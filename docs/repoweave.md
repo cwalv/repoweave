@@ -463,8 +463,10 @@ Roles are a first-class field in `rwv.yaml`:
 | `rwv weave {project} --delete` | Delete a weave (remove worktrees, clean up ephemeral branches). |
 | `rwv weave {project} --sync` | Sync weave worktrees and ecosystem files with manifest. |
 | `rwv weave {project} --list` | List weaves for a project. |
-| `rwv fetch {source}` | Clone a project repo and all its listed repos, generate ecosystem files. |
-| `rwv add {url\|path}` | Clone a repo, register in `rwv.yaml`, re-run integration hooks. With `--role`, sets the role annotation. |
+| `rwv init {project}` | Create a new project directory with empty `rwv.yaml`. Optional `--provider {registry}/{owner}` sets up the remote. |
+| `rwv activate {project}` | Set the active project — generate ecosystem files in the project directory, symlink at weave root, run install commands. |
+| `rwv fetch {source}` | Clone a project repo and all its listed repos, activate, update `rwv.lock`. `--locked` for exact reproduction, `--frozen` for CI (errors if lock is stale). |
+| `rwv add {url}` | Clone a repo, register in `rwv.yaml`, re-run integration hooks. With `--role`, sets the role. With `--new`, initializes a new repo at the canonical path (infers URL). |
 | `rwv remove {path}` | Remove from `rwv.yaml`, re-run integration hooks. With `--delete`, also removes the clone (confirms unless `--force`). |
 | `rwv lock` | Snapshot repo versions into the project's `rwv.lock`. Errors on uncommitted changes (`--dirty` to bypass). Runs integration lock hooks. |
 | `rwv check` | Convention enforcement: orphaned clones, dangling references, missing roles, stale locks, weave drift, integration checks. |

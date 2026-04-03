@@ -146,11 +146,20 @@ To add it to mobile-app too:
 
 ```bash
 rwv activate mobile-app
-rwv add github/example/some-lib --role dependency
-# No clone needed — already on disk. Just adds to rwv.yaml and regenerates.
+rwv add https://github.com/example/some-lib.git --role dependency
+# Clone is a no-op — already on disk. Just adds to rwv.yaml and regenerates.
 ```
 
-**Open question:** `rwv add` with a local path (already-cloned repo) vs a URL. The first `add` uses a URL and clones. The second uses a path because the repo is already there. Should both forms work? The manifest entry needs a URL for `rwv fetch` on other machines. Maybe `rwv add <path>` infers the URL from `git remote get-url origin`?
+`rwv add` always takes a URL. The manifest needs the URL for `rwv fetch` on other machines. If the repo is already cloned at the canonical path, the clone step is a fast no-op.
+
+To create a brand new repo that doesn't exist yet:
+
+```bash
+rwv add github/chatly/auth --new
+# git init at the canonical path
+# URL inferred from path convention: https://github.com/chatly/auth.git
+# Added to rwv.yaml with role: primary (the default for --new)
+```
 
 ## Removing a repo
 
@@ -189,15 +198,21 @@ git add rwv.lock && git commit -m "lock: update after payment feature"
 git push
 ```
 
-Lock all projects at once (useful when shared repos changed):
+To lock multiple projects, activate and lock each explicitly:
 
 ```bash
-rwv lock-all
+rwv activate web-app
+rwv lock
+rwv activate mobile-app
+rwv lock
+```
+
+Then commit in each project repo:
+
+```bash
 cd projects/web-app && git add rwv.lock && git commit -m "lock: update server"
 cd ../mobile-app && git add rwv.lock && git commit -m "lock: update server"
 ```
-
-**Open question:** `rwv lock-all` updates multiple project repos. Should it also commit? Or is that too opinionated? A `--commit` flag? Or a separate `rwv commit` that commits lock file changes in all project repos?
 
 ## Creating a weave for a feature branch
 
@@ -394,20 +409,20 @@ You already have repos cloned. You want to create a project that groups them.
 
 ```bash
 cd ~/work
-rwv init web-app
-# Creates projects/web-app/ with an empty rwv.yaml
-# Initializes it as a git repo
+rwv init web-app --provider github/chatly
+# Creates projects/web-app/
+# git init
+# git remote add origin https://github.com/chatly/web-app.git
+# Creates empty rwv.yaml
 
-rwv add github/chatly/server --role primary
-rwv add github/chatly/web --role primary
-rwv add github/chatly/protocol --role primary
-rwv add github/socketio/engine.io --role fork
-
-# Or, if you want to add by URL (clones if not present):
 rwv add https://github.com/chatly/server.git --role primary
+rwv add https://github.com/chatly/web.git --role primary
+rwv add https://github.com/chatly/protocol.git --role primary
+rwv add https://github.com/socketio/engine.io.git --role fork
+rwv activate web-app
 ```
 
-**Open question:** `rwv init` is a new command — not in the current spec. It creates a project directory and initializes it as a git repo. Is this needed, or can `rwv add` create the project directory on first use? An explicit `init` is clearer.
+`rwv init` is explicit, like `git init` — a one-time setup step with a clear before/after. The `--provider` flag is optional; it uses the registry mapping (`github` → `github.com`) and the project name to set up the remote as a convenience. Without `--provider`, no remote is configured — you add it later when ready.
 
 ## What about repos not in any project?
 
@@ -440,15 +455,21 @@ rwv fetch chatly/web-app
 
 This clones the project repo, reads `rwv.yaml`, clones all listed repos, activates, generates ecosystem files, runs install. One command from zero to working.
 
+This fetches latest (branch HEAD from `rwv.yaml`) and updates `rwv.lock` with the SHAs that were actually checked out — same as how `npm install` resolves latest and updates `package-lock.json`.
+
 If they want the exact versions you had:
 
 ```bash
 rwv fetch chatly/web-app --locked
 ```
 
-This checks out each repo at the SHA in `rwv.lock` instead of the branch in `rwv.yaml`. Deterministic reproduction.
+This checks out each repo at the revision in `rwv.lock` instead of the branch in `rwv.yaml`. Deterministic reproduction.
 
-**Open question:** `--locked` flag — is this needed as a separate flag, or should `rwv fetch` always use the lock file when present? The lock file might be stale (committed weeks ago). Using `rwv.yaml` branches by default (latest) is friendlier for getting started; `--locked` is for CI or debugging a specific state.
+For CI, `--frozen` is stricter — errors if the lock file is missing or doesn't match the manifest:
+
+```bash
+rwv fetch chatly/web-app --frozen
+```
 
 ## Working on the project repo itself
 
@@ -472,11 +493,16 @@ git push
 
 The project repo is a normal git repo. You commit to it, push it, branch it.
 
-## Summary of open questions
+## Design decisions (resolved)
 
-1. **Shared node_modules across project switches** — acceptable cost, or should tool state be per-project?
-2. **rwv add with local path vs URL** — should both work? How does path-based add get the URL for the manifest?
-3. **rwv lock-all and committing** — should lock-all also commit? A --commit flag? Separate rwv commit?
-4. **rwv init** — needed as an explicit command, or can project creation be implicit on first add?
-5. **rwv fetch --locked** — separate flag, or default behavior when lock file exists?
-6. **Weave naming** — `~/work--payments/` uses `--` as separator. What if the primary directory name has dashes? Configurable separator?
+1. **Shared tool state across project switches** — acceptable cost. `npm install` after `rwv activate` is incremental. If the cost is too high, create a weave for the second project — natural escalation from activate to weave.
+
+2. **`rwv add` takes a URL** — always. The manifest needs URLs for `rwv fetch` on other machines. If the repo is already on disk, clone is a no-op. For new repos that don't exist yet, `rwv add <path> --new` initializes at the canonical path and infers the URL.
+
+3. **No `lock-all`** — dropped. Each project needs `activate` first (to generate ecosystem files), making lock-all a heavyweight operation that's better done explicitly: `rwv activate web-app && rwv lock`, repeat per project. `rwv lock` does not auto-commit — following ecosystem tool convention (npm, cargo, uv none auto-commit). Lock writes `rwv.lock` and runs integration lock hooks.
+
+4. **`rwv init` is explicit** — like `git init`, a one-time setup. Optional `--provider github/chatly` uses registry mapping to set up the remote as a convenience.
+
+5. **`rwv fetch` updates the lock** — fetches at branch HEAD from `rwv.yaml` and updates `rwv.lock` with actual SHAs (like `npm install` updates `package-lock.json`). `--locked` checks out exact revisions from the lock. `--frozen` errors if lock is missing or stale (CI mode). `--latest` ignores the lock entirely.
+
+6. **Weave naming** — `--` separator (`web-app--payments`). It's a default convention, not load-bearing — nothing internal parses directory names. Weaves track their primary via git worktree metadata. The separator can change later without breaking anything.
