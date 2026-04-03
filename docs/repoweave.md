@@ -10,6 +10,8 @@ What ecosystem workspaces don't handle: getting the code on disk, tracking which
 
 This also gives you monorepo ergonomics without merging repos. All your code lives in one directory tree, so every tool that touches the filesystem — editors, grep, agents, debuggers, build tools — works across all of it. Your code can talk to your other code without ceremony. But repos stay sovereign: normal git, normal branches, normal push/pull.
 
+The biggest win over a traditional multi-repo setup: **no version bump cycle to use changes across repos.** Normally, changing `protocol` before `server` can use it means: bump protocol's version, publish, update server's dependency, install, test. With repoweave, the ecosystem workspace wiring means `server` already imports from the local `protocol` checkout. You commit in both repos, lock, done. The version bump can happen later — or never, for internal code. This is monorepo-level iteration speed.
+
 ## Core idea
 
 The workspace has three layers:
@@ -331,6 +333,32 @@ The practical difference matters for workflow. In a traditional multi-repo setup
 This is monorepo-level iteration speed without a monorepo. The lock file captures your exact state whether or not you've done a formal version bump. When a tag exists at HEAD, the lock records it (readable, auditable). When it doesn't, the SHA is equally pinned — just less pretty.
 
 The ecosystem lock files complement `rwv.lock`. Together they capture both layers: `rwv.lock` pins which commit of each repo, and `package-lock.json` / `Cargo.lock` / etc. pin which versions of external dependencies were resolved within that ecosystem. Full reproducibility requires both.
+
+### Versioning guidelines
+
+repoweave doesn't require any particular versioning scheme, but one practice makes the multi-repo workflow smoother: **include the git revision in your package version.**
+
+Semver supports build metadata via the `+` suffix: `2.1.0+7a3b2c1`. The revision after `+` doesn't affect version precedence but carries provenance. Whatever mechanism a package uses to report its version — `package.json` `version` field, `pyproject.toml`, `Cargo.toml`, a `--version` flag — it should include the revision when possible.
+
+This makes the version output useful for debugging across repos:
+
+```
+$ my-server --version
+my-server 2.1.0+7a3b2c1
+
+$ my-protocol --version
+my-protocol 1.4.0+e1f2a3b
+```
+
+You can immediately tell which commits are running. In a monorepo, `git rev-parse HEAD` tells you everything. In a multi-repo setup, the `+revision` suffix gives you the same traceability per package.
+
+Most ecosystems support this:
+- **npm**: `version` in `package.json` supports semver build metadata
+- **Cargo**: `version` in `Cargo.toml` supports `+` metadata
+- **Python**: PEP 440 uses `+local` for local version identifiers (e.g., `2.1.0+7a3b2c1`)
+- **Go**: `runtime/debug.BuildInfo` can embed VCS revision via build flags
+
+For repos that don't publish packages (internal services, scripts), the version matters less — `rwv.lock` captures the exact SHA regardless. The `+revision` convention is most valuable for packages that are consumed as dependencies, where "which version of protocol is server using?" is a common question.
 
 ## Projects
 
