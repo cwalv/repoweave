@@ -1,0 +1,19 @@
+[package]
+name = "repoweave"
+version = "0.1.0"
+edition = "2021"
+description = "A cross-repo workspace manager"
+license = "MIT"
+repository = "https://github.com/cwalv/repoweave"
+keywords = ["workspace", "monorepo", "git", "multi-repo"]
+categories = ["development-tools", "command-line-utilities"]
+
+[[bin]]
+name = "rwv"
+path = "src/main.rs"
+
+[dependencies]
+clap = { version = "4", features = ["derive"] }
+serde = { version = "1", features = ["derive"] }
+serde_yaml = "0.9"
+anyhow = "1"
