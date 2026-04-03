@@ -626,3 +626,29 @@ export GITA_PROJECT_HOME="$PWD/gita"          # point gita at derived config
 - run: cargo install repoweave && rwv fetch   # reads rwv.yaml, clones code repos
 - run: npm install && npm test
 ```
+
+## Prior art: multi-repo coordination
+
+There is no universal standard for multi-repo development. "Polyrepo" names the strategy (the counterpart to "monorepo") but prescribes no conventions. Each ecosystem that needed multi-repo coordination invented its own:
+
+| Tool | Ecosystem | Manifest format | Lock/pin mechanism |
+|------|-----------|----------------|--------------------|
+| Google `repo` | Android/embedded | XML (`default.xml`) | `repo manifest -r` (revision-locked manifest) |
+| West | Zephyr RTOS | YAML | `west manifest --freeze` |
+| vcstool | ROS | YAML (`.repos`) | `vcs export --exact` |
+| git submodules | General | `.gitmodules` | SHA in parent tree (inherent) |
+
+These tools are well-established within their ecosystems but none crossed over to become a general standard. Each makes trade-offs specific to its community — `repo` assumes Gerrit, West requires a manifest repo, submodules take ownership of clones.
+
+Meanwhile, ecosystem workspace tools have converged on a shared *pattern* — a manifest listing directories for cross-package resolution — without coordinating on format:
+
+| Tool | Manifest | Purpose |
+|------|----------|---------|
+| npm/pnpm | `package.json` workspaces / `pnpm-workspace.yaml` | Cross-package imports, shared deps |
+| Go | `go.work` | Cross-module resolution |
+| Cargo | `Cargo.toml` `[workspace]` | Shared lock, shared target |
+| uv | `pyproject.toml` `[tool.uv.workspace]` | Cross-package deps |
+
+These don't care about repo boundaries — they list directories. They handle dependency resolution but not repo lifecycle (cloning, pinning, reproducing).
+
+repoweave sits at the intersection: it provides the repo lifecycle layer (like `repo`/West/vcstool) and generates the ecosystem workspace configs (like `go.work`/pnpm). The manifest format is YAML, based on vcstool's `.repos` format — the most portable of the existing formats.
