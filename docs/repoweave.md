@@ -10,7 +10,9 @@ What ecosystem workspaces don't handle: getting the code on disk, tracking which
 
 This also gives you monorepo ergonomics without merging repos. All your code lives in one directory tree, so every tool that touches the filesystem — editors, grep, agents, debuggers, build tools — works across all of it. Your code can talk to your other code without ceremony. But repos stay sovereign: normal git, normal branches, normal push/pull.
 
-The biggest win over a traditional multi-repo setup: **no version bump cycle to use changes across repos.** Normally, changing `protocol` before `server` can use it means: bump protocol's version, publish, update server's dependency, install, test. With repoweave, the ecosystem workspace wiring means `server` already imports from the local `protocol` checkout. You commit in both repos, lock, done. The version bump can happen later — or never, for internal code. This is monorepo-level iteration speed.
+Monorepos succeed because they provide a single, well-understood convention — directory layout, cross-package imports, atomic versioning, workspace-wide tooling all just work. Multi-repo setups have no equivalent standard, so every team reinvents the glue (or doesn't, and lives with the friction). repoweave provides that convention: a standard layout, ecosystem wiring, version pinning, and reproducibility across repos.
+
+One example of reduced friction: **no version bump cycle for cross-repo changes.** Normally, changing `protocol` before `server` can use it means: bump protocol's version, publish, update server's dependency, install, test. With repoweave, the ecosystem workspace wiring means `server` already imports from the local `protocol` checkout. You commit in both repos, lock, done. The version bump can happen later — or never, for internal code.
 
 ## Core idea
 
