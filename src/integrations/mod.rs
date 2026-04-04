@@ -3,6 +3,7 @@ pub mod gita;
 pub mod go_work;
 pub mod npm_workspaces;
 pub mod pnpm_workspaces;
+pub mod static_files;
 pub mod uv_workspace;
 pub mod vscode_workspace;
 
@@ -13,6 +14,7 @@ pub use gita::Gita;
 pub use go_work::GoWork;
 pub use npm_workspaces::NpmWorkspaces;
 pub use pnpm_workspaces::PnpmWorkspaces;
+pub use static_files::StaticFiles;
 pub use uv_workspace::UvWorkspace;
 pub use vscode_workspace::VscodeWorkspace;
 
@@ -26,5 +28,6 @@ pub fn builtin_integrations() -> Vec<Box<dyn Integration>> {
         Box::new(CargoWorkspace),
         Box::new(Gita),
         Box::new(VscodeWorkspace),
+        Box::new(StaticFiles),
     ]
 }

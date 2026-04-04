@@ -1464,3 +1464,195 @@ mod lock_hooks {
         assert!(result.is_ok(), "vscode-workspace lock should be a no-op");
     }
 }
+
+// ===========================================================================
+// static-files
+// ===========================================================================
+
+mod static_files {
+    use super::*;
+
+    #[test]
+    fn default_disabled() {
+        let integration = StaticFiles;
+        assert!(!integration.default_enabled());
+    }
+
+    #[test]
+    fn name_is_static_files() {
+        let integration = StaticFiles;
+        assert_eq!(integration.name(), "static-files");
+    }
+
+    #[test]
+    fn generated_files_returns_configured_files() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+
+        let manifest = make_manifest(vec![("github/acme/server", Role::Primary)]);
+        let project = ProjectName::new("test-project");
+        let config = IntegrationConfig {
+            enabled: Some(true),
+            files: vec![
+                "turbo.json".to_string(),
+                ".eslintrc.json".to_string(),
+                ".prettierrc".to_string(),
+            ],
+        };
+        let ctx = make_ctx(root, &project, &manifest, &config);
+
+        let integration = StaticFiles;
+        let files = integration.generated_files(&ctx);
+        assert_eq!(files, vec!["turbo.json", ".eslintrc.json", ".prettierrc"]);
+    }
+
+    #[test]
+    fn generated_files_empty_when_no_files_configured() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+
+        let manifest = make_manifest(vec![("github/acme/server", Role::Primary)]);
+        let project = ProjectName::new("test-project");
+        let config = IntegrationConfig {
+            enabled: Some(true),
+            files: vec![],
+        };
+        let ctx = make_ctx(root, &project, &manifest, &config);
+
+        let integration = StaticFiles;
+        let files = integration.generated_files(&ctx);
+        assert!(files.is_empty());
+    }
+
+    #[test]
+    fn activate_succeeds_when_files_exist() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+
+        // Create the declared files in the project directory (output_dir)
+        write_file(root, "turbo.json", r#"{"pipeline": {}}"#);
+        write_file(root, ".eslintrc.json", "{}");
+
+        let manifest = make_manifest(vec![("github/acme/server", Role::Primary)]);
+        let project = ProjectName::new("test-project");
+        let config = IntegrationConfig {
+            enabled: Some(true),
+            files: vec!["turbo.json".to_string(), ".eslintrc.json".to_string()],
+        };
+        let ctx = make_ctx(root, &project, &manifest, &config);
+
+        let integration = StaticFiles;
+        let result = integration.activate(&ctx);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn activate_succeeds_even_when_files_missing() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+
+        // Don't create the files — activate should still succeed (just warn)
+        let manifest = make_manifest(vec![("github/acme/server", Role::Primary)]);
+        let project = ProjectName::new("test-project");
+        let config = IntegrationConfig {
+            enabled: Some(true),
+            files: vec!["turbo.json".to_string()],
+        };
+        let ctx = make_ctx(root, &project, &manifest, &config);
+
+        let integration = StaticFiles;
+        let result = integration.activate(&ctx);
+        assert!(result.is_ok(), "activate should succeed even with missing files");
+    }
+
+    #[test]
+    fn check_warns_on_missing_files() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+
+        // Create one of two declared files
+        write_file(root, "turbo.json", "{}");
+
+        let manifest = make_manifest(vec![("github/acme/server", Role::Primary)]);
+        let project = ProjectName::new("test-project");
+        let config = IntegrationConfig {
+            enabled: Some(true),
+            files: vec!["turbo.json".to_string(), ".eslintrc.json".to_string()],
+        };
+        let ctx = make_ctx(root, &project, &manifest, &config);
+
+        let integration = StaticFiles;
+        let issues = integration.check(&ctx).unwrap();
+        assert_eq!(issues.len(), 1);
+        assert_eq!(issues[0].severity, Severity::Warning);
+        assert!(issues[0].message.contains(".eslintrc.json"));
+        assert_eq!(issues[0].integration, "static-files");
+    }
+
+    #[test]
+    fn check_no_issues_when_all_files_present() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+
+        write_file(root, "turbo.json", "{}");
+        write_file(root, ".prettierrc", "{}");
+
+        let manifest = make_manifest(vec![("github/acme/server", Role::Primary)]);
+        let project = ProjectName::new("test-project");
+        let config = IntegrationConfig {
+            enabled: Some(true),
+            files: vec!["turbo.json".to_string(), ".prettierrc".to_string()],
+        };
+        let ctx = make_ctx(root, &project, &manifest, &config);
+
+        let integration = StaticFiles;
+        let issues = integration.check(&ctx).unwrap();
+        assert!(issues.is_empty());
+    }
+
+    #[test]
+    fn check_no_issues_when_no_files_configured() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+
+        let manifest = make_manifest(vec![("github/acme/server", Role::Primary)]);
+        let project = ProjectName::new("test-project");
+        let config = IntegrationConfig {
+            enabled: Some(true),
+            files: vec![],
+        };
+        let ctx = make_ctx(root, &project, &manifest, &config);
+
+        let integration = StaticFiles;
+        let issues = integration.check(&ctx).unwrap();
+        assert!(issues.is_empty());
+    }
+
+    #[test]
+    fn deactivate_succeeds() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+
+        let integration = StaticFiles;
+        let result = integration.deactivate(root);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn lock_is_noop() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+
+        let manifest = make_manifest(vec![("github/acme/server", Role::Primary)]);
+        let project = ProjectName::new("test-project");
+        let config = IntegrationConfig {
+            enabled: Some(true),
+            files: vec!["turbo.json".to_string()],
+        };
+        let ctx = make_ctx(root, &project, &manifest, &config);
+
+        let integration = StaticFiles;
+        let result = integration.lock(&ctx);
+        assert!(result.is_ok(), "static-files lock should be a no-op");
+    }
+}

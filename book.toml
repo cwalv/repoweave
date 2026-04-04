@@ -1,0 +1,11 @@
+[book]
+title = "repoweave"
+authors = ["cwalv"]
+language = "en"
+src = "docs"
+
+[build]
+build-dir = "book"
+
+[output.html]
+git-repository-url = "https://github.com/cwalv/repoweave"

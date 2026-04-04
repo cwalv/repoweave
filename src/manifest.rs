@@ -137,8 +137,12 @@ pub struct RepoEntry {
 pub struct IntegrationConfig {
     #[serde(default)]
     pub enabled: Option<bool>,
-    // Future: integration-specific fields via `#[serde(flatten)]`
-    // on a `BTreeMap<String, serde_yaml::Value>`.
+
+    /// List of filenames for the `static-files` integration.
+    /// Each file is symlinked from the project directory to the workspace root
+    /// on activation and removed on deactivation.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub files: Vec<String>,
 }
 
 // ---------------------------------------------------------------------------

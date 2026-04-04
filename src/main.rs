@@ -9,12 +9,15 @@ mod integration_runner;
 mod integrations;
 mod lock;
 mod manifest;
+mod prime;
 mod registry;
+mod setup;
 mod vcs;
 mod weave;
 mod workspace;
 
-use clap::{Parser, Subcommand};
+use clap::{CommandFactory, Parser, Subcommand};
+use clap_complete::Shell;
 use repoweave::manifest::WeaveName;
 use repoweave::workspace::WorkspaceContext;
 
@@ -99,6 +102,26 @@ enum Commands {
         /// Project name
         project: String,
     },
+    /// Print structured workspace context for agent system prompts
+    Prime,
+    /// Generate workspace-level configuration files
+    Setup {
+        #[command(subcommand)]
+        action: SetupAction,
+    },
+    /// Generate shell completions
+    Completions {
+        /// Shell to generate completions for
+        shell: Shell,
+    },
+}
+
+#[derive(Subcommand)]
+enum SetupAction {
+    /// Generate AGENTS.md at the workspace root
+    AgentsMd,
+    /// Register rwv prime as a Claude Code hook (SessionStart + PreCompact)
+    Claude,
 }
 
 fn main() -> anyhow::Result<()> {
@@ -179,6 +202,21 @@ fn main() -> anyhow::Result<()> {
         Some(Commands::Activate { project }) => {
             let cwd = std::env::current_dir()?;
             activate::activate(&project, &cwd)?;
+        }
+        Some(Commands::Prime) => {
+            let cwd = std::env::current_dir()?;
+            prime::prime(&cwd)?;
+        }
+        Some(Commands::Setup { action }) => {
+            let cwd = std::env::current_dir()?;
+            match action {
+                SetupAction::AgentsMd => setup::agents_md(&cwd)?,
+                SetupAction::Claude => setup::claude()?,
+            }
+        }
+        Some(Commands::Completions { shell }) => {
+            let mut cmd = Cli::command();
+            clap_complete::generate(shell, &mut cmd, "rwv", &mut std::io::stdout());
         }
     }
 
