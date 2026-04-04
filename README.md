@@ -61,7 +61,7 @@ That single command clones the project repo, reads its `rwv.yaml` manifest, clon
 # edit across repos freely — cross-package imports resolve locally
 cd github/chatly/server
 # ... make changes ...
-npm test --workspaces             # from workspace root — tests span all repos
+npm test --workspaces             # from weave root — tests span all repos
 
 rwv lock                          # snapshot repo SHAs into rwv.lock
 cd projects/web-app
@@ -73,7 +73,7 @@ Create an isolated working copy when you need parallel work, PR review, or agent
 ```bash
 rwv workweave web-app payments    # creates isolated working copy with git worktrees
 cd .workweaves/payments
-# independent branches, node_modules, .venv — primary weave is undisturbed
+# independent branches, node_modules, .venv — weave is undisturbed
 ```
 
 ### Commands
@@ -89,10 +89,10 @@ cd .workweaves/payments
 | `rwv lock` | Snapshot repo HEADs into `rwv.lock`. Errors on uncommitted changes (`--dirty` to bypass) |
 | `rwv check` | Convention enforcement: orphans, dangling refs, stale locks, integration checks |
 | `rwv workweave <project> <name>` | Create an isolated working copy (worktrees on ephemeral branches). `--delete` / `--sync` / `--list` |
-| `rwv resolve` | Print the workspace root path (useful for scripting: `cd $(rwv resolve)`) |
+| `rwv resolve` | Print the weave root path (useful for scripting: `cd $(rwv resolve)`) |
 | `rwv prime` | Print structured workspace context for agent system prompts |
 | `rwv setup claude` | Register `rwv prime` as a Claude Code hook (SessionStart + PreCompact) |
-| `rwv setup agents-md` | Generate `AGENTS.md` at workspace root for Cursor, Copilot, and other agents |
+| `rwv setup agents-md` | Generate `AGENTS.md` at weave root for Cursor, Copilot, and other agents |
 | `rwv completions <shell>` | Generate shell completions (bash, zsh, fish, etc.) |
 
 ### Shell completions

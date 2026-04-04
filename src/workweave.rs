@@ -3,7 +3,7 @@
 //! A workweave is a parallel working directory containing worktrees for each
 //! repo in a project, including the project repo itself. The workweave directory
 //! lives under `.workweaves/` in the parent of the workspace root (or under
-//! `WEAVEROOT` if set). Each workweave carries its own `.rwv-workweave` marker
+//! `WORKWEAVEROOT` if set). Each workweave carries its own `.rwv-workweave` marker
 //! and `.rwv-active` file so it is fully self-describing.
 
 use crate::git::GitVcs;
@@ -17,10 +17,10 @@ use std::path::{Path, PathBuf};
 
 /// Determine where workweave directories live.
 ///
-/// If `WEAVEROOT` is set, workweaves go under that directory.
+/// If `WORKWEAVEROOT` is set, workweaves go under that directory.
 /// Otherwise they live under `.workweaves/` in the parent of the workspace root.
 fn workweave_parent(ws_root: &Path) -> PathBuf {
-    if let Ok(wr) = std::env::var("WEAVEROOT") {
+    if let Ok(wr) = std::env::var("WORKWEAVEROOT") {
         PathBuf::from(wr)
     } else {
         ws_root

@@ -32,15 +32,12 @@ if [ ! -f "$active_file" ]; then
 fi
 project=$(cat "$active_file" | tr -d '[:space:]')
 
-# Derive workweave name from branch_name, falling back to session_id or timestamp.
+# Derive workweave name from branch_name, falling back to a unique hex name.
 # branch_name can arrive as the literal string "null" when Claude Code fires
 # WorktreeCreate for a subagent without a real branch name.
+# Session ID is not used — it's constant within a session, causing collisions.
 if [ -z "$branch_name" ] || [ "$branch_name" = "null" ]; then
-    if [ -n "$session_id" ] && [ "$session_id" != "null" ]; then
-        raw_name="$session_id"
-    else
-        raw_name="ww-$(date +%s)"
-    fi
+    raw_name="workweave-$(printf '%08x' $(($(date +%s) ^ $(date +%N))))"
 else
     raw_name="$branch_name"
 fi

@@ -216,7 +216,7 @@ cd ../mobile-app && git add rwv.lock && git commit -m "lock: update server"
 
 ## Creating a workweave for a feature branch
 
-You're working on a feature that spans server and protocol. You want to keep main undisturbed. A workweave is a worktree-based derivative of the primary weave, created on demand for isolation.
+You're working on a feature that spans server and protocol. You want to keep main undisturbed. A workweave is a worktree-based derivative of the weave, created on demand for isolation.
 
 ```bash
 rwv workweave web-app payments
@@ -227,7 +227,7 @@ What happens:
 1. Creates `.workweaves/payments/` under the weaveroot
 2. For each repo in web-app's manifest, runs `git worktree add` with an ephemeral branch:
    - `github/chatly/server/` → worktree on `payments/main`
-   - `github/chatly/web/` → worktree on `payments/feature-A` (tracks whatever branch the primary had)
+   - `github/chatly/web/` → worktree on `payments/feature-A` (tracks whatever branch the weave had)
    - `github/chatly/protocol/` → worktree on `payments/main`
 3. Creates a worktree for the project repo too:
    - `projects/web-app/` → worktree on `payments/main`
@@ -236,7 +236,7 @@ What happens:
 6. Runs `npm install`
 
 ```
-~/work/                               # primary weave — undisturbed
+~/work/                               # weave — undisturbed
 .workweaves/payments/                 # workweave
 ├── github/chatly/server/             # worktree, on payments/main
 ├── github/chatly/web/                # worktree, on payments/feature-A
@@ -262,12 +262,12 @@ cd ../protocol
 npm test --workspaces                 # from workweave root — isolated deps
 ```
 
-Meanwhile, the primary weave is untouched:
+Meanwhile, the weave is untouched:
 
 ```bash
 cd ~/work
 git -C github/chatly/server status    # still on main, clean
-npm test --workspaces                 # primary's deps, primary's branches
+npm test --workspaces                 # weave's deps, weave's branches
 ```
 
 ## Creating a workweave for PR review
@@ -505,4 +505,4 @@ The project repo is a normal git repo. You commit to it, push it, branch it.
 
 5. **`rwv fetch` updates the lock** — fetches at branch HEAD from `rwv.yaml` and updates `rwv.lock` with actual SHAs (like `npm install` updates `package-lock.json`). `--locked` checks out exact revisions from the lock. `--frozen` errors if lock is missing or stale (CI mode). `--latest` ignores the lock entirely.
 
-6. **Workweave location** — workweaves live in `.workweaves/{name}` under the weaveroot. The `.rwv-workweave` marker file records the primary path and project, making the relationship explicit and independent of directory naming.
+6. **Workweave location** — workweaves live in `.workweaves/{name}` under the weaveroot. The `.rwv-workweave` marker file records the weave path and project, making the relationship explicit and independent of directory naming.

@@ -2,7 +2,7 @@
 
 ## The workspace surface
 
-The primary directory (or workweave directory) is the **workspace surface** — the directory that ecosystem tools see. npm sees a directory with a `package.json` listing workspace packages. Go sees a directory with a `go.work` listing modules. Cargo sees a directory with a `Cargo.toml` listing workspace members. These tools have no idea that the packages come from different git repos. They see a workspace directory with packages in it — nothing more.
+The weave root (or workweave root) is the **workspace surface** — the directory that ecosystem tools see. npm sees a directory with a `package.json` listing workspace packages. Go sees a directory with a `go.work` listing modules. Cargo sees a directory with a `Cargo.toml` listing workspace members. These tools have no idea that the packages come from different git repos. They see a workspace directory with packages in it — nothing more.
 
 Integrations are the translation layer between repoweave's multi-repo world (repos, projects, roles) and the ecosystem's workspace world (`package.json`, `go.work`, `Cargo.toml`). They read the project's `rwv.yaml` — which describes repos — and produce the ecosystem workspace files that tools expect at the workspace surface. The result: ecosystem tools work exactly as they would in a monorepo, because from their perspective, it *is* a workspace directory with packages.
 
@@ -21,7 +21,7 @@ Each integration provides:
 4. **Deactivation logic** — removes generated files. Called during workweave deletion.
 5. **Check logic** — receives the same inputs; returns issues and warnings without changing state.
 
-When a workspace is activated or a workweave is created or synced, integrations are run: the deactivation hook cleans up first, then the activation hook generates fresh config. Each integration auto-detects relevant repos — if none are found, it does nothing.
+When a project is activated or a workweave is created or synced, integrations are run: the deactivation hook cleans up first, then the activation hook generates fresh config. Each integration auto-detects relevant repos — if none are found, it does nothing.
 
 `rwv check` runs check hooks across all enabled integrations as part of its broader convention audit.
 
@@ -29,7 +29,7 @@ Ecosystem integrations auto-detect repos with the relevant manifest file. If non
 
 ### Generated files are persistent
 
-Generated ecosystem files live in the primary directory (or the workweave directory for workweaves). They are **committable, not ephemeral** — they are regenerated on workweave creation, sync, or `rwv add`, but they persist between runs and can be committed to version control.
+Generated ecosystem files live in the project directory (symlinked to the weave root, or the workweave root for workweaves). They are **committable, not ephemeral** — they are regenerated on workweave creation, sync, or `rwv add`, but they persist between runs and can be committed to version control.
 
 Ecosystem lock files (`package-lock.json`, `pnpm-lock.yaml`, `uv.lock`, `go.sum`, `Cargo.lock`) are produced by the ecosystem tools during the install step. These are important persistent state that pins exact dependency versions within each ecosystem. They should be committed alongside the ecosystem workspace configs.
 
@@ -78,7 +78,7 @@ The `active_repos()` method filters out `reference` repos, which should not be i
 | `cargo-workspace` | yes | repos with `Cargo.toml` | root `Cargo.toml` | -- |
 | `gita` | yes | all repos | `gita/` directory | -- |
 | `vscode-workspace` | yes | all repos | `{project}.code-workspace` | -- |
-| `static-files` | no | n/a (configured explicitly) | symlinks declared files to workspace root | -- |
+| `static-files` | no | n/a (configured explicitly) | symlinks declared files to weave root | -- |
 
 ## npm-workspaces
 
@@ -98,7 +98,7 @@ Generates a root `package.json` with a `workspaces` array listing every project 
 }
 ```
 
-This file lives at the root of the primary directory (or workweave directory). It is committable. The corresponding `package-lock.json` and `node_modules/` are produced by `npm install` — `package-lock.json` is committable persistent state, `node_modules/` is gitignored tool state.
+This file is generated in the project directory and symlinked to the weave root (or workweave root). It is committable. The corresponding `package-lock.json` and `node_modules/` are produced by `npm install` — `package-lock.json` is committable persistent state, `node_modules/` is gitignored tool state.
 
 ### Deactivation
 
@@ -131,7 +131,7 @@ packages:
   - github/chatly/web
 ```
 
-This file lives at the root of the primary directory (or workweave directory). It is committable. The corresponding `pnpm-lock.yaml` and `node_modules/` are produced by `pnpm install` — `pnpm-lock.yaml` is committable persistent state, `node_modules/` is gitignored tool state.
+This file is generated in the project directory and symlinked to the weave root (or workweave root). It is committable. The corresponding `pnpm-lock.yaml` and `node_modules/` are produced by `pnpm install` — `pnpm-lock.yaml` is committable persistent state, `node_modules/` is gitignored tool state.
 
 ### Deactivation
 
@@ -156,7 +156,7 @@ use (
 )
 ```
 
-This file lives at the root of the primary directory (or workweave directory). It is committable. The corresponding `go.sum` is produced by the Go toolchain and is also committable persistent state.
+This file is generated in the project directory and symlinked to the weave root (or workweave root). It is committable. The corresponding `go.sum` is produced by the Go toolchain and is also committable persistent state.
 
 ### Deactivation
 
@@ -181,7 +181,7 @@ members = [
 ]
 ```
 
-This file lives at the root of the primary directory (or workweave directory). It is committable. The corresponding `uv.lock` and `.venv/` are produced by `uv sync` — `uv.lock` is committable persistent state, `.venv/` is gitignored tool state.
+This file is generated in the project directory and symlinked to the weave root (or workweave root). It is committable. The corresponding `uv.lock` and `.venv/` are produced by `uv sync` — `uv.lock` is committable persistent state, `.venv/` is gitignored tool state.
 
 ### Deactivation
 
@@ -205,7 +205,7 @@ members = ["github/chatly/protocol", "github/chatly/server"]
 resolver = "2"
 ```
 
-This file lives at the root of the primary directory (or workweave directory). It is committable. The corresponding `Cargo.lock` and `target/` are produced by Cargo — `Cargo.lock` is committable persistent state, `target/` is gitignored tool state.
+This file is generated in the project directory and symlinked to the weave root (or workweave root). It is committable. The corresponding `Cargo.lock` and `target/` are produced by Cargo — `Cargo.lock` is committable persistent state, `target/` is gitignored tool state.
 
 ### Deactivation
 
@@ -219,10 +219,10 @@ No checks currently. Could warn if `cargo` is not on PATH when Rust repos are pr
 
 [gita](https://github.com/nosarthur/gita) provides the multi-repo dashboard (`gita ll`), cross-repo git delegation (`gita super`), cross-repo shell commands (`gita shell`), groups, and context scoping. Rather than reimplement these in `rwv`, we use gita directly via this integration.
 
-The activation hook generates gita's config files into a `gita/` directory inside the primary (or workweave) directory, scoped to the project's repos. Point gita at this directory via `GITA_PROJECT_HOME`:
+The activation hook generates gita's config files into a `gita/` directory inside the weave (or workweave) directory, scoped to the project's repos. Point gita at this directory via `GITA_PROJECT_HOME`:
 
 ```bash
-# .envrc in primary or workweave dir
+# .envrc in weave or workweave dir
 export GITA_PROJECT_HOME="$PWD/gita"
 ```
 
@@ -276,7 +276,7 @@ gita has its own serialization format (`gita freeze` outputs CSV with URL, name,
 
 ## vscode-workspace
 
-Generates a `{project}.code-workspace` file in the primary (or workweave) directory. Uses a single-root workspace (the directory itself) with git settings configured for the multi-repo layout.
+Generates a `{project}.code-workspace` file in the weave (or workweave) directory. Uses a single-root workspace (the directory itself) with git settings configured for the multi-repo layout.
 
 The file is named after the project (e.g., `web-app.code-workspace`), making the project visible in the VS Code title bar.
 
@@ -285,7 +285,7 @@ The file is named after the project (e.g., `web-app.code-workspace`), making the
 ```json
 {
   "folders": [
-    { "path": ".", "name": "web-app (primary)" }
+    { "path": ".", "name": "web-app (weave)" }
   ],
   "settings": {
     "git.autoRepositoryDetection": "subFolders",
@@ -294,8 +294,8 @@ The file is named after the project (e.g., `web-app.code-workspace`), making the
 }
 ```
 
-- **Single root folder** at `"."` — the primary or workweave directory.
-- **Folder name** includes the context (e.g., `"web-app (primary)"`, `"web-app (agent-42)"`).
+- **Single root folder** at `"."` — the weave or workweave directory.
+- **Folder name** includes the context (e.g., `"web-app (weave)"`, `"web-app (agent-42)"`).
 - **`git.autoRepositoryDetection: subFolders`** prevents VS Code from walking up to a parent repo.
 - **`git.repositoryScanMaxDepth: 3`** ensures VS Code discovers repos at the `registry/owner/repo` depth.
 - **Merge on activate** — only `folders` and managed `settings` keys are replaced. Other keys (extensions, launch configs, other settings) are preserved, so user customizations survive re-activation. This merge behavior is meaningful because the generated file persists in the directory and can be customized.
@@ -310,7 +310,7 @@ Validates that the `.code-workspace` file exists as a regular file (not a symlin
 
 ## static-files
 
-Symlinks declared files from the project directory to the workspace root on activation. This is the escape hatch for root-level config files that don't belong to any ecosystem integration — build orchestrator configs (`turbo.json`, `nx.json`), linter configs (`.eslintrc.json`, `.prettierrc`), or anything else that tools expect at the workspace root.
+Symlinks declared files from the project directory to the weave root on activation. This is the escape hatch for root-level config files that don't belong to any ecosystem integration — build orchestrator configs (`turbo.json`, `nx.json`), linter configs (`.eslintrc.json`, `.prettierrc`), or anything else that tools expect at the weave root.
 
 Disabled by default. Enable explicitly in `rwv.yaml` with a list of files:
 
@@ -321,17 +321,17 @@ integrations:
     files: [turbo.json, nx.json, .eslintrc.json, .prettierrc]
 ```
 
-Each file listed in `files` must exist in the project directory (e.g., `projects/web-app/turbo.json`). On activation, the integration symlinks each file to the workspace root so that tools like Turborepo or Nx find them where they expect.
+Each file listed in `files` must exist in the project directory (e.g., `projects/web-app/turbo.json`). On activation, the integration symlinks each file to the weave root so that tools like Turborepo or Nx find them where they expect.
 
 ### How it works
 
-Unlike ecosystem integrations that auto-detect repos and generate config, static-files does no generation and no detection. The files are hand-written and committed in the project directory. The integration simply makes them visible at the workspace root via symlinks.
+Unlike ecosystem integrations that auto-detect repos and generate config, static-files does no generation and no detection. The files are hand-written and committed in the project directory. The integration simply makes them visible at the weave root via symlinks.
 
 If a declared file is missing from the project directory, the integration prints a warning but activation still succeeds — the missing file is skipped.
 
 ### Deactivation
 
-Symlinks are removed by the activation framework (any symlink at the workspace root pointing into `projects/` is cleaned up). The original files in the project directory are untouched.
+Symlinks are removed by the activation framework (any symlink at the weave root pointing into `projects/` is cleaned up). The original files in the project directory are untouched.
 
 ### Check
 
@@ -375,7 +375,7 @@ The `turbo.json` file lives alongside `rwv.yaml` in the project directory:
 }
 ```
 
-After activation, the workspace root contains:
+After activation, the weave root contains:
 - `package.json` — generated by the `npm-workspaces` integration
 - `turbo.json` — symlinked by the `static-files` integration
 
@@ -391,7 +391,7 @@ Build orchestration tools (Nx, Turborepo) add three capabilities on top of the w
 | **Caching** | Skips re-running tasks when inputs haven't changed | Slow builds, CI optimization |
 | **Affected analysis** | Determines which packages changed since a base ref, runs only those | Large workspaces where running everything is too slow |
 
-These tools consume the same workspace structure that activation hooks generate. Adding `nx.json` or `turbo.json` at root requires zero restructuring — they discover packages from `package.json` workspaces, `go.work`, etc. Use the `static-files` integration to place `turbo.json` or `nx.json` at the workspace root (see [static-files](#static-files) above).
+These tools consume the same workspace structure that activation hooks generate. Adding `nx.json` or `turbo.json` at root requires zero restructuring — they discover packages from `package.json` workspaces, `go.work`, etc. Use the `static-files` integration to place `turbo.json` or `nx.json` at the weave root (see [static-files](#static-files) above).
 
 For most projects, ecosystem workspace commands are sufficient without a build orchestrator:
 

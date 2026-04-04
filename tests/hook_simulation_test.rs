@@ -178,7 +178,7 @@ fn hook_create_produces_workweave() {
     let (status, stdout, stderr) = run_hook(
         &script,
         &json,
-        &[("WEAVEROOT", weaveroot.to_str().unwrap())],
+        &[("WORKWEAVEROOT", weaveroot.to_str().unwrap())],
         Some(&rwv_bin_dir()),
         Some(&ws),
     );
@@ -247,7 +247,7 @@ fn hook_create_null_branch_uses_session_id() {
     let (status, stdout, stderr) = run_hook(
         &script,
         &json,
-        &[("WEAVEROOT", weaveroot.to_str().unwrap())],
+        &[("WORKWEAVEROOT", weaveroot.to_str().unwrap())],
         Some(&rwv_bin_dir()),
         Some(&ws),
     );
@@ -290,7 +290,7 @@ fn hook_create_null_branch_null_session_uses_timestamp() {
     let (status, stdout, stderr) = run_hook(
         &script,
         &json,
-        &[("WEAVEROOT", weaveroot.to_str().unwrap())],
+        &[("WORKWEAVEROOT", weaveroot.to_str().unwrap())],
         Some(&rwv_bin_dir()),
         Some(&ws),
     );
@@ -342,7 +342,7 @@ fn hook_create_from_subdirectory() {
     let (status, stdout, stderr) = run_hook(
         &script,
         &json,
-        &[("WEAVEROOT", weaveroot.to_str().unwrap())],
+        &[("WORKWEAVEROOT", weaveroot.to_str().unwrap())],
         Some(&rwv_bin_dir()),
         Some(&ws),
     );
@@ -383,7 +383,7 @@ fn hook_remove_cleans_up() {
     let (create_status, create_stdout, create_stderr) = run_hook(
         &create_script,
         &create_json,
-        &[("WEAVEROOT", weaveroot.to_str().unwrap())],
+        &[("WORKWEAVEROOT", weaveroot.to_str().unwrap())],
         Some(&rwv_bin_dir()),
         Some(&ws),
     );
@@ -406,7 +406,7 @@ fn hook_remove_cleans_up() {
     let (remove_status, _remove_stdout, remove_stderr) = run_hook(
         &remove_script,
         &remove_json,
-        &[("WEAVEROOT", weaveroot.to_str().unwrap())],
+        &[("WORKWEAVEROOT", weaveroot.to_str().unwrap())],
         Some(&rwv_bin_dir()),
         Some(&ws),
     );

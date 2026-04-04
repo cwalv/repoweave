@@ -17,16 +17,29 @@ Full monorepos eliminate the version dance and solve other problems that workspa
 
 The goal is to weave independent **threads** (your repositories) into a single, coherent **fabric** — a unified workspace. The threads keep their identity and history; they simply work better together.
 
-A `weave` is a workspace in the same sense as a `go.work` workspace or a `cargo [workspace]`, but with superpowers. Often, the workspace configurations can be generated from the repoweave manifest alone. In addition to simple cross-package imports and shared dependency resolution that workspace management tools bring, you get monorepo ergonomics.
+A `weave` is a workspace in the same sense as a `go.work` workspace or a Cargo `[workspace]`, but with superpowers. Often, the workspace configurations can be generated from the repoweave manifest alone. In addition to simple cross-package imports and shared dependency resolution that workspace management tools bring, you get monorepo ergonomics.
 
-repoweave provides a `lock` mechanism analogous to package manager locks, with a similar feel to the atomic commit you get from working in a monorepo (so no more edit → bump version → publish → update dependents → reinstall dance for repos in the same workspace). Want to reproduce a 'workspace' on another machine, or CI? The `lock` makes it easy. It also makes it easy to create ephemeral workspaces for isolated work or review, like a multi-repo `git worktree`. Also, all your code lives in one directory tree, so every tool that touches the filesystem — editors, grep, agents, debuggers, build tools — works across all of it, just like a monorepo.
+repoweave provides a `lock` mechanism analogous to package manager locks, with a similar feel to the atomic commit you get from working in a monorepo (so no more edit → bump version → publish → update dependents → reinstall dance for repos in the same weave). Want to reproduce a weave on another machine, or CI? The `lock` makes it easy. It also makes it easy to create ephemeral workweaves for isolated work or review, like a multi-repo `git worktree`. Also, all your code lives in one directory tree, so every tool that touches the filesystem — editors, grep, agents, debuggers, build tools — works across all of it, just like a monorepo.
+
+### Terminology
+
+| Term | Meaning |
+|------|---------|
+| **weave** | A repoweave workspace — a directory containing repos, project directories, and ecosystem wiring generated from the active project |
+| **workweave** | A worktree-based derivative of a weave, created on demand for isolation (agents, features, PR review) |
+| **project** | A directory under `projects/` containing `rwv.yaml`, `rwv.lock`, and project-scoped docs. Itself a git repo |
+| **manifest** (`rwv.yaml`) | Declares which repos belong to a project, their roles, and integration config |
+| **lock file** (`rwv.lock`) | Pins repos to exact SHAs for reproducibility |
+| **activation** | Generating ecosystem workspace files from a project's manifest and symlinking them to the weave root |
+| **role** | A repo's relationship to a project: `primary` (your code), `fork`, `dependency`, `reference` |
+| **workspace surface** | The root directory where ecosystem tools find workspace config files |
 
 ## Core idea
 
-The workspace has three layers:
+The weave has three layers:
 
 1. **The directory tree** — repos under one root. Every tool benefits: search, navigation, agents, editors. This is the convention alone — no tooling required.
-2. **Ecosystem wiring** — the primary directory (or workweave directory) is the **workspace surface**: the directory that ecosystem tools see. Integrations generate workspace files (`package.json`, `go.work`, `Cargo.toml`, `pnpm-workspace.yaml`) at this surface so cross-package imports resolve locally. Ecosystem tools don't know repos exist — they see a workspace directory with packages. `import { thing } from '@myorg/shared'` just works.
+2. **Ecosystem wiring** — the weave root (or workweave root) is the **workspace surface**: the directory that ecosystem tools see. Integrations generate workspace files (`package.json`, `go.work`, `Cargo.toml`, `pnpm-workspace.yaml`) at this surface so cross-package imports resolve locally. Ecosystem tools don't know repos exist — they see a workspace directory with packages. `import { thing } from '@myorg/shared'` just works.
 3. **Reproducibility** — a committed `rwv.yaml` file and its `rwv.lock` pin each repo to an exact SHA, making the project state reproducible from a single project repo.
 
 Committing a project gets a coherent cross-repo "revision", similar to a monorepo commit. You commit in individual repos first, then regenerate and commit the lock file. By default, it's not atomic as a monorepo is, but it could be scripted to be so. It's two-phase commit — the lock update is detectable and reversible:
@@ -71,7 +84,7 @@ Project paths default to `projects/{name}/` for ergonomics. If names collide (tw
 Example — a team building a chat product with a web app and mobile app:
 
 ```
-web-app/                                  # primary weave
+web-app/                                  # weave
 ├── github/                               # regular clones
 │   ├── chatly/
 │   │   ├── server/                       # regular clone, on main
@@ -114,9 +127,9 @@ web-app/                                  # primary weave
 
 ## Weaves and workweaves
 
-A **weave** is a workspace — the same concept as `go.work`, `Cargo [workspace]`, or pnpm workspaces, but spanning multiple repos. The primary directory is itself a weave: it contains regular git clones, project directories (each with their own manifest), and ecosystem wiring generated from the active project. This is where you do most of your work.
+A **weave** is a workspace — the same concept as `go.work`, `Cargo [workspace]`, or pnpm workspaces, but spanning multiple repos. It contains regular git clones, project directories (each with their own manifest), and ecosystem wiring generated from the active project. This is where you do most of your work.
 
-A **workweave** is a derivative of the primary weave, created on demand for isolation. It contains git worktrees (not clones) for each repo, with its own branches, ecosystem files, and tool state. Workweaves are ephemeral — created around a unit of work (an agent task, a PR review, a parallel feature) and destroyed when done. They depend on the primary for git objects, just as git worktrees depend on their parent clone.
+A **workweave** is a derivative of a weave, created on demand for isolation. It contains git worktrees (not clones) for each repo, with its own branches, ecosystem files, and tool state. Workweaves are ephemeral — created around a unit of work (an agent task, a PR review, a parallel feature) and destroyed when done. They depend on the weave for git objects, just as git worktrees depend on their parent clone.
 
 ```bash
 rwv workweave web-app agent-42       # isolated working copy for an agent
@@ -126,20 +139,20 @@ rwv workweave web-app review-pr-99   # isolated working copy for PR review
 
 Each workweave:
 
-1. **Creates worktrees** from the primary's clones for every repo in `rwv.yaml`, each on an ephemeral branch.
+1. **Creates worktrees** from the weave's clones for every repo in `rwv.yaml`, each on an ephemeral branch.
 2. **Runs integrations** — generates ecosystem files (`package.json`, `go.work`, etc.) and runs install commands inside the workweave directory.
 
-Workweaves are fully isolated. `node_modules/`, `.venv/`, branches, and generated files are per-workweave. One workweave can be on `feature-A` while another is on `main`, while the primary weave stays undisturbed.
+Workweaves are fully isolated. `node_modules/`, `.venv/`, branches, and generated files are per-workweave. One workweave can be on `feature-A` while another is on `main`, while the weave stays undisturbed.
 
 See [workweaves.md](../../../projects/project-repoweave/docs/workweaves.md) for the full design document covering structure, artifact categories, Claude Code integration, and the relationship to Gas Town/Gas City.
 
 ### Workweave location
 
-Workweaves live in `.workweaves/` under the weaveroot (the parent of the primary workspace), with a `.` prefix reflecting that they are managed artifacts:
+Workweaves live in `.workweaves/` under the weaveroot (the parent of the weave), with a `.` prefix reflecting that they are managed artifacts:
 
 ```
 weaveroot/
-├── web-app/                              # primary weave — regular clones
+├── web-app/                              # weave — regular clones
 │   ├── github/chatly/server/             # clone, on main
 │   ├── package.json
 │   ├── package-lock.json
@@ -154,10 +167,10 @@ weaveroot/
         ├── package-lock.json             # this workweave's resolution
         ├── node_modules/                 # isolated
         ├── .venv/                        # isolated
-        └── .rwv-workweave               # marker: records primary path, project
+        └── .rwv-workweave               # marker: records weave path, project
 ```
 
-Each workweave contains an `.rwv-workweave` marker file that records the primary's path and the active project, making the relationship explicit and independent of directory naming.
+Each workweave contains an `.rwv-workweave` marker file that records the weave's path and the active project, making the relationship explicit and independent of directory naming.
 
 ### How workweave creation works
 
@@ -175,19 +188,6 @@ git -C github/chatly/server worktree add \
 
 Then runs integration hooks to generate ecosystem files and install dependencies in the new workweave.
 
-### Ephemeral branches
-
-Git won't let two worktrees check out the same branch. Workweaves handle this by creating ephemeral branches:
-
-```bash
-# If the clone's server/ is on "main":
-git worktree add ../.workweaves/agent-42/github/chatly/server -b agent-42/main
-# Creates branch "agent-42/main" at the same commit as "main"
-```
-
-The agent (or developer) works on `agent-42/main`. When done, the branch gets merged or cherry-picked back, then deleted with the workweave. The primary clone stays on `main` undisturbed.
-
-This is how agents naturally work anyway — they should be on their own branches. The ephemeral branch isn't a workaround; it's correct behavior.
 
 ### Workweave lifecycle
 
@@ -220,30 +220,15 @@ rwv workweave web-app agent-42 --delete
 # Optionally deletes ephemeral branches
 ```
 
-### WEAVEROOT
 
-By default, workweaves live in `.workweaves/` under the weaveroot. Override with the `WEAVEROOT` environment variable:
-
-```bash
-WEAVEROOT=~/weaves rwv workweave web-app agent-42
-# Creates ~/weaves/.workweaves/agent-42/
-```
-
-Or per-invocation:
-
-```bash
-rwv workweave web-app agent-42 --path ~/weaves/agent-42
-```
-
-This is useful when workweaves should live on a different filesystem.
 
 ### Workspace context
 
 Commands like `add`, `remove`, `lock`, and `check` infer the project and workspace from your CWD:
 
 - **In a workweave directory** — uses that workweave directly.
-- **In the primary directory** — resolves to the primary weave.
-- **In a project directory** — resolves to the primary weave.
+- **In the weave directory** — resolves to the weave.
+- **In a project directory** — resolves to the weave.
 - **Override** — use `--project` flag.
 
 ### Syncing after manifest changes
@@ -265,7 +250,7 @@ rwv workweave web-app agent-42
 # Agent CWD: .workweaves/agent-42/
 ```
 
-The agent gets its own worktrees on ephemeral branches, its own `node_modules/`, its own everything. It commits, tests, and iterates without affecting the developer's primary weave.
+The agent gets its own worktrees on ephemeral branches, its own `node_modules/`, its own everything. It commits, tests, and iterates without affecting the developer's weave.
 
 When done:
 
@@ -316,7 +301,7 @@ Generated by `rwv lock`, same format but with resolved revisions instead of bran
 
 ```yaml
 # projects/web-app/rwv.lock — generated, committed
-workweave: agent-42    # or omitted for the primary weave
+workweave: agent-42    # or omitted for the weave
 repositories:
   github/chatly/server:
     type: git
@@ -333,7 +318,7 @@ repositories:
   # ...
 ```
 
-The `workweave` field is metadata — it records provenance without mixing responsibilities. It is omitted when the lock was generated from the primary weave.
+The `workweave` field is metadata — it records provenance without mixing responsibilities. It is omitted when the lock was generated from the weave.
 
 Lock files live alongside `rwv.yaml` in the project directory, committed in the project repo. Each project owns its own lock state.
 
@@ -479,13 +464,13 @@ Roles are a first-class field in `rwv.yaml`:
 | `rwv workweave {project} --sync` | Sync workweave worktrees and ecosystem files with manifest. |
 | `rwv workweave {project} --list` | List workweaves for a project. |
 | `rwv init {project}` | Create a new project directory with empty `rwv.yaml`. Optional `--provider {registry}/{owner}` sets up the remote. |
-| `rwv activate {project}` | Set the active project — generate ecosystem files in the project directory, symlink at workspace root, run install commands. |
+| `rwv activate {project}` | Set the active project — generate ecosystem files in the project directory, symlink at weave root, run install commands. |
 | `rwv fetch {source}` | Clone a project repo and all its listed repos, activate, update `rwv.lock`. `--locked` for exact reproduction, `--frozen` for CI (errors if lock is stale). |
 | `rwv add {url}` | Clone a repo, register in `rwv.yaml`, re-run integration hooks. With `--role`, sets the role. With `--new`, initializes a new repo at the canonical path (infers URL). |
 | `rwv remove {path}` | Remove from `rwv.yaml`, re-run integration hooks. With `--delete`, also removes the clone (confirms unless `--force`). |
 | `rwv lock` | Snapshot repo versions into the project's `rwv.lock`. Errors on uncommitted changes (`--dirty` to bypass). Runs integration lock hooks. |
 | `rwv check` | Convention enforcement: orphaned clones, dangling references, missing roles, stale locks, workweave drift, integration checks. |
-| `rwv resolve` | Print the workspace root (workweave or primary weave). Useful for scripting: `cd $(rwv resolve)`. |
+| `rwv resolve` | Print the weave root (workweave or weave). Useful for scripting: `cd $(rwv resolve)`. |
 
 ### `rwv check` and multi-project awareness
 
@@ -502,7 +487,7 @@ Roles are a first-class field in `rwv.yaml`:
 
 ### `rwv lock`
 
-Lock snapshots the active project's repo versions. It reads HEAD from each repo (regular clones in the primary weave, worktrees in a workweave) and writes `rwv.lock` to the project directory. If a tag exists at HEAD, the tag name is recorded; otherwise the raw SHA.
+Lock snapshots the active project's repo versions. It reads HEAD from each repo (regular clones in the weave, worktrees in a workweave) and writes `rwv.lock` to the project directory. If a tag exists at HEAD, the tag name is recorded; otherwise the raw SHA.
 
 **Uncommitted changes are an error.** If any repo in the project has uncommitted changes, `rwv lock` refuses to proceed — the lock file would record a SHA that doesn't reflect the actual state on disk. Use `--dirty` to bypass:
 
@@ -553,7 +538,7 @@ The design trade-off: submodules get atomic locking for free by taking ownership
 
 ## Integrations
 
-The primary directory (or workweave directory) is the **workspace surface** — the directory that ecosystem tools see. npm, Go, Cargo, uv — none of them know that repos exist. They see a workspace directory with packages in it. `package.json` lists workspace packages. `go.work` lists modules. `Cargo.toml` lists crate members. The packages happen to come from different git repos, but the ecosystem tools neither know nor care.
+The weave root (or workweave root) is the **workspace surface** — the directory that ecosystem tools see. npm, Go, Cargo, uv — none of them know that repos exist. They see a workspace directory with packages in it. `package.json` lists workspace packages. `go.work` lists modules. `Cargo.toml` lists crate members. The packages happen to come from different git repos, but the ecosystem tools neither know nor care.
 
 Integrations are the translation layer between repoweave's multi-repo world (repos, projects, roles) and the ecosystem's workspace world (`package.json`, `go.work`, `Cargo.toml`, `pnpm-workspace.yaml`). They read the project's `rwv.yaml` and produce the ecosystem workspace files at the workspace surface. The result is that ecosystem tools work exactly as they would in a monorepo.
 
@@ -569,7 +554,7 @@ Each integration is a pluggable unit that derives config for one tool from the r
 | `gita` | yes | all repos | `gita/` config directory |
 | `vscode-workspace` | yes | all repos | `{project}.code-workspace` |
 
-All generated files live in the primary directory (or the workweave directory for workweaves). Ecosystem integrations generate workspace config files that are committable — they are persistent state, not ephemeral artifacts. Integrations merge into existing files where possible — for example, the vscode-workspace integration preserves user-added settings and extensions while updating managed keys.
+All generated files live in the project directory (symlinked to the weave root, or the workweave root for workweaves). Ecosystem integrations generate workspace config files that are committable — they are persistent state, not ephemeral artifacts. Integrations merge into existing files where possible — for example, the vscode-workspace integration preserves user-added settings and extensions while updating managed keys.
 
 Ecosystem lock files (`package-lock.json`, `pnpm-lock.yaml`, `uv.lock`, `go.sum`, `Cargo.lock`) are produced by the ecosystem tools themselves (npm, pnpm, uv, go, cargo) during the install step. These are important persistent state — they pin exact dependency versions within each ecosystem and should be committed alongside the ecosystem workspace configs.
 
