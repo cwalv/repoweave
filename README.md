@@ -28,16 +28,10 @@ repoweave gives you the two biggest practical wins of a monorepo while keeping e
 cargo install repoweave
 ```
 
-**Via npm:**
+**Via pip/uvx:**
 
 ```bash
-npm install -g repoweave
-```
-
-**Via pip:**
-
-```bash
-pip install repoweave
+pip install repoweave    # or: uvx repoweave
 ```
 
 ### Quick start

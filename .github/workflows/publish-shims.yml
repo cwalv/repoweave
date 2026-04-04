@@ -1,12 +1,13 @@
-# Publish npm and PyPI shim packages after a GitHub Release is created.
+# Publish PyPI shim package after a GitHub Release is created.
 #
-# This workflow runs after the Release workflow creates a GitHub Release
-# with cargo-dist artifacts. It downloads those artifacts, packages them
-# into platform-specific npm/PyPI packages, and publishes them.
-name: Publish shim packages
+# Uses OIDC (OpenID Connect) via PyPI trusted publishing — no stored tokens.
+#
+# One-time setup required:
+#   PyPI: add a trusted publisher at pypi.org/manage/project/repoweave/settings/publishing/
+#         (publisher: GitHub, repo: cwalv/repoweave, workflow: publish-shims.yml)
+name: Publish PyPI package
 
 on:
-  # Trigger when the Release workflow completes successfully
   workflow_run:
     workflows: ["Release"]
     types: [completed]
@@ -14,127 +15,9 @@ on:
 
 permissions:
   contents: read
+  id-token: write  # Required for PyPI OIDC
 
 jobs:
-  publish-npm:
-    if: ${{ github.event.workflow_run.conclusion == 'success' && startsWith(github.event.workflow_run.head_branch, 'v') || contains(github.event.workflow_run.head_branch, '.') }}
-    runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        include:
-          - pkg: repoweave-darwin-arm64
-            artifact: repoweave-aarch64-apple-darwin.tar.xz
-            ext: tar.xz
-            bin: rwv
-          - pkg: repoweave-darwin-x64
-            artifact: repoweave-x86_64-apple-darwin.tar.xz
-            ext: tar.xz
-            bin: rwv
-          - pkg: repoweave-linux-arm64
-            artifact: repoweave-aarch64-unknown-linux-gnu.tar.xz
-            ext: tar.xz
-            bin: rwv
-          - pkg: repoweave-linux-x64
-            artifact: repoweave-x86_64-unknown-linux-gnu.tar.xz
-            ext: tar.xz
-            bin: rwv
-          - pkg: repoweave-windows-x64
-            artifact: repoweave-x86_64-pc-windows-msvc.zip
-            ext: zip
-            bin: rwv.exe
-    steps:
-      - uses: actions/checkout@v6
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "20"
-          registry-url: "https://registry.npmjs.org"
-
-      - name: Get version from tag
-        id: version
-        run: |
-          # Extract version from the release tag (e.g., v0.1.0 -> 0.1.0)
-          TAG="${{ github.event.workflow_run.head_branch }}"
-          VERSION="${TAG#v}"
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
-
-      - name: Download release artifact
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          gh release download "${{ steps.version.outputs.tag }}" \
-            --pattern "${{ matrix.artifact }}" \
-            --dir /tmp/artifacts/
-
-      - name: Extract binary into package
-        run: |
-          mkdir -p "npm/${{ matrix.pkg }}/bin"
-          if [[ "${{ matrix.ext }}" == "zip" ]]; then
-            unzip -o -j "/tmp/artifacts/${{ matrix.artifact }}" "*/${{ matrix.bin }}" -d "npm/${{ matrix.pkg }}/bin/"
-          else
-            tar -xJf "/tmp/artifacts/${{ matrix.artifact }}" -C /tmp/artifacts/
-            ARCHIVE_DIR="${{ matrix.artifact }}"
-            ARCHIVE_DIR="${ARCHIVE_DIR%.tar.xz}"
-            cp "/tmp/artifacts/${ARCHIVE_DIR}/${{ matrix.bin }}" "npm/${{ matrix.pkg }}/bin/${{ matrix.bin }}"
-            chmod +x "npm/${{ matrix.pkg }}/bin/${{ matrix.bin }}"
-          fi
-
-      - name: Update package version
-        run: |
-          cd "npm/${{ matrix.pkg }}"
-          VERSION="${{ steps.version.outputs.version }}"
-          node -e "
-            const pkg = require('./package.json');
-            pkg.version = '$VERSION';
-            require('fs').writeFileSync('package.json', JSON.stringify(pkg, null, 2) + '\n');
-          "
-
-      - name: Publish platform package
-        run: |
-          cd "npm/${{ matrix.pkg }}"
-          npm publish --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-
-  publish-npm-root:
-    needs: publish-npm
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "20"
-          registry-url: "https://registry.npmjs.org"
-
-      - name: Get version from tag
-        id: version
-        run: |
-          TAG="${{ github.event.workflow_run.head_branch }}"
-          VERSION="${TAG#v}"
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-
-      - name: Update versions
-        run: |
-          cd npm/repoweave
-          VERSION="${{ steps.version.outputs.version }}"
-          node -e "
-            const pkg = require('./package.json');
-            pkg.version = '$VERSION';
-            for (const dep of Object.keys(pkg.optionalDependencies || {})) {
-              pkg.optionalDependencies[dep] = '$VERSION';
-            }
-            require('fs').writeFileSync('package.json', JSON.stringify(pkg, null, 2) + '\n');
-          "
-
-      - name: Publish root package
-        run: |
-          cd npm/repoweave
-          npm publish --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-
   publish-pypi:
     if: ${{ github.event.workflow_run.conclusion == 'success' && startsWith(github.event.workflow_run.head_branch, 'v') || contains(github.event.workflow_run.head_branch, '.') }}
     runs-on: ubuntu-latest
@@ -210,30 +93,25 @@ jobs:
           VERSION="${{ steps.version.outputs.version }}"
           sed -i "s/^version = .*/version = \"$VERSION\"/" python/repoweave/pyproject.toml
 
-      - name: Build pure wheel then repack with binary
+      - name: Build platform wheel
         run: |
           cd python/repoweave
           VERSION="${{ steps.version.outputs.version }}"
           PLAT_TAG="${{ matrix.plat_tag }}"
 
-          # Build the pure wheel
           python -m build --wheel --outdir /tmp/pure-wheel/
 
-          # Repack with native binary
           PURE_WHL=$(ls /tmp/pure-wheel/*.whl | head -1)
           REPACK_DIR="/tmp/repack"
           mkdir -p "$REPACK_DIR"
           unzip -q -o "$PURE_WHL" -d "$REPACK_DIR"
 
-          # Add binary to data scripts
           mkdir -p "${REPACK_DIR}/repoweave-${VERSION}.data/scripts"
           cp "/tmp/bin/${{ matrix.bin }}" "${REPACK_DIR}/repoweave-${VERSION}.data/scripts/${{ matrix.bin }}"
 
-          # Fix platform tag
           sed -i "s/Tag: py3-none-any/Tag: py3-none-${PLAT_TAG}/" \
             "${REPACK_DIR}/repoweave-${VERSION}.dist-info/WHEEL"
 
-          # Rebuild RECORD
           cd "$REPACK_DIR"
           python3 -c "
           import hashlib, base64, os, pathlib
@@ -241,7 +119,7 @@ jobs:
           lines = []
           for root, dirs, files in os.walk('.'):
               for f in sorted(files):
-                  p = os.path.join(root, f)[2:]  # strip ./
+                  p = os.path.join(root, f)[2:]
                   if p.endswith('RECORD'):
                       continue
                   data = open(p, 'rb').read()
@@ -251,7 +129,6 @@ jobs:
           pathlib.Path(record_path).write_text('\n'.join(lines) + '\n')
           "
 
-          # Create the platform wheel
           WHEEL_NAME="repoweave-${VERSION}-py3-none-${PLAT_TAG}.whl"
           mkdir -p /tmp/dist
           zip -q -r "/tmp/dist/${WHEEL_NAME}" .
@@ -259,12 +136,9 @@ jobs:
           VERSION: ${{ steps.version.outputs.version }}
 
       - name: Publish to PyPI
-        run: |
-          pip install twine
-          twine upload /tmp/dist/*.whl
-        env:
-          TWINE_USERNAME: __token__
-          TWINE_PASSWORD: ${{ secrets.PYPI_TOKEN }}
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: /tmp/dist/
 
   publish-pypi-sdist:
     if: ${{ github.event.workflow_run.conclusion == 'success' && startsWith(github.event.workflow_run.head_branch, 'v') || contains(github.event.workflow_run.head_branch, '.') }}
@@ -277,7 +151,7 @@ jobs:
           python-version: "3.12"
 
       - name: Install build tools
-        run: pip install build twine
+        run: pip install build
 
       - name: Get version from tag
         id: version
@@ -291,11 +165,12 @@ jobs:
           VERSION="${{ steps.version.outputs.version }}"
           sed -i "s/^version = .*/version = \"$VERSION\"/" python/repoweave/pyproject.toml
 
-      - name: Build and publish sdist
+      - name: Build sdist
         run: |
           cd python/repoweave
           python -m build --sdist --outdir /tmp/dist/
-          twine upload /tmp/dist/*.tar.gz
-        env:
-          TWINE_USERNAME: __token__
-          TWINE_PASSWORD: ${{ secrets.PYPI_TOKEN }}
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: /tmp/dist/
