@@ -1,0 +1,16 @@
+{
+  "name": "@repoweave/windows-x64",
+  "version": "0.1.0",
+  "description": "repoweave binary for Windows x64",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/cwalv/repoweave.git"
+  },
+  "os": ["win32"],
+  "cpu": ["x64"],
+  "main": "package.json",
+  "files": [
+    "bin/rwv.exe"
+  ]
+}

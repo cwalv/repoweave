@@ -1,0 +1,27 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "repoweave"
+version = "0.1.0"
+description = "A cross-repo workspace manager"
+license = "MIT"
+requires-python = ">=3.8"
+keywords = ["workspace", "monorepo", "git", "multi-repo"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Rust",
+    "Topic :: Software Development :: Build Tools",
+]
+
+[project.urls]
+Repository = "https://github.com/cwalv/repoweave"
+
+[project.scripts]
+rwv = "repoweave:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/repoweave"]
