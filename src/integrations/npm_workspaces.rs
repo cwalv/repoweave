@@ -86,6 +86,6 @@ impl Integration for NpmWorkspaces {
     }
 
     fn generated_files(&self, _ctx: &IntegrationContext) -> Vec<String> {
-        vec!["package.json".to_string()]
+        vec!["package.json".to_string(), "package-lock.json".to_string()]
     }
 }

@@ -20,7 +20,7 @@ What happens:
 4. Runs `rwv activate web-app` automatically:
    - Generates ecosystem files in `projects/web-app/` (package.json, go.work, etc.)
    - Creates symlinks at root pointing to them
-   - Runs `npm install` / `uv sync` / etc.
+5. Runs `rwv lock`, which triggers integration lock hooks (`npm install`, `uv sync`, etc.) and writes `rwv.lock`
 
 Result:
 
@@ -94,8 +94,7 @@ What happens:
 1. Generates ecosystem files in `projects/mobile-app/` (or updates them)
 2. Removes old symlinks at root (web-app's package.json, etc.)
 3. Creates new symlinks pointing to `projects/mobile-app/`
-4. Runs install commands
-5. Updates `.rwv-active` to "mobile-app"
+4. Updates `.rwv-active` to "mobile-app"
 
 ```
 ~/work/
@@ -111,9 +110,10 @@ Switch back:
 
 ```bash
 rwv activate web-app
+npm install   # reconcile node_modules/ with web-app's dependency tree; fast if nothing changed
 ```
 
-Symlinks swap back. `npm install` runs (reconciles `node_modules/` with web-app's dependency tree). Fast if nothing changed.
+`rwv activate` only swaps the symlinks and regenerates config files. Run `npm install` (or `rwv lock`) separately to reconcile tool state.
 
 **Open question:** `node_modules/` at root is shared across activations. Switching projects means `npm install` has to reconcile. This is the same cost as pre-workspace reporoot. Is it acceptable? Or should each project's `node_modules/` be separate? (That would mean node_modules inside the project directory, or namespaced somehow.)
 
@@ -132,11 +132,13 @@ What happens:
 2. Adds entry to the active project's `rwv.yaml` (web-app)
 3. Regenerates ecosystem files in `projects/web-app/` (adds some-lib to package.json workspaces)
 4. Symlinks already point to projects/web-app/, so root sees the update
-5. Runs `npm install` to pick up the new package
+
+Run `npm install` (or `rwv lock`) afterward to pick up the new package in `node_modules/`.
 
 ```bash
 # Verify it's there
 cat projects/web-app/rwv.yaml | grep some-lib
+npm install
 npm ls @example/some-lib
 ```
 
@@ -171,8 +173,9 @@ What happens:
 
 1. Removes entry from the active project's `rwv.yaml`
 2. Regenerates ecosystem files
-3. Runs install commands
-4. Clone stays on disk (other projects might use it)
+3. Clone stays on disk (other projects might use it)
+
+Run `npm install` (or `rwv lock`) afterward to update `node_modules/` and ecosystem lock files.
 
 To also delete the clone:
 
@@ -233,7 +236,6 @@ What happens:
    - `projects/web-app/` → worktree on `payments/main`
 4. Generates ecosystem files in the workweave's `projects/web-app/`
 5. Creates symlinks at `.workweaves/payments/` root
-6. Runs `npm install`
 
 ```
 ~/work/                               # weave — undisturbed
@@ -453,7 +455,7 @@ mkdir ~/work && cd ~/work
 rwv fetch chatly/web-app
 ```
 
-This clones the project repo, reads `rwv.yaml`, clones all listed repos, activates, generates ecosystem files, runs install. One command from zero to working.
+This clones the project repo, reads `rwv.yaml`, clones all listed repos, activates (generates ecosystem files and symlinks), and runs `rwv lock` (which triggers integration lock hooks like `npm install`, `uv sync`, etc. and writes `rwv.lock`). One command from zero to working.
 
 This fetches latest (branch HEAD from `rwv.yaml`) and updates `rwv.lock` with the SHAs that were actually checked out — same as how `npm install` resolves latest and updates `package-lock.json`.
 

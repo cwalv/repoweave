@@ -10,14 +10,16 @@ Integrations are the translation layer between repoweave's multi-repo world (rep
 
 Rather than hardcoding knowledge of each ecosystem and tool, `rwv` uses **integrations** — pluggable units that each know how to derive config for one tool from the repo list. Each integration participates in two hook points:
 
-- **Activation hooks** (run during workweave creation, sync, add, remove) — generate config files, run install commands, or do nothing. This is the write path.
+- **Activation hooks** (run during workweave creation, sync, add, remove) — generate config files and symlinks, or do nothing. This is the write path.
+- **Lock hooks** (run during `rwv lock`) — run install commands (`npm install`, `uv sync`, `cargo generate-lockfile`, etc.) to ensure ecosystem lock files are up to date. This is where package installation happens.
 - **Check hooks** (`rwv check`) — read-only inspection. Verify the environment is healthy, report missing tools, stale config, etc.
 
 Each integration provides:
 
 1. **A name** — unique identifier (e.g., `npm-workspaces`).
 2. **A default enabled state** — whether the integration runs without explicit opt-in.
-3. **Activation logic** — receives the resolved repo list (paths, URLs, roles) and its config; generates files, runs commands, or does nothing.
+3. **Activation logic** — receives the resolved repo list (paths, URLs, roles) and its config; generates workspace config files, or does nothing.
+3a. **Lock logic** — receives the same inputs; runs install commands to update ecosystem lock files (`npm install`, `uv sync`, `cargo generate-lockfile`, etc.).
 4. **Deactivation logic** — removes generated files. Called during workweave deletion.
 5. **Check logic** — receives the same inputs; returns issues and warnings without changing state.
 
@@ -33,7 +35,7 @@ Generated ecosystem files live in the project directory (symlinked to the weave 
 
 Ecosystem lock files (`package-lock.json`, `pnpm-lock.yaml`, `uv.lock`, `go.sum`, `Cargo.lock`) are produced by the ecosystem tools during the install step. These are important persistent state that pins exact dependency versions within each ecosystem. They should be committed alongside the ecosystem workspace configs.
 
-Some integrations also run external tools (`npm install`, `pnpm install`, `uv sync`) that create their own tool state (`node_modules/`, `.venv/`). Tool state directories are gitignored and managed by the ecosystem tool, not by `rwv`. If tool state gets corrupted or out of sync, `rwv workweave {project} --sync` regenerates config and re-runs install commands.
+Some integrations have lock hooks that run external tools (`npm install`, `pnpm install`, `uv sync`) during `rwv lock`. These commands create their own tool state (`node_modules/`, `.venv/`). Tool state directories are gitignored and managed by the ecosystem tool, not by `rwv`. You can also run install commands manually after `rwv activate`. If tool state gets corrupted or out of sync, `rwv workweave {project} --sync` regenerates config and re-runs lock hooks.
 
 ### Hook configuration in `rwv.yaml`
 
@@ -69,20 +71,20 @@ The `active_repos()` method filters out `reference` repos, which should not be i
 
 ## Built-in integrations
 
-| Integration | Default enabled | Auto-detects | Generates | Post-generate command |
+| Integration | Default enabled | Auto-detects | Generates | Lock hook (runs during `rwv lock`) |
 |---|---|---|---|---|
 | `npm-workspaces` | yes | repos with `package.json` | root `package.json` | `npm install` |
 | `pnpm-workspaces` | no | repos with `package.json` | `pnpm-workspace.yaml` | `pnpm install` |
 | `go-work` | yes | repos with `go.mod` | `go.work` | -- |
 | `uv-workspace` | yes | repos with `pyproject.toml` | root `pyproject.toml` | `uv sync` |
-| `cargo-workspace` | yes | repos with `Cargo.toml` | root `Cargo.toml` | -- |
+| `cargo-workspace` | yes | repos with `Cargo.toml` | root `Cargo.toml` | `cargo generate-lockfile` |
 | `gita` | yes | all repos | `gita/` directory | -- |
 | `vscode-workspace` | yes | all repos | `{project}.code-workspace` | -- |
 | `static-files` | no | n/a (configured explicitly) | symlinks declared files to weave root | -- |
 
 ## npm-workspaces
 
-Generates a root `package.json` with a `workspaces` array listing every project repo (excluding `reference` repos) that contains a `package.json`. After writing the file, runs `npm install` if `npm` is on PATH.
+Generates a root `package.json` with a `workspaces` array listing every project repo (excluding `reference` repos) that contains a `package.json`. The lock hook (run during `rwv lock`) runs `npm install` if `npm` is on PATH to update `package-lock.json` and `node_modules/`. To install immediately after activation, run `npm install` manually.
 
 ### Generated file
 
@@ -110,7 +112,7 @@ Warns if repos with `package.json` exist but `npm` is not on PATH.
 
 ## pnpm-workspaces
 
-Generates a `pnpm-workspace.yaml` file listing every project repo (excluding `reference` repos) that contains a `package.json`. After writing the file, runs `pnpm install` if `pnpm` is on PATH.
+Generates a `pnpm-workspace.yaml` file listing every project repo (excluding `reference` repos) that contains a `package.json`. The lock hook (run during `rwv lock`) runs `pnpm install` if `pnpm` is on PATH to update `pnpm-lock.yaml` and `node_modules/`. To install immediately after activation, run `pnpm install` manually.
 
 Disabled by default. Enable explicitly in `rwv.yaml` for projects that use pnpm instead of npm:
 
@@ -168,7 +170,7 @@ No checks currently. Could warn if `go` is not on PATH when Go repos are present
 
 ## uv-workspace
 
-Generates a root `pyproject.toml` with a `[tool.uv.workspace]` section listing every project repo (excluding `reference` repos) that contains a `pyproject.toml`. After writing the file, runs `uv sync` if `uv` is on PATH.
+Generates a root `pyproject.toml` with a `[tool.uv.workspace]` section listing every project repo (excluding `reference` repos) that contains a `pyproject.toml`. The lock hook (run during `rwv lock`) runs `uv sync` if `uv` is on PATH to update `uv.lock` and `.venv/`. To install immediately after activation, run `uv sync` manually.
 
 ### Generated file
 

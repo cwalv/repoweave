@@ -78,6 +78,6 @@ impl Integration for UvWorkspace {
     }
 
     fn generated_files(&self, _ctx: &IntegrationContext) -> Vec<String> {
-        vec!["pyproject.toml".to_string()]
+        vec!["pyproject.toml".to_string(), "uv.lock".to_string()]
     }
 }

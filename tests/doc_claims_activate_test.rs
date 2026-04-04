@@ -274,7 +274,7 @@ fn check_workweave_drift_extra_repo() {
 // ===========================================================================
 
 #[test]
-fn activate_symlinks_cargo_toml_but_not_necessarily_lock() {
+fn activate_symlinks_cargo_toml_and_lock() {
     let tmp = tempfile::tempdir().unwrap();
     let ws_root = tmp.path().join("ws");
     std::fs::create_dir_all(ws_root.join("github")).unwrap();
@@ -323,23 +323,19 @@ fn activate_symlinks_cargo_toml_but_not_necessarily_lock() {
         target.display()
     );
 
-    // Check whether Cargo.lock is also symlinked.
+    // Cargo.lock should also be symlinked (even as a dangling symlink —
+    // cargo fills it in on first build).
     let root_lock = ws_root.join("Cargo.lock");
-    if root_lock.exists() && root_lock.symlink_metadata().unwrap().file_type().is_symlink() {
-        // The implementation symlinks lock files — good, matches the doc claim.
-        let lock_target = std::fs::read_link(&root_lock).unwrap();
-        assert!(
-            lock_target.to_string_lossy().contains("projects/cargo-proj"),
-            "Cargo.lock symlink should point into projects/cargo-proj, got: {}",
-            lock_target.display()
-        );
-    } else {
-        // TODO (project-reporoot-c3ad): Doc claims Cargo.lock is symlinked
-        // alongside Cargo.toml, but the current implementation only symlinks
-        // the generated workspace config files (e.g. Cargo.toml produced by
-        // cargo-workspace integration).  Cargo.lock is a repo-level artefact
-        // and is not yet handled.  Update this branch once implemented.
-    }
+    assert!(
+        root_lock.symlink_metadata().unwrap().file_type().is_symlink(),
+        "Cargo.lock at workspace root should be a symlink"
+    );
+    let lock_target = std::fs::read_link(&root_lock).unwrap();
+    assert!(
+        lock_target.to_string_lossy().contains("projects/cargo-proj"),
+        "Cargo.lock symlink should point into projects/cargo-proj, got: {}",
+        lock_target.display()
+    );
 }
 
 // ===========================================================================

@@ -80,6 +80,6 @@ impl Integration for CargoWorkspace {
     }
 
     fn generated_files(&self, _ctx: &IntegrationContext) -> Vec<String> {
-        vec!["Cargo.toml".to_string()]
+        vec!["Cargo.toml".to_string(), "Cargo.lock".to_string()]
     }
 }

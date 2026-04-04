@@ -72,6 +72,6 @@ impl Integration for PnpmWorkspaces {
     }
 
     fn generated_files(&self, _ctx: &IntegrationContext) -> Vec<String> {
-        vec!["pnpm-workspace.yaml".to_string()]
+        vec!["pnpm-workspace.yaml".to_string(), "pnpm-lock.yaml".to_string()]
     }
 }

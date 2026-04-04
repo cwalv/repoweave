@@ -99,10 +99,9 @@ pub fn activate(project: &str, cwd: &Path) -> anyhow::Result<()> {
         let source = project_dir.join(file);
         let link = root.join(file);
 
-        // Only create symlink if the integration actually wrote the file.
-        if !source.exists() {
-            continue;
-        }
+        // Create symlink even if the target doesn't exist yet — lock files
+        // (Cargo.lock, package-lock.json, etc.) are populated by ecosystem
+        // tools on first build/install, writing through the dangling symlink.
 
         // Ensure parent directory exists for nested files (e.g., gita/repos.csv).
         if let Some(parent) = link.parent() {

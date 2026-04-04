@@ -54,6 +54,6 @@ impl Integration for GoWork {
     }
 
     fn generated_files(&self, _ctx: &IntegrationContext) -> Vec<String> {
-        vec!["go.work".to_string()]
+        vec!["go.work".to_string(), "go.sum".to_string()]
     }
 }

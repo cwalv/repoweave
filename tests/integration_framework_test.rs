@@ -557,7 +557,7 @@ fn cargo_workspace_generated_files() {
     };
 
     let files = CargoWorkspace.generated_files(&ctx);
-    assert_eq!(files, vec!["Cargo.toml"]);
+    assert_eq!(files, vec!["Cargo.toml", "Cargo.lock"]);
 }
 
 #[test]
@@ -578,7 +578,7 @@ fn npm_workspaces_generated_files() {
     };
 
     let files = NpmWorkspaces.generated_files(&ctx);
-    assert_eq!(files, vec!["package.json"]);
+    assert_eq!(files, vec!["package.json", "package-lock.json"]);
 }
 
 #[test]
@@ -599,7 +599,7 @@ fn pnpm_workspaces_generated_files() {
     };
 
     let files = PnpmWorkspaces.generated_files(&ctx);
-    assert_eq!(files, vec!["pnpm-workspace.yaml"]);
+    assert_eq!(files, vec!["pnpm-workspace.yaml", "pnpm-lock.yaml"]);
 }
 
 #[test]
@@ -620,7 +620,7 @@ fn go_work_generated_files() {
     };
 
     let files = GoWork.generated_files(&ctx);
-    assert_eq!(files, vec!["go.work"]);
+    assert_eq!(files, vec!["go.work", "go.sum"]);
 }
 
 #[test]
@@ -641,7 +641,7 @@ fn uv_workspace_generated_files() {
     };
 
     let files = UvWorkspace.generated_files(&ctx);
-    assert_eq!(files, vec!["pyproject.toml"]);
+    assert_eq!(files, vec!["pyproject.toml", "uv.lock"]);
 }
 
 #[test]
