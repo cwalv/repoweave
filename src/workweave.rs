@@ -479,7 +479,9 @@ fn derive_workweave_name(branch_name: Option<&str>, _session_id: Option<&str>) -
             let d = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap_or_default();
-            format!("ww-{}-{}", d.as_secs(), d.subsec_nanos())
+            // Mix seconds and nanos into a short hex suffix for uniqueness
+            let hash = d.as_secs() ^ (d.subsec_nanos() as u64);
+            format!("workweave-{:08x}", hash)
         }
     };
     raw.replace('/', "-")
@@ -562,13 +564,13 @@ mod tests {
     #[test]
     fn derive_name_null_branch_uses_timestamp() {
         let name = derive_workweave_name(Some("null"), Some("abc-session-123"));
-        assert!(name.starts_with("ww-"), "session_id ignored, expected ww-<timestamp>, got {name}");
+        assert!(name.starts_with("workweave-"), "session_id ignored, expected ww-<timestamp>, got {name}");
     }
 
     #[test]
     fn derive_name_empty_branch_uses_timestamp() {
         let name = derive_workweave_name(Some(""), Some("sess-xyz"));
-        assert!(name.starts_with("ww-"), "session_id ignored, expected ww-<timestamp>, got {name}");
+        assert!(name.starts_with("workweave-"), "session_id ignored, expected ww-<timestamp>, got {name}");
     }
 
     #[test]
@@ -582,7 +584,7 @@ mod tests {
     #[test]
     fn derive_name_all_none_produces_timestamp() {
         let name = derive_workweave_name(None, None);
-        assert!(name.starts_with("ww-"), "expected ww-<timestamp>, got {name}");
+        assert!(name.starts_with("workweave-"), "expected ww-<timestamp>, got {name}");
     }
 
     #[test]
@@ -609,7 +611,7 @@ mod tests {
     #[test]
     fn claude_hook_null_branch_uses_timestamp_not_session() {
         let name = derive_workweave_name(Some("null"), Some("my-session-id"));
-        assert!(name.starts_with("ww-"), "session_id ignored, expected ww-*, got {name}");
+        assert!(name.starts_with("workweave-"), "session_id ignored, expected ww-*, got {name}");
     }
 
     #[test]

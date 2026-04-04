@@ -268,7 +268,7 @@ fn hook_create_null_branch_uses_session_id() {
     );
 }
 
-/// 3. When both branch_name and session_id are "null", the name starts with "ww-".
+/// 3. When both branch_name and session_id are "null", the name starts with "workweave-".
 #[test]
 fn hook_create_null_branch_null_session_uses_timestamp() {
     if !jq_available() {
@@ -313,8 +313,8 @@ fn hook_create_null_branch_null_session_uses_timestamp() {
         .unwrap_or(&dir_name)
         .to_string();
     assert!(
-        name_part.starts_with("ww-"),
-        "workweave name should start with 'ww-' when both branch and session are null, got: {name_part}"
+        name_part.starts_with("workweave-"),
+        "workweave name should start with 'workweave-' when both branch and session are null, got: {name_part}"
     );
 }
 

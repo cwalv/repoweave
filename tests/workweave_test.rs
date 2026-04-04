@@ -1366,8 +1366,8 @@ fn claude_hook_null_branch_fallback() {
     let ww_path_str = stdout.trim();
     // Should use timestamp fallback, not session_id
     assert!(
-        ww_path_str.contains("ww-"),
-        "workweave path should use timestamp name (ww-*), got: {ww_path_str}"
+        ww_path_str.contains("workweave-"),
+        "workweave path should use generated name (workweave-*), got: {ww_path_str}"
     );
     assert!(
         std::path::Path::new(ww_path_str).exists(),
