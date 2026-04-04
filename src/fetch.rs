@@ -50,13 +50,15 @@ pub fn project_name_from_source(source: &str) -> String {
         .to_string()
 }
 
-/// Resolve `source` to a clone URL.
+/// Resolve `source` to a clone URL and the owner string.
 ///
 /// Accepts full URLs (returned as-is) or `owner/repo` / `registry/owner/repo`
 /// shorthand (resolved via the built-in registries to an HTTPS clone URL).
-fn resolve_source(source: &str) -> anyhow::Result<String> {
-    let (url, _registry_name, _repo_id) = registry::resolve_to_clone_info(source)?;
-    Ok(url)
+///
+/// Returns `(url, owner)` where `owner` may be empty for unrecognised URLs.
+fn resolve_source(source: &str) -> anyhow::Result<(String, String)> {
+    let (url, _registry_name, repo_id) = registry::resolve_to_clone_info(source)?;
+    Ok((url, repo_id.owner))
 }
 
 /// Validate that a lock file covers all repos in the manifest.
@@ -78,16 +80,45 @@ pub fn run_fetch(source: &str, workspace_root: &Path, mode: FetchMode) -> anyhow
     let git = GitVcs;
 
     // Resolve source to a clone URL (supports full URLs and owner/repo shorthand).
-    let url = resolve_source(source)?;
+    let (url, owner) = resolve_source(source)?;
     let name = project_name_from_source(&url);
     let projects_dir = workspace_root.join("projects");
     std::fs::create_dir_all(&projects_dir)
         .context("failed to create projects/ directory")?;
     let project_dir = projects_dir.join(&name);
     if project_dir.exists() {
-        // Project already exists — re-read its manifest and continue
-        // to ensure repos are cloned.
-        println!("rwv fetch: project '{}' already exists, skipping clone", name);
+        // The project directory already exists.  Decide whether this is a
+        // re-fetch of the same project (idempotent, allowed) or a name
+        // collision with a different project (error).
+        let is_same_source = std::process::Command::new("git")
+            .args(["remote", "get-url", "origin"])
+            .current_dir(&project_dir)
+            .output()
+            .ok()
+            .and_then(|o| if o.status.success() { Some(o.stdout) } else { None })
+            .and_then(|bytes| String::from_utf8(bytes).ok())
+            .map(|remote| {
+                let remote = remote.trim();
+                // Normalise trailing `.git` for comparison.
+                let norm = |s: &str| s.trim_end_matches(".git").to_string();
+                norm(remote) == norm(&url)
+            })
+            .unwrap_or(false);
+
+        if is_same_source {
+            // Re-fetch of the same project — continue to refresh repos.
+            println!("rwv fetch: project '{}' already exists, re-fetching repos", name);
+        } else {
+            // Name collision with a different project — surface a helpful hint.
+            let scoped = if owner.is_empty() {
+                format!("projects/{{owner}}/{name}/")
+            } else {
+                format!("projects/{owner}/{name}/")
+            };
+            eprintln!("Error: project '{name}' already exists at projects/{name}/");
+            eprintln!("Hint: try a scoped path: {scoped}");
+            bail!("project '{}' already exists at projects/{}/", name, name);
+        }
     } else {
         println!("rwv fetch: cloning project '{}'", name);
         git.clone_repo(&url, &project_dir)
@@ -246,8 +277,19 @@ pub fn run_fetch(source: &str, workspace_root: &Path, mode: FetchMode) -> anyhow
         lock::write_lock(&lock, &lock_path)?;
         eprintln!("rwv fetch: wrote {}", lock_path.display());
 
-        // Auto-activate the project.
-        crate::activate::activate(&name, workspace_root)?;
+        // Auto-activate only when no project is already active (first fetch).
+        let active_file = workspace_root.join(".rwv-active");
+        if active_file.exists() {
+            println!(
+                "rwv fetch: skipping auto-activate (project '{}' already active)",
+                std::fs::read_to_string(&active_file)
+                    .unwrap_or_default()
+                    .trim()
+                    .to_string()
+            );
+        } else {
+            crate::activate::activate(&name, workspace_root)?;
+        }
     }
 
     Ok(())
@@ -305,31 +347,40 @@ mod tests {
     #[test]
     fn resolve_source_passes_through_urls() {
         let url = "https://github.com/org/repo.git";
-        assert_eq!(resolve_source(url).unwrap(), url);
+        let (resolved_url, owner) = resolve_source(url).unwrap();
+        assert_eq!(resolved_url, url);
+        assert_eq!(owner, "org");
     }
 
     #[test]
     fn resolve_source_passes_through_ssh_urls() {
         let url = "git@github.com:org/repo.git";
-        assert_eq!(resolve_source(url).unwrap(), url);
+        let (resolved_url, owner) = resolve_source(url).unwrap();
+        assert_eq!(resolved_url, url);
+        assert_eq!(owner, "org");
     }
 
     #[test]
     fn resolve_source_passes_through_file_urls() {
         let url = "file:///tmp/repo.git";
-        assert_eq!(resolve_source(url).unwrap(), url);
+        let (resolved_url, owner) = resolve_source(url).unwrap();
+        assert_eq!(resolved_url, url);
+        // file:// URLs that don't match any registry have an empty owner
+        let _ = owner; // owner may be empty or a path segment; just verify no panic
     }
 
     #[test]
     fn resolve_source_resolves_two_part_shorthand() {
-        let result = resolve_source("cwalv/repoweave").unwrap();
-        assert_eq!(result, "https://github.com/cwalv/repoweave.git");
+        let (url, owner) = resolve_source("cwalv/repoweave").unwrap();
+        assert_eq!(url, "https://github.com/cwalv/repoweave.git");
+        assert_eq!(owner, "cwalv");
     }
 
     #[test]
     fn resolve_source_resolves_three_part_shorthand() {
-        let result = resolve_source("gitlab/org/proj").unwrap();
-        assert_eq!(result, "https://gitlab.com/org/proj.git");
+        let (url, owner) = resolve_source("gitlab/org/proj").unwrap();
+        assert_eq!(url, "https://gitlab.com/org/proj.git");
+        assert_eq!(owner, "org");
     }
 
     #[test]

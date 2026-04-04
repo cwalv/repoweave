@@ -355,25 +355,26 @@ fn fetch_existing_workspace_handles_gracefully() {
         .assert()
         .success();
 
-    // Second fetch — should handle gracefully (skip already-cloned repos or
-    // report that the project already exists). Must not panic or produce an
-    // unhandled error.
-    let second = rwv()
+    // Second fetch of the same source — the project directory already exists,
+    // so rwv fetch must exit non-zero with an "already exists" error and a
+    // scoped-path hint.
+    let output = rwv()
         .args(["fetch", &source])
         .current_dir(&workspace)
-        .assert();
+        .output()
+        .expect("rwv fetch should run");
 
-    // Accept either success (idempotent skip) or a clean error message.
-    let output = second.get_output();
     let stderr = String::from_utf8_lossy(&output.stderr);
     let stdout = String::from_utf8_lossy(&output.stdout);
     let combined = format!("{stdout}{stderr}");
+
     assert!(
-        output.status.success()
-            || combined.contains("already exists")
-            || combined.contains("already fetched")
-            || combined.contains("skip"),
-        "second fetch should either succeed or produce a clear message, got: {combined}"
+        !output.status.success(),
+        "second fetch of same source should fail (project already exists), got: {combined}"
+    );
+    assert!(
+        combined.contains("already exists"),
+        "second fetch should report 'already exists', got: {combined}"
     );
 }
 
@@ -954,14 +955,15 @@ fn fetch_frozen_succeeds_with_valid_lock() {
 }
 
 // ============================================================================
-// Idempotency: second fetch of same project
+// Second fetch of same project: collision error
 // ============================================================================
 
 #[test]
 fn fetch_second_invocation_is_idempotent() {
-    // Running `rwv fetch` twice for the same project should be idempotent:
-    // repos already cloned are skipped, lock is updated (or stays the same
-    // if nothing changed), project stays activated.
+    // Fetching the same project source twice collides on the project directory.
+    // The second fetch must exit non-zero with an "already exists" error.
+    // The first fetch activates the project; the active file must remain after
+    // the failed second fetch.
     let tmp = tempfile::tempdir().unwrap();
     let workspace = tmp.path().join("ws");
     std::fs::create_dir_all(&workspace).unwrap();
@@ -1003,41 +1005,42 @@ fn fetch_second_invocation_is_idempotent() {
 
     let source = format!("file://{}", project_bare.display());
 
-    // First fetch.
+    // First fetch — succeeds and activates the project.
     rwv()
         .args(["fetch", &source])
         .current_dir(&workspace)
         .assert()
         .success();
 
-    // Capture lock after first fetch.
-    let lock_path = workspace.join("projects/project/rwv.lock");
-    let lock_first = if lock_path.exists() {
-        Some(std::fs::read_to_string(&lock_path).unwrap())
-    } else {
-        None
-    };
-
-    // Second fetch — should succeed.
-    rwv()
-        .args(["fetch", &source])
-        .current_dir(&workspace)
-        .assert()
-        .success();
-
-    // Lock should be unchanged (no new commits, same HEADs).
-    if let Some(first) = lock_first {
-        let lock_second = std::fs::read_to_string(&lock_path).unwrap();
-        assert_eq!(
-            first, lock_second,
-            "second fetch without changes should produce identical lock"
-        );
-    }
-
-    // .rwv-active should still exist.
     assert!(
         workspace.join(".rwv-active").exists(),
-        "project should remain activated after second fetch"
+        "project should be activated after first fetch"
+    );
+
+    // Second fetch of the same source — must fail with collision error.
+    let output = rwv()
+        .args(["fetch", &source])
+        .current_dir(&workspace)
+        .output()
+        .expect("rwv fetch should run");
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let combined = format!("{stdout}{stderr}");
+
+    assert!(
+        !output.status.success(),
+        "second fetch of same source should fail (project already exists), got: {combined}"
+    );
+    assert!(
+        combined.contains("already exists"),
+        "second fetch should report 'already exists', got: {combined}"
+    );
+
+    // .rwv-active must still exist after the failed second fetch.
+    assert!(
+        workspace.join(".rwv-active").exists(),
+        "project should remain activated after failed second fetch"
     );
 }
 

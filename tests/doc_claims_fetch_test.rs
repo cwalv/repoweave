@@ -135,22 +135,14 @@ fn setup_workspace_with_project(
 }
 
 // ============================================================================
-// Test 1 — project-reporoot-42z
+// Test 1 — project-reporoot-gazl
 //
 // Doc claim: "If names collide, rwv fetch errors and suggests a scoped path:
 //             projects/{owner}/{name}/"
-//
-// Current behaviour: fetch prints "already exists, skipping clone" and
-// continues without error; it does NOT surface a scoped-path suggestion.
 // ============================================================================
 
 #[test]
 fn fetch_name_collision_behavior() {
-    // TODO: docs claim scoped path suggestion, not implemented
-    //
-    // The implementation skips re-cloning and carries on (exit 0).  The docs
-    // describe an error with a helpful suggestion — that suggestion is absent.
-
     let tmp = tempfile::tempdir().unwrap();
     let workspace = tmp.path().join("ws");
     std::fs::create_dir_all(&workspace).unwrap();
@@ -178,32 +170,41 @@ fn fetch_name_collision_behavior() {
     let stderr = String::from_utf8_lossy(&output.stderr);
     let combined = format!("{stdout}{stderr}");
 
-    // Current behaviour: command succeeds and reports "already exists".
-    // The docs claim it should error — that is NOT implemented.
+    // Command must exit non-zero.
+    assert!(
+        !output.status.success(),
+        "fetch should exit non-zero on name collision, got exit: {}\n{combined}",
+        output.status
+    );
+
+    // Error message must mention "already exists".
     assert!(
         combined.contains("already exists"),
-        "expected 'already exists' message for name collision, got:\n{combined}"
+        "expected 'already exists' in error output, got:\n{combined}"
     );
-    // NOTE: the docs also claim a scoped-path suggestion ("projects/owner/name/")
-    // is printed.  That suggestion is absent from the current implementation.
+
+    // Output must include the scoped-path hint.
+    assert!(
+        combined.contains("Hint") || combined.contains("scoped"),
+        "expected a scoped-path hint in the output, got:\n{combined}"
+    );
+    assert!(
+        combined.contains("web-app"),
+        "hint should name the project, got:\n{combined}"
+    );
 }
 
 // ============================================================================
-// Test 2 — project-reporoot-cq5
+// Test 2 — project-reporoot-nt18
 //
-// Doc claim: `rwv remove --delete` checks whether other projects reference
-//             the same repo before deleting.
-//
-// Current behaviour: deletes unconditionally — no cross-project check.
+// `rwv remove --delete` checks whether other projects reference the same repo
+// before deleting.  If a reference is found:
+//   - A warning is printed: "warning: repo also referenced by project 'X'"
+//   - The deletion is refused unless `--force` is also passed.
 // ============================================================================
 
 #[test]
 fn remove_delete_does_not_check_other_projects() {
-    // TODO: docs claim cross-project check, not implemented
-    //
-    // The implementation calls `std::fs::remove_dir_all` without inspecting
-    // any other project manifests.  Shared repos are silently deleted.
-
     let tmp = tempfile::tempdir().unwrap();
 
     // Create a bare repo that both projects will reference.
@@ -216,8 +217,7 @@ fn remove_delete_does_not_check_other_projects() {
     let (workspace, _project_a_dir) =
         setup_workspace_with_project(&tmp, "project-a", &[(repo_path, &shared_url)]);
 
-    // Project B also references the same repo (written directly — we only need
-    // one active project for workspace resolution to work).
+    // Project B also references the same repo.
     let project_b_dir = workspace.join("projects").join("project-b");
     std::fs::create_dir_all(&project_b_dir).unwrap();
     let yaml_b = format!(
@@ -240,43 +240,51 @@ fn remove_delete_does_not_check_other_projects() {
         .expect("git clone failed");
     assert!(clone_status.success());
 
-    // Run `rwv remove <repo> --delete` from within project-a.
-    // Workspace resolver picks the single project in projects/ when CWD is ws root,
-    // but with two projects present we run from inside project-a to disambiguate.
-    rwv()
+    // --- Without --force: should fail and print a warning ---
+    let output = rwv()
         .args(["remove", repo_path, "--delete"])
+        .current_dir(&workspace.join("projects").join("project-a"))
+        .output()
+        .expect("rwv remove should run");
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !output.status.success(),
+        "rwv remove --delete should fail when another project references the repo; stderr:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("warning: repo also referenced by project"),
+        "expected cross-project warning in stderr, got:\n{stderr}"
+    );
+    // The directory must still exist — deletion was refused.
+    assert!(
+        repo_dir.exists(),
+        "directory should NOT be deleted when another project references the repo"
+    );
+
+    // --- With --force: should succeed and delete ---
+    rwv()
+        .args(["remove", repo_path, "--delete", "--force"])
         .current_dir(&workspace.join("projects").join("project-a"))
         .assert()
         .success();
 
-    // Current behaviour: directory is deleted without checking project-b.
     assert!(
         !repo_dir.exists(),
-        "rwv remove --delete should delete the directory (no cross-project check)"
+        "rwv remove --delete --force should delete the directory even when shared"
     );
-    // NOTE: project-b still references the now-deleted repo — no warning was
-    // issued.  The docs claim a cross-project check would prevent or warn about
-    // this; that check is absent.
 }
 
 // ============================================================================
-// Test 3 — project-reporoot-781
+// Test 3 — project-reporoot-fwui
 //
-// Doc claim: `rwv add github/org/repo --role reference` infers the URL from
-//             the clone's origin remote when the directory already exists.
-//
-// Current behaviour: the argument is treated as a URL, not as a canonical
-// path.  A bare `github/org/repo` string (without a URL scheme) is rejected
-// because neither `resolve_url` nor `derive_local_path_from_url` can handle
-// it.
+// `rwv add <local-path> --role reference` infers the URL from the clone's
+// origin remote when the argument has no URL scheme and the directory exists
+// under the workspace root.
 // ============================================================================
 
 #[test]
 fn add_from_local_path_infers_url() {
-    // TODO: docs describe URL inference from an existing clone's origin remote;
-    //       current `run_add` treats the positional argument as a URL and
-    //       errors on path-style inputs.
-
     let tmp = tempfile::tempdir().unwrap();
 
     // Create a bare repo to act as the remote origin.
@@ -287,7 +295,7 @@ fn add_from_local_path_infers_url() {
     // Set up workspace with an empty project manifest.
     let (workspace, _project_dir) = setup_workspace_with_project(&tmp, "test-project", &[]);
 
-    // Clone the bare repo to the canonical path github/org/repo.
+    // Clone the bare repo to the canonical path github/org/repo inside the workspace.
     let repo_dir = workspace.join("github").join("org").join("repo");
     std::fs::create_dir_all(repo_dir.parent().unwrap()).unwrap();
     let clone_status = process::Command::new("git")
@@ -302,39 +310,28 @@ fn add_from_local_path_infers_url() {
         .expect("git clone failed");
     assert!(clone_status.success());
 
-    // Run `rwv add github/org/repo --role reference`.
-    // Per docs this should infer the URL from the clone's origin remote.
-    let output = rwv()
+    // Run `rwv add github/org/repo --role reference` from the workspace root.
+    // The directory exists, so rwv should detect it as a local path and infer
+    // the URL from the clone's origin remote.
+    rwv()
         .args(["add", "github/org/repo", "--role", "reference"])
         .current_dir(&workspace)
-        .output()
-        .expect("rwv add should run");
+        .assert()
+        .success();
 
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    let combined = format!("{stdout}{stderr}");
+    // Verify the manifest contains the correct origin URL and repo path.
+    let manifest_path = workspace.join("projects/test-project/rwv.yaml");
+    let manifest_content = std::fs::read_to_string(&manifest_path)
+        .expect("rwv.yaml should exist after add");
 
-    if output.status.success() {
-        // If it succeeded, verify the manifest contains the origin URL.
-        let manifest_path = workspace.join("projects/test-project/rwv.yaml");
-        let manifest_content = std::fs::read_to_string(&manifest_path)
-            .expect("rwv.yaml should exist after add");
-        assert!(
-            manifest_content.contains(&origin_url) || manifest_content.contains("github/org/repo"),
-            "manifest should reference the repo, got:\n{manifest_content}"
-        );
-    } else {
-        // Current behaviour: fails because `github/org/repo` is not a valid URL.
-        // The docs' URL-inference feature is not yet implemented.
-        assert!(
-            combined.contains("error")
-                || combined.contains("Error")
-                || combined.contains("unrecognized")
-                || combined.contains("invalid")
-                || combined.contains("failed"),
-            "expected a clear error for path-style input, got:\n{combined}"
-        );
-    }
+    assert!(
+        manifest_content.contains("github/org/repo"),
+        "manifest should contain the repo path 'github/org/repo', got:\n{manifest_content}"
+    );
+    assert!(
+        manifest_content.contains(&origin_url),
+        "manifest should contain the inferred origin URL '{origin_url}', got:\n{manifest_content}"
+    );
 }
 
 // ============================================================================
@@ -414,20 +411,13 @@ fn fetch_shorthand_notation_with_local_bare_repo() {
 }
 
 // ============================================================================
-// Test 5 — project-reporoot-57vl
+// Test 5 — project-reporoot-gjci
 //
 // Doc claim: Fetching a second project does not change the active project.
-//
-// Current behaviour: `run_fetch` always calls `activate::activate` after a
-// successful fetch, so the *second* fetched project becomes active.
 // ============================================================================
 
 #[test]
 fn fetch_second_project_does_not_auto_activate() {
-    // TODO: docs claim the active project is preserved after fetching a second
-    //       project; current implementation re-activates on every fetch, so the
-    //       active project is overwritten.
-
     let tmp = tempfile::tempdir().unwrap();
     let workspace = tmp.path().join("ws");
     std::fs::create_dir_all(&workspace).unwrap();
@@ -440,7 +430,7 @@ fn fetch_second_project_does_not_auto_activate() {
     push_manifest_to_bare(&project_a_bare, &[]);
     let url_a = format!("file://{}", project_a_bare.display());
 
-    // Fetch project A — this should activate it.
+    // Fetch project A — this should activate it (first fetch, no .rwv-active yet).
     rwv()
         .args(["fetch", &url_a])
         .current_dir(&workspace)
@@ -466,26 +456,19 @@ fn fetch_second_project_does_not_auto_activate() {
     push_manifest_to_bare(&project_b_bare, &[]);
     let url_b = format!("file://{}", project_b_bare.display());
 
-    // Fetch project B.
+    // Fetch project B — .rwv-active already exists, so activation is skipped.
     rwv()
         .args(["fetch", &url_b])
         .current_dir(&workspace)
         .assert()
         .success();
 
-    // Read the active project after the second fetch.
+    // .rwv-active must still point to project-a.
     let active_after_b = std::fs::read_to_string(&active_path)
         .expect("failed to read .rwv-active after second fetch");
-
-    // Current behaviour: project-b is now active (activate is called on every fetch).
-    // The docs claim project-a should remain active.
-    //
-    // We assert the *current* behaviour so the test passes and documents the gap.
     assert_eq!(
         active_after_b.trim(),
-        "project-b",
-        "current behaviour: second fetch overwrites .rwv-active with project-b \
-         (docs claim project-a should remain active — cross-project activation \
-         guard is not implemented)"
+        "project-a",
+        "second fetch must not overwrite .rwv-active; project-a should remain active"
     );
 }
