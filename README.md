@@ -18,10 +18,19 @@ repoweave gives you the two biggest practical wins of a monorepo while keeping e
 
 “Weave” comes from weaving fabric: independent **threads** (your git repositories) are interwoven into a single, usable **fabric** — a unified workspace. The threads keep their identity and history; they simply work better together.
 
-### Quick start
+### Install
+
+**Pre-built binaries** — download from [GitHub Releases](https://github.com/cwalv/repoweave/releases) (linux x86_64/aarch64, macOS x86_64/aarch64, Windows x86_64).
+
+**From source** via Cargo:
 
 ```bash
 cargo install repoweave
+```
+
+### Quick start
+
+```bash
 mkdir my-workspace && cd my-workspace
 rwv fetch myproject/web-app
 cd projects/web-app
