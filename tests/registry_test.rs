@@ -1,5 +1,6 @@
 use repoweave::registry::{
-    builtin_registries, DirectoryRegistry, DomainRegistry, Registry, RegistryName, RepoId,
+    builtin_registries, resolve_shorthand, DirectoryRegistry, DomainRegistry, Registry,
+    RegistryName, RepoId,
 };
 use std::path::{Path, PathBuf};
 
@@ -234,4 +235,63 @@ fn dir_registry() -> DirectoryRegistry {
         registry_name: RegistryName("local".into()),
         prefix: PathBuf::from("/srv/repos"),
     }
+}
+
+// ---------------------------------------------------------------------------
+// resolve_shorthand: 2-part (owner/repo) defaults to first registry
+// ---------------------------------------------------------------------------
+
+fn as_refs(registries: &[Box<dyn Registry>]) -> Vec<&dyn Registry> {
+    registries.iter().map(|r| r.as_ref()).collect()
+}
+
+#[test]
+fn resolve_shorthand_two_part_defaults_to_github() {
+    let owned = builtin_registries();
+    let registries = as_refs(&owned);
+    let (name, id, path) = resolve_shorthand("cwalv/repoweave", &registries).unwrap();
+    assert_eq!(name, RegistryName("github".into()));
+    assert_eq!(id.owner, "cwalv");
+    assert_eq!(id.repo, "repoweave");
+    assert_eq!(path, Path::new("github/cwalv/repoweave"));
+}
+
+// ---------------------------------------------------------------------------
+// resolve_shorthand: 3-part (registry/owner/repo) selects named registry
+// ---------------------------------------------------------------------------
+
+#[test]
+fn resolve_shorthand_three_part_gitlab() {
+    let owned = builtin_registries();
+    let registries = as_refs(&owned);
+    let (name, id, path) = resolve_shorthand("gitlab/org/proj", &registries).unwrap();
+    assert_eq!(name, RegistryName("gitlab".into()));
+    assert_eq!(id.owner, "org");
+    assert_eq!(id.repo, "proj");
+    assert_eq!(path, Path::new("gitlab/org/proj"));
+}
+
+#[test]
+fn resolve_shorthand_three_part_unknown_registry() {
+    let owned = builtin_registries();
+    let registries = as_refs(&owned);
+    assert!(resolve_shorthand("sourcehut/owner/repo", &registries).is_none());
+}
+
+// ---------------------------------------------------------------------------
+// resolve_shorthand: invalid inputs
+// ---------------------------------------------------------------------------
+
+#[test]
+fn resolve_shorthand_single_segment_returns_none() {
+    let owned = builtin_registries();
+    let registries = as_refs(&owned);
+    assert!(resolve_shorthand("justarepo", &registries).is_none());
+}
+
+#[test]
+fn resolve_shorthand_too_many_segments_returns_none() {
+    let owned = builtin_registries();
+    let registries = as_refs(&owned);
+    assert!(resolve_shorthand("a/b/c/d", &registries).is_none());
 }

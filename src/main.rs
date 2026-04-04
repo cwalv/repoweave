@@ -56,6 +56,9 @@ enum Commands {
         /// Like --locked, but error if lock file is missing or stale (CI mode)
         #[arg(long, conflicts_with = "locked")]
         frozen: bool,
+        /// Bootstrap into a non-empty directory that is not a workspace
+        #[arg(long)]
+        force: bool,
     },
     /// Add a repo to the current weave
     Add {
@@ -91,11 +94,14 @@ enum Commands {
     Resolve,
     /// Initialize a new project
     Init {
-        /// Project name
+        /// Project name (or URL / shorthand when --adopt is used)
         project: String,
         /// Provider in registry/owner format (e.g., github/myorg)
-        #[arg(long)]
+        #[arg(long, conflicts_with = "adopt")]
         provider: Option<String>,
+        /// Adopt an existing repo: clone from URL or shorthand instead of git init
+        #[arg(long)]
+        adopt: bool,
     },
     /// Activate a project (generate ecosystem files, create symlinks)
     Activate {
@@ -154,8 +160,9 @@ fn main() -> anyhow::Result<()> {
                 repoweave::weave::create_weave(ws_root, &project, &WeaveName::new(name))?;
             }
         }
-        Some(Commands::Fetch { source, locked, frozen }) => {
+        Some(Commands::Fetch { source, locked, frozen, force }) => {
             let cwd = std::env::current_dir()?;
+            repoweave::workspace::require_workspace_or_empty(&cwd, force)?;
             let mode = if frozen {
                 fetch::FetchMode::Frozen
             } else if locked {
@@ -195,9 +202,13 @@ fn main() -> anyhow::Result<()> {
             let ctx = WorkspaceContext::resolve(&cwd, None)?;
             println!("{}", ctx.resolve_path().display());
         }
-        Some(Commands::Init { project, provider }) => {
+        Some(Commands::Init { project, provider, adopt }) => {
             let cwd = std::env::current_dir()?;
-            init::init(&project, provider.as_deref(), &cwd)?;
+            if adopt {
+                init::init_adopt(&project, &cwd)?;
+            } else {
+                init::init(&project, provider.as_deref(), &cwd)?;
+            }
         }
         Some(Commands::Activate { project }) => {
             let cwd = std::env::current_dir()?;

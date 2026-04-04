@@ -151,6 +151,42 @@ pub fn scan_repos_on_disk(root: &Path, registries: &[Box<dyn Registry>], vcs: &d
     repos
 }
 
+/// Check that `cwd` is safe to use as a workspace root for bootstrapping
+/// commands (`fetch`, future `init --adopt`).
+///
+/// - If [`WorkspaceContext::resolve`] succeeds, returns `Ok(())` — we are
+///   inside an existing workspace.
+/// - If resolve fails and `cwd` is an empty directory, returns `Ok(())` —
+///   bootstrapping into a fresh directory is fine.
+/// - If resolve fails and `cwd` is **non-empty**, returns an error advising
+///   the caller to use `--force`.
+///
+/// Pass `force = true` to skip the non-empty check entirely.
+pub fn require_workspace_or_empty(cwd: &Path, force: bool) -> anyhow::Result<()> {
+    match WorkspaceContext::resolve(cwd, None) {
+        Ok(_) => return Ok(()), // existing workspace — proceed
+        Err(_) if force => return Ok(()), // user passed --force
+        Err(_) => {}
+    }
+
+    // resolve failed and no --force — check whether CWD is empty.
+    let is_empty = match std::fs::read_dir(cwd) {
+        Ok(mut entries) => entries.next().is_none(),
+        // If we cannot read the directory, let downstream code handle it.
+        Err(_) => return Ok(()),
+    };
+
+    if is_empty {
+        Ok(())
+    } else {
+        anyhow::bail!(
+            "no repoweave workspace found and {} is not empty; \
+             use --force to bootstrap here anyway",
+            cwd.display()
+        )
+    }
+}
+
 impl WorkspaceContext {
     /// Resolve the workspace context by walking up from `cwd`.
     ///
@@ -620,5 +656,48 @@ mod tests {
             }
             WorkspaceLocation::Weave { .. } => panic!("expected Primary"),
         }
+    }
+
+    // ========================================================================
+    // require_workspace_or_empty
+    // ========================================================================
+
+    #[test]
+    fn require_workspace_or_empty_ok_in_existing_workspace() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = make_workspace(tmp.path(), "ws");
+        // Inside a valid workspace — should succeed.
+        assert!(require_workspace_or_empty(&root, false).is_ok());
+    }
+
+    #[test]
+    fn require_workspace_or_empty_ok_in_empty_dir() {
+        let tmp = tempfile::tempdir().unwrap();
+        let empty = tmp.path().join("fresh");
+        std::fs::create_dir_all(&empty).unwrap();
+        // Empty directory, no workspace markers — should succeed.
+        assert!(require_workspace_or_empty(&empty, false).is_ok());
+    }
+
+    #[test]
+    fn require_workspace_or_empty_errors_in_non_empty_non_workspace() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("messy");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("random.txt"), "stuff").unwrap();
+        // Non-empty, no workspace — should error.
+        let err = require_workspace_or_empty(&dir, false).unwrap_err();
+        let msg = format!("{err}");
+        assert!(msg.contains("--force"), "expected --force hint, got: {msg}");
+    }
+
+    #[test]
+    fn require_workspace_or_empty_force_bypasses_check() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("messy");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("random.txt"), "stuff").unwrap();
+        // Non-empty + --force — should succeed.
+        assert!(require_workspace_or_empty(&dir, true).is_ok());
     }
 }

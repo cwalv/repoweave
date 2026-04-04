@@ -1,11 +1,12 @@
 //! `rwv fetch` — clone a project and its repos into the workspace.
 //!
-//! The source can be a URL (cloned to `projects/{name}/`) or a local path
-//! to an existing project directory.
+//! The source must be a URL (full URL or `owner/repo` shorthand resolved via
+//! the registry). Local paths are not accepted; use `rwv activate` instead.
 
 use crate::git::GitVcs;
 use crate::lock;
 use crate::manifest::{LockFile, Manifest, RepoPath};
+use crate::registry;
 use crate::vcs::Vcs;
 use anyhow::{bail, Context};
 use std::path::Path;
@@ -49,9 +50,13 @@ pub fn project_name_from_source(source: &str) -> String {
         .to_string()
 }
 
-/// Returns true if `source` looks like a URL (as opposed to a local path).
-fn is_url(source: &str) -> bool {
-    source.contains("://") || source.starts_with("git@")
+/// Resolve `source` to a clone URL.
+///
+/// Accepts full URLs (returned as-is) or `owner/repo` / `registry/owner/repo`
+/// shorthand (resolved via the built-in registries to an HTTPS clone URL).
+fn resolve_source(source: &str) -> anyhow::Result<String> {
+    let (url, _registry_name, _repo_id) = registry::resolve_to_clone_info(source)?;
+    Ok(url)
 }
 
 /// Validate that a lock file covers all repos in the manifest.
@@ -72,37 +77,22 @@ fn find_stale_repos(manifest: &Manifest, lock: &LockFile) -> Vec<RepoPath> {
 pub fn run_fetch(source: &str, workspace_root: &Path, mode: FetchMode) -> anyhow::Result<()> {
     let git = GitVcs;
 
-    let project_dir = if is_url(source) {
-        // Clone the project repo into projects/{name}/
-        let name = project_name_from_source(source);
-        let projects_dir = workspace_root.join("projects");
-        std::fs::create_dir_all(&projects_dir)
-            .context("failed to create projects/ directory")?;
-        let project_dir = projects_dir.join(&name);
-        if project_dir.exists() {
-            // Project already exists — re-read its manifest and continue
-            // to ensure repos are cloned.
-            println!("rwv fetch: project '{}' already exists, skipping clone", name);
-        } else {
-            println!("rwv fetch: cloning project '{}'", name);
-            git.clone_repo(source, &project_dir)
-                .with_context(|| format!("failed to clone project source '{}'", source))?;
-        }
-        project_dir
+    // Resolve source to a clone URL (supports full URLs and owner/repo shorthand).
+    let url = resolve_source(source)?;
+    let name = project_name_from_source(&url);
+    let projects_dir = workspace_root.join("projects");
+    std::fs::create_dir_all(&projects_dir)
+        .context("failed to create projects/ directory")?;
+    let project_dir = projects_dir.join(&name);
+    if project_dir.exists() {
+        // Project already exists — re-read its manifest and continue
+        // to ensure repos are cloned.
+        println!("rwv fetch: project '{}' already exists, skipping clone", name);
     } else {
-        // Local path — must be an existing directory with rwv.yaml
-        let path = Path::new(source);
-        if !path.exists() {
-            bail!("Error: source path '{}' not found", source);
-        }
-        if !path.join("rwv.yaml").exists() {
-            bail!(
-                "Error: source path '{}' does not contain an rwv.yaml manifest",
-                source
-            );
-        }
-        path.to_path_buf()
-    };
+        println!("rwv fetch: cloning project '{}'", name);
+        git.clone_repo(&url, &project_dir)
+            .with_context(|| format!("failed to clone project source '{}'", url))?;
+    }
 
     // Read the manifest
     let manifest_path = project_dir.join("rwv.yaml");
@@ -257,16 +247,7 @@ pub fn run_fetch(source: &str, workspace_root: &Path, mode: FetchMode) -> anyhow
         eprintln!("rwv fetch: wrote {}", lock_path.display());
 
         // Auto-activate the project.
-        let project_name = if is_url(source) {
-            project_name_from_source(source)
-        } else {
-            // For local path, derive name from dir name.
-            project_dir
-                .file_name()
-                .map(|n| n.to_string_lossy().into_owned())
-                .unwrap_or_else(|| "unknown".to_string())
-        };
-        crate::activate::activate(&project_name, workspace_root)?;
+        crate::activate::activate(&name, workspace_root)?;
     }
 
     Ok(())
@@ -322,13 +303,43 @@ mod tests {
     }
 
     #[test]
-    fn is_url_detects_schemes() {
-        assert!(is_url("https://example.com/repo"));
-        assert!(is_url("file:///tmp/repo.git"));
-        assert!(is_url("git@github.com:owner/repo.git"));
-        assert!(!is_url("/local/path"));
-        assert!(!is_url("relative/path"));
-        assert!(!is_url("my-project"));
+    fn resolve_source_passes_through_urls() {
+        let url = "https://github.com/org/repo.git";
+        assert_eq!(resolve_source(url).unwrap(), url);
+    }
+
+    #[test]
+    fn resolve_source_passes_through_ssh_urls() {
+        let url = "git@github.com:org/repo.git";
+        assert_eq!(resolve_source(url).unwrap(), url);
+    }
+
+    #[test]
+    fn resolve_source_passes_through_file_urls() {
+        let url = "file:///tmp/repo.git";
+        assert_eq!(resolve_source(url).unwrap(), url);
+    }
+
+    #[test]
+    fn resolve_source_resolves_two_part_shorthand() {
+        let result = resolve_source("cwalv/repoweave").unwrap();
+        assert_eq!(result, "https://github.com/cwalv/repoweave.git");
+    }
+
+    #[test]
+    fn resolve_source_resolves_three_part_shorthand() {
+        let result = resolve_source("gitlab/org/proj").unwrap();
+        assert_eq!(result, "https://gitlab.com/org/proj.git");
+    }
+
+    #[test]
+    fn resolve_source_rejects_invalid_shorthand() {
+        assert!(resolve_source("not-a-valid-source").is_err());
+    }
+
+    #[test]
+    fn resolve_source_rejects_four_part_shorthand() {
+        assert!(resolve_source("a/b/c/d").is_err());
     }
 
     // FetchMode enum tests

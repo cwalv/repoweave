@@ -328,3 +328,251 @@ fn init_works_from_workspace_subdirectory() {
         "init from a subdirectory should still create the project under projects/"
     );
 }
+
+// ============================================================================
+// --adopt flag tests
+// ============================================================================
+
+/// Create a bare git repo that can serve as a clone source for --adopt tests.
+/// Returns the path to the bare repo.
+fn make_bare_repo(parent: &Path, name: &str) -> std::path::PathBuf {
+    let bare = parent.join(format!("{}.git", name));
+    let status = process::Command::new("git")
+        .args(["init", "--bare", "--initial-branch=main"])
+        .arg(&bare)
+        .stdout(process::Stdio::null())
+        .stderr(process::Stdio::null())
+        .status()
+        .expect("git init --bare should succeed");
+    assert!(status.success());
+    bare
+}
+
+/// Create a non-bare repo with an initial commit and push to a bare remote.
+/// This gives us a clone source that has a valid HEAD.
+fn make_repo_with_commit(parent: &Path, name: &str) -> std::path::PathBuf {
+    let bare = make_bare_repo(parent, name);
+
+    // Clone, commit, push
+    let work = parent.join(format!("{}-work", name));
+    let status = process::Command::new("git")
+        .args(["clone", bare.to_str().unwrap(), work.to_str().unwrap()])
+        .stdout(process::Stdio::null())
+        .stderr(process::Stdio::null())
+        .status()
+        .expect("git clone should succeed");
+    assert!(status.success());
+
+    // Configure git user for the commit
+    let _ = process::Command::new("git")
+        .args(["config", "user.email", "test@test.com"])
+        .current_dir(&work)
+        .status();
+    let _ = process::Command::new("git")
+        .args(["config", "user.name", "Test"])
+        .current_dir(&work)
+        .status();
+
+    std::fs::write(work.join("README.md"), "# test\n").unwrap();
+    let _ = process::Command::new("git")
+        .args(["add", "."])
+        .current_dir(&work)
+        .status();
+    let _ = process::Command::new("git")
+        .args(["commit", "-m", "init"])
+        .current_dir(&work)
+        .stdout(process::Stdio::null())
+        .stderr(process::Stdio::null())
+        .status();
+    let _ = process::Command::new("git")
+        .args(["push", "origin", "main"])
+        .current_dir(&work)
+        .stdout(process::Stdio::null())
+        .stderr(process::Stdio::null())
+        .status();
+
+    bare
+}
+
+#[test]
+fn adopt_clones_repo_into_projects() {
+    let tmp = tempfile::tempdir().unwrap();
+    let ws = make_empty_workspace(tmp.path());
+    let bare = make_repo_with_commit(tmp.path(), "my-app");
+
+    rwv()
+        .args([
+            "init",
+            "--adopt",
+            &format!("file://{}", bare.display()),
+        ])
+        .current_dir(&ws)
+        .assert()
+        .success();
+
+    let project_dir = ws.join("projects/my-app");
+    assert!(
+        project_dir.exists(),
+        "projects/my-app/ should exist after adopt"
+    );
+    // Should be a git repo (cloned, not git-init'd)
+    let toplevel = git_output(&["rev-parse", "--git-dir"], &project_dir);
+    assert!(
+        toplevel.contains(".git"),
+        "adopted project should be a git repo"
+    );
+}
+
+#[test]
+fn adopt_writes_rwv_yaml_when_missing() {
+    let tmp = tempfile::tempdir().unwrap();
+    let ws = make_empty_workspace(tmp.path());
+    let bare = make_repo_with_commit(tmp.path(), "no-yaml");
+
+    rwv()
+        .args([
+            "init",
+            "--adopt",
+            &format!("file://{}", bare.display()),
+        ])
+        .current_dir(&ws)
+        .assert()
+        .success();
+
+    let manifest_path = ws.join("projects/no-yaml/rwv.yaml");
+    assert!(
+        manifest_path.exists(),
+        "rwv.yaml should be created for adopted repo"
+    );
+}
+
+#[test]
+fn adopt_preserves_existing_rwv_yaml() {
+    let tmp = tempfile::tempdir().unwrap();
+    let ws = make_empty_workspace(tmp.path());
+
+    // Create a bare repo that already has an rwv.yaml
+    let bare = tmp.path().join("has-yaml.git");
+    let work = tmp.path().join("has-yaml-work");
+
+    let _ = process::Command::new("git")
+        .args(["init", "--bare", "--initial-branch=main"])
+        .arg(&bare)
+        .stdout(process::Stdio::null())
+        .stderr(process::Stdio::null())
+        .status();
+    let _ = process::Command::new("git")
+        .args(["clone", bare.to_str().unwrap(), work.to_str().unwrap()])
+        .stdout(process::Stdio::null())
+        .stderr(process::Stdio::null())
+        .status();
+    let _ = process::Command::new("git")
+        .args(["config", "user.email", "test@test.com"])
+        .current_dir(&work)
+        .status();
+    let _ = process::Command::new("git")
+        .args(["config", "user.name", "Test"])
+        .current_dir(&work)
+        .status();
+
+    // Write a custom rwv.yaml
+    let custom = "repositories: {}\n# custom marker\n";
+    std::fs::write(work.join("rwv.yaml"), custom).unwrap();
+    let _ = process::Command::new("git")
+        .args(["add", "."])
+        .current_dir(&work)
+        .status();
+    let _ = process::Command::new("git")
+        .args(["commit", "-m", "with rwv.yaml"])
+        .current_dir(&work)
+        .stdout(process::Stdio::null())
+        .stderr(process::Stdio::null())
+        .status();
+    let _ = process::Command::new("git")
+        .args(["push", "origin", "main"])
+        .current_dir(&work)
+        .stdout(process::Stdio::null())
+        .stderr(process::Stdio::null())
+        .status();
+
+    rwv()
+        .args([
+            "init",
+            "--adopt",
+            &format!("file://{}", bare.display()),
+        ])
+        .current_dir(&ws)
+        .assert()
+        .success();
+
+    let content = std::fs::read_to_string(ws.join("projects/has-yaml/rwv.yaml")).unwrap();
+    assert!(
+        content.contains("# custom marker"),
+        "existing rwv.yaml should be preserved, got: {content}"
+    );
+}
+
+#[test]
+fn adopt_activates_project() {
+    let tmp = tempfile::tempdir().unwrap();
+    let ws = make_empty_workspace(tmp.path());
+    let bare = make_repo_with_commit(tmp.path(), "activated");
+
+    rwv()
+        .args([
+            "init",
+            "--adopt",
+            &format!("file://{}", bare.display()),
+        ])
+        .current_dir(&ws)
+        .assert()
+        .success();
+
+    // Check that .rwv-active was written
+    let active = std::fs::read_to_string(ws.join(".rwv-active")).unwrap();
+    assert_eq!(
+        active.trim(),
+        "activated",
+        ".rwv-active should contain the adopted project name"
+    );
+}
+
+#[test]
+fn adopt_rejects_duplicate_project_name() {
+    let tmp = tempfile::tempdir().unwrap();
+    let ws = make_empty_workspace(tmp.path());
+    let bare = make_repo_with_commit(tmp.path(), "dup");
+
+    // First adopt succeeds.
+    rwv()
+        .args([
+            "init",
+            "--adopt",
+            &format!("file://{}", bare.display()),
+        ])
+        .current_dir(&ws)
+        .assert()
+        .success();
+
+    // Second adopt with same source should fail.
+    rwv()
+        .args([
+            "init",
+            "--adopt",
+            &format!("file://{}", bare.display()),
+        ])
+        .current_dir(&ws)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("already exists"));
+}
+
+#[test]
+fn adopt_conflicts_with_provider() {
+    // --adopt and --provider are mutually exclusive.
+    rwv()
+        .args(["init", "--adopt", "--provider", "github/owner", "foo"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("cannot be used with"));
+}
