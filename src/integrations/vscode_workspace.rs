@@ -1,9 +1,84 @@
 use crate::integration::{Integration, IntegrationContext, Issue, Severity};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::Path;
 
 /// Marker key written into generated `.code-workspace` files so that
 /// `deactivate` can distinguish rwv-managed files from user-created ones.
 const GENERATED_MARKER_KEY: &str = "rwv.generated";
+
+/// Per-integration settings for the vscode-workspace integration.
+///
+/// Deserialized from the `integrations.vscode-workspace:` block in `rwv.yaml`.
+#[derive(serde::Deserialize, Default)]
+struct VscodeConfig {
+    /// Whether to hide dotfiles (paths starting with `.`) in the VS Code
+    /// file explorer. Defaults to `true`.
+    #[serde(default = "default_true", rename = "hide-dotfiles")]
+    hide_dotfiles: bool,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+/// Collapse a set of excluded repo paths up the directory hierarchy.
+///
+/// Algorithm (mirrors the Python reference in reporoot v0.3.1):
+/// 1. Group all on-disk repos by owner (`registry/owner`, first two path segments).
+/// 2. If **all** repos under an owner are excluded → replace them with the owner path.
+/// 3. Group owners by registry (first path segment).
+/// 4. If **all** owners under a registry are collapsed → replace them with the registry path.
+///
+/// Returns the collapsed set as a sorted `Vec<String>`.
+pub fn collapse_excludes(excluded: &HashSet<String>, all_repos: &[String]) -> Vec<String> {
+    // Group all repos by owner (first two segments).
+    let mut repos_by_owner: HashMap<String, HashSet<String>> = HashMap::new();
+    for repo in all_repos {
+        let parts: Vec<&str> = repo.splitn(3, '/').collect();
+        if parts.len() >= 2 {
+            let owner = format!("{}/{}", parts[0], parts[1]);
+            repos_by_owner.entry(owner).or_default().insert(repo.clone());
+        }
+    }
+
+    // Collapse at owner level.
+    let mut collapsed: HashSet<String> = HashSet::new();
+    let mut collapsed_owners: HashSet<String> = HashSet::new();
+    for (owner, repos) in &repos_by_owner {
+        if repos.is_subset(excluded) {
+            collapsed.insert(owner.clone());
+            collapsed_owners.insert(owner.clone());
+        } else {
+            for repo in repos.intersection(excluded) {
+                collapsed.insert(repo.clone());
+            }
+        }
+    }
+
+    // Group owners by registry (first segment).
+    let mut owners_by_registry: HashMap<String, HashSet<String>> = HashMap::new();
+    for owner in repos_by_owner.keys() {
+        let registry = owner.split('/').next().unwrap_or(owner).to_string();
+        owners_by_registry
+            .entry(registry)
+            .or_default()
+            .insert(owner.clone());
+    }
+
+    // Collapse at registry level.
+    for (registry, owners) in &owners_by_registry {
+        if owners.is_subset(&collapsed_owners) {
+            for owner in owners {
+                collapsed.remove(owner);
+            }
+            collapsed.insert(registry.clone());
+        }
+    }
+
+    let mut result: Vec<String> = collapsed.into_iter().collect();
+    result.sort();
+    result
+}
 
 pub struct VscodeWorkspace;
 
@@ -17,6 +92,8 @@ impl Integration for VscodeWorkspace {
     }
 
     fn activate(&self, ctx: &IntegrationContext) -> anyhow::Result<()> {
+        let cfg: VscodeConfig = ctx.config.settings();
+
         let filename = format!("{}.code-workspace", ctx.project.as_str());
         let filepath = ctx.output_dir.join(&filename);
 
@@ -41,14 +118,67 @@ impl Integration for VscodeWorkspace {
             serde_json::json!([{ "path": ".", "name": folder_name }]),
         );
 
-        // Merge settings: overwrite managed keys, preserve user keys
-        let managed_settings: serde_json::Map<String, serde_json::Value> = serde_json::from_value(
-            serde_json::json!({
+        // Build files.exclude:
+        //   - Repos on disk that are not in this project (collapsed)
+        //   - Other project directories
+        //   - Optionally dotfiles
+        let active_repo_set: HashSet<String> = ctx
+            .repos
+            .keys()
+            .map(|rp| rp.as_str().to_string())
+            .collect();
+
+        let all_repos_on_disk: Vec<String> = ctx
+            .all_repos_on_disk
+            .iter()
+            .filter_map(|p| p.to_str().map(|s| s.to_string()))
+            .collect();
+
+        let excluded_repos: HashSet<String> = all_repos_on_disk
+            .iter()
+            .filter(|r| !active_repo_set.contains(*r))
+            .cloned()
+            .collect();
+
+        let collapsed = collapse_excludes(&excluded_repos, &all_repos_on_disk);
+
+        // Collect into a BTreeMap for deterministic ordering.
+        let mut files_exclude: BTreeMap<String, serde_json::Value> = BTreeMap::new();
+
+        if cfg.hide_dotfiles {
+            files_exclude.insert(".*".to_string(), serde_json::Value::Bool(true));
+        }
+
+        for path in collapsed {
+            files_exclude.insert(path, serde_json::Value::Bool(true));
+        }
+
+        // Hide other project directories.
+        let active_project = ctx.project.as_str();
+        for project_path in ctx.all_project_paths {
+            if project_path != active_project {
+                files_exclude.insert(
+                    format!("projects/{}", project_path),
+                    serde_json::Value::Bool(true),
+                );
+            }
+        }
+
+        // Merge settings: overwrite managed keys, preserve user keys.
+        let mut managed_settings: serde_json::Map<String, serde_json::Value> =
+            serde_json::from_value(serde_json::json!({
                 "git.autoRepositoryDetection": "subFolders",
                 "git.repositoryScanMaxDepth": 3
-            }),
-        )
-        .unwrap();
+            }))
+            .unwrap();
+
+        // Always overwrite files.exclude entirely (it's fully derived from
+        // repo state). Users should put their excludes in VS Code user settings,
+        // not workspace settings.
+        managed_settings.insert(
+            "files.exclude".to_string(),
+            serde_json::to_value(&files_exclude).unwrap(),
+        );
 
         let settings = obj
             .entry("settings".to_string())
@@ -103,5 +233,101 @@ impl Integration for VscodeWorkspace {
 
     fn generated_files(&self, ctx: &IntegrationContext) -> Vec<String> {
         vec![format!("{}.code-workspace", ctx.project.as_str())]
+    }
+}
+
+// ===========================================================================
+// Unit tests
+// ===========================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn set(items: &[&str]) -> HashSet<String> {
+        items.iter().map(|s| s.to_string()).collect()
+    }
+
+    fn all_repos(items: &[&str]) -> Vec<String> {
+        items.iter().map(|s| s.to_string()).collect()
+    }
+
+    // -----------------------------------------------------------------------
+    // collapse_excludes
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn collapse_all_repos_under_owner() {
+        // All repos under github/acme are excluded → collapse to owner.
+        let all = all_repos(&[
+            "github/acme/server",
+            "github/acme/web",
+            "github/chatly/api",
+        ]);
+        let excluded = set(&["github/acme/server", "github/acme/web"]);
+        let result = collapse_excludes(&excluded, &all);
+        assert_eq!(result, vec!["github/acme"]);
+    }
+
+    #[test]
+    fn no_collapse_for_mixed_owner() {
+        // Only some repos under github/acme are excluded → list individually.
+        let all = all_repos(&[
+            "github/acme/server",
+            "github/acme/web",
+            "github/acme/docs",
+        ]);
+        let excluded = set(&["github/acme/server", "github/acme/web"]);
+        let result = collapse_excludes(&excluded, &all);
+        assert_eq!(result, vec!["github/acme/server", "github/acme/web"]);
+    }
+
+    #[test]
+    fn collapse_all_owners_under_registry() {
+        // All repos under github/ are excluded → collapse to registry.
+        let all = all_repos(&[
+            "github/acme/server",
+            "github/acme/web",
+            "github/chatly/api",
+        ]);
+        let excluded = set(&["github/acme/server", "github/acme/web", "github/chatly/api"]);
+        let result = collapse_excludes(&excluded, &all);
+        assert_eq!(result, vec!["github"]);
+    }
+
+    #[test]
+    fn collapse_some_owners_but_not_registry() {
+        // All repos under github/acme excluded, but github/chatly has an active repo.
+        let all = all_repos(&[
+            "github/acme/server",
+            "github/acme/web",
+            "github/chatly/api",
+            "github/chatly/frontend",
+        ]);
+        let excluded = set(&[
+            "github/acme/server",
+            "github/acme/web",
+            "github/chatly/api",
+        ]);
+        let mut result = collapse_excludes(&excluded, &all);
+        result.sort();
+        assert!(result.contains(&"github/acme".to_string()));
+        assert!(result.contains(&"github/chatly/api".to_string()));
+        assert!(!result.contains(&"github".to_string()));
+    }
+
+    #[test]
+    fn empty_excluded_set_returns_empty() {
+        let all = all_repos(&["github/acme/server", "github/chatly/api"]);
+        let excluded = set(&[]);
+        let result = collapse_excludes(&excluded, &all);
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn all_repos_empty_returns_empty() {
+        let excluded = set(&["github/acme/server"]);
+        let result = collapse_excludes(&excluded, &[]);
+        assert!(result.is_empty());
     }
 }

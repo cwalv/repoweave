@@ -1128,6 +1128,172 @@ mod vscode_workspace {
         assert!(issues.iter().any(|i| i.severity == Severity::Warning
             && i.message.contains("code-workspace")));
     }
+
+    #[test]
+    fn files_exclude_hides_non_project_repos() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+
+        // Active project has github/chatly/server.
+        // github/acme/web is on disk but not in the project.
+        let manifest = make_manifest(vec![("github/chatly/server", Role::Primary)]);
+        let project = ProjectName::new("test-project");
+        let config = IntegrationConfig::default();
+
+        let all_repos_on_disk: Vec<std::path::PathBuf> = vec![
+            "github/chatly/server".into(),
+            "github/acme/web".into(),
+        ];
+
+        let ctx = IntegrationContext {
+            output_dir: root,
+            workspace_root: root,
+            project: &project,
+            repos: &manifest.repositories,
+            config: &config,
+            all_repos_on_disk: &all_repos_on_disk,
+            all_project_paths: &[],
+        };
+
+        VscodeWorkspace.activate(&ctx).unwrap();
+
+        let content =
+            std::fs::read_to_string(root.join("test-project.code-workspace")).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
+
+        let exclude = &parsed["settings"]["files.exclude"];
+        // github/acme/web should be excluded (only repo under github/acme, so
+        // collapse_excludes will produce "github/acme")
+        assert_eq!(exclude["github/acme"], serde_json::Value::Bool(true));
+        // github/chatly/server is active — must NOT be excluded
+        assert!(exclude.get("github/chatly/server").is_none());
+        assert!(exclude.get("github/chatly").is_none());
+        assert!(exclude.get("github").is_none());
+    }
+
+    #[test]
+    fn files_exclude_hides_other_projects() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+
+        let manifest = make_manifest(vec![("github/acme/server", Role::Primary)]);
+        let project = ProjectName::new("proj-a");
+        let config = IntegrationConfig::default();
+
+        let all_repos_on_disk: Vec<std::path::PathBuf> =
+            vec!["github/acme/server".into()];
+        let all_project_paths = vec!["proj-a".to_string(), "proj-b".to_string()];
+
+        let ctx = IntegrationContext {
+            output_dir: root,
+            workspace_root: root,
+            project: &project,
+            repos: &manifest.repositories,
+            config: &config,
+            all_repos_on_disk: &all_repos_on_disk,
+            all_project_paths: &all_project_paths,
+        };
+
+        VscodeWorkspace.activate(&ctx).unwrap();
+
+        let content = std::fs::read_to_string(root.join("proj-a.code-workspace")).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
+        let exclude = &parsed["settings"]["files.exclude"];
+
+        // The other project directory should be excluded.
+        assert_eq!(exclude["projects/proj-b"], serde_json::Value::Bool(true));
+        // The active project should NOT be excluded.
+        assert!(exclude.get("projects/proj-a").is_none());
+    }
+
+    #[test]
+    fn files_exclude_hides_dotfiles_by_default() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+
+        let manifest = make_manifest(vec![("github/acme/server", Role::Primary)]);
+        let project = ProjectName::new("test-project");
+        let config = IntegrationConfig::default();
+        let ctx = make_ctx(root, &project, &manifest, &config);
+
+        VscodeWorkspace.activate(&ctx).unwrap();
+
+        let content =
+            std::fs::read_to_string(root.join("test-project.code-workspace")).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
+
+        assert_eq!(
+            parsed["settings"]["files.exclude"][".*"],
+            serde_json::Value::Bool(true),
+            "dotfiles should be hidden by default"
+        );
+    }
+
+    #[test]
+    fn files_exclude_respects_hide_dotfiles_false() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+
+        let manifest = make_manifest(vec![("github/acme/server", Role::Primary)]);
+        let project = ProjectName::new("test-project");
+        let config = IntegrationConfig::from_yaml("hide-dotfiles: false");
+        let ctx = make_ctx(root, &project, &manifest, &config);
+
+        VscodeWorkspace.activate(&ctx).unwrap();
+
+        let content =
+            std::fs::read_to_string(root.join("test-project.code-workspace")).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
+
+        assert!(
+            parsed["settings"]["files.exclude"].get(".*").is_none(),
+            "dotfiles should not be hidden when hide-dotfiles is false"
+        );
+    }
+
+    #[test]
+    fn files_exclude_collapses_paths() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+
+        // Active project has only github/acme/server.
+        // All other repos are under github/other — should collapse to github/other.
+        let manifest = make_manifest(vec![("github/acme/server", Role::Primary)]);
+        let project = ProjectName::new("test-project");
+        let config = IntegrationConfig::default();
+
+        let all_repos_on_disk: Vec<std::path::PathBuf> = vec![
+            "github/acme/server".into(),
+            "github/other/alpha".into(),
+            "github/other/beta".into(),
+        ];
+
+        let ctx = IntegrationContext {
+            output_dir: root,
+            workspace_root: root,
+            project: &project,
+            repos: &manifest.repositories,
+            config: &config,
+            all_repos_on_disk: &all_repos_on_disk,
+            all_project_paths: &[],
+        };
+
+        VscodeWorkspace.activate(&ctx).unwrap();
+
+        let content =
+            std::fs::read_to_string(root.join("test-project.code-workspace")).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
+        let exclude = &parsed["settings"]["files.exclude"];
+
+        // All repos under github/other excluded → should collapse to owner path.
+        assert_eq!(exclude["github/other"], serde_json::Value::Bool(true));
+        // Individual paths should NOT appear (they were collapsed).
+        assert!(exclude.get("github/other/alpha").is_none());
+        assert!(exclude.get("github/other/beta").is_none());
+        // Active repo and its owner must not be excluded.
+        assert!(exclude.get("github/acme").is_none());
+        assert!(exclude.get("github/acme/server").is_none());
+    }
 }
 
 // ===========================================================================
