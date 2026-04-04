@@ -192,22 +192,29 @@ fn setup_claude_registers_hooks() {
         assert!(found, "{event} should contain rwv prime hook");
     }
 
-    // WorktreeCreate + WorktreeRemove registered
+    // WorktreeCreate + WorktreeRemove registered with rwv workweave --claude-hook
     for event in &["WorktreeCreate", "WorktreeRemove"] {
-        assert!(
-            content["hooks"][event].as_array().is_some(),
-            "{event} should be registered"
-        );
+        let arr = content["hooks"][event].as_array().unwrap_or_else(|| {
+            panic!("{event} should be registered")
+        });
+        let found = arr.iter().any(|g| {
+            g["hooks"]
+                .as_array()
+                .map(|hs| {
+                    hs.iter()
+                        .any(|h| h["command"].as_str() == Some("rwv workweave --claude-hook"))
+                })
+                .unwrap_or(false)
+        });
+        assert!(found, "{event} should contain 'rwv workweave --claude-hook'");
     }
 
-    // Hook scripts installed
+    // No hook scripts should be installed — rwv workweave --claude-hook is used directly.
     let hooks_dir = claude_dir.join("hooks");
-    for filename in &["rwv-workweave-create.sh", "rwv-workweave-remove.sh"] {
-        assert!(
-            hooks_dir.join(filename).exists(),
-            "{filename} should be installed in ~/.claude/hooks/"
-        );
-    }
+    assert!(
+        !hooks_dir.exists(),
+        "hooks_dir should not be created (no shell scripts needed)"
+    );
 }
 
 // ============================================================================
@@ -236,18 +243,20 @@ fn setup_claude_idempotent() {
         .env("HOME", tmp.path())
         .assert()
         .success()
-        .stdout(predicate::str::contains("already registered"));
+        .stdout(predicate::str::contains("up to date"));
 
     let second = fs::read_to_string(claude_dir.join("settings.json")).unwrap();
     assert_eq!(first, second, "second run should not modify the file");
 }
 
 // ============================================================================
-// 8. setup claude — hook scripts are executable
+// 8. setup claude — no hook scripts installed (uses rwv workweave --claude-hook)
 // ============================================================================
 
 #[test]
 fn setup_claude_scripts_are_executable() {
+    // rwv setup claude no longer installs shell scripts; it registers
+    // `rwv workweave --claude-hook` directly. Verify no scripts are installed.
     let tmp = tempfile::tempdir().unwrap();
     let claude_dir = tmp.path().join(".claude");
     fs::create_dir_all(&claude_dir).unwrap();
@@ -261,17 +270,8 @@ fn setup_claude_scripts_are_executable() {
         .success();
 
     let hooks_dir = claude_dir.join("hooks");
-    for filename in &["rwv-workweave-create.sh", "rwv-workweave-remove.sh"] {
-        let path = hooks_dir.join(filename);
-        assert!(path.exists(), "{filename} should exist");
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let mode = fs::metadata(&path).unwrap().permissions().mode();
-            assert!(
-                mode & 0o111 != 0,
-                "{filename} should be executable (mode={mode:#o})"
-            );
-        }
-    }
+    assert!(
+        !hooks_dir.exists(),
+        "hooks_dir should not be created (scripts not needed with --claude-hook)"
+    );
 }

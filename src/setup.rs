@@ -57,7 +57,16 @@ const HOOK_COMMAND: &str = "rwv prime";
 /// Hook events we register `rwv prime` under.
 const HOOK_EVENTS: &[&str] = &["SessionStart", "PreCompact"];
 
+/// The command registered for WorktreeCreate and WorktreeRemove hooks.
+/// A single binary handles both events by reading `hook_event_name` from stdin JSON.
+const WORKWEAVE_HOOK_COMMAND: &str = "rwv workweave --claude-hook";
+
+/// Workweave hook events handled by `rwv workweave --claude-hook`.
+const WORKWEAVE_HOOK_EVENTS: &[&str] = &["WorktreeCreate", "WorktreeRemove"];
+
 /// Workweave hook scripts: (event, filename, embedded content).
+/// Kept for reference / legacy callers; no longer installed by default.
+#[allow(dead_code)]
 const WORKWEAVE_HOOKS: &[(&str, &str, &str)] = &[
     (
         "WorktreeCreate",
@@ -93,38 +102,12 @@ pub fn claude_at(settings_path: &Path, hooks_dir: &Path) -> anyhow::Result<()> {
     claude_inner(settings_path, hooks_dir)
 }
 
-fn claude_inner(settings_path: &Path, hooks_dir: &Path) -> anyhow::Result<()> {
+fn claude_inner(settings_path: &Path, _hooks_dir: &Path) -> anyhow::Result<()> {
     if !settings_path.exists() {
         bail!(
             "{} does not exist. Please run Claude Code at least once to create it.",
             settings_path.display()
         );
-    }
-
-    // Install (or update) workweave hook scripts to hooks_dir.
-    std::fs::create_dir_all(hooks_dir)
-        .with_context(|| format!("failed to create {}", hooks_dir.display()))?;
-
-    let mut scripts_updated = false;
-    for &(_event, filename, content) in WORKWEAVE_HOOKS {
-        let dest = hooks_dir.join(filename);
-        let needs_write = if dest.exists() {
-            std::fs::read_to_string(&dest).ok().as_deref() != Some(content)
-        } else {
-            true
-        };
-        if needs_write {
-            std::fs::write(&dest, content)
-                .with_context(|| format!("failed to write {}", dest.display()))?;
-            scripts_updated = true;
-        }
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let perms = std::fs::Permissions::from_mode(0o755);
-            std::fs::set_permissions(&dest, perms)
-                .with_context(|| format!("failed to chmod {}", dest.display()))?;
-        }
     }
 
     // Read and parse settings.json.
@@ -152,11 +135,10 @@ fn claude_inner(settings_path: &Path, hooks_dir: &Path) -> anyhow::Result<()> {
         }
     }
 
-    // Register workweave scripts for WorktreeCreate + WorktreeRemove.
-    for &(event, filename, _content) in WORKWEAVE_HOOKS {
-        let script_path = hooks_dir.join(filename);
-        let command = script_path.to_string_lossy().into_owned();
-        if ensure_command_hook_registered(hooks_obj, event, &command) {
+    // Register `rwv workweave --claude-hook` for WorktreeCreate + WorktreeRemove.
+    // The same command handles both events by reading hook_event_name from stdin JSON.
+    for &event in WORKWEAVE_HOOK_EVENTS {
+        if ensure_command_hook_registered(hooks_obj, event, WORKWEAVE_HOOK_COMMAND) {
             changed = true;
         }
     }
@@ -166,8 +148,6 @@ fn claude_inner(settings_path: &Path, hooks_dir: &Path) -> anyhow::Result<()> {
         std::fs::write(settings_path, format!("{output}\n"))
             .with_context(|| format!("failed to write {}", settings_path.display()))?;
         println!("Registered rwv hooks in {}", settings_path.display());
-    } else if scripts_updated {
-        println!("Updated hook scripts in {}", hooks_dir.display());
     } else {
         println!("rwv hooks up to date — nothing to do.");
     }
@@ -378,8 +358,8 @@ mod tests {
             assert!(found, "{event} should contain rwv prime");
         }
 
-        // Workweave hooks registered
-        for &(event, _filename, _content) in WORKWEAVE_HOOKS {
+        // Workweave hook events registered with rwv workweave --claude-hook
+        for &event in WORKWEAVE_HOOK_EVENTS {
             assert!(
                 content["hooks"][event].as_array().is_some(),
                 "{event} should be registered"
@@ -388,7 +368,9 @@ mod tests {
     }
 
     #[test]
-    fn claude_installs_hook_scripts() {
+    fn claude_does_not_install_hook_scripts() {
+        // rwv setup claude no longer installs shell scripts — it registers
+        // `rwv workweave --claude-hook` directly in settings.json.
         let tmp = tempfile::tempdir().unwrap();
         let settings_path = tmp.path().join("settings.json");
         let hooks_dir = tmp.path().join("hooks");
@@ -396,19 +378,11 @@ mod tests {
 
         claude_at(&settings_path, &hooks_dir).unwrap();
 
-        for &(_event, filename, _content) in WORKWEAVE_HOOKS {
-            let dest = hooks_dir.join(filename);
-            assert!(dest.exists(), "{filename} should be installed");
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::PermissionsExt;
-                let mode = std::fs::metadata(&dest).unwrap().permissions().mode();
-                assert!(
-                    mode & 0o111 != 0,
-                    "{filename} should be executable (mode={mode:#o})"
-                );
-            }
-        }
+        // hooks_dir should NOT have been created (no scripts to install).
+        assert!(
+            !hooks_dir.exists(),
+            "hooks_dir should not be created when using --claude-hook"
+        );
     }
 
     #[test]
@@ -423,8 +397,7 @@ mod tests {
         let content: Value =
             serde_json::from_str(&std::fs::read_to_string(&settings_path).unwrap()).unwrap();
 
-        for &(event, filename, _content) in WORKWEAVE_HOOKS {
-            let expected_cmd = hooks_dir.join(filename).to_string_lossy().into_owned();
+        for &event in WORKWEAVE_HOOK_EVENTS {
             let arr = content["hooks"][event]
                 .as_array()
                 .unwrap_or_else(|| panic!("{event} should be present"));
@@ -433,11 +406,11 @@ mod tests {
                     .as_array()
                     .map(|hs| {
                         hs.iter()
-                            .any(|h| h["command"].as_str() == Some(expected_cmd.as_str()))
+                            .any(|h| h["command"].as_str() == Some(WORKWEAVE_HOOK_COMMAND))
                     })
                     .unwrap_or(false)
             });
-            assert!(found, "{event} should contain command {expected_cmd}");
+            assert!(found, "{event} should contain command {WORKWEAVE_HOOK_COMMAND}");
         }
     }
 

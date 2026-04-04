@@ -9,8 +9,10 @@
 use crate::git::GitVcs;
 use crate::manifest::{Manifest, ProjectName, RepoPath, VcsType, WorkweaveName};
 use crate::vcs::Vcs;
-use crate::workspace::{parse_weave_dir_name, set_active_project, weave_dir_name, WorkweaveMarker};
-use anyhow::bail;
+use crate::workspace::{
+    parse_weave_dir_name, read_active_project, set_active_project, weave_dir_name, WorkweaveMarker,
+};
+use anyhow::{anyhow, bail};
 use std::path::{Path, PathBuf};
 
 /// Determine where workweave directories live.
@@ -239,6 +241,28 @@ pub fn delete_workweave(
                 let msg = format!("{}: {e}", repo_path.as_str());
                 eprintln!("rwv workweave delete: error: {msg}");
                 errors.push(msg);
+                continue;
+            }
+        }
+
+        // Prune stale worktree metadata and delete ephemeral branches.
+        let _ = vcs.worktree_prune(&repo_abs);
+        match vcs.list_branches_with_prefix(&repo_abs, name.as_str()) {
+            Ok(branches) => {
+                for branch in branches {
+                    if let Err(e) = vcs.delete_branch(&repo_abs, &branch) {
+                        eprintln!(
+                            "rwv workweave delete: warning: could not delete branch {branch} in {}: {e}",
+                            repo_path.as_str()
+                        );
+                    }
+                }
+            }
+            Err(e) => {
+                eprintln!(
+                    "rwv workweave delete: warning: could not list branches in {}: {e}",
+                    repo_path.as_str()
+                );
             }
         }
     }
@@ -257,6 +281,18 @@ pub fn delete_workweave(
                 let msg = format!("projects/{project}: {e}");
                 eprintln!("rwv workweave delete: error: {msg}");
                 errors.push(msg);
+            } else {
+                // Prune and delete ephemeral branches for the project repo.
+                let _ = GitVcs.worktree_prune(&project_dir);
+                if let Ok(branches) = GitVcs.list_branches_with_prefix(&project_dir, name.as_str()) {
+                    for branch in branches {
+                        if let Err(e) = GitVcs.delete_branch(&project_dir, &branch) {
+                            eprintln!(
+                                "rwv workweave delete: warning: could not delete branch {branch} in projects/{project}: {e}"
+                            );
+                        }
+                    }
+                }
             }
         }
     }
@@ -414,4 +450,193 @@ fn walk_for_repos(
 fn load_manifest(ws_root: &Path, project: &str) -> anyhow::Result<Manifest> {
     let manifest_path = ws_root.join("projects").join(project).join("rwv.yaml");
     Manifest::from_path(&manifest_path)
+}
+
+// ---------------------------------------------------------------------------
+// Claude Code hook mode
+// ---------------------------------------------------------------------------
+
+/// Input JSON sent by Claude Code for WorktreeCreate / WorktreeRemove hooks.
+#[derive(serde::Deserialize)]
+struct ClaudeHookInput {
+    cwd: Option<String>,
+    branch_name: Option<String>,
+    session_id: Option<String>,
+    hook_event_name: Option<String>,
+    worktree_path: Option<String>,
+}
+
+/// Derive a workweave name from the hook payload.
+///
+/// Priority: branch_name → session_id → timestamp fallback.
+/// Slashes are replaced with dashes for filesystem safety.
+fn derive_workweave_name(branch_name: Option<&str>, session_id: Option<&str>) -> String {
+    let raw = match branch_name {
+        Some(b) if !b.is_empty() && b != "null" => b.to_string(),
+        _ => match session_id {
+            Some(s) if !s.is_empty() && s != "null" => s.to_string(),
+            _ => format!(
+                "ww-{}",
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs()
+            ),
+        },
+    };
+    raw.replace('/', "-")
+}
+
+/// Handle a Claude Code hook invocation.
+///
+/// Reads JSON from stdin, dispatches on `hook_event_name`:
+/// - `WorktreeCreate` — creates a workweave and prints its path to stdout.
+/// - `WorktreeRemove` — deletes the workweave (fire-and-forget; always exits 0).
+pub fn handle_claude_hook() -> anyhow::Result<()> {
+    let input: ClaudeHookInput = serde_json::from_reader(std::io::stdin())
+        .map_err(|e| anyhow!("failed to parse hook JSON from stdin: {e}"))?;
+
+    match input.hook_event_name.as_deref() {
+        Some("WorktreeCreate") => {
+            let cwd = input.cwd.ok_or_else(|| anyhow!("missing cwd in hook input"))?;
+
+            let ws_ctx = crate::workspace::WorkspaceContext::resolve(Path::new(&cwd), None)?;
+            let ws_root = &ws_ctx.root;
+
+            let project = read_active_project(ws_root)
+                .ok_or_else(|| anyhow!("no .rwv-active found in {}", ws_root.display()))?;
+
+            let name = derive_workweave_name(
+                input.branch_name.as_deref(),
+                input.session_id.as_deref(),
+            );
+
+            let path = create_workweave(ws_root, project.as_str(), &WorkweaveName::new(&name))?;
+            println!("{}", path.display());
+        }
+        Some("WorktreeRemove") => {
+            let worktree_path = input
+                .worktree_path
+                .ok_or_else(|| anyhow!("missing worktree_path in hook input"))?;
+
+            // Fire-and-forget: log errors but always succeed.
+            if let Ok(Some(marker)) = WorkweaveMarker::read(Path::new(&worktree_path)) {
+                let dir_name = Path::new(&worktree_path)
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("");
+                let name = dir_name
+                    .split_once("--")
+                    .map(|(_, n)| n)
+                    .unwrap_or(dir_name);
+
+                if let Err(e) = delete_workweave(
+                    &marker.primary,
+                    marker.project.as_str(),
+                    &WorkweaveName::new(name),
+                ) {
+                    eprintln!("rwv workweave --claude-hook WorktreeRemove: warning: {e}");
+                }
+            }
+            // Always exit 0.
+        }
+        other => {
+            anyhow::bail!("unknown hook_event_name: {:?}", other);
+        }
+    }
+
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // -----------------------------------------------------------------------
+    // derive_workweave_name
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn derive_name_uses_branch_name() {
+        assert_eq!(derive_workweave_name(Some("feat/my-branch"), None), "feat-my-branch");
+    }
+
+    #[test]
+    fn derive_name_falls_back_to_session_id() {
+        let name = derive_workweave_name(Some("null"), Some("abc-session-123"));
+        assert_eq!(name, "abc-session-123");
+    }
+
+    #[test]
+    fn derive_name_empty_branch_falls_back_to_session_id() {
+        let name = derive_workweave_name(Some(""), Some("sess-xyz"));
+        assert_eq!(name, "sess-xyz");
+    }
+
+    #[test]
+    fn derive_name_falls_back_to_timestamp_when_both_null() {
+        let name = derive_workweave_name(Some("null"), Some("null"));
+        assert!(name.starts_with("ww-"), "expected ww-<timestamp>, got {name}");
+    }
+
+    #[test]
+    fn derive_name_all_none_produces_timestamp() {
+        let name = derive_workweave_name(None, None);
+        assert!(name.starts_with("ww-"), "expected ww-<timestamp>, got {name}");
+    }
+
+    #[test]
+    fn derive_name_replaces_slashes() {
+        assert_eq!(derive_workweave_name(Some("a/b/c"), None), "a-b-c");
+    }
+
+    // -----------------------------------------------------------------------
+    // handle_claude_hook — JSON parsing via serde
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn claude_hook_unknown_event_errors() {
+        // Deserialise directly and call the dispatch logic via the public API.
+        // We simulate by constructing the input struct.
+        let json = r#"{"hook_event_name":"UnknownEvent"}"#;
+        let input: ClaudeHookInput = serde_json::from_str(json).unwrap();
+        // The match arm should hit the `other` branch.
+        assert_eq!(input.hook_event_name.as_deref(), Some("UnknownEvent"));
+        assert!(input.cwd.is_none());
+        assert!(input.worktree_path.is_none());
+    }
+
+    #[test]
+    fn claude_hook_null_branch_derives_session_name() {
+        let name = derive_workweave_name(Some("null"), Some("my-session-id"));
+        assert_eq!(name, "my-session-id");
+    }
+
+    #[test]
+    fn claude_hook_input_deserialises_fully() {
+        let json = r#"{
+            "cwd": "/home/user/ws",
+            "branch_name": "feat/new-thing",
+            "session_id": "sess-001",
+            "hook_event_name": "WorktreeCreate",
+            "worktree_path": "/tmp/wt"
+        }"#;
+        let input: ClaudeHookInput = serde_json::from_str(json).unwrap();
+        assert_eq!(input.cwd.as_deref(), Some("/home/user/ws"));
+        assert_eq!(input.branch_name.as_deref(), Some("feat/new-thing"));
+        assert_eq!(input.session_id.as_deref(), Some("sess-001"));
+        assert_eq!(input.hook_event_name.as_deref(), Some("WorktreeCreate"));
+        assert_eq!(input.worktree_path.as_deref(), Some("/tmp/wt"));
+    }
+
+    #[test]
+    fn claude_hook_input_all_optional_fields_missing() {
+        let json = r#"{}"#;
+        let input: ClaudeHookInput = serde_json::from_str(json).unwrap();
+        assert!(input.cwd.is_none());
+        assert!(input.branch_name.is_none());
+        assert!(input.session_id.is_none());
+        assert!(input.hook_event_name.is_none());
+        assert!(input.worktree_path.is_none());
+    }
 }

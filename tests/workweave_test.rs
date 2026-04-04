@@ -1161,3 +1161,297 @@ fn delete_nonexistent_workweave_errors_gracefully() {
     );
     let _ = exit_code; // silence unused warning
 }
+
+// ============================================================================
+// Ephemeral branch cleanup (rwv-9mp)
+// ============================================================================
+
+/// Helper: list local branches in a git repo whose names start with `prefix/`.
+fn branches_with_prefix(repo: &Path, prefix: &str) -> Vec<String> {
+    let output = process::Command::new("git")
+        .args(["branch", "--list", &format!("{prefix}/*")])
+        .current_dir(repo)
+        .output()
+        .expect("git branch --list should work");
+    String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .map(|l| l.trim_start_matches('*').trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect()
+}
+
+#[test]
+fn delete_workweave_cleans_up_ephemeral_branches() {
+    let tmp = tempfile::tempdir().unwrap();
+    let ws = make_workspace(tmp.path(), "web-app");
+
+    let weaveroot = tmp.path().join(".workweaves");
+    std::fs::create_dir_all(&weaveroot).unwrap();
+
+    // Create a workweave — this creates ephemeral branch "cleanup/main" in the repo.
+    rwv()
+        .args(["workweave", "web-app", "cleanup"])
+        .env("WEAVEROOT", &weaveroot)
+        .current_dir(&ws)
+        .assert()
+        .success();
+
+    let primary_repo = ws.join("github/org/repo");
+
+    // Confirm the ephemeral branch exists before deletion.
+    let before = branches_with_prefix(&primary_repo, "cleanup");
+    assert!(
+        !before.is_empty(),
+        "ephemeral branch cleanup/main should exist before delete, got: {before:?}"
+    );
+
+    // Delete the workweave.
+    rwv()
+        .args(["workweave", "web-app", "cleanup", "--delete"])
+        .env("WEAVEROOT", &weaveroot)
+        .current_dir(&ws)
+        .assert()
+        .success();
+
+    // The ephemeral branch should be gone.
+    let after = branches_with_prefix(&primary_repo, "cleanup");
+    assert!(
+        after.is_empty(),
+        "delete_workweave should remove ephemeral branches with prefix 'cleanup/', remaining: {after:?}"
+    );
+}
+
+#[test]
+fn create_workweave_handles_stale_branches() {
+    let tmp = tempfile::tempdir().unwrap();
+    let ws = make_workspace(tmp.path(), "web-app");
+
+    let weaveroot = tmp.path().join(".workweaves");
+    std::fs::create_dir_all(&weaveroot).unwrap();
+
+    // Create a workweave, then delete it normally (branches cleaned up).
+    rwv()
+        .args(["workweave", "web-app", "stale-test"])
+        .env("WEAVEROOT", &weaveroot)
+        .current_dir(&ws)
+        .assert()
+        .success();
+
+    rwv()
+        .args(["workweave", "web-app", "stale-test", "--delete"])
+        .env("WEAVEROOT", &weaveroot)
+        .current_dir(&ws)
+        .assert()
+        .success();
+
+    // Manually re-create the stale ephemeral branch to simulate a failed cleanup.
+    let primary_repo = ws.join("github/org/repo");
+    let head = process::Command::new("git")
+        .args(["rev-parse", "HEAD"])
+        .current_dir(&primary_repo)
+        .output()
+        .expect("git rev-parse HEAD");
+    let head_sha = String::from_utf8_lossy(&head.stdout).trim().to_string();
+
+    let status = process::Command::new("git")
+        .args(["branch", "stale-test/main", &head_sha])
+        .current_dir(&primary_repo)
+        .status()
+        .expect("git branch stale-test/main");
+    assert!(status.success(), "should be able to create stale branch");
+
+    // Creating the workweave again with the same name should succeed despite
+    // the stale ephemeral branch.
+    rwv()
+        .args(["workweave", "web-app", "stale-test"])
+        .env("WEAVEROOT", &weaveroot)
+        .current_dir(&ws)
+        .assert()
+        .success();
+
+    // Verify the workweave was actually created.
+    let ww_dir = weaveroot.join("ws--stale-test");
+    assert!(
+        ww_dir.join("github/org/repo").exists(),
+        "workweave should be created successfully even with pre-existing stale branch"
+    );
+}
+
+// ============================================================================
+// --claude-hook flag
+// ============================================================================
+
+/// Helper: build WorktreeCreate JSON for a workspace cwd.
+fn worktree_create_json(cwd: &std::path::Path, branch: &str, session: &str) -> String {
+    serde_json::json!({
+        "hook_event_name": "WorktreeCreate",
+        "cwd": cwd.to_string_lossy(),
+        "branch_name": branch,
+        "session_id": session,
+    })
+    .to_string()
+}
+
+/// Helper: build WorktreeRemove JSON for a workweave path.
+fn worktree_remove_json(worktree_path: &std::path::Path) -> String {
+    serde_json::json!({
+        "hook_event_name": "WorktreeRemove",
+        "worktree_path": worktree_path.to_string_lossy(),
+    })
+    .to_string()
+}
+
+#[test]
+fn claude_hook_create_produces_path() {
+    let tmp = tempfile::tempdir().unwrap();
+    let ws = make_workspace(tmp.path(), "web-app");
+    std::fs::write(ws.join(".rwv-active"), "web-app\n").unwrap();
+
+    let weaveroot = tmp.path().join(".workweaves");
+    std::fs::create_dir_all(&weaveroot).unwrap();
+
+    let json = worktree_create_json(&ws, "feat/my-branch", "sess-001");
+
+    let output = rwv()
+        .args(["workweave", "--claude-hook"])
+        .env("WEAVEROOT", &weaveroot)
+        .write_stdin(json)
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "should succeed, stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let path_str = stdout.trim();
+    assert!(!path_str.is_empty(), "should print workweave path to stdout");
+
+    let ww_path = std::path::Path::new(path_str);
+    assert!(
+        ww_path.exists(),
+        "workweave directory should exist at {path_str}"
+    );
+}
+
+#[test]
+fn claude_hook_null_branch_fallback() {
+    // When branch_name is "null", should fall back to session_id.
+    let tmp = tempfile::tempdir().unwrap();
+    let ws = make_workspace(tmp.path(), "web-app");
+    std::fs::write(ws.join(".rwv-active"), "web-app\n").unwrap();
+
+    let weaveroot = tmp.path().join(".workweaves");
+    std::fs::create_dir_all(&weaveroot).unwrap();
+
+    let json = worktree_create_json(&ws, "null", "my-fallback-session");
+
+    let output = rwv()
+        .args(["workweave", "--claude-hook"])
+        .env("WEAVEROOT", &weaveroot)
+        .write_stdin(json)
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "should succeed, stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let ww_path_str = stdout.trim();
+    // The path should contain the session_id as the name part.
+    assert!(
+        ww_path_str.contains("my-fallback-session"),
+        "workweave path should use session_id as name, got: {ww_path_str}"
+    );
+    assert!(
+        std::path::Path::new(ww_path_str).exists(),
+        "workweave directory should exist"
+    );
+}
+
+#[test]
+fn claude_hook_remove_cleans_up() {
+    let tmp = tempfile::tempdir().unwrap();
+    let ws = make_workspace(tmp.path(), "web-app");
+    std::fs::write(ws.join(".rwv-active"), "web-app\n").unwrap();
+
+    let weaveroot = tmp.path().join(".workweaves");
+    std::fs::create_dir_all(&weaveroot).unwrap();
+
+    // First create a workweave the normal way.
+    rwv()
+        .args(["workweave", "web-app", "to-remove"])
+        .env("WEAVEROOT", &weaveroot)
+        .current_dir(&ws)
+        .assert()
+        .success();
+
+    let ww_dir = weaveroot.join("ws--to-remove");
+    assert!(ww_dir.exists(), "workweave should exist before removal");
+
+    // Now delete it via --claude-hook WorktreeRemove.
+    let json = worktree_remove_json(&ww_dir);
+
+    rwv()
+        .args(["workweave", "--claude-hook"])
+        .env("WEAVEROOT", &weaveroot)
+        .write_stdin(json)
+        .assert()
+        .success();
+
+    assert!(
+        !ww_dir.exists(),
+        "workweave directory should be removed after WorktreeRemove hook"
+    );
+}
+
+#[test]
+fn claude_hook_unknown_event_errors() {
+    let tmp = tempfile::tempdir().unwrap();
+    let ws = make_workspace(tmp.path(), "web-app");
+
+    let json = serde_json::json!({
+        "hook_event_name": "SomeUnknownEvent",
+        "cwd": ws.to_string_lossy(),
+    })
+    .to_string();
+
+    rwv()
+        .args(["workweave", "--claude-hook"])
+        .write_stdin(json)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("unknown hook_event_name"));
+}
+
+#[test]
+fn claude_hook_conflicts_with_delete_flag() {
+    // --claude-hook should conflict with --delete.
+    rwv()
+        .args(["workweave", "--claude-hook", "--delete"])
+        .write_stdin(r#"{}"#)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("cannot be used with"));
+}
+
+#[test]
+fn claude_hook_no_project_arg_needed() {
+    // --claude-hook should work without a project argument (derived from .rwv-active).
+    let assert = rwv()
+        .args(["workweave", "--claude-hook"])
+        .write_stdin(r#"{"hook_event_name":"WorktreeCreate","cwd":"/nonexistent/path"}"#)
+        .assert();
+    // It will fail because the path doesn't exist — but the important thing is
+    // that it doesn't fail with a clap "required argument" error.
+    let stderr = String::from_utf8_lossy(&assert.get_output().stderr);
+    assert!(
+        !stderr.contains("required arguments"),
+        "should not require project arg with --claude-hook, got: {stderr}"
+    );
+}

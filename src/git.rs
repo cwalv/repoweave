@@ -73,10 +73,34 @@ impl Vcs for GitVcs {
         let dest_str = dest
             .to_str()
             .ok_or_else(|| anyhow::anyhow!("worktree path is not valid UTF-8"))?;
-        Self::run(
+
+        // First try creating a new branch with -b.
+        let result = Self::run(
             &["worktree", "add", "-b", branch_name, dest_str, start_point],
             repo,
-        )?;
+        );
+
+        if let Err(e) = result {
+            // If the branch already exists, try using it as-is (no -b).
+            // This handles the case where a previous delete didn't clean up branches.
+            let err_str = e.to_string();
+            if err_str.contains("already exists") || err_str.contains("already a worktree") {
+                // Delete the stale branch first, then retry with -b.
+                // If delete fails, fall back to using the existing branch directly.
+                let deleted = Self::run(&["branch", "-D", branch_name], repo).is_ok();
+                if deleted {
+                    Self::run(
+                        &["worktree", "add", "-b", branch_name, dest_str, start_point],
+                        repo,
+                    )?;
+                } else {
+                    Self::run(&["worktree", "add", dest_str, branch_name], repo)?;
+                }
+            } else {
+                return Err(e);
+            }
+        }
+
         Ok(())
     }
 
@@ -118,5 +142,30 @@ impl Vcs for GitVcs {
     fn checkout(&self, repo: &Path, revision: &str) -> anyhow::Result<()> {
         Self::run(&["checkout", revision], repo)?;
         Ok(())
+    }
+
+    fn delete_branch(&self, repo: &Path, branch: &str) -> anyhow::Result<()> {
+        Self::run(&["branch", "-D", branch], repo)?;
+        Ok(())
+    }
+
+    fn worktree_prune(&self, repo: &Path) -> anyhow::Result<()> {
+        Self::run(&["worktree", "prune"], repo)?;
+        Ok(())
+    }
+
+    fn list_branches_with_prefix(&self, repo: &Path, prefix: &str) -> anyhow::Result<Vec<String>> {
+        // `git branch --list 'prefix/*'` lists all local branches under the prefix.
+        let pattern = format!("{prefix}/*");
+        let output = Self::run(&["branch", "--list", &pattern], repo)?;
+        let branches = output
+            .lines()
+            .map(|line| {
+                // Lines from `git branch` are prefixed with "* " (current) or "  ".
+                line.trim_start_matches('*').trim().to_string()
+            })
+            .filter(|s| !s.is_empty())
+            .collect();
+        Ok(branches)
     }
 }

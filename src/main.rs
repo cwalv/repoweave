@@ -24,8 +24,9 @@ struct Cli {
 enum Commands {
     /// Create, delete, or list workweaves
     Workweave {
-        /// Project name
-        project: String,
+        /// Project name (not required when --claude-hook is set)
+        #[arg(required_unless_present = "claude_hook")]
+        project: Option<String>,
         /// Optional workweave name
         name: Option<String>,
         /// Delete the named workweave
@@ -40,6 +41,9 @@ enum Commands {
         /// Hook mode: print only the workweave path to stdout (for Claude Code WorktreeCreate hook)
         #[arg(long)]
         hook_mode: bool,
+        /// Claude Code hook mode: read JSON from stdin, handle create/remove automatically
+        #[arg(long, conflicts_with_all = ["delete", "list", "sync", "hook_mode"])]
+        claude_hook: bool,
     },
     /// Clone a project and its repos
     Fetch {
@@ -134,27 +138,32 @@ fn main() -> anyhow::Result<()> {
             let ctx = WorkspaceContext::resolve(&cwd, None)?;
             println!("{}", ctx.display());
         }
-        Some(Commands::Workweave { project, name, delete, list, sync, hook_mode }) => {
-            let cwd = std::env::current_dir()?;
-            let ctx = WorkspaceContext::resolve(&cwd, None)?;
-            let ws_root = &ctx.root;
-
-            if list {
-                let names = repoweave::workweave::list_workweaves(ws_root)?;
-                for n in &names {
-                    println!("{}", n);
-                }
-            } else if delete {
-                let name = name.ok_or_else(|| anyhow::anyhow!("--delete requires a workweave name"))?;
-                repoweave::workweave::delete_workweave(ws_root, &project, &WorkweaveName::new(name))?;
-            } else if sync {
-                let name = name.ok_or_else(|| anyhow::anyhow!("--sync requires a workweave name"))?;
-                repoweave::workweave::sync_workweave(ws_root, &project, &WorkweaveName::new(name))?;
+        Some(Commands::Workweave { project, name, delete, list, sync, hook_mode, claude_hook }) => {
+            if claude_hook {
+                repoweave::workweave::handle_claude_hook()?;
             } else {
-                let name = name.ok_or_else(|| anyhow::anyhow!("workweave create requires a name argument"))?;
-                let workweave_path = repoweave::workweave::create_workweave(ws_root, &project, &WorkweaveName::new(name))?;
-                if hook_mode {
-                    println!("{}", workweave_path.display());
+                let project = project.expect("project is required unless --claude-hook is set");
+                let cwd = std::env::current_dir()?;
+                let ctx = WorkspaceContext::resolve(&cwd, None)?;
+                let ws_root = &ctx.root;
+
+                if list {
+                    let names = repoweave::workweave::list_workweaves(ws_root)?;
+                    for n in &names {
+                        println!("{}", n);
+                    }
+                } else if delete {
+                    let name = name.ok_or_else(|| anyhow::anyhow!("--delete requires a workweave name"))?;
+                    repoweave::workweave::delete_workweave(ws_root, &project, &WorkweaveName::new(name))?;
+                } else if sync {
+                    let name = name.ok_or_else(|| anyhow::anyhow!("--sync requires a workweave name"))?;
+                    repoweave::workweave::sync_workweave(ws_root, &project, &WorkweaveName::new(name))?;
+                } else {
+                    let name = name.ok_or_else(|| anyhow::anyhow!("workweave create requires a name argument"))?;
+                    let workweave_path = repoweave::workweave::create_workweave(ws_root, &project, &WorkweaveName::new(name))?;
+                    if hook_mode {
+                        println!("{}", workweave_path.display());
+                    }
                 }
             }
         }

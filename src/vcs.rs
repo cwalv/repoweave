@@ -98,4 +98,13 @@ pub trait Vcs {
 
     /// Check out a specific revision (SHA, tag, or branch) in a repo.
     fn checkout(&self, repo: &Path, revision: &str) -> anyhow::Result<()>;
+
+    /// Delete a local branch by name. Uses force-delete semantics.
+    fn delete_branch(&self, repo: &Path, branch: &str) -> anyhow::Result<()>;
+
+    /// Prune stale worktree administrative files from a repo.
+    fn worktree_prune(&self, repo: &Path) -> anyhow::Result<()>;
+
+    /// List local branch names that start with `prefix`.
+    fn list_branches_with_prefix(&self, repo: &Path, prefix: &str) -> anyhow::Result<Vec<String>>;
 }
