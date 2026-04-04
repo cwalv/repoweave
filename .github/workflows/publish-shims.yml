@@ -129,15 +129,15 @@ jobs:
           "
 
           WHEEL_NAME="repoweave-${VERSION}-py3-none-${PLAT_TAG}.whl"
-          mkdir -p /tmp/dist
-          zip -q -r "/tmp/dist/${WHEEL_NAME}" .
+          mkdir -p "$GITHUB_WORKSPACE/dist"
+          zip -q -r "$GITHUB_WORKSPACE/dist/${WHEEL_NAME}" .
         env:
           VERSION: ${{ steps.version.outputs.version }}
 
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
-          packages-dir: /tmp/dist/
+          packages-dir: dist/
 
   publish-pypi-sdist:
     if: ${{ github.event.workflow_run.conclusion == 'success' && startsWith(github.event.workflow_run.head_branch, 'v') || contains(github.event.workflow_run.head_branch, '.') }}
@@ -167,9 +167,9 @@ jobs:
       - name: Build sdist
         run: |
           cd python/repoweave
-          python -m build --sdist --outdir /tmp/dist/
+          python -m build --sdist --outdir "$GITHUB_WORKSPACE/dist/"
 
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
-          packages-dir: /tmp/dist/
+          packages-dir: dist/
