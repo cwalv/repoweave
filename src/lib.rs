@@ -1,0 +1,14 @@
+pub mod activate;
+pub mod add_remove;
+pub mod fetch;
+pub mod git;
+pub mod init;
+pub mod integration;
+pub mod integration_runner;
+pub mod integrations;
+pub mod lock;
+pub mod manifest;
+pub mod registry;
+pub mod vcs;
+pub mod weave;
+pub mod workspace;

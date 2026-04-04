@@ -19,7 +19,7 @@ One example of reduced friction: **no version bump cycle for cross-repo changes.
 The workspace has three layers:
 
 1. **The directory tree** — repos under one root. Every tool benefits: search, navigation, agents, editors. This is the convention alone — no tooling required.
-2. **Ecosystem wiring** — integrations generate workspace files (`package.json`, `go.work`, `Cargo.toml`, `pnpm-workspace.yaml`) so cross-package imports resolve locally. `import { thing } from '@myorg/shared'` just works.
+2. **Ecosystem wiring** — the root directory is the **workspace surface**: the directory that ecosystem tools see. Integrations generate workspace files (`package.json`, `go.work`, `Cargo.toml`, `pnpm-workspace.yaml`) at this surface so cross-package imports resolve locally. Ecosystem tools don't know repos exist — they see a workspace directory with packages. `import { thing } from '@myorg/shared'` just works.
 3. **Reproducibility** — a committed `rwv.yaml` file and its `rwv.lock` pin each repo to an exact SHA, making the project state reproducible from a single project repo.
 
 The only difference from a monorepo commit: updating the lock file is two steps instead of one. You commit in individual repos first, then regenerate and commit the lock file. It's two-phase commit — the lock update is detectable and reversible:
@@ -538,7 +538,11 @@ The design trade-off: submodules get atomic locking for free by taking ownership
 
 ## Integrations
 
-Integrations are pluggable units that each derive config for one tool from the repo list. Each participates in activation hooks (run when creating/syncing weaves or after `rwv add`/`rwv remove`) and check hooks (`rwv check` — read-only inspection). Integration config lives in the project's `rwv.yaml` under an `integrations` key; only overrides need to be listed.
+The primary directory (or weave directory) is the **workspace surface** — the directory that ecosystem tools see. npm, Go, Cargo, uv — none of them know that repos exist. They see a workspace directory with packages in it. `package.json` lists workspace packages. `go.work` lists modules. `Cargo.toml` lists crate members. The packages happen to come from different git repos, but the ecosystem tools neither know nor care.
+
+Integrations are the translation layer between repoweave's multi-repo world (repos, projects, roles) and the ecosystem's workspace world (`package.json`, `go.work`, `Cargo.toml`, `pnpm-workspace.yaml`). They read the project's `rwv.yaml` and produce the ecosystem workspace files at the workspace surface. The result is that ecosystem tools work exactly as they would in a monorepo.
+
+Each integration is a pluggable unit that derives config for one tool from the repo list. Each participates in activation hooks (run when creating/syncing weaves or after `rwv add`/`rwv remove`) and check hooks (`rwv check` — read-only inspection). Integration config lives in the project's `rwv.yaml` under an `integrations` key; only overrides need to be listed.
 
 | Integration | Default enabled | Auto-detects | Generates |
 |---|---|---|---|

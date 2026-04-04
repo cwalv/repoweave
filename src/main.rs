@@ -1,4 +1,22 @@
+mod activate;
+mod add_remove;
+mod check;
+mod fetch;
+mod git;
+mod init;
+mod integration;
+mod integration_runner;
+mod integrations;
+mod lock;
+mod manifest;
+mod registry;
+mod vcs;
+mod weave;
+mod workspace;
+
 use clap::{Parser, Subcommand};
+use repoweave::manifest::WeaveName;
+use repoweave::workspace::WorkspaceContext;
 
 #[derive(Parser)]
 #[command(name = "rwv", version, about = "A cross-repo workspace manager")]
@@ -15,30 +33,72 @@ enum Commands {
         project: String,
         /// Optional weave name
         name: Option<String>,
+        /// Delete the named weave
+        #[arg(long)]
+        delete: bool,
+        /// List existing weaves
+        #[arg(long)]
+        list: bool,
+        /// Sync weave with current manifest
+        #[arg(long)]
+        sync: bool,
     },
     /// Clone a project and its repos
     Fetch {
         /// Source to fetch from
         source: String,
+        /// Check out exact revisions from rwv.lock (reproducible builds)
+        #[arg(long, conflicts_with = "frozen")]
+        locked: bool,
+        /// Like --locked, but error if lock file is missing or stale (CI mode)
+        #[arg(long, conflicts_with = "locked")]
+        frozen: bool,
     },
     /// Add a repo to the current weave
     Add {
-        /// Repository URL
+        /// Repository URL or path (with --new)
         url: String,
+        /// Role for the repo (primary, fork, dependency, reference)
+        #[arg(long, default_value = "dependency")]
+        role: String,
+        /// Create a new repo (git init) at the canonical path instead of cloning
+        #[arg(long)]
+        new: bool,
     },
     /// Remove a repo from the current weave
     Remove {
         /// Path of the repo to remove
         path: String,
+        /// Delete the clone directory
+        #[arg(long)]
+        delete: bool,
+        /// Skip confirmation when deleting
+        #[arg(long)]
+        force: bool,
     },
     /// Snapshot repo versions
-    Lock,
-    /// Snapshot all projects
-    LockAll,
+    Lock {
+        /// Allow locking repos with uncommitted changes
+        #[arg(long)]
+        dirty: bool,
+    },
     /// Convention enforcement
     Check,
     /// Print weave root path
     Resolve,
+    /// Initialize a new project
+    Init {
+        /// Project name
+        project: String,
+        /// Provider in registry/owner format (e.g., github/myorg)
+        #[arg(long)]
+        provider: Option<String>,
+    },
+    /// Activate a project (generate ecosystem files, create symlinks)
+    Activate {
+        /// Project name
+        project: String,
+    },
 }
 
 fn main() -> anyhow::Result<()> {
@@ -46,35 +106,79 @@ fn main() -> anyhow::Result<()> {
 
     match cli.command {
         None => {
-            println!("rwv: showing current context (not yet implemented)");
+            let cwd = std::env::current_dir()?;
+            let ctx = WorkspaceContext::resolve(&cwd, None)?;
+            println!("{}", ctx.display());
         }
-        Some(Commands::Weave { project, name }) => {
-            println!(
-                "rwv weave: project={}, name={} (not yet implemented)",
-                project,
-                name.unwrap_or_default()
-            );
+        Some(Commands::Weave { project, name, delete, list, sync }) => {
+            let cwd = std::env::current_dir()?;
+            let ctx = WorkspaceContext::resolve(&cwd, None)?;
+            let ws_root = &ctx.root;
+
+            if list {
+                let names = repoweave::weave::list_weaves(ws_root)?;
+                for n in &names {
+                    println!("{}", n);
+                }
+            } else if delete {
+                let name = name.ok_or_else(|| anyhow::anyhow!("--delete requires a weave name"))?;
+                repoweave::weave::delete_weave(ws_root, &project, &WeaveName::new(name))?;
+            } else if sync {
+                let name = name.ok_or_else(|| anyhow::anyhow!("--sync requires a weave name"))?;
+                repoweave::weave::sync_weave(ws_root, &project, &WeaveName::new(name))?;
+            } else {
+                let name = name.ok_or_else(|| anyhow::anyhow!("weave create requires a name argument"))?;
+                repoweave::weave::create_weave(ws_root, &project, &WeaveName::new(name))?;
+            }
         }
-        Some(Commands::Fetch { source }) => {
-            println!("rwv fetch: source={source} (not yet implemented)");
+        Some(Commands::Fetch { source, locked, frozen }) => {
+            let cwd = std::env::current_dir()?;
+            let mode = if frozen {
+                fetch::FetchMode::Frozen
+            } else if locked {
+                fetch::FetchMode::Locked
+            } else {
+                fetch::FetchMode::Default
+            };
+            fetch::run_fetch(&source, &cwd, mode)?;
         }
-        Some(Commands::Add { url }) => {
-            println!("rwv add: url={url} (not yet implemented)");
+        Some(Commands::Add { url, role, new }) => {
+            let cwd = std::env::current_dir()?;
+            if new {
+                add_remove::run_add_new(&url, &cwd)?;
+            } else {
+                let parsed_role: manifest::Role = serde_yaml::from_str(&role)
+                    .map_err(|_| anyhow::anyhow!("Invalid role '{}'. Valid roles: primary, fork, dependency, reference", role))?;
+                add_remove::run_add(&url, parsed_role, &cwd)?;
+            }
         }
-        Some(Commands::Remove { path }) => {
-            println!("rwv remove: path={path} (not yet implemented)");
+        Some(Commands::Remove { path, delete, force }) => {
+            let cwd = std::env::current_dir()?;
+            add_remove::run_remove(&path, delete, force, &cwd)?;
         }
-        Some(Commands::Lock) => {
-            println!("rwv lock (not yet implemented)");
-        }
-        Some(Commands::LockAll) => {
-            println!("rwv lock-all (not yet implemented)");
+        Some(Commands::Lock { dirty }) => {
+            let cwd = std::env::current_dir()?;
+            lock::lock(&cwd, dirty)?;
         }
         Some(Commands::Check) => {
-            println!("rwv check (not yet implemented)");
+            let cwd = std::env::current_dir()?;
+            let has_errors = check::run_check(&cwd)?;
+            if has_errors {
+                std::process::exit(1);
+            }
         }
         Some(Commands::Resolve) => {
-            println!("rwv resolve (not yet implemented)");
+            let cwd = std::env::current_dir()?;
+            let ctx = WorkspaceContext::resolve(&cwd, None)?;
+            println!("{}", ctx.resolve_path().display());
+        }
+        Some(Commands::Init { project, provider }) => {
+            let cwd = std::env::current_dir()?;
+            init::init(&project, provider.as_deref(), &cwd)?;
+        }
+        Some(Commands::Activate { project }) => {
+            let cwd = std::env::current_dir()?;
+            activate::activate(&project, &cwd)?;
         }
     }
 

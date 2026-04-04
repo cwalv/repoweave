@@ -1,11 +1,17 @@
 # Integrations
 
+## The workspace surface
+
+The primary directory (or weave directory) is the **workspace surface** — the directory that ecosystem tools see. npm sees a directory with a `package.json` listing workspace packages. Go sees a directory with a `go.work` listing modules. Cargo sees a directory with a `Cargo.toml` listing workspace members. These tools have no idea that the packages come from different git repos. They see a workspace directory with packages in it — nothing more.
+
+Integrations are the translation layer between repoweave's multi-repo world (repos, projects, roles) and the ecosystem's workspace world (`package.json`, `go.work`, `Cargo.toml`). They read the project's `rwv.yaml` — which describes repos — and produce the ecosystem workspace files that tools expect at the workspace surface. The result: ecosystem tools work exactly as they would in a monorepo, because from their perspective, it *is* a workspace directory with packages.
+
+## How integrations work
+
 Rather than hardcoding knowledge of each ecosystem and tool, `rwv` uses **integrations** — pluggable units that each know how to derive config for one tool from the repo list. Each integration participates in two hook points:
 
 - **Activation hooks** (run during weave creation, sync, add, remove) — generate config files, run install commands, or do nothing. This is the write path.
 - **Check hooks** (`rwv check`) — read-only inspection. Verify the environment is healthy, report missing tools, stale config, etc.
-
-## How integrations work
 
 Each integration provides:
 
