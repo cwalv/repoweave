@@ -468,21 +468,19 @@ struct ClaudeHookInput {
 
 /// Derive a workweave name from the hook payload.
 ///
-/// Priority: branch_name → session_id → timestamp fallback.
+/// Priority: branch_name → timestamp+nanos fallback.
+/// Session ID is not used — it's constant within a session, causing
+/// collisions when multiple subagents are spawned.
 /// Slashes are replaced with dashes for filesystem safety.
-fn derive_workweave_name(branch_name: Option<&str>, session_id: Option<&str>) -> String {
+fn derive_workweave_name(branch_name: Option<&str>, _session_id: Option<&str>) -> String {
     let raw = match branch_name {
         Some(b) if !b.is_empty() && b != "null" => b.to_string(),
-        _ => match session_id {
-            Some(s) if !s.is_empty() && s != "null" => s.to_string(),
-            _ => format!(
-                "ww-{}",
-                std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap_or_default()
-                    .as_secs()
-            ),
-        },
+        _ => {
+            let d = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default();
+            format!("ww-{}-{}", d.as_secs(), d.subsec_nanos())
+        }
     };
     raw.replace('/', "-")
 }
@@ -562,21 +560,23 @@ mod tests {
     }
 
     #[test]
-    fn derive_name_falls_back_to_session_id() {
+    fn derive_name_null_branch_uses_timestamp() {
         let name = derive_workweave_name(Some("null"), Some("abc-session-123"));
-        assert_eq!(name, "abc-session-123");
+        assert!(name.starts_with("ww-"), "session_id ignored, expected ww-<timestamp>, got {name}");
     }
 
     #[test]
-    fn derive_name_empty_branch_falls_back_to_session_id() {
+    fn derive_name_empty_branch_uses_timestamp() {
         let name = derive_workweave_name(Some(""), Some("sess-xyz"));
-        assert_eq!(name, "sess-xyz");
+        assert!(name.starts_with("ww-"), "session_id ignored, expected ww-<timestamp>, got {name}");
     }
 
     #[test]
-    fn derive_name_falls_back_to_timestamp_when_both_null() {
-        let name = derive_workweave_name(Some("null"), Some("null"));
-        assert!(name.starts_with("ww-"), "expected ww-<timestamp>, got {name}");
+    fn derive_name_timestamps_are_unique() {
+        let a = derive_workweave_name(None, None);
+        std::thread::sleep(std::time::Duration::from_millis(1));
+        let b = derive_workweave_name(None, None);
+        assert_ne!(a, b, "sequential calls should produce different names");
     }
 
     #[test]
@@ -607,9 +607,9 @@ mod tests {
     }
 
     #[test]
-    fn claude_hook_null_branch_derives_session_name() {
+    fn claude_hook_null_branch_uses_timestamp_not_session() {
         let name = derive_workweave_name(Some("null"), Some("my-session-id"));
-        assert_eq!(name, "my-session-id");
+        assert!(name.starts_with("ww-"), "session_id ignored, expected ww-*, got {name}");
     }
 
     #[test]

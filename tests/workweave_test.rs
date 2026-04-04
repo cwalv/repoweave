@@ -1338,7 +1338,8 @@ fn claude_hook_create_produces_path() {
 
 #[test]
 fn claude_hook_null_branch_fallback() {
-    // When branch_name is "null", should fall back to session_id.
+    // When branch_name is "null", should generate a timestamp-based name
+    // (session_id is ignored — it's constant within a session, causing collisions).
     let tmp = tempfile::tempdir().unwrap();
     let ws = make_workspace(tmp.path(), "web-app");
     std::fs::write(ws.join(".rwv-active"), "web-app\n").unwrap();
@@ -1363,10 +1364,10 @@ fn claude_hook_null_branch_fallback() {
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     let ww_path_str = stdout.trim();
-    // The path should contain the session_id as the name part.
+    // Should use timestamp fallback, not session_id
     assert!(
-        ww_path_str.contains("my-fallback-session"),
-        "workweave path should use session_id as name, got: {ww_path_str}"
+        ww_path_str.contains("ww-"),
+        "workweave path should use timestamp name (ww-*), got: {ww_path_str}"
     );
     assert!(
         std::path::Path::new(ww_path_str).exists(),
