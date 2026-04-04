@@ -1,4 +1,4 @@
-use crate::integration::{Integration, IntegrationContext, Issue};
+use crate::integration::{Integration, IntegrationContext, Issue, Severity};
 use std::path::Path;
 
 pub struct GoWork;
@@ -36,8 +36,21 @@ impl Integration for GoWork {
         Ok(())
     }
 
-    fn check(&self, _ctx: &IntegrationContext) -> anyhow::Result<Vec<Issue>> {
-        Ok(vec![])
+    fn check(&self, ctx: &IntegrationContext) -> anyhow::Result<Vec<Issue>> {
+        let paths = ctx.detect_repos_with_manifest("go.mod");
+        if paths.is_empty() {
+            return Ok(vec![]);
+        }
+
+        let mut issues = Vec::new();
+        if which::which("go").is_err() {
+            issues.push(Issue {
+                integration: self.name().to_string(),
+                severity: Severity::Warning,
+                message: "go is not on PATH".to_string(),
+            });
+        }
+        Ok(issues)
     }
 
     fn generated_files(&self, _ctx: &IntegrationContext) -> Vec<String> {

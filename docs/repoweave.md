@@ -1,28 +1,35 @@
 # repoweave
 
-You know `go.work`? It lets you group Go modules under one root so cross-module imports resolve locally. pnpm workspaces do the same for Node packages. Cargo workspaces for Rust crates. uv workspaces for Python packages.
+repoweave provides the scaffolding for building projects from components tracked in separate repositories. It removes two major sources of friction:
 
-repoweave does the same thing at the repo layer.
+- The edit → bump → publish → update → reinstall cycle for internal dependencies
+- The difficulty of creating ephemeral multi-repo workspaces for agents, PRs, or parallel work
 
-Every major package ecosystem has converged on the same concept: a workspace that groups multiple packages under one root for cross-package imports, shared dependency resolution, and coordinated development. None of these tools care whether the packages are in one repo or twenty — `go.work` lists directories, not repos. A pnpm workspace can already span repo boundaries. The workspace concept is repo-agnostic.
+### Workspaces
 
-What ecosystem workspaces don't handle: getting the code on disk, tracking which repos belong together and why, pinning versions across repos, or generating the ecosystem workspace configs. repoweave handles all of that. An `rwv.yaml` manifest describes the same set of directories that `package.json` workspaces or `go.work` describes — for a different purpose (repo lifecycle vs. dependency resolution). The integrations translate one workspace manifest into another.
+Many major package ecosystems have converged on the concept of a workspace that groups multiple packages under one root for cross-package imports, shared dependency resolution, and coordinated development (`go.work`, Cargo `[workspace]`, pnpm workspaces, uv workspaces, etc.). They deal with packages, not repositories, but these are often 1:1.
 
-This also gives you monorepo ergonomics without merging repos. All your code lives in one directory tree, so every tool that touches the filesystem — editors, grep, agents, debuggers, build tools — works across all of it. Your code can talk to your other code without ceremony. But repos stay sovereign: normal git, normal branches, normal push/pull.
+### Monorepos
 
-Monorepos succeed because they provide a single, well-understood convention — directory layout, cross-package imports, atomic versioning, workspace-wide tooling all just work. Multi-repo setups have no equivalent standard, so every team reinvents the glue (or doesn't, and lives with the friction). repoweave provides that convention: a standard layout, ecosystem wiring, version pinning, and reproducibility across repos.
+Full monorepos eliminate the version dance and solve other problems that workspaces help, but require vendoring or forking everything. Revision logs are polluted, provenance is obscured, and collaboration on or distribution of logical subsets of the monorepo is much more painful than it is with repositories that are scoped appropriately.
 
-One example of reduced friction: **no version bump cycle for cross-repo changes.** Normally, changing `protocol` before `server` can use it means: bump protocol's version, publish, update server's dependency, install, test. With repoweave, the ecosystem workspace wiring means `server` already imports from the local `protocol` checkout. You commit in both repos, lock, done. The version bump can happen later — or never, for internal code.
+### The weave metaphor
+
+The goal is to weave independent **threads** (your repositories) into a single, coherent **fabric** — a unified workspace. The threads keep their identity and history; they simply work better together.
+
+A `weave` is a workspace in the same sense as a `go.work` workspace or a `cargo [workspace]`, but with superpowers. Often, the workspace configurations can be generated from the repoweave manifest alone. In addition to simple cross-package imports and shared dependency resolution that workspace management tools bring, you get monorepo ergonomics.
+
+repoweave provides a `lock` mechanism analogous to package manager locks, with a similar feel to the atomic commit you get from working in a monorepo (so no more edit → bump version → publish → update dependents → reinstall dance for repos in the same workspace). Want to reproduce a 'workspace' on another machine, or CI? The `lock` makes it easy. It also makes it easy to create ephemeral workspaces for isolated work or review, like a multi-repo `git worktree`. Also, all your code lives in one directory tree, so every tool that touches the filesystem — editors, grep, agents, debuggers, build tools — works across all of it, just like a monorepo.
 
 ## Core idea
 
 The workspace has three layers:
 
 1. **The directory tree** — repos under one root. Every tool benefits: search, navigation, agents, editors. This is the convention alone — no tooling required.
-2. **Ecosystem wiring** — the root directory is the **workspace surface**: the directory that ecosystem tools see. Integrations generate workspace files (`package.json`, `go.work`, `Cargo.toml`, `pnpm-workspace.yaml`) at this surface so cross-package imports resolve locally. Ecosystem tools don't know repos exist — they see a workspace directory with packages. `import { thing } from '@myorg/shared'` just works.
+2. **Ecosystem wiring** — the primary directory (or weave directory) is the **workspace surface**: the directory that ecosystem tools see. Integrations generate workspace files (`package.json`, `go.work`, `Cargo.toml`, `pnpm-workspace.yaml`) at this surface so cross-package imports resolve locally. Ecosystem tools don't know repos exist — they see a workspace directory with packages. `import { thing } from '@myorg/shared'` just works.
 3. **Reproducibility** — a committed `rwv.yaml` file and its `rwv.lock` pin each repo to an exact SHA, making the project state reproducible from a single project repo.
 
-The only difference from a monorepo commit: updating the lock file is two steps instead of one. You commit in individual repos first, then regenerate and commit the lock file. It's two-phase commit — the lock update is detectable and reversible:
+Committing a weave project gets a coherent cross-repo "revision", similar to a monorepo commit. You commit in individual repos first, then regenerate and commit the lock file. By default, it's not atomic as a monorepo is, but it could be scripted to be so. It's two-phase commit — the lock update is detectable and reversible:
 
 ```bash
 # 1. Commit in individual repos (already done)
@@ -40,13 +47,15 @@ mkdir my-workspace && cd my-workspace
 rwv fetch chatly/web-app
 ```
 
-`sha256sum rwv.lock` gives a single fingerprint for the project state — the multi-repo equivalent of `git rev-parse HEAD`.
+`sha256sum rwv.lock` gives a single fingerprint for the project state — the multi-repo equivalent of `git rev-parse HEAD` on a monorepo.
 
 ## Directory layout
 
-Repos are **regular clones** at canonical paths: `{registry}/{owner}/{repo}/`. No bare repos, no worktree indirection for the default case. The primary directory has ecosystem files at its root — committable, not gitignored.
+repoweave uses a flat, provenance-based layout for repos: `{registry}/{owner}/{repo}/`. This keeps discovery simple, avoids path collisions when multiple projects share repos, and means every repo is a regular clone — `cd github/chatly/server && git status` just works. No bare repos, no worktree indirection for the default case.
 
-Normal repos are organized by provenance: `{registry}/{owner}/{repo}/`. The first path segment is a **registry** — a short name for where the repo lives. `rwv` ships with built-in defaults for well-known hosts (`github.com` -> `github`, `gitlab.com` -> `gitlab`, `bitbucket.org` -> `bitbucket`); custom registries are configured in `rwv`'s own config. A registry can be domain-based (e.g., `git.mycompany.com` -> `internal`, handles `https://` and `git@` URLs) or directory-based (e.g., `/srv/repos` -> `local`, handles `file://` URLs). This follows Go's GOPATH precedent (`$GOPATH/src/github.com/owner/repo`), shortened for ergonomics.
+Hierarchy and grouping happen at the project level (via `rwv.yaml`, which pulls in any subset of repos) and inside individual repos (organize your code however you like). Generated editor workspaces (VS Code `.code-workspace`) further let you focus on just the repos in a given project.
+
+The first path segment is a **registry** — a short name for where the repo lives. `rwv` ships with built-in defaults for well-known hosts (`github.com` -> `github`, `gitlab.com` -> `gitlab`, `bitbucket.org` -> `bitbucket`); custom registries are configured in `rwv`'s own config. A registry can be domain-based (e.g., `git.mycompany.com` -> `internal`, handles `https://` and `git@` URLs) or directory-based (e.g., `/srv/repos` -> `local`, handles `file://` URLs). This follows Go's GOPATH precedent (`$GOPATH/src/github.com/owner/repo`), shortened for ergonomics.
 
 Two kinds of directories:
 
@@ -86,25 +95,26 @@ web-app/                                  # primary
 │       ├── rwv.lock
 │       └── docs/
 │
-├── package.json                          # ecosystem workspace — committable
-├── package-lock.json                     # ecosystem lock — committable
-├── go.work                               # ecosystem workspace — committable
-├── go.sum                                # ecosystem lock — committable
+├── package.json -> projects/web-app/package.json       # symlink to active project
+├── package-lock.json -> projects/web-app/package-lock.json
+├── go.work -> projects/web-app/go.work
+├── go.sum -> projects/web-app/go.sum
 ├── node_modules/                         # tool state — gitignored
 ├── .venv/                                # tool state — gitignored
+├── .rwv-active                           # "web-app" — tracks active project
 └── .gitignore
 ```
 
 - **Repos are regular clones** — `cd github/chatly/server && git status` works. No bare repos, no `.git` file indirection, universal tool compatibility.
-- **Ecosystem files at the root** — `package.json`, `go.work`, `Cargo.toml` live at the primary's root. They're committable, not ephemeral.
-- **Ecosystem lock files are committable** — `package-lock.json`, `pnpm-lock.yaml`, `uv.lock`, `go.sum`, `Cargo.lock` live at the root alongside their workspace configs.
+- **Ecosystem files are symlinked** — `package.json`, `go.work`, `Cargo.toml` at root are symlinks to the active project's directory. The real files live in `projects/web-app/` and are committable in the project repo.
+- **Ecosystem lock files are committable** — `package-lock.json`, `pnpm-lock.yaml`, `uv.lock`, `go.sum`, `Cargo.lock` live in the project directory alongside their workspace configs, symlinked to root.
 - **Projects are directories** with an `rwv.yaml` file, an `rwv.lock` file, and `docs/`. They don't contain code — build tools are unaware of them.
 - **Overlap is natural** — `server` and `protocol` appear in both projects' `rwv.yaml` files, but there's one clone on disk.
 - **Repos without a project stay on disk** — clone something for a quick look; it's an inert directory until you add it to a project.
 
 ## Weaves
 
-A weave is an isolated working copy of a project — its own git worktrees, ecosystem files, and tool state. The primary directory is a regular directory of clones; weaves are created on demand when isolation is needed (agents, PR review, parallel features).
+A weave is a workspace — the same concept as `go.work`, `Cargo [workspace]`, or pnpm workspaces, but spanning multiple repos. The primary directory is itself a weave (the default one). Additional weaves are isolated working copies created on demand — each with its own git worktrees on ephemeral branches, its own ecosystem files, and its own tool state. You create them when you need isolation: agents, PR review, parallel features.
 
 ```bash
 rwv weave web-app agent-42       # isolated working copy for an agent
@@ -258,9 +268,9 @@ When done:
 rwv weave web-app agent-42 --delete
 ```
 
-For the Claude Code SDK, the orchestrator creates the weave before launching the agent. The agent doesn't need to know about repoweave internals — it sees a directory with repos in it.
+The orchestrator creates the weave before launching the agent. The agent doesn't need to know about repoweave internals — it sees a directory with repos in it. Most tools and editors work fine with CWD at the weave root.
 
-**CWD constraint**: Claude Code's `isolation: "worktree"` requires CWD inside a git repo. The weave directory itself isn't a git repo — it contains git worktrees. The agent's CWD should be set to a specific repo within the weave (e.g., the primary repo).
+For agent frameworks that offer their own isolation (e.g., Claude Code's `isolation: "worktree"`), use `rwv weave` instead — it provides the same git worktree isolation but across all repos in the project. The two mechanisms are redundant; pick one.
 
 ## Repos files
 
@@ -423,9 +433,9 @@ This avoids inventing inheritance or "derived project" machinery. A branch is al
 
 ### Ecosystem files and multiple projects
 
-The primary directory serves multiple projects, but ecosystem files (`package.json`, `go.work`) at the root reflect the union of all repos on disk. Every repo appears in the ecosystem workspace configs. This is the simplest approach and matches how the directory actually works — all repos are on disk, all ecosystem tools can see them.
+Each project has its own ecosystem files in its project directory (`projects/web-app/package.json`, `projects/mobile-app/package.json`). The root symlinks point to the active project's files. Switching projects with `rwv activate` swaps the symlinks and runs install commands to reconcile tool state.
 
-If a project needs scoped ecosystem files (only its own repos), it creates a weave. Weaves generate ecosystem files scoped to the project's `rwv.yaml`.
+If switching is too slow (large dependency diff), create a weave for the second project — it gets its own `node_modules/`, `.venv/`, and ecosystem files with no reconciliation needed.
 
 ## Roles
 

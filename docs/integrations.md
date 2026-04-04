@@ -57,14 +57,15 @@ integrations:
 
 Each integration receives an `IntegrationContext` with:
 
-- **root** — the primary directory or weave directory (the directory where generated files should be written).
+- **output_dir** — where generated files should be written (project directory for activate, weave project directory for weaves).
+- **workspace_root** — where repos live on disk (used for manifest detection like finding `package.json`).
 - **project** — the active project name (may be multi-segment, e.g., `chatly/web-app`).
 - **repos** — repo entries from the project's `rwv.yaml`: `{local_path: {type, url, version, role, ...}}`.
 - **config** — per-integration config from the `integrations` key in `rwv.yaml`.
 - **all_repos_on_disk** — all git repos found on disk under registry directories (relative paths). Computed once, shared across integrations.
 - **all_project_paths** — all project paths (e.g., `['web-app', 'mobile-app']`). Computed once, shared across integrations.
 
-The `active_repos()` method filters out `reference` repos, which should not be included in ecosystem workspace configs (they are read-only and not part of the build graph).
+The `active_repos()` method filters out `reference` repos, which should not be included in ecosystem workspace configs (they are read-only and not part of the build graph). The `detect_repos_with_manifest()` helper finds active repos containing a given file (e.g., `package.json`), using `workspace_root` for detection.
 
 ## Built-in integrations
 
@@ -351,9 +352,20 @@ pub trait Integration {
     fn activate(&self, ctx: &IntegrationContext) -> Result<()>;
     fn deactivate(&self, root: &Path) -> Result<()>;
     fn check(&self, ctx: &IntegrationContext) -> Result<Vec<Issue>>;
+    fn lock(&self, ctx: &IntegrationContext) -> Result<()> { Ok(()) }
+    fn generated_files(&self) -> Vec<&str> { vec![] }
 }
 ```
 
-`IntegrationContext` provides the primary or weave directory (as `root`), project name, resolved repo entries (with paths, URLs, roles), per-integration config from `rwv.yaml`, all repos found on disk across registries (`all_repos_on_disk`), and all project paths (`all_project_paths`). The disk-scan fields are computed once and shared across integrations.
+`IntegrationContext` provides:
+- **`output_dir`** — the directory where generated files should be written (project directory for activate, weave project directory for weaves).
+- **`workspace_root`** — the directory where repos live on disk (for manifest detection via `detect_repos_with_manifest`).
+- **`project`** — the active project name.
+- **`repos`** — repo entries from the project's `rwv.yaml`.
+- **`config`** — per-integration config from the `integrations` key in `rwv.yaml`.
+- **`all_repos_on_disk`** — all git repos found on disk under registry directories. Computed once, shared across integrations.
+- **`all_project_paths`** — all project paths. Computed once, shared across integrations.
+
+The `active_repos()` method filters out `reference` repos. The `detect_repos_with_manifest()` method finds active repos containing a given manifest file (e.g., `package.json`), using `workspace_root` for detection.
 
 New integrations are registered in `registry.rs`.

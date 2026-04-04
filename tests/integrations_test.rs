@@ -453,7 +453,7 @@ mod go_work {
     }
 
     #[test]
-    fn check_no_issues_by_default() {
+    fn check_warns_when_go_not_on_path() {
         let tmp = TempDir::new().unwrap();
         let root = tmp.path();
 
@@ -466,7 +466,12 @@ mod go_work {
 
         let integration = GoWork;
         let issues = integration.check(&ctx).unwrap();
-        assert!(issues.is_empty());
+        if which::which("go").is_err() {
+            assert!(issues.iter().any(|i| i.severity == Severity::Warning
+                && i.message.contains("go")));
+        } else {
+            assert!(issues.is_empty());
+        }
     }
 }
 
@@ -734,7 +739,7 @@ mod cargo_workspace {
     }
 
     #[test]
-    fn check_no_issues_by_default() {
+    fn check_warns_when_cargo_not_on_path() {
         let tmp = TempDir::new().unwrap();
         let root = tmp.path();
 
@@ -747,7 +752,12 @@ mod cargo_workspace {
 
         let integration = CargoWorkspace;
         let issues = integration.check(&ctx).unwrap();
-        assert!(issues.is_empty());
+        if which::which("cargo").is_err() {
+            assert!(issues.iter().any(|i| i.severity == Severity::Warning
+                && i.message.contains("cargo")));
+        } else {
+            assert!(issues.is_empty());
+        }
     }
 }
 
