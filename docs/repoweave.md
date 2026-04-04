@@ -114,7 +114,7 @@ web-app/                                  # primary weave
 
 ## Weaves and workweaves
 
-A **weave** is a workspace — the same concept as `go.work`, `Cargo [workspace]`, or pnpm workspaces, but spanning multiple repos. The primary directory is itself a weave: it contains regular git clones, ecosystem wiring, and a project manifest. This is where you do most of your work.
+A **weave** is a workspace — the same concept as `go.work`, `Cargo [workspace]`, or pnpm workspaces, but spanning multiple repos. The primary directory is itself a weave: it contains regular git clones, project directories (each with their own manifest), and ecosystem wiring generated from the active project. This is where you do most of your work.
 
 A **workweave** is a derivative of the primary weave, created on demand for isolation. It contains git worktrees (not clones) for each repo, with its own branches, ecosystem files, and tool state. Workweaves are ephemeral — created around a unit of work (an agent task, a PR review, a parallel feature) and destroyed when done. They depend on the primary for git objects, just as git worktrees depend on their parent clone.
 
