@@ -53,6 +53,15 @@ pub fn run_add(url: &str, role: Role, cwd: &Path) -> anyhow::Result<()> {
     let project_dir = find_project_dir(&ctx)?;
     let manifest_path = project_dir.join("rwv.yaml");
 
+    // Check if the argument is a local path (no URL scheme and directory exists
+    // relative to workspace root).
+    if !url.contains("://") {
+        let candidate = ctx.root.join(url);
+        if candidate.is_dir() {
+            return run_add_from_local_path(url, &candidate, role, &manifest_path);
+        }
+    }
+
     // Resolve the URL through registries to get a canonical local path.
     let owned_registries = builtin_registries();
     let registry_refs: Vec<&dyn Registry> = owned_registries.iter().map(|r| r.as_ref()).collect();
@@ -115,6 +124,77 @@ pub fn run_add(url: &str, role: Role, cwd: &Path) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Handle `rwv add <local-path>` where the argument is a relative path to an
+/// existing directory under the workspace root.  Infers the URL by reading the
+/// clone's `origin` remote.
+fn run_add_from_local_path(
+    path_arg: &str,
+    clone_dir: &Path,
+    role: Role,
+    manifest_path: &Path,
+) -> anyhow::Result<()> {
+    // Read the origin URL from the existing clone.
+    let output = std::process::Command::new("git")
+        .args(["remote", "get-url", "origin"])
+        .current_dir(clone_dir)
+        .output()
+        .with_context(|| format!("failed to run git in {}", clone_dir.display()))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!(
+            "could not determine origin URL for '{}': {}",
+            clone_dir.display(),
+            stderr.trim()
+        );
+    }
+
+    let raw_url = String::from_utf8(output.stdout)
+        .map_err(|e| anyhow::anyhow!("git remote get-url origin produced non-UTF-8 output: {e}"))?
+        .trim()
+        .to_string();
+
+    // Normalise bare absolute paths to file:// URLs so manifests are
+    // consistent regardless of how the clone was created.
+    let origin_url = if raw_url.starts_with('/') {
+        format!("file://{raw_url}")
+    } else {
+        raw_url
+    };
+
+    let repo_path = RepoPath::new(path_arg);
+
+    // Load and check existing manifest.
+    let mut manifest = Manifest::from_path(manifest_path)
+        .with_context(|| format!("failed to load manifest at {}", manifest_path.display()))?;
+
+    if manifest.repositories.contains_key(&repo_path) {
+        eprintln!(
+            "Repository already exists in manifest at '{}'",
+            repo_path.as_str()
+        );
+        return Ok(());
+    }
+
+    // Add entry to manifest using the inferred origin URL.
+    let entry = RepoEntry {
+        vcs_type: VcsType::Git,
+        url: origin_url.clone(),
+        version: RefName::new("main"),
+        role,
+    };
+    manifest.repositories.insert(repo_path.clone(), entry);
+
+    write_manifest(manifest_path, &manifest)?;
+
+    eprintln!(
+        "Added '{}' to manifest (url: {})",
+        repo_path.as_str(),
+        origin_url
+    );
+    Ok(())
+}
+
 /// Execute `rwv remove PATH [--delete] [--force]`.
 pub fn run_remove(path: &str, delete: bool, force: bool, cwd: &Path) -> anyhow::Result<()> {
     let ctx = WorkspaceContext::resolve(cwd, None)?;
@@ -134,7 +214,33 @@ pub fn run_remove(path: &str, delete: bool, force: bool, cwd: &Path) -> anyhow::
         );
     }
 
-    // Write back the manifest.
+    // Before writing anything, check for cross-project references when --delete
+    // is requested.  If another project references the repo and --force is not
+    // set, bail early so the manifest is left untouched.
+    if delete {
+        let repo_dir = ctx.root.join(repo_path.as_path());
+        if repo_dir.exists() {
+            let referencing_projects = find_other_projects_referencing(
+                &ctx.root,
+                &project_dir,
+                &repo_path,
+            );
+
+            if !referencing_projects.is_empty() {
+                for proj in &referencing_projects {
+                    eprintln!("warning: repo also referenced by project '{proj}'");
+                }
+                if !force {
+                    anyhow::bail!(
+                        "refusing to delete '{}': referenced by other projects (use --force to override)",
+                        repo_path.as_str()
+                    );
+                }
+            }
+        }
+    }
+
+    // Write back the manifest (after all pre-flight checks pass).
     write_manifest(&manifest_path, &manifest)?;
 
     eprintln!("Removed '{}' from manifest", repo_path.as_str());
@@ -143,14 +249,6 @@ pub fn run_remove(path: &str, delete: bool, force: bool, cwd: &Path) -> anyhow::
     if delete {
         let repo_dir = ctx.root.join(repo_path.as_path());
         if repo_dir.exists() {
-            if !force {
-                // In non-interactive (test / pipe) context, --delete without --force
-                // would normally prompt. For simplicity and test compatibility, we
-                // proceed if stdin is not a terminal (non-interactive).
-                // If it IS a terminal, we'd prompt — but tests use --delete --force.
-                // To keep it simple: just delete. The --force flag suppresses any
-                // future confirmation.
-            }
             std::fs::remove_dir_all(&repo_dir).with_context(|| {
                 format!("failed to delete directory {}", repo_dir.display())
             })?;
@@ -238,6 +336,46 @@ pub fn run_add_new(path_arg: &str, cwd: &Path) -> anyhow::Result<()> {
 
     eprintln!("Added new repo '{}' to manifest", repo_path.as_str());
     Ok(())
+}
+
+/// Scan `projects/*/rwv.yaml` (excluding `active_project_dir`) and return the
+/// names of any projects that reference `repo_path`.
+fn find_other_projects_referencing(
+    workspace_root: &Path,
+    active_project_dir: &Path,
+    repo_path: &RepoPath,
+) -> Vec<String> {
+    let projects_dir = workspace_root.join("projects");
+    let mut referencing: Vec<String> = Vec::new();
+
+    let entries = match std::fs::read_dir(&projects_dir) {
+        Ok(e) => e,
+        Err(_) => return referencing,
+    };
+
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !path.is_dir() {
+            continue;
+        }
+        // Skip the active project.
+        if path == active_project_dir {
+            continue;
+        }
+        let manifest_path = path.join("rwv.yaml");
+        if let Ok(manifest) = Manifest::from_path(&manifest_path) {
+            if manifest.repositories.contains_key(repo_path) {
+                // Derive a human-readable project name from the directory name.
+                let name = path
+                    .file_name()
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .unwrap_or_else(|| path.display().to_string());
+                referencing.push(name);
+            }
+        }
+    }
+
+    referencing
 }
 
 /// Infer a clone URL from a local path by matching the first segment against
