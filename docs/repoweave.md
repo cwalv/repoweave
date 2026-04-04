@@ -125,102 +125,28 @@ web-app/                                  # weave
 - **Overlap is natural** — `server` and `protocol` appear in both projects' `rwv.yaml` files, but there's one clone on disk.
 - **Repos without a project stay on disk** — clone something for a quick look; it's an inert directory until you add it to a project.
 
-## Weaves and workweaves
+## Workweaves
 
-A **weave** is a workspace — the same concept as `go.work`, `Cargo [workspace]`, or pnpm workspaces, but spanning multiple repos. It contains regular git clones, project directories (each with their own manifest), and ecosystem wiring generated from the active project. This is where you do most of your work.
+The weave is where you do most of your work — regular git clones, project directories, and ecosystem wiring. But sometimes you need isolation: an agent task, a PR review, a parallel feature branch. That's what workweaves are for.
 
-A **workweave** is a derivative of a weave, created on demand for isolation. It contains git worktrees (not clones) for each repo, with its own branches, ecosystem files, and tool state. Workweaves are ephemeral — created around a unit of work (an agent task, a PR review, a parallel feature) and destroyed when done. They depend on the weave for git objects, just as git worktrees depend on their parent clone.
-
-```bash
-rwv workweave web-app agent-42       # isolated working copy for an agent
-rwv workweave web-app hotfix         # parallel working copy for a hotfix
-rwv workweave web-app review-pr-99   # isolated working copy for PR review
-```
-
-Each workweave:
-
-1. **Creates worktrees** from the weave's clones for every repo in `rwv.yaml`, each on an ephemeral branch.
-2. **Runs integrations** — generates ecosystem files (`package.json`, `go.work`, etc.) and runs install commands inside the workweave directory.
-
-Workweaves are fully isolated. `node_modules/`, `.venv/`, branches, and generated files are per-workweave. One workweave can be on `feature-A` while another is on `main`, while the weave stays undisturbed.
-
-See [workweaves.md](../../../projects/project-repoweave/docs/workweaves.md) for the full design document covering structure, artifact categories, Claude Code integration, and the relationship to Gas Town/Gas City.
-
-### Workweave location
-
-Workweaves live in `.workweaves/` under the weaveroot (the parent of the weave), with a `.` prefix reflecting that they are managed artifacts:
-
-```
-weaveroot/
-├── web-app/                              # weave — regular clones
-│   ├── github/chatly/server/             # clone, on main
-│   ├── package.json
-│   ├── package-lock.json
-│   └── ...
-│
-└── .workweaves/
-    └── agent-42/                         # workweave — worktrees
-        ├── github/chatly/server/         # worktree, on agent-42/main
-        ├── github/chatly/web/            # worktree, on agent-42/feature-A
-        ├── github/chatly/protocol/       # worktree, on agent-42/main
-        ├── package.json                  # generated for this workweave
-        ├── package-lock.json             # this workweave's resolution
-        ├── node_modules/                 # isolated
-        ├── .venv/                        # isolated
-        └── .rwv-workweave               # marker: records weave path, project
-```
-
-Each workweave contains an `.rwv-workweave` marker file that records the weave's path and the active project, making the relationship explicit and independent of directory naming.
-
-### How workweave creation works
+A **workweave** is a worktree-based derivative of the weave, created on demand. Each repo gets a git worktree (not a clone) on an ephemeral branch, with its own ecosystem files and tool state. Workweaves are ephemeral — created around a unit of work and destroyed when done.
 
 ```bash
-rwv workweave web-app agent-42
-```
-
-For each repo in `projects/web-app/rwv.yaml`, this runs:
-
-```bash
-git -C github/chatly/server worktree add \
-  ../.workweaves/agent-42/github/chatly/server \
-  -b agent-42/main    # ephemeral branch off current HEAD
-```
-
-Then runs integration hooks to generate ecosystem files and install dependencies in the new workweave.
-
-
-### Workweave lifecycle
-
-**Creation:**
-
-```bash
-rwv workweave web-app agent-42
-# Creates .workweaves/agent-42/
-# Fans out git worktree add for each repo
-# Generates ecosystem files
-# Runs npm install / uv sync / etc.
-```
-
-**Working:**
-
-```bash
+rwv workweave web-app agent-42       # create
 cd .workweaves/agent-42
-npm test --workspaces
+npm test --workspaces                # isolated deps, isolated branches
 cd github/chatly/server && git commit -m "fix"
+# ... done ...
+rwv workweave web-app agent-42 --delete   # clean up
 ```
 
-Standard git, standard ecosystem tools. The workweave is just a directory with worktrees.
+Workweaves are fully isolated. `node_modules/`, `.venv/`, branches, and generated files are per-workweave. One workweave can be on `feature-A` while another is on `main`, while the weave stays undisturbed. Workweaves live in `.workweaves/{name}/` under the weaveroot.
 
-**Cleanup:**
+This is also the natural escalation when switching projects with `rwv activate` is too slow (large dependency diff) — create a workweave for the second project and it gets its own `node_modules/` with no reconciliation needed.
 
-```bash
-rwv workweave web-app agent-42 --delete
-# Runs git worktree remove for each repo
-# Removes the directory
-# Optionally deletes ephemeral branches
-```
+For agents, the orchestrator creates the workweave before launching the agent. The agent doesn't need to know about repoweave — it sees a directory with repos in it. For agent frameworks that offer their own worktree isolation (e.g., Claude Code's `isolation: "worktree"`), use `rwv workweave` instead — it provides the same isolation but across all repos in the project.
 
-
+See [workweaves.md](../../../projects/project-repoweave/docs/workweaves.md) for the full design document covering structure, artifact categories, and the relationship to Gas Town/Gas City. See [workflows.md](workflows.md) for detailed walkthrough examples.
 
 ### Workspace context
 
@@ -231,36 +157,7 @@ Commands like `add`, `remove`, `lock`, and `check` infer the project and workspa
 - **In a project directory** — resolves to the weave.
 - **Override** — use `--project` flag.
 
-### Syncing after manifest changes
-
-If you edit `rwv.yaml` (add/remove repos), sync the workweave:
-
-```bash
-rwv workweave web-app --sync
-```
-
-`rwv add` and `rwv remove` handle this automatically — they update `rwv.yaml` and re-run integration hooks in one step.
-
-### Agent isolation
-
-Creating an isolated workweave for an agent:
-
-```bash
-rwv workweave web-app agent-42
-# Agent CWD: .workweaves/agent-42/
-```
-
-The agent gets its own worktrees on ephemeral branches, its own `node_modules/`, its own everything. It commits, tests, and iterates without affecting the developer's weave.
-
-When done:
-
-```bash
-rwv workweave web-app agent-42 --delete
-```
-
-The orchestrator creates the workweave before launching the agent. The agent doesn't need to know about repoweave internals — it sees a directory with repos in it. Most tools and editors work fine with CWD at the workweave root.
-
-For agent frameworks that offer their own isolation (e.g., Claude Code's `isolation: "worktree"`), use `rwv workweave` instead — it provides the same git worktree isolation but across all repos in the project. The two mechanisms are redundant; pick one.
+If you edit `rwv.yaml` in a workweave, sync it with `rwv workweave web-app --sync`. `rwv add` and `rwv remove` handle this automatically.
 
 ## Repos files
 
