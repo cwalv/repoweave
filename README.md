@@ -20,7 +20,13 @@ repoweave gives you the two biggest practical wins of a monorepo while keeping e
 
 ### Install
 
-**Pre-built binaries** — download from [GitHub Releases](https://github.com/cwalv/repoweave/releases) (linux x86_64/aarch64, macOS x86_64/aarch64, Windows x86_64).
+**Quick install** (Linux/macOS — detects platform, installs to `~/.local/bin`):
+
+```bash
+curl -fsSL https://cwalv.github.io/repoweave/install.sh | sh
+```
+
+**Pre-built binaries** — download from [GitHub Releases](https://github.com/cwalv/repoweave/releases) (Linux x86_64/aarch64, macOS x86_64/aarch64, Windows x86_64).
 
 **From source** via Cargo:
 
