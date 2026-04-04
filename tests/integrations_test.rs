@@ -38,6 +38,7 @@ fn make_manifest(repos: Vec<(&str, Role)>) -> Manifest {
     Manifest {
         repositories,
         integrations: BTreeMap::new(),
+        workweave: None,
     }
 }
 

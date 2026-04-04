@@ -5,7 +5,9 @@
 //!   same content as `rwv prime`, for non-Claude agents (Cursor, Copilot, etc.)
 //!   that read AGENTS.md.
 //! - `claude`: Register `rwv prime` as a Claude Code hook in
-//!   `~/.claude/settings.json` (SessionStart + PreCompact). Idempotent.
+//!   `~/.claude/settings.json` (SessionStart + PreCompact). Also installs
+//!   WorktreeCreate/WorktreeRemove hook scripts to `~/.claude/hooks/` and
+//!   registers them. Idempotent.
 
 use crate::prime::render_context;
 use crate::workspace::WorkspaceContext;
@@ -52,8 +54,22 @@ pub fn agents_md(cwd: &Path) -> anyhow::Result<()> {
 /// The command string registered as a hook.
 const HOOK_COMMAND: &str = "rwv prime";
 
-/// Hook events we register under.
+/// Hook events we register `rwv prime` under.
 const HOOK_EVENTS: &[&str] = &["SessionStart", "PreCompact"];
+
+/// Workweave hook scripts: (event, filename, embedded content).
+const WORKWEAVE_HOOKS: &[(&str, &str, &str)] = &[
+    (
+        "WorktreeCreate",
+        "rwv-workweave-create.sh",
+        include_str!("../examples/hooks/rwv-workweave-create.sh"),
+    ),
+    (
+        "WorktreeRemove",
+        "rwv-workweave-remove.sh",
+        include_str!("../examples/hooks/rwv-workweave-remove.sh"),
+    ),
+];
 
 /// Resolve `~/.claude/settings.json`.
 fn claude_settings_path() -> anyhow::Result<PathBuf> {
@@ -61,24 +77,52 @@ fn claude_settings_path() -> anyhow::Result<PathBuf> {
     Ok(Path::new(&home).join(".claude").join("settings.json"))
 }
 
-/// Run `rwv setup claude`.
-pub fn claude() -> anyhow::Result<()> {
-    claude_at(&claude_settings_path()?)
+/// Resolve `~/.claude/hooks/` directory.
+fn claude_hooks_dir() -> anyhow::Result<PathBuf> {
+    let home = std::env::var("HOME").context("HOME environment variable not set")?;
+    Ok(Path::new(&home).join(".claude").join("hooks"))
 }
 
-/// Implementation that accepts an explicit path (for testing).
-pub fn claude_at(path: &Path) -> anyhow::Result<()> {
-    if !path.exists() {
+/// Run `rwv setup claude`.
+pub fn claude() -> anyhow::Result<()> {
+    claude_inner(&claude_settings_path()?, &claude_hooks_dir()?)
+}
+
+/// Implementation that accepts explicit paths (for testing).
+pub fn claude_at(settings_path: &Path, hooks_dir: &Path) -> anyhow::Result<()> {
+    claude_inner(settings_path, hooks_dir)
+}
+
+fn claude_inner(settings_path: &Path, hooks_dir: &Path) -> anyhow::Result<()> {
+    if !settings_path.exists() {
         bail!(
             "{} does not exist. Please run Claude Code at least once to create it.",
-            path.display()
+            settings_path.display()
         );
     }
 
-    let content = std::fs::read_to_string(path)
-        .with_context(|| format!("failed to read {}", path.display()))?;
+    // Install workweave hook scripts to hooks_dir.
+    std::fs::create_dir_all(hooks_dir)
+        .with_context(|| format!("failed to create {}", hooks_dir.display()))?;
+
+    for &(_event, filename, content) in WORKWEAVE_HOOKS {
+        let dest = hooks_dir.join(filename);
+        std::fs::write(&dest, content)
+            .with_context(|| format!("failed to write {}", dest.display()))?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let perms = std::fs::Permissions::from_mode(0o755);
+            std::fs::set_permissions(&dest, perms)
+                .with_context(|| format!("failed to chmod {}", dest.display()))?;
+        }
+    }
+
+    // Read and parse settings.json.
+    let content = std::fs::read_to_string(settings_path)
+        .with_context(|| format!("failed to read {}", settings_path.display()))?;
     let mut root: Value = serde_json::from_str(&content)
-        .with_context(|| format!("invalid JSON in {}", path.display()))?;
+        .with_context(|| format!("invalid JSON in {}", settings_path.display()))?;
 
     let hooks = root
         .as_object_mut()
@@ -91,27 +135,42 @@ pub fn claude_at(path: &Path) -> anyhow::Result<()> {
         .context("\"hooks\" is not an object")?;
 
     let mut changed = false;
+
+    // Register `rwv prime` for SessionStart + PreCompact.
     for &event in HOOK_EVENTS {
-        if ensure_hook_registered(hooks_obj, event) {
+        if ensure_command_hook_registered(hooks_obj, event, HOOK_COMMAND) {
+            changed = true;
+        }
+    }
+
+    // Register workweave scripts for WorktreeCreate + WorktreeRemove.
+    for &(event, filename, _content) in WORKWEAVE_HOOKS {
+        let script_path = hooks_dir.join(filename);
+        let command = script_path.to_string_lossy().into_owned();
+        if ensure_command_hook_registered(hooks_obj, event, &command) {
             changed = true;
         }
     }
 
     if changed {
         let output = serde_json::to_string_pretty(&root)?;
-        std::fs::write(path, format!("{output}\n"))
-            .with_context(|| format!("failed to write {}", path.display()))?;
-        println!("Registered `{HOOK_COMMAND}` in {}", path.display());
+        std::fs::write(settings_path, format!("{output}\n"))
+            .with_context(|| format!("failed to write {}", settings_path.display()))?;
+        println!("Registered rwv hooks in {}", settings_path.display());
     } else {
-        println!("`{HOOK_COMMAND}` already registered — nothing to do.");
+        println!("rwv hooks already registered — nothing to do.");
     }
 
     Ok(())
 }
 
-/// Ensure `rwv prime` is present in the hook array for `event`.
+/// Ensure `command` is present in the hook array for `event`.
 /// Returns `true` if the array was modified.
-fn ensure_hook_registered(hooks: &mut serde_json::Map<String, Value>, event: &str) -> bool {
+fn ensure_command_hook_registered(
+    hooks: &mut serde_json::Map<String, Value>,
+    event: &str,
+    command: &str,
+) -> bool {
     let entries = hooks
         .entry(event.to_string())
         .or_insert_with(|| Value::Array(vec![]));
@@ -123,7 +182,7 @@ fn ensure_hook_registered(hooks: &mut serde_json::Map<String, Value>, event: &st
 
     // Already present in any group?
     for group in arr.iter() {
-        if group_contains_hook_command(group) {
+        if group_contains_command(group, command) {
             return false;
         }
     }
@@ -131,7 +190,7 @@ fn ensure_hook_registered(hooks: &mut serde_json::Map<String, Value>, event: &st
     // Append to existing catch-all group (matcher == ""), or create one.
     let hook_entry = serde_json::json!({
         "type": "command",
-        "command": HOOK_COMMAND
+        "command": command
     });
 
     let catchall = arr.iter_mut().find(|g| {
@@ -158,8 +217,8 @@ fn ensure_hook_registered(hooks: &mut serde_json::Map<String, Value>, event: &st
     true
 }
 
-/// Check whether a matcher-group already contains our hook command.
-fn group_contains_hook_command(group: &Value) -> bool {
+/// Check whether a matcher-group already contains the given command.
+fn group_contains_command(group: &Value, command: &str) -> bool {
     group
         .get("hooks")
         .and_then(|h| h.as_array())
@@ -167,7 +226,7 @@ fn group_contains_hook_command(group: &Value) -> bool {
             hooks.iter().any(|h| {
                 h.get("command")
                     .and_then(|c| c.as_str())
-                    .map(|c| c == HOOK_COMMAND)
+                    .map(|c| c == command)
                     .unwrap_or(false)
             })
         })
@@ -190,6 +249,12 @@ mod tests {
         let dir = root.join("projects").join(project);
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("rwv.yaml"), yaml).unwrap();
+    }
+
+    /// Helper: call claude_at with a temp hooks_dir alongside the settings file.
+    fn claude_at_tmp(settings_path: &Path) -> anyhow::Result<()> {
+        let hooks_dir = settings_path.parent().unwrap().join("hooks");
+        claude_at(settings_path, &hooks_dir)
     }
 
     #[test]
@@ -267,7 +332,7 @@ mod tests {
     fn claude_errors_if_settings_missing() {
         let tmp = tempfile::tempdir().unwrap();
         let path = tmp.path().join("settings.json");
-        let result = claude_at(&path);
+        let result = claude_at_tmp(&path);
         assert!(result.is_err());
         assert!(
             result.unwrap_err().to_string().contains("does not exist"),
@@ -281,18 +346,87 @@ mod tests {
         let path = tmp.path().join("settings.json");
         std::fs::write(&path, "{}").unwrap();
 
-        claude_at(&path).unwrap();
+        claude_at_tmp(&path).unwrap();
 
         let content: Value =
             serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
 
+        // rwv prime registered for SessionStart + PreCompact
         for event in HOOK_EVENTS {
             let arr = content["hooks"][event].as_array().unwrap();
-            assert_eq!(arr.len(), 1);
-            assert_eq!(arr[0]["matcher"], "");
-            let hooks = arr[0]["hooks"].as_array().unwrap();
-            assert_eq!(hooks.len(), 1);
-            assert_eq!(hooks[0]["command"], HOOK_COMMAND);
+            assert!(!arr.is_empty(), "{event} should have hooks");
+            let found = arr.iter().any(|g| {
+                g["hooks"]
+                    .as_array()
+                    .map(|hs| {
+                        hs.iter()
+                            .any(|h| h["command"].as_str() == Some(HOOK_COMMAND))
+                    })
+                    .unwrap_or(false)
+            });
+            assert!(found, "{event} should contain rwv prime");
+        }
+
+        // Workweave hooks registered
+        for &(event, _filename, _content) in WORKWEAVE_HOOKS {
+            assert!(
+                content["hooks"][event].as_array().is_some(),
+                "{event} should be registered"
+            );
+        }
+    }
+
+    #[test]
+    fn claude_installs_hook_scripts() {
+        let tmp = tempfile::tempdir().unwrap();
+        let settings_path = tmp.path().join("settings.json");
+        let hooks_dir = tmp.path().join("hooks");
+        std::fs::write(&settings_path, "{}").unwrap();
+
+        claude_at(&settings_path, &hooks_dir).unwrap();
+
+        for &(_event, filename, _content) in WORKWEAVE_HOOKS {
+            let dest = hooks_dir.join(filename);
+            assert!(dest.exists(), "{filename} should be installed");
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                let mode = std::fs::metadata(&dest).unwrap().permissions().mode();
+                assert!(
+                    mode & 0o111 != 0,
+                    "{filename} should be executable (mode={mode:#o})"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn claude_workweave_hooks_registered_in_settings() {
+        let tmp = tempfile::tempdir().unwrap();
+        let settings_path = tmp.path().join("settings.json");
+        let hooks_dir = tmp.path().join("hooks");
+        std::fs::write(&settings_path, "{}").unwrap();
+
+        claude_at(&settings_path, &hooks_dir).unwrap();
+
+        let content: Value =
+            serde_json::from_str(&std::fs::read_to_string(&settings_path).unwrap()).unwrap();
+
+        for &(event, filename, _content) in WORKWEAVE_HOOKS {
+            let expected_cmd = hooks_dir.join(filename).to_string_lossy().into_owned();
+            let arr = content["hooks"][event]
+                .as_array()
+                .unwrap_or_else(|| panic!("{event} should be present"));
+            let found = arr.iter().any(|g| {
+                g["hooks"]
+                    .as_array()
+                    .map(|hs| {
+                        hs.iter()
+                            .any(|h| h["command"].as_str() == Some(expected_cmd.as_str()))
+                    })
+                    .unwrap_or(false)
+            });
+            assert!(found, "{event} should contain command {expected_cmd}");
         }
     }
 
@@ -318,7 +452,7 @@ mod tests {
         )
         .unwrap();
 
-        claude_at(&path).unwrap();
+        claude_at_tmp(&path).unwrap();
 
         let content: Value =
             serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
@@ -342,10 +476,10 @@ mod tests {
         let path = tmp.path().join("settings.json");
         std::fs::write(&path, "{}").unwrap();
 
-        claude_at(&path).unwrap();
+        claude_at_tmp(&path).unwrap();
         let first = std::fs::read_to_string(&path).unwrap();
 
-        claude_at(&path).unwrap();
+        claude_at_tmp(&path).unwrap();
         let second = std::fs::read_to_string(&path).unwrap();
 
         assert_eq!(first, second, "second run should not change the file");
@@ -374,7 +508,7 @@ mod tests {
         )
         .unwrap();
 
-        claude_at(&path).unwrap();
+        claude_at_tmp(&path).unwrap();
 
         let content: Value =
             serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
@@ -399,7 +533,7 @@ mod tests {
         )
         .unwrap();
 
-        claude_at(&path).unwrap();
+        claude_at_tmp(&path).unwrap();
 
         let content: Value =
             serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();

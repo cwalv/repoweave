@@ -176,13 +176,36 @@ fn setup_claude_registers_hooks() {
     )
     .unwrap();
 
+    // rwv prime registered for SessionStart + PreCompact
     for event in &["SessionStart", "PreCompact"] {
         let arr = content["hooks"][event].as_array().unwrap();
         assert!(!arr.is_empty(), "{event} hooks should be non-empty");
-        let hooks = arr[0]["hooks"].as_array().unwrap();
+        let found = arr.iter().any(|g| {
+            g["hooks"]
+                .as_array()
+                .map(|hs| {
+                    hs.iter()
+                        .any(|h| h["command"].as_str() == Some("rwv prime"))
+                })
+                .unwrap_or(false)
+        });
+        assert!(found, "{event} should contain rwv prime hook");
+    }
+
+    // WorktreeCreate + WorktreeRemove registered
+    for event in &["WorktreeCreate", "WorktreeRemove"] {
         assert!(
-            hooks.iter().any(|h| h["command"] == "rwv prime"),
-            "{event} should contain rwv prime hook"
+            content["hooks"][event].as_array().is_some(),
+            "{event} should be registered"
+        );
+    }
+
+    // Hook scripts installed
+    let hooks_dir = claude_dir.join("hooks");
+    for filename in &["rwv-workweave-create.sh", "rwv-workweave-remove.sh"] {
+        assert!(
+            hooks_dir.join(filename).exists(),
+            "{filename} should be installed in ~/.claude/hooks/"
         );
     }
 }
@@ -217,4 +240,38 @@ fn setup_claude_idempotent() {
 
     let second = fs::read_to_string(claude_dir.join("settings.json")).unwrap();
     assert_eq!(first, second, "second run should not modify the file");
+}
+
+// ============================================================================
+// 8. setup claude — hook scripts are executable
+// ============================================================================
+
+#[test]
+fn setup_claude_scripts_are_executable() {
+    let tmp = tempfile::tempdir().unwrap();
+    let claude_dir = tmp.path().join(".claude");
+    fs::create_dir_all(&claude_dir).unwrap();
+    fs::write(claude_dir.join("settings.json"), "{}").unwrap();
+
+    Command::cargo_bin("rwv")
+        .unwrap()
+        .args(["setup", "claude"])
+        .env("HOME", tmp.path())
+        .assert()
+        .success();
+
+    let hooks_dir = claude_dir.join("hooks");
+    for filename in &["rwv-workweave-create.sh", "rwv-workweave-remove.sh"] {
+        let path = hooks_dir.join(filename);
+        assert!(path.exists(), "{filename} should exist");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = fs::metadata(&path).unwrap().permissions().mode();
+            assert!(
+                mode & 0o111 != 0,
+                "{filename} should be executable (mode={mode:#o})"
+            );
+        }
+    }
 }

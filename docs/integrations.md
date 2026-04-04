@@ -2,7 +2,7 @@
 
 ## The workspace surface
 
-The primary directory (or weave directory) is the **workspace surface** — the directory that ecosystem tools see. npm sees a directory with a `package.json` listing workspace packages. Go sees a directory with a `go.work` listing modules. Cargo sees a directory with a `Cargo.toml` listing workspace members. These tools have no idea that the packages come from different git repos. They see a workspace directory with packages in it — nothing more.
+The primary directory (or workweave directory) is the **workspace surface** — the directory that ecosystem tools see. npm sees a directory with a `package.json` listing workspace packages. Go sees a directory with a `go.work` listing modules. Cargo sees a directory with a `Cargo.toml` listing workspace members. These tools have no idea that the packages come from different git repos. They see a workspace directory with packages in it — nothing more.
 
 Integrations are the translation layer between repoweave's multi-repo world (repos, projects, roles) and the ecosystem's workspace world (`package.json`, `go.work`, `Cargo.toml`). They read the project's `rwv.yaml` — which describes repos — and produce the ecosystem workspace files that tools expect at the workspace surface. The result: ecosystem tools work exactly as they would in a monorepo, because from their perspective, it *is* a workspace directory with packages.
 
@@ -10,7 +10,7 @@ Integrations are the translation layer between repoweave's multi-repo world (rep
 
 Rather than hardcoding knowledge of each ecosystem and tool, `rwv` uses **integrations** — pluggable units that each know how to derive config for one tool from the repo list. Each integration participates in two hook points:
 
-- **Activation hooks** (run during weave creation, sync, add, remove) — generate config files, run install commands, or do nothing. This is the write path.
+- **Activation hooks** (run during workweave creation, sync, add, remove) — generate config files, run install commands, or do nothing. This is the write path.
 - **Check hooks** (`rwv check`) — read-only inspection. Verify the environment is healthy, report missing tools, stale config, etc.
 
 Each integration provides:
@@ -18,10 +18,10 @@ Each integration provides:
 1. **A name** — unique identifier (e.g., `npm-workspaces`).
 2. **A default enabled state** — whether the integration runs without explicit opt-in.
 3. **Activation logic** — receives the resolved repo list (paths, URLs, roles) and its config; generates files, runs commands, or does nothing.
-4. **Deactivation logic** — removes generated files. Called during weave deletion.
+4. **Deactivation logic** — removes generated files. Called during workweave deletion.
 5. **Check logic** — receives the same inputs; returns issues and warnings without changing state.
 
-When a weave is created or synced, integrations are run: the deactivation hook cleans up first, then the activation hook generates fresh config. Each integration auto-detects relevant repos — if none are found, it does nothing.
+When a workspace is activated or a workweave is created or synced, integrations are run: the deactivation hook cleans up first, then the activation hook generates fresh config. Each integration auto-detects relevant repos — if none are found, it does nothing.
 
 `rwv check` runs check hooks across all enabled integrations as part of its broader convention audit.
 
@@ -29,11 +29,11 @@ Ecosystem integrations auto-detect repos with the relevant manifest file. If non
 
 ### Generated files are persistent
 
-Generated ecosystem files live in the primary directory (or the weave directory for weaves). They are **committable, not ephemeral** — they are regenerated on weave creation, sync, or `rwv add`, but they persist between runs and can be committed to version control.
+Generated ecosystem files live in the primary directory (or the workweave directory for workweaves). They are **committable, not ephemeral** — they are regenerated on workweave creation, sync, or `rwv add`, but they persist between runs and can be committed to version control.
 
 Ecosystem lock files (`package-lock.json`, `pnpm-lock.yaml`, `uv.lock`, `go.sum`, `Cargo.lock`) are produced by the ecosystem tools during the install step. These are important persistent state that pins exact dependency versions within each ecosystem. They should be committed alongside the ecosystem workspace configs.
 
-Some integrations also run external tools (`npm install`, `pnpm install`, `uv sync`) that create their own tool state (`node_modules/`, `.venv/`). Tool state directories are gitignored and managed by the ecosystem tool, not by `rwv`. If tool state gets corrupted or out of sync, `rwv weave {project} --sync` regenerates config and re-runs install commands.
+Some integrations also run external tools (`npm install`, `pnpm install`, `uv sync`) that create their own tool state (`node_modules/`, `.venv/`). Tool state directories are gitignored and managed by the ecosystem tool, not by `rwv`. If tool state gets corrupted or out of sync, `rwv workweave {project} --sync` regenerates config and re-runs install commands.
 
 ### Hook configuration in `rwv.yaml`
 
@@ -57,7 +57,7 @@ integrations:
 
 Each integration receives an `IntegrationContext` with:
 
-- **output_dir** — where generated files should be written (project directory for activate, weave project directory for weaves).
+- **output_dir** — where generated files should be written (project directory for activate, workweave project directory for workweaves).
 - **workspace_root** — where repos live on disk (used for manifest detection like finding `package.json`).
 - **project** — the active project name (may be multi-segment, e.g., `chatly/web-app`).
 - **repos** — repo entries from the project's `rwv.yaml`: `{local_path: {type, url, version, role, ...}}`.
@@ -98,7 +98,7 @@ Generates a root `package.json` with a `workspaces` array listing every project 
 }
 ```
 
-This file lives at the root of the primary directory (or weave directory). It is committable. The corresponding `package-lock.json` and `node_modules/` are produced by `npm install` — `package-lock.json` is committable persistent state, `node_modules/` is gitignored tool state.
+This file lives at the root of the primary directory (or workweave directory). It is committable. The corresponding `package-lock.json` and `node_modules/` are produced by `npm install` — `package-lock.json` is committable persistent state, `node_modules/` is gitignored tool state.
 
 ### Deactivation
 
@@ -131,7 +131,7 @@ packages:
   - github/chatly/web
 ```
 
-This file lives at the root of the primary directory (or weave directory). It is committable. The corresponding `pnpm-lock.yaml` and `node_modules/` are produced by `pnpm install` — `pnpm-lock.yaml` is committable persistent state, `node_modules/` is gitignored tool state.
+This file lives at the root of the primary directory (or workweave directory). It is committable. The corresponding `pnpm-lock.yaml` and `node_modules/` are produced by `pnpm install` — `pnpm-lock.yaml` is committable persistent state, `node_modules/` is gitignored tool state.
 
 ### Deactivation
 
@@ -156,7 +156,7 @@ use (
 )
 ```
 
-This file lives at the root of the primary directory (or weave directory). It is committable. The corresponding `go.sum` is produced by the Go toolchain and is also committable persistent state.
+This file lives at the root of the primary directory (or workweave directory). It is committable. The corresponding `go.sum` is produced by the Go toolchain and is also committable persistent state.
 
 ### Deactivation
 
@@ -181,7 +181,7 @@ members = [
 ]
 ```
 
-This file lives at the root of the primary directory (or weave directory). It is committable. The corresponding `uv.lock` and `.venv/` are produced by `uv sync` — `uv.lock` is committable persistent state, `.venv/` is gitignored tool state.
+This file lives at the root of the primary directory (or workweave directory). It is committable. The corresponding `uv.lock` and `.venv/` are produced by `uv sync` — `uv.lock` is committable persistent state, `.venv/` is gitignored tool state.
 
 ### Deactivation
 
@@ -205,7 +205,7 @@ members = ["github/chatly/protocol", "github/chatly/server"]
 resolver = "2"
 ```
 
-This file lives at the root of the primary directory (or weave directory). It is committable. The corresponding `Cargo.lock` and `target/` are produced by Cargo — `Cargo.lock` is committable persistent state, `target/` is gitignored tool state.
+This file lives at the root of the primary directory (or workweave directory). It is committable. The corresponding `Cargo.lock` and `target/` are produced by Cargo — `Cargo.lock` is committable persistent state, `target/` is gitignored tool state.
 
 ### Deactivation
 
@@ -219,14 +219,14 @@ No checks currently. Could warn if `cargo` is not on PATH when Rust repos are pr
 
 [gita](https://github.com/nosarthur/gita) provides the multi-repo dashboard (`gita ll`), cross-repo git delegation (`gita super`), cross-repo shell commands (`gita shell`), groups, and context scoping. Rather than reimplement these in `rwv`, we use gita directly via this integration.
 
-The activation hook generates gita's config files into a `gita/` directory inside the primary (or weave) directory, scoped to the project's repos. Point gita at this directory via `GITA_PROJECT_HOME`:
+The activation hook generates gita's config files into a `gita/` directory inside the primary (or workweave) directory, scoped to the project's repos. Point gita at this directory via `GITA_PROJECT_HOME`:
 
 ```bash
-# .envrc in primary or weave dir
+# .envrc in primary or workweave dir
 export GITA_PROJECT_HOME="$PWD/gita"
 ```
 
-`GITA_PROJECT_HOME` replaces (not supplements) gita's default config directory. Each weave gets its own gita config — gita commands are always scoped to the current context's repos.
+`GITA_PROJECT_HOME` replaces (not supplements) gita's default config directory. Each workweave gets its own gita config — gita commands are always scoped to the current context's repos.
 
 For build/test/lint across packages, prefer the ecosystem's own workspace commands (`npm run --workspaces test`, `pnpm -r run test`, `cargo test --workspace`) — they understand package dependency ordering. gita's value is at the **git layer**: status, bulk fetch/pull, seeing which repos have uncommitted work.
 
@@ -243,7 +243,7 @@ path,name,flags
 /home/dev/workspace/github/chatly/protocol,protocol,
 ```
 
-- **path**: absolute path to the repo (or worktree in a weave)
+- **path**: absolute path to the repo (or worktree in a workweave)
 - **name**: display name used in gita commands (basename of the repo path)
 - **flags**: extra args inserted after `git` in delegated commands (currently unused)
 
@@ -276,7 +276,7 @@ gita has its own serialization format (`gita freeze` outputs CSV with URL, name,
 
 ## vscode-workspace
 
-Generates a `{project}.code-workspace` file in the primary (or weave) directory. Uses a single-root workspace (the directory itself) with git settings configured for the multi-repo layout.
+Generates a `{project}.code-workspace` file in the primary (or workweave) directory. Uses a single-root workspace (the directory itself) with git settings configured for the multi-repo layout.
 
 The file is named after the project (e.g., `web-app.code-workspace`), making the project visible in the VS Code title bar.
 
@@ -294,7 +294,7 @@ The file is named after the project (e.g., `web-app.code-workspace`), making the
 }
 ```
 
-- **Single root folder** at `"."` — the primary or weave directory.
+- **Single root folder** at `"."` — the primary or workweave directory.
 - **Folder name** includes the context (e.g., `"web-app (primary)"`, `"web-app (agent-42)"`).
 - **`git.autoRepositoryDetection: subFolders`** prevents VS Code from walking up to a parent repo.
 - **`git.repositoryScanMaxDepth: 3`** ensures VS Code discovers repos at the `registry/owner/repo` depth.
@@ -432,7 +432,7 @@ pub trait Integration {
 ```
 
 `IntegrationContext` provides:
-- **`output_dir`** — the directory where generated files should be written (project directory for activate, weave project directory for weaves).
+- **`output_dir`** — the directory where generated files should be written (project directory for activate, workweave project directory for workweaves).
 - **`workspace_root`** — the directory where repos live on disk (for manifest detection via `detect_repos_with_manifest`).
 - **`project`** — the active project name.
 - **`repos`** — repo entries from the project's `rwv.yaml`.

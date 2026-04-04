@@ -1,14 +1,14 @@
 //! Lock logic: snapshot repo HEADs into `rwv.lock`.
 
 use crate::git::GitVcs;
-use crate::manifest::{LockEntry, LockFile, Manifest, Project, VcsType, WeaveName};
+use crate::manifest::{LockEntry, LockFile, Manifest, Project, VcsType, WorkweaveName};
 use crate::vcs::{RevisionId, Vcs};
 use crate::workspace::{WorkspaceContext, WorkspaceLocation};
 use std::collections::BTreeMap;
 use std::path::Path;
 
 /// Generate a [`LockFile`] for a project, resolving HEAD revisions from the
-/// workspace (primary or weave).
+/// workspace (weave or workweave).
 ///
 /// When `dirty` is false, each repo is checked for uncommitted changes and
 /// an error is returned if any are found. When `dirty` is true, the check
@@ -19,8 +19,8 @@ use std::path::Path;
 pub fn generate_lock(
     manifest: &Manifest,
     workspace_root: &Path,
-    weave: Option<&WeaveName>,
-    weave_dir: Option<&Path>,
+    workweave: Option<&WorkweaveName>,
+    workweave_dir: Option<&Path>,
     dirty: bool,
 ) -> anyhow::Result<LockFile> {
     let git = GitVcs;
@@ -28,13 +28,13 @@ pub fn generate_lock(
 
     for (repo_path, entry) in &manifest.repositories {
         // Determine the actual on-disk path for this repo.
-        // In a weave, repos live under the weave directory; in primary, under root.
-        let repo_dir = if let Some(wd) = weave_dir {
+        // In a workweave, repos live under the workweave directory; in primary, under root.
+        let repo_dir = if let Some(wd) = workweave_dir {
             let candidate = wd.join(repo_path.as_path());
             if candidate.exists() {
                 candidate
             } else {
-                // Fall back to primary if the repo doesn't exist in the weave
+                // Fall back to primary if the repo doesn't exist in the workweave
                 workspace_root.join(repo_path.as_path())
             }
         } else {
@@ -77,7 +77,7 @@ pub fn generate_lock(
     }
 
     Ok(LockFile {
-        weave: weave.cloned(),
+        workweave: workweave.cloned(),
         repositories,
     })
 }
@@ -102,14 +102,14 @@ pub fn lock(cwd: &Path, dirty: bool) -> anyhow::Result<()> {
 
     let ctx = WorkspaceContext::resolve(cwd, None)?;
 
-    let (project_name, weave_name, weave_dir) = match &ctx.location {
-        WorkspaceLocation::Primary { project } => {
+    let (project_name, workweave_name, workweave_dir) = match &ctx.location {
+        WorkspaceLocation::Weave { project } => {
             let name = project
                 .as_ref()
                 .ok_or_else(|| anyhow::anyhow!("no active project found; run from a project directory or use --project"))?;
             (name.clone(), None, None)
         }
-        WorkspaceLocation::Weave {
+        WorkspaceLocation::Workweave {
             name,
             dir,
             project,
@@ -124,8 +124,8 @@ pub fn lock(cwd: &Path, dirty: bool) -> anyhow::Result<()> {
     let lock = generate_lock(
         &project.manifest,
         &ctx.root,
-        weave_name.as_ref(),
-        weave_dir.as_deref(),
+        workweave_name.as_ref(),
+        workweave_dir.as_deref(),
         dirty,
     )?;
 
@@ -155,7 +155,7 @@ pub fn lock(cwd: &Path, dirty: bool) -> anyhow::Result<()> {
         Vec::new()
     };
 
-    let output_dir = weave_dir.as_deref().unwrap_or(&ctx.root);
+    let output_dir = workweave_dir.as_deref().unwrap_or(&ctx.root);
     let ctx_base = IntegrationContextBase {
         output_dir,
         workspace_root: &ctx.root,

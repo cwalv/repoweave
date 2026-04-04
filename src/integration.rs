@@ -18,14 +18,14 @@ use std::path::{Path, PathBuf};
 /// Immutable — integrations read this, then write to the filesystem.
 pub struct IntegrationContext<'a> {
     /// The directory where generated files should be written
-    /// (primary root or weave directory).
+    /// (primary root or workweave directory).
     pub output_dir: &'a Path,
 
     /// The workspace root where repos live on disk. Used for detecting
     /// manifest files (e.g., `Cargo.toml`, `package.json`) inside repos.
-    /// In the primary workspace this equals `output_dir`; in a weave it
+    /// In the primary workspace this equals `output_dir`; in a workweave it
     /// points to the primary workspace root so that repo detection still
-    /// works even when repo clones are not duplicated into the weave dir.
+    /// works even when repo clones are not duplicated into the workweave dir.
     pub workspace_root: &'a Path,
 
     /// The active project name.
@@ -111,10 +111,10 @@ pub trait Integration {
     fn default_enabled(&self) -> bool;
 
     /// Generate config files and run install commands.
-    /// Called during weave creation, sync, add, and remove.
+    /// Called during activation, workweave creation, sync, add, and remove.
     fn activate(&self, ctx: &IntegrationContext) -> anyhow::Result<()>;
 
-    /// Remove generated files. Called during weave deletion.
+    /// Remove generated files. Called during deactivation.
     fn deactivate(&self, root: &Path) -> anyhow::Result<()>;
 
     /// Read-only inspection. Returns issues without changing state.

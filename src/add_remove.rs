@@ -13,8 +13,8 @@ use std::path::{Path, PathBuf};
 /// look for a single project under `projects/` and use that.
 fn find_project_dir(ctx: &WorkspaceContext) -> anyhow::Result<std::path::PathBuf> {
     let project_name = match &ctx.location {
-        WorkspaceLocation::Primary { project } => project.clone(),
-        WorkspaceLocation::Weave { project, .. } => Some(project.clone()),
+        WorkspaceLocation::Weave { project } => project.clone(),
+        WorkspaceLocation::Workweave { project, .. } => Some(project.clone()),
     };
 
     if let Some(name) = project_name {

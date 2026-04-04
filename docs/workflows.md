@@ -214,30 +214,30 @@ cd projects/web-app && git add rwv.lock && git commit -m "lock: update server"
 cd ../mobile-app && git add rwv.lock && git commit -m "lock: update server"
 ```
 
-## Creating a weave for a feature branch
+## Creating a workweave for a feature branch
 
-You're working on a feature that spans server and protocol. You want to keep main undisturbed.
+You're working on a feature that spans server and protocol. You want to keep main undisturbed. A workweave is a worktree-based derivative of the primary weave, created on demand for isolation.
 
 ```bash
-rwv weave web-app payments
+rwv workweave web-app payments
 ```
 
 What happens:
 
-1. Creates `~/work--payments/` as a sibling directory
+1. Creates `.workweaves/payments/` under the weaveroot
 2. For each repo in web-app's manifest, runs `git worktree add` with an ephemeral branch:
    - `github/chatly/server/` → worktree on `payments/main`
    - `github/chatly/web/` → worktree on `payments/feature-A` (tracks whatever branch the primary had)
    - `github/chatly/protocol/` → worktree on `payments/main`
 3. Creates a worktree for the project repo too:
    - `projects/web-app/` → worktree on `payments/main`
-4. Generates ecosystem files in the weave's `projects/web-app/`
-5. Creates symlinks at `~/work--payments/` root
+4. Generates ecosystem files in the workweave's `projects/web-app/`
+5. Creates symlinks at `.workweaves/payments/` root
 6. Runs `npm install`
 
 ```
-~/work/                               # primary — undisturbed
-~/work--payments/                     # weave
+~/work/                               # primary weave — undisturbed
+.workweaves/payments/                 # workweave
 ├── github/chatly/server/             # worktree, on payments/main
 ├── github/chatly/web/                # worktree, on payments/feature-A
 ├── github/chatly/protocol/           # worktree, on payments/main
@@ -250,19 +250,19 @@ What happens:
 └── .rwv-active                       # "web-app"
 ```
 
-Work in the weave:
+Work in the workweave:
 
 ```bash
-cd ~/work--payments
+cd .workweaves/payments
 cd github/chatly/server
 git checkout -b feature/payments      # or: already on payments/main, start working
 # ... make changes, commit ...
 cd ../protocol
 # ... make changes, commit ...
-npm test --workspaces                 # from weave root — isolated deps
+npm test --workspaces                 # from workweave root — isolated deps
 ```
 
-Meanwhile, the primary is untouched:
+Meanwhile, the primary weave is untouched:
 
 ```bash
 cd ~/work
@@ -270,13 +270,13 @@ git -C github/chatly/server status    # still on main, clean
 npm test --workspaces                 # primary's deps, primary's branches
 ```
 
-## Creating a weave for PR review
+## Creating a workweave for PR review
 
 A colleague opened a PR against server. You want to review it without disrupting your work.
 
 ```bash
-rwv weave web-app review-pr-42
-cd ~/work--review-pr-42/github/chatly/server
+rwv workweave web-app review-pr-42
+cd .workweaves/review-pr-42/github/chatly/server
 git fetch origin pull/42/head:pr-42
 git checkout pr-42
 npm test --workspaces
@@ -286,18 +286,18 @@ npm test --workspaces
 When done:
 
 ```bash
-rwv weave web-app review-pr-42 --delete
+rwv workweave web-app review-pr-42 --delete
 ```
 
 Worktrees removed, ephemeral branches cleaned up, directory deleted.
 
 ## Agent isolation
 
-An orchestrator spins up a weave for an agent:
+An orchestrator spins up a workweave for an agent:
 
 ```bash
-rwv weave web-app agent-task-99
-# Launch agent with CWD at ~/work--agent-task-99/github/chatly/server/
+rwv workweave web-app agent-task-99
+# Launch agent with CWD at .workweaves/agent-task-99/github/chatly/server/
 ```
 
 The agent works in full isolation — its own branches, its own `node_modules/`, its own ecosystem resolution. It can commit, push, run tests without affecting anything.
@@ -306,7 +306,7 @@ When the agent finishes:
 
 ```bash
 # Review what the agent did
-cd ~/work--agent-task-99/github/chatly/server
+cd .workweaves/agent-task-99/github/chatly/server
 git log --oneline agent-task-99/main..HEAD
 
 # Merge into main if good
@@ -314,7 +314,7 @@ cd ~/work/github/chatly/server
 git merge agent-task-99/main
 
 # Clean up
-rwv weave web-app agent-task-99 --delete
+rwv workweave web-app agent-task-99 --delete
 ```
 
 ## Checking project health
@@ -340,14 +340,14 @@ mobile-app:
 orphans:
   ⚠ github/example/old-experiment/ not in any project
 
-weaves:
-  ~/work--payments: web-app (3 repos)
-  ~/work--agent-task-99: web-app (3 repos, stale — 7 days old)
+workweaves:
+  .workweaves/payments: web-app (3 repos)
+  .workweaves/agent-task-99: web-app (3 repos, stale — 7 days old)
 ```
 
 ## Day-to-day flow
 
-The typical cycle, no weaves needed:
+The typical cycle, no workweaves needed:
 
 ```bash
 cd ~/work
@@ -377,7 +377,7 @@ cd ~/work/github/chatly/server
 git push origin feature/new-endpoint
 ```
 
-No weave created. No worktree indirection. Just repos, just git.
+No workweave created. No worktree indirection. Just repos, just git.
 
 ## Ecosystem file conflicts when switching projects
 
@@ -393,15 +393,15 @@ npm install                 # has to reconcile node_modules/ for mobile-app's de
 
 This is the same cost as any project switch. `npm install` is incremental — it adds/removes the diff. For large dependency trees this can take 10-30 seconds.
 
-If this is too slow, create a weave for the second project:
+If this is too slow, create a workweave for the second project:
 
 ```bash
-rwv weave mobile-app dev
-cd ~/work--dev
-# This weave has its own node_modules/, no reconciliation needed
+rwv workweave mobile-app dev
+cd .workweaves/dev
+# This workweave has its own node_modules/, no reconciliation needed
 ```
 
-This is the natural escalation: start with activate (shared tool state, fast switching for small dep diffs), graduate to weaves when you need full isolation.
+This is the natural escalation: start with activate (shared tool state, fast switching for small dep diffs), graduate to workweaves when you need full isolation.
 
 ## Initializing a new project from existing repos
 
@@ -495,7 +495,7 @@ The project repo is a normal git repo. You commit to it, push it, branch it.
 
 ## Design decisions (resolved)
 
-1. **Shared tool state across project switches** — acceptable cost. `npm install` after `rwv activate` is incremental. If the cost is too high, create a weave for the second project — natural escalation from activate to weave.
+1. **Shared tool state across project switches** — acceptable cost. `npm install` after `rwv activate` is incremental. If the cost is too high, create a workweave for the second project — natural escalation from activate to workweave.
 
 2. **`rwv add` takes a URL** — always. The manifest needs URLs for `rwv fetch` on other machines. If the repo is already on disk, clone is a no-op. For new repos that don't exist yet, `rwv add <path> --new` initializes at the canonical path and infers the URL.
 
@@ -505,4 +505,4 @@ The project repo is a normal git repo. You commit to it, push it, branch it.
 
 5. **`rwv fetch` updates the lock** — fetches at branch HEAD from `rwv.yaml` and updates `rwv.lock` with actual SHAs (like `npm install` updates `package-lock.json`). `--locked` checks out exact revisions from the lock. `--frozen` errors if lock is missing or stale (CI mode). `--latest` ignores the lock entirely.
 
-6. **Weave naming** — `--` separator (`web-app--payments`). It's a default convention, not load-bearing — nothing internal parses directory names. Weaves track their primary via git worktree metadata. The separator can change later without breaking anything.
+6. **Workweave location** — workweaves live in `.workweaves/{name}` under the weaveroot. The `.rwv-workweave` marker file records the primary path and project, making the relationship explicit and independent of directory naming.

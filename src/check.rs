@@ -33,9 +33,9 @@ pub enum CheckViolation {
         actual: RevisionId,
     },
 
-    /// A worktree missing from a weave, or an extra worktree not in the manifest.
-    WeaveDrift {
-        weave: String,
+    /// A worktree missing from a workweave, or an extra worktree not in the manifest.
+    WorkweaveDrift {
+        workweave: String,
         kind: DriftKind,
         repo: RepoPath,
     },
@@ -141,14 +141,14 @@ pub fn violations_to_issues(violations: Vec<CheckViolation>) -> Vec<Issue> {
                         repo, locked, actual
                     ),
                 ),
-                CheckViolation::WeaveDrift { weave, kind, repo } => {
+                CheckViolation::WorkweaveDrift { workweave, kind, repo } => {
                     let kind_str = match kind {
                         DriftKind::Missing => "missing worktree",
                         DriftKind::Extra => "extra worktree",
                     };
                     (
                         crate::integration::Severity::Warning,
-                        format!("weave drift in {weave}: {kind_str} {repo}"),
+                        format!("workweave drift in {workweave}: {kind_str} {repo}"),
                     )
                 }
             };

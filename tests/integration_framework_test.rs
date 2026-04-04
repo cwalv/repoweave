@@ -320,7 +320,7 @@ fn touch(dir: &Path, relative: &str) {
 #[test]
 fn detect_repos_with_manifest_uses_workspace_root_not_output_dir() {
     // Set up two separate directories: workspace_root has the repos,
-    // output_dir is an empty weave directory.
+    // output_dir is an empty workweave directory.
     let ws_tmp = TempDir::new().unwrap();
     let out_tmp = TempDir::new().unwrap();
     let workspace_root = ws_tmp.path();

@@ -1,7 +1,7 @@
 //! `rwv prime` — emit structured workspace context for agent system prompts.
 //!
 //! Prints markdown describing the current repoweave workspace: root path,
-//! active project, workspace/weave location, repository table with roles,
+//! active project, workspace location (weave/workweave), repository table with roles,
 //! enabled integrations, key commands, and directory layout.
 //!
 //! Silent (exit 0, no output) when not inside a repoweave workspace.
@@ -34,13 +34,13 @@ pub fn render_context(ctx: &WorkspaceContext) -> String {
     out.push_str(&format!("- **Root**: `{}`\n", ctx.root.display()));
 
     let project: Option<&ProjectName> = match &ctx.location {
-        WorkspaceLocation::Primary { project } => {
-            out.push_str("- **Location**: primary\n");
+        WorkspaceLocation::Weave { project } => {
+            out.push_str("- **Location**: weave\n");
             project.as_ref()
         }
-        WorkspaceLocation::Weave { name, dir, project } => {
+        WorkspaceLocation::Workweave { name, dir, project } => {
             out.push_str(&format!(
-                "- **Location**: weave `{}`\n- **Weave dir**: `{}`\n",
+                "- **Location**: workweave `{}`\n- **Workweave dir**: `{}`\n",
                 name.as_str(),
                 dir.display()
             ));
@@ -69,9 +69,9 @@ pub fn render_context(ctx: &WorkspaceContext) -> String {
     out.push_str("| `rwv` | Show workspace context |\n");
     out.push_str("| `rwv resolve` | Print effective root path |\n");
     out.push_str("| `rwv activate PROJECT` | Set active project, generate ecosystem configs |\n");
-    out.push_str("| `rwv weave PROJECT NAME` | Create a weave (worktree-based workspace) |\n");
-    out.push_str("| `rwv add URL [--role ROLE]` | Add a repo to the current weave |\n");
-    out.push_str("| `rwv remove PATH` | Remove a repo from the current weave |\n");
+    out.push_str("| `rwv workweave PROJECT NAME` | Create a workweave (worktree-based workspace) |\n");
+    out.push_str("| `rwv add URL [--role ROLE]` | Add a repo to the active project |\n");
+    out.push_str("| `rwv remove PATH` | Remove a repo from the active project |\n");
     out.push_str("| `rwv lock` | Snapshot repo versions to rwv.lock |\n");
     out.push_str("| `rwv check` | Run convention enforcement |\n");
     out.push_str("| `rwv fetch SOURCE` | Clone a project and its repos |\n");
@@ -238,7 +238,7 @@ integrations:
 
         assert!(output.contains("# repoweave workspace"));
         assert!(output.contains("**Root**"));
-        assert!(output.contains("**Location**: primary"));
+        assert!(output.contains("**Location**: weave"));
         assert!(output.contains("**Project**: `web-app`"));
         assert!(output.contains("## Repositories"));
         assert!(output.contains("github/acme/server"));
@@ -251,14 +251,14 @@ integrations:
         assert!(output.contains("## Directory layout"));
     }
 
-    // -- render_context in weave ----------------------------------------------
+    // -- render_context in workweave ------------------------------------------
 
     #[test]
-    fn render_context_weave() {
+    fn render_context_workweave() {
         let tmp = tempfile::tempdir().unwrap();
         let root = make_test_workspace(tmp.path(), "ws");
-        let weave_dir = tmp.path().join("ws--hotfix");
-        std::fs::create_dir_all(&weave_dir).unwrap();
+        let workweave_dir = tmp.path().join("ws--hotfix");
+        std::fs::create_dir_all(&workweave_dir).unwrap();
 
         write_manifest(
             &root,
@@ -273,10 +273,10 @@ repositories:
 "#,
         );
 
-        let ctx = WorkspaceContext::resolve(&weave_dir, None).unwrap();
+        let ctx = WorkspaceContext::resolve(&workweave_dir, None).unwrap();
         let output = render_context(&ctx);
 
-        assert!(output.contains("weave `hotfix`"));
+        assert!(output.contains("workweave `hotfix`"));
         assert!(output.contains("**Project**: `ws`"));
         assert!(output.contains("## Repositories"));
     }
@@ -292,7 +292,7 @@ repositories:
         let output = render_context(&ctx);
 
         assert!(output.contains("# repoweave workspace"));
-        assert!(output.contains("**Location**: primary"));
+        assert!(output.contains("**Location**: weave"));
         assert!(!output.contains("**Project**"));
         assert!(!output.contains("## Repositories"));
     }

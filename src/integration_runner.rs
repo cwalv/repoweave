@@ -295,6 +295,7 @@ mod tests {
         Manifest {
             repositories: repos,
             integrations: integration_configs,
+            workweave: None,
         }
     }
 

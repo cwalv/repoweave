@@ -63,16 +63,16 @@ git add rwv.lock && git commit -m “lock: update after payment feature”
 Create an isolated working copy when you need parallel work, PR review, or agent isolation:
 
 ```bash
-rwv weave web-app payments        # creates sibling dir with git worktrees
-cd ../my-workspace--payments
-# independent branches, node_modules, .venv — primary is undisturbed
+rwv workweave web-app payments    # creates isolated working copy with git worktrees
+cd .workweaves/payments
+# independent branches, node_modules, .venv — primary weave is undisturbed
 ```
 
 ### Commands
 
 | Command | Description |
 |---|---|
-| `rwv` | Show current context (root, project, weave, repos) |
+| `rwv` | Show current context (root, project, workweave, repos) |
 | `rwv fetch <source>` | Clone a project and all its repos; activate and install. `--locked` for exact reproduction, `--frozen` for CI |
 | `rwv init <project>` | Create a new project with empty `rwv.yaml`. Optional `--provider registry/owner` sets up the remote |
 | `rwv activate <project>` | Set the active project — generate ecosystem files, symlink at root, run install |
@@ -80,7 +80,7 @@ cd ../my-workspace--payments
 | `rwv remove <path>` | Remove from `rwv.yaml`, re-run integrations. `--delete` removes the clone |
 | `rwv lock` | Snapshot repo HEADs into `rwv.lock`. Errors on uncommitted changes (`--dirty` to bypass) |
 | `rwv check` | Convention enforcement: orphans, dangling refs, stale locks, integration checks |
-| `rwv weave <project> <name>` | Create an isolated working copy (worktrees on ephemeral branches). `--delete` / `--sync` / `--list` |
+| `rwv workweave <project> <name>` | Create an isolated working copy (worktrees on ephemeral branches). `--delete` / `--sync` / `--list` |
 | `rwv resolve` | Print the workspace root path (useful for scripting: `cd $(rwv resolve)`) |
 | `rwv prime` | Print structured workspace context for agent system prompts |
 | `rwv setup claude` | Register `rwv prime` as a Claude Code hook (SessionStart + PreCompact) |
@@ -119,9 +119,9 @@ Both commands are idempotent and safe to re-run.
 
 Full docs at **[cwalv.github.io/repoweave](https://cwalv.github.io/repoweave/)**, or browse the source:
 
-- [repoweave.md](docs/repoweave.md) — core concepts: directory layout, weaves, projects, roles, lock files, prior art
+- [repoweave.md](docs/repoweave.md) — core concepts: directory layout, weaves and workweaves, projects, roles, lock files, prior art
 - [integrations.md](docs/integrations.md) — built-in ecosystem integrations (npm, pnpm, Go, uv, Cargo, gita, VS Code, static-files)
-- [workflows.md](docs/workflows.md) — walkthrough of common workflows (fetch, add/remove, lock, weave, agent isolation, CI)
+- [workflows.md](docs/workflows.md) — walkthrough of common workflows (fetch, add/remove, lock, workweave, agent isolation, CI)
 
 ### License
 

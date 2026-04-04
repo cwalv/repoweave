@@ -1,4 +1,4 @@
-use repoweave::manifest::{LockFile, Manifest, Project, RepoPath, Role, VcsType, WeaveName};
+use repoweave::manifest::{LockFile, Manifest, Project, RepoPath, Role, VcsType, WorkweaveName};
 use repoweave::vcs::{RefName, RevisionId};
 
 // ---------------------------------------------------------------------------
@@ -43,8 +43,8 @@ repositories:
     role: primary
 "#;
 
-const LOCK_WITH_WEAVE_YAML: &str = r#"
-weave: hotfix-42
+const LOCK_WITH_WORKWEAVE_YAML: &str = r#"
+workweave: hotfix-42
 repositories:
   github/acme/server:
     type: git
@@ -56,7 +56,7 @@ repositories:
     version: "789000aabbcc"
 "#;
 
-const LOCK_WITHOUT_WEAVE_YAML: &str = r#"
+const LOCK_WITHOUT_WORKWEAVE_YAML: &str = r#"
 repositories:
   github/acme/server:
     type: git
@@ -160,9 +160,9 @@ integrations:
 // ---------------------------------------------------------------------------
 
 #[test]
-fn lock_with_weave_provenance() {
-    let lock: LockFile = serde_yaml::from_str(LOCK_WITH_WEAVE_YAML).unwrap();
-    assert_eq!(lock.weave, Some(WeaveName::new("hotfix-42")));
+fn lock_with_workweave_provenance() {
+    let lock: LockFile = serde_yaml::from_str(LOCK_WITH_WORKWEAVE_YAML).unwrap();
+    assert_eq!(lock.workweave, Some(WorkweaveName::new("hotfix-42")));
     assert_eq!(lock.repositories.len(), 2);
 
     let server = &lock.repositories[&RepoPath::new("github/acme/server")];
@@ -171,15 +171,15 @@ fn lock_with_weave_provenance() {
 }
 
 #[test]
-fn lock_without_weave_provenance() {
-    let lock: LockFile = serde_yaml::from_str(LOCK_WITHOUT_WEAVE_YAML).unwrap();
-    assert_eq!(lock.weave, None);
+fn lock_without_workweave_provenance() {
+    let lock: LockFile = serde_yaml::from_str(LOCK_WITHOUT_WORKWEAVE_YAML).unwrap();
+    assert_eq!(lock.workweave, None);
     assert_eq!(lock.repositories.len(), 1);
 }
 
 #[test]
 fn lock_repo_paths_sorted() {
-    let lock: LockFile = serde_yaml::from_str(LOCK_WITH_WEAVE_YAML).unwrap();
+    let lock: LockFile = serde_yaml::from_str(LOCK_WITH_WORKWEAVE_YAML).unwrap();
     let keys: Vec<&str> = lock.repositories.keys().map(|k| k.as_str()).collect();
     assert_eq!(keys, vec!["github/acme/client", "github/acme/server"]);
 }
@@ -207,11 +207,11 @@ fn manifest_round_trip() {
 
 #[test]
 fn lock_round_trip() {
-    let original: LockFile = serde_yaml::from_str(LOCK_WITH_WEAVE_YAML).unwrap();
+    let original: LockFile = serde_yaml::from_str(LOCK_WITH_WORKWEAVE_YAML).unwrap();
     let serialized = serde_yaml::to_string(&original).unwrap();
     let deserialized: LockFile = serde_yaml::from_str(&serialized).unwrap();
 
-    assert_eq!(original.weave, deserialized.weave);
+    assert_eq!(original.workweave, deserialized.workweave);
     assert_eq!(
         original.repositories.len(),
         deserialized.repositories.len()
@@ -225,13 +225,14 @@ fn lock_round_trip() {
 }
 
 #[test]
-fn lock_without_weave_round_trip_skips_weave_key() {
-    let original: LockFile = serde_yaml::from_str(LOCK_WITHOUT_WEAVE_YAML).unwrap();
+fn lock_without_workweave_round_trip_skips_workweave_key() {
+    let original: LockFile = serde_yaml::from_str(LOCK_WITHOUT_WORKWEAVE_YAML).unwrap();
     let serialized = serde_yaml::to_string(&original).unwrap();
-    // The `weave` key should be absent thanks to `skip_serializing_if`.
+    // The `workweave` key should be absent thanks to `skip_serializing_if`.
+    assert!(!serialized.contains("workweave:"));
     assert!(!serialized.contains("weave:"));
     let deserialized: LockFile = serde_yaml::from_str(&serialized).unwrap();
-    assert_eq!(deserialized.weave, None);
+    assert_eq!(deserialized.workweave, None);
 }
 
 // ---------------------------------------------------------------------------
@@ -253,12 +254,12 @@ fn project_from_dir_manifest_only() {
 fn project_from_dir_manifest_and_lock() {
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(dir.path().join("rwv.yaml"), FULL_MANIFEST_YAML).unwrap();
-    std::fs::write(dir.path().join("rwv.lock"), LOCK_WITH_WEAVE_YAML).unwrap();
+    std::fs::write(dir.path().join("rwv.lock"), LOCK_WITH_WORKWEAVE_YAML).unwrap();
 
     let project = Project::from_dir(dir.path()).unwrap();
     assert_eq!(project.manifest.repositories.len(), 4);
     let lock = project.lock.as_ref().unwrap();
-    assert_eq!(lock.weave, Some(WeaveName::new("hotfix-42")));
+    assert_eq!(lock.workweave, Some(WorkweaveName::new("hotfix-42")));
     assert_eq!(lock.repositories.len(), 2);
 }
 

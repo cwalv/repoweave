@@ -133,10 +133,12 @@ fn remove_subcommand_is_recognized() {
 
 #[test]
 fn add_accepts_url_argument() {
-    // With a URL argument, the CLI parses successfully. Without a workspace,
-    // the command fails at runtime (not at argument parsing).
+    // CLI parses the URL argument successfully. Fails at workspace resolution
+    // (not argument parsing) because we run from an empty temp dir.
+    let tmp = tempfile::tempdir().unwrap();
     rwv()
-        .args(["add", "https://github.com/example/repo.git"])
+        .args(["add", "https://example.com/org/repo.git"])
+        .current_dir(tmp.path())
         .assert()
         .failure()
         .stderr(predicate::str::contains("workspace").or(predicate::str::contains("project")));
@@ -144,10 +146,12 @@ fn add_accepts_url_argument() {
 
 #[test]
 fn remove_accepts_path_argument() {
-    // With a path argument, the CLI parses successfully. Without a workspace,
-    // the command fails at runtime (not at argument parsing).
+    // CLI parses the path argument successfully. Fails at workspace resolution
+    // (not argument parsing) because we run from an empty temp dir.
+    let tmp = tempfile::tempdir().unwrap();
     rwv()
         .args(["remove", "github/example/repo"])
+        .current_dir(tmp.path())
         .assert()
         .failure()
         .stderr(predicate::str::contains("workspace").or(predicate::str::contains("project")));

@@ -121,7 +121,7 @@ fn lock_in_primary_creates_lock_file() {
     // Parse as LockFile to verify structure
     let lock = repoweave::manifest::LockFile::from_path(&lock_path).unwrap();
     assert_eq!(lock.repositories.len(), 2);
-    assert!(lock.weave.is_none(), "primary lock should have no weave");
+    assert!(lock.workweave.is_none(), "primary lock should have no workweave");
 
     let entry_a = lock
         .repositories
@@ -138,11 +138,11 @@ fn lock_in_primary_creates_lock_file() {
 }
 
 // ---------------------------------------------------------------------------
-// 2. `rwv lock` in a weave — includes weave provenance
+// 2. `rwv lock` in a workweave — includes workweave provenance
 // ---------------------------------------------------------------------------
 
 #[test]
-fn lock_in_weave_includes_weave_name() {
+fn lock_in_workweave_includes_workweave_name() {
     let tmp = tempfile::tempdir().unwrap();
     let root = make_workspace(tmp.path(), "ws");
 
@@ -156,38 +156,38 @@ fn lock_in_weave_includes_weave_name() {
         &[(repo_path, "https://github.com/acme/server.git")],
     );
 
-    // Create a weave sibling directory: ws--hotfix
-    let weave_dir = tmp.path().join("ws--hotfix");
-    std::fs::create_dir_all(weave_dir.join("github")).unwrap();
+    // Create a workweave sibling directory: ws--hotfix
+    let workweave_dir = tmp.path().join("ws--hotfix");
+    std::fs::create_dir_all(workweave_dir.join("github")).unwrap();
 
-    // Also create the repo in the weave so HEAD can be resolved
-    let weave_repo = weave_dir.join(repo_path);
-    let weave_sha = init_git_repo(&weave_repo);
+    // Also create the repo in the workweave so HEAD can be resolved
+    let workweave_repo = workweave_dir.join(repo_path);
+    let workweave_sha = init_git_repo(&workweave_repo);
 
     rwv_cmd()
         .arg("lock")
-        .current_dir(&weave_dir)
+        .current_dir(&workweave_dir)
         .assert()
         .success();
 
-    // Lock file should be in the project dir (or weave project dir)
-    // Check the lock file includes weave provenance
+    // Lock file should be in the project dir
+    // Check the lock file includes workweave provenance
     let lock_path = project_dir.join("rwv.lock");
     assert!(lock_path.exists(), "rwv.lock should be created");
 
     let lock = repoweave::manifest::LockFile::from_path(&lock_path).unwrap();
     assert_eq!(
-        lock.weave,
-        Some(repoweave::manifest::WeaveName::new("hotfix")),
-        "lock should include weave name"
+        lock.workweave,
+        Some(repoweave::manifest::WorkweaveName::new("hotfix")),
+        "lock should include workweave name"
     );
 
     let entry = lock
         .repositories
         .get(&repoweave::manifest::RepoPath::new(repo_path))
         .expect("lock should contain repo");
-    // The SHA should come from the weave's repo
-    assert_eq!(entry.version.as_str(), &weave_sha);
+    // The SHA should come from the workweave's repo
+    assert_eq!(entry.version.as_str(), &workweave_sha);
     let _ = sha; // primary SHA unused but kept for clarity
 }
 

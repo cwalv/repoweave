@@ -61,7 +61,7 @@ fn context_display_in_primary_subdir() {
 }
 
 // ============================================================================
-// 2. `rwv` (no subcommand) in a weave directory
+// 2. `rwv` (no subcommand) in a workweave directory
 // ============================================================================
 
 #[test]
@@ -70,7 +70,7 @@ fn context_display_in_weave_shows_weave_info() {
     let tmp = tempfile::tempdir().unwrap();
     let _root = make_workspace(tmp.path(), "ws");
 
-    // Create the weave sibling directory
+    // Create the workweave sibling directory
     let weave_dir = tmp.path().join("ws--hotfix");
     fs::create_dir_all(&weave_dir).unwrap();
 
@@ -148,7 +148,7 @@ fn resolve_at_workspace_root_prints_root_path() {
 }
 
 // ============================================================================
-// 4. `rwv resolve` in a weave directory
+// 4. `rwv resolve` in a workweave directory
 // ============================================================================
 
 #[test]

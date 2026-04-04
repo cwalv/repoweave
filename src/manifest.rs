@@ -59,12 +59,12 @@ impl fmt::Display for ProjectName {
     }
 }
 
-/// A weave name (e.g., `agent-42`, `hotfix`).
+/// A workweave name (e.g., `agent-42`, `hotfix`).
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
-pub struct WeaveName(String);
+pub struct WorkweaveName(String);
 
-impl WeaveName {
+impl WorkweaveName {
     pub fn new(s: impl Into<String>) -> Self {
         Self(s.into())
     }
@@ -74,7 +74,7 @@ impl WeaveName {
     }
 }
 
-impl fmt::Display for WeaveName {
+impl fmt::Display for WorkweaveName {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(&self.0)
     }
@@ -146,6 +146,24 @@ pub struct IntegrationConfig {
 }
 
 // ---------------------------------------------------------------------------
+// WorkweaveConfig — artifact handling for workweaves
+// ---------------------------------------------------------------------------
+
+/// Configuration for workweave artifact handling.
+/// Declares which gitignored artifacts should be copied or linked
+/// when creating a workweave.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct WorkweaveConfig {
+    /// Paths to symlink from workweave to primary (shared state).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub link: Vec<String>,
+
+    /// Paths to copy from primary to workweave (local config).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub copy: Vec<String>,
+}
+
+// ---------------------------------------------------------------------------
 // Manifest — the parsed `rwv.yaml`
 // ---------------------------------------------------------------------------
 
@@ -155,6 +173,8 @@ pub struct Manifest {
     pub repositories: BTreeMap<RepoPath, RepoEntry>,
     #[serde(default)]
     pub integrations: BTreeMap<String, IntegrationConfig>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workweave: Option<WorkweaveConfig>,
 }
 
 impl Manifest {
@@ -184,9 +204,9 @@ pub struct LockEntry {
 /// A parsed `rwv.lock` file — pinned SHAs for reproducibility.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LockFile {
-    /// Which weave this lock was generated from, if any.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub weave: Option<WeaveName>,
+    /// Which workweave this lock was generated from, if any.
+    #[serde(default, skip_serializing_if = "Option::is_none", alias = "weave")]
+    pub workweave: Option<WorkweaveName>,
     pub repositories: BTreeMap<RepoPath, LockEntry>,
 }
 
@@ -285,7 +305,7 @@ repositories:
 "#;
 
     const VALID_LOCK: &str = r#"
-weave: hotfix-42
+workweave: hotfix-42
 repositories:
   github/acme/server:
     type: git
@@ -293,7 +313,7 @@ repositories:
     version: abc123def456
 "#;
 
-    const VALID_LOCK_NO_WEAVE: &str = r#"
+    const VALID_LOCK_NO_WORKWEAVE: &str = r#"
 repositories:
   github/acme/server:
     type: git
@@ -423,24 +443,24 @@ repositories:
     // ========================================================================
 
     #[test]
-    fn lock_from_path_with_weave() {
+    fn lock_from_path_with_workweave() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("rwv.lock");
         std::fs::write(&path, VALID_LOCK).unwrap();
 
         let lock = LockFile::from_path(&path).unwrap();
-        assert_eq!(lock.weave, Some(WeaveName::new("hotfix-42")));
+        assert_eq!(lock.workweave, Some(WorkweaveName::new("hotfix-42")));
         assert_eq!(lock.repositories.len(), 1);
     }
 
     #[test]
-    fn lock_from_path_without_weave() {
+    fn lock_from_path_without_workweave() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("rwv.lock");
-        std::fs::write(&path, VALID_LOCK_NO_WEAVE).unwrap();
+        std::fs::write(&path, VALID_LOCK_NO_WORKWEAVE).unwrap();
 
         let lock = LockFile::from_path(&path).unwrap();
-        assert_eq!(lock.weave, None);
+        assert_eq!(lock.workweave, None);
         assert_eq!(lock.repositories.len(), 1);
     }
 
@@ -469,7 +489,7 @@ repositories:
     fn lock_from_path_missing_repositories() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("empty.lock");
-        std::fs::write(&path, "weave: test\n").unwrap();
+        std::fs::write(&path, "workweave: test\n").unwrap();
 
         let result = LockFile::from_path(&path);
         assert!(result.is_err(), "lock without repositories should fail");
@@ -496,12 +516,12 @@ repositories:
     }
 
     #[test]
-    fn lock_serde_round_trip_with_weave() {
+    fn lock_serde_round_trip_with_workweave() {
         let original: LockFile = serde_yaml::from_str(VALID_LOCK).unwrap();
         let yaml = serde_yaml::to_string(&original).unwrap();
         let restored: LockFile = serde_yaml::from_str(&yaml).unwrap();
 
-        assert_eq!(original.weave, restored.weave);
+        assert_eq!(original.workweave, restored.workweave);
         assert_eq!(original.repositories.len(), restored.repositories.len());
         for (key, orig) in &original.repositories {
             let rest = &restored.repositories[key];
@@ -512,12 +532,13 @@ repositories:
     }
 
     #[test]
-    fn lock_round_trip_no_weave_omits_key() {
-        let original: LockFile = serde_yaml::from_str(VALID_LOCK_NO_WEAVE).unwrap();
+    fn lock_round_trip_no_workweave_omits_key() {
+        let original: LockFile = serde_yaml::from_str(VALID_LOCK_NO_WORKWEAVE).unwrap();
         let yaml = serde_yaml::to_string(&original).unwrap();
+        assert!(!yaml.contains("workweave:"), "workweave key should be omitted via skip_serializing_if");
         assert!(!yaml.contains("weave:"), "weave key should be omitted via skip_serializing_if");
         let restored: LockFile = serde_yaml::from_str(&yaml).unwrap();
-        assert_eq!(restored.weave, None);
+        assert_eq!(restored.workweave, None);
     }
 
     #[test]
@@ -568,18 +589,6 @@ repositories:
         assert!(project.lock.is_none());
         assert_eq!(project.manifest.repositories.len(), 1);
         assert_eq!(project.dir, dir.path());
-    }
-
-    #[test]
-    fn project_from_dir_with_lock() {
-        let dir = tempfile::tempdir().unwrap();
-        std::fs::write(dir.path().join("rwv.yaml"), VALID_MANIFEST).unwrap();
-        std::fs::write(dir.path().join("rwv.lock"), VALID_LOCK).unwrap();
-
-        let project = Project::from_dir(dir.path()).unwrap();
-        assert!(project.lock.is_some());
-        let lock = project.lock.unwrap();
-        assert_eq!(lock.weave, Some(WeaveName::new("hotfix-42")));
     }
 
     #[test]
@@ -642,6 +651,93 @@ repositories:
         let yaml = "repositories: {}\n";
         let lock: LockFile = serde_yaml::from_str(yaml).unwrap();
         assert!(lock.repositories.is_empty());
-        assert_eq!(lock.weave, None);
+        assert_eq!(lock.workweave, None);
+    }
+
+    // ========================================================================
+    // WorkweaveConfig serde
+    // ========================================================================
+
+    #[test]
+    fn workweave_config_serde_round_trip() {
+        let original = WorkweaveConfig {
+            link: vec!["target/".to_string(), ".cargo/registry".to_string()],
+            copy: vec![".env".to_string(), ".vscode/settings.json".to_string()],
+        };
+        let yaml = serde_yaml::to_string(&original).unwrap();
+        let restored: WorkweaveConfig = serde_yaml::from_str(&yaml).unwrap();
+        assert_eq!(original, restored);
+    }
+
+    #[test]
+    fn manifest_with_workweave_section() {
+        let yaml = r#"
+repositories:
+  github/acme/server:
+    type: git
+    url: https://github.com/acme/server.git
+    version: main
+    role: primary
+workweave:
+  link:
+    - target/
+  copy:
+    - .env
+"#;
+        let m: Manifest = serde_yaml::from_str(yaml).unwrap();
+        let ww = m.workweave.expect("workweave should be Some");
+        assert_eq!(ww.link, vec!["target/"]);
+        assert_eq!(ww.copy, vec![".env"]);
+    }
+
+    #[test]
+    fn manifest_without_workweave_section() {
+        let m: Manifest = serde_yaml::from_str(VALID_MANIFEST).unwrap();
+        assert!(m.workweave.is_none());
+    }
+
+    #[test]
+    fn lock_file_workweave_field() {
+        let yaml = r#"
+workweave: agent-42
+repositories:
+  github/acme/server:
+    type: git
+    url: https://github.com/acme/server.git
+    version: abc123
+"#;
+        let lock: LockFile = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(lock.workweave, Some(WorkweaveName::new("agent-42")));
+    }
+
+    #[test]
+    fn lock_file_weave_alias_backward_compat() {
+        // Old lock files used `weave:` — the serde alias should read them.
+        let yaml = r#"
+weave: hotfix-99
+repositories:
+  github/acme/server:
+    type: git
+    url: https://github.com/acme/server.git
+    version: deadbeef
+"#;
+        let lock: LockFile = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(lock.workweave, Some(WorkweaveName::new("hotfix-99")));
+    }
+
+    // ========================================================================
+    // Project::from_dir with workweave in lock
+    // ========================================================================
+
+    #[test]
+    fn project_from_dir_with_lock() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("rwv.yaml"), VALID_MANIFEST).unwrap();
+        std::fs::write(dir.path().join("rwv.lock"), VALID_LOCK).unwrap();
+
+        let project = Project::from_dir(dir.path()).unwrap();
+        assert!(project.lock.is_some());
+        let lock = project.lock.unwrap();
+        assert_eq!(lock.workweave, Some(WorkweaveName::new("hotfix-42")));
     }
 }

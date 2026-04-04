@@ -104,16 +104,16 @@ fn prime_no_active_project() {
         .assert()
         .success()
         .stdout(predicate::str::contains("# repoweave workspace"))
-        .stdout(predicate::str::contains("**Location**: primary"))
+        .stdout(predicate::str::contains("**Location**: weave"))
         .stdout(predicate::function(|s: &str| !s.contains("**Project**")));
 }
 
 // ============================================================================
-// 4. Inside a weave
+// 4. Inside a workweave
 // ============================================================================
 
 #[test]
-fn prime_in_weave() {
+fn prime_in_workweave() {
     let tmp = tempfile::tempdir().unwrap();
     let root = make_workspace(tmp.path(), "ws");
 
@@ -139,7 +139,7 @@ repositories:
         .current_dir(&weave_dir)
         .assert()
         .success()
-        .stdout(predicate::str::contains("weave `hotfix`"))
+        .stdout(predicate::str::contains("workweave `hotfix`"))
         .stdout(predicate::str::contains("**Project**: `ws`"))
         .stdout(predicate::str::contains("## Repositories"));
 }

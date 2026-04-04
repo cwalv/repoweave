@@ -1,24 +1,16 @@
-mod activate;
-mod add_remove;
-mod check;
-mod fetch;
-mod git;
-mod init;
-mod integration;
-mod integration_runner;
-mod integrations;
-mod lock;
-mod manifest;
-mod prime;
-mod registry;
-mod setup;
-mod vcs;
-mod weave;
-mod workspace;
+use repoweave::add_remove;
+use repoweave::activate;
+use repoweave::check;
+use repoweave::fetch;
+use repoweave::init;
+use repoweave::lock;
+use repoweave::manifest;
+use repoweave::prime;
+use repoweave::setup;
 
 use clap::{CommandFactory, Parser, Subcommand};
 use clap_complete::Shell;
-use repoweave::manifest::WeaveName;
+use repoweave::manifest::WorkweaveName;
 use repoweave::workspace::WorkspaceContext;
 
 #[derive(Parser)]
@@ -30,21 +22,24 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Create, delete, or list weaves
-    Weave {
+    /// Create, delete, or list workweaves
+    Workweave {
         /// Project name
         project: String,
-        /// Optional weave name
+        /// Optional workweave name
         name: Option<String>,
-        /// Delete the named weave
+        /// Delete the named workweave
         #[arg(long)]
         delete: bool,
-        /// List existing weaves
+        /// List existing workweaves
         #[arg(long)]
         list: bool,
-        /// Sync weave with current manifest
+        /// Sync workweave with current manifest
         #[arg(long)]
         sync: bool,
+        /// Hook mode: print only the workweave path to stdout (for Claude Code WorktreeCreate hook)
+        #[arg(long)]
+        hook_mode: bool,
     },
     /// Clone a project and its repos
     Fetch {
@@ -60,7 +55,7 @@ enum Commands {
         #[arg(long)]
         force: bool,
     },
-    /// Add a repo to the current weave
+    /// Add a repo to the active project
     Add {
         /// Repository URL or path (with --new)
         url: String,
@@ -71,7 +66,7 @@ enum Commands {
         #[arg(long)]
         new: bool,
     },
-    /// Remove a repo from the current weave
+    /// Remove a repo from the active project
     Remove {
         /// Path of the repo to remove
         path: String,
@@ -90,7 +85,7 @@ enum Commands {
     },
     /// Convention enforcement
     Check,
-    /// Print weave root path
+    /// Print workspace root path
     Resolve,
     /// Initialize a new project
     Init {
@@ -139,25 +134,28 @@ fn main() -> anyhow::Result<()> {
             let ctx = WorkspaceContext::resolve(&cwd, None)?;
             println!("{}", ctx.display());
         }
-        Some(Commands::Weave { project, name, delete, list, sync }) => {
+        Some(Commands::Workweave { project, name, delete, list, sync, hook_mode }) => {
             let cwd = std::env::current_dir()?;
             let ctx = WorkspaceContext::resolve(&cwd, None)?;
             let ws_root = &ctx.root;
 
             if list {
-                let names = repoweave::weave::list_weaves(ws_root)?;
+                let names = repoweave::workweave::list_workweaves(ws_root)?;
                 for n in &names {
                     println!("{}", n);
                 }
             } else if delete {
-                let name = name.ok_or_else(|| anyhow::anyhow!("--delete requires a weave name"))?;
-                repoweave::weave::delete_weave(ws_root, &project, &WeaveName::new(name))?;
+                let name = name.ok_or_else(|| anyhow::anyhow!("--delete requires a workweave name"))?;
+                repoweave::workweave::delete_workweave(ws_root, &project, &WorkweaveName::new(name))?;
             } else if sync {
-                let name = name.ok_or_else(|| anyhow::anyhow!("--sync requires a weave name"))?;
-                repoweave::weave::sync_weave(ws_root, &project, &WeaveName::new(name))?;
+                let name = name.ok_or_else(|| anyhow::anyhow!("--sync requires a workweave name"))?;
+                repoweave::workweave::sync_workweave(ws_root, &project, &WorkweaveName::new(name))?;
             } else {
-                let name = name.ok_or_else(|| anyhow::anyhow!("weave create requires a name argument"))?;
-                repoweave::weave::create_weave(ws_root, &project, &WeaveName::new(name))?;
+                let name = name.ok_or_else(|| anyhow::anyhow!("workweave create requires a name argument"))?;
+                let workweave_path = repoweave::workweave::create_workweave(ws_root, &project, &WorkweaveName::new(name))?;
+                if hook_mode {
+                    println!("{}", workweave_path.display());
+                }
             }
         }
         Some(Commands::Fetch { source, locked, frozen, force }) => {
