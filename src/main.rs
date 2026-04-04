@@ -126,7 +126,11 @@ enum SetupAction {
     /// Generate AGENTS.md at the workspace root
     AgentsMd,
     /// Register rwv prime as a Claude Code hook (SessionStart + PreCompact)
-    Claude,
+    Claude {
+        /// Remove all rwv hooks from Claude Code settings
+        #[arg(long)]
+        uninstall: bool,
+    },
 }
 
 fn main() -> anyhow::Result<()> {
@@ -229,7 +233,13 @@ fn main() -> anyhow::Result<()> {
             let cwd = std::env::current_dir()?;
             match action {
                 SetupAction::AgentsMd => setup::agents_md(&cwd)?,
-                SetupAction::Claude => setup::claude()?,
+                SetupAction::Claude { uninstall } => {
+                    if uninstall {
+                        setup::claude_uninstall()?;
+                    } else {
+                        setup::claude()?;
+                    }
+                }
             }
         }
         Some(Commands::Completions { shell }) => {

@@ -92,9 +92,122 @@ fn claude_hooks_dir() -> anyhow::Result<PathBuf> {
     Ok(Path::new(&home).join(".claude").join("hooks"))
 }
 
+/// Command substrings that identify rwv-registered hooks.
+const RWV_HOOK_COMMANDS: &[&str] = &[
+    "rwv prime",
+    "rwv workweave --claude-hook",
+    "rwv-workweave-create.sh",
+    "rwv-workweave-remove.sh",
+];
+
 /// Run `rwv setup claude`.
 pub fn claude() -> anyhow::Result<()> {
     claude_inner(&claude_settings_path()?, &claude_hooks_dir()?)
+}
+
+/// Run `rwv setup claude --uninstall`.
+pub fn claude_uninstall() -> anyhow::Result<()> {
+    claude_uninstall_at(&claude_settings_path()?, &claude_hooks_dir()?)
+}
+
+/// Implementation that accepts explicit paths (for testing).
+pub fn claude_uninstall_at(settings_path: &Path, hooks_dir: &Path) -> anyhow::Result<()> {
+    if !settings_path.exists() {
+        println!("No settings.json found — nothing to do.");
+        return Ok(());
+    }
+
+    let content = std::fs::read_to_string(settings_path)
+        .with_context(|| format!("failed to read {}", settings_path.display()))?;
+    let mut root: Value = serde_json::from_str(&content)
+        .with_context(|| format!("invalid JSON in {}", settings_path.display()))?;
+
+    let root_obj = root
+        .as_object_mut()
+        .context("settings.json root is not an object")?;
+
+    let hooks_obj = match root_obj.get_mut("hooks").and_then(|h| h.as_object_mut()) {
+        Some(obj) => obj,
+        None => {
+            println!("No hooks registered — nothing to do.");
+            return Ok(());
+        }
+    };
+
+    let mut removed_count = 0usize;
+
+    // Collect event keys first to avoid borrow issues.
+    let event_keys: Vec<String> = hooks_obj.keys().cloned().collect();
+
+    for event in &event_keys {
+        if let Some(arr) = hooks_obj.get_mut(event).and_then(|v| v.as_array_mut()) {
+            // For each matcher group, remove rwv hook entries.
+            for group in arr.iter_mut() {
+                if let Some(hook_entries) = group.get_mut("hooks").and_then(|h| h.as_array_mut()) {
+                    let before = hook_entries.len();
+                    hook_entries.retain(|h| {
+                        let cmd = h
+                            .get("command")
+                            .and_then(|c| c.as_str())
+                            .unwrap_or("");
+                        !RWV_HOOK_COMMANDS.iter().any(|pat| cmd.contains(pat))
+                    });
+                    removed_count += before - hook_entries.len();
+                }
+            }
+            // Remove groups whose hooks array is now empty.
+            arr.retain(|group| {
+                group
+                    .get("hooks")
+                    .and_then(|h| h.as_array())
+                    .map(|h| !h.is_empty())
+                    .unwrap_or(true) // keep groups with non-array hooks (unexpected shape)
+            });
+        }
+    }
+
+    // Remove event keys whose arrays are now empty.
+    let empty_events: Vec<String> = hooks_obj
+        .iter()
+        .filter(|(_, v)| {
+            v.as_array().map(|a| a.is_empty()).unwrap_or(false)
+        })
+        .map(|(k, _)| k.clone())
+        .collect();
+    for key in &empty_events {
+        hooks_obj.remove(key);
+    }
+
+    // Remove legacy script files from hooks_dir.
+    let legacy_scripts = ["rwv-workweave-create.sh", "rwv-workweave-remove.sh"];
+    let mut removed_scripts = vec![];
+    for script in &legacy_scripts {
+        let path = hooks_dir.join(script);
+        if path.exists() {
+            std::fs::remove_file(&path)
+                .with_context(|| format!("failed to remove {}", path.display()))?;
+            removed_scripts.push(path);
+        }
+    }
+
+    if removed_count > 0 || !removed_scripts.is_empty() {
+        let output = serde_json::to_string_pretty(&root)?;
+        std::fs::write(settings_path, format!("{output}\n"))
+            .with_context(|| format!("failed to write {}", settings_path.display()))?;
+        println!(
+            "Removed {} rwv hook entr{} from {}",
+            removed_count,
+            if removed_count == 1 { "y" } else { "ies" },
+            settings_path.display()
+        );
+        for script in &removed_scripts {
+            println!("Removed legacy script {}", script.display());
+        }
+    } else {
+        println!("No rwv hooks found — nothing to do.");
+    }
+
+    Ok(())
 }
 
 /// Implementation that accepts explicit paths (for testing).
@@ -524,5 +637,212 @@ mod tests {
         assert_eq!(content["attribution"]["commit"], "");
         assert_eq!(content["permissions"]["defaultMode"], "bypassPermissions");
         assert!(content["hooks"]["SessionStart"].as_array().is_some());
+    }
+
+    // -- claude_uninstall tests ------------------------------------------------
+
+    fn uninstall_at_tmp(settings_path: &Path) -> anyhow::Result<()> {
+        let hooks_dir = settings_path.parent().unwrap().join("hooks");
+        claude_uninstall_at(settings_path, &hooks_dir)
+    }
+
+    #[test]
+    fn claude_uninstall_removes_rwv_hooks() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("settings.json");
+        // Settings with both rwv hooks and a non-rwv hook (bd prime).
+        std::fs::write(
+            &path,
+            serde_json::to_string_pretty(&serde_json::json!({
+                "hooks": {
+                    "SessionStart": [
+                        {
+                            "matcher": "",
+                            "hooks": [
+                                { "type": "command", "command": "bd prime" },
+                                { "type": "command", "command": "rwv prime" }
+                            ]
+                        }
+                    ],
+                    "PreCompact": [
+                        {
+                            "matcher": "",
+                            "hooks": [
+                                { "type": "command", "command": "rwv prime" }
+                            ]
+                        }
+                    ]
+                }
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+
+        uninstall_at_tmp(&path).unwrap();
+
+        let content: Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+
+        // bd prime should still be present
+        let session_hooks = content["hooks"]["SessionStart"][0]["hooks"]
+            .as_array()
+            .unwrap();
+        assert_eq!(session_hooks.len(), 1);
+        assert_eq!(session_hooks[0]["command"], "bd prime");
+
+        // PreCompact had only rwv hooks — event key should be gone
+        assert!(content["hooks"]["PreCompact"].is_null());
+    }
+
+    #[test]
+    fn claude_uninstall_removes_legacy_scripts() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("settings.json");
+        let hooks_dir = tmp.path().join("hooks");
+        std::fs::create_dir_all(&hooks_dir).unwrap();
+
+        // Write legacy script files.
+        std::fs::write(
+            hooks_dir.join("rwv-workweave-create.sh"),
+            "#!/bin/bash\n",
+        )
+        .unwrap();
+        std::fs::write(
+            hooks_dir.join("rwv-workweave-remove.sh"),
+            "#!/bin/bash\n",
+        )
+        .unwrap();
+
+        // Settings referencing the legacy scripts via path.
+        std::fs::write(
+            &path,
+            serde_json::to_string_pretty(&serde_json::json!({
+                "hooks": {
+                    "WorktreeCreate": [
+                        {
+                            "matcher": "",
+                            "hooks": [
+                                { "type": "command", "command": "/home/user/.claude/hooks/rwv-workweave-create.sh" }
+                            ]
+                        }
+                    ],
+                    "WorktreeRemove": [
+                        {
+                            "matcher": "",
+                            "hooks": [
+                                { "type": "command", "command": "/home/user/.claude/hooks/rwv-workweave-remove.sh" }
+                            ]
+                        }
+                    ]
+                }
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+
+        claude_uninstall_at(&path, &hooks_dir).unwrap();
+
+        // Legacy script files should be gone.
+        assert!(!hooks_dir.join("rwv-workweave-create.sh").exists());
+        assert!(!hooks_dir.join("rwv-workweave-remove.sh").exists());
+
+        // Hook entries should be removed.
+        let content: Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert!(content["hooks"]["WorktreeCreate"].is_null());
+        assert!(content["hooks"]["WorktreeRemove"].is_null());
+    }
+
+    #[test]
+    fn claude_uninstall_cleans_empty_events() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("settings.json");
+        // All hooks in every event are rwv hooks — all event keys should be removed.
+        std::fs::write(
+            &path,
+            serde_json::to_string_pretty(&serde_json::json!({
+                "hooks": {
+                    "SessionStart": [
+                        {
+                            "matcher": "",
+                            "hooks": [
+                                { "type": "command", "command": "rwv prime" }
+                            ]
+                        }
+                    ],
+                    "WorktreeCreate": [
+                        {
+                            "matcher": "",
+                            "hooks": [
+                                { "type": "command", "command": "rwv workweave --claude-hook" }
+                            ]
+                        }
+                    ]
+                }
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+
+        uninstall_at_tmp(&path).unwrap();
+
+        let content: Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        // Both event keys should be gone.
+        assert!(content["hooks"]["SessionStart"].is_null());
+        assert!(content["hooks"]["WorktreeCreate"].is_null());
+    }
+
+    #[test]
+    fn claude_uninstall_preserves_other_settings() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("settings.json");
+        std::fs::write(
+            &path,
+            serde_json::to_string_pretty(&serde_json::json!({
+                "attribution": { "commit": "" },
+                "permissions": { "defaultMode": "bypassPermissions" },
+                "hooks": {
+                    "SessionStart": [
+                        {
+                            "matcher": "",
+                            "hooks": [
+                                { "type": "command", "command": "rwv prime" }
+                            ]
+                        }
+                    ]
+                }
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+
+        uninstall_at_tmp(&path).unwrap();
+
+        let content: Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(content["attribution"]["commit"], "");
+        assert_eq!(content["permissions"]["defaultMode"], "bypassPermissions");
+    }
+
+    #[test]
+    fn claude_uninstall_noop_when_no_hooks() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("settings.json");
+        std::fs::write(
+            &path,
+            serde_json::to_string_pretty(&serde_json::json!({
+                "permissions": { "defaultMode": "bypassPermissions" }
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+
+        let before = std::fs::read_to_string(&path).unwrap();
+        uninstall_at_tmp(&path).unwrap();
+        let after = std::fs::read_to_string(&path).unwrap();
+
+        // File should be unchanged (no hooks key, nothing to do).
+        assert_eq!(before, after);
     }
 }
