@@ -1350,10 +1350,7 @@ mod lock_hooks {
 
         let manifest = make_manifest(vec![("github/acme/server", Role::Primary)]);
         let project = ProjectName::new("test-project");
-        let config = IntegrationConfig {
-            enabled: Some(true),
-            ..Default::default()
-        };
+        let config = IntegrationConfig::from_yaml("enabled: true");
         let ctx = make_ctx(root, &project, &manifest, &config);
 
         // Activate first so the pnpm-workspace.yaml exists
@@ -1386,10 +1383,7 @@ mod lock_hooks {
         // No package.json in any repo
         let manifest = make_manifest(vec![("github/acme/server", Role::Primary)]);
         let project = ProjectName::new("test-project");
-        let config = IntegrationConfig {
-            enabled: Some(true),
-            ..Default::default()
-        };
+        let config = IntegrationConfig::from_yaml("enabled: true");
         let ctx = make_ctx(root, &project, &manifest, &config);
 
         let integration = PnpmWorkspaces;
@@ -1492,14 +1486,9 @@ mod static_files {
 
         let manifest = make_manifest(vec![("github/acme/server", Role::Primary)]);
         let project = ProjectName::new("test-project");
-        let config = IntegrationConfig {
-            enabled: Some(true),
-            files: vec![
-                "turbo.json".to_string(),
-                ".eslintrc.json".to_string(),
-                ".prettierrc".to_string(),
-            ],
-        };
+        let config = IntegrationConfig::from_yaml(
+            "enabled: true\nfiles: [turbo.json, .eslintrc.json, .prettierrc]",
+        );
         let ctx = make_ctx(root, &project, &manifest, &config);
 
         let integration = StaticFiles;
@@ -1514,10 +1503,7 @@ mod static_files {
 
         let manifest = make_manifest(vec![("github/acme/server", Role::Primary)]);
         let project = ProjectName::new("test-project");
-        let config = IntegrationConfig {
-            enabled: Some(true),
-            files: vec![],
-        };
+        let config = IntegrationConfig::from_yaml("enabled: true");
         let ctx = make_ctx(root, &project, &manifest, &config);
 
         let integration = StaticFiles;
@@ -1536,10 +1522,7 @@ mod static_files {
 
         let manifest = make_manifest(vec![("github/acme/server", Role::Primary)]);
         let project = ProjectName::new("test-project");
-        let config = IntegrationConfig {
-            enabled: Some(true),
-            files: vec!["turbo.json".to_string(), ".eslintrc.json".to_string()],
-        };
+        let config = IntegrationConfig::from_yaml("enabled: true\nfiles: [turbo.json, .eslintrc.json]");
         let ctx = make_ctx(root, &project, &manifest, &config);
 
         let integration = StaticFiles;
@@ -1555,10 +1538,7 @@ mod static_files {
         // Don't create the files — activate should still succeed (just warn)
         let manifest = make_manifest(vec![("github/acme/server", Role::Primary)]);
         let project = ProjectName::new("test-project");
-        let config = IntegrationConfig {
-            enabled: Some(true),
-            files: vec!["turbo.json".to_string()],
-        };
+        let config = IntegrationConfig::from_yaml("enabled: true\nfiles: [turbo.json]");
         let ctx = make_ctx(root, &project, &manifest, &config);
 
         let integration = StaticFiles;
@@ -1576,10 +1556,7 @@ mod static_files {
 
         let manifest = make_manifest(vec![("github/acme/server", Role::Primary)]);
         let project = ProjectName::new("test-project");
-        let config = IntegrationConfig {
-            enabled: Some(true),
-            files: vec!["turbo.json".to_string(), ".eslintrc.json".to_string()],
-        };
+        let config = IntegrationConfig::from_yaml("enabled: true\nfiles: [turbo.json, .eslintrc.json]");
         let ctx = make_ctx(root, &project, &manifest, &config);
 
         let integration = StaticFiles;
@@ -1600,10 +1577,7 @@ mod static_files {
 
         let manifest = make_manifest(vec![("github/acme/server", Role::Primary)]);
         let project = ProjectName::new("test-project");
-        let config = IntegrationConfig {
-            enabled: Some(true),
-            files: vec!["turbo.json".to_string(), ".prettierrc".to_string()],
-        };
+        let config = IntegrationConfig::from_yaml("enabled: true\nfiles: [turbo.json, .prettierrc]");
         let ctx = make_ctx(root, &project, &manifest, &config);
 
         let integration = StaticFiles;
@@ -1618,10 +1592,7 @@ mod static_files {
 
         let manifest = make_manifest(vec![("github/acme/server", Role::Primary)]);
         let project = ProjectName::new("test-project");
-        let config = IntegrationConfig {
-            enabled: Some(true),
-            files: vec![],
-        };
+        let config = IntegrationConfig::from_yaml("enabled: true");
         let ctx = make_ctx(root, &project, &manifest, &config);
 
         let integration = StaticFiles;
@@ -1646,10 +1617,7 @@ mod static_files {
 
         let manifest = make_manifest(vec![("github/acme/server", Role::Primary)]);
         let project = ProjectName::new("test-project");
-        let config = IntegrationConfig {
-            enabled: Some(true),
-            files: vec!["turbo.json".to_string()],
-        };
+        let config = IntegrationConfig::from_yaml("enabled: true\nfiles: [turbo.json]");
         let ctx = make_ctx(root, &project, &manifest, &config);
 
         let integration = StaticFiles;

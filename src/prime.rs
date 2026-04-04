@@ -121,7 +121,7 @@ fn render_integrations(out: &mut String, manifest: &Manifest) {
     let enabled: Vec<&String> = manifest
         .integrations
         .iter()
-        .filter(|(_, cfg)| cfg.enabled.unwrap_or(true))
+        .filter(|(_, cfg)| cfg.enabled().unwrap_or(true))
         .map(|(name, _)| name)
         .collect();
 

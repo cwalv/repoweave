@@ -152,7 +152,7 @@ integrations:
   cargo: {}
 "#;
     let m: Manifest = serde_yaml::from_str(yaml).unwrap();
-    assert!(m.integrations["cargo"].enabled.is_none());
+    assert!(m.integrations["cargo"].enabled().is_none());
 }
 
 // ---------------------------------------------------------------------------

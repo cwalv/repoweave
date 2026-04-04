@@ -133,16 +133,45 @@ pub struct RepoEntry {
 // ---------------------------------------------------------------------------
 
 /// Per-integration configuration from the `integrations:` key.
+///
+/// Stored as a raw YAML mapping so each integration can define its own typed
+/// settings struct without polluting a shared flat struct. The framework only
+/// inspects the `enabled` key; all other keys are integration-specific.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct IntegrationConfig {
-    #[serde(default)]
-    pub enabled: Option<bool>,
+#[serde(transparent)]
+pub struct IntegrationConfig(serde_yaml::Mapping);
 
-    /// List of filenames for the `static-files` integration.
-    /// Each file is symlinked from the project directory to the workspace root
-    /// on activation and removed on deactivation.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub files: Vec<String>,
+impl IntegrationConfig {
+    /// Whether the integration should run.
+    ///
+    /// Returns `Some(true)` / `Some(false)` when `enabled:` is present in the
+    /// YAML mapping, `None` when absent (fall back to `default_enabled()`).
+    pub fn enabled(&self) -> Option<bool> {
+        self.0
+            .get(serde_yaml::Value::String("enabled".into()))
+            .and_then(|v| v.as_bool())
+    }
+
+    /// Parse integration-specific settings into a typed struct.
+    ///
+    /// Deserializes the full mapping into `T`. Returns `T::default()` when
+    /// parsing fails or when required fields are absent, so callers get
+    /// graceful degradation rather than hard errors.
+    pub fn settings<T: serde::de::DeserializeOwned + Default>(&self) -> T {
+        serde_yaml::from_value(serde_yaml::Value::Mapping(self.0.clone()))
+            .unwrap_or_default()
+    }
+
+    /// Convenience constructor: parse an `IntegrationConfig` from a YAML string.
+    ///
+    /// Useful in tests where you want to supply inline YAML rather than
+    /// constructing a `serde_yaml::Mapping` by hand.
+    ///
+    /// # Panics
+    /// Panics if the YAML is invalid or does not represent a mapping.
+    pub fn from_yaml(yaml: &str) -> Self {
+        serde_yaml::from_str(yaml).expect("IntegrationConfig::from_yaml: invalid YAML")
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -275,6 +304,86 @@ mod tests {
     use super::*;
     #[allow(unused_imports)]
     use crate::vcs::{RefName, RevisionId};
+
+    // ========================================================================
+    // IntegrationConfig — new transparent mapping API
+    // ========================================================================
+
+    #[derive(serde::Deserialize, Default, Debug, PartialEq)]
+    struct TestSettings {
+        #[serde(default)]
+        files: Vec<String>,
+        #[serde(default)]
+        count: u32,
+    }
+
+    #[test]
+    fn integration_config_default_is_empty_mapping() {
+        let config = IntegrationConfig::default();
+        assert!(config.enabled().is_none());
+    }
+
+    #[test]
+    fn integration_config_enabled_some_true() {
+        let config = IntegrationConfig::from_yaml("enabled: true");
+        assert_eq!(config.enabled(), Some(true));
+    }
+
+    #[test]
+    fn integration_config_enabled_some_false() {
+        let config = IntegrationConfig::from_yaml("enabled: false");
+        assert_eq!(config.enabled(), Some(false));
+    }
+
+    #[test]
+    fn integration_config_enabled_absent_returns_none() {
+        let config = IntegrationConfig::from_yaml("files: [foo.txt]");
+        assert_eq!(config.enabled(), None);
+    }
+
+    #[test]
+    fn integration_config_settings_deserializes_files_list() {
+        let config = IntegrationConfig::from_yaml("enabled: true\nfiles: [a.txt, b.txt]");
+        let settings: TestSettings = config.settings();
+        assert_eq!(settings.files, vec!["a.txt", "b.txt"]);
+    }
+
+    #[test]
+    fn integration_config_settings_returns_default_when_keys_missing() {
+        let config = IntegrationConfig::from_yaml("enabled: true");
+        let settings: TestSettings = config.settings();
+        assert_eq!(settings, TestSettings::default());
+    }
+
+    #[test]
+    fn integration_config_settings_returns_default_on_wrong_type() {
+        // `files` expects a sequence, but we supply a scalar — graceful degradation.
+        let config = IntegrationConfig::from_yaml("files: not-a-list");
+        let settings: TestSettings = config.settings();
+        assert_eq!(settings, TestSettings::default());
+    }
+
+    #[test]
+    fn integration_config_arbitrary_keys_round_trip() {
+        // IntegrationConfig should preserve unknown keys through serde.
+        let yaml = "enabled: true\nfiles:\n  - x.json\ncount: 42\n";
+        let config: IntegrationConfig = serde_yaml::from_str(yaml).unwrap();
+        let restored = serde_yaml::to_string(&config).unwrap();
+        let config2: IntegrationConfig = serde_yaml::from_str(&restored).unwrap();
+        assert_eq!(config2.enabled(), Some(true));
+        let settings: TestSettings = config2.settings();
+        assert_eq!(settings.files, vec!["x.json"]);
+        assert_eq!(settings.count, 42);
+    }
+
+    #[test]
+    fn integration_config_default_serializes_as_empty_mapping() {
+        let config = IntegrationConfig::default();
+        let yaml = serde_yaml::to_string(&config).unwrap();
+        // Deserializing back should still give us an empty mapping
+        let restored: IntegrationConfig = serde_yaml::from_str(&yaml).unwrap();
+        assert!(restored.enabled().is_none());
+    }
 
     // -- YAML test fixtures --------------------------------------------------
 

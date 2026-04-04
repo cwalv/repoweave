@@ -14,7 +14,15 @@
 //! ```
 
 use crate::integration::{Integration, IntegrationContext, Issue, Severity};
+use serde::Deserialize;
 use std::path::Path;
+
+/// Integration-specific settings for the `static-files` integration.
+#[derive(Deserialize, Default)]
+struct StaticFilesConfig {
+    #[serde(default)]
+    files: Vec<String>,
+}
 
 pub struct StaticFiles;
 
@@ -36,7 +44,8 @@ impl Integration for StaticFiles {
         // We validate here that declared files actually exist so that the user
         // gets early feedback (activation still succeeds — missing files are
         // simply skipped by the symlink machinery in activate.rs).
-        for file in &ctx.config.files {
+        let cfg: StaticFilesConfig = ctx.config.settings();
+        for file in &cfg.files {
             let path = ctx.output_dir.join(file);
             if !path.exists() {
                 eprintln!(
@@ -59,8 +68,9 @@ impl Integration for StaticFiles {
     }
 
     fn check(&self, ctx: &IntegrationContext) -> anyhow::Result<Vec<Issue>> {
+        let cfg: StaticFilesConfig = ctx.config.settings();
         let mut issues = Vec::new();
-        for file in &ctx.config.files {
+        for file in &cfg.files {
             let path = ctx.output_dir.join(file);
             if !path.exists() {
                 issues.push(Issue {
@@ -77,6 +87,6 @@ impl Integration for StaticFiles {
     }
 
     fn generated_files(&self, ctx: &IntegrationContext) -> Vec<String> {
-        ctx.config.files.clone()
+        ctx.config.settings::<StaticFilesConfig>().files
     }
 }
