@@ -243,14 +243,21 @@ pub fn delete_workweave(
         }
     }
 
-    // Remove the project repo worktree (only if the primary project dir is a git repo).
+    // Remove the project repo worktree.
+    // Only call remove_worktree if the workweave copy is actually a git worktree,
+    // indicated by .git being a FILE (not a directory). If .git is a directory
+    // (or absent), the workweave copy was a plain directory copy — just let
+    // remove_dir_all below handle it.
     let project_dir = ws_root.join("projects").join(project);
     let project_worktree = workweave_dir.join("projects").join(project);
-    if project_worktree.exists() && GitVcs.is_repo(&project_dir) {
-        if let Err(e) = GitVcs.remove_worktree(&project_dir, &project_worktree) {
-            let msg = format!("projects/{project}: {e}");
-            eprintln!("rwv workweave delete: error: {msg}");
-            errors.push(msg);
+    if project_worktree.exists() {
+        let dot_git = project_worktree.join(".git");
+        if dot_git.exists() && dot_git.is_file() {
+            if let Err(e) = GitVcs.remove_worktree(&project_dir, &project_worktree) {
+                let msg = format!("projects/{project}: {e}");
+                eprintln!("rwv workweave delete: error: {msg}");
+                errors.push(msg);
+            }
         }
     }
 

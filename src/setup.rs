@@ -101,14 +101,23 @@ fn claude_inner(settings_path: &Path, hooks_dir: &Path) -> anyhow::Result<()> {
         );
     }
 
-    // Install workweave hook scripts to hooks_dir.
+    // Install (or update) workweave hook scripts to hooks_dir.
     std::fs::create_dir_all(hooks_dir)
         .with_context(|| format!("failed to create {}", hooks_dir.display()))?;
 
+    let mut scripts_updated = false;
     for &(_event, filename, content) in WORKWEAVE_HOOKS {
         let dest = hooks_dir.join(filename);
-        std::fs::write(&dest, content)
-            .with_context(|| format!("failed to write {}", dest.display()))?;
+        let needs_write = if dest.exists() {
+            std::fs::read_to_string(&dest).ok().as_deref() != Some(content)
+        } else {
+            true
+        };
+        if needs_write {
+            std::fs::write(&dest, content)
+                .with_context(|| format!("failed to write {}", dest.display()))?;
+            scripts_updated = true;
+        }
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
@@ -157,8 +166,10 @@ fn claude_inner(settings_path: &Path, hooks_dir: &Path) -> anyhow::Result<()> {
         std::fs::write(settings_path, format!("{output}\n"))
             .with_context(|| format!("failed to write {}", settings_path.display()))?;
         println!("Registered rwv hooks in {}", settings_path.display());
+    } else if scripts_updated {
+        println!("Updated hook scripts in {}", hooks_dir.display());
     } else {
-        println!("rwv hooks already registered — nothing to do.");
+        println!("rwv hooks up to date — nothing to do.");
     }
 
     Ok(())

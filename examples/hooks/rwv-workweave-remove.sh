@@ -24,7 +24,9 @@ fi
 
 project=$(grep 'project:' "$marker" | sed 's/project: *//' | tr -d '[:space:]')
 
-# Derive name from directory basename
-name=$(basename "$worktree_path")
+# Derive workweave name from directory basename.
+# The directory is named {primary}--{name}, so strip the primary-- prefix.
+dir_basename=$(basename "$worktree_path")
+name="${dir_basename#*--}"
 
 rwv workweave "$project" "$name" --delete 2>/dev/null || true
