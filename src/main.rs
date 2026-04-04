@@ -14,7 +14,7 @@ use repoweave::manifest::WorkweaveName;
 use repoweave::workspace::WorkspaceContext;
 
 #[derive(Parser)]
-#[command(name = "rwv", version, about = "A cross-repo workspace manager")]
+#[command(name = "rwv", version = option_env!("RWV_VERSION").unwrap_or(env!("CARGO_PKG_VERSION")), about = "A cross-repo workspace manager")]
 struct Cli {
     #[command(subcommand)]
     command: Option<Commands>,

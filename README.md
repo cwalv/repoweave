@@ -40,6 +40,14 @@ cargo install repoweave
 pip install repoweave    # or: uvx repoweave
 ```
 
+### Uninstall
+
+Remove the binary:
+
+```sh
+rm ~/.local/bin/rwv
+```
+
 ### Quick start
 
 ```bash

@@ -140,6 +140,7 @@ main() {
 
     info "installed ${BINARY} to ${INSTALL_DIR}/${BINARY}"
     printf '\n'
+    printf 'To uninstall: rm %s/%s\n\n' "$INSTALL_DIR" "$BINARY"
 
     # Check PATH
     case ":${PATH}:" in
