@@ -64,21 +64,6 @@ const WORKWEAVE_HOOK_COMMAND: &str = "rwv workweave --claude-hook";
 /// Workweave hook events handled by `rwv workweave --claude-hook`.
 const WORKWEAVE_HOOK_EVENTS: &[&str] = &["WorktreeCreate", "WorktreeRemove"];
 
-/// Workweave hook scripts: (event, filename, embedded content).
-/// Kept for reference / legacy callers; no longer installed by default.
-#[allow(dead_code)]
-const WORKWEAVE_HOOKS: &[(&str, &str, &str)] = &[
-    (
-        "WorktreeCreate",
-        "rwv-workweave-create.sh",
-        include_str!("../examples/hooks/rwv-workweave-create.sh"),
-    ),
-    (
-        "WorktreeRemove",
-        "rwv-workweave-remove.sh",
-        include_str!("../examples/hooks/rwv-workweave-remove.sh"),
-    ),
-];
 
 /// Resolve `~/.claude/settings.json`.
 fn claude_settings_path() -> anyhow::Result<PathBuf> {
