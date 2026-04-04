@@ -20,8 +20,8 @@ classifiers = [
 [project.urls]
 Repository = "https://github.com/cwalv/repoweave"
 
-[project.scripts]
-rwv = "repoweave:main"
+# No [project.scripts] — the native rwv binary is installed directly
+# via the wheel's .data/scripts/ entry. No Python wrapper needed.
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/repoweave"]
