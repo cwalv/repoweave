@@ -78,7 +78,7 @@ jobs:
         run: |
           mkdir -p /tmp/bin
           if [[ "${{ matrix.ext }}" == "zip" ]]; then
-            unzip -o -j "/tmp/artifacts/${{ matrix.artifact }}" "*/${{ matrix.bin }}" -d /tmp/bin/
+            unzip -o -j "/tmp/artifacts/${{ matrix.artifact }}" "${{ matrix.bin }}" -d /tmp/bin/
           else
             tar -xJf "/tmp/artifacts/${{ matrix.artifact }}" -C /tmp/artifacts/
             ARCHIVE_DIR="${{ matrix.artifact }}"
