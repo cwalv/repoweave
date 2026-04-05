@@ -32,7 +32,7 @@ repoweave provides a `lock` mechanism analogous to package manager locks, with a
 | **lock file** (`rwv.lock`) | Pins repos to exact revisions for reproducibility |
 | **activation** | Generating ecosystem workspace files from a project's manifest and symlinking them to the weave directory |
 | **role** | A repo's relationship to a project: `primary` (your code), `fork`, `dependency`, `reference` |
-| **workspace surface** | The root directory where ecosystem tools find workspace config files |
+| **workspace surface** | The directory where ecosystem tools find workspace config files |
 
 ## Core idea
 
