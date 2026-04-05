@@ -251,7 +251,8 @@ pub fn run_check(cwd: &std::path::Path) -> anyhow::Result<bool> {
         builtin.iter().map(|b| b.as_ref()).collect();
 
     for project in &input.projects {
-        let ctx_base = session.context_base(&ctx.root, &project.name);
+        let detection_cache = crate::integration_runner::build_detection_cache(&ctx.root, &project.manifest.repositories);
+        let ctx_base = session.context_base(&ctx.root, &project.name, &detection_cache);
         let integration_issues = run_checks(&integrations, &project.manifest, &ctx_base);
         all_issues.extend(integration_issues);
     }

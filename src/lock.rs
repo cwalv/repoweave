@@ -131,7 +131,8 @@ pub fn lock(cwd: &Path, dirty: bool) -> anyhow::Result<()> {
     let session = crate::workspace::WorkspaceSession::new(&ctx.root);
 
     let output_dir = workweave_dir.as_deref().unwrap_or(&ctx.root);
-    let ctx_base = session.context_base(output_dir, &project_name);
+    let detection_cache = crate::integration_runner::build_detection_cache(&ctx.root, &project.manifest.repositories);
+    let ctx_base = session.context_base(output_dir, &project_name, &detection_cache);
 
     let builtin = builtin_integrations();
     let integrations: Vec<&dyn crate::integration::Integration> =

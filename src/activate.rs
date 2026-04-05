@@ -13,7 +13,7 @@
 use std::path::Path;
 
 use crate::integration::{is_enabled, Integration, IntegrationContext, Severity};
-use crate::integration_runner::run_activations;
+use crate::integration_runner::{build_detection_cache, run_activations};
 use crate::integrations::builtin_integrations;
 use crate::manifest::{IntegrationConfig, Manifest, ProjectName};
 use crate::workspace::{set_active_project, WorkspaceContext, WorkspaceSession};
@@ -44,7 +44,8 @@ fn activate_at(root: &Path, project: &str, skip_missing_sources: bool) -> anyhow
     let integrations: Vec<&dyn Integration> = builtin.iter().map(|b| b.as_ref()).collect();
 
     // 1. Run integrations with output_dir = project_dir.
-    let ctx_base = session.context_base(&project_dir, &project_name);
+    let detection_cache = build_detection_cache(root, &manifest.repositories);
+    let ctx_base = session.context_base(&project_dir, &project_name, &detection_cache);
 
     let issues = run_activations(&integrations, &manifest, &ctx_base);
 
@@ -79,6 +80,7 @@ fn activate_at(root: &Path, project: &str, skip_missing_sources: bool) -> anyhow
             config,
             all_repos_on_disk: session.repos_on_disk(),
             all_project_paths: session.project_paths(),
+            detection_cache: &detection_cache,
         };
 
         new_generated.extend(integration.generated_files(&int_ctx));

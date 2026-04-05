@@ -7,9 +7,12 @@
 //! Errors from individual integrations are captured as `Issue`s rather than
 //! aborting — one integration failing should not prevent others from running.
 
+use std::collections::HashMap;
 use std::path::Path;
 
-use crate::integration::{is_enabled, Integration, IntegrationContext, Issue, Severity};
+use crate::integration::{
+    detect_repos_with_manifest_impl, is_enabled, Integration, IntegrationContext, Issue, Severity,
+};
 use crate::manifest::{IntegrationConfig, Manifest, ProjectName, RepoPath};
 
 /// Shared base data for constructing `IntegrationContext` per integration.
@@ -24,6 +27,28 @@ pub struct IntegrationContextBase<'a> {
     pub all_repos_on_disk: &'a [RepoPath],
     /// All project paths.
     pub all_project_paths: &'a [String],
+    /// Pre-computed detection cache. Maps manifest filenames to the sorted list
+    /// of active repo paths that contain that manifest.
+    pub detection_cache: &'a HashMap<String, Vec<String>>,
+}
+
+/// The set of manifest filenames pre-computed into the detection cache.
+pub const KNOWN_MANIFESTS: &[&str] =
+    &["Cargo.toml", "package.json", "go.mod", "pyproject.toml", "go.sum"];
+
+/// Build a detection cache for the given workspace root and repos.
+pub fn build_detection_cache(
+    workspace_root: &Path,
+    repos: &std::collections::BTreeMap<crate::manifest::RepoPath, crate::manifest::RepoEntry>,
+) -> HashMap<String, Vec<String>> {
+    let mut cache = HashMap::new();
+    for &manifest in KNOWN_MANIFESTS {
+        cache.insert(
+            manifest.to_string(),
+            detect_repos_with_manifest_impl(workspace_root, repos, manifest),
+        );
+    }
+    cache
 }
 
 impl<'a> IntegrationContextBase<'a> {
@@ -41,6 +66,7 @@ impl<'a> IntegrationContextBase<'a> {
             config,
             all_repos_on_disk: self.all_repos_on_disk,
             all_project_paths: self.all_project_paths,
+            detection_cache: self.detection_cache,
         }
     }
 }
@@ -299,13 +325,14 @@ mod tests {
         }
     }
 
-    fn make_ctx_base(project: &ProjectName) -> IntegrationContextBase<'_> {
+    fn make_ctx_base<'a>(project: &'a ProjectName, cache: &'a HashMap<String, Vec<String>>) -> IntegrationContextBase<'a> {
         IntegrationContextBase {
             output_dir: Path::new("/workspace"),
             workspace_root: Path::new("/workspace"),
             project,
             all_repos_on_disk: &[],
             all_project_paths: &[],
+            detection_cache: cache,
         }
     }
 
@@ -321,7 +348,8 @@ mod tests {
 
         let manifest = make_manifest(BTreeMap::new());
         let project = ProjectName::new("test-project");
-        let ctx_base = make_ctx_base(&project);
+        let cache = HashMap::new();
+        let ctx_base = make_ctx_base(&project, &cache);
 
         let issues = run_activations(&integrations, &manifest, &ctx_base);
         assert!(issues.is_empty());
@@ -343,7 +371,8 @@ mod tests {
         );
         let manifest = make_manifest(configs);
         let project = ProjectName::new("test-project");
-        let ctx_base = make_ctx_base(&project);
+        let cache = HashMap::new();
+        let ctx_base = make_ctx_base(&project, &cache);
 
         let issues = run_activations(&integrations, &manifest, &ctx_base);
         assert!(issues.is_empty());
@@ -362,7 +391,8 @@ mod tests {
         );
         let manifest = make_manifest(configs);
         let project = ProjectName::new("test-project");
-        let ctx_base = make_ctx_base(&project);
+        let cache = HashMap::new();
+        let ctx_base = make_ctx_base(&project, &cache);
 
         let issues = run_activations(&integrations, &manifest, &ctx_base);
         assert!(issues.is_empty());
@@ -377,7 +407,8 @@ mod tests {
 
         let manifest = make_manifest(BTreeMap::new());
         let project = ProjectName::new("test-project");
-        let ctx_base = make_ctx_base(&project);
+        let cache = HashMap::new();
+        let ctx_base = make_ctx_base(&project, &cache);
 
         let issues = run_activations(&integrations, &manifest, &ctx_base);
         assert_eq!(issues.len(), 1);
@@ -404,7 +435,8 @@ mod tests {
         // npm gets default config (no entry)
         let manifest = make_manifest(configs);
         let project = ProjectName::new("test-project");
-        let ctx_base = make_ctx_base(&project);
+        let cache = HashMap::new();
+        let ctx_base = make_ctx_base(&project, &cache);
 
         let issues = run_activations(&integrations, &manifest, &ctx_base);
         assert!(issues.is_empty());
@@ -434,7 +466,8 @@ mod tests {
 
         let manifest = make_manifest(BTreeMap::new());
         let project = ProjectName::new("test-project");
-        let ctx_base = make_ctx_base(&project);
+        let cache = HashMap::new();
+        let ctx_base = make_ctx_base(&project, &cache);
 
         let issues = run_checks(&integrations, &manifest, &ctx_base);
         assert_eq!(issues.len(), 2);
@@ -449,7 +482,8 @@ mod tests {
 
         let manifest = make_manifest(BTreeMap::new());
         let project = ProjectName::new("test-project");
-        let ctx_base = make_ctx_base(&project);
+        let cache = HashMap::new();
+        let ctx_base = make_ctx_base(&project, &cache);
 
         let issues = run_checks(&integrations, &manifest, &ctx_base);
         assert!(issues.is_empty());
@@ -468,7 +502,8 @@ mod tests {
 
         let manifest = make_manifest(BTreeMap::new());
         let project = ProjectName::new("test-project");
-        let ctx_base = make_ctx_base(&project);
+        let cache = HashMap::new();
+        let ctx_base = make_ctx_base(&project, &cache);
 
         let issues = run_checks(&integrations, &manifest, &ctx_base);
         assert_eq!(issues.len(), 2);
@@ -548,7 +583,8 @@ mod tests {
 
         let manifest = make_manifest(BTreeMap::new());
         let project = ProjectName::new("test-project");
-        let ctx_base = make_ctx_base(&project);
+        let cache = HashMap::new();
+        let ctx_base = make_ctx_base(&project, &cache);
 
         let issues = run_lock_hooks(&integrations, &manifest, &ctx_base);
         assert!(issues.is_empty());
@@ -566,7 +602,8 @@ mod tests {
 
         let manifest = make_manifest(BTreeMap::new());
         let project = ProjectName::new("test-project");
-        let ctx_base = make_ctx_base(&project);
+        let cache = HashMap::new();
+        let ctx_base = make_ctx_base(&project, &cache);
 
         let issues = run_lock_hooks(&integrations, &manifest, &ctx_base);
         assert_eq!(issues.len(), 1);
@@ -591,7 +628,8 @@ mod tests {
         );
         let manifest = make_manifest(configs);
         let project = ProjectName::new("test-project");
-        let ctx_base = make_ctx_base(&project);
+        let cache = HashMap::new();
+        let ctx_base = make_ctx_base(&project, &cache);
 
         let issues = run_lock_hooks(&integrations, &manifest, &ctx_base);
         assert!(issues.is_empty());
@@ -607,7 +645,8 @@ mod tests {
 
         let manifest = make_manifest(BTreeMap::new());
         let project = ProjectName::new("my-special-project");
-        let ctx_base = make_ctx_base(&project);
+        let cache = HashMap::new();
+        let ctx_base = make_ctx_base(&project, &cache);
 
         let issues = run_lock_hooks(&integrations, &manifest, &ctx_base);
         assert!(issues.is_empty());

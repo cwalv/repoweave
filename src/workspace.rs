@@ -207,6 +207,7 @@ impl WorkspaceSession {
         &'a self,
         output_dir: &'a Path,
         project: &'a ProjectName,
+        detection_cache: &'a std::collections::HashMap<String, Vec<String>>,
     ) -> IntegrationContextBase<'a> {
         IntegrationContextBase {
             output_dir,
@@ -214,6 +215,7 @@ impl WorkspaceSession {
             project,
             all_repos_on_disk: &self.repos_on_disk,
             all_project_paths: &self.project_paths,
+            detection_cache,
         }
     }
 

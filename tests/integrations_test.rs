@@ -7,6 +7,7 @@
 //! 4. Deactivation cleanup
 //! 5. Check warnings (e.g., missing tools)
 
+use std::collections::HashMap;
 use repoweave::integration::{Integration, IntegrationContext, Severity};
 use repoweave::integrations::*;
 use repoweave::manifest::{
@@ -49,6 +50,7 @@ fn make_ctx<'a>(
     project: &'a ProjectName,
     manifest: &'a Manifest,
     config: &'a IntegrationConfig,
+    cache: &'a HashMap<String, Vec<String>>,
 ) -> IntegrationContext<'a> {
     IntegrationContext {
         output_dir: root,
@@ -58,6 +60,7 @@ fn make_ctx<'a>(
         config,
         all_repos_on_disk: &[],
         all_project_paths: &[],
+        detection_cache: cache,
     }
 }
 
@@ -103,7 +106,8 @@ mod npm_workspaces {
         ]);
         let project = ProjectName::new("test-project");
         let config = IntegrationConfig::default();
-        let ctx = make_ctx(root, &project, &manifest, &config);
+        let cache = HashMap::new();
+    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
 
         let integration = NpmWorkspaces;
         integration.activate(&ctx).unwrap();
@@ -134,7 +138,8 @@ mod npm_workspaces {
         ]);
         let project = ProjectName::new("test-project");
         let config = IntegrationConfig::default();
-        let ctx = make_ctx(root, &project, &manifest, &config);
+        let cache = HashMap::new();
+    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
 
         let integration = NpmWorkspaces;
         integration.activate(&ctx).unwrap();
@@ -165,7 +170,8 @@ mod npm_workspaces {
         ]);
         let project = ProjectName::new("test-project");
         let config = IntegrationConfig::default();
-        let ctx = make_ctx(root, &project, &manifest, &config);
+        let cache = HashMap::new();
+    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
 
         let integration = NpmWorkspaces;
         integration.activate(&ctx).unwrap();
@@ -222,7 +228,8 @@ mod npm_workspaces {
         let manifest = make_manifest(vec![("github/acme/server", Role::Primary)]);
         let project = ProjectName::new("test-project");
         let config = IntegrationConfig::default();
-        let ctx = make_ctx(root, &project, &manifest, &config);
+        let cache = HashMap::new();
+    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
 
         let integration = NpmWorkspaces;
         let issues = integration.check(&ctx).unwrap();
@@ -261,7 +268,8 @@ mod pnpm_workspaces {
         ]);
         let project = ProjectName::new("test-project");
         let config = IntegrationConfig::default();
-        let ctx = make_ctx(root, &project, &manifest, &config);
+        let cache = HashMap::new();
+    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
 
         let integration = PnpmWorkspaces;
         integration.activate(&ctx).unwrap();
@@ -288,7 +296,8 @@ mod pnpm_workspaces {
         ]);
         let project = ProjectName::new("test-project");
         let config = IntegrationConfig::default();
-        let ctx = make_ctx(root, &project, &manifest, &config);
+        let cache = HashMap::new();
+    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
 
         let integration = PnpmWorkspaces;
         integration.activate(&ctx).unwrap();
@@ -312,7 +321,8 @@ mod pnpm_workspaces {
         ]);
         let project = ProjectName::new("test-project");
         let config = IntegrationConfig::default();
-        let ctx = make_ctx(root, &project, &manifest, &config);
+        let cache = HashMap::new();
+    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
 
         let integration = PnpmWorkspaces;
         integration.activate(&ctx).unwrap();
@@ -345,7 +355,8 @@ mod pnpm_workspaces {
         let manifest = make_manifest(vec![("github/acme/server", Role::Primary)]);
         let project = ProjectName::new("test-project");
         let config = IntegrationConfig::default();
-        let ctx = make_ctx(root, &project, &manifest, &config);
+        let cache = HashMap::new();
+    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
 
         let integration = PnpmWorkspaces;
         let issues = integration.check(&ctx).unwrap();
@@ -381,7 +392,8 @@ mod go_work {
         ]);
         let project = ProjectName::new("test-project");
         let config = IntegrationConfig::default();
-        let ctx = make_ctx(root, &project, &manifest, &config);
+        let cache = HashMap::new();
+    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
 
         let integration = GoWork;
         integration.activate(&ctx).unwrap();
@@ -406,7 +418,8 @@ mod go_work {
         ]);
         let project = ProjectName::new("test-project");
         let config = IntegrationConfig::default();
-        let ctx = make_ctx(root, &project, &manifest, &config);
+        let cache = HashMap::new();
+    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
 
         let integration = GoWork;
         integration.activate(&ctx).unwrap();
@@ -430,7 +443,8 @@ mod go_work {
         ]);
         let project = ProjectName::new("test-project");
         let config = IntegrationConfig::default();
-        let ctx = make_ctx(root, &project, &manifest, &config);
+        let cache = HashMap::new();
+    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
 
         let integration = GoWork;
         integration.activate(&ctx).unwrap();
@@ -463,7 +477,8 @@ mod go_work {
         let manifest = make_manifest(vec![("github/acme/server", Role::Primary)]);
         let project = ProjectName::new("test-project");
         let config = IntegrationConfig::default();
-        let ctx = make_ctx(root, &project, &manifest, &config);
+        let cache = HashMap::new();
+    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
 
         let integration = GoWork;
         let issues = integration.check(&ctx).unwrap();
@@ -499,7 +514,8 @@ mod uv_workspace {
         ]);
         let project = ProjectName::new("test-project");
         let config = IntegrationConfig::default();
-        let ctx = make_ctx(root, &project, &manifest, &config);
+        let cache = HashMap::new();
+    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
 
         let integration = UvWorkspace;
         integration.activate(&ctx).unwrap();
@@ -524,7 +540,8 @@ mod uv_workspace {
         ]);
         let project = ProjectName::new("test-project");
         let config = IntegrationConfig::default();
-        let ctx = make_ctx(root, &project, &manifest, &config);
+        let cache = HashMap::new();
+    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
 
         let integration = UvWorkspace;
         integration.activate(&ctx).unwrap();
@@ -550,7 +567,8 @@ mod uv_workspace {
         ]);
         let project = ProjectName::new("test-project");
         let config = IntegrationConfig::default();
-        let ctx = make_ctx(root, &project, &manifest, &config);
+        let cache = HashMap::new();
+    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
 
         let integration = UvWorkspace;
         integration.activate(&ctx).unwrap();
@@ -605,7 +623,8 @@ mod uv_workspace {
         let manifest = make_manifest(vec![("github/acme/server", Role::Primary)]);
         let project = ProjectName::new("test-project");
         let config = IntegrationConfig::default();
-        let ctx = make_ctx(root, &project, &manifest, &config);
+        let cache = HashMap::new();
+    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
 
         let integration = UvWorkspace;
         let issues = integration.check(&ctx).unwrap();
@@ -641,7 +660,8 @@ mod cargo_workspace {
         ]);
         let project = ProjectName::new("test-project");
         let config = IntegrationConfig::default();
-        let ctx = make_ctx(root, &project, &manifest, &config);
+        let cache = HashMap::new();
+    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
 
         let integration = CargoWorkspace;
         integration.activate(&ctx).unwrap();
@@ -666,7 +686,8 @@ mod cargo_workspace {
         ]);
         let project = ProjectName::new("test-project");
         let config = IntegrationConfig::default();
-        let ctx = make_ctx(root, &project, &manifest, &config);
+        let cache = HashMap::new();
+    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
 
         let integration = CargoWorkspace;
         integration.activate(&ctx).unwrap();
@@ -693,7 +714,8 @@ mod cargo_workspace {
         ]);
         let project = ProjectName::new("test-project");
         let config = IntegrationConfig::default();
-        let ctx = make_ctx(root, &project, &manifest, &config);
+        let cache = HashMap::new();
+    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
 
         let integration = CargoWorkspace;
         integration.activate(&ctx).unwrap();
@@ -749,7 +771,8 @@ mod cargo_workspace {
         let manifest = make_manifest(vec![("github/acme/server", Role::Primary)]);
         let project = ProjectName::new("test-project");
         let config = IntegrationConfig::default();
-        let ctx = make_ctx(root, &project, &manifest, &config);
+        let cache = HashMap::new();
+    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
 
         let integration = CargoWorkspace;
         let issues = integration.check(&ctx).unwrap();
@@ -781,7 +804,8 @@ mod gita {
         ]);
         let project = ProjectName::new("test-project");
         let config = IntegrationConfig::default();
-        let ctx = make_ctx(root, &project, &manifest, &config);
+        let cache = HashMap::new();
+    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
 
         let integration = Gita;
         integration.activate(&ctx).unwrap();
@@ -803,7 +827,8 @@ mod gita {
         ]);
         let project = ProjectName::new("test-project");
         let config = IntegrationConfig::default();
-        let ctx = make_ctx(root, &project, &manifest, &config);
+        let cache = HashMap::new();
+    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
 
         let integration = Gita;
         integration.activate(&ctx).unwrap();
@@ -837,7 +862,8 @@ mod gita {
         ]);
         let project = ProjectName::new("test-project");
         let config = IntegrationConfig::default();
-        let ctx = make_ctx(root, &project, &manifest, &config);
+        let cache = HashMap::new();
+    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
 
         let integration = Gita;
         integration.activate(&ctx).unwrap();
@@ -859,7 +885,8 @@ mod gita {
         ]);
         let project = ProjectName::new("test-project");
         let config = IntegrationConfig::default();
-        let ctx = make_ctx(root, &project, &manifest, &config);
+        let cache = HashMap::new();
+    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
 
         let integration = Gita;
         integration.activate(&ctx).unwrap();
@@ -899,6 +926,7 @@ mod gita {
         ]);
         let project = ProjectName::new("test-project");
         let config = IntegrationConfig::default();
+        let cache = HashMap::new();
         let ctx = IntegrationContext {
             output_dir,
             workspace_root,
@@ -907,6 +935,7 @@ mod gita {
             config: &config,
             all_repos_on_disk: &[],
             all_project_paths: &[],
+            detection_cache: &cache,
         };
 
         let integration = Gita;
@@ -942,7 +971,8 @@ mod gita {
         let manifest = make_manifest(vec![("github/acme/server", Role::Primary)]);
         let project = ProjectName::new("test-project");
         let config = IntegrationConfig::default();
-        let ctx = make_ctx(root, &project, &manifest, &config);
+        let cache = HashMap::new();
+    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
 
         let integration = Gita;
         let issues = integration.check(&ctx).unwrap();
@@ -974,7 +1004,8 @@ mod vscode_workspace {
         ]);
         let project = ProjectName::new("test-project");
         let config = IntegrationConfig::default();
-        let ctx = make_ctx(root, &project, &manifest, &config);
+        let cache = HashMap::new();
+    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
 
         let integration = VscodeWorkspace;
         integration.activate(&ctx).unwrap();
@@ -992,7 +1023,8 @@ mod vscode_workspace {
         ]);
         let project = ProjectName::new("web-app");
         let config = IntegrationConfig::default();
-        let ctx = make_ctx(root, &project, &manifest, &config);
+        let cache = HashMap::new();
+    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
 
         let integration = VscodeWorkspace;
         integration.activate(&ctx).unwrap();
@@ -1020,7 +1052,8 @@ mod vscode_workspace {
         let manifest = make_manifest(vec![("github/acme/server", Role::Primary)]);
         let project = ProjectName::new("my-project");
         let config = IntegrationConfig::default();
-        let ctx = make_ctx(root, &project, &manifest, &config);
+        let cache = HashMap::new();
+    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
 
         let integration = VscodeWorkspace;
         integration.activate(&ctx).unwrap();
@@ -1052,7 +1085,8 @@ mod vscode_workspace {
         let manifest = make_manifest(vec![("github/acme/server", Role::Primary)]);
         let project = ProjectName::new("test-project");
         let config = IntegrationConfig::default();
-        let ctx = make_ctx(root, &project, &manifest, &config);
+        let cache = HashMap::new();
+    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
 
         let integration = VscodeWorkspace;
         integration.activate(&ctx).unwrap();
@@ -1121,7 +1155,8 @@ mod vscode_workspace {
         let manifest = make_manifest(vec![("github/acme/server", Role::Primary)]);
         let project = ProjectName::new("test-project");
         let config = IntegrationConfig::default();
-        let ctx = make_ctx(root, &project, &manifest, &config);
+        let cache = HashMap::new();
+    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
 
         let integration = VscodeWorkspace;
         let issues = integration.check(&ctx).unwrap();
@@ -1145,6 +1180,7 @@ mod vscode_workspace {
             RepoPath::new("github/acme/web"),
         ];
 
+        let cache = HashMap::new();
         let ctx = IntegrationContext {
             output_dir: root,
             workspace_root: root,
@@ -1153,6 +1189,7 @@ mod vscode_workspace {
             config: &config,
             all_repos_on_disk: &all_repos_on_disk,
             all_project_paths: &[],
+            detection_cache: &cache,
         };
 
         VscodeWorkspace.activate(&ctx).unwrap();
@@ -1192,6 +1229,7 @@ mod vscode_workspace {
             config: &config,
             all_repos_on_disk: &all_repos_on_disk,
             all_project_paths: &all_project_paths,
+            detection_cache: &HashMap::new(),
         };
 
         VscodeWorkspace.activate(&ctx).unwrap();
@@ -1214,7 +1252,8 @@ mod vscode_workspace {
         let manifest = make_manifest(vec![("github/acme/server", Role::Primary)]);
         let project = ProjectName::new("test-project");
         let config = IntegrationConfig::default();
-        let ctx = make_ctx(root, &project, &manifest, &config);
+        let cache = HashMap::new();
+    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
 
         VscodeWorkspace.activate(&ctx).unwrap();
 
@@ -1237,7 +1276,8 @@ mod vscode_workspace {
         let manifest = make_manifest(vec![("github/acme/server", Role::Primary)]);
         let project = ProjectName::new("test-project");
         let config = IntegrationConfig::from_yaml("hide-dotfiles: false");
-        let ctx = make_ctx(root, &project, &manifest, &config);
+        let cache = HashMap::new();
+    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
 
         VscodeWorkspace.activate(&ctx).unwrap();
 
@@ -1268,6 +1308,7 @@ mod vscode_workspace {
             RepoPath::new("github/other/beta"),
         ];
 
+        let cache = HashMap::new();
         let ctx = IntegrationContext {
             output_dir: root,
             workspace_root: root,
@@ -1276,6 +1317,7 @@ mod vscode_workspace {
             config: &config,
             all_repos_on_disk: &all_repos_on_disk,
             all_project_paths: &[],
+            detection_cache: &cache,
         };
 
         VscodeWorkspace.activate(&ctx).unwrap();
@@ -1326,7 +1368,8 @@ mod lock_hooks {
         let manifest = make_manifest(vec![("github/acme/server", Role::Primary)]);
         let project = ProjectName::new("test-project");
         let config = IntegrationConfig::default();
-        let ctx = make_ctx(root, &project, &manifest, &config);
+        let cache = HashMap::new();
+    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
 
         // Activate first so the root package.json exists
         let integration = NpmWorkspaces;
@@ -1360,7 +1403,8 @@ mod lock_hooks {
         let manifest = make_manifest(vec![("github/acme/server", Role::Primary)]);
         let project = ProjectName::new("test-project");
         let config = IntegrationConfig::default();
-        let ctx = make_ctx(root, &project, &manifest, &config);
+        let cache = HashMap::new();
+    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
 
         let integration = NpmWorkspaces;
         let result = integration.lock(&ctx);
@@ -1391,7 +1435,8 @@ mod lock_hooks {
         let manifest = make_manifest(vec![("github/acme/server", Role::Primary)]);
         let project = ProjectName::new("test-project");
         let config = IntegrationConfig::default();
-        let ctx = make_ctx(root, &project, &manifest, &config);
+        let cache = HashMap::new();
+    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
 
         // Activate first so the root Cargo.toml workspace exists
         let integration = CargoWorkspace;
@@ -1424,7 +1469,8 @@ mod lock_hooks {
         let manifest = make_manifest(vec![("github/acme/server", Role::Primary)]);
         let project = ProjectName::new("test-project");
         let config = IntegrationConfig::default();
-        let ctx = make_ctx(root, &project, &manifest, &config);
+        let cache = HashMap::new();
+    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
 
         let integration = CargoWorkspace;
         let result = integration.lock(&ctx);
@@ -1454,7 +1500,8 @@ mod lock_hooks {
         let manifest = make_manifest(vec![("github/acme/server", Role::Primary)]);
         let project = ProjectName::new("test-project");
         let config = IntegrationConfig::default();
-        let ctx = make_ctx(root, &project, &manifest, &config);
+        let cache = HashMap::new();
+    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
 
         // Activate first so the root pyproject.toml exists
         let integration = UvWorkspace;
@@ -1487,7 +1534,8 @@ mod lock_hooks {
         let manifest = make_manifest(vec![("github/acme/server", Role::Primary)]);
         let project = ProjectName::new("test-project");
         let config = IntegrationConfig::default();
-        let ctx = make_ctx(root, &project, &manifest, &config);
+        let cache = HashMap::new();
+    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
 
         let integration = UvWorkspace;
         let result = integration.lock(&ctx);
@@ -1517,7 +1565,8 @@ mod lock_hooks {
         let manifest = make_manifest(vec![("github/acme/server", Role::Primary)]);
         let project = ProjectName::new("test-project");
         let config = IntegrationConfig::from_yaml("enabled: true");
-        let ctx = make_ctx(root, &project, &manifest, &config);
+        let cache = HashMap::new();
+    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
 
         // Activate first so the pnpm-workspace.yaml exists
         let integration = PnpmWorkspaces;
@@ -1550,7 +1599,8 @@ mod lock_hooks {
         let manifest = make_manifest(vec![("github/acme/server", Role::Primary)]);
         let project = ProjectName::new("test-project");
         let config = IntegrationConfig::from_yaml("enabled: true");
-        let ctx = make_ctx(root, &project, &manifest, &config);
+        let cache = HashMap::new();
+    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
 
         let integration = PnpmWorkspaces;
         let result = integration.lock(&ctx);
@@ -1575,7 +1625,8 @@ mod lock_hooks {
         let manifest = make_manifest(vec![("github/acme/server", Role::Primary)]);
         let project = ProjectName::new("test-project");
         let config = IntegrationConfig::default();
-        let ctx = make_ctx(root, &project, &manifest, &config);
+        let cache = HashMap::new();
+    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
 
         let integration = GoWork;
         let result = integration.lock(&ctx);
@@ -1599,7 +1650,8 @@ mod lock_hooks {
         let manifest = make_manifest(vec![("github/acme/server", Role::Primary)]);
         let project = ProjectName::new("test-project");
         let config = IntegrationConfig::default();
-        let ctx = make_ctx(root, &project, &manifest, &config);
+        let cache = HashMap::new();
+    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
 
         let integration = Gita;
         let result = integration.lock(&ctx);
@@ -1618,7 +1670,8 @@ mod lock_hooks {
         let manifest = make_manifest(vec![("github/acme/server", Role::Primary)]);
         let project = ProjectName::new("test-project");
         let config = IntegrationConfig::default();
-        let ctx = make_ctx(root, &project, &manifest, &config);
+        let cache = HashMap::new();
+    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
 
         let integration = VscodeWorkspace;
         let result = integration.lock(&ctx);
@@ -1655,7 +1708,8 @@ mod static_files {
         let config = IntegrationConfig::from_yaml(
             "enabled: true\nfiles: [turbo.json, .eslintrc.json, .prettierrc]",
         );
-        let ctx = make_ctx(root, &project, &manifest, &config);
+        let cache = HashMap::new();
+    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
 
         let integration = StaticFiles;
         let files = integration.generated_files(&ctx);
@@ -1670,7 +1724,8 @@ mod static_files {
         let manifest = make_manifest(vec![("github/acme/server", Role::Primary)]);
         let project = ProjectName::new("test-project");
         let config = IntegrationConfig::from_yaml("enabled: true");
-        let ctx = make_ctx(root, &project, &manifest, &config);
+        let cache = HashMap::new();
+    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
 
         let integration = StaticFiles;
         let files = integration.generated_files(&ctx);
@@ -1689,7 +1744,8 @@ mod static_files {
         let manifest = make_manifest(vec![("github/acme/server", Role::Primary)]);
         let project = ProjectName::new("test-project");
         let config = IntegrationConfig::from_yaml("enabled: true\nfiles: [turbo.json, .eslintrc.json]");
-        let ctx = make_ctx(root, &project, &manifest, &config);
+        let cache = HashMap::new();
+    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
 
         let integration = StaticFiles;
         let result = integration.activate(&ctx);
@@ -1705,7 +1761,8 @@ mod static_files {
         let manifest = make_manifest(vec![("github/acme/server", Role::Primary)]);
         let project = ProjectName::new("test-project");
         let config = IntegrationConfig::from_yaml("enabled: true\nfiles: [turbo.json]");
-        let ctx = make_ctx(root, &project, &manifest, &config);
+        let cache = HashMap::new();
+    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
 
         let integration = StaticFiles;
         let result = integration.activate(&ctx);
@@ -1723,7 +1780,8 @@ mod static_files {
         let manifest = make_manifest(vec![("github/acme/server", Role::Primary)]);
         let project = ProjectName::new("test-project");
         let config = IntegrationConfig::from_yaml("enabled: true\nfiles: [turbo.json, .eslintrc.json]");
-        let ctx = make_ctx(root, &project, &manifest, &config);
+        let cache = HashMap::new();
+    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
 
         let integration = StaticFiles;
         let issues = integration.check(&ctx).unwrap();
@@ -1744,7 +1802,8 @@ mod static_files {
         let manifest = make_manifest(vec![("github/acme/server", Role::Primary)]);
         let project = ProjectName::new("test-project");
         let config = IntegrationConfig::from_yaml("enabled: true\nfiles: [turbo.json, .prettierrc]");
-        let ctx = make_ctx(root, &project, &manifest, &config);
+        let cache = HashMap::new();
+    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
 
         let integration = StaticFiles;
         let issues = integration.check(&ctx).unwrap();
@@ -1759,7 +1818,8 @@ mod static_files {
         let manifest = make_manifest(vec![("github/acme/server", Role::Primary)]);
         let project = ProjectName::new("test-project");
         let config = IntegrationConfig::from_yaml("enabled: true");
-        let ctx = make_ctx(root, &project, &manifest, &config);
+        let cache = HashMap::new();
+    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
 
         let integration = StaticFiles;
         let issues = integration.check(&ctx).unwrap();
@@ -1784,7 +1844,8 @@ mod static_files {
         let manifest = make_manifest(vec![("github/acme/server", Role::Primary)]);
         let project = ProjectName::new("test-project");
         let config = IntegrationConfig::from_yaml("enabled: true\nfiles: [turbo.json]");
-        let ctx = make_ctx(root, &project, &manifest, &config);
+        let cache = HashMap::new();
+    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
 
         let integration = StaticFiles;
         let result = integration.lock(&ctx);

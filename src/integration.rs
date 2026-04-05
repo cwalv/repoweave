@@ -5,7 +5,7 @@
 //! and check (read-only inspection).
 
 use crate::manifest::{IntegrationConfig, ProjectName, RepoEntry, RepoPath};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
 
 // ---------------------------------------------------------------------------
@@ -44,6 +44,11 @@ pub struct IntegrationContext<'a> {
     /// All project paths (e.g., `["web-app", "mobile-app"]`).
     /// Computed once, shared across integrations.
     pub all_project_paths: &'a [String],
+
+    /// Pre-computed detection cache mapping manifest filenames to lists of
+    /// repo paths that contain that manifest. Populated once per
+    /// activation/check cycle before any integrations run.
+    pub detection_cache: &'a HashMap<String, Vec<String>>,
 }
 
 impl<'a> IntegrationContext<'a> {
@@ -62,14 +67,30 @@ impl<'a> IntegrationContext<'a> {
     /// so that repo detection works even when the output directory differs
     /// from where repos live (e.g., in weaves).
     pub fn detect_repos_with_manifest(&self, filename: &str) -> Vec<String> {
-        let mut paths: Vec<String> = self
-            .active_repos()
-            .filter(|(rp, _)| self.workspace_root.join(rp.as_str()).join(filename).exists())
-            .map(|(rp, _)| rp.as_str().to_string())
-            .collect();
-        paths.sort();
-        paths
+        if let Some(cached) = self.detection_cache.get(filename) {
+            return cached.clone();
+        }
+        detect_repos_with_manifest_impl(self.workspace_root, self.repos, filename)
     }
+}
+
+/// Perform a live filesystem scan for active repos that contain `filename`.
+///
+/// Shared by [`IntegrationContext::detect_repos_with_manifest`] (as a fallback)
+/// and the cache pre-computation in the integration runner.
+pub fn detect_repos_with_manifest_impl(
+    workspace_root: &Path,
+    repos: &BTreeMap<RepoPath, RepoEntry>,
+    filename: &str,
+) -> Vec<String> {
+    let mut paths: Vec<String> = repos
+        .iter()
+        .filter(|(_, e)| e.role.is_active())
+        .filter(|(rp, _)| workspace_root.join(rp.as_str()).join(filename).exists())
+        .map(|(rp, _)| rp.as_str().to_string())
+        .collect();
+    paths.sort();
+    paths
 }
 
 // ---------------------------------------------------------------------------

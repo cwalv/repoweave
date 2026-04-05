@@ -2,7 +2,7 @@
 //! is_enabled resolution, mock integration behavior, output_dir/workspace_root
 //! split, default lock hook, and generated_files().
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use tempfile::TempDir;
@@ -138,6 +138,7 @@ fn active_repos_excludes_reference() {
 
     let project = ProjectName::new("test-project");
     let config = IntegrationConfig::default();
+    let cache = HashMap::new();
     let ctx = IntegrationContext {
         output_dir: Path::new("/tmp/test"),
         workspace_root: Path::new("/tmp/test"),
@@ -146,6 +147,7 @@ fn active_repos_excludes_reference() {
         config: &config,
         all_repos_on_disk: &[],
         all_project_paths: &[],
+        detection_cache: &cache,
     };
 
     let active: Vec<_> = ctx.active_repos().collect();
@@ -163,6 +165,7 @@ fn active_repos_includes_primary_fork_dependency() {
 
     let project = ProjectName::new("test-project");
     let config = IntegrationConfig::default();
+    let cache = HashMap::new();
     let ctx = IntegrationContext {
         output_dir: Path::new("/tmp/test"),
         workspace_root: Path::new("/tmp/test"),
@@ -171,6 +174,7 @@ fn active_repos_includes_primary_fork_dependency() {
         config: &config,
         all_repos_on_disk: &[],
         all_project_paths: &[],
+        detection_cache: &cache,
     };
 
     let active: Vec<_> = ctx.active_repos().collect();
@@ -194,6 +198,7 @@ fn mock_activate_receives_correct_context() {
 
     let project = ProjectName::new("my-project");
     let config = IntegrationConfig::default();
+    let cache = HashMap::new();
     let ctx = IntegrationContext {
         output_dir: Path::new("/workspace"),
         workspace_root: Path::new("/workspace"),
@@ -202,6 +207,7 @@ fn mock_activate_receives_correct_context() {
         config: &config,
         all_repos_on_disk: &[],
         all_project_paths: &[],
+        detection_cache: &cache,
     };
 
     let mock = MockIntegration::new("cargo", true);
@@ -245,6 +251,7 @@ fn mock_check_returns_issues() {
 
     let project = ProjectName::new("check-project");
     let config = IntegrationConfig::default();
+    let cache = HashMap::new();
     let ctx = IntegrationContext {
         output_dir: Path::new("/workspace"),
         workspace_root: Path::new("/workspace"),
@@ -253,6 +260,7 @@ fn mock_check_returns_issues() {
         config: &config,
         all_repos_on_disk: &[],
         all_project_paths: &[],
+        detection_cache: &cache,
     };
 
     let mock = MockIntegration::new("cargo", true).with_check_issues(issues);
@@ -333,6 +341,7 @@ fn detect_repos_with_manifest_uses_workspace_root_not_output_dir() {
 
     let project = ProjectName::new("test-project");
     let config = IntegrationConfig::default();
+    let cache = HashMap::new();
     let ctx = IntegrationContext {
         output_dir,
         workspace_root,
@@ -341,6 +350,7 @@ fn detect_repos_with_manifest_uses_workspace_root_not_output_dir() {
         config: &config,
         all_repos_on_disk: &[],
         all_project_paths: &[],
+        detection_cache: &cache,
     };
 
     let detected = ctx.detect_repos_with_manifest("Cargo.toml");
@@ -365,6 +375,7 @@ fn detect_repos_with_manifest_ignores_output_dir_manifests() {
 
     let project = ProjectName::new("test-project");
     let config = IntegrationConfig::default();
+    let cache = HashMap::new();
     let ctx = IntegrationContext {
         output_dir,
         workspace_root,
@@ -373,6 +384,7 @@ fn detect_repos_with_manifest_ignores_output_dir_manifests() {
         config: &config,
         all_repos_on_disk: &[],
         all_project_paths: &[],
+        detection_cache: &cache,
     };
 
     let detected = ctx.detect_repos_with_manifest("Cargo.toml");
@@ -392,6 +404,7 @@ fn context_output_dir_and_workspace_root_can_be_same() {
 
     let project = ProjectName::new("test-project");
     let config = IntegrationConfig::default();
+    let cache = HashMap::new();
     let ctx = IntegrationContext {
         output_dir: root,
         workspace_root: root,
@@ -400,6 +413,7 @@ fn context_output_dir_and_workspace_root_can_be_same() {
         config: &config,
         all_repos_on_disk: &[],
         all_project_paths: &[],
+        detection_cache: &cache,
     };
 
     let detected = ctx.detect_repos_with_manifest("package.json");
@@ -417,6 +431,7 @@ fn default_lock_hook_is_noop() {
     let repos = BTreeMap::new();
     let project = ProjectName::new("test-project");
     let config = IntegrationConfig::default();
+    let cache = HashMap::new();
     let ctx = IntegrationContext {
         output_dir: Path::new("/workspace"),
         workspace_root: Path::new("/workspace"),
@@ -425,6 +440,7 @@ fn default_lock_hook_is_noop() {
         config: &config,
         all_repos_on_disk: &[],
         all_project_paths: &[],
+        detection_cache: &cache,
     };
 
     // Default lock() should succeed and do nothing
@@ -492,6 +508,7 @@ fn overridden_lock_hook_is_called() {
     let repos = BTreeMap::new();
     let project = ProjectName::new("my-project");
     let config = IntegrationConfig::default();
+    let cache = HashMap::new();
     let ctx = IntegrationContext {
         output_dir: Path::new("/workspace"),
         workspace_root: Path::new("/workspace"),
@@ -500,6 +517,7 @@ fn overridden_lock_hook_is_called() {
         config: &config,
         all_repos_on_disk: &[],
         all_project_paths: &[],
+        detection_cache: &cache,
     };
 
     integration.lock(&ctx).unwrap();
@@ -521,6 +539,7 @@ fn default_generated_files_returns_empty() {
     let repos = BTreeMap::new();
     let project = ProjectName::new("test-project");
     let config = IntegrationConfig::default();
+    let cache = HashMap::new();
     let ctx = IntegrationContext {
         output_dir: Path::new("/workspace"),
         workspace_root: Path::new("/workspace"),
@@ -529,6 +548,7 @@ fn default_generated_files_returns_empty() {
         config: &config,
         all_repos_on_disk: &[],
         all_project_paths: &[],
+        detection_cache: &cache,
     };
 
     let files = mock.generated_files(&ctx);
@@ -548,6 +568,7 @@ fn cargo_workspace_generated_files() {
     let project = ProjectName::new("test-project");
     let config = IntegrationConfig::default();
     let tmp = TempDir::new().unwrap();
+    let cache = HashMap::new();
     let ctx = IntegrationContext {
         output_dir: tmp.path(),
         workspace_root: tmp.path(),
@@ -556,6 +577,7 @@ fn cargo_workspace_generated_files() {
         config: &config,
         all_repos_on_disk: &[],
         all_project_paths: &[],
+        detection_cache: &cache,
     };
     assert_eq!(CargoWorkspace.generated_files(&ctx), Vec::<String>::new());
 
@@ -571,6 +593,7 @@ fn cargo_workspace_generated_files() {
         config: &config,
         all_repos_on_disk: &[],
         all_project_paths: &[],
+        detection_cache: &cache,
     };
     assert_eq!(CargoWorkspace.generated_files(&ctx2), vec!["Cargo.toml", "Cargo.lock"]);
 }
@@ -584,6 +607,7 @@ fn npm_workspaces_generated_files() {
     let project = ProjectName::new("test-project");
     let config = IntegrationConfig::default();
     let tmp = TempDir::new().unwrap();
+    let cache = HashMap::new();
     let ctx = IntegrationContext {
         output_dir: tmp.path(),
         workspace_root: tmp.path(),
@@ -592,6 +616,7 @@ fn npm_workspaces_generated_files() {
         config: &config,
         all_repos_on_disk: &[],
         all_project_paths: &[],
+        detection_cache: &cache,
     };
     assert_eq!(NpmWorkspaces.generated_files(&ctx), Vec::<String>::new());
 
@@ -607,6 +632,7 @@ fn npm_workspaces_generated_files() {
         config: &config,
         all_repos_on_disk: &[],
         all_project_paths: &[],
+        detection_cache: &cache,
     };
     assert_eq!(NpmWorkspaces.generated_files(&ctx2), vec!["package.json", "package-lock.json"]);
 }
@@ -620,6 +646,7 @@ fn pnpm_workspaces_generated_files() {
     let project = ProjectName::new("test-project");
     let config = IntegrationConfig::default();
     let tmp = TempDir::new().unwrap();
+    let cache = HashMap::new();
     let ctx = IntegrationContext {
         output_dir: tmp.path(),
         workspace_root: tmp.path(),
@@ -628,6 +655,7 @@ fn pnpm_workspaces_generated_files() {
         config: &config,
         all_repos_on_disk: &[],
         all_project_paths: &[],
+        detection_cache: &cache,
     };
     assert_eq!(PnpmWorkspaces.generated_files(&ctx), Vec::<String>::new());
 
@@ -643,6 +671,7 @@ fn pnpm_workspaces_generated_files() {
         config: &config,
         all_repos_on_disk: &[],
         all_project_paths: &[],
+        detection_cache: &cache,
     };
     assert_eq!(PnpmWorkspaces.generated_files(&ctx2), vec!["pnpm-workspace.yaml", "pnpm-lock.yaml"]);
 }
@@ -656,6 +685,7 @@ fn go_work_generated_files() {
     let project = ProjectName::new("test-project");
     let config = IntegrationConfig::default();
     let tmp = TempDir::new().unwrap();
+    let cache = HashMap::new();
     let ctx = IntegrationContext {
         output_dir: tmp.path(),
         workspace_root: tmp.path(),
@@ -664,6 +694,7 @@ fn go_work_generated_files() {
         config: &config,
         all_repos_on_disk: &[],
         all_project_paths: &[],
+        detection_cache: &cache,
     };
     assert_eq!(GoWork.generated_files(&ctx), Vec::<String>::new());
 
@@ -679,6 +710,7 @@ fn go_work_generated_files() {
         config: &config,
         all_repos_on_disk: &[],
         all_project_paths: &[],
+        detection_cache: &cache,
     };
     assert_eq!(GoWork.generated_files(&ctx2), vec!["go.work", "go.sum"]);
 }
@@ -692,6 +724,7 @@ fn uv_workspace_generated_files() {
     let project = ProjectName::new("test-project");
     let config = IntegrationConfig::default();
     let tmp = TempDir::new().unwrap();
+    let cache = HashMap::new();
     let ctx = IntegrationContext {
         output_dir: tmp.path(),
         workspace_root: tmp.path(),
@@ -700,6 +733,7 @@ fn uv_workspace_generated_files() {
         config: &config,
         all_repos_on_disk: &[],
         all_project_paths: &[],
+        detection_cache: &cache,
     };
     assert_eq!(UvWorkspace.generated_files(&ctx), Vec::<String>::new());
 
@@ -715,6 +749,7 @@ fn uv_workspace_generated_files() {
         config: &config,
         all_repos_on_disk: &[],
         all_project_paths: &[],
+        detection_cache: &cache,
     };
     assert_eq!(UvWorkspace.generated_files(&ctx2), vec!["pyproject.toml", "uv.lock"]);
 }
@@ -726,6 +761,7 @@ fn gita_generated_files() {
     let repos = BTreeMap::new();
     let project = ProjectName::new("test-project");
     let config = IntegrationConfig::default();
+    let cache = HashMap::new();
     let ctx = IntegrationContext {
         output_dir: Path::new("/workspace"),
         workspace_root: Path::new("/workspace"),
@@ -734,6 +770,7 @@ fn gita_generated_files() {
         config: &config,
         all_repos_on_disk: &[],
         all_project_paths: &[],
+        detection_cache: &cache,
     };
 
     let files = Gita.generated_files(&ctx);
@@ -747,6 +784,7 @@ fn vscode_workspace_generated_files_includes_project_name() {
     let repos = BTreeMap::new();
     let project = ProjectName::new("web-app");
     let config = IntegrationConfig::default();
+    let cache = HashMap::new();
     let ctx = IntegrationContext {
         output_dir: Path::new("/workspace"),
         workspace_root: Path::new("/workspace"),
@@ -755,6 +793,7 @@ fn vscode_workspace_generated_files_includes_project_name() {
         config: &config,
         all_repos_on_disk: &[],
         all_project_paths: &[],
+        detection_cache: &cache,
     };
 
     let files = VscodeWorkspace.generated_files(&ctx);
@@ -770,6 +809,7 @@ fn vscode_workspace_generated_files_varies_with_project() {
 
     // Different project name produces different filename
     let project = ProjectName::new("mobile-app");
+    let cache = HashMap::new();
     let ctx = IntegrationContext {
         output_dir: Path::new("/workspace"),
         workspace_root: Path::new("/workspace"),
@@ -778,6 +818,7 @@ fn vscode_workspace_generated_files_varies_with_project() {
         config: &config,
         all_repos_on_disk: &[],
         all_project_paths: &[],
+        detection_cache: &cache,
     };
 
     let files = VscodeWorkspace.generated_files(&ctx);
