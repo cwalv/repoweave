@@ -12,13 +12,11 @@
 
 use std::path::Path;
 
-use crate::git::GitVcs;
 use crate::integration::{is_enabled, Integration, IntegrationContext, Severity};
-use crate::integration_runner::{run_activations, IntegrationContextBase};
+use crate::integration_runner::run_activations;
 use crate::integrations::builtin_integrations;
 use crate::manifest::{IntegrationConfig, Manifest, ProjectName};
-use crate::registry::builtin_registries;
-use crate::workspace::{scan_repos_on_disk, set_active_project, WorkspaceContext};
+use crate::workspace::{set_active_project, WorkspaceContext, WorkspaceSession};
 
 /// Run `rwv activate PROJECT` from the given working directory.
 pub fn activate(project: &str, cwd: &Path) -> anyhow::Result<()> {
@@ -40,22 +38,13 @@ fn activate_at(root: &Path, project: &str, skip_missing_sources: bool) -> anyhow
     let manifest = Manifest::from_path(&manifest_path)?;
 
     // Discover repos on disk and project paths (needed by IntegrationContext).
-    let registries = builtin_registries();
-    let git = GitVcs;
-    let all_repos_on_disk = scan_repos_on_disk(root, &registries, &git);
-    let all_project_paths = discover_project_paths(root);
+    let session = WorkspaceSession::new(root);
 
     let builtin = builtin_integrations();
     let integrations: Vec<&dyn Integration> = builtin.iter().map(|b| b.as_ref()).collect();
 
     // 1. Run integrations with output_dir = project_dir.
-    let ctx_base = IntegrationContextBase {
-        output_dir: &project_dir,
-        workspace_root: root,
-        project: &project_name,
-        all_repos_on_disk: &all_repos_on_disk,
-        all_project_paths: &all_project_paths,
-    };
+    let ctx_base = session.context_base(&project_dir, &project_name);
 
     let issues = run_activations(&integrations, &manifest, &ctx_base);
 
@@ -88,8 +77,8 @@ fn activate_at(root: &Path, project: &str, skip_missing_sources: bool) -> anyhow
             project: &project_name,
             repos: &manifest.repositories,
             config,
-            all_repos_on_disk: &all_repos_on_disk,
-            all_project_paths: &all_project_paths,
+            all_repos_on_disk: session.repos_on_disk(),
+            all_project_paths: session.project_paths(),
         };
 
         new_generated.extend(integration.generated_files(&int_ctx));
@@ -229,21 +218,6 @@ fn remove_activation_symlinks_in(dir: &Path, root: &Path) -> anyhow::Result<()> 
     }
 
     Ok(())
-}
-
-/// Discover all project names under `projects/`.
-fn discover_project_paths(root: &Path) -> Vec<String> {
-    let projects_dir = root.join("projects");
-    let mut names = Vec::new();
-    if let Ok(entries) = std::fs::read_dir(&projects_dir) {
-        for entry in entries.flatten() {
-            if entry.path().is_dir() {
-                names.push(entry.file_name().to_string_lossy().into_owned());
-            }
-        }
-    }
-    names.sort();
-    names
 }
 
 /// Run activation in a workweave directory without calling resolve.

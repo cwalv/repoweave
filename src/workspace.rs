@@ -4,6 +4,8 @@
 //! and ecosystem files. This module resolves the workspace from CWD and
 //! provides the context that commands operate on.
 
+use crate::git::GitVcs;
+use crate::integration_runner::IntegrationContextBase;
 use crate::manifest::{Manifest, ProjectName, RepoPath, WorkweaveName};
 use serde::{Deserialize, Serialize};
 use crate::registry::{builtin_registries, Registry};
@@ -150,6 +152,80 @@ pub fn scan_repos_on_disk(root: &Path, registries: &[Box<dyn Registry>], vcs: &d
     }
 
     repos
+}
+
+/// Discover all project names under `projects/` relative to `root`.
+///
+/// Returns a sorted list of directory names found under `{root}/projects/`.
+pub fn discover_project_paths(root: &Path) -> Vec<String> {
+    let projects_dir = root.join("projects");
+    let mut names = Vec::new();
+    if let Ok(entries) = std::fs::read_dir(&projects_dir) {
+        for entry in entries.flatten() {
+            if entry.path().is_dir() {
+                names.push(entry.file_name().to_string_lossy().into_owned());
+            }
+        }
+    }
+    names.sort();
+    names
+}
+
+// ---------------------------------------------------------------------------
+// WorkspaceSession — computed-once workspace data
+// ---------------------------------------------------------------------------
+
+/// Computed-once workspace data: registries, repos on disk, and project paths.
+///
+/// Call [`WorkspaceSession::new`] once per command invocation to pay the scan
+/// cost a single time, then pass varying data (output_dir, project) to
+/// [`WorkspaceSession::context_base`] to build an [`IntegrationContextBase`].
+pub struct WorkspaceSession {
+    pub root: PathBuf,
+    repos_on_disk: Vec<RepoPath>,
+    project_paths: Vec<String>,
+}
+
+impl WorkspaceSession {
+    /// Build a `WorkspaceSession` by running the standard scan triad:
+    /// `builtin_registries()` → `scan_repos_on_disk()` → `discover_project_paths()`.
+    pub fn new(root: &Path) -> Self {
+        let registries = builtin_registries();
+        let git = GitVcs;
+        let repos_on_disk = scan_repos_on_disk(root, &registries, &git);
+        let project_paths = discover_project_paths(root);
+        Self {
+            root: root.to_path_buf(),
+            repos_on_disk,
+            project_paths,
+        }
+    }
+
+    /// Build an [`IntegrationContextBase`] from this session's shared data
+    /// combined with the per-invocation `output_dir` and `project`.
+    pub fn context_base<'a>(
+        &'a self,
+        output_dir: &'a Path,
+        project: &'a ProjectName,
+    ) -> IntegrationContextBase<'a> {
+        IntegrationContextBase {
+            output_dir,
+            workspace_root: &self.root,
+            project,
+            all_repos_on_disk: &self.repos_on_disk,
+            all_project_paths: &self.project_paths,
+        }
+    }
+
+    /// The repos found on disk (relative paths from workspace root).
+    pub fn repos_on_disk(&self) -> &[RepoPath] {
+        &self.repos_on_disk
+    }
+
+    /// The discovered project path names (directory names under `projects/`).
+    pub fn project_paths(&self) -> &[String] {
+        &self.project_paths
+    }
 }
 
 /// Check that `cwd` is safe to use as a workspace root for bootstrapping

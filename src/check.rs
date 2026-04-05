@@ -169,22 +169,19 @@ pub fn run_check(cwd: &std::path::Path) -> anyhow::Result<bool> {
     use crate::git::GitVcs;
     use crate::integration::Severity;
     use crate::manifest::Project;
-    use crate::registry::builtin_registries;
     use crate::vcs::Vcs;
-    use crate::workspace::{WorkspaceContext, scan_repos_on_disk};
-    use crate::integration_runner::{run_checks, IntegrationContextBase};
+    use crate::workspace::{WorkspaceContext, WorkspaceSession};
+    use crate::integration_runner::run_checks;
 
     let ctx = WorkspaceContext::resolve(cwd, None)?;
 
-    // Scan registry directories for repos on disk
-    let registries = builtin_registries();
+    // Build session (runs builtin_registries → scan_repos_on_disk → discover_project_paths).
+    let session = WorkspaceSession::new(&ctx.root);
     let git = GitVcs;
-
-    let repos_on_disk = scan_repos_on_disk(&ctx.root, &registries, &git);
 
     // Resolve HEAD revisions for each repo on disk.
     let mut head_revisions = BTreeMap::new();
-    for repo_path in &repos_on_disk {
+    for repo_path in session.repos_on_disk() {
         let abs = ctx.root.join(repo_path.as_path());
         if let Ok(rev) = git.head_revision(&abs) {
             head_revisions.insert(repo_path.clone(), rev);
@@ -240,7 +237,7 @@ pub fn run_check(cwd: &std::path::Path) -> anyhow::Result<bool> {
     // Build CheckInput and find violations
     let input = CheckInput {
         known_repos,
-        repos_on_disk,
+        repos_on_disk: session.repos_on_disk().to_vec(),
         projects,
         head_revisions,
     };
@@ -249,24 +246,12 @@ pub fn run_check(cwd: &std::path::Path) -> anyhow::Result<bool> {
     let mut all_issues = violations_to_issues(violations);
 
     // Run integration check hooks for each project
-    let project_paths: Vec<String> = input
-        .projects
-        .iter()
-        .map(|p| p.name.as_str().to_owned())
-        .collect();
-
     let builtin = crate::integrations::builtin_integrations();
     let integrations: Vec<&dyn crate::integration::Integration> =
         builtin.iter().map(|b| b.as_ref()).collect();
 
     for project in &input.projects {
-        let ctx_base = IntegrationContextBase {
-            output_dir: &ctx.root,
-            workspace_root: &ctx.root,
-            project: &project.name,
-            all_repos_on_disk: &input.repos_on_disk,
-            all_project_paths: &project_paths,
-        };
+        let ctx_base = session.context_base(&ctx.root, &project.name);
         let integration_issues = run_checks(&integrations, &project.manifest, &ctx_base);
         all_issues.extend(integration_issues);
     }

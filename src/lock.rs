@@ -88,9 +88,8 @@ pub fn write_lock(lock: &LockFile, path: &Path) -> anyhow::Result<()> {
 /// When `dirty` is true, the uncommitted-changes check is skipped.
 pub fn lock(cwd: &Path, dirty: bool) -> anyhow::Result<()> {
     use crate::integration::Severity;
-    use crate::integration_runner::{run_lock_hooks, IntegrationContextBase};
+    use crate::integration_runner::run_lock_hooks;
     use crate::integrations::builtin_integrations;
-    use crate::registry::builtin_registries;
 
     let ctx = WorkspaceContext::resolve(cwd, None)?;
 
@@ -129,34 +128,10 @@ pub fn lock(cwd: &Path, dirty: bool) -> anyhow::Result<()> {
     eprintln!("Wrote {}", lock_path.display());
 
     // Run integration lock hooks after writing the lock file.
-    let registries = builtin_registries();
-    let git = GitVcs;
-    let repos_on_disk = crate::workspace::scan_repos_on_disk(&ctx.root, &registries, &git);
-
-    let projects_dir = ctx.root.join("projects");
-    let project_paths: Vec<String> = if projects_dir.is_dir() {
-        std::fs::read_dir(&projects_dir)
-            .ok()
-            .map(|entries| {
-                entries
-                    .filter_map(|e| e.ok())
-                    .filter(|e| e.path().is_dir() && e.path().join("rwv.yaml").exists())
-                    .map(|e| e.file_name().to_string_lossy().into_owned())
-                    .collect()
-            })
-            .unwrap_or_default()
-    } else {
-        Vec::new()
-    };
+    let session = crate::workspace::WorkspaceSession::new(&ctx.root);
 
     let output_dir = workweave_dir.as_deref().unwrap_or(&ctx.root);
-    let ctx_base = IntegrationContextBase {
-        output_dir,
-        workspace_root: &ctx.root,
-        project: &project_name,
-        all_repos_on_disk: &repos_on_disk,
-        all_project_paths: &project_paths,
-    };
+    let ctx_base = session.context_base(output_dir, &project_name);
 
     let builtin = builtin_integrations();
     let integrations: Vec<&dyn crate::integration::Integration> =
