@@ -513,26 +513,26 @@ The dependency order comes from the ecosystem manifests: `go.mod` imports, `Carg
 
 ### Per-ecosystem recipes
 
-**Go** (e.g., `gastown` depends on `beads`):
+**Go** (e.g., `server` depends on `protocol`):
 
 ```bash
-# Development: go.work resolves beads locally, no version pin needed
+# Development: go.work resolves protocol locally, no version pin needed
 rwv lock                                        # capture tested state
-cd github/steveyegge/beads
-git tag v0.63.4 && git push origin v0.63.4      # release beads first
-cd ../../steveyegge/gastown
-go get github.com/steveyegge/beads@v0.63.4      # update go.mod pin
-git tag v0.4.0 && git push origin v0.4.0        # release gastown
+cd github/chatly/protocol
+git tag v1.5.0 && git push origin v1.5.0        # release protocol first
+cd ../server
+go get github.com/chatly/protocol@v1.5.0        # update go.mod pin
+git tag v2.2.0 && git push origin v2.2.0        # release server
 ```
 
 **Cargo** (e.g., `server` depends on `protocol`):
 
 ```bash
 rwv lock
-cd github/acme/protocol
+cd github/chatly/protocol
 cargo publish                                    # publish to crates.io
 cd ../server
-# update Cargo.toml: protocol = "0.2.0" (or path dep → version dep)
+# update Cargo.toml: protocol = "1.5.0" (or path dep → version dep)
 cargo publish
 ```
 
@@ -540,10 +540,10 @@ cargo publish
 
 ```bash
 rwv lock
-cd github/acme/shared-types
+cd github/chatly/shared-types
 npm version 1.3.0 && npm publish
 cd ../server
-npm install @acme/shared-types@1.3.0             # update package.json pin
+npm install @chatly/shared-types@1.3.0           # update package.json pin
 npm version 2.1.0 && npm publish
 ```
 
