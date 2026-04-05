@@ -1,4 +1,8 @@
-# Publish PyPI shim package after a GitHub Release is created.
+# Publish platform-specific PyPI wheels after a GitHub Release is created.
+#
+# Each wheel contains the pre-built rwv binary in its .data/scripts/ directory,
+# so that pip/uv/pipx install it directly into the user's PATH.  No Python
+# wrapper or Rust toolchain is required on the install side.
 #
 # Uses OIDC (OpenID Connect) via PyPI trusted publishing — no stored tokens.
 #
@@ -17,46 +21,45 @@ permissions:
   id-token: write  # Required for PyPI OIDC
 
 jobs:
-  publish-pypi:
-    if: ${{ github.event.workflow_run.conclusion == 'success' && startsWith(github.event.workflow_run.head_branch, 'v') || contains(github.event.workflow_run.head_branch, '.') }}
+  # Build one platform-specific wheel per Rust target.
+  build-wheel:
+    # Only run when the Release workflow succeeded on a version tag.
+    if: |
+      github.event.workflow_run.conclusion == 'success' &&
+      (startsWith(github.event.workflow_run.head_branch, 'v') ||
+       contains(github.event.workflow_run.head_branch, '.'))
     runs-on: ubuntu-latest
     strategy:
+      fail-fast: false
       matrix:
         include:
           - rust_target: aarch64-apple-darwin
             plat_tag: macosx_11_0_arm64
             artifact: repoweave-aarch64-apple-darwin.tar.xz
-            ext: tar.xz
             bin: rwv
           - rust_target: x86_64-apple-darwin
             plat_tag: macosx_10_12_x86_64
             artifact: repoweave-x86_64-apple-darwin.tar.xz
-            ext: tar.xz
             bin: rwv
           - rust_target: aarch64-unknown-linux-gnu
             plat_tag: manylinux_2_17_aarch64.manylinux2014_aarch64
             artifact: repoweave-aarch64-unknown-linux-gnu.tar.xz
-            ext: tar.xz
             bin: rwv
           - rust_target: x86_64-unknown-linux-gnu
             plat_tag: manylinux_2_17_x86_64.manylinux2014_x86_64
             artifact: repoweave-x86_64-unknown-linux-gnu.tar.xz
-            ext: tar.xz
             bin: rwv
           - rust_target: x86_64-pc-windows-msvc
             plat_tag: win_amd64
             artifact: repoweave-x86_64-pc-windows-msvc.zip
-            ext: zip
             bin: rwv.exe
+
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v4
 
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-
-      - name: Install build tools
-        run: pip install build wheel
 
       - name: Get version from tag
         id: version
@@ -71,79 +74,52 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           gh release download "${{ steps.version.outputs.tag }}" \
+            --repo "${{ github.repository }}" \
             --pattern "${{ matrix.artifact }}" \
             --dir /tmp/artifacts/
 
       - name: Extract binary
         run: |
           mkdir -p /tmp/bin
-          if [[ "${{ matrix.ext }}" == "zip" ]]; then
-            unzip -o -j "/tmp/artifacts/${{ matrix.artifact }}" "${{ matrix.bin }}" -d /tmp/bin/
+          artifact="/tmp/artifacts/${{ matrix.artifact }}"
+          if [[ "${{ matrix.artifact }}" == *.zip ]]; then
+            unzip -o -j "$artifact" "${{ matrix.bin }}" -d /tmp/bin/
           else
-            tar -xJf "/tmp/artifacts/${{ matrix.artifact }}" -C /tmp/artifacts/
-            ARCHIVE_DIR="${{ matrix.artifact }}"
-            ARCHIVE_DIR="${ARCHIVE_DIR%.tar.xz}"
-            cp "/tmp/artifacts/${ARCHIVE_DIR}/${{ matrix.bin }}" "/tmp/bin/${{ matrix.bin }}"
+            # tar.xz: archive directory matches artifact name without extension
+            tar -xJf "$artifact" -C /tmp/artifacts/
+            archive_dir="${{ matrix.artifact }}"
+            archive_dir="${archive_dir%.tar.xz}"
+            cp "/tmp/artifacts/${archive_dir}/${{ matrix.bin }}" "/tmp/bin/${{ matrix.bin }}"
             chmod +x "/tmp/bin/${{ matrix.bin }}"
           fi
 
-      - name: Update version in pyproject.toml
-        run: |
-          VERSION="${{ steps.version.outputs.version }}"
-          sed -i "s/^version = .*/version = \"$VERSION\"/" python/repoweave/pyproject.toml
-
       - name: Build platform wheel
         run: |
-          cd python/repoweave
-          VERSION="${{ steps.version.outputs.version }}"
-          PLAT_TAG="${{ matrix.plat_tag }}"
+          mkdir -p dist/
+          python python/build_wheels.py \
+            --version "${{ steps.version.outputs.version }}" \
+            --binary "/tmp/bin/${{ matrix.bin }}" \
+            --platform "${{ matrix.plat_tag }}" \
+            --out dist/
+          ls -la dist/
 
-          python -m build --wheel --outdir /tmp/pure-wheel/
-
-          PURE_WHL=$(ls /tmp/pure-wheel/*.whl | head -1)
-          REPACK_DIR="/tmp/repack"
-          mkdir -p "$REPACK_DIR"
-          unzip -q -o "$PURE_WHL" -d "$REPACK_DIR"
-
-          mkdir -p "${REPACK_DIR}/repoweave-${VERSION}.data/scripts"
-          cp "/tmp/bin/${{ matrix.bin }}" "${REPACK_DIR}/repoweave-${VERSION}.data/scripts/${{ matrix.bin }}"
-
-          sed -i "s/Tag: py3-none-any/Tag: py3-none-${PLAT_TAG}/" \
-            "${REPACK_DIR}/repoweave-${VERSION}.dist-info/WHEEL"
-
-          cd "$REPACK_DIR"
-          python3 -c "
-          import hashlib, base64, os, pathlib
-          record_path = f'repoweave-{os.environ[\"VERSION\"]}.dist-info/RECORD'
-          lines = []
-          for root, dirs, files in os.walk('.'):
-              for f in sorted(files):
-                  p = os.path.join(root, f)[2:]
-                  if p.endswith('RECORD'):
-                      continue
-                  data = open(p, 'rb').read()
-                  h = base64.urlsafe_b64encode(hashlib.sha256(data).digest()).rstrip(b'=').decode()
-                  lines.append(f'{p},sha256={h},{len(data)}')
-          lines.append(f'{record_path},,')
-          pathlib.Path(record_path).write_text('\n'.join(lines) + '\n')
-          "
-
-          WHEEL_NAME="repoweave-${VERSION}-py3-none-${PLAT_TAG}.whl"
-          mkdir -p "$GITHUB_WORKSPACE/dist"
-          zip -q -r "$GITHUB_WORKSPACE/dist/${WHEEL_NAME}" .
-        env:
-          VERSION: ${{ steps.version.outputs.version }}
-
-      - name: Publish to PyPI
-        uses: pypa/gh-action-pypi-publish@release/v1
+      - name: Upload wheel artifact
+        uses: actions/upload-artifact@v4
         with:
-          packages-dir: dist/
+          name: wheel-${{ matrix.rust_target }}
+          path: dist/*.whl
+          retention-days: 1
 
-  publish-pypi-sdist:
-    if: ${{ github.event.workflow_run.conclusion == 'success' && startsWith(github.event.workflow_run.head_branch, 'v') || contains(github.event.workflow_run.head_branch, '.') }}
+  # Build the sdist (platform-independent source distribution).
+  build-sdist:
+    if: |
+      github.event.workflow_run.conclusion == 'success' &&
+      (startsWith(github.event.workflow_run.head_branch, 'v') ||
+       contains(github.event.workflow_run.head_branch, '.'))
     runs-on: ubuntu-latest
+
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v4
 
       - uses: actions/setup-python@v5
         with:
@@ -159,7 +135,7 @@ jobs:
           VERSION="${TAG#v}"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
-      - name: Update version
+      - name: Update version in pyproject.toml
         run: |
           VERSION="${{ steps.version.outputs.version }}"
           sed -i "s/^version = .*/version = \"$VERSION\"/" python/repoweave/pyproject.toml
@@ -168,6 +144,30 @@ jobs:
         run: |
           cd python/repoweave
           python -m build --sdist --outdir "$GITHUB_WORKSPACE/dist/"
+
+      - name: Upload sdist artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sdist
+          path: dist/*.tar.gz
+          retention-days: 1
+
+  # Publish all wheels + sdist to PyPI in a single job to stay within
+  # the OIDC trusted-publisher constraint (one upload per workflow run).
+  publish-pypi:
+    needs: [build-wheel, build-sdist]
+    runs-on: ubuntu-latest
+    environment: pypi  # optional: gate behind a required-reviewer environment
+
+    steps:
+      - name: Download all distribution artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist/
+          merge-multiple: true
+
+      - name: List distributions
+        run: ls -la dist/
 
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1

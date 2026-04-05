@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "repoweave"
-version = "0.1.0"
+version = "0.2.0"
 description = "A cross-repo workspace manager"
 license = "MIT"
 requires-python = ">=3.8"
@@ -20,8 +20,10 @@ classifiers = [
 [project.urls]
 Repository = "https://github.com/cwalv/repoweave"
 
-# No [project.scripts] — the native rwv binary is installed directly
-# via the wheel's .data/scripts/ entry. No Python wrapper needed.
+# [project.scripts] is used by the sdist fallback install path only.
+# Platform-specific wheels deliver rwv via .data/scripts/ directly (no wrapper).
+[project.scripts]
+rwv = "repoweave:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/repoweave"]
