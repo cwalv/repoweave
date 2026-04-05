@@ -192,9 +192,20 @@ npm install @chatly/shared-types@1.3.0           # update package.json pin
 npm version 2.1.0 && npm publish
 ```
 
-### Why the lock file matters for multi-ecosystem projects
+### What the lock file tells you at release time
 
-In a single-ecosystem project, the dependency graph is visible to the ecosystem tool and the release sequence is obvious. In a multi-ecosystem project — a Go service using protobufs that a TypeScript frontend also uses — no single ecosystem tool sees the full picture. The lock file is the only artifact that captures the cross-ecosystem dependency state, regardless of whether individual packages are published or not.
+The lock file bookends the release process:
+
+| What | Who knows |
+|------|-----------|
+| Which repos changed (need release) | `rwv.lock` — tagged repos are already released, untagged repos need attention |
+| Which repos depend on which | Ecosystem manifests (`go.mod`, `Cargo.toml`, `package.json`) |
+| How to update version pins | Ecosystem tools (`go get`, `cargo update`, `npm install`) |
+| What was tested together | `rwv.lock` — the cross-ecosystem snapshot |
+
+repoweave owns the first and last rows. The dependency ordering and reference updates are the ecosystem's job — each tool knows its own dependency graph.
+
+In a multi-ecosystem project — a Go service using protobufs that a TypeScript frontend also uses — no single ecosystem tool sees all the repos that were tested together. The lock file is the only artifact that captures that cross-ecosystem state.
 
 ## Creating a new project
 
