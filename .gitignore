@@ -11,3 +11,7 @@ Cargo.lock
 
 # mdbook output
 /book/
+tests/fixtures/**/target/
+tests/fixtures/**/dist/
+tests/fixtures/**/node_modules/
+tests/fixtures/**/__pycache__/
