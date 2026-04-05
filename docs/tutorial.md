@@ -116,97 +116,6 @@ rwv remove github/example/some-lib --delete
 # Checks no other project references it, then removes the directory
 ```
 
-## Locking and releasing
-
-### Two models
-
-Repoweave supports two release models. Most teams use the first; the second is there when you need it.
-
-**Internal model (monorepo-style):** Repos in the project are tightly coupled and consumed together. You don't have to publish individual packages to registries �� the project/workspace IS the distribution unit. `rwv lock` captures the cross-repo state, and `rwv.lock` is the version. `sha256sum rwv.lock` is the project fingerprint. This eliminates version friction entirely — no bumps, no publishing, no dependency update dance. You develop, you lock, you deploy from the lock.
-
-This is the common case for application-level projects: a web app with a server, frontend, and shared types. The repos import from each other via workspace wiring, and the lock file is all you need for reproducibility and CI.
-
-**Publishing model:** Some repos are also consumed outside the project — as published packages on npm, crates.io, PyPI, etc. These repos need tagged releases and version pins. The workspace wiring still eliminates the version dance *during development* — you edit across repos freely, imports resolve locally. But at release time, downstream repos need version pins to the published upstream artifacts.
-
-The two models aren't exclusive. A project can have repos that are internal-only alongside repos that publish. The lock file captures the tested state either way — it's the handoff point from development to whatever release process you use.
-
-### Locking
-
-When you're ready to capture the current state:
-
-```bash
-rwv lock
-```
-
-Reads the HEAD revision from each repo and writes `projects/web-app/rwv.lock`. If a tag exists at HEAD, the lock records the tag name; otherwise the revision ID.
-
-```bash
-cd projects/web-app
-git add rwv.lock && git commit -m "lock: payment feature"
-git push
-```
-
-For the internal model, this is the whole release: the committed lock file pins every repo to an exact revision. Reproduce it anywhere with `rwv fetch --locked`.
-
-### Publishing: per-ecosystem recipes
-
-For repos that publish to registries, the pattern is:
-
-1. Develop with workspace wiring — no version bumps, just edit and test
-2. `rwv lock` — captures the tested state
-3. Release repos in dependency order (leaf nodes first)
-4. Update downstream version pins to freshly published versions
-
-The dependency order comes from ecosystem manifests (`go.mod`, `Cargo.toml`, `package.json`). repoweave doesn't need to understand these — the ecosystem tools do.
-
-Go (e.g., `server` depends on `protocol`):
-
-```bash
-rwv lock
-cd github/chatly/protocol
-git tag v1.5.0 && git push origin v1.5.0        # release protocol first
-cd ../server
-go get github.com/chatly/protocol@v1.5.0        # update go.mod pin
-git tag v2.2.0 && git push origin v2.2.0        # release server
-```
-
-Cargo:
-
-```bash
-rwv lock
-cd github/chatly/protocol
-cargo publish                                    # publish to crates.io
-cd ../server
-# update Cargo.toml: protocol = "1.5.0" (or path dep → version dep)
-cargo publish
-```
-
-Node (npm/pnpm):
-
-```bash
-rwv lock
-cd github/chatly/shared-types
-npm version 1.3.0 && npm publish
-cd ../server
-npm install @chatly/shared-types@1.3.0           # update package.json pin
-npm version 2.1.0 && npm publish
-```
-
-### What the lock file tells you at release time
-
-The lock file bookends the release process:
-
-| What | Who knows |
-|------|-----------|
-| Which repos changed (need release) | `rwv.lock` — tagged repos are already released, untagged repos need attention |
-| Which repos depend on which | Ecosystem manifests (`go.mod`, `Cargo.toml`, `package.json`) |
-| How to update version pins | Ecosystem tools (`go get`, `cargo update`, `npm install`) |
-| What was tested together | `rwv.lock` — the cross-ecosystem snapshot |
-
-repoweave owns the first and last rows. The dependency ordering and reference updates are the ecosystem's job — each tool knows its own dependency graph.
-
-In a multi-ecosystem project — a Go service using protobufs that a TypeScript frontend also uses — no single ecosystem tool sees all the repos that were tested together. The lock file is the only artifact that captures that cross-ecosystem state.
-
 ## Creating a new project
 
 You have repos on disk and want to create a project that groups them:
@@ -268,7 +177,7 @@ Swaps symlinks at root, regenerates ecosystem files. Tool state (`node_modules/`
 For large dependency differences, or when you need both projects active simultaneously, use a workweave instead of switching:
 
 ```bash
-rwv workweave mobile-app dev
+rwv workweave mobile-app create dev
 cd .workweaves/dev
 # independent tool state, no reconciliation needed
 ```
@@ -278,7 +187,7 @@ cd .workweaves/dev
 Workweaves are worktree-based derivatives of the weave, created on demand for isolation. Each workweave has its own branches, ecosystem files, and tool state. The weave is undisturbed.
 
 ```bash
-rwv workweave web-app payments create
+rwv workweave web-app create payments
 ```
 
 Creates `.workweaves/payments/` with a git worktree for each repo on an ephemeral branch, plus ecosystem workspace files:
@@ -300,7 +209,7 @@ Work in the workweave like you would in the weave — `cargo test --workspace`, 
 **Feature branch** spanning multiple repos:
 
 ```bash
-rwv workweave web-app payments create
+rwv workweave web-app create payments
 cd .workweaves/payments/github/chatly/server
 # ... make changes across server and protocol, test, commit ...
 ```
@@ -308,30 +217,30 @@ cd .workweaves/payments/github/chatly/server
 **PR review** without disrupting your work:
 
 ```bash
-rwv workweave web-app review-pr-42 create
+rwv workweave web-app create review-pr-42
 cd .workweaves/review-pr-42/github/chatly/server
 git fetch origin pull/42/head:pr-42 && git checkout pr-42
 cargo test --workspace
-rwv workweave web-app review-pr-42 delete    # clean up when done
+rwv workweave web-app delete review-pr-42    # clean up when done
 ```
 
 **Agent isolation** — each agent gets its own workweave:
 
 ```bash
-rwv workweave web-app agent-task-99 create
+rwv workweave web-app create agent-task-99
 # agent works in .workweaves/agent-task-99/
 
 # when done, review and merge:
 cd ~/weaveroot/github/chatly/server
 git merge agent-task-99/main
-rwv workweave web-app agent-task-99 delete
+rwv workweave web-app delete agent-task-99
 ```
 
 **Parallel projects** — work on two projects without switching:
 
 ```bash
 # web-app is active in the weave
-rwv workweave mobile-app dev create
+rwv workweave mobile-app create dev
 cd .workweaves/dev
 # mobile-app has its own tool state here
 ```
@@ -339,7 +248,7 @@ cd .workweaves/dev
 ### Cleanup
 
 ```bash
-rwv workweave web-app payments delete
+rwv workweave web-app delete payments
 ```
 
 Removes worktrees, cleans up ephemeral branches, deletes the directory. Commits on ephemeral branches survive in the weave's repos — merge or discard them with normal git.
@@ -370,16 +279,3 @@ workweaves:
   .workweaves/agent-task-99: web-app (3 repos, stale — 7 days old)
 ```
 
-## Design decisions
-
-1. **Shared tool state across project switches** — acceptable cost. Ecosystem install after `rwv activate` is incremental. Workweaves are the escalation when switching is too slow.
-
-2. **`rwv add` takes a URL** — the manifest needs URLs for `rwv fetch` on other machines. If the repo is already on disk, clone is a no-op.
-
-3. **No `lock-all`** — each project needs `activate` first. Lock explicitly per project.
-
-4. **`rwv init` auto-activates** — like `git init`, a one-time setup. Optional `--provider` sets up the remote.
-
-5. **`rwv fetch` updates the lock** — fetches at branch HEAD and updates `rwv.lock` with actual revisions. `--locked` checks out exact revisions. `--frozen` errors if lock is stale (CI).
-
-6. **Workweave location** — `.workweaves/{name}` under the weaveroot. The `.rwv-workweave` marker records the weave path and project.

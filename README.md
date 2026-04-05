@@ -11,7 +11,7 @@ Your code lives across multiple independent git repositories. Changing a shared 
 
 repoweave gives you the two biggest practical wins of a monorepo while keeping every repo sovereign:
 
-- **No version-bump dance** for internal dependencies — imports resolve locally, tests run end-to-end, you commit and `rwv lock`
+- **No version-bump dance** during development — imports resolve locally across repos, tests run end-to-end, you commit and `rwv lock`. Repos that publish externally still tag and publish at release time; the rest never need semver at all.
 - **Ephemeral isolated workspaces** — spin up clean copies for agents, PRs, or parallel work via git worktrees on ephemeral branches
 
 ### The weave metaphor
@@ -71,7 +71,7 @@ git add rwv.lock && git commit -m “lock: update after payment feature”
 Create an isolated working copy when you need parallel work, PR review, or agent isolation:
 
 ```bash
-rwv workweave web-app payments    # creates isolated working copy with git worktrees
+rwv workweave web-app create payments    # creates isolated working copy with git worktrees
 cd .workweaves/payments
 # independent branches, node_modules, .venv — weave is undisturbed
 ```
@@ -88,8 +88,11 @@ cd .workweaves/payments
 | `rwv remove <path>` | Remove from `rwv.yaml`, re-run integrations. `--delete` removes the clone |
 | `rwv lock` | Snapshot repo HEADs into `rwv.lock`. Errors on uncommitted changes (`--dirty` to bypass) |
 | `rwv check` | Convention enforcement: orphans, dangling refs, stale locks, integration checks |
-| `rwv workweave <project> <name>` | Create an isolated working copy (worktrees on ephemeral branches). `--delete` / `--sync` / `--list` |
-| `rwv resolve` | Print the weave root path (useful for scripting: `cd $(rwv resolve)`) |
+| `rwv workweave <project> create <name>` | Create an isolated working copy (worktrees on ephemeral branches) |
+| `rwv workweave <project> delete <name>` | Delete a workweave (remove worktrees, clean up ephemeral branches) |
+| `rwv workweave <project> sync <name>` | Sync workweave with current manifest |
+| `rwv workweave <project> list` | List workweaves for a project |
+| `rwv resolve` | Print the weave directory path (useful for scripting: `cd $(rwv resolve)`) |
 | `rwv prime` | Print structured workspace context for agent system prompts |
 | `rwv setup claude` | Register `rwv prime` as a Claude Code hook (SessionStart + PreCompact) |
 | `rwv setup agents-md` | Generate `AGENTS.md` at weave root for Cursor, Copilot, and other agents |
@@ -127,9 +130,12 @@ Both commands are idempotent and safe to re-run.
 
 Full docs at **[cwalv.github.io/repoweave](https://cwalv.github.io/repoweave/)**, or browse the source:
 
-- [repoweave.md](docs/repoweave.md) — core concepts: directory layout, weaves and workweaves, projects, roles, lock files, prior art
+- [tutorial.md](docs/tutorial.md) — walkthrough of common workflows (fetch, add/remove, lock, workweave, agent isolation, CI)
+- [concepts.md](docs/concepts.md) — why repoweave exists, design rationale, prior art, design decisions
+- [releasing.md](docs/releasing.md) — locking, releasing, per-ecosystem constraint checking and publishing
+- [reference.md](docs/reference.md) — directory layout, weaves and workweaves, projects, roles, lock files, commands
 - [integrations.md](docs/integrations.md) — built-in ecosystem integrations (npm, pnpm, Go, uv, Cargo, gita, VS Code, static-files)
-- [workflows.md](docs/workflows.md) — walkthrough of common workflows (fetch, add/remove, lock, workweave, agent isolation, CI)
+- [adjacent-tools.md](docs/adjacent-tools.md) — mise, direnv, devcontainers, CI multi-repo checkout
 
 ### License
 

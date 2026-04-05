@@ -1,5 +1,8 @@
 # Summary
 
-- [repoweave](./repoweave.md)
+- [Tutorial](./tutorial.md)
+- [Concepts](./concepts.md)
+- [Releasing](./releasing.md)
+- [Reference](./reference.md)
 - [Integrations](./integrations.md)
-- [Workflows](./workflows.md)
+- [Adjacent tools](./adjacent-tools.md)

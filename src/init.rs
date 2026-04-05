@@ -1,8 +1,8 @@
 //! Project initialization: `rwv init`.
 //!
-//! Creates a new project directory under `projects/`, runs `git init`, and
-//! writes an empty `rwv.yaml`. Optionally configures a git remote when
-//! `--provider` is given.
+//! Creates a new project directory under `projects/`, runs `git init`,
+//! writes an empty `rwv.yaml`, and auto-activates the project. Optionally
+//! configures a git remote when `--provider` is given.
 //!
 //! `rwv init --adopt SOURCE` clones an existing repo as a project. The source
 //! can be a URL or a shorthand (`owner/repo` or `registry/owner/repo`). The
@@ -23,8 +23,7 @@ use std::process::Command;
 /// - Runs `git init` in the new directory.
 /// - Writes an empty `rwv.yaml` (`repositories: {}`).
 /// - If `provider` is given (e.g., `"github/owner"`), configures a git remote.
-///
-/// Does NOT activate the project (no `.rwv-active` update).
+/// - Activates the project (writes `.rwv-active` and generates ecosystem files).
 pub fn init(name: &str, provider: Option<&str>, cwd: &Path) -> anyhow::Result<()> {
     let ctx = WorkspaceContext::resolve(cwd, None)?;
     let project_dir = ctx.root.join("projects").join(name);
@@ -105,6 +104,10 @@ pub fn init(name: &str, provider: Option<&str>, cwd: &Path) -> anyhow::Result<()
         name,
         project_dir.display()
     );
+
+    // Auto-activate the newly created project.
+    crate::activate::activate(name, cwd)?;
+
     Ok(())
 }
 

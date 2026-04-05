@@ -1,5 +1,6 @@
 //! `rwv add` and `rwv remove` — manage repos in a project manifest.
 
+use crate::activate::activate;
 use crate::git::GitVcs;
 use crate::manifest::{Manifest, RepoEntry, RepoPath, Role, VcsType};
 use crate::registry::{builtin_registries, resolve_url, Registry};
@@ -54,7 +55,12 @@ pub fn run_add(url: &str, role: Role, cwd: &Path) -> anyhow::Result<()> {
     if !url.contains("://") {
         let candidate = ctx.root.join(url);
         if candidate.is_dir() {
-            return run_add_from_local_path(url, &candidate, role, &manifest_path);
+            run_add_from_local_path(url, &candidate, role, &manifest_path)?;
+            let project_name = project_dir
+                .file_name()
+                .and_then(|n| n.to_str())
+                .ok_or_else(|| anyhow::anyhow!("could not determine project name from path"))?;
+            return activate(project_name, cwd);
         }
     }
 
@@ -120,6 +126,14 @@ pub fn run_add(url: &str, role: Role, cwd: &Path) -> anyhow::Result<()> {
     write_manifest(&manifest_path, &manifest)?;
 
     eprintln!("Added '{}' to manifest", repo_path.as_str());
+
+    // Re-run activation so ecosystem files (Cargo.toml, package.json, etc.) are updated.
+    let project_name = project_dir
+        .file_name()
+        .and_then(|n| n.to_str())
+        .ok_or_else(|| anyhow::anyhow!("could not determine project name from path"))?;
+    activate(project_name, cwd)?;
+
     Ok(())
 }
 
@@ -241,6 +255,13 @@ pub fn run_remove(path: &str, delete: bool, force: bool, cwd: &Path) -> anyhow::
 
     eprintln!("Removed '{}' from manifest", repo_path.as_str());
 
+    // Re-run activation so ecosystem files (Cargo.toml, package.json, etc.) are updated.
+    let project_name = project_dir
+        .file_name()
+        .and_then(|n| n.to_str())
+        .ok_or_else(|| anyhow::anyhow!("could not determine project name from path"))?;
+    activate(project_name, cwd)?;
+
     // Optionally delete the clone directory.
     if delete {
         let repo_dir = ctx.root.join(repo_path.as_path());
@@ -332,6 +353,14 @@ pub fn run_add_new(path_arg: &str, cwd: &Path) -> anyhow::Result<()> {
     write_manifest(&manifest_path, &manifest)?;
 
     eprintln!("Added new repo '{}' to manifest", repo_path.as_str());
+
+    // Re-run activation so ecosystem files (Cargo.toml, package.json, etc.) are updated.
+    let project_name = project_dir
+        .file_name()
+        .and_then(|n| n.to_str())
+        .ok_or_else(|| anyhow::anyhow!("could not determine project name from path"))?;
+    activate(project_name, cwd)?;
+
     Ok(())
 }
 

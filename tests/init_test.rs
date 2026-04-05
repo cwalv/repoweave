@@ -272,36 +272,52 @@ fn init_without_provider_has_no_remote() {
 }
 
 // ============================================================================
-// Init does not activate
+// Init auto-activates the project
 // ============================================================================
 
 #[test]
-fn init_does_not_activate_project() {
+fn init_activates_project() {
     let tmp = tempfile::tempdir().unwrap();
     let ws = make_empty_workspace(tmp.path());
 
-    // Create a first project so we have something to compare against.
+    rwv()
+        .args(["init", "my-proj"])
+        .current_dir(&ws)
+        .assert()
+        .success();
+
+    // .rwv-active should be written with the new project name.
+    let active = std::fs::read_to_string(ws.join(".rwv-active")).unwrap();
+    assert_eq!(
+        active.trim(),
+        "my-proj",
+        ".rwv-active should contain the newly initialised project name"
+    );
+}
+
+#[test]
+fn init_last_project_wins_activation() {
+    let tmp = tempfile::tempdir().unwrap();
+    let ws = make_empty_workspace(tmp.path());
+
     rwv()
         .args(["init", "first-proj"])
         .current_dir(&ws)
         .assert()
         .success();
 
-    // Init a second project.
     rwv()
         .args(["init", "second-proj"])
         .current_dir(&ws)
         .assert()
         .success();
 
-    // Running `rwv` (no subcommand) from the workspace root should NOT show
-    // second-proj as the active project (no project should be active when
-    // running from root).
-    let output = rwv().current_dir(&ws).output().expect("rwv should run");
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(
-        !stdout.contains("Active project: second-proj"),
-        "init should not activate the project, got: {stdout}"
+    // The second init should have activated second-proj, overwriting first-proj.
+    let active = std::fs::read_to_string(ws.join(".rwv-active")).unwrap();
+    assert_eq!(
+        active.trim(),
+        "second-proj",
+        ".rwv-active should reflect the last project initialised"
     );
 }
 

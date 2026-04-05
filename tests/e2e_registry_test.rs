@@ -1,5 +1,5 @@
 //! E2E integration tests that exercise the release workflow recipes from
-//! docs/workflows.md against real package registries.
+//! docs/releasing.md against real package registries.
 //!
 //! These tests are gated behind the `RWV_E2E_REGISTRY=1` environment variable
 //! because they require network access and are slower than the other e2e tests.
@@ -47,7 +47,7 @@ macro_rules! require_tool {
 // ---------------------------------------------------------------------------
 // Test 1 — Go registry release workflow
 //
-// Recipe from docs/workflows.md ("Per-ecosystem recipes", Go section):
+// Recipe from docs/releasing.md ("Per-ecosystem recipes", Go section):
 //
 //   rwv lock
 //   cd github/chatly/protocol
@@ -104,7 +104,7 @@ func main() {
     // -----------------------------------------------------------------------
     // 2. `go get` the real published module from proxy.golang.org.
     //    This is the registry analogue of `go get github.com/chatly/protocol@v1.5.0`
-    //    from the workflows.md recipe.
+    //    from the releasing.md recipe.
     // -----------------------------------------------------------------------
     let get_output = Command::new("go")
         .args([
@@ -157,7 +157,7 @@ func main() {
 // ---------------------------------------------------------------------------
 // Test 2 — npm registry release workflow
 //
-// Recipe from docs/workflows.md ("Per-ecosystem recipes", Node section):
+// Recipe from docs/releasing.md ("Per-ecosystem recipes", Node section):
 //
 //   cd github/chatly/shared-types
 //   npm version 1.3.0 && npm publish
@@ -248,7 +248,7 @@ fn npm_registry_release_workflow() {
 // ---------------------------------------------------------------------------
 // Test 3 — Cargo registry release workflow
 //
-// Recipe from docs/workflows.md ("Per-ecosystem recipes", Cargo section):
+// Recipe from docs/releasing.md ("Per-ecosystem recipes", Cargo section):
 //
 //   cd github/chatly/protocol
 //   cargo publish                        ← publish to crates.io
