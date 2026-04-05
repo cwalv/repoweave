@@ -38,7 +38,7 @@ Result:
 
 You're ready to work. Ecosystem tools see the workspace files at root — `cargo test --workspace`, `npm test --workspaces`, `go test ./...` all work across repos.
 
-For exact reproduction (same SHAs your colleague had):
+For exact reproduction (same revisions your colleague had):
 
 ```bash
 rwv fetch chatly/web-app --locked
@@ -146,7 +146,7 @@ git add rwv.lock && git commit -m "lock: payment feature"
 git push
 ```
 
-For the internal model, this is the whole release: the committed lock file pins every repo to an exact SHA. Reproduce it anywhere with `rwv fetch --locked`.
+For the internal model, this is the whole release: the committed lock file pins every repo to an exact revision. Reproduce it anywhere with `rwv fetch --locked`.
 
 ### Publishing: per-ecosystem recipes
 
@@ -344,8 +344,8 @@ Reports:
 ```
 web-app:
   ✓ 4 repos on disk, 4 in manifest
-  ✓ rwv.lock matches HEAD SHAs
-  ⚠ github/chatly/web: 3 commits ahead of locked SHA
+  ✓ rwv.lock matches HEAD revisions
+  ⚠ github/chatly/web: 3 commits ahead of locked revision
 
 mobile-app:
   ✓ 4 repos on disk, 4 in manifest
@@ -369,6 +369,6 @@ workweaves:
 
 4. **`rwv init` auto-activates** — like `git init`, a one-time setup. Optional `--provider` sets up the remote.
 
-5. **`rwv fetch` updates the lock** — fetches at branch HEAD and updates `rwv.lock` with actual SHAs. `--locked` checks out exact revisions. `--frozen` errors if lock is stale (CI).
+5. **`rwv fetch` updates the lock** — fetches at branch HEAD and updates `rwv.lock` with actual revisions. `--locked` checks out exact revisions. `--frozen` errors if lock is stale (CI).
 
 6. **Workweave location** — `.workweaves/{name}` under the weaveroot. The `.rwv-workweave` marker records the weave path and project.
