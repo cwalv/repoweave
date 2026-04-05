@@ -495,6 +495,73 @@ git push
 
 The project repo is a normal git repo. You commit to it, push it, branch it.
 
+## Releasing: the lock file as handoff
+
+During development, ecosystem workspace wiring (`go.work`, Cargo workspaces, npm workspaces) eliminates the version bump dance — cross-repo imports resolve locally, no publishing needed. At release time, the dance returns: downstream repos need version pins to published upstream artifacts.
+
+The lock file is the handoff point. `rwv lock` captures the exact SHAs that were tested together. Your release process — whatever it is — consumes this state and produces tagged, publishable artifacts.
+
+### The pattern
+
+1. Develop with workspace wiring — no version bumps, just edit and test
+2. When ready: `rwv lock` — captures the tested state
+3. Release repos in dependency order (leaf nodes first)
+4. Update downstream version pins to freshly published versions
+5. The lock file records which versions were tested together
+
+The dependency order comes from the ecosystem manifests: `go.mod` imports, `Cargo.toml` path dependencies, `package.json` workspace references. repoweave doesn't need to understand these — the ecosystem tools already do.
+
+### Per-ecosystem recipes
+
+**Go** (e.g., `gastown` depends on `beads`):
+
+```bash
+# Development: go.work resolves beads locally, no version pin needed
+rwv lock                                        # capture tested state
+cd github/steveyegge/beads
+git tag v0.63.4 && git push origin v0.63.4      # release beads first
+cd ../../steveyegge/gastown
+go get github.com/steveyegge/beads@v0.63.4      # update go.mod pin
+git tag v0.4.0 && git push origin v0.4.0        # release gastown
+```
+
+**Cargo** (e.g., `server` depends on `protocol`):
+
+```bash
+rwv lock
+cd github/acme/protocol
+cargo publish                                    # publish to crates.io
+cd ../server
+# update Cargo.toml: protocol = "0.2.0" (or path dep → version dep)
+cargo publish
+```
+
+**Node** (npm/pnpm workspaces):
+
+```bash
+rwv lock
+cd github/acme/shared-types
+npm version 1.3.0 && npm publish
+cd ../server
+npm install @acme/shared-types@1.3.0             # update package.json pin
+npm version 2.1.0 && npm publish
+```
+
+**Internal only** (no publishing — the most common case):
+
+```bash
+rwv lock
+cd projects/web-app
+git add rwv.lock && git commit -m "lock: release candidate"
+git push
+```
+
+The lock file IS the version. `sha256sum rwv.lock` is the project fingerprint. Two machines with the same lock checksum have identical source for every repo.
+
+### Why this matters
+
+In a single-ecosystem project, the dependency graph is visible to the ecosystem tool and the release sequence is obvious. In a multi-ecosystem project — a Go service importing protobufs that are also used by a TypeScript frontend — no single ecosystem tool sees the full picture. The lock file is the only artifact that captures the cross-ecosystem dependency state. It generalizes to any DAG of inter-repo dependencies, regardless of which ecosystems are involved.
+
 ## Design decisions (resolved)
 
 1. **Shared tool state across project switches** — acceptable cost. `npm install` after `rwv activate` is incremental. If the cost is too high, create a workweave for the second project — natural escalation from activate to workweave.

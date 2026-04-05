@@ -496,8 +496,17 @@ pub fn handle_claude_hook() -> anyhow::Result<()> {
             let ws_ctx = crate::workspace::WorkspaceContext::resolve(Path::new(&cwd), None)?;
             let ws_root = &ws_ctx.root;
 
-            let project = read_active_project(ws_root)
-                .ok_or_else(|| anyhow!("no .rwv-active found in {}", ws_root.display()))?;
+            // Prefer the workweave's project (from .rwv-workweave marker) over
+            // the primary weave's .rwv-active. This matters when a sub-agent
+            // spawns from a workweave for a different project than the weave's
+            // active project.
+            let project = match &ws_ctx.location {
+                crate::workspace::WorkspaceLocation::Workweave { project, .. } => {
+                    project.clone()
+                }
+                _ => read_active_project(ws_root)
+                    .ok_or_else(|| anyhow!("no .rwv-active found in {}", ws_root.display()))?,
+            };
 
             let name = derive_workweave_name(
                 input.branch_name.as_deref(),
