@@ -380,8 +380,11 @@ fn lock_command_is_recognized() {
     // The command should parse successfully (not fail with "unrecognized subcommand").
     // It will fail because there's no workspace, but the error should NOT be about
     // an unrecognized subcommand.
+    // Run from an empty temp dir so we don't accidentally pick up a real workspace.
+    let tmp = tempfile::tempdir().unwrap();
     rwv_cmd()
         .arg("lock")
+        .current_dir(tmp.path())
         .assert()
         .failure()
         .stderr(predicate::str::contains("unrecognized").not());
