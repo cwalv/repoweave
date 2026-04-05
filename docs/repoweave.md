@@ -515,9 +515,11 @@ export GITA_PROJECT_HOME="$PWD/gita"          # point gita at derived config
 }
 ```
 
-### Nix flakes — structural parallel
+### Nix flakes — complementary layer
 
-[Nix flakes](https://wiki.nixos.org/wiki/Flakes) are the deepest structural parallel. `flake.nix` inputs = project `rwv.yaml`, `flake.lock` = project `rwv.lock`, `devShell` = toolchain+deps setup. The difference: Nix owns the entire build graph and is all-or-nothing. repoweave is deliberately lighter — just repos and conventions, composable with whatever build/env tools you prefer.
+[Nix flakes](https://wiki.nixos.org/wiki/Flakes) provide hermetic, reproducible dev environments — exact toolchain versions, build dependencies, and system packages. repoweave provides multi-repo structure — which repos, at what versions, with what ecosystem wiring. They compose naturally: a `flake.nix` `devShell` supplies the tools (Go, Node, Cargo, uv), repoweave supplies the repos and workspace files. `nix develop` + `rwv fetch` gets you from zero to a fully working multi-repo environment.
+
+Both have input declarations and lock files (`flake.nix`/`flake.lock` vs `rwv.yaml`/`rwv.lock`), but they solve different problems at different layers. Nix locks the entire build graph — every dependency, transitively, content-addressed. repoweave locks repo versions — which SHAs were tested together. They don't overlap; they stack.
 
 ### CI multi-repo checkout
 
