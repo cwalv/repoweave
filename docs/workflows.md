@@ -118,6 +118,18 @@ rwv remove github/example/some-lib --delete
 
 ## Locking and releasing
 
+### Two models
+
+Repoweave supports two release models. Most teams use the first; the second is there when you need it.
+
+**Internal model (monorepo-style):** Repos in the project are tightly coupled and consumed together. You don't publish individual packages to registries �� the workspace IS the distribution unit. `rwv lock` captures the cross-repo state, and `rwv.lock` is the version. `sha256sum rwv.lock` is the project fingerprint. This eliminates version friction entirely — no bumps, no publishing, no dependency update dance. You develop, you lock, you deploy from the lock.
+
+This is the common case for application-level projects: a web app with a server, frontend, and shared types. The repos import from each other via workspace wiring, and the lock file is all you need for reproducibility and CI.
+
+**Publishing model:** Some repos are also consumed outside the project — as published packages on npm, crates.io, PyPI, or Go module proxy. These repos need tagged releases and version pins. The workspace wiring still eliminates the version dance *during development* — you edit across repos freely, imports resolve locally. But at release time, downstream repos need version pins to the published upstream artifacts.
+
+The two models aren't exclusive. A project can have repos that are internal-only alongside repos that publish. The lock file captures the tested state either way — it's the handoff point from development to whatever release process you use.
+
 ### Locking
 
 When you're ready to capture the current state:
@@ -134,18 +146,18 @@ git add rwv.lock && git commit -m "lock: payment feature"
 git push
 ```
 
-### The lock file as release handoff
+For the internal model, this is the whole release: the committed lock file pins every repo to an exact SHA. Reproduce it anywhere with `rwv fetch --locked`.
 
-During development, workspace wiring eliminates the version bump dance — cross-repo imports resolve locally. At release time, downstream repos need version pins to published upstream artifacts. The lock file is the handoff point: it captures the exact SHAs that were tested together.
+### Publishing: per-ecosystem recipes
 
-**The pattern:**
+For repos that publish to registries, the pattern is:
 
 1. Develop with workspace wiring — no version bumps, just edit and test
 2. `rwv lock` — captures the tested state
 3. Release repos in dependency order (leaf nodes first)
 4. Update downstream version pins to freshly published versions
 
-**Per-ecosystem recipes:**
+The dependency order comes from ecosystem manifests (`go.mod`, `Cargo.toml`, `package.json`). repoweave doesn't need to understand these — the ecosystem tools do.
 
 Go (e.g., `server` depends on `protocol`):
 
@@ -180,18 +192,9 @@ npm install @chatly/shared-types@1.3.0           # update package.json pin
 npm version 2.1.0 && npm publish
 ```
 
-Internal only (no publishing — the most common case):
+### Why the lock file matters for multi-ecosystem projects
 
-```bash
-rwv lock
-cd projects/web-app
-git add rwv.lock && git commit -m "lock: release candidate"
-git push
-```
-
-The lock file IS the version. `sha256sum rwv.lock` is the project fingerprint. Two machines with the same lock checksum have identical source for every repo.
-
-In a multi-ecosystem project — a Go service using protobufs that a TypeScript frontend also uses — no single ecosystem tool sees the full dependency picture. The lock file is the only artifact that captures the cross-ecosystem state.
+In a single-ecosystem project, the dependency graph is visible to the ecosystem tool and the release sequence is obvious. In a multi-ecosystem project — a Go service using protobufs that a TypeScript frontend also uses — no single ecosystem tool sees the full picture. The lock file is the only artifact that captures the cross-ecosystem dependency state, regardless of whether individual packages are published or not.
 
 ## Creating a new project
 
