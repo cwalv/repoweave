@@ -4,11 +4,10 @@ A walkthrough of common repoweave workflows. These are written as idealized exam
 
 ## Starting from scratch
 
-You just installed repoweave. You have nothing on disk.
+You have nothing on disk. Install repoweave (see [install options](../README.md)) and create a weave:
 
 ```bash
-cargo install repoweave
-mkdir ~/work && cd ~/work
+mkdir ~/weaveroot && cd ~/weaveroot
 rwv fetch chatly/web-app
 ```
 
@@ -25,7 +24,7 @@ What happens:
 Result:
 
 ```
-~/work/
+~/weaveroot/
 ├── github/chatly/server/             # clone
 ├── github/chatly/web/                # clone
 ├── github/chatly/protocol/           # clone
@@ -55,7 +54,7 @@ npm test --workspaces   # from root — cross-repo deps resolve
 You also work on the mobile app. Some repos overlap.
 
 ```bash
-cd ~/work
+cd ~/weaveroot
 rwv fetch chatly/mobile-app
 ```
 
@@ -68,7 +67,7 @@ What happens:
 5. Does NOT activate mobile-app — web-app is still the active project
 
 ```
-~/work/
+~/weaveroot/
 ├── github/chatly/server/             # shared — used by both projects
 ├── github/chatly/web/                # web-app only
 ├── github/chatly/protocol/           # shared
@@ -97,7 +96,7 @@ What happens:
 4. Updates `.rwv-active` to "mobile-app"
 
 ```
-~/work/
+~/weaveroot/
 ├── package.json -> projects/mobile-app/package.json   # switched
 ├── package-lock.json -> projects/mobile-app/package-lock.json
 ├── .rwv-active                       # "mobile-app"
@@ -115,14 +114,14 @@ npm install   # reconcile node_modules/ with web-app's dependency tree; fast if 
 
 `rwv activate` only swaps the symlinks and regenerates config files. Run `npm install` (or `rwv lock`) separately to reconcile tool state.
 
-**Open question:** `node_modules/` at root is shared across activations. Switching projects means `npm install` has to reconcile. This is the same cost as pre-workspace reporoot. Is it acceptable? Or should each project's `node_modules/` be separate? (That would mean node_modules inside the project directory, or namespaced somehow.)
+Tool state (`node_modules/`, `.venv/`, `target/`) is shared across activations. Switching projects means the ecosystem tool has to reconcile — `npm install` is incremental and fast for small dep diffs. For large dependency differences or when you need both projects active simultaneously, create a workweave for the second project instead of switching — each workweave has its own tool state.
 
 ## Adding a repo to a project
 
 You need a new dependency:
 
 ```bash
-cd ~/work
+cd ~/weaveroot
 rwv add https://github.com/example/some-lib.git --role dependency
 ```
 
@@ -130,10 +129,10 @@ What happens:
 
 1. Clones to `github/example/some-lib/`
 2. Adds entry to the active project's `rwv.yaml` (web-app)
-3. Regenerates ecosystem files in `projects/web-app/` (adds some-lib to package.json workspaces)
+3. Re-runs integrations (e.g., adds the new repo to workspace config files like `Cargo.toml`, `go.work`, `package.json`)
 4. Symlinks already point to projects/web-app/, so root sees the update
 
-Run `npm install` (or `rwv lock`) afterward to pick up the new package in `node_modules/`.
+Run the ecosystem install command (or `rwv lock`) afterward to pick up the new package.
 
 ```bash
 # Verify it's there
@@ -172,10 +171,10 @@ rwv remove github/example/some-lib
 What happens:
 
 1. Removes entry from the active project's `rwv.yaml`
-2. Regenerates ecosystem files
-3. Clone stays on disk (other projects might use it)
+2. Re-runs integrations
+3. Clone stays on disk (other projects might use it; `rwv check` will report it as an orphan if no project references it)
 
-Run `npm install` (or `rwv lock`) afterward to update `node_modules/` and ecosystem lock files.
+Run the ecosystem install command (or `rwv lock`) afterward to reconcile tool state.
 
 To also delete the clone:
 
@@ -184,9 +183,15 @@ rwv remove github/example/some-lib --delete
 # Checks no other project references it, then removes the directory
 ```
 
+To find and clean up orphaned clones that no project references:
+
+```bash
+rwv check   # reports orphans
+```
+
 ## Locking versions
 
-After a day of work, you want to pin the current state:
+When you're ready to capture the current state for release or reproducibility:
 
 ```bash
 rwv lock
@@ -217,9 +222,16 @@ cd projects/web-app && git add rwv.lock && git commit -m "lock: update server"
 cd ../mobile-app && git add rwv.lock && git commit -m "lock: update server"
 ```
 
-## Creating a workweave for a feature branch
+## Creating a workweave for isolation
 
-You're working on a feature that spans server and protocol. You want to keep main undisturbed. A workweave is a worktree-based derivative of the weave, created on demand for isolation.
+Workweaves are worktree-based derivatives of the weave, created on demand. Use cases:
+
+- **Feature branch** — work on a cross-repo feature without disturbing main
+- **Parallel projects** — only one project can be active in the weave; a workweave lets you work on a second project with its own tool state
+- **PR review** — check out a PR in isolation, run tests, delete when done
+- **Agent isolation** — each agent gets its own branches and ecosystem files
+
+A feature that spans server and protocol — you want to keep main undisturbed:
 
 ```bash
 rwv workweave web-app payments
@@ -238,7 +250,7 @@ What happens:
 5. Creates symlinks at `.workweaves/payments/` root
 
 ```
-~/work/                               # weave — undisturbed
+~/weaveroot/                               # weave — undisturbed
 .workweaves/payments/                 # workweave
 ├── github/chatly/server/             # worktree, on payments/main
 ├── github/chatly/web/                # worktree, on payments/feature-A
@@ -267,7 +279,7 @@ npm test --workspaces                 # from workweave root — isolated deps
 Meanwhile, the weave is untouched:
 
 ```bash
-cd ~/work
+cd ~/weaveroot
 git -C github/chatly/server status    # still on main, clean
 npm test --workspaces                 # weave's deps, weave's branches
 ```
@@ -312,7 +324,7 @@ cd .workweaves/agent-task-99/github/chatly/server
 git log --oneline agent-task-99/main..HEAD
 
 # Merge into main if good
-cd ~/work/github/chatly/server
+cd ~/weaveroot/github/chatly/server
 git merge agent-task-99/main
 
 # Clean up
@@ -352,7 +364,7 @@ workweaves:
 The typical cycle, no workweaves needed:
 
 ```bash
-cd ~/work
+cd ~/weaveroot
 
 # Morning: pull latest
 cd github/chatly/server && git pull
@@ -361,12 +373,12 @@ cd ../protocol && git pull
 # Or with gita: gita super primary pull
 
 # Work on server
-cd ~/work/github/chatly/server
+cd ~/weaveroot/github/chatly/server
 git checkout -b feature/new-endpoint
 # ... edit, test, commit ...
 
 # Test cross-repo
-cd ~/work
+cd ~/weaveroot
 npm test --workspaces
 
 # Lock and push
@@ -375,7 +387,7 @@ cd projects/web-app
 git add rwv.lock && git commit -m "lock: new endpoint"
 git push
 
-cd ~/work/github/chatly/server
+cd ~/weaveroot/github/chatly/server
 git push origin feature/new-endpoint
 ```
 
@@ -383,34 +395,16 @@ No workweave created. No worktree indirection. Just repos, just git.
 
 ## Ecosystem file conflicts when switching projects
 
-A subtle issue: web-app and mobile-app both need `package.json` at root, but with different contents. When you `rwv activate mobile-app`, the symlink swaps, but `node_modules/` was installed for web-app's `package.json`.
+When switching projects with `rwv activate`, ecosystem files swap instantly (symlinks) but tool state (`node_modules/`, `.venv/`, `target/`) needs reconciliation. Run the ecosystem install command after switching — it's incremental, typically a few seconds for small dep diffs.
 
-```bash
-rwv activate web-app
-npm install                 # installs web-app deps into node_modules/
-# ... work ...
-rwv activate mobile-app
-npm install                 # has to reconcile node_modules/ for mobile-app's deps
-```
-
-This is the same cost as any project switch. `npm install` is incremental — it adds/removes the diff. For large dependency trees this can take 10-30 seconds.
-
-If this is too slow, create a workweave for the second project:
-
-```bash
-rwv workweave mobile-app dev
-cd .workweaves/dev
-# This workweave has its own node_modules/, no reconciliation needed
-```
-
-This is the natural escalation: start with activate (shared tool state, fast switching for small dep diffs), graduate to workweaves when you need full isolation.
+For large dependency differences or when reconciliation is too slow, create a workweave for the second project instead (see [Creating a workweave for isolation](#creating-a-workweave-for-isolation)).
 
 ## Initializing a new project from existing repos
 
 You already have repos cloned. You want to create a project that groups them.
 
 ```bash
-cd ~/work
+cd ~/weaveroot
 rwv init web-app --provider github/chatly
 # Creates projects/web-app/
 # git init
@@ -421,37 +415,28 @@ rwv add https://github.com/chatly/server.git --role primary
 rwv add https://github.com/chatly/web.git --role primary
 rwv add https://github.com/chatly/protocol.git --role primary
 rwv add https://github.com/socketio/engine.io.git --role fork
-rwv activate web-app
 ```
 
-`rwv init` is explicit, like `git init` — a one-time setup step with a clear before/after. The `--provider` flag is optional; it uses the registry mapping (`github` → `github.com`) and the project name to set up the remote as a convenience. Without `--provider`, no remote is configured — you add it later when ready.
+`rwv init` creates the project and activates it. The `--provider` flag is optional; it uses the registry mapping (`github` → `github.com`) and the project name to set up the remote as a convenience. Without `--provider`, no remote is configured — you add it later when ready.
 
-## What about repos not in any project?
+## Adding a repo for reference
 
-You clone something for a quick look:
+You want to read another team's code alongside yours:
 
 ```bash
-cd ~/work
-git clone https://github.com/interesting/library.git github/interesting/library
+rwv add https://github.com/interesting/library.git --role reference
 ```
 
-It's on disk at the canonical path. It's not in any project's `rwv.yaml`. It doesn't appear in ecosystem workspace files. `rwv check` reports it as an orphan (informational, not an error).
+This clones to the canonical path, adds it to the active project's `rwv.yaml` as a reference repo, and re-runs integrations. Reference repos are visible in the workspace but excluded from build graphs (not listed in workspace config files).
 
-If you later want it in a project:
-
-```bash
-rwv add github/interesting/library --role reference
-```
-
-This adds it to the active project's `rwv.yaml` (inferring URL from the clone's origin remote) and regenerates ecosystem files.
+`rwv check` reports repos on disk that aren't in any project's manifest as orphans — prefer `rwv add --role reference` over manual `git clone` so repos are tracked.
 
 ## Reproducing a project on a new machine
 
 Your colleague wants to work on web-app:
 
 ```bash
-cargo install repoweave
-mkdir ~/work && cd ~/work
+mkdir ~/weaveroot && cd ~/weaveroot
 rwv fetch chatly/web-app
 ```
 
@@ -478,16 +463,16 @@ rwv fetch chatly/web-app --frozen
 The project repo contains `rwv.yaml`, `rwv.lock`, docs, and now ecosystem files. Sometimes you need to edit the manifest directly:
 
 ```bash
-cd ~/work/projects/web-app
+cd ~/weaveroot/projects/web-app
 vim rwv.yaml                          # add a repo, change a role
-cd ~/work
+cd ~/weaveroot
 rwv activate web-app                  # regenerate ecosystem files from updated manifest
 ```
 
 Or edit cross-repo docs:
 
 ```bash
-cd ~/work/projects/web-app/docs
+cd ~/weaveroot/projects/web-app/docs
 vim architecture.md
 git add . && git commit -m "docs: update architecture after payments refactor"
 git push
