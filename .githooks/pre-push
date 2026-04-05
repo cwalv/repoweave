@@ -12,4 +12,19 @@ cargo fmt --check
 echo "pre-push: running cargo test..."
 cargo test
 
+# If pushing a version tag, verify it matches Cargo.toml
+while read local_ref local_sha remote_ref remote_sha; do
+  case "$local_ref" in
+    refs/tags/v*)
+      tag="${local_ref#refs/tags/}"
+      cargo_version="v$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)"/\1/')"
+      if [ "$tag" != "$cargo_version" ]; then
+        echo "pre-push: tag $tag does not match Cargo.toml version $cargo_version"
+        exit 1
+      fi
+      echo "pre-push: tag $tag matches Cargo.toml"
+      ;;
+  esac
+done
+
 echo "pre-push: all checks passed"
