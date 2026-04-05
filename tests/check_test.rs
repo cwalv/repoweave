@@ -78,8 +78,13 @@ fn write_lock(project_dir: &Path, repos: &[(&str, &str, &str)]) {
 }
 
 /// Build a `Command` for the `rwv` binary.
+///
+/// Sets `current_dir` to a temp dir so tests never accidentally pick up
+/// the real workspace. Tests override with their own `.current_dir()`.
 fn rwv_cmd() -> Command {
-    Command::cargo_bin("rwv").expect("rwv binary not found")
+    let mut cmd = Command::cargo_bin("rwv").expect("rwv binary not found");
+    cmd.current_dir(std::env::temp_dir());
+    cmd
 }
 
 // ===========================================================================
