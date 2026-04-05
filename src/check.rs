@@ -79,7 +79,7 @@ pub fn find_violations(input: &CheckInput) -> Vec<CheckViolation> {
 
     // Per-project checks
     for project in &input.projects {
-        for (repo_path, _entry) in &project.manifest.repositories {
+        for repo_path in project.manifest.repositories.keys() {
             // Dangling reference: in manifest but not on disk
             if !input.repos_on_disk.contains(repo_path) {
                 violations.push(CheckViolation::DanglingReference {

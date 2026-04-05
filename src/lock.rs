@@ -1,6 +1,5 @@
 //! Lock logic: snapshot repo HEADs into `rwv.lock`.
 
-use crate::git::GitVcs;
 use crate::manifest::{LockEntry, LockFile, Manifest, Project, WorkweaveName};
 use crate::vcs::{vcs_for, RevisionId};
 use crate::workspace::{WorkspaceContext, WorkspaceLocation};
@@ -42,13 +41,11 @@ pub fn generate_lock(
         let vcs = vcs_for(entry.vcs_type);
 
         // Check for uncommitted changes unless --dirty is set.
-        if !dirty {
-            if vcs.has_uncommitted_changes(&repo_dir)? {
-                anyhow::bail!(
-                    "repo {} has uncommitted changes; commit or use --dirty to override",
-                    repo_path
-                );
-            }
+        if !dirty && vcs.has_uncommitted_changes(&repo_dir)? {
+            anyhow::bail!(
+                "repo {} has uncommitted changes; commit or use --dirty to override",
+                repo_path
+            );
         }
 
         // Prefer tag name at HEAD over raw SHA.

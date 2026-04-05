@@ -150,10 +150,8 @@ pub fn create_workweave(
         if let Err(e) = result {
             eprintln!("rwv workweave create: warning: could not create project worktree projects/{project}: {e}");
             // Non-fatal: fall through so we still create the directory copy below
-            if !project_wt_dest.exists() {
-                if project_dir.exists() {
-                    copy_dir_recursive(&project_dir, &project_wt_dest)?;
-                }
+            if !project_wt_dest.exists() && project_dir.exists() {
+                copy_dir_recursive(&project_dir, &project_wt_dest)?;
             }
         }
     } else if project_dir.exists() {

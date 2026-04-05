@@ -262,7 +262,6 @@ pub fn run_fetch(source: &str, workspace_root: &Path, mode: FetchMode) -> anyhow
                 std::fs::read_to_string(&active_file)
                     .unwrap_or_default()
                     .trim()
-                    .to_string()
             );
         } else {
             crate::activate::activate(&name, workspace_root)?;
