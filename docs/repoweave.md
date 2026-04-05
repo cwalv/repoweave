@@ -30,7 +30,7 @@ repoweave provides a `lock` mechanism analogous to package manager locks, with a
 | **project** | A directory under `projects/` containing `rwv.yaml`, `rwv.lock`, and project-scoped docs. Itself a git repo |
 | **manifest** (`rwv.yaml`) | Declares which repos belong to a project, their roles, and integration config |
 | **lock file** (`rwv.lock`) | Pins repos to exact revisions for reproducibility |
-| **activation** | Generating ecosystem workspace files from a project's manifest and symlinking them to the weave root |
+| **activation** | Generating ecosystem workspace files from a project's manifest and symlinking them to the weave directory |
 | **role** | A repo's relationship to a project: `primary` (your code), `fork`, `dependency`, `reference` |
 | **workspace surface** | The root directory where ecosystem tools find workspace config files |
 
@@ -39,7 +39,7 @@ repoweave provides a `lock` mechanism analogous to package manager locks, with a
 The weave has three layers:
 
 1. **The directory tree** — repos under one root. Every tool benefits: search, navigation, agents, editors. This is the convention alone — no tooling required.
-2. **Ecosystem wiring** — the weave root (or workweave root) is the **workspace surface**: the directory that ecosystem tools see. Integrations generate workspace files (`package.json`, `go.work`, `Cargo.toml`, `pnpm-workspace.yaml`) at this surface so cross-package imports resolve locally. Ecosystem tools don't know repos exist — they see a workspace directory with packages. `import { thing } from '@myorg/shared'` just works.
+2. **Ecosystem wiring** — the weave directory (or workweave directory) is the **workspace surface**: the directory that ecosystem tools see. Integrations generate workspace files (`package.json`, `go.work`, `Cargo.toml`, `pnpm-workspace.yaml`) at this surface so cross-package imports resolve locally. Ecosystem tools don't know repos exist — they see a workspace directory with packages. `import { thing } from '@myorg/shared'` just works.
 3. **Reproducibility** — a committed `rwv.yaml` file and its `rwv.lock` pin each repo to an exact revision, making the project state reproducible from a single project repo.
 
 Committing a project gets a coherent cross-repo "revision", similar to a monorepo commit. You commit in individual repos first, then regenerate and commit the lock file. By default, it's not atomic as a monorepo is, but it could be scripted to be so. It's two-phase commit — the lock update is detectable and reversible:
@@ -119,7 +119,7 @@ web-app/                                  # weave
 
 - **Repos are regular clones** — `cd github/chatly/server && git status` works. No bare repos, no `.git` file indirection, universal tool compatibility.
 - **Ecosystem files are symlinked** — `package.json`, `go.work`, `Cargo.toml` at root are symlinks to the active project's directory. The real files live in `projects/web-app/` and are committable in the project repo.
-- **Ecosystem lock files are committable** — `package-lock.json`, `pnpm-lock.yaml`, `uv.lock`, `go.sum`, `Cargo.lock` live in the project directory alongside their workspace configs, symlinked to root.
+- **Ecosystem lock files are committable** — `package-lock.json`, `pnpm-lock.yaml`, `uv.lock`, `go.sum`, `Cargo.lock` live in the project directory alongside their workspace configs, symlinked to the weave directory.
 - **Projects are directories** with an `rwv.yaml` file, an `rwv.lock` file, and `docs/`. They don't contain code — build tools are unaware of them.
 - **Overlap is natural** — `server` and `protocol` appear in both projects' `rwv.yaml` files, but there's one clone on disk.
 - **Repos without a project stay on disk** — clone something for a quick look; it's an inert directory until you add it to a project.
@@ -285,7 +285,7 @@ This avoids inventing inheritance or "derived project" machinery. A branch is al
 
 ### Ecosystem files and multiple projects
 
-Each project has its own ecosystem files in its project directory (`projects/web-app/package.json`, `projects/mobile-app/package.json`). The root symlinks point to the active project's files. Switching projects with `rwv activate` swaps the symlinks; to reconcile tool state run `npm install` (or `rwv lock`, which triggers integration lock hooks) afterward.
+Each project has its own ecosystem files in its project directory (`projects/web-app/package.json`, `projects/mobile-app/package.json`). The symlinks at the weave directory point to the active project's files. Switching projects with `rwv activate` swaps the symlinks; to reconcile tool state run `npm install` (or `rwv lock`, which triggers integration lock hooks) afterward.
 
 If switching is too slow (large dependency diff), create a workweave for the second project — it gets its own `node_modules/`, `.venv/`, and ecosystem files with no reconciliation needed.
 
@@ -360,13 +360,13 @@ If you edit `rwv.yaml` in a workweave, sync it with `rwv workweave web-app sync`
 | `rwv workweave {project} sync {name}` | Sync workweave worktrees and ecosystem files with manifest. |
 | `rwv workweave {project} list` | List workweaves for a project. |
 | `rwv init {project}` | Create a new project directory with empty `rwv.yaml`. Optional `--provider {registry}/{owner}` sets up the remote. |
-| `rwv activate {project}` | Set the active project — generate ecosystem files in the project directory, symlink at weave root. |
+| `rwv activate {project}` | Set the active project — generate ecosystem files in the project directory, symlink to the weave directory. |
 | `rwv fetch {source}` | Clone a project repo and all its listed repos, activate, update `rwv.lock`. `--locked` for exact reproduction, `--frozen` for CI (errors if lock is stale). |
 | `rwv add {url}` | Clone a repo, register in `rwv.yaml`, re-run integration hooks. With `--role`, sets the role. With `--new`, initializes a new repo at the canonical path (infers URL). |
 | `rwv remove {path}` | Remove from `rwv.yaml`, re-run integration hooks. With `--delete`, also removes the clone (confirms unless `--force`). |
 | `rwv lock` | Snapshot repo versions into the project's `rwv.lock`. Errors on uncommitted changes (`--dirty` to bypass). Runs integration lock hooks. |
 | `rwv check` | Convention enforcement: orphaned clones, dangling references, missing roles, stale locks, workweave drift, integration checks. |
-| `rwv resolve` | Print the weave root (workweave or weave). Useful for scripting: `cd $(rwv resolve)`. |
+| `rwv resolve` | Print the weave directory (workweave or weave). Useful for scripting: `cd $(rwv resolve)`. |
 
 ### `rwv check` and multi-project awareness
 
@@ -426,7 +426,7 @@ The design trade-off: submodules get atomic locking for free by taking ownership
 
 ## Integrations
 
-The weave root (or workweave root) is the **workspace surface** — the directory that ecosystem tools see. npm, Go, Cargo, uv — none of them know that repos exist. They see a workspace directory with packages in it. `package.json` lists workspace packages. `go.work` lists modules. `Cargo.toml` lists crate members. The packages happen to come from different git repos, but the ecosystem tools neither know nor care.
+The weave directory (or workweave directory) is the **workspace surface** — the directory that ecosystem tools see. npm, Go, Cargo, uv — none of them know that repos exist. They see a workspace directory with packages in it. `package.json` lists workspace packages. `go.work` lists modules. `Cargo.toml` lists crate members. The packages happen to come from different git repos, but the ecosystem tools neither know nor care.
 
 Integrations are the translation layer between repoweave's multi-repo world (repos, projects, roles) and the ecosystem's workspace world (`package.json`, `go.work`, `Cargo.toml`, `pnpm-workspace.yaml`). They read the project's `rwv.yaml` and produce the ecosystem workspace files at the workspace surface. The result is that ecosystem tools work exactly as they would in a monorepo.
 
@@ -442,7 +442,7 @@ Each integration is a pluggable unit that derives config for one tool from the r
 | `gita` | yes | all repos | `gita/` config directory | -- |
 | `vscode-workspace` | yes | all repos | `{project}.code-workspace` | -- |
 
-All generated files live in the project directory (symlinked to the weave root, or the workweave root for workweaves). Ecosystem integrations generate workspace config files that are committable — they are persistent state, not ephemeral artifacts. Integrations merge into existing files where possible — for example, the vscode-workspace integration preserves user-added settings and extensions while updating managed keys.
+All generated files live in the project directory (symlinked to the weave directory, or the workweave directory for workweaves). Ecosystem integrations generate workspace config files that are committable — they are persistent state, not ephemeral artifacts. Integrations merge into existing files where possible — for example, the vscode-workspace integration preserves user-added settings and extensions while updating managed keys.
 
 Ecosystem lock files (`package-lock.json`, `pnpm-lock.yaml`, `uv.lock`, `go.sum`, `Cargo.lock`) are produced by the ecosystem tools themselves (npm, pnpm, uv, go, cargo) during the install step. These are important persistent state — they pin exact dependency versions within each ecosystem and should be committed alongside the ecosystem workspace configs.
 

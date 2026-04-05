@@ -16,7 +16,7 @@ What happens:
 1. Clones `projects/web-app/` from `https://github.com/chatly/web-app.git`
 2. Reads `projects/web-app/rwv.yaml` to get the repo list
 3. Clones each repo to its canonical path: `github/chatly/server/`, `github/chatly/web/`, `github/chatly/protocol/`
-4. Runs `rwv activate web-app` — generates ecosystem workspace files and symlinks them to the root
+4. Runs `rwv activate web-app` — generates ecosystem workspace files and symlinks them to the weave directory
 5. Writes `.rwv-active` with "web-app"
 
 Result:
