@@ -27,23 +27,14 @@ enum Commands {
         /// Project name (not required when --claude-hook is set)
         #[arg(required_unless_present = "claude_hook")]
         project: Option<String>,
-        /// Optional workweave name
-        name: Option<String>,
-        /// Delete the named workweave
-        #[arg(long)]
-        delete: bool,
-        /// List existing workweaves
-        #[arg(long)]
-        list: bool,
-        /// Sync workweave with current manifest
-        #[arg(long)]
-        sync: bool,
         /// Hook mode: print only the workweave path to stdout (for Claude Code WorktreeCreate hook)
         #[arg(long)]
         hook_mode: bool,
         /// Claude Code hook mode: read JSON from stdin, handle create/remove automatically
-        #[arg(long, conflicts_with_all = ["delete", "list", "sync", "hook_mode"])]
+        #[arg(long, conflicts_with = "hook_mode")]
         claude_hook: bool,
+        #[command(subcommand)]
+        action: Option<WorkweaveAction>,
     },
     /// Clone a project and its repos
     Fetch {
@@ -63,9 +54,9 @@ enum Commands {
     Add {
         /// Repository URL or path (with --new)
         url: String,
-        /// Role for the repo (primary, fork, dependency, reference)
-        #[arg(long, default_value = "dependency")]
-        role: String,
+        /// Role for the repo
+        #[arg(long, default_value = "dependency", value_enum)]
+        role: manifest::Role,
         /// Create a new repo (git init) at the canonical path instead of cloning
         #[arg(long)]
         new: bool,
@@ -122,6 +113,27 @@ enum Commands {
 }
 
 #[derive(Subcommand)]
+enum WorkweaveAction {
+    /// Create a new workweave
+    Create {
+        /// Workweave name
+        name: String,
+    },
+    /// Delete a workweave
+    Delete {
+        /// Workweave name
+        name: String,
+    },
+    /// List existing workweaves
+    List,
+    /// Sync workweave with current manifest
+    Sync {
+        /// Workweave name
+        name: String,
+    },
+}
+
+#[derive(Subcommand)]
 enum SetupAction {
     /// Generate AGENTS.md at the workspace root
     AgentsMd,
@@ -142,7 +154,7 @@ fn main() -> anyhow::Result<()> {
             let ctx = WorkspaceContext::resolve(&cwd, None)?;
             println!("{}", ctx.display());
         }
-        Some(Commands::Workweave { project, name, delete, list, sync, hook_mode, claude_hook }) => {
+        Some(Commands::Workweave { project, hook_mode, claude_hook, action }) => {
             if claude_hook {
                 repoweave::workweave::handle_claude_hook()?;
             } else {
@@ -151,22 +163,24 @@ fn main() -> anyhow::Result<()> {
                 let ctx = WorkspaceContext::resolve(&cwd, None)?;
                 let ws_root = &ctx.root;
 
-                if list {
-                    let names = repoweave::workweave::list_workweaves(ws_root)?;
-                    for n in &names {
-                        println!("{}", n);
+                match action {
+                    Some(WorkweaveAction::List) | None => {
+                        let names = repoweave::workweave::list_workweaves(ws_root)?;
+                        for n in &names {
+                            println!("{}", n);
+                        }
                     }
-                } else if delete {
-                    let name = name.ok_or_else(|| anyhow::anyhow!("--delete requires a workweave name"))?;
-                    repoweave::workweave::delete_workweave(ws_root, &project, &WorkweaveName::new(name))?;
-                } else if sync {
-                    let name = name.ok_or_else(|| anyhow::anyhow!("--sync requires a workweave name"))?;
-                    repoweave::workweave::sync_workweave(ws_root, &project, &WorkweaveName::new(name))?;
-                } else {
-                    let name = name.ok_or_else(|| anyhow::anyhow!("workweave create requires a name argument"))?;
-                    let workweave_path = repoweave::workweave::create_workweave(ws_root, &project, &WorkweaveName::new(name))?;
-                    if hook_mode {
-                        println!("{}", workweave_path.display());
+                    Some(WorkweaveAction::Delete { name }) => {
+                        repoweave::workweave::delete_workweave(ws_root, &project, &WorkweaveName::new(name))?;
+                    }
+                    Some(WorkweaveAction::Sync { name }) => {
+                        repoweave::workweave::sync_workweave(ws_root, &project, &WorkweaveName::new(name))?;
+                    }
+                    Some(WorkweaveAction::Create { name }) => {
+                        let workweave_path = repoweave::workweave::create_workweave(ws_root, &project, &WorkweaveName::new(name))?;
+                        if hook_mode {
+                            println!("{}", workweave_path.display());
+                        }
                     }
                 }
             }
@@ -188,9 +202,7 @@ fn main() -> anyhow::Result<()> {
             if new {
                 add_remove::run_add_new(&url, &cwd)?;
             } else {
-                let parsed_role: manifest::Role = serde_yaml::from_str(&role)
-                    .map_err(|_| anyhow::anyhow!("Invalid role '{}'. Valid roles: primary, fork, dependency, reference", role))?;
-                add_remove::run_add(&url, parsed_role, &cwd)?;
+                add_remove::run_add(&url, role, &cwd)?;
             }
         }
         Some(Commands::Remove { path, delete, force }) => {

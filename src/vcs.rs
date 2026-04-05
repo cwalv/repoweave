@@ -48,6 +48,13 @@ impl fmt::Display for RefName {
     }
 }
 
+/// Resolve a VCS implementation from a [`crate::manifest::VcsType`].
+pub(crate) fn vcs_for(vcs_type: crate::manifest::VcsType) -> Box<dyn Vcs> {
+    match vcs_type {
+        crate::manifest::VcsType::Git => Box::new(crate::git::GitVcs),
+    }
+}
+
 /// Operations repoweave needs from a version control system.
 ///
 /// Implementations exist for git (and eventually jj, sl, hg). Each method
@@ -107,4 +114,11 @@ pub trait Vcs {
 
     /// List local branch names that start with `prefix`.
     fn list_branches_with_prefix(&self, repo: &Path, prefix: &str) -> anyhow::Result<Vec<String>>;
+
+    /// Return the default branch name for `repo`.
+    ///
+    /// Reads `refs/remotes/origin/HEAD` via `git symbolic-ref` and strips the
+    /// `refs/remotes/origin/` prefix to obtain the branch name (e.g., `main`).
+    /// Falls back to `"main"` when no remote or no `origin/HEAD` is configured.
+    fn default_branch(&self, repo: &Path) -> anyhow::Result<RefName>;
 }

@@ -77,7 +77,10 @@ impl Integration for UvWorkspace {
         Ok(())
     }
 
-    fn generated_files(&self, _ctx: &IntegrationContext) -> Vec<String> {
+    fn generated_files(&self, ctx: &IntegrationContext) -> Vec<String> {
+        if ctx.detect_repos_with_manifest("pyproject.toml").is_empty() {
+            return vec![];
+        }
         vec!["pyproject.toml".to_string(), "uv.lock".to_string()]
     }
 }

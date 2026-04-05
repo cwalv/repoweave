@@ -6,7 +6,7 @@
 
 use crate::manifest::{IntegrationConfig, ProjectName, RepoEntry, RepoPath};
 use std::collections::BTreeMap;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 // ---------------------------------------------------------------------------
 // Integration context — shared input for all integrations
@@ -39,7 +39,7 @@ pub struct IntegrationContext<'a> {
 
     /// All git repos found on disk under registry directories (relative paths).
     /// Computed once, shared across integrations.
-    pub all_repos_on_disk: &'a [PathBuf],
+    pub all_repos_on_disk: &'a [RepoPath],
 
     /// All project paths (e.g., `["web-app", "mobile-app"]`).
     /// Computed once, shared across integrations.

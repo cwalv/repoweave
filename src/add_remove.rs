@@ -3,7 +3,7 @@
 use crate::git::GitVcs;
 use crate::manifest::{Manifest, RepoEntry, RepoPath, Role, VcsType};
 use crate::registry::{builtin_registries, resolve_url, Registry};
-use crate::vcs::{RefName, Vcs};
+use crate::vcs::Vcs;
 use crate::workspace::{WorkspaceContext, WorkspaceLocation};
 use anyhow::{bail, Context};
 use std::path::{Path, PathBuf};
@@ -108,11 +108,14 @@ pub fn run_add(url: &str, role: Role, cwd: &Path) -> anyhow::Result<()> {
             .with_context(|| format!("failed to clone '{}' into {}", url, dest.display()))?;
     }
 
+    let git = GitVcs;
+    let default_branch = git.default_branch(&dest)?;
+
     // Add entry to manifest.
     let entry = RepoEntry {
         vcs_type: VcsType::Git,
         url: url.to_string(),
-        version: RefName::new("main"),
+        version: default_branch,
         role,
     };
     manifest.repositories.insert(repo_path.clone(), entry);
@@ -176,11 +179,14 @@ fn run_add_from_local_path(
         return Ok(());
     }
 
+    let git = GitVcs;
+    let default_branch = git.default_branch(clone_dir)?;
+
     // Add entry to manifest using the inferred origin URL.
     let entry = RepoEntry {
         vcs_type: VcsType::Git,
         url: origin_url.clone(),
-        version: RefName::new("main"),
+        version: default_branch,
         role,
     };
     manifest.repositories.insert(repo_path.clone(), entry);
@@ -322,11 +328,14 @@ pub fn run_add_new(path_arg: &str, cwd: &Path) -> anyhow::Result<()> {
             .with_context(|| format!("failed to init repo at {}", dest.display()))?;
     }
 
+    let git = GitVcs;
+    let default_branch = git.default_branch(&dest)?;
+
     // Add entry to manifest with role primary.
     let entry = RepoEntry {
         vcs_type: VcsType::Git,
         url,
-        version: RefName::new("main"),
+        version: default_branch,
         role: Role::Primary,
     };
     manifest.repositories.insert(repo_path.clone(), entry);

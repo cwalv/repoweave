@@ -108,7 +108,7 @@ fn make_workspace_with_project_repo(tmp: &Path, project: &str) -> std::path::Pat
 #[test]
 fn workweave_subcommand_is_recognised() {
     // `rwv workweave` with a project name should not produce "unrecognized subcommand".
-    let assert = rwv().args(["workweave", "my-project"]).assert();
+    let assert = rwv().args(["workweave", "my-project", "list"]).assert();
     let output = assert.get_output();
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
@@ -128,14 +128,14 @@ fn workweave_requires_project_argument() {
 
 #[test]
 fn workweave_accepts_project_and_name() {
-    // `rwv workweave my-project hotfix` should be accepted by the CLI parser.
-    let assert = rwv().args(["workweave", "my-project", "hotfix"]).assert();
+    // `rwv workweave my-project create hotfix` should be accepted by the CLI parser.
+    let assert = rwv().args(["workweave", "my-project", "create", "hotfix"]).assert();
     let output = assert.get_output();
     let stderr = String::from_utf8_lossy(&output.stderr);
     // Should not fail with a clap parse error.
     assert!(
         !stderr.contains("unexpected argument"),
-        "workweave should accept project + name, got stderr: {stderr}"
+        "workweave should accept project + create + name, got stderr: {stderr}"
     );
 }
 
@@ -153,7 +153,7 @@ fn workweave_create_makes_directory_under_weaveroot() {
     std::fs::create_dir_all(&weaveroot).unwrap();
 
     rwv()
-        .args(["workweave", "web-app", "hotfix"])
+        .args(["workweave", "web-app", "create", "hotfix"])
         .env("WORKWEAVEROOT", &weaveroot)
         .current_dir(&ws)
         .assert()
@@ -177,7 +177,7 @@ fn workweave_create_worktrees_on_ephemeral_branches() {
     std::fs::create_dir_all(&weaveroot).unwrap();
 
     rwv()
-        .args(["workweave", "web-app", "hotfix"])
+        .args(["workweave", "web-app", "create", "hotfix"])
         .env("WORKWEAVEROOT", &weaveroot)
         .current_dir(&ws)
         .assert()
@@ -215,7 +215,7 @@ fn workweave_create_mirrors_primary_layout() {
     std::fs::create_dir_all(&weaveroot).unwrap();
 
     rwv()
-        .args(["workweave", "web-app", "feat-x"])
+        .args(["workweave", "web-app", "create", "feat-x"])
         .env("WORKWEAVEROOT", &weaveroot)
         .current_dir(&ws)
         .assert()
@@ -248,7 +248,7 @@ fn create_workweave_includes_project_repo() {
     std::fs::create_dir_all(&weaveroot).unwrap();
 
     rwv()
-        .args(["workweave", "my-project", "feat"])
+        .args(["workweave", "my-project", "create", "feat"])
         .env("WORKWEAVEROOT", &weaveroot)
         .current_dir(&ws)
         .assert()
@@ -285,7 +285,7 @@ fn delete_workweave_removes_project_worktree() {
 
     // Create first.
     rwv()
-        .args(["workweave", "my-project", "to-del"])
+        .args(["workweave", "my-project", "create", "to-del"])
         .env("WORKWEAVEROOT", &weaveroot)
         .current_dir(&ws)
         .assert()
@@ -296,7 +296,7 @@ fn delete_workweave_removes_project_worktree() {
 
     // Delete it.
     rwv()
-        .args(["workweave", "my-project", "to-del", "--delete"])
+        .args(["workweave", "my-project", "delete", "to-del"])
         .env("WORKWEAVEROOT", &weaveroot)
         .current_dir(&ws)
         .assert()
@@ -354,7 +354,7 @@ workweave:
     std::fs::create_dir_all(&weaveroot).unwrap();
 
     rwv()
-        .args(["workweave", "web-app", "copy-test"])
+        .args(["workweave", "web-app", "create", "copy-test"])
         .env("WORKWEAVEROOT", &weaveroot)
         .current_dir(&ws)
         .assert()
@@ -412,7 +412,7 @@ workweave:
     std::fs::create_dir_all(&weaveroot).unwrap();
 
     rwv()
-        .args(["workweave", "web-app", "link-test"])
+        .args(["workweave", "web-app", "create", "link-test"])
         .env("WORKWEAVEROOT", &weaveroot)
         .current_dir(&ws)
         .assert()
@@ -460,7 +460,7 @@ fn create_workweave_writes_marker() {
     std::fs::create_dir_all(&weaveroot).unwrap();
 
     rwv()
-        .args(["workweave", "web-app", "marker-test"])
+        .args(["workweave", "web-app", "create", "marker-test"])
         .env("WORKWEAVEROOT", &weaveroot)
         .current_dir(&ws)
         .assert()
@@ -499,7 +499,7 @@ fn create_workweave_writes_rwv_active() {
     std::fs::create_dir_all(&weaveroot).unwrap();
 
     rwv()
-        .args(["workweave", "web-app", "active-test"])
+        .args(["workweave", "web-app", "create", "active-test"])
         .env("WORKWEAVEROOT", &weaveroot)
         .current_dir(&ws)
         .assert()
@@ -535,7 +535,7 @@ fn workweave_delete_removes_directory_and_worktrees() {
 
     // Create a workweave first.
     rwv()
-        .args(["workweave", "web-app", "to-delete"])
+        .args(["workweave", "web-app", "create", "to-delete"])
         .env("WORKWEAVEROOT", &weaveroot)
         .current_dir(&ws)
         .assert()
@@ -546,7 +546,7 @@ fn workweave_delete_removes_directory_and_worktrees() {
 
     // Delete it.
     rwv()
-        .args(["workweave", "web-app", "to-delete", "--delete"])
+        .args(["workweave", "web-app", "delete", "to-delete"])
         .env("WORKWEAVEROOT", &weaveroot)
         .current_dir(&ws)
         .assert()
@@ -584,20 +584,20 @@ fn workweave_list_shows_existing_workweaves() {
 
     // Create two workweaves.
     rwv()
-        .args(["workweave", "web-app", "alpha"])
+        .args(["workweave", "web-app", "create", "alpha"])
         .env("WORKWEAVEROOT", &weaveroot)
         .current_dir(&ws)
         .assert()
         .success();
     rwv()
-        .args(["workweave", "web-app", "beta"])
+        .args(["workweave", "web-app", "create", "beta"])
         .env("WORKWEAVEROOT", &weaveroot)
         .current_dir(&ws)
         .assert()
         .success();
 
     rwv()
-        .args(["workweave", "web-app", "--list"])
+        .args(["workweave", "web-app", "list"])
         .env("WORKWEAVEROOT", &weaveroot)
         .current_dir(&ws)
         .assert()
@@ -616,7 +616,7 @@ fn workweave_list_empty_when_no_workweaves() {
     std::fs::create_dir_all(&weaveroot).unwrap();
 
     rwv()
-        .args(["workweave", "web-app", "--list"])
+        .args(["workweave", "web-app", "list"])
         .env("WORKWEAVEROOT", &weaveroot)
         .current_dir(&ws)
         .assert()
@@ -638,7 +638,7 @@ fn workweave_sync_reconciles_with_manifest() {
 
     // Create a workweave.
     rwv()
-        .args(["workweave", "web-app", "sync-test"])
+        .args(["workweave", "web-app", "create", "sync-test"])
         .env("WORKWEAVEROOT", &weaveroot)
         .current_dir(&ws)
         .assert()
@@ -669,7 +669,7 @@ fn workweave_sync_reconciles_with_manifest() {
 
     // Sync should add the new repo's worktree to the workweave.
     rwv()
-        .args(["workweave", "web-app", "sync-test", "--sync"])
+        .args(["workweave", "web-app", "sync", "sync-test"])
         .env("WORKWEAVEROOT", &weaveroot)
         .current_dir(&ws)
         .assert()
@@ -695,7 +695,7 @@ fn workweave_respects_weaveroot_env() {
     std::fs::create_dir_all(&custom_root).unwrap();
 
     rwv()
-        .args(["workweave", "web-app", "override-test"])
+        .args(["workweave", "web-app", "create", "override-test"])
         .env("WORKWEAVEROOT", &custom_root)
         .current_dir(&ws)
         .assert()
@@ -750,7 +750,7 @@ fn workweave_with_multiple_repos_creates_all_worktrees() {
     std::fs::create_dir_all(&weaveroot).unwrap();
 
     rwv()
-        .args(["workweave", "full-stack", "multi"])
+        .args(["workweave", "full-stack", "create", "multi"])
         .env("WORKWEAVEROOT", &weaveroot)
         .current_dir(&ws)
         .assert()
@@ -780,7 +780,7 @@ fn cli_workweave_hook_mode_outputs_path() {
     std::fs::create_dir_all(&weaveroot).unwrap();
 
     let output = rwv()
-        .args(["workweave", "web-app", "hook-test", "--hook-mode"])
+        .args(["workweave", "web-app", "--hook-mode", "create", "hook-test"])
         .env("WORKWEAVEROOT", &weaveroot)
         .current_dir(&ws)
         .assert()
@@ -815,7 +815,7 @@ fn cli_workweave_hook_mode_path_is_absolute() {
     std::fs::create_dir_all(&weaveroot).unwrap();
 
     let output = rwv()
-        .args(["workweave", "web-app", "abs-test", "--hook-mode"])
+        .args(["workweave", "web-app", "--hook-mode", "create", "abs-test"])
         .env("WORKWEAVEROOT", &weaveroot)
         .current_dir(&ws)
         .assert()
@@ -845,7 +845,7 @@ fn cli_workweave_create_without_hook_mode() {
     std::fs::create_dir_all(&weaveroot).unwrap();
 
     let output = rwv()
-        .args(["workweave", "web-app", "normal-test"])
+        .args(["workweave", "web-app", "create", "normal-test"])
         .env("WORKWEAVEROOT", &weaveroot)
         .current_dir(&ws)
         .assert()
@@ -888,7 +888,7 @@ fn workweave_full_round_trip() {
 
     // --- Create ---
     rwv()
-        .args(["workweave", "round-trip-project", "rt"])
+        .args(["workweave", "round-trip-project", "create", "rt"])
         .env("WORKWEAVEROOT", &weaveroot)
         .current_dir(&ws)
         .assert()
@@ -917,7 +917,7 @@ fn workweave_full_round_trip() {
 
     // --- Delete ---
     rwv()
-        .args(["workweave", "round-trip-project", "rt", "--delete"])
+        .args(["workweave", "round-trip-project", "delete", "rt"])
         .env("WORKWEAVEROOT", &weaveroot)
         .current_dir(&ws)
         .assert()
@@ -993,7 +993,7 @@ fn create_workweave_generates_ecosystem_files() {
     std::fs::create_dir_all(&weaveroot).unwrap();
 
     rwv()
-        .args(["workweave", "cargo-project", "eco"])
+        .args(["workweave", "cargo-project", "create", "eco"])
         .env("WORKWEAVEROOT", &weaveroot)
         .current_dir(&ws)
         .assert()
@@ -1034,7 +1034,7 @@ fn resolve_from_inside_workweave_returns_workweave_path() {
 
     // Create a workweave.
     rwv()
-        .args(["workweave", "web-app", "resolve-test"])
+        .args(["workweave", "web-app", "create", "resolve-test"])
         .env("WORKWEAVEROOT", &weaveroot)
         .current_dir(&ws)
         .assert()
@@ -1082,7 +1082,7 @@ fn workweave_name_with_hyphens_and_underscores() {
     std::fs::create_dir_all(&weaveroot).unwrap();
 
     rwv()
-        .args(["workweave", "web-app", "feat_my-feature_v2"])
+        .args(["workweave", "web-app", "create", "feat_my-feature_v2"])
         .env("WORKWEAVEROOT", &weaveroot)
         .current_dir(&ws)
         .assert()
@@ -1118,7 +1118,7 @@ fn workweave_create_without_rwv_active_in_primary() {
 
     // Should succeed: project name is provided as CLI argument.
     rwv()
-        .args(["workweave", "my-proj", "no-active"])
+        .args(["workweave", "my-proj", "create", "no-active"])
         .env("WORKWEAVEROOT", &weaveroot)
         .current_dir(&ws)
         .assert()
@@ -1141,7 +1141,7 @@ fn delete_nonexistent_workweave_errors_gracefully() {
 
     // Attempt to delete a workweave that was never created.
     let result = rwv()
-        .args(["workweave", "web-app", "ghost", "--delete"])
+        .args(["workweave", "web-app", "delete", "ghost"])
         .env("WORKWEAVEROOT", &weaveroot)
         .current_dir(&ws)
         .assert();
@@ -1190,7 +1190,7 @@ fn delete_workweave_cleans_up_ephemeral_branches() {
 
     // Create a workweave — this creates ephemeral branch "cleanup/main" in the repo.
     rwv()
-        .args(["workweave", "web-app", "cleanup"])
+        .args(["workweave", "web-app", "create", "cleanup"])
         .env("WORKWEAVEROOT", &weaveroot)
         .current_dir(&ws)
         .assert()
@@ -1207,7 +1207,7 @@ fn delete_workweave_cleans_up_ephemeral_branches() {
 
     // Delete the workweave.
     rwv()
-        .args(["workweave", "web-app", "cleanup", "--delete"])
+        .args(["workweave", "web-app", "delete", "cleanup"])
         .env("WORKWEAVEROOT", &weaveroot)
         .current_dir(&ws)
         .assert()
@@ -1231,14 +1231,14 @@ fn create_workweave_handles_stale_branches() {
 
     // Create a workweave, then delete it normally (branches cleaned up).
     rwv()
-        .args(["workweave", "web-app", "stale-test"])
+        .args(["workweave", "web-app", "create", "stale-test"])
         .env("WORKWEAVEROOT", &weaveroot)
         .current_dir(&ws)
         .assert()
         .success();
 
     rwv()
-        .args(["workweave", "web-app", "stale-test", "--delete"])
+        .args(["workweave", "web-app", "delete", "stale-test"])
         .env("WORKWEAVEROOT", &weaveroot)
         .current_dir(&ws)
         .assert()
@@ -1263,7 +1263,7 @@ fn create_workweave_handles_stale_branches() {
     // Creating the workweave again with the same name should succeed despite
     // the stale ephemeral branch.
     rwv()
-        .args(["workweave", "web-app", "stale-test"])
+        .args(["workweave", "web-app", "create", "stale-test"])
         .env("WORKWEAVEROOT", &weaveroot)
         .current_dir(&ws)
         .assert()
@@ -1386,7 +1386,7 @@ fn claude_hook_remove_cleans_up() {
 
     // First create a workweave the normal way.
     rwv()
-        .args(["workweave", "web-app", "to-remove"])
+        .args(["workweave", "web-app", "create", "to-remove"])
         .env("WORKWEAVEROOT", &weaveroot)
         .current_dir(&ws)
         .assert()
@@ -1431,10 +1431,10 @@ fn claude_hook_unknown_event_errors() {
 }
 
 #[test]
-fn claude_hook_conflicts_with_delete_flag() {
-    // --claude-hook should conflict with --delete.
+fn claude_hook_conflicts_with_hook_mode_flag() {
+    // --claude-hook should conflict with --hook-mode.
     rwv()
-        .args(["workweave", "--claude-hook", "--delete"])
+        .args(["workweave", "--claude-hook", "--hook-mode"])
         .write_stdin(r#"{}"#)
         .assert()
         .failure()

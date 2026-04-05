@@ -71,7 +71,10 @@ impl Integration for PnpmWorkspaces {
         Ok(())
     }
 
-    fn generated_files(&self, _ctx: &IntegrationContext) -> Vec<String> {
+    fn generated_files(&self, ctx: &IntegrationContext) -> Vec<String> {
+        if ctx.detect_repos_with_manifest("package.json").is_empty() {
+            return vec![];
+        }
         vec!["pnpm-workspace.yaml".to_string(), "pnpm-lock.yaml".to_string()]
     }
 }

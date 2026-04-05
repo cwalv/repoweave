@@ -7,7 +7,6 @@ use crate::integration::Issue;
 use crate::manifest::{Project, RepoPath};
 use crate::vcs::RevisionId;
 use std::collections::{BTreeMap, BTreeSet};
-use std::path::PathBuf;
 
 /// The kinds of convention violations `rwv check` can find.
 ///
@@ -17,7 +16,7 @@ use std::path::PathBuf;
 #[derive(Debug)]
 pub enum CheckViolation {
     /// A directory under a registry path not listed in any project's `rwv.yaml`.
-    OrphanedClone { path: PathBuf },
+    OrphanedClone { path: RepoPath },
 
     /// An `rwv.yaml` entry pointing to a path not present on disk.
     DanglingReference { project: String, repo: RepoPath },
@@ -73,7 +72,7 @@ pub fn find_violations(input: &CheckInput) -> Vec<CheckViolation> {
     for repo_path in &input.repos_on_disk {
         if !input.known_repos.contains(repo_path) {
             violations.push(CheckViolation::OrphanedClone {
-                path: repo_path.as_path().to_path_buf(),
+                path: repo_path.clone(),
             });
         }
     }
@@ -119,7 +118,7 @@ pub fn violations_to_issues(violations: Vec<CheckViolation>) -> Vec<Issue> {
             let (severity, message) = match v {
                 CheckViolation::OrphanedClone { path } => (
                     crate::integration::Severity::Error,
-                    format!("orphaned clone: {}", path.display()),
+                    format!("orphaned clone: {path}"),
                 ),
                 CheckViolation::DanglingReference { project, repo } => (
                     crate::integration::Severity::Error,
@@ -181,19 +180,15 @@ pub fn run_check(cwd: &std::path::Path) -> anyhow::Result<bool> {
     let registries = builtin_registries();
     let git = GitVcs;
 
-    let repo_paths_on_disk = scan_repos_on_disk(&ctx.root, &registries, &git);
+    let repos_on_disk = scan_repos_on_disk(&ctx.root, &registries, &git);
 
-    // Convert to RepoPath and resolve HEAD revisions
-    let mut repos_on_disk = Vec::new();
+    // Resolve HEAD revisions for each repo on disk.
     let mut head_revisions = BTreeMap::new();
-
-    for rel in &repo_paths_on_disk {
-        let repo_path = RepoPath::new(rel.to_string_lossy().to_string());
-        let abs = ctx.root.join(rel);
+    for repo_path in &repos_on_disk {
+        let abs = ctx.root.join(repo_path.as_path());
         if let Ok(rev) = git.head_revision(&abs) {
             head_revisions.insert(repo_path.clone(), rev);
         }
-        repos_on_disk.push(repo_path);
     }
 
     // Load all project manifests from projects/*/rwv.yaml
@@ -254,11 +249,6 @@ pub fn run_check(cwd: &std::path::Path) -> anyhow::Result<bool> {
     let mut all_issues = violations_to_issues(violations);
 
     // Run integration check hooks for each project
-    let repos_on_disk_paths: Vec<PathBuf> = input
-        .repos_on_disk
-        .iter()
-        .map(|r| r.as_path().to_path_buf())
-        .collect();
     let project_paths: Vec<String> = input
         .projects
         .iter()
@@ -274,7 +264,7 @@ pub fn run_check(cwd: &std::path::Path) -> anyhow::Result<bool> {
             output_dir: &ctx.root,
             workspace_root: &ctx.root,
             project: &project.name,
-            all_repos_on_disk: &repos_on_disk_paths,
+            all_repos_on_disk: &input.repos_on_disk,
             all_project_paths: &project_paths,
         };
         let integration_issues = run_checks(&integrations, &project.manifest, &ctx_base);

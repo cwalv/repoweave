@@ -85,8 +85,9 @@ impl fmt::Display for WorkweaveName {
 // ---------------------------------------------------------------------------
 
 /// How freely code in this repo may be modified within the owning project.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, clap::ValueEnum)]
 #[serde(rename_all = "lowercase")]
+#[clap(rename_all = "lowercase")]
 pub enum Role {
     /// Your code. Change freely.
     Primary,
@@ -103,6 +104,15 @@ impl Role {
     /// Reference repos are excluded — they're not part of the build graph.
     pub fn is_active(&self) -> bool {
         !matches!(self, Role::Reference)
+    }
+
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Role::Primary => "primary",
+            Role::Fork => "fork",
+            Role::Dependency => "dependency",
+            Role::Reference => "reference",
+        }
     }
 }
 
@@ -159,7 +169,10 @@ impl IntegrationConfig {
     /// graceful degradation rather than hard errors.
     pub fn settings<T: serde::de::DeserializeOwned + Default>(&self) -> T {
         serde_yaml::from_value(serde_yaml::Value::Mapping(self.0.clone()))
-            .unwrap_or_default()
+            .unwrap_or_else(|e| {
+                eprintln!("[warning] integration config: failed to parse settings, using defaults: {e}");
+                T::default()
+            })
     }
 
     /// Convenience constructor: parse an `IntegrationConfig` from a YAML string.

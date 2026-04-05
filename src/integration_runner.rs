@@ -7,10 +7,10 @@
 //! Errors from individual integrations are captured as `Issue`s rather than
 //! aborting — one integration failing should not prevent others from running.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use crate::integration::{is_enabled, Integration, IntegrationContext, Issue, Severity};
-use crate::manifest::{IntegrationConfig, Manifest, ProjectName};
+use crate::manifest::{IntegrationConfig, Manifest, ProjectName, RepoPath};
 
 /// Shared base data for constructing `IntegrationContext` per integration.
 pub struct IntegrationContextBase<'a> {
@@ -21,7 +21,7 @@ pub struct IntegrationContextBase<'a> {
     /// Active project name.
     pub project: &'a ProjectName,
     /// All git repos found on disk under registry directories.
-    pub all_repos_on_disk: &'a [PathBuf],
+    pub all_repos_on_disk: &'a [RepoPath],
     /// All project paths.
     pub all_project_paths: &'a [String],
 }

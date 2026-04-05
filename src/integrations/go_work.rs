@@ -53,7 +53,10 @@ impl Integration for GoWork {
         Ok(issues)
     }
 
-    fn generated_files(&self, _ctx: &IntegrationContext) -> Vec<String> {
+    fn generated_files(&self, ctx: &IntegrationContext) -> Vec<String> {
+        if ctx.detect_repos_with_manifest("go.mod").is_empty() {
+            return vec![];
+        }
         vec!["go.work".to_string(), "go.sum".to_string()]
     }
 }

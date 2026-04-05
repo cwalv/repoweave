@@ -157,7 +157,7 @@ fn workweave_sync_adds_new_repo() {
 
     // Create the initial workweave.
     rwv()
-        .args(["workweave", "web-app", "feat"])
+        .args(["workweave", "web-app", "create", "feat"])
         .env("WORKWEAVEROOT", &weaveroot)
         .current_dir(&ws)
         .assert()
@@ -206,7 +206,7 @@ fn workweave_sync_adds_new_repo() {
 
     // Run sync.
     rwv()
-        .args(["workweave", "web-app", "feat", "--sync"])
+        .args(["workweave", "web-app", "sync", "feat"])
         .env("WORKWEAVEROOT", &weaveroot)
         .current_dir(&ws)
         .assert()
@@ -343,7 +343,7 @@ fn rwv_display_in_workweave() {
 
     // Create the workweave.
     rwv()
-        .args(["workweave", "web-app", "display-test"])
+        .args(["workweave", "web-app", "create", "display-test"])
         .env("WORKWEAVEROOT", &weaveroot)
         .current_dir(&ws)
         .assert()

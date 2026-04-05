@@ -131,7 +131,7 @@ impl Integration for VscodeWorkspace {
         let all_repos_on_disk: Vec<String> = ctx
             .all_repos_on_disk
             .iter()
-            .filter_map(|p| p.to_str().map(|s| s.to_string()))
+            .map(|p| p.as_str().to_string())
             .collect();
 
         let excluded_repos: HashSet<String> = all_repos_on_disk

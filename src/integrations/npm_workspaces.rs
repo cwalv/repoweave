@@ -85,7 +85,10 @@ impl Integration for NpmWorkspaces {
         Ok(())
     }
 
-    fn generated_files(&self, _ctx: &IntegrationContext) -> Vec<String> {
+    fn generated_files(&self, ctx: &IntegrationContext) -> Vec<String> {
+        if ctx.detect_repos_with_manifest("package.json").is_empty() {
+            return vec![];
+        }
         vec!["package.json".to_string(), "package-lock.json".to_string()]
     }
 }

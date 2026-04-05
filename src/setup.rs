@@ -87,7 +87,7 @@ const RWV_HOOK_COMMANDS: &[&str] = &[
 
 /// Run `rwv setup claude`.
 pub fn claude() -> anyhow::Result<()> {
-    claude_inner(&claude_settings_path()?, &claude_hooks_dir()?)
+    claude_inner(&claude_settings_path()?)
 }
 
 /// Run `rwv setup claude --uninstall`.
@@ -195,12 +195,12 @@ pub fn claude_uninstall_at(settings_path: &Path, hooks_dir: &Path) -> anyhow::Re
     Ok(())
 }
 
-/// Implementation that accepts explicit paths (for testing).
-pub fn claude_at(settings_path: &Path, hooks_dir: &Path) -> anyhow::Result<()> {
-    claude_inner(settings_path, hooks_dir)
+/// Implementation that accepts an explicit path (for testing).
+pub fn claude_at(settings_path: &Path) -> anyhow::Result<()> {
+    claude_inner(settings_path)
 }
 
-fn claude_inner(settings_path: &Path, _hooks_dir: &Path) -> anyhow::Result<()> {
+fn claude_inner(settings_path: &Path) -> anyhow::Result<()> {
     if !settings_path.exists() {
         bail!(
             "{} does not exist. Please run Claude Code at least once to create it.",
@@ -340,10 +340,9 @@ mod tests {
         std::fs::write(dir.join("rwv.yaml"), yaml).unwrap();
     }
 
-    /// Helper: call claude_at with a temp hooks_dir alongside the settings file.
+    /// Helper: call claude_at with a temp settings path.
     fn claude_at_tmp(settings_path: &Path) -> anyhow::Result<()> {
-        let hooks_dir = settings_path.parent().unwrap().join("hooks");
-        claude_at(settings_path, &hooks_dir)
+        claude_at(settings_path)
     }
 
     #[test]
@@ -474,7 +473,7 @@ mod tests {
         let hooks_dir = tmp.path().join("hooks");
         std::fs::write(&settings_path, "{}").unwrap();
 
-        claude_at(&settings_path, &hooks_dir).unwrap();
+        claude_at(&settings_path).unwrap();
 
         // hooks_dir should NOT have been created (no scripts to install).
         assert!(
@@ -487,10 +486,9 @@ mod tests {
     fn claude_workweave_hooks_registered_in_settings() {
         let tmp = tempfile::tempdir().unwrap();
         let settings_path = tmp.path().join("settings.json");
-        let hooks_dir = tmp.path().join("hooks");
         std::fs::write(&settings_path, "{}").unwrap();
 
-        claude_at(&settings_path, &hooks_dir).unwrap();
+        claude_at(&settings_path).unwrap();
 
         let content: Value =
             serde_json::from_str(&std::fs::read_to_string(&settings_path).unwrap()).unwrap();

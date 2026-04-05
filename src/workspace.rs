@@ -4,7 +4,7 @@
 //! and ecosystem files. This module resolves the workspace from CWD and
 //! provides the context that commands operate on.
 
-use crate::manifest::{Manifest, ProjectName, WorkweaveName};
+use crate::manifest::{Manifest, ProjectName, RepoPath, WorkweaveName};
 use serde::{Deserialize, Serialize};
 use crate::registry::{builtin_registries, Registry};
 use crate::vcs::Vcs;
@@ -113,7 +113,7 @@ pub fn set_active_project(root: &Path, project: &ProjectName) -> anyhow::Result<
 /// Walks the `{registry}/{owner}/{repo}` directory structure for each
 /// registry, filters directories using `vcs.is_repo()`, and returns
 /// relative paths from `root`.
-pub fn scan_repos_on_disk(root: &Path, registries: &[Box<dyn Registry>], vcs: &dyn Vcs) -> Vec<PathBuf> {
+pub fn scan_repos_on_disk(root: &Path, registries: &[Box<dyn Registry>], vcs: &dyn Vcs) -> Vec<RepoPath> {
     let mut repos = Vec::new();
 
     for reg in registries {
@@ -143,7 +143,7 @@ pub fn scan_repos_on_disk(root: &Path, registries: &[Box<dyn Registry>], vcs: &d
                     continue;
                 }
                 if let Ok(rel) = repo_path.strip_prefix(root) {
-                    repos.push(rel.to_path_buf());
+                    repos.push(RepoPath::new(rel.to_string_lossy()));
                 }
             }
         }

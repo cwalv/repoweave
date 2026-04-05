@@ -168,4 +168,20 @@ impl Vcs for GitVcs {
             .collect();
         Ok(branches)
     }
+
+    fn default_branch(&self, repo: &Path) -> anyhow::Result<RefName> {
+        const FALLBACK: &str = "main";
+        const PREFIX: &str = "refs/remotes/origin/";
+
+        match Self::run(&["symbolic-ref", "refs/remotes/origin/HEAD"], repo) {
+            Ok(sym_ref) => {
+                let branch = sym_ref
+                    .strip_prefix(PREFIX)
+                    .unwrap_or(FALLBACK)
+                    .to_string();
+                Ok(RefName::new(branch))
+            }
+            Err(_) => Ok(RefName::new(FALLBACK)),
+        }
+    }
 }

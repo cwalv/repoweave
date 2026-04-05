@@ -1140,9 +1140,9 @@ mod vscode_workspace {
         let project = ProjectName::new("test-project");
         let config = IntegrationConfig::default();
 
-        let all_repos_on_disk: Vec<std::path::PathBuf> = vec![
-            "github/chatly/server".into(),
-            "github/acme/web".into(),
+        let all_repos_on_disk: Vec<RepoPath> = vec![
+            RepoPath::new("github/chatly/server"),
+            RepoPath::new("github/acme/web"),
         ];
 
         let ctx = IntegrationContext {
@@ -1180,8 +1180,8 @@ mod vscode_workspace {
         let project = ProjectName::new("proj-a");
         let config = IntegrationConfig::default();
 
-        let all_repos_on_disk: Vec<std::path::PathBuf> =
-            vec!["github/acme/server".into()];
+        let all_repos_on_disk: Vec<RepoPath> =
+            vec![RepoPath::new("github/acme/server")];
         let all_project_paths = vec!["proj-a".to_string(), "proj-b".to_string()];
 
         let ctx = IntegrationContext {
@@ -1262,10 +1262,10 @@ mod vscode_workspace {
         let project = ProjectName::new("test-project");
         let config = IntegrationConfig::default();
 
-        let all_repos_on_disk: Vec<std::path::PathBuf> = vec![
-            "github/acme/server".into(),
-            "github/other/alpha".into(),
-            "github/other/beta".into(),
+        let all_repos_on_disk: Vec<RepoPath> = vec![
+            RepoPath::new("github/acme/server"),
+            RepoPath::new("github/other/alpha"),
+            RepoPath::new("github/other/beta"),
         ];
 
         let ctx = IntegrationContext {

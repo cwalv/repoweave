@@ -58,7 +58,7 @@ if [ "$after_count" -gt "$before_count" ]; then
     echo "--- cleaning up ---"
     project=$(cat "$ww_path/.rwv-active" 2>/dev/null | tr -d '[:space:]')
     name="${new_ww#*--}"
-    rwv workweave "$project" "$name" --delete 2>&1 || echo "WARN: delete had errors"
+    rwv workweave "$project" delete "$name" 2>&1 || echo "WARN: delete had errors"
 
     [ ! -d "$ww_path" ] && echo "PASS: cleanup successful" || echo "FAIL: workweave dir still exists"
 else

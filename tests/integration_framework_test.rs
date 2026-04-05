@@ -543,105 +543,180 @@ fn default_generated_files_returns_empty() {
 fn cargo_workspace_generated_files() {
     use repoweave::integrations::CargoWorkspace;
 
+    // No matching repos → empty
     let repos = BTreeMap::new();
     let project = ProjectName::new("test-project");
     let config = IntegrationConfig::default();
+    let tmp = TempDir::new().unwrap();
     let ctx = IntegrationContext {
-        output_dir: Path::new("/workspace"),
-        workspace_root: Path::new("/workspace"),
+        output_dir: tmp.path(),
+        workspace_root: tmp.path(),
         project: &project,
         repos: &repos,
         config: &config,
         all_repos_on_disk: &[],
         all_project_paths: &[],
     };
+    assert_eq!(CargoWorkspace.generated_files(&ctx), Vec::<String>::new());
 
-    let files = CargoWorkspace.generated_files(&ctx);
-    assert_eq!(files, vec!["Cargo.toml", "Cargo.lock"]);
+    // Repos with Cargo.toml present → files returned
+    let mut repos_with_manifest = BTreeMap::new();
+    repos_with_manifest.insert(RepoPath::new("github/acme/mylib"), make_repo_entry(Role::Primary));
+    touch(tmp.path(), "github/acme/mylib/Cargo.toml");
+    let ctx2 = IntegrationContext {
+        output_dir: tmp.path(),
+        workspace_root: tmp.path(),
+        project: &project,
+        repos: &repos_with_manifest,
+        config: &config,
+        all_repos_on_disk: &[],
+        all_project_paths: &[],
+    };
+    assert_eq!(CargoWorkspace.generated_files(&ctx2), vec!["Cargo.toml", "Cargo.lock"]);
 }
 
 #[test]
 fn npm_workspaces_generated_files() {
     use repoweave::integrations::NpmWorkspaces;
 
+    // No matching repos → empty
     let repos = BTreeMap::new();
     let project = ProjectName::new("test-project");
     let config = IntegrationConfig::default();
+    let tmp = TempDir::new().unwrap();
     let ctx = IntegrationContext {
-        output_dir: Path::new("/workspace"),
-        workspace_root: Path::new("/workspace"),
+        output_dir: tmp.path(),
+        workspace_root: tmp.path(),
         project: &project,
         repos: &repos,
         config: &config,
         all_repos_on_disk: &[],
         all_project_paths: &[],
     };
+    assert_eq!(NpmWorkspaces.generated_files(&ctx), Vec::<String>::new());
 
-    let files = NpmWorkspaces.generated_files(&ctx);
-    assert_eq!(files, vec!["package.json", "package-lock.json"]);
+    // Repos with package.json present → files returned
+    let mut repos_with_manifest = BTreeMap::new();
+    repos_with_manifest.insert(RepoPath::new("github/acme/webapp"), make_repo_entry(Role::Primary));
+    touch(tmp.path(), "github/acme/webapp/package.json");
+    let ctx2 = IntegrationContext {
+        output_dir: tmp.path(),
+        workspace_root: tmp.path(),
+        project: &project,
+        repos: &repos_with_manifest,
+        config: &config,
+        all_repos_on_disk: &[],
+        all_project_paths: &[],
+    };
+    assert_eq!(NpmWorkspaces.generated_files(&ctx2), vec!["package.json", "package-lock.json"]);
 }
 
 #[test]
 fn pnpm_workspaces_generated_files() {
     use repoweave::integrations::PnpmWorkspaces;
 
+    // No matching repos → empty
     let repos = BTreeMap::new();
     let project = ProjectName::new("test-project");
     let config = IntegrationConfig::default();
+    let tmp = TempDir::new().unwrap();
     let ctx = IntegrationContext {
-        output_dir: Path::new("/workspace"),
-        workspace_root: Path::new("/workspace"),
+        output_dir: tmp.path(),
+        workspace_root: tmp.path(),
         project: &project,
         repos: &repos,
         config: &config,
         all_repos_on_disk: &[],
         all_project_paths: &[],
     };
+    assert_eq!(PnpmWorkspaces.generated_files(&ctx), Vec::<String>::new());
 
-    let files = PnpmWorkspaces.generated_files(&ctx);
-    assert_eq!(files, vec!["pnpm-workspace.yaml", "pnpm-lock.yaml"]);
+    // Repos with package.json present → files returned
+    let mut repos_with_manifest = BTreeMap::new();
+    repos_with_manifest.insert(RepoPath::new("github/acme/frontend"), make_repo_entry(Role::Primary));
+    touch(tmp.path(), "github/acme/frontend/package.json");
+    let ctx2 = IntegrationContext {
+        output_dir: tmp.path(),
+        workspace_root: tmp.path(),
+        project: &project,
+        repos: &repos_with_manifest,
+        config: &config,
+        all_repos_on_disk: &[],
+        all_project_paths: &[],
+    };
+    assert_eq!(PnpmWorkspaces.generated_files(&ctx2), vec!["pnpm-workspace.yaml", "pnpm-lock.yaml"]);
 }
 
 #[test]
 fn go_work_generated_files() {
     use repoweave::integrations::GoWork;
 
+    // No matching repos → empty
     let repos = BTreeMap::new();
     let project = ProjectName::new("test-project");
     let config = IntegrationConfig::default();
+    let tmp = TempDir::new().unwrap();
     let ctx = IntegrationContext {
-        output_dir: Path::new("/workspace"),
-        workspace_root: Path::new("/workspace"),
+        output_dir: tmp.path(),
+        workspace_root: tmp.path(),
         project: &project,
         repos: &repos,
         config: &config,
         all_repos_on_disk: &[],
         all_project_paths: &[],
     };
+    assert_eq!(GoWork.generated_files(&ctx), Vec::<String>::new());
 
-    let files = GoWork.generated_files(&ctx);
-    assert_eq!(files, vec!["go.work", "go.sum"]);
+    // Repos with go.mod present → files returned
+    let mut repos_with_manifest = BTreeMap::new();
+    repos_with_manifest.insert(RepoPath::new("github/acme/svc"), make_repo_entry(Role::Primary));
+    touch(tmp.path(), "github/acme/svc/go.mod");
+    let ctx2 = IntegrationContext {
+        output_dir: tmp.path(),
+        workspace_root: tmp.path(),
+        project: &project,
+        repos: &repos_with_manifest,
+        config: &config,
+        all_repos_on_disk: &[],
+        all_project_paths: &[],
+    };
+    assert_eq!(GoWork.generated_files(&ctx2), vec!["go.work", "go.sum"]);
 }
 
 #[test]
 fn uv_workspace_generated_files() {
     use repoweave::integrations::UvWorkspace;
 
+    // No matching repos → empty
     let repos = BTreeMap::new();
     let project = ProjectName::new("test-project");
     let config = IntegrationConfig::default();
+    let tmp = TempDir::new().unwrap();
     let ctx = IntegrationContext {
-        output_dir: Path::new("/workspace"),
-        workspace_root: Path::new("/workspace"),
+        output_dir: tmp.path(),
+        workspace_root: tmp.path(),
         project: &project,
         repos: &repos,
         config: &config,
         all_repos_on_disk: &[],
         all_project_paths: &[],
     };
+    assert_eq!(UvWorkspace.generated_files(&ctx), Vec::<String>::new());
 
-    let files = UvWorkspace.generated_files(&ctx);
-    assert_eq!(files, vec!["pyproject.toml", "uv.lock"]);
+    // Repos with pyproject.toml present → files returned
+    let mut repos_with_manifest = BTreeMap::new();
+    repos_with_manifest.insert(RepoPath::new("github/acme/pylib"), make_repo_entry(Role::Primary));
+    touch(tmp.path(), "github/acme/pylib/pyproject.toml");
+    let ctx2 = IntegrationContext {
+        output_dir: tmp.path(),
+        workspace_root: tmp.path(),
+        project: &project,
+        repos: &repos_with_manifest,
+        config: &config,
+        all_repos_on_disk: &[],
+        all_project_paths: &[],
+    };
+    assert_eq!(UvWorkspace.generated_files(&ctx2), vec!["pyproject.toml", "uv.lock"]);
 }
 
 #[test]

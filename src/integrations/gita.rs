@@ -1,5 +1,4 @@
 use crate::integration::{Integration, IntegrationContext, Issue, Severity};
-use crate::manifest::Role;
 use std::collections::BTreeMap;
 use std::path::Path;
 
@@ -48,12 +47,7 @@ impl Integration for Gita {
         // groups.csv — group by role, sorted by group name
         let mut groups: BTreeMap<String, Vec<String>> = BTreeMap::new();
         for (rp, entry) in &active {
-            let role_str = match entry.role {
-                Role::Primary => "primary",
-                Role::Fork => "fork",
-                Role::Dependency => "dependency",
-                Role::Reference => "reference",
-            };
+            let role_str = entry.role.as_str();
             let name = rp
                 .as_str()
                 .rsplit('/')

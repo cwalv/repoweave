@@ -1,8 +1,8 @@
 //! Lock logic: snapshot repo HEADs into `rwv.lock`.
 
 use crate::git::GitVcs;
-use crate::manifest::{LockEntry, LockFile, Manifest, Project, VcsType, WorkweaveName};
-use crate::vcs::{RevisionId, Vcs};
+use crate::manifest::{LockEntry, LockFile, Manifest, Project, WorkweaveName};
+use crate::vcs::{vcs_for, RevisionId};
 use crate::workspace::{WorkspaceContext, WorkspaceLocation};
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -19,17 +19,15 @@ use std::path::Path;
 pub fn generate_lock(
     manifest: &Manifest,
     workspace_root: &Path,
-    workweave: Option<&WorkweaveName>,
-    workweave_dir: Option<&Path>,
+    workweave: Option<(&WorkweaveName, &Path)>,
     dirty: bool,
 ) -> anyhow::Result<LockFile> {
-    let git = GitVcs;
     let mut repositories = BTreeMap::new();
 
     for (repo_path, entry) in &manifest.repositories {
         // Determine the actual on-disk path for this repo.
         // In a workweave, repos live under the workweave directory; in primary, under root.
-        let repo_dir = if let Some(wd) = workweave_dir {
+        let repo_dir = if let Some((_, wd)) = workweave {
             let candidate = wd.join(repo_path.as_path());
             if candidate.exists() {
                 candidate
@@ -41,29 +39,23 @@ pub fn generate_lock(
             workspace_root.join(repo_path.as_path())
         };
 
+        let vcs = vcs_for(entry.vcs_type);
+
         // Check for uncommitted changes unless --dirty is set.
         if !dirty {
-            match entry.vcs_type {
-                VcsType::Git => {
-                    if git.has_uncommitted_changes(&repo_dir)? {
-                        anyhow::bail!(
-                            "repo {} has uncommitted changes; commit or use --dirty to override",
-                            repo_path
-                        );
-                    }
-                }
+            if vcs.has_uncommitted_changes(&repo_dir)? {
+                anyhow::bail!(
+                    "repo {} has uncommitted changes; commit or use --dirty to override",
+                    repo_path
+                );
             }
         }
 
         // Prefer tag name at HEAD over raw SHA.
-        let version = match entry.vcs_type {
-            VcsType::Git => {
-                if let Some(tag) = git.tag_at_head(&repo_dir)? {
-                    RevisionId::new(tag)
-                } else {
-                    git.head_revision(&repo_dir)?
-                }
-            }
+        let version = if let Some(tag) = vcs.tag_at_head(&repo_dir)? {
+            RevisionId::new(tag)
+        } else {
+            vcs.head_revision(&repo_dir)?
         };
 
         repositories.insert(
@@ -77,7 +69,7 @@ pub fn generate_lock(
     }
 
     Ok(LockFile {
-        workweave: workweave.cloned(),
+        workweave: workweave.map(|(name, _)| name.clone()),
         repositories,
     })
 }
@@ -121,11 +113,13 @@ pub fn lock(cwd: &Path, dirty: bool) -> anyhow::Result<()> {
     let project = Project::from_dir(&project_dir)
         .map_err(|e| anyhow::anyhow!("failed to load project '{}': {e}", project_name))?;
 
+    let workweave_pair = workweave_name
+        .as_ref()
+        .zip(workweave_dir.as_deref());
     let lock = generate_lock(
         &project.manifest,
         &ctx.root,
-        workweave_name.as_ref(),
-        workweave_dir.as_deref(),
+        workweave_pair,
         dirty,
     )?;
 

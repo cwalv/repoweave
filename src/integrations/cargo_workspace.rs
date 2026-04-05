@@ -79,7 +79,10 @@ impl Integration for CargoWorkspace {
         Ok(())
     }
 
-    fn generated_files(&self, _ctx: &IntegrationContext) -> Vec<String> {
+    fn generated_files(&self, ctx: &IntegrationContext) -> Vec<String> {
+        if ctx.detect_repos_with_manifest("Cargo.toml").is_empty() {
+            return vec![];
+        }
         vec!["Cargo.toml".to_string(), "Cargo.lock".to_string()]
     }
 }

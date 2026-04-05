@@ -87,38 +87,15 @@ pub fn run_fetch(source: &str, workspace_root: &Path, mode: FetchMode) -> anyhow
         .context("failed to create projects/ directory")?;
     let project_dir = projects_dir.join(&name);
     if project_dir.exists() {
-        // The project directory already exists.  Decide whether this is a
-        // re-fetch of the same project (idempotent, allowed) or a name
-        // collision with a different project (error).
-        let is_same_source = std::process::Command::new("git")
-            .args(["remote", "get-url", "origin"])
-            .current_dir(&project_dir)
-            .output()
-            .ok()
-            .and_then(|o| if o.status.success() { Some(o.stdout) } else { None })
-            .and_then(|bytes| String::from_utf8(bytes).ok())
-            .map(|remote| {
-                let remote = remote.trim();
-                // Normalise trailing `.git` for comparison.
-                let norm = |s: &str| s.trim_end_matches(".git").to_string();
-                norm(remote) == norm(&url)
-            })
-            .unwrap_or(false);
-
-        if is_same_source {
-            // Re-fetch of the same project — continue to refresh repos.
-            println!("rwv fetch: project '{}' already exists, re-fetching repos", name);
+        // Project name already taken — surface a helpful scoped-path hint.
+        let scoped = if owner.is_empty() {
+            format!("projects/{{owner}}/{name}/")
         } else {
-            // Name collision with a different project — surface a helpful hint.
-            let scoped = if owner.is_empty() {
-                format!("projects/{{owner}}/{name}/")
-            } else {
-                format!("projects/{owner}/{name}/")
-            };
-            eprintln!("Error: project '{name}' already exists at projects/{name}/");
-            eprintln!("Hint: try a scoped path: {scoped}");
-            bail!("project '{}' already exists at projects/{}/", name, name);
-        }
+            format!("projects/{owner}/{name}/")
+        };
+        eprintln!("Error: project '{name}' already exists at projects/{name}/");
+        eprintln!("Hint: try a scoped path: {scoped}");
+        bail!("project '{}' already exists at projects/{}/", name, name);
     } else {
         println!("rwv fetch: cloning project '{}'", name);
         git.clone_repo(&url, &project_dir)
@@ -273,7 +250,7 @@ pub fn run_fetch(source: &str, workspace_root: &Path, mode: FetchMode) -> anyhow
     // For Default mode: update rwv.lock with resolved SHAs, then auto-activate.
     if mode == FetchMode::Default {
         // Generate and write lock file (using dirty=true since we just cloned).
-        let lock = lock::generate_lock(&manifest, workspace_root, None, None, true)?;
+        let lock = lock::generate_lock(&manifest, workspace_root, None, true)?;
         lock::write_lock(&lock, &lock_path)?;
         eprintln!("rwv fetch: wrote {}", lock_path.display());
 
