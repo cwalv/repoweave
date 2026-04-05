@@ -122,11 +122,11 @@ rwv remove github/example/some-lib --delete
 
 Repoweave supports two release models. Most teams use the first; the second is there when you need it.
 
-**Internal model (monorepo-style):** Repos in the project are tightly coupled and consumed together. You don't publish individual packages to registries �� the workspace IS the distribution unit. `rwv lock` captures the cross-repo state, and `rwv.lock` is the version. `sha256sum rwv.lock` is the project fingerprint. This eliminates version friction entirely — no bumps, no publishing, no dependency update dance. You develop, you lock, you deploy from the lock.
+**Internal model (monorepo-style):** Repos in the project are tightly coupled and consumed together. You don't have to publish individual packages to registries �� the project/workspace IS the distribution unit. `rwv lock` captures the cross-repo state, and `rwv.lock` is the version. `sha256sum rwv.lock` is the project fingerprint. This eliminates version friction entirely — no bumps, no publishing, no dependency update dance. You develop, you lock, you deploy from the lock.
 
 This is the common case for application-level projects: a web app with a server, frontend, and shared types. The repos import from each other via workspace wiring, and the lock file is all you need for reproducibility and CI.
 
-**Publishing model:** Some repos are also consumed outside the project — as published packages on npm, crates.io, PyPI, or Go module proxy. These repos need tagged releases and version pins. The workspace wiring still eliminates the version dance *during development* — you edit across repos freely, imports resolve locally. But at release time, downstream repos need version pins to the published upstream artifacts.
+**Publishing model:** Some repos are also consumed outside the project — as published packages on npm, crates.io, PyPI, etc. These repos need tagged releases and version pins. The workspace wiring still eliminates the version dance *during development* — you edit across repos freely, imports resolve locally. But at release time, downstream repos need version pins to the published upstream artifacts.
 
 The two models aren't exclusive. A project can have repos that are internal-only alongside repos that publish. The lock file captures the tested state either way — it's the handoff point from development to whatever release process you use.
 
@@ -138,7 +138,7 @@ When you're ready to capture the current state:
 rwv lock
 ```
 
-Reads HEAD SHA from each repo, writes `projects/web-app/rwv.lock`. If a tag exists at HEAD, the lock records the tag name; otherwise the raw SHA.
+Reads the HEAD revision from each repo and writes `projects/web-app/rwv.lock`. If a tag exists at HEAD, the lock records the tag name; otherwise the revision ID.
 
 ```bash
 cd projects/web-app
