@@ -23,7 +23,12 @@ fn git(args: &[&str], dir: &Path) {
         .stderr(process::Stdio::null())
         .status()
         .expect("git should be available");
-    assert!(status.success(), "git {:?} in {} failed", args, dir.display());
+    assert!(
+        status.success(),
+        "git {:?} in {} failed",
+        args,
+        dir.display()
+    );
 }
 
 /// Initialise a normal (non-bare) git repo at `path` with one commit on `main`.
@@ -129,7 +134,9 @@ fn workweave_requires_project_argument() {
 #[test]
 fn workweave_accepts_project_and_name() {
     // `rwv workweave my-project create hotfix` should be accepted by the CLI parser.
-    let assert = rwv().args(["workweave", "my-project", "create", "hotfix"]).assert();
+    let assert = rwv()
+        .args(["workweave", "my-project", "create", "hotfix"])
+        .assert();
     let output = assert.get_output();
     let stderr = String::from_utf8_lossy(&output.stderr);
     // Should not fail with a clap parse error.
@@ -602,9 +609,7 @@ fn workweave_list_shows_existing_workweaves() {
         .current_dir(&ws)
         .assert()
         .success()
-        .stdout(
-            predicate::str::contains("alpha").and(predicate::str::contains("beta")),
-        );
+        .stdout(predicate::str::contains("alpha").and(predicate::str::contains("beta")));
 }
 
 #[test]
@@ -900,11 +905,17 @@ fn workweave_full_round_trip() {
     let repo_wt = ww_dir.join("github/org/repo");
     assert!(repo_wt.exists(), "repo worktree should exist after create");
     let dot_git = repo_wt.join(".git");
-    assert!(dot_git.exists() && dot_git.is_file(), "repo .git should be a worktree file");
+    assert!(
+        dot_git.exists() && dot_git.is_file(),
+        "repo .git should be a worktree file"
+    );
 
     // Verify project worktree exists.
     let project_wt = ww_dir.join("projects/round-trip-project");
-    assert!(project_wt.exists(), "project worktree should exist after create");
+    assert!(
+        project_wt.exists(),
+        "project worktree should exist after create"
+    );
     let project_dot_git = project_wt.join(".git");
     assert!(
         project_dot_git.exists() && project_dot_git.is_file(),
@@ -912,8 +923,14 @@ fn workweave_full_round_trip() {
     );
 
     // Verify marker and .rwv-active.
-    assert!(ww_dir.join(".rwv-workweave").exists(), ".rwv-workweave should exist");
-    assert!(ww_dir.join(".rwv-active").exists(), ".rwv-active should exist");
+    assert!(
+        ww_dir.join(".rwv-workweave").exists(),
+        ".rwv-workweave should exist"
+    );
+    assert!(
+        ww_dir.join(".rwv-active").exists(),
+        ".rwv-active should exist"
+    );
 
     // --- Delete ---
     rwv()
@@ -924,7 +941,10 @@ fn workweave_full_round_trip() {
         .success();
 
     // Verify workweave directory is gone.
-    assert!(!ww_dir.exists(), "workweave directory should be removed after delete");
+    assert!(
+        !ww_dir.exists(),
+        "workweave directory should be removed after delete"
+    );
 
     // Verify repo worktree is cleaned up from primary.
     let output = process::Command::new("git")
@@ -963,7 +983,11 @@ fn make_workspace_with_cargo_repo(tmp: &Path, project: &str) -> std::path::PathB
     init_repo_with_commit(&repo_path);
 
     // Add a Cargo.toml to the repo so the integration detects it.
-    std::fs::write(repo_path.join("Cargo.toml"), "[package]\nname = \"cargo-crate\"\nversion = \"0.1.0\"\nedition = \"2021\"\n").unwrap();
+    std::fs::write(
+        repo_path.join("Cargo.toml"),
+        "[package]\nname = \"cargo-crate\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    )
+    .unwrap();
     git(&["add", "Cargo.toml"], &repo_path);
     git(&["commit", "-m", "add Cargo.toml"], &repo_path);
 
@@ -1059,11 +1083,12 @@ fn resolve_from_inside_workweave_returns_workweave_path() {
     // The resolved path should be the workweave directory (not the primary).
     let ww_canonical = ww_dir.canonicalize().unwrap();
     let resolved_path = std::path::Path::new(resolved);
-    let resolved_canonical = resolved_path.canonicalize().unwrap_or_else(|_| resolved_path.to_path_buf());
+    let resolved_canonical = resolved_path
+        .canonicalize()
+        .unwrap_or_else(|_| resolved_path.to_path_buf());
 
     assert_eq!(
-        resolved_canonical,
-        ww_canonical,
+        resolved_canonical, ww_canonical,
         "rwv resolve from workweave should return the workweave path, got: {resolved}"
     );
 }
@@ -1327,7 +1352,10 @@ fn claude_hook_create_produces_path() {
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     let path_str = stdout.trim();
-    assert!(!path_str.is_empty(), "should print workweave path to stdout");
+    assert!(
+        !path_str.is_empty(),
+        "should print workweave path to stdout"
+    );
 
     let ww_path = std::path::Path::new(path_str);
     assert!(

@@ -105,8 +105,7 @@ fn e2e_cargo_workspace_wiring() {
     setup_weave(root);
 
     // ---- Step 1: activate("web-app", root) generates root Cargo.toml ----
-    repoweave::activate::activate("web-app", root)
-        .expect("activate should succeed");
+    repoweave::activate::activate("web-app", root).expect("activate should succeed");
 
     // ---- Step 2: verify root Cargo.toml exists and is a symlink ----
     let root_cargo = root.join("Cargo.toml");

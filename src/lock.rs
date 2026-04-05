@@ -92,16 +92,16 @@ pub fn lock(cwd: &Path, dirty: bool) -> anyhow::Result<()> {
 
     let (project_name, workweave_name, workweave_dir) = match &ctx.location {
         WorkspaceLocation::Weave { project } => {
-            let name = project
-                .as_ref()
-                .ok_or_else(|| anyhow::anyhow!("no active project found; run from a project directory or use --project"))?;
+            let name = project.as_ref().ok_or_else(|| {
+                anyhow::anyhow!(
+                    "no active project found; run from a project directory or use --project"
+                )
+            })?;
             (name.clone(), None, None)
         }
-        WorkspaceLocation::Workweave {
-            name,
-            dir,
-            project,
-        } => (project.clone(), Some(name.clone()), Some(dir.clone())),
+        WorkspaceLocation::Workweave { name, dir, project } => {
+            (project.clone(), Some(name.clone()), Some(dir.clone()))
+        }
     };
 
     // Load the project manifest from the primary workspace.
@@ -109,15 +109,8 @@ pub fn lock(cwd: &Path, dirty: bool) -> anyhow::Result<()> {
     let project = Project::from_dir(&project_dir)
         .map_err(|e| anyhow::anyhow!("failed to load project '{}': {e}", project_name))?;
 
-    let workweave_pair = workweave_name
-        .as_ref()
-        .zip(workweave_dir.as_deref());
-    let lock = generate_lock(
-        &project.manifest,
-        &ctx.root,
-        workweave_pair,
-        dirty,
-    )?;
+    let workweave_pair = workweave_name.as_ref().zip(workweave_dir.as_deref());
+    let lock = generate_lock(&project.manifest, &ctx.root, workweave_pair, dirty)?;
 
     let lock_path = project_dir.join("rwv.lock");
     write_lock(&lock, &lock_path)?;
@@ -128,7 +121,8 @@ pub fn lock(cwd: &Path, dirty: bool) -> anyhow::Result<()> {
     let session = crate::workspace::WorkspaceSession::new(&ctx.root);
 
     let output_dir = workweave_dir.as_deref().unwrap_or(&ctx.root);
-    let detection_cache = crate::integration_runner::build_detection_cache(&ctx.root, &project.manifest.repositories);
+    let detection_cache =
+        crate::integration_runner::build_detection_cache(&ctx.root, &project.manifest.repositories);
     let ctx_base = session.context_base(output_dir, &project_name, &detection_cache);
 
     let builtin = builtin_integrations();

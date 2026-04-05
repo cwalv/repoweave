@@ -11,7 +11,12 @@ use std::process::Command;
 /// Return early (skip) if `go` is not on PATH.
 macro_rules! require_go {
     () => {
-        if Command::new("which").arg("go").output().map(|o| o.status.success()).unwrap_or(false) {
+        if Command::new("which")
+            .arg("go")
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false)
+        {
             // go is available, continue
         } else {
             eprintln!("skipping test: `go` not found on PATH");
@@ -126,8 +131,7 @@ repositories:\n  \
     // ------------------------------------------------------------------
     // 6. Call activate("web-app", root) via the repoweave library
     // ------------------------------------------------------------------
-    repoweave::activate::activate("web-app", root)
-        .expect("activate should succeed");
+    repoweave::activate::activate("web-app", root).expect("activate should succeed");
 
     // ------------------------------------------------------------------
     // 7. Verify go.work exists at the weave root and lists both modules

@@ -31,7 +31,11 @@ pub fn init(name: &str, provider: Option<&str>, cwd: &Path) -> anyhow::Result<()
 
     // Collision check
     if project_dir.exists() {
-        anyhow::bail!("project '{}' already exists at {}", name, project_dir.display());
+        anyhow::bail!(
+            "project '{}' already exists at {}",
+            name,
+            project_dir.display()
+        );
     }
 
     // Create directory
@@ -56,34 +60,33 @@ pub fn init(name: &str, provider: Option<&str>, cwd: &Path) -> anyhow::Result<()
 
     // Set up remote from --provider
     if let Some(provider_str) = provider {
-        let (registry_name, owner) = provider_str
-            .split_once('/')
-            .ok_or_else(|| anyhow::anyhow!(
+        let (registry_name, owner) = provider_str.split_once('/').ok_or_else(|| {
+            anyhow::anyhow!(
                 "invalid --provider format '{}', expected 'registry/owner' (e.g., 'github/myorg')",
                 provider_str
-            ))?;
+            )
+        })?;
 
         // Look up the registry to get the clone URL pattern
         let registries = builtin_registries();
         let registry = registries
             .iter()
             .find(|r| r.name().0 == registry_name)
-            .ok_or_else(|| anyhow::anyhow!(
-                "unknown registry '{}'. Known registries: github, gitlab, bitbucket",
-                registry_name
-            ))?;
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "unknown registry '{}'. Known registries: github, gitlab, bitbucket",
+                    registry_name
+                )
+            })?;
 
         let repo_id = RepoId {
             owner: owner.to_string(),
             repo: name.to_string(),
         };
 
-        let url = registry
-            .clone_url(&repo_id)
-            .ok_or_else(|| anyhow::anyhow!(
-                "registry '{}' does not support clone URLs",
-                registry_name
-            ))?;
+        let url = registry.clone_url(&repo_id).ok_or_else(|| {
+            anyhow::anyhow!("registry '{}' does not support clone URLs", registry_name)
+        })?;
 
         let status = Command::new("git")
             .args(["remote", "add", "origin", &url])
@@ -97,7 +100,11 @@ pub fn init(name: &str, provider: Option<&str>, cwd: &Path) -> anyhow::Result<()
         }
     }
 
-    eprintln!("Initialized project '{}' at {}", name, project_dir.display());
+    eprintln!(
+        "Initialized project '{}' at {}",
+        name,
+        project_dir.display()
+    );
     Ok(())
 }
 

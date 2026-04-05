@@ -33,8 +33,13 @@ pub struct IntegrationContextBase<'a> {
 }
 
 /// The set of manifest filenames pre-computed into the detection cache.
-pub const KNOWN_MANIFESTS: &[&str] =
-    &["Cargo.toml", "package.json", "go.mod", "pyproject.toml", "go.sum"];
+pub const KNOWN_MANIFESTS: &[&str] = &[
+    "Cargo.toml",
+    "package.json",
+    "go.mod",
+    "pyproject.toml",
+    "go.sum",
+];
 
 /// Build a detection cache for the given workspace root and repos.
 pub fn build_detection_cache(
@@ -272,10 +277,10 @@ mod tests {
         }
 
         fn deactivate(&self, root: &Path) -> anyhow::Result<()> {
-            self.call_log.lock().unwrap().push((
-                "deactivate".into(),
-                format!("root={}", root.display()),
-            ));
+            self.call_log
+                .lock()
+                .unwrap()
+                .push(("deactivate".into(), format!("root={}", root.display())));
             if let Some(ref msg) = self.deactivate_err {
                 anyhow::bail!("{msg}");
             }
@@ -283,10 +288,10 @@ mod tests {
         }
 
         fn check(&self, ctx: &IntegrationContext) -> anyhow::Result<Vec<Issue>> {
-            self.call_log.lock().unwrap().push((
-                "check".into(),
-                format!("project={}", ctx.project.as_str()),
-            ));
+            self.call_log
+                .lock()
+                .unwrap()
+                .push(("check".into(), format!("project={}", ctx.project.as_str())));
             if let Some(ref msg) = self.check_err {
                 anyhow::bail!("{msg}");
             }
@@ -294,10 +299,10 @@ mod tests {
         }
 
         fn lock(&self, ctx: &IntegrationContext) -> anyhow::Result<()> {
-            self.call_log.lock().unwrap().push((
-                "lock".into(),
-                format!("project={}", ctx.project.as_str()),
-            ));
+            self.call_log
+                .lock()
+                .unwrap()
+                .push(("lock".into(), format!("project={}", ctx.project.as_str())));
             if let Some(ref msg) = self.lock_err {
                 anyhow::bail!("{msg}");
             }
@@ -325,7 +330,10 @@ mod tests {
         }
     }
 
-    fn make_ctx_base<'a>(project: &'a ProjectName, cache: &'a HashMap<String, Vec<String>>) -> IntegrationContextBase<'a> {
+    fn make_ctx_base<'a>(
+        project: &'a ProjectName,
+        cache: &'a HashMap<String, Vec<String>>,
+    ) -> IntegrationContextBase<'a> {
         IntegrationContextBase {
             output_dir: Path::new("/workspace"),
             workspace_root: Path::new("/workspace"),
@@ -589,14 +597,19 @@ mod tests {
         let issues = run_lock_hooks(&integrations, &manifest, &ctx_base);
         assert!(issues.is_empty());
 
-        let enabled_calls: Vec<_> = enabled.calls().into_iter().filter(|(m, _)| m == "lock").collect();
+        let enabled_calls: Vec<_> = enabled
+            .calls()
+            .into_iter()
+            .filter(|(m, _)| m == "lock")
+            .collect();
         assert_eq!(enabled_calls.len(), 1);
         assert!(disabled.calls().is_empty());
     }
 
     #[test]
     fn lock_hooks_error_captured_others_still_run() {
-        let failing = MockIntegration::new("cargo", true).with_lock_err("lockfile generation failed");
+        let failing =
+            MockIntegration::new("cargo", true).with_lock_err("lockfile generation failed");
         let succeeding = MockIntegration::new("npm", true);
         let integrations: Vec<&dyn Integration> = vec![&failing, &succeeding];
 
@@ -612,7 +625,11 @@ mod tests {
         assert!(issues[0].message.contains("lockfile generation failed"));
 
         // succeeding integration should still have been called
-        let npm_lock_calls: Vec<_> = succeeding.calls().into_iter().filter(|(m, _)| m == "lock").collect();
+        let npm_lock_calls: Vec<_> = succeeding
+            .calls()
+            .into_iter()
+            .filter(|(m, _)| m == "lock")
+            .collect();
         assert_eq!(npm_lock_calls.len(), 1);
     }
 
@@ -634,7 +651,11 @@ mod tests {
         let issues = run_lock_hooks(&integrations, &manifest, &ctx_base);
         assert!(issues.is_empty());
 
-        let lock_calls: Vec<_> = integration.calls().into_iter().filter(|(m, _)| m == "lock").collect();
+        let lock_calls: Vec<_> = integration
+            .calls()
+            .into_iter()
+            .filter(|(m, _)| m == "lock")
+            .collect();
         assert_eq!(lock_calls.len(), 1);
     }
 
@@ -651,7 +672,11 @@ mod tests {
         let issues = run_lock_hooks(&integrations, &manifest, &ctx_base);
         assert!(issues.is_empty());
 
-        let lock_calls: Vec<_> = integration.calls().into_iter().filter(|(m, _)| m == "lock").collect();
+        let lock_calls: Vec<_> = integration
+            .calls()
+            .into_iter()
+            .filter(|(m, _)| m == "lock")
+            .collect();
         assert_eq!(lock_calls.len(), 1);
         assert_eq!(lock_calls[0].1, "project=my-special-project");
     }

@@ -109,9 +109,7 @@ fn domain_registry_local_path() {
 #[test]
 fn directory_registry_parse_file_url() {
     let reg = dir_registry();
-    let id = reg
-        .parse_url("file:///srv/repos/owner/repo")
-        .unwrap();
+    let id = reg.parse_url("file:///srv/repos/owner/repo").unwrap();
     assert_eq!(id.owner, "owner");
     assert_eq!(id.repo, "repo");
 }

@@ -562,7 +562,10 @@ fn activate_same_project_twice_is_idempotent() {
         .success();
 
     let content2 = std::fs::read_to_string(ws.join("package.json")).unwrap();
-    assert_eq!(content1, content2, "re-activating should produce identical output");
+    assert_eq!(
+        content1, content2,
+        "re-activating should produce identical output"
+    );
 
     let active = std::fs::read_to_string(ws.join(".rwv-active")).unwrap();
     assert_eq!(active.trim(), "my-proj");
@@ -578,11 +581,7 @@ fn activate_project_with_no_ecosystem_files() {
     let ws = make_workspace(tmp.path());
 
     // Project with repos that have no ecosystem manifest files
-    make_project(
-        &ws,
-        "plain-proj",
-        &[("github/acme/docs", "primary", &[])],
-    );
+    make_project(&ws, "plain-proj", &[("github/acme/docs", "primary", &[])]);
 
     rwv()
         .args(["activate", "plain-proj"])

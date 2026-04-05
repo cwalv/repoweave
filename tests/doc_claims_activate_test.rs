@@ -34,7 +34,12 @@ fn git(args: &[&str], dir: &Path) {
         .stderr(process::Stdio::null())
         .status()
         .expect("git should be available");
-    assert!(status.success(), "git {:?} in {} failed", args, dir.display());
+    assert!(
+        status.success(),
+        "git {:?} in {} failed",
+        args,
+        dir.display()
+    );
 }
 
 /// Initialise a real git repo at `path` with one commit on `main`.
@@ -52,10 +57,7 @@ fn init_repo_with_commit(path: &Path) {
 ///   {parent}/ws/github/org/repo/      — a real git repo
 ///
 /// Returns (workspace_root, bare_repo_path) so callers can use file:// URLs.
-fn make_workspace_with_git_repo(
-    parent: &Path,
-    project: &str,
-) -> (PathBuf, PathBuf) {
+fn make_workspace_with_git_repo(parent: &Path, project: &str) -> (PathBuf, PathBuf) {
     let ws = parent.join("ws");
     let repo_path = ws.join("github/org/repo");
     init_repo_with_commit(&repo_path);
@@ -129,10 +131,7 @@ fn workspace_context_from_project_dir_no_subcommand() {
 
     let project_dir = ws.join("projects/my-project");
 
-    let output = rwv()
-        .current_dir(&project_dir)
-        .output()
-        .unwrap();
+    let output = rwv().current_dir(&project_dir).output().unwrap();
 
     assert!(
         output.status.success(),
@@ -174,11 +173,7 @@ fn check_missing_role_field() {
 "#;
     std::fs::write(ws.join("projects/my-project/rwv.yaml"), bad_manifest).unwrap();
 
-    let output = rwv()
-        .arg("check")
-        .current_dir(&ws)
-        .output()
-        .unwrap();
+    let output = rwv().arg("check").current_dir(&ws).output().unwrap();
 
     // Either serde rejects the manifest at parse time (non-zero exit, stderr
     // contains a parse error) OR the check phase produces a diagnostic.
@@ -229,11 +224,7 @@ fn check_workweave_drift_extra_repo() {
     let extra_repo = ws.join("github/org/extra-repo");
     init_repo_with_commit(&extra_repo);
 
-    let output = rwv()
-        .arg("check")
-        .current_dir(&ws)
-        .output()
-        .unwrap();
+    let output = rwv().arg("check").current_dir(&ws).output().unwrap();
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
@@ -246,9 +237,9 @@ fn check_workweave_drift_extra_repo() {
         // so that future implementers know the test expectation once drift
         // detection is implemented.
         let _ = (&stdout, &stderr); // suppress unused warning
-        // For now just note that an unlisted repo does not yet cause a failure:
-        // TODO: once drift detection is implemented, remove this branch and
-        // assert failure + mention of "extra-repo".
+                                    // For now just note that an unlisted repo does not yet cause a failure:
+                                    // TODO: once drift detection is implemented, remove this branch and
+                                    // assert failure + mention of "extra-repo".
     } else {
         // Preferred future behavior: non-zero exit reporting the orphan.
         assert!(
@@ -313,7 +304,11 @@ fn activate_symlinks_cargo_toml_and_lock() {
         "Cargo.toml should be present at workspace root after activate"
     );
     assert!(
-        root_cargo.symlink_metadata().unwrap().file_type().is_symlink(),
+        root_cargo
+            .symlink_metadata()
+            .unwrap()
+            .file_type()
+            .is_symlink(),
         "Cargo.toml at workspace root should be a symlink"
     );
     let target = std::fs::read_link(&root_cargo).unwrap();
@@ -327,12 +322,18 @@ fn activate_symlinks_cargo_toml_and_lock() {
     // cargo fills it in on first build).
     let root_lock = ws_root.join("Cargo.lock");
     assert!(
-        root_lock.symlink_metadata().unwrap().file_type().is_symlink(),
+        root_lock
+            .symlink_metadata()
+            .unwrap()
+            .file_type()
+            .is_symlink(),
         "Cargo.lock at workspace root should be a symlink"
     );
     let lock_target = std::fs::read_link(&root_lock).unwrap();
     assert!(
-        lock_target.to_string_lossy().contains("projects/cargo-proj"),
+        lock_target
+            .to_string_lossy()
+            .contains("projects/cargo-proj"),
         "Cargo.lock symlink should point into projects/cargo-proj, got: {}",
         lock_target.display()
     );

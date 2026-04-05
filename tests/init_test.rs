@@ -113,7 +113,9 @@ fn init_creates_empty_rwv_yaml() {
     let content = std::fs::read_to_string(&manifest_path).unwrap();
     // The manifest should parse as valid YAML with an empty repositories map.
     let manifest: serde_yaml::Value = serde_yaml::from_str(&content).unwrap();
-    let repos = manifest.get("repositories").expect("should have repositories key");
+    let repos = manifest
+        .get("repositories")
+        .expect("should have repositories key");
     // Empty map can be represented as Mapping with 0 entries or as Null.
     match repos {
         serde_yaml::Value::Mapping(m) => assert!(m.is_empty(), "repositories should be empty"),
@@ -295,10 +297,7 @@ fn init_does_not_activate_project() {
     // Running `rwv` (no subcommand) from the workspace root should NOT show
     // second-proj as the active project (no project should be active when
     // running from root).
-    let output = rwv()
-        .current_dir(&ws)
-        .output()
-        .expect("rwv should run");
+    let output = rwv().current_dir(&ws).output().expect("rwv should run");
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
         !stdout.contains("Active project: second-proj"),
@@ -401,11 +400,7 @@ fn adopt_clones_repo_into_projects() {
     let bare = make_repo_with_commit(tmp.path(), "my-app");
 
     rwv()
-        .args([
-            "init",
-            "--adopt",
-            &format!("file://{}", bare.display()),
-        ])
+        .args(["init", "--adopt", &format!("file://{}", bare.display())])
         .current_dir(&ws)
         .assert()
         .success();
@@ -430,11 +425,7 @@ fn adopt_writes_rwv_yaml_when_missing() {
     let bare = make_repo_with_commit(tmp.path(), "no-yaml");
 
     rwv()
-        .args([
-            "init",
-            "--adopt",
-            &format!("file://{}", bare.display()),
-        ])
+        .args(["init", "--adopt", &format!("file://{}", bare.display())])
         .current_dir(&ws)
         .assert()
         .success();
@@ -496,11 +487,7 @@ fn adopt_preserves_existing_rwv_yaml() {
         .status();
 
     rwv()
-        .args([
-            "init",
-            "--adopt",
-            &format!("file://{}", bare.display()),
-        ])
+        .args(["init", "--adopt", &format!("file://{}", bare.display())])
         .current_dir(&ws)
         .assert()
         .success();
@@ -519,11 +506,7 @@ fn adopt_activates_project() {
     let bare = make_repo_with_commit(tmp.path(), "activated");
 
     rwv()
-        .args([
-            "init",
-            "--adopt",
-            &format!("file://{}", bare.display()),
-        ])
+        .args(["init", "--adopt", &format!("file://{}", bare.display())])
         .current_dir(&ws)
         .assert()
         .success();
@@ -545,22 +528,14 @@ fn adopt_rejects_duplicate_project_name() {
 
     // First adopt succeeds.
     rwv()
-        .args([
-            "init",
-            "--adopt",
-            &format!("file://{}", bare.display()),
-        ])
+        .args(["init", "--adopt", &format!("file://{}", bare.display())])
         .current_dir(&ws)
         .assert()
         .success();
 
     // Second adopt with same source should fail.
     rwv()
-        .args([
-            "init",
-            "--adopt",
-            &format!("file://{}", bare.display()),
-        ])
+        .args(["init", "--adopt", &format!("file://{}", bare.display())])
         .current_dir(&ws)
         .assert()
         .failure()

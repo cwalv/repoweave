@@ -76,10 +76,7 @@ impl Integration for StaticFiles {
                 issues.push(Issue {
                     integration: self.name().to_string(),
                     severity: Severity::Warning,
-                    message: format!(
-                        "declared file '{}' not found in project directory",
-                        file
-                    ),
+                    message: format!("declared file '{}' not found in project directory", file),
                 });
             }
         }

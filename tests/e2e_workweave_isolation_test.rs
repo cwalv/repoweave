@@ -179,9 +179,8 @@ repositories:\n  \
     std::env::set_var("WORKWEAVEROOT", &workweave_root);
 
     let ww_name = repoweave::manifest::WorkweaveName::new("agent-1");
-    let ww_dir =
-        repoweave::workweave::create_workweave(&ws, "web-app", &ww_name)
-            .expect("create_workweave should succeed");
+    let ww_dir = repoweave::workweave::create_workweave(&ws, "web-app", &ww_name)
+        .expect("create_workweave should succeed");
 
     // ------------------------------------------------------------------
     // 6. Verify workweave directory exists and repos are git worktrees
@@ -202,11 +201,8 @@ repositories:\n  \
         );
 
         let dot_git = wt_path.join(".git");
-        let meta = std::fs::symlink_metadata(&dot_git).unwrap_or_else(|e| {
-            panic!(
-                ".git should exist in workweave worktree {repo_rel}: {e}"
-            )
-        });
+        let meta = std::fs::symlink_metadata(&dot_git)
+            .unwrap_or_else(|e| panic!(".git should exist in workweave worktree {repo_rel}: {e}"));
         assert!(
             meta.file_type().is_file(),
             ".git in workweave {repo_rel} should be a file (worktree), not a directory"

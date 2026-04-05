@@ -8,9 +8,7 @@ use std::sync::{Arc, Mutex};
 use tempfile::TempDir;
 
 use repoweave::integration::{is_enabled, Integration, IntegrationContext, Issue, Severity};
-use repoweave::manifest::{
-    IntegrationConfig, ProjectName, RepoEntry, RepoPath, Role, VcsType,
-};
+use repoweave::manifest::{IntegrationConfig, ProjectName, RepoEntry, RepoPath, Role, VcsType};
 use repoweave::vcs::RefName;
 
 // ---------------------------------------------------------------------------
@@ -78,18 +76,18 @@ impl Integration for MockIntegration {
     }
 
     fn deactivate(&self, root: &Path) -> anyhow::Result<()> {
-        self.call_log.lock().unwrap().push((
-            "deactivate".into(),
-            format!("root={}", root.display()),
-        ));
+        self.call_log
+            .lock()
+            .unwrap()
+            .push(("deactivate".into(), format!("root={}", root.display())));
         Ok(())
     }
 
     fn check(&self, ctx: &IntegrationContext) -> anyhow::Result<Vec<Issue>> {
-        self.call_log.lock().unwrap().push((
-            "check".into(),
-            format!("project={}", ctx.project.as_str()),
-        ));
+        self.call_log
+            .lock()
+            .unwrap()
+            .push(("check".into(), format!("project={}", ctx.project.as_str())));
         Ok(self.check_issues.clone())
     }
 }
@@ -134,7 +132,10 @@ fn is_enabled_default_disabled_no_override() {
 fn active_repos_excludes_reference() {
     let mut repos = BTreeMap::new();
     repos.insert(RepoPath::new("ref-repo"), make_repo_entry(Role::Reference));
-    repos.insert(RepoPath::new("primary-repo"), make_repo_entry(Role::Primary));
+    repos.insert(
+        RepoPath::new("primary-repo"),
+        make_repo_entry(Role::Primary),
+    );
 
     let project = ProjectName::new("test-project");
     let config = IntegrationConfig::default();
@@ -336,8 +337,14 @@ fn detect_repos_with_manifest_uses_workspace_root_not_output_dir() {
     // because it looks in workspace_root.
 
     let mut repos = BTreeMap::new();
-    repos.insert(RepoPath::new("github/acme/server"), make_repo_entry(Role::Primary));
-    repos.insert(RepoPath::new("github/acme/web"), make_repo_entry(Role::Primary));
+    repos.insert(
+        RepoPath::new("github/acme/server"),
+        make_repo_entry(Role::Primary),
+    );
+    repos.insert(
+        RepoPath::new("github/acme/web"),
+        make_repo_entry(Role::Primary),
+    );
 
     let project = ProjectName::new("test-project");
     let config = IntegrationConfig::default();
@@ -371,7 +378,10 @@ fn detect_repos_with_manifest_ignores_output_dir_manifests() {
     touch(output_dir, "github/acme/server/Cargo.toml");
 
     let mut repos = BTreeMap::new();
-    repos.insert(RepoPath::new("github/acme/server"), make_repo_entry(Role::Primary));
+    repos.insert(
+        RepoPath::new("github/acme/server"),
+        make_repo_entry(Role::Primary),
+    );
 
     let project = ProjectName::new("test-project");
     let config = IntegrationConfig::default();
@@ -400,7 +410,10 @@ fn context_output_dir_and_workspace_root_can_be_same() {
     touch(root, "github/acme/server/package.json");
 
     let mut repos = BTreeMap::new();
-    repos.insert(RepoPath::new("github/acme/server"), make_repo_entry(Role::Primary));
+    repos.insert(
+        RepoPath::new("github/acme/server"),
+        make_repo_entry(Role::Primary),
+    );
 
     let project = ProjectName::new("test-project");
     let config = IntegrationConfig::default();
@@ -493,10 +506,10 @@ impl Integration for MockIntegrationWithLock {
     }
 
     fn lock(&self, ctx: &IntegrationContext) -> anyhow::Result<()> {
-        self.call_log.lock().unwrap().push((
-            "lock".into(),
-            format!("project={}", ctx.project.as_str()),
-        ));
+        self.call_log
+            .lock()
+            .unwrap()
+            .push(("lock".into(), format!("project={}", ctx.project.as_str())));
         Ok(())
     }
 }
@@ -552,7 +565,10 @@ fn default_generated_files_returns_empty() {
     };
 
     let files = mock.generated_files(&ctx);
-    assert!(files.is_empty(), "default generated_files should return empty vec");
+    assert!(
+        files.is_empty(),
+        "default generated_files should return empty vec"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -583,7 +599,10 @@ fn cargo_workspace_generated_files() {
 
     // Repos with Cargo.toml present → files returned
     let mut repos_with_manifest = BTreeMap::new();
-    repos_with_manifest.insert(RepoPath::new("github/acme/mylib"), make_repo_entry(Role::Primary));
+    repos_with_manifest.insert(
+        RepoPath::new("github/acme/mylib"),
+        make_repo_entry(Role::Primary),
+    );
     touch(tmp.path(), "github/acme/mylib/Cargo.toml");
     let ctx2 = IntegrationContext {
         output_dir: tmp.path(),
@@ -595,7 +614,10 @@ fn cargo_workspace_generated_files() {
         all_project_paths: &[],
         detection_cache: &cache,
     };
-    assert_eq!(CargoWorkspace.generated_files(&ctx2), vec!["Cargo.toml", "Cargo.lock"]);
+    assert_eq!(
+        CargoWorkspace.generated_files(&ctx2),
+        vec!["Cargo.toml", "Cargo.lock"]
+    );
 }
 
 #[test]
@@ -622,7 +644,10 @@ fn npm_workspaces_generated_files() {
 
     // Repos with package.json present → files returned
     let mut repos_with_manifest = BTreeMap::new();
-    repos_with_manifest.insert(RepoPath::new("github/acme/webapp"), make_repo_entry(Role::Primary));
+    repos_with_manifest.insert(
+        RepoPath::new("github/acme/webapp"),
+        make_repo_entry(Role::Primary),
+    );
     touch(tmp.path(), "github/acme/webapp/package.json");
     let ctx2 = IntegrationContext {
         output_dir: tmp.path(),
@@ -634,7 +659,10 @@ fn npm_workspaces_generated_files() {
         all_project_paths: &[],
         detection_cache: &cache,
     };
-    assert_eq!(NpmWorkspaces.generated_files(&ctx2), vec!["package.json", "package-lock.json"]);
+    assert_eq!(
+        NpmWorkspaces.generated_files(&ctx2),
+        vec!["package.json", "package-lock.json"]
+    );
 }
 
 #[test]
@@ -661,7 +689,10 @@ fn pnpm_workspaces_generated_files() {
 
     // Repos with package.json present → files returned
     let mut repos_with_manifest = BTreeMap::new();
-    repos_with_manifest.insert(RepoPath::new("github/acme/frontend"), make_repo_entry(Role::Primary));
+    repos_with_manifest.insert(
+        RepoPath::new("github/acme/frontend"),
+        make_repo_entry(Role::Primary),
+    );
     touch(tmp.path(), "github/acme/frontend/package.json");
     let ctx2 = IntegrationContext {
         output_dir: tmp.path(),
@@ -673,7 +704,10 @@ fn pnpm_workspaces_generated_files() {
         all_project_paths: &[],
         detection_cache: &cache,
     };
-    assert_eq!(PnpmWorkspaces.generated_files(&ctx2), vec!["pnpm-workspace.yaml", "pnpm-lock.yaml"]);
+    assert_eq!(
+        PnpmWorkspaces.generated_files(&ctx2),
+        vec!["pnpm-workspace.yaml", "pnpm-lock.yaml"]
+    );
 }
 
 #[test]
@@ -700,7 +734,10 @@ fn go_work_generated_files() {
 
     // Repos with go.mod present → files returned
     let mut repos_with_manifest = BTreeMap::new();
-    repos_with_manifest.insert(RepoPath::new("github/acme/svc"), make_repo_entry(Role::Primary));
+    repos_with_manifest.insert(
+        RepoPath::new("github/acme/svc"),
+        make_repo_entry(Role::Primary),
+    );
     touch(tmp.path(), "github/acme/svc/go.mod");
     let ctx2 = IntegrationContext {
         output_dir: tmp.path(),
@@ -739,7 +776,10 @@ fn uv_workspace_generated_files() {
 
     // Repos with pyproject.toml present → files returned
     let mut repos_with_manifest = BTreeMap::new();
-    repos_with_manifest.insert(RepoPath::new("github/acme/pylib"), make_repo_entry(Role::Primary));
+    repos_with_manifest.insert(
+        RepoPath::new("github/acme/pylib"),
+        make_repo_entry(Role::Primary),
+    );
     touch(tmp.path(), "github/acme/pylib/pyproject.toml");
     let ctx2 = IntegrationContext {
         output_dir: tmp.path(),
@@ -751,7 +791,10 @@ fn uv_workspace_generated_files() {
         all_project_paths: &[],
         detection_cache: &cache,
     };
-    assert_eq!(UvWorkspace.generated_files(&ctx2), vec!["pyproject.toml", "uv.lock"]);
+    assert_eq!(
+        UvWorkspace.generated_files(&ctx2),
+        vec!["pyproject.toml", "uv.lock"]
+    );
 }
 
 #[test]

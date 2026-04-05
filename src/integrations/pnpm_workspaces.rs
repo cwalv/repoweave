@@ -75,6 +75,9 @@ impl Integration for PnpmWorkspaces {
         if ctx.detect_repos_with_manifest("package.json").is_empty() {
             return vec![];
         }
-        vec!["pnpm-workspace.yaml".to_string(), "pnpm-lock.yaml".to_string()]
+        vec![
+            "pnpm-workspace.yaml".to_string(),
+            "pnpm-lock.yaml".to_string(),
+        ]
     }
 }

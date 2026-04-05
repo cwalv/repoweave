@@ -69,7 +69,9 @@ pub fn render_context(ctx: &WorkspaceContext) -> String {
     out.push_str("| `rwv` | Show workspace context |\n");
     out.push_str("| `rwv resolve` | Print effective root path |\n");
     out.push_str("| `rwv activate PROJECT` | Set active project, generate ecosystem configs |\n");
-    out.push_str("| `rwv workweave PROJECT NAME` | Create a workweave (worktree-based workspace) |\n");
+    out.push_str(
+        "| `rwv workweave PROJECT NAME` | Create a workweave (worktree-based workspace) |\n",
+    );
     out.push_str("| `rwv add URL [--role ROLE]` | Add a repo to the active project |\n");
     out.push_str("| `rwv remove PATH` | Remove a repo from the active project |\n");
     out.push_str("| `rwv lock` | Snapshot repo versions to rwv.lock |\n");
@@ -136,7 +138,11 @@ fn render_integrations(out: &mut String, manifest: &Manifest) {
 }
 
 /// Render a concise directory layout.
-fn render_directory_layout(out: &mut String, ctx: &WorkspaceContext, project: Option<&ProjectName>) {
+fn render_directory_layout(
+    out: &mut String,
+    ctx: &WorkspaceContext,
+    project: Option<&ProjectName>,
+) {
     out.push_str("\n## Directory layout\n\n");
     out.push_str("```\n");
     out.push_str(&format!("{}/\n", ctx.root.display()));

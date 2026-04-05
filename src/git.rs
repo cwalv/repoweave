@@ -175,10 +175,7 @@ impl Vcs for GitVcs {
 
         match Self::run(&["symbolic-ref", "refs/remotes/origin/HEAD"], repo) {
             Ok(sym_ref) => {
-                let branch = sym_ref
-                    .strip_prefix(PREFIX)
-                    .unwrap_or(FALLBACK)
-                    .to_string();
+                let branch = sym_ref.strip_prefix(PREFIX).unwrap_or(FALLBACK).to_string();
                 Ok(RefName::new(branch))
             }
             Err(_) => Ok(RefName::new(FALLBACK)),

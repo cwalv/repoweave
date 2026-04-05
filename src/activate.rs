@@ -126,7 +126,10 @@ fn activate_at(root: &Path, project: &str, skip_missing_sources: bool) -> anyhow
         // `projects/{project}/{file}`. For nested files like `gita/repos.csv`
         // we need to prepend `../` for each directory level.
         let file_path = Path::new(file);
-        let depth = file_path.parent().map(|p| p.components().count()).unwrap_or(0);
+        let depth = file_path
+            .parent()
+            .map(|p| p.components().count())
+            .unwrap_or(0);
         let mut relative_target = std::path::PathBuf::new();
         for _ in 0..depth {
             relative_target.push("..");
@@ -189,9 +192,7 @@ fn remove_activation_symlinks_in(dir: &Path, root: &Path) -> anyhow::Result<()> 
                 // `projects/{proj}/{file}`; for nested files it's
                 // `../projects/{proj}/{dir}/{file}`. We check whether any
                 // component of the target path is `projects`.
-                let is_activation = target
-                    .components()
-                    .any(|c| c.as_os_str() == "projects");
+                let is_activation = target.components().any(|c| c.as_os_str() == "projects");
                 if is_activation {
                     std::fs::remove_file(&path)?;
                 }
@@ -199,8 +200,11 @@ fn remove_activation_symlinks_in(dir: &Path, root: &Path) -> anyhow::Result<()> 
         } else if meta.file_type().is_dir() {
             // Skip well-known workspace directories to avoid unnecessary recursion.
             if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
-                if name == "projects" || name == "github" || name == "gitlab"
-                    || name == "bitbucket" || name == ".git"
+                if name == "projects"
+                    || name == "github"
+                    || name == "gitlab"
+                    || name == "bitbucket"
+                    || name == ".git"
                 {
                     continue;
                 }

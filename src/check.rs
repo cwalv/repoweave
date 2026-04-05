@@ -140,7 +140,11 @@ pub fn violations_to_issues(violations: Vec<CheckViolation>) -> Vec<Issue> {
                         repo, locked, actual
                     ),
                 ),
-                CheckViolation::WorkweaveDrift { workweave, kind, repo } => {
+                CheckViolation::WorkweaveDrift {
+                    workweave,
+                    kind,
+                    repo,
+                } => {
                     let kind_str = match kind {
                         DriftKind::Missing => "missing worktree",
                         DriftKind::Extra => "extra worktree",
@@ -168,10 +172,10 @@ pub fn violations_to_issues(violations: Vec<CheckViolation>) -> Vec<Issue> {
 pub fn run_check(cwd: &std::path::Path) -> anyhow::Result<bool> {
     use crate::git::GitVcs;
     use crate::integration::Severity;
+    use crate::integration_runner::run_checks;
     use crate::manifest::Project;
     use crate::vcs::Vcs;
     use crate::workspace::{WorkspaceContext, WorkspaceSession};
-    use crate::integration_runner::run_checks;
 
     let ctx = WorkspaceContext::resolve(cwd, None)?;
 
@@ -209,9 +213,7 @@ pub fn run_check(cwd: &std::path::Path) -> anyhow::Result<bool> {
                 continue;
             }
             // Use relative path for Project::from_dir so project name derivation works
-            let rel_dir = project_dir
-                .strip_prefix(&ctx.root)
-                .unwrap_or(&project_dir);
+            let rel_dir = project_dir.strip_prefix(&ctx.root).unwrap_or(&project_dir);
             match Project::from_dir(&project_dir) {
                 Ok(mut project) => {
                     // Fix the project name to use relative path
@@ -228,7 +230,10 @@ pub fn run_check(cwd: &std::path::Path) -> anyhow::Result<bool> {
                     projects.push(project);
                 }
                 Err(e) => {
-                    eprintln!("warning: failed to load project at {}: {e}", project_dir.display());
+                    eprintln!(
+                        "warning: failed to load project at {}: {e}",
+                        project_dir.display()
+                    );
                 }
             }
         }
@@ -251,7 +256,10 @@ pub fn run_check(cwd: &std::path::Path) -> anyhow::Result<bool> {
         builtin.iter().map(|b| b.as_ref()).collect();
 
     for project in &input.projects {
-        let detection_cache = crate::integration_runner::build_detection_cache(&ctx.root, &project.manifest.repositories);
+        let detection_cache = crate::integration_runner::build_detection_cache(
+            &ctx.root,
+            &project.manifest.repositories,
+        );
         let ctx_base = session.context_base(&ctx.root, &project.name, &detection_cache);
         let integration_issues = run_checks(&integrations, &project.manifest, &ctx_base);
         all_issues.extend(integration_issues);

@@ -26,7 +26,12 @@ fn git(args: &[&str], dir: &Path) {
         .stderr(process::Stdio::null())
         .status()
         .expect("git should be available");
-    assert!(status.success(), "git {:?} in {} failed", args, dir.display());
+    assert!(
+        status.success(),
+        "git {:?} in {} failed",
+        args,
+        dir.display()
+    );
 }
 
 /// Create a bare git repo at `path`.
@@ -59,7 +64,10 @@ fn init_bare_repo_with_commit(path: &Path) {
         assert!(status.success(), "git {:?} failed", args);
     };
 
-    run(&["clone", &path.to_string_lossy(), &work.to_string_lossy()], tmp.path());
+    run(
+        &["clone", &path.to_string_lossy(), &work.to_string_lossy()],
+        tmp.path(),
+    );
     run(&["config", "user.email", "test@test.com"], &work);
     run(&["config", "user.name", "Test"], &work);
     std::fs::write(work.join("README"), "init").unwrap();
@@ -86,7 +94,10 @@ fn push_manifest_to_bare(bare: &Path, repos: &[(&str, &str)]) {
         assert!(status.success(), "git {:?} failed", args);
     };
 
-    run(&["clone", &bare.to_string_lossy(), &work.to_string_lossy()], tmp.path());
+    run(
+        &["clone", &bare.to_string_lossy(), &work.to_string_lossy()],
+        tmp.path(),
+    );
     run(&["config", "user.email", "test@test.com"], &work);
     run(&["config", "user.name", "Test"], &work);
 
@@ -321,8 +332,8 @@ fn add_from_local_path_infers_url() {
 
     // Verify the manifest contains the correct origin URL and repo path.
     let manifest_path = workspace.join("projects/test-project/rwv.yaml");
-    let manifest_content = std::fs::read_to_string(&manifest_path)
-        .expect("rwv.yaml should exist after add");
+    let manifest_content =
+        std::fs::read_to_string(&manifest_path).expect("rwv.yaml should exist after add");
 
     assert!(
         manifest_content.contains("github/org/repo"),
@@ -439,9 +450,11 @@ fn fetch_second_project_does_not_auto_activate() {
 
     // Verify project A is active.
     let active_path = workspace.join(".rwv-active");
-    assert!(active_path.exists(), ".rwv-active should exist after first fetch");
-    let active_after_a = std::fs::read_to_string(&active_path)
-        .expect("failed to read .rwv-active");
+    assert!(
+        active_path.exists(),
+        ".rwv-active should exist after first fetch"
+    );
+    let active_after_a = std::fs::read_to_string(&active_path).expect("failed to read .rwv-active");
     assert_eq!(
         active_after_a.trim(),
         "project-a",

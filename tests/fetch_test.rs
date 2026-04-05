@@ -45,11 +45,7 @@ fn init_bare_repo_with_commit(path: &Path) {
     };
 
     run(
-        &[
-            "clone",
-            &path.to_string_lossy(),
-            &work.to_string_lossy(),
-        ],
+        &["clone", &path.to_string_lossy(), &work.to_string_lossy()],
         tmp.path(),
     );
     run(&["config", "user.email", "test@test.com"], &work);
@@ -294,7 +290,10 @@ fn fetch_repos_at_canonical_paths() {
 
     // Repo should be at {registry}/{owner}/{repo}/ relative to workspace root.
     let repo_dir = workspace.join("local/team/dep");
-    assert!(repo_dir.exists(), "repo should be at canonical path local/team/dep");
+    assert!(
+        repo_dir.exists(),
+        "repo should be at canonical path local/team/dep"
+    );
     assert!(
         repo_dir.join(".git").exists() || repo_dir.join("HEAD").exists(),
         "canonical path should contain a git repository"
@@ -391,11 +390,13 @@ fn fetch_invalid_source_errors_clearly() {
         .current_dir(tmp.path())
         .assert()
         .failure()
-        .stderr(predicate::str::contains("error").or(predicate::str::contains("Error")).or(
-            predicate::str::contains("not found")
-                .or(predicate::str::contains("failed"))
-                .or(predicate::str::contains("could not")),
-        ));
+        .stderr(
+            predicate::str::contains("error")
+                .or(predicate::str::contains("Error"))
+                .or(predicate::str::contains("not found")
+                    .or(predicate::str::contains("failed"))
+                    .or(predicate::str::contains("could not"))),
+        );
 }
 
 #[test]
@@ -785,12 +786,11 @@ fn fetch_frozen_errors_on_missing_lock() {
         .assert()
         .failure()
         .stderr(
-            predicate::str::contains("lock")
-                .and(
-                    predicate::str::contains("missing")
-                        .or(predicate::str::contains("not found"))
-                        .or(predicate::str::contains("does not exist")),
-                ),
+            predicate::str::contains("lock").and(
+                predicate::str::contains("missing")
+                    .or(predicate::str::contains("not found"))
+                    .or(predicate::str::contains("does not exist")),
+            ),
         );
 }
 
@@ -840,10 +840,7 @@ fn fetch_frozen_errors_on_stale_lock() {
     // Manifest lists TWO repos.
     write_manifest(
         &work,
-        &[
-            ("local/team/dep", &dep_url),
-            ("local/team/dep2", &dep2_url),
-        ],
+        &[("local/team/dep", &dep_url), ("local/team/dep2", &dep2_url)],
     );
 
     // Lock only covers ONE repo — stale.

@@ -64,7 +64,6 @@ const WORKWEAVE_HOOK_COMMAND: &str = "rwv workweave --claude-hook";
 /// Workweave hook events handled by `rwv workweave --claude-hook`.
 const WORKWEAVE_HOOK_EVENTS: &[&str] = &["WorktreeCreate", "WorktreeRemove"];
 
-
 /// Resolve `~/.claude/settings.json`.
 fn claude_settings_path() -> anyhow::Result<PathBuf> {
     let home = std::env::var("HOME").context("HOME environment variable not set")?;
@@ -131,10 +130,7 @@ pub fn claude_uninstall_at(settings_path: &Path, hooks_dir: &Path) -> anyhow::Re
                 if let Some(hook_entries) = group.get_mut("hooks").and_then(|h| h.as_array_mut()) {
                     let before = hook_entries.len();
                     hook_entries.retain(|h| {
-                        let cmd = h
-                            .get("command")
-                            .and_then(|c| c.as_str())
-                            .unwrap_or("");
+                        let cmd = h.get("command").and_then(|c| c.as_str()).unwrap_or("");
                         !RWV_HOOK_COMMANDS.iter().any(|pat| cmd.contains(pat))
                     });
                     removed_count += before - hook_entries.len();
@@ -154,9 +150,7 @@ pub fn claude_uninstall_at(settings_path: &Path, hooks_dir: &Path) -> anyhow::Re
     // Remove event keys whose arrays are now empty.
     let empty_events: Vec<String> = hooks_obj
         .iter()
-        .filter(|(_, v)| {
-            v.as_array().map(|a| a.is_empty()).unwrap_or(false)
-        })
+        .filter(|(_, v)| v.as_array().map(|a| a.is_empty()).unwrap_or(false))
         .map(|(k, _)| k.clone())
         .collect();
     for key in &empty_events {
@@ -506,7 +500,10 @@ mod tests {
                     })
                     .unwrap_or(false)
             });
-            assert!(found, "{event} should contain command {WORKWEAVE_HOOK_COMMAND}");
+            assert!(
+                found,
+                "{event} should contain command {WORKWEAVE_HOOK_COMMAND}"
+            );
         }
     }
 
@@ -685,16 +682,8 @@ mod tests {
         std::fs::create_dir_all(&hooks_dir).unwrap();
 
         // Write legacy script files.
-        std::fs::write(
-            hooks_dir.join("rwv-workweave-create.sh"),
-            "#!/bin/bash\n",
-        )
-        .unwrap();
-        std::fs::write(
-            hooks_dir.join("rwv-workweave-remove.sh"),
-            "#!/bin/bash\n",
-        )
-        .unwrap();
+        std::fs::write(hooks_dir.join("rwv-workweave-create.sh"), "#!/bin/bash\n").unwrap();
+        std::fs::write(hooks_dir.join("rwv-workweave-remove.sh"), "#!/bin/bash\n").unwrap();
 
         // Settings referencing the legacy scripts via path.
         std::fs::write(

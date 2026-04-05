@@ -103,11 +103,7 @@ fn check_clean_workspace_exits_zero() {
         &[(repo_path, "https://github.com/acme/server.git")],
     );
 
-    rwv_cmd()
-        .arg("check")
-        .current_dir(&root)
-        .assert()
-        .success();
+    rwv_cmd().arg("check").current_dir(&root).assert().success();
 }
 
 // ===========================================================================
@@ -171,9 +167,7 @@ fn check_dangling_reference_reported() {
         .current_dir(&root)
         .assert()
         .failure()
-        .stdout(
-            predicate::str::contains("dangling").or(predicate::str::contains("vanished")),
-        );
+        .stdout(predicate::str::contains("dangling").or(predicate::str::contains("vanished")));
 }
 
 // ===========================================================================
@@ -245,11 +239,7 @@ fn check_multi_project_no_false_orphan() {
     );
 
     // Both repos are known across projects — no orphans expected
-    rwv_cmd()
-        .arg("check")
-        .current_dir(&root)
-        .assert()
-        .success();
+    rwv_cmd().arg("check").current_dir(&root).assert().success();
 }
 
 // ===========================================================================
@@ -304,11 +294,7 @@ integrations:
     // Even with integration hooks, a clean workspace should not error.
     // Any integration warnings should be printed but not cause failure
     // (only errors cause non-zero exit).
-    rwv_cmd()
-        .arg("check")
-        .current_dir(&root)
-        .assert()
-        .success();
+    rwv_cmd().arg("check").current_dir(&root).assert().success();
 }
 
 // ===========================================================================

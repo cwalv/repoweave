@@ -212,10 +212,7 @@ fn lock_round_trip() {
     let deserialized: LockFile = serde_yaml::from_str(&serialized).unwrap();
 
     assert_eq!(original.workweave, deserialized.workweave);
-    assert_eq!(
-        original.repositories.len(),
-        deserialized.repositories.len()
-    );
+    assert_eq!(original.repositories.len(), deserialized.repositories.len());
     for (key, orig_entry) in &original.repositories {
         let de_entry = &deserialized.repositories[key];
         assert_eq!(orig_entry.vcs_type, de_entry.vcs_type);

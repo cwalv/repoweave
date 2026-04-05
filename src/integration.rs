@@ -164,5 +164,7 @@ pub trait Integration {
 
 /// Whether an integration should run, considering its default and any override.
 pub fn is_enabled(integration: &dyn Integration, config: &IntegrationConfig) -> bool {
-    config.enabled().unwrap_or_else(|| integration.default_enabled())
+    config
+        .enabled()
+        .unwrap_or_else(|| integration.default_enabled())
 }

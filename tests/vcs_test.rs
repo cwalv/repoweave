@@ -35,10 +35,7 @@ fn git(dir: &std::path::Path, args: &[&str]) -> String {
             String::from_utf8_lossy(&output.stderr)
         );
     }
-    String::from_utf8(output.stdout)
-        .unwrap()
-        .trim()
-        .to_string()
+    String::from_utf8(output.stdout).unwrap().trim().to_string()
 }
 
 // ============================================================================
@@ -209,7 +206,10 @@ fn init_repo_creates_git_directory() {
     let vcs = GitVcs;
     vcs.init_repo(&repo_path).unwrap();
 
-    assert!(repo_path.join(".git").exists(), "should create .git directory");
+    assert!(
+        repo_path.join(".git").exists(),
+        "should create .git directory"
+    );
 }
 
 #[test]
@@ -236,7 +236,10 @@ fn init_repo_creates_nested_directories() {
     let vcs = GitVcs;
     vcs.init_repo(&repo_path).unwrap();
 
-    assert!(repo_path.join(".git").exists(), "should create nested dirs and init repo");
+    assert!(
+        repo_path.join(".git").exists(),
+        "should create nested dirs and init repo"
+    );
 }
 
 #[test]
@@ -247,5 +250,8 @@ fn init_repo_is_recognized_by_is_repo() {
     let vcs = GitVcs;
     vcs.init_repo(&repo_path).unwrap();
 
-    assert!(vcs.is_repo(&repo_path), "init_repo result should be recognized as a repo");
+    assert!(
+        vcs.is_repo(&repo_path),
+        "init_repo result should be recognized as a repo"
+    );
 }

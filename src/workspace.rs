@@ -7,9 +7,9 @@
 use crate::git::GitVcs;
 use crate::integration_runner::IntegrationContextBase;
 use crate::manifest::{Manifest, ProjectName, RepoPath, WorkweaveName};
-use serde::{Deserialize, Serialize};
 use crate::registry::{builtin_registries, Registry};
 use crate::vcs::Vcs;
+use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
 // ---------------------------------------------------------------------------
@@ -35,9 +35,7 @@ pub struct WorkspaceContext {
 pub enum WorkspaceLocation {
     /// Working in the weave directory (regular clones).
     /// The active project is inferred from CWD or `--project`.
-    Weave {
-        project: Option<ProjectName>,
-    },
+    Weave { project: Option<ProjectName> },
     /// Working in a workweave (worktrees on ephemeral branches).
     Workweave {
         name: WorkweaveName,
@@ -115,7 +113,11 @@ pub fn set_active_project(root: &Path, project: &ProjectName) -> anyhow::Result<
 /// Walks the `{registry}/{owner}/{repo}` directory structure for each
 /// registry, filters directories using `vcs.is_repo()`, and returns
 /// relative paths from `root`.
-pub fn scan_repos_on_disk(root: &Path, registries: &[Box<dyn Registry>], vcs: &dyn Vcs) -> Vec<RepoPath> {
+pub fn scan_repos_on_disk(
+    root: &Path,
+    registries: &[Box<dyn Registry>],
+    vcs: &dyn Vcs,
+) -> Vec<RepoPath> {
     let mut repos = Vec::new();
 
     for reg in registries {
@@ -243,7 +245,7 @@ impl WorkspaceSession {
 /// Pass `force = true` to skip the non-empty check entirely.
 pub fn require_workspace_or_empty(cwd: &Path, force: bool) -> anyhow::Result<()> {
     match WorkspaceContext::resolve(cwd, None) {
-        Ok(_) => return Ok(()), // existing workspace — proceed
+        Ok(_) => return Ok(()),           // existing workspace — proceed
         Err(_) if force => return Ok(()), // user passed --force
         Err(_) => {}
     }
@@ -319,9 +321,8 @@ impl WorkspaceContext {
                         .ok_or_else(|| anyhow::anyhow!("workweave directory has no parent"))?;
                     let root = parent.join(primary_name);
                     if is_workspace_root(&root) {
-                        let project = project_override.unwrap_or_else(|| {
-                            ProjectName::new(primary_name)
-                        });
+                        let project =
+                            project_override.unwrap_or_else(|| ProjectName::new(primary_name));
                         return Ok(WorkspaceContext {
                             root: root.clone(),
                             location: WorkspaceLocation::Workweave {
@@ -352,10 +353,7 @@ impl WorkspaceContext {
             }
         }
 
-        anyhow::bail!(
-            "no repoweave workspace found above {}",
-            cwd.display()
-        )
+        anyhow::bail!("no repoweave workspace found above {}", cwd.display())
     }
 
     /// Return the effective path for `rwv resolve`: the primary root or the
@@ -381,7 +379,8 @@ impl WorkspaceContext {
                 if let Some(p) = project {
                     lines.push(format!("Active project: {}", p.as_str()));
                     // Try to load manifest and show repo count
-                    let manifest_path = self.root.join("projects").join(p.as_str()).join("rwv.yaml");
+                    let manifest_path =
+                        self.root.join("projects").join(p.as_str()).join("rwv.yaml");
                     if let Ok(manifest) = Manifest::from_path(&manifest_path) {
                         lines.push(format!("Repos: {}", manifest.repositories.len()));
                     }
@@ -392,7 +391,11 @@ impl WorkspaceContext {
                 lines.push(format!("Workweave dir: {}", dir.display()));
                 lines.push(format!("Project: {}", project.as_str()));
                 // Try to load manifest and show repo count
-                let manifest_path = self.root.join("projects").join(project.as_str()).join("rwv.yaml");
+                let manifest_path = self
+                    .root
+                    .join("projects")
+                    .join(project.as_str())
+                    .join("rwv.yaml");
                 if let Ok(manifest) = Manifest::from_path(&manifest_path) {
                     lines.push(format!("Repos: {}", manifest.repositories.len()));
                 }
@@ -460,8 +463,9 @@ impl WorkweaveMarker {
         }
         let content = std::fs::read_to_string(&path)
             .map_err(|e| anyhow::anyhow!("failed to read {}: {e}", path.display()))?;
-        let marker: Self = serde_yaml::from_str(&content)
-            .map_err(|e| anyhow::anyhow!("failed to parse .rwv-workweave at {}: {e}", path.display()))?;
+        let marker: Self = serde_yaml::from_str(&content).map_err(|e| {
+            anyhow::anyhow!("failed to parse .rwv-workweave at {}: {e}", path.display())
+        })?;
         Ok(Some(marker))
     }
 
@@ -609,11 +613,8 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let root = make_workspace(tmp.path(), "ws");
 
-        let ctx = WorkspaceContext::resolve(
-            &root,
-            Some(ProjectName::new("overridden-project")),
-        )
-        .unwrap();
+        let ctx =
+            WorkspaceContext::resolve(&root, Some(ProjectName::new("overridden-project"))).unwrap();
         match &ctx.location {
             WorkspaceLocation::Weave { project } => {
                 let p = project.as_ref().expect("project should be set");
@@ -630,11 +631,8 @@ mod tests {
         let weave_dir = tmp.path().join("ws--hotfix");
         std::fs::create_dir_all(&weave_dir).unwrap();
 
-        let ctx = WorkspaceContext::resolve(
-            &weave_dir,
-            Some(ProjectName::new("custom-proj")),
-        )
-        .unwrap();
+        let ctx =
+            WorkspaceContext::resolve(&weave_dir, Some(ProjectName::new("custom-proj"))).unwrap();
         match &ctx.location {
             WorkspaceLocation::Workweave { project, .. } => {
                 assert_eq!(project.as_str(), "custom-proj");
@@ -759,7 +757,9 @@ mod tests {
         let ctx = WorkspaceContext::resolve(&root, None).unwrap();
         match &ctx.location {
             WorkspaceLocation::Weave { project } => {
-                let p = project.as_ref().expect("project should come from .rwv-active");
+                let p = project
+                    .as_ref()
+                    .expect("project should come from .rwv-active");
                 assert_eq!(p.as_str(), "web-app");
             }
             WorkspaceLocation::Workweave { .. } => panic!("expected Weave"),
@@ -780,7 +780,9 @@ mod tests {
         let ctx = WorkspaceContext::resolve(&project_dir, None).unwrap();
         match &ctx.location {
             WorkspaceLocation::Weave { project } => {
-                let p = project.as_ref().expect("project should be detected from CWD");
+                let p = project
+                    .as_ref()
+                    .expect("project should be detected from CWD");
                 assert_eq!(p.as_str(), "from-cwd");
             }
             WorkspaceLocation::Workweave { .. } => panic!("expected Weave"),
@@ -793,11 +795,8 @@ mod tests {
         let root = make_workspace(tmp.path(), "ws");
         std::fs::write(root.join(".rwv-active"), "from-file\n").unwrap();
 
-        let ctx = WorkspaceContext::resolve(
-            &root,
-            Some(ProjectName::new("explicit-override")),
-        )
-        .unwrap();
+        let ctx =
+            WorkspaceContext::resolve(&root, Some(ProjectName::new("explicit-override"))).unwrap();
         match &ctx.location {
             WorkspaceLocation::Weave { project } => {
                 let p = project.as_ref().expect("project should be set");
@@ -864,7 +863,9 @@ mod tests {
         };
         marker.write(dir).unwrap();
 
-        let read_back = WorkweaveMarker::read(dir).unwrap().expect("marker should be Some");
+        let read_back = WorkweaveMarker::read(dir)
+            .unwrap()
+            .expect("marker should be Some");
         assert_eq!(read_back.primary, marker.primary);
         assert_eq!(read_back.project.as_str(), "my-project");
     }

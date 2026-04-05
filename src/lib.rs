@@ -13,5 +13,5 @@ pub mod prime;
 pub mod registry;
 pub mod setup;
 pub mod vcs;
-pub mod workweave;
 pub mod workspace;
+pub mod workweave;

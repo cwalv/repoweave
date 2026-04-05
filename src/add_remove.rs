@@ -28,9 +28,7 @@ fn find_project_dir(ctx: &WorkspaceContext) -> anyhow::Result<std::path::PathBuf
     }
 
     let mut project_dirs: Vec<std::path::PathBuf> = Vec::new();
-    for entry in std::fs::read_dir(&projects_dir)
-        .context("failed to read projects/")?
-    {
+    for entry in std::fs::read_dir(&projects_dir).context("failed to read projects/")? {
         let entry = entry?;
         let path = entry.path();
         if path.is_dir() && path.join("rwv.yaml").exists() {
@@ -41,9 +39,7 @@ fn find_project_dir(ctx: &WorkspaceContext) -> anyhow::Result<std::path::PathBuf
     match project_dirs.len() {
         0 => bail!("no projects with rwv.yaml found under projects/"),
         1 => Ok(project_dirs.into_iter().next().unwrap()),
-        _ => bail!(
-            "multiple projects found; run from inside a project directory or use --project"
-        ),
+        _ => bail!("multiple projects found; run from inside a project directory or use --project"),
     }
 }
 
@@ -66,15 +62,15 @@ pub fn run_add(url: &str, role: Role, cwd: &Path) -> anyhow::Result<()> {
     let owned_registries = builtin_registries();
     let registry_refs: Vec<&dyn Registry> = owned_registries.iter().map(|r| r.as_ref()).collect();
 
-    let local_path = if let Some((_registry_name, _repo_id, path)) =
-        resolve_url(url, &registry_refs)
-    {
-        path
-    } else {
-        // No registry matched — try to derive a path from the URL.
-        derive_local_path_from_url(url)
-            .ok_or_else(|| anyhow::anyhow!("Error: unrecognized URL '{url}' — could not derive a local path"))?
-    };
+    let local_path =
+        if let Some((_registry_name, _repo_id, path)) = resolve_url(url, &registry_refs) {
+            path
+        } else {
+            // No registry matched — try to derive a path from the URL.
+            derive_local_path_from_url(url).ok_or_else(|| {
+                anyhow::anyhow!("Error: unrecognized URL '{url}' — could not derive a local path")
+            })?
+        };
 
     let repo_path = RepoPath::new(local_path.to_string_lossy().to_string());
 
@@ -214,10 +210,7 @@ pub fn run_remove(path: &str, delete: bool, force: bool, cwd: &Path) -> anyhow::
         .with_context(|| format!("failed to load manifest at {}", manifest_path.display()))?;
 
     if manifest.repositories.remove(&repo_path).is_none() {
-        bail!(
-            "Error: path '{}' not found in manifest",
-            repo_path.as_str()
-        );
+        bail!("Error: path '{}' not found in manifest", repo_path.as_str());
     }
 
     // Before writing anything, check for cross-project references when --delete
@@ -226,11 +219,8 @@ pub fn run_remove(path: &str, delete: bool, force: bool, cwd: &Path) -> anyhow::
     if delete {
         let repo_dir = ctx.root.join(repo_path.as_path());
         if repo_dir.exists() {
-            let referencing_projects = find_other_projects_referencing(
-                &ctx.root,
-                &project_dir,
-                &repo_path,
-            );
+            let referencing_projects =
+                find_other_projects_referencing(&ctx.root, &project_dir, &repo_path);
 
             if !referencing_projects.is_empty() {
                 for proj in &referencing_projects {
@@ -255,9 +245,8 @@ pub fn run_remove(path: &str, delete: bool, force: bool, cwd: &Path) -> anyhow::
     if delete {
         let repo_dir = ctx.root.join(repo_path.as_path());
         if repo_dir.exists() {
-            std::fs::remove_dir_all(&repo_dir).with_context(|| {
-                format!("failed to delete directory {}", repo_dir.display())
-            })?;
+            std::fs::remove_dir_all(&repo_dir)
+                .with_context(|| format!("failed to delete directory {}", repo_dir.display()))?;
             eprintln!("Deleted '{}'", repo_dir.display());
         }
     }
@@ -289,13 +278,12 @@ pub fn run_add_new(path_arg: &str, cwd: &Path) -> anyhow::Result<()> {
     let owned_registries = builtin_registries();
     let registry_refs: Vec<&dyn Registry> = owned_registries.iter().map(|r| r.as_ref()).collect();
 
-    let url = infer_url_from_path(path_arg, &registry_refs)
-        .ok_or_else(|| {
-            anyhow::anyhow!(
-                "Error: could not infer a URL from path '{}' — no matching registry",
-                path_arg
-            )
-        })?;
+    let url = infer_url_from_path(path_arg, &registry_refs).ok_or_else(|| {
+        anyhow::anyhow!(
+            "Error: could not infer a URL from path '{}' — no matching registry",
+            path_arg
+        )
+    })?;
 
     let repo_path = RepoPath::new(path_arg);
 

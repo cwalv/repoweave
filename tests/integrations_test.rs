@@ -7,7 +7,6 @@
 //! 4. Deactivation cleanup
 //! 5. Check warnings (e.g., missing tools)
 
-use std::collections::HashMap;
 use repoweave::integration::{Integration, IntegrationContext, Severity};
 use repoweave::integrations::*;
 use repoweave::manifest::{
@@ -15,6 +14,7 @@ use repoweave::manifest::{
 };
 use repoweave::vcs::RefName;
 use std::collections::BTreeMap;
+use std::collections::HashMap;
 use std::path::Path;
 use tempfile::TempDir;
 
@@ -30,7 +30,10 @@ fn make_manifest(repos: Vec<(&str, Role)>) -> Manifest {
             RepoPath::new(path),
             RepoEntry {
                 vcs_type: VcsType::Git,
-                url: format!("https://github.com/test/{}.git", path.split('/').last().unwrap()),
+                url: format!(
+                    "https://github.com/test/{}.git",
+                    path.split('/').last().unwrap()
+                ),
                 version: RefName::new("main"),
                 role,
             },
@@ -107,7 +110,7 @@ mod npm_workspaces {
         let project = ProjectName::new("test-project");
         let config = IntegrationConfig::default();
         let cache = HashMap::new();
-    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+        let ctx = make_ctx(root, &project, &manifest, &config, &cache);
 
         let integration = NpmWorkspaces;
         integration.activate(&ctx).unwrap();
@@ -139,7 +142,7 @@ mod npm_workspaces {
         let project = ProjectName::new("test-project");
         let config = IntegrationConfig::default();
         let cache = HashMap::new();
-    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+        let ctx = make_ctx(root, &project, &manifest, &config, &cache);
 
         let integration = NpmWorkspaces;
         integration.activate(&ctx).unwrap();
@@ -171,7 +174,7 @@ mod npm_workspaces {
         let project = ProjectName::new("test-project");
         let config = IntegrationConfig::default();
         let cache = HashMap::new();
-    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+        let ctx = make_ctx(root, &project, &manifest, &config, &cache);
 
         let integration = NpmWorkspaces;
         integration.activate(&ctx).unwrap();
@@ -229,7 +232,7 @@ mod npm_workspaces {
         let project = ProjectName::new("test-project");
         let config = IntegrationConfig::default();
         let cache = HashMap::new();
-    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+        let ctx = make_ctx(root, &project, &manifest, &config, &cache);
 
         let integration = NpmWorkspaces;
         let issues = integration.check(&ctx).unwrap();
@@ -237,8 +240,9 @@ mod npm_workspaces {
         // but we can verify the check runs without error.
         // If npm is not on PATH, there should be a warning.
         if which::which("npm").is_err() {
-            assert!(issues.iter().any(|i| i.severity == Severity::Warning
-                && i.message.contains("npm")));
+            assert!(issues
+                .iter()
+                .any(|i| i.severity == Severity::Warning && i.message.contains("npm")));
         } else {
             assert!(issues.is_empty());
         }
@@ -269,7 +273,7 @@ mod pnpm_workspaces {
         let project = ProjectName::new("test-project");
         let config = IntegrationConfig::default();
         let cache = HashMap::new();
-    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+        let ctx = make_ctx(root, &project, &manifest, &config, &cache);
 
         let integration = PnpmWorkspaces;
         integration.activate(&ctx).unwrap();
@@ -297,7 +301,7 @@ mod pnpm_workspaces {
         let project = ProjectName::new("test-project");
         let config = IntegrationConfig::default();
         let cache = HashMap::new();
-    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+        let ctx = make_ctx(root, &project, &manifest, &config, &cache);
 
         let integration = PnpmWorkspaces;
         integration.activate(&ctx).unwrap();
@@ -322,7 +326,7 @@ mod pnpm_workspaces {
         let project = ProjectName::new("test-project");
         let config = IntegrationConfig::default();
         let cache = HashMap::new();
-    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+        let ctx = make_ctx(root, &project, &manifest, &config, &cache);
 
         let integration = PnpmWorkspaces;
         integration.activate(&ctx).unwrap();
@@ -356,13 +360,14 @@ mod pnpm_workspaces {
         let project = ProjectName::new("test-project");
         let config = IntegrationConfig::default();
         let cache = HashMap::new();
-    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+        let ctx = make_ctx(root, &project, &manifest, &config, &cache);
 
         let integration = PnpmWorkspaces;
         let issues = integration.check(&ctx).unwrap();
         if which::which("pnpm").is_err() {
-            assert!(issues.iter().any(|i| i.severity == Severity::Warning
-                && i.message.contains("pnpm")));
+            assert!(issues
+                .iter()
+                .any(|i| i.severity == Severity::Warning && i.message.contains("pnpm")));
         } else {
             assert!(issues.is_empty());
         }
@@ -393,7 +398,7 @@ mod go_work {
         let project = ProjectName::new("test-project");
         let config = IntegrationConfig::default();
         let cache = HashMap::new();
-    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+        let ctx = make_ctx(root, &project, &manifest, &config, &cache);
 
         let integration = GoWork;
         integration.activate(&ctx).unwrap();
@@ -419,13 +424,14 @@ mod go_work {
         let project = ProjectName::new("test-project");
         let config = IntegrationConfig::default();
         let cache = HashMap::new();
-    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+        let ctx = make_ctx(root, &project, &manifest, &config, &cache);
 
         let integration = GoWork;
         integration.activate(&ctx).unwrap();
 
         let content = std::fs::read_to_string(root.join("go.work")).unwrap();
-        let expected = "go 1.21\n\nuse (\n    ./github/chatly/protocol\n    ./github/chatly/server\n)\n";
+        let expected =
+            "go 1.21\n\nuse (\n    ./github/chatly/protocol\n    ./github/chatly/server\n)\n";
         assert_eq!(content, expected);
     }
 
@@ -444,7 +450,7 @@ mod go_work {
         let project = ProjectName::new("test-project");
         let config = IntegrationConfig::default();
         let cache = HashMap::new();
-    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+        let ctx = make_ctx(root, &project, &manifest, &config, &cache);
 
         let integration = GoWork;
         integration.activate(&ctx).unwrap();
@@ -478,13 +484,14 @@ mod go_work {
         let project = ProjectName::new("test-project");
         let config = IntegrationConfig::default();
         let cache = HashMap::new();
-    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+        let ctx = make_ctx(root, &project, &manifest, &config, &cache);
 
         let integration = GoWork;
         let issues = integration.check(&ctx).unwrap();
         if which::which("go").is_err() {
-            assert!(issues.iter().any(|i| i.severity == Severity::Warning
-                && i.message.contains("go")));
+            assert!(issues
+                .iter()
+                .any(|i| i.severity == Severity::Warning && i.message.contains("go")));
         } else {
             assert!(issues.is_empty());
         }
@@ -515,7 +522,7 @@ mod uv_workspace {
         let project = ProjectName::new("test-project");
         let config = IntegrationConfig::default();
         let cache = HashMap::new();
-    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+        let ctx = make_ctx(root, &project, &manifest, &config, &cache);
 
         let integration = UvWorkspace;
         integration.activate(&ctx).unwrap();
@@ -541,7 +548,7 @@ mod uv_workspace {
         let project = ProjectName::new("test-project");
         let config = IntegrationConfig::default();
         let cache = HashMap::new();
-    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+        let ctx = make_ctx(root, &project, &manifest, &config, &cache);
 
         let integration = UvWorkspace;
         integration.activate(&ctx).unwrap();
@@ -568,7 +575,7 @@ mod uv_workspace {
         let project = ProjectName::new("test-project");
         let config = IntegrationConfig::default();
         let cache = HashMap::new();
-    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+        let ctx = make_ctx(root, &project, &manifest, &config, &cache);
 
         let integration = UvWorkspace;
         integration.activate(&ctx).unwrap();
@@ -624,13 +631,14 @@ mod uv_workspace {
         let project = ProjectName::new("test-project");
         let config = IntegrationConfig::default();
         let cache = HashMap::new();
-    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+        let ctx = make_ctx(root, &project, &manifest, &config, &cache);
 
         let integration = UvWorkspace;
         let issues = integration.check(&ctx).unwrap();
         if which::which("uv").is_err() {
-            assert!(issues.iter().any(|i| i.severity == Severity::Warning
-                && i.message.contains("uv")));
+            assert!(issues
+                .iter()
+                .any(|i| i.severity == Severity::Warning && i.message.contains("uv")));
         } else {
             assert!(issues.is_empty());
         }
@@ -661,7 +669,7 @@ mod cargo_workspace {
         let project = ProjectName::new("test-project");
         let config = IntegrationConfig::default();
         let cache = HashMap::new();
-    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+        let ctx = make_ctx(root, &project, &manifest, &config, &cache);
 
         let integration = CargoWorkspace;
         integration.activate(&ctx).unwrap();
@@ -687,7 +695,7 @@ mod cargo_workspace {
         let project = ProjectName::new("test-project");
         let config = IntegrationConfig::default();
         let cache = HashMap::new();
-    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+        let ctx = make_ctx(root, &project, &manifest, &config, &cache);
 
         let integration = CargoWorkspace;
         integration.activate(&ctx).unwrap();
@@ -715,7 +723,7 @@ mod cargo_workspace {
         let project = ProjectName::new("test-project");
         let config = IntegrationConfig::default();
         let cache = HashMap::new();
-    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+        let ctx = make_ctx(root, &project, &manifest, &config, &cache);
 
         let integration = CargoWorkspace;
         integration.activate(&ctx).unwrap();
@@ -772,13 +780,14 @@ mod cargo_workspace {
         let project = ProjectName::new("test-project");
         let config = IntegrationConfig::default();
         let cache = HashMap::new();
-    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+        let ctx = make_ctx(root, &project, &manifest, &config, &cache);
 
         let integration = CargoWorkspace;
         let issues = integration.check(&ctx).unwrap();
         if which::which("cargo").is_err() {
-            assert!(issues.iter().any(|i| i.severity == Severity::Warning
-                && i.message.contains("cargo")));
+            assert!(issues
+                .iter()
+                .any(|i| i.severity == Severity::Warning && i.message.contains("cargo")));
         } else {
             assert!(issues.is_empty());
         }
@@ -805,7 +814,7 @@ mod gita {
         let project = ProjectName::new("test-project");
         let config = IntegrationConfig::default();
         let cache = HashMap::new();
-    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+        let ctx = make_ctx(root, &project, &manifest, &config, &cache);
 
         let integration = Gita;
         integration.activate(&ctx).unwrap();
@@ -828,7 +837,7 @@ mod gita {
         let project = ProjectName::new("test-project");
         let config = IntegrationConfig::default();
         let cache = HashMap::new();
-    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+        let ctx = make_ctx(root, &project, &manifest, &config, &cache);
 
         let integration = Gita;
         integration.activate(&ctx).unwrap();
@@ -863,7 +872,7 @@ mod gita {
         let project = ProjectName::new("test-project");
         let config = IntegrationConfig::default();
         let cache = HashMap::new();
-    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+        let ctx = make_ctx(root, &project, &manifest, &config, &cache);
 
         let integration = Gita;
         integration.activate(&ctx).unwrap();
@@ -886,7 +895,7 @@ mod gita {
         let project = ProjectName::new("test-project");
         let config = IntegrationConfig::default();
         let cache = HashMap::new();
-    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+        let ctx = make_ctx(root, &project, &manifest, &config, &cache);
 
         let integration = Gita;
         integration.activate(&ctx).unwrap();
@@ -921,9 +930,7 @@ mod gita {
         let weave_tmp = TempDir::new().unwrap();
         let output_dir = weave_tmp.path();
 
-        let manifest = make_manifest(vec![
-            ("github/acme/server", Role::Primary),
-        ]);
+        let manifest = make_manifest(vec![("github/acme/server", Role::Primary)]);
         let project = ProjectName::new("test-project");
         let config = IntegrationConfig::default();
         let cache = HashMap::new();
@@ -972,13 +979,14 @@ mod gita {
         let project = ProjectName::new("test-project");
         let config = IntegrationConfig::default();
         let cache = HashMap::new();
-    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+        let ctx = make_ctx(root, &project, &manifest, &config, &cache);
 
         let integration = Gita;
         let issues = integration.check(&ctx).unwrap();
         if which::which("gita").is_err() {
-            assert!(issues.iter().any(|i| i.severity == Severity::Warning
-                && i.message.contains("gita")));
+            assert!(issues
+                .iter()
+                .any(|i| i.severity == Severity::Warning && i.message.contains("gita")));
         } else {
             assert!(issues.is_empty());
         }
@@ -1005,7 +1013,7 @@ mod vscode_workspace {
         let project = ProjectName::new("test-project");
         let config = IntegrationConfig::default();
         let cache = HashMap::new();
-    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+        let ctx = make_ctx(root, &project, &manifest, &config, &cache);
 
         let integration = VscodeWorkspace;
         integration.activate(&ctx).unwrap();
@@ -1024,7 +1032,7 @@ mod vscode_workspace {
         let project = ProjectName::new("web-app");
         let config = IntegrationConfig::default();
         let cache = HashMap::new();
-    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+        let ctx = make_ctx(root, &project, &manifest, &config, &cache);
 
         let integration = VscodeWorkspace;
         integration.activate(&ctx).unwrap();
@@ -1037,7 +1045,10 @@ mod vscode_workspace {
         assert_eq!(folders[0]["path"], ".");
         assert_eq!(folders[0]["name"], "web-app (primary)");
 
-        assert_eq!(parsed["settings"]["git.autoRepositoryDetection"], "subFolders");
+        assert_eq!(
+            parsed["settings"]["git.autoRepositoryDetection"],
+            "subFolders"
+        );
         assert_eq!(parsed["settings"]["git.repositoryScanMaxDepth"], 3);
 
         // Should include the generated marker so deactivate can identify it.
@@ -1053,7 +1064,7 @@ mod vscode_workspace {
         let project = ProjectName::new("my-project");
         let config = IntegrationConfig::default();
         let cache = HashMap::new();
-    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+        let ctx = make_ctx(root, &project, &manifest, &config, &cache);
 
         let integration = VscodeWorkspace;
         integration.activate(&ctx).unwrap();
@@ -1086,7 +1097,7 @@ mod vscode_workspace {
         let project = ProjectName::new("test-project");
         let config = IntegrationConfig::default();
         let cache = HashMap::new();
-    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+        let ctx = make_ctx(root, &project, &manifest, &config, &cache);
 
         let integration = VscodeWorkspace;
         integration.activate(&ctx).unwrap();
@@ -1099,12 +1110,17 @@ mod vscode_workspace {
         assert_eq!(folders[0]["name"], "test-project (primary)");
 
         // Managed settings should be updated
-        assert_eq!(parsed["settings"]["git.autoRepositoryDetection"], "subFolders");
+        assert_eq!(
+            parsed["settings"]["git.autoRepositoryDetection"],
+            "subFolders"
+        );
         assert_eq!(parsed["settings"]["git.repositoryScanMaxDepth"], 3);
 
         // User customizations should survive
         assert_eq!(parsed["settings"]["editor.fontSize"], 14);
-        assert!(parsed["extensions"]["recommendations"].as_array().unwrap()
+        assert!(parsed["extensions"]["recommendations"]
+            .as_array()
+            .unwrap()
             .contains(&serde_json::json!("rust-analyzer")));
     }
 
@@ -1156,12 +1172,13 @@ mod vscode_workspace {
         let project = ProjectName::new("test-project");
         let config = IntegrationConfig::default();
         let cache = HashMap::new();
-    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+        let ctx = make_ctx(root, &project, &manifest, &config, &cache);
 
         let integration = VscodeWorkspace;
         let issues = integration.check(&ctx).unwrap();
-        assert!(issues.iter().any(|i| i.severity == Severity::Warning
-            && i.message.contains("code-workspace")));
+        assert!(issues
+            .iter()
+            .any(|i| i.severity == Severity::Warning && i.message.contains("code-workspace")));
     }
 
     #[test]
@@ -1194,8 +1211,7 @@ mod vscode_workspace {
 
         VscodeWorkspace.activate(&ctx).unwrap();
 
-        let content =
-            std::fs::read_to_string(root.join("test-project.code-workspace")).unwrap();
+        let content = std::fs::read_to_string(root.join("test-project.code-workspace")).unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
 
         let exclude = &parsed["settings"]["files.exclude"];
@@ -1217,8 +1233,7 @@ mod vscode_workspace {
         let project = ProjectName::new("proj-a");
         let config = IntegrationConfig::default();
 
-        let all_repos_on_disk: Vec<RepoPath> =
-            vec![RepoPath::new("github/acme/server")];
+        let all_repos_on_disk: Vec<RepoPath> = vec![RepoPath::new("github/acme/server")];
         let all_project_paths = vec!["proj-a".to_string(), "proj-b".to_string()];
 
         let ctx = IntegrationContext {
@@ -1253,12 +1268,11 @@ mod vscode_workspace {
         let project = ProjectName::new("test-project");
         let config = IntegrationConfig::default();
         let cache = HashMap::new();
-    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+        let ctx = make_ctx(root, &project, &manifest, &config, &cache);
 
         VscodeWorkspace.activate(&ctx).unwrap();
 
-        let content =
-            std::fs::read_to_string(root.join("test-project.code-workspace")).unwrap();
+        let content = std::fs::read_to_string(root.join("test-project.code-workspace")).unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
 
         assert_eq!(
@@ -1277,12 +1291,11 @@ mod vscode_workspace {
         let project = ProjectName::new("test-project");
         let config = IntegrationConfig::from_yaml("hide-dotfiles: false");
         let cache = HashMap::new();
-    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+        let ctx = make_ctx(root, &project, &manifest, &config, &cache);
 
         VscodeWorkspace.activate(&ctx).unwrap();
 
-        let content =
-            std::fs::read_to_string(root.join("test-project.code-workspace")).unwrap();
+        let content = std::fs::read_to_string(root.join("test-project.code-workspace")).unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
 
         assert!(
@@ -1322,8 +1335,7 @@ mod vscode_workspace {
 
         VscodeWorkspace.activate(&ctx).unwrap();
 
-        let content =
-            std::fs::read_to_string(root.join("test-project.code-workspace")).unwrap();
+        let content = std::fs::read_to_string(root.join("test-project.code-workspace")).unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
         let exclude = &parsed["settings"]["files.exclude"];
 
@@ -1369,7 +1381,7 @@ mod lock_hooks {
         let project = ProjectName::new("test-project");
         let config = IntegrationConfig::default();
         let cache = HashMap::new();
-    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+        let ctx = make_ctx(root, &project, &manifest, &config, &cache);
 
         // Activate first so the root package.json exists
         let integration = NpmWorkspaces;
@@ -1390,7 +1402,10 @@ mod lock_hooks {
             );
         } else {
             // When npm is not on PATH, the lock hook should fail gracefully
-            assert!(result.is_err(), "npm lock hook should fail when npm is not available");
+            assert!(
+                result.is_err(),
+                "npm lock hook should fail when npm is not available"
+            );
         }
     }
 
@@ -1404,11 +1419,14 @@ mod lock_hooks {
         let project = ProjectName::new("test-project");
         let config = IntegrationConfig::default();
         let cache = HashMap::new();
-    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+        let ctx = make_ctx(root, &project, &manifest, &config, &cache);
 
         let integration = NpmWorkspaces;
         let result = integration.lock(&ctx);
-        assert!(result.is_ok(), "npm lock should be no-op when no repos detected");
+        assert!(
+            result.is_ok(),
+            "npm lock should be no-op when no repos detected"
+        );
         assert!(
             !root.join("package-lock.json").exists(),
             "no package-lock.json should be created when no repos detected"
@@ -1436,7 +1454,7 @@ mod lock_hooks {
         let project = ProjectName::new("test-project");
         let config = IntegrationConfig::default();
         let cache = HashMap::new();
-    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+        let ctx = make_ctx(root, &project, &manifest, &config, &cache);
 
         // Activate first so the root Cargo.toml workspace exists
         let integration = CargoWorkspace;
@@ -1456,7 +1474,10 @@ mod lock_hooks {
                 "cargo lock hook should create Cargo.lock"
             );
         } else {
-            assert!(result.is_err(), "cargo lock hook should fail when cargo is not available");
+            assert!(
+                result.is_err(),
+                "cargo lock hook should fail when cargo is not available"
+            );
         }
     }
 
@@ -1470,11 +1491,14 @@ mod lock_hooks {
         let project = ProjectName::new("test-project");
         let config = IntegrationConfig::default();
         let cache = HashMap::new();
-    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+        let ctx = make_ctx(root, &project, &manifest, &config, &cache);
 
         let integration = CargoWorkspace;
         let result = integration.lock(&ctx);
-        assert!(result.is_ok(), "cargo lock should be no-op when no repos detected");
+        assert!(
+            result.is_ok(),
+            "cargo lock should be no-op when no repos detected"
+        );
         assert!(
             !root.join("Cargo.lock").exists(),
             "no Cargo.lock should be created when no repos detected"
@@ -1501,7 +1525,7 @@ mod lock_hooks {
         let project = ProjectName::new("test-project");
         let config = IntegrationConfig::default();
         let cache = HashMap::new();
-    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+        let ctx = make_ctx(root, &project, &manifest, &config, &cache);
 
         // Activate first so the root pyproject.toml exists
         let integration = UvWorkspace;
@@ -1521,7 +1545,10 @@ mod lock_hooks {
                 "uv lock hook should create uv.lock"
             );
         } else {
-            assert!(result.is_err(), "uv lock hook should fail when uv is not available");
+            assert!(
+                result.is_err(),
+                "uv lock hook should fail when uv is not available"
+            );
         }
     }
 
@@ -1535,11 +1562,14 @@ mod lock_hooks {
         let project = ProjectName::new("test-project");
         let config = IntegrationConfig::default();
         let cache = HashMap::new();
-    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+        let ctx = make_ctx(root, &project, &manifest, &config, &cache);
 
         let integration = UvWorkspace;
         let result = integration.lock(&ctx);
-        assert!(result.is_ok(), "uv lock should be no-op when no repos detected");
+        assert!(
+            result.is_ok(),
+            "uv lock should be no-op when no repos detected"
+        );
         assert!(
             !root.join("uv.lock").exists(),
             "no uv.lock should be created when no repos detected"
@@ -1566,7 +1596,7 @@ mod lock_hooks {
         let project = ProjectName::new("test-project");
         let config = IntegrationConfig::from_yaml("enabled: true");
         let cache = HashMap::new();
-    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+        let ctx = make_ctx(root, &project, &manifest, &config, &cache);
 
         // Activate first so the pnpm-workspace.yaml exists
         let integration = PnpmWorkspaces;
@@ -1586,7 +1616,10 @@ mod lock_hooks {
                 "pnpm lock hook should create pnpm-lock.yaml"
             );
         } else {
-            assert!(result.is_err(), "pnpm lock hook should fail when pnpm is not available");
+            assert!(
+                result.is_err(),
+                "pnpm lock hook should fail when pnpm is not available"
+            );
         }
     }
 
@@ -1600,11 +1633,14 @@ mod lock_hooks {
         let project = ProjectName::new("test-project");
         let config = IntegrationConfig::from_yaml("enabled: true");
         let cache = HashMap::new();
-    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+        let ctx = make_ctx(root, &project, &manifest, &config, &cache);
 
         let integration = PnpmWorkspaces;
         let result = integration.lock(&ctx);
-        assert!(result.is_ok(), "pnpm lock should be no-op when no repos detected");
+        assert!(
+            result.is_ok(),
+            "pnpm lock should be no-op when no repos detected"
+        );
         assert!(
             !root.join("pnpm-lock.yaml").exists(),
             "no pnpm-lock.yaml should be created when no repos detected"
@@ -1626,7 +1662,7 @@ mod lock_hooks {
         let project = ProjectName::new("test-project");
         let config = IntegrationConfig::default();
         let cache = HashMap::new();
-    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+        let ctx = make_ctx(root, &project, &manifest, &config, &cache);
 
         let integration = GoWork;
         let result = integration.lock(&ctx);
@@ -1651,7 +1687,7 @@ mod lock_hooks {
         let project = ProjectName::new("test-project");
         let config = IntegrationConfig::default();
         let cache = HashMap::new();
-    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+        let ctx = make_ctx(root, &project, &manifest, &config, &cache);
 
         let integration = Gita;
         let result = integration.lock(&ctx);
@@ -1671,7 +1707,7 @@ mod lock_hooks {
         let project = ProjectName::new("test-project");
         let config = IntegrationConfig::default();
         let cache = HashMap::new();
-    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+        let ctx = make_ctx(root, &project, &manifest, &config, &cache);
 
         let integration = VscodeWorkspace;
         let result = integration.lock(&ctx);
@@ -1709,7 +1745,7 @@ mod static_files {
             "enabled: true\nfiles: [turbo.json, .eslintrc.json, .prettierrc]",
         );
         let cache = HashMap::new();
-    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+        let ctx = make_ctx(root, &project, &manifest, &config, &cache);
 
         let integration = StaticFiles;
         let files = integration.generated_files(&ctx);
@@ -1725,7 +1761,7 @@ mod static_files {
         let project = ProjectName::new("test-project");
         let config = IntegrationConfig::from_yaml("enabled: true");
         let cache = HashMap::new();
-    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+        let ctx = make_ctx(root, &project, &manifest, &config, &cache);
 
         let integration = StaticFiles;
         let files = integration.generated_files(&ctx);
@@ -1743,9 +1779,10 @@ mod static_files {
 
         let manifest = make_manifest(vec![("github/acme/server", Role::Primary)]);
         let project = ProjectName::new("test-project");
-        let config = IntegrationConfig::from_yaml("enabled: true\nfiles: [turbo.json, .eslintrc.json]");
+        let config =
+            IntegrationConfig::from_yaml("enabled: true\nfiles: [turbo.json, .eslintrc.json]");
         let cache = HashMap::new();
-    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+        let ctx = make_ctx(root, &project, &manifest, &config, &cache);
 
         let integration = StaticFiles;
         let result = integration.activate(&ctx);
@@ -1762,11 +1799,14 @@ mod static_files {
         let project = ProjectName::new("test-project");
         let config = IntegrationConfig::from_yaml("enabled: true\nfiles: [turbo.json]");
         let cache = HashMap::new();
-    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+        let ctx = make_ctx(root, &project, &manifest, &config, &cache);
 
         let integration = StaticFiles;
         let result = integration.activate(&ctx);
-        assert!(result.is_ok(), "activate should succeed even with missing files");
+        assert!(
+            result.is_ok(),
+            "activate should succeed even with missing files"
+        );
     }
 
     #[test]
@@ -1779,9 +1819,10 @@ mod static_files {
 
         let manifest = make_manifest(vec![("github/acme/server", Role::Primary)]);
         let project = ProjectName::new("test-project");
-        let config = IntegrationConfig::from_yaml("enabled: true\nfiles: [turbo.json, .eslintrc.json]");
+        let config =
+            IntegrationConfig::from_yaml("enabled: true\nfiles: [turbo.json, .eslintrc.json]");
         let cache = HashMap::new();
-    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+        let ctx = make_ctx(root, &project, &manifest, &config, &cache);
 
         let integration = StaticFiles;
         let issues = integration.check(&ctx).unwrap();
@@ -1801,9 +1842,10 @@ mod static_files {
 
         let manifest = make_manifest(vec![("github/acme/server", Role::Primary)]);
         let project = ProjectName::new("test-project");
-        let config = IntegrationConfig::from_yaml("enabled: true\nfiles: [turbo.json, .prettierrc]");
+        let config =
+            IntegrationConfig::from_yaml("enabled: true\nfiles: [turbo.json, .prettierrc]");
         let cache = HashMap::new();
-    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+        let ctx = make_ctx(root, &project, &manifest, &config, &cache);
 
         let integration = StaticFiles;
         let issues = integration.check(&ctx).unwrap();
@@ -1819,7 +1861,7 @@ mod static_files {
         let project = ProjectName::new("test-project");
         let config = IntegrationConfig::from_yaml("enabled: true");
         let cache = HashMap::new();
-    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+        let ctx = make_ctx(root, &project, &manifest, &config, &cache);
 
         let integration = StaticFiles;
         let issues = integration.check(&ctx).unwrap();
@@ -1845,7 +1887,7 @@ mod static_files {
         let project = ProjectName::new("test-project");
         let config = IntegrationConfig::from_yaml("enabled: true\nfiles: [turbo.json]");
         let cache = HashMap::new();
-    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+        let ctx = make_ctx(root, &project, &manifest, &config, &cache);
 
         let integration = StaticFiles;
         let result = integration.lock(&ctx);

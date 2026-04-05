@@ -164,7 +164,10 @@ fn workweave_sync_adds_new_repo() {
         .success();
 
     let ww_dir = weaveroot.join("ws--feat");
-    assert!(ww_dir.exists(), "workweave directory should exist after create");
+    assert!(
+        ww_dir.exists(),
+        "workweave directory should exist after create"
+    );
 
     // Create the second code repo in the primary weave (so the worktree source
     // exists when sync tries to add it).

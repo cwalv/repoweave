@@ -37,7 +37,10 @@ pub fn collapse_excludes(excluded: &HashSet<String>, all_repos: &[String]) -> Ve
         let parts: Vec<&str> = repo.splitn(3, '/').collect();
         if parts.len() >= 2 {
             let owner = format!("{}/{}", parts[0], parts[1]);
-            repos_by_owner.entry(owner).or_default().insert(repo.clone());
+            repos_by_owner
+                .entry(owner)
+                .or_default()
+                .insert(repo.clone());
         }
     }
 
@@ -122,11 +125,8 @@ impl Integration for VscodeWorkspace {
         //   - Repos on disk that are not in this project (collapsed)
         //   - Other project directories
         //   - Optionally dotfiles
-        let active_repo_set: HashSet<String> = ctx
-            .repos
-            .keys()
-            .map(|rp| rp.as_str().to_string())
-            .collect();
+        let active_repo_set: HashSet<String> =
+            ctx.repos.keys().map(|rp| rp.as_str().to_string()).collect();
 
         let all_repos_on_disk: Vec<String> = ctx
             .all_repos_on_disk
@@ -205,8 +205,7 @@ impl Integration for VscodeWorkspace {
                 }
                 if let Ok(content) = std::fs::read_to_string(&path) {
                     if let Ok(val) = serde_json::from_str::<serde_json::Value>(&content) {
-                        if val.get(GENERATED_MARKER_KEY).and_then(|v| v.as_bool()) == Some(true)
-                        {
+                        if val.get(GENERATED_MARKER_KEY).and_then(|v| v.as_bool()) == Some(true) {
                             std::fs::remove_file(path)?;
                         }
                     }
@@ -259,11 +258,7 @@ mod tests {
     #[test]
     fn collapse_all_repos_under_owner() {
         // All repos under github/acme are excluded → collapse to owner.
-        let all = all_repos(&[
-            "github/acme/server",
-            "github/acme/web",
-            "github/chatly/api",
-        ]);
+        let all = all_repos(&["github/acme/server", "github/acme/web", "github/chatly/api"]);
         let excluded = set(&["github/acme/server", "github/acme/web"]);
         let result = collapse_excludes(&excluded, &all);
         assert_eq!(result, vec!["github/acme"]);
@@ -272,11 +267,7 @@ mod tests {
     #[test]
     fn no_collapse_for_mixed_owner() {
         // Only some repos under github/acme are excluded → list individually.
-        let all = all_repos(&[
-            "github/acme/server",
-            "github/acme/web",
-            "github/acme/docs",
-        ]);
+        let all = all_repos(&["github/acme/server", "github/acme/web", "github/acme/docs"]);
         let excluded = set(&["github/acme/server", "github/acme/web"]);
         let result = collapse_excludes(&excluded, &all);
         assert_eq!(result, vec!["github/acme/server", "github/acme/web"]);
@@ -285,11 +276,7 @@ mod tests {
     #[test]
     fn collapse_all_owners_under_registry() {
         // All repos under github/ are excluded → collapse to registry.
-        let all = all_repos(&[
-            "github/acme/server",
-            "github/acme/web",
-            "github/chatly/api",
-        ]);
+        let all = all_repos(&["github/acme/server", "github/acme/web", "github/chatly/api"]);
         let excluded = set(&["github/acme/server", "github/acme/web", "github/chatly/api"]);
         let result = collapse_excludes(&excluded, &all);
         assert_eq!(result, vec!["github"]);
@@ -304,11 +291,7 @@ mod tests {
             "github/chatly/api",
             "github/chatly/frontend",
         ]);
-        let excluded = set(&[
-            "github/acme/server",
-            "github/acme/web",
-            "github/chatly/api",
-        ]);
+        let excluded = set(&["github/acme/server", "github/acme/web", "github/chatly/api"]);
         let mut result = collapse_excludes(&excluded, &all);
         result.sort();
         assert!(result.contains(&"github/acme".to_string()));

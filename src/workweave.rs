@@ -104,12 +104,7 @@ pub fn create_workweave(
                 std::fs::create_dir_all(parent_dir)?;
             }
 
-            vcs.create_worktree(
-                &repo_abs,
-                &worktree_dest,
-                &ephemeral_branch,
-                head.as_str(),
-            )?;
+            vcs.create_worktree(&repo_abs, &worktree_dest, &ephemeral_branch, head.as_str())?;
 
             Ok(())
         })();
@@ -124,9 +119,7 @@ pub fn create_workweave(
     if !errors.is_empty() {
         let total = manifest.repositories.len();
         let failed = errors.len();
-        bail!(
-            "workweave create completed with {failed} failure(s) out of {total} repo(s)"
-        );
+        bail!("workweave create completed with {failed} failure(s) out of {total} repo(s)");
     }
 
     // Create worktree for the project repo (if it is a git repo).
@@ -143,7 +136,12 @@ pub fn create_workweave(
             let ephemeral_branch = ephemeral_branch_name(name, &current_branch);
             let head = GitVcs.head_revision(&project_dir)?;
             std::fs::create_dir_all(project_wt_dest.parent().unwrap())?;
-            GitVcs.create_worktree(&project_dir, &project_wt_dest, &ephemeral_branch, head.as_str())?;
+            GitVcs.create_worktree(
+                &project_dir,
+                &project_wt_dest,
+                &ephemeral_branch,
+                head.as_str(),
+            )?;
             Ok(())
         })();
 
@@ -179,7 +177,9 @@ pub fn create_workweave(
 
         // Link entries — absolute symlinks to primary's canonical paths.
         for entry in &ww_config.link {
-            let source = ws_root.join(entry).canonicalize()
+            let source = ws_root
+                .join(entry)
+                .canonicalize()
                 .unwrap_or_else(|_| ws_root.join(entry));
             let dest = workweave_dir.join(entry);
             if source.exists() {
@@ -209,11 +209,7 @@ pub fn create_workweave(
 }
 
 /// Delete a workweave: remove worktrees (including project repo) and delete the workweave directory.
-pub fn delete_workweave(
-    ws_root: &Path,
-    project: &str,
-    name: &WorkweaveName,
-) -> anyhow::Result<()> {
+pub fn delete_workweave(ws_root: &Path, project: &str, name: &WorkweaveName) -> anyhow::Result<()> {
     let manifest = load_manifest(ws_root, project)?;
     let pname = primary_name(ws_root);
     let parent = workweave_parent(ws_root);
@@ -275,7 +271,8 @@ pub fn delete_workweave(
             } else {
                 // Prune and delete ephemeral branches for the project repo.
                 let _ = GitVcs.worktree_prune(&project_dir);
-                if let Ok(branches) = GitVcs.list_branches_with_prefix(&project_dir, name.as_str()) {
+                if let Ok(branches) = GitVcs.list_branches_with_prefix(&project_dir, name.as_str())
+                {
                     for branch in branches {
                         if let Err(e) = GitVcs.delete_branch(&project_dir, &branch) {
                             eprintln!(
@@ -298,9 +295,7 @@ pub fn delete_workweave(
     } else {
         let total = manifest.repositories.len() + 1;
         let failed = errors.len();
-        bail!(
-            "workweave delete completed with {failed} failure(s) out of {total} repo(s)"
-        )
+        bail!("workweave delete completed with {failed} failure(s) out of {total} repo(s)")
     }
 }
 
@@ -328,11 +323,7 @@ pub fn list_workweaves(ws_root: &Path) -> anyhow::Result<Vec<String>> {
 
 /// Sync a workweave: add worktrees for repos that are in the manifest but missing
 /// from the workweave, and report any extra worktrees.
-pub fn sync_workweave(
-    ws_root: &Path,
-    project: &str,
-    name: &WorkweaveName,
-) -> anyhow::Result<()> {
+pub fn sync_workweave(ws_root: &Path, project: &str, name: &WorkweaveName) -> anyhow::Result<()> {
     let manifest = load_manifest(ws_root, project)?;
     let pname = primary_name(ws_root);
     let parent = workweave_parent(ws_root);
@@ -363,12 +354,7 @@ pub fn sync_workweave(
                 std::fs::create_dir_all(parent_dir)?;
             }
 
-            vcs.create_worktree(
-                &repo_abs,
-                &worktree_dest,
-                &ephemeral_branch,
-                head.as_str(),
-            )?;
+            vcs.create_worktree(&repo_abs, &worktree_dest, &ephemeral_branch, head.as_str())?;
 
             eprintln!("added: {}", repo_path.as_str());
             Ok(())
@@ -390,9 +376,7 @@ pub fn sync_workweave(
     } else {
         let total = manifest.repositories.len();
         let failed = errors.len();
-        bail!(
-            "workweave sync completed with {failed} failure(s) out of {total} repo(s)"
-        )
+        bail!("workweave sync completed with {failed} failure(s) out of {total} repo(s)")
     }
 }
 
@@ -489,7 +473,9 @@ pub fn handle_claude_hook() -> anyhow::Result<()> {
 
     match input.hook_event_name.as_deref() {
         Some("WorktreeCreate") => {
-            let cwd = input.cwd.ok_or_else(|| anyhow!("missing cwd in hook input"))?;
+            let cwd = input
+                .cwd
+                .ok_or_else(|| anyhow!("missing cwd in hook input"))?;
 
             let ws_ctx = crate::workspace::WorkspaceContext::resolve(Path::new(&cwd), None)?;
             let ws_root = &ws_ctx.root;
@@ -499,17 +485,13 @@ pub fn handle_claude_hook() -> anyhow::Result<()> {
             // spawns from a workweave for a different project than the weave's
             // active project.
             let project = match &ws_ctx.location {
-                crate::workspace::WorkspaceLocation::Workweave { project, .. } => {
-                    project.clone()
-                }
+                crate::workspace::WorkspaceLocation::Workweave { project, .. } => project.clone(),
                 _ => read_active_project(ws_root)
                     .ok_or_else(|| anyhow!("no .rwv-active found in {}", ws_root.display()))?,
             };
 
-            let name = derive_workweave_name(
-                input.branch_name.as_deref(),
-                input.session_id.as_deref(),
-            );
+            let name =
+                derive_workweave_name(input.branch_name.as_deref(), input.session_id.as_deref());
 
             let path = create_workweave(ws_root, project.as_str(), &WorkweaveName::new(&name))?;
             println!("{}", path.display());
@@ -558,19 +540,28 @@ mod tests {
 
     #[test]
     fn derive_name_uses_branch_name() {
-        assert_eq!(derive_workweave_name(Some("feat/my-branch"), None), "feat-my-branch");
+        assert_eq!(
+            derive_workweave_name(Some("feat/my-branch"), None),
+            "feat-my-branch"
+        );
     }
 
     #[test]
     fn derive_name_null_branch_uses_timestamp() {
         let name = derive_workweave_name(Some("null"), Some("abc-session-123"));
-        assert!(name.starts_with("workweave-"), "session_id ignored, expected ww-<timestamp>, got {name}");
+        assert!(
+            name.starts_with("workweave-"),
+            "session_id ignored, expected ww-<timestamp>, got {name}"
+        );
     }
 
     #[test]
     fn derive_name_empty_branch_uses_timestamp() {
         let name = derive_workweave_name(Some(""), Some("sess-xyz"));
-        assert!(name.starts_with("workweave-"), "session_id ignored, expected ww-<timestamp>, got {name}");
+        assert!(
+            name.starts_with("workweave-"),
+            "session_id ignored, expected ww-<timestamp>, got {name}"
+        );
     }
 
     #[test]
@@ -584,7 +575,10 @@ mod tests {
     #[test]
     fn derive_name_all_none_produces_timestamp() {
         let name = derive_workweave_name(None, None);
-        assert!(name.starts_with("workweave-"), "expected ww-<timestamp>, got {name}");
+        assert!(
+            name.starts_with("workweave-"),
+            "expected ww-<timestamp>, got {name}"
+        );
     }
 
     #[test]
@@ -611,7 +605,10 @@ mod tests {
     #[test]
     fn claude_hook_null_branch_uses_timestamp_not_session() {
         let name = derive_workweave_name(Some("null"), Some("my-session-id"));
-        assert!(name.starts_with("workweave-"), "session_id ignored, expected ww-*, got {name}");
+        assert!(
+            name.starts_with("workweave-"),
+            "session_id ignored, expected ww-*, got {name}"
+        );
     }
 
     #[test]

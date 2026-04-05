@@ -1,5 +1,5 @@
-use repoweave::add_remove;
 use repoweave::activate;
+use repoweave::add_remove;
 use repoweave::check;
 use repoweave::fetch;
 use repoweave::init;
@@ -154,7 +154,12 @@ fn main() -> anyhow::Result<()> {
             let ctx = WorkspaceContext::resolve(&cwd, None)?;
             println!("{}", ctx.display());
         }
-        Some(Commands::Workweave { project, hook_mode, claude_hook, action }) => {
+        Some(Commands::Workweave {
+            project,
+            hook_mode,
+            claude_hook,
+            action,
+        }) => {
             if claude_hook {
                 repoweave::workweave::handle_claude_hook()?;
             } else {
@@ -171,13 +176,25 @@ fn main() -> anyhow::Result<()> {
                         }
                     }
                     Some(WorkweaveAction::Delete { name }) => {
-                        repoweave::workweave::delete_workweave(ws_root, &project, &WorkweaveName::new(name))?;
+                        repoweave::workweave::delete_workweave(
+                            ws_root,
+                            &project,
+                            &WorkweaveName::new(name),
+                        )?;
                     }
                     Some(WorkweaveAction::Sync { name }) => {
-                        repoweave::workweave::sync_workweave(ws_root, &project, &WorkweaveName::new(name))?;
+                        repoweave::workweave::sync_workweave(
+                            ws_root,
+                            &project,
+                            &WorkweaveName::new(name),
+                        )?;
                     }
                     Some(WorkweaveAction::Create { name }) => {
-                        let workweave_path = repoweave::workweave::create_workweave(ws_root, &project, &WorkweaveName::new(name))?;
+                        let workweave_path = repoweave::workweave::create_workweave(
+                            ws_root,
+                            &project,
+                            &WorkweaveName::new(name),
+                        )?;
                         if hook_mode {
                             println!("{}", workweave_path.display());
                         }
@@ -185,7 +202,12 @@ fn main() -> anyhow::Result<()> {
                 }
             }
         }
-        Some(Commands::Fetch { source, locked, frozen, force }) => {
+        Some(Commands::Fetch {
+            source,
+            locked,
+            frozen,
+            force,
+        }) => {
             let cwd = std::env::current_dir()?;
             repoweave::workspace::require_workspace_or_empty(&cwd, force)?;
             let mode = if frozen {
@@ -205,7 +227,11 @@ fn main() -> anyhow::Result<()> {
                 add_remove::run_add(&url, role, &cwd)?;
             }
         }
-        Some(Commands::Remove { path, delete, force }) => {
+        Some(Commands::Remove {
+            path,
+            delete,
+            force,
+        }) => {
             let cwd = std::env::current_dir()?;
             add_remove::run_remove(&path, delete, force, &cwd)?;
         }
@@ -225,7 +251,11 @@ fn main() -> anyhow::Result<()> {
             let ctx = WorkspaceContext::resolve(&cwd, None)?;
             println!("{}", ctx.resolve_path().display());
         }
-        Some(Commands::Init { project, provider, adopt }) => {
+        Some(Commands::Init {
+            project,
+            provider,
+            adopt,
+        }) => {
             let cwd = std::env::current_dir()?;
             if adopt {
                 init::init_adopt(&project, &cwd)?;

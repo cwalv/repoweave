@@ -168,11 +168,12 @@ impl IntegrationConfig {
     /// parsing fails or when required fields are absent, so callers get
     /// graceful degradation rather than hard errors.
     pub fn settings<T: serde::de::DeserializeOwned + Default>(&self) -> T {
-        serde_yaml::from_value(serde_yaml::Value::Mapping(self.0.clone()))
-            .unwrap_or_else(|e| {
-                eprintln!("[warning] integration config: failed to parse settings, using defaults: {e}");
-                T::default()
-            })
+        serde_yaml::from_value(serde_yaml::Value::Mapping(self.0.clone())).unwrap_or_else(|e| {
+            eprintln!(
+                "[warning] integration config: failed to parse settings, using defaults: {e}"
+            );
+            T::default()
+        })
     }
 
     /// Convenience constructor: parse an `IntegrationConfig` from a YAML string.
@@ -280,12 +281,18 @@ impl Project {
     /// Load a project from its directory.
     pub fn from_dir(dir: &Path) -> anyhow::Result<Self> {
         let manifest_path = dir.join("rwv.yaml");
-        let manifest = Manifest::from_path(&manifest_path)
-            .map_err(|e| anyhow::anyhow!("failed to load manifest at {}: {}", manifest_path.display(), e))?;
+        let manifest = Manifest::from_path(&manifest_path).map_err(|e| {
+            anyhow::anyhow!(
+                "failed to load manifest at {}: {}",
+                manifest_path.display(),
+                e
+            )
+        })?;
         let lock_path = dir.join("rwv.lock");
         let lock = if lock_path.exists() {
-            Some(LockFile::from_path(&lock_path)
-                .map_err(|e| anyhow::anyhow!("failed to load lock at {}: {}", lock_path.display(), e))?)
+            Some(LockFile::from_path(&lock_path).map_err(|e| {
+                anyhow::anyhow!("failed to load lock at {}: {}", lock_path.display(), e)
+            })?)
         } else {
             None
         };
@@ -503,8 +510,10 @@ repositories:
         let result = Manifest::from_path(&dir.path().join("nonexistent.yaml"));
         assert!(result.is_err());
         let msg = format!("{}", result.unwrap_err());
-        assert!(msg.contains("No such file") || msg.contains("not found") || msg.contains("os error"),
-            "expected IO error, got: {msg}");
+        assert!(
+            msg.contains("No such file") || msg.contains("not found") || msg.contains("os error"),
+            "expected IO error, got: {msg}"
+        );
     }
 
     #[test]
@@ -524,21 +533,28 @@ repositories:
         std::fs::write(&path, "integrations: {}\n").unwrap();
 
         let result = Manifest::from_path(&path);
-        assert!(result.is_err(), "should fail when 'repositories' is missing");
+        assert!(
+            result.is_err(),
+            "should fail when 'repositories' is missing"
+        );
     }
 
     #[test]
     fn manifest_from_path_wrong_role_value() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("bad_role.yaml");
-        std::fs::write(&path, r#"
+        std::fs::write(
+            &path,
+            r#"
 repositories:
   foo:
     type: git
     url: https://example.com
     version: main
     role: nonexistent_role
-"#).unwrap();
+"#,
+        )
+        .unwrap();
 
         let result = Manifest::from_path(&path);
         assert!(result.is_err(), "unknown role should cause a parse error");
@@ -548,13 +564,17 @@ repositories:
     fn manifest_from_path_missing_url_in_entry() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("no_url.yaml");
-        std::fs::write(&path, r#"
+        std::fs::write(
+            &path,
+            r#"
 repositories:
   foo:
     type: git
     version: main
     role: primary
-"#).unwrap();
+"#,
+        )
+        .unwrap();
 
         let result = Manifest::from_path(&path);
         assert!(result.is_err(), "missing url should cause a parse error");
@@ -657,8 +677,14 @@ repositories:
     fn lock_round_trip_no_workweave_omits_key() {
         let original: LockFile = serde_yaml::from_str(VALID_LOCK_NO_WORKWEAVE).unwrap();
         let yaml = serde_yaml::to_string(&original).unwrap();
-        assert!(!yaml.contains("workweave:"), "workweave key should be omitted via skip_serializing_if");
-        assert!(!yaml.contains("weave:"), "weave key should be omitted via skip_serializing_if");
+        assert!(
+            !yaml.contains("workweave:"),
+            "workweave key should be omitted via skip_serializing_if"
+        );
+        assert!(
+            !yaml.contains("weave:"),
+            "weave key should be omitted via skip_serializing_if"
+        );
         let restored: LockFile = serde_yaml::from_str(&yaml).unwrap();
         assert_eq!(restored.workweave, None);
     }
@@ -699,7 +725,10 @@ repositories:
         let result = Project::from_dir(dir.path());
         assert!(result.is_err());
         let msg = format!("{}", result.unwrap_err());
-        assert!(msg.contains("failed to load manifest"), "error should mention manifest: {msg}");
+        assert!(
+            msg.contains("failed to load manifest"),
+            "error should mention manifest: {msg}"
+        );
     }
 
     #[test]
@@ -722,7 +751,10 @@ repositories:
         let result = Project::from_dir(dir.path());
         assert!(result.is_err());
         let msg = format!("{}", result.unwrap_err());
-        assert!(msg.contains("failed to load lock"), "error should mention lock: {msg}");
+        assert!(
+            msg.contains("failed to load lock"),
+            "error should mention lock: {msg}"
+        );
     }
 
     #[test]

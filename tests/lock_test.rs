@@ -121,7 +121,10 @@ fn lock_in_primary_creates_lock_file() {
     // Parse as LockFile to verify structure
     let lock = repoweave::manifest::LockFile::from_path(&lock_path).unwrap();
     assert_eq!(lock.repositories.len(), 2);
-    assert!(lock.workweave.is_none(), "primary lock should have no workweave");
+    assert!(
+        lock.workweave.is_none(),
+        "primary lock should have no workweave"
+    );
 
     let entry_a = lock
         .repositories
@@ -308,8 +311,7 @@ fn stale_lock_detected_after_new_commit() {
 
     let lock_path = project_dir.join("rwv.lock");
     let lock_before = repoweave::manifest::LockFile::from_path(&lock_path).unwrap();
-    let pinned_sha = lock_before.repositories
-        [&repoweave::manifest::RepoPath::new(repo_path)]
+    let pinned_sha = lock_before.repositories[&repoweave::manifest::RepoPath::new(repo_path)]
         .version
         .as_str()
         .to_string();
@@ -338,8 +340,7 @@ fn stale_lock_detected_after_new_commit() {
 
     // The existing lock file still has the old SHA — it's stale
     let stale_lock = repoweave::manifest::LockFile::from_path(&lock_path).unwrap();
-    let stale_sha = stale_lock.repositories
-        [&repoweave::manifest::RepoPath::new(repo_path)]
+    let stale_sha = stale_lock.repositories[&repoweave::manifest::RepoPath::new(repo_path)]
         .version
         .as_str()
         .to_string();
@@ -360,8 +361,7 @@ fn stale_lock_detected_after_new_commit() {
         .success();
 
     let updated_lock = repoweave::manifest::LockFile::from_path(&lock_path).unwrap();
-    let updated_sha = updated_lock.repositories
-        [&repoweave::manifest::RepoPath::new(repo_path)]
+    let updated_sha = updated_lock.repositories[&repoweave::manifest::RepoPath::new(repo_path)]
         .version
         .as_str()
         .to_string();
@@ -489,7 +489,10 @@ fn lock_dirty_flag_bypasses_uncommitted_check() {
 
     // Lock file should exist and contain the HEAD SHA
     let lock_path = project_dir.join("rwv.lock");
-    assert!(lock_path.exists(), "rwv.lock should be created with --dirty");
+    assert!(
+        lock_path.exists(),
+        "rwv.lock should be created with --dirty"
+    );
 
     let lock = repoweave::manifest::LockFile::from_path(&lock_path).unwrap();
     let entry = lock
@@ -706,14 +709,10 @@ fn lock_runs_integration_lock_hooks() {
 fn lock_all_is_removed_cli_error() {
     // `rwv lock-all` should be rejected as an unrecognized subcommand
     // (or produce a helpful error telling users to use `rwv lock` instead).
-    rwv_cmd()
-        .arg("lock-all")
-        .assert()
-        .failure()
-        .stderr(
-            predicate::str::contains("unrecognized")
-                .or(predicate::str::contains("removed"))
-                .or(predicate::str::contains("no longer"))
-                .or(predicate::str::contains("not a valid")),
-        );
+    rwv_cmd().arg("lock-all").assert().failure().stderr(
+        predicate::str::contains("unrecognized")
+            .or(predicate::str::contains("removed"))
+            .or(predicate::str::contains("no longer"))
+            .or(predicate::str::contains("not a valid")),
+    );
 }

@@ -44,11 +44,7 @@ fn init_bare_repo_with_commit(path: &Path) {
     };
 
     run(
-        &[
-            "clone",
-            &path.to_string_lossy(),
-            &work.to_string_lossy(),
-        ],
+        &["clone", &path.to_string_lossy(), &work.to_string_lossy()],
         tmp.path(),
     );
     run(&["config", "user.email", "test@test.com"], &work);
@@ -183,11 +179,10 @@ fn add_clones_repo_to_canonical_path() {
     // For a file:// URL the exact path depends on registry resolution,
     // but the manifest should have a new entry.
     let manifest_path = workspace.join("projects/test-project/rwv.yaml");
-    let manifest_content = std::fs::read_to_string(&manifest_path)
-        .expect("rwv.yaml should exist after add");
+    let manifest_content =
+        std::fs::read_to_string(&manifest_path).expect("rwv.yaml should exist after add");
     assert!(
-        manifest_content.contains(&remote_url)
-            || manifest_content.contains("file://"),
+        manifest_content.contains(&remote_url) || manifest_content.contains("file://"),
         "manifest should contain the added repo URL, got:\n{manifest_content}"
     );
 }
@@ -210,8 +205,8 @@ fn add_with_role_flag_sets_annotation() {
         .success();
 
     let manifest_path = workspace.join("projects/test-project/rwv.yaml");
-    let manifest_content = std::fs::read_to_string(&manifest_path)
-        .expect("rwv.yaml should exist after add");
+    let manifest_content =
+        std::fs::read_to_string(&manifest_path).expect("rwv.yaml should exist after add");
     assert!(
         manifest_content.contains("role: fork"),
         "manifest should have role set to fork, got:\n{manifest_content}"
@@ -258,9 +253,7 @@ fn add_existing_repo_handles_gracefully() {
     let combined = format!("{stdout}{stderr}");
 
     assert!(
-        output.status.success()
-            || combined.contains("already")
-            || combined.contains("exists"),
+        output.status.success() || combined.contains("already") || combined.contains("exists"),
         "adding an existing repo should succeed or give a clear message, got: {combined}"
     );
 }
@@ -300,8 +293,7 @@ fn remove_path_removes_manifest_entry() {
     let remote_url = format!("file://{}", bare.display());
 
     let repo_path = "local/org/to-remove";
-    let (workspace, _project_dir) =
-        setup_workspace_with_project(&tmp, &[(repo_path, &remote_url)]);
+    let (workspace, _project_dir) = setup_workspace_with_project(&tmp, &[(repo_path, &remote_url)]);
 
     // Clone the repo so it exists on disk.
     let repo_dir = workspace.join(repo_path);
@@ -326,8 +318,8 @@ fn remove_path_removes_manifest_entry() {
 
     // The manifest should no longer contain the removed path.
     let manifest_path = workspace.join("projects/test-project/rwv.yaml");
-    let manifest_content = std::fs::read_to_string(&manifest_path)
-        .expect("rwv.yaml should still exist");
+    let manifest_content =
+        std::fs::read_to_string(&manifest_path).expect("rwv.yaml should still exist");
     assert!(
         !manifest_content.contains(repo_path),
         "manifest should not contain the removed repo path, got:\n{manifest_content}"
@@ -350,8 +342,7 @@ fn remove_with_delete_flag_removes_clone() {
     let remote_url = format!("file://{}", bare.display());
 
     let repo_path = "local/org/delete-me";
-    let (workspace, _project_dir) =
-        setup_workspace_with_project(&tmp, &[(repo_path, &remote_url)]);
+    let (workspace, _project_dir) = setup_workspace_with_project(&tmp, &[(repo_path, &remote_url)]);
 
     // Clone the repo so it exists on disk.
     let repo_dir = workspace.join(repo_path);
@@ -376,8 +367,8 @@ fn remove_with_delete_flag_removes_clone() {
 
     // The manifest should no longer contain the removed path.
     let manifest_path = workspace.join("projects/test-project/rwv.yaml");
-    let manifest_content = std::fs::read_to_string(&manifest_path)
-        .expect("rwv.yaml should still exist");
+    let manifest_content =
+        std::fs::read_to_string(&manifest_path).expect("rwv.yaml should still exist");
     assert!(
         !manifest_content.contains(repo_path),
         "manifest should not contain the removed repo path, got:\n{manifest_content}"
@@ -450,8 +441,8 @@ fn add_new_updates_manifest_with_inferred_url() {
 
     // The manifest should contain the new entry with an inferred URL.
     let manifest_path = workspace.join("projects/test-project/rwv.yaml");
-    let manifest_content = std::fs::read_to_string(&manifest_path)
-        .expect("rwv.yaml should exist after add --new");
+    let manifest_content =
+        std::fs::read_to_string(&manifest_path).expect("rwv.yaml should exist after add --new");
     assert!(
         manifest_content.contains("github/myorg/newrepo"),
         "manifest should contain the repo path, got:\n{manifest_content}"
@@ -474,8 +465,8 @@ fn add_new_sets_role_to_primary() {
         .success();
 
     let manifest_path = workspace.join("projects/test-project/rwv.yaml");
-    let manifest_content = std::fs::read_to_string(&manifest_path)
-        .expect("rwv.yaml should exist after add --new");
+    let manifest_content =
+        std::fs::read_to_string(&manifest_path).expect("rwv.yaml should exist after add --new");
 
     // Find the entry for our repo and verify it has role: primary.
     // The YAML should contain "role: primary" in the newrepo entry.
@@ -497,8 +488,8 @@ fn add_new_infers_url_for_github_path() {
         .success();
 
     let manifest_path = workspace.join("projects/test-project/rwv.yaml");
-    let manifest_content = std::fs::read_to_string(&manifest_path)
-        .expect("rwv.yaml should exist after add --new");
+    let manifest_content =
+        std::fs::read_to_string(&manifest_path).expect("rwv.yaml should exist after add --new");
     assert!(
         manifest_content.contains("https://github.com/cwalv/repoweave.git"),
         "should infer GitHub HTTPS URL from path convention, got:\n{manifest_content}"

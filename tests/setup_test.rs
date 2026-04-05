@@ -171,10 +171,9 @@ fn setup_claude_registers_hooks() {
         .success()
         .stdout(predicate::str::contains("Registered"));
 
-    let content: serde_json::Value = serde_json::from_str(
-        &fs::read_to_string(claude_dir.join("settings.json")).unwrap(),
-    )
-    .unwrap();
+    let content: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(claude_dir.join("settings.json")).unwrap())
+            .unwrap();
 
     // rwv prime registered for SessionStart + PreCompact
     for event in &["SessionStart", "PreCompact"] {
@@ -194,9 +193,9 @@ fn setup_claude_registers_hooks() {
 
     // WorktreeCreate + WorktreeRemove registered with rwv workweave --claude-hook
     for event in &["WorktreeCreate", "WorktreeRemove"] {
-        let arr = content["hooks"][event].as_array().unwrap_or_else(|| {
-            panic!("{event} should be registered")
-        });
+        let arr = content["hooks"][event]
+            .as_array()
+            .unwrap_or_else(|| panic!("{event} should be registered"));
         let found = arr.iter().any(|g| {
             g["hooks"]
                 .as_array()
@@ -206,7 +205,10 @@ fn setup_claude_registers_hooks() {
                 })
                 .unwrap_or(false)
         });
-        assert!(found, "{event} should contain 'rwv workweave --claude-hook'");
+        assert!(
+            found,
+            "{event} should contain 'rwv workweave --claude-hook'"
+        );
     }
 
     // No hook scripts should be installed — rwv workweave --claude-hook is used directly.

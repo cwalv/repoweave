@@ -35,15 +35,9 @@ pub enum FetchMode {
 pub fn project_name_from_source(source: &str) -> String {
     // Strip trailing slashes, then take the last segment.
     let trimmed = source.trim_end_matches('/');
-    let last_segment = trimmed
-        .rsplit('/')
-        .next()
-        .unwrap_or(trimmed);
+    let last_segment = trimmed.rsplit('/').next().unwrap_or(trimmed);
     // Also handle git@host:owner/repo.git — take after last ':'
-    let last_segment = last_segment
-        .rsplit(':')
-        .next()
-        .unwrap_or(last_segment);
+    let last_segment = last_segment.rsplit(':').next().unwrap_or(last_segment);
     last_segment
         .strip_suffix(".git")
         .unwrap_or(last_segment)
@@ -83,8 +77,7 @@ pub fn run_fetch(source: &str, workspace_root: &Path, mode: FetchMode) -> anyhow
     let (url, owner) = resolve_source(source)?;
     let name = project_name_from_source(&url);
     let projects_dir = workspace_root.join("projects");
-    std::fs::create_dir_all(&projects_dir)
-        .context("failed to create projects/ directory")?;
+    std::fs::create_dir_all(&projects_dir).context("failed to create projects/ directory")?;
     let project_dir = projects_dir.join(&name);
     if project_dir.exists() {
         // Project name already taken — surface a helpful scoped-path hint.
@@ -131,12 +124,9 @@ pub fn run_fetch(source: &str, workspace_root: &Path, mode: FetchMode) -> anyhow
         }
         FetchMode::Locked => {
             if lock_path.exists() {
-                Some(
-                    LockFile::from_path(&lock_path)
-                        .with_context(|| {
-                            format!("failed to read lock file at {}", lock_path.display())
-                        })?,
-                )
+                Some(LockFile::from_path(&lock_path).with_context(|| {
+                    format!("failed to read lock file at {}", lock_path.display())
+                })?)
             } else {
                 None
             }
@@ -172,10 +162,7 @@ pub fn run_fetch(source: &str, workspace_root: &Path, mode: FetchMode) -> anyhow
                     }
                 }
             } else {
-                println!(
-                    "rwv fetch: skip {} (already exists)",
-                    repo_path.as_str()
-                );
+                println!("rwv fetch: skip {} (already exists)", repo_path.as_str());
             }
             succeeded += 1;
             continue;
@@ -195,7 +182,11 @@ pub fn run_fetch(source: &str, workspace_root: &Path, mode: FetchMode) -> anyhow
             }
         }
 
-        println!("rwv fetch: cloning {} from {}", repo_path.as_str(), entry.url);
+        println!(
+            "rwv fetch: cloning {} from {}",
+            repo_path.as_str(),
+            entry.url
+        );
         if let Err(e) = git.clone_repo(&entry.url, &dest) {
             let msg = format!(
                 "{}: failed to clone {} into {}: {e}",
@@ -235,7 +226,10 @@ pub fn run_fetch(source: &str, workspace_root: &Path, mode: FetchMode) -> anyhow
     // Summary
     let total = succeeded + errors.len();
     if !errors.is_empty() {
-        eprintln!("rwv fetch: {succeeded}/{total} repo(s) succeeded, {} failed:", errors.len());
+        eprintln!(
+            "rwv fetch: {succeeded}/{total} repo(s) succeeded, {} failed:",
+            errors.len()
+        );
         for msg in &errors {
             eprintln!("  - {msg}");
         }
