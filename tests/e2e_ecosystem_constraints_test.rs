@@ -277,7 +277,10 @@ fn npm_workspace_checks_version_mismatch() {
         return;
     }
     if tool_major_version("npm") < 10 {
-        eprintln!("SKIP: npm {} does not enforce workspace version constraints (need 10+)", tool_major_version("npm"));
+        eprintln!(
+            "SKIP: npm {} does not enforce workspace version constraints (need 10+)",
+            tool_major_version("npm")
+        );
         return;
     }
 
