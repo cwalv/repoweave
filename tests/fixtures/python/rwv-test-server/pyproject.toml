@@ -1,0 +1,11 @@
+[project]
+name = "rwv-test-server"
+version = "1.0.0"
+description = "Test fixture for repoweave e2e registry tests"
+license = "MIT"
+requires-python = ">=3.9"
+dependencies = ["rwv-test-types>=1.0.0"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

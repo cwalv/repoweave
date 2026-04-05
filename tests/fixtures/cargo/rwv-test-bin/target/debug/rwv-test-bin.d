@@ -1,0 +1,1 @@
+/home/cwa/weaveroot/foundations/github/cwalv/repoweave/tests/fixtures/cargo/rwv-test-bin/target/debug/rwv-test-bin: /home/cwa/weaveroot/foundations/github/cwalv/repoweave/tests/fixtures/cargo/rwv-test-bin/target/package/rwv-test-bin-0.1.0/src/main.rs

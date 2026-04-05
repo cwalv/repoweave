@@ -1,0 +1,7 @@
+{
+  "git": {
+    "sha1": "65621d47c02c6880648b4e9ec24a28412d3dd9e7",
+    "dirty": true
+  },
+  "path_in_vcs": "tests/fixtures/cargo/rwv-test-lib"
+}

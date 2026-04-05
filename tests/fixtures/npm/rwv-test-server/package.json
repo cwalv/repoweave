@@ -1,0 +1,10 @@
+{
+  "name": "@cwalv/rwv-test-server",
+  "version": "1.0.0",
+  "description": "Test fixture for repoweave e2e registry tests",
+  "main": "index.js",
+  "dependencies": {
+    "@cwalv/rwv-test-types": "1.0.0"
+  },
+  "license": "MIT"
+}
