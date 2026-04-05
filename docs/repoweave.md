@@ -7,7 +7,7 @@ repoweave provides the scaffolding for building projects from components tracked
 
 ### Workspaces
 
-Many major package ecosystems have converged on the concept of a workspace that groups multiple packages under one root for cross-package imports, shared dependency resolution, and coordinated development (`go.work`, Cargo `[workspace]`, pnpm workspaces, uv workspaces, etc.). They deal with packages, not repositories, but these are often 1:1.
+Many major package ecosystems have converged on the concept of a workspace that groups multiple packages under one root for cross-package imports, shared dependency resolution, and coordinated development (`go.work`, Cargo `[workspace]`, pnpm workspaces, uv workspaces, etc.). They deal with packages, not repositories, but packages and repositories are often 1:1.
 
 ### Monorepos
 
@@ -19,7 +19,7 @@ The goal is to weave independent **threads** (your repositories) into a single, 
 
 A `weave` is a workspace in the same sense as a `go.work` workspace or a Cargo `[workspace]`, but with superpowers. Often, the workspace configurations can be generated from the repoweave manifest alone. In addition to simple cross-package imports and shared dependency resolution that workspace management tools bring, you get monorepo ergonomics.
 
-repoweave provides a `lock` mechanism analogous to package manager locks, with a similar feel to the atomic commit you get from working in a monorepo (so no more edit → bump version → publish → update dependents → reinstall dance for repos in the same weave). Want to reproduce a weave on another machine, or CI? The `lock` makes it easy. It also makes it easy to create ephemeral workweaves for isolated work or review, like a multi-repo `git worktree`. Also, all your code lives in one directory tree, so every tool that touches the filesystem — editors, grep, agents, debuggers, build tools — works across all of it, just like a monorepo.
+repoweave provides a `lock` mechanism analogous to package manager locks, with a similar feel to the atomic commit you get from working in a monorepo — no more edit → bump version → publish → update dependents → reinstall dance for repos in the same weave. The `lock` makes it easy to reproduce a weave on another machine or in CI. It also makes it easy to create ephemeral workweaves for isolated work or review, like a multi-repo `git worktree`. All your code lives in one directory tree, so every tool that touches the filesystem — editors, grep, agents, debuggers, build tools — works across all of it, just like a monorepo.
 
 ### Terminology
 
@@ -29,7 +29,7 @@ repoweave provides a `lock` mechanism analogous to package manager locks, with a
 | **workweave** | A worktree-based derivative of a weave, created on demand for isolation (agents, features, PR review) |
 | **project** | A directory under `projects/` containing `rwv.yaml`, `rwv.lock`, and project-scoped docs. Itself a git repo |
 | **manifest** (`rwv.yaml`) | Declares which repos belong to a project, their roles, and integration config |
-| **lock file** (`rwv.lock`) | Pins repos to exact SHAs for reproducibility |
+| **lock file** (`rwv.lock`) | Pins repos to exact revisions for reproducibility |
 | **activation** | Generating ecosystem workspace files from a project's manifest and symlinking them to the weave root |
 | **role** | A repo's relationship to a project: `primary` (your code), `fork`, `dependency`, `reference` |
 | **workspace surface** | The root directory where ecosystem tools find workspace config files |
@@ -40,7 +40,7 @@ The weave has three layers:
 
 1. **The directory tree** — repos under one root. Every tool benefits: search, navigation, agents, editors. This is the convention alone — no tooling required.
 2. **Ecosystem wiring** — the weave root (or workweave root) is the **workspace surface**: the directory that ecosystem tools see. Integrations generate workspace files (`package.json`, `go.work`, `Cargo.toml`, `pnpm-workspace.yaml`) at this surface so cross-package imports resolve locally. Ecosystem tools don't know repos exist — they see a workspace directory with packages. `import { thing } from '@myorg/shared'` just works.
-3. **Reproducibility** — a committed `rwv.yaml` file and its `rwv.lock` pin each repo to an exact SHA, making the project state reproducible from a single project repo.
+3. **Reproducibility** — a committed `rwv.yaml` file and its `rwv.lock` pin each repo to an exact revision, making the project state reproducible from a single project repo.
 
 Committing a project gets a coherent cross-repo "revision", similar to a monorepo commit. You commit in individual repos first, then regenerate and commit the lock file. By default, it's not atomic as a monorepo is, but it could be scripted to be so. It's two-phase commit — the lock update is detectable and reversible:
 
@@ -55,7 +55,6 @@ git add rwv.lock && git commit -m "lock: add payment endpoint"
 To reproduce a project from scratch:
 
 ```bash
-cargo install repoweave
 mkdir my-workspace && cd my-workspace
 rwv fetch chatly/web-app
 ```
@@ -77,7 +76,7 @@ Two kinds of directories:
 | **Normal** | `{registry}/{owner}/{repo}/` | Code. Build tools look here. Other repos import from here. Listed in root `package.json` workspaces, `go.work`, etc. |
 | **Project** | `projects/{name}/` | Coordination. `rwv.yaml`, lock files, docs. Build tools never see these. No importable code. |
 
-Path encodes kind — you can tell what a directory is for from its location. Build tools (npm/pnpm, Go, Cargo, uv) are configured to look inside registry directories (`github/`, `gitlab/`, etc.), not `projects/`. Project repos have GitHub URLs (for fetchability) but their local path reflects their *role*, not their provenance.
+The path determines the directory's role — you can tell what a directory is for from its location. Build tools (npm/pnpm, Go, Cargo, uv) are configured to look inside registry directories (`github/`, `gitlab/`, etc.), not `projects/`. Project repos have GitHub URLs (for fetchability) but their local path reflects their *role*, not their provenance.
 
 Project paths default to `projects/{name}/` for ergonomics. If names collide (two owners with a project called `web-app`), `rwv fetch` errors and suggests a scoped path: `projects/{owner}/{name}/` or `projects/{registry}/{owner}/{name}/`. `rwv` commands that take a project path require the path as created — if the project lives at `projects/chatly/web-app/`, you must use `chatly/web-app`, not just `web-app`. Errors if no matching directory with an `rwv.yaml` file exists.
 
@@ -101,7 +100,7 @@ web-app/                                  # weave
 ├── projects/
 │   ├── web-app/
 │   │   ├── rwv.yaml                      # source of truth: which repos, what roles
-│   │   ├── rwv.lock                      # pinned SHAs (committed)
+│   │   ├── rwv.lock                      # pinned revisions (committed)
 │   │   └── docs/
 │   └── mobile-app/
 │       ├── rwv.yaml
@@ -125,43 +124,9 @@ web-app/                                  # weave
 - **Overlap is natural** — `server` and `protocol` appear in both projects' `rwv.yaml` files, but there's one clone on disk.
 - **Repos without a project stay on disk** — clone something for a quick look; it's an inert directory until you add it to a project.
 
-## Workweaves
-
-The weave is where you do most of your work — regular git clones, project directories, and ecosystem wiring. But sometimes you need isolation: an agent task, a PR review, a parallel feature branch. That's what workweaves are for.
-
-A **workweave** is a worktree-based derivative of the weave, created on demand. Each repo gets a git worktree (not a clone) on an ephemeral branch, with its own ecosystem files and tool state. Workweaves are ephemeral — created around a unit of work and destroyed when done.
-
-```bash
-rwv workweave web-app agent-42       # create
-cd .workweaves/agent-42
-npm test --workspaces                # isolated deps, isolated branches
-cd github/chatly/server && git commit -m "fix"
-# ... done ...
-rwv workweave web-app agent-42 --delete   # clean up
-```
-
-Workweaves are fully isolated. `node_modules/`, `.venv/`, branches, and generated files are per-workweave. One workweave can be on `feature-A` while another is on `main`, while the weave stays undisturbed. Workweaves live in `.workweaves/{name}/` under the weaveroot.
-
-This is also the natural escalation when switching projects with `rwv activate` is too slow (large dependency diff) — create a workweave for the second project and it gets its own `node_modules/` with no reconciliation needed.
-
-For agents, the orchestrator creates the workweave before launching the agent. The agent doesn't need to know about repoweave — it sees a directory with repos in it. For agent frameworks that offer their own worktree isolation (e.g., Claude Code's `isolation: "worktree"`), use `rwv workweave` instead — it provides the same isolation but across all repos in the project.
-
-See [workweaves.md](../../../projects/project-repoweave/docs/workweaves.md) for the full design document covering structure, artifact categories, and the relationship to Gas Town/Gas City. See [workflows.md](workflows.md) for detailed walkthrough examples.
-
-### Workspace context
-
-Commands like `add`, `remove`, `lock`, and `check` infer the project and workspace from your CWD:
-
-- **In a workweave directory** — uses that workweave directly.
-- **In the weave directory** — resolves to the weave.
-- **In a project directory** — resolves to the weave.
-- **Override** — use `--project` flag.
-
-If you edit `rwv.yaml` in a workweave, sync it with `rwv workweave web-app --sync`. `rwv add` and `rwv remove` handle this automatically.
-
 ## Repos files
 
-YAML format with a `repositories` root key. Each entry is keyed by local path and has `type`, `url`, `version`, and `role` fields. Based on vcstool's `.repos` format, extended with `role` and an optional `integrations` key for integration configuration (see [Integrations](#integrations)). Each project directory contains an `rwv.yaml` (the declaration) and optionally an `rwv.lock` (pinned SHAs).
+YAML format with a `repositories` root key. Each entry is keyed by local path and has `type`, `url`, `version`, and `role` fields. Based on vcstool's `.repos` format, extended with `role` and an optional `integrations` key for integration configuration (see [Integrations](#integrations)). Each project directory contains an `rwv.yaml` (the declaration) and optionally an `rwv.lock` (pinned revisions).
 
 ### Project `rwv.yaml` files
 
@@ -194,7 +159,7 @@ repositories:
 
 ### Lock files
 
-Generated by `rwv lock`, same format but with resolved revisions instead of branch names. When a tag exists at HEAD, the tag name is recorded; otherwise, the raw SHA. Optionally records which workweave it was generated from:
+Generated by `rwv lock`, same format but with resolved revisions instead of branch names. When a tag exists at HEAD, the tag name is recorded; otherwise, the revision ID. Optionally records which workweave it was generated from:
 
 ```yaml
 # projects/web-app/rwv.lock — generated, committed
@@ -207,7 +172,7 @@ repositories:
   github/chatly/web:
     type: git
     url: https://github.com/chatly/web.git
-    version: e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0  # untagged — raw SHA
+    version: e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0  # untagged — revision ID
   github/chatly/protocol:
     type: git
     url: https://github.com/chatly/protocol.git
@@ -229,7 +194,7 @@ But the purpose is the same: **reproducibility**. Both kinds of lock file answer
 
 The practical difference matters for workflow. In a traditional multi-repo setup, changing `protocol` before `server` can use it requires: bump protocol's version, publish, update server's dependency, install, test. With repoweave, the ecosystem workspace wiring means `server` already imports from the local `protocol` checkout. You commit in both repos, run `rwv lock`, done. The version bump can happen later — or never, for internal code that doesn't need a published version.
 
-This is monorepo-level iteration speed without a monorepo. The lock file captures your exact state whether or not you've done a formal version bump. When a tag exists at HEAD, the lock records it (readable, auditable). When it doesn't, the SHA is equally pinned — just less pretty.
+This is monorepo-level iteration speed without a monorepo. The lock file captures your exact state whether or not you've done a formal version bump. When a tag exists at HEAD, the lock records it (readable, auditable). When it doesn't, the revision ID is equally pinned — just less pretty.
 
 The ecosystem lock files complement `rwv.lock`. Together they capture both layers: `rwv.lock` pins which commit of each repo, and `package-lock.json` / `Cargo.lock` / etc. pin which versions of external dependencies were resolved within that ecosystem. Full reproducibility requires both.
 
@@ -257,7 +222,7 @@ Most ecosystems support this:
 - **Python**: PEP 440 uses `+local` for local version identifiers (e.g., `2.1.0+7a3b2c1`)
 - **Go**: `runtime/debug.BuildInfo` can embed VCS revision via build flags
 
-For repos that don't publish packages (internal services, scripts), the version matters less — `rwv.lock` captures the exact SHA regardless. The `+revision` convention is most valuable for packages that are consumed as dependencies, where "which version of protocol is server using?" is a common question.
+For repos that don't publish packages (internal services, scripts), the version matters less — `rwv.lock` captures the exact revision regardless. The `+revision` convention is most valuable for packages that are consumed as dependencies, where "which version of protocol is server using?" is a common question.
 
 ## Projects
 
@@ -266,7 +231,7 @@ A project is a directory under `projects/` with an `rwv.yaml` file, a lock file,
 ```
 projects/web-app/
 ├── rwv.yaml                      # Which repos, with what roles
-├── rwv.lock                      # Pinned SHAs (rwv lock)
+├── rwv.lock                      # Pinned revisions (rwv lock)
 └── docs/                         # Cross-repo architecture docs, roadmap, coordination
 ```
 
@@ -283,7 +248,7 @@ Projects also provide a home for documentation that doesn't belong to any single
 On a new machine, you don't clone repos one by one:
 
 ```bash
-mkdir ~/workspace && cd ~/workspace
+mkdir ~/weaveroot && cd ~/weaveroot
 rwv fetch chatly/web-app
 ```
 
@@ -313,7 +278,7 @@ Need a variant of a project — same repos but with an extra dependency, or a di
 cd projects/web-app
 git checkout -b experiment
 # edit rwv.yaml (add a repo, change a role)
-rwv workweave web-app experiment   # new workweave reads the branch's rwv.yaml
+rwv workweave web-app create experiment   # new workweave reads the branch's rwv.yaml
 ```
 
 This avoids inventing inheritance or "derived project" machinery. A branch is already a variant with full version history.
@@ -349,6 +314,40 @@ Roles are a first-class field in `rwv.yaml`:
 
 **Directory owner as heuristic** — `github/chatly/` is likely primary, `github/{other}/` is likely reference or dependency. But this is a default, not a rule — projects override it.
 
+## Workweaves
+
+The weave is where you do most of your work — regular git clones, project directories, and ecosystem wiring. But sometimes you need isolation: an agent task, a PR review, a parallel feature branch. That's what workweaves are for.
+
+A **workweave** is a worktree-based derivative of the weave, created on demand. Each repo gets a git worktree (not a clone) on an ephemeral branch, with its own ecosystem files and tool state. Workweaves are ephemeral — created around a unit of work and destroyed when done.
+
+```bash
+rwv workweave web-app create agent-42       # create
+cd .workweaves/agent-42
+npm test --workspaces                # isolated deps, isolated branches
+cd github/chatly/server && git commit -m "fix"
+# ... done ...
+rwv workweave web-app delete agent-42   # clean up
+```
+
+Workweaves are fully isolated. `node_modules/`, `.venv/`, branches, and generated files are per-workweave. One workweave can be on `feature-A` while another is on `main`, while the weave stays undisturbed. Workweaves live in `.workweaves/{name}/` under the weaveroot.
+
+This is also the natural escalation when switching projects with `rwv activate` is too slow (large dependency diff) — create a workweave for the second project and it gets its own `node_modules/` with no reconciliation needed.
+
+For agents, the orchestrator creates the workweave before launching the agent. The agent doesn't need to know about repoweave — it sees a directory with repos in it. For agent frameworks that offer their own worktree isolation (e.g., Claude Code's `isolation: "worktree"`), use `rwv workweave` instead — it provides the same isolation but across all repos in the project.
+
+See [workweaves.md](../../../projects/project-repoweave/docs/workweaves.md) for the full design document covering structure, artifact categories, and the relationship to Gas Town/Gas City. See [workflows.md](workflows.md) for detailed walkthrough examples.
+
+### Workspace context
+
+Commands like `add`, `remove`, `lock`, and `check` infer the project and workspace from your CWD:
+
+- **In a workweave directory** — uses that workweave directly.
+- **In the weave directory** — resolves to the weave.
+- **In a project directory** — resolves to the weave.
+- **Override** — use `--project` flag.
+
+If you edit `rwv.yaml` in a workweave, sync it with `rwv workweave web-app sync`. `rwv add` and `rwv remove` handle this automatically.
+
 ## Commands
 
 `rwv` is a standalone Rust CLI that manages repos following repoweave conventions using direct git commands. Installed out of band — not part of any project. Nothing about the underlying `rwv.yaml` files changes; `rwv` is a convenience layer on top.
@@ -356,10 +355,10 @@ Roles are a first-class field in `rwv.yaml`:
 | Command | What it does |
 |---|---|
 | `rwv` | Show current context (root, project, workweave, repos). |
-| `rwv workweave {project} [name]` | Create a workweave (isolated working copy with worktrees on ephemeral branches). |
-| `rwv workweave {project} --delete` | Delete a workweave (remove worktrees, clean up ephemeral branches). |
-| `rwv workweave {project} --sync` | Sync workweave worktrees and ecosystem files with manifest. |
-| `rwv workweave {project} --list` | List workweaves for a project. |
+| `rwv workweave {project} create [name]` | Create a workweave (isolated working copy with worktrees on ephemeral branches). |
+| `rwv workweave {project} delete {name}` | Delete a workweave (remove worktrees, clean up ephemeral branches). |
+| `rwv workweave {project} sync {name}` | Sync workweave worktrees and ecosystem files with manifest. |
+| `rwv workweave {project} list` | List workweaves for a project. |
 | `rwv init {project}` | Create a new project directory with empty `rwv.yaml`. Optional `--provider {registry}/{owner}` sets up the remote. |
 | `rwv activate {project}` | Set the active project — generate ecosystem files in the project directory, symlink at weave root. |
 | `rwv fetch {source}` | Clone a project repo and all its listed repos, activate, update `rwv.lock`. `--locked` for exact reproduction, `--frozen` for CI (errors if lock is stale). |
@@ -378,15 +377,15 @@ Roles are a first-class field in `rwv.yaml`:
 | **Orphaned clones** | Directories under registry paths not listed in ANY project `rwv.yaml` |
 | **Dangling references** | Entries in an `rwv.yaml` pointing to paths not on disk |
 | **Missing role** | `rwv.yaml` entries without a `role` field |
-| **Stale lock** | Project's `rwv.lock` doesn't match current HEAD SHAs |
+| **Stale lock** | Project's `rwv.lock` doesn't match current HEAD revisions |
 | **Workweave drift** | Worktrees missing from a workweave or extra worktrees not in manifest |
 | **Integration checks** | Each integration's check hook reports tool availability, stale config, etc. (see [Integrations](#integrations)) |
 
 ### `rwv lock`
 
-Lock snapshots the active project's repo versions. It reads HEAD from each repo (regular clones in the weave, worktrees in a workweave) and writes `rwv.lock` to the project directory. If a tag exists at HEAD, the tag name is recorded; otherwise the raw SHA.
+Lock snapshots the active project's repo versions. It reads HEAD from each repo (regular clones in the weave, worktrees in a workweave) and writes `rwv.lock` to the project directory. If a tag exists at HEAD, the tag name is recorded; otherwise the revision ID.
 
-**Uncommitted changes are an error.** If any repo in the project has uncommitted changes, `rwv lock` refuses to proceed — the lock file would record a SHA that doesn't reflect the actual state on disk. Use `--dirty` to bypass:
+**Uncommitted changes are an error.** If any repo in the project has uncommitted changes, `rwv lock` refuses to proceed — the lock file would record a revision that doesn't reflect the actual state on disk. Use `--dirty` to bypass:
 
 ```bash
 $ rwv lock
@@ -401,14 +400,6 @@ wrote projects/web-app/rwv.lock (4 repos)
 
 **Integration lock hooks.** After writing `rwv.lock`, each integration's lock hook runs to ensure ecosystem lock files are up to date (`npm install --package-lock-only`, `uv lock`, `cargo generate-lockfile`, etc.). This way `rwv lock` means "pin everything" — both repo versions and ecosystem dependency versions.
 
-### Bootstrap on a new machine
-
-```bash
-cargo install repoweave
-mkdir ~/workspace && cd ~/workspace
-rwv fetch chatly/web-app
-```
-
 ## Why not git submodules?
 
 Git submodules aim to solve a similar problem — coordinating code across repos — but take a different approach. The feature mapping is close:
@@ -416,7 +407,7 @@ Git submodules aim to solve a similar problem — coordinating code across repos
 | repoweave | Git submodules |
 |---|---|
 | project `rwv.yaml` | `.gitmodules` |
-| project `rwv.lock` | SHA stored in parent tree (inherent) |
+| project `rwv.lock` | revision stored in parent tree (inherent) |
 | `rwv fetch` | `git submodule update --init --recursive` |
 | `rwv lock` | `git add <submodule>` (records current SHA) |
 
@@ -522,7 +513,7 @@ export GITA_PROJECT_HOME="$PWD/gita"          # point gita at derived config
 ```yaml
 # .github/workflows/ci.yml
 - uses: actions/checkout@v4          # this repo (projects/web-app)
-- run: cargo install repoweave && rwv fetch   # reads rwv.yaml, clones code repos
+- run: rwv fetch   # reads rwv.yaml, clones code repos
 - run: npm install && npm test
 ```
 
