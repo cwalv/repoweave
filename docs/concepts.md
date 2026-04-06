@@ -76,7 +76,7 @@ There is no universal standard for multi-repo development. "Polyrepo" names the 
 
 West is the closest design ancestor — YAML manifest, explicit freeze, groups for filtering, even multi-file manifest imports. `repo` is similar but XML-based and assumes Gerrit. vcstool's `.repos` format is the most portable and is the basis for repoweave's manifest format.
 
-None of these tools generate ecosystem workspace configs or provide workweave-style isolation. They solve "which repos, at what versions" but stop there — you still have to wire up cross-package imports yourself, and there's no mechanism for isolated parallel work across repos.
+None of these tools provide workweave-style isolation or generate ecosystem workspace configs. They solve "which repos, at what versions" but stop there — there's no mechanism for isolated parallel work across repos, and you still have to wire up cross-package imports yourself.
 
 ### Git submodules
 
@@ -99,7 +99,7 @@ Independently, ecosystem workspace tools have converged on a shared *pattern* �
 
 These tools don't care about repo boundaries — they list directories. They handle dependency resolution but not repo lifecycle (cloning, pinning, reproducing). And they're per-ecosystem: npm workspaces don't help your Go modules, and `go.work` doesn't help your Cargo crates.
 
-repoweave's integration layer bridges these two worlds. It reads the project manifest (which describes repos) and generates the ecosystem workspace configs (which describe packages). The result: cross-package imports resolve locally across repos, in every ecosystem, without manual setup. This is the key differentiator over the repo coordination tools above — they give you repos on disk, but you still have to wire up the cross-package imports yourself.
+repoweave bridges these two worlds. It reads the project manifest (which describes repos) and generates the ecosystem workspace configs (which describe packages). The result: cross-package imports resolve locally across repos, in every ecosystem, without manual setup. Combined with workweaves for isolation, this is what separates repoweave from the repo coordination tools — they give you repos on disk, but the development experience stops there.
 
 ## Design decisions
 
