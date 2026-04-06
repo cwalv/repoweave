@@ -31,19 +31,18 @@ pub fn render_context(ctx: &WorkspaceContext) -> String {
     out.push_str("# repoweave workspace\n\n");
 
     // -- Location ---------------------------------------------------------------
-    out.push_str(&format!("- **Root**: `{}`\n", ctx.root.display()));
-
     let project: Option<&ProjectName> = match &ctx.location {
         WorkspaceLocation::Weave { project } => {
-            out.push_str("- **Location**: weave\n");
+            out.push_str(&format!("- **Weave**: `{}`\n", ctx.root.display()));
             project.as_ref()
         }
-        WorkspaceLocation::Workweave { name, dir, project } => {
-            out.push_str(&format!(
-                "- **Location**: workweave `{}`\n- **Workweave dir**: `{}`\n",
-                name.as_str(),
-                dir.display()
-            ));
+        WorkspaceLocation::Workweave {
+            name: _,
+            dir,
+            project,
+        } => {
+            out.push_str(&format!("- **Workweave**: `{}`\n", dir.display()));
+            out.push_str(&format!("- **Weave**: `{}`\n", ctx.root.display()));
             Some(project)
         }
     };
@@ -243,8 +242,7 @@ integrations:
         let output = render_context(&ctx);
 
         assert!(output.contains("# repoweave workspace"));
-        assert!(output.contains("**Root**"));
-        assert!(output.contains("**Location**: weave"));
+        assert!(output.contains("**Weave**"));
         assert!(output.contains("**Project**: `web-app`"));
         assert!(output.contains("## Repositories"));
         assert!(output.contains("github/acme/server"));
@@ -282,7 +280,7 @@ repositories:
         let ctx = WorkspaceContext::resolve(&workweave_dir, None).unwrap();
         let output = render_context(&ctx);
 
-        assert!(output.contains("workweave `hotfix`"));
+        assert!(output.contains("**Workweave**"));
         assert!(output.contains("**Project**: `ws`"));
         assert!(output.contains("## Repositories"));
     }
@@ -298,7 +296,7 @@ repositories:
         let output = render_context(&ctx);
 
         assert!(output.contains("# repoweave workspace"));
-        assert!(output.contains("**Location**: weave"));
+        assert!(output.contains("**Weave**"));
         assert!(!output.contains("**Project**"));
         assert!(!output.contains("## Repositories"));
     }

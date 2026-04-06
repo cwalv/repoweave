@@ -61,7 +61,7 @@ That single command clones the project repo, reads its `rwv.yaml` manifest, clon
 # edit across repos freely — cross-package imports resolve locally
 cd github/chatly/server
 # ... make changes ...
-npm test --workspaces             # from weave root — tests span all repos
+npm test --workspaces             # from weave directory — tests span all repos
 
 rwv lock                          # snapshot repo SHAs into rwv.lock
 cd projects/web-app
@@ -80,10 +80,10 @@ cd .workweaves/payments
 
 | Command | Description |
 |---|---|
-| `rwv` | Show current context (root, project, workweave, repos) |
+| `rwv` | Show current context (weave, project, workweave, repos) |
 | `rwv fetch <source>` | Clone a project and all its repos; activate and install. `--locked` for exact reproduction, `--frozen` for CI |
 | `rwv init <project>` | Create a new project with empty `rwv.yaml`. Optional `--provider registry/owner` sets up the remote |
-| `rwv activate <project>` | Set the active project — generate ecosystem files, symlink at root, run install |
+| `rwv activate <project>` | Set the active project — generate ecosystem files, symlink to weave directory, run install |
 | `rwv add <url>` | Clone a repo, add to `rwv.yaml`, re-run integrations. `--role` sets the role, `--new` for `git init` |
 | `rwv remove <path>` | Remove from `rwv.yaml`, re-run integrations. `--delete` removes the clone |
 | `rwv lock` | Snapshot repo HEADs into `rwv.lock`. Errors on uncommitted changes (`--dirty` to bypass) |
@@ -95,7 +95,7 @@ cd .workweaves/payments
 | `rwv resolve` | Print the weave directory path (useful for scripting: `cd $(rwv resolve)`) |
 | `rwv prime` | Print structured workspace context for agent system prompts |
 | `rwv setup claude` | Register `rwv prime` as a Claude Code hook (SessionStart + PreCompact) |
-| `rwv setup agents-md` | Generate `AGENTS.md` at weave root for Cursor, Copilot, and other agents |
+| `rwv setup agents-md` | Generate `AGENTS.md` at the weave directory for Cursor, Copilot, and other agents |
 | `rwv completions <shell>` | Generate shell completions (bash, zsh, fish, etc.) |
 
 ### Shell completions

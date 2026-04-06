@@ -7,7 +7,7 @@ A walkthrough of repoweave, from joining a project to releasing. Uses a fictiona
 Someone already created the project. You want to reproduce their environment:
 
 ```bash
-mkdir ~/weaveroot && cd ~/weaveroot
+mkdir ~/work && cd ~/work
 rwv fetch chatly/web-app
 ```
 
@@ -22,7 +22,7 @@ What happens:
 Result:
 
 ```
-~/weaveroot/
+~/work/
 ├── github/chatly/server/             # clone
 ├── github/chatly/web/                # clone
 ├── github/chatly/protocol/           # clone
@@ -36,7 +36,7 @@ Result:
 └── .gitignore
 ```
 
-You're ready to work. Ecosystem tools see the workspace files at root — `cargo test --workspace`, `npm test --workspaces`, `go test ./...` all work across repos.
+You're ready to work. Ecosystem tools see the workspace files at the weave directory — `cargo test --workspace`, `npm test --workspaces`, `go test ./...` all work across repos.
 
 For exact reproduction (same revisions your colleague had):
 
@@ -55,7 +55,7 @@ rwv fetch chatly/web-app --frozen
 The typical cycle — no special tooling needed:
 
 ```bash
-cd ~/weaveroot
+cd ~/work
 
 # Pull latest across repos
 gita super primary pull            # or: cd into each repo and git pull
@@ -66,7 +66,7 @@ git checkout -b feature/new-endpoint
 # ... edit, test, commit ...
 
 # Test across repos — workspace wiring resolves cross-repo imports
-cd ~/weaveroot
+cd ~/work
 cargo test --workspace             # or: npm test --workspaces, go test ./...
 
 # Push your work
@@ -121,7 +121,7 @@ rwv remove github/example/some-lib --delete
 You have repos on disk and want to create a project that groups them:
 
 ```bash
-cd ~/weaveroot
+cd ~/work
 rwv init web-app --provider github/chatly
 ```
 
@@ -141,9 +141,9 @@ The `--provider` flag is optional — it uses the registry mapping (`github` →
 The project repo is a normal git repo containing `rwv.yaml`, `rwv.lock`, docs, and generated ecosystem files:
 
 ```bash
-cd ~/weaveroot/projects/web-app
+cd ~/work/projects/web-app
 vim rwv.yaml                          # edit the manifest
-cd ~/weaveroot
+cd ~/work
 rwv activate web-app                  # regenerate from updated manifest
 ```
 
@@ -172,7 +172,7 @@ Clones the project repo and any repos not already on disk. Does NOT activate —
 rwv activate mobile-app
 ```
 
-Swaps symlinks at root, regenerates ecosystem files. Tool state (`node_modules/`, `.venv/`, `target/`) needs reconciliation — run the ecosystem install command after switching. This is incremental and fast for small dep diffs.
+Swaps symlinks in the weave directory, regenerates ecosystem files. Tool state (`node_modules/`, `.venv/`, `target/`) needs reconciliation — run the ecosystem install command after switching. This is incremental and fast for small dep diffs.
 
 For large dependency differences, or when you need both projects active simultaneously, use a workweave instead of switching:
 
@@ -231,7 +231,7 @@ rwv workweave web-app create agent-task-99
 # agent works in .workweaves/agent-task-99/
 
 # when done, review and merge:
-cd ~/weaveroot/github/chatly/server
+cd ~/work/github/chatly/server
 git merge agent-task-99/main
 rwv workweave web-app delete agent-task-99
 ```

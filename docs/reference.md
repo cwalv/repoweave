@@ -13,7 +13,6 @@ Authoritative reference for repoweave's terminology, directory layout, file form
 | **lock file** (`rwv.lock`) | Pins repos to exact revisions for reproducibility |
 | **activation** | Generating ecosystem workspace files from a project's manifest and symlinking them to the weave directory |
 | **role** | A repo's relationship to a project: `primary` (your code), `fork`, `dependency`, `reference` |
-| **workspace surface** | The directory where ecosystem tools find workspace config files |
 
 ## Directory layout
 
@@ -27,7 +26,7 @@ Two kinds of directories:
 
 | Kind | Path | Purpose |
 |------|------|---------|
-| **Normal** | `{registry}/{owner}/{repo}/` | Code. Build tools look here. Other repos import from here. Listed in root `package.json` workspaces, `go.work`, etc. |
+| **Normal** | `{registry}/{owner}/{repo}/` | Code. Build tools look here. Other repos import from here. Listed in the weave's `package.json` workspaces, `go.work`, etc. |
 | **Project** | `projects/{name}/` | Coordination. `rwv.yaml`, lock files, docs. Build tools never see these. No importable code. |
 
 The path determines the directory's role — you can tell what a directory is for from its location. Build tools (npm/pnpm, Go, Cargo, uv) are configured to look inside registry directories (`github/`, `gitlab/`, etc.), not `projects/`. Project repos have GitHub URLs (for fetchability) but their local path reflects their *role*, not their provenance.
@@ -72,7 +71,7 @@ web-app/                                  # weave
 ```
 
 - **Repos are regular clones** — `cd github/chatly/server && git status` works. No bare repos, no `.git` file indirection, universal tool compatibility.
-- **Ecosystem files are symlinked** — `package.json`, `go.work`, `Cargo.toml` at root are symlinks to the active project's directory. The real files live in `projects/web-app/` and are committable in the project repo.
+- **Ecosystem files are symlinked** — `package.json`, `go.work`, `Cargo.toml` at the weave directory are symlinks to the active project's directory. The real files live in `projects/web-app/` and are committable in the project repo.
 - **Ecosystem lock files are committable** — `package-lock.json`, `pnpm-lock.yaml`, `uv.lock`, `go.sum`, `Cargo.lock` live in the project directory alongside their workspace configs, symlinked to the weave directory.
 - **Projects are directories** with an `rwv.yaml` file, an `rwv.lock` file, and `docs/`. They don't contain code — build tools are unaware of them.
 - **Overlap is natural** — `server` and `protocol` appear in both projects' `rwv.yaml` files, but there's one clone on disk.
@@ -198,11 +197,11 @@ Projects also provide a home for documentation that doesn't belong to any single
 On a new machine, you don't clone repos one by one:
 
 ```bash
-mkdir ~/weaveroot && cd ~/weaveroot
+mkdir ~/work && cd ~/work
 rwv fetch chatly/web-app
 ```
 
-`rwv fetch` clones the project repo to `projects/web-app/`, reads its `rwv.yaml`, creates regular clones for every listed repo at their canonical paths, and generates ecosystem files at the root. One command, and you have the complete working environment.
+`rwv fetch` clones the project repo to `projects/web-app/`, reads its `rwv.yaml`, creates regular clones for every listed repo at their canonical paths, and generates ecosystem files at the weave directory. One command, and you have the complete working environment.
 
 ### Overlap between projects
 
@@ -289,7 +288,7 @@ If you edit `rwv.yaml` in a workweave, sync it with `rwv workweave web-app sync 
 
 | Command | What it does |
 |---|---|
-| `rwv` | Show current context (root, project, workweave, repos). |
+| `rwv` | Show current context (weave, project, workweave, repos). |
 | `rwv workweave {project} create [name]` | Create a workweave (isolated working copy with worktrees on ephemeral branches). |
 | `rwv workweave {project} delete {name}` | Delete a workweave (remove worktrees, clean up ephemeral branches). |
 | `rwv workweave {project} sync {name}` | Sync workweave worktrees and ecosystem files with manifest. |
@@ -337,7 +336,7 @@ wrote projects/web-app/rwv.lock (4 repos)
 
 ## Integrations
 
-Integrations translate between repoweave's multi-repo world and ecosystem workspace formats. They generate workspace config files (`package.json`, `go.work`, `Cargo.toml`, etc.) at the workspace surface during activation, run install commands during `rwv lock`, and perform read-only checks during `rwv check`.
+Integrations translate between repoweave's multi-repo world and ecosystem workspace formats. They generate workspace config files (`package.json`, `go.work`, `Cargo.toml`, etc.) in the weave directory during activation, run install commands during `rwv lock`, and perform read-only checks during `rwv check`.
 
 | Integration | Default enabled | Auto-detects | Generates (activation) | Lock hook (`rwv lock`) |
 |---|---|---|---|---|
@@ -350,4 +349,4 @@ Integrations translate between repoweave's multi-repo world and ecosystem worksp
 | `vscode-workspace` | yes | all repos | `{project}.code-workspace` | -- |
 | `static-files` | no | n/a (configured explicitly) | symlinks declared files to weave directory | -- |
 
-See [Integrations](./integrations.md) for the workspace surface concept, generated file formats, configuration, and details on each integration.
+See [Integrations](./integrations.md) for generated file formats, configuration, and details on each integration.

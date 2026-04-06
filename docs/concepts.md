@@ -2,6 +2,10 @@
 
 This page explains the ideas behind repoweave — why it exists, how it relates to existing tools, and the design trade-offs it makes.
 
+## What is a weave?
+
+A weave is a directory containing two kinds of subdirectories: **repositories** (under `{registry}/{owner}/{repo}/`) and **projects** (under `projects/{name}/`). That's it — the directory convention is the foundation. Everything else is layered on top: ecosystem workspace files, symlinks, `.rwv-active` — all ephemeral, regenerated on activation. The repos and projects are the persistent state.
+
 ### Workspaces
 
 Many major package ecosystems have converged on the concept of a workspace that groups multiple packages under one root for cross-package imports, shared dependency resolution, and coordinated development (`go.work`, Cargo `[workspace]`, pnpm workspaces, uv workspaces, etc.). They deal with packages, not repositories, but packages and repositories are often 1:1.
@@ -22,8 +26,8 @@ repoweave provides a `lock` mechanism analogous to package manager locks, with a
 
 The weave has three layers:
 
-1. **The directory tree** — repos under one root. Every tool benefits: search, navigation, agents, editors. This is the convention alone — no tooling required.
-2. **Ecosystem wiring** — the weave directory (or workweave directory) is the **workspace surface**: the directory that ecosystem tools see. Integrations generate workspace files (`package.json`, `go.work`, `Cargo.toml`, `pnpm-workspace.yaml`) at this surface so cross-package imports resolve locally. Ecosystem tools don't know repos exist — they see a workspace directory with packages. `import { thing } from '@myorg/shared'` just works.
+1. **The directory tree** — repos and projects under one directory. Every tool benefits: search, navigation, agents, editors. This is the convention alone — no tooling required.
+2. **Ecosystem wiring** — integrations generate workspace files (`package.json`, `go.work`, `Cargo.toml`, `pnpm-workspace.yaml`) in the weave directory so ecosystem tools see it as a workspace. Cross-package imports resolve locally. Ecosystem tools don't know repos exist — they see a workspace directory with packages. `import { thing } from '@myorg/shared'` just works.
 3. **Reproducibility** — a committed `rwv.yaml` file and its `rwv.lock` pin each repo to an exact revision, making the project state reproducible from a single project repo.
 
 Committing a project gets a coherent cross-repo "revision", similar to a monorepo commit. You commit in individual repos first, then regenerate and commit the lock file. By default, it's not atomic as a monorepo is, but it could be scripted to be so. It's two-phase commit — the lock update is detectable and reversible:
@@ -55,44 +59,36 @@ Most ecosystem tools also enforce version constraints within the workspace: if y
 
 See [Releasing](./releasing.md) for the release-time workflow when repos publish to external registries.
 
-## Why not git submodules?
-
-Git submodules aim to solve a similar problem — coordinating code across repos — but take a different approach. The feature mapping is close:
-
-| repoweave | Git submodules |
-|---|---|
-| project `rwv.yaml` | `.gitmodules` |
-| project `rwv.lock` | revision stored in parent tree (inherent) |
-| `rwv fetch` | `git submodule update --init --recursive` |
-| `rwv lock` | `git add <submodule>` (records current SHA) |
-
-Submodules are better at one thing: **atomic locking**. The SHA is part of the parent's git tree — there's no two-phase commit. When you commit the parent, the lock updates atomically. repoweave's explicit lock file is the price of not using submodules.
-
-But submodules take ownership in ways that conflict with multi-repo development:
-
-- **Detached HEAD** — submodules check out a SHA, not a branch. You `cd` into one and you're in detached HEAD. You have to `git checkout main` before working. Every repo, every time.
-- **Can't adopt existing clones** — submodules want to own the clone. You can't take 16 repos already on disk and retroactively make them submodules.
-- **Parent owns the relationship** — updating a submodule means: commit in child, `cd` to parent, `git add child`, commit parent. The parent is always in the loop. For reference repos you don't control, this is backwards.
-- **No partial fetch** — submodules are all-or-nothing per parent. No "fetch only the web-app project's repos." No project-scoped views.
-- **No roles** — submodules are a flat list. No way to distinguish primary from reference, no per-project role assignments.
-- **Flat nesting only** — if a dependency uses submodules, you get recursive submodule hell. repoweave's flat `{registry}/{owner}/{repo}` layout avoids nesting.
-
-The design trade-off: submodules get atomic locking for free by taking ownership. repoweave gives up atomic locking to preserve sovereignty — repos stay on normal branches, you work in them normally, and the lock file is an explicit (two-step) operation.
-
-## Prior art: multi-repo coordination
+## Prior art: repo coordination tools
 
 There is no universal standard for multi-repo development. "Polyrepo" names the strategy (the counterpart to "monorepo") but prescribes no conventions. Each ecosystem that needed multi-repo coordination invented its own:
 
-| Tool | Ecosystem | Manifest format | Lock/pin mechanism |
-|------|-----------|----------------|--------------------|
-| Google `repo` | Android/embedded | XML (`default.xml`) | `repo manifest -r` (revision-locked manifest) |
-| West | Zephyr RTOS | YAML | `west manifest --freeze` |
-| vcstool | ROS | YAML (`.repos`) | `vcs export --exact` |
-| git submodules | General | `.gitmodules` | SHA in parent tree (inherent) |
+| | Google `repo` | West | vcstool | git submodules | repoweave |
+|---|---|---|---|---|---|
+| **Ecosystem** | Android/embedded | Zephyr RTOS | ROS | General | General |
+| **Manifest** | XML | YAML | YAML (`.repos`) | `.gitmodules` | YAML |
+| **Lock/freeze** | `repo manifest -r` | `west manifest --freeze` | `vcs export --exact` | SHA in parent tree | `rwv lock` |
+| **Fetch all** | `repo sync` | `west update` | `vcs import` | `git submodule update` | `rwv fetch` |
+| **Grouping** | groups | groups | none | none | roles + projects |
+| **Multiple views** | no | manifest imports | no | no | multiple projects |
+| **Ecosystem wiring** | no | no | no | no | generates workspace configs |
+| **Isolation** | no | no | no | no | workweaves |
 
-These tools are well-established within their ecosystems but none crossed over to become a general standard. Each makes trade-offs specific to its community — `repo` assumes Gerrit, West requires a manifest repo, submodules take ownership of clones.
+West is the closest design ancestor — YAML manifest, explicit freeze, groups for filtering, even multi-file manifest imports. `repo` is similar but XML-based and assumes Gerrit. vcstool's `.repos` format is the most portable and is the basis for repoweave's manifest format.
 
-Meanwhile, ecosystem workspace tools have converged on a shared *pattern* — a manifest listing directories for cross-package resolution — without coordinating on format:
+None of these tools generate ecosystem workspace configs or provide workweave-style isolation. They solve "which repos, at what versions" but stop there — you still have to wire up cross-package imports yourself, and there's no mechanism for isolated parallel work across repos.
+
+### Git submodules
+
+Submodules are the tool people ask about most, even though they're the least similar. They work fundamentally differently: the pinned revision is part of the parent's git tree (a "gitlink" entry), not a separate lock file. This gives them **atomic locking** for free — when you commit the parent, the lock updates atomically. repoweave's explicit lock file is the price of not using submodules.
+
+But submodules take ownership in ways that conflict with multi-repo development: detached HEAD on checkout, can't adopt existing clones, parent must be in the loop for every update, clones are nested under the parent (no sharing across projects), and recursive submodules compound all of these.
+
+The design trade-off: submodules get atomic locking for free by taking ownership. repoweave gives up atomic locking to preserve sovereignty — repos stay on normal branches, you work in them normally, and the lock file is an explicit (two-step) operation.
+
+## Prior art: ecosystem workspace tools
+
+Independently, ecosystem workspace tools have converged on a shared *pattern* — a manifest listing directories for cross-package resolution:
 
 | Tool | Manifest | Purpose |
 |------|----------|---------|
@@ -101,9 +97,9 @@ Meanwhile, ecosystem workspace tools have converged on a shared *pattern* — a 
 | Cargo | `Cargo.toml` `[workspace]` | Shared lock, shared target |
 | uv | `pyproject.toml` `[tool.uv.workspace]` | Cross-package deps |
 
-These don't care about repo boundaries — they list directories. They handle dependency resolution but not repo lifecycle (cloning, pinning, reproducing).
+These tools don't care about repo boundaries — they list directories. They handle dependency resolution but not repo lifecycle (cloning, pinning, reproducing). And they're per-ecosystem: npm workspaces don't help your Go modules, and `go.work` doesn't help your Cargo crates.
 
-repoweave sits at the intersection: it provides the repo lifecycle layer (like `repo`/West/vcstool) and generates the ecosystem workspace configs (like `go.work`/pnpm). The manifest format is YAML, based on vcstool's `.repos` format — the most portable of the existing formats.
+repoweave's integration layer bridges these two worlds. It reads the project manifest (which describes repos) and generates the ecosystem workspace configs (which describe packages). The result: cross-package imports resolve locally across repos, in every ecosystem, without manual setup. This is the key differentiator over the repo coordination tools above — they give you repos on disk, but you still have to wire up the cross-package imports yourself.
 
 ## Design decisions
 
@@ -111,10 +107,4 @@ repoweave sits at the intersection: it provides the repo lifecycle layer (like `
 
 2. **`rwv add` takes a URL** — the manifest needs URLs for `rwv fetch` on other machines. If the repo is already on disk, the clone step is a no-op.
 
-3. **No `lock-all`** — each project needs `activate` first. Lock explicitly per project.
-
-4. **`rwv init` auto-activates** — like `git init`, a one-time setup. Optional `--provider` sets up the remote.
-
-5. **`rwv fetch` updates the lock** — fetches at branch HEAD and updates `rwv.lock` with actual revisions. `--locked` checks out exact revisions. `--frozen` errors if lock is stale (CI).
-
-6. **Workweave location** — `.workweaves/{name}` under the weave directory. The `.rwv-workweave` marker records the weave path and project.
+3. **`rwv fetch` updates the lock** — fetches at branch HEAD and updates `rwv.lock` with actual revisions. `--locked` checks out exact revisions. `--frozen` errors if lock is stale (CI).

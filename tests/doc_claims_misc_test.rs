@@ -158,7 +158,7 @@ fn workweave_sync_adds_new_repo() {
     // Create the initial workweave.
     rwv()
         .args(["workweave", "web-app", "create", "feat"])
-        .env("WORKWEAVEROOT", &weaveroot)
+        .env("RWV_WORKWEAVE_DIR", &weaveroot)
         .current_dir(&ws)
         .assert()
         .success();
@@ -210,7 +210,7 @@ fn workweave_sync_adds_new_repo() {
     // Run sync.
     rwv()
         .args(["workweave", "web-app", "sync", "feat"])
-        .env("WORKWEAVEROOT", &weaveroot)
+        .env("RWV_WORKWEAVE_DIR", &weaveroot)
         .current_dir(&ws)
         .assert()
         .success();
@@ -322,9 +322,9 @@ fn rwv_display_no_active_project() {
         "output should list available projects (found 'my-project'), got:\n{stdout}"
     );
 
-    // No "Active project:" line should appear when nothing is active.
+    // No "Project:" line should appear when nothing is active.
     assert!(
-        !stdout.contains("Active project:"),
+        !stdout.contains("Project:"),
         "output should NOT show 'Active project:' when no project is active, got:\n{stdout}"
     );
 }
@@ -347,7 +347,7 @@ fn rwv_display_in_workweave() {
     // Create the workweave.
     rwv()
         .args(["workweave", "web-app", "create", "display-test"])
-        .env("WORKWEAVEROOT", &weaveroot)
+        .env("RWV_WORKWEAVE_DIR", &weaveroot)
         .current_dir(&ws)
         .assert()
         .success();

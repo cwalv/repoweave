@@ -1,10 +1,10 @@
 # Integrations
 
-## The workspace surface
+## What ecosystem tools see
 
-The weave directory (or workweave directory) is the **workspace surface** — the directory that ecosystem tools see. npm sees a directory with a `package.json` listing workspace packages. Go sees a directory with a `go.work` listing modules. Cargo sees a directory with a `Cargo.toml` listing workspace members. These tools have no idea that the packages come from different git repos. They see a workspace directory with packages in it — nothing more.
+The weave directory (or workweave directory) is what ecosystem tools see. npm sees a directory with a `package.json` listing workspace packages. Go sees a directory with a `go.work` listing modules. Cargo sees a directory with a `Cargo.toml` listing workspace members. These tools have no idea that the packages come from different git repos. They see a workspace directory with packages in it — nothing more.
 
-Integrations are the translation layer between repoweave's multi-repo world (repos, projects, roles) and the ecosystem's workspace world (`package.json`, `go.work`, `Cargo.toml`). They read the project's `rwv.yaml` — which describes repos — and produce the ecosystem workspace files that tools expect at the workspace surface. The result: ecosystem tools work exactly as they would in a monorepo, because from their perspective, it *is* a workspace directory with packages.
+Integrations are the translation layer between repoweave's multi-repo world (repos, projects, roles) and the ecosystem's workspace world (`package.json`, `go.work`, `Cargo.toml`). They read the project's `rwv.yaml` — which describes repos — and produce the ecosystem workspace files in the weave directory. The result: ecosystem tools work exactly as they would in a monorepo, because from their perspective, it *is* a workspace directory with packages.
 
 ## How integrations work
 
@@ -73,18 +73,18 @@ The `active_repos()` method filters out `reference` repos, which should not be i
 
 | Integration | Default enabled | Auto-detects | Generates | Lock hook (runs during `rwv lock`) |
 |---|---|---|---|---|
-| `npm-workspaces` | yes | repos with `package.json` | root `package.json` | `npm install` |
+| `npm-workspaces` | yes | repos with `package.json` | `package.json` | `npm install` |
 | `pnpm-workspaces` | no | repos with `package.json` | `pnpm-workspace.yaml` | `pnpm install` |
 | `go-work` | yes | repos with `go.mod` | `go.work` | -- |
-| `uv-workspace` | yes | repos with `pyproject.toml` | root `pyproject.toml` | `uv sync` |
-| `cargo-workspace` | yes | repos with `Cargo.toml` | root `Cargo.toml` | `cargo generate-lockfile` |
+| `uv-workspace` | yes | repos with `pyproject.toml` | `pyproject.toml` | `uv sync` |
+| `cargo-workspace` | yes | repos with `Cargo.toml` | `Cargo.toml` | `cargo generate-lockfile` |
 | `gita` | yes | all repos | `gita/` directory | -- |
 | `vscode-workspace` | yes | all repos | `{project}.code-workspace` | -- |
 | `static-files` | no | n/a (configured explicitly) | symlinks declared files to weave directory | -- |
 
 ## npm-workspaces
 
-Generates a root `package.json` with a `workspaces` array listing every project repo (excluding `reference` repos) that contains a `package.json`. The lock hook (run during `rwv lock`) runs `npm install` if `npm` is on PATH to update `package-lock.json` and `node_modules/`. To install immediately after activation, run `npm install` manually.
+Generates a `package.json` with a `workspaces` array listing every project repo (excluding `reference` repos) that contains a `package.json`. The lock hook (run during `rwv lock`) runs `npm install` if `npm` is on PATH to update `package-lock.json` and `node_modules/`. To install immediately after activation, run `npm install` manually.
 
 ### Generated file
 
@@ -170,7 +170,7 @@ No checks currently. Could warn if `go` is not on PATH when Go repos are present
 
 ## uv-workspace
 
-Generates a root `pyproject.toml` with a `[tool.uv.workspace]` section listing every project repo (excluding `reference` repos) that contains a `pyproject.toml`. The lock hook (run during `rwv lock`) runs `uv sync` if `uv` is on PATH to update `uv.lock` and `.venv/`. To install immediately after activation, run `uv sync` manually.
+Generates a `pyproject.toml` with a `[tool.uv.workspace]` section listing every project repo (excluding `reference` repos) that contains a `pyproject.toml`. The lock hook (run during `rwv lock`) runs `uv sync` if `uv` is on PATH to update `uv.lock` and `.venv/`. To install immediately after activation, run `uv sync` manually.
 
 ### Generated file
 
@@ -195,7 +195,7 @@ Warns if repos with `pyproject.toml` exist but `uv` is not on PATH.
 
 ## cargo-workspace
 
-Generates a root `Cargo.toml` with a `[workspace]` section listing every project repo (excluding `reference` repos) that contains a `Cargo.toml`. Uses resolver version 2.
+Generates a `Cargo.toml` with a `[workspace]` section listing every project repo (excluding `reference` repos) that contains a `Cargo.toml`. Uses resolver version 2.
 
 ### Generated file
 
@@ -312,7 +312,7 @@ Validates that the `.code-workspace` file exists as a regular file (not a symlin
 
 ## static-files
 
-Symlinks declared files from the project directory to the weave directory on activation. This is the escape hatch for root-level config files that don't belong to any ecosystem integration — build orchestrator configs (`turbo.json`, `nx.json`), linter configs (`.eslintrc.json`, `.prettierrc`), or anything else that tools expect at the weave directory.
+Symlinks declared files from the project directory to the weave directory on activation. This is the escape hatch for top-level config files that don't belong to any ecosystem integration — build orchestrator configs (`turbo.json`, `nx.json`), linter configs (`.eslintrc.json`, `.prettierrc`), or anything else that tools expect at the weave directory.
 
 Disabled by default. Enable explicitly in `rwv.yaml` with a list of files:
 
@@ -383,11 +383,11 @@ After activation, the weave directory contains:
 - `package.json` — generated by the `npm-workspaces` integration
 - `turbo.json` — symlinked by the `static-files` integration
 
-Turborepo discovers packages from `package.json` workspaces and reads its pipeline config from `turbo.json` — both at root, exactly where it expects them.
+Turborepo discovers packages from `package.json` workspaces and reads its pipeline config from `turbo.json` — both at the weave directory, exactly where it expects them.
 
 #### Linter and formatter configs (`.eslintrc.json`, `.prettierrc`)
 
-ESLint and Prettier expect their config at the workspace root to apply across all packages. With npm or pnpm workspaces, linting commands run from the root — the config must be there too.
+ESLint and Prettier expect their config at the weave directory to apply across all packages. With npm or pnpm workspaces, linting commands run from the weave directory — the config must be there too.
 
 ```yaml
 # projects/web-app/rwv.yaml
@@ -417,11 +417,11 @@ integrations:
 
 The `"root": true` in `.eslintrc.json` is important — it tells ESLint to stop walking up the directory tree, so it doesn't accidentally pick up a config from a parent directory outside the weave.
 
-After activation, `eslint .` and `prettier --check .` run from the weave root and apply consistently across every package in the workspace.
+After activation, `eslint .` and `prettier --check .` run from the weave directory and apply consistently across every package in the workspace.
 
 #### Nx build orchestrator (`nx.json`)
 
-[Nx](https://nx.dev/) is a build orchestrator that adds dependency-aware task ordering, caching, and affected-build analysis on top of npm/pnpm workspaces. Like Turborepo, it reads a config file from the workspace root.
+[Nx](https://nx.dev/) is a build orchestrator that adds dependency-aware task ordering, caching, and affected-build analysis on top of npm/pnpm workspaces. Like Turborepo, it reads a config file from the weave directory.
 
 ```yaml
 # projects/web-app/rwv.yaml
@@ -460,7 +460,7 @@ Nx discovers packages from `pnpm-workspace.yaml` and reads task configuration fr
 
 #### Toolchain versions (`.mise.toml`)
 
-[mise](https://mise.jdx.dev/) reads `.mise.toml` from the directory you `cd` into, activating the declared toolchain versions. Placing it at the weave root ensures everyone working on the project uses the same Node, Go, Rust, or Python version — without per-repo `.nvmrc` or `.tool-versions` files scattered across repos.
+[mise](https://mise.jdx.dev/) reads `.mise.toml` from the directory you `cd` into, activating the declared toolchain versions. Placing it at the weave directory ensures everyone working on the project uses the same Node, Go, Rust, or Python version — without per-repo `.nvmrc` or `.tool-versions` files scattered across repos.
 
 ```yaml
 # projects/web-app/rwv.yaml
@@ -479,11 +479,11 @@ rust = "1.78"
 python = "3.12"
 ```
 
-After activation, `mise install` at the weave root installs the declared versions. Combine with direnv (`use mise` in `.envrc`) for automatic activation on `cd`.
+After activation, `mise install` at the weave directory installs the declared versions. Combine with direnv (`use mise` in `.envrc`) for automatic activation on `cd`.
 
 #### Environment activation (`.envrc`)
 
-[direnv](https://direnv.net/) reads `.envrc` from the directory you enter, activating environment variables and shell configuration automatically. At the weave root, `.envrc` sets up the full development environment in one step.
+[direnv](https://direnv.net/) reads `.envrc` from the directory you enter, activating environment variables and shell configuration automatically. At the weave directory, `.envrc` sets up the full development environment in one step.
 
 ```yaml
 # projects/web-app/rwv.yaml
@@ -505,9 +505,9 @@ After activation, entering the weave directory automatically activates toolchain
 
 Note: `.envrc` files often contain developer-local paths or credentials. Consider what belongs in the committed `.envrc` versus a `.envrc.local` that each developer maintains separately.
 
-#### Makefile or justfile at weave root
+#### Makefile or justfile
 
-A `Makefile` or [`justfile`](https://github.com/casey/just) at the weave root provides a consistent command interface across the multi-repo workspace — shortcuts for common sequences that span repos or require a specific order.
+A `Makefile` or [`justfile`](https://github.com/casey/just) at the weave directory provides a consistent command interface across the multi-repo workspace — shortcuts for common sequences that span repos or require a specific order.
 
 ```yaml
 # projects/web-app/rwv.yaml
@@ -542,7 +542,7 @@ lock:
     cd projects/web-app && git add rwv.lock && git commit -m "chore: update lock"
 ```
 
-After activation, `just install`, `just test`, and `just lint` work from the weave root. A justfile (or Makefile) is particularly useful for documenting the commands that require multi-step sequences — like running `rwv lock` before `npm install`, or running lint after a format pass.
+After activation, `just install`, `just test`, and `just lint` work from the weave directory. A justfile (or Makefile) is particularly useful for documenting the commands that require multi-step sequences — like running `rwv lock` before `npm install`, or running lint after a format pass.
 
 ## Build orchestration
 
@@ -554,7 +554,7 @@ Build orchestration tools (Nx, Turborepo) add three capabilities on top of the w
 | **Caching** | Skips re-running tasks when inputs haven't changed | Slow builds, CI optimization |
 | **Affected analysis** | Determines which packages changed since a base ref, runs only those | Large workspaces where running everything is too slow |
 
-These tools consume the same workspace structure that activation hooks generate. Adding `nx.json` or `turbo.json` at root requires zero restructuring — they discover packages from `package.json` workspaces, `go.work`, etc. Use the `static-files` integration to place `turbo.json` or `nx.json` at the weave directory (see [static-files](#static-files) above).
+These tools consume the same workspace structure that activation hooks generate. Adding `nx.json` or `turbo.json` requires zero restructuring — they discover packages from `package.json` workspaces, `go.work`, etc. Use the `static-files` integration to place `turbo.json` or `nx.json` at the weave directory (see [static-files](#static-files) above).
 
 For most projects, ecosystem workspace commands are sufficient without a build orchestrator:
 

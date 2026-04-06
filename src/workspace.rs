@@ -367,17 +367,16 @@ impl WorkspaceContext {
 
     /// Display the workspace context to stdout.
     ///
-    /// Shows root path, location type (weave/workweave), active project, and
+    /// Shows weave path, workweave (if applicable), active project, and
     /// available projects.
     pub fn display(&self) -> String {
         let mut lines = Vec::new();
-        lines.push(format!("Root: {}", self.root.display()));
 
         match &self.location {
             WorkspaceLocation::Weave { project } => {
-                lines.push("Location: weave".to_string());
+                lines.push(format!("Weave: {}", self.root.display()));
                 if let Some(p) = project {
-                    lines.push(format!("Active project: {}", p.as_str()));
+                    lines.push(format!("Project: {}", p.as_str()));
                     // Try to load manifest and show repo count
                     let manifest_path =
                         self.root.join("projects").join(p.as_str()).join("rwv.yaml");
@@ -386,9 +385,13 @@ impl WorkspaceContext {
                     }
                 }
             }
-            WorkspaceLocation::Workweave { name, dir, project } => {
-                lines.push(format!("Location: workweave \"{}\"", name.as_str()));
-                lines.push(format!("Workweave dir: {}", dir.display()));
+            WorkspaceLocation::Workweave {
+                name: _,
+                dir,
+                project,
+            } => {
+                lines.push(format!("Workweave: {}", dir.display()));
+                lines.push(format!("Weave: {}", self.root.display()));
                 lines.push(format!("Project: {}", project.as_str()));
                 // Try to load manifest and show repo count
                 let manifest_path = self

@@ -104,7 +104,7 @@ fn prime_no_active_project() {
         .assert()
         .success()
         .stdout(predicate::str::contains("# repoweave workspace"))
-        .stdout(predicate::str::contains("**Location**: weave"))
+        .stdout(predicate::str::contains("**Weave**"))
         .stdout(predicate::function(|s: &str| !s.contains("**Project**")));
 }
 
@@ -139,7 +139,7 @@ repositories:
         .current_dir(&weave_dir)
         .assert()
         .success()
-        .stdout(predicate::str::contains("workweave `hotfix`"))
+        .stdout(predicate::str::contains("**Workweave**"))
         .stdout(predicate::str::contains("**Project**: `ws`"))
         .stdout(predicate::str::contains("## Repositories"));
 }
