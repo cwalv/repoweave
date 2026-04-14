@@ -20,10 +20,10 @@ classifiers = [
 [project.urls]
 Repository = "https://github.com/cwalv/repoweave"
 
-# [project.scripts] is used by the sdist fallback install path only.
-# Platform-specific wheels deliver rwv via .data/scripts/ directly (no wrapper).
-[project.scripts]
-rwv = "repoweave:main"
+# No [project.scripts]: the native rwv binary is shipped in the wheel's
+# .data/scripts/ directory (via cargo-dist / build_wheels.py) and lands in
+# bin/rwv directly at install time. Matches ruff and uv, which use the same
+# packaging approach and ship no console-script entry points.
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/repoweave"]

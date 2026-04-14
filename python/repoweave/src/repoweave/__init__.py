@@ -1,9 +1,15 @@
 """
 repoweave - A cross-repo workspace manager.
 
-This is a thin Python wrapper that downloads and runs the pre-built
-repoweave (rwv) binary from GitHub Releases. It enables `uvx repoweave`
-and `pipx run repoweave` without requiring a Rust toolchain.
+The installable command is the native `rwv` binary shipped in the wheel's
+`.data/scripts/` directory (via cargo-dist / build_wheels.py). This Python
+package exists so `python -m repoweave` works (see ``__main__.py``) and so
+``import repoweave`` succeeds.
+
+This module intentionally has no ``main()`` entry point: running through a
+Python wrapper defeats signal forwarding (``subprocess.run`` doesn't
+propagate SIGTERM/SIGINT to the child), which breaks shell hooks that
+invoke rwv. The ruff and uv projects ship in the same way.
 """
 
 from __future__ import annotations
@@ -16,7 +22,6 @@ import sysconfig
 
 def _find_binary() -> str:
     """Locate the rwv binary bundled in the package's scripts/data directory."""
-    # When installed via pip/pipx/uvx, the binary ends up in the scripts dir
     scripts_dir = sysconfig.get_path("scripts")
     if scripts_dir:
         bin_name = "rwv.exe" if sys.platform == "win32" else "rwv"
@@ -24,7 +29,6 @@ def _find_binary() -> str:
         if os.path.isfile(candidate):
             return candidate
 
-    # Fallback: check next to this file (for development / editable installs)
     pkg_dir = os.path.dirname(os.path.abspath(__file__))
     bin_name = "rwv.exe" if sys.platform == "win32" else "rwv"
     candidate = os.path.join(pkg_dir, "bin", bin_name)
@@ -36,16 +40,3 @@ def _find_binary() -> str:
         f"Platform: {platform.system()} {platform.machine()}. "
         f"Please report this issue at https://github.com/cwalv/repoweave/issues"
     )
-
-
-def main() -> None:
-    """Entry point for the `rwv` console script."""
-    import subprocess
-
-    binary = _find_binary()
-    result = subprocess.run([binary, *sys.argv[1:]])
-    raise SystemExit(result.returncode)
-
-
-if __name__ == "__main__":
-    main()
