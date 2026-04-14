@@ -65,16 +65,51 @@ fn copy_dir_recursive(src: &Path, dst: &Path) -> anyhow::Result<()> {
 /// Also creates a worktree for the project repo, processes `workweave:` artifacts,
 /// writes the marker file, writes `.rwv-active`, and runs activate.
 ///
+/// If the workweave directory already exists, behavior depends on `force`:
+/// - `force == false`: validate that the existing workweave matches this
+///   `(primary, project)` pair and has no local modifications, then
+///   short-circuit. This preserves non-git state (e.g. `.runtime/`,
+///   `.claude/`) written by agents between invocations — the contract
+///   relied on by Gas City's `gc runtime request-restart` flow.
+///   Returns an error if the marker is missing or for a different project,
+///   or if any worktree has uncommitted changes or advanced commits.
+/// - `force == true`: destroy the existing workweave and recreate from
+///   scratch. Intended for explicit rebuild scenarios (corruption
+///   recovery, or switching a slot to a different project).
+///
 /// Returns the absolute path of the created workweave directory.
 pub fn create_workweave(
     ws_root: &Path,
     project: &str,
     name: &WorkweaveName,
+    force: bool,
 ) -> anyhow::Result<PathBuf> {
     let manifest = load_manifest(ws_root, project)?;
     let pname = primary_name(ws_root);
     let parent = workweave_parent(ws_root);
     let workweave_dir = parent.join(weave_dir_name(&pname, name));
+
+    if workweave_dir.exists() {
+        if force {
+            // Destructive reuse. Prefer delete_workweave (which also
+            // prunes worktrees and ephemeral branches) when the marker
+            // belongs to this project; fall back to a raw remove
+            // otherwise since delete_workweave loads a manifest tied to
+            // `project` and would fail on wrong-marker / missing-marker
+            // cases.
+            let can_use_structured_delete = match WorkweaveMarker::read(&workweave_dir)? {
+                Some(m) => m.project.as_str() == project,
+                None => false,
+            };
+            if can_use_structured_delete {
+                delete_workweave(ws_root, project, name)?;
+            } else {
+                std::fs::remove_dir_all(&workweave_dir)?;
+            }
+        } else {
+            return reuse_existing_workweave(ws_root, project, name, &workweave_dir, &manifest);
+        }
+    }
 
     std::fs::create_dir_all(&workweave_dir)?;
 
@@ -206,6 +241,98 @@ pub fn create_workweave(
     crate::activate::activate_workweave(project, &workweave_dir)?;
 
     Ok(workweave_dir)
+}
+
+/// Validate that an existing workweave directory matches `(ws_root, project, name)`
+/// and is in a clean state, then return its path without modifying anything.
+///
+/// Called from [`create_workweave`] on re-invocation without `--force`. Refuses
+/// if the `.rwv-workweave` marker is missing or for a different primary/project,
+/// or if any per-repo worktree has uncommitted changes or advanced commits
+/// relative to the primary.
+fn reuse_existing_workweave(
+    ws_root: &Path,
+    project: &str,
+    _name: &WorkweaveName,
+    workweave_dir: &Path,
+    manifest: &Manifest,
+) -> anyhow::Result<PathBuf> {
+    let marker = WorkweaveMarker::read(workweave_dir)?.ok_or_else(|| {
+        anyhow!(
+            "workweave directory {} exists but has no .rwv-workweave marker; \
+             rerun with --force to recreate it",
+            workweave_dir.display()
+        )
+    })?;
+
+    if marker.project.as_str() != project {
+        bail!(
+            "workweave at {} is for project '{}', refusing to recreate for project '{}'; \
+             rerun with --force to overwrite",
+            workweave_dir.display(),
+            marker.project.as_str(),
+            project
+        );
+    }
+
+    let marker_primary = marker
+        .primary
+        .canonicalize()
+        .unwrap_or_else(|_| marker.primary.clone());
+    let ws_canonical = ws_root
+        .canonicalize()
+        .unwrap_or_else(|_| ws_root.to_path_buf());
+    if marker_primary != ws_canonical {
+        bail!(
+            "workweave at {} is for primary workspace {}, refusing to recreate for {}; \
+             rerun with --force to overwrite",
+            workweave_dir.display(),
+            marker.primary.display(),
+            ws_root.display()
+        );
+    }
+
+    // Detect local modifications (uncommitted changes or advanced commits)
+    // in any existing worktree. Missing worktrees are not "modified" — a
+    // manifest may have grown since the workweave was created; `rwv
+    // workweave sync` is the path for adding them.
+    let mut modified: Vec<String> = Vec::new();
+    for (repo_path, entry) in &manifest.repositories {
+        let vcs = vcs_for(entry.vcs_type);
+        let worktree_dest = workweave_dir.join(repo_path.as_path());
+        if !worktree_dest.exists() {
+            continue;
+        }
+        if vcs.has_uncommitted_changes(&worktree_dest)? {
+            modified.push(format!("{}: uncommitted changes", repo_path.as_str()));
+            continue;
+        }
+        let repo_abs = ws_root.join(repo_path.as_path());
+        let wt_head = vcs.head_revision(&worktree_dest)?;
+        let primary_head = vcs.head_revision(&repo_abs)?;
+        if wt_head != primary_head {
+            modified.push(format!(
+                "{}: worktree has diverged from primary ({} vs {})",
+                repo_path.as_str(),
+                short_sha(wt_head.as_str()),
+                short_sha(primary_head.as_str()),
+            ));
+        }
+    }
+
+    if !modified.is_empty() {
+        bail!(
+            "workweave at {} has local modifications; refusing to recreate without --force:\n  {}",
+            workweave_dir.display(),
+            modified.join("\n  ")
+        );
+    }
+
+    Ok(workweave_dir.to_path_buf())
+}
+
+fn short_sha(sha: &str) -> &str {
+    &sha[..sha.len().min(12)]
 }
 
 /// Delete a workweave: remove worktrees (including project repo) and delete the workweave directory.
@@ -393,7 +520,8 @@ pub fn handle_claude_hook() -> anyhow::Result<()> {
             let name =
                 derive_workweave_name(input.branch_name.as_deref(), input.session_id.as_deref());
 
-            let path = create_workweave(ws_root, project.as_str(), &WorkweaveName::new(&name))?;
+            let path =
+                create_workweave(ws_root, project.as_str(), &WorkweaveName::new(&name), false)?;
             println!("{}", path.display());
         }
         Some("WorktreeRemove") => {

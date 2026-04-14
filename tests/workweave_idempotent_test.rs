@@ -13,6 +13,7 @@
 //! are all preserved.
 
 use assert_cmd::Command;
+use predicates::prelude::*;
 use std::path::Path;
 use std::process;
 
@@ -95,13 +96,7 @@ fn current_branch(dir: &Path) -> String {
 /// assumes non-git files written by agents (sentinel state under
 /// `.runtime/`, agent scratch under `.claude/`) survive a re-invocation
 /// of the same `rwv workweave ... create ...` command.
-///
-/// Currently `#[ignore]`: re-invocation fails at the `git worktree add`
-/// step because the destination already exists. The implementation work
-/// to make this idempotent is tracked in fo-bsd; removing `#[ignore]`
-/// when the fix lands converts this into an active regression guard.
 #[test]
-#[ignore = "red-green: fo-bsd implements idempotent workweave create"]
 fn workweave_recreate_preserves_non_git_state() {
     let tmp = tempfile::tempdir().unwrap();
     let ws = make_workspace(tmp.path(), "web-app");
@@ -212,4 +207,219 @@ fn workweave_recreate_preserves_non_git_state() {
         branch_after, branch_before,
         "worktree ephemeral branch should be unchanged after re-invocation"
     );
+}
+
+/// Re-invoking `rwv workweave PROJECT create NAME` on a workweave that has
+/// local modifications (uncommitted changes OR commits on the ephemeral
+/// branch) must refuse without `--force`, preserving the user's work.
+///
+/// This protects against silent loss when a user has done work inside a
+/// workweave and then accidentally (or a tool) re-issues the create
+/// command — a failed idempotency check here would clobber that work.
+#[test]
+fn workweave_recreate_refuses_on_local_modifications() {
+    let tmp = tempfile::tempdir().unwrap();
+    let ws = make_workspace(tmp.path(), "web-app");
+    let weaveroot = tmp.path().join(".workweaves");
+    std::fs::create_dir_all(&weaveroot).unwrap();
+
+    // ---- Case A: uncommitted changes in the worktree. ----
+    rwv()
+        .args(["workweave", "web-app", "create", "dirty"])
+        .env("RWV_WORKWEAVE_DIR", &weaveroot)
+        .current_dir(&ws)
+        .assert()
+        .success();
+
+    let ww_dir = weaveroot.join("ws--dirty");
+    let weave_repo = ww_dir.join("github/org/repo");
+    let head_before_dirty = head_sha(&weave_repo);
+
+    // Introduce an uncommitted change (new file).
+    std::fs::write(weave_repo.join("scratch.txt"), "untracked edit\n").unwrap();
+
+    rwv()
+        .args(["workweave", "web-app", "create", "dirty"])
+        .env("RWV_WORKWEAVE_DIR", &weaveroot)
+        .current_dir(&ws)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("uncommitted changes"));
+
+    // Dirty file must still be there.
+    assert!(
+        weave_repo.join("scratch.txt").exists(),
+        "scratch.txt should survive a refused re-invocation"
+    );
+    assert_eq!(
+        head_sha(&weave_repo),
+        head_before_dirty,
+        "worktree HEAD should be unchanged after refused re-invocation"
+    );
+
+    // ---- Case B: a new commit on the ephemeral branch. ----
+    rwv()
+        .args(["workweave", "web-app", "create", "advanced"])
+        .env("RWV_WORKWEAVE_DIR", &weaveroot)
+        .current_dir(&ws)
+        .assert()
+        .success();
+
+    let ww2_dir = weaveroot.join("ws--advanced");
+    let weave2_repo = ww2_dir.join("github/org/repo");
+
+    std::fs::write(weave2_repo.join("new-file.txt"), "content\n").unwrap();
+    git(&["add", "."], &weave2_repo);
+    git(&["commit", "-m", "work in progress"], &weave2_repo);
+    let advanced_head = head_sha(&weave2_repo);
+
+    rwv()
+        .args(["workweave", "web-app", "create", "advanced"])
+        .env("RWV_WORKWEAVE_DIR", &weaveroot)
+        .current_dir(&ws)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("diverged from primary"));
+
+    // Commit must still be there.
+    assert_eq!(
+        head_sha(&weave2_repo),
+        advanced_head,
+        "ephemeral-branch commit should survive a refused re-invocation"
+    );
+    assert!(
+        weave2_repo.join("new-file.txt").exists(),
+        "committed file should still be on disk"
+    );
+}
+
+/// Re-invoking `rwv workweave` with a project that does NOT match the
+/// existing marker in the target directory must refuse (without `--force`).
+///
+/// Without this check, a user who typoed the project name or reused a
+/// name across projects would silently clobber the existing workweave.
+#[test]
+fn workweave_recreate_refuses_on_wrong_project_marker() {
+    let tmp = tempfile::tempdir().unwrap();
+    let ws = make_workspace(tmp.path(), "project-a");
+    // Add a second project manifest pointing at the same repo.
+    let project_b_dir = ws.join("projects/project-b");
+    std::fs::create_dir_all(&project_b_dir).unwrap();
+    let repo_path = ws.join("github/org/repo");
+    let manifest_b = format!(
+        r#"repositories:
+  github/org/repo:
+    type: git
+    url: file://{repo}
+    version: main
+    role: primary
+"#,
+        repo = repo_path.display()
+    );
+    std::fs::write(project_b_dir.join("rwv.yaml"), manifest_b).unwrap();
+
+    let weaveroot = tmp.path().join(".workweaves");
+    std::fs::create_dir_all(&weaveroot).unwrap();
+
+    // Create workweave "shared" for project-a.
+    rwv()
+        .args(["workweave", "project-a", "create", "shared"])
+        .env("RWV_WORKWEAVE_DIR", &weaveroot)
+        .current_dir(&ws)
+        .assert()
+        .success();
+
+    let ww_dir = weaveroot.join("ws--shared");
+    assert!(ww_dir.exists());
+    let marker_before = std::fs::read_to_string(ww_dir.join(".rwv-workweave")).unwrap();
+
+    // Attempt to recreate the same workweave for project-b — must refuse.
+    rwv()
+        .args(["workweave", "project-b", "create", "shared"])
+        .env("RWV_WORKWEAVE_DIR", &weaveroot)
+        .current_dir(&ws)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("project-a"));
+
+    // Marker unchanged: the existing workweave was not touched.
+    let marker_after = std::fs::read_to_string(ww_dir.join(".rwv-workweave")).unwrap();
+    assert_eq!(
+        marker_after, marker_before,
+        ".rwv-workweave marker should be unchanged after refused cross-project recreate"
+    );
+}
+
+/// `--force` must destroy and recreate the workweave even when the
+/// existing state has local modifications. This is the explicit rebuild
+/// path (corruption recovery, reusing a slot for a new purpose).
+#[test]
+fn workweave_recreate_with_force_destroys_and_recreates() {
+    let tmp = tempfile::tempdir().unwrap();
+    let ws = make_workspace(tmp.path(), "web-app");
+    let weaveroot = tmp.path().join(".workweaves");
+    std::fs::create_dir_all(&weaveroot).unwrap();
+
+    rwv()
+        .args(["workweave", "web-app", "create", "reset"])
+        .env("RWV_WORKWEAVE_DIR", &weaveroot)
+        .current_dir(&ws)
+        .assert()
+        .success();
+
+    let ww_dir = weaveroot.join("ws--reset");
+    let weave_repo = ww_dir.join("github/org/repo");
+
+    // Dirty it — a refused-recreate would have fired here without --force.
+    std::fs::write(weave_repo.join("scratch.txt"), "local work\n").unwrap();
+    let sentinel = ww_dir.join(".runtime/sentinel.txt");
+    std::fs::create_dir_all(sentinel.parent().unwrap()).unwrap();
+    std::fs::write(&sentinel, "will be wiped\n").unwrap();
+    let head_before = head_sha(&weave_repo);
+
+    // Re-invoke with --force: should destroy and recreate.
+    rwv()
+        .args(["workweave", "web-app", "create", "reset", "--force"])
+        .env("RWV_WORKWEAVE_DIR", &weaveroot)
+        .current_dir(&ws)
+        .assert()
+        .success();
+
+    // Dirty file and sentinel are gone — --force is destructive.
+    assert!(
+        !weave_repo.join("scratch.txt").exists(),
+        "scratch.txt should be wiped by --force recreate"
+    );
+    assert!(
+        !sentinel.exists(),
+        "sentinel file should be wiped by --force recreate"
+    );
+
+    // Workweave is rebuilt: marker present, worktree on expected branch,
+    // HEAD matching primary's current branch.
+    assert!(ww_dir.join(".rwv-workweave").exists());
+    assert_eq!(current_branch(&weave_repo), "reset/main");
+    assert_eq!(
+        head_sha(&weave_repo),
+        head_before,
+        "rebuilt worktree HEAD should match primary's current-branch HEAD"
+    );
+}
+
+fn head_sha(dir: &Path) -> String {
+    let output = process::Command::new("git")
+        .args(["rev-parse", "HEAD"])
+        .current_dir(dir)
+        .output()
+        .expect("git rev-parse should run");
+    assert!(
+        output.status.success(),
+        "git rev-parse HEAD in {} failed: {}",
+        dir.display(),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    String::from_utf8(output.stdout)
+        .expect("sha should be valid UTF-8")
+        .trim()
+        .to_string()
 }

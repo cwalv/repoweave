@@ -179,7 +179,7 @@ repositories:\n  \
     std::env::set_var("RWV_WORKWEAVE_DIR", &workweave_root);
 
     let ww_name = repoweave::manifest::WorkweaveName::new("agent-1");
-    let ww_dir = repoweave::workweave::create_workweave(&ws, "web-app", &ww_name)
+    let ww_dir = repoweave::workweave::create_workweave(&ws, "web-app", &ww_name, false)
         .expect("create_workweave should succeed");
 
     // ------------------------------------------------------------------

@@ -148,6 +148,13 @@ enum WorkweaveAction {
     Create {
         /// Workweave name
         name: String,
+        /// Destroy an existing workweave at this path before recreating.
+        ///
+        /// Without this flag, re-invoking `create` against an existing
+        /// workweave preserves non-git state in place (the idempotent
+        /// path). Use `--force` for explicit rebuild scenarios.
+        #[arg(long)]
+        force: bool,
     },
     /// Delete a workweave
     Delete {
@@ -207,11 +214,12 @@ fn main() -> anyhow::Result<()> {
                             &WorkweaveName::new(name),
                         )?;
                     }
-                    Some(WorkweaveAction::Create { name }) => {
+                    Some(WorkweaveAction::Create { name, force }) => {
                         let workweave_path = repoweave::workweave::create_workweave(
                             ws_root,
                             &project,
                             &WorkweaveName::new(name),
+                            force,
                         )?;
                         if hook_mode {
                             println!("{}", workweave_path.display());
