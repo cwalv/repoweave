@@ -18,11 +18,7 @@ The binary lands at `target/release/rwv`.
 
 ## Install
 
-Cargo has no `cargo install -e` analog of `uv tool install -e`. The practical equivalent is a symlink that points at `target/release/rwv`; every subsequent `cargo build --release` updates what's on `PATH` in place, no re-install needed.
-
-Two ways to wire it up. Pick one — they achieve the same thing.
-
-### Option A — symlink in `~/.local/bin` (simplest)
+Cargo has no `cargo install -e` analog of `uv tool install -e`. The practical equivalent is a symlink in `~/.local/bin` that points at `target/release/rwv`; every subsequent `cargo build --release` updates what's on `PATH` in place, no re-install needed.
 
 One-time setup:
 
@@ -38,36 +34,15 @@ After any source change:
 cargo build --release
 ```
 
-This is also where `install.sh` drops its binary, so the dev symlink and a released install occupy the same path — the dev symlink wins. To return to the released version, delete the symlink and re-run `install.sh` (or `uv tool install repoweave`).
+This is also where `install.sh` drops its binary, so the dev symlink and a released install occupy the same path — the dev symlink wins.
 
-### Option B — `uv tool install --editable`
-
-Mirrors the shape of the released `uv tool install repoweave` path. Uses the editable-install fallback in the Python wrapper (`python/repoweave/src/repoweave/__init__.py`'s `_find_binary()` checks `<pkg_dir>/bin/rwv` before the installed scripts dir).
-
-One-time setup:
-
-```bash
-cd github/cwalv/repoweave
-cargo build --release
-mkdir -p python/repoweave/src/repoweave/bin
-ln -sf "$(pwd)/target/release/rwv" python/repoweave/src/repoweave/bin/rwv
-uv tool install --editable ./python/repoweave --force
-```
-
-After any source change:
-
-```bash
-cargo build --release
-```
-
-The editable Python wrapper resolves through the symlink on each invocation, so the fresh binary is picked up immediately.
+`uv tool install --editable ./python/repoweave` does **not** work: `pyproject.toml` declares no `[project.scripts]` (native binary ships via `.data/scripts/` in the release wheel, matching ruff/uv), so editable installs produce no `rwv` on PATH. Dogfood via the symlink above.
 
 ## Verify
 
 ```bash
-which rwv           # resolves to ~/.local/bin/rwv (either option)
+which rwv           # resolves to ~/.local/bin/rwv
 rwv --version       # matches the freshly built version
-uv tool list        # option B: shows repoweave (editable)
 ```
 
 `rwv --version` is the ground truth — if it reports the expected version and your source changes are visible in behavior, the loop is working.
@@ -78,19 +53,10 @@ uv tool list        # option B: shows repoweave (editable)
 
 ## Going back to the released version
 
-**Option A:**
-
 ```bash
 rm ~/.local/bin/rwv
 curl -fsSL https://cwalv.github.io/repoweave/install.sh | sh
 # or: uv tool install repoweave
-```
-
-**Option B:**
-
-```bash
-uv tool uninstall repoweave
-uv tool install repoweave
 ```
 
 ## When to cut a release
