@@ -74,7 +74,7 @@ pub fn render_context(ctx: &WorkspaceContext) -> String {
     out.push_str("| `rwv add URL [--role ROLE]` | Add a repo to the active project |\n");
     out.push_str("| `rwv remove PATH` | Remove a repo from the active project |\n");
     out.push_str("| `rwv lock` | Snapshot repo versions to rwv.lock |\n");
-    out.push_str("| `rwv check` | Run convention enforcement |\n");
+    out.push_str("| `rwv doctor` | Run convention enforcement |\n");
     out.push_str("| `rwv fetch SOURCE` | Clone a project and its repos |\n");
 
     // -- Directory layout -------------------------------------------------------

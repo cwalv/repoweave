@@ -101,7 +101,7 @@ rwv add github/chatly/auth --new
 rwv add https://github.com/interesting/library.git --role reference
 ```
 
-Reference repos are visible in the workspace but excluded from build graphs. Use this instead of manual `git clone` so repos are tracked — `rwv check` reports untracked repos as orphans.
+Reference repos are visible in the workspace but excluded from build graphs. Use this instead of manual `git clone` so repos are tracked — `rwv doctor` reports untracked repos as orphans.
 
 ### Removing a repo
 
@@ -256,7 +256,7 @@ Removes worktrees, cleans up ephemeral branches, deletes the directory. Commits 
 ## Checking project health
 
 ```bash
-rwv check
+rwv doctor
 ```
 
 Reports:

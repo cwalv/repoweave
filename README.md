@@ -87,7 +87,7 @@ cd .workweaves/payments
 | `rwv add <url>` | Clone a repo, add to `rwv.yaml`, re-run integrations. `--role` sets the role, `--new` for `git init` |
 | `rwv remove <path>` | Remove from `rwv.yaml`, re-run integrations. `--delete` removes the clone |
 | `rwv lock` | Snapshot repo HEADs into `rwv.lock`. Errors on uncommitted changes (`--dirty` to bypass) |
-| `rwv check` | Convention enforcement: orphans, dangling refs, stale locks, integration checks |
+| `rwv doctor` | Convention enforcement: orphans, dangling refs, stale locks, integration checks |
 | `rwv workweave <project> create <name>` | Create an isolated working copy (worktrees on ephemeral branches) |
 | `rwv workweave <project> delete <name>` | Delete a workweave (remove worktrees, clean up ephemeral branches) |
 | `rwv workweave <project> sync <name>` | Sync workweave with current manifest |

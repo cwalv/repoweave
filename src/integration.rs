@@ -139,7 +139,7 @@ pub trait Integration {
     fn deactivate(&self, root: &Path) -> anyhow::Result<()>;
 
     /// Read-only inspection. Returns issues without changing state.
-    /// Called by `rwv check`.
+    /// Called by `rwv doctor`.
     fn check(&self, ctx: &IntegrationContext) -> anyhow::Result<Vec<Issue>>;
 
     /// Lock hook — run after `rwv lock` writes `rwv.lock`.

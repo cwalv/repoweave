@@ -79,7 +79,8 @@ enum Commands {
         dirty: bool,
     },
     /// Convention enforcement
-    Check,
+    #[command(alias = "check")]
+    Doctor,
     /// Print workspace root path
     Resolve,
     /// Initialize a new project
@@ -239,7 +240,7 @@ fn main() -> anyhow::Result<()> {
             let cwd = std::env::current_dir()?;
             lock::lock(&cwd, dirty)?;
         }
-        Some(Commands::Check) => {
+        Some(Commands::Doctor) => {
             let cwd = std::env::current_dir()?;
             let has_errors = check::run_check(&cwd)?;
             if has_errors {

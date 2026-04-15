@@ -188,7 +188,7 @@ projects/web-app/
 
 Projects answer the question: "I'm working on the web app — which repos matter?"
 
-Without projects, you have a flat list of 20 repos and need tribal knowledge to know which ones are relevant. With a project, every `rwv` command — `rwv lock`, `rwv check` — and every workweave is scoped to the repos that matter for that work.
+Without projects, you have a flat list of 20 repos and need tribal knowledge to know which ones are relevant. With a project, every `rwv` command — `rwv lock`, `rwv doctor` — and every workweave is scoped to the repos that matter for that work.
 
 Projects also provide a home for documentation that doesn't belong to any single repo. An architecture decision that spans `server` and `protocol` shouldn't live in either repo — it lives in `projects/web-app/docs/`.
 
@@ -299,12 +299,12 @@ If you edit `rwv.yaml` in a workweave, sync it with `rwv workweave web-app sync 
 | `rwv add {url}` | Clone a repo, register in `rwv.yaml`, re-run integration hooks. With `--role`, sets the role. With `--new`, initializes a new repo at the canonical path (infers URL). |
 | `rwv remove {path}` | Remove from `rwv.yaml`, re-run integration hooks. With `--delete`, also removes the clone (confirms unless `--force`). |
 | `rwv lock` | Snapshot repo versions into the project's `rwv.lock`. Errors on uncommitted changes (`--dirty` to bypass). Runs integration lock hooks. |
-| `rwv check` | Convention enforcement: orphaned clones, dangling references, missing roles, stale locks, workweave drift, integration checks. |
+| `rwv doctor` | Convention enforcement: orphaned clones, dangling references, missing roles, stale locks, workweave drift, integration checks. |
 | `rwv resolve` | Print the weave directory (workweave or weave). Useful for scripting: `cd $(rwv resolve)`. |
 
-### `rwv check` and multi-project awareness
+### `rwv doctor` and multi-project awareness
 
-`rwv check` scans all `projects/*/rwv.yaml` files to build a complete inventory of known repos. This prevents false orphan warnings — a repo from another project is not an orphan.
+`rwv doctor` scans all `projects/*/rwv.yaml` files to build a complete inventory of known repos. This prevents false orphan warnings — a repo from another project is not an orphan.
 
 | Check | Description |
 |---|---|
@@ -336,7 +336,7 @@ wrote projects/web-app/rwv.lock (4 repos)
 
 ## Integrations
 
-Integrations translate between repoweave's multi-repo world and ecosystem workspace formats. They generate workspace config files (`package.json`, `go.work`, `Cargo.toml`, etc.) in the weave directory during activation, run install commands during `rwv lock`, and perform read-only checks during `rwv check`.
+Integrations translate between repoweave's multi-repo world and ecosystem workspace formats. They generate workspace config files (`package.json`, `go.work`, `Cargo.toml`, etc.) in the weave directory during activation, run install commands during `rwv lock`, and perform read-only checks during `rwv doctor`.
 
 | Integration | Default enabled | Auto-detects | Generates (activation) | Lock hook (`rwv lock`) |
 |---|---|---|---|---|

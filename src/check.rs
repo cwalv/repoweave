@@ -1,6 +1,6 @@
 //! Convention checks: orphaned clones, dangling refs, stale locks, etc.
 //!
-//! `rwv check` builds a workspace-wide inventory from all projects, then runs
+//! `rwv doctor` builds a workspace-wide inventory from all projects, then runs
 //! a series of checks. Integration check hooks are run separately.
 
 use crate::integration::Issue;
@@ -8,7 +8,7 @@ use crate::manifest::{Project, RepoPath};
 use crate::vcs::RevisionId;
 use std::collections::{BTreeMap, BTreeSet};
 
-/// The kinds of convention violations `rwv check` can find.
+/// The kinds of convention violations `rwv doctor` can find.
 ///
 /// Each variant carries enough data to produce a useful message.
 /// Separating the description (this enum) from execution (the checker)
@@ -164,7 +164,7 @@ pub fn violations_to_issues(violations: Vec<CheckViolation>) -> Vec<Issue> {
         .collect()
 }
 
-/// Execute `rwv check` for the current workspace context.
+/// Execute `rwv doctor` for the current workspace context.
 ///
 /// Scans registry directories for repos on disk, loads all project manifests,
 /// runs convention checks and integration check hooks, then displays issues.

@@ -12,7 +12,7 @@ Rather than hardcoding knowledge of each ecosystem and tool, `rwv` uses **integr
 
 - **Activation hooks** (run during workweave creation, sync, add, remove) — generate config files and symlinks, or do nothing. This is the write path.
 - **Lock hooks** (run during `rwv lock`) — run install commands (`npm install`, `uv sync`, `cargo generate-lockfile`, etc.) to ensure ecosystem lock files are up to date. This is where package installation happens.
-- **Check hooks** (`rwv check`) — read-only inspection. Verify the environment is healthy, report missing tools, stale config, etc.
+- **Check hooks** (`rwv doctor`) — read-only inspection. Verify the environment is healthy, report missing tools, stale config, etc.
 
 Each integration provides:
 
@@ -25,7 +25,7 @@ Each integration provides:
 
 When a project is activated or a workweave is created or synced, integrations are run: the deactivation hook cleans up first, then the activation hook generates fresh config. Each integration auto-detects relevant repos — if none are found, it does nothing.
 
-`rwv check` runs check hooks across all enabled integrations as part of its broader convention audit.
+`rwv doctor` runs check hooks across all enabled integrations as part of its broader convention audit.
 
 Ecosystem integrations auto-detect repos with the relevant manifest file. If none are found, they do nothing — no config file is generated, no error is raised.
 
