@@ -41,8 +41,22 @@ fn primary_name(ws_root: &Path) -> String {
 }
 
 /// Build the ephemeral branch name used by workweave worktrees.
-fn ephemeral_branch_name(workweave_name: &WorkweaveName, current_branch: &str) -> String {
-    format!("{}/{}", workweave_name.as_str(), current_branch)
+///
+/// Includes the project name so that workweaves with the same name across
+/// different projects do not collide on shared repos (e.g., both
+/// `project-repoweave` and `foundations` referencing `github/gastownhall/beads`).
+fn ephemeral_branch_name(
+    project: &str,
+    workweave_name: &WorkweaveName,
+    current_branch: &str,
+) -> String {
+    format!("{}--{}/{}", project, workweave_name.as_str(), current_branch)
+}
+
+/// Build the branch prefix used to locate all ephemeral branches for a given
+/// (project, workweave_name) pair. Used to clean up branches on delete.
+fn ephemeral_branch_prefix(project: &str, workweave_name: &WorkweaveName) -> String {
+    format!("{}--{}", project, workweave_name.as_str())
 }
 
 /// Recursively copy a directory from `src` to `dst`.
@@ -61,7 +75,7 @@ fn copy_dir_recursive(src: &Path, dst: &Path) -> anyhow::Result<()> {
 }
 
 /// Create a workweave: for each repo in the manifest, create a worktree in the
-/// workweave directory on an ephemeral branch `{workweave_name}/{current_branch}`.
+/// workweave directory on an ephemeral branch `{project}--{workweave_name}/{current_branch}`.
 /// Also creates a worktree for the project repo, processes `workweave:` artifacts,
 /// writes the marker file, writes `.rwv-active`, and runs activate.
 ///
@@ -127,7 +141,7 @@ pub fn create_workweave(
                 .map(|r| r.as_str().to_string())
                 .unwrap_or_else(|| "HEAD".to_string());
 
-            let ephemeral_branch = ephemeral_branch_name(name, &current_branch);
+            let ephemeral_branch = ephemeral_branch_name(project, name, &current_branch);
 
             // Get the current HEAD revision as the start point.
             let head = vcs.head_revision(&repo_abs)?;
@@ -168,7 +182,7 @@ pub fn create_workweave(
                 .current_ref(&project_dir)?
                 .map(|r| r.as_str().to_string())
                 .unwrap_or_else(|| "HEAD".to_string());
-            let ephemeral_branch = ephemeral_branch_name(name, &current_branch);
+            let ephemeral_branch = ephemeral_branch_name(project, name, &current_branch);
             let head = GitVcs.head_revision(&project_dir)?;
             std::fs::create_dir_all(project_wt_dest.parent().unwrap())?;
             GitVcs.create_worktree(
@@ -361,7 +375,8 @@ pub fn delete_workweave(ws_root: &Path, project: &str, name: &WorkweaveName) -> 
 
         // Prune stale worktree metadata and delete ephemeral branches.
         let _ = vcs.worktree_prune(&repo_abs);
-        match vcs.list_branches_with_prefix(&repo_abs, name.as_str()) {
+        let branch_prefix = ephemeral_branch_prefix(project, name);
+        match vcs.list_branches_with_prefix(&repo_abs, &branch_prefix) {
             Ok(branches) => {
                 for branch in branches {
                     if let Err(e) = vcs.delete_branch(&repo_abs, &branch) {
@@ -398,7 +413,8 @@ pub fn delete_workweave(ws_root: &Path, project: &str, name: &WorkweaveName) -> 
             } else {
                 // Prune and delete ephemeral branches for the project repo.
                 let _ = GitVcs.worktree_prune(&project_dir);
-                if let Ok(branches) = GitVcs.list_branches_with_prefix(&project_dir, name.as_str())
+                let branch_prefix = ephemeral_branch_prefix(project, name);
+                if let Ok(branches) = GitVcs.list_branches_with_prefix(&project_dir, &branch_prefix)
                 {
                     for branch in branches {
                         if let Err(e) = GitVcs.delete_branch(&project_dir, &branch) {

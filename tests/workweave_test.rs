@@ -191,7 +191,8 @@ fn workweave_create_worktrees_on_ephemeral_branches() {
         .success();
 
     // The worktree in the workweave should be on an ephemeral branch
-    // named {workweave-name}/{original-branch}, i.e. "hotfix/main".
+    // named {project}--{workweave-name}/{original-branch}, i.e.
+    // "web-app--hotfix/main".
     let weave_repo = weaveroot.join("ws--hotfix/github/org/repo");
     assert!(
         weave_repo.exists(),
@@ -208,8 +209,8 @@ fn workweave_create_worktrees_on_ephemeral_branches() {
         .trim()
         .to_string();
     assert_eq!(
-        branch, "hotfix/main",
-        "worktree should be on ephemeral branch hotfix/main, got: {branch}"
+        branch, "web-app--hotfix/main",
+        "worktree should be on ephemeral branch web-app--hotfix/main, got: {branch}"
     );
 }
 
@@ -1155,7 +1156,7 @@ fn delete_workweave_cleans_up_ephemeral_branches() {
     let weaveroot = tmp.path().join(".workweaves");
     std::fs::create_dir_all(&weaveroot).unwrap();
 
-    // Create a workweave — this creates ephemeral branch "cleanup/main" in the repo.
+    // Create a workweave — this creates ephemeral branch "web-app--cleanup/main" in the repo.
     rwv()
         .args(["workweave", "web-app", "create", "cleanup"])
         .env("RWV_WORKWEAVE_DIR", &weaveroot)
@@ -1166,10 +1167,10 @@ fn delete_workweave_cleans_up_ephemeral_branches() {
     let primary_repo = ws.join("github/org/repo");
 
     // Confirm the ephemeral branch exists before deletion.
-    let before = branches_with_prefix(&primary_repo, "cleanup");
+    let before = branches_with_prefix(&primary_repo, "web-app--cleanup");
     assert!(
         !before.is_empty(),
-        "ephemeral branch cleanup/main should exist before delete, got: {before:?}"
+        "ephemeral branch web-app--cleanup/main should exist before delete, got: {before:?}"
     );
 
     // Delete the workweave.
@@ -1181,10 +1182,10 @@ fn delete_workweave_cleans_up_ephemeral_branches() {
         .success();
 
     // The ephemeral branch should be gone.
-    let after = branches_with_prefix(&primary_repo, "cleanup");
+    let after = branches_with_prefix(&primary_repo, "web-app--cleanup");
     assert!(
         after.is_empty(),
-        "delete_workweave should remove ephemeral branches with prefix 'cleanup/', remaining: {after:?}"
+        "delete_workweave should remove ephemeral branches with prefix 'web-app--cleanup/', remaining: {after:?}"
     );
 }
 
@@ -1221,10 +1222,10 @@ fn create_workweave_handles_stale_branches() {
     let head_sha = String::from_utf8_lossy(&head.stdout).trim().to_string();
 
     let status = process::Command::new("git")
-        .args(["branch", "stale-test/main", &head_sha])
+        .args(["branch", "web-app--stale-test/main", &head_sha])
         .current_dir(&primary_repo)
         .status()
-        .expect("git branch stale-test/main");
+        .expect("git branch web-app--stale-test/main");
     assert!(status.success(), "should be able to create stale branch");
 
     // Creating the workweave again with the same name should succeed despite

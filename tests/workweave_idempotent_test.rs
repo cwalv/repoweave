@@ -140,8 +140,8 @@ fn workweave_recreate_preserves_non_git_state() {
     let weave_repo = ww_dir.join("github/org/repo");
     let branch_before = current_branch(&weave_repo);
     assert_eq!(
-        branch_before, "resume/main",
-        "worktree should be on ephemeral branch resume/main before re-invocation"
+        branch_before, "web-app--resume/main",
+        "worktree should be on ephemeral branch web-app--resume/main before re-invocation"
     );
 
     // ---- Second invocation: re-create the same workweave. ----
@@ -398,7 +398,7 @@ fn workweave_recreate_with_force_destroys_and_recreates() {
     // Workweave is rebuilt: marker present, worktree on expected branch,
     // HEAD matching primary's current branch.
     assert!(ww_dir.join(".rwv-workweave").exists());
-    assert_eq!(current_branch(&weave_repo), "reset/main");
+    assert_eq!(current_branch(&weave_repo), "web-app--reset/main");
     assert_eq!(
         head_sha(&weave_repo),
         head_before,
