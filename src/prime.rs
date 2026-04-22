@@ -33,7 +33,7 @@ pub fn prime(cwd: &Path, no_suppress: bool) -> anyhow::Result<()> {
 
 /// Render an orientation block for when CWD is not inside any weave or workweave.
 ///
-/// Covers concept definitions (weave / workweave / rig), common agent pitfalls,
+/// Covers concept definitions (weave / workweave), common agent pitfalls,
 /// and a quick command reference. Intended for `--no-suppress` callers such as
 /// session-start hooks running from a gc city directory.
 pub fn render_overview() -> String {
@@ -53,10 +53,6 @@ pub fn render_overview() -> String {
     out.push_str("**Workweave** — an ephemeral, isolated copy of a weave (the multi-repo equivalent of `git worktree`). ");
     out.push_str("Workweaves enable isolated parallel work or review across multiple repos without affecting the primary weave. ");
     out.push_str("Created with `rwv workweave PROJECT create NAME`; deleted with `rwv workweave PROJECT delete NAME`.\n\n");
-
-    out.push_str("**Rig** — a session configuration in a Gas City `city.toml` that pairs a shell environment with a ");
-    out.push_str("session provider (e.g. tmux or cloudcli) and optional integrations. ");
-    out.push_str("Rigs are how gc agents get launched in an isolated session with the right CWD, environment, and capabilities.\n\n");
 
     out.push_str("## Common pitfalls\n\n");
     out.push_str("- Do not assume code lives in the city (gc) directory — the weave and workweave are separate from the city CWD.\n");
@@ -273,7 +269,7 @@ mod tests {
         assert!(overview.contains("CWD is not inside a weave"));
         assert!(overview.contains("**Weave**"));
         assert!(overview.contains("**Workweave**"));
-        assert!(overview.contains("**Rig**"));
+        assert!(!overview.contains("**Rig**"));
         assert!(overview.contains("Common pitfalls"));
         assert!(overview.contains("Essential commands"));
         assert!(overview.contains("rwv --help"));
