@@ -12,16 +12,73 @@ use std::path::Path;
 
 /// Run `rwv prime` from the given working directory.
 ///
-/// Returns `Ok(())` unconditionally. Prints nothing if not in a workspace.
-pub fn prime(cwd: &Path) -> anyhow::Result<()> {
+/// Returns `Ok(())` unconditionally. Prints nothing if not in a workspace,
+/// unless `no_suppress` is true — in which case an orientation overview is
+/// emitted instead so agents can orient themselves without per-workspace details.
+pub fn prime(cwd: &Path, no_suppress: bool) -> anyhow::Result<()> {
     let ctx = match WorkspaceContext::resolve(cwd, None) {
         Ok(ctx) => ctx,
-        Err(_) => return Ok(()), // silent outside workspace
+        Err(_) => {
+            if no_suppress {
+                print!("{}", render_overview());
+            }
+            return Ok(());
+        }
     };
 
     let output = render_context(&ctx);
     print!("{output}");
     Ok(())
+}
+
+/// Render an orientation block for when CWD is not inside any weave or workweave.
+///
+/// Covers concept definitions (weave / workweave / rig), common agent pitfalls,
+/// and a quick command reference. Intended for `--no-suppress` callers such as
+/// session-start hooks running from a gc city directory.
+pub fn render_overview() -> String {
+    let mut out = String::new();
+
+    out.push_str("# repoweave: orientation\n\n");
+    out.push_str("> CWD is not inside a weave or workweave. ");
+    out.push_str("No per-workspace details are available — this is not an error.\n\n");
+
+    out.push_str("## Concepts\n\n");
+    out.push_str("**Weave** — a directory that weaves multiple repository *threads* into a single workspace *fabric*. ");
+    out.push_str("It contains repositories cloned under `{registry}/{owner}/{repo}/` and projects under `projects/{name}/`. ");
+    out.push_str("Ecosystem workspace files and symlinks are ephemeral (regenerated on `rwv activate`); ");
+    out.push_str("repos and projects are the persistent state. ");
+    out.push_str("A weave is analogous to a `go.work` or Cargo `[workspace]`, with lock-based reproducibility and multi-ecosystem support.\n\n");
+
+    out.push_str("**Workweave** — an ephemeral, isolated copy of a weave (the multi-repo equivalent of `git worktree`). ");
+    out.push_str("Workweaves enable isolated parallel work or review across multiple repos without affecting the primary weave. ");
+    out.push_str("Created with `rwv workweave PROJECT create NAME`; deleted with `rwv workweave PROJECT delete NAME`.\n\n");
+
+    out.push_str("**Rig** — a session configuration in a Gas City `city.toml` that pairs a shell environment with a ");
+    out.push_str("session provider (e.g. tmux or cloudcli) and optional integrations. ");
+    out.push_str("Rigs are how gc agents get launched in an isolated session with the right CWD, environment, and capabilities.\n\n");
+
+    out.push_str("## Common pitfalls\n\n");
+    out.push_str("- Do not assume code lives in the city (gc) directory — the weave and workweave are separate from the city CWD.\n");
+    out.push_str("- Do not confuse a *weave* (the primary workspace root) with a *workweave* (an isolated working copy).\n");
+    out.push_str("- Do not `cd` into arbitrary paths before repo-scoped commands; run them from inside the weave or workweave directory.\n");
+    out.push_str("- `rwv prime` without `--no-suppress` is intentionally silent outside a weave; absence of output is not an error.\n\n");
+
+    out.push_str("## Essential commands\n\n");
+    out.push_str("Run `rwv --help` for the full command reference.\n\n");
+    out.push_str("| Command | Description |\n");
+    out.push_str("|---------|-------------|\n");
+    out.push_str("| `rwv` | Show workspace context |\n");
+    out.push_str("| `rwv prime [--no-suppress]` | Emit structured context; `--no-suppress` always emits, even outside a weave |\n");
+    out.push_str("| `rwv workweave PROJECT NAME` | Create a workweave (worktree-based workspace) |\n");
+    out.push_str("| `rwv fetch SOURCE` | Clone a project and its repos |\n");
+    out.push_str("| `rwv resolve` | Print effective root path |\n");
+    out.push_str("| `rwv sync SOURCE` | Align CWD workspace with another workspace's committed rwv.lock |\n");
+    out.push_str("| `rwv abort` | Restore CWD workspace to its pre-sync state |\n");
+    out.push_str("| `rwv doctor --locked` | Zero exit iff every repo's tip matches its rwv.lock entry |\n");
+    out.push_str("| `rwv status` | Show per-repo state of the CWD workspace |\n");
+
+    out
 }
 
 /// Render the full markdown context string.
@@ -203,9 +260,23 @@ mod tests {
     #[test]
     fn prime_silent_outside_workspace() {
         let tmp = tempfile::tempdir().unwrap();
-        // No workspace markers
-        prime(tmp.path()).unwrap();
+        prime(tmp.path(), false).unwrap();
         // No panic, no error — just silent
+    }
+
+    // -- render_overview contains required sections ---------------------------
+
+    #[test]
+    fn render_overview_contains_concepts() {
+        let overview = render_overview();
+        assert!(overview.contains("repoweave: orientation"));
+        assert!(overview.contains("CWD is not inside a weave"));
+        assert!(overview.contains("**Weave**"));
+        assert!(overview.contains("**Workweave**"));
+        assert!(overview.contains("**Rig**"));
+        assert!(overview.contains("Common pitfalls"));
+        assert!(overview.contains("Essential commands"));
+        assert!(overview.contains("rwv --help"));
     }
 
     // -- render_context in primary with project -------------------------------

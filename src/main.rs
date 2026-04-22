@@ -125,7 +125,11 @@ enum Commands {
         project: String,
     },
     /// Print structured workspace context for agent system prompts
-    Prime,
+    Prime {
+        /// Always emit output, even when CWD is not inside a weave or workweave
+        #[arg(long)]
+        no_suppress: bool,
+    },
     /// Generate workspace-level configuration files
     Setup {
         #[command(subcommand)]
@@ -304,9 +308,9 @@ fn main() -> anyhow::Result<()> {
             let cwd = std::env::current_dir()?;
             activate::activate(&project, &cwd)?;
         }
-        Some(Commands::Prime) => {
+        Some(Commands::Prime { no_suppress }) => {
             let cwd = std::env::current_dir()?;
-            prime::prime(&cwd)?;
+            prime::prime(&cwd, no_suppress)?;
         }
         Some(Commands::Setup { action }) => {
             let cwd = std::env::current_dir()?;
