@@ -185,7 +185,7 @@ fn prime_no_suppress_outside_workspace() {
         .stdout(predicate::str::contains("CWD is not inside a weave"))
         .stdout(predicate::str::contains("**Weave**"))
         .stdout(predicate::str::contains("**Workweave**"))
-        .stdout(predicate::str::contains("**Rig**"))
+        .stdout(predicate::str::contains("**Rig**").not())
         .stdout(predicate::str::contains("Common pitfalls"))
         .stdout(predicate::str::contains("Essential commands"))
         .stdout(predicate::str::contains("rwv --help"));
