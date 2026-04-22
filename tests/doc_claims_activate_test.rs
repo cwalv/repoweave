@@ -114,10 +114,12 @@ fn workspace_context_from_project_dir_resolve() {
     );
 
     let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    // The resolved path should equal the workspace root, not the project dir.
+    // Canonicalize the expected path so /var vs /private/var symlinks (macOS)
+    // don't cause spurious mismatches.
+    let ws_canonical = std::fs::canonicalize(&ws).unwrap();
     assert_eq!(
         stdout,
-        ws.to_string_lossy().trim_end_matches('/'),
+        ws_canonical.to_string_lossy().trim_end_matches('/'),
         "rwv resolve should print the workspace root, not the project subdir"
     );
 }

@@ -50,7 +50,12 @@ fn ephemeral_branch_name(
     workweave_name: &WorkweaveName,
     current_branch: &str,
 ) -> String {
-    format!("{}--{}/{}", project, workweave_name.as_str(), current_branch)
+    format!(
+        "{}--{}/{}",
+        project,
+        workweave_name.as_str(),
+        current_branch
+    )
 }
 
 /// Build the branch prefix used to locate all ephemeral branches for a given

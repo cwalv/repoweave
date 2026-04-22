@@ -134,7 +134,10 @@ fn workweave_recreate_preserves_non_git_state() {
     // Snapshot the marker and the repo's worktree branch so we can
     // assert they are unchanged after re-invocation.
     let marker_path = ww_dir.join(".rwv-workweave");
-    assert!(marker_path.exists(), ".rwv-workweave should exist after create");
+    assert!(
+        marker_path.exists(),
+        ".rwv-workweave should exist after create"
+    );
     let marker_before = std::fs::read_to_string(&marker_path).unwrap();
 
     let weave_repo = ww_dir.join("github/org/repo");
@@ -190,7 +193,10 @@ fn workweave_recreate_preserves_non_git_state() {
     // We compare the content directly: the marker is derived from the
     // workspace root and project name, both of which are unchanged, so
     // a byte-identical result is the strongest assertion we can make.
-    assert!(marker_path.exists(), ".rwv-workweave marker should still exist");
+    assert!(
+        marker_path.exists(),
+        ".rwv-workweave marker should still exist"
+    );
     let marker_after = std::fs::read_to_string(&marker_path).unwrap();
     assert_eq!(
         marker_after, marker_before,
