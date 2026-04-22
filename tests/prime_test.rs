@@ -185,10 +185,47 @@ fn prime_no_suppress_outside_workspace() {
         .stdout(predicate::str::contains("CWD is not inside a weave"))
         .stdout(predicate::str::contains("**Weave**"))
         .stdout(predicate::str::contains("**Workweave**"))
+        .stdout(predicate::str::contains("**Lock & sync**"))
         .stdout(predicate::str::contains("**Rig**").not())
         .stdout(predicate::str::contains("Common pitfalls"))
+        .stdout(predicate::str::contains("Typical flow"))
         .stdout(predicate::str::contains("Essential commands"))
+        .stdout(predicate::str::contains("Sync family"))
         .stdout(predicate::str::contains("rwv --help"));
+}
+
+// ============================================================================
+// 6b. --no-suppress is repoweave-only — no gc/city leakage
+//      (amendment from fo-rwv-prime-revamp: broader grep than just 'Rig')
+// ============================================================================
+
+#[test]
+fn prime_no_suppress_has_no_gc_or_city_references() {
+    let tmp = tempfile::tempdir().unwrap();
+
+    let assert = Command::cargo_bin("rwv")
+        .unwrap()
+        .args(["prime", "--no-suppress"])
+        .current_dir(tmp.path())
+        .assert()
+        .success();
+    let output = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
+    let lower = output.to_ascii_lowercase();
+
+    for forbidden in [
+        "rig",
+        "gas city",
+        "city (gc)",
+        "city(gc)",
+        "gc agents",
+        "gc session",
+        "gc.city",
+    ] {
+        assert!(
+            !lower.contains(forbidden),
+            "rwv prime --no-suppress emitted forbidden token {forbidden:?}; full output:\n{output}"
+        );
+    }
 }
 
 // ============================================================================

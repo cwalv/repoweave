@@ -33,9 +33,11 @@ pub fn prime(cwd: &Path, no_suppress: bool) -> anyhow::Result<()> {
 
 /// Render an orientation block for when CWD is not inside any weave or workweave.
 ///
-/// Covers concept definitions (weave / workweave), common agent pitfalls,
-/// and a quick command reference. Intended for `--no-suppress` callers such as
-/// session-start hooks running from a gc city directory.
+/// Covers concept definitions (weave / workweave / lock-and-sync), common agent
+/// pitfalls, a typical multi-repo flow, and a command reference grouped so the
+/// less self-evident sync-family commands carry a "when to use" note. Intended
+/// for `--no-suppress` callers such as session-start hooks running outside a
+/// repoweave workspace.
 pub fn render_overview() -> String {
     let mut out = String::new();
 
@@ -45,34 +47,79 @@ pub fn render_overview() -> String {
 
     out.push_str("## Concepts\n\n");
     out.push_str("**Weave** — a directory that weaves multiple repository *threads* into a single workspace *fabric*. ");
-    out.push_str("It contains repositories cloned under `{registry}/{owner}/{repo}/` and projects under `projects/{name}/`. ");
-    out.push_str("Ecosystem workspace files and symlinks are ephemeral (regenerated on `rwv activate`); ");
+    out.push_str("Contains repositories cloned under `{registry}/{owner}/{repo}/` and projects under `projects/{name}/`. ");
+    out.push_str(
+        "Ecosystem workspace files and symlinks are ephemeral (regenerated on `rwv activate`); ",
+    );
     out.push_str("repos and projects are the persistent state. ");
-    out.push_str("A weave is analogous to a `go.work` or Cargo `[workspace]`, with lock-based reproducibility and multi-ecosystem support.\n\n");
+    out.push_str("Analogous to a `go.work` or Cargo `[workspace]`, with lock-based reproducibility and multi-ecosystem support.\n\n");
 
-    out.push_str("**Workweave** — an ephemeral, isolated copy of a weave (the multi-repo equivalent of `git worktree`). ");
-    out.push_str("Workweaves enable isolated parallel work or review across multiple repos without affecting the primary weave. ");
+    out.push_str("**Workweave** — an ephemeral, isolated derivative of a weave (the multi-repo equivalent of `git worktree`). ");
+    out.push_str("Each repo gets a worktree on its own ephemeral branch; ecosystem files and tool state (`node_modules/`, `.venv/`, `target/`) are per-workweave. ");
+    out.push_str("Use for feature work, PR review, or per-agent isolation without disturbing the primary weave. ");
     out.push_str("Created with `rwv workweave PROJECT create NAME`; deleted with `rwv workweave PROJECT delete NAME`.\n\n");
 
+    out.push_str("**Lock & sync** — every project owns an `rwv.lock` that pins each repo to an exact revision (tag name when HEAD is tagged, SHA otherwise). ");
+    out.push_str("The lock is *load-bearing*, not a passive snapshot: `rwv sync <source>` aligns the CWD workspace with `<source>`'s committed lock. ");
+    out.push_str("It is direction-neutral — `cd primary && rwv sync payments` brings a workweave's work home; `cd .workweaves/payments && rwv sync primary` catches the workweave up. ");
+    out.push_str("Both sides must satisfy `rwv doctor --locked` first (bypass with `--force`); `rwv abort` rolls back via savepoint refs under `refs/rwv/pre-op/`. ");
+    out.push_str("`sha256sum rwv.lock` is the project fingerprint — the multi-repo equivalent of `git rev-parse HEAD` on a monorepo.\n\n");
+
     out.push_str("## Common pitfalls\n\n");
-    out.push_str("- Do not assume code lives in the city (gc) directory — the weave and workweave are separate from the city CWD.\n");
-    out.push_str("- Do not confuse a *weave* (the primary workspace root) with a *workweave* (an isolated working copy).\n");
-    out.push_str("- Do not `cd` into arbitrary paths before repo-scoped commands; run them from inside the weave or workweave directory.\n");
+    out.push_str("- Do not confuse a *weave* (the primary workspace root) with a *workweave* (a worktree-based isolated copy). They share an object store, but branches, locks, and tool state diverge.\n");
+    out.push_str("- Do not `cd` into arbitrary paths before repo-scoped commands; `rwv` infers project and workspace from CWD. Use `rwv resolve` if you need the effective workspace root for scripting.\n");
+    out.push_str("- Do not edit ecosystem workspace files (`package.json`, `go.work`, `Cargo.toml`) at the weave directory by hand — they are symlinks to generated files in `projects/{name}/` and get clobbered by the next `rwv activate`. Edit `rwv.yaml` instead.\n");
+    out.push_str("- Do not run `rwv lock` with uncommitted changes — it errors by design (the lock would record HEAD, not your working tree). Commit first, or pass `--dirty` if you accept the divergence.\n");
+    out.push_str("- Do not assume `rwv sync` has a one-true direction. The verb is direction-neutral; `<source>` is whichever workspace's committed lock you want to align against.\n");
     out.push_str("- `rwv prime` without `--no-suppress` is intentionally silent outside a weave; absence of output is not an error.\n\n");
 
+    out.push_str("## Typical flow\n\n");
+    out.push_str("Reproduce a project, work in isolation, land the result back in primary:\n\n");
+    out.push_str("```\n");
+    out.push_str(
+        "rwv fetch <owner>/<project>             # clone project repo + every repo it lists\n",
+    );
+    out.push_str("rwv activate <project>                  # generate ecosystem workspace files; set active project\n");
+    out.push_str("rwv workweave <project> create <name>   # spin up an isolated workspace for the feature/agent\n");
+    out.push_str("# ... edit, test, commit across repos in .workweaves/<name>/ ...\n");
+    out.push_str("rwv lock                                # snapshot revisions to rwv.lock\n");
+    out.push_str("git -C projects/<project> commit -am 'lock: <name>'   # commit the lock in the project repo\n");
+    out.push_str(
+        "cd <primary> && rwv sync <name>         # land the workweave's lock back in primary\n",
+    );
+    out.push_str("rwv doctor                              # convention audit (orphans, stale locks, drift)\n");
+    out.push_str("```\n\n");
+
     out.push_str("## Essential commands\n\n");
-    out.push_str("Run `rwv --help` for the full command reference.\n\n");
+    out.push_str("Run `rwv --help` for the full command reference. Workspace and project are inferred from CWD unless overridden with `--project`.\n\n");
     out.push_str("| Command | Description |\n");
     out.push_str("|---------|-------------|\n");
     out.push_str("| `rwv` | Show workspace context |\n");
     out.push_str("| `rwv prime [--no-suppress]` | Emit structured context; `--no-suppress` always emits, even outside a weave |\n");
-    out.push_str("| `rwv workweave PROJECT NAME` | Create a workweave (worktree-based workspace) |\n");
-    out.push_str("| `rwv fetch SOURCE` | Clone a project and its repos |\n");
-    out.push_str("| `rwv resolve` | Print effective root path |\n");
-    out.push_str("| `rwv sync SOURCE` | Align CWD workspace with another workspace's committed rwv.lock |\n");
-    out.push_str("| `rwv abort` | Restore CWD workspace to its pre-sync state |\n");
-    out.push_str("| `rwv doctor --locked` | Zero exit iff every repo's tip matches its rwv.lock entry |\n");
-    out.push_str("| `rwv status` | Show per-repo state of the CWD workspace |\n");
+    out.push_str("| `rwv resolve` | Print effective workspace root path (handy for scripting: `cd $(rwv resolve)`) |\n");
+    out.push_str("| `rwv fetch SOURCE [--locked\\|--frozen]` | Clone a project and every repo it lists; activate it |\n");
+    out.push_str("| `rwv activate PROJECT` | Set active project; (re)generate ecosystem workspace files and symlinks |\n");
+    out.push_str("| `rwv init PROJECT [--provider REG/OWNER]` | Create a new project directory with empty `rwv.yaml` |\n");
+    out.push_str("| `rwv add URL [--role ROLE\\|--new]` | Clone and register a repo; `--new` initializes a brand-new repo at the canonical path |\n");
+    out.push_str(
+        "| `rwv remove PATH [--delete]` | Unregister a repo; `--delete` also removes the clone |\n",
+    );
+    out.push_str("| `rwv lock [--dirty]` | Snapshot repo revisions to the project's `rwv.lock`; runs integration lock hooks |\n");
+    out.push_str(
+        "| `rwv workweave PROJECT create NAME` | Spin up a worktree-based isolated workspace |\n",
+    );
+    out.push_str("| `rwv workweave PROJECT delete NAME` | Tear down a workweave (worktrees + ephemeral branches) |\n");
+    out.push_str("| `rwv workweave PROJECT list` | List workweaves for a project |\n\n");
+
+    out.push_str("### Sync family — when to use which\n\n");
+    out.push_str("These four commands are easy to confuse — they cooperate around the lock-authoritative model.\n\n");
+    out.push_str("| Command | When to use |\n");
+    out.push_str("|---------|-------------|\n");
+    out.push_str("| `rwv sync <source> [--strategy ff\\|rebase\\|merge] [--force]` | Align CWD workspace with `<source>`'s committed `rwv.lock`. Default `ff`; use `rebase` or `merge` when both sides advanced |\n");
+    out.push_str("| `rwv abort` | Restore CWD workspace to its pre-sync state via savepoint refs; runs VCS-native abort for in-progress rebase/merge |\n");
+    out.push_str("| `rwv status [--json]` | Show per-repo branch, tip, lock SHA, and relation (`ok`/`ahead`/`behind`/`diverged`/`no-lock`) without changing anything |\n");
+    out.push_str("| `rwv doctor --locked` | Zero exit iff every repo's tip matches its lock entry — the precondition `rwv sync` enforces. Scriptable |\n");
+    out.push_str("| `rwv doctor` | Full convention audit (orphans, dangling refs, stale locks, workweave drift, integration checks) |\n");
 
     out
 }
@@ -269,10 +316,44 @@ mod tests {
         assert!(overview.contains("CWD is not inside a weave"));
         assert!(overview.contains("**Weave**"));
         assert!(overview.contains("**Workweave**"));
+        assert!(overview.contains("**Lock & sync**"));
         assert!(!overview.contains("**Rig**"));
         assert!(overview.contains("Common pitfalls"));
+        assert!(overview.contains("Typical flow"));
         assert!(overview.contains("Essential commands"));
+        assert!(overview.contains("Sync family"));
         assert!(overview.contains("rwv --help"));
+    }
+
+    // -- render_overview is repoweave-only — no gc/city leakage ----------------
+
+    #[test]
+    fn render_overview_has_no_gc_or_city_references() {
+        let overview = render_overview();
+        // Mirrors the amendment grep from fo-rwv-prime-revamp:
+        //   rwv prime --no-suppress | grep -iE 'rig|gas city|city ?\(gc\)|gc agents|gc session|gc.city'
+        let lower = overview.to_ascii_lowercase();
+        assert!(!lower.contains("rig"));
+        assert!(!lower.contains("gas city"));
+        assert!(!lower.contains("city (gc)"));
+        assert!(!lower.contains("city(gc)"));
+        assert!(!lower.contains("gc agents"));
+        assert!(!lower.contains("gc session"));
+        assert!(!lower.contains("gc.city"));
+    }
+
+    // -- render_overview density floor ----------------------------------------
+
+    #[test]
+    fn render_overview_is_meaningfully_dense() {
+        let overview = render_overview();
+        let lines = overview.lines().count();
+        // v0.3.2 was ~32 lines; the amendment asked for noticeably richer.
+        // Treat 60 as a soft floor so trivial trims don't regress us silently.
+        assert!(
+            lines >= 60,
+            "render_overview shrank to {lines} lines; amendment requires noticeably denser than v0.3.2 (~32)"
+        );
     }
 
     // -- render_context in primary with project -------------------------------
