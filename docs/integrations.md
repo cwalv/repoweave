@@ -10,7 +10,7 @@ Integrations are the translation layer between repoweave's multi-repo world (rep
 
 Rather than hardcoding knowledge of each ecosystem and tool, `rwv` uses **integrations** — pluggable units that each know how to derive config for one tool from the repo list. Each integration participates in two hook points:
 
-- **Activation hooks** (run during workweave creation, sync, add, remove) — generate config files and symlinks, or do nothing. This is the write path.
+- **Activation hooks** (run during `rwv activate`, workweave creation, `rwv sync`, `rwv add`, `rwv remove`) — generate config files and symlinks, or do nothing. This is the write path.
 - **Lock hooks** (run during `rwv lock`) — run install commands (`npm install`, `uv sync`, `cargo generate-lockfile`, etc.) to ensure ecosystem lock files are up to date. This is where package installation happens.
 - **Check hooks** (`rwv doctor`) — read-only inspection. Verify the environment is healthy, report missing tools, stale config, etc.
 
@@ -23,7 +23,7 @@ Each integration provides:
 4. **Deactivation logic** — removes generated files. Called during workweave deletion.
 5. **Check logic** — receives the same inputs; returns issues and warnings without changing state.
 
-When a project is activated or a workweave is created or synced, integrations are run: the deactivation hook cleans up first, then the activation hook generates fresh config. Each integration auto-detects relevant repos — if none are found, it does nothing.
+When a project is activated, a workweave is created, or `rwv sync` materializes repo changes, integrations are run: the deactivation hook cleans up first, then the activation hook generates fresh config. Each integration auto-detects relevant repos — if none are found, it does nothing.
 
 `rwv doctor` runs check hooks across all enabled integrations as part of its broader convention audit.
 
@@ -31,11 +31,11 @@ Ecosystem integrations auto-detect repos with the relevant manifest file. If non
 
 ### Generated files are persistent
 
-Generated ecosystem files live in the project directory (symlinked to the weave directory, or the workweave directory for workweaves). They are **committable, not ephemeral** — they are regenerated on workweave creation, sync, or `rwv add`, but they persist between runs and can be committed to version control.
+Generated ecosystem files live in the project directory (symlinked to the weave directory, or the workweave directory for workweaves). They are **committable, not ephemeral** — they are regenerated on workweave creation, `rwv sync`, or `rwv add`, but they persist between runs and can be committed to version control.
 
 Ecosystem lock files (`package-lock.json`, `pnpm-lock.yaml`, `uv.lock`, `go.sum`, `Cargo.lock`) are produced by the ecosystem tools during the install step. These are important persistent state that pins exact dependency versions within each ecosystem. They should be committed alongside the ecosystem workspace configs.
 
-Some integrations have lock hooks that run external tools (`npm install`, `pnpm install`, `uv sync`) during `rwv lock`. These commands create their own tool state (`node_modules/`, `.venv/`). Tool state directories are gitignored and managed by the ecosystem tool, not by `rwv`. You can also run install commands manually after `rwv activate`. If tool state gets corrupted or out of sync, `rwv workweave {project} sync {name}` regenerates config and re-runs lock hooks.
+Some integrations have lock hooks that run external tools (`npm install`, `pnpm install`, `uv sync`) during `rwv lock`. These commands create their own tool state (`node_modules/`, `.venv/`). Tool state directories are gitignored and managed by the ecosystem tool, not by `rwv`. You can also run install commands manually after `rwv activate`. If tool state gets corrupted in a workweave, delete and recreate the workweave (`rwv workweave {project} delete {name}` then `rwv workweave {project} create {name}`) to regenerate config and re-run activation hooks.
 
 ### Hook configuration in `rwv.yaml`
 

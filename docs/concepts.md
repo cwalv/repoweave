@@ -108,3 +108,5 @@ repoweave bridges these two worlds. It reads the project manifest (which describ
 2. **`rwv add` takes a URL** — the manifest needs URLs for `rwv fetch` on other machines. If the repo is already on disk, the clone step is a no-op.
 
 3. **`rwv fetch` updates the lock** — fetches at branch HEAD and updates `rwv.lock` with actual revisions. `--locked` checks out exact revisions. `--frozen` errors if lock is stale (CI).
+
+4. **`rwv.lock` is load-bearing, not a passive snapshot** — advancement verbs consult it as the target. `rwv sync <source>` aligns the current workspace with `<source>`'s committed lock using a chosen strategy (ff, rebase, merge). Both sides must satisfy `rwv check --locked` before the op runs; `rwv abort` rolls back using savepoint refs. Workspace type (primary vs workweave) is not load-bearing — the same verb handles either direction, determined by CWD.

@@ -164,6 +164,64 @@ pub fn violations_to_issues(violations: Vec<CheckViolation>) -> Vec<Issue> {
         .collect()
 }
 
+/// Execute `rwv check --locked` for the current workspace context.
+///
+/// Compares each repo's HEAD SHA against its `rwv.lock` entry. Outputs per-repo
+/// status to stdout. Returns `Ok(true)` if any repo's tip differs from its lock
+/// entry (exit 1), `Ok(false)` if all match (exit 0).
+pub fn run_check_locked(cwd: &std::path::Path) -> anyhow::Result<bool> {
+    use crate::git::GitVcs;
+    use crate::manifest::Project;
+    use crate::vcs::Vcs;
+    use crate::workspace::{WorkspaceContext, WorkspaceLocation};
+
+    let ctx = WorkspaceContext::resolve(cwd, None)?;
+    let git = GitVcs;
+    let workspace_dir = ctx.resolve_path().to_path_buf();
+
+    let project_names: Vec<String> = match &ctx.location {
+        WorkspaceLocation::Weave { project: Some(p) } => vec![p.as_str().to_owned()],
+        WorkspaceLocation::Workweave { project, .. } => vec![project.as_str().to_owned()],
+        WorkspaceLocation::Weave { project: None } => {
+            crate::workspace::discover_project_paths(&ctx.root)
+        }
+    };
+
+    let mut any_drift = false;
+
+    for pname in &project_names {
+        let project_dir = ctx.root.join("projects").join(pname);
+        let project = match Project::from_dir(&project_dir) {
+            Ok(p) => p,
+            Err(_) => continue,
+        };
+
+        let lock = match project.lock {
+            Some(l) => l,
+            None => continue,
+        };
+
+        for (repo_path, lock_entry) in &lock.repositories {
+            let repo_abs = workspace_dir.join(repo_path.as_path());
+            match git.head_revision(&repo_abs) {
+                Ok(actual) if actual.as_str() == lock_entry.version.as_str() => {
+                    println!("{repo_path}: ok");
+                }
+                Ok(actual) => {
+                    println!("{repo_path}: tip {} ≠ lock {}", actual, lock_entry.version);
+                    any_drift = true;
+                }
+                Err(_) => {
+                    println!("{repo_path}: not on disk (lock: {})", lock_entry.version);
+                    any_drift = true;
+                }
+            }
+        }
+    }
+
+    Ok(any_drift)
+}
+
 /// Execute `rwv doctor` for the current workspace context.
 ///
 /// Scans registry directories for repos on disk, loads all project manifests,

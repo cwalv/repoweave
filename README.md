@@ -87,10 +87,13 @@ cd .workweaves/payments
 | `rwv add <url>` | Clone a repo, add to `rwv.yaml`, re-run integrations. `--role` sets the role, `--new` for `git init` |
 | `rwv remove <path>` | Remove from `rwv.yaml`, re-run integrations. `--delete` removes the clone |
 | `rwv lock` | Snapshot repo HEADs into `rwv.lock`. Errors on uncommitted changes (`--dirty` to bypass) |
-| `rwv doctor` | Convention enforcement: orphans, dangling refs, stale locks, integration checks |
+| `rwv doctor` | Convention enforcement: orphans, dangling refs, stale locks, integration checks. `--locked` for scriptable lock-freshness check |
+| `rwv check --locked` | Alias for `rwv doctor --locked` — zero exit iff every repo tip matches its lock entry |
+| `rwv status` | Show per-repo state: branch, tip, lock entry, relation, mid-op state. `--json` for machine-readable output |
+| `rwv sync <source>` | Align CWD workspace with another workspace's committed `rwv.lock`. `--strategy ff\|rebase\|merge`, `--force` to bypass lock-freshness precondition |
+| `rwv abort` | Restore CWD workspace to its pre-sync state using savepoint refs |
 | `rwv workweave <project> create <name>` | Create an isolated working copy (worktrees on ephemeral branches) |
 | `rwv workweave <project> delete <name>` | Delete a workweave (remove worktrees, clean up ephemeral branches) |
-| `rwv workweave <project> sync <name>` | Sync workweave with current manifest |
 | `rwv workweave <project> list` | List workweaves for a project |
 | `rwv resolve` | Print the weave directory path (useful for scripting: `cd $(rwv resolve)`) |
 | `rwv prime` | Print structured workspace context for agent system prompts |

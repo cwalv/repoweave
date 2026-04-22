@@ -7,7 +7,7 @@
 //! and `.rwv-active` file so it is fully self-describing.
 
 use crate::git::GitVcs;
-use crate::manifest::{Manifest, ProjectName, RepoPath, VcsType, WorkweaveName};
+use crate::manifest::{Manifest, ProjectName, WorkweaveName};
 use crate::vcs::{vcs_for, Vcs};
 use crate::workspace::{
     parse_weave_dir_name, read_active_project, set_active_project, weave_dir_name, WorkweaveMarker,
@@ -319,106 +319,6 @@ pub fn list_workweaves(ws_root: &Path) -> anyhow::Result<Vec<String>> {
 
     names.sort();
     Ok(names)
-}
-
-/// Sync a workweave: add worktrees for repos that are in the manifest but missing
-/// from the workweave, and report any extra worktrees.
-pub fn sync_workweave(ws_root: &Path, project: &str, name: &WorkweaveName) -> anyhow::Result<()> {
-    let manifest = load_manifest(ws_root, project)?;
-    let pname = primary_name(ws_root);
-    let parent = workweave_parent(ws_root);
-    let workweave_dir = parent.join(weave_dir_name(&pname, name));
-
-    let mut errors: Vec<String> = Vec::new();
-
-    for (repo_path, entry) in &manifest.repositories {
-        let vcs = vcs_for(entry.vcs_type);
-        let repo_abs = ws_root.join(repo_path.as_path());
-        let worktree_dest = workweave_dir.join(repo_path.as_path());
-
-        if worktree_dest.exists() {
-            continue; // already present
-        }
-
-        let result = (|| -> anyhow::Result<()> {
-            // Get the current branch (or fall back to "HEAD").
-            let current_branch = vcs
-                .current_ref(&repo_abs)?
-                .map(|r| r.as_str().to_string())
-                .unwrap_or_else(|| "HEAD".to_string());
-
-            let ephemeral_branch = ephemeral_branch_name(name, &current_branch);
-            let head = vcs.head_revision(&repo_abs)?;
-
-            if let Some(parent_dir) = worktree_dest.parent() {
-                std::fs::create_dir_all(parent_dir)?;
-            }
-
-            vcs.create_worktree(&repo_abs, &worktree_dest, &ephemeral_branch, head.as_str())?;
-
-            eprintln!("added: {}", repo_path.as_str());
-            Ok(())
-        })();
-
-        if let Err(e) = result {
-            let msg = format!("{}: {e}", repo_path.as_str());
-            eprintln!("rwv workweave sync: error: {msg}");
-            errors.push(msg);
-        }
-    }
-
-    // Report extra worktrees (dirs in workweave that aren't in manifest).
-    // Walk the workweave dir looking for git repos not listed in manifest.
-    report_extras(&workweave_dir, &manifest)?;
-
-    if errors.is_empty() {
-        Ok(())
-    } else {
-        let total = manifest.repositories.len();
-        let failed = errors.len();
-        bail!("workweave sync completed with {failed} failure(s) out of {total} repo(s)")
-    }
-}
-
-/// Walk the workweave directory and report repos not in the manifest.
-fn report_extras(workweave_dir: &Path, manifest: &Manifest) -> anyhow::Result<()> {
-    let vcs = vcs_for(VcsType::Git);
-    walk_for_repos(workweave_dir, workweave_dir, vcs.as_ref(), manifest)?;
-    Ok(())
-}
-
-fn walk_for_repos(
-    base: &Path,
-    dir: &Path,
-    vcs: &dyn Vcs,
-    manifest: &Manifest,
-) -> anyhow::Result<()> {
-    if !dir.is_dir() {
-        return Ok(());
-    }
-
-    // If this directory is a git repo, check if it's in the manifest.
-    if vcs.is_repo(dir) {
-        if let Ok(rel) = dir.strip_prefix(base) {
-            let rel_str = rel.to_string_lossy().to_string();
-            let repo_path = RepoPath::new(&rel_str);
-            if !manifest.repositories.contains_key(&repo_path) {
-                eprintln!("extra: {}", rel_str);
-            }
-        }
-        return Ok(()); // Don't recurse into repos.
-    }
-
-    // Recurse into subdirectories.
-    if let Ok(entries) = std::fs::read_dir(dir) {
-        for entry in entries.flatten() {
-            if entry.path().is_dir() {
-                walk_for_repos(base, &entry.path(), vcs, manifest)?;
-            }
-        }
-    }
-
-    Ok(())
 }
 
 /// Load the project manifest from the workspace.

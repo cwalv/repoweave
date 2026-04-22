@@ -269,6 +269,8 @@ A **workweave** is a worktree-based derivative of the weave, created on demand f
 
 `node_modules/`, `.venv/`, branches, and generated files are all per-workweave. One workweave can be on `feature-A` while another is on `main`, while the weave stays undisturbed.
 
+Use `rwv sync <source>` to align one workspace with another's committed `rwv.lock` — the direction-neutral primitive for bringing workweave work home or catching a workweave up to primary.
+
 See the [Tutorial](./tutorial.md#workweaves) for use-case walkthroughs (feature branches, PR review, agent isolation, parallel projects).
 
 ### Workspace context
@@ -280,8 +282,6 @@ Commands like `add`, `remove`, `lock`, and `check` infer the project and workspa
 - **In a project directory** — resolves to the weave.
 - **Override** — use `--project` flag.
 
-If you edit `rwv.yaml` in a workweave, sync it with `rwv workweave web-app sync {name}`. `rwv add` and `rwv remove` handle this automatically.
-
 ## Commands
 
 `rwv` is a standalone Rust CLI that manages repos following repoweave conventions using direct git commands. Installed out of band — not part of any project. Nothing about the underlying `rwv.yaml` files changes; `rwv` is a convenience layer on top.
@@ -291,7 +291,6 @@ If you edit `rwv.yaml` in a workweave, sync it with `rwv workweave web-app sync 
 | `rwv` | Show current context (weave, project, workweave, repos). |
 | `rwv workweave {project} create [name]` | Create a workweave (isolated working copy with worktrees on ephemeral branches). |
 | `rwv workweave {project} delete {name}` | Delete a workweave (remove worktrees, clean up ephemeral branches). |
-| `rwv workweave {project} sync {name}` | Sync workweave worktrees and ecosystem files with manifest. |
 | `rwv workweave {project} list` | List workweaves for a project. |
 | `rwv init {project}` | Create a new project directory with empty `rwv.yaml`. Optional `--provider {registry}/{owner}` sets up the remote. |
 | `rwv activate {project}` | Set the active project — generate ecosystem files in the project directory, symlink to the weave directory. |
@@ -299,7 +298,10 @@ If you edit `rwv.yaml` in a workweave, sync it with `rwv workweave web-app sync 
 | `rwv add {url}` | Clone a repo, register in `rwv.yaml`, re-run integration hooks. With `--role`, sets the role. With `--new`, initializes a new repo at the canonical path (infers URL). |
 | `rwv remove {path}` | Remove from `rwv.yaml`, re-run integration hooks. With `--delete`, also removes the clone (confirms unless `--force`). |
 | `rwv lock` | Snapshot repo versions into the project's `rwv.lock`. Errors on uncommitted changes (`--dirty` to bypass). Runs integration lock hooks. |
-| `rwv doctor` | Convention enforcement: orphaned clones, dangling references, missing roles, stale locks, workweave drift, integration checks. |
+| `rwv doctor` | Convention enforcement: orphaned clones, dangling references, missing roles, stale locks, workweave drift, integration checks. With `--locked` (also `rwv check --locked`): zero exit iff every repo tip matches its lock entry — scriptable precondition for `rwv sync`. |
+| `rwv status [--json]` | Show per-repo state of the CWD workspace: branch, tip, lock SHA, lock relation (`ok`/`ahead`/`behind`/`diverged`), and mid-op state. `--json` for machine-readable output. |
+| `rwv sync <source>` | Align CWD workspace with `<source>`'s committed `rwv.lock`. `<source>` is a workspace name (`primary`, a workweave name) or a path. `--strategy ff\|rebase\|merge` (default `ff`). `--force` bypasses the lock-freshness precondition. |
+| `rwv abort` | Restore CWD workspace to its pre-sync state using savepoint refs stored under `refs/rwv/pre-op/`. Runs VCS-native abort for any in-progress operations (rebase, merge, cherry-pick). |
 | `rwv resolve` | Print the weave directory (workweave or weave). Useful for scripting: `cd $(rwv resolve)`. |
 
 ### `rwv doctor` and multi-project awareness
@@ -350,3 +352,95 @@ Integrations translate between repoweave's multi-repo world and ecosystem worksp
 | `static-files` | no | n/a (configured explicitly) | symlinks declared files to weave directory | -- |
 
 See [Integrations](./integrations.md) for generated file formats, configuration, and details on each integration.
+
+## Syncing workspaces
+
+`rwv sync` and `rwv abort` operate on the **lock-authoritative model**: `rwv.lock` is the target of advancement, not a passive snapshot. Both workspaces must satisfy `rwv check --locked` before `sync` will proceed (bypass with `--force`).
+
+### `rwv check --locked`
+
+```
+rwv check --locked
+rwv doctor --locked   # equivalent
+```
+
+Zero exit iff every repo in the CWD workspace has its tip SHA matching its `rwv.lock` entry. Nonzero exit prints per-repo status:
+
+```
+github/chatly/server: tip abc1234 ≠ lock e1f2a3b
+github/chatly/web:    ok
+github/chatly/protocol: ok
+```
+
+Use as a precondition check before `rwv sync`, or in CI to enforce that locks are committed.
+
+### `rwv status`
+
+```
+rwv status [--json]
+```
+
+Shows per-repo state of the CWD workspace without modifying anything:
+
+| Column | Values |
+|--------|--------|
+| path | repo path relative to workspace root |
+| branch | current branch name, or `-` if detached |
+| tip | current HEAD SHA (first 12 chars) |
+| lock SHA | SHA from `rwv.lock` (first 12 chars), or `-` if no lock |
+| relation | `ok` / `ahead` / `behind` / `diverged` / `no-lock` / `unknown` |
+| mid-op | present if the repo is mid-rebase, mid-merge, etc. |
+
+Example output:
+
+```
+github/chatly/server    main   abc123456789   lock: e1f2a3b456...   [ahead]
+github/chatly/web       main   e1f2a3b456...  lock: e1f2a3b456...   [ok]
+github/chatly/protocol  main   7a3b2c1d4e5f   lock: 7a3b2c1d4e5f   [ok]
+```
+
+`--json` outputs a JSON array with full SHAs and all fields.
+
+### `rwv sync <source>`
+
+```
+rwv sync <source> [--strategy ff|rebase|merge] [--force]
+```
+
+Aligns the CWD workspace with `<source>`'s committed `rwv.lock`. `<source>` can be:
+- `primary` — the primary workspace root (resolved from CWD context)
+- a workweave name (e.g., `payments`)
+- an absolute or relative path to any workspace directory
+
+**Strategies:**
+
+| Strategy | Behavior | When to use |
+|---|---|---|
+| `ff` (default) | Fast-forward only. Errors if not a strict ancestor | Everyday forward-only alignment |
+| `rebase` | Replay CWD's commits onto `<source>` tip | CWD has local commits on an outdated base |
+| `merge` | Create a merge commit joining both sides | Both workspaces have independently advanced |
+
+**Phases:**
+
+1. Reset CWD's project repo to `<source>`'s project-repo tip (exposes `<source>`'s `rwv.lock`).
+2. For each repo in the now-visible lock, advance CWD's branch using the chosen strategy.
+3. Materialize any repos newly listed in the lock; remove worktrees for dropped entries.
+
+**Preconditions** (enforced before any repo is touched):
+- Both `<source>` and CWD must pass `rwv check --locked` (bypass with `--force`).
+- CWD's project repo must not be mid-rebase or mid-merge.
+- No uncommitted changes in repos whose branches will be advanced.
+
+**Resume after conflict:** fix the conflict in the affected repo, then re-run `rwv sync <source>`. Already-advanced repos are no-ops; the fixed repo and any remaining repos proceed.
+
+**Savepoints:** before Phase 1, `sync` snapshots each repo's tip as a git ref under `refs/rwv/pre-op/<op-id>/`. These are deleted on successful completion and consumed by `rwv abort`.
+
+### `rwv abort`
+
+```
+rwv abort
+```
+
+Restores the CWD workspace to its pre-sync state. Reads the op marker written by `sync`, resets every repo to its savepoint ref, runs any VCS-native abort for in-progress operations (`git rebase --abort`, `git merge --abort`), then removes the marker and savepoint refs.
+
+Errors if no sync operation is in progress.

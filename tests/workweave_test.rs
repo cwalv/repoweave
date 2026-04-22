@@ -630,64 +630,6 @@ fn workweave_list_empty_when_no_workweaves() {
 }
 
 // ============================================================================
-// Workweave sync -- `rwv workweave PROJECT --sync`
-// ============================================================================
-
-#[test]
-fn workweave_sync_reconciles_with_manifest() {
-    let tmp = tempfile::tempdir().unwrap();
-    let ws = make_workspace(tmp.path(), "web-app");
-
-    let weaveroot = tmp.path().join(".workweaves");
-    std::fs::create_dir_all(&weaveroot).unwrap();
-
-    // Create a workweave.
-    rwv()
-        .args(["workweave", "web-app", "create", "sync-test"])
-        .env("RWV_WORKWEAVE_DIR", &weaveroot)
-        .current_dir(&ws)
-        .assert()
-        .success();
-
-    // Add a second repo to the manifest.
-    let repo2 = ws.join("github/org/repo2");
-    init_repo_with_commit(&repo2);
-
-    let project_dir = ws.join("projects/web-app");
-    let manifest = format!(
-        r#"repositories:
-  github/org/repo:
-    type: git
-    url: file://{repo1}
-    version: main
-    role: primary
-  github/org/repo2:
-    type: git
-    url: file://{repo2}
-    version: main
-    role: primary
-"#,
-        repo1 = ws.join("github/org/repo").display(),
-        repo2 = repo2.display()
-    );
-    std::fs::write(project_dir.join("rwv.yaml"), manifest).unwrap();
-
-    // Sync should add the new repo's worktree to the workweave.
-    rwv()
-        .args(["workweave", "web-app", "sync", "sync-test"])
-        .env("RWV_WORKWEAVE_DIR", &weaveroot)
-        .current_dir(&ws)
-        .assert()
-        .success();
-
-    let weave_repo2 = weaveroot.join("ws--sync-test/github/org/repo2");
-    assert!(
-        weave_repo2.exists(),
-        "sync should add newly-listed repo worktree to the workweave"
-    );
-}
-
-// ============================================================================
 // RWV_WORKWEAVE_DIR override
 // ============================================================================
 

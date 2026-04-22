@@ -229,10 +229,11 @@ rwv workweave web-app delete review-pr-42    # clean up when done
 ```bash
 rwv workweave web-app create agent-task-99
 # agent works in .workweaves/agent-task-99/
+# ... agent runs rwv lock + commits project repo when done ...
 
-# when done, review and merge:
-cd ~/work/github/chatly/server
-git merge agent-task-99/main
+# bring completed work home:
+cd ~/work                             # primary weave
+rwv sync agent-task-99
 rwv workweave web-app delete agent-task-99
 ```
 
@@ -245,15 +246,100 @@ cd .workweaves/dev
 # mobile-app has its own tool state here
 ```
 
+### Bringing workweave work home
+
+`rwv sync` is a direction-neutral primitive that aligns one workspace with another's committed `rwv.lock`. Both workspaces must be locked — tip must match `rwv.lock` across all repos — before `sync` will run.
+
+**Typical flow** — work finishes in the workweave, land it in primary:
+
+```bash
+# in workweave: capture the cross-repo state
+cd .workweaves/payments
+(commit work across repos)
+rwv lock
+git -C projects/web-app commit -am "lock: payments feature"
+
+# from primary: bring the workweave's work home
+cd ~/work
+rwv sync payments              # fast-forwards primary's repos to workweave's lock
+```
+
+**Catching a workweave up to primary** — when primary has advanced (upstream merge, another workweave's sync):
+
+```bash
+# in primary, after whatever landed
+rwv lock
+git -C projects/web-app commit -am "lock: upstream merge"
+
+# in the workweave that needs to catch up
+cd .workweaves/payments
+rwv sync primary               # same verb, opposite direction
+```
+
+**When fast-forward won't apply** — workweave and primary have both advanced independently:
+
+```bash
+# replay workweave's commits onto primary's tip
+rwv sync primary --strategy rebase
+
+# or create a merge commit joining both sides
+rwv sync primary --strategy merge
+```
+
+**Conflict handling** — if rebase or merge hits a conflict, fix it in the affected repo, then:
+
+```bash
+rwv sync primary --strategy rebase   # re-run resumes; already-advanced repos are no-ops
+```
+
+To give up entirely and restore every repo to its pre-sync state:
+
+```bash
+rwv abort
+```
+
 ### Cleanup
 
 ```bash
 rwv workweave web-app delete payments
 ```
 
-Removes worktrees, cleans up ephemeral branches, deletes the directory. Commits on ephemeral branches survive in the weave's repos — merge or discard them with normal git.
+Removes worktrees, cleans up ephemeral branches, deletes the directory.
 
 ## Checking project health
+
+### Lock freshness
+
+Verify that every repo in a workspace is at its locked revision — a precondition for `rwv sync`:
+
+```bash
+rwv check --locked
+```
+
+Zero exit means all repos match their `rwv.lock` entries. Nonzero exit shows what drifted:
+
+```
+github/chatly/server: tip abc1234 ≠ lock e1f2a3b  ← run rwv lock to update
+github/chatly/web:    ok
+```
+
+### Per-repo status
+
+```bash
+rwv status
+```
+
+Shows each repo's branch, tip, lock entry, and relation:
+
+```
+github/chatly/server   main   abc1234   lock: e1f2a3b   [2 commits ahead]
+github/chatly/web      main   e1f2a3b   lock: e1f2a3b   [ok]
+github/chatly/protocol main   7a3b2c1   lock: 7a3b2c1   [ok]
+```
+
+Add `--json` for machine-readable output.
+
+### Full convention audit
 
 ```bash
 rwv doctor

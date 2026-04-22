@@ -29,6 +29,51 @@ impl GitVcs {
 }
 
 impl GitVcs {
+    /// Check if `ancestor` is a strict ancestor of `descendant` in `repo`.
+    ///
+    /// Uses `git merge-base --is-ancestor`. Returns `Ok(false)` when the
+    /// objects are the same (equal, not strictly ancestral).
+    pub fn is_ancestor(repo: &Path, ancestor: &str, descendant: &str) -> bool {
+        if ancestor == descendant {
+            return false;
+        }
+        std::process::Command::new("git")
+            .args(["merge-base", "--is-ancestor", ancestor, descendant])
+            .current_dir(repo)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false)
+    }
+
+    /// Detect if a repo is in a mid-operation VCS state (mid-rebase, mid-merge, etc.).
+    pub fn mid_op_state(repo: &Path) -> Option<String> {
+        let git_dir = match Self::run(&["rev-parse", "--git-dir"], repo) {
+            Ok(s) => {
+                let p = std::path::PathBuf::from(&s);
+                if p.is_absolute() {
+                    p
+                } else {
+                    repo.join(p)
+                }
+            }
+            Err(_) => return None,
+        };
+        if git_dir.join("rebase-apply").exists() || git_dir.join("rebase-merge").exists() {
+            return Some("mid-rebase".to_owned());
+        }
+        if git_dir.join("MERGE_HEAD").exists() {
+            return Some("mid-merge".to_owned());
+        }
+        if git_dir.join("CHERRY_PICK_HEAD").exists() {
+            return Some("mid-cherry-pick".to_owned());
+        }
+        None
+    }
+}
+
+impl GitVcs {
     /// Initialize a new git repo at `dest`.
     pub fn init_repo(&self, dest: &Path) -> anyhow::Result<()> {
         std::fs::create_dir_all(dest)

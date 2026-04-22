@@ -7,6 +7,8 @@ use repoweave::lock;
 use repoweave::manifest;
 use repoweave::prime;
 use repoweave::setup;
+use repoweave::status;
+use repoweave::sync;
 
 use clap::{CommandFactory, Parser, Subcommand};
 use clap_complete::Shell;
@@ -78,9 +80,32 @@ enum Commands {
         #[arg(long)]
         dirty: bool,
     },
-    /// Convention enforcement
+    /// Convention enforcement and lock-freshness checking
     #[command(alias = "check")]
-    Doctor,
+    Doctor {
+        /// Zero exit iff every repo's tip matches its rwv.lock entry (scriptable precondition for rwv sync)
+        #[arg(long)]
+        locked: bool,
+    },
+    /// Show per-repo state of the CWD workspace
+    Status {
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
+    },
+    /// Align CWD workspace with another workspace's committed rwv.lock
+    Sync {
+        /// Source workspace: a workspace name (primary, a workweave name) or a path
+        source: String,
+        /// Sync strategy: ff (default), rebase, or merge
+        #[arg(long, default_value = "ff")]
+        strategy: String,
+        /// Bypass the lock-freshness precondition
+        #[arg(long)]
+        force: bool,
+    },
+    /// Restore CWD workspace to its pre-sync state using savepoint refs
+    Abort,
     /// Print workspace root path
     Resolve,
     /// Initialize a new project
@@ -127,11 +152,6 @@ enum WorkweaveAction {
     },
     /// List existing workweaves
     List,
-    /// Sync workweave with current manifest
-    Sync {
-        /// Workweave name
-        name: String,
-    },
 }
 
 #[derive(Subcommand)]
@@ -178,13 +198,6 @@ fn main() -> anyhow::Result<()> {
                     }
                     Some(WorkweaveAction::Delete { name }) => {
                         repoweave::workweave::delete_workweave(
-                            ws_root,
-                            &project,
-                            &WorkweaveName::new(name),
-                        )?;
-                    }
-                    Some(WorkweaveAction::Sync { name }) => {
-                        repoweave::workweave::sync_workweave(
                             ws_root,
                             &project,
                             &WorkweaveName::new(name),
@@ -240,12 +253,35 @@ fn main() -> anyhow::Result<()> {
             let cwd = std::env::current_dir()?;
             lock::lock(&cwd, dirty)?;
         }
-        Some(Commands::Doctor) => {
+        Some(Commands::Doctor { locked }) => {
             let cwd = std::env::current_dir()?;
-            let has_errors = check::run_check(&cwd)?;
-            if has_errors {
-                std::process::exit(1);
+            if locked {
+                let has_drift = check::run_check_locked(&cwd)?;
+                if has_drift {
+                    std::process::exit(1);
+                }
+            } else {
+                let has_errors = check::run_check(&cwd)?;
+                if has_errors {
+                    std::process::exit(1);
+                }
             }
+        }
+        Some(Commands::Status { json }) => {
+            let cwd = std::env::current_dir()?;
+            status::run_status(&cwd, json)?;
+        }
+        Some(Commands::Sync {
+            source,
+            strategy,
+            force,
+        }) => {
+            let cwd = std::env::current_dir()?;
+            sync::run_sync(&cwd, &source, &strategy, force)?;
+        }
+        Some(Commands::Abort) => {
+            let cwd = std::env::current_dir()?;
+            sync::run_abort(&cwd)?;
         }
         Some(Commands::Resolve) => {
             let cwd = std::env::current_dir()?;

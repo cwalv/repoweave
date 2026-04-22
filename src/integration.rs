@@ -132,7 +132,7 @@ pub trait Integration {
     fn default_enabled(&self) -> bool;
 
     /// Generate config files and run install commands.
-    /// Called during activation, workweave creation, sync, add, and remove.
+    /// Called during `rwv activate`, workweave creation, `rwv sync`, `rwv add`, and `rwv remove`.
     fn activate(&self, ctx: &IntegrationContext) -> anyhow::Result<()>;
 
     /// Remove generated files. Called during deactivation.
