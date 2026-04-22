@@ -303,6 +303,170 @@ integrations:
 }
 
 // ===========================================================================
+// 8. `rwv doctor --locked` — tag-form lock entries
+// ===========================================================================
+
+/// Helper: add a git tag in a repo.
+fn git_tag(repo: &std::path::Path, tag: &str) {
+    let out = process::Command::new("git")
+        .args(["tag", tag])
+        .current_dir(repo)
+        .env("GIT_COMMITTER_NAME", "Test")
+        .env("GIT_COMMITTER_EMAIL", "test@test.com")
+        .output()
+        .expect("git tag failed to start");
+    assert!(
+        out.status.success(),
+        "git tag failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+/// Helper: make a second commit in an already-initialised repo. Returns new SHA.
+fn make_commit(repo: &std::path::Path) -> String {
+    let run = |args: &[&str], dir: &std::path::Path| -> String {
+        let out = process::Command::new("git")
+            .args(args)
+            .current_dir(dir)
+            .env("GIT_AUTHOR_NAME", "Test")
+            .env("GIT_AUTHOR_EMAIL", "test@test.com")
+            .env("GIT_COMMITTER_NAME", "Test")
+            .env("GIT_COMMITTER_EMAIL", "test@test.com")
+            .output()
+            .expect("git command failed to start");
+        assert!(
+            out.status.success(),
+            "git {:?} failed: {}",
+            args,
+            String::from_utf8_lossy(&out.stderr)
+        );
+        String::from_utf8(out.stdout).unwrap().trim().to_string()
+    };
+    std::fs::write(repo.join("extra.txt"), "change\n").unwrap();
+    run(&["add", "."], repo);
+    run(&["commit", "-m", "second"], repo);
+    run(&["rev-parse", "HEAD"], repo)
+}
+
+#[test]
+fn check_locked_tag_form_reports_ok() {
+    // Lock pins a tag name; HEAD is at that tag's commit — should exit 0.
+    let tmp = tempfile::tempdir().unwrap();
+    let root = make_workspace(tmp.path(), "ws");
+
+    let repo_path = "github/acme/server";
+    let _sha = init_git_repo(&root.join(repo_path));
+    git_tag(&root.join(repo_path), "v1.0.0");
+
+    let project_dir = root.join("projects").join("my-app");
+    write_manifest(
+        &project_dir,
+        &[(repo_path, "https://github.com/acme/server.git")],
+    );
+    write_lock(
+        &project_dir,
+        &[(repo_path, "https://github.com/acme/server.git", "v1.0.0")],
+    );
+
+    rwv_cmd()
+        .args(["doctor", "--locked"])
+        .current_dir(&project_dir)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("ok"));
+}
+
+#[test]
+fn check_locked_sha_form_reports_ok() {
+    // Lock pins a SHA directly; HEAD is the same commit — should exit 0.
+    let tmp = tempfile::tempdir().unwrap();
+    let root = make_workspace(tmp.path(), "ws");
+
+    let repo_path = "github/acme/server";
+    let sha = init_git_repo(&root.join(repo_path));
+
+    let project_dir = root.join("projects").join("my-app");
+    write_manifest(
+        &project_dir,
+        &[(repo_path, "https://github.com/acme/server.git")],
+    );
+    write_lock(
+        &project_dir,
+        &[(repo_path, "https://github.com/acme/server.git", &sha)],
+    );
+
+    rwv_cmd()
+        .args(["doctor", "--locked"])
+        .current_dir(&project_dir)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("ok"));
+}
+
+#[test]
+fn check_locked_tag_form_drift_reported() {
+    // Lock pins a tag; HEAD is at a later commit — should exit 1.
+    let tmp = tempfile::tempdir().unwrap();
+    let root = make_workspace(tmp.path(), "ws");
+
+    let repo_path = "github/acme/server";
+    init_git_repo(&root.join(repo_path));
+    git_tag(&root.join(repo_path), "v1.0.0");
+    make_commit(&root.join(repo_path)); // HEAD moves past v1.0.0
+
+    let project_dir = root.join("projects").join("my-app");
+    write_manifest(
+        &project_dir,
+        &[(repo_path, "https://github.com/acme/server.git")],
+    );
+    write_lock(
+        &project_dir,
+        &[(repo_path, "https://github.com/acme/server.git", "v1.0.0")],
+    );
+
+    rwv_cmd()
+        .args(["doctor", "--locked"])
+        .current_dir(&project_dir)
+        .assert()
+        .failure();
+}
+
+#[test]
+fn check_locked_unknown_tag_reported_as_drift() {
+    // Lock pins a tag that no longer exists locally — should exit 1 with a
+    // clear "unknown revision" message rather than a generic "tip ≠ lock".
+    let tmp = tempfile::tempdir().unwrap();
+    let root = make_workspace(tmp.path(), "ws");
+
+    let repo_path = "github/acme/server";
+    init_git_repo(&root.join(repo_path));
+
+    let project_dir = root.join("projects").join("my-app");
+    write_manifest(
+        &project_dir,
+        &[(repo_path, "https://github.com/acme/server.git")],
+    );
+    // Lock references a tag that was never created in this repo.
+    write_lock(
+        &project_dir,
+        &[(
+            repo_path,
+            "https://github.com/acme/server.git",
+            "v9.9.9-nonexistent",
+        )],
+    );
+
+    rwv_cmd()
+        .args(["doctor", "--locked"])
+        .current_dir(&project_dir)
+        .assert()
+        .failure()
+        .stdout(
+            predicate::str::contains("unknown revision").or(predicate::str::contains("v9.9.9")),
+        );
+}
+
+// ===========================================================================
 // Smoke test: `rwv check` CLI command is recognized
 // ===========================================================================
 

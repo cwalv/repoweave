@@ -29,6 +29,17 @@ impl GitVcs {
 }
 
 impl GitVcs {
+    /// Resolve any revision (tag name, branch name, or SHA) to a commit SHA.
+    ///
+    /// Uses `git rev-parse --verify <rev>^{commit}`. SHAs pass through unchanged;
+    /// tags and branches are dereferenced. Returns an error when the revision is
+    /// unknown in this repo.
+    pub fn resolve_revision(repo: &Path, rev: &str) -> anyhow::Result<RevisionId> {
+        let deref = format!("{rev}^{{commit}}");
+        let sha = Self::run(&["rev-parse", "--verify", &deref], repo)?;
+        Ok(RevisionId::new(sha))
+    }
+
     /// Check if `ancestor` is a strict ancestor of `descendant` in `repo`.
     ///
     /// Uses `git merge-base --is-ancestor`. Returns `Ok(false)` when the

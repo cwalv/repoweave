@@ -203,18 +203,35 @@ pub fn run_check_locked(cwd: &std::path::Path) -> anyhow::Result<bool> {
 
         for (repo_path, lock_entry) in &lock.repositories {
             let repo_abs = workspace_dir.join(repo_path.as_path());
-            match git.head_revision(&repo_abs) {
-                Ok(actual) if actual.as_str() == lock_entry.version.as_str() => {
-                    println!("{repo_path}: ok");
-                }
-                Ok(actual) => {
-                    println!("{repo_path}: tip {} ≠ lock {}", actual, lock_entry.version);
-                    any_drift = true;
-                }
+
+            let actual = match git.head_revision(&repo_abs) {
+                Ok(rev) => rev,
                 Err(_) => {
                     println!("{repo_path}: not on disk (lock: {})", lock_entry.version);
                     any_drift = true;
+                    continue;
                 }
+            };
+
+            // Resolve the lock version to a commit SHA before comparing.
+            // Handles tag names, branch names, and SHAs uniformly.
+            let lock_sha = match GitVcs::resolve_revision(&repo_abs, lock_entry.version.as_str()) {
+                Ok(sha) => sha,
+                Err(_) => {
+                    println!(
+                        "{repo_path}: lock pins unknown revision {}",
+                        lock_entry.version
+                    );
+                    any_drift = true;
+                    continue;
+                }
+            };
+
+            if actual.as_str() == lock_sha.as_str() {
+                println!("{repo_path}: ok");
+            } else {
+                println!("{repo_path}: tip {} ≠ lock {}", actual, lock_entry.version);
+                any_drift = true;
             }
         }
     }
