@@ -86,6 +86,9 @@ enum Commands {
         /// Zero exit iff every repo's tip matches its rwv.lock entry (scriptable precondition for rwv sync)
         #[arg(long)]
         locked: bool,
+        /// Auto-fix safely-fixable index drift (stale indexes whose tree matches an ancestor commit)
+        #[arg(long, conflicts_with = "locked")]
+        fix: bool,
     },
     /// Show per-repo state of the CWD workspace
     Status {
@@ -265,7 +268,7 @@ fn main() -> anyhow::Result<()> {
             let cwd = std::env::current_dir()?;
             lock::lock(&cwd, dirty)?;
         }
-        Some(Commands::Doctor { locked }) => {
+        Some(Commands::Doctor { locked, fix }) => {
             let cwd = std::env::current_dir()?;
             if locked {
                 let has_drift = check::run_check_locked(&cwd)?;
@@ -273,7 +276,7 @@ fn main() -> anyhow::Result<()> {
                     std::process::exit(1);
                 }
             } else {
-                let has_errors = check::run_check(&cwd)?;
+                let has_errors = check::run_check(&cwd, fix)?;
                 if has_errors {
                     std::process::exit(1);
                 }

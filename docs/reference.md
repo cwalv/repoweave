@@ -315,6 +315,7 @@ Commands like `add`, `remove`, `lock`, and `check` infer the project and workspa
 | **Missing role** | `rwv.yaml` entries without a `role` field |
 | **Stale lock** | Project's `rwv.lock` doesn't match current HEAD revisions |
 | **Workweave drift** | Worktrees missing from a workweave or extra worktrees not in manifest |
+| **Index drift** | A repo's index doesn't match its HEAD tree, caused by silent shared-ref advance from a sibling worktree. Classified as *safe-to-fix* when the index tree matches an ancestor commit (use `--fix`), or *live staged* when it does not (manual review required — `--fix` never touches this class). |
 | **Integration checks** | Each integration's check hook reports tool availability, stale config, etc. (see [Integrations](./integrations.md)) |
 
 ### `rwv lock`

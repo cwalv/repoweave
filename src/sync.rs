@@ -102,6 +102,62 @@ fn check_lock_freshness(workspace_dir: &Path, lock: &LockFile, label: &str) -> a
     Ok(())
 }
 
+/// Refresh the git index to match HEAD, but only for the safely-auto-fixable class.
+///
+/// Runs bare `git reset` (mixed): aligns the index to HEAD without touching
+/// the working tree or HEAD ref. No-op when the index already matches HEAD.
+///
+/// Safety invariant: never replaces index content that is not already an
+/// exactly-committed tree reachable from HEAD. If the index holds live staged
+/// content (tree not found in recent ancestors), this function does nothing.
+fn refresh_index_if_safe(repo: &Path) {
+    // Quick exit: index already matches HEAD.
+    let clean = std::process::Command::new("git")
+        .args(["diff-index", "--cached", "--exit-code", "HEAD"])
+        .current_dir(repo)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(true); // assume clean on error; never touch if unsure
+    if clean {
+        return;
+    }
+
+    // Get the current index tree SHA.
+    let index_tree = match std::process::Command::new("git")
+        .arg("write-tree")
+        .current_dir(repo)
+        .output()
+    {
+        Ok(out) if out.status.success() => {
+            String::from_utf8(out.stdout).unwrap_or_default().trim().to_owned()
+        }
+        _ => return, // can't verify — leave index alone
+    };
+
+    // Safety check: is the index tree the tree of some recent ancestor commit?
+    // Bounded to last 200 commits to keep doctor fast on large histories.
+    let ancestor_trees = match std::process::Command::new("git")
+        .args(["log", "--format=%T", "-200", "HEAD"])
+        .current_dir(repo)
+        .output()
+    {
+        Ok(out) if out.status.success() => String::from_utf8(out.stdout).unwrap_or_default(),
+        _ => return,
+    };
+
+    if !ancestor_trees.lines().any(|t| t.trim() == index_tree) {
+        return; // live staged content — do not clobber
+    }
+
+    // Safe: realign index to HEAD.
+    let _ = std::process::Command::new("git")
+        .arg("reset")
+        .current_dir(repo)
+        .output();
+}
+
 fn find_project_name(ctx: &WorkspaceContext) -> anyhow::Result<String> {
     let name = match &ctx.location {
         WorkspaceLocation::Weave { project: Some(p) } => p.as_str().to_owned(),

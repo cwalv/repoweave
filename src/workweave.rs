@@ -469,6 +469,31 @@ pub fn list_workweaves(ws_root: &Path) -> anyhow::Result<Vec<String>> {
     Ok(names)
 }
 
+/// Return `(name, path)` pairs for all workweave directories belonging to `ws_root`.
+pub fn list_workweave_dirs(ws_root: &Path) -> Vec<(String, PathBuf)> {
+    let pname = primary_name(ws_root);
+    let parent = workweave_parent(ws_root);
+    let mut result = Vec::new();
+
+    if let Ok(entries) = std::fs::read_dir(&parent) {
+        for entry in entries.flatten() {
+            let dir = entry.path();
+            if !dir.is_dir() {
+                continue;
+            }
+            let dir_name = entry.file_name().to_string_lossy().into_owned();
+            if let Some((primary, workweave_name)) = parse_weave_dir_name(&dir_name) {
+                if primary == pname {
+                    result.push((workweave_name.as_str().to_string(), dir));
+                }
+            }
+        }
+    }
+
+    result.sort_by(|a, b| a.0.cmp(&b.0));
+    result
+}
+
 /// Load the project manifest from the workspace.
 fn load_manifest(ws_root: &Path, project: &str) -> anyhow::Result<Manifest> {
     let manifest_path = ws_root.join("projects").join(project).join("rwv.yaml");

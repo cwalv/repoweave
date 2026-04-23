@@ -1,4 +1,4 @@
-//! Convention checks: orphaned clones, dangling refs, stale locks, etc.
+//! Convention checks: orphaned clones, dangling refs, stale locks, index drift, etc.
 //!
 //! `rwv doctor` builds a workspace-wide inventory from all projects, then runs
 //! a series of checks. Integration check hooks are run separately.
@@ -7,6 +7,7 @@ use crate::integration::Issue;
 use crate::manifest::{Project, RepoPath};
 use crate::vcs::RevisionId;
 use std::collections::{BTreeMap, BTreeSet};
+use std::path::Path;
 
 /// The kinds of convention violations `rwv doctor` can find.
 ///
@@ -38,6 +39,16 @@ pub enum CheckViolation {
         kind: DriftKind,
         repo: RepoPath,
     },
+
+    /// A git repo's index does not match its HEAD tree (silent stale-index from
+    /// shared-ref advance in a sibling worktree).
+    IndexDrift {
+        /// Workweave name; `None` for repos in the primary weave.
+        workweave: Option<String>,
+        repo: RepoPath,
+        kind: IndexDriftKind,
+    },
+
 }
 
 #[derive(Debug)]
@@ -46,6 +57,17 @@ pub enum DriftKind {
     Missing,
     /// Worktree exists, but manifest doesn't list it.
     Extra,
+}
+
+/// How a stale index should be treated.
+#[derive(Debug)]
+pub enum IndexDriftKind {
+    /// Index tree matches the tree of some recent ancestor commit. Safe to
+    /// auto-fix with `git reset` — the displaced tree is permanently in the DAG.
+    SafeToFix,
+    /// Index tree is not found in recent ancestor trees. The user has live
+    /// staged content; `--fix` must not touch this.
+    LiveStaged,
 }
 
 /// Inputs for running workspace-wide checks.
@@ -154,6 +176,26 @@ pub fn violations_to_issues(violations: Vec<CheckViolation>) -> Vec<Issue> {
                         format!("workweave drift in {workweave}: {kind_str} {repo}"),
                     )
                 }
+                CheckViolation::IndexDrift {
+                    workweave,
+                    repo,
+                    kind,
+                } => {
+                    let location = match workweave {
+                        Some(ww) => format!("{ww}/{repo}"),
+                        None => format!("{repo}"),
+                    };
+                    let detail = match kind {
+                        IndexDriftKind::SafeToFix => "index stale (safe to --fix)",
+                        IndexDriftKind::LiveStaged => {
+                            "index has live staged changes (manual review)"
+                        }
+                    };
+                    (
+                        crate::integration::Severity::Warning,
+                        format!("{location}: {detail}"),
+                    )
+                }
             };
             Issue {
                 integration: "core".into(),
@@ -163,6 +205,78 @@ pub fn violations_to_issues(violations: Vec<CheckViolation>) -> Vec<Issue> {
         })
         .collect()
 }
+
+// ---------------------------------------------------------------------------
+// Index-drift helpers
+// ---------------------------------------------------------------------------
+
+/// Classify the index-drift state of a git repo at `repo`.
+///
+/// Returns `None` when the index matches HEAD (no drift).  Otherwise returns
+/// `Some(IndexDriftKind)` — either `SafeToFix` (index tree is an ancestor
+/// commit's tree, safely replaceable) or `LiveStaged` (user has staged content
+/// that is not a committed tree; must not be auto-fixed).
+pub fn classify_index_drift(repo: &Path) -> Option<IndexDriftKind> {
+    // Exit-0 means index matches HEAD tree — no drift.
+    let clean = std::process::Command::new("git")
+        .args(["diff-index", "--cached", "--exit-code", "HEAD"])
+        .current_dir(repo)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(true); // assume clean if git unavailable
+    if clean {
+        return None;
+    }
+
+    // Index differs from HEAD. Determine the current index tree SHA.
+    let index_tree = match std::process::Command::new("git")
+        .arg("write-tree")
+        .current_dir(repo)
+        .output()
+    {
+        Ok(out) if out.status.success() => {
+            String::from_utf8(out.stdout).unwrap_or_default().trim().to_owned()
+        }
+        _ => return Some(IndexDriftKind::LiveStaged), // conservative
+    };
+
+    // Safety check: is the index tree the tree of some recent ancestor commit?
+    // Bounded to 200 ancestors to keep performance acceptable on deep histories.
+    let ancestor_trees = match std::process::Command::new("git")
+        .args(["log", "--format=%T", "-200", "HEAD"])
+        .current_dir(repo)
+        .output()
+    {
+        Ok(out) if out.status.success() => String::from_utf8(out.stdout).unwrap_or_default(),
+        _ => return Some(IndexDriftKind::LiveStaged),
+    };
+
+    if ancestor_trees.lines().any(|t| t.trim() == index_tree) {
+        Some(IndexDriftKind::SafeToFix)
+    } else {
+        Some(IndexDriftKind::LiveStaged)
+    }
+}
+
+/// Reset the index to match HEAD, leaving the working tree and HEAD untouched.
+///
+/// Only call after confirming `classify_index_drift` returns `SafeToFix`.
+/// Uses bare `git reset` (equivalent to `git reset --mixed HEAD`).
+pub fn reset_index_to_head(repo: &Path) -> anyhow::Result<()> {
+    let out = std::process::Command::new("git")
+        .arg("reset")
+        .current_dir(repo)
+        .output()
+        .map_err(|e| anyhow::anyhow!("failed to run git reset: {e}"))?;
+    if !out.status.success() {
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        anyhow::bail!("git reset failed in {}: {}", repo.display(), stderr.trim());
+    }
+    Ok(())
+}
+
 
 /// Execute `rwv check --locked` for the current workspace context.
 ///
@@ -243,14 +357,17 @@ pub fn run_check_locked(cwd: &std::path::Path) -> anyhow::Result<bool> {
 ///
 /// Scans registry directories for repos on disk, loads all project manifests,
 /// runs convention checks and integration check hooks, then displays issues.
+/// When `fix` is `true`, safely-auto-fixable index-drift cases are remediated
+/// in place with `git reset` (index ← HEAD, working tree untouched).
+///
 /// Returns `Ok(true)` if there are errors (exit 1), `Ok(false)` if clean.
-pub fn run_check(cwd: &std::path::Path) -> anyhow::Result<bool> {
+pub fn run_check(cwd: &std::path::Path, fix: bool) -> anyhow::Result<bool> {
     use crate::git::GitVcs;
     use crate::integration::Severity;
     use crate::integration_runner::run_checks;
     use crate::manifest::Project;
     use crate::vcs::Vcs;
-    use crate::workspace::{WorkspaceContext, WorkspaceSession};
+    use crate::workspace::{WorkspaceContext, WorkspaceLocation, WorkspaceSession};
 
     let ctx = WorkspaceContext::resolve(cwd, None)?;
 
@@ -339,6 +456,76 @@ pub fn run_check(cwd: &std::path::Path) -> anyhow::Result<bool> {
         let integration_issues = run_checks(&integrations, &project.manifest, &ctx_base);
         all_issues.extend(integration_issues);
     }
+
+    // Index-drift detection: check repos in the current workspace and, when
+    // running from the primary weave, all workweave repos too.
+    //
+    // Collects (workweave_label, repo_abs, repo_path_display) triples.
+    let mut index_scan: Vec<(Option<String>, std::path::PathBuf, String)> = Vec::new();
+
+    let workspace_dir = ctx.resolve_path().to_path_buf();
+    for project in &input.projects {
+        for repo_path in project.manifest.repositories.keys() {
+            let abs = workspace_dir.join(repo_path.as_path());
+            if abs.exists() {
+                index_scan.push((None, abs, repo_path.to_string()));
+            }
+        }
+    }
+
+    // From the primary weave: also scan every known workweave.
+    if matches!(ctx.location, WorkspaceLocation::Weave { .. }) {
+        for (ww_name, ww_dir) in crate::workweave::list_workweave_dirs(&ctx.root) {
+            for project in &input.projects {
+                for repo_path in project.manifest.repositories.keys() {
+                    let abs = ww_dir.join(repo_path.as_path());
+                    if abs.exists() {
+                        index_scan.push((Some(ww_name.clone()), abs, repo_path.to_string()));
+                    }
+                }
+            }
+        }
+    }
+
+    for (ww_label, repo_abs, repo_display) in &index_scan {
+        let location = match ww_label {
+            Some(ww) => format!("{ww}/{repo_display}"),
+            None => repo_display.clone(),
+        };
+
+        if let Some(drift_kind) = classify_index_drift(repo_abs) {
+            match drift_kind {
+                IndexDriftKind::SafeToFix => {
+                    if fix {
+                        match reset_index_to_head(repo_abs) {
+                            Ok(()) => println!("[fixed] core: index refreshed for {location}"),
+                            Err(e) => all_issues.push(Issue {
+                                integration: "core".into(),
+                                severity: Severity::Error,
+                                message: format!("{location}: index fix failed: {e}"),
+                            }),
+                        }
+                    } else {
+                        all_issues.push(Issue {
+                            integration: "core".into(),
+                            severity: Severity::Warning,
+                            message: format!("{location}: index stale (safe to --fix)"),
+                        });
+                    }
+                }
+                IndexDriftKind::LiveStaged => {
+                    all_issues.push(Issue {
+                        integration: "core".into(),
+                        severity: Severity::Warning,
+                        message: format!(
+                            "{location}: index has live staged changes (manual review)"
+                        ),
+                    });
+                }
+            }
+        }
+    }
+
 
     // Display issues and determine exit status
     let mut has_errors = false;
