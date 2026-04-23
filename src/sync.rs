@@ -90,7 +90,19 @@ fn check_lock_freshness(workspace_dir: &Path, lock: &LockFile, label: &str) -> a
             continue;
         }
         if let Ok(actual) = git_head(&abs) {
-            if actual != lock_entry.version.as_str() {
+            // Resolve the lock version to a commit SHA before comparing so that
+            // tag-form entries (e.g. v0.3.4) are not spuriously flagged as stale
+            // when the actual HEAD SHA is the same commit the tag points at.
+            let resolved =
+                match crate::git::GitVcs::resolve_revision(&abs, lock_entry.version.as_str()) {
+                    Ok(sha) => sha,
+                    Err(_) => anyhow::bail!(
+                        "{label} lock references unknown revision {}: {repo_path}  \
+                         (run `rwv lock` on the {label} workspace, or use --force to bypass)",
+                        lock_entry.version
+                    ),
+                };
+            if actual != resolved.as_str() {
                 anyhow::bail!(
                     "{label} lock is stale: {repo_path} tip={actual} lock={}  \
                      (run `rwv lock` on the {label} workspace, or use --force to bypass)",

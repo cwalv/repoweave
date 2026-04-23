@@ -632,6 +632,121 @@ fn abort_restores_repos_to_pre_op_state() {
 // ---------------------------------------------------------------------------
 // Round-trip convergence
 // ---------------------------------------------------------------------------
+// rwv sync — tag-form lock freshness (mirrors check_test.rs §8)
+// ---------------------------------------------------------------------------
+
+/// Add a lightweight tag at HEAD in `repo`.
+fn git_tag(repo: &Path, tag: &str) {
+    git(
+        &[
+            "-c",
+            "user.email=test@test.com",
+            "-c",
+            "user.name=Test",
+            "tag",
+            tag,
+        ],
+        repo,
+    );
+}
+
+/// sync proceeds when the source lock is pinned by a tag that resolves to the source HEAD.
+/// Regression test: before the fix, this spuriously produced "source lock is stale".
+#[test]
+fn sync_proceeds_when_source_lock_tag_matches_head() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (primary, ww, _c1) = make_shared_workspaces(tmp.path());
+
+    // Tag primary's server at its current HEAD and update the source lock to the tag name.
+    git_tag(&primary.server_dir, "v1.0.0");
+    write_lock(&primary.project_dir, &[(SERVER_PATH, SERVER_URL, "v1.0.0")]);
+    git(&["add", "rwv.lock"], &primary.project_dir);
+    git(&["commit", "-m", "lock: pin v1.0.0 (tag form)"], &primary.project_dir);
+
+    rwv()
+        .args(["sync", &primary.root.to_string_lossy()])
+        .current_dir(&ww.root)
+        .assert()
+        .success();
+}
+
+/// sync proceeds when the source lock is pinned by a SHA that equals the source HEAD.
+/// Regression guard: SHA-form should always have worked; this ensures it still does.
+#[test]
+fn sync_proceeds_when_source_lock_sha_matches_head() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (primary, ww, c1) = make_shared_workspaces(tmp.path());
+
+    // primary's project already has the lock with C1 SHA committed.
+    // Syncing ww from primary is a no-op; the freshness check must pass.
+    let source_lock_sha = c1; // the SHA already in the lock
+    assert!(!source_lock_sha.is_empty());
+
+    rwv()
+        .args(["sync", &primary.root.to_string_lossy()])
+        .current_dir(&ww.root)
+        .assert()
+        .success();
+}
+
+/// sync refuses when the source lock is pinned by a tag whose commit differs from HEAD.
+/// The "stale" error must fire even when the lock version is a tag name, not a raw SHA.
+#[test]
+fn sync_refuses_when_source_lock_tag_is_genuinely_stale() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (primary, _) = make_locked_workspace(tmp.path(), "primary");
+    let (cwd_ws, _) = make_locked_workspace(tmp.path(), "cwd");
+
+    // Tag primary's server at C1, then advance past it — now HEAD ≠ tag commit.
+    git_tag(&primary.server_dir, "v1.0.0");
+    make_commit(
+        &primary.server_dir,
+        "advance.txt",
+        "advance\n",
+        "primary: advance past v1.0.0",
+    );
+
+    // Update source lock to the tag name — it's now genuinely stale (HEAD > tag commit).
+    write_lock(&primary.project_dir, &[(SERVER_PATH, SERVER_URL, "v1.0.0")]);
+    git(&["add", "rwv.lock"], &primary.project_dir);
+    git(&["commit", "-m", "lock: v1.0.0 (stale)"], &primary.project_dir);
+
+    rwv()
+        .args(["sync", &primary.root.to_string_lossy()])
+        .current_dir(&cwd_ws.root)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("lock").or(predicate::str::contains("stale")));
+}
+
+/// sync refuses and reports "unknown revision" when the source lock references a tag
+/// that no longer exists locally.
+#[test]
+fn sync_refuses_with_unknown_revision_when_source_lock_tag_missing() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (primary, _) = make_locked_workspace(tmp.path(), "primary");
+    let (cwd_ws, _) = make_locked_workspace(tmp.path(), "cwd");
+
+    // Write a source lock pinned by a tag that was never created.
+    write_lock(
+        &primary.project_dir,
+        &[(SERVER_PATH, SERVER_URL, "v9.9.9-nonexistent")],
+    );
+    git(&["add", "rwv.lock"], &primary.project_dir);
+    git(&["commit", "-m", "lock: nonexistent tag"], &primary.project_dir);
+
+    rwv()
+        .args(["sync", &primary.root.to_string_lossy()])
+        .current_dir(&cwd_ws.root)
+        .assert()
+        .failure()
+        .stderr(
+            predicate::str::contains("unknown revision")
+                .or(predicate::str::contains("v9.9.9-nonexistent")),
+        );
+}
+
+// ---------------------------------------------------------------------------
 
 /// sync A→B then B→A should be a no-op on B (project repo must not grow unbounded).
 #[test]

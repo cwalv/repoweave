@@ -366,7 +366,7 @@ rwv check --locked
 rwv doctor --locked   # equivalent
 ```
 
-Zero exit iff every repo in the CWD workspace has its tip SHA matching its `rwv.lock` entry. Nonzero exit prints per-repo status:
+Zero exit iff every repo in the CWD workspace has its tip matching its `rwv.lock` entry. Both SHA-form and tag-form lock entries are resolved to commit SHAs before comparing, so a tag-pinned workspace reports `ok` when HEAD is the tagged commit. Nonzero exit prints per-repo status:
 
 ```
 github/chatly/server: tip abc1234 ≠ lock e1f2a3b
