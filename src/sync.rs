@@ -142,9 +142,10 @@ fn refresh_index_if_safe(repo: &Path) {
         .current_dir(repo)
         .output()
     {
-        Ok(out) if out.status.success() => {
-            String::from_utf8(out.stdout).unwrap_or_default().trim().to_owned()
-        }
+        Ok(out) if out.status.success() => String::from_utf8(out.stdout)
+            .unwrap_or_default()
+            .trim()
+            .to_owned(),
         _ => return, // can't verify — leave index alone
     };
 
@@ -239,12 +240,11 @@ fn refresh_working_tree_if_safe(repo: &Path) {
             Ok(out) if out.status.success() => out,
             _ => return,
         };
-        let reachable: std::collections::HashSet<String> =
-            String::from_utf8(objects_out.stdout)
-                .unwrap_or_default()
-                .lines()
-                .filter_map(|l| l.split_whitespace().next().map(|s| s.to_owned()))
-                .collect();
+        let reachable: std::collections::HashSet<String> = String::from_utf8(objects_out.stdout)
+            .unwrap_or_default()
+            .lines()
+            .filter_map(|l| l.split_whitespace().next().map(|s| s.to_owned()))
+            .collect();
         for file in &modified_files {
             let hash_out = match std::process::Command::new("git")
                 .args(["hash-object", file])

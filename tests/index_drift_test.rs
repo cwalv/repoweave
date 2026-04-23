@@ -264,8 +264,7 @@ fn doctor_detects_stale_index_in_workweave() {
         .current_dir(&ws.primary_root)
         .assert()
         .stdout(
-            predicate::str::contains("index stale")
-                .or(predicate::str::contains("safe to --fix")),
+            predicate::str::contains("index stale").or(predicate::str::contains("safe to --fix")),
         );
 }
 
@@ -350,8 +349,7 @@ fn doctor_fix_does_not_clobber_live_staged_changes() {
         .current_dir(&ws.primary_root)
         .assert()
         .stdout(
-            predicate::str::contains("manual review")
-                .or(predicate::str::contains("live staged")),
+            predicate::str::contains("manual review").or(predicate::str::contains("live staged")),
         );
 
     // The staged file must still be staged.
@@ -492,8 +490,7 @@ fn doctor_fix_refuses_non_reachable_index_tree() {
         .current_dir(&ws.primary_root)
         .assert()
         .stdout(
-            predicate::str::contains("manual review")
-                .or(predicate::str::contains("live staged")),
+            predicate::str::contains("manual review").or(predicate::str::contains("live staged")),
         );
 
     // The staged file must still be there.

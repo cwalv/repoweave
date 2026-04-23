@@ -306,8 +306,11 @@ fn doctor_fix_does_not_clobber_live_working_tree_edits() {
     git(&["reset"], &ws.server_ww);
 
     // Now write a live edit to a tracked file with UNIQUE content (never committed).
-    std::fs::write(ws.server_ww.join("README.md"), "my unique edit — never committed\n")
-        .unwrap();
+    std::fs::write(
+        ws.server_ww.join("README.md"),
+        "my unique edit — never committed\n",
+    )
+    .unwrap();
 
     // doctor --fix must NOT touch the live edit.
     rwv()
@@ -315,8 +318,7 @@ fn doctor_fix_does_not_clobber_live_working_tree_edits() {
         .current_dir(&ws.primary_root)
         .assert()
         .stdout(
-            predicate::str::contains("live edits")
-                .or(predicate::str::contains("manual review")),
+            predicate::str::contains("live edits").or(predicate::str::contains("manual review")),
         );
 
     // The live edit must still be present.
@@ -516,8 +518,7 @@ fn doctor_fix_refuses_when_working_tree_has_unreachable_content() {
         .current_dir(&ws.primary_root)
         .assert()
         .stdout(
-            predicate::str::contains("live edits")
-                .or(predicate::str::contains("manual review")),
+            predicate::str::contains("live edits").or(predicate::str::contains("manual review")),
         );
 
     // Unique content must still be intact.

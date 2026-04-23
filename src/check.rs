@@ -274,9 +274,10 @@ pub fn classify_index_drift(repo: &Path) -> Option<IndexDriftKind> {
         .current_dir(repo)
         .output()
     {
-        Ok(out) if out.status.success() => {
-            String::from_utf8(out.stdout).unwrap_or_default().trim().to_owned()
-        }
+        Ok(out) if out.status.success() => String::from_utf8(out.stdout)
+            .unwrap_or_default()
+            .trim()
+            .to_owned(),
         _ => return Some(IndexDriftKind::LiveStaged), // conservative
     };
 
@@ -393,12 +394,11 @@ pub fn classify_working_tree_drift(repo: &Path) -> Option<WorkingTreeDriftKind> 
         Ok(out) if out.status.success() => out,
         _ => return Some(WorkingTreeDriftKind::LiveEdits),
     };
-    let reachable: std::collections::HashSet<String> =
-        String::from_utf8(objects_out.stdout)
-            .unwrap_or_default()
-            .lines()
-            .filter_map(|l| l.split_whitespace().next().map(|s| s.to_owned()))
-            .collect();
+    let reachable: std::collections::HashSet<String> = String::from_utf8(objects_out.stdout)
+        .unwrap_or_default()
+        .lines()
+        .filter_map(|l| l.split_whitespace().next().map(|s| s.to_owned()))
+        .collect();
 
     // For each M file, verify its on-disk blob is reachable.
     for file in &modified_files {
@@ -740,9 +740,7 @@ pub fn run_check(cwd: &std::path::Path, fix: bool) -> anyhow::Result<bool> {
                     all_issues.push(Issue {
                         integration: "core".into(),
                         severity: Severity::Warning,
-                        message: format!(
-                            "{location}: working tree has live edits (manual review)"
-                        ),
+                        message: format!("{location}: working tree has live edits (manual review)"),
                     });
                 }
             }

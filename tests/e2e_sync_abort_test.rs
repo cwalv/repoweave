@@ -661,7 +661,10 @@ fn sync_proceeds_when_source_lock_tag_matches_head() {
     git_tag(&primary.server_dir, "v1.0.0");
     write_lock(&primary.project_dir, &[(SERVER_PATH, SERVER_URL, "v1.0.0")]);
     git(&["add", "rwv.lock"], &primary.project_dir);
-    git(&["commit", "-m", "lock: pin v1.0.0 (tag form)"], &primary.project_dir);
+    git(
+        &["commit", "-m", "lock: pin v1.0.0 (tag form)"],
+        &primary.project_dir,
+    );
 
     rwv()
         .args(["sync", &primary.root.to_string_lossy()])
@@ -709,7 +712,10 @@ fn sync_refuses_when_source_lock_tag_is_genuinely_stale() {
     // Update source lock to the tag name — it's now genuinely stale (HEAD > tag commit).
     write_lock(&primary.project_dir, &[(SERVER_PATH, SERVER_URL, "v1.0.0")]);
     git(&["add", "rwv.lock"], &primary.project_dir);
-    git(&["commit", "-m", "lock: v1.0.0 (stale)"], &primary.project_dir);
+    git(
+        &["commit", "-m", "lock: v1.0.0 (stale)"],
+        &primary.project_dir,
+    );
 
     rwv()
         .args(["sync", &primary.root.to_string_lossy()])
@@ -733,7 +739,10 @@ fn sync_refuses_with_unknown_revision_when_source_lock_tag_missing() {
         &[(SERVER_PATH, SERVER_URL, "v9.9.9-nonexistent")],
     );
     git(&["add", "rwv.lock"], &primary.project_dir);
-    git(&["commit", "-m", "lock: nonexistent tag"], &primary.project_dir);
+    git(
+        &["commit", "-m", "lock: nonexistent tag"],
+        &primary.project_dir,
+    );
 
     rwv()
         .args(["sync", &primary.root.to_string_lossy()])
