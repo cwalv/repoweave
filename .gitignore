@@ -14,4 +14,8 @@ Cargo.lock
 tests/fixtures/**/target/
 tests/fixtures/**/dist/
 tests/fixtures/**/node_modules/
-tests/fixtures/**/__pycache__/
+
+# Python build artifacts (pycache + pip-installed rwv binary landing spot)
+__pycache__/
+*.pyc
+python/repoweave/src/repoweave/bin/
