@@ -1,4 +1,4 @@
-//! Convention checks: orphaned clones, dangling refs, stale locks, index drift, etc.
+//! Convention checks: orphaned clones, dangling refs, stale locks, index drift, working-tree drift, etc.
 //!
 //! `rwv doctor` builds a workspace-wide inventory from all projects, then runs
 //! a series of checks. Integration check hooks are run separately.
@@ -49,6 +49,13 @@ pub enum CheckViolation {
         kind: IndexDriftKind,
     },
 
+    /// A git repo's working-tree files do not match its HEAD tree (stale on-disk
+    /// content after shared-ref advance in a sibling worktree).
+    WorkingTreeDrift {
+        workweave: Option<String>,
+        repo: RepoPath,
+        kind: WorkingTreeDriftKind,
+    },
 }
 
 #[derive(Debug)]
@@ -68,6 +75,17 @@ pub enum IndexDriftKind {
     /// Index tree is not found in recent ancestor trees. The user has live
     /// staged content; `--fix` must not touch this.
     LiveStaged,
+}
+
+/// How stale working-tree files should be treated.
+#[derive(Debug)]
+pub enum WorkingTreeDriftKind {
+    /// All modified files' on-disk content matches blobs reachable from HEAD.
+    /// Safe to restore with `git checkout HEAD -- <files>` — no work is lost.
+    SafeToFix,
+    /// At least one modified file has on-disk content not found in any recent
+    /// ancestor's tree. The user has active edits; `--fix` must not touch this.
+    LiveEdits,
 }
 
 /// Inputs for running workspace-wide checks.
@@ -196,6 +214,26 @@ pub fn violations_to_issues(violations: Vec<CheckViolation>) -> Vec<Issue> {
                         format!("{location}: {detail}"),
                     )
                 }
+                CheckViolation::WorkingTreeDrift {
+                    workweave,
+                    repo,
+                    kind,
+                } => {
+                    let location = match workweave {
+                        Some(ww) => format!("{ww}/{repo}"),
+                        None => format!("{repo}"),
+                    };
+                    let detail = match kind {
+                        WorkingTreeDriftKind::SafeToFix => "working tree stale (safe to --fix)",
+                        WorkingTreeDriftKind::LiveEdits => {
+                            "working tree has live edits (manual review)"
+                        }
+                    };
+                    (
+                        crate::integration::Severity::Warning,
+                        format!("{location}: {detail}"),
+                    )
+                }
             };
             Issue {
                 integration: "core".into(),
@@ -277,6 +315,147 @@ pub fn reset_index_to_head(repo: &Path) -> anyhow::Result<()> {
     Ok(())
 }
 
+// ---------------------------------------------------------------------------
+// Working-tree-drift helpers
+// ---------------------------------------------------------------------------
+
+/// Classify the working-tree-drift state of a git repo at `repo`.
+///
+/// Returns `None` when the working tree matches HEAD (no drift). Otherwise
+/// returns `Some(WorkingTreeDriftKind)` — either `SafeToFix` (all modified
+/// files' on-disk content matches a reachable committed blob) or `LiveEdits`
+/// (at least one file has content not found in recent ancestors; must not be
+/// auto-fixed).
+///
+/// Uses `git diff-index HEAD` (without `--cached`) so detection works
+/// regardless of whether index drift has already been resolved.
+pub fn classify_working_tree_drift(repo: &Path) -> Option<WorkingTreeDriftKind> {
+    // Exit-0 means working tree matches HEAD — no drift.
+    let clean = std::process::Command::new("git")
+        .args(["diff-index", "--exit-code", "HEAD"])
+        .current_dir(repo)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(true);
+    if clean {
+        return None;
+    }
+
+    // Use --name-status to distinguish two cases:
+    //   D = file exists in HEAD but is absent from the working tree — content is
+    //       in HEAD and by definition reachable; always safe to restore.
+    //   M = file differs between HEAD and working tree — must verify the on-disk
+    //       blob is reachable before treating it as safely fixable.
+    let status_out = match std::process::Command::new("git")
+        .args(["diff-index", "--name-status", "HEAD"])
+        .current_dir(repo)
+        .output()
+    {
+        Ok(out) if out.status.success() => out,
+        _ => return Some(WorkingTreeDriftKind::LiveEdits),
+    };
+    let mut modified_files: Vec<String> = Vec::new();
+    let mut has_entries = false;
+    for line in String::from_utf8_lossy(&status_out.stdout).lines() {
+        if line.is_empty() {
+            continue;
+        }
+        has_entries = true;
+        let mut parts = line.splitn(2, '\t');
+        let status = parts.next().unwrap_or("").trim();
+        let path = parts.next().unwrap_or("").trim();
+        match status {
+            "D" => {
+                // Deleted from working tree; restore from HEAD → safely fixable.
+            }
+            "M" | "T" => {
+                modified_files.push(path.to_owned());
+            }
+            _ => return Some(WorkingTreeDriftKind::LiveEdits),
+        }
+    }
+    if !has_entries {
+        return None;
+    }
+    if modified_files.is_empty() {
+        // Only D (deleted-from-WT) entries — always safely restorable.
+        return Some(WorkingTreeDriftKind::SafeToFix);
+    }
+
+    // Gather all reachable object SHAs from the last 200 commits.
+    let objects_out = match std::process::Command::new("git")
+        .args(["rev-list", "--objects", "-n", "200", "HEAD"])
+        .current_dir(repo)
+        .output()
+    {
+        Ok(out) if out.status.success() => out,
+        _ => return Some(WorkingTreeDriftKind::LiveEdits),
+    };
+    let reachable: std::collections::HashSet<String> =
+        String::from_utf8(objects_out.stdout)
+            .unwrap_or_default()
+            .lines()
+            .filter_map(|l| l.split_whitespace().next().map(|s| s.to_owned()))
+            .collect();
+
+    // For each M file, verify its on-disk blob is reachable.
+    for file in &modified_files {
+        let hash_out = match std::process::Command::new("git")
+            .args(["hash-object", file])
+            .current_dir(repo)
+            .output()
+        {
+            Ok(out) if out.status.success() => out,
+            _ => return Some(WorkingTreeDriftKind::LiveEdits),
+        };
+        let blob_sha = String::from_utf8_lossy(&hash_out.stdout).trim().to_owned();
+        if !reachable.contains(&blob_sha) {
+            return Some(WorkingTreeDriftKind::LiveEdits);
+        }
+    }
+
+    Some(WorkingTreeDriftKind::SafeToFix)
+}
+
+/// Restore working-tree files to match HEAD.
+///
+/// Only call after confirming `classify_working_tree_drift` returns `SafeToFix`.
+/// Restores each tracked file that differs from HEAD using
+/// `git checkout HEAD -- <files>`, leaving unstaged files and the index alone.
+pub fn restore_working_tree_to_head(repo: &Path) -> anyhow::Result<()> {
+    let modified_out = std::process::Command::new("git")
+        .args(["diff-index", "--name-only", "HEAD"])
+        .current_dir(repo)
+        .output()
+        .map_err(|e| anyhow::anyhow!("failed to run git diff-index: {e}"))?;
+    let files: Vec<String> = String::from_utf8_lossy(&modified_out.stdout)
+        .lines()
+        .filter(|l| !l.is_empty())
+        .map(|l| l.to_owned())
+        .collect();
+    if files.is_empty() {
+        return Ok(());
+    }
+
+    let mut args = vec!["checkout".to_owned(), "HEAD".to_owned(), "--".to_owned()];
+    args.extend(files);
+    let out = std::process::Command::new("git")
+        .args(&args)
+        .current_dir(repo)
+        .output()
+        .map_err(|e| anyhow::anyhow!("failed to run git checkout: {e}"))?;
+    if !out.status.success() {
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        anyhow::bail!(
+            "git checkout HEAD -- <files> failed in {}: {}",
+            repo.display(),
+            stderr.trim()
+        );
+    }
+    Ok(())
+}
 
 /// Execute `rwv check --locked` for the current workspace context.
 ///
@@ -526,6 +705,49 @@ pub fn run_check(cwd: &std::path::Path, fix: bool) -> anyhow::Result<bool> {
         }
     }
 
+    // Working-tree drift detection: same scan list, same workweave scope.
+    // Uses `git diff-index HEAD` (without --cached) so it works whether or not
+    // index drift has just been fixed above.
+    for (ww_label, repo_abs, repo_display) in &index_scan {
+        let location = match ww_label {
+            Some(ww) => format!("{ww}/{repo_display}"),
+            None => repo_display.clone(),
+        };
+
+        if let Some(drift_kind) = classify_working_tree_drift(repo_abs) {
+            match drift_kind {
+                WorkingTreeDriftKind::SafeToFix => {
+                    if fix {
+                        match restore_working_tree_to_head(repo_abs) {
+                            Ok(()) => {
+                                println!("[fixed] core: working tree refreshed for {location}")
+                            }
+                            Err(e) => all_issues.push(Issue {
+                                integration: "core".into(),
+                                severity: Severity::Error,
+                                message: format!("{location}: working-tree fix failed: {e}"),
+                            }),
+                        }
+                    } else {
+                        all_issues.push(Issue {
+                            integration: "core".into(),
+                            severity: Severity::Warning,
+                            message: format!("{location}: working tree stale (safe to --fix)"),
+                        });
+                    }
+                }
+                WorkingTreeDriftKind::LiveEdits => {
+                    all_issues.push(Issue {
+                        integration: "core".into(),
+                        severity: Severity::Warning,
+                        message: format!(
+                            "{location}: working tree has live edits (manual review)"
+                        ),
+                    });
+                }
+            }
+        }
+    }
 
     // Display issues and determine exit status
     let mut has_errors = false;

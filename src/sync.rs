@@ -158,6 +158,106 @@ fn refresh_index_if_safe(repo: &Path) {
         .output();
 }
 
+/// Restore working-tree files to match HEAD, but only for the safely-auto-fixable class.
+///
+/// Mirrors `refresh_index_if_safe`: detects modified files using
+/// `git diff-index HEAD` (without --cached), verifies each file's on-disk blob
+/// SHA is reachable from the last 200 commits, then runs
+/// `git checkout HEAD -- <files>` to restore them. No-op when clean or when
+/// any file has live edits (content not found in reachable history).
+///
+/// Safety invariant: never replaces on-disk content that is not already a
+/// committed blob reachable from HEAD. No work is ever silently lost.
+fn refresh_working_tree_if_safe(repo: &Path) {
+    // Quick exit: working tree already matches HEAD.
+    let clean = std::process::Command::new("git")
+        .args(["diff-index", "--exit-code", "HEAD"])
+        .current_dir(repo)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(true);
+    if clean {
+        return;
+    }
+
+    // Use --name-status: D = deleted from WT (always safe); M = modified (check blob).
+    let status_out = match std::process::Command::new("git")
+        .args(["diff-index", "--name-status", "HEAD"])
+        .current_dir(repo)
+        .output()
+    {
+        Ok(out) if out.status.success() => out,
+        _ => return,
+    };
+    let mut all_files: Vec<String> = Vec::new(); // all entries to restore
+    let mut modified_files: Vec<String> = Vec::new(); // M entries needing blob check
+    let mut has_entries = false;
+    for line in String::from_utf8_lossy(&status_out.stdout).lines() {
+        if line.is_empty() {
+            continue;
+        }
+        has_entries = true;
+        let mut parts = line.splitn(2, '\t');
+        let status = parts.next().unwrap_or("").trim();
+        let path = parts.next().unwrap_or("").trim();
+        match status {
+            "D" => {
+                all_files.push(path.to_owned());
+            }
+            "M" | "T" => {
+                all_files.push(path.to_owned());
+                modified_files.push(path.to_owned());
+            }
+            _ => return, // unknown status — leave working tree alone
+        }
+    }
+    if !has_entries || all_files.is_empty() {
+        return;
+    }
+
+    // For M files, verify the on-disk blob is reachable before touching anything.
+    if !modified_files.is_empty() {
+        let objects_out = match std::process::Command::new("git")
+            .args(["rev-list", "--objects", "-n", "200", "HEAD"])
+            .current_dir(repo)
+            .output()
+        {
+            Ok(out) if out.status.success() => out,
+            _ => return,
+        };
+        let reachable: std::collections::HashSet<String> =
+            String::from_utf8(objects_out.stdout)
+                .unwrap_or_default()
+                .lines()
+                .filter_map(|l| l.split_whitespace().next().map(|s| s.to_owned()))
+                .collect();
+        for file in &modified_files {
+            let hash_out = match std::process::Command::new("git")
+                .args(["hash-object", file])
+                .current_dir(repo)
+                .output()
+            {
+                Ok(out) if out.status.success() => out,
+                _ => return,
+            };
+            let blob_sha = String::from_utf8_lossy(&hash_out.stdout).trim().to_owned();
+            if !reachable.contains(&blob_sha) {
+                return; // live edits — do not clobber
+            }
+        }
+    }
+
+    // Safe: restore all files from HEAD.
+    let mut args = vec!["checkout".to_owned(), "HEAD".to_owned(), "--".to_owned()];
+    args.extend(all_files);
+    let _ = std::process::Command::new("git")
+        .args(&args)
+        .current_dir(repo)
+        .output();
+}
+
 fn find_project_name(ctx: &WorkspaceContext) -> anyhow::Result<String> {
     let name = match &ctx.location {
         WorkspaceLocation::Weave { project: Some(p) } => p.as_str().to_owned(),
@@ -287,6 +387,10 @@ pub fn run_sync(cwd: &Path, source: &str, strategy: &str, force: bool) -> anyhow
 
         match apply_strategy(&abs, lock_entry.version.as_str(), strategy) {
             Ok(()) => {
+                // Post-sync: refresh index and working tree if stale from a
+                // shared-ref advance (HEAD advanced but index/WT were not updated).
+                refresh_index_if_safe(&abs);
+                refresh_working_tree_if_safe(&abs);
                 println!("  {repo_path}: ok");
             }
             Err(e) => {

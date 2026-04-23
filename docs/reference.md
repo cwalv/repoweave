@@ -298,7 +298,7 @@ Commands like `add`, `remove`, `lock`, and `check` infer the project and workspa
 | `rwv add {url}` | Clone a repo, register in `rwv.yaml`, re-run integration hooks. With `--role`, sets the role. With `--new`, initializes a new repo at the canonical path (infers URL). |
 | `rwv remove {path}` | Remove from `rwv.yaml`, re-run integration hooks. With `--delete`, also removes the clone (confirms unless `--force`). |
 | `rwv lock` | Snapshot repo versions into the project's `rwv.lock`. Errors on uncommitted changes (`--dirty` to bypass). Runs integration lock hooks. |
-| `rwv doctor` | Convention enforcement: orphaned clones, dangling references, missing roles, stale locks, workweave drift, integration checks. With `--locked` (also `rwv check --locked`): zero exit iff every repo tip matches its lock entry — scriptable precondition for `rwv sync`. |
+| `rwv doctor` | Convention enforcement: orphaned clones, dangling references, missing roles, stale locks, workweave drift, index drift, working-tree drift, integration checks. With `--locked` (also `rwv check --locked`): zero exit iff every repo tip matches its lock entry — scriptable precondition for `rwv sync`. With `--fix`: auto-remediate safely-fixable index drift (stale indexes whose tree matches an ancestor commit) **and** safely-fixable working-tree drift (stale on-disk files whose content matches a reachable committed blob); never touches live staged content or live edits. |
 | `rwv status [--json]` | Show per-repo state of the CWD workspace: branch, tip, lock SHA, lock relation (`ok`/`ahead`/`behind`/`diverged`), and mid-op state. `--json` for machine-readable output. |
 | `rwv sync <source>` | Align CWD workspace with `<source>`'s committed `rwv.lock`. `<source>` is a workspace name (`primary`, a workweave name) or a path. `--strategy ff\|rebase\|merge` (default `ff`). `--force` bypasses the lock-freshness precondition. |
 | `rwv abort` | Restore CWD workspace to its pre-sync state using savepoint refs stored under `refs/rwv/pre-op/`. Runs VCS-native abort for any in-progress operations (rebase, merge, cherry-pick). |
@@ -316,6 +316,7 @@ Commands like `add`, `remove`, `lock`, and `check` infer the project and workspa
 | **Stale lock** | Project's `rwv.lock` doesn't match current HEAD revisions |
 | **Workweave drift** | Worktrees missing from a workweave or extra worktrees not in manifest |
 | **Index drift** | A repo's index doesn't match its HEAD tree, caused by silent shared-ref advance from a sibling worktree. Classified as *safe-to-fix* when the index tree matches an ancestor commit (use `--fix`), or *live staged* when it does not (manual review required — `--fix` never touches this class). |
+| **Working-tree drift** | A repo's on-disk files don't match its HEAD tree, caused by the same shared-ref advance mechanism. Classified as *safe-to-fix* when all differing files' on-disk content matches a blob reachable from a recent ancestor (use `--fix`), or *live edits* when any file has content not found in the object history. `--fix` restores only the safely-fixable files; files with live edits are left untouched. |
 | **Integration checks** | Each integration's check hook reports tool availability, stale config, etc. (see [Integrations](./integrations.md)) |
 
 ### `rwv lock`
