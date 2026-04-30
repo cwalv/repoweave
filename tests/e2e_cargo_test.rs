@@ -11,9 +11,11 @@ use std::path::Path;
 use std::process::Command;
 use tempfile::TempDir;
 
+mod common;
+
 /// Run a git command in `dir`, asserting success.
 fn git(args: &[&str], dir: &Path) {
-    let status = Command::new("git")
+    let status = common::git()
         .args(args)
         .current_dir(dir)
         .status()
@@ -100,7 +102,7 @@ fn setup_weave(tmp: &Path) {
     // ---- git init for each repo (required by scan_repos_on_disk) ----
     for repo_rel in &["github/chatly/protocol", "github/chatly/server"] {
         let repo_path = tmp.join(repo_rel);
-        let status = Command::new("git")
+        let status = common::git()
             .args(["init", "-q"])
             .current_dir(&repo_path)
             .status()

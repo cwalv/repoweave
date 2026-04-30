@@ -3,10 +3,10 @@
 //! `rwv sync` aligns the CWD workspace with another workspace's committed
 //! `rwv.lock`. `rwv abort` rolls back to pre-sync state using savepoint refs.
 
+use crate::git::git_command;
 use crate::manifest::{LockFile, Project};
 use crate::workspace::{WorkspaceContext, WorkspaceLocation};
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 const SYNC_OP_MARKER: &str = ".rwv-sync-op";
 const PRE_OP_REF: &str = "refs/rwv/pre-op";
@@ -16,7 +16,7 @@ const PRE_OP_REF: &str = "refs/rwv/pre-op";
 // ---------------------------------------------------------------------------
 
 fn git(args: &[&str], dir: &Path) -> anyhow::Result<String> {
-    let out = Command::new("git")
+    let out = git_command()
         .args(args)
         .current_dir(dir)
         .output()
@@ -124,7 +124,7 @@ fn check_lock_freshness(workspace_dir: &Path, lock: &LockFile, label: &str) -> a
 /// content (tree not found in recent ancestors), this function does nothing.
 fn refresh_index_if_safe(repo: &Path) {
     // Quick exit: index already matches HEAD.
-    let clean = std::process::Command::new("git")
+    let clean = git_command()
         .args(["diff-index", "--cached", "--exit-code", "HEAD"])
         .current_dir(repo)
         .stdout(std::process::Stdio::null())
@@ -137,11 +137,7 @@ fn refresh_index_if_safe(repo: &Path) {
     }
 
     // Get the current index tree SHA.
-    let index_tree = match std::process::Command::new("git")
-        .arg("write-tree")
-        .current_dir(repo)
-        .output()
-    {
+    let index_tree = match git_command().arg("write-tree").current_dir(repo).output() {
         Ok(out) if out.status.success() => String::from_utf8(out.stdout)
             .unwrap_or_default()
             .trim()
@@ -151,7 +147,7 @@ fn refresh_index_if_safe(repo: &Path) {
 
     // Safety check: is the index tree the tree of some recent ancestor commit?
     // Bounded to last 200 commits to keep doctor fast on large histories.
-    let ancestor_trees = match std::process::Command::new("git")
+    let ancestor_trees = match git_command()
         .args(["log", "--format=%T", "-200", "HEAD"])
         .current_dir(repo)
         .output()
@@ -165,10 +161,7 @@ fn refresh_index_if_safe(repo: &Path) {
     }
 
     // Safe: realign index to HEAD.
-    let _ = std::process::Command::new("git")
-        .arg("reset")
-        .current_dir(repo)
-        .output();
+    let _ = git_command().arg("reset").current_dir(repo).output();
 }
 
 /// Restore working-tree files to match HEAD, but only for the safely-auto-fixable class.
@@ -183,7 +176,7 @@ fn refresh_index_if_safe(repo: &Path) {
 /// committed blob reachable from HEAD. No work is ever silently lost.
 fn refresh_working_tree_if_safe(repo: &Path) {
     // Quick exit: working tree already matches HEAD.
-    let clean = std::process::Command::new("git")
+    let clean = git_command()
         .args(["diff-index", "--exit-code", "HEAD"])
         .current_dir(repo)
         .stdout(std::process::Stdio::null())
@@ -196,7 +189,7 @@ fn refresh_working_tree_if_safe(repo: &Path) {
     }
 
     // Use --name-status: D = deleted from WT (always safe); M = modified (check blob).
-    let status_out = match std::process::Command::new("git")
+    let status_out = match git_command()
         .args(["diff-index", "--name-status", "HEAD"])
         .current_dir(repo)
         .output()
@@ -232,7 +225,7 @@ fn refresh_working_tree_if_safe(repo: &Path) {
 
     // For M files, verify the on-disk blob is reachable before touching anything.
     if !modified_files.is_empty() {
-        let objects_out = match std::process::Command::new("git")
+        let objects_out = match git_command()
             .args(["rev-list", "--objects", "-n", "200", "HEAD"])
             .current_dir(repo)
             .output()
@@ -246,7 +239,7 @@ fn refresh_working_tree_if_safe(repo: &Path) {
             .filter_map(|l| l.split_whitespace().next().map(|s| s.to_owned()))
             .collect();
         for file in &modified_files {
-            let hash_out = match std::process::Command::new("git")
+            let hash_out = match git_command()
                 .args(["hash-object", file])
                 .current_dir(repo)
                 .output()
@@ -264,10 +257,7 @@ fn refresh_working_tree_if_safe(repo: &Path) {
     // Safe: restore all files from HEAD.
     let mut args = vec!["checkout".to_owned(), "HEAD".to_owned(), "--".to_owned()];
     args.extend(all_files);
-    let _ = std::process::Command::new("git")
-        .args(&args)
-        .current_dir(repo)
-        .output();
+    let _ = git_command().args(&args).current_dir(repo).output();
 }
 
 fn find_project_name(ctx: &WorkspaceContext) -> anyhow::Result<String> {

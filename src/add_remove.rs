@@ -1,6 +1,7 @@
 //! `rwv add` and `rwv remove` — manage repos in a project manifest.
 
 use crate::activate::activate;
+use crate::git::git_command;
 use crate::git::GitVcs;
 use crate::manifest::{Manifest, RepoEntry, RepoPath, Role, VcsType};
 use crate::registry::{builtin_registries, resolve_url, Registry};
@@ -147,7 +148,7 @@ fn run_add_from_local_path(
     manifest_path: &Path,
 ) -> anyhow::Result<()> {
     // Read the origin URL from the existing clone.
-    let output = std::process::Command::new("git")
+    let output = git_command()
         .args(["remote", "get-url", "origin"])
         .current_dir(clone_dir)
         .output()

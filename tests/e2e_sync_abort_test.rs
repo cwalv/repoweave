@@ -8,14 +8,15 @@
 use assert_cmd::Command as AssertCommand;
 use predicates::prelude::*;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+
+mod common;
 
 // ---------------------------------------------------------------------------
 // Git helpers
 // ---------------------------------------------------------------------------
 
 fn git(args: &[&str], dir: &Path) {
-    let out = Command::new("git")
+    let out = common::git()
         .args(args)
         .current_dir(dir)
         .env("GIT_AUTHOR_NAME", "Test")
@@ -34,7 +35,7 @@ fn git(args: &[&str], dir: &Path) {
 }
 
 fn git_out(args: &[&str], dir: &Path) -> String {
-    let out = Command::new("git")
+    let out = common::git()
         .args(args)
         .current_dir(dir)
         .env("GIT_AUTHOR_NAME", "Test")
@@ -94,7 +95,7 @@ fn write_lock(project_dir: &Path, repos: &[(&str, &str, &str)]) {
 }
 
 fn rwv() -> AssertCommand {
-    AssertCommand::cargo_bin("rwv").expect("rwv binary should be buildable")
+    common::rwv()
 }
 
 // ---------------------------------------------------------------------------
@@ -495,7 +496,7 @@ fn sync_rebase_replays_local_commits_on_source_tip() {
 
     // After rebase, ww/main should be a descendant of C2.
     let ww_head = git_out(&["rev-parse", "ww/main"], &primary.server_dir);
-    let is_descendant = Command::new("git")
+    let is_descendant = common::git()
         .args(["merge-base", "--is-ancestor", &c2, &ww_head])
         .current_dir(&primary.server_dir)
         .status()

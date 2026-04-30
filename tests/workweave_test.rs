@@ -9,14 +9,16 @@ use predicates::prelude::*;
 use std::path::Path;
 use std::process;
 
+mod common;
+
 /// Build a `Command` for the `rwv` binary.
 fn rwv() -> Command {
-    Command::cargo_bin("rwv").expect("rwv binary should be buildable")
+    common::rwv()
 }
 
 /// Run a git command in `dir`, panicking on failure.
 fn git(args: &[&str], dir: &Path) {
-    let status = process::Command::new("git")
+    let status = common::git()
         .args(args)
         .current_dir(dir)
         .stdout(process::Stdio::null())
@@ -199,7 +201,7 @@ fn workweave_create_worktrees_on_ephemeral_branches() {
         "workweave should contain worktree at github/org/repo"
     );
 
-    let output = process::Command::new("git")
+    let output = common::git()
         .args(["symbolic-ref", "--short", "HEAD"])
         .current_dir(&weave_repo)
         .output()
@@ -317,7 +319,7 @@ fn delete_workweave_removes_project_worktree() {
 
     // The primary project repo should not list the workweave worktree any more.
     let primary_project = ws.join("projects/my-project");
-    let output = process::Command::new("git")
+    let output = common::git()
         .args(["worktree", "list", "--porcelain"])
         .current_dir(&primary_project)
         .output()
@@ -566,7 +568,7 @@ fn workweave_delete_removes_directory_and_worktrees() {
     );
 
     // The primary repo should not list the workweave worktree any more.
-    let output = process::Command::new("git")
+    let output = common::git()
         .args(["worktree", "list", "--porcelain"])
         .current_dir(ws.join("github/org/repo"))
         .output()
@@ -890,7 +892,7 @@ fn workweave_full_round_trip() {
     );
 
     // Verify repo worktree is cleaned up from primary.
-    let output = process::Command::new("git")
+    let output = common::git()
         .args(["worktree", "list", "--porcelain"])
         .current_dir(ws.join("github/org/repo"))
         .output()
@@ -902,7 +904,7 @@ fn workweave_full_round_trip() {
     );
 
     // Verify project worktree is cleaned up from primary.
-    let output = process::Command::new("git")
+    let output = common::git()
         .args(["worktree", "list", "--porcelain"])
         .current_dir(ws.join("projects/round-trip-project"))
         .output()
@@ -1136,7 +1138,7 @@ fn delete_nonexistent_workweave_errors_gracefully() {
 
 /// Helper: list local branches in a git repo whose names start with `prefix/`.
 fn branches_with_prefix(repo: &Path, prefix: &str) -> Vec<String> {
-    let output = process::Command::new("git")
+    let output = common::git()
         .args(["branch", "--list", &format!("{prefix}/*")])
         .current_dir(repo)
         .output()
@@ -1214,14 +1216,14 @@ fn create_workweave_handles_stale_branches() {
 
     // Manually re-create the stale ephemeral branch to simulate a failed cleanup.
     let primary_repo = ws.join("github/org/repo");
-    let head = process::Command::new("git")
+    let head = common::git()
         .args(["rev-parse", "HEAD"])
         .current_dir(&primary_repo)
         .output()
         .expect("git rev-parse HEAD");
     let head_sha = String::from_utf8_lossy(&head.stdout).trim().to_string();
 
-    let status = process::Command::new("git")
+    let status = common::git()
         .args(["branch", "web-app--stale-test/main", &head_sha])
         .current_dir(&primary_repo)
         .status()

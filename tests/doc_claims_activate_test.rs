@@ -12,18 +12,20 @@ use assert_cmd::Command;
 use std::path::{Path, PathBuf};
 use std::process;
 
+mod common;
+
 // ===========================================================================
 // Shared helpers
 // ===========================================================================
 
 /// Build a `Command` for the `rwv` binary.
 fn rwv() -> Command {
-    Command::cargo_bin("rwv").expect("rwv binary should be buildable")
+    common::rwv()
 }
 
 /// Run a git command in `dir`, panicking on failure.
 fn git(args: &[&str], dir: &Path) {
-    let status = process::Command::new("git")
+    let status = common::git()
         .args(args)
         .current_dir(dir)
         .env("GIT_AUTHOR_NAME", "Test")

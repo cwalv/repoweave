@@ -9,14 +9,16 @@ use predicates::prelude::*;
 use std::path::Path;
 use std::process;
 
+mod common;
+
 /// Build a `Command` for the `rwv` binary.
 fn rwv() -> Command {
-    Command::cargo_bin("rwv").expect("rwv binary should be buildable")
+    common::rwv()
 }
 
 /// Run a git command in `dir`, returning its stdout as a String.
 fn git_output(args: &[&str], dir: &Path) -> String {
-    let output = process::Command::new("git")
+    let output = common::git()
         .args(args)
         .current_dir(dir)
         .output()
@@ -352,7 +354,7 @@ fn init_works_from_workspace_subdirectory() {
 /// Returns the path to the bare repo.
 fn make_bare_repo(parent: &Path, name: &str) -> std::path::PathBuf {
     let bare = parent.join(format!("{}.git", name));
-    let status = process::Command::new("git")
+    let status = common::git()
         .args(["init", "--bare", "--initial-branch=main"])
         .arg(&bare)
         .stdout(process::Stdio::null())
@@ -370,7 +372,7 @@ fn make_repo_with_commit(parent: &Path, name: &str) -> std::path::PathBuf {
 
     // Clone, commit, push
     let work = parent.join(format!("{}-work", name));
-    let status = process::Command::new("git")
+    let status = common::git()
         .args(["clone", bare.to_str().unwrap(), work.to_str().unwrap()])
         .stdout(process::Stdio::null())
         .stderr(process::Stdio::null())
@@ -379,27 +381,24 @@ fn make_repo_with_commit(parent: &Path, name: &str) -> std::path::PathBuf {
     assert!(status.success());
 
     // Configure git user for the commit
-    let _ = process::Command::new("git")
+    let _ = common::git()
         .args(["config", "user.email", "test@test.com"])
         .current_dir(&work)
         .status();
-    let _ = process::Command::new("git")
+    let _ = common::git()
         .args(["config", "user.name", "Test"])
         .current_dir(&work)
         .status();
 
     std::fs::write(work.join("README.md"), "# test\n").unwrap();
-    let _ = process::Command::new("git")
-        .args(["add", "."])
-        .current_dir(&work)
-        .status();
-    let _ = process::Command::new("git")
+    let _ = common::git().args(["add", "."]).current_dir(&work).status();
+    let _ = common::git()
         .args(["commit", "-m", "init"])
         .current_dir(&work)
         .stdout(process::Stdio::null())
         .stderr(process::Stdio::null())
         .status();
-    let _ = process::Command::new("git")
+    let _ = common::git()
         .args(["push", "origin", "main"])
         .current_dir(&work)
         .stdout(process::Stdio::null())
@@ -462,22 +461,22 @@ fn adopt_preserves_existing_rwv_yaml() {
     let bare = tmp.path().join("has-yaml.git");
     let work = tmp.path().join("has-yaml-work");
 
-    let _ = process::Command::new("git")
+    let _ = common::git()
         .args(["init", "--bare", "--initial-branch=main"])
         .arg(&bare)
         .stdout(process::Stdio::null())
         .stderr(process::Stdio::null())
         .status();
-    let _ = process::Command::new("git")
+    let _ = common::git()
         .args(["clone", bare.to_str().unwrap(), work.to_str().unwrap()])
         .stdout(process::Stdio::null())
         .stderr(process::Stdio::null())
         .status();
-    let _ = process::Command::new("git")
+    let _ = common::git()
         .args(["config", "user.email", "test@test.com"])
         .current_dir(&work)
         .status();
-    let _ = process::Command::new("git")
+    let _ = common::git()
         .args(["config", "user.name", "Test"])
         .current_dir(&work)
         .status();
@@ -485,17 +484,14 @@ fn adopt_preserves_existing_rwv_yaml() {
     // Write a custom rwv.yaml
     let custom = "repositories: {}\n# custom marker\n";
     std::fs::write(work.join("rwv.yaml"), custom).unwrap();
-    let _ = process::Command::new("git")
-        .args(["add", "."])
-        .current_dir(&work)
-        .status();
-    let _ = process::Command::new("git")
+    let _ = common::git().args(["add", "."]).current_dir(&work).status();
+    let _ = common::git()
         .args(["commit", "-m", "with rwv.yaml"])
         .current_dir(&work)
         .stdout(process::Stdio::null())
         .stderr(process::Stdio::null())
         .status();
-    let _ = process::Command::new("git")
+    let _ = common::git()
         .args(["push", "origin", "main"])
         .current_dir(&work)
         .stdout(process::Stdio::null())

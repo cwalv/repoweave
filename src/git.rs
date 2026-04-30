@@ -4,13 +4,41 @@ use crate::vcs::{RefName, RevisionId, Vcs};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+/// `GIT_*` environment variables that git itself sets for hooks (and that
+/// other tooling sometimes sets) which silently misdirect any subprocess
+/// `git` invocation if inherited.
+const GIT_ENV_VARS: &[&str] = &[
+    "GIT_DIR",
+    "GIT_WORK_TREE",
+    "GIT_INDEX_FILE",
+    "GIT_PREFIX",
+    "GIT_OBJECT_DIRECTORY",
+    "GIT_COMMON_DIR",
+    "GIT_NAMESPACE",
+    "GIT_CEILING_DIRECTORIES",
+    "GIT_DISCOVERY_ACROSS_FILESYSTEM",
+];
+
+/// Build a `git` command with all inherited `GIT_*` environment variables
+/// stripped. rwv resolves its own paths via `WorkspaceContext`; inheriting
+/// these vars from the surrounding process (a `pre-push` hook, another git
+/// invocation, etc.) makes subprocess `git` operate on the wrong repo
+/// regardless of the `current_dir` we set.
+pub(crate) fn git_command() -> Command {
+    let mut cmd = Command::new("git");
+    for var in GIT_ENV_VARS {
+        cmd.env_remove(var);
+    }
+    cmd
+}
+
 /// Git-based version control operations.
 pub struct GitVcs;
 
 impl GitVcs {
     /// Run a git command in `dir` and return trimmed stdout on success.
     fn run(args: &[&str], dir: &Path) -> anyhow::Result<String> {
-        let output = Command::new("git")
+        let output = git_command()
             .args(args)
             .current_dir(dir)
             .output()
@@ -48,7 +76,7 @@ impl GitVcs {
         if ancestor == descendant {
             return false;
         }
-        std::process::Command::new("git")
+        git_command()
             .args(["merge-base", "--is-ancestor", ancestor, descendant])
             .current_dir(repo)
             .stdout(std::process::Stdio::null())

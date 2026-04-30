@@ -3,6 +3,7 @@
 //! `rwv doctor` builds a workspace-wide inventory from all projects, then runs
 //! a series of checks. Integration check hooks are run separately.
 
+use crate::git::git_command;
 use crate::integration::Issue;
 use crate::manifest::{Project, RepoPath};
 use crate::vcs::RevisionId;
@@ -256,7 +257,7 @@ pub fn violations_to_issues(violations: Vec<CheckViolation>) -> Vec<Issue> {
 /// that is not a committed tree; must not be auto-fixed).
 pub fn classify_index_drift(repo: &Path) -> Option<IndexDriftKind> {
     // Exit-0 means index matches HEAD tree — no drift.
-    let clean = std::process::Command::new("git")
+    let clean = git_command()
         .args(["diff-index", "--cached", "--exit-code", "HEAD"])
         .current_dir(repo)
         .stdout(std::process::Stdio::null())
@@ -269,11 +270,7 @@ pub fn classify_index_drift(repo: &Path) -> Option<IndexDriftKind> {
     }
 
     // Index differs from HEAD. Determine the current index tree SHA.
-    let index_tree = match std::process::Command::new("git")
-        .arg("write-tree")
-        .current_dir(repo)
-        .output()
-    {
+    let index_tree = match git_command().arg("write-tree").current_dir(repo).output() {
         Ok(out) if out.status.success() => String::from_utf8(out.stdout)
             .unwrap_or_default()
             .trim()
@@ -283,7 +280,7 @@ pub fn classify_index_drift(repo: &Path) -> Option<IndexDriftKind> {
 
     // Safety check: is the index tree the tree of some recent ancestor commit?
     // Bounded to 200 ancestors to keep performance acceptable on deep histories.
-    let ancestor_trees = match std::process::Command::new("git")
+    let ancestor_trees = match git_command()
         .args(["log", "--format=%T", "-200", "HEAD"])
         .current_dir(repo)
         .output()
@@ -304,7 +301,7 @@ pub fn classify_index_drift(repo: &Path) -> Option<IndexDriftKind> {
 /// Only call after confirming `classify_index_drift` returns `SafeToFix`.
 /// Uses bare `git reset` (equivalent to `git reset --mixed HEAD`).
 pub fn reset_index_to_head(repo: &Path) -> anyhow::Result<()> {
-    let out = std::process::Command::new("git")
+    let out = git_command()
         .arg("reset")
         .current_dir(repo)
         .output()
@@ -332,7 +329,7 @@ pub fn reset_index_to_head(repo: &Path) -> anyhow::Result<()> {
 /// regardless of whether index drift has already been resolved.
 pub fn classify_working_tree_drift(repo: &Path) -> Option<WorkingTreeDriftKind> {
     // Exit-0 means working tree matches HEAD — no drift.
-    let clean = std::process::Command::new("git")
+    let clean = git_command()
         .args(["diff-index", "--exit-code", "HEAD"])
         .current_dir(repo)
         .stdout(std::process::Stdio::null())
@@ -349,7 +346,7 @@ pub fn classify_working_tree_drift(repo: &Path) -> Option<WorkingTreeDriftKind> 
     //       in HEAD and by definition reachable; always safe to restore.
     //   M = file differs between HEAD and working tree — must verify the on-disk
     //       blob is reachable before treating it as safely fixable.
-    let status_out = match std::process::Command::new("git")
+    let status_out = match git_command()
         .args(["diff-index", "--name-status", "HEAD"])
         .current_dir(repo)
         .output()
@@ -386,7 +383,7 @@ pub fn classify_working_tree_drift(repo: &Path) -> Option<WorkingTreeDriftKind> 
     }
 
     // Gather all reachable object SHAs from the last 200 commits.
-    let objects_out = match std::process::Command::new("git")
+    let objects_out = match git_command()
         .args(["rev-list", "--objects", "-n", "200", "HEAD"])
         .current_dir(repo)
         .output()
@@ -402,7 +399,7 @@ pub fn classify_working_tree_drift(repo: &Path) -> Option<WorkingTreeDriftKind> 
 
     // For each M file, verify its on-disk blob is reachable.
     for file in &modified_files {
-        let hash_out = match std::process::Command::new("git")
+        let hash_out = match git_command()
             .args(["hash-object", file])
             .current_dir(repo)
             .output()
@@ -425,7 +422,7 @@ pub fn classify_working_tree_drift(repo: &Path) -> Option<WorkingTreeDriftKind> 
 /// Restores each tracked file that differs from HEAD using
 /// `git checkout HEAD -- <files>`, leaving unstaged files and the index alone.
 pub fn restore_working_tree_to_head(repo: &Path) -> anyhow::Result<()> {
-    let modified_out = std::process::Command::new("git")
+    let modified_out = git_command()
         .args(["diff-index", "--name-only", "HEAD"])
         .current_dir(repo)
         .output()
@@ -441,7 +438,7 @@ pub fn restore_working_tree_to_head(repo: &Path) -> anyhow::Result<()> {
 
     let mut args = vec!["checkout".to_owned(), "HEAD".to_owned(), "--".to_owned()];
     args.extend(files);
-    let out = std::process::Command::new("git")
+    let out = git_command()
         .args(&args)
         .current_dir(repo)
         .output()

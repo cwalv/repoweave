@@ -9,12 +9,12 @@
 //! cloned repo is placed under `projects/{name}/`, an `rwv.yaml` is written if
 //! missing, and the project is activated.
 
+use crate::git::git_command;
 use crate::git::GitVcs;
 use crate::registry::{builtin_registries, resolve_to_clone_info, RepoId};
 use crate::vcs::Vcs;
 use crate::workspace::WorkspaceContext;
 use std::path::Path;
-use std::process::Command;
 
 /// Initialize a new project in the workspace.
 ///
@@ -42,7 +42,7 @@ pub fn init(name: &str, provider: Option<&str>, cwd: &Path) -> anyhow::Result<()
         .map_err(|e| anyhow::anyhow!("failed to create {}: {e}", project_dir.display()))?;
 
     // git init
-    let status = Command::new("git")
+    let status = git_command()
         .args(["init"])
         .current_dir(&project_dir)
         .stdout(std::process::Stdio::null())
@@ -87,7 +87,7 @@ pub fn init(name: &str, provider: Option<&str>, cwd: &Path) -> anyhow::Result<()
             anyhow::anyhow!("registry '{}' does not support clone URLs", registry_name)
         })?;
 
-        let status = Command::new("git")
+        let status = git_command()
             .args(["remote", "add", "origin", &url])
             .current_dir(&project_dir)
             .stdout(std::process::Stdio::null())

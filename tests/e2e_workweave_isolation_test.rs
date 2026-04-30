@@ -7,6 +7,8 @@
 
 use std::process::Command;
 
+mod common;
+
 /// Return early (skip) if `go` is not on PATH.
 macro_rules! require_go {
     () => {
@@ -26,7 +28,7 @@ macro_rules! require_go {
 
 /// Run a git command in `dir`, panicking on failure.
 fn git(args: &[&str], dir: &std::path::Path) {
-    let status = Command::new("git")
+    let status = common::git()
         .args(args)
         .current_dir(dir)
         .stdout(std::process::Stdio::null())

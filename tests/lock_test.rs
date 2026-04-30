@@ -6,7 +6,8 @@
 use assert_cmd::Command;
 use predicates::prelude::*;
 use std::path::{Path, PathBuf};
-use std::process;
+
+mod common;
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -27,7 +28,7 @@ fn init_git_repo(path: &Path) -> String {
     std::fs::create_dir_all(path).unwrap();
 
     let run = |args: &[&str], dir: &Path| {
-        let out = process::Command::new("git")
+        let out = common::git()
             .args(args)
             .current_dir(dir)
             .env("GIT_AUTHOR_NAME", "Test")
@@ -72,7 +73,7 @@ fn write_manifest(project_dir: &Path, repos: &[(&str, &str)]) {
 /// the real workspace. Tests that need a specific workspace override with their
 /// own `.current_dir()` call.
 fn rwv_cmd() -> Command {
-    let mut cmd = Command::cargo_bin("rwv").expect("rwv binary not found");
+    let mut cmd = common::rwv();
     cmd.current_dir(std::env::temp_dir());
     cmd
 }
@@ -350,7 +351,7 @@ fn stale_lock_detected_after_new_commit() {
     let repo_dir = root.join(repo_path);
     std::fs::write(repo_dir.join("new_file.txt"), "change\n").unwrap();
     let run_git = |args: &[&str], dir: &Path| -> String {
-        let out = process::Command::new("git")
+        let out = common::git()
             .args(args)
             .current_dir(dir)
             .env("GIT_AUTHOR_NAME", "Test")
@@ -474,7 +475,7 @@ fn lock_errors_on_staged_uncommitted_changes() {
     // Stage a change but don't commit it
     let repo_dir = root.join(repo_path);
     std::fs::write(repo_dir.join("staged.txt"), "staged\n").unwrap();
-    let _ = process::Command::new("git")
+    let _ = common::git()
         .args(["add", "staged.txt"])
         .current_dir(&repo_dir)
         .output()
@@ -545,7 +546,7 @@ fn lock_records_tag_name_when_head_is_tagged() {
 
     // Create a tag at HEAD
     let repo_dir = root.join(repo_path);
-    let _ = process::Command::new("git")
+    let _ = common::git()
         .args(["tag", "v1.0.0"])
         .current_dir(&repo_dir)
         .env("GIT_COMMITTER_NAME", "Test")
@@ -626,7 +627,7 @@ fn lock_records_tag_per_repo_independently() {
     let sha_b = init_git_repo(&root.join(repo_b));
 
     // Tag only repo A
-    let _ = process::Command::new("git")
+    let _ = common::git()
         .args(["tag", "v2.0.0"])
         .current_dir(root.join(repo_a))
         .env("GIT_COMMITTER_NAME", "Test")
@@ -687,7 +688,7 @@ fn lock_runs_integration_lock_hooks() {
     )
     .unwrap();
     // Commit the Cargo.toml so the repo is clean
-    let _ = process::Command::new("git")
+    let _ = common::git()
         .args(["add", "."])
         .current_dir(&repo_dir)
         .env("GIT_AUTHOR_NAME", "Test")
@@ -696,7 +697,7 @@ fn lock_runs_integration_lock_hooks() {
         .env("GIT_COMMITTER_EMAIL", "test@test.com")
         .output()
         .unwrap();
-    let _ = process::Command::new("git")
+    let _ = common::git()
         .args(["commit", "-m", "add cargo.toml"])
         .current_dir(&repo_dir)
         .env("GIT_AUTHOR_NAME", "Test")

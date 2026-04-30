@@ -24,14 +24,15 @@
 use assert_cmd::Command as AssertCommand;
 use predicates::prelude::*;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+
+mod common;
 
 // ---------------------------------------------------------------------------
 // Git helpers
 // ---------------------------------------------------------------------------
 
 fn git(args: &[&str], dir: &Path) {
-    let out = Command::new("git")
+    let out = common::git()
         .args(args)
         .current_dir(dir)
         .env("GIT_AUTHOR_NAME", "Test")
@@ -50,7 +51,7 @@ fn git(args: &[&str], dir: &Path) {
 }
 
 fn git_out(args: &[&str], dir: &Path) -> String {
-    let out = Command::new("git")
+    let out = common::git()
         .args(args)
         .current_dir(dir)
         .env("GIT_AUTHOR_NAME", "Test")
@@ -70,7 +71,7 @@ fn git_out(args: &[&str], dir: &Path) -> String {
 }
 
 fn git_tag(repo: &Path, tag: &str) {
-    let out = Command::new("git")
+    let out = common::git()
         .args(["tag", tag])
         .current_dir(repo)
         .env("GIT_COMMITTER_NAME", "Test")
@@ -126,7 +127,7 @@ fn write_lock(project_dir: &Path, repos: &[(&str, &str, &str)]) {
 }
 
 fn rwv() -> AssertCommand {
-    AssertCommand::cargo_bin("rwv").expect("rwv binary should be buildable")
+    common::rwv()
 }
 
 // ---------------------------------------------------------------------------
@@ -248,7 +249,7 @@ fn doctor_detects_stale_index_in_workweave() {
     advance_ww_branch(&ws.server_primary, "ww/main", &c2);
 
     // Verify the workweave's index IS stale (HEAD=C2, index=C1-tree).
-    let diff = Command::new("git")
+    let diff = common::git()
         .args(["diff-index", "--cached", "--name-only", "HEAD"])
         .current_dir(&ws.server_ww)
         .output()
@@ -288,7 +289,7 @@ fn doctor_fix_refreshes_stale_index_without_touching_working_tree() {
     advance_ww_branch(&ws.server_primary, "ww/main", &c2);
 
     // Confirm stale before fix.
-    let diff_before = Command::new("git")
+    let diff_before = common::git()
         .args(["diff-index", "--cached", "--name-only", "HEAD"])
         .current_dir(&ws.server_ww)
         .output()
@@ -306,7 +307,7 @@ fn doctor_fix_refreshes_stale_index_without_touching_working_tree() {
         .stdout(predicate::str::contains("fixed").or(predicate::str::contains("refreshed")));
 
     // After fix: index must match HEAD.
-    let diff_after = Command::new("git")
+    let diff_after = common::git()
         .args(["diff-index", "--cached", "--exit-code", "HEAD"])
         .current_dir(&ws.server_ww)
         .stdout(std::process::Stdio::null())
@@ -442,7 +443,7 @@ fn sync_post_refresh_clears_stale_index() {
     advance_ww_branch(&server_primary, "ww/main", &c2);
 
     // Verify stale before sync.
-    let diff_before = Command::new("git")
+    let diff_before = common::git()
         .args(["diff-index", "--cached", "--name-only", "HEAD"])
         .current_dir(&server_ww)
         .output()
@@ -460,7 +461,7 @@ fn sync_post_refresh_clears_stale_index() {
         .success();
 
     // After sync: index should match HEAD.
-    let diff_after = Command::new("git")
+    let diff_after = common::git()
         .args(["diff-index", "--cached", "--exit-code", "HEAD"])
         .current_dir(&server_ww)
         .stdout(std::process::Stdio::null())

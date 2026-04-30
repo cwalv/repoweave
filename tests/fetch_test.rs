@@ -8,14 +8,16 @@ use predicates::prelude::*;
 use std::path::Path;
 use std::process;
 
+mod common;
+
 /// Build a `Command` for the `rwv` binary.
 fn rwv() -> Command {
-    Command::cargo_bin("rwv").expect("rwv binary should be buildable")
+    common::rwv()
 }
 
 /// Create a bare git repo at `path` to serve as a local "remote".
 fn init_bare_repo(path: &Path) {
-    let status = process::Command::new("git")
+    let status = common::git()
         .args(["init", "--bare", "--initial-branch=main"])
         .arg(path)
         .stdout(process::Stdio::null())
@@ -34,7 +36,7 @@ fn init_bare_repo_with_commit(path: &Path) {
     let work = tmp.path().join("work");
 
     let run = |args: &[&str], cwd: &Path| {
-        let status = process::Command::new("git")
+        let status = common::git()
             .args(args)
             .current_dir(cwd)
             .stdout(process::Stdio::null())
@@ -117,7 +119,7 @@ fn fetch_clones_project_and_repos() {
     // Clone the project bare repo, add an rwv.yaml, push.
     let project_work = tmp.path().join("project_work");
     let run = |args: &[&str], cwd: &Path| {
-        let status = process::Command::new("git")
+        let status = common::git()
             .args(args)
             .current_dir(cwd)
             .stdout(process::Stdio::null())
@@ -187,7 +189,7 @@ fn fetch_creates_project_dir_with_manifest() {
 
     let work = tmp.path().join("work");
     let run = |args: &[&str], cwd: &Path| {
-        let status = process::Command::new("git")
+        let status = common::git()
             .args(args)
             .current_dir(cwd)
             .stdout(process::Stdio::null())
@@ -254,7 +256,7 @@ fn fetch_repos_at_canonical_paths() {
 
     let work = tmp.path().join("work");
     let run = |args: &[&str], cwd: &Path| {
-        let status = process::Command::new("git")
+        let status = common::git()
             .args(args)
             .current_dir(cwd)
             .stdout(process::Stdio::null())
@@ -318,7 +320,7 @@ fn fetch_existing_workspace_handles_gracefully() {
 
     let work = tmp.path().join("work");
     let run = |args: &[&str], cwd: &Path| {
-        let status = process::Command::new("git")
+        let status = common::git()
             .args(args)
             .current_dir(cwd)
             .stdout(process::Stdio::null())
@@ -443,7 +445,7 @@ fn fetch_mode_default_updates_lock() {
 
     let work = tmp.path().join("work");
     let run = |args: &[&str], cwd: &Path| {
-        let status = process::Command::new("git")
+        let status = common::git()
             .args(args)
             .current_dir(cwd)
             .stdout(process::Stdio::null())
@@ -511,7 +513,7 @@ fn fetch_default_auto_activates_project() {
 
     let work = tmp.path().join("work");
     let run = |args: &[&str], cwd: &Path| {
-        let status = process::Command::new("git")
+        let status = common::git()
             .args(args)
             .current_dir(cwd)
             .stdout(process::Stdio::null())
@@ -578,7 +580,7 @@ fn fetch_locked_checks_out_exact_lock_revisions() {
 
     let work = tmp.path().join("work");
     let run = |args: &[&str], cwd: &Path| -> String {
-        let out = process::Command::new("git")
+        let out = common::git()
             .args(args)
             .current_dir(cwd)
             .stdout(process::Stdio::piped())
@@ -590,7 +592,7 @@ fn fetch_locked_checks_out_exact_lock_revisions() {
     };
 
     let run_quiet = |args: &[&str], cwd: &Path| {
-        let status = process::Command::new("git")
+        let status = common::git()
             .args(args)
             .current_dir(cwd)
             .stdout(process::Stdio::null())
@@ -679,7 +681,7 @@ fn fetch_locked_does_not_update_lock() {
 
     let work = tmp.path().join("work");
     let run = |args: &[&str], cwd: &Path| {
-        let status = process::Command::new("git")
+        let status = common::git()
             .args(args)
             .current_dir(cwd)
             .stdout(process::Stdio::null())
@@ -751,7 +753,7 @@ fn fetch_frozen_errors_on_missing_lock() {
 
     let work = tmp.path().join("work");
     let run = |args: &[&str], cwd: &Path| {
-        let status = process::Command::new("git")
+        let status = common::git()
             .args(args)
             .current_dir(cwd)
             .stdout(process::Stdio::null())
@@ -813,7 +815,7 @@ fn fetch_frozen_errors_on_stale_lock() {
 
     let work = tmp.path().join("work");
     let run = |args: &[&str], cwd: &Path| {
-        let status = process::Command::new("git")
+        let status = common::git()
             .args(args)
             .current_dir(cwd)
             .stdout(process::Stdio::null())
@@ -883,7 +885,7 @@ fn fetch_frozen_succeeds_with_valid_lock() {
 
     let work = tmp.path().join("work");
     let run = |args: &[&str], cwd: &Path| -> String {
-        let out = process::Command::new("git")
+        let out = common::git()
             .args(args)
             .current_dir(cwd)
             .stdout(process::Stdio::piped())
@@ -894,7 +896,7 @@ fn fetch_frozen_succeeds_with_valid_lock() {
         String::from_utf8(out.stdout).unwrap().trim().to_string()
     };
     let run_quiet = |args: &[&str], cwd: &Path| {
-        let status = process::Command::new("git")
+        let status = common::git()
             .args(args)
             .current_dir(cwd)
             .stdout(process::Stdio::null())
@@ -973,7 +975,7 @@ fn fetch_second_invocation_is_idempotent() {
 
     let work = tmp.path().join("work");
     let run = |args: &[&str], cwd: &Path| {
-        let status = process::Command::new("git")
+        let status = common::git()
             .args(args)
             .current_dir(cwd)
             .stdout(process::Stdio::null())

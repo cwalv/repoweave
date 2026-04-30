@@ -9,6 +9,8 @@
 use std::path::Path;
 use std::process::Command;
 
+mod common;
+
 /// Return early (skip) if `go` is not on PATH.
 macro_rules! require_go {
     () => {
@@ -47,7 +49,7 @@ fn go_workspace_wiring_resolves_cross_module_import() {
     std::fs::create_dir_all(&protocol_dir).unwrap();
 
     // git init so scan_repos_on_disk recognises it as a repo
-    Command::new("git")
+    common::git()
         .args(["init", "-q"])
         .current_dir(&protocol_dir)
         .status()
@@ -77,7 +79,7 @@ func Greeting() string {
     let server_dir = root.join("github/chatly/server");
     std::fs::create_dir_all(&server_dir).unwrap();
 
-    Command::new("git")
+    common::git()
         .args(["init", "-q"])
         .current_dir(&server_dir)
         .status()
@@ -182,7 +184,7 @@ repositories:\n  \
 // Helper: run a git command and assert success, returning stdout.
 // ---------------------------------------------------------------------------
 fn git_run(args: &[&str], dir: &Path) -> String {
-    let out = Command::new("git")
+    let out = common::git()
         .args(args)
         .current_dir(dir)
         .env("GIT_AUTHOR_NAME", "Test")

@@ -1,8 +1,9 @@
 use repoweave::git::GitVcs;
 use repoweave::vcs::Vcs;
 use std::fs;
-use std::process::Command;
 use tempfile::TempDir;
+
+mod common;
 
 /// Create a fresh git repo in a temp directory with one initial commit.
 fn init_repo() -> TempDir {
@@ -22,7 +23,7 @@ fn init_repo() -> TempDir {
 
 /// Helper: run git in `dir` and panic on failure.
 fn git(dir: &std::path::Path, args: &[&str]) -> String {
-    let output = Command::new("git")
+    let output = common::git()
         .args(args)
         .current_dir(dir)
         .output()

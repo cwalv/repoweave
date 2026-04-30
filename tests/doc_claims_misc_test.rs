@@ -7,16 +7,18 @@ use assert_cmd::Command;
 use std::path::Path;
 use std::process;
 
+mod common;
+
 // ---------------------------------------------------------------------------
 // Helpers (mirrored from workweave_test.rs)
 // ---------------------------------------------------------------------------
 
 fn rwv() -> Command {
-    Command::cargo_bin("rwv").expect("rwv binary should be buildable")
+    common::rwv()
 }
 
 fn git(args: &[&str], dir: &Path) {
-    let status = process::Command::new("git")
+    let status = common::git()
         .args(args)
         .current_dir(dir)
         .stdout(process::Stdio::null())

@@ -17,12 +17,14 @@ use predicates::prelude::*;
 use std::path::Path;
 use std::process;
 
+mod common;
+
 fn rwv() -> Command {
-    Command::cargo_bin("rwv").expect("rwv binary should be buildable")
+    common::rwv()
 }
 
 fn git(args: &[&str], dir: &Path) {
-    let status = process::Command::new("git")
+    let status = common::git()
         .args(args)
         .current_dir(dir)
         .stdout(process::Stdio::null())
@@ -71,7 +73,7 @@ fn make_workspace(tmp: &Path, project: &str) -> std::path::PathBuf {
 }
 
 fn current_branch(dir: &Path) -> String {
-    let output = process::Command::new("git")
+    let output = common::git()
         .args(["symbolic-ref", "--short", "HEAD"])
         .current_dir(dir)
         .output()
@@ -413,7 +415,7 @@ fn workweave_recreate_with_force_destroys_and_recreates() {
 }
 
 fn head_sha(dir: &Path) -> String {
-    let output = process::Command::new("git")
+    let output = common::git()
         .args(["rev-parse", "HEAD"])
         .current_dir(dir)
         .output()

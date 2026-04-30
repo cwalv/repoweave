@@ -9,17 +9,19 @@ use assert_cmd::Command;
 use std::path::Path;
 use std::process;
 
+mod common;
+
 // ---------------------------------------------------------------------------
 // Helpers (mirrors patterns from add_remove_test.rs / workweave_test.rs)
 // ---------------------------------------------------------------------------
 
 fn rwv() -> Command {
-    Command::cargo_bin("rwv").expect("rwv binary should be buildable")
+    common::rwv()
 }
 
 /// Run a git command in `dir`, panicking on failure.
 fn git(args: &[&str], dir: &Path) {
-    let status = process::Command::new("git")
+    let status = common::git()
         .args(args)
         .current_dir(dir)
         .stdout(process::Stdio::null())
@@ -36,7 +38,7 @@ fn git(args: &[&str], dir: &Path) {
 
 /// Create a bare git repo at `path`.
 fn init_bare_repo(path: &Path) {
-    let status = process::Command::new("git")
+    let status = common::git()
         .args(["init", "--bare", "--initial-branch=main"])
         .arg(path)
         .stdout(process::Stdio::null())
@@ -54,7 +56,7 @@ fn init_bare_repo_with_commit(path: &Path) {
     let work = tmp.path().join("work");
 
     let run = |args: &[&str], cwd: &Path| {
-        let status = process::Command::new("git")
+        let status = common::git()
             .args(args)
             .current_dir(cwd)
             .stdout(process::Stdio::null())
@@ -84,7 +86,7 @@ fn push_manifest_to_bare(bare: &Path, repos: &[(&str, &str)]) {
     let work = tmp.path().join("mwork");
 
     let run = |args: &[&str], cwd: &Path| {
-        let status = process::Command::new("git")
+        let status = common::git()
             .args(args)
             .current_dir(cwd)
             .stdout(process::Stdio::null())
@@ -239,7 +241,7 @@ fn remove_delete_does_not_check_other_projects() {
     // Clone the shared repo to disk so --delete has something to remove.
     let repo_dir = workspace.join(repo_path);
     std::fs::create_dir_all(repo_dir.parent().unwrap()).unwrap();
-    let clone_status = process::Command::new("git")
+    let clone_status = common::git()
         .args([
             "clone",
             &shared_bare.to_string_lossy(),
@@ -309,7 +311,7 @@ fn add_from_local_path_infers_url() {
     // Clone the bare repo to the canonical path github/org/repo inside the workspace.
     let repo_dir = workspace.join("github").join("org").join("repo");
     std::fs::create_dir_all(repo_dir.parent().unwrap()).unwrap();
-    let clone_status = process::Command::new("git")
+    let clone_status = common::git()
         .args([
             "clone",
             &bare.to_string_lossy(),

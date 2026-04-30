@@ -6,7 +6,8 @@
 use assert_cmd::Command;
 use predicates::prelude::*;
 use std::path::{Path, PathBuf};
-use std::process;
+
+mod common;
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -27,7 +28,7 @@ fn init_git_repo(path: &Path) -> String {
     std::fs::create_dir_all(path).unwrap();
 
     let run = |args: &[&str], dir: &Path| {
-        let out = process::Command::new("git")
+        let out = common::git()
             .args(args)
             .current_dir(dir)
             .env("GIT_AUTHOR_NAME", "Test")
@@ -82,7 +83,7 @@ fn write_lock(project_dir: &Path, repos: &[(&str, &str, &str)]) {
 /// Sets `current_dir` to a temp dir so tests never accidentally pick up
 /// the real workspace. Tests override with their own `.current_dir()`.
 fn rwv_cmd() -> Command {
-    let mut cmd = Command::cargo_bin("rwv").expect("rwv binary not found");
+    let mut cmd = common::rwv();
     cmd.current_dir(std::env::temp_dir());
     cmd
 }
@@ -308,7 +309,7 @@ integrations:
 
 /// Helper: add a git tag in a repo.
 fn git_tag(repo: &std::path::Path, tag: &str) {
-    let out = process::Command::new("git")
+    let out = common::git()
         .args(["tag", tag])
         .current_dir(repo)
         .env("GIT_COMMITTER_NAME", "Test")
@@ -325,7 +326,7 @@ fn git_tag(repo: &std::path::Path, tag: &str) {
 /// Helper: make a second commit in an already-initialised repo. Returns new SHA.
 fn make_commit(repo: &std::path::Path) -> String {
     let run = |args: &[&str], dir: &std::path::Path| -> String {
-        let out = process::Command::new("git")
+        let out = common::git()
             .args(args)
             .current_dir(dir)
             .env("GIT_AUTHOR_NAME", "Test")

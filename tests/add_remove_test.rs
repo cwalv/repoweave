@@ -8,14 +8,16 @@ use predicates::prelude::*;
 use std::path::Path;
 use std::process;
 
+mod common;
+
 /// Build a `Command` for the `rwv` binary.
 fn rwv() -> Command {
-    Command::cargo_bin("rwv").expect("rwv binary should be buildable")
+    common::rwv()
 }
 
 /// Create a bare git repo at `path`.
 fn init_bare_repo(path: &Path) {
-    let status = process::Command::new("git")
+    let status = common::git()
         .args(["init", "--bare", "--initial-branch=main"])
         .arg(path)
         .stdout(process::Stdio::null())
@@ -33,7 +35,7 @@ fn init_bare_repo_with_commit(path: &Path) {
     let work = tmp.path().join("work");
 
     let run = |args: &[&str], cwd: &Path| {
-        let status = process::Command::new("git")
+        let status = common::git()
             .args(args)
             .current_dir(cwd)
             .stdout(process::Stdio::null())
@@ -69,7 +71,7 @@ fn setup_workspace_with_project(
 
     // Initialize the project dir as a git repo so workspace resolution works.
     let run = |args: &[&str], cwd: &Path| {
-        let status = process::Command::new("git")
+        let status = common::git()
             .args(args)
             .current_dir(cwd)
             .stdout(process::Stdio::null())
@@ -229,7 +231,7 @@ fn add_existing_repo_handles_gracefully() {
     // Pre-clone the repo so it already exists on disk.
     let repo_dir = workspace.join("local/org/existing");
     std::fs::create_dir_all(repo_dir.parent().unwrap()).unwrap();
-    let status = process::Command::new("git")
+    let status = common::git()
         .args([
             "clone",
             &bare.to_string_lossy(),
@@ -298,7 +300,7 @@ fn remove_path_removes_manifest_entry() {
     // Clone the repo so it exists on disk.
     let repo_dir = workspace.join(repo_path);
     std::fs::create_dir_all(repo_dir.parent().unwrap()).unwrap();
-    let status = process::Command::new("git")
+    let status = common::git()
         .args([
             "clone",
             &bare.to_string_lossy(),
@@ -347,7 +349,7 @@ fn remove_with_delete_flag_removes_clone() {
     // Clone the repo so it exists on disk.
     let repo_dir = workspace.join(repo_path);
     std::fs::create_dir_all(repo_dir.parent().unwrap()).unwrap();
-    let status = process::Command::new("git")
+    let status = common::git()
         .args([
             "clone",
             &bare.to_string_lossy(),

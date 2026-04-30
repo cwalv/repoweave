@@ -22,9 +22,11 @@
 use std::path::Path;
 use std::process;
 
+mod common;
+
 /// Run a git command in `dir`, silencing output.
 fn git(args: &[&str], dir: &Path) {
-    let status = process::Command::new("git")
+    let status = common::git()
         .args(args)
         .current_dir(dir)
         .stdout(process::Stdio::null())

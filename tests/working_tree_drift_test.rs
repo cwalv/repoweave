@@ -24,14 +24,15 @@
 use assert_cmd::Command as AssertCommand;
 use predicates::prelude::*;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+
+mod common;
 
 // ---------------------------------------------------------------------------
 // Git helpers
 // ---------------------------------------------------------------------------
 
 fn git(args: &[&str], dir: &Path) {
-    let out = Command::new("git")
+    let out = common::git()
         .args(args)
         .current_dir(dir)
         .env("GIT_AUTHOR_NAME", "Test")
@@ -50,7 +51,7 @@ fn git(args: &[&str], dir: &Path) {
 }
 
 fn git_out(args: &[&str], dir: &Path) -> String {
-    let out = Command::new("git")
+    let out = common::git()
         .args(args)
         .current_dir(dir)
         .env("GIT_AUTHOR_NAME", "Test")
@@ -110,7 +111,7 @@ fn write_lock(project_dir: &Path, repos: &[(&str, &str, &str)]) {
 }
 
 fn rwv() -> AssertCommand {
-    AssertCommand::cargo_bin("rwv").expect("rwv binary should be buildable")
+    common::rwv()
 }
 
 // ---------------------------------------------------------------------------
@@ -218,7 +219,7 @@ fn doctor_detects_stale_working_tree_in_workweave() {
     make_working_tree_stale(&ws.server_ww, &ws.server_primary, &c2);
 
     // Verify working tree IS stale before doctor.
-    let wt_diff = Command::new("git")
+    let wt_diff = common::git()
         .args(["diff-index", "--name-only", "HEAD"])
         .current_dir(&ws.server_ww)
         .output()
@@ -254,7 +255,7 @@ fn doctor_fix_restores_stale_working_tree() {
     make_working_tree_stale(&ws.server_ww, &ws.server_primary, &c2);
 
     // Confirm working tree is stale.
-    let diff_before = Command::new("git")
+    let diff_before = common::git()
         .args(["diff-index", "--name-only", "HEAD"])
         .current_dir(&ws.server_ww)
         .output()
@@ -271,7 +272,7 @@ fn doctor_fix_restores_stale_working_tree() {
         .stdout(predicate::str::contains("fixed").or(predicate::str::contains("refreshed")));
 
     // After fix: working tree must match HEAD.
-    let diff_after = Command::new("git")
+    let diff_after = common::git()
         .args(["diff-index", "--exit-code", "HEAD"])
         .current_dir(&ws.server_ww)
         .stdout(std::process::Stdio::null())
@@ -403,7 +404,7 @@ fn sync_post_refresh_clears_stale_working_tree() {
     // Set up working-tree drift in the ww server repo.
     make_working_tree_stale(&server_ww, &server_primary, &c2);
 
-    let diff_before = Command::new("git")
+    let diff_before = common::git()
         .args(["diff-index", "--name-only", "HEAD"])
         .current_dir(&server_ww)
         .output()
@@ -420,7 +421,7 @@ fn sync_post_refresh_clears_stale_working_tree() {
         .success();
 
     // After sync: working tree must match HEAD.
-    let diff_after = Command::new("git")
+    let diff_after = common::git()
         .args(["diff-index", "--exit-code", "HEAD"])
         .current_dir(&server_ww)
         .stdout(std::process::Stdio::null())
@@ -557,7 +558,7 @@ fn doctor_fix_clears_both_index_and_working_tree_drift() {
     advance_ww_branch(&ws.server_primary, "ww/main", &c2);
 
     // Confirm both drifts are present.
-    let idx_diff = Command::new("git")
+    let idx_diff = common::git()
         .args(["diff-index", "--cached", "--name-only", "HEAD"])
         .current_dir(&ws.server_ww)
         .output()
@@ -566,7 +567,7 @@ fn doctor_fix_clears_both_index_and_working_tree_drift() {
         !idx_diff.stdout.is_empty(),
         "index should be stale before --fix"
     );
-    let wt_diff = Command::new("git")
+    let wt_diff = common::git()
         .args(["diff-index", "--name-only", "HEAD"])
         .current_dir(&ws.server_ww)
         .output()
@@ -583,7 +584,7 @@ fn doctor_fix_clears_both_index_and_working_tree_drift() {
         .stdout(predicate::str::contains("fixed").or(predicate::str::contains("refreshed")));
 
     // After --fix: index must match HEAD.
-    let idx_after = Command::new("git")
+    let idx_after = common::git()
         .args(["diff-index", "--cached", "--exit-code", "HEAD"])
         .current_dir(&ws.server_ww)
         .stdout(std::process::Stdio::null())
@@ -596,7 +597,7 @@ fn doctor_fix_clears_both_index_and_working_tree_drift() {
     );
 
     // After --fix: working tree must match HEAD.
-    let wt_after = Command::new("git")
+    let wt_after = common::git()
         .args(["diff-index", "--exit-code", "HEAD"])
         .current_dir(&ws.server_ww)
         .stdout(std::process::Stdio::null())
