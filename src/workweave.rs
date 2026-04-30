@@ -551,7 +551,7 @@ pub fn handle_claude_hook() -> anyhow::Result<()> {
                 .ok_or_else(|| anyhow!("missing cwd in hook input"))?;
 
             let ws_ctx = crate::workspace::WorkspaceContext::resolve(Path::new(&cwd), None)?;
-            let ws_root = &ws_ctx.root;
+            let ws_root = ws_ctx.primary_path();
 
             // Prefer the workweave's project (from .rwv-workweave marker) over
             // the primary weave's .rwv-active. This matters when a sub-agent

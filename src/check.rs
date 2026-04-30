@@ -470,20 +470,20 @@ pub fn run_check_locked(cwd: &std::path::Path) -> anyhow::Result<bool> {
 
     let ctx = WorkspaceContext::resolve(cwd, None)?;
     let git = GitVcs;
-    let workspace_dir = ctx.resolve_path().to_path_buf();
+    let workspace_dir = ctx.active_path().to_path_buf();
 
     let project_names: Vec<String> = match &ctx.location {
         WorkspaceLocation::Weave { project: Some(p) } => vec![p.as_str().to_owned()],
         WorkspaceLocation::Workweave { project, .. } => vec![project.as_str().to_owned()],
         WorkspaceLocation::Weave { project: None } => {
-            crate::workspace::discover_project_paths(&ctx.root)
+            crate::workspace::discover_project_paths(&workspace_dir)
         }
     };
 
     let mut any_drift = false;
 
     for pname in &project_names {
-        let project_dir = ctx.root.join("projects").join(pname);
+        let project_dir = workspace_dir.join("projects").join(pname);
         let project = match Project::from_dir(&project_dir) {
             Ok(p) => p,
             Err(_) => continue,
@@ -549,22 +549,23 @@ pub fn run_check(cwd: &std::path::Path, fix: bool) -> anyhow::Result<bool> {
     use crate::workspace::{WorkspaceContext, WorkspaceLocation, WorkspaceSession};
 
     let ctx = WorkspaceContext::resolve(cwd, None)?;
+    let workspace_dir = ctx.active_path().to_path_buf();
 
     // Build session (runs builtin_registries → scan_repos_on_disk → discover_project_paths).
-    let session = WorkspaceSession::new(&ctx.root);
+    let session = WorkspaceSession::new(&workspace_dir);
     let git = GitVcs;
 
     // Resolve HEAD revisions for each repo on disk.
     let mut head_revisions = BTreeMap::new();
     for repo_path in session.repos_on_disk() {
-        let abs = ctx.root.join(repo_path.as_path());
+        let abs = workspace_dir.join(repo_path.as_path());
         if let Ok(rev) = git.head_revision(&abs) {
             head_revisions.insert(repo_path.clone(), rev);
         }
     }
 
     // Load all project manifests from projects/*/rwv.yaml
-    let projects_dir = ctx.root.join("projects");
+    let projects_dir = workspace_dir.join("projects");
     let mut projects = Vec::new();
     let mut known_repos = BTreeSet::new();
 
@@ -584,7 +585,9 @@ pub fn run_check(cwd: &std::path::Path, fix: bool) -> anyhow::Result<bool> {
                 continue;
             }
             // Use relative path for Project::from_dir so project name derivation works
-            let rel_dir = project_dir.strip_prefix(&ctx.root).unwrap_or(&project_dir);
+            let rel_dir = project_dir
+                .strip_prefix(&workspace_dir)
+                .unwrap_or(&project_dir);
             match Project::from_dir(&project_dir) {
                 Ok(mut project) => {
                     // Fix the project name to use relative path
@@ -628,10 +631,10 @@ pub fn run_check(cwd: &std::path::Path, fix: bool) -> anyhow::Result<bool> {
 
     for project in &input.projects {
         let detection_cache = crate::integration_runner::build_detection_cache(
-            &ctx.root,
+            &workspace_dir,
             &project.manifest.repositories,
         );
-        let ctx_base = session.context_base(&ctx.root, &project.name, &detection_cache);
+        let ctx_base = session.context_base(&workspace_dir, &project.name, &detection_cache);
         let integration_issues = run_checks(&integrations, &project.manifest, &ctx_base);
         all_issues.extend(integration_issues);
     }
@@ -642,7 +645,6 @@ pub fn run_check(cwd: &std::path::Path, fix: bool) -> anyhow::Result<bool> {
     // Collects (workweave_label, repo_abs, repo_path_display) triples.
     let mut index_scan: Vec<(Option<String>, std::path::PathBuf, String)> = Vec::new();
 
-    let workspace_dir = ctx.resolve_path().to_path_buf();
     for project in &input.projects {
         for repo_path in project.manifest.repositories.keys() {
             let abs = workspace_dir.join(repo_path.as_path());
@@ -654,7 +656,7 @@ pub fn run_check(cwd: &std::path::Path, fix: bool) -> anyhow::Result<bool> {
 
     // From the primary weave: also scan every known workweave.
     if matches!(ctx.location, WorkspaceLocation::Weave { .. }) {
-        for (ww_name, ww_dir) in crate::workweave::list_workweave_dirs(&ctx.root) {
+        for (ww_name, ww_dir) in crate::workweave::list_workweave_dirs(ctx.primary_path()) {
             for project in &input.projects {
                 for repo_path in project.manifest.repositories.keys() {
                     let abs = ww_dir.join(repo_path.as_path());

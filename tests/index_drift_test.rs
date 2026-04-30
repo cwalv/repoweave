@@ -428,6 +428,16 @@ fn sync_post_refresh_clears_stale_index() {
     git(&["add", "rwv.lock"], &project_primary);
     git(&["commit", "-m", "lock: advance"], &project_primary);
 
+    // Mirror the lock advance into the workweave's own project worktree so
+    // that the workweave's lock matches the workweave's tip after we advance
+    // the server ref below. Without this, sync's CWD-lock-freshness
+    // precondition (which reads the workweave's own committed lock, per
+    // fo-rwv-lock-cross-workspace-confusion) would fail before reaching the
+    // post-refresh path this test is exercising.
+    write_lock(&project_ww, &[(SERVER_PATH, SERVER_URL, &c2)]);
+    git(&["add", "rwv.lock"], &project_ww);
+    git(&["commit", "-m", "lock: ww advance"], &project_ww);
+
     // Advance the workweave's server branch ref to C2 (stale-index setup).
     advance_ww_branch(&server_primary, "ww/main", &c2);
 

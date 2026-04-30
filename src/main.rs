@@ -201,7 +201,7 @@ fn main() -> anyhow::Result<()> {
                 let project = project.expect("project is required unless --claude-hook is set");
                 let cwd = std::env::current_dir()?;
                 let ctx = WorkspaceContext::resolve(&cwd, None)?;
-                let ws_root = &ctx.root;
+                let ws_root = ctx.primary_path();
 
                 match action {
                     Some(WorkweaveAction::List) | None => {
@@ -301,7 +301,7 @@ fn main() -> anyhow::Result<()> {
         Some(Commands::Resolve) => {
             let cwd = std::env::current_dir()?;
             let ctx = WorkspaceContext::resolve(&cwd, None)?;
-            println!("{}", ctx.resolve_path().display());
+            println!("{}", ctx.active_path().display());
         }
         Some(Commands::Init {
             project,

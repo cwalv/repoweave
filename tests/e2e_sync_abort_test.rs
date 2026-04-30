@@ -801,3 +801,222 @@ fn sync_roundtrip_converges_without_project_repo_growth() {
         "no-op round-trip sync must not add commits to the project repo (auto-relock idempotence)"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Marker-based workweave fixtures and regression tests
+// ---------------------------------------------------------------------------
+//
+// `make_shared_workspaces` produces two workspaces that both look like primary
+// weaves to `WorkspaceContext::resolve` (no `.rwv-workweave` marker, no
+// `{primary}--{name}` naming). The marker-based fixtures below mirror what
+// `rwv workweave create` produces in production and exercise the
+// fo-rwv-lock-cross-workspace-confusion code paths: lock writes and
+// freshness checks must use the workweave's own `projects/<name>/rwv.lock`,
+// not primary's, when CWD is inside the workweave.
+
+/// Workspaces produced by `make_marker_workweave`.
+struct MarkerSharedWorkspaces {
+    primary: Workspace,
+    /// The workweave's root directory (with `.rwv-workweave` marker).
+    ww_root: PathBuf,
+    /// The workweave's project worktree (`<ww>/projects/web-app`), on its own branch.
+    ww_project_dir: PathBuf,
+    /// The workweave's server worktree (`<ww>/github/chatly/server`), on its own branch.
+    ww_server_dir: PathBuf,
+}
+
+/// Mirror what `rwv workweave create` produces: a workweave directory under
+/// `parent/.workweaves/<primary-name>--<ww-name>/` with a `.rwv-workweave`
+/// marker, with each repo (and the project repo) as a worktree of primary's
+/// on a per-workweave ephemeral branch.
+fn make_marker_workweave(parent: &Path, ww_name: &str) -> MarkerSharedWorkspaces {
+    let (primary, _c1) = make_locked_workspace(parent, "primary");
+    let ww_root = parent
+        .join(".workweaves")
+        .join(format!("primary--{ww_name}"));
+    std::fs::create_dir_all(ww_root.join("github/chatly")).unwrap();
+    std::fs::create_dir_all(ww_root.join("projects")).unwrap();
+
+    let ww_server = ww_root.join(SERVER_PATH);
+    git(
+        &[
+            "worktree",
+            "add",
+            "-b",
+            &format!("primary--{ww_name}/main"),
+            &ww_server.to_string_lossy(),
+        ],
+        &primary.server_dir,
+    );
+
+    let ww_project = ww_root.join("projects/web-app");
+    git(
+        &[
+            "worktree",
+            "add",
+            "-b",
+            &format!("primary--{ww_name}/project"),
+            &ww_project.to_string_lossy(),
+        ],
+        &primary.project_dir,
+    );
+
+    let marker = format!(
+        "primary: {}\nproject: web-app\n",
+        primary.root.canonicalize().unwrap().display()
+    );
+    std::fs::write(ww_root.join(".rwv-workweave"), marker).unwrap();
+
+    MarkerSharedWorkspaces {
+        primary,
+        ww_root,
+        ww_project_dir: ww_project,
+        ww_server_dir: ww_server,
+    }
+}
+
+/// Anomaly B regression: `rwv lock` running inside a marker-based workweave
+/// must write to the workweave's own `projects/<name>/rwv.lock`, leaving
+/// primary's lock file content untouched.
+#[test]
+fn lock_in_marker_workweave_does_not_mutate_primary_lock_file() {
+    let tmp = tempfile::tempdir().unwrap();
+    let ws = make_marker_workweave(tmp.path(), "feat");
+
+    // Advance the workweave's server tip past the inherited C1 lock.
+    let c2 = make_commit(&ws.ww_server_dir, "ww-only.txt", "ww only\n", "ww: advance");
+
+    // Snapshot primary's lock file content before running lock in the workweave.
+    let primary_lock_path = ws.primary.project_dir.join("rwv.lock");
+    let primary_lock_before = std::fs::read_to_string(&primary_lock_path).unwrap();
+
+    rwv()
+        .arg("lock")
+        .current_dir(&ws.ww_root)
+        .assert()
+        .success();
+
+    // Primary's lock file content must be unchanged on disk.
+    let primary_lock_after = std::fs::read_to_string(&primary_lock_path).unwrap();
+    assert_eq!(
+        primary_lock_before, primary_lock_after,
+        "`rwv lock` from a workweave must not mutate primary's rwv.lock content"
+    );
+
+    // Workweave's lock must contain the workweave's tip (C2), not primary's (C1).
+    let ww_lock_path = ws.ww_project_dir.join("rwv.lock");
+    let ww_lock = repoweave::manifest::LockFile::from_path(&ww_lock_path).unwrap();
+    let entry = ww_lock
+        .repositories
+        .get(&repoweave::manifest::RepoPath::new(SERVER_PATH))
+        .expect("workweave lock should contain server entry");
+    assert_eq!(
+        entry.version.as_str(),
+        &c2,
+        "workweave lock entry must reflect workweave's tip (C2), not primary's (C1)"
+    );
+}
+
+/// Anomaly A regression: when locks diverge between primary and a marker-based
+/// workweave, `rwv sync`'s "CWD lock" freshness check must read the workweave's
+/// own committed lock — not primary's — to determine staleness from the
+/// operator's perspective.
+#[test]
+fn sync_in_marker_workweave_uses_workweave_own_lock_for_cwd_freshness() {
+    let tmp = tempfile::tempdir().unwrap();
+    let ws = make_marker_workweave(tmp.path(), "feat");
+
+    // Primary advances to C2 and commits the C2 lock on its main branch.
+    let c2 = make_commit(
+        &ws.primary.server_dir,
+        "primary-advance.txt",
+        "primary advance\n",
+        "primary: C2",
+    );
+    write_lock(&ws.primary.project_dir, &[(SERVER_PATH, SERVER_URL, &c2)]);
+    git(&["add", "rwv.lock"], &ws.primary.project_dir);
+    git(
+        &["commit", "-m", "lock: primary advance"],
+        &ws.primary.project_dir,
+    );
+
+    // Workweave's own server tip is still at C1, and its committed lock is
+    // still at C1 (inherited from the worktree-creation snapshot of project
+    // repo @ C1). From the operator's perspective in the workweave, "CWD lock
+    // is fresh" — workweave-tip C1 == workweave-lock C1 — even though primary
+    // has diverged.
+    rwv()
+        .args(["sync", &ws.primary.root.to_string_lossy()])
+        .current_dir(&ws.ww_root)
+        .assert()
+        .success();
+
+    // After sync the workweave's server tip should have caught up to C2.
+    let ww_server_head = git_out(&["rev-parse", "HEAD"], &ws.ww_server_dir);
+    assert_eq!(
+        ww_server_head, c2,
+        "workweave server should be at C2 after sync from primary"
+    );
+}
+
+/// Symmetric regression: `rwv sync` from primary with a marker-based workweave
+/// as source must read the workweave's lock for `source` freshness — not
+/// primary's lock interpreted as the source's.
+#[test]
+fn sync_from_primary_with_marker_workweave_source_uses_source_own_lock() {
+    let tmp = tempfile::tempdir().unwrap();
+    let ws = make_marker_workweave(tmp.path(), "feat");
+
+    // Workweave advances to C2 and commits the C2 lock on its own project branch.
+    let c2 = make_commit(
+        &ws.ww_server_dir,
+        "ww-advance.txt",
+        "ww advance\n",
+        "ww: C2",
+    );
+    write_lock(&ws.ww_project_dir, &[(SERVER_PATH, SERVER_URL, &c2)]);
+    git(&["add", "rwv.lock"], &ws.ww_project_dir);
+    git(&["commit", "-m", "lock: ww advance"], &ws.ww_project_dir);
+
+    // Primary syncs from the workweave. Source freshness must be checked
+    // against the workweave's own lock (C2 vs ww-tip C2), not primary's lock.
+    rwv()
+        .args(["sync", &ws.ww_root.to_string_lossy()])
+        .current_dir(&ws.primary.root)
+        .assert()
+        .success();
+
+    // Primary's server should have advanced to C2 (the workweave's lock target).
+    let primary_server_head = git_out(&["rev-parse", "HEAD"], &ws.primary.server_dir);
+    assert_eq!(
+        primary_server_head, c2,
+        "primary server should be at C2 after sync from workweave"
+    );
+}
+
+/// Anomaly A precondition guard: when the workweave's own committed lock is
+/// genuinely stale (workweave-tip ≠ workweave-lock), sync from the workweave
+/// must refuse with a "CWD lock is stale" error referring to the workweave's
+/// own values — not silently pass by reading primary's lock.
+#[test]
+fn sync_in_marker_workweave_refuses_when_workweave_own_lock_is_stale() {
+    let tmp = tempfile::tempdir().unwrap();
+    let ws = make_marker_workweave(tmp.path(), "feat");
+
+    // Advance the workweave's server tip without updating the workweave's
+    // own committed lock. (Primary's lock is left untouched at C1 to guarantee
+    // we are not silently reading primary's value.)
+    make_commit(
+        &ws.ww_server_dir,
+        "ww-advance.txt",
+        "ww advance\n",
+        "ww: advance past lock",
+    );
+
+    rwv()
+        .args(["sync", &ws.primary.root.to_string_lossy()])
+        .current_dir(&ws.ww_root)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("CWD lock").and(predicate::str::contains("stale")));
+}

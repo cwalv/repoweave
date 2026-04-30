@@ -151,25 +151,38 @@ fn lock_in_primary_creates_lock_file() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn lock_in_workweave_includes_workweave_name() {
+fn lock_in_workweave_writes_to_workweave_project_dir_not_primary() {
+    // Regression: `rwv lock` from a workweave must write to the workweave's
+    // own project worktree, not primary's. Each worktree has its own working
+    // -tree copy of `rwv.lock` on a separate branch; writing to primary from
+    // a workweave clobbers primary's committed lock state with workweave-tip
+    // values.
     let tmp = tempfile::tempdir().unwrap();
     let root = make_workspace(tmp.path(), "ws");
 
     let repo_path = "github/acme/server";
-    let sha = init_git_repo(&root.join(repo_path));
+    let primary_sha = init_git_repo(&root.join(repo_path));
 
-    // Create the project
-    let project_dir = root.join("projects").join("ws");
+    // Primary's project dir with rwv.yaml.
+    let primary_project_dir = root.join("projects").join("ws");
     write_manifest(
-        &project_dir,
+        &primary_project_dir,
         &[(repo_path, "https://github.com/acme/server.git")],
     );
 
-    // Create a workweave sibling directory: ws--hotfix
+    // Workweave dir using the legacy `{primary}--{name}` naming convention.
+    // Mirror the layout produced by `rwv workweave create`: the workweave has
+    // its own project dir with the same manifest committed.
     let workweave_dir = tmp.path().join("ws--hotfix");
     std::fs::create_dir_all(workweave_dir.join("github")).unwrap();
+    let workweave_project_dir = workweave_dir.join("projects").join("ws");
+    write_manifest(
+        &workweave_project_dir,
+        &[(repo_path, "https://github.com/acme/server.git")],
+    );
 
-    // Also create the repo in the workweave so HEAD can be resolved
+    // Repo also exists in the workweave on a different commit so we can
+    // observe whose tip ends up in which lock.
     let workweave_repo = workweave_dir.join(repo_path);
     let workweave_sha = init_git_repo(&workweave_repo);
 
@@ -179,25 +192,35 @@ fn lock_in_workweave_includes_workweave_name() {
         .assert()
         .success();
 
-    // Lock file should be in the project dir
-    // Check the lock file includes workweave provenance
-    let lock_path = project_dir.join("rwv.lock");
-    assert!(lock_path.exists(), "rwv.lock should be created");
-
-    let lock = repoweave::manifest::LockFile::from_path(&lock_path).unwrap();
+    // The workweave's lock must be created with workweave provenance.
+    let workweave_lock_path = workweave_project_dir.join("rwv.lock");
+    assert!(
+        workweave_lock_path.exists(),
+        "workweave's rwv.lock should be created"
+    );
+    let workweave_lock = repoweave::manifest::LockFile::from_path(&workweave_lock_path).unwrap();
     assert_eq!(
-        lock.workweave,
+        workweave_lock.workweave,
         Some(repoweave::manifest::WorkweaveName::new("hotfix")),
         "lock should include workweave name"
     );
-
-    let entry = lock
+    let entry = workweave_lock
         .repositories
         .get(&repoweave::manifest::RepoPath::new(repo_path))
-        .expect("lock should contain repo");
-    // The SHA should come from the workweave's repo
-    assert_eq!(entry.version.as_str(), &workweave_sha);
-    let _ = sha; // primary SHA unused but kept for clarity
+        .expect("workweave lock should contain repo");
+    assert_eq!(
+        entry.version.as_str(),
+        &workweave_sha,
+        "workweave lock SHA must come from the workweave's repo, not primary's"
+    );
+
+    // Primary's lock must NOT have been touched by the workweave's `rwv lock`.
+    let primary_lock_path = primary_project_dir.join("rwv.lock");
+    assert!(
+        !primary_lock_path.exists(),
+        "primary's rwv.lock must not be created by `rwv lock` running in a workweave"
+    );
+    let _ = primary_sha;
 }
 
 // ---------------------------------------------------------------------------

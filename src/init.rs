@@ -26,7 +26,7 @@ use std::process::Command;
 /// - Activates the project (writes `.rwv-active` and generates ecosystem files).
 pub fn init(name: &str, provider: Option<&str>, cwd: &Path) -> anyhow::Result<()> {
     let ctx = WorkspaceContext::resolve(cwd, None)?;
-    let project_dir = ctx.root.join("projects").join(name);
+    let project_dir = ctx.primary_path().join("projects").join(name);
 
     // Collision check
     if project_dir.exists() {
@@ -122,7 +122,7 @@ pub fn init(name: &str, provider: Option<&str>, cwd: &Path) -> anyhow::Result<()
 /// 5. Activates the project.
 pub fn init_adopt(source: &str, cwd: &Path) -> anyhow::Result<()> {
     let ctx = WorkspaceContext::resolve(cwd, None)?;
-    let root = &ctx.root;
+    let root = ctx.primary_path();
 
     // Resolve the source to a clone URL and project name.
     let (clone_url, project_name) = resolve_adopt_source(source)?;

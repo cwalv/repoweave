@@ -19,11 +19,11 @@ fn find_project_dir(ctx: &WorkspaceContext) -> anyhow::Result<std::path::PathBuf
     };
 
     if let Some(name) = project_name {
-        return Ok(ctx.root.join("projects").join(name.as_str()));
+        return Ok(ctx.primary_path().join("projects").join(name.as_str()));
     }
 
     // No project auto-detected. Scan projects/ for a single project.
-    let projects_dir = ctx.root.join("projects");
+    let projects_dir = ctx.primary_path().join("projects");
     if !projects_dir.is_dir() {
         bail!("no projects/ directory found in workspace");
     }
@@ -53,7 +53,7 @@ pub fn run_add(url: &str, role: Role, cwd: &Path) -> anyhow::Result<()> {
     // Check if the argument is a local path (no URL scheme and directory exists
     // relative to workspace root).
     if !url.contains("://") {
-        let candidate = ctx.root.join(url);
+        let candidate = ctx.primary_path().join(url);
         if candidate.is_dir() {
             run_add_from_local_path(url, &candidate, role, &manifest_path)?;
             let project_name = project_dir
@@ -93,7 +93,7 @@ pub fn run_add(url: &str, role: Role, cwd: &Path) -> anyhow::Result<()> {
     }
 
     // Clone the repo if it doesn't exist on disk.
-    let dest = ctx.root.join(repo_path.as_path());
+    let dest = ctx.primary_path().join(repo_path.as_path());
     if dest.exists() {
         eprintln!(
             "Directory already exists at '{}', skipping clone",
@@ -231,10 +231,10 @@ pub fn run_remove(path: &str, delete: bool, force: bool, cwd: &Path) -> anyhow::
     // is requested.  If another project references the repo and --force is not
     // set, bail early so the manifest is left untouched.
     if delete {
-        let repo_dir = ctx.root.join(repo_path.as_path());
+        let repo_dir = ctx.primary_path().join(repo_path.as_path());
         if repo_dir.exists() {
             let referencing_projects =
-                find_other_projects_referencing(&ctx.root, &project_dir, &repo_path);
+                find_other_projects_referencing(ctx.primary_path(), &project_dir, &repo_path);
 
             if !referencing_projects.is_empty() {
                 for proj in &referencing_projects {
@@ -264,7 +264,7 @@ pub fn run_remove(path: &str, delete: bool, force: bool, cwd: &Path) -> anyhow::
 
     // Optionally delete the clone directory.
     if delete {
-        let repo_dir = ctx.root.join(repo_path.as_path());
+        let repo_dir = ctx.primary_path().join(repo_path.as_path());
         if repo_dir.exists() {
             std::fs::remove_dir_all(&repo_dir)
                 .with_context(|| format!("failed to delete directory {}", repo_dir.display()))?;
@@ -321,7 +321,7 @@ pub fn run_add_new(path_arg: &str, cwd: &Path) -> anyhow::Result<()> {
     }
 
     // Create the directory and run git init.
-    let dest = ctx.root.join(repo_path.as_path());
+    let dest = ctx.primary_path().join(repo_path.as_path());
     if dest.exists() {
         eprintln!(
             "Directory already exists at '{}', skipping init",

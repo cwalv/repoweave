@@ -275,11 +275,11 @@ fn find_project_name(ctx: &WorkspaceContext) -> anyhow::Result<String> {
         WorkspaceLocation::Weave { project: Some(p) } => p.as_str().to_owned(),
         WorkspaceLocation::Workweave { project, .. } => project.as_str().to_owned(),
         WorkspaceLocation::Weave { project: None } => {
-            let names = crate::workspace::discover_project_paths(&ctx.root);
+            let names = crate::workspace::discover_project_paths(ctx.active_path());
             names.into_iter().next().ok_or_else(|| {
                 anyhow::anyhow!(
                     "no project found under {}; is this a workspace?",
-                    ctx.root.display()
+                    ctx.active_path().display()
                 )
             })?
         }
@@ -294,14 +294,16 @@ fn find_project_name(ctx: &WorkspaceContext) -> anyhow::Result<String> {
 /// - `primary` — the primary workspace root (resolved from CWD context).
 fn resolve_source_path(ctx: &WorkspaceContext, source: &str) -> anyhow::Result<PathBuf> {
     if source == "primary" {
-        return Ok(ctx.root.clone());
+        return Ok(ctx.primary_path().to_path_buf());
     }
     let p = PathBuf::from(source);
     if p.is_absolute() {
         return Ok(p);
     }
-    // Relative path: resolve against workspace root.
-    Ok(ctx.root.join(source))
+    // Relative path: resolve against the primary weave so workweave names
+    // (which live alongside primary under `.workweaves/`) resolve consistently
+    // regardless of CWD.
+    Ok(ctx.primary_path().join(source))
 }
 
 // ---------------------------------------------------------------------------
@@ -317,18 +319,20 @@ pub fn run_sync(cwd: &Path, source: &str, strategy: &str, force: bool) -> anyhow
 
     // Resolve CWD and source workspaces.
     let ctx = WorkspaceContext::resolve(cwd, None)?;
-    let workspace_dir = ctx.resolve_path().to_path_buf();
+    let workspace_dir = ctx.active_path().to_path_buf();
 
     let source_path = resolve_source_path(&ctx, source)?;
     let source_ctx = WorkspaceContext::resolve(&source_path, None)?;
-    let source_workspace_dir = source_ctx.resolve_path().to_path_buf();
+    let source_workspace_dir = source_ctx.active_path().to_path_buf();
 
     // Find active projects.
     let cwd_project_name = find_project_name(&ctx)?;
     let source_project_name = find_project_name(&source_ctx)?;
 
-    let cwd_project_dir = ctx.root.join("projects").join(&cwd_project_name);
-    let source_project_dir = source_ctx.root.join("projects").join(&source_project_name);
+    let cwd_project_dir = workspace_dir.join("projects").join(&cwd_project_name);
+    let source_project_dir = source_workspace_dir
+        .join("projects")
+        .join(&source_project_name);
 
     // Load manifests.
     let cwd_project = Project::from_dir(&cwd_project_dir)
@@ -437,7 +441,7 @@ pub fn run_sync(cwd: &Path, source: &str, strategy: &str, force: bool) -> anyhow
 /// Execute `rwv abort` — restore CWD workspace to its pre-sync state.
 pub fn run_abort(cwd: &Path) -> anyhow::Result<()> {
     let ctx = WorkspaceContext::resolve(cwd, None)?;
-    let workspace_dir = ctx.resolve_path().to_path_buf();
+    let workspace_dir = ctx.active_path().to_path_buf();
 
     // Read the op marker.
     let marker_path = workspace_dir.join(SYNC_OP_MARKER);
@@ -450,7 +454,7 @@ pub fn run_abort(cwd: &Path) -> anyhow::Result<()> {
         .to_owned();
 
     let cwd_project_name = find_project_name(&ctx)?;
-    let cwd_project_dir = ctx.root.join("projects").join(&cwd_project_name);
+    let cwd_project_dir = workspace_dir.join("projects").join(&cwd_project_name);
     let cwd_project = Project::from_dir(&cwd_project_dir)
         .map_err(|e| anyhow::anyhow!("failed to load CWD project: {e}"))?;
 

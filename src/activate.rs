@@ -21,7 +21,7 @@ use crate::workspace::{set_active_project, WorkspaceContext, WorkspaceSession};
 /// Run `rwv activate PROJECT` from the given working directory.
 pub fn activate(project: &str, cwd: &Path) -> anyhow::Result<()> {
     let ctx = WorkspaceContext::resolve(cwd, None)?;
-    activate_at(&ctx.root, project, false)
+    activate_at(ctx.primary_path(), project, false)
 }
 
 /// Shared activation logic.
@@ -243,7 +243,7 @@ pub fn activate_workweave(project: &str, workweave_dir: &Path) -> anyhow::Result
 #[allow(dead_code)]
 pub fn deactivate(cwd: &Path) -> anyhow::Result<()> {
     let ctx = WorkspaceContext::resolve(cwd, None)?;
-    let root = &ctx.root;
+    let root = ctx.primary_path();
 
     remove_activation_symlinks(root)?;
 

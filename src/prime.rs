@@ -133,7 +133,10 @@ pub fn render_context(ctx: &WorkspaceContext) -> String {
     // -- Location ---------------------------------------------------------------
     let project: Option<&ProjectName> = match &ctx.location {
         WorkspaceLocation::Weave { project } => {
-            out.push_str(&format!("- **Weave**: `{}`\n", ctx.root.display()));
+            out.push_str(&format!(
+                "- **Weave**: `{}`\n",
+                ctx.primary_path().display()
+            ));
             project.as_ref()
         }
         WorkspaceLocation::Workweave {
@@ -142,7 +145,10 @@ pub fn render_context(ctx: &WorkspaceContext) -> String {
             project,
         } => {
             out.push_str(&format!("- **Workweave**: `{}`\n", dir.display()));
-            out.push_str(&format!("- **Weave**: `{}`\n", ctx.root.display()));
+            out.push_str(&format!(
+                "- **Weave**: `{}`\n",
+                ctx.primary_path().display()
+            ));
             Some(project)
         }
     };
@@ -153,7 +159,11 @@ pub fn render_context(ctx: &WorkspaceContext) -> String {
 
     // -- Repository table -------------------------------------------------------
     if let Some(p) = project {
-        let manifest_path = ctx.root.join("projects").join(p.as_str()).join("rwv.yaml");
+        let manifest_path = ctx
+            .primary_path()
+            .join("projects")
+            .join(p.as_str())
+            .join("rwv.yaml");
         if let Ok(manifest) = Manifest::from_path(&manifest_path) {
             out.push('\n');
             render_repo_table(&mut out, &manifest);
@@ -244,19 +254,19 @@ fn render_directory_layout(
 ) {
     out.push_str("\n## Directory layout\n\n");
     out.push_str("```\n");
-    out.push_str(&format!("{}/\n", ctx.root.display()));
+    out.push_str(&format!("{}/\n", ctx.primary_path().display()));
 
     // List registry dirs
     let registries = ["github", "gitlab", "bitbucket"];
     for reg in &registries {
-        let reg_path = ctx.root.join(reg);
+        let reg_path = ctx.primary_path().join(reg);
         if reg_path.is_dir() {
             out.push_str(&format!("  {reg}/           # {reg} repos\n"));
         }
     }
 
     // Projects dir
-    let projects_dir = ctx.root.join("projects");
+    let projects_dir = ctx.primary_path().join("projects");
     if projects_dir.is_dir() {
         out.push_str("  projects/\n");
         if let Ok(entries) = std::fs::read_dir(&projects_dir) {

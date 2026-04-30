@@ -19,13 +19,24 @@ use std::path::{Path, PathBuf};
 /// The resolved workspace context, inferred from CWD.
 ///
 /// Every `rwv` command starts by resolving this. It answers:
-/// - Where is the workspace root?
-/// - Are we in the primary weave or a workweave?
+/// - Where is the primary weave?
+/// - Are we currently in the primary weave or in a workweave?
 /// - Which project is active?
+///
+/// Two distinct paths are exposed; choose deliberately:
+/// - [`primary_path`] — the primary weave directory. Use for state owned by
+///   the workspace as a whole (`.rwv-active`, `projects/` enumeration,
+///   `.workweaves/` listing, AGENTS.md).
+/// - [`active_path`] — the directory CWD is actually in: the primary path
+///   when in a weave, the workweave directory when in a workweave. Use for
+///   per-workspace state (project worktrees and their `rwv.lock` /
+///   `rwv.yaml`, repo worktrees the operator is working in).
+///
+/// [`primary_path`]: WorkspaceContext::primary_path
+/// [`active_path`]: WorkspaceContext::active_path
 #[derive(Debug)]
 pub struct WorkspaceContext {
-    /// The primary directory (workspace root with regular clones).
-    pub root: PathBuf,
+    primary_root: PathBuf,
     /// The current working location: weave or a specific workweave.
     pub location: WorkspaceLocation,
 }
@@ -300,7 +311,7 @@ impl WorkspaceContext {
                     let workweave_name = WorkweaveName::new(workweave_name_str);
                     let project = project_override.unwrap_or(marker.project);
                     return Ok(WorkspaceContext {
-                        root,
+                        primary_root: root,
                         location: WorkspaceLocation::Workweave {
                             name: workweave_name,
                             dir: current.to_path_buf(),
@@ -324,7 +335,7 @@ impl WorkspaceContext {
                         let project =
                             project_override.unwrap_or_else(|| ProjectName::new(primary_name));
                         return Ok(WorkspaceContext {
-                            root: root.clone(),
+                            primary_root: root.clone(),
                             location: WorkspaceLocation::Workweave {
                                 name: workweave_name,
                                 dir: current.to_path_buf(),
@@ -341,7 +352,7 @@ impl WorkspaceContext {
                     .or_else(|| detect_project(&cwd, current))
                     .or_else(|| read_active_project(current));
                 return Ok(WorkspaceContext {
-                    root: current.to_path_buf(),
+                    primary_root: current.to_path_buf(),
                     location: WorkspaceLocation::Weave { project },
                 });
             }
@@ -356,11 +367,28 @@ impl WorkspaceContext {
         anyhow::bail!("no repoweave workspace found above {}", cwd.display())
     }
 
-    /// Return the effective path for `rwv resolve`: the primary root or the
-    /// workweave directory.
-    pub fn resolve_path(&self) -> &Path {
+    /// The primary weave directory.
+    ///
+    /// Use this for state owned by the workspace as a whole — the
+    /// `.rwv-active` file, the `projects/` directory used to enumerate
+    /// projects, the `.workweaves/` directory used to enumerate workweaves,
+    /// and workspace-level config files like `AGENTS.md`. These all live
+    /// under the primary regardless of where CWD currently is.
+    pub fn primary_path(&self) -> &Path {
+        &self.primary_root
+    }
+
+    /// The directory CWD is actually in: the primary path when in a weave,
+    /// the workweave directory when in a workweave.
+    ///
+    /// Use this for per-workspace state — project worktrees and their
+    /// `rwv.lock` / `rwv.yaml`, the repo worktrees the operator is working
+    /// in, integration outputs that follow CWD's workspace. A workweave is
+    /// itself a workspace; reading or writing through the primary from
+    /// inside a workweave clobbers the workweave's view of the world.
+    pub fn active_path(&self) -> &Path {
         match &self.location {
-            WorkspaceLocation::Weave { .. } => &self.root,
+            WorkspaceLocation::Weave { .. } => &self.primary_root,
             WorkspaceLocation::Workweave { dir, .. } => dir,
         }
     }
@@ -374,12 +402,15 @@ impl WorkspaceContext {
 
         match &self.location {
             WorkspaceLocation::Weave { project } => {
-                lines.push(format!("Weave: {}", self.root.display()));
+                lines.push(format!("Weave: {}", self.primary_root.display()));
                 if let Some(p) = project {
                     lines.push(format!("Project: {}", p.as_str()));
                     // Try to load manifest and show repo count
-                    let manifest_path =
-                        self.root.join("projects").join(p.as_str()).join("rwv.yaml");
+                    let manifest_path = self
+                        .primary_root
+                        .join("projects")
+                        .join(p.as_str())
+                        .join("rwv.yaml");
                     if let Ok(manifest) = Manifest::from_path(&manifest_path) {
                         lines.push(format!("Repos: {}", manifest.repositories.len()));
                     }
@@ -391,11 +422,11 @@ impl WorkspaceContext {
                 project,
             } => {
                 lines.push(format!("Workweave: {}", dir.display()));
-                lines.push(format!("Weave: {}", self.root.display()));
+                lines.push(format!("Weave: {}", self.primary_root.display()));
                 lines.push(format!("Project: {}", project.as_str()));
                 // Try to load manifest and show repo count
                 let manifest_path = self
-                    .root
+                    .primary_root
                     .join("projects")
                     .join(project.as_str())
                     .join("rwv.yaml");
@@ -406,7 +437,7 @@ impl WorkspaceContext {
         }
 
         // List available projects
-        let projects_dir = self.root.join("projects");
+        let projects_dir = self.primary_root.join("projects");
         if let Ok(entries) = std::fs::read_dir(&projects_dir) {
             let mut project_names: Vec<String> = entries
                 .filter_map(|e| e.ok())
@@ -511,7 +542,7 @@ mod tests {
         std::fs::create_dir_all(&deep).unwrap();
 
         let ctx = WorkspaceContext::resolve(&deep, None).unwrap();
-        assert_eq!(ctx.root, root.canonicalize().unwrap());
+        assert_eq!(ctx.primary_path(), root.canonicalize().unwrap());
         match &ctx.location {
             WorkspaceLocation::Weave { project } => {
                 assert!(project.is_none());
@@ -532,7 +563,7 @@ mod tests {
         std::fs::create_dir_all(&project_dir).unwrap();
 
         let ctx = WorkspaceContext::resolve(&project_dir, None).unwrap();
-        assert_eq!(ctx.root, root.canonicalize().unwrap());
+        assert_eq!(ctx.primary_path(), root.canonicalize().unwrap());
         match &ctx.location {
             WorkspaceLocation::Weave { project } => {
                 let p = project.as_ref().expect("project should be detected");
@@ -555,7 +586,7 @@ mod tests {
         std::fs::create_dir_all(&weave_dir).unwrap();
 
         let ctx = WorkspaceContext::resolve(&weave_dir, None).unwrap();
-        assert_eq!(ctx.root, root.canonicalize().unwrap());
+        assert_eq!(ctx.primary_path(), root.canonicalize().unwrap());
         match &ctx.location {
             WorkspaceLocation::Workweave { name, dir, project } => {
                 assert_eq!(name.as_str(), "hotfix");
@@ -579,7 +610,7 @@ mod tests {
         std::fs::create_dir_all(&repo_dir).unwrap();
 
         let ctx = WorkspaceContext::resolve(&repo_dir, None).unwrap();
-        assert_eq!(ctx.root, root.canonicalize().unwrap());
+        assert_eq!(ctx.primary_path(), root.canonicalize().unwrap());
         match &ctx.location {
             WorkspaceLocation::Workweave { name, dir, project } => {
                 assert_eq!(name.as_str(), "feat-login");
@@ -654,7 +685,7 @@ mod tests {
         let root = make_workspace(tmp.path(), "ws");
 
         let ctx = WorkspaceContext::resolve(&root, None).unwrap();
-        assert_eq!(ctx.root, root.canonicalize().unwrap());
+        assert_eq!(ctx.primary_path(), root.canonicalize().unwrap());
         match &ctx.location {
             WorkspaceLocation::Weave { project } => {
                 assert!(project.is_none());
@@ -901,7 +932,7 @@ mod tests {
         marker.write(&weave_dir).unwrap();
 
         let ctx = WorkspaceContext::resolve(&weave_dir, None).unwrap();
-        assert_eq!(ctx.root, root.canonicalize().unwrap());
+        assert_eq!(ctx.primary_path(), root.canonicalize().unwrap());
         match &ctx.location {
             WorkspaceLocation::Workweave { name, dir, project } => {
                 assert_eq!(name.as_str(), "feat");
@@ -929,7 +960,7 @@ mod tests {
         marker.write(&weave_dir).unwrap();
 
         let ctx = WorkspaceContext::resolve(&repo_dir, None).unwrap();
-        assert_eq!(ctx.root, root.canonicalize().unwrap());
+        assert_eq!(ctx.primary_path(), root.canonicalize().unwrap());
         match &ctx.location {
             WorkspaceLocation::Workweave { name, dir, project } => {
                 assert_eq!(name.as_str(), "feat");
@@ -949,7 +980,7 @@ mod tests {
         std::fs::create_dir_all(&weave_dir).unwrap();
 
         let ctx = WorkspaceContext::resolve(&weave_dir, None).unwrap();
-        assert_eq!(ctx.root, root.canonicalize().unwrap());
+        assert_eq!(ctx.primary_path(), root.canonicalize().unwrap());
         match &ctx.location {
             WorkspaceLocation::Workweave { name, dir, project } => {
                 assert_eq!(name.as_str(), "hotfix");

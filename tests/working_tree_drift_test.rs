@@ -391,6 +391,15 @@ fn sync_post_refresh_clears_stale_working_tree() {
     git(&["add", "rwv.lock"], &project_primary);
     git(&["commit", "-m", "lock: advance"], &project_primary);
 
+    // Mirror the lock advance in the workweave's own project worktree so
+    // that sync's CWD-lock-freshness precondition passes once the server
+    // ref is advanced below. (Per fo-rwv-lock-cross-workspace-confusion the
+    // workweave's freshness check reads its own committed lock, not
+    // primary's.)
+    write_lock(&project_ww, &[(SERVER_PATH, SERVER_URL, &c2)]);
+    git(&["add", "rwv.lock"], &project_ww);
+    git(&["commit", "-m", "lock: ww advance"], &project_ww);
+
     // Set up working-tree drift in the ww server repo.
     make_working_tree_stale(&server_ww, &server_primary, &c2);
 

@@ -104,13 +104,15 @@ pub fn lock(cwd: &Path, dirty: bool) -> anyhow::Result<()> {
         }
     };
 
-    // Load the project manifest from the primary workspace.
-    let project_dir = ctx.root.join("projects").join(project_name.as_str());
+    let project_dir = ctx
+        .active_path()
+        .join("projects")
+        .join(project_name.as_str());
     let project = Project::from_dir(&project_dir)
         .map_err(|e| anyhow::anyhow!("failed to load project '{}': {e}", project_name))?;
 
     let workweave_pair = workweave_name.as_ref().zip(workweave_dir.as_deref());
-    let lock = generate_lock(&project.manifest, &ctx.root, workweave_pair, dirty)?;
+    let lock = generate_lock(&project.manifest, ctx.primary_path(), workweave_pair, dirty)?;
 
     let lock_path = project_dir.join("rwv.lock");
     write_lock(&lock, &lock_path)?;
@@ -118,11 +120,13 @@ pub fn lock(cwd: &Path, dirty: bool) -> anyhow::Result<()> {
     eprintln!("Wrote {}", lock_path.display());
 
     // Run integration lock hooks after writing the lock file.
-    let session = crate::workspace::WorkspaceSession::new(&ctx.root);
+    let session = crate::workspace::WorkspaceSession::new(ctx.active_path());
 
-    let output_dir = workweave_dir.as_deref().unwrap_or(&ctx.root);
-    let detection_cache =
-        crate::integration_runner::build_detection_cache(&ctx.root, &project.manifest.repositories);
+    let output_dir = ctx.active_path();
+    let detection_cache = crate::integration_runner::build_detection_cache(
+        ctx.active_path(),
+        &project.manifest.repositories,
+    );
     let ctx_base = session.context_base(output_dir, &project_name, &detection_cache);
 
     let builtin = builtin_integrations();

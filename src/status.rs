@@ -74,7 +74,7 @@ fn project_names_for_ctx(ctx: &WorkspaceContext) -> Vec<String> {
         WorkspaceLocation::Weave { project: Some(p) } => vec![p.as_str().to_owned()],
         WorkspaceLocation::Workweave { project, .. } => vec![project.as_str().to_owned()],
         WorkspaceLocation::Weave { project: None } => {
-            crate::workspace::discover_project_paths(&ctx.root)
+            crate::workspace::discover_project_paths(ctx.active_path())
         }
     }
 }
@@ -83,12 +83,12 @@ fn project_names_for_ctx(ctx: &WorkspaceContext) -> Vec<String> {
 pub fn run_status(cwd: &Path, json: bool) -> anyhow::Result<()> {
     let ctx = WorkspaceContext::resolve(cwd, None)?;
     let git = GitVcs;
-    let workspace_dir = ctx.resolve_path().to_path_buf();
+    let workspace_dir = ctx.active_path().to_path_buf();
 
     let mut entries: Vec<RepoStatus> = Vec::new();
 
     for pname in project_names_for_ctx(&ctx) {
-        let project_dir = ctx.root.join("projects").join(&pname);
+        let project_dir = workspace_dir.join("projects").join(&pname);
         let project = match Project::from_dir(&project_dir) {
             Ok(p) => p,
             Err(_) => continue,
