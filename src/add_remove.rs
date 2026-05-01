@@ -243,7 +243,7 @@ pub fn run_remove(path: &str, delete: bool, force: bool, cwd: &Path) -> anyhow::
                 }
                 if !force {
                     anyhow::bail!(
-                        "refusing to delete '{}': referenced by other projects (use --force to override)",
+                        "refusing to delete '{}': referenced by other projects. Remove the entry from those projects first, or use `--force` if you intend to delete the shared clone anyway.",
                         repo_path.as_str()
                     );
                 }

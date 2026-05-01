@@ -2,6 +2,7 @@
 
 - [Tutorial](./tutorial.md)
 - [Concepts](./concepts.md)
+- [Sync](./sync.md)
 - [Releasing](./releasing.md)
 - [Local development](./developing.md)
 - [Reference](./reference.md)

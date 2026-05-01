@@ -453,9 +453,12 @@ fn sync_post_refresh_clears_stale_index() {
         "workweave index should be stale before sync"
     );
 
-    // Sync from primary to workweave.
+    // Sync from primary to workweave. Both sides committed independent lock
+    // advances above (so each side's lock-freshness check passes), which
+    // diverges the project repos; --force is required to bypass the Phase 1
+    // ancestor precondition. The test's focus is the Phase 2 post-refresh.
     rwv()
-        .args(["sync", &primary_root.to_string_lossy()])
+        .args(["sync", &primary_root.to_string_lossy(), "--force"])
         .current_dir(&ww_root)
         .assert()
         .success();

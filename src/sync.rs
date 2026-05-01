@@ -10,6 +10,36 @@ use crate::workspace::{WorkspaceContext, WorkspaceLocation};
 use std::fmt;
 use std::path::{Path, PathBuf};
 
+/// Which side of a sync a check or error is reporting against.
+#[derive(Debug, Clone, Copy)]
+enum Side {
+    Source,
+    Destination,
+}
+
+impl Side {
+    fn as_str(self) -> &'static str {
+        match self {
+            Side::Source => "source",
+            Side::Destination => "destination",
+        }
+    }
+}
+
+/// Display name for a workspace: the workweave name when in a workweave,
+/// otherwise the basename of the primary path.
+fn workspace_name(ctx: &WorkspaceContext) -> String {
+    match &ctx.location {
+        WorkspaceLocation::Workweave { name, .. } => name.as_str().to_owned(),
+        WorkspaceLocation::Weave { .. } => ctx
+            .primary_path()
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("unknown")
+            .to_owned(),
+    }
+}
+
 const SYNC_OP_MARKER: &str = ".rwv-sync-op";
 const PRE_OP_REF: &str = "refs/rwv/pre-op";
 
@@ -228,7 +258,23 @@ fn read_savepoint(repo: &Path, op_id: &OpId) -> Option<RevisionId> {
         .map(RevisionId::raw)
 }
 
-fn check_lock_freshness(workspace_dir: &Path, lock: &LockFile, label: &str) -> anyhow::Result<()> {
+/// The recovery instruction differs by side: source's lock is committed
+/// upstream from the operator's perspective ("Run `rwv lock` in the source
+/// workspace and commit before syncing"), destination's is right here
+/// ("Run `rwv lock` to refresh before syncing").
+fn lock_recovery(side: Side) -> &'static str {
+    match side {
+        Side::Source => "Run `rwv lock` in the source workspace and commit before syncing",
+        Side::Destination => "Run `rwv lock` to refresh before syncing",
+    }
+}
+
+fn check_lock_freshness(
+    workspace_dir: &Path,
+    lock: &LockFile,
+    side: Side,
+    workspace_name: &str,
+) -> anyhow::Result<()> {
     // Resolve lock entries against on-disk repos so the comparison below is
     // purely a canonical-SHA equality check. Tag-form entries (e.g. v0.3.4)
     // resolve to the canonical SHA; SHA-form entries pass through unchanged.
@@ -239,9 +285,10 @@ fn check_lock_freshness(workspace_dir: &Path, lock: &LockFile, label: &str) -> a
             .version
             .as_str()
             .to_string();
+        let side_str = side.as_str();
+        let recovery = lock_recovery(side);
         anyhow::bail!(
-            "{label} lock references unknown revision {raw}: {repo_path}  \
-             (run `rwv lock` on the {label} workspace, or use --force to bypass)",
+            "{side_str} workspace '{workspace_name}' lock references unknown revision {raw} for {repo_path}. {recovery}.",
         );
     }
 
@@ -252,15 +299,84 @@ fn check_lock_freshness(workspace_dir: &Path, lock: &LockFile, label: &str) -> a
         }
         if let Ok(actual) = GitVcs.head_revision(&abs) {
             if actual != lock_entry.version {
+                let side_str = side.as_str();
+                let recovery = lock_recovery(side);
                 anyhow::bail!(
-                    "{label} lock is stale: {repo_path} tip={actual} lock={}  \
-                     (run `rwv lock` on the {label} workspace, or use --force to bypass)",
+                    "{side_str} workspace '{workspace_name}' has a stale lock — {repo_path} tip={actual} doesn't match lock={}. {recovery}.",
                     lock_entry.version
                 );
             }
         }
     }
     Ok(())
+}
+
+/// Phase 1 precondition predicate: would resetting `cwd_tip` to `source_tip`
+/// discard reachable commits? Returns `true` when CWD is an ancestor of (or
+/// equal to) source — the safe cases.
+fn cwd_is_ancestor_or_equal(
+    cwd_project_dir: &Path,
+    cwd_tip: &RevisionId,
+    source_tip: &RevisionId,
+) -> bool {
+    if cwd_tip == source_tip {
+        return true;
+    }
+    // Run merge-base from cwd_project_dir; both tips must be reachable in its
+    // object DB for merge-base to work. (Source's tip is reachable because
+    // Phase 1's reset --hard relies on the same reachability.)
+    git_command()
+        .args([
+            "merge-base",
+            "--is-ancestor",
+            cwd_tip.as_str(),
+            source_tip.as_str(),
+        ])
+        .current_dir(cwd_project_dir)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+}
+
+/// Phase 1 precondition: refuse if hard-resetting CWD's project repo to
+/// source's tip would discard commits reachable only from CWD.
+///
+/// Cases:
+/// - equal: no-op, allowed.
+/// - CWD ancestor of source (forward): allowed — the normal sync case.
+/// - source ancestor of CWD (CWD ahead): refused — would discard CWD's commits.
+/// - diverged (neither ancestor): refused — would discard CWD's diverging commits.
+fn check_phase1_ancestor(
+    cwd_project_dir: &Path,
+    cwd_tip: &RevisionId,
+    source_tip: &RevisionId,
+    cwd_workspace_name: &str,
+    source_workspace_name: &str,
+) -> anyhow::Result<()> {
+    if cwd_is_ancestor_or_equal(cwd_project_dir, cwd_tip, source_tip) {
+        return Ok(());
+    }
+
+    // CWD is not an ancestor of source. Count the commits CWD has that source
+    // doesn't (the ones a reset --hard would discard).
+    let extra_count = git(
+        &[
+            "rev-list",
+            "--count",
+            &format!("{}..{}", source_tip.as_str(), cwd_tip.as_str()),
+        ],
+        cwd_project_dir,
+    )
+    .unwrap_or_else(|_| "?".to_owned());
+
+    anyhow::bail!(
+        "destination workspace '{cwd_workspace_name}' project repo at {cwd_tip} has {extra_count} \
+         commits not in source workspace '{source_workspace_name}'. Either sync the other direction \
+         first to bring those commits to source, or use `--force` if you intend to discard them \
+         (preserved in refs/rwv/pre-op/<id> for `rwv abort`).",
+    );
 }
 
 /// Refresh the git index to match HEAD, but only for the safely-auto-fixable class.
@@ -482,17 +598,55 @@ pub fn run_sync(
         anyhow::bail!("CWD project repo is {state}; resolve before running sync");
     }
 
+    let cwd_workspace_name = workspace_name(&ctx);
+    let source_workspace_name = workspace_name(&source_ctx);
+
     // Precondition: lock freshness (unless --force).
     if !force {
         let source_project = Project::from_dir(&source_project_dir)
             .map_err(|e| anyhow::anyhow!("failed to load source project: {e}"))?;
         if let Some(ref lock) = source_project.lock {
-            check_lock_freshness(&source_workspace_dir, lock, "source")?;
+            check_lock_freshness(
+                &source_workspace_dir,
+                lock,
+                Side::Source,
+                &source_workspace_name,
+            )?;
         }
         if let Some(ref lock) = cwd_project.lock {
-            check_lock_freshness(&workspace_dir, lock, "CWD")?;
+            check_lock_freshness(&workspace_dir, lock, Side::Destination, &cwd_workspace_name)?;
         }
     }
+
+    // Resolve project tips up front; the ancestor precondition (and Phase 1
+    // reset) need both. `head_revision` is read-only — running it before any
+    // side effects keeps the refusal path clean.
+    let source_project_tip = GitVcs
+        .head_revision(&source_project_dir)
+        .map_err(|e| anyhow::anyhow!("failed to read source project HEAD: {e}"))?;
+    let cwd_project_tip = GitVcs
+        .head_revision(&cwd_project_dir)
+        .map_err(|e| anyhow::anyhow!("failed to read CWD project HEAD: {e}"))?;
+
+    // Precondition: Phase 1 hard-resets the destination's project repo to
+    // source's tip. Refuse if that would discard reachable commits (i.e. CWD
+    // is not an ancestor of source). `--force` bypasses; the savepoint
+    // preserves the discarded commits for `rwv abort`.
+    let phase1_ancestor_bypassed = if force {
+        // Even with --force, detect whether the ancestor check WOULD have
+        // refused — so we can preserve the project savepoint post-op as a
+        // tombstone of the discarded commits.
+        !cwd_is_ancestor_or_equal(&cwd_project_dir, &cwd_project_tip, &source_project_tip)
+    } else {
+        check_phase1_ancestor(
+            &cwd_project_dir,
+            &cwd_project_tip,
+            &source_project_tip,
+            &cwd_workspace_name,
+            &source_workspace_name,
+        )?;
+        false
+    };
 
     let op_id = OpId::new_now();
 
@@ -513,10 +667,6 @@ pub fn run_sync(
     // Phase 1: reset CWD project repo to source's tip to expose source's rwv.lock.
     // Always a hard reset (not strategy-based): the project repo tracks lock state,
     // not diverging development; merging/rebasing lock files always conflicts.
-    let source_project_tip = GitVcs
-        .head_revision(&source_project_dir)
-        .map_err(|e| anyhow::anyhow!("failed to read source project HEAD: {e}"))?;
-
     if let Err(e) = git(
         &["reset", "--hard", source_project_tip.as_str()],
         &cwd_project_dir,
@@ -563,7 +713,23 @@ pub fn run_sync(
     }
 
     // Successful completion: clean up savepoints and marker.
-    delete_savepoint(&cwd_project_dir, &op_id);
+    //
+    // Exception: when `--force` bypassed the Phase 1 ancestor check, the
+    // hard-reset discarded reachable commits from the project repo. Preserve
+    // the project repo's savepoint as a tombstone so the operator can recover
+    // via `git reset --hard refs/rwv/pre-op/<id>` (manual; the marker is
+    // gone, so `rwv abort` no longer sees an in-flight op). Manifest repo
+    // savepoints are still cleaned — they are not part of the discarded set.
+    if !phase1_ancestor_bypassed {
+        delete_savepoint(&cwd_project_dir, &op_id);
+    } else {
+        eprintln!(
+            "note: --force discarded project commits; pre-sync state preserved at \
+             refs/rwv/pre-op/{op_id} (recover with `git reset --hard refs/rwv/pre-op/{op_id}` \
+             in {})",
+            cwd_project_dir.display()
+        );
+    }
     for repo_path in cwd_project.manifest.repositories.keys() {
         let abs = workspace_dir.join(repo_path.as_path());
         if abs.exists() {

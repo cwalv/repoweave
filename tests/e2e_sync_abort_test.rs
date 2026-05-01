@@ -447,6 +447,311 @@ fn sync_force_bypasses_lock_freshness_precondition() {
 }
 
 // ---------------------------------------------------------------------------
+// rwv sync — Phase 1 ancestor precondition
+// ---------------------------------------------------------------------------
+//
+// Phase 1 hard-resets the destination's project repo to the source's tip.
+// The precondition refuses when this would discard reachable commits — i.e.
+// when the destination's project tip is NOT an ancestor of the source's tip.
+
+/// Helper: advance primary's project repo by one commit (no-op edit) and re-lock.
+/// Leaves primary's lock fresh.
+fn primary_advance_project_one_commit(primary: &Workspace, server_sha: &str) {
+    write_lock(
+        &primary.project_dir,
+        &[(SERVER_PATH, SERVER_URL, server_sha)],
+    );
+    git(&["add", "rwv.lock"], &primary.project_dir);
+    git(
+        &[
+            "commit",
+            "--allow-empty",
+            "-m",
+            "lock: primary project advance",
+        ],
+        &primary.project_dir,
+    );
+}
+
+/// Backward sync: when CWD's project tip is ahead of source's, sync refuses.
+/// The error names both workspaces and the proper recovery path.
+#[test]
+fn sync_refuses_when_destination_project_repo_is_ahead_of_source() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (primary, ww, c1) = make_shared_workspaces(tmp.path());
+
+    // Primary advances its project repo by one commit (still pointing at C1
+    // server). ww's project repo stays at C1. Both locks are fresh.
+    primary_advance_project_one_commit(&primary, &c1);
+
+    // Sync ww → primary: source=ww (project @ C1), CWD=primary (project ahead of C1).
+    // primary has a project commit ww doesn't — refuse.
+    let assertion = rwv()
+        .args(["sync", &ww.root.to_string_lossy()])
+        .current_dir(&primary.root)
+        .assert()
+        .failure();
+    let output = assertion.get_output();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    // Names the destination workspace.
+    assert!(
+        stderr.contains("destination workspace") && stderr.contains("project repo"),
+        "expected refusal naming destination project repo; got: {stderr}"
+    );
+    // Names the source workspace too.
+    assert!(
+        stderr.contains("source workspace"),
+        "expected refusal naming source workspace; got: {stderr}"
+    );
+    // Names the rwv-native recovery path.
+    assert!(
+        stderr.contains("sync the other direction first"),
+        "expected refusal to name the rwv-native recovery; got: {stderr}"
+    );
+    // Names the --force scenario explicitly.
+    assert!(
+        stderr.contains("--force") && stderr.contains("discard"),
+        "expected refusal to name the --force scenario (discard); got: {stderr}"
+    );
+}
+
+/// Diverged sync: when CWD's project tip and source's project tip have diverged
+/// (neither is an ancestor of the other), sync refuses.
+#[test]
+fn sync_refuses_when_destination_project_repo_has_diverged_from_source() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (primary, ww, c1) = make_shared_workspaces(tmp.path());
+
+    // Primary advances its project by one commit (still pointing at C1 server).
+    primary_advance_project_one_commit(&primary, &c1);
+
+    // ww independently advances its project by a different commit (still C1 server).
+    write_lock(&ww.project_dir, &[(SERVER_PATH, SERVER_URL, &c1)]);
+    git(&["add", "rwv.lock"], &ww.project_dir);
+    git(
+        &["commit", "--allow-empty", "-m", "lock: ww project advance"],
+        &ww.project_dir,
+    );
+
+    // Sanity: tips diverged from common ancestor C1.
+    let primary_tip = git_out(&["rev-parse", "HEAD"], &primary.project_dir);
+    let ww_tip = git_out(&["rev-parse", "HEAD"], &ww.project_dir);
+    assert_ne!(primary_tip, ww_tip);
+
+    rwv()
+        .args(["sync", &ww.root.to_string_lossy()])
+        .current_dir(&primary.root)
+        .assert()
+        .failure()
+        .stderr(
+            predicate::str::contains("destination workspace")
+                .and(predicate::str::contains("project repo"))
+                .and(predicate::str::contains("commits not in source workspace")),
+        );
+}
+
+/// Forward sync (CWD strict ancestor of source): allowed — the normal case.
+/// Already covered by `sync_ff_primary_advances_to_workweave_lock` etc., but
+/// guard explicitly that the ancestor precondition does NOT fire.
+#[test]
+fn sync_allows_when_destination_project_repo_is_strict_ancestor_of_source() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (primary, ww, c1) = make_shared_workspaces(tmp.path());
+
+    // ww advances its project (server still at C1). primary's project stays at C1.
+    write_lock(&ww.project_dir, &[(SERVER_PATH, SERVER_URL, &c1)]);
+    git(&["add", "rwv.lock"], &ww.project_dir);
+    git(
+        &["commit", "--allow-empty", "-m", "lock: ww project advance"],
+        &ww.project_dir,
+    );
+
+    // Sync ww → primary: primary (CWD) at C1, ww (source) ahead. primary IS
+    // ancestor of ww — forward, allowed.
+    rwv()
+        .args(["sync", &ww.root.to_string_lossy()])
+        .current_dir(&primary.root)
+        .assert()
+        .success();
+}
+
+/// Equal tips: both project repos at the same SHA — no-op, allowed.
+#[test]
+fn sync_allows_when_destination_project_repo_equals_source() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (primary, ww, _c1) = make_shared_workspaces(tmp.path());
+
+    // No advances anywhere — both project tips share C1.
+    let primary_tip = git_out(&["rev-parse", "HEAD"], &primary.project_dir);
+    let ww_tip = git_out(&["rev-parse", "HEAD"], &ww.project_dir);
+    assert_eq!(primary_tip, ww_tip);
+
+    rwv()
+        .args(["sync", &ww.root.to_string_lossy()])
+        .current_dir(&primary.root)
+        .assert()
+        .success();
+}
+
+/// `--force` bypasses the ancestor precondition: backward sync succeeds and
+/// the savepoint preserves the discarded commits for `rwv abort`.
+#[test]
+fn sync_force_bypasses_phase1_ancestor_refusal_and_preserves_savepoint() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (primary, ww, c1) = make_shared_workspaces(tmp.path());
+
+    // Primary advances its project past C1; ww's project stays at C1.
+    primary_advance_project_one_commit(&primary, &c1);
+    let primary_pre_sync = git_out(&["rev-parse", "HEAD"], &primary.project_dir);
+
+    // Backward sync with --force: must succeed.
+    rwv()
+        .args(["sync", &ww.root.to_string_lossy(), "--force"])
+        .current_dir(&primary.root)
+        .assert()
+        .success();
+
+    // Primary's project repo should now be at ww's project tip (forced reset).
+    let ww_tip = git_out(&["rev-parse", "HEAD"], &ww.project_dir);
+    let primary_post_sync = git_out(&["rev-parse", "HEAD"], &primary.project_dir);
+    assert_eq!(
+        primary_post_sync, ww_tip,
+        "with --force, primary's project tip should now equal ww's"
+    );
+
+    // The pre-sync commit is no longer reachable from HEAD but MUST be
+    // reachable from some `refs/rwv/pre-op/*` savepoint — that's the
+    // contract `--force` makes with the operator (recoverable via abort).
+    let savepoint_refs = git_out(
+        &[
+            "for-each-ref",
+            "--format=%(objectname) %(refname)",
+            "refs/rwv/pre-op",
+        ],
+        &primary.project_dir,
+    );
+    assert!(
+        savepoint_refs.contains(&primary_pre_sync),
+        "pre-sync commit {primary_pre_sync} should be preserved in a refs/rwv/pre-op/* savepoint; \
+         got: {savepoint_refs}"
+    );
+}
+
+/// Refusal message names the source-side recovery: "sync the other direction
+/// first" — and that recovery actually works (no infinite refusal loop).
+#[test]
+fn sync_other_direction_first_unblocks_a_refused_backward_sync() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (primary, ww, c1) = make_shared_workspaces(tmp.path());
+
+    // Primary advances its project by one commit (C1 server still).
+    primary_advance_project_one_commit(&primary, &c1);
+
+    // Backward sync from primary refuses (verified in another test).
+    // Operator runs the named recovery: sync the other direction first
+    // (primary → ww), bringing primary's commit to ww.
+    rwv()
+        .args(["sync", &primary.root.to_string_lossy()])
+        .current_dir(&ww.root)
+        .assert()
+        .success();
+
+    // Now primary and ww are aligned. The originally-refused sync (primary
+    // CWD, ww source) is now allowed (equal tips → no-op).
+    rwv()
+        .args(["sync", &ww.root.to_string_lossy()])
+        .current_dir(&primary.root)
+        .assert()
+        .success();
+}
+
+// ---------------------------------------------------------------------------
+// rwv sync — error message structure
+// ---------------------------------------------------------------------------
+
+/// Lock-freshness error names the source workspace and the recovery path,
+/// and does NOT mention `--force` (per the structured-error guideline:
+/// `rwv lock` is the proper recovery, not `--force`).
+#[test]
+fn lock_freshness_source_error_names_workspace_and_recovery_path() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (primary, _) = make_locked_workspace(tmp.path(), "primary");
+    let (source, _) = make_locked_workspace(tmp.path(), "source");
+
+    make_commit(
+        &source.server_dir,
+        "extra.txt",
+        "extra\n",
+        "source: advance past lock",
+    );
+
+    let assertion = rwv()
+        .args(["sync", &source.root.to_string_lossy()])
+        .current_dir(&primary.root)
+        .assert()
+        .failure();
+    let stderr = String::from_utf8_lossy(&assertion.get_output().stderr).to_string();
+
+    assert!(
+        stderr.contains("source workspace 'source'"),
+        "expected named source workspace; got: {stderr}"
+    );
+    assert!(
+        stderr.contains("stale lock"),
+        "expected 'stale lock' phrasing; got: {stderr}"
+    );
+    assert!(
+        stderr.contains("rwv lock"),
+        "expected named recovery (`rwv lock`); got: {stderr}"
+    );
+    assert!(
+        !stderr.contains("--force"),
+        "lock-freshness error must not mention --force (proper recovery is `rwv lock`); got: {stderr}"
+    );
+}
+
+/// Lock-freshness destination error names the destination workspace and the
+/// recovery path, and does NOT mention `--force`.
+#[test]
+fn lock_freshness_destination_error_names_workspace_and_recovery_path() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (primary, _) = make_locked_workspace(tmp.path(), "primary");
+    let (source, _) = make_locked_workspace(tmp.path(), "source");
+
+    make_commit(
+        &primary.server_dir,
+        "extra.txt",
+        "extra\n",
+        "primary: advance past lock",
+    );
+
+    let assertion = rwv()
+        .args(["sync", &source.root.to_string_lossy()])
+        .current_dir(&primary.root)
+        .assert()
+        .failure();
+    let stderr = String::from_utf8_lossy(&assertion.get_output().stderr).to_string();
+
+    assert!(
+        stderr.contains("destination workspace 'primary'"),
+        "expected named destination workspace; got: {stderr}"
+    );
+    assert!(
+        stderr.contains("stale lock"),
+        "expected 'stale lock' phrasing; got: {stderr}"
+    );
+    assert!(
+        stderr.contains("rwv lock"),
+        "expected named recovery (`rwv lock`); got: {stderr}"
+    );
+    assert!(
+        !stderr.contains("--force"),
+        "lock-freshness error must not mention --force; got: {stderr}"
+    );
+}
+
+// ---------------------------------------------------------------------------
 // rwv sync — non-ff strategies
 // ---------------------------------------------------------------------------
 
@@ -483,12 +788,18 @@ fn sync_rebase_replays_local_commits_on_source_tip() {
 
     // ww/main (C_ww) and primary main (C2) have both diverged from C1.
     // --strategy rebase should replay C_ww onto C2.
+    //
+    // Both sides also independently committed locks → ww and primary's project
+    // repos diverged too. Phase 1's ancestor precondition refuses divergent
+    // project repos; this test deliberately constructs that to exercise Phase
+    // 2's rebase strategy on the manifest repo, so it opts in via --force.
     rwv()
         .args([
             "sync",
             &primary.root.to_string_lossy(),
             "--strategy",
             "rebase",
+            "--force",
         ])
         .current_dir(&ww.root)
         .assert()
@@ -535,12 +846,16 @@ fn sync_merge_creates_merge_commit_from_diverged_sides() {
     git(&["commit", "-m", "lock: ww advance"], &ww.project_dir);
 
     // --strategy merge should create a merge commit on ww/main.
+    // Project repos diverge from independent lock commits; --force is required
+    // to bypass the Phase 1 ancestor precondition. The test's intent is the
+    // Phase 2 merge strategy on the manifest repo.
     rwv()
         .args([
             "sync",
             &primary.root.to_string_lossy(),
             "--strategy",
             "merge",
+            "--force",
         ])
         .current_dir(&ww.root)
         .assert()
@@ -610,12 +925,15 @@ fn abort_restores_repos_to_pre_op_state() {
     assert_eq!(pre_op_sha, c_ww);
 
     // Attempt rebase sync — should hit a conflict and leave repos mid-op.
+    // Project repos diverged from independent lock commits → --force is
+    // required to reach Phase 2 where the rebase conflict is the focus.
     let _ = rwv()
         .args([
             "sync",
             &primary.root.to_string_lossy(),
             "--strategy",
             "rebase",
+            "--force",
         ])
         .current_dir(&ww.root)
         .assert();
@@ -997,8 +1315,8 @@ fn sync_from_primary_with_marker_workweave_source_uses_source_own_lock() {
 
 /// Anomaly A precondition guard: when the workweave's own committed lock is
 /// genuinely stale (workweave-tip ≠ workweave-lock), sync from the workweave
-/// must refuse with a "CWD lock is stale" error referring to the workweave's
-/// own values — not silently pass by reading primary's lock.
+/// must refuse with a stale-lock error naming the destination workspace —
+/// not silently pass by reading primary's lock.
 #[test]
 fn sync_in_marker_workweave_refuses_when_workweave_own_lock_is_stale() {
     let tmp = tempfile::tempdir().unwrap();
@@ -1019,7 +1337,10 @@ fn sync_in_marker_workweave_refuses_when_workweave_own_lock_is_stale() {
         .current_dir(&ws.ww_root)
         .assert()
         .failure()
-        .stderr(predicate::str::contains("CWD lock").and(predicate::str::contains("stale")));
+        .stderr(
+            predicate::str::contains("destination workspace 'primary--feat'")
+                .and(predicate::str::contains("stale lock")),
+        );
 }
 
 // ---------------------------------------------------------------------------
@@ -1059,8 +1380,11 @@ fn sync_reports_already_ahead_when_cwd_is_past_lock_target() {
     git(&["commit", "-m", "lock: C3"], &ww.project_dir);
 
     // Sync ww from primary: target is C2, but ww is at C3 (C2 is ancestor of C3).
+    // --force bypasses the Phase 1 ancestor precondition because ww's project repo
+    // has the C3 lock commit primary doesn't; the test's intent is Phase 2 behavior
+    // on the manifest repo (already-ahead reporting), not the Phase 1 guard.
     let out = rwv()
-        .args(["sync", &primary.root.to_string_lossy()])
+        .args(["sync", &primary.root.to_string_lossy(), "--force"])
         .current_dir(&ww.root)
         .assert()
         .success()
@@ -1103,8 +1427,11 @@ fn sync_ff_reports_failed_for_diverged_repo() {
     git(&["commit", "-m", "lock: C_ww"], &ww.project_dir);
 
     // ff sync: C2 and C_ww both diverge from C1 → cannot fast-forward.
+    // --force bypasses the Phase 1 ancestor precondition because ww's project repo
+    // has the C_ww lock commit primary doesn't; the test's intent is Phase 2's ff
+    // failure on the manifest repo, not the Phase 1 guard.
     let out = rwv()
-        .args(["sync", &primary.root.to_string_lossy()])
+        .args(["sync", &primary.root.to_string_lossy(), "--force"])
         .current_dir(&ww.root)
         .assert()
         .failure()

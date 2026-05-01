@@ -414,8 +414,11 @@ fn sync_post_refresh_clears_stale_working_tree() {
         "working tree should be stale before sync"
     );
 
+    // Both sides committed independent lock advances above; project repos
+    // diverged → --force is required to bypass the Phase 1 ancestor
+    // precondition. The test's focus is the post-Phase-2 working-tree refresh.
     rwv()
-        .args(["sync", &primary_root.to_string_lossy()])
+        .args(["sync", &primary_root.to_string_lossy(), "--force"])
         .current_dir(&ww_root)
         .assert()
         .success();
