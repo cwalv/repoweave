@@ -432,9 +432,9 @@ console.log(types.greeting);
         .expect("lock should contain shared-types entry");
 
     assert_eq!(
-        shared_types_entry.version.as_str(),
+        shared_types_entry.version.display_str(),
         "v1.0.0",
         "generate_lock should record the tag name 'v1.0.0' for shared-types, got: {}",
-        shared_types_entry.version.as_str(),
+        shared_types_entry.version.display_str(),
     );
 }

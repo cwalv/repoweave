@@ -150,7 +150,7 @@ pub fn run_fetch(source: &str, workspace_root: &Path, mode: FetchMode) -> anyhow
                         repo_path.as_str(),
                         lock_entry.version,
                     );
-                    if let Err(e) = git.checkout(&dest, lock_entry.version.as_str()) {
+                    if let Err(e) = git.checkout(&dest, &lock_entry.version) {
                         let msg = format!(
                             "{}: failed to check out {}: {e}",
                             repo_path.as_str(),
@@ -207,7 +207,7 @@ pub fn run_fetch(source: &str, workspace_root: &Path, mode: FetchMode) -> anyhow
                     repo_path.as_str(),
                     lock_entry.version,
                 );
-                if let Err(e) = git.checkout(&dest, lock_entry.version.as_str()) {
+                if let Err(e) = git.checkout(&dest, &lock_entry.version) {
                     let msg = format!(
                         "{}: failed to check out {}: {e}",
                         repo_path.as_str(),

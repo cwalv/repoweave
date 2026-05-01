@@ -57,17 +57,6 @@ impl GitVcs {
 }
 
 impl GitVcs {
-    /// Resolve any revision (tag name, branch name, or SHA) to a commit SHA.
-    ///
-    /// Uses `git rev-parse --verify <rev>^{commit}`. SHAs pass through unchanged;
-    /// tags and branches are dereferenced. Returns an error when the revision is
-    /// unknown in this repo.
-    pub fn resolve_revision(repo: &Path, rev: &str) -> anyhow::Result<RevisionId> {
-        let deref = format!("{rev}^{{commit}}");
-        let sha = Self::run(&["rev-parse", "--verify", &deref], repo)?;
-        Ok(RevisionId::new(sha))
-    }
-
     /// Check if `ancestor` is a strict ancestor of `descendant` in `repo`.
     ///
     /// Uses `git merge-base --is-ancestor`. Returns `Ok(false)` when the
@@ -137,7 +126,22 @@ impl Vcs for GitVcs {
 
     fn head_revision(&self, repo: &Path) -> anyhow::Result<RevisionId> {
         let sha = Self::run(&["rev-parse", "HEAD"], repo)?;
-        Ok(RevisionId::new(sha))
+        // If a tag points at HEAD, preserve it as the display form so callers
+        // get human-readable round-trips (e.g., `v0.3.4`) without an extra
+        // resolve step.
+        let display = self.tag_at_head(repo)?.map(|t| t.as_str().to_string());
+        Ok(RevisionId::from_canonical(sha, display))
+    }
+
+    fn resolve_revision(&self, repo: &Path, rev: &str) -> anyhow::Result<RevisionId> {
+        let deref = format!("{rev}^{{commit}}");
+        let canonical = Self::run(&["rev-parse", "--verify", &deref], repo)?;
+        let display = if rev == canonical {
+            None
+        } else {
+            Some(rev.to_string())
+        };
+        Ok(RevisionId::from_canonical(canonical, display))
     }
 
     fn current_ref(&self, repo: &Path) -> anyhow::Result<Option<RefName>> {
@@ -152,15 +156,16 @@ impl Vcs for GitVcs {
         repo: &Path,
         dest: &Path,
         branch_name: &str,
-        start_point: &str,
+        start_point: &RevisionId,
     ) -> anyhow::Result<()> {
         let dest_str = dest
             .to_str()
             .ok_or_else(|| anyhow::anyhow!("worktree path is not valid UTF-8"))?;
+        let start = start_point.as_str();
 
         // First try creating a new branch with -b.
         let result = Self::run(
-            &["worktree", "add", "-b", branch_name, dest_str, start_point],
+            &["worktree", "add", "-b", branch_name, dest_str, start],
             repo,
         );
 
@@ -174,7 +179,7 @@ impl Vcs for GitVcs {
                 let deleted = Self::run(&["branch", "-D", branch_name], repo).is_ok();
                 if deleted {
                     Self::run(
-                        &["worktree", "add", "-b", branch_name, dest_str, start_point],
+                        &["worktree", "add", "-b", branch_name, dest_str, start],
                         repo,
                     )?;
                 } else {
@@ -217,14 +222,14 @@ impl Vcs for GitVcs {
         Ok(!output.is_empty())
     }
 
-    fn tag_at_head(&self, repo: &Path) -> anyhow::Result<Option<String>> {
+    fn tag_at_head(&self, repo: &Path) -> anyhow::Result<Option<RefName>> {
         // `git tag --points-at HEAD` lists tags that resolve to HEAD.
         let output = Self::run(&["tag", "--points-at", "HEAD"], repo)?;
-        Ok(output.lines().next().map(|s| s.to_string()))
+        Ok(output.lines().next().map(RefName::new))
     }
 
-    fn checkout(&self, repo: &Path, revision: &str) -> anyhow::Result<()> {
-        Self::run(&["checkout", revision], repo)?;
+    fn checkout(&self, repo: &Path, revision: &RevisionId) -> anyhow::Result<()> {
+        Self::run(&["checkout", revision.as_str()], repo)?;
         Ok(())
     }
 

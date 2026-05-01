@@ -158,7 +158,7 @@ pub fn create_workweave(
                 std::fs::create_dir_all(parent_dir)?;
             }
 
-            vcs.create_worktree(&repo_abs, &worktree_dest, &ephemeral_branch, head.as_str())?;
+            vcs.create_worktree(&repo_abs, &worktree_dest, &ephemeral_branch, &head)?;
 
             Ok(())
         })();
@@ -190,12 +190,7 @@ pub fn create_workweave(
             let ephemeral_branch = ephemeral_branch_name(project, name, &current_branch);
             let head = GitVcs.head_revision(&project_dir)?;
             std::fs::create_dir_all(project_wt_dest.parent().unwrap())?;
-            GitVcs.create_worktree(
-                &project_dir,
-                &project_wt_dest,
-                &ephemeral_branch,
-                head.as_str(),
-            )?;
+            GitVcs.create_worktree(&project_dir, &project_wt_dest, &ephemeral_branch, &head)?;
             Ok(())
         })();
 

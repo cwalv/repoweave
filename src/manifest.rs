@@ -261,6 +261,33 @@ impl LockFile {
             .map_err(|e| anyhow::anyhow!("failed to parse rwv.lock at {}: {e}", path.display()))?;
         Ok(lock)
     }
+
+    /// Resolve each entry's `version` against its on-disk repo so the
+    /// canonical SHA is filled in. After this, comparing a lock entry's
+    /// version against a value returned by [`crate::vcs::Vcs::head_revision`]
+    /// uses canonical SHAs and so works uniformly whether the lock pinned a
+    /// tag, branch, or SHA.
+    ///
+    /// Repos missing on disk are skipped — their entries stay raw, which the
+    /// caller can treat as drift if appropriate. Returns the list of repo
+    /// paths whose `version` could not be resolved (i.e., the revision name
+    /// is unknown in that repo). Those entries are likewise left raw.
+    pub fn resolve_versions(&mut self, workspace_dir: &Path) -> Vec<RepoPath> {
+        let mut failures = Vec::new();
+        for (repo_path, entry) in &mut self.repositories {
+            let repo_abs = workspace_dir.join(repo_path.as_path());
+            if !repo_abs.exists() {
+                continue;
+            }
+            let vcs = crate::vcs::vcs_for(entry.vcs_type);
+            let raw = entry.version.as_str().to_string();
+            match vcs.resolve_revision(&repo_abs, &raw) {
+                Ok(resolved) => entry.version = resolved,
+                Err(_) => failures.push(repo_path.clone()),
+            }
+        }
+        failures
+    }
 }
 
 // ---------------------------------------------------------------------------

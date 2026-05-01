@@ -50,7 +50,7 @@ fn compute_relation(
     lock_sha: &Option<RevisionId>,
 ) -> LockRelation {
     let (tip, lock) = match (tip, lock_sha) {
-        (Some(t), Some(l)) => (t.as_str(), l.as_str()),
+        (Some(t), Some(l)) => (t, l),
         (_, None) => return LockRelation::NoLock,
         (None, _) => return LockRelation::Unknown,
     };
@@ -59,8 +59,8 @@ fn compute_relation(
         return LockRelation::Ok;
     }
 
-    let tip_ahead = GitVcs::is_ancestor(repo_abs, lock, tip);
-    let tip_behind = GitVcs::is_ancestor(repo_abs, tip, lock);
+    let tip_ahead = GitVcs::is_ancestor(repo_abs, lock.as_str(), tip.as_str());
+    let tip_behind = GitVcs::is_ancestor(repo_abs, tip.as_str(), lock.as_str());
 
     match (tip_ahead, tip_behind) {
         (true, _) => LockRelation::Ahead,
@@ -93,7 +93,13 @@ pub fn run_status(cwd: &Path, json: bool) -> anyhow::Result<()> {
             Ok(p) => p,
             Err(_) => continue,
         };
-        let lock = project.lock;
+        let mut lock = project.lock;
+        // Resolve lock entries against their on-disk repos so equality with
+        // a tip RevisionId (which always carries the canonical SHA) works
+        // whether the lock pinned a tag, branch, or raw SHA.
+        if let Some(ref mut l) = lock {
+            l.resolve_versions(&workspace_dir);
+        }
 
         for repo_path in project.manifest.repositories.keys() {
             let repo_abs = workspace_dir.join(repo_path.as_path());
@@ -118,8 +124,8 @@ pub fn run_status(cwd: &Path, json: bool) -> anyhow::Result<()> {
             entries.push(RepoStatus {
                 path: repo_path.to_string(),
                 branch,
-                tip: tip.map(|r| r.as_str().to_owned()),
-                lock_sha: lock_sha.map(|r| r.as_str().to_owned()),
+                tip: tip.map(|r| r.display_str().to_owned()),
+                lock_sha: lock_sha.map(|r| r.display_str().to_owned()),
                 relation,
                 mid_op,
             });

@@ -130,11 +130,13 @@ pub fn find_violations(input: &CheckInput) -> Vec<CheckViolation> {
             }
         }
 
-        // Compare lock entries against resolved HEADs
+        // Compare lock entries against resolved HEADs. The lock entries are
+        // expected to have been resolved already (see `LockFile::resolve_versions`),
+        // so equality compares canonical SHAs across tag-form and SHA-form alike.
         if let Some(ref lock) = project.lock {
             for (repo_path, lock_entry) in &lock.repositories {
                 if let Some(actual_rev) = input.head_revisions.get(repo_path) {
-                    if lock_entry.version.as_str() != actual_rev.as_str() {
+                    if &lock_entry.version != actual_rev {
                         violations.push(CheckViolation::StaleLock {
                             project: project.name.as_str().to_owned(),
                             repo: repo_path.clone(),
@@ -486,10 +488,16 @@ pub fn run_check_locked(cwd: &std::path::Path) -> anyhow::Result<bool> {
             Err(_) => continue,
         };
 
-        let lock = match project.lock {
+        let mut lock = match project.lock {
             Some(l) => l,
             None => continue,
         };
+
+        // Resolve lock entries against on-disk repos. Repos whose revision
+        // can't be resolved (unknown tag/branch) come back in `unresolved`
+        // so we can report them with a distinct "unknown revision" message.
+        let unresolved: std::collections::BTreeSet<RepoPath> =
+            lock.resolve_versions(&workspace_dir).into_iter().collect();
 
         for (repo_path, lock_entry) in &lock.repositories {
             let repo_abs = workspace_dir.join(repo_path.as_path());
@@ -503,21 +511,16 @@ pub fn run_check_locked(cwd: &std::path::Path) -> anyhow::Result<bool> {
                 }
             };
 
-            // Resolve the lock version to a commit SHA before comparing.
-            // Handles tag names, branch names, and SHAs uniformly.
-            let lock_sha = match GitVcs::resolve_revision(&repo_abs, lock_entry.version.as_str()) {
-                Ok(sha) => sha,
-                Err(_) => {
-                    println!(
-                        "{repo_path}: lock pins unknown revision {}",
-                        lock_entry.version
-                    );
-                    any_drift = true;
-                    continue;
-                }
-            };
+            if unresolved.contains(repo_path) {
+                println!(
+                    "{repo_path}: lock pins unknown revision {}",
+                    lock_entry.version
+                );
+                any_drift = true;
+                continue;
+            }
 
-            if actual.as_str() == lock_sha.as_str() {
+            if actual == lock_entry.version {
                 println!("{repo_path}: ok");
             } else {
                 println!("{repo_path}: tip {} ≠ lock {}", actual, lock_entry.version);
@@ -594,6 +597,13 @@ pub fn run_check(cwd: &std::path::Path, fix: bool) -> anyhow::Result<bool> {
                         .to_string_lossy()
                         .into_owned();
                     project.name = crate::manifest::ProjectName::new(name_from_rel);
+
+                    // Resolve lock entries against on-disk repos so the
+                    // canonical-SHA equality used by `find_violations` works
+                    // uniformly for tag-form, branch-form, and SHA-form locks.
+                    if let Some(ref mut lock) = project.lock {
+                        let _ = lock.resolve_versions(&workspace_dir);
+                    }
 
                     for repo_path in project.manifest.repositories.keys() {
                         known_repos.insert(repo_path.clone());

@@ -3,13 +3,77 @@
 //! `rwv sync` aligns the CWD workspace with another workspace's committed
 //! `rwv.lock`. `rwv abort` rolls back to pre-sync state using savepoint refs.
 
-use crate::git::git_command;
+use crate::git::{git_command, GitVcs};
 use crate::manifest::{LockFile, Project};
+use crate::vcs::{RevisionId, Vcs};
 use crate::workspace::{WorkspaceContext, WorkspaceLocation};
+use std::fmt;
 use std::path::{Path, PathBuf};
 
 const SYNC_OP_MARKER: &str = ".rwv-sync-op";
 const PRE_OP_REF: &str = "refs/rwv/pre-op";
+
+// ---------------------------------------------------------------------------
+// SyncStrategy — typed sync strategy
+// ---------------------------------------------------------------------------
+
+/// How `rwv sync` advances each repo to its lock target.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+#[clap(rename_all = "lowercase")]
+pub enum SyncStrategy {
+    /// Fast-forward only; bail if not possible.
+    Ff,
+    /// Rebase the local branch onto the lock target.
+    Rebase,
+    /// Merge the lock target into the local branch with an auto-generated commit.
+    Merge,
+}
+
+impl fmt::Display for SyncStrategy {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Self::Ff => "ff",
+            Self::Rebase => "rebase",
+            Self::Merge => "merge",
+        })
+    }
+}
+
+// ---------------------------------------------------------------------------
+// OpId — newtype for sync operation identifiers
+// ---------------------------------------------------------------------------
+
+/// A nanosecond-resolution identifier for one in-flight sync operation.
+///
+/// Used to namespace pre-op savepoint refs so concurrent or interleaved
+/// sync attempts don't collide.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OpId(String);
+
+impl OpId {
+    /// Generate a fresh `OpId` from the current wall-clock time.
+    pub fn new_now() -> Self {
+        let s = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos().to_string())
+            .unwrap_or_else(|_| "0".to_owned());
+        Self(s)
+    }
+
+    pub fn from_string(s: impl Into<String>) -> Self {
+        Self(s.into())
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl fmt::Display for OpId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -36,14 +100,11 @@ fn git(args: &[&str], dir: &Path) -> anyhow::Result<String> {
         .to_owned())
 }
 
-fn git_head(repo: &Path) -> anyhow::Result<String> {
-    git(&["rev-parse", "HEAD"], repo)
-}
-
-fn apply_strategy(repo: &Path, target: &str, strategy: &str) -> anyhow::Result<()> {
+fn apply_strategy(repo: &Path, target: &RevisionId, strategy: SyncStrategy) -> anyhow::Result<()> {
+    let target_ref = target.as_str();
     match strategy {
-        "ff" => {
-            let out = git(&["merge", "--ff-only", target], repo);
+        SyncStrategy::Ff => {
+            let out = git(&["merge", "--ff-only", target_ref], repo);
             if let Err(e) = out {
                 anyhow::bail!(
                     "cannot fast-forward; rerun with --strategy rebase or --strategy merge. {}",
@@ -51,58 +112,67 @@ fn apply_strategy(repo: &Path, target: &str, strategy: &str) -> anyhow::Result<(
                 );
             }
         }
-        "rebase" => {
-            git(&["rebase", target], repo)?;
+        SyncStrategy::Rebase => {
+            git(&["rebase", target_ref], repo)?;
         }
-        "merge" => {
+        SyncStrategy::Merge => {
             // Merge with auto-generated commit message.
-            git(&["merge", "--no-edit", target], repo)?;
+            git(&["merge", "--no-edit", target_ref], repo)?;
         }
-        _ => anyhow::bail!("unknown strategy {strategy:?}; expected ff, rebase, or merge"),
     }
     Ok(())
 }
 
-fn create_savepoint(repo: &Path, op_id: &str) -> anyhow::Result<String> {
-    let sha = git_head(repo)?;
+fn create_savepoint(repo: &Path, op_id: &OpId) -> anyhow::Result<RevisionId> {
+    let head = GitVcs.head_revision(repo)?;
     git(
-        &["update-ref", &format!("{PRE_OP_REF}/{op_id}"), &sha],
+        &[
+            "update-ref",
+            &format!("{PRE_OP_REF}/{op_id}"),
+            head.as_str(),
+        ],
         repo,
     )?;
-    Ok(sha)
+    Ok(head)
 }
 
-fn delete_savepoint(repo: &Path, op_id: &str) {
+fn delete_savepoint(repo: &Path, op_id: &OpId) {
     let _ = git(
         &["update-ref", "-d", &format!("{PRE_OP_REF}/{op_id}")],
         repo,
     );
 }
 
-fn read_savepoint(repo: &Path, op_id: &str) -> Option<String> {
-    git(&["rev-parse", &format!("{PRE_OP_REF}/{op_id}")], repo).ok()
+fn read_savepoint(repo: &Path, op_id: &OpId) -> Option<RevisionId> {
+    git(&["rev-parse", &format!("{PRE_OP_REF}/{op_id}")], repo)
+        .ok()
+        .map(RevisionId::raw)
 }
 
 fn check_lock_freshness(workspace_dir: &Path, lock: &LockFile, label: &str) -> anyhow::Result<()> {
-    for (repo_path, lock_entry) in &lock.repositories {
+    // Resolve lock entries against on-disk repos so the comparison below is
+    // purely a canonical-SHA equality check. Tag-form entries (e.g. v0.3.4)
+    // resolve to the canonical SHA; SHA-form entries pass through unchanged.
+    let mut resolved = lock.clone();
+    let failures = resolved.resolve_versions(workspace_dir);
+    if let Some(repo_path) = failures.first() {
+        let raw = resolved.repositories[repo_path]
+            .version
+            .as_str()
+            .to_string();
+        anyhow::bail!(
+            "{label} lock references unknown revision {raw}: {repo_path}  \
+             (run `rwv lock` on the {label} workspace, or use --force to bypass)",
+        );
+    }
+
+    for (repo_path, lock_entry) in &resolved.repositories {
         let abs = workspace_dir.join(repo_path.as_path());
         if !abs.exists() {
             continue;
         }
-        if let Ok(actual) = git_head(&abs) {
-            // Resolve the lock version to a commit SHA before comparing so that
-            // tag-form entries (e.g. v0.3.4) are not spuriously flagged as stale
-            // when the actual HEAD SHA is the same commit the tag points at.
-            let resolved =
-                match crate::git::GitVcs::resolve_revision(&abs, lock_entry.version.as_str()) {
-                    Ok(sha) => sha,
-                    Err(_) => anyhow::bail!(
-                        "{label} lock references unknown revision {}: {repo_path}  \
-                         (run `rwv lock` on the {label} workspace, or use --force to bypass)",
-                        lock_entry.version
-                    ),
-                };
-            if actual != resolved.as_str() {
+        if let Ok(actual) = GitVcs.head_revision(&abs) {
+            if actual != lock_entry.version {
                 anyhow::bail!(
                     "{label} lock is stale: {repo_path} tip={actual} lock={}  \
                      (run `rwv lock` on the {label} workspace, or use --force to bypass)",
@@ -301,12 +371,12 @@ fn resolve_source_path(ctx: &WorkspaceContext, source: &str) -> anyhow::Result<P
 // ---------------------------------------------------------------------------
 
 /// Execute `rwv sync <source>`.
-pub fn run_sync(cwd: &Path, source: &str, strategy: &str, force: bool) -> anyhow::Result<()> {
-    // Validate strategy.
-    if !matches!(strategy, "ff" | "rebase" | "merge") {
-        anyhow::bail!("unknown strategy {strategy:?}; expected ff, rebase, or merge");
-    }
-
+pub fn run_sync(
+    cwd: &Path,
+    source: &str,
+    strategy: SyncStrategy,
+    force: bool,
+) -> anyhow::Result<()> {
     // Resolve CWD and source workspaces.
     let ctx = WorkspaceContext::resolve(cwd, None)?;
     let workspace_dir = ctx.active_path().to_path_buf();
@@ -345,15 +415,11 @@ pub fn run_sync(cwd: &Path, source: &str, strategy: &str, force: bool) -> anyhow
         }
     }
 
-    // Generate op-id (nanosecond timestamp).
-    let op_id = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_nanos().to_string())
-        .unwrap_or_else(|_| "0".to_owned());
+    let op_id = OpId::new_now();
 
     // Write op marker to CWD workspace.
     let marker_path = workspace_dir.join(SYNC_OP_MARKER);
-    std::fs::write(&marker_path, &op_id)
+    std::fs::write(&marker_path, op_id.as_str())
         .map_err(|e| anyhow::anyhow!("failed to write sync op marker: {e}"))?;
 
     // Create savepoints for all CWD repos (including project repo).
@@ -368,10 +434,14 @@ pub fn run_sync(cwd: &Path, source: &str, strategy: &str, force: bool) -> anyhow
     // Phase 1: reset CWD project repo to source's tip to expose source's rwv.lock.
     // Always a hard reset (not strategy-based): the project repo tracks lock state,
     // not diverging development; merging/rebasing lock files always conflicts.
-    let source_project_tip = git_head(&source_project_dir)
+    let source_project_tip = GitVcs
+        .head_revision(&source_project_dir)
         .map_err(|e| anyhow::anyhow!("failed to read source project HEAD: {e}"))?;
 
-    if let Err(e) = git(&["reset", "--hard", &source_project_tip], &cwd_project_dir) {
+    if let Err(e) = git(
+        &["reset", "--hard", source_project_tip.as_str()],
+        &cwd_project_dir,
+    ) {
         eprintln!("Phase 1 (project repo reset) failed: {e}");
         // Don't clean up savepoints — leave them for `rwv abort`.
         anyhow::bail!("sync failed in Phase 1 (project repo); run `rwv abort` to restore");
@@ -379,8 +449,11 @@ pub fn run_sync(cwd: &Path, source: &str, strategy: &str, force: bool) -> anyhow
 
     // Phase 2: advance per-repo branches using the now-visible lock.
     let updated_lock_path = cwd_project_dir.join("rwv.lock");
-    let updated_lock = LockFile::from_path(&updated_lock_path)
+    let mut updated_lock = LockFile::from_path(&updated_lock_path)
         .map_err(|e| anyhow::anyhow!("failed to read lock after Phase 1: {e}"))?;
+    // Resolve the freshly-loaded lock against on-disk repos so apply_strategy
+    // operates on the canonical SHA.
+    let _ = updated_lock.resolve_versions(&workspace_dir);
 
     let mut any_failure = false;
 
@@ -391,7 +464,7 @@ pub fn run_sync(cwd: &Path, source: &str, strategy: &str, force: bool) -> anyhow
             continue;
         }
 
-        match apply_strategy(&abs, lock_entry.version.as_str(), strategy) {
+        match apply_strategy(&abs, &lock_entry.version, strategy) {
             Ok(()) => {
                 // Post-sync: refresh index and working tree if stale from a
                 // shared-ref advance (HEAD advanced but index/WT were not updated).
@@ -442,6 +515,7 @@ pub fn run_abort(cwd: &Path) -> anyhow::Result<()> {
         .map_err(|e| anyhow::anyhow!("failed to read sync op marker: {e}"))?
         .trim()
         .to_owned();
+    let op_id = OpId::from_string(op_id);
 
     let cwd_project_name = find_project_name(&ctx)?;
     let cwd_project_dir = workspace_dir.join("projects").join(&cwd_project_name);
@@ -480,7 +554,7 @@ pub fn run_abort(cwd: &Path) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn abort_one_repo(repo: &Path, op_id: &str) -> anyhow::Result<()> {
+fn abort_one_repo(repo: &Path, op_id: &OpId) -> anyhow::Result<()> {
     // Run VCS-native abort if mid-op.
     if let Some(state) = crate::git::GitVcs::mid_op_state(repo) {
         let abort_args: &[&str] = match state.as_str() {
@@ -497,7 +571,7 @@ fn abort_one_repo(repo: &Path, op_id: &str) -> anyhow::Result<()> {
     // Reset to savepoint.
     match read_savepoint(repo, op_id) {
         Some(sha) => {
-            git(&["reset", "--hard", &sha], repo)
+            git(&["reset", "--hard", sha.as_str()], repo)
                 .map_err(|e| anyhow::anyhow!("reset --hard failed: {e}"))?;
             delete_savepoint(repo, op_id);
             Ok(())

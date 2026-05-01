@@ -1,7 +1,7 @@
 //! Lock logic: snapshot repo HEADs into `rwv.lock`.
 
 use crate::manifest::{LockEntry, LockFile, Manifest, Project, WorkweaveName};
-use crate::vcs::{vcs_for, RevisionId};
+use crate::vcs::vcs_for;
 use crate::workspace::{WorkspaceContext, WorkspaceLocation};
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -48,12 +48,11 @@ pub fn generate_lock(
             );
         }
 
-        // Prefer tag name at HEAD over raw SHA.
-        let version = if let Some(tag) = vcs.tag_at_head(&repo_dir)? {
-            RevisionId::new(tag)
-        } else {
-            vcs.head_revision(&repo_dir)?
-        };
+        // `head_revision` resolves to the canonical SHA and, when a tag
+        // points at HEAD, also fills in the tag display form — so the lock
+        // serializes as the tag name when available and the canonical SHA
+        // otherwise.
+        let version = vcs.head_revision(&repo_dir)?;
 
         repositories.insert(
             repo_path.clone(),

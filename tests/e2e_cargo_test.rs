@@ -284,13 +284,22 @@ fn cargo_release_version_pin_workflow() {
         .get(&protocol_key)
         .expect("lock should contain protocol entry");
 
+    // After the typed-RevisionId refactor, `as_str` returns the canonical SHA
+    // and the tag-form is preserved as the display form (which is also what
+    // gets serialized into rwv.lock).
     assert_eq!(
-        protocol_entry.version.as_str(),
+        protocol_entry.version.display_str(),
         "v0.1.0",
         "generate_lock should prefer the tag over the raw SHA for protocol"
     );
+    // Canonical SHA must still be a hex commit — the tag dereferences to a real commit.
+    assert_eq!(
+        protocol_entry.version.as_str().len(),
+        40,
+        "protocol canonical SHA should be a full 40-char hex string"
+    );
 
-    // Server has no tag, so its version should be a SHA (non-empty, not a tag).
+    // Server has no tag, so its display form is the SHA (no tag form).
     let server_key = repoweave::manifest::RepoPath::new("github/chatly/server");
     let server_entry = lock
         .repositories
@@ -298,7 +307,7 @@ fn cargo_release_version_pin_workflow() {
         .expect("lock should contain server entry");
 
     assert_ne!(
-        server_entry.version.as_str(),
+        server_entry.version.display_str(),
         "v0.1.0",
         "server should have a SHA, not the protocol tag"
     );

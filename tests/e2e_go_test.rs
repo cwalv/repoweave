@@ -397,8 +397,10 @@ repositories:\n  \
         ))
         .expect("lock should contain github/chatly/protocol");
 
+    // Tag-form is preserved as the display form (round-trips into rwv.lock as
+    // `version: v1.0.0`); `as_str` returns the canonical SHA.
     assert_eq!(
-        protocol_entry.version.as_str(),
+        protocol_entry.version.display_str(),
         "v1.0.0",
         "rwv.lock should record the tag name 'v1.0.0' for the protocol repo when HEAD is tagged"
     );

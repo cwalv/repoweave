@@ -167,7 +167,7 @@ fn lock_with_workweave_provenance() {
 
     let server = &lock.repositories[&RepoPath::new("github/acme/server")];
     assert_eq!(server.vcs_type, VcsType::Git);
-    assert_eq!(server.version, RevisionId::new("abc123def456"));
+    assert_eq!(server.version, RevisionId::raw("abc123def456"));
 }
 
 #[test]

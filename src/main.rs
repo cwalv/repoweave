@@ -9,6 +9,7 @@ use repoweave::prime;
 use repoweave::setup;
 use repoweave::status;
 use repoweave::sync;
+use repoweave::sync::SyncStrategy;
 
 use clap::{CommandFactory, Parser, Subcommand};
 use clap_complete::Shell;
@@ -101,8 +102,8 @@ enum Commands {
         /// Source workspace: a workspace name (primary, a workweave name) or a path
         source: String,
         /// Sync strategy: ff (default), rebase, or merge
-        #[arg(long, default_value = "ff")]
-        strategy: String,
+        #[arg(long, default_value = "ff", value_enum)]
+        strategy: SyncStrategy,
         /// Bypass the lock-freshness precondition
         #[arg(long)]
         force: bool,
@@ -292,7 +293,7 @@ fn main() -> anyhow::Result<()> {
             force,
         }) => {
             let cwd = std::env::current_dir()?;
-            sync::run_sync(&cwd, &source, &strategy, force)?;
+            sync::run_sync(&cwd, &source, strategy, force)?;
         }
         Some(Commands::Abort) => {
             let cwd = std::env::current_dir()?;

@@ -746,3 +746,243 @@ fn lock_all_is_removed_cli_error() {
             .or(predicate::str::contains("not a valid")),
     );
 }
+
+// ---------------------------------------------------------------------------
+// 12. RevisionId round-trip via lock load + resolve
+// ---------------------------------------------------------------------------
+
+#[test]
+fn lock_round_trip_preserves_tag_form_in_yaml() {
+    // Generate a lock with a tag at HEAD, parse it back, write again — the
+    // tag-form should survive the round-trip (i.e., `version: v1.0.0`, not the
+    // canonical SHA).
+    let tmp = tempfile::tempdir().unwrap();
+    let root = make_workspace(tmp.path(), "ws");
+
+    let repo_path = "github/acme/server";
+    init_git_repo(&root.join(repo_path));
+    let _ = common::git()
+        .args(["tag", "v1.0.0"])
+        .current_dir(root.join(repo_path))
+        .env("GIT_COMMITTER_NAME", "Test")
+        .env("GIT_COMMITTER_EMAIL", "test@test.com")
+        .output()
+        .unwrap();
+
+    let project_dir = root.join("projects").join("my-app");
+    write_manifest(
+        &project_dir,
+        &[(repo_path, "https://github.com/acme/server.git")],
+    );
+
+    rwv_cmd()
+        .arg("lock")
+        .current_dir(&project_dir)
+        .assert()
+        .success();
+
+    let lock_path = project_dir.join("rwv.lock");
+    let yaml_first = std::fs::read_to_string(&lock_path).unwrap();
+    assert!(
+        yaml_first.contains("version: v1.0.0"),
+        "first lock should serialize tag-form: {yaml_first}"
+    );
+
+    // Reparse and reserialize via the public LockFile API.
+    let lock = repoweave::manifest::LockFile::from_path(&lock_path).unwrap();
+    let yaml_round = serde_yaml::to_string(&lock).unwrap();
+    assert!(
+        yaml_round.contains("version: v1.0.0"),
+        "round-tripped YAML should preserve tag-form: {yaml_round}"
+    );
+}
+
+#[test]
+fn lock_resolve_versions_makes_tag_form_equal_head() {
+    // After loading a lock with `version: v1.0.0` and calling
+    // `resolve_versions(workspace_dir)`, the entry's RevisionId compares equal
+    // to the head's RevisionId — equality goes through canonical SHAs.
+    let tmp = tempfile::tempdir().unwrap();
+    let root = make_workspace(tmp.path(), "ws");
+
+    let repo_path = "github/acme/server";
+    init_git_repo(&root.join(repo_path));
+    let _ = common::git()
+        .args(["tag", "v1.0.0"])
+        .current_dir(root.join(repo_path))
+        .env("GIT_COMMITTER_NAME", "Test")
+        .env("GIT_COMMITTER_EMAIL", "test@test.com")
+        .output()
+        .unwrap();
+
+    // Hand-write a lock pinning the tag-form; resolution must populate
+    // canonical from rev-parse for the comparison to succeed.
+    let project_dir = root.join("projects").join("my-app");
+    write_manifest(
+        &project_dir,
+        &[(repo_path, "https://github.com/acme/server.git")],
+    );
+    let lock_path = project_dir.join("rwv.lock");
+    std::fs::write(
+        &lock_path,
+        r#"repositories:
+  github/acme/server:
+    type: git
+    url: https://github.com/acme/server.git
+    version: v1.0.0
+"#,
+    )
+    .unwrap();
+
+    let mut lock = repoweave::manifest::LockFile::from_path(&lock_path).unwrap();
+    let failures = lock.resolve_versions(&root);
+    assert!(
+        failures.is_empty(),
+        "resolution should succeed: {failures:?}"
+    );
+
+    use repoweave::vcs::Vcs;
+    let head = repoweave::git::GitVcs
+        .head_revision(&root.join(repo_path))
+        .unwrap();
+    let entry = &lock.repositories[&repoweave::manifest::RepoPath::new(repo_path)];
+    assert_eq!(
+        entry.version, head,
+        "tag-form lock entry should be == HEAD after resolve_versions"
+    );
+    // Display form is preserved post-resolve so writing back keeps the tag.
+    assert_eq!(entry.version.display_str(), "v1.0.0");
+}
+
+#[test]
+fn lock_resolve_versions_unknown_revision_returns_failure() {
+    // A lock pinning a nonexistent revision is reported in the failures list
+    // and the entry is left as-is so callers can craft a meaningful error.
+    let tmp = tempfile::tempdir().unwrap();
+    let root = make_workspace(tmp.path(), "ws");
+
+    let repo_path = "github/acme/server";
+    init_git_repo(&root.join(repo_path));
+
+    let project_dir = root.join("projects").join("my-app");
+    write_manifest(
+        &project_dir,
+        &[(repo_path, "https://github.com/acme/server.git")],
+    );
+    let lock_path = project_dir.join("rwv.lock");
+    std::fs::write(
+        &lock_path,
+        r#"repositories:
+  github/acme/server:
+    type: git
+    url: https://github.com/acme/server.git
+    version: v9.9.9-nonexistent
+"#,
+    )
+    .unwrap();
+
+    let mut lock = repoweave::manifest::LockFile::from_path(&lock_path).unwrap();
+    let failures = lock.resolve_versions(&root);
+    assert_eq!(
+        failures,
+        vec![repoweave::manifest::RepoPath::new(repo_path)],
+        "unknown revision should appear in failures"
+    );
+    let entry = &lock.repositories[&repoweave::manifest::RepoPath::new(repo_path)];
+    assert_eq!(
+        entry.version.as_str(),
+        "v9.9.9-nonexistent",
+        "unresolvable entry should retain its raw version"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// 13. SME reproducer: tag-form lock + HEAD at tag commit reports `ok`
+// ---------------------------------------------------------------------------
+
+#[test]
+fn status_ok_when_lock_pins_tag_at_current_head() {
+    // From SME's gc-wisp-mdcj: a workspace where rwv.lock has
+    // `version: v0.3.3` for repoweave and HEAD is at the v0.3.3 commit
+    // should report `ok` (not `ahead`).
+    let tmp = tempfile::tempdir().unwrap();
+    let root = make_workspace(tmp.path(), "ws");
+
+    let repo_path = "github/acme/server";
+    init_git_repo(&root.join(repo_path));
+    let _ = common::git()
+        .args(["tag", "v0.3.3"])
+        .current_dir(root.join(repo_path))
+        .env("GIT_COMMITTER_NAME", "Test")
+        .env("GIT_COMMITTER_EMAIL", "test@test.com")
+        .output()
+        .unwrap();
+
+    let project_dir = root.join("projects").join("my-app");
+    write_manifest(
+        &project_dir,
+        &[(repo_path, "https://github.com/acme/server.git")],
+    );
+    // Hand-write a tag-form lock to mirror the SME's reproducer.
+    let lock_path = project_dir.join("rwv.lock");
+    std::fs::write(
+        &lock_path,
+        r#"repositories:
+  github/acme/server:
+    type: git
+    url: https://github.com/acme/server.git
+    version: v0.3.3
+"#,
+    )
+    .unwrap();
+
+    rwv_cmd()
+        .arg("status")
+        .current_dir(&root)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("[ok]"))
+        .stdout(predicate::str::contains("[ahead]").not());
+}
+
+#[test]
+fn check_locked_ok_when_lock_pins_tag_at_current_head() {
+    // Same scenario as the status test, but exercising `rwv doctor --locked`.
+    // Should exit 0 (no drift) and not flag the entry as `tip ≠ lock`.
+    let tmp = tempfile::tempdir().unwrap();
+    let root = make_workspace(tmp.path(), "ws");
+
+    let repo_path = "github/acme/server";
+    init_git_repo(&root.join(repo_path));
+    let _ = common::git()
+        .args(["tag", "v0.3.3"])
+        .current_dir(root.join(repo_path))
+        .env("GIT_COMMITTER_NAME", "Test")
+        .env("GIT_COMMITTER_EMAIL", "test@test.com")
+        .output()
+        .unwrap();
+
+    let project_dir = root.join("projects").join("my-app");
+    write_manifest(
+        &project_dir,
+        &[(repo_path, "https://github.com/acme/server.git")],
+    );
+    let lock_path = project_dir.join("rwv.lock");
+    std::fs::write(
+        &lock_path,
+        r#"repositories:
+  github/acme/server:
+    type: git
+    url: https://github.com/acme/server.git
+    version: v0.3.3
+"#,
+    )
+    .unwrap();
+
+    rwv_cmd()
+        .args(["doctor", "--locked"])
+        .current_dir(&project_dir)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(": ok"));
+}
