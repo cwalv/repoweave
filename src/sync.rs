@@ -40,6 +40,85 @@ impl fmt::Display for SyncStrategy {
 }
 
 // ---------------------------------------------------------------------------
+// RepoSyncOutcome — per-repo result of a sync operation
+// ---------------------------------------------------------------------------
+
+#[derive(Debug)]
+enum RepoSyncOutcome {
+    /// HEAD advanced to the lock SHA.
+    Converged,
+    /// Lock SHA is already an ancestor of HEAD; no change made.
+    AlreadyAhead { commits_ahead: usize },
+    /// HEAD was already equal to the lock SHA before sync.
+    NoOp,
+    /// Strategy failed (conflict, divergence, etc.).
+    Failed { reason: String },
+}
+
+impl RepoSyncOutcome {
+    fn is_failure(&self) -> bool {
+        matches!(self, Self::Failed { .. })
+    }
+}
+
+impl fmt::Display for RepoSyncOutcome {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Converged => f.write_str("converged"),
+            Self::AlreadyAhead { commits_ahead } => write!(
+                f,
+                "already-ahead (lock is {commits_ahead} commit{s} behind HEAD; \
+                 rerun with --strategy=rebase to land HEAD on lock, or accept the divergence)",
+                s = if *commits_ahead == 1 { "" } else { "s" }
+            ),
+            Self::NoOp => f.write_str("up-to-date"),
+            Self::Failed { reason } => f.write_str(reason),
+        }
+    }
+}
+
+fn sync_one_repo(repo: &Path, target: &RevisionId, strategy: SyncStrategy) -> RepoSyncOutcome {
+    let head = match GitVcs.head_revision(repo) {
+        Ok(h) => h,
+        Err(e) => {
+            return RepoSyncOutcome::Failed {
+                reason: e.to_string(),
+            }
+        }
+    };
+
+    if head == *target {
+        return RepoSyncOutcome::NoOp;
+    }
+
+    // Detect AlreadyAhead: lock is a strict ancestor of HEAD (HEAD is past the lock).
+    let is_ancestor = git_command()
+        .args(["merge-base", "--is-ancestor", target.as_str(), "HEAD"])
+        .current_dir(repo)
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
+
+    if is_ancestor {
+        let commits_ahead = git(
+            &["rev-list", "--count", &format!("{}..HEAD", target.as_str())],
+            repo,
+        )
+        .ok()
+        .and_then(|s| s.trim().parse::<usize>().ok())
+        .unwrap_or(0);
+        return RepoSyncOutcome::AlreadyAhead { commits_ahead };
+    }
+
+    match apply_strategy(repo, target, strategy) {
+        Ok(()) => RepoSyncOutcome::Converged,
+        Err(e) => RepoSyncOutcome::Failed {
+            reason: e.to_string(),
+        },
+    }
+}
+
+// ---------------------------------------------------------------------------
 // OpId — newtype for sync operation identifiers
 // ---------------------------------------------------------------------------
 
@@ -464,19 +543,18 @@ pub fn run_sync(
             continue;
         }
 
-        match apply_strategy(&abs, &lock_entry.version, strategy) {
-            Ok(()) => {
+        let outcome = sync_one_repo(&abs, &lock_entry.version, strategy);
+        if outcome.is_failure() {
+            eprintln!("  {repo_path}: {outcome}");
+            any_failure = true;
+        } else {
+            if matches!(outcome, RepoSyncOutcome::Converged) {
                 // Post-sync: refresh index and working tree if stale from a
                 // shared-ref advance (HEAD advanced but index/WT were not updated).
                 refresh_index_if_safe(&abs);
                 refresh_working_tree_if_safe(&abs);
-                println!("  {repo_path}: ok");
             }
-            Err(e) => {
-                eprintln!("  {repo_path}: {e}");
-                any_failure = true;
-                println!("  {repo_path}: failed");
-            }
+            println!("  {repo_path}: {outcome}");
         }
     }
 

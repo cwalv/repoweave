@@ -1021,3 +1021,89 @@ fn sync_in_marker_workweave_refuses_when_workweave_own_lock_is_stale() {
         .failure()
         .stderr(predicate::str::contains("CWD lock").and(predicate::str::contains("stale")));
 }
+
+// ---------------------------------------------------------------------------
+// RepoSyncOutcome — per-repo status reporting
+// ---------------------------------------------------------------------------
+
+/// Regression: CWD is ahead of the lock target → sync reports `already-ahead`, not bare `ok`.
+///
+/// Repro from SME triage: after `rwv sync`, the per-repo line said "ok" even
+/// though HEAD didn't move to the lock SHA, leaving `rwv status` showing [ahead].
+#[test]
+fn sync_reports_already_ahead_when_cwd_is_past_lock_target() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (primary, ww, _c1) = make_shared_workspaces(tmp.path());
+
+    // Primary: advance to C2, lock at C2.
+    let c2 = make_commit(&primary.server_dir, "primary.txt", "primary\n", "primary: C2");
+    write_lock(&primary.project_dir, &[(SERVER_PATH, SERVER_URL, &c2)]);
+    git(&["add", "rwv.lock"], &primary.project_dir);
+    git(&["commit", "-m", "lock: C2"], &primary.project_dir);
+
+    // Workweave: fast-forward to C2, then add C3 (ww is now ahead of primary's lock).
+    git(&["merge", "--ff-only", "main"], &ww.server_dir);
+    let c3 = make_commit(
+        &ww.server_dir,
+        "ww-extra.txt",
+        "ww extra\n",
+        "ww: C3 (ahead of C2)",
+    );
+    write_lock(&ww.project_dir, &[(SERVER_PATH, SERVER_URL, &c3)]);
+    git(&["add", "rwv.lock"], &ww.project_dir);
+    git(&["commit", "-m", "lock: C3"], &ww.project_dir);
+
+    // Sync ww from primary: target is C2, but ww is at C3 (C2 is ancestor of C3).
+    let out = rwv()
+        .args(["sync", &primary.root.to_string_lossy()])
+        .current_dir(&ww.root)
+        .assert()
+        .success()
+        .get_output()
+        .clone();
+
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("already-ahead"),
+        "sync should report already-ahead when CWD is past the lock target; got stdout: {stdout}"
+    );
+    assert!(
+        !stdout.contains(": ok"),
+        "sync must not report bare 'ok' for already-ahead case; got stdout: {stdout}"
+    );
+}
+
+/// Regression: diverged repo + `--strategy ff` must still report `failed (cannot fast-forward...)`.
+/// Verifies the failure message structure carries through the new outcome enum unchanged.
+#[test]
+fn sync_ff_reports_failed_for_diverged_repo() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (primary, ww, _c1) = make_shared_workspaces(tmp.path());
+
+    // Primary: advance to C2.
+    let c2 = make_commit(&primary.server_dir, "primary.txt", "primary\n", "primary: C2");
+    write_lock(&primary.project_dir, &[(SERVER_PATH, SERVER_URL, &c2)]);
+    git(&["add", "rwv.lock"], &primary.project_dir);
+    git(&["commit", "-m", "lock: C2"], &primary.project_dir);
+
+    // Workweave: diverge from C1 (different file, cannot fast-forward to C2).
+    let c_ww = make_commit(&ww.server_dir, "ww.txt", "ww\n", "ww: diverged from C1");
+    write_lock(&ww.project_dir, &[(SERVER_PATH, SERVER_URL, &c_ww)]);
+    git(&["add", "rwv.lock"], &ww.project_dir);
+    git(&["commit", "-m", "lock: C_ww"], &ww.project_dir);
+
+    // ff sync: C2 and C_ww both diverge from C1 → cannot fast-forward.
+    let out = rwv()
+        .args(["sync", &primary.root.to_string_lossy()])
+        .current_dir(&ww.root)
+        .assert()
+        .failure()
+        .get_output()
+        .clone();
+
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("cannot fast-forward") || stderr.contains("failed"),
+        "diverged ff sync should report failure; got stderr: {stderr}"
+    );
+}
