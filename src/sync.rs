@@ -548,12 +548,12 @@ pub fn run_sync(
             eprintln!("  {repo_path}: {outcome}");
             any_failure = true;
         } else {
-            if matches!(outcome, RepoSyncOutcome::Converged) {
-                // Post-sync: refresh index and working tree if stale from a
-                // shared-ref advance (HEAD advanced but index/WT were not updated).
-                refresh_index_if_safe(&abs);
-                refresh_working_tree_if_safe(&abs);
-            }
+            // Post-sync: refresh index and working tree if stale. Fires on
+            // every non-failure outcome — including NoOp (HEAD already at lock
+            // but index/WT may have drifted from a shared-ref advance) and
+            // AlreadyAhead (working tree should still reflect HEAD).
+            refresh_index_if_safe(&abs);
+            refresh_working_tree_if_safe(&abs);
             println!("  {repo_path}: {outcome}");
         }
     }
