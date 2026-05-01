@@ -1036,7 +1036,12 @@ fn sync_reports_already_ahead_when_cwd_is_past_lock_target() {
     let (primary, ww, _c1) = make_shared_workspaces(tmp.path());
 
     // Primary: advance to C2, lock at C2.
-    let c2 = make_commit(&primary.server_dir, "primary.txt", "primary\n", "primary: C2");
+    let c2 = make_commit(
+        &primary.server_dir,
+        "primary.txt",
+        "primary\n",
+        "primary: C2",
+    );
     write_lock(&primary.project_dir, &[(SERVER_PATH, SERVER_URL, &c2)]);
     git(&["add", "rwv.lock"], &primary.project_dir);
     git(&["commit", "-m", "lock: C2"], &primary.project_dir);
@@ -1081,7 +1086,12 @@ fn sync_ff_reports_failed_for_diverged_repo() {
     let (primary, ww, _c1) = make_shared_workspaces(tmp.path());
 
     // Primary: advance to C2.
-    let c2 = make_commit(&primary.server_dir, "primary.txt", "primary\n", "primary: C2");
+    let c2 = make_commit(
+        &primary.server_dir,
+        "primary.txt",
+        "primary\n",
+        "primary: C2",
+    );
     write_lock(&primary.project_dir, &[(SERVER_PATH, SERVER_URL, &c2)]);
     git(&["add", "rwv.lock"], &primary.project_dir);
     git(&["commit", "-m", "lock: C2"], &primary.project_dir);
