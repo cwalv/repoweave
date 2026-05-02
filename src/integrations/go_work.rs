@@ -18,7 +18,10 @@ impl Integration for GoWork {
             return Ok(());
         }
 
-        let mut content = String::from("go 1.21\n\nuse (\n");
+        let mut content = match max_go_version(&paths, ctx.workspace_root) {
+            Some(v) => format!("go {v}\n\nuse (\n"),
+            None => String::from("use (\n"),
+        };
         for p in &paths {
             content.push_str(&format!("    ./{}\n", p));
         }
@@ -59,4 +62,29 @@ impl Integration for GoWork {
         }
         vec!["go.work".to_string(), "go.sum".to_string()]
     }
+}
+
+fn max_go_version(paths: &[impl AsRef<str>], workspace_root: &Path) -> Option<String> {
+    let mut max: Option<(u64, u64)> = None;
+    for p in paths {
+        let go_mod = workspace_root.join(p.as_ref()).join("go.mod");
+        if let Ok(content) = std::fs::read_to_string(go_mod) {
+            for line in content.lines() {
+                if let Some(rest) = line.strip_prefix("go ") {
+                    let parts: Vec<&str> = rest.trim().splitn(3, '.').collect();
+                    if parts.len() >= 2 {
+                        if let (Ok(maj), Ok(min)) =
+                            (parts[0].parse::<u64>(), parts[1].parse::<u64>())
+                        {
+                            if max.is_none_or(|m| (maj, min) > m) {
+                                max = Some((maj, min));
+                            }
+                        }
+                    }
+                    break;
+                }
+            }
+        }
+    }
+    max.map(|(maj, min)| format!("{maj}.{min}"))
 }

@@ -414,8 +414,16 @@ mod go_work {
         let tmp = TempDir::new().unwrap();
         let root = tmp.path();
 
-        touch(root, "github/chatly/protocol/go.mod");
-        touch(root, "github/chatly/server/go.mod");
+        write_file(
+            root,
+            "github/chatly/protocol/go.mod",
+            "module github.com/chatly/protocol\n\ngo 1.21\n",
+        );
+        write_file(
+            root,
+            "github/chatly/server/go.mod",
+            "module github.com/chatly/server\n\ngo 1.22\n",
+        );
 
         let manifest = make_manifest(vec![
             ("github/chatly/protocol", Role::Primary),
@@ -431,7 +439,7 @@ mod go_work {
 
         let content = std::fs::read_to_string(root.join("go.work")).unwrap();
         let expected =
-            "go 1.21\n\nuse (\n    ./github/chatly/protocol\n    ./github/chatly/server\n)\n";
+            "go 1.22\n\nuse (\n    ./github/chatly/protocol\n    ./github/chatly/server\n)\n";
         assert_eq!(content, expected);
     }
 
