@@ -84,28 +84,41 @@ fn copy_dir_recursive(src: &Path, dst: &Path) -> anyhow::Result<()> {
 /// Also creates a worktree for the project repo, processes `workweave:` artifacts,
 /// writes the marker file, writes `.rwv-active`, and runs activate.
 ///
+/// `primary_root` locates the surrounding weave: it determines where new
+/// workweaves live (`<primary_parent>/.workweaves/`) and is recorded in the
+/// `.rwv-workweave` marker so the workweave knows its primary.
+///
+/// `source_root` is the workspace forked from: the manifest, per-repo HEADs,
+/// `projects/<project>/` worktree, and `workweave:` copy/link sources are
+/// all read from `source_root`. When forking from primary, pass the same path
+/// for both. When forking from another workweave (e.g. a Gas City rig
+/// creating a peer workweave from inside itself), `source_root` is that
+/// workweave's directory while `primary_root` remains the primary weave.
+///
 /// If the workweave directory already exists, behavior depends on `force`:
 /// - `force == false`: validate that the existing workweave matches this
-///   `(primary, project)` pair and has no local modifications, then
-///   short-circuit. This preserves non-git state (e.g. `.runtime/`,
-///   `.claude/`) written by agents between invocations — the contract
-///   relied on by Gas City's `gc runtime request-restart` flow.
+///   `(primary, project)` pair and has no local modifications relative to
+///   `source_root`, then short-circuit. This preserves non-git state (e.g.
+///   `.runtime/`, `.claude/`) written by agents between invocations — the
+///   contract relied on by Gas City's `gc runtime request-restart` flow.
 ///   Returns an error if the marker is missing or for a different project,
-///   or if any worktree has uncommitted changes or advanced commits.
+///   or if any worktree has uncommitted changes or has diverged from the
+///   source.
 /// - `force == true`: destroy the existing workweave and recreate from
 ///   scratch. Intended for explicit rebuild scenarios (corruption
 ///   recovery, or switching a slot to a different project).
 ///
 /// Returns the absolute path of the created workweave directory.
 pub fn create_workweave(
-    ws_root: &Path,
+    primary_root: &Path,
+    source_root: &Path,
     project: &str,
     name: &WorkweaveName,
     force: bool,
 ) -> anyhow::Result<PathBuf> {
-    let manifest = load_manifest(ws_root, project)?;
-    let pname = primary_name(ws_root);
-    let parent = workweave_parent(ws_root);
+    let manifest = load_manifest(source_root, project)?;
+    let pname = primary_name(primary_root);
+    let parent = workweave_parent(primary_root);
     let workweave_dir = parent.join(weave_dir_name(&pname, name));
 
     if workweave_dir.exists() {
@@ -121,12 +134,19 @@ pub fn create_workweave(
                 None => false,
             };
             if can_use_structured_delete {
-                delete_workweave(ws_root, project, name)?;
+                delete_workweave(primary_root, project, name)?;
             } else {
                 std::fs::remove_dir_all(&workweave_dir)?;
             }
         } else {
-            return reuse_existing_workweave(ws_root, project, name, &workweave_dir, &manifest);
+            return reuse_existing_workweave(
+                primary_root,
+                source_root,
+                project,
+                name,
+                &workweave_dir,
+                &manifest,
+            );
         }
     }
 
@@ -134,10 +154,12 @@ pub fn create_workweave(
 
     let mut errors: Vec<String> = Vec::new();
 
-    // Create worktrees for each repo in the manifest.
+    // Create worktrees for each repo in the manifest. Forks come from
+    // source_root so peer workweaves rooted in another workweave's HEADs
+    // diverge cleanly from that parent rather than from primary.
     for (repo_path, entry) in &manifest.repositories {
         let vcs = vcs_for(entry.vcs_type);
-        let repo_abs = ws_root.join(repo_path.as_path());
+        let repo_abs = source_root.join(repo_path.as_path());
 
         let result = (|| -> anyhow::Result<()> {
             // Get the current branch (or fall back to "HEAD").
@@ -179,7 +201,7 @@ pub fn create_workweave(
     // Create worktree for the project repo (if it is a git repo).
     // If the project directory exists but is not a git repo, copy it into the
     // workweave so that activate_workweave can find rwv.yaml there.
-    let project_dir = ws_root.join("projects").join(project);
+    let project_dir = source_root.join("projects").join(project);
     let project_wt_dest = workweave_dir.join("projects").join(project);
     if GitVcs.is_repo(&project_dir) {
         let result = (|| -> anyhow::Result<()> {
@@ -206,11 +228,12 @@ pub fn create_workweave(
         copy_dir_recursive(&project_dir, &project_wt_dest)?;
     }
 
-    // Process WorkweaveConfig artifacts.
+    // Process WorkweaveConfig artifacts. Sources resolve against source_root
+    // so artifacts follow the workspace being forked from.
     if let Some(ref ww_config) = manifest.workweave {
         // Copy entries.
         for entry in &ww_config.copy {
-            let source = ws_root.join(entry);
+            let source = source_root.join(entry);
             let dest = workweave_dir.join(entry);
             if source.exists() {
                 if let Some(parent) = dest.parent() {
@@ -224,12 +247,12 @@ pub fn create_workweave(
             }
         }
 
-        // Link entries — absolute symlinks to primary's canonical paths.
+        // Link entries — absolute symlinks to the source's canonical paths.
         for entry in &ww_config.link {
-            let source = ws_root
+            let source = source_root
                 .join(entry)
                 .canonicalize()
-                .unwrap_or_else(|_| ws_root.join(entry));
+                .unwrap_or_else(|_| source_root.join(entry));
             let dest = workweave_dir.join(entry);
             if source.exists() {
                 if let Some(parent) = dest.parent() {
@@ -241,9 +264,11 @@ pub fn create_workweave(
         }
     }
 
-    // Write .rwv-workweave marker file.
+    // Write .rwv-workweave marker file. The marker records the primary so
+    // workweaves always know how to find their parent weave regardless of
+    // where they were forked from.
     let marker = WorkweaveMarker {
-        primary: ws_root.to_path_buf(),
+        primary: primary_root.to_path_buf(),
         project: ProjectName::new(project),
     };
     marker.write(&workweave_dir)?;
@@ -257,15 +282,17 @@ pub fn create_workweave(
     Ok(workweave_dir)
 }
 
-/// Validate that an existing workweave directory matches `(ws_root, project, name)`
-/// and is in a clean state, then return its path without modifying anything.
+/// Validate that an existing workweave directory matches `(primary_root, project, name)`
+/// and is in a clean state relative to `source_root`, then return its path
+/// without modifying anything.
 ///
 /// Called from [`create_workweave`] on re-invocation without `--force`. Refuses
 /// if the `.rwv-workweave` marker is missing or for a different primary/project,
-/// or if any per-repo worktree has uncommitted changes or advanced commits
-/// relative to the primary.
+/// or if any per-repo worktree has uncommitted changes or has diverged from the
+/// source's HEAD.
 fn reuse_existing_workweave(
-    ws_root: &Path,
+    primary_root: &Path,
+    source_root: &Path,
     project: &str,
     _name: &WorkweaveName,
     workweave_dir: &Path,
@@ -293,23 +320,23 @@ fn reuse_existing_workweave(
         .primary
         .canonicalize()
         .unwrap_or_else(|_| marker.primary.clone());
-    let ws_canonical = ws_root
+    let primary_canonical = primary_root
         .canonicalize()
-        .unwrap_or_else(|_| ws_root.to_path_buf());
-    if marker_primary != ws_canonical {
+        .unwrap_or_else(|_| primary_root.to_path_buf());
+    if marker_primary != primary_canonical {
         bail!(
             "workweave at {} is for primary workspace {}, refusing to recreate for {}; \
              rerun with --force to overwrite",
             workweave_dir.display(),
             marker.primary.display(),
-            ws_root.display()
+            primary_root.display()
         );
     }
 
-    // Detect local modifications (uncommitted changes or advanced commits)
-    // in any existing worktree. Missing worktrees are not "modified" — a
-    // manifest may have grown since the workweave was created; `rwv
-    // workweave sync` is the path for adding them.
+    // Detect local modifications (uncommitted changes or HEAD divergence
+    // from source) in any existing worktree. Missing worktrees are not
+    // "modified" — a manifest may have grown since the workweave was
+    // created; `rwv workweave sync` is the path for adding them.
     let mut modified: Vec<String> = Vec::new();
     for (repo_path, entry) in &manifest.repositories {
         let vcs = vcs_for(entry.vcs_type);
@@ -321,15 +348,15 @@ fn reuse_existing_workweave(
             modified.push(format!("{}: uncommitted changes", repo_path.as_str()));
             continue;
         }
-        let repo_abs = ws_root.join(repo_path.as_path());
+        let repo_abs = source_root.join(repo_path.as_path());
         let wt_head = vcs.head_revision(&worktree_dest)?;
-        let primary_head = vcs.head_revision(&repo_abs)?;
-        if wt_head != primary_head {
+        let source_head = vcs.head_revision(&repo_abs)?;
+        if wt_head != source_head {
             modified.push(format!(
-                "{}: worktree has diverged from primary ({} vs {})",
+                "{}: worktree has diverged from source ({} vs {})",
                 repo_path.as_str(),
                 short_sha(wt_head.as_str()),
-                short_sha(primary_head.as_str()),
+                short_sha(source_head.as_str()),
             ));
         }
     }
@@ -546,7 +573,8 @@ pub fn handle_claude_hook() -> anyhow::Result<()> {
                 .ok_or_else(|| anyhow!("missing cwd in hook input"))?;
 
             let ws_ctx = crate::workspace::WorkspaceContext::resolve(Path::new(&cwd), None)?;
-            let ws_root = ws_ctx.primary_path();
+            let primary_root = ws_ctx.primary_path();
+            let source_root = ws_ctx.active_path();
 
             // Prefer the workweave's project (from .rwv-workweave marker) over
             // the primary weave's .rwv-active. This matters when a sub-agent
@@ -554,15 +582,20 @@ pub fn handle_claude_hook() -> anyhow::Result<()> {
             // active project.
             let project = match &ws_ctx.location {
                 crate::workspace::WorkspaceLocation::Workweave { project, .. } => project.clone(),
-                _ => read_active_project(ws_root)
-                    .ok_or_else(|| anyhow!("no .rwv-active found in {}", ws_root.display()))?,
+                _ => read_active_project(primary_root)
+                    .ok_or_else(|| anyhow!("no .rwv-active found in {}", primary_root.display()))?,
             };
 
             let name =
                 derive_workweave_name(input.branch_name.as_deref(), input.session_id.as_deref());
 
-            let path =
-                create_workweave(ws_root, project.as_str(), &WorkweaveName::new(&name), false)?;
+            let path = create_workweave(
+                primary_root,
+                source_root,
+                project.as_str(),
+                &WorkweaveName::new(&name),
+                false,
+            )?;
             println!("{}", path.display());
         }
         Some("WorktreeRemove") => {

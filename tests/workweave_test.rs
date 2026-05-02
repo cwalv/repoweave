@@ -1248,6 +1248,157 @@ fn create_workweave_handles_stale_branches() {
 }
 
 // ============================================================================
+// Fork source — peer workweaves fork from CWD's active workspace
+// ============================================================================
+
+/// Helper: read HEAD revision SHA from a git repo or worktree.
+fn head_sha(repo: &Path) -> String {
+    let output = common::git()
+        .args(["rev-parse", "HEAD"])
+        .current_dir(repo)
+        .output()
+        .expect("git rev-parse HEAD");
+    assert!(
+        output.status.success(),
+        "git rev-parse HEAD failed in {}: {}",
+        repo.display(),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    String::from_utf8_lossy(&output.stdout).trim().to_string()
+}
+
+#[test]
+fn workweave_create_from_workweave_cwd_forks_from_workweave() {
+    // When `rwv workweave create` is invoked from inside a workweave (no
+    // `--from` flag), the new peer should fork from that workweave's HEAD,
+    // not from primary's. Establishes the rig=workweave model: peer rooted
+    // in rig means rig→peer is a fast-forward and `rwv sync` works without
+    // ancestor divergence.
+    let tmp = tempfile::tempdir().unwrap();
+    let ws = make_workspace(tmp.path(), "web-app");
+
+    let weaveroot = tmp.path().join(".workweaves");
+    std::fs::create_dir_all(&weaveroot).unwrap();
+
+    // Create the rig workweave from primary CWD (today's behavior).
+    rwv()
+        .args(["workweave", "web-app", "create", "rig"])
+        .env("RWV_WORKWEAVE_DIR", &weaveroot)
+        .current_dir(&ws)
+        .assert()
+        .success();
+
+    let rig_dir = weaveroot.join("ws--rig");
+    let rig_repo = rig_dir.join("github/org/repo");
+    let primary_repo = ws.join("github/org/repo");
+
+    // Advance the rig's repo so its HEAD diverges from primary's. The
+    // commit lands on the rig's ephemeral branch only.
+    std::fs::write(rig_repo.join("rig-marker.txt"), "advanced in rig\n").unwrap();
+    git(&["add", "rig-marker.txt"], &rig_repo);
+    git(&["commit", "-m", "advance rig"], &rig_repo);
+
+    let primary_head = head_sha(&primary_repo);
+    let rig_head = head_sha(&rig_repo);
+    assert_ne!(
+        primary_head, rig_head,
+        "rig should have advanced past primary; primary={primary_head}, rig={rig_head}"
+    );
+
+    // Create a peer workweave from inside the rig. Default (no --from)
+    // should fork from rig.
+    rwv()
+        .args(["workweave", "web-app", "create", "peer"])
+        .env("RWV_WORKWEAVE_DIR", &weaveroot)
+        .current_dir(&rig_dir)
+        .assert()
+        .success();
+
+    // Peer should land in the same .workweaves/ as rig, not nested under
+    // rig — workweaves are flat under primary's parent.
+    let peer_dir = weaveroot.join("ws--peer");
+    assert!(
+        peer_dir.exists(),
+        "peer workweave should live alongside rig at {}, not nested under rig",
+        peer_dir.display()
+    );
+    assert!(
+        !rig_dir.join(".workweaves").exists(),
+        "peer should not be created nested under rig at {}/.workweaves",
+        rig_dir.display()
+    );
+
+    let peer_repo = peer_dir.join("github/org/repo");
+    let peer_head = head_sha(&peer_repo);
+    assert_eq!(
+        peer_head, rig_head,
+        "peer forked from rig CWD should start at rig's HEAD ({rig_head}), got peer={peer_head}, primary={primary_head}"
+    );
+
+    // Marker still points at primary, regardless of source.
+    let marker = std::fs::read_to_string(peer_dir.join(".rwv-workweave")).unwrap();
+    let ws_canonical = ws.canonicalize().unwrap();
+    assert!(
+        marker.contains(ws_canonical.to_str().unwrap()),
+        "peer marker should record primary {}, got:\n{marker}",
+        ws_canonical.display()
+    );
+}
+
+#[test]
+fn workweave_create_from_primary_flag_overrides_active_path() {
+    // When invoked from inside a workweave with `--from primary`, the new
+    // peer should fork from primary's HEAD even though CWD's active
+    // workspace is the rig. Escape hatch for operators who want the old
+    // behavior explicitly.
+    let tmp = tempfile::tempdir().unwrap();
+    let ws = make_workspace(tmp.path(), "web-app");
+
+    let weaveroot = tmp.path().join(".workweaves");
+    std::fs::create_dir_all(&weaveroot).unwrap();
+
+    rwv()
+        .args(["workweave", "web-app", "create", "rig"])
+        .env("RWV_WORKWEAVE_DIR", &weaveroot)
+        .current_dir(&ws)
+        .assert()
+        .success();
+
+    let rig_dir = weaveroot.join("ws--rig");
+    let rig_repo = rig_dir.join("github/org/repo");
+    let primary_repo = ws.join("github/org/repo");
+
+    std::fs::write(rig_repo.join("rig-marker.txt"), "advanced\n").unwrap();
+    git(&["add", "rig-marker.txt"], &rig_repo);
+    git(&["commit", "-m", "advance rig"], &rig_repo);
+
+    let primary_head = head_sha(&primary_repo);
+    let rig_head = head_sha(&rig_repo);
+    assert_ne!(primary_head, rig_head);
+
+    rwv()
+        .args([
+            "workweave",
+            "web-app",
+            "create",
+            "peer",
+            "--from",
+            "primary",
+        ])
+        .env("RWV_WORKWEAVE_DIR", &weaveroot)
+        .current_dir(&rig_dir)
+        .assert()
+        .success();
+
+    let peer_repo = weaveroot.join("ws--peer/github/org/repo");
+    let peer_head = head_sha(&peer_repo);
+    assert_eq!(
+        peer_head, primary_head,
+        "peer with --from primary should start at primary's HEAD ({primary_head}), got peer={peer_head}, rig={rig_head}"
+    );
+}
+
+// ============================================================================
 // --claude-hook flag
 // ============================================================================
 

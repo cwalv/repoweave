@@ -269,6 +269,12 @@ A **workweave** is a worktree-based derivative of the weave, created on demand f
 
 `node_modules/`, `.venv/`, branches, and generated files are all per-workweave. One workweave can be on `feature-A` while another is on `main`, while the weave stays undisturbed.
 
+### Fork source
+
+`rwv workweave {project} create {name}` forks the new workweave from CWD's active workspace by default — primary when invoked from primary, or the workweave itself when invoked from inside one. This makes peer workweaves rooted in their parent: a workweave created from inside another workweave starts at that workweave's HEADs, so the parent→peer relationship is a clean fast-forward and `rwv sync` works without ancestor divergence.
+
+Use `--from <source>` to override. Accepts `primary`, an absolute path, or a relative path (resolved against the primary weave so `--from .workweaves/foundations--rig` references a sibling workweave by directory name). Regardless of fork source, all workweaves live alongside each other under primary's `.workweaves/`, and the `.rwv-workweave` marker always records the primary.
+
 Use `rwv sync <source>` to align one workspace with another's committed `rwv.lock` — the direction-neutral primitive for bringing workweave work home or catching a workweave up to primary.
 
 See the [Tutorial](./tutorial.md#workweaves) for use-case walkthroughs (feature branches, PR review, agent isolation, parallel projects).
@@ -289,7 +295,7 @@ Commands like `add`, `remove`, `lock`, and `check` infer the project and workspa
 | Command | What it does |
 |---|---|
 | `rwv` | Show current context (weave, project, workweave, repos). |
-| `rwv workweave {project} create [name]` | Create a workweave (isolated working copy with worktrees on ephemeral branches). |
+| `rwv workweave {project} create [name]` | Create a workweave (isolated working copy with worktrees on ephemeral branches). Forks from CWD's active workspace by default; `--from <source>` (`primary`, a path) overrides. |
 | `rwv workweave {project} delete {name}` | Delete a workweave (remove worktrees, clean up ephemeral branches). |
 | `rwv workweave {project} list` | List workweaves for a project. |
 | `rwv init {project}` | Create a new project directory with empty `rwv.yaml`. Optional `--provider {registry}/{owner}` sets up the remote. |

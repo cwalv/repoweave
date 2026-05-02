@@ -287,7 +287,7 @@ fn workweave_recreate_refuses_on_local_modifications() {
         .current_dir(&ws)
         .assert()
         .failure()
-        .stderr(predicate::str::contains("diverged from primary"));
+        .stderr(predicate::str::contains("diverged from source"));
 
     // Commit must still be there.
     assert_eq!(

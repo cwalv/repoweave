@@ -162,6 +162,14 @@ enum WorkweaveAction {
         /// path). Use `--force` for explicit rebuild scenarios.
         #[arg(long)]
         force: bool,
+        /// Workspace to fork the new workweave from. Accepts `primary`, an
+        /// absolute or relative path, or is omitted to fork from CWD's
+        /// active workspace (the workweave when invoked from inside one,
+        /// otherwise primary). Relative paths resolve against primary, so
+        /// peer workweaves can be referenced by directory name (e.g.
+        /// `--from .workweaves/foundations--fo-city`).
+        #[arg(long)]
+        from: Option<String>,
     },
     /// Delete a workweave
     Delete {
@@ -205,25 +213,38 @@ fn main() -> anyhow::Result<()> {
                 let project = project.expect("project is required unless --claude-hook is set");
                 let cwd = std::env::current_dir()?;
                 let ctx = WorkspaceContext::resolve(&cwd, None)?;
-                let ws_root = ctx.primary_path();
+                let primary_root = ctx.primary_path();
 
                 match action {
                     Some(WorkweaveAction::List) | None => {
-                        let names = repoweave::workweave::list_workweaves(ws_root)?;
+                        let names = repoweave::workweave::list_workweaves(primary_root)?;
                         for n in &names {
                             println!("{}", n);
                         }
                     }
                     Some(WorkweaveAction::Delete { name }) => {
                         repoweave::workweave::delete_workweave(
-                            ws_root,
+                            primary_root,
                             &project,
                             &WorkweaveName::new(name),
                         )?;
                     }
-                    Some(WorkweaveAction::Create { name, force }) => {
+                    Some(WorkweaveAction::Create { name, force, from }) => {
+                        let source_root = match from.as_deref() {
+                            None => ctx.active_path().to_path_buf(),
+                            Some("primary") => primary_root.to_path_buf(),
+                            Some(s) => {
+                                let p = std::path::PathBuf::from(s);
+                                if p.is_absolute() {
+                                    p
+                                } else {
+                                    primary_root.join(s)
+                                }
+                            }
+                        };
                         let workweave_path = repoweave::workweave::create_workweave(
-                            ws_root,
+                            primary_root,
+                            &source_root,
                             &project,
                             &WorkweaveName::new(name),
                             force,
