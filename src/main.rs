@@ -80,6 +80,9 @@ enum Commands {
         /// Allow locking repos with uncommitted changes
         #[arg(long)]
         dirty: bool,
+        /// Commit rwv.lock after writing it
+        #[arg(long)]
+        commit: bool,
     },
     /// Convention enforcement and lock-freshness checking
     #[command(alias = "check")]
@@ -265,9 +268,9 @@ fn main() -> anyhow::Result<()> {
             let cwd = std::env::current_dir()?;
             add_remove::run_remove(&path, delete, force, &cwd)?;
         }
-        Some(Commands::Lock { dirty }) => {
+        Some(Commands::Lock { dirty, commit }) => {
             let cwd = std::env::current_dir()?;
-            lock::lock(&cwd, dirty)?;
+            lock::lock(&cwd, dirty, commit)?;
         }
         Some(Commands::Doctor { locked, fix }) => {
             let cwd = std::env::current_dir()?;

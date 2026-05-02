@@ -897,6 +897,134 @@ fn lock_resolve_versions_unknown_revision_returns_failure() {
 }
 
 // ---------------------------------------------------------------------------
+// 14. --commit flag: commits rwv.lock after writing
+// ---------------------------------------------------------------------------
+
+#[test]
+fn lock_commit_flag_commits_lock_file() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = make_workspace(tmp.path(), "ws");
+
+    let run_git = |args: &[&str]| {
+        let out = common::git()
+            .args(args)
+            .current_dir(&root)
+            .env("GIT_AUTHOR_NAME", "Test")
+            .env("GIT_AUTHOR_EMAIL", "test@test.com")
+            .env("GIT_COMMITTER_NAME", "Test")
+            .env("GIT_COMMITTER_EMAIL", "test@test.com")
+            .output()
+            .expect("git command failed to start");
+        assert!(
+            out.status.success(),
+            "git {:?} failed: {}",
+            args,
+            String::from_utf8_lossy(&out.stderr)
+        );
+        String::from_utf8(out.stdout).unwrap().trim().to_string()
+    };
+
+    // Init a git repo at the workspace root and configure local identity.
+    run_git(&["init", "-b", "main"]);
+    run_git(&["config", "user.email", "test@test.com"]);
+    run_git(&["config", "user.name", "Test"]);
+
+    let repo_path = "github/acme/server";
+    init_git_repo(&root.join(repo_path));
+
+    let project_dir = root.join("projects").join("my-app");
+    write_manifest(
+        &project_dir,
+        &[(repo_path, "https://github.com/acme/server.git")],
+    );
+
+    // Commit the initial workspace state so HEAD exists.
+    run_git(&["add", "."]);
+    run_git(&["commit", "-m", "initial"]);
+
+    rwv_cmd()
+        .args(["lock", "--commit"])
+        .current_dir(&project_dir)
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("Committed rwv.lock"));
+
+    // Lock file must exist.
+    assert!(project_dir.join("rwv.lock").exists());
+
+    // A commit with the conventional message must appear in the log.
+    let log = run_git(&["log", "--oneline"]);
+    assert!(
+        log.contains("chore: update rwv.lock"),
+        "expected commit message in log: {log}"
+    );
+}
+
+#[test]
+fn lock_commit_flag_skips_when_lock_unchanged() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = make_workspace(tmp.path(), "ws");
+
+    let run_git = |args: &[&str]| {
+        let out = common::git()
+            .args(args)
+            .current_dir(&root)
+            .env("GIT_AUTHOR_NAME", "Test")
+            .env("GIT_AUTHOR_EMAIL", "test@test.com")
+            .env("GIT_COMMITTER_NAME", "Test")
+            .env("GIT_COMMITTER_EMAIL", "test@test.com")
+            .output()
+            .expect("git command failed to start");
+        assert!(
+            out.status.success(),
+            "git {:?} failed: {}",
+            args,
+            String::from_utf8_lossy(&out.stderr)
+        );
+        String::from_utf8(out.stdout).unwrap().trim().to_string()
+    };
+
+    run_git(&["init", "-b", "main"]);
+    run_git(&["config", "user.email", "test@test.com"]);
+    run_git(&["config", "user.name", "Test"]);
+
+    let repo_path = "github/acme/server";
+    init_git_repo(&root.join(repo_path));
+
+    let project_dir = root.join("projects").join("my-app");
+    write_manifest(
+        &project_dir,
+        &[(repo_path, "https://github.com/acme/server.git")],
+    );
+
+    run_git(&["add", "."]);
+    run_git(&["commit", "-m", "initial"]);
+
+    // First lock --commit creates the commit.
+    rwv_cmd()
+        .args(["lock", "--commit"])
+        .current_dir(&project_dir)
+        .assert()
+        .success();
+
+    let log_after_first = run_git(&["log", "--oneline"]);
+
+    // Second lock --commit: lock unchanged — must skip the commit.
+    rwv_cmd()
+        .args(["lock", "--commit"])
+        .current_dir(&project_dir)
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("nothing to commit"));
+
+    let log_after_second = run_git(&["log", "--oneline"]);
+    assert_eq!(
+        log_after_first, log_after_second,
+        "second --commit must not create a new commit when lock is unchanged"
+    );
+}
+
+// ---------------------------------------------------------------------------
 // 13. SME reproducer: tag-form lock + HEAD at tag commit reports `ok`
 // ---------------------------------------------------------------------------
 

@@ -79,10 +79,62 @@ pub fn write_lock(lock: &LockFile, path: &Path) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Commit the lock file at `lock_path` into the git repo at `workspace_root`.
+///
+/// Stages `lock_path`, skips the commit if nothing changed, and commits with a
+/// conventional-style message otherwise.
+fn commit_lock_file(workspace_root: &Path, lock_path: &Path) -> anyhow::Result<()> {
+    use crate::git::git_command;
+
+    let lock_str = lock_path
+        .to_str()
+        .ok_or_else(|| anyhow::anyhow!("lock path is not valid UTF-8"))?;
+
+    let add_out = git_command()
+        .args(["add", lock_str])
+        .current_dir(workspace_root)
+        .output()
+        .map_err(|e| anyhow::anyhow!("failed to run git add: {e}"))?;
+
+    if !add_out.status.success() {
+        let stderr = String::from_utf8_lossy(&add_out.stderr);
+        anyhow::bail!("git add failed: {}", stderr.trim());
+    }
+
+    // `git diff --cached --quiet` exits 0 when nothing is staged.
+    let nothing_staged = git_command()
+        .args(["diff", "--cached", "--quiet"])
+        .current_dir(workspace_root)
+        .output()
+        .map_err(|e| anyhow::anyhow!("failed to check staged changes: {e}"))?
+        .status
+        .success();
+
+    if nothing_staged {
+        eprintln!("Lock unchanged, nothing to commit.");
+        return Ok(());
+    }
+
+    let commit_out = git_command()
+        .args(["commit", "-m", "chore: update rwv.lock"])
+        .current_dir(workspace_root)
+        .output()
+        .map_err(|e| anyhow::anyhow!("failed to run git commit: {e}"))?;
+
+    if !commit_out.status.success() {
+        let stderr = String::from_utf8_lossy(&commit_out.stderr);
+        anyhow::bail!("git commit failed: {}", stderr.trim());
+    }
+
+    eprintln!("Committed rwv.lock");
+    Ok(())
+}
+
 /// Execute `rwv lock` for the current workspace context.
 ///
 /// When `dirty` is true, the uncommitted-changes check is skipped.
-pub fn lock(cwd: &Path, dirty: bool) -> anyhow::Result<()> {
+/// When `commit` is true, the lock file is staged and committed after writing.
+pub fn lock(cwd: &Path, dirty: bool, commit: bool) -> anyhow::Result<()> {
     use crate::integration::Severity;
     use crate::integration_runner::run_lock_hooks;
     use crate::integrations::builtin_integrations;
@@ -139,6 +191,10 @@ pub fn lock(cwd: &Path, dirty: bool) -> anyhow::Result<()> {
             Severity::Error => "error",
         };
         eprintln!("[{prefix}] {}: {}", issue.integration, issue.message);
+    }
+
+    if commit {
+        commit_lock_file(ctx.active_path(), &lock_path)?;
     }
 
     Ok(())
