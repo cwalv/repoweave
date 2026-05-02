@@ -6,6 +6,45 @@ use crate::workspace::{WorkspaceContext, WorkspaceLocation};
 use std::collections::BTreeMap;
 use std::path::Path;
 
+/// Build a commit message summarising which repos' lock entries changed.
+///
+/// When `old_lock` is `None` (fresh lock), all repos appear in the list.
+/// Otherwise, only repos whose version advanced are listed. Versions are
+/// compared by canonical SHA and by display form to correctly handle
+/// tag-pinned entries that survived deserialization as raw strings.
+fn build_commit_message(new_lock: &LockFile, old_lock: Option<&LockFile>) -> String {
+    let changed: Vec<_> = new_lock
+        .repositories
+        .iter()
+        .filter(|(path, new_entry)| {
+            old_lock.map_or(true, |old| {
+                old.repositories.get(*path).map_or(true, |old_entry| {
+                    old_entry.version != new_entry.version
+                        && old_entry.version.display_str() != new_entry.version.display_str()
+                })
+            })
+        })
+        .collect();
+
+    let n = changed.len();
+    if n == 0 {
+        return "lock: no changes".to_string();
+    }
+
+    let mut msg = format!("lock: refresh {} repo{}", n, if n == 1 { "" } else { "s" });
+    msg.push_str("\n\n");
+    for (path, entry) in &changed {
+        let ver = entry.version.display_str();
+        let abbrev = if ver.len() == 40 && ver.chars().all(|c| c.is_ascii_hexdigit()) {
+            &ver[..7]
+        } else {
+            ver
+        };
+        msg.push_str(&format!("  - {}: {}\n", path, abbrev));
+    }
+    msg.trim_end().to_string()
+}
+
 /// Generate a [`LockFile`] for a project, resolving HEAD revisions from the
 /// workspace (weave or workweave).
 ///
@@ -81,10 +120,49 @@ pub fn write_lock(lock: &LockFile, path: &Path) -> anyhow::Result<()> {
 
 /// Commit the lock file at `lock_path` into the git repo at `workspace_root`.
 ///
-/// Stages `lock_path`, skips the commit if nothing changed, and commits with a
-/// conventional-style message otherwise.
-fn commit_lock_file(workspace_root: &Path, lock_path: &Path) -> anyhow::Result<()> {
+/// Refuses if the workspace has uncommitted changes to files other than the
+/// lock file — the auto-commit must not bundle unrelated work-in-progress.
+/// Stages `lock_path`, skips the commit if nothing changed, and commits with
+/// a multi-repo summary message otherwise.
+fn commit_lock_file(
+    workspace_root: &Path,
+    lock_path: &Path,
+    new_lock: &LockFile,
+    old_lock: Option<&LockFile>,
+) -> anyhow::Result<()> {
     use crate::git::git_command;
+
+    // Compute the lock path relative to workspace_root for status comparison.
+    let lock_relative = lock_path
+        .strip_prefix(workspace_root)
+        .unwrap_or(lock_path);
+    let lock_relative_str = lock_relative.to_string_lossy();
+
+    // Dirty check: refuse when non-lock tracked files have uncommitted changes.
+    let status_out = git_command()
+        .args(["status", "--porcelain"])
+        .current_dir(workspace_root)
+        .output()
+        .map_err(|e| anyhow::anyhow!("failed to run git status: {e}"))?;
+    if !status_out.status.success() {
+        let stderr = String::from_utf8_lossy(&status_out.stderr);
+        anyhow::bail!("git status failed: {}", stderr.trim());
+    }
+    let status_str = String::from_utf8_lossy(&status_out.stdout);
+    let has_other_changes = status_str.lines().any(|line| {
+        if line.starts_with("??") {
+            return false; // untracked files are never committed
+        }
+        // Porcelain format: "XY path" — path starts at byte 3.
+        let path = line.get(3..).unwrap_or("").trim();
+        path != lock_relative_str.as_ref()
+    });
+    if has_other_changes {
+        anyhow::bail!(
+            "workspace has uncommitted changes outside rwv.lock; \
+             commit or stash them before using --commit"
+        );
+    }
 
     let lock_str = lock_path
         .to_str()
@@ -115,8 +193,10 @@ fn commit_lock_file(workspace_root: &Path, lock_path: &Path) -> anyhow::Result<(
         return Ok(());
     }
 
+    let message = build_commit_message(new_lock, old_lock);
+
     let commit_out = git_command()
-        .args(["commit", "-m", "chore: update rwv.lock"])
+        .args(["commit", "-m", &message])
         .current_dir(workspace_root)
         .output()
         .map_err(|e| anyhow::anyhow!("failed to run git commit: {e}"))?;
@@ -166,6 +246,12 @@ pub fn lock(cwd: &Path, dirty: bool, commit: bool) -> anyhow::Result<()> {
     let lock = generate_lock(&project.manifest, ctx.primary_path(), workweave_pair, dirty)?;
 
     let lock_path = project_dir.join("rwv.lock");
+    // Read old lock before overwriting so the commit message can list what changed.
+    let old_lock = if commit {
+        LockFile::from_path(&lock_path).ok()
+    } else {
+        None
+    };
     write_lock(&lock, &lock_path)?;
 
     eprintln!("Wrote {}", lock_path.display());
@@ -194,7 +280,7 @@ pub fn lock(cwd: &Path, dirty: bool, commit: bool) -> anyhow::Result<()> {
     }
 
     if commit {
-        commit_lock_file(ctx.active_path(), &lock_path)?;
+        commit_lock_file(ctx.active_path(), &lock_path, &lock, old_lock.as_ref())?;
     }
 
     Ok(())

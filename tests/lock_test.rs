@@ -952,11 +952,11 @@ fn lock_commit_flag_commits_lock_file() {
     // Lock file must exist.
     assert!(project_dir.join("rwv.lock").exists());
 
-    // A commit with the conventional message must appear in the log.
+    // A commit with the multi-repo summary message must appear in the log.
     let log = run_git(&["log", "--oneline"]);
     assert!(
-        log.contains("chore: update rwv.lock"),
-        "expected commit message in log: {log}"
+        log.contains("lock: refresh"),
+        "expected lock summary message in log: {log}"
     );
 }
 
@@ -1113,4 +1113,194 @@ fn check_locked_ok_when_lock_pins_tag_at_current_head() {
         .assert()
         .success()
         .stdout(predicate::str::contains(": ok"));
+}
+
+// ---------------------------------------------------------------------------
+// 15. --commit flag: multi-repo summary message
+// ---------------------------------------------------------------------------
+
+#[test]
+fn lock_commit_message_summarises_repos() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = make_workspace(tmp.path(), "ws");
+
+    let run_git = |args: &[&str]| {
+        let out = common::git()
+            .args(args)
+            .current_dir(&root)
+            .env("GIT_AUTHOR_NAME", "Test")
+            .env("GIT_AUTHOR_EMAIL", "test@test.com")
+            .env("GIT_COMMITTER_NAME", "Test")
+            .env("GIT_COMMITTER_EMAIL", "test@test.com")
+            .output()
+            .expect("git command failed");
+        assert!(
+            out.status.success(),
+            "git {:?} failed: {}",
+            args,
+            String::from_utf8_lossy(&out.stderr)
+        );
+        String::from_utf8(out.stdout).unwrap().trim().to_string()
+    };
+
+    run_git(&["init", "-b", "main"]);
+    run_git(&["config", "user.email", "test@test.com"]);
+    run_git(&["config", "user.name", "Test"]);
+
+    let repo_a = "github/acme/server";
+    let repo_b = "github/acme/client";
+    init_git_repo(&root.join(repo_a));
+    init_git_repo(&root.join(repo_b));
+
+    let project_dir = root.join("projects").join("my-app");
+    write_manifest(
+        &project_dir,
+        &[
+            (repo_a, "https://github.com/acme/server.git"),
+            (repo_b, "https://github.com/acme/client.git"),
+        ],
+    );
+
+    run_git(&["add", "."]);
+    run_git(&["commit", "-m", "initial"]);
+
+    rwv_cmd()
+        .args(["lock", "--commit"])
+        .current_dir(&project_dir)
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("Committed rwv.lock"));
+
+    // Commit subject must name both repos.
+    let log = run_git(&["log", "--format=%B", "-1"]);
+    assert!(
+        log.contains("lock: refresh 2 repos"),
+        "expected '2 repos' in message: {log}"
+    );
+    assert!(
+        log.contains(repo_a),
+        "message should list repo A: {log}"
+    );
+    assert!(
+        log.contains(repo_b),
+        "message should list repo B: {log}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// 16. --commit flag: dirty check refuses non-lock uncommitted changes
+// ---------------------------------------------------------------------------
+
+#[test]
+fn lock_commit_dirty_check_refuses_non_lock_changes() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = make_workspace(tmp.path(), "ws");
+
+    let run_git = |args: &[&str]| {
+        let out = common::git()
+            .args(args)
+            .current_dir(&root)
+            .env("GIT_AUTHOR_NAME", "Test")
+            .env("GIT_AUTHOR_EMAIL", "test@test.com")
+            .env("GIT_COMMITTER_NAME", "Test")
+            .env("GIT_COMMITTER_EMAIL", "test@test.com")
+            .output()
+            .expect("git command failed");
+        assert!(
+            out.status.success(),
+            "git {:?} failed: {}",
+            args,
+            String::from_utf8_lossy(&out.stderr)
+        );
+        String::from_utf8(out.stdout).unwrap().trim().to_string()
+    };
+
+    run_git(&["init", "-b", "main"]);
+    run_git(&["config", "user.email", "test@test.com"]);
+    run_git(&["config", "user.name", "Test"]);
+
+    let repo_path = "github/acme/server";
+    init_git_repo(&root.join(repo_path));
+
+    let project_dir = root.join("projects").join("my-app");
+    write_manifest(
+        &project_dir,
+        &[(repo_path, "https://github.com/acme/server.git")],
+    );
+
+    // Commit initial state, then create a tracked file and modify it.
+    run_git(&["add", "."]);
+    run_git(&["commit", "-m", "initial"]);
+    std::fs::write(root.join("work.txt"), "committed\n").unwrap();
+    run_git(&["add", "work.txt"]);
+    run_git(&["commit", "-m", "add work file"]);
+    std::fs::write(root.join("work.txt"), "uncommitted change\n").unwrap();
+
+    // --commit must refuse because work.txt has uncommitted changes.
+    rwv_cmd()
+        .args(["lock", "--commit"])
+        .current_dir(&project_dir)
+        .assert()
+        .failure()
+        .stderr(
+            predicate::str::contains("uncommitted")
+                .or(predicate::str::contains("outside"))
+                .or(predicate::str::contains("stash")),
+        );
+}
+
+#[test]
+fn lock_commit_dirty_check_refuses_staged_non_lock_changes() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = make_workspace(tmp.path(), "ws");
+
+    let run_git = |args: &[&str]| {
+        let out = common::git()
+            .args(args)
+            .current_dir(&root)
+            .env("GIT_AUTHOR_NAME", "Test")
+            .env("GIT_AUTHOR_EMAIL", "test@test.com")
+            .env("GIT_COMMITTER_NAME", "Test")
+            .env("GIT_COMMITTER_EMAIL", "test@test.com")
+            .output()
+            .expect("git command failed");
+        assert!(
+            out.status.success(),
+            "git {:?} failed: {}",
+            args,
+            String::from_utf8_lossy(&out.stderr)
+        );
+        String::from_utf8(out.stdout).unwrap().trim().to_string()
+    };
+
+    run_git(&["init", "-b", "main"]);
+    run_git(&["config", "user.email", "test@test.com"]);
+    run_git(&["config", "user.name", "Test"]);
+
+    let repo_path = "github/acme/server";
+    init_git_repo(&root.join(repo_path));
+
+    let project_dir = root.join("projects").join("my-app");
+    write_manifest(
+        &project_dir,
+        &[(repo_path, "https://github.com/acme/server.git")],
+    );
+
+    run_git(&["add", "."]);
+    run_git(&["commit", "-m", "initial"]);
+
+    // Stage a new file (would be bundled into the lock commit without the check).
+    std::fs::write(root.join("staged.txt"), "staged\n").unwrap();
+    run_git(&["add", "staged.txt"]);
+
+    rwv_cmd()
+        .args(["lock", "--commit"])
+        .current_dir(&project_dir)
+        .assert()
+        .failure()
+        .stderr(
+            predicate::str::contains("uncommitted")
+                .or(predicate::str::contains("outside"))
+                .or(predicate::str::contains("stash")),
+        );
 }
