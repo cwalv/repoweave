@@ -17,8 +17,8 @@ fn build_commit_message(new_lock: &LockFile, old_lock: Option<&LockFile>) -> Str
         .repositories
         .iter()
         .filter(|(path, new_entry)| {
-            old_lock.map_or(true, |old| {
-                old.repositories.get(*path).map_or(true, |old_entry| {
+            old_lock.is_none_or(|old| {
+                old.repositories.get(*path).is_none_or(|old_entry| {
                     old_entry.version != new_entry.version
                         && old_entry.version.display_str() != new_entry.version.display_str()
                 })
@@ -133,9 +133,7 @@ fn commit_lock_file(
     use crate::git::git_command;
 
     // Compute the lock path relative to workspace_root for status comparison.
-    let lock_relative = lock_path
-        .strip_prefix(workspace_root)
-        .unwrap_or(lock_path);
+    let lock_relative = lock_path.strip_prefix(workspace_root).unwrap_or(lock_path);
     let lock_relative_str = lock_relative.to_string_lossy();
 
     // Dirty check: refuse when non-lock tracked files have uncommitted changes.

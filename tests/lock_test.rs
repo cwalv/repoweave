@@ -1177,14 +1177,8 @@ fn lock_commit_message_summarises_repos() {
         log.contains("lock: refresh 2 repos"),
         "expected '2 repos' in message: {log}"
     );
-    assert!(
-        log.contains(repo_a),
-        "message should list repo A: {log}"
-    );
-    assert!(
-        log.contains(repo_b),
-        "message should list repo B: {log}"
-    );
+    assert!(log.contains(repo_a), "message should list repo A: {log}");
+    assert!(log.contains(repo_b), "message should list repo B: {log}");
 }
 
 // ---------------------------------------------------------------------------
