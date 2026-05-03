@@ -34,7 +34,8 @@ fn make_manifest(repos: Vec<(&str, Role)>) -> Manifest {
                     "https://github.com/test/{}.git",
                     path.split('/').last().unwrap()
                 )
-                .into(),
+                .parse()
+                .unwrap(),
                 version: RefName::new("main"),
                 role,
             },

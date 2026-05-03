@@ -85,8 +85,9 @@ pub fn init(name: &str, provider: Option<&str>, cwd: &Path) -> anyhow::Result<()
             anyhow::anyhow!("registry '{}' does not support clone URLs", registry_name)
         })?;
 
+        let url_str = url.to_string();
         let status = git_command()
-            .args(["remote", "add", "origin", url.as_str()])
+            .args(["remote", "add", "origin", &url_str])
             .current_dir(&project_dir)
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
@@ -139,7 +140,7 @@ pub fn init_adopt(source: &str, cwd: &Path) -> anyhow::Result<()> {
     // Clone the repo
     let git = GitVcs;
     eprintln!("Cloning {} into {}", clone_url, project_dir.display());
-    git.clone_repo(clone_url.as_str(), &project_dir)
+    git.clone_repo(&clone_url.to_string(), &project_dir)
         .map_err(|e| anyhow::anyhow!("failed to clone {}: {e}", clone_url))?;
 
     // Write rwv.yaml if missing
@@ -167,7 +168,8 @@ pub fn init_adopt(source: &str, cwd: &Path) -> anyhow::Result<()> {
 /// For shorthands, the registry is used to construct the clone URL and the
 /// repo name becomes the project name.
 fn resolve_adopt_source(source: &str) -> anyhow::Result<(RepoUrl, String)> {
-    let info = resolve_to_clone_info(&RepoUrl::parse(source))?;
+    let parsed: RepoUrl = source.parse()?;
+    let info = resolve_to_clone_info(&parsed)?;
     let repo = info.id.repo().to_owned();
     Ok((info.url, repo))
 }

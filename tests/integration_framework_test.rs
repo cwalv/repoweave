@@ -18,7 +18,7 @@ use repoweave::vcs::RefName;
 fn make_repo_entry(role: Role) -> RepoEntry {
     RepoEntry {
         vcs_type: VcsType::Git,
-        url: "https://example.com/repo.git".into(),
+        url: "https://example.com/repo.git".parse().unwrap(),
         version: RefName::new("main"),
         role,
     }

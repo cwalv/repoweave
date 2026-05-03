@@ -3,11 +3,13 @@
 //! These types model the on-disk YAML format and the resolved in-memory
 //! representation. Parsing produces a `Manifest`; locking produces a `LockFile`.
 
+use crate::registry::RegistryName;
 use crate::vcs::{RefName, RevisionId};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::fmt;
 use std::path::{Path, PathBuf};
+use std::str::FromStr;
 
 // ---------------------------------------------------------------------------
 // Newtypes — distinguish semantically different strings at the type level
@@ -87,102 +89,187 @@ impl fmt::Display for WorkweaveName {
 }
 
 // ---------------------------------------------------------------------------
-// RepoUrl — a clone source string with its kind classified once on construction
+// RepoUrl — a clone source parsed into structured data
 // ---------------------------------------------------------------------------
 
-/// What flavor of clone source a [`RepoUrl`] holds.
+/// A clone source string parsed into its constituent parts.
 ///
-/// Classified eagerly by [`RepoUrl::parse`] so consumers (registries,
-/// `resolve_to_clone_info`) can dispatch on the variant rather than redo
-/// `strip_prefix` / `contains("://")` checks.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum UrlKind {
-    /// `https://...` URL.
-    Https,
-    /// `git@host:owner/repo[.git]` SCP-style SSH form.
-    Ssh,
-    /// `file://...` URL.
-    File,
-    /// Any other URL scheme (e.g. `ssh://`, `git://`).
-    OtherUrl,
-    /// A shorthand: `owner/repo` or `registry/owner/repo`.
-    Shorthand,
+/// Parsing happens once at the boundary via [`FromStr`] / [`Deserialize`],
+/// which walks the registry list (built-in and any future user registries)
+/// and returns the first match. Downstream code dispatches on the variant
+/// rather than re-parsing.
+///
+/// `Display` reconstructs the canonical clone URL or shorthand form. For
+/// inputs the registry list does not recognise, [`RepoUrl::Unknown`]
+/// preserves the raw string verbatim.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum RepoUrl {
+    /// `https://{host}/{owner}/{repo}.git` — host matched a domain registry.
+    Https {
+        registry: RegistryName,
+        host: String,
+        owner: String,
+        repo: String,
+    },
+    /// `git@{host}:{owner}/{repo}.git` — SCP-style SSH, host matched a domain registry.
+    Ssh {
+        registry: RegistryName,
+        host: String,
+        owner: String,
+        repo: String,
+    },
+    /// `file://{prefix}/{owner}/{repo}` — under a directory registry.
+    File {
+        registry: RegistryName,
+        prefix: PathBuf,
+        owner: String,
+        repo: String,
+    },
+    /// `owner/repo` (no registry — defaults at resolve time) or
+    /// `{registry}/{owner}/{repo}` (registry named).
+    Shorthand {
+        registry: Option<RegistryName>,
+        owner: String,
+        repo: String,
+    },
+    /// Anything not matched by a registry — full URL with unknown host,
+    /// non-shorthand string, etc. The raw form survives here.
+    Unknown(String),
 }
 
-/// A clone source — full URL or shorthand — with its kind decided up front.
+/// Error returned by [`RepoUrl::from_str`].
 ///
-/// Construction is the single point where the raw string is classified.
-/// Round-trips through serde and `Display` as the original string, so
-/// `rwv.yaml` / `rwv.lock` files are byte-identical to before.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct RepoUrl {
-    raw: String,
-    kind: UrlKind,
+/// Currently a placeholder — `FromStr` falls back to [`RepoUrl::Unknown`]
+/// rather than failing, so this type is reserved for future stricter parsing.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RepoUrlParseError(pub String);
+
+impl fmt::Display for RepoUrlParseError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "could not parse '{}' as a repo URL or shorthand", self.0)
+    }
+}
+
+impl std::error::Error for RepoUrlParseError {}
+
+impl FromStr for RepoUrl {
+    type Err = RepoUrlParseError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        // Walk built-in registries; first match wins.
+        let registries = crate::registry::builtin_registries();
+        for reg in &registries {
+            if let Some(url) = reg.matches(s) {
+                return Ok(url);
+            }
+        }
+        // 2-part shorthand fallback (registry-less; defaults at resolve time).
+        if let Some(url) = parse_two_part_shorthand(s) {
+            return Ok(url);
+        }
+        // Anything else: preserve the raw string.
+        Ok(RepoUrl::Unknown(s.to_owned()))
+    }
+}
+
+fn parse_two_part_shorthand(s: &str) -> Option<RepoUrl> {
+    let parts: Vec<&str> = s.split('/').collect();
+    if parts.len() != 2 || parts[0].is_empty() || parts[1].is_empty() {
+        return None;
+    }
+    Some(RepoUrl::Shorthand {
+        registry: None,
+        owner: parts[0].to_owned(),
+        repo: parts[1].to_owned(),
+    })
 }
 
 impl RepoUrl {
-    /// Construct from a raw string, classifying its kind by shape.
-    pub fn parse(s: impl Into<String>) -> Self {
-        let raw = s.into();
-        let kind = classify(&raw);
-        Self { raw, kind }
+    /// The registry that recognised this URL, when one did.
+    pub fn registry(&self) -> Option<&RegistryName> {
+        match self {
+            Self::Https { registry, .. }
+            | Self::Ssh { registry, .. }
+            | Self::File { registry, .. } => Some(registry),
+            Self::Shorthand {
+                registry: Some(r), ..
+            } => Some(r),
+            Self::Shorthand { registry: None, .. } | Self::Unknown(_) => None,
+        }
     }
 
-    pub fn as_str(&self) -> &str {
-        &self.raw
+    /// Owner and repo, when the parser could extract them.
+    pub fn owner_repo(&self) -> Option<(&str, &str)> {
+        match self {
+            Self::Https { owner, repo, .. }
+            | Self::Ssh { owner, repo, .. }
+            | Self::File { owner, repo, .. }
+            | Self::Shorthand { owner, repo, .. } => Some((owner, repo)),
+            Self::Unknown(_) => None,
+        }
     }
 
-    pub fn kind(&self) -> UrlKind {
-        self.kind
-    }
-
-    /// True for any URL form (i.e. anything but [`UrlKind::Shorthand`]).
+    /// Whether this represents a URL form passable to `git clone`.
+    /// HTTPS, SSH, File are URLs; Shorthand is not. Unknown is decided
+    /// by inspecting the raw string.
     pub fn is_url(&self) -> bool {
-        !matches!(self.kind, UrlKind::Shorthand)
+        match self {
+            Self::Https { .. } | Self::Ssh { .. } | Self::File { .. } => true,
+            Self::Shorthand { .. } => false,
+            Self::Unknown(s) => s.contains("://") || s.starts_with("git@"),
+        }
     }
-}
 
-fn classify(s: &str) -> UrlKind {
-    if s.starts_with("https://") {
-        UrlKind::Https
-    } else if s.starts_with("git@") {
-        UrlKind::Ssh
-    } else if s.starts_with("file://") {
-        UrlKind::File
-    } else if s.contains("://") {
-        UrlKind::OtherUrl
-    } else {
-        UrlKind::Shorthand
+    /// Canonical local path `{registry}/{owner}/{repo}` for variants where the
+    /// registry is known. Returns `None` for [`Self::Shorthand`] without a
+    /// registry and for [`Self::Unknown`].
+    pub fn local_path(&self) -> Option<PathBuf> {
+        let registry = self.registry()?;
+        let (owner, repo) = self.owner_repo()?;
+        Some(Path::new(registry.as_str()).join(owner).join(repo))
     }
 }
 
 impl fmt::Display for RepoUrl {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(&self.raw)
-    }
-}
-
-impl From<&str> for RepoUrl {
-    fn from(s: &str) -> Self {
-        Self::parse(s.to_owned())
-    }
-}
-
-impl From<String> for RepoUrl {
-    fn from(s: String) -> Self {
-        Self::parse(s)
+        match self {
+            Self::Https {
+                host, owner, repo, ..
+            } => write!(f, "https://{}/{}/{}.git", host, owner, repo),
+            Self::Ssh {
+                host, owner, repo, ..
+            } => write!(f, "git@{}:{}/{}.git", host, owner, repo),
+            Self::File {
+                prefix,
+                owner,
+                repo,
+                ..
+            } => write!(f, "file://{}/{}/{}", prefix.display(), owner, repo),
+            Self::Shorthand {
+                registry: None,
+                owner,
+                repo,
+            } => write!(f, "{}/{}", owner, repo),
+            Self::Shorthand {
+                registry: Some(r),
+                owner,
+                repo,
+            } => write!(f, "{}/{}/{}", r.as_str(), owner, repo),
+            Self::Unknown(s) => f.write_str(s),
+        }
     }
 }
 
 impl Serialize for RepoUrl {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        serializer.serialize_str(&self.raw)
+        serializer.collect_str(self)
     }
 }
 
 impl<'de> Deserialize<'de> for RepoUrl {
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        String::deserialize(deserializer).map(Self::parse)
+        let s = String::deserialize(deserializer)?;
+        s.parse::<RepoUrl>().map_err(serde::de::Error::custom)
     }
 }
 

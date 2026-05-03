@@ -92,7 +92,7 @@ fn manifest_repo_entry_fields() {
     let m: Manifest = serde_yaml::from_str(FULL_MANIFEST_YAML).unwrap();
     let server = &m.repositories[&RepoPath::new("github/acme/server")];
     assert_eq!(server.vcs_type, VcsType::Git);
-    assert_eq!(server.url.as_str(), "https://github.com/acme/server.git");
+    assert_eq!(server.url.to_string(), "https://github.com/acme/server.git");
     assert_eq!(server.version, RefName::new("main"));
     assert_eq!(server.role, Role::Primary);
 }

@@ -4,7 +4,7 @@ use crate::activate::activate;
 use crate::git::git_command;
 use crate::git::GitVcs;
 use crate::manifest::{Manifest, RepoEntry, RepoPath, RepoUrl, Role, VcsType};
-use crate::registry::{builtin_registries, resolve_url, Registry};
+use crate::registry::{builtin_registries, Registry};
 use crate::vcs::Vcs;
 use crate::workspace::{WorkspaceContext, WorkspaceLocation};
 use anyhow::{bail, Context};
@@ -66,20 +66,10 @@ pub fn run_add(url: &str, role: Role, cwd: &Path) -> anyhow::Result<()> {
     }
 
     // Resolve the URL through registries to get a canonical local path.
-    let owned_registries = builtin_registries();
-    let registry_refs: Vec<&dyn Registry> = owned_registries.iter().map(|r| r.as_ref()).collect();
-
-    let parsed_url = RepoUrl::parse(url);
-    let local_path = if let Some((_registry_name, _repo_id, path)) =
-        resolve_url(&parsed_url, &registry_refs)
-    {
-        path
-    } else {
-        // No registry matched — try to derive a path from the URL.
-        derive_local_path_from_url(url).ok_or_else(|| {
-            anyhow::anyhow!("Error: unrecognized URL '{url}' — could not derive a local path")
-        })?
-    };
+    let parsed_url: RepoUrl = url.parse()?;
+    let local_path = parsed_url.local_path().or_else(|| derive_local_path_from_url(url)).ok_or_else(|| {
+        anyhow::anyhow!("Error: unrecognized URL '{url}' — could not derive a local path")
+    })?;
 
     let repo_path = RepoPath::new(local_path.to_string_lossy().to_string());
 
@@ -198,7 +188,7 @@ fn run_add_from_local_path(
     // Add entry to manifest using the inferred origin URL.
     let entry = RepoEntry {
         vcs_type: VcsType::Git,
-        url: RepoUrl::parse(origin_url.clone()),
+        url: origin_url.parse()?,
         version: default_branch,
         role,
     };
@@ -502,7 +492,7 @@ mod tests {
         let gh = github_reg();
         let registries: Vec<&dyn Registry> = vec![&gh];
         let url = infer_url_from_path("github/owner/repo", &registries).unwrap();
-        assert_eq!(url.as_str(), "https://github.com/owner/repo.git");
+        assert_eq!(url.to_string(), "https://github.com/owner/repo.git");
     }
 
     #[test]
@@ -510,7 +500,7 @@ mod tests {
         let gl = gitlab_reg();
         let registries: Vec<&dyn Registry> = vec![&gl];
         let url = infer_url_from_path("gitlab/org/project", &registries).unwrap();
-        assert_eq!(url.as_str(), "https://gitlab.com/org/project.git");
+        assert_eq!(url.to_string(), "https://gitlab.com/org/project.git");
     }
 
     #[test]
@@ -519,7 +509,7 @@ mod tests {
         let gl = gitlab_reg();
         let registries: Vec<&dyn Registry> = vec![&gh, &gl];
         let url = infer_url_from_path("github/alice/widgets", &registries).unwrap();
-        assert_eq!(url.as_str(), "https://github.com/alice/widgets.git");
+        assert_eq!(url.to_string(), "https://github.com/alice/widgets.git");
     }
 
     #[test]
@@ -561,7 +551,7 @@ mod tests {
         let gh = github_reg();
         let registries: Vec<&dyn Registry> = vec![&gh];
         let url = infer_url_from_path("github/owner/repo/extra/path", &registries).unwrap();
-        assert_eq!(url.as_str(), "https://github.com/owner/repo.git");
+        assert_eq!(url.to_string(), "https://github.com/owner/repo.git");
     }
 
     #[test]
@@ -569,7 +559,7 @@ mod tests {
         let gh = github_reg();
         let registries: Vec<&dyn Registry> = vec![&gh];
         let url = infer_url_from_path("/github/owner/repo", &registries).unwrap();
-        assert_eq!(url.as_str(), "https://github.com/owner/repo.git");
+        assert_eq!(url.to_string(), "https://github.com/owner/repo.git");
     }
 
     // -----------------------------------------------------------------------

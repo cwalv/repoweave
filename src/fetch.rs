@@ -51,7 +51,8 @@ pub fn project_name_from_source(source: &str) -> String {
 ///
 /// Returns `(url, owner)` where `owner` may be empty for unrecognised URLs.
 fn resolve_source(source: &str) -> anyhow::Result<(crate::manifest::RepoUrl, String)> {
-    let info = registry::resolve_to_clone_info(&crate::manifest::RepoUrl::parse(source))?;
+    let parsed: crate::manifest::RepoUrl = source.parse()?;
+    let info = registry::resolve_to_clone_info(&parsed)?;
     let owner = info.id.owner().to_owned();
     Ok((info.url, owner))
 }
@@ -76,7 +77,8 @@ pub fn run_fetch(source: &str, workspace_root: &Path, mode: FetchMode) -> anyhow
 
     // Resolve source to a clone URL (supports full URLs and owner/repo shorthand).
     let (url, owner) = resolve_source(source)?;
-    let name = project_name_from_source(url.as_str());
+    let url_str = url.to_string();
+    let name = project_name_from_source(&url_str);
     let projects_dir = workspace_root.join("projects");
     std::fs::create_dir_all(&projects_dir).context("failed to create projects/ directory")?;
     let project_dir = projects_dir.join(&name);
@@ -92,7 +94,7 @@ pub fn run_fetch(source: &str, workspace_root: &Path, mode: FetchMode) -> anyhow
         bail!("project '{}' already exists at projects/{}/", name, name);
     } else {
         println!("rwv fetch: cloning project '{}'", name);
-        git.clone_repo(url.as_str(), &project_dir)
+        git.clone_repo(&url_str, &project_dir)
             .with_context(|| format!("failed to clone project source '{}'", url))?;
     }
 
@@ -188,7 +190,7 @@ pub fn run_fetch(source: &str, workspace_root: &Path, mode: FetchMode) -> anyhow
             repo_path.as_str(),
             entry.url
         );
-        if let Err(e) = git.clone_repo(entry.url.as_str(), &dest) {
+        if let Err(e) = git.clone_repo(&entry.url.to_string(), &dest) {
             let msg = format!(
                 "{}: failed to clone {} into {}: {e}",
                 repo_path.as_str(),
@@ -319,7 +321,7 @@ mod tests {
     fn resolve_source_passes_through_urls() {
         let url = "https://github.com/org/repo.git";
         let (resolved_url, owner) = resolve_source(url).unwrap();
-        assert_eq!(resolved_url.as_str(), url);
+        assert_eq!(resolved_url.to_string(), url);
         assert_eq!(owner, "org");
     }
 
@@ -327,7 +329,7 @@ mod tests {
     fn resolve_source_passes_through_ssh_urls() {
         let url = "git@github.com:org/repo.git";
         let (resolved_url, owner) = resolve_source(url).unwrap();
-        assert_eq!(resolved_url.as_str(), url);
+        assert_eq!(resolved_url.to_string(), url);
         assert_eq!(owner, "org");
     }
 
@@ -335,7 +337,7 @@ mod tests {
     fn resolve_source_passes_through_file_urls() {
         let url = "file:///tmp/repo.git";
         let (resolved_url, owner) = resolve_source(url).unwrap();
-        assert_eq!(resolved_url.as_str(), url);
+        assert_eq!(resolved_url.to_string(), url);
         // file:// URLs that don't match any registry have an empty owner
         let _ = owner; // owner may be empty or a path segment; just verify no panic
     }
@@ -343,14 +345,14 @@ mod tests {
     #[test]
     fn resolve_source_resolves_two_part_shorthand() {
         let (url, owner) = resolve_source("cwalv/repoweave").unwrap();
-        assert_eq!(url.as_str(), "https://github.com/cwalv/repoweave.git");
+        assert_eq!(url.to_string(), "https://github.com/cwalv/repoweave.git");
         assert_eq!(owner, "cwalv");
     }
 
     #[test]
     fn resolve_source_resolves_three_part_shorthand() {
         let (url, owner) = resolve_source("gitlab/org/proj").unwrap();
-        assert_eq!(url.as_str(), "https://gitlab.com/org/proj.git");
+        assert_eq!(url.to_string(), "https://gitlab.com/org/proj.git");
         assert_eq!(owner, "org");
     }
 
