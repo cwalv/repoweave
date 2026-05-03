@@ -422,13 +422,10 @@ fn infer_url_from_path(path: &str, registries: &[&dyn Registry]) -> Option<RepoU
     let owner = segments[1];
     let repo = segments[2];
 
-    let id = crate::registry::RepoId {
-        owner: owner.to_string(),
-        repo: repo.to_string(),
-    };
+    let id = crate::registry::RepoId::new(owner, repo);
 
     for reg in registries {
-        if reg.name().0 == registry_name {
+        if reg.name().as_str() == registry_name {
             return reg.clone_url(&id);
         }
     }
@@ -484,14 +481,14 @@ mod tests {
 
     fn github_reg() -> DomainRegistry {
         DomainRegistry {
-            registry_name: RegistryName("github".into()),
+            registry_name: RegistryName::new("github"),
             domain: "github.com".into(),
         }
     }
 
     fn gitlab_reg() -> DomainRegistry {
         DomainRegistry {
-            registry_name: RegistryName("gitlab".into()),
+            registry_name: RegistryName::new("gitlab"),
             domain: "gitlab.com".into(),
         }
     }

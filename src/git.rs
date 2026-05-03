@@ -200,7 +200,7 @@ impl Vcs for GitVcs {
         &self,
         repo: &Path,
         dest: &Path,
-        branch_name: &str,
+        branch_name: &RefName,
         start_point: &RevisionId,
     ) -> Result<(), VcsError> {
         let dest_str = dest.to_str().ok_or_else(|| VcsError::Io {
@@ -211,10 +211,11 @@ impl Vcs for GitVcs {
             ),
         })?;
         let start = start_point.as_str();
+        let branch = branch_name.as_str();
 
         // First try creating a new branch with -b.
         let result = Self::run(
-            &["worktree", "add", "-b", branch_name, dest_str, start],
+            &["worktree", "add", "-b", branch, dest_str, start],
             repo,
         );
 
@@ -228,14 +229,14 @@ impl Vcs for GitVcs {
             if already {
                 // Delete the stale branch first, then retry with -b.
                 // If delete fails, fall back to using the existing branch directly.
-                let deleted = Self::run(&["branch", "-D", branch_name], repo).is_ok();
+                let deleted = Self::run(&["branch", "-D", branch], repo).is_ok();
                 if deleted {
                     Self::run(
-                        &["worktree", "add", "-b", branch_name, dest_str, start],
+                        &["worktree", "add", "-b", branch, dest_str, start],
                         repo,
                     )?;
                 } else {
-                    Self::run(&["worktree", "add", dest_str, branch_name], repo)?;
+                    Self::run(&["worktree", "add", dest_str, branch], repo)?;
                 }
             } else {
                 return Err(e);
@@ -292,8 +293,8 @@ impl Vcs for GitVcs {
         Ok(())
     }
 
-    fn delete_branch(&self, repo: &Path, branch: &str) -> Result<(), VcsError> {
-        Self::run(&["branch", "-D", branch], repo)?;
+    fn delete_branch(&self, repo: &Path, branch: &RefName) -> Result<(), VcsError> {
+        Self::run(&["branch", "-D", branch.as_str()], repo)?;
         Ok(())
     }
 
@@ -305,10 +306,10 @@ impl Vcs for GitVcs {
     fn list_branches_with_prefix(
         &self,
         repo: &Path,
-        prefix: &str,
-    ) -> Result<Vec<String>, VcsError> {
+        prefix: &RefName,
+    ) -> Result<Vec<RefName>, VcsError> {
         // `git branch --list 'prefix/*'` lists all local branches under the prefix.
-        let pattern = format!("{prefix}/*");
+        let pattern = format!("{}/*", prefix.as_str());
         let output = Self::run(&["branch", "--list", &pattern], repo)?;
         let branches = output
             .lines()
@@ -317,6 +318,7 @@ impl Vcs for GitVcs {
                 line.trim_start_matches('*').trim().to_string()
             })
             .filter(|s| !s.is_empty())
+            .map(RefName::new)
             .collect();
         Ok(branches)
     }

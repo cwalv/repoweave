@@ -52,7 +52,8 @@ pub fn project_name_from_source(source: &str) -> String {
 /// Returns `(url, owner)` where `owner` may be empty for unrecognised URLs.
 fn resolve_source(source: &str) -> anyhow::Result<(crate::manifest::RepoUrl, String)> {
     let info = registry::resolve_to_clone_info(&crate::manifest::RepoUrl::parse(source))?;
-    Ok((info.url, info.id.owner))
+    let owner = info.id.owner().to_owned();
+    Ok((info.url, owner))
 }
 
 /// Validate that a lock file covers all repos in the manifest.

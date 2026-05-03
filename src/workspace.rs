@@ -61,7 +61,7 @@ pub enum WorkspaceLocation {
 fn workspace_marker_names() -> Vec<String> {
     let mut names: Vec<String> = builtin_registries()
         .iter()
-        .map(|r| r.name().0.clone())
+        .map(|r| r.name().as_str().to_owned())
         .collect();
     names.push("projects".to_string());
     names
@@ -132,7 +132,7 @@ pub fn scan_repos_on_disk(
     let mut repos = Vec::new();
 
     for reg in registries {
-        let reg_dir = root.join(&reg.name().0);
+        let reg_dir = root.join(reg.name().as_str());
         if !reg_dir.is_dir() {
             continue;
         }

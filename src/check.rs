@@ -5,7 +5,7 @@
 
 use crate::git::git_command;
 use crate::integration::Issue;
-use crate::manifest::{Project, RepoPath};
+use crate::manifest::{Project, ProjectName, RepoPath, WorkweaveName};
 use crate::vcs::RevisionId;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
@@ -21,14 +21,20 @@ pub enum CheckViolation {
     OrphanedClone { path: RepoPath },
 
     /// An `rwv.yaml` entry pointing to a path not present on disk.
-    DanglingReference { project: String, repo: RepoPath },
+    DanglingReference {
+        project: ProjectName,
+        repo: RepoPath,
+    },
 
     /// An `rwv.yaml` entry missing the `role` field.
-    MissingRole { project: String, repo: RepoPath },
+    MissingRole {
+        project: ProjectName,
+        repo: RepoPath,
+    },
 
     /// A project's `rwv.lock` doesn't match current HEAD SHAs.
     StaleLock {
-        project: String,
+        project: ProjectName,
         repo: RepoPath,
         locked: RevisionId,
         actual: RevisionId,
@@ -36,7 +42,7 @@ pub enum CheckViolation {
 
     /// A worktree missing from a workweave, or an extra worktree not in the manifest.
     WorkweaveDrift {
-        workweave: String,
+        workweave: WorkweaveName,
         kind: DriftKind,
         repo: RepoPath,
     },
@@ -45,7 +51,7 @@ pub enum CheckViolation {
     /// shared-ref advance in a sibling worktree).
     IndexDrift {
         /// Workweave name; `None` for repos in the primary weave.
-        workweave: Option<String>,
+        workweave: Option<WorkweaveName>,
         repo: RepoPath,
         kind: IndexDriftKind,
     },
@@ -53,7 +59,7 @@ pub enum CheckViolation {
     /// A git repo's working-tree files do not match its HEAD tree (stale on-disk
     /// content after shared-ref advance in a sibling worktree).
     WorkingTreeDrift {
-        workweave: Option<String>,
+        workweave: Option<WorkweaveName>,
         repo: RepoPath,
         kind: WorkingTreeDriftKind,
     },
@@ -124,7 +130,7 @@ pub fn find_violations(input: &CheckInput) -> Vec<CheckViolation> {
             // Dangling reference: in manifest but not on disk
             if !input.repos_on_disk.contains(repo_path) {
                 violations.push(CheckViolation::DanglingReference {
-                    project: project.name.as_str().to_owned(),
+                    project: project.name.clone(),
                     repo: repo_path.clone(),
                 });
             }
@@ -138,7 +144,7 @@ pub fn find_violations(input: &CheckInput) -> Vec<CheckViolation> {
                 if let Some(actual_rev) = input.head_revisions.get(repo_path) {
                     if &lock_entry.version != actual_rev {
                         violations.push(CheckViolation::StaleLock {
-                            project: project.name.as_str().to_owned(),
+                            project: project.name.clone(),
                             repo: repo_path.clone(),
                             locked: lock_entry.version.clone(),
                             actual: actual_rev.clone(),

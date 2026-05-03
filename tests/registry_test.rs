@@ -17,16 +17,16 @@ fn url(s: &str) -> RepoUrl {
 fn domain_registry_parse_https_url() {
     let reg = github_registry();
     let id = reg.parse_url(&url("https://github.com/owner/repo.git")).unwrap();
-    assert_eq!(id.owner, "owner");
-    assert_eq!(id.repo, "repo");
+    assert_eq!(id.owner(), "owner");
+    assert_eq!(id.repo(), "repo");
 }
 
 #[test]
 fn domain_registry_parse_https_url_without_git_suffix() {
     let reg = github_registry();
     let id = reg.parse_url(&url("https://github.com/owner/repo")).unwrap();
-    assert_eq!(id.owner, "owner");
-    assert_eq!(id.repo, "repo");
+    assert_eq!(id.owner(), "owner");
+    assert_eq!(id.repo(), "repo");
 }
 
 // ---------------------------------------------------------------------------
@@ -37,16 +37,16 @@ fn domain_registry_parse_https_url_without_git_suffix() {
 fn domain_registry_parse_ssh_url() {
     let reg = github_registry();
     let id = reg.parse_url(&url("git@github.com:owner/repo.git")).unwrap();
-    assert_eq!(id.owner, "owner");
-    assert_eq!(id.repo, "repo");
+    assert_eq!(id.owner(), "owner");
+    assert_eq!(id.repo(), "repo");
 }
 
 #[test]
 fn domain_registry_parse_ssh_url_without_git_suffix() {
     let reg = github_registry();
     let id = reg.parse_url(&url("git@github.com:owner/repo")).unwrap();
-    assert_eq!(id.owner, "owner");
-    assert_eq!(id.repo, "repo");
+    assert_eq!(id.owner(), "owner");
+    assert_eq!(id.repo(), "repo");
 }
 
 // ---------------------------------------------------------------------------
@@ -92,10 +92,7 @@ fn domain_registry_rejects_wrong_domain_ssh() {
 #[test]
 fn domain_registry_clone_url() {
     let reg = github_registry();
-    let id = RepoId {
-        owner: "cwalv".into(),
-        repo: "repoweave".into(),
-    };
+    let id = RepoId::new("cwalv", "repoweave");
     let result = reg.clone_url(&id).unwrap();
     assert_eq!(result.as_str(), "https://github.com/cwalv/repoweave.git");
 }
@@ -107,10 +104,7 @@ fn domain_registry_clone_url() {
 #[test]
 fn domain_registry_local_path() {
     let reg = github_registry();
-    let id = RepoId {
-        owner: "cwalv".into(),
-        repo: "repoweave".into(),
-    };
+    let id = RepoId::new("cwalv", "repoweave");
     let path = reg.local_path(&id);
     assert_eq!(path, Path::new("github/cwalv/repoweave"));
 }
@@ -123,8 +117,8 @@ fn domain_registry_local_path() {
 fn directory_registry_parse_file_url() {
     let reg = dir_registry();
     let id = reg.parse_url(&url("file:///srv/repos/owner/repo")).unwrap();
-    assert_eq!(id.owner, "owner");
-    assert_eq!(id.repo, "repo");
+    assert_eq!(id.owner(), "owner");
+    assert_eq!(id.repo(), "repo");
 }
 
 // ---------------------------------------------------------------------------
@@ -154,10 +148,7 @@ fn directory_registry_rejects_https_urls() {
 #[test]
 fn directory_registry_clone_url_returns_none() {
     let reg = dir_registry();
-    let id = RepoId {
-        owner: "owner".into(),
-        repo: "repo".into(),
-    };
+    let id = RepoId::new("owner", "repo");
     assert!(reg.clone_url(&id).is_none());
 }
 
@@ -168,7 +159,7 @@ fn directory_registry_clone_url_returns_none() {
 #[test]
 fn builtin_registries_contains_github_gitlab_bitbucket() {
     let registries = builtin_registries();
-    let names: Vec<&str> = registries.iter().map(|r| r.name().0.as_str()).collect();
+    let names: Vec<&str> = registries.iter().map(|r| r.name().as_str()).collect();
     assert!(names.contains(&"github"), "missing github");
     assert!(names.contains(&"gitlab"), "missing gitlab");
     assert!(names.contains(&"bitbucket"), "missing bitbucket");
@@ -240,14 +231,14 @@ fn empty_repo_ssh_returns_none() {
 
 fn github_registry() -> DomainRegistry {
     DomainRegistry {
-        registry_name: RegistryName("github".into()),
+        registry_name: RegistryName::new("github"),
         domain: "github.com".into(),
     }
 }
 
 fn dir_registry() -> DirectoryRegistry {
     DirectoryRegistry {
-        registry_name: RegistryName("local".into()),
+        registry_name: RegistryName::new("local"),
         prefix: PathBuf::from("/srv/repos"),
     }
 }
@@ -265,9 +256,9 @@ fn resolve_shorthand_two_part_defaults_to_github() {
     let owned = builtin_registries();
     let registries = as_refs(&owned);
     let (name, id, path) = resolve_shorthand("cwalv/repoweave", &registries).unwrap();
-    assert_eq!(name, RegistryName("github".into()));
-    assert_eq!(id.owner, "cwalv");
-    assert_eq!(id.repo, "repoweave");
+    assert_eq!(name, RegistryName::new("github"));
+    assert_eq!(id.owner(), "cwalv");
+    assert_eq!(id.repo(), "repoweave");
     assert_eq!(path, Path::new("github/cwalv/repoweave"));
 }
 
@@ -280,9 +271,9 @@ fn resolve_shorthand_three_part_gitlab() {
     let owned = builtin_registries();
     let registries = as_refs(&owned);
     let (name, id, path) = resolve_shorthand("gitlab/org/proj", &registries).unwrap();
-    assert_eq!(name, RegistryName("gitlab".into()));
-    assert_eq!(id.owner, "org");
-    assert_eq!(id.repo, "proj");
+    assert_eq!(name, RegistryName::new("gitlab"));
+    assert_eq!(id.owner(), "org");
+    assert_eq!(id.repo(), "proj");
     assert_eq!(path, Path::new("gitlab/org/proj"));
 }
 

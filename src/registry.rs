@@ -12,13 +12,47 @@ use std::path::{Path, PathBuf};
 /// A short name for a code host or directory that serves as the first path
 /// segment in the canonical layout: `{registry}/{owner}/{repo}/`.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
-pub struct RegistryName(pub String);
+#[serde(transparent)]
+pub struct RegistryName(String);
+
+impl RegistryName {
+    pub fn new(s: impl Into<String>) -> Self {
+        Self(s.into())
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl std::fmt::Display for RegistryName {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
 
 /// Parsed identity of a repo within a registry.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RepoId {
-    pub owner: String,
-    pub repo: String,
+    owner: String,
+    repo: String,
+}
+
+impl RepoId {
+    pub fn new(owner: impl Into<String>, repo: impl Into<String>) -> Self {
+        Self {
+            owner: owner.into(),
+            repo: repo.into(),
+        }
+    }
+
+    pub fn owner(&self) -> &str {
+        &self.owner
+    }
+
+    pub fn repo(&self) -> &str {
+        &self.repo
+    }
 }
 
 /// A code host or directory that can resolve URLs to local paths.
@@ -43,7 +77,9 @@ pub trait Registry {
 
     /// The local path for a repo: `{registry}/{owner}/{repo}`.
     fn local_path(&self, id: &RepoId) -> PathBuf {
-        Path::new(&self.name().0).join(&id.owner).join(&id.repo)
+        Path::new(self.name().as_str())
+            .join(id.owner())
+            .join(id.repo())
     }
 }
 
@@ -80,18 +116,20 @@ impl Registry for DomainRegistry {
 
         let path = path.strip_suffix(".git").unwrap_or(path);
         let mut parts = path.split('/').filter(|s| !s.is_empty());
-        let owner = parts.next()?.to_string();
-        let repo = parts.next()?.to_string();
+        let owner = parts.next()?;
+        let repo = parts.next()?;
         if owner.is_empty() || repo.is_empty() {
             return None;
         }
-        Some(RepoId { owner, repo })
+        Some(RepoId::new(owner, repo))
     }
 
     fn clone_url(&self, id: &RepoId) -> Option<RepoUrl> {
         Some(RepoUrl::parse(format!(
             "https://{}/{}/{}.git",
-            self.domain, id.owner, id.repo
+            self.domain,
+            id.owner(),
+            id.repo()
         )))
     }
 }
@@ -119,9 +157,9 @@ impl Registry for DirectoryRegistry {
         let path = Path::new(path);
         let relative = path.strip_prefix(&self.prefix).ok()?;
         let mut components = relative.components();
-        let owner = components.next()?.as_os_str().to_str()?.to_string();
-        let repo = components.next()?.as_os_str().to_str()?.to_string();
-        Some(RepoId { owner, repo })
+        let owner = components.next()?.as_os_str().to_str()?;
+        let repo = components.next()?.as_os_str().to_str()?;
+        Some(RepoId::new(owner, repo))
     }
 
     fn clone_url(&self, _id: &RepoId) -> Option<RepoUrl> {
@@ -171,10 +209,7 @@ pub fn resolve_shorthand(
             }
             // Use the default (first) registry
             let reg = registries.first()?;
-            let id = RepoId {
-                owner: owner.to_string(),
-                repo: repo.to_string(),
-            };
+            let id = RepoId::new(owner, repo);
             let path = reg.local_path(&id);
             Some((reg.name().clone(), id, path))
         }
@@ -185,7 +220,9 @@ pub fn resolve_shorthand(
             if registry_name.is_empty() || owner.is_empty() || repo.is_empty() {
                 return None;
             }
-            let reg = registries.iter().find(|r| r.name().0 == registry_name)?;
+            let reg = registries
+                .iter()
+                .find(|r| r.name().as_str() == registry_name)?;
             let id = RepoId {
                 owner: owner.to_string(),
                 repo: repo.to_string(),
@@ -236,11 +273,8 @@ pub fn resolve_to_clone_info(source: &RepoUrl) -> anyhow::Result<CloneInfo> {
         let project_name = crate::fetch::project_name_from_source(source.as_str());
         return Ok(CloneInfo {
             url: source.clone(),
-            registry: RegistryName("unknown".into()),
-            id: RepoId {
-                owner: String::new(),
-                repo: project_name,
-            },
+            registry: RegistryName::new("unknown"),
+            id: RepoId::new("", project_name),
         });
     }
 
@@ -249,10 +283,10 @@ pub fn resolve_to_clone_info(source: &RepoUrl) -> anyhow::Result<CloneInfo> {
         let reg = refs
             .iter()
             .find(|r| r.name() == &registry)
-            .ok_or_else(|| anyhow::anyhow!("registry '{}' not found", registry.0))?;
-        let url = reg.clone_url(&id).ok_or_else(|| {
-            anyhow::anyhow!("registry '{}' does not support clone URLs", registry.0)
-        })?;
+            .ok_or_else(|| anyhow::anyhow!("registry '{}' not found", registry))?;
+        let url = reg
+            .clone_url(&id)
+            .ok_or_else(|| anyhow::anyhow!("registry '{}' does not support clone URLs", registry))?;
         return Ok(CloneInfo { url, registry, id });
     }
 
@@ -266,15 +300,15 @@ pub fn resolve_to_clone_info(source: &RepoUrl) -> anyhow::Result<CloneInfo> {
 pub fn builtin_registries() -> Vec<Box<dyn Registry>> {
     vec![
         Box::new(DomainRegistry {
-            registry_name: RegistryName("github".into()),
+            registry_name: RegistryName::new("github"),
             domain: "github.com".into(),
         }),
         Box::new(DomainRegistry {
-            registry_name: RegistryName("gitlab".into()),
+            registry_name: RegistryName::new("gitlab"),
             domain: "gitlab.com".into(),
         }),
         Box::new(DomainRegistry {
-            registry_name: RegistryName("bitbucket".into()),
+            registry_name: RegistryName::new("bitbucket"),
             domain: "bitbucket.org".into(),
         }),
     ]

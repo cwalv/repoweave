@@ -71,7 +71,7 @@ pub fn init(name: &str, provider: Option<&str>, cwd: &Path) -> anyhow::Result<()
         let registries = builtin_registries();
         let registry = registries
             .iter()
-            .find(|r| r.name().0 == registry_name)
+            .find(|r| r.name().as_str() == registry_name)
             .ok_or_else(|| {
                 anyhow::anyhow!(
                     "unknown registry '{}'. Known registries: github, gitlab, bitbucket",
@@ -79,10 +79,7 @@ pub fn init(name: &str, provider: Option<&str>, cwd: &Path) -> anyhow::Result<()
                 )
             })?;
 
-        let repo_id = RepoId {
-            owner: owner.to_string(),
-            repo: name.to_string(),
-        };
+        let repo_id = RepoId::new(owner, name);
 
         let url = registry.clone_url(&repo_id).ok_or_else(|| {
             anyhow::anyhow!("registry '{}' does not support clone URLs", registry_name)
@@ -171,5 +168,6 @@ pub fn init_adopt(source: &str, cwd: &Path) -> anyhow::Result<()> {
 /// repo name becomes the project name.
 fn resolve_adopt_source(source: &str) -> anyhow::Result<(RepoUrl, String)> {
     let info = resolve_to_clone_info(&RepoUrl::parse(source))?;
-    Ok((info.url, info.id.repo))
+    let repo = info.id.repo().to_owned();
+    Ok((info.url, repo))
 }

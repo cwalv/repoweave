@@ -59,6 +59,12 @@ impl fmt::Display for ProjectName {
     }
 }
 
+impl AsRef<Path> for ProjectName {
+    fn as_ref(&self) -> &Path {
+        Path::new(&self.0)
+    }
+}
+
 /// A workweave name (e.g., `agent-42`, `hotfix`).
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(transparent)]

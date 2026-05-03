@@ -247,7 +247,7 @@ pub trait Vcs {
         &self,
         repo: &Path,
         dest: &Path,
-        branch_name: &str,
+        branch_name: &RefName,
         start_point: &RevisionId,
     ) -> Result<(), VcsError>;
 
@@ -276,7 +276,7 @@ pub trait Vcs {
     fn checkout(&self, repo: &Path, revision: &RevisionId) -> Result<(), VcsError>;
 
     /// Delete a local branch by name. Uses force-delete semantics.
-    fn delete_branch(&self, repo: &Path, branch: &str) -> Result<(), VcsError>;
+    fn delete_branch(&self, repo: &Path, branch: &RefName) -> Result<(), VcsError>;
 
     /// Prune stale worktree administrative files from a repo.
     fn worktree_prune(&self, repo: &Path) -> Result<(), VcsError>;
@@ -285,8 +285,8 @@ pub trait Vcs {
     fn list_branches_with_prefix(
         &self,
         repo: &Path,
-        prefix: &str,
-    ) -> Result<Vec<String>, VcsError>;
+        prefix: &RefName,
+    ) -> Result<Vec<RefName>, VcsError>;
 
     /// Return the default branch name for `repo`.
     ///

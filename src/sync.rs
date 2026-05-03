@@ -5,7 +5,7 @@
 
 use crate::git::{git_command, GitVcs};
 use crate::lock::{commit_lock_file_with_message, generate_lock};
-use crate::manifest::{LockFile, Project, WorkweaveName};
+use crate::manifest::{LockFile, Project, ProjectName, WorkweaveName};
 use crate::vcs::{RevisionId, Vcs};
 use crate::workspace::{WorkspaceContext, WorkspaceLocation};
 use crate::workweave::workweave_path_for;
@@ -293,7 +293,11 @@ impl OpId {
         Self(s)
     }
 
-    pub fn from_string(s: impl Into<String>) -> Self {
+    /// Reconstruct an `OpId` from its string form (e.g. when reading the sync
+    /// op marker file). `pub(crate)` to keep the constructor inside the
+    /// crate — `OpId::new_now` is the only externally legitimate way to mint
+    /// a fresh id.
+    pub(crate) fn from_string(s: impl Into<String>) -> Self {
         Self(s.into())
     }
 
@@ -654,21 +658,21 @@ fn refresh_working_tree_if_safe(repo: &Path) {
     let _ = git_command().args(&args).current_dir(repo).output();
 }
 
-fn find_project_name(ctx: &WorkspaceContext) -> anyhow::Result<String> {
-    let name = match &ctx.location {
-        WorkspaceLocation::Weave { project: Some(p) } => p.as_str().to_owned(),
-        WorkspaceLocation::Workweave { project, .. } => project.as_str().to_owned(),
+fn find_project_name(ctx: &WorkspaceContext) -> anyhow::Result<ProjectName> {
+    match &ctx.location {
+        WorkspaceLocation::Weave { project: Some(p) } => Ok(p.clone()),
+        WorkspaceLocation::Workweave { project, .. } => Ok(project.clone()),
         WorkspaceLocation::Weave { project: None } => {
             let names = crate::workspace::discover_project_paths(ctx.active_path());
-            names.into_iter().next().ok_or_else(|| {
+            let name = names.into_iter().next().ok_or_else(|| {
                 anyhow::anyhow!(
                     "no project found under {}; is this a workspace?",
                     ctx.active_path().display()
                 )
-            })?
+            })?;
+            Ok(ProjectName::new(name))
         }
-    };
-    Ok(name)
+    }
 }
 
 // ---------------------------------------------------------------------------

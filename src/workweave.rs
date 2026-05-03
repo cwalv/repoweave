@@ -8,7 +8,7 @@
 
 use crate::git::GitVcs;
 use crate::manifest::{Manifest, ProjectName, WorkweaveName};
-use crate::vcs::{vcs_for, Vcs};
+use crate::vcs::{vcs_for, RefName, Vcs};
 use crate::workspace::{
     parse_weave_dir_name, read_active_project, set_active_project, weave_dir_name, WorkweaveMarker,
 };
@@ -60,19 +60,19 @@ fn ephemeral_branch_name(
     project: &str,
     workweave_name: &WorkweaveName,
     current_branch: &str,
-) -> String {
-    format!(
+) -> RefName {
+    RefName::new(format!(
         "{}--{}/{}",
         project,
         workweave_name.as_str(),
         current_branch
-    )
+    ))
 }
 
 /// Build the branch prefix used to locate all ephemeral branches for a given
 /// (project, workweave_name) pair. Used to clean up branches on delete.
-fn ephemeral_branch_prefix(project: &str, workweave_name: &WorkweaveName) -> String {
-    format!("{}--{}", project, workweave_name.as_str())
+fn ephemeral_branch_prefix(project: &str, workweave_name: &WorkweaveName) -> RefName {
+    RefName::new(format!("{}--{}", project, workweave_name.as_str()))
 }
 
 /// Recursively copy a directory from `src` to `dst`.
