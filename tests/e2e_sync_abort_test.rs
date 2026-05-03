@@ -638,6 +638,99 @@ fn sync_force_bypasses_phase1_ancestor_refusal_and_preserves_savepoint() {
     );
 }
 
+/// Refusal message also names `--strategy rebase` / `--strategy merge` as the
+/// rwv-native paths to land diverging project commits without `--force`.
+#[test]
+fn sync_refusal_message_suggests_rebase_or_merge_strategy() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (primary, ww, c1) = make_shared_workspaces(tmp.path());
+
+    primary_advance_project_one_commit(&primary, &c1);
+
+    let assertion = rwv()
+        .args(["sync", &ww.root.to_string_lossy()])
+        .current_dir(&primary.root)
+        .assert()
+        .failure();
+    let stderr = String::from_utf8_lossy(&assertion.get_output().stderr).to_string();
+
+    assert!(
+        stderr.contains("--strategy rebase") || stderr.contains("--strategy merge"),
+        "expected refusal to suggest --strategy rebase or --strategy merge; got: {stderr}"
+    );
+}
+
+/// Backward sync that ff refuses lands cleanly under `--strategy rebase`:
+/// CWD's lock-only divergence is replayed onto source's tip with `rwv.lock`
+/// excluded (skipped as empty), and Phase 3 leaves the lock consistent with
+/// manifest tips.
+#[test]
+fn sync_rebase_lands_lock_only_divergence_without_force() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (primary, ww, c1) = make_shared_workspaces(tmp.path());
+
+    // primary advances its project by a lock-only commit; ww stays at C1.
+    primary_advance_project_one_commit(&primary, &c1);
+    let ww_tip_before = git_out(&["rev-parse", "HEAD"], &ww.project_dir);
+
+    // Default ff would refuse (covered elsewhere). --strategy rebase replays
+    // primary's lock-only commit onto ww's tip, dropping rwv.lock from the
+    // patch → empty → skipped.
+    rwv()
+        .args(["sync", &ww.root.to_string_lossy(), "--strategy", "rebase"])
+        .current_dir(&primary.root)
+        .assert()
+        .success();
+
+    // Primary's project tip should match ww's (the lock-only commit was
+    // skipped during replay; Phase 3 found no lock change to commit).
+    let primary_tip_after = git_out(&["rev-parse", "HEAD"], &primary.project_dir);
+    assert_eq!(
+        primary_tip_after, ww_tip_before,
+        "after rebase landed lock-only divergence, primary tip should equal ww tip; \
+         got primary={primary_tip_after} ww={ww_tip_before}"
+    );
+}
+
+/// Backward sync with `--strategy merge` produces a merge commit on top of
+/// CWD whose tree matches source on non-lock paths.
+#[test]
+fn sync_merge_lands_lock_only_divergence_without_force() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (primary, ww, c1) = make_shared_workspaces(tmp.path());
+
+    // primary advances its project by a lock-only commit.
+    primary_advance_project_one_commit(&primary, &c1);
+    let primary_pre_sync = git_out(&["rev-parse", "HEAD"], &primary.project_dir);
+
+    rwv()
+        .args(["sync", &ww.root.to_string_lossy(), "--strategy", "merge"])
+        .current_dir(&primary.root)
+        .assert()
+        .success();
+
+    // Either a merge commit was created (ff impossible), or primary's tip
+    // already had ww's tip as ancestor (ff'd through merge). Either way,
+    // primary's history must reach the pre-sync commit (no commits lost).
+    let primary_post_sync = git_out(&["rev-parse", "HEAD"], &primary.project_dir);
+    let reachable = common::git()
+        .args([
+            "merge-base",
+            "--is-ancestor",
+            &primary_pre_sync,
+            &primary_post_sync,
+        ])
+        .current_dir(&primary.project_dir)
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
+    assert!(
+        reachable,
+        "after --strategy merge, pre-sync commit {primary_pre_sync} should still be reachable \
+         from primary's HEAD {primary_post_sync}"
+    );
+}
+
 /// Refusal message names the source-side recovery: "sync the other direction
 /// first" — and that recovery actually works (no infinite refusal loop).
 #[test]

@@ -118,28 +118,75 @@ pub fn write_lock(lock: &LockFile, path: &Path) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Commit the lock file at `lock_path` into the git repo at `workspace_root`.
+/// Stage `rwv.lock` and commit from `project_dir`.
 ///
-/// Refuses if the workspace has uncommitted changes to files other than the
-/// lock file — the auto-commit must not bundle unrelated work-in-progress.
-/// Stages `lock_path`, skips the commit if nothing changed, and commits with
-/// a multi-repo summary message otherwise.
+/// Generic helper: caller supplies the message. Returns `Ok(false)` when
+/// the staged change is empty (lock unchanged), `Ok(true)` when a commit
+/// was made.
+///
+/// Runs git from `project_dir` so the operation works for both the
+/// project-as-its-own-git-repo model (where `project_dir` is itself a
+/// git repo or worktree) and the workspace-root-as-single-repo model
+/// (where `project_dir` is a sub-directory inside a larger git repo).
+pub(crate) fn commit_lock_file_with_message(
+    project_dir: &Path,
+    message: &str,
+) -> anyhow::Result<bool> {
+    use crate::git::git_command;
+
+    let add_out = git_command()
+        .args(["add", "rwv.lock"])
+        .current_dir(project_dir)
+        .output()
+        .map_err(|e| anyhow::anyhow!("failed to run git add: {e}"))?;
+
+    if !add_out.status.success() {
+        let stderr = String::from_utf8_lossy(&add_out.stderr);
+        anyhow::bail!("git add failed: {}", stderr.trim());
+    }
+
+    // `git diff --cached --quiet` exits 0 when nothing is staged.
+    let nothing_staged = git_command()
+        .args(["diff", "--cached", "--quiet"])
+        .current_dir(project_dir)
+        .output()
+        .map_err(|e| anyhow::anyhow!("failed to check staged changes: {e}"))?
+        .status
+        .success();
+
+    if nothing_staged {
+        return Ok(false);
+    }
+
+    let commit_out = git_command()
+        .args(["commit", "-m", message])
+        .current_dir(project_dir)
+        .output()
+        .map_err(|e| anyhow::anyhow!("failed to run git commit: {e}"))?;
+
+    if !commit_out.status.success() {
+        let stderr = String::from_utf8_lossy(&commit_out.stderr);
+        anyhow::bail!("git commit failed: {}", stderr.trim());
+    }
+
+    Ok(true)
+}
+
+/// Commit `rwv.lock` from `project_dir` with a multi-repo summary message.
+///
+/// Refuses if the project repo has uncommitted changes outside the lock
+/// file — the auto-commit must not bundle unrelated work-in-progress.
 fn commit_lock_file(
-    workspace_root: &Path,
-    lock_path: &Path,
+    project_dir: &Path,
     new_lock: &LockFile,
     old_lock: Option<&LockFile>,
 ) -> anyhow::Result<()> {
     use crate::git::git_command;
 
-    // Compute the lock path relative to workspace_root for status comparison.
-    let lock_relative = lock_path.strip_prefix(workspace_root).unwrap_or(lock_path);
-    let lock_relative_str = lock_relative.to_string_lossy();
-
-    // Dirty check: refuse when non-lock tracked files have uncommitted changes.
+    // Dirty check (scoped to the project repo).
     let status_out = git_command()
         .args(["status", "--porcelain"])
-        .current_dir(workspace_root)
+        .current_dir(project_dir)
         .output()
         .map_err(|e| anyhow::anyhow!("failed to run git status: {e}"))?;
     if !status_out.status.success() {
@@ -153,58 +200,21 @@ fn commit_lock_file(
         }
         // Porcelain format: "XY path" — path starts at byte 3.
         let path = line.get(3..).unwrap_or("").trim();
-        path != lock_relative_str.as_ref()
+        path != "rwv.lock"
     });
     if has_other_changes {
         anyhow::bail!(
-            "workspace has uncommitted changes outside rwv.lock; \
+            "project repo has uncommitted changes outside rwv.lock; \
              commit or stash them before using --commit"
         );
     }
 
-    let lock_str = lock_path
-        .to_str()
-        .ok_or_else(|| anyhow::anyhow!("lock path is not valid UTF-8"))?;
-
-    let add_out = git_command()
-        .args(["add", lock_str])
-        .current_dir(workspace_root)
-        .output()
-        .map_err(|e| anyhow::anyhow!("failed to run git add: {e}"))?;
-
-    if !add_out.status.success() {
-        let stderr = String::from_utf8_lossy(&add_out.stderr);
-        anyhow::bail!("git add failed: {}", stderr.trim());
-    }
-
-    // `git diff --cached --quiet` exits 0 when nothing is staged.
-    let nothing_staged = git_command()
-        .args(["diff", "--cached", "--quiet"])
-        .current_dir(workspace_root)
-        .output()
-        .map_err(|e| anyhow::anyhow!("failed to check staged changes: {e}"))?
-        .status
-        .success();
-
-    if nothing_staged {
-        eprintln!("Lock unchanged, nothing to commit.");
-        return Ok(());
-    }
-
     let message = build_commit_message(new_lock, old_lock);
-
-    let commit_out = git_command()
-        .args(["commit", "-m", &message])
-        .current_dir(workspace_root)
-        .output()
-        .map_err(|e| anyhow::anyhow!("failed to run git commit: {e}"))?;
-
-    if !commit_out.status.success() {
-        let stderr = String::from_utf8_lossy(&commit_out.stderr);
-        anyhow::bail!("git commit failed: {}", stderr.trim());
+    if commit_lock_file_with_message(project_dir, &message)? {
+        eprintln!("Committed rwv.lock");
+    } else {
+        eprintln!("Lock unchanged, nothing to commit.");
     }
-
-    eprintln!("Committed rwv.lock");
     Ok(())
 }
 
@@ -278,7 +288,7 @@ pub fn lock(cwd: &Path, dirty: bool, commit: bool) -> anyhow::Result<()> {
     }
 
     if commit {
-        commit_lock_file(ctx.active_path(), &lock_path, &lock, old_lock.as_ref())?;
+        commit_lock_file(&project_dir, &lock, old_lock.as_ref())?;
     }
 
     Ok(())

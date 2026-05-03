@@ -306,7 +306,7 @@ Commands like `add`, `remove`, `lock`, and `check` infer the project and workspa
 | `rwv lock` | Snapshot repo versions into the project's `rwv.lock`. Errors on uncommitted changes (`--dirty` to bypass). Runs integration lock hooks. |
 | `rwv doctor` | Convention enforcement: orphaned clones, dangling references, missing roles, stale locks, workweave drift, index drift, working-tree drift, integration checks. With `--locked` (also `rwv check --locked`): zero exit iff every repo tip matches its lock entry — scriptable precondition for `rwv sync`. With `--fix`: auto-remediate safely-fixable index drift (stale indexes whose tree matches an ancestor commit) **and** safely-fixable working-tree drift (stale on-disk files whose content matches a reachable committed blob); never touches live staged content or live edits. |
 | `rwv status [--json]` | Show per-repo state of the CWD workspace: branch, tip, lock SHA, lock relation (`ok`/`ahead`/`behind`/`diverged`), and mid-op state. `--json` for machine-readable output. |
-| `rwv sync <source>` | Align CWD workspace with `<source>`'s committed `rwv.lock`. `<source>` is a workspace name (`primary`, a workweave name) or a path. `--strategy ff\|rebase\|merge` (default `ff`). `--force` bypasses the lock-freshness precondition. |
+| `rwv sync <source>` | Align CWD workspace with `<source>`'s committed `rwv.lock`. `<source>` is a workspace name (`primary`, a workweave name) or a path. `--strategy ff\|rebase\|merge` (default `ff`) applies uniformly to both project and manifest repos; `rwv.lock` is excluded from project-repo merge inputs and regenerated in Phase 3. `--force` bypasses the lock-freshness precondition and hard-resets the project repo (discards CWD's project commits). |
 | `rwv abort` | Restore CWD workspace to its pre-sync state using savepoint refs stored under `refs/rwv/pre-op/`. Runs VCS-native abort for any in-progress operations (rebase, merge, cherry-pick). |
 | `rwv resolve` | Print the weave directory (workweave or weave). Useful for scripting: `cd $(rwv resolve)`. |
 
@@ -424,15 +424,15 @@ Aligns the CWD workspace with `<source>`'s committed `rwv.lock`. `<source>` can 
 
 | Strategy | Behavior | When to use |
 |---|---|---|
-| `ff` (default) | Fast-forward only. Errors if not a strict ancestor | Everyday forward-only alignment |
-| `rebase` | Replay CWD's commits onto `<source>` tip | CWD has local commits on an outdated base |
-| `merge` | Create a merge commit joining both sides | Both workspaces have independently advanced |
+| `ff` (default) | Fast-forward only. Errors if project or manifest branch is not a strict ancestor of source | Everyday forward-only alignment |
+| `rebase` | Replay CWD's commits onto `<source>` tip; on the project repo, `rwv.lock` is excluded from replayed commits | CWD has local commits on an outdated base; project or manifest repos are diverged |
+| `merge` | Create a merge commit joining both sides; on the project repo, `rwv.lock` is excluded from merge inputs | Both workspaces have independently advanced |
 
 **Phases:**
 
-1. Reset CWD's project repo to `<source>`'s project-repo tip (exposes `<source>`'s `rwv.lock`).
-2. For each repo in the now-visible lock, advance CWD's branch using the chosen strategy.
-3. Materialize any repos newly listed in the lock; remove worktrees for dropped entries.
+1. Phase 2 — advance each manifest repo's branch to `<source>`'s lock target using the chosen strategy.
+2. Phase 1' — replay CWD's unique project commits onto `<source>`'s project tip with `rwv.lock` excluded from each commit's diff; lock-only commits are skipped.
+3. Phase 3 — regenerate `rwv.lock` from post-Phase-2 manifest tips and commit if changed. Materialize any repos newly listed in the lock; remove worktrees for dropped entries.
 
 **Preconditions** (enforced before any repo is touched):
 - Both `<source>` and CWD must pass `rwv check --locked` (bypass with `--force`).

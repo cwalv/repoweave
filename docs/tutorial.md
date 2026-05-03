@@ -298,6 +298,30 @@ To give up entirely and restore every repo to its pre-sync state:
 rwv abort
 ```
 
+**Multiple workweaves (n-way flow)** — two workweaves both have project commits; the second one can land without manual replay:
+
+```bash
+# ww1 finishes first and lands cleanly
+cd ~/work
+rwv sync ww1              # primary fast-forwards to ww1's tip
+
+# ww2 is now diverged from primary; bring primary into ww2 first
+cd .workweaves/payments
+rwv sync primary --strategy rebase
+# Phase 2: ww2's manifest repos advance to primary's lock targets
+# Phase 1': ww2's project commits are replayed onto primary's tip
+#           with rwv.lock excluded — lock-only commits become no-ops
+# Phase 3: lock regenerated from the merged manifest tips
+
+# now ww2 is ahead of primary in a straight line; land it
+cd ~/work
+rwv sync payments         # fast-forward; already linear
+```
+
+`rwv.lock` is never merged — it is recomputed in Phase 3 each time,
+so lock-file conflicts never arise regardless of how many workweaves
+are in flight.
+
 ### Cleanup
 
 ```bash

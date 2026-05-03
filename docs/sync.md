@@ -4,66 +4,85 @@
 workspace's committed state. It looks symmetric on the surface — `cd primary &&
 rwv sync feat` and `cd .workweaves/feat && rwv sync primary` both compile
 to a `rwv sync <source>` invocation — but it is *not* symmetric in effect.
-This page explains the asymmetry, why it exists, and the two repo classes
-sync treats differently.
+This page explains how sync works, the lock-as-derived contract, and the
+phase ordering.
 
-## Two repo classes, two strategies
+## The lock-as-derived contract
 
-A workspace contains two structurally different kinds of repositories.
+`rwv.lock` records manifest repo tips. It is *derived state*: its content
+is fully determined by running `rwv lock` against the current manifest
+tips. This means `rwv.lock` is never an input to a merge — it is always
+an output of sync.
 
-### Project repo
+This distinction matters when two workspaces both have project commits
+(commits inside `projects/<name>/`). Naively merging their project repos
+produces lock-file conflicts on every line both sides touched. But those
+"conflicts" are synthetic — the authoritative value is whatever `rwv lock`
+computes from the post-merge manifest tips. Treating `rwv.lock` as an
+input to merge would force operators to manually resolve a conflict that
+has a deterministic answer.
 
-`projects/<name>/` is a git repo holding `rwv.yaml`, `rwv.lock`, and project-
-level docs. Its data is **snapshot-shaped**: every commit is a coherent
-point-in-time view of the world (manifest + lock + state of project docs at
-that moment). The lock file is a structural resource — every project commit
-that updates the lock will conflict with every other project commit that
-updates the lock, because both sides edit the same `rwv.lock` lines.
+`rwv sync` handles this by excluding `rwv.lock` from Phase 1' (the
+project-repo step) and regenerating it in Phase 3.
 
-This rules out divergent-development merge strategies: rebase replays
-project commits onto a different lock-file base and conflicts at every
-commit; merge commits create lock-file conflicts that have to be hand-
-resolved per merge. Both add work without adding value — the project repo
-is not where divergent development belongs.
+## Unified strategy model
 
-So `rwv sync` treats the project repo specially: a single hard-reset to the
-source's tip. **Source-aligned**: post-sync, the destination's project tip
-*equals* the source's. (Post-fix: refused if the destination would lose
-commits — see "Phase 1 ancestor precondition" below.)
+Both repo classes — the project repo (`projects/<name>/`) and manifest
+repos (`github/<owner>/<repo>/` etc.) — run under the same `--strategy`
+choice. The distinction between them is not *whether* to merge but *how*
+`rwv.lock` is handled during the merge:
 
-### Manifest repos
+| Class | Strategy | `rwv.lock` treatment |
+|-------|----------|----------------------|
+| Project repo | `ff` / `rebase` / `merge` | Excluded from Phase 1' inputs; regenerated in Phase 3 |
+| Manifest repos | `ff` / `rebase` / `merge` | Normal content; no exclusion |
 
-The repos listed in `rwv.yaml` (under `github/<owner>/<repo>/`,
-`gita/<owner>/<repo>/`, etc.) are the actual code repos. Their data is
-**divergent-development-shaped**: branches advance independently, merges and
-rebases are normal, and conflicts when they happen are content conflicts
-that operators are accustomed to resolving.
+`--force` retains hard-reset semantics on the project repo — the way to
+*discard* CWD's project commits intentionally. It is no longer the only
+path that handles project-repo divergence; `--strategy rebase` or
+`--strategy merge` are the paths that *land* CWD's project commits.
 
-`rwv sync` treats manifest repos the way operators treat any branch
-update: pick a strategy. `--strategy ff` (default) refuses to advance if
-the local branch isn't an ancestor of the lock target; `--strategy rebase`
-replays local commits on top of the lock target; `--strategy merge` creates
-a merge commit. This is a per-invocation choice that mirrors `git pull`.
+## Phase ordering
+
+Sync runs three phases in this order:
+
+**Phase 2 (manifest repos)** runs first, advancing each manifest repo's
+branch to the source's lock target using `--strategy`. This happens
+before the project repo is touched because Phase 3 (re-lock) needs the
+final manifest tips.
+
+**Phase 1' (project repo, lock-excluded)** replays CWD's unique project
+commits — commits reachable from CWD's project tip but not from source's
+— onto source's project tip using `--strategy`, with `rwv.lock` excluded
+from each commit's effective diff. Commits whose only change was
+`rwv.lock` become empty patches and are skipped automatically.
+
+**Phase 3 (re-lock)** regenerates `rwv.lock` from the post-Phase-2
+manifest tips. If the lock differs from what is in the project repo's
+working tree, sync commits it automatically with a message like
+`lock: auto-relock after sync from <source>`.
+
+The old Phase 1 (hard-reset project repo to source's tip) is superseded
+by Phase 1' + Phase 3. The effect is the same when CWD's project repo is
+a strict ancestor of source's (ff case): Phase 1' fast-forwards and Phase
+3 regenerates the lock. When there is divergence, Phase 1' replays or
+merges instead of refusing.
 
 ## sync's symmetries and asymmetries
 
-`rwv sync` looks symmetric and *is* symmetric in some ways. The asymmetries
-are deliberate, narrow, and easy to miss without spelling them out.
-
 ### Symmetric in surface
 
-Any workspace can be source for any other. Any workspace can be destination
-for any other. `rwv sync <other>` from primary and `rwv sync <primary>`
-from a workweave are the same command exercising the same code path. There
-is no per-direction logic in `run_sync` — direction-of-effect is
-parameterized by which workspace is CWD.
+Any workspace can be source for any other. Any workspace can be
+destination for any other. `rwv sync <other>` from primary and
+`rwv sync <primary>` from a workweave are the same command exercising the
+same code path. There is no per-direction logic in `run_sync` —
+direction-of-effect is parameterized by which workspace is CWD.
 
 ### Symmetric in mechanism
 
-Both directions go through the same Phase 1 (project repo hard-reset to
-source's tip) and Phase 2 (per-repo `apply_strategy` against the now-
-visible lock). The savepoint protocol (`refs/rwv/pre-op/<id>`) and abort
-contract are also direction-neutral.
+Both directions go through the same Phase 2 (manifest repos), Phase 1'
+(project repo), and Phase 3 (re-lock). The savepoint protocol
+(`refs/rwv/pre-op/<id>`) and abort contract are direction-neutral.
 
 ### Asymmetric in direction-of-effect
 
@@ -78,45 +97,39 @@ sync from the other side).
 ### Asymmetric in cost-of-operation
 
 `rwv sync <source>` modifies the destination's project repo and manifest
-repos. It only **reads** from the source. So source can safely be a stable
-or shared workspace; destination is the workspace that absorbs change.
-
-### Asymmetric per-repo-class
-
-Already covered above, but the asymmetry is worth restating:
-
-| Class | Strategy | Post-sync state of destination | What `--force` bypasses |
-|-------|----------|--------------------------------|-------------------------|
-| Project repo | hard reset (always) | tip == source's tip | The Phase 1 ancestor precondition |
-| Manifest repos | `ff` / `rebase` / `merge` | tip = local lock-target reachable through the chosen strategy | (lock-freshness, when set) |
+repos. It only **reads** from the source. So source can safely be a
+stable or shared workspace; destination is the workspace that absorbs
+change.
 
 ## Phase 1 ancestor precondition
 
-Phase 1 hard-resets the destination's project repo to the source's tip.
-Before doing that, sync checks the ancestor relationship between the two
-project tips and refuses if the reset would discard reachable commits.
+Before Phase 1', sync checks the ancestor relationship between the two
+project tips and applies strategy-aware logic:
 
-| Relation | Sync action |
-|----------|-------------|
-| Equal tips | No-op, allowed |
-| CWD is ancestor of source (forward) | Allowed — the normal case |
-| Source is ancestor of CWD (CWD ahead) | **Refused** — would discard CWD's commits |
-| Diverged (neither ancestor) | **Refused** — would discard CWD's diverging commits |
+| Relation | `ff` | `rebase` / `merge` |
+|----------|------|---------------------|
+| Equal tips | No-op, allowed | No-op, allowed |
+| CWD is ancestor of source (forward) | Allowed — fast-forward | Allowed |
+| Source is ancestor of CWD (CWD ahead) | **Refused** | Handled by strategy |
+| Diverged (neither ancestor) | **Refused** | Handled by strategy |
 
-`--force` bypasses the refusal. The savepoint protocol still runs — the
-discarded commits are preserved at `refs/rwv/pre-op/<id>` and recoverable
-via `rwv abort`.
+With `ff` (the default), sync refuses when CWD's project tip is not an
+ancestor of source's. The error message suggests `--strategy rebase` or
+`--strategy merge` as alternatives to `--force`.
 
-The savepoint is a recovery mechanism, not a guard: an operator only
-notices the loss if they run abort, and abort is something they have to
-remember to do. The precondition is the guard — refusing first means
-operators learn about the divergence before any state is lost.
+With `rebase` or `merge`, the strategy itself handles divergence. The
+ancestor precondition is bypassed.
+
+`--force` bypasses the precondition and hard-resets the project repo to
+source's tip — use this when you want to intentionally discard CWD's
+project commits. The savepoint protocol still runs; discarded commits are
+preserved at `refs/rwv/pre-op/<id>` and recoverable via `rwv abort`.
 
 ## Two example scenarios
 
 ### Forward sync (clean case)
 
-A workweave has new lock + new manifest commits; primary lags.
+A workweave finishes work, locks, and primary syncs in:
 
 ```text
 primary/project: ─── C1
@@ -129,54 +142,67 @@ cd /path/to/primary
 rwv sync feat
 ```
 
-- Lock-freshness: both sides are fresh. ✓
-- Phase 1 ancestor: primary's project tip (C1) is ancestor of workweave's
-  (C2-lock). Forward — allowed.
-- Phase 1 effect: primary's project repo fast-aligns to C2-lock.
-- Phase 2: each manifest repo advances per `--strategy`.
+- Phase 2: manifest repos fast-forward to workweave's lock targets.
+- Phase 1': CWD's project tip (C1) is an ancestor of workweave's (C2-lock).
+  Phase 1' fast-forwards. C2-lock's only change is `rwv.lock`, which is
+  excluded — so Phase 1' fast-forwards the non-lock project content
+  (none here) and Phase 3 picks up the lock.
+- Phase 3: lock regenerated and committed if changed.
 
-This is the design's optimal case.
+### N-way merge (two workweaves, serial landing)
 
-### Reverse sync (post-fix refusal)
-
-Primary has local project commits; the workweave is older.
+Two workweaves both have project commits. `ww1` lands first; `ww2` syncs
+in and lands second.
 
 ```text
-primary/project: ─── C1 ─── C2-primary
+primary/project: ─── C1
                        \
-workweave/project: ──── C1
+ww1/project: ──────── C1 ─── CA    (ww1 doc changes + lock)
+ww2/project: ──────── C1 ─── CB    (ww2 doc changes + lock)
 ```
+
+**Step 1: sync ww1 into primary (ff)**
 
 ```bash
 cd /path/to/primary
-rwv sync feat
-# Error: destination workspace 'primary' project repo at <sha> has 1
-# commits not in source workspace 'feat'. Either sync the other direction
-# first to bring those commits to source, or use `--force` if you intend
-# to discard them (preserved in refs/rwv/pre-op/<id> for `rwv abort`).
+rwv sync ww1
+# primary now at CA; manifest repos at ww1's lock targets
 ```
 
-The named recovery — "sync the other direction first" — applies in two
-shapes:
+**Step 2: bring primary into ww2 (rebase)**
 
-- **`rwv sync` from the workweave** (workweave-as-CWD, primary-as-source).
-  Forward from the workweave's perspective; brings primary's commit to the
-  workweave. Then `rwv sync feat` from primary becomes a no-op.
-- **Push primary's project branch to a remote and merge upstream**, the
-  workweave fetches and either pulls or `rwv sync`s. This is the workflow
-  for cross-machine collaboration where the workspaces don't share a
-  worktree.
+ww2's project tip (CB) is now diverged from primary (CA). `ff` would
+refuse — use rebase:
 
-`--force` is the right answer when the operator *intends* to discard
-primary's project commits (e.g. "this was a bad idea, let me throw it
-away"). The escape hatch's escape hatch is `rwv abort`, which restores
-from the savepoint.
+```bash
+cd /path/to/ww2
+rwv sync primary --strategy rebase
+# Phase 2: ww2's manifest repos advance to primary's lock targets
+# Phase 1': CB replayed onto CA with rwv.lock excluded
+#   CB's lock-only lines produce an empty patch and are skipped;
+#   CB's doc changes replay cleanly onto CA
+# Phase 3: lock regenerated from post-Phase-2 manifest tips
+```
+
+ww2 is now rebased on top of primary. Its project history is linear.
+
+**Step 3: sync ww2 into primary (ff)**
+
+```bash
+cd /path/to/primary
+rwv sync ww2
+# fast-forward; ww2 is already ahead of primary in a straight line
+```
+
+Both workweaves' project commits land without manual intervention.
+`rwv.lock` is never merged — it is computed by Phase 3 each time.
 
 ## Where this lives in code
 
-- `src/sync.rs::check_phase1_ancestor` — the precondition.
-- `src/sync.rs::check_lock_freshness` — both lock-freshness errors.
-- `src/sync.rs::run_sync` — the orchestrator (mid-op guard, lock freshness,
-  ancestor check, savepoint, Phase 1, Phase 2).
-- `tests/e2e_sync_abort_test.rs` — end-to-end coverage for every relation
-  above plus the error-message structure.
+- `src/sync.rs::check_phase1_ancestor` — the strategy-aware precondition.
+- `src/sync.rs::run_sync` — the orchestrator (Phase 2 → Phase 1' → Phase 3).
+- `src/lock.rs` — Phase 3 re-lock codepath.
+- `tests/e2e_two_workweaves_test.rs` — acceptance tests for the n-way
+  merge contract (lock-only changes, doc changes, genuine conflict).
+- `tests/e2e_sync_abort_test.rs` — Phase 1 ancestor precondition and
+  error message coverage.

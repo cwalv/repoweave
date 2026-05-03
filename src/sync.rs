@@ -4,6 +4,7 @@
 //! `rwv.lock`. `rwv abort` rolls back to pre-sync state using savepoint refs.
 
 use crate::git::{git_command, GitVcs};
+use crate::lock::{commit_lock_file_with_message, generate_lock};
 use crate::manifest::{LockFile, Project};
 use crate::vcs::{RevisionId, Vcs};
 use crate::workspace::{WorkspaceContext, WorkspaceLocation};
@@ -340,14 +341,18 @@ fn cwd_is_ancestor_or_equal(
         .unwrap_or(false)
 }
 
-/// Phase 1 precondition: refuse if hard-resetting CWD's project repo to
-/// source's tip would discard commits reachable only from CWD.
+/// Phase 1 precondition (ff-strategy only): refuse if fast-forwarding CWD's
+/// project repo to source's tip would discard commits reachable only from CWD.
 ///
 /// Cases:
 /// - equal: no-op, allowed.
 /// - CWD ancestor of source (forward): allowed — the normal sync case.
-/// - source ancestor of CWD (CWD ahead): refused — would discard CWD's commits.
-/// - diverged (neither ancestor): refused — would discard CWD's diverging commits.
+/// - source ancestor of CWD (CWD ahead): refused — ff cannot discard commits.
+/// - diverged (neither ancestor): refused — ff cannot merge.
+///
+/// `rebase` and `merge` strategies bypass this precondition; they handle
+/// divergence by replaying CWD's project commits (with `rwv.lock` excluded)
+/// onto source's tip.
 fn check_phase1_ancestor(
     cwd_project_dir: &Path,
     cwd_tip: &RevisionId,
@@ -360,7 +365,7 @@ fn check_phase1_ancestor(
     }
 
     // CWD is not an ancestor of source. Count the commits CWD has that source
-    // doesn't (the ones a reset --hard would discard).
+    // doesn't (the ones a fast-forward would refuse to land).
     let extra_count = git(
         &[
             "rev-list",
@@ -373,9 +378,10 @@ fn check_phase1_ancestor(
 
     anyhow::bail!(
         "destination workspace '{cwd_workspace_name}' project repo at {cwd_tip} has {extra_count} \
-         commits not in source workspace '{source_workspace_name}'. Either sync the other direction \
-         first to bring those commits to source, or use `--force` if you intend to discard them \
-         (preserved in refs/rwv/pre-op/<id> for `rwv abort`).",
+         commits not in source workspace '{source_workspace_name}'. Rerun with `--strategy rebase` \
+         or `--strategy merge` to land them, sync the other direction first to bring those commits \
+         to source, or use `--force` if you intend to discard them (preserved in refs/rwv/pre-op/<id> \
+         for `rwv abort`).",
     );
 }
 
@@ -566,6 +572,16 @@ fn resolve_source_path(ctx: &WorkspaceContext, source: &str) -> anyhow::Result<P
 // ---------------------------------------------------------------------------
 
 /// Execute `rwv sync <source>`.
+///
+/// Phase ordering under the lock-as-derived contract:
+/// 1. **Phase 2 (manifest repos)** — advance each manifest repo to source's
+///    committed lock target via `--strategy`.
+/// 2. **Phase 1' (project repo)** — replay CWD's unique project commits onto
+///    source's tip via `--strategy`, with `rwv.lock` excluded from each
+///    commit's effective diff. Lock-only commits become empty patches and
+///    are skipped. `--force` retains hard-reset semantics.
+/// 3. **Phase 3 (re-lock)** — regenerate `rwv.lock` from the now-merged
+///    manifest tips and commit if changed.
 pub fn run_sync(
     cwd: &Path,
     source: &str,
@@ -618,9 +634,9 @@ pub fn run_sync(
         }
     }
 
-    // Resolve project tips up front; the ancestor precondition (and Phase 1
-    // reset) need both. `head_revision` is read-only — running it before any
-    // side effects keeps the refusal path clean.
+    // Resolve project tips up front; the ancestor precondition (ff-only) and
+    // Phase 1' need both. `head_revision` is read-only — running it before
+    // any side effects keeps the refusal path clean.
     let source_project_tip = GitVcs
         .head_revision(&source_project_dir)
         .map_err(|e| anyhow::anyhow!("failed to read source project HEAD: {e}"))?;
@@ -628,16 +644,16 @@ pub fn run_sync(
         .head_revision(&cwd_project_dir)
         .map_err(|e| anyhow::anyhow!("failed to read CWD project HEAD: {e}"))?;
 
-    // Precondition: Phase 1 hard-resets the destination's project repo to
-    // source's tip. Refuse if that would discard reachable commits (i.e. CWD
-    // is not an ancestor of source). `--force` bypasses; the savepoint
-    // preserves the discarded commits for `rwv abort`.
+    // Precondition: ff strategy refuses divergence; rebase/merge handle it
+    // by replaying CWD's commits onto source's tip with `rwv.lock` excluded.
+    // `--force` bypasses regardless of strategy and discards CWD's project
+    // commits via hard-reset; the savepoint preserves them for `rwv abort`.
     let phase1_ancestor_bypassed = if force {
         // Even with --force, detect whether the ancestor check WOULD have
         // refused — so we can preserve the project savepoint post-op as a
         // tombstone of the discarded commits.
         !cwd_is_ancestor_or_equal(&cwd_project_dir, &cwd_project_tip, &source_project_tip)
-    } else {
+    } else if strategy == SyncStrategy::Ff {
         check_phase1_ancestor(
             &cwd_project_dir,
             &cwd_project_tip,
@@ -645,6 +661,10 @@ pub fn run_sync(
             &cwd_workspace_name,
             &source_workspace_name,
         )?;
+        false
+    } else {
+        // rebase/merge: precondition bypassed; the strategy itself handles
+        // divergence. Savepoint cleanup follows the normal path (no tombstone).
         false
     };
 
@@ -664,29 +684,18 @@ pub fn run_sync(
         }
     }
 
-    // Phase 1: reset CWD project repo to source's tip to expose source's rwv.lock.
-    // Always a hard reset (not strategy-based): the project repo tracks lock state,
-    // not diverging development; merging/rebasing lock files always conflicts.
-    if let Err(e) = git(
-        &["reset", "--hard", source_project_tip.as_str()],
-        &cwd_project_dir,
-    ) {
-        eprintln!("Phase 1 (project repo reset) failed: {e}");
-        // Don't clean up savepoints — leave them for `rwv abort`.
-        anyhow::bail!("sync failed in Phase 1 (project repo); run `rwv abort` to restore");
-    }
-
-    // Phase 2: advance per-repo branches using the now-visible lock.
-    let updated_lock_path = cwd_project_dir.join("rwv.lock");
-    let mut updated_lock = LockFile::from_path(&updated_lock_path)
-        .map_err(|e| anyhow::anyhow!("failed to read lock after Phase 1: {e}"))?;
-    // Resolve the freshly-loaded lock against on-disk repos so apply_strategy
-    // operates on the canonical SHA.
-    let _ = updated_lock.resolve_versions(&workspace_dir);
+    // Phase 2 first: advance manifest repos using source's committed lock as
+    // targets. Reading source's lock directly (rather than from the CWD
+    // project after a Phase-1 reset, as the old contract did) keeps the lock
+    // out of the merge inputs entirely.
+    let source_lock_path = source_project_dir.join("rwv.lock");
+    let mut source_lock = LockFile::from_path(&source_lock_path)
+        .map_err(|e| anyhow::anyhow!("failed to read source lock: {e}"))?;
+    let _ = source_lock.resolve_versions(&source_workspace_dir);
 
     let mut any_failure = false;
 
-    for (repo_path, lock_entry) in &updated_lock.repositories {
+    for (repo_path, lock_entry) in &source_lock.repositories {
         let abs = workspace_dir.join(repo_path.as_path());
         if !abs.exists() {
             println!("  {repo_path}: skipped (not on disk)");
@@ -710,6 +719,38 @@ pub fn run_sync(
 
     if any_failure {
         anyhow::bail!("sync completed with failures; fix conflicts and re-run, or run `rwv abort`");
+    }
+
+    // Phase 1': project repo strategy with rwv.lock excluded.
+    let phase1_outcome = if force {
+        // Hard-reset semantics: discard CWD's project commits.
+        match git(
+            &["reset", "--hard", source_project_tip.as_str()],
+            &cwd_project_dir,
+        ) {
+            Ok(_) => Ok(()),
+            Err(e) => Err(anyhow::anyhow!("project repo reset --force failed: {e}")),
+        }
+    } else {
+        apply_project_strategy_excluding_lock(
+            &cwd_project_dir,
+            &source_project_tip,
+            &cwd_project_tip,
+            strategy,
+        )
+    };
+
+    if let Err(e) = phase1_outcome {
+        eprintln!("Phase 1' (project repo) failed: {e}");
+        anyhow::bail!("sync failed in Phase 1' (project repo); run `rwv abort` to restore");
+    }
+
+    // Phase 3: regenerate rwv.lock from current manifest tips and commit if changed.
+    if let Err(e) =
+        regenerate_lock_phase3(&ctx, &cwd_project_dir, &cwd_project, &source_workspace_name)
+    {
+        eprintln!("Phase 3 (re-lock) failed: {e}");
+        anyhow::bail!("sync failed in Phase 3 (re-lock); run `rwv abort` to restore");
     }
 
     // Successful completion: clean up savepoints and marker.
@@ -738,6 +779,260 @@ pub fn run_sync(
     }
     let _ = std::fs::remove_file(&marker_path);
 
+    Ok(())
+}
+
+/// Phase 1': replay CWD's unique project commits onto `source_tip` via
+/// `strategy`, with `rwv.lock` excluded from each commit's effective diff.
+///
+/// - `Ff`: requires CWD ancestor of source (caller already verified). Performs
+///   a fast-forward via `git merge --ff-only`.
+/// - `Rebase`: cherry-picks each CWD-unique commit onto source, dropping
+///   `rwv.lock` from the staged changes. Lock-only commits become empty
+///   patches and are skipped silently.
+/// - `Merge`: produces a merge commit on top of CWD whose tree matches a
+///   regular merge with source, but with `rwv.lock` taken from source (Phase 3
+///   regenerates it).
+///
+/// Conflicts on non-lock paths halt the operation with an error naming the
+/// conflicting paths; the operator resolves and re-runs sync, or invokes
+/// `rwv abort`.
+fn apply_project_strategy_excluding_lock(
+    cwd_project_dir: &Path,
+    source_tip: &RevisionId,
+    cwd_tip: &RevisionId,
+    strategy: SyncStrategy,
+) -> anyhow::Result<()> {
+    if cwd_tip == source_tip {
+        // No-op.
+        return Ok(());
+    }
+
+    match strategy {
+        SyncStrategy::Ff => {
+            // CWD must be ancestor of source (caller verified). Fast-forward.
+            git(
+                &["merge", "--ff-only", source_tip.as_str()],
+                cwd_project_dir,
+            )?;
+        }
+        SyncStrategy::Rebase => {
+            apply_rebase_excluding_lock(cwd_project_dir, source_tip)?;
+        }
+        SyncStrategy::Merge => {
+            apply_merge_excluding_lock(cwd_project_dir, source_tip)?;
+        }
+    }
+    Ok(())
+}
+
+/// Cherry-pick each CWD-unique commit (in chronological order) onto
+/// `source_tip`, with `rwv.lock` excluded from each commit's effective diff.
+fn apply_rebase_excluding_lock(repo: &Path, source_tip: &RevisionId) -> anyhow::Result<()> {
+    let source_ref = source_tip.as_str();
+
+    // Find merge-base between CWD's HEAD and source.
+    let merge_base = git(&["merge-base", "HEAD", source_ref], repo)
+        .map_err(|e| anyhow::anyhow!("failed to find merge-base with source: {e}"))?;
+
+    // List CWD's unique commits since merge-base, oldest-first.
+    let commits_str = git(
+        &["rev-list", "--reverse", &format!("{merge_base}..HEAD")],
+        repo,
+    )
+    .map_err(|e| anyhow::anyhow!("failed to list unique commits: {e}"))?;
+    let commits: Vec<String> = commits_str
+        .lines()
+        .filter(|s| !s.is_empty())
+        .map(String::from)
+        .collect();
+
+    if commits.is_empty() {
+        // CWD is ancestor of source — fast-forward.
+        git(&["reset", "--hard", source_ref], repo)?;
+        return Ok(());
+    }
+
+    // Reset onto source's tip; we'll replay each unique commit on top.
+    git(&["reset", "--hard", source_ref], repo)?;
+
+    for sha in &commits {
+        // Cherry-pick with --no-commit so we can manipulate the index/WT
+        // before deciding whether to commit.
+        let _ = git_command()
+            .args(["cherry-pick", "--allow-empty", "--no-commit", sha])
+            .current_dir(repo)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status();
+
+        // Drop any rwv.lock changes (resolves any lock conflict by taking
+        // HEAD's version, then unstages so it's effectively excluded).
+        let _ = git_command()
+            .args(["checkout", "HEAD", "--", "rwv.lock"])
+            .current_dir(repo)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status();
+        let _ = git_command()
+            .args(["reset", "HEAD", "--", "rwv.lock"])
+            .current_dir(repo)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status();
+
+        // Surface real (non-lock) conflicts as a halt.
+        let unmerged_str =
+            git(&["diff", "--name-only", "--diff-filter=U"], repo).unwrap_or_default();
+        let real_conflicts: Vec<String> = unmerged_str
+            .lines()
+            .filter(|p| !p.is_empty() && *p != "rwv.lock")
+            .map(String::from)
+            .collect();
+        if !real_conflicts.is_empty() {
+            anyhow::bail!(
+                "rebase replay hit conflict at commit {sha} on paths: {}. \
+                 Resolve in {} and re-run sync, or run `rwv abort` to restore.",
+                real_conflicts.join(", "),
+                repo.display()
+            );
+        }
+
+        // Empty-patch detection: nothing staged means the commit was
+        // lock-only (or otherwise empty after lock exclusion). Skip with a
+        // log line and clear cherry-pick state.
+        let nothing_staged = git_command()
+            .args(["diff", "--cached", "--quiet"])
+            .current_dir(repo)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(true);
+
+        if nothing_staged {
+            // Clear CHERRY_PICK_HEAD if set so the next iteration is clean.
+            clear_cherry_pick_state(repo);
+            eprintln!("  (project): skipped lock-only commit {sha}");
+            continue;
+        }
+
+        // Commit with original commit's metadata (author, message, date).
+        git(&["commit", "-C", sha], repo)
+            .map_err(|e| anyhow::anyhow!("failed to commit replayed {sha}: {e}"))?;
+    }
+
+    Ok(())
+}
+
+/// Merge `source_tip` into CWD, dropping any `rwv.lock` change/conflict by
+/// taking HEAD's version (Phase 3 regenerates the lock from manifest tips).
+fn apply_merge_excluding_lock(repo: &Path, source_tip: &RevisionId) -> anyhow::Result<()> {
+    let source_ref = source_tip.as_str();
+
+    // Try a regular merge with --no-commit so we can manipulate the index/WT.
+    let _ = git_command()
+        .args(["merge", "--no-commit", "--no-edit", source_ref])
+        .current_dir(repo)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status();
+
+    // Resolve any rwv.lock change/conflict by taking HEAD's version.
+    let _ = git_command()
+        .args(["checkout", "HEAD", "--", "rwv.lock"])
+        .current_dir(repo)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status();
+    let _ = git_command()
+        .args(["reset", "HEAD", "--", "rwv.lock"])
+        .current_dir(repo)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status();
+
+    // Surface real (non-lock) conflicts as a halt.
+    let unmerged_str = git(&["diff", "--name-only", "--diff-filter=U"], repo).unwrap_or_default();
+    let real_conflicts: Vec<String> = unmerged_str
+        .lines()
+        .filter(|p| !p.is_empty() && *p != "rwv.lock")
+        .map(String::from)
+        .collect();
+    if !real_conflicts.is_empty() {
+        anyhow::bail!(
+            "merge conflict in {} on paths: {}. \
+             Resolve and re-run sync, or run `rwv abort` to restore.",
+            repo.display(),
+            real_conflicts.join(", ")
+        );
+    }
+
+    // Detect whether MERGE_HEAD is still set (i.e. there's a merge in
+    // progress). A clean fast-forward leaves no MERGE_HEAD and no commit to
+    // make; if we're already at source_tip, nothing to do.
+    let git_dir = git(&["rev-parse", "--git-dir"], repo)
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| repo.join(".git"));
+    let merge_head = if git_dir.is_absolute() {
+        git_dir.join("MERGE_HEAD")
+    } else {
+        repo.join(&git_dir).join("MERGE_HEAD")
+    };
+
+    if merge_head.exists() {
+        git(&["commit", "--no-edit"], repo)
+            .map_err(|e| anyhow::anyhow!("failed to commit merge: {e}"))?;
+    }
+
+    Ok(())
+}
+
+/// Clear cherry-pick mid-op state without aborting — used when a commit is
+/// dropped after lock exclusion.
+fn clear_cherry_pick_state(repo: &Path) {
+    let git_dir = match git(&["rev-parse", "--git-dir"], repo) {
+        Ok(s) => {
+            let p = PathBuf::from(&s);
+            if p.is_absolute() {
+                p
+            } else {
+                repo.join(p)
+            }
+        }
+        Err(_) => return,
+    };
+    let _ = std::fs::remove_file(git_dir.join("CHERRY_PICK_HEAD"));
+}
+
+/// Phase 3: regenerate `rwv.lock` from the current manifest tips. Commit it
+/// if it differs from what's currently in the project repo.
+fn regenerate_lock_phase3(
+    ctx: &WorkspaceContext,
+    cwd_project_dir: &Path,
+    cwd_project: &Project,
+    source_workspace_name: &str,
+) -> anyhow::Result<()> {
+    let workweave_pair = match &ctx.location {
+        WorkspaceLocation::Workweave { name, dir, .. } => Some((name, dir.as_path())),
+        WorkspaceLocation::Weave { .. } => None,
+    };
+
+    let new_lock = generate_lock(
+        &cwd_project.manifest,
+        ctx.primary_path(),
+        workweave_pair,
+        true, // dirty: skip uncommitted-changes check; sync may have produced WT churn
+    )
+    .map_err(|e| anyhow::anyhow!("failed to generate lock: {e}"))?;
+
+    let lock_path = cwd_project_dir.join("rwv.lock");
+    crate::lock::write_lock(&new_lock, &lock_path)?;
+
+    let message = format!("lock: auto-relock after sync from {source_workspace_name}");
+    if commit_lock_file_with_message(cwd_project_dir, &message)? {
+        eprintln!("  (project): re-locked after sync from {source_workspace_name}");
+    }
     Ok(())
 }
 
