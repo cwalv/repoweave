@@ -357,16 +357,11 @@ impl IntegrationConfig {
 
     /// Parse integration-specific settings into a typed struct.
     ///
-    /// Deserializes the full mapping into `T`. Returns `T::default()` when
-    /// parsing fails or when required fields are absent, so callers get
-    /// graceful degradation rather than hard errors.
-    pub fn settings<T: serde::de::DeserializeOwned + Default>(&self) -> T {
-        serde_yaml::from_value(serde_yaml::Value::Mapping(self.0.clone())).unwrap_or_else(|e| {
-            eprintln!(
-                "[warning] integration config: failed to parse settings, using defaults: {e}"
-            );
-            T::default()
-        })
+    /// Returns `Err` if the YAML mapping cannot be deserialized into `T` so
+    /// that callers can surface the parse error rather than silently falling
+    /// back to a default.
+    pub fn settings<T: serde::de::DeserializeOwned>(&self) -> Result<T, serde_yaml::Error> {
+        serde_yaml::from_value(serde_yaml::Value::Mapping(self.0.clone()))
     }
 
     /// Convenience constructor: parse an `IntegrationConfig` from a YAML string.
@@ -584,23 +579,22 @@ mod tests {
     #[test]
     fn integration_config_settings_deserializes_files_list() {
         let config = IntegrationConfig::from_yaml("enabled: true\nfiles: [a.txt, b.txt]");
-        let settings: TestSettings = config.settings();
+        let settings: TestSettings = config.settings().unwrap();
         assert_eq!(settings.files, vec!["a.txt", "b.txt"]);
     }
 
     #[test]
     fn integration_config_settings_returns_default_when_keys_missing() {
         let config = IntegrationConfig::from_yaml("enabled: true");
-        let settings: TestSettings = config.settings();
+        let settings: TestSettings = config.settings().unwrap();
         assert_eq!(settings, TestSettings::default());
     }
 
     #[test]
-    fn integration_config_settings_returns_default_on_wrong_type() {
-        // `files` expects a sequence, but we supply a scalar — graceful degradation.
+    fn integration_config_settings_errors_on_wrong_type() {
+        // `files` expects a sequence, but we supply a scalar — parse error surfaces.
         let config = IntegrationConfig::from_yaml("files: not-a-list");
-        let settings: TestSettings = config.settings();
-        assert_eq!(settings, TestSettings::default());
+        assert!(config.settings::<TestSettings>().is_err());
     }
 
     #[test]
@@ -611,7 +605,7 @@ mod tests {
         let restored = serde_yaml::to_string(&config).unwrap();
         let config2: IntegrationConfig = serde_yaml::from_str(&restored).unwrap();
         assert_eq!(config2.enabled(), Some(true));
-        let settings: TestSettings = config2.settings();
+        let settings: TestSettings = config2.settings().unwrap();
         assert_eq!(settings.files, vec!["x.json"]);
         assert_eq!(settings.count, 42);
     }

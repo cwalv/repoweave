@@ -44,7 +44,7 @@ impl Integration for StaticFiles {
         // We validate here that declared files actually exist so that the user
         // gets early feedback (activation still succeeds — missing files are
         // simply skipped by the symlink machinery in activate.rs).
-        let cfg: StaticFilesConfig = ctx.config.settings();
+        let cfg: StaticFilesConfig = ctx.config.settings()?;
         for file in &cfg.files {
             let path = ctx.output_dir.join(file);
             if !path.exists() {
@@ -68,7 +68,7 @@ impl Integration for StaticFiles {
     }
 
     fn check(&self, ctx: &IntegrationContext) -> anyhow::Result<Vec<Issue>> {
-        let cfg: StaticFilesConfig = ctx.config.settings();
+        let cfg: StaticFilesConfig = ctx.config.settings()?;
         let mut issues = Vec::new();
         for file in &cfg.files {
             let path = ctx.output_dir.join(file);
@@ -84,6 +84,6 @@ impl Integration for StaticFiles {
     }
 
     fn generated_files(&self, ctx: &IntegrationContext) -> Vec<String> {
-        ctx.config.settings::<StaticFilesConfig>().files
+        ctx.config.settings::<StaticFilesConfig>().unwrap_or_default().files
     }
 }

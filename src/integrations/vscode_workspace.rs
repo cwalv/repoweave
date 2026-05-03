@@ -95,7 +95,7 @@ impl Integration for VscodeWorkspace {
     }
 
     fn activate(&self, ctx: &IntegrationContext) -> anyhow::Result<()> {
-        let cfg: VscodeConfig = ctx.config.settings();
+        let cfg: VscodeConfig = ctx.config.settings()?;
 
         let filename = format!("{}.code-workspace", ctx.project.as_str());
         let filepath = ctx.output_dir.join(&filename);
