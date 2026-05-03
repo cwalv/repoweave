@@ -1,8 +1,13 @@
+use repoweave::manifest::RepoUrl;
 use repoweave::registry::{
     builtin_registries, resolve_shorthand, DirectoryRegistry, DomainRegistry, Registry,
     RegistryName, RepoId,
 };
 use std::path::{Path, PathBuf};
+
+fn url(s: &str) -> RepoUrl {
+    RepoUrl::parse(s)
+}
 
 // ---------------------------------------------------------------------------
 // DomainRegistry: HTTPS URL parsing
@@ -11,7 +16,7 @@ use std::path::{Path, PathBuf};
 #[test]
 fn domain_registry_parse_https_url() {
     let reg = github_registry();
-    let id = reg.parse_url("https://github.com/owner/repo.git").unwrap();
+    let id = reg.parse_url(&url("https://github.com/owner/repo.git")).unwrap();
     assert_eq!(id.owner, "owner");
     assert_eq!(id.repo, "repo");
 }
@@ -19,7 +24,7 @@ fn domain_registry_parse_https_url() {
 #[test]
 fn domain_registry_parse_https_url_without_git_suffix() {
     let reg = github_registry();
-    let id = reg.parse_url("https://github.com/owner/repo").unwrap();
+    let id = reg.parse_url(&url("https://github.com/owner/repo")).unwrap();
     assert_eq!(id.owner, "owner");
     assert_eq!(id.repo, "repo");
 }
@@ -31,7 +36,7 @@ fn domain_registry_parse_https_url_without_git_suffix() {
 #[test]
 fn domain_registry_parse_ssh_url() {
     let reg = github_registry();
-    let id = reg.parse_url("git@github.com:owner/repo.git").unwrap();
+    let id = reg.parse_url(&url("git@github.com:owner/repo.git")).unwrap();
     assert_eq!(id.owner, "owner");
     assert_eq!(id.repo, "repo");
 }
@@ -39,7 +44,7 @@ fn domain_registry_parse_ssh_url() {
 #[test]
 fn domain_registry_parse_ssh_url_without_git_suffix() {
     let reg = github_registry();
-    let id = reg.parse_url("git@github.com:owner/repo").unwrap();
+    let id = reg.parse_url(&url("git@github.com:owner/repo")).unwrap();
     assert_eq!(id.owner, "owner");
     assert_eq!(id.repo, "repo");
 }
@@ -51,8 +56,12 @@ fn domain_registry_parse_ssh_url_without_git_suffix() {
 #[test]
 fn domain_registry_git_suffix_presence_and_absence_yield_same_result() {
     let reg = github_registry();
-    let with = reg.parse_url("https://github.com/owner/repo.git").unwrap();
-    let without = reg.parse_url("https://github.com/owner/repo").unwrap();
+    let with = reg
+        .parse_url(&url("https://github.com/owner/repo.git"))
+        .unwrap();
+    let without = reg
+        .parse_url(&url("https://github.com/owner/repo"))
+        .unwrap();
     assert_eq!(with, without);
 }
 
@@ -63,13 +72,17 @@ fn domain_registry_git_suffix_presence_and_absence_yield_same_result() {
 #[test]
 fn domain_registry_rejects_wrong_domain_https() {
     let reg = github_registry();
-    assert!(reg.parse_url("https://gitlab.com/owner/repo.git").is_none());
+    assert!(reg
+        .parse_url(&url("https://gitlab.com/owner/repo.git"))
+        .is_none());
 }
 
 #[test]
 fn domain_registry_rejects_wrong_domain_ssh() {
     let reg = github_registry();
-    assert!(reg.parse_url("git@gitlab.com:owner/repo.git").is_none());
+    assert!(reg
+        .parse_url(&url("git@gitlab.com:owner/repo.git"))
+        .is_none());
 }
 
 // ---------------------------------------------------------------------------
@@ -83,8 +96,8 @@ fn domain_registry_clone_url() {
         owner: "cwalv".into(),
         repo: "repoweave".into(),
     };
-    let url = reg.clone_url(&id).unwrap();
-    assert_eq!(url, "https://github.com/cwalv/repoweave.git");
+    let result = reg.clone_url(&id).unwrap();
+    assert_eq!(result.as_str(), "https://github.com/cwalv/repoweave.git");
 }
 
 // ---------------------------------------------------------------------------
@@ -109,7 +122,7 @@ fn domain_registry_local_path() {
 #[test]
 fn directory_registry_parse_file_url() {
     let reg = dir_registry();
-    let id = reg.parse_url("file:///srv/repos/owner/repo").unwrap();
+    let id = reg.parse_url(&url("file:///srv/repos/owner/repo")).unwrap();
     assert_eq!(id.owner, "owner");
     assert_eq!(id.repo, "repo");
 }
@@ -121,13 +134,17 @@ fn directory_registry_parse_file_url() {
 #[test]
 fn directory_registry_rejects_non_matching_prefix() {
     let reg = dir_registry();
-    assert!(reg.parse_url("file:///other/path/owner/repo").is_none());
+    assert!(reg
+        .parse_url(&url("file:///other/path/owner/repo"))
+        .is_none());
 }
 
 #[test]
 fn directory_registry_rejects_https_urls() {
     let reg = dir_registry();
-    assert!(reg.parse_url("https://example.com/owner/repo").is_none());
+    assert!(reg
+        .parse_url(&url("https://example.com/owner/repo"))
+        .is_none());
 }
 
 // ---------------------------------------------------------------------------
@@ -162,15 +179,15 @@ fn builtin_registries_can_parse_their_urls() {
     let registries = builtin_registries();
     // github
     assert!(registries[0]
-        .parse_url("https://github.com/o/r.git")
+        .parse_url(&url("https://github.com/o/r.git"))
         .is_some());
     // gitlab
     assert!(registries[1]
-        .parse_url("https://gitlab.com/o/r.git")
+        .parse_url(&url("https://gitlab.com/o/r.git"))
         .is_some());
     // bitbucket
     assert!(registries[2]
-        .parse_url("https://bitbucket.org/o/r.git")
+        .parse_url(&url("https://bitbucket.org/o/r.git"))
         .is_some());
 }
 
@@ -181,12 +198,12 @@ fn builtin_registries_can_parse_their_urls() {
 #[test]
 fn malformed_url_returns_none() {
     let reg = github_registry();
-    assert!(reg.parse_url("not-a-url").is_none());
-    assert!(reg.parse_url("").is_none());
-    assert!(reg.parse_url("ftp://github.com/owner/repo").is_none());
-    assert!(reg.parse_url("https://").is_none());
-    assert!(reg.parse_url("https://github.com").is_none());
-    assert!(reg.parse_url("https://github.com/").is_none());
+    assert!(reg.parse_url(&url("not-a-url")).is_none());
+    assert!(reg.parse_url(&url("")).is_none());
+    assert!(reg.parse_url(&url("ftp://github.com/owner/repo")).is_none());
+    assert!(reg.parse_url(&url("https://")).is_none());
+    assert!(reg.parse_url(&url("https://github.com")).is_none());
+    assert!(reg.parse_url(&url("https://github.com/")).is_none());
 }
 
 // ---------------------------------------------------------------------------
@@ -196,25 +213,25 @@ fn malformed_url_returns_none() {
 #[test]
 fn empty_owner_returns_none() {
     let reg = github_registry();
-    assert!(reg.parse_url("https://github.com//repo").is_none());
+    assert!(reg.parse_url(&url("https://github.com//repo")).is_none());
 }
 
 #[test]
 fn empty_repo_returns_none() {
     let reg = github_registry();
-    assert!(reg.parse_url("https://github.com/owner/").is_none());
+    assert!(reg.parse_url(&url("https://github.com/owner/")).is_none());
 }
 
 #[test]
 fn empty_owner_ssh_returns_none() {
     let reg = github_registry();
-    assert!(reg.parse_url("git@github.com:/repo").is_none());
+    assert!(reg.parse_url(&url("git@github.com:/repo")).is_none());
 }
 
 #[test]
 fn empty_repo_ssh_returns_none() {
     let reg = github_registry();
-    assert!(reg.parse_url("git@github.com:owner/").is_none());
+    assert!(reg.parse_url(&url("git@github.com:owner/")).is_none());
 }
 
 // ---------------------------------------------------------------------------

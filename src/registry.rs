@@ -6,6 +6,7 @@
 //! The `Registry` trait allows different hosts (GitHub, GitLab, self-hosted)
 //! to have different URL parsing, authentication, and discovery behavior.
 
+use crate::manifest::{RepoUrl, UrlKind};
 use std::path::{Path, PathBuf};
 
 /// A short name for a code host or directory that serves as the first path
@@ -30,11 +31,15 @@ pub trait Registry {
     fn name(&self) -> &RegistryName;
 
     /// If `url` belongs to this registry, parse out the owner and repo.
-    fn parse_url(&self, url: &str) -> Option<RepoId>;
+    ///
+    /// The kind has already been classified — implementations short-circuit
+    /// for kinds they don't handle (e.g. `DomainRegistry` only matches
+    /// `Https`/`Ssh`, `DirectoryRegistry` only matches `File`).
+    fn parse_url(&self, url: &RepoUrl) -> Option<RepoId>;
 
     /// Construct a clone URL from an owner/repo pair.
     /// Returns `None` if this registry can't generate URLs (e.g., directory-based).
-    fn clone_url(&self, id: &RepoId) -> Option<String>;
+    fn clone_url(&self, id: &RepoId) -> Option<RepoUrl>;
 
     /// The local path for a repo: `{registry}/{owner}/{repo}`.
     fn local_path(&self, id: &RepoId) -> PathBuf {
@@ -58,17 +63,19 @@ impl Registry for DomainRegistry {
         &self.registry_name
     }
 
-    fn parse_url(&self, url: &str) -> Option<RepoId> {
-        // HTTPS: https://github.com/owner/repo.git
-        // SSH:   git@github.com:owner/repo.git
-        let path = if let Some(rest) = url.strip_prefix("https://") {
-            let rest = rest.strip_prefix(self.domain.as_str())?;
-            rest.strip_prefix('/')
-        } else if let Some(rest) = url.strip_prefix("git@") {
-            let rest = rest.strip_prefix(self.domain.as_str())?;
-            rest.strip_prefix(':')
-        } else {
-            None
+    fn parse_url(&self, url: &RepoUrl) -> Option<RepoId> {
+        // Only HTTPS and SCP-style SSH URLs map to a domain.
+        let raw = url.as_str();
+        let path = match url.kind() {
+            UrlKind::Https => raw
+                .strip_prefix("https://")?
+                .strip_prefix(self.domain.as_str())?
+                .strip_prefix('/'),
+            UrlKind::Ssh => raw
+                .strip_prefix("git@")?
+                .strip_prefix(self.domain.as_str())?
+                .strip_prefix(':'),
+            _ => return None,
         }?;
 
         let path = path.strip_suffix(".git").unwrap_or(path);
@@ -81,11 +88,11 @@ impl Registry for DomainRegistry {
         Some(RepoId { owner, repo })
     }
 
-    fn clone_url(&self, id: &RepoId) -> Option<String> {
-        Some(format!(
+    fn clone_url(&self, id: &RepoId) -> Option<RepoUrl> {
+        Some(RepoUrl::parse(format!(
             "https://{}/{}/{}.git",
             self.domain, id.owner, id.repo
-        ))
+        )))
     }
 }
 
@@ -104,8 +111,11 @@ impl Registry for DirectoryRegistry {
         &self.registry_name
     }
 
-    fn parse_url(&self, url: &str) -> Option<RepoId> {
-        let path = url.strip_prefix("file://")?;
+    fn parse_url(&self, url: &RepoUrl) -> Option<RepoId> {
+        if url.kind() != UrlKind::File {
+            return None;
+        }
+        let path = url.as_str().strip_prefix("file://")?;
         let path = Path::new(path);
         let relative = path.strip_prefix(&self.prefix).ok()?;
         let mut components = relative.components();
@@ -114,7 +124,7 @@ impl Registry for DirectoryRegistry {
         Some(RepoId { owner, repo })
     }
 
-    fn clone_url(&self, _id: &RepoId) -> Option<String> {
+    fn clone_url(&self, _id: &RepoId) -> Option<RepoUrl> {
         None
     }
 }
@@ -127,7 +137,7 @@ impl Registry for DirectoryRegistry {
 ///
 /// Returns the registry name, parsed repo ID, and the local path for the repo.
 pub fn resolve_url(
-    url: &str,
+    url: &RepoUrl,
     registries: &[&dyn Registry],
 ) -> Option<(RegistryName, RepoId, PathBuf)> {
     for reg in registries {
@@ -187,12 +197,17 @@ pub fn resolve_shorthand(
     }
 }
 
-/// Returns true if `source` looks like a URL (as opposed to a shorthand).
-fn is_url(source: &str) -> bool {
-    source.contains("://") || source.starts_with("git@")
+/// Result of resolving a source (URL or shorthand) to a real clone URL.
+///
+/// The `url` is always a real clone URL (never a [`UrlKind::Shorthand`]).
+#[derive(Debug, Clone)]
+pub struct CloneInfo {
+    pub url: RepoUrl,
+    pub registry: RegistryName,
+    pub id: RepoId,
 }
 
-/// Resolve a source string (URL or shorthand) to its clone URL, registry name,
+/// Resolve a source (URL or shorthand) to its clone URL, registry name,
 /// and repo ID.
 ///
 /// For full URLs, the clone URL is the source itself. The registry name and repo
@@ -204,37 +219,41 @@ fn is_url(source: &str) -> bool {
 /// constructs the clone URL.
 ///
 /// This is the single shared resolution path used by both `fetch` and `init --adopt`.
-pub fn resolve_to_clone_info(source: &str) -> anyhow::Result<(String, RegistryName, RepoId)> {
+pub fn resolve_to_clone_info(source: &RepoUrl) -> anyhow::Result<CloneInfo> {
     let registries = builtin_registries();
     let refs: Vec<&dyn Registry> = registries.iter().map(|r| r.as_ref()).collect();
 
-    if is_url(source) {
+    if source.is_url() {
         // For URLs, try to parse via registries to get structured info.
-        if let Some((name, id, _path)) = resolve_url(source, &refs) {
-            return Ok((source.to_string(), name, id));
+        if let Some((registry, id, _path)) = resolve_url(source, &refs) {
+            return Ok(CloneInfo {
+                url: source.clone(),
+                registry,
+                id,
+            });
         }
         // No registry matched — derive repo name from the URL.
-        let project_name = crate::fetch::project_name_from_source(source);
-        return Ok((
-            source.to_string(),
-            RegistryName("unknown".into()),
-            RepoId {
+        let project_name = crate::fetch::project_name_from_source(source.as_str());
+        return Ok(CloneInfo {
+            url: source.clone(),
+            registry: RegistryName("unknown".into()),
+            id: RepoId {
                 owner: String::new(),
                 repo: project_name,
             },
-        ));
+        });
     }
 
     // Try as a shorthand (owner/repo or registry/owner/repo).
-    if let Some((name, id, _path)) = resolve_shorthand(source, &refs) {
+    if let Some((registry, id, _path)) = resolve_shorthand(source.as_str(), &refs) {
         let reg = refs
             .iter()
-            .find(|r| r.name() == &name)
-            .ok_or_else(|| anyhow::anyhow!("registry '{}' not found", name.0))?;
-        let url = reg
-            .clone_url(&id)
-            .ok_or_else(|| anyhow::anyhow!("registry '{}' does not support clone URLs", name.0))?;
-        return Ok((url, name, id));
+            .find(|r| r.name() == &registry)
+            .ok_or_else(|| anyhow::anyhow!("registry '{}' not found", registry.0))?;
+        let url = reg.clone_url(&id).ok_or_else(|| {
+            anyhow::anyhow!("registry '{}' does not support clone URLs", registry.0)
+        })?;
+        return Ok(CloneInfo { url, registry, id });
     }
 
     anyhow::bail!(
@@ -286,6 +305,10 @@ mod tests {
         }
     }
 
+    fn url(s: &str) -> RepoUrl {
+        RepoUrl::parse(s)
+    }
+
     // -----------------------------------------------------------------------
     // parse_url edge cases for DomainRegistry
     // -----------------------------------------------------------------------
@@ -294,7 +317,9 @@ mod tests {
     fn parse_domain_url_trailing_slash_https() {
         let reg = github_reg();
         // Trailing slash is ignored; repo = "repo"
-        let id = reg.parse_url("https://github.com/owner/repo/").unwrap();
+        let id = reg
+            .parse_url(&url("https://github.com/owner/repo/"))
+            .unwrap();
         assert_eq!(id.owner, "owner");
         assert_eq!(id.repo, "repo");
     }
@@ -304,7 +329,7 @@ mod tests {
         let reg = github_reg();
         // Extra segments beyond owner/repo are discarded
         let id = reg
-            .parse_url("https://github.com/owner/repo/tree/main")
+            .parse_url(&url("https://github.com/owner/repo/tree/main"))
             .unwrap();
         assert_eq!(id.owner, "owner");
         assert_eq!(id.repo, "repo");
@@ -315,7 +340,7 @@ mod tests {
         let reg = github_reg();
         // Extra segments beyond owner/repo are discarded
         let id = reg
-            .parse_url("git@github.com:owner/repo/tree/main")
+            .parse_url(&url("git@github.com:owner/repo/tree/main"))
             .unwrap();
         assert_eq!(id.owner, "owner");
         assert_eq!(id.repo, "repo");
@@ -324,13 +349,13 @@ mod tests {
     #[test]
     fn parse_domain_url_only_owner_no_repo() {
         let reg = github_reg();
-        assert!(reg.parse_url("https://github.com/owner").is_none());
+        assert!(reg.parse_url(&url("https://github.com/owner")).is_none());
     }
 
     #[test]
     fn parse_domain_url_ssh_only_owner() {
         let reg = github_reg();
-        assert!(reg.parse_url("git@github.com:owner").is_none());
+        assert!(reg.parse_url(&url("git@github.com:owner")).is_none());
     }
 
     #[test]
@@ -338,14 +363,16 @@ mod tests {
         // Ensure "github.com.evil.com" doesn't match "github.com"
         let reg = github_reg();
         assert!(reg
-            .parse_url("https://github.com.evil.com/owner/repo")
+            .parse_url(&url("https://github.com.evil.com/owner/repo"))
             .is_none());
     }
 
     #[test]
     fn parse_domain_url_strips_git_suffix_once() {
         let reg = github_reg();
-        let id = reg.parse_url("https://github.com/owner/repo.git").unwrap();
+        let id = reg
+            .parse_url(&url("https://github.com/owner/repo.git"))
+            .unwrap();
         assert_eq!(id.repo, "repo");
     }
 
@@ -353,7 +380,7 @@ mod tests {
     fn parse_domain_url_git_in_repo_name() {
         let reg = github_reg();
         let id = reg
-            .parse_url("https://github.com/owner/my.git.repo.git")
+            .parse_url(&url("https://github.com/owner/my.git.repo.git"))
             .unwrap();
         assert_eq!(id.repo, "my.git.repo");
     }
@@ -367,7 +394,7 @@ mod tests {
         let reg = dir_reg();
         // Extra path segments beyond owner/repo are ignored (components iterator)
         let id = reg
-            .parse_url("file:///srv/repos/owner/repo/sub/dir")
+            .parse_url(&url("file:///srv/repos/owner/repo/sub/dir"))
             .unwrap();
         assert_eq!(id.owner, "owner");
         assert_eq!(id.repo, "repo");
@@ -376,20 +403,22 @@ mod tests {
     #[test]
     fn parse_directory_url_only_owner() {
         let reg = dir_reg();
-        assert!(reg.parse_url("file:///srv/repos/owner").is_none());
+        assert!(reg.parse_url(&url("file:///srv/repos/owner")).is_none());
     }
 
     #[test]
     fn parse_directory_url_exact_prefix_no_segments() {
         let reg = dir_reg();
-        assert!(reg.parse_url("file:///srv/repos").is_none());
+        assert!(reg.parse_url(&url("file:///srv/repos")).is_none());
     }
 
     #[test]
     fn parse_directory_url_trailing_slash() {
         let reg = dir_reg();
         // "/srv/repos/owner/repo/" — the trailing slash doesn't add a component
-        let id = reg.parse_url("file:///srv/repos/owner/repo/").unwrap();
+        let id = reg
+            .parse_url(&url("file:///srv/repos/owner/repo/"))
+            .unwrap();
         assert_eq!(id.owner, "owner");
         assert_eq!(id.repo, "repo");
     }
@@ -397,7 +426,9 @@ mod tests {
     #[test]
     fn parse_directory_url_non_file_scheme() {
         let reg = dir_reg();
-        assert!(reg.parse_url("https:///srv/repos/owner/repo").is_none());
+        assert!(reg
+            .parse_url(&url("https:///srv/repos/owner/repo"))
+            .is_none());
     }
 
     // -----------------------------------------------------------------------
@@ -436,7 +467,7 @@ mod tests {
             repo: "widgets".into(),
         };
         assert_eq!(
-            reg.clone_url(&id).unwrap(),
+            reg.clone_url(&id).unwrap().as_str(),
             "https://github.com/alice/widgets.git"
         );
     }
@@ -449,7 +480,7 @@ mod tests {
             repo: "project".into(),
         };
         assert_eq!(
-            reg.clone_url(&id).unwrap(),
+            reg.clone_url(&id).unwrap().as_str(),
             "https://gitlab.com/org/project.git"
         );
     }
@@ -475,7 +506,7 @@ mod tests {
         let registries: Vec<&dyn Registry> = vec![&gh, &gl];
 
         let (name, id, path) =
-            resolve_url("https://github.com/owner/repo.git", &registries).unwrap();
+            resolve_url(&url("https://github.com/owner/repo.git"), &registries).unwrap();
         assert_eq!(name, RegistryName("github".into()));
         assert_eq!(id.owner, "owner");
         assert_eq!(id.repo, "repo");
@@ -488,7 +519,8 @@ mod tests {
         let gl = gitlab_reg();
         let registries: Vec<&dyn Registry> = vec![&gh, &gl];
 
-        let (name, id, _path) = resolve_url("https://gitlab.com/org/proj", &registries).unwrap();
+        let (name, id, _path) =
+            resolve_url(&url("https://gitlab.com/org/proj"), &registries).unwrap();
         assert_eq!(name, RegistryName("gitlab".into()));
         assert_eq!(id.owner, "org");
         assert_eq!(id.repo, "proj");
@@ -500,13 +532,13 @@ mod tests {
         let gl = gitlab_reg();
         let registries: Vec<&dyn Registry> = vec![&gh, &gl];
 
-        assert!(resolve_url("https://example.com/owner/repo", &registries).is_none());
+        assert!(resolve_url(&url("https://example.com/owner/repo"), &registries).is_none());
     }
 
     #[test]
     fn resolve_url_empty_registries_returns_none() {
         let registries: Vec<&dyn Registry> = vec![];
-        assert!(resolve_url("https://github.com/owner/repo", &registries).is_none());
+        assert!(resolve_url(&url("https://github.com/owner/repo"), &registries).is_none());
     }
 
     #[test]
@@ -515,7 +547,8 @@ mod tests {
         let gh = github_reg();
         let registries: Vec<&dyn Registry> = vec![&dr, &gh];
 
-        let (name, id, path) = resolve_url("file:///srv/repos/owner/repo", &registries).unwrap();
+        let (name, id, path) =
+            resolve_url(&url("file:///srv/repos/owner/repo"), &registries).unwrap();
         assert_eq!(name, RegistryName("local".into()));
         assert_eq!(id.owner, "owner");
         assert_eq!(id.repo, "repo");
@@ -528,7 +561,7 @@ mod tests {
         let registries: Vec<&dyn Registry> = vec![&gh];
 
         let (_name, _id, path) =
-            resolve_url("git@github.com:cwalv/repoweave.git", &registries).unwrap();
+            resolve_url(&url("git@github.com:cwalv/repoweave.git"), &registries).unwrap();
         assert_eq!(path, Path::new("github/cwalv/repoweave"));
     }
 
@@ -625,17 +658,38 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // is_url
+    // RepoUrl classification
     // -----------------------------------------------------------------------
 
     #[test]
-    fn is_url_detects_schemes() {
-        assert!(is_url("https://example.com/repo"));
-        assert!(is_url("file:///tmp/repo.git"));
-        assert!(is_url("git@github.com:owner/repo.git"));
-        assert!(!is_url("owner/repo"));
-        assert!(!is_url("github/owner/repo"));
-        assert!(!is_url("my-project"));
+    fn repo_url_classifies_https() {
+        assert_eq!(url("https://example.com/repo").kind(), UrlKind::Https);
+    }
+
+    #[test]
+    fn repo_url_classifies_ssh() {
+        assert_eq!(url("git@github.com:owner/repo.git").kind(), UrlKind::Ssh);
+    }
+
+    #[test]
+    fn repo_url_classifies_file() {
+        assert_eq!(url("file:///tmp/repo.git").kind(), UrlKind::File);
+    }
+
+    #[test]
+    fn repo_url_classifies_shorthand() {
+        assert_eq!(url("owner/repo").kind(), UrlKind::Shorthand);
+        assert_eq!(url("github/owner/repo").kind(), UrlKind::Shorthand);
+        assert_eq!(url("my-project").kind(), UrlKind::Shorthand);
+    }
+
+    #[test]
+    fn repo_url_is_url_excludes_shorthand() {
+        assert!(url("https://example.com/repo").is_url());
+        assert!(url("file:///tmp/repo.git").is_url());
+        assert!(url("git@github.com:owner/repo.git").is_url());
+        assert!(!url("owner/repo").is_url());
+        assert!(!url("github/owner/repo").is_url());
     }
 
     // -----------------------------------------------------------------------
@@ -644,55 +698,55 @@ mod tests {
 
     #[test]
     fn resolve_to_clone_info_url_known_registry() {
-        let (url, name, id) = resolve_to_clone_info("https://github.com/org/repo.git").unwrap();
-        assert_eq!(url, "https://github.com/org/repo.git");
-        assert_eq!(name, RegistryName("github".into()));
-        assert_eq!(id.owner, "org");
-        assert_eq!(id.repo, "repo");
+        let info = resolve_to_clone_info(&url("https://github.com/org/repo.git")).unwrap();
+        assert_eq!(info.url.as_str(), "https://github.com/org/repo.git");
+        assert_eq!(info.registry, RegistryName("github".into()));
+        assert_eq!(info.id.owner, "org");
+        assert_eq!(info.id.repo, "repo");
     }
 
     #[test]
     fn resolve_to_clone_info_url_unknown_registry() {
-        let (url, name, id) = resolve_to_clone_info("https://example.com/org/repo.git").unwrap();
-        assert_eq!(url, "https://example.com/org/repo.git");
-        assert_eq!(name, RegistryName("unknown".into()));
-        assert_eq!(id.repo, "repo");
+        let info = resolve_to_clone_info(&url("https://example.com/org/repo.git")).unwrap();
+        assert_eq!(info.url.as_str(), "https://example.com/org/repo.git");
+        assert_eq!(info.registry, RegistryName("unknown".into()));
+        assert_eq!(info.id.repo, "repo");
     }
 
     #[test]
     fn resolve_to_clone_info_ssh_url() {
-        let (url, name, id) = resolve_to_clone_info("git@github.com:org/repo.git").unwrap();
-        assert_eq!(url, "git@github.com:org/repo.git");
-        assert_eq!(name, RegistryName("github".into()));
-        assert_eq!(id.owner, "org");
-        assert_eq!(id.repo, "repo");
+        let info = resolve_to_clone_info(&url("git@github.com:org/repo.git")).unwrap();
+        assert_eq!(info.url.as_str(), "git@github.com:org/repo.git");
+        assert_eq!(info.registry, RegistryName("github".into()));
+        assert_eq!(info.id.owner, "org");
+        assert_eq!(info.id.repo, "repo");
     }
 
     #[test]
     fn resolve_to_clone_info_two_part_shorthand() {
-        let (url, name, id) = resolve_to_clone_info("cwalv/repoweave").unwrap();
-        assert_eq!(url, "https://github.com/cwalv/repoweave.git");
-        assert_eq!(name, RegistryName("github".into()));
-        assert_eq!(id.owner, "cwalv");
-        assert_eq!(id.repo, "repoweave");
+        let info = resolve_to_clone_info(&url("cwalv/repoweave")).unwrap();
+        assert_eq!(info.url.as_str(), "https://github.com/cwalv/repoweave.git");
+        assert_eq!(info.registry, RegistryName("github".into()));
+        assert_eq!(info.id.owner, "cwalv");
+        assert_eq!(info.id.repo, "repoweave");
     }
 
     #[test]
     fn resolve_to_clone_info_three_part_shorthand() {
-        let (url, name, id) = resolve_to_clone_info("gitlab/org/proj").unwrap();
-        assert_eq!(url, "https://gitlab.com/org/proj.git");
-        assert_eq!(name, RegistryName("gitlab".into()));
-        assert_eq!(id.owner, "org");
-        assert_eq!(id.repo, "proj");
+        let info = resolve_to_clone_info(&url("gitlab/org/proj")).unwrap();
+        assert_eq!(info.url.as_str(), "https://gitlab.com/org/proj.git");
+        assert_eq!(info.registry, RegistryName("gitlab".into()));
+        assert_eq!(info.id.owner, "org");
+        assert_eq!(info.id.repo, "proj");
     }
 
     #[test]
     fn resolve_to_clone_info_rejects_invalid() {
-        assert!(resolve_to_clone_info("not-a-valid-source").is_err());
+        assert!(resolve_to_clone_info(&url("not-a-valid-source")).is_err());
     }
 
     #[test]
     fn resolve_to_clone_info_rejects_four_part() {
-        assert!(resolve_to_clone_info("a/b/c/d").is_err());
+        assert!(resolve_to_clone_info(&url("a/b/c/d")).is_err());
     }
 }

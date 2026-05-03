@@ -11,6 +11,7 @@
 
 use crate::git::git_command;
 use crate::git::GitVcs;
+use crate::manifest::RepoUrl;
 use crate::registry::{builtin_registries, resolve_to_clone_info, RepoId};
 use crate::vcs::Vcs;
 use crate::workspace::WorkspaceContext;
@@ -88,7 +89,7 @@ pub fn init(name: &str, provider: Option<&str>, cwd: &Path) -> anyhow::Result<()
         })?;
 
         let status = git_command()
-            .args(["remote", "add", "origin", &url])
+            .args(["remote", "add", "origin", url.as_str()])
             .current_dir(&project_dir)
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
@@ -141,7 +142,7 @@ pub fn init_adopt(source: &str, cwd: &Path) -> anyhow::Result<()> {
     // Clone the repo
     let git = GitVcs;
     eprintln!("Cloning {} into {}", clone_url, project_dir.display());
-    git.clone_repo(&clone_url, &project_dir)
+    git.clone_repo(clone_url.as_str(), &project_dir)
         .map_err(|e| anyhow::anyhow!("failed to clone {}: {e}", clone_url))?;
 
     // Write rwv.yaml if missing
@@ -168,7 +169,7 @@ pub fn init_adopt(source: &str, cwd: &Path) -> anyhow::Result<()> {
 /// For full URLs, the project name is derived from the last path segment.
 /// For shorthands, the registry is used to construct the clone URL and the
 /// repo name becomes the project name.
-fn resolve_adopt_source(source: &str) -> anyhow::Result<(String, String)> {
-    let (clone_url, _registry_name, repo_id) = resolve_to_clone_info(source)?;
-    Ok((clone_url, repo_id.repo))
+fn resolve_adopt_source(source: &str) -> anyhow::Result<(RepoUrl, String)> {
+    let info = resolve_to_clone_info(&RepoUrl::parse(source))?;
+    Ok((info.url, info.id.repo))
 }

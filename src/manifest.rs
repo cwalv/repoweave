@@ -81,6 +81,106 @@ impl fmt::Display for WorkweaveName {
 }
 
 // ---------------------------------------------------------------------------
+// RepoUrl — a clone source string with its kind classified once on construction
+// ---------------------------------------------------------------------------
+
+/// What flavor of clone source a [`RepoUrl`] holds.
+///
+/// Classified eagerly by [`RepoUrl::parse`] so consumers (registries,
+/// `resolve_to_clone_info`) can dispatch on the variant rather than redo
+/// `strip_prefix` / `contains("://")` checks.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum UrlKind {
+    /// `https://...` URL.
+    Https,
+    /// `git@host:owner/repo[.git]` SCP-style SSH form.
+    Ssh,
+    /// `file://...` URL.
+    File,
+    /// Any other URL scheme (e.g. `ssh://`, `git://`).
+    OtherUrl,
+    /// A shorthand: `owner/repo` or `registry/owner/repo`.
+    Shorthand,
+}
+
+/// A clone source — full URL or shorthand — with its kind decided up front.
+///
+/// Construction is the single point where the raw string is classified.
+/// Round-trips through serde and `Display` as the original string, so
+/// `rwv.yaml` / `rwv.lock` files are byte-identical to before.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct RepoUrl {
+    raw: String,
+    kind: UrlKind,
+}
+
+impl RepoUrl {
+    /// Construct from a raw string, classifying its kind by shape.
+    pub fn parse(s: impl Into<String>) -> Self {
+        let raw = s.into();
+        let kind = classify(&raw);
+        Self { raw, kind }
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.raw
+    }
+
+    pub fn kind(&self) -> UrlKind {
+        self.kind
+    }
+
+    /// True for any URL form (i.e. anything but [`UrlKind::Shorthand`]).
+    pub fn is_url(&self) -> bool {
+        !matches!(self.kind, UrlKind::Shorthand)
+    }
+}
+
+fn classify(s: &str) -> UrlKind {
+    if s.starts_with("https://") {
+        UrlKind::Https
+    } else if s.starts_with("git@") {
+        UrlKind::Ssh
+    } else if s.starts_with("file://") {
+        UrlKind::File
+    } else if s.contains("://") {
+        UrlKind::OtherUrl
+    } else {
+        UrlKind::Shorthand
+    }
+}
+
+impl fmt::Display for RepoUrl {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.raw)
+    }
+}
+
+impl From<&str> for RepoUrl {
+    fn from(s: &str) -> Self {
+        Self::parse(s.to_owned())
+    }
+}
+
+impl From<String> for RepoUrl {
+    fn from(s: String) -> Self {
+        Self::parse(s)
+    }
+}
+
+impl Serialize for RepoUrl {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(&self.raw)
+    }
+}
+
+impl<'de> Deserialize<'de> for RepoUrl {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        String::deserialize(deserializer).map(Self::parse)
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Role — change-resistance level for a repo within a project
 // ---------------------------------------------------------------------------
 
@@ -133,7 +233,7 @@ pub enum VcsType {
 pub struct RepoEntry {
     #[serde(rename = "type")]
     pub vcs_type: VcsType,
-    pub url: String,
+    pub url: RepoUrl,
     pub version: RefName,
     pub role: Role,
 }
@@ -240,7 +340,7 @@ impl Manifest {
 pub struct LockEntry {
     #[serde(rename = "type")]
     pub vcs_type: VcsType,
-    pub url: String,
+    pub url: RepoUrl,
     pub version: RevisionId,
 }
 

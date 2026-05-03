@@ -278,7 +278,7 @@ fn lock_file_format_has_correct_fields() {
     let entry = &lock.repositories[&repoweave::manifest::RepoPath::new(repo_path)];
     assert_eq!(entry.vcs_type, repoweave::manifest::VcsType::Git);
     assert_eq!(entry.version.as_str(), &sha);
-    assert_eq!(entry.url, "https://github.com/acme/server.git");
+    assert_eq!(entry.url.as_str(), "https://github.com/acme/server.git");
 
     // SHA should look like a full git SHA (40 hex chars)
     assert_eq!(
