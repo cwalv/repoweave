@@ -67,9 +67,12 @@ pub fn run_add(url: &str, role: Role, cwd: &Path) -> anyhow::Result<()> {
 
     // Resolve the URL through registries to get a canonical local path.
     let parsed_url: RepoUrl = url.parse()?;
-    let local_path = parsed_url.local_path().or_else(|| derive_local_path_from_url(url)).ok_or_else(|| {
-        anyhow::anyhow!("Error: unrecognized URL '{url}' — could not derive a local path")
-    })?;
+    let local_path = parsed_url
+        .local_path()
+        .or_else(|| derive_local_path_from_url(url))
+        .ok_or_else(|| {
+            anyhow::anyhow!("Error: unrecognized URL '{url}' — could not derive a local path")
+        })?;
 
     let repo_path = RepoPath::new(local_path.to_string_lossy().to_string());
 

@@ -84,6 +84,9 @@ impl Integration for StaticFiles {
     }
 
     fn generated_files(&self, ctx: &IntegrationContext) -> Vec<String> {
-        ctx.config.settings::<StaticFilesConfig>().unwrap_or_default().files
+        ctx.config
+            .settings::<StaticFilesConfig>()
+            .unwrap_or_default()
+            .files
     }
 }

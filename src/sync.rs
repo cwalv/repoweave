@@ -1236,7 +1236,10 @@ mod tests {
 
     #[test]
     fn sync_source_parses_primary() {
-        assert_eq!("primary".parse::<SyncSource>().unwrap(), SyncSource::Primary);
+        assert_eq!(
+            "primary".parse::<SyncSource>().unwrap(),
+            SyncSource::Primary
+        );
     }
 
     #[test]
@@ -1288,17 +1291,11 @@ mod tests {
     #[test]
     fn sync_failure_kind_tags_are_stable() {
         assert_eq!(
-            SyncFailure::HeadUnreadable {
-                error: "x".into()
-            }
-            .kind(),
+            SyncFailure::HeadUnreadable { error: "x".into() }.kind(),
             "head-unreadable"
         );
         assert_eq!(
-            SyncFailure::FastForwardImpossible {
-                error: "x".into()
-            }
-            .kind(),
+            SyncFailure::FastForwardImpossible { error: "x".into() }.kind(),
             "ff-impossible"
         );
         assert_eq!(

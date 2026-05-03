@@ -205,19 +205,13 @@ impl Vcs for GitVcs {
     ) -> Result<(), VcsError> {
         let dest_str = dest.to_str().ok_or_else(|| VcsError::Io {
             ctx: format!("worktree path {} is not valid UTF-8", dest.display()),
-            source: std::io::Error::new(
-                std::io::ErrorKind::InvalidInput,
-                "non-utf8 worktree path",
-            ),
+            source: std::io::Error::new(std::io::ErrorKind::InvalidInput, "non-utf8 worktree path"),
         })?;
         let start = start_point.as_str();
         let branch = branch_name.as_str();
 
         // First try creating a new branch with -b.
-        let result = Self::run(
-            &["worktree", "add", "-b", branch, dest_str, start],
-            repo,
-        );
+        let result = Self::run(&["worktree", "add", "-b", branch, dest_str, start], repo);
 
         if let Err(e) = result {
             // If the branch already exists, try using it as-is (no -b).
@@ -231,10 +225,7 @@ impl Vcs for GitVcs {
                 // If delete fails, fall back to using the existing branch directly.
                 let deleted = Self::run(&["branch", "-D", branch], repo).is_ok();
                 if deleted {
-                    Self::run(
-                        &["worktree", "add", "-b", branch, dest_str, start],
-                        repo,
-                    )?;
+                    Self::run(&["worktree", "add", "-b", branch, dest_str, start], repo)?;
                 } else {
                     Self::run(&["worktree", "add", dest_str, branch], repo)?;
                 }
@@ -252,10 +243,7 @@ impl Vcs for GitVcs {
                 "worktree path {} is not valid UTF-8",
                 worktree_path.display()
             ),
-            source: std::io::Error::new(
-                std::io::ErrorKind::InvalidInput,
-                "non-utf8 worktree path",
-            ),
+            source: std::io::Error::new(std::io::ErrorKind::InvalidInput, "non-utf8 worktree path"),
         })?;
         Self::run(&["worktree", "remove", "--force", wt_str], repo)?;
         Ok(())

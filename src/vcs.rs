@@ -173,21 +173,15 @@ impl fmt::Display for VcsError {
             Self::RevisionNotFound { repo, rev } => {
                 write!(f, "revision '{rev}' not found in {}", repo.display())
             }
-            Self::BranchAlreadyExists { repo, branch } => write!(
-                f,
-                "branch '{branch}' already exists in {}",
-                repo.display()
-            ),
+            Self::BranchAlreadyExists { repo, branch } => {
+                write!(f, "branch '{branch}' already exists in {}", repo.display())
+            }
             Self::WorktreeExists(p) => write!(f, "worktree path already exists: {}", p.display()),
             Self::UncommittedChanges(p) => {
                 write!(f, "{} has uncommitted changes", p.display())
             }
             Self::Io { ctx, source } => write!(f, "{ctx}: {source}"),
-            Self::CommandFailed {
-                args,
-                repo,
-                stderr,
-            } => write!(
+            Self::CommandFailed { args, repo, stderr } => write!(
                 f,
                 "git {:?} in {} failed: {}",
                 args,

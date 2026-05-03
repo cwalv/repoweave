@@ -457,9 +457,7 @@ mod tests {
 
     #[test]
     fn directory_matches_trailing_slash() {
-        let url = dir_reg()
-            .matches("file:///srv/repos/owner/repo/")
-            .unwrap();
+        let url = dir_reg().matches("file:///srv/repos/owner/repo/").unwrap();
         assert_eq!(url.owner_repo(), Some(("owner", "repo")));
     }
 
@@ -544,7 +542,10 @@ mod tests {
     #[test]
     fn from_str_ssh_returns_correct_local_path() {
         let url: RepoUrl = "git@github.com:cwalv/repoweave.git".parse().unwrap();
-        assert_eq!(url.local_path().unwrap(), Path::new("github/cwalv/repoweave"));
+        assert_eq!(
+            url.local_path().unwrap(),
+            Path::new("github/cwalv/repoweave")
+        );
     }
 
     #[test]
@@ -676,7 +677,10 @@ mod tests {
     #[test]
     fn resolve_to_clone_info_two_part_shorthand() {
         let info = resolve_to_clone_info(&parse("cwalv/repoweave")).unwrap();
-        assert_eq!(info.url.to_string(), "https://github.com/cwalv/repoweave.git");
+        assert_eq!(
+            info.url.to_string(),
+            "https://github.com/cwalv/repoweave.git"
+        );
         assert_eq!(info.registry, RegistryName::new("github"));
         assert_eq!(info.id.owner(), "cwalv");
         assert_eq!(info.id.repo(), "repoweave");
