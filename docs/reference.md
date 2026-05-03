@@ -286,7 +286,6 @@ Commands like `add`, `remove`, `lock`, and `check` infer the project and workspa
 - **In a workweave directory** — uses that workweave directly.
 - **In the weave directory** — resolves to the weave.
 - **In a project directory** — resolves to the weave.
-- **Override** — use `--project` flag.
 
 ## Commands
 
@@ -309,6 +308,10 @@ Commands like `add`, `remove`, `lock`, and `check` infer the project and workspa
 | `rwv sync <source>` | Align CWD workspace with `<source>`'s committed `rwv.lock`. `<source>` is a workspace name (`primary`, a workweave name) or a path. `--strategy ff\|rebase\|merge` (default `ff`) applies uniformly to both project and manifest repos; `rwv.lock` is excluded from project-repo merge inputs and regenerated in Phase 3. `--force` bypasses the lock-freshness precondition and hard-resets the project repo (discards CWD's project commits). |
 | `rwv abort` | Restore CWD workspace to its pre-sync state using savepoint refs stored under `refs/rwv/pre-op/`. Runs VCS-native abort for any in-progress operations (rebase, merge, cherry-pick). |
 | `rwv resolve` | Print the weave directory (workweave or weave). Useful for scripting: `cd $(rwv resolve)`. |
+| `rwv prime [--no-suppress]` | Print structured workspace context for agent system prompts. Suppressed when CWD is not inside a weave or workweave (pass `--no-suppress` to always emit). |
+| `rwv setup claude [--uninstall]` | Register `rwv prime` as a Claude Code hook (SessionStart + PreCompact). `--uninstall` removes all rwv hooks. |
+| `rwv setup agents-md` | Generate `AGENTS.md` at the workspace root for Cursor, Copilot, and other agent tools. |
+| `rwv completions <shell>` | Generate shell completions (bash, zsh, fish, etc.). Source the output in your shell rc file. |
 
 ### `rwv doctor` and multi-project awareness
 

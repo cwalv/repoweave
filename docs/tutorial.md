@@ -58,7 +58,7 @@ The typical cycle — no special tooling needed:
 cd ~/work
 
 # Pull latest across repos
-gita super primary pull            # or: cd into each repo and git pull
+gita super primary pull            # or: cd into each repo and git pull (gita setup: see integrations.md)
 
 # Work on a repo
 cd github/chatly/server
@@ -194,9 +194,9 @@ Creates `.workweaves/payments/` with a git worktree for each repo on an ephemera
 
 ```
 .workweaves/payments/
-├── github/chatly/server/             # worktree, on payments/main
-├── github/chatly/web/                # worktree, on payments/feature-A
-├── github/chatly/protocol/           # worktree, on payments/main
+├── github/chatly/server/             # worktree, on web-app--payments/main
+├── github/chatly/web/                # worktree, on web-app--payments/feature-A
+├── github/chatly/protocol/           # worktree, on web-app--payments/main
 ├── projects/web-app/                 # worktree
 ├── Cargo.toml -> projects/web-app/Cargo.toml
 └── .rwv-active                       # "web-app"

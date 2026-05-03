@@ -90,7 +90,7 @@ enum Commands {
         /// Zero exit iff every repo's tip matches its rwv.lock entry (scriptable precondition for rwv sync)
         #[arg(long)]
         locked: bool,
-        /// Auto-fix safely-fixable index drift (stale indexes whose tree matches an ancestor commit)
+        /// Auto-fix safely-fixable index drift and working-tree drift (see `rwv doctor` description for classification rules)
         #[arg(long, conflicts_with = "locked")]
         fix: bool,
     },

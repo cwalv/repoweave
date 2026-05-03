@@ -67,6 +67,6 @@ Place `.envrc` in the project directory and use the `static-files` integration t
 ```yaml
 # .github/workflows/ci.yml
 - uses: actions/checkout@v4          # this repo (projects/web-app)
-- run: rwv fetch   # reads rwv.yaml, clones code repos
+- run: rwv fetch chatly/web-app      # clones all repos listed in rwv.yaml
 - run: npm install && npm test
 ```
