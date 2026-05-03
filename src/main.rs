@@ -9,7 +9,7 @@ use repoweave::prime;
 use repoweave::setup;
 use repoweave::status;
 use repoweave::sync;
-use repoweave::sync::SyncStrategy;
+use repoweave::sync::{SyncSource, SyncStrategy};
 
 use clap::{CommandFactory, Parser, Subcommand};
 use clap_complete::Shell;
@@ -102,8 +102,9 @@ enum Commands {
     },
     /// Align CWD workspace with another workspace's committed rwv.lock
     Sync {
-        /// Source workspace: a workspace name (primary, a workweave name) or a path
-        source: String,
+        /// Source workspace: `primary`, a bare workweave name, or a path
+        /// (absolute, or relative to the primary workspace)
+        source: SyncSource,
         /// Sync strategy: ff (default), rebase, or merge
         #[arg(long, default_value = "ff", value_enum)]
         strategy: SyncStrategy,

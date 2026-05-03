@@ -5,11 +5,13 @@
 
 use crate::git::{git_command, GitVcs};
 use crate::lock::{commit_lock_file_with_message, generate_lock};
-use crate::manifest::{LockFile, Project};
+use crate::manifest::{LockFile, Project, WorkweaveName};
 use crate::vcs::{RevisionId, Vcs};
 use crate::workspace::{WorkspaceContext, WorkspaceLocation};
+use crate::workweave::workweave_path_for;
 use std::fmt;
 use std::path::{Path, PathBuf};
+use std::str::FromStr;
 
 /// Which side of a sync a check or error is reporting against.
 #[derive(Debug, Clone, Copy)]
@@ -68,6 +70,80 @@ impl fmt::Display for SyncStrategy {
             Self::Merge => "merge",
         })
     }
+}
+
+// ---------------------------------------------------------------------------
+// SyncSource — typed source workspace for `rwv sync`
+// ---------------------------------------------------------------------------
+
+/// Source workspace for `rwv sync <source>`.
+///
+/// The boundary parser ([`FromStr`]) disambiguates by shape:
+/// - `Primary` — the literal string `"primary"` (the primary workspace root).
+/// - `Workweave(name)` — a bare identifier with no path separators or leading
+///   dot. Resolves to `<workweave_parent>/<primary>--<name>`.
+/// - `Path(p)` — anything else: an absolute path is used as-is, a relative
+///   path is joined against the primary workspace root.
+///
+/// `SyncSource` is the single source of truth for this disambiguation; the
+/// resolver matches on the enum rather than re-parsing strings.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SyncSource {
+    Primary,
+    Workweave(WorkweaveName),
+    Path(PathBuf),
+}
+
+impl SyncSource {
+    /// Resolve to an on-disk workspace path using the surrounding context to
+    /// locate `primary`.
+    pub fn resolve(&self, ctx: &WorkspaceContext) -> PathBuf {
+        match self {
+            Self::Primary => ctx.primary_path().to_path_buf(),
+            Self::Workweave(name) => workweave_path_for(ctx.primary_path(), name),
+            Self::Path(p) => {
+                if p.is_absolute() {
+                    p.clone()
+                } else {
+                    ctx.primary_path().join(p)
+                }
+            }
+        }
+    }
+}
+
+impl FromStr for SyncSource {
+    type Err = std::convert::Infallible;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        if s == "primary" {
+            return Ok(Self::Primary);
+        }
+        if looks_path_like(s) {
+            return Ok(Self::Path(PathBuf::from(s)));
+        }
+        Ok(Self::Workweave(WorkweaveName::new(s)))
+    }
+}
+
+impl fmt::Display for SyncSource {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Primary => f.write_str("primary"),
+            Self::Workweave(n) => f.write_str(n.as_str()),
+            Self::Path(p) => f.write_str(&p.to_string_lossy()),
+        }
+    }
+}
+
+/// A string is "path-like" when it contains a separator, starts with a dot
+/// (so `.` and `./foo` parse as paths), or is absolute. Bare identifiers fall
+/// through to the workweave-name interpretation.
+fn looks_path_like(s: &str) -> bool {
+    s.contains('/')
+        || s.contains(std::path::MAIN_SEPARATOR)
+        || s.starts_with('.')
+        || PathBuf::from(s).is_absolute()
 }
 
 // ---------------------------------------------------------------------------
@@ -548,25 +624,6 @@ fn find_project_name(ctx: &WorkspaceContext) -> anyhow::Result<String> {
     Ok(name)
 }
 
-/// Resolve `source` to a filesystem path.
-///
-/// Accepts:
-/// - An absolute or relative path.
-/// - `primary` — the primary workspace root (resolved from CWD context).
-fn resolve_source_path(ctx: &WorkspaceContext, source: &str) -> anyhow::Result<PathBuf> {
-    if source == "primary" {
-        return Ok(ctx.primary_path().to_path_buf());
-    }
-    let p = PathBuf::from(source);
-    if p.is_absolute() {
-        return Ok(p);
-    }
-    // Relative path: resolve against the primary weave so workweave names
-    // (which live alongside primary under `.workweaves/`) resolve consistently
-    // regardless of CWD.
-    Ok(ctx.primary_path().join(source))
-}
-
 // ---------------------------------------------------------------------------
 // rwv sync
 // ---------------------------------------------------------------------------
@@ -584,7 +641,7 @@ fn resolve_source_path(ctx: &WorkspaceContext, source: &str) -> anyhow::Result<P
 ///    manifest tips and commit if changed.
 pub fn run_sync(
     cwd: &Path,
-    source: &str,
+    source: &SyncSource,
     strategy: SyncStrategy,
     force: bool,
 ) -> anyhow::Result<()> {
@@ -592,7 +649,7 @@ pub fn run_sync(
     let ctx = WorkspaceContext::resolve(cwd, None)?;
     let workspace_dir = ctx.active_path().to_path_buf();
 
-    let source_path = resolve_source_path(&ctx, source)?;
+    let source_path = source.resolve(&ctx);
     let source_ctx = WorkspaceContext::resolve(&source_path, None)?;
     let source_workspace_dir = source_ctx.active_path().to_path_buf();
 
@@ -1119,5 +1176,61 @@ fn abort_one_repo(repo: &Path, op_id: &OpId) -> anyhow::Result<()> {
             // No savepoint for this repo — nothing to restore.
             Ok(())
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sync_source_parses_primary() {
+        assert_eq!("primary".parse::<SyncSource>().unwrap(), SyncSource::Primary);
+    }
+
+    #[test]
+    fn sync_source_parses_workweave_name() {
+        let parsed: SyncSource = "fo-city".parse().unwrap();
+        assert_eq!(parsed, SyncSource::Workweave(WorkweaveName::new("fo-city")));
+    }
+
+    #[test]
+    fn sync_source_parses_relative_path_with_slash() {
+        let parsed: SyncSource = ".workweaves/foo--bar".parse().unwrap();
+        assert_eq!(
+            parsed,
+            SyncSource::Path(PathBuf::from(".workweaves/foo--bar"))
+        );
+    }
+
+    #[test]
+    fn sync_source_parses_dot_relative() {
+        let parsed: SyncSource = "./foo".parse().unwrap();
+        assert_eq!(parsed, SyncSource::Path(PathBuf::from("./foo")));
+    }
+
+    #[test]
+    fn sync_source_parses_absolute_path() {
+        let parsed: SyncSource = "/tmp/some/path".parse().unwrap();
+        assert_eq!(parsed, SyncSource::Path(PathBuf::from("/tmp/some/path")));
+    }
+
+    #[test]
+    fn sync_source_display_round_trips_primary() {
+        assert_eq!(SyncSource::Primary.to_string(), "primary");
+    }
+
+    #[test]
+    fn sync_source_display_round_trips_workweave() {
+        let s = SyncSource::Workweave(WorkweaveName::new("ww1"));
+        assert_eq!(s.to_string(), "ww1");
+        assert_eq!(s.to_string().parse::<SyncSource>().unwrap(), s);
+    }
+
+    #[test]
+    fn sync_source_display_round_trips_path() {
+        let s = SyncSource::Path(PathBuf::from("/abs/path"));
+        assert_eq!(s.to_string(), "/abs/path");
+        assert_eq!(s.to_string().parse::<SyncSource>().unwrap(), s);
     }
 }

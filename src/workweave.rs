@@ -30,6 +30,17 @@ fn workweave_parent(ws_root: &Path) -> PathBuf {
     }
 }
 
+/// Compute the on-disk directory for a workweave by name, given the primary
+/// workspace root. The result is `<workweave_parent>/<primary>--<name>`.
+///
+/// Does not check whether the directory exists; callers that need that should
+/// call `.exists()` themselves.
+pub fn workweave_path_for(primary_root: &Path, name: &WorkweaveName) -> PathBuf {
+    let parent = workweave_parent(primary_root);
+    let pname = primary_name(primary_root);
+    parent.join(weave_dir_name(&pname, name))
+}
+
 /// The primary directory name (last component of workspace root).
 fn primary_name(ws_root: &Path) -> String {
     ws_root
