@@ -1,6 +1,6 @@
 //! Git implementation of the [`Vcs`] trait.
 
-use crate::vcs::{RefName, RevisionId, Vcs};
+use crate::vcs::{RefName, RevisionId, Vcs, VcsError};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -37,22 +37,38 @@ pub struct GitVcs;
 
 impl GitVcs {
     /// Run a git command in `dir` and return trimmed stdout on success.
-    fn run(args: &[&str], dir: &Path) -> anyhow::Result<String> {
+    ///
+    /// Maps process I/O failure to [`VcsError::Io`] and non-zero exit to
+    /// [`VcsError::CommandFailed`] with the args and stderr captured. Callers
+    /// that can detect more specific failures (revision not found, branch
+    /// already exists, ...) should match on the resulting `CommandFailed`
+    /// stderr and remap.
+    fn run(args: &[&str], dir: &Path) -> Result<String, VcsError> {
         let output = git_command()
             .args(args)
             .current_dir(dir)
             .output()
-            .map_err(|e| anyhow::anyhow!("failed to run git: {e}"))?;
+            .map_err(|e| VcsError::Io {
+                ctx: format!("failed to spawn git {args:?}"),
+                source: e,
+            })?;
 
         if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            anyhow::bail!("git {:?} failed: {}", args, stderr.trim());
+            let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+            return Err(VcsError::CommandFailed {
+                args: args.iter().map(|s| (*s).to_owned()).collect(),
+                repo: dir.to_path_buf(),
+                stderr,
+            });
         }
 
-        Ok(String::from_utf8(output.stdout)
-            .map_err(|e| anyhow::anyhow!("git output not valid UTF-8: {e}"))?
-            .trim()
-            .to_string())
+        String::from_utf8(output.stdout)
+            .map(|s| s.trim().to_string())
+            .map_err(|_| VcsError::CommandFailed {
+                args: args.iter().map(|s| (*s).to_owned()).collect(),
+                repo: dir.to_path_buf(),
+                stderr: "git output not valid UTF-8".to_string(),
+            })
     }
 }
 
@@ -103,12 +119,27 @@ impl GitVcs {
 
 impl GitVcs {
     /// Initialize a new git repo at `dest`.
-    pub fn init_repo(&self, dest: &Path) -> anyhow::Result<()> {
-        std::fs::create_dir_all(dest)
-            .map_err(|e| anyhow::anyhow!("failed to create directory {}: {e}", dest.display()))?;
+    pub fn init_repo(&self, dest: &Path) -> Result<(), VcsError> {
+        std::fs::create_dir_all(dest).map_err(|e| VcsError::Io {
+            ctx: format!("failed to create directory {}", dest.display()),
+            source: e,
+        })?;
         Self::run(&["init", "--initial-branch=main"], dest)?;
         Ok(())
     }
+}
+
+/// True when stderr signals "revision unknown / no such object".
+fn is_revision_not_found(stderr: &str) -> bool {
+    stderr.contains("unknown revision")
+        || stderr.contains("not a valid object name")
+        || stderr.contains("ambiguous argument")
+        || stderr.contains("Needed a single revision")
+}
+
+/// True when stderr signals "branch already exists / worktree already exists".
+fn is_already_exists(stderr: &str) -> bool {
+    stderr.contains("already exists") || stderr.contains("already a worktree")
 }
 
 impl Vcs for GitVcs {
@@ -116,15 +147,19 @@ impl Vcs for GitVcs {
         "git"
     }
 
-    fn clone_repo(&self, url: &str, dest: &Path) -> anyhow::Result<()> {
-        let dest_str = dest
-            .to_str()
-            .ok_or_else(|| anyhow::anyhow!("destination path is not valid UTF-8"))?;
+    fn clone_repo(&self, url: &str, dest: &Path) -> Result<(), VcsError> {
+        let dest_str = dest.to_str().ok_or_else(|| VcsError::Io {
+            ctx: format!("destination path {} is not valid UTF-8", dest.display()),
+            source: std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "non-utf8 destination path",
+            ),
+        })?;
         Self::run(&["clone", url, dest_str], Path::new("."))?;
         Ok(())
     }
 
-    fn head_revision(&self, repo: &Path) -> anyhow::Result<RevisionId> {
+    fn head_revision(&self, repo: &Path) -> Result<RevisionId, VcsError> {
         let sha = Self::run(&["rev-parse", "HEAD"], repo)?;
         // If a tag points at HEAD, preserve it as the display form so callers
         // get human-readable round-trips (e.g., `v0.3.4`) without an extra
@@ -133,18 +168,28 @@ impl Vcs for GitVcs {
         Ok(RevisionId::from_canonical(sha, display))
     }
 
-    fn resolve_revision(&self, repo: &Path, rev: &str) -> anyhow::Result<RevisionId> {
+    fn resolve_revision(&self, repo: &Path, rev: &str) -> Result<RevisionId, VcsError> {
         let deref = format!("{rev}^{{commit}}");
-        let canonical = Self::run(&["rev-parse", "--verify", &deref], repo)?;
-        let display = if rev == canonical {
-            None
-        } else {
-            Some(rev.to_string())
-        };
-        Ok(RevisionId::from_canonical(canonical, display))
+        match Self::run(&["rev-parse", "--verify", &deref], repo) {
+            Ok(canonical) => {
+                let display = if rev == canonical {
+                    None
+                } else {
+                    Some(rev.to_string())
+                };
+                Ok(RevisionId::from_canonical(canonical, display))
+            }
+            Err(VcsError::CommandFailed { stderr, .. }) if is_revision_not_found(&stderr) => {
+                Err(VcsError::RevisionNotFound {
+                    repo: repo.to_path_buf(),
+                    rev: rev.to_string(),
+                })
+            }
+            Err(e) => Err(e),
+        }
     }
 
-    fn current_ref(&self, repo: &Path) -> anyhow::Result<Option<RefName>> {
+    fn current_ref(&self, repo: &Path) -> Result<Option<RefName>, VcsError> {
         match Self::run(&["symbolic-ref", "--short", "HEAD"], repo) {
             Ok(name) => Ok(Some(RefName::new(name))),
             Err(_) => Ok(None), // detached HEAD
@@ -157,10 +202,14 @@ impl Vcs for GitVcs {
         dest: &Path,
         branch_name: &str,
         start_point: &RevisionId,
-    ) -> anyhow::Result<()> {
-        let dest_str = dest
-            .to_str()
-            .ok_or_else(|| anyhow::anyhow!("worktree path is not valid UTF-8"))?;
+    ) -> Result<(), VcsError> {
+        let dest_str = dest.to_str().ok_or_else(|| VcsError::Io {
+            ctx: format!("worktree path {} is not valid UTF-8", dest.display()),
+            source: std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "non-utf8 worktree path",
+            ),
+        })?;
         let start = start_point.as_str();
 
         // First try creating a new branch with -b.
@@ -172,8 +221,11 @@ impl Vcs for GitVcs {
         if let Err(e) = result {
             // If the branch already exists, try using it as-is (no -b).
             // This handles the case where a previous delete didn't clean up branches.
-            let err_str = e.to_string();
-            if err_str.contains("already exists") || err_str.contains("already a worktree") {
+            let already = matches!(
+                &e,
+                VcsError::CommandFailed { stderr, .. } if is_already_exists(stderr)
+            );
+            if already {
                 // Delete the stale branch first, then retry with -b.
                 // If delete fails, fall back to using the existing branch directly.
                 let deleted = Self::run(&["branch", "-D", branch_name], repo).is_ok();
@@ -193,10 +245,17 @@ impl Vcs for GitVcs {
         Ok(())
     }
 
-    fn remove_worktree(&self, repo: &Path, worktree_path: &Path) -> anyhow::Result<()> {
-        let wt_str = worktree_path
-            .to_str()
-            .ok_or_else(|| anyhow::anyhow!("worktree path is not valid UTF-8"))?;
+    fn remove_worktree(&self, repo: &Path, worktree_path: &Path) -> Result<(), VcsError> {
+        let wt_str = worktree_path.to_str().ok_or_else(|| VcsError::Io {
+            ctx: format!(
+                "worktree path {} is not valid UTF-8",
+                worktree_path.display()
+            ),
+            source: std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "non-utf8 worktree path",
+            ),
+        })?;
         Self::run(&["worktree", "remove", "--force", wt_str], repo)?;
         Ok(())
     }
@@ -205,7 +264,7 @@ impl Vcs for GitVcs {
         Self::run(&["rev-parse", "--git-dir"], path).is_ok()
     }
 
-    fn list_worktrees(&self, repo: &Path) -> anyhow::Result<Vec<PathBuf>> {
+    fn list_worktrees(&self, repo: &Path) -> Result<Vec<PathBuf>, VcsError> {
         let output = Self::run(&["worktree", "list", "--porcelain"], repo)?;
         let paths = output
             .lines()
@@ -215,35 +274,39 @@ impl Vcs for GitVcs {
         Ok(paths)
     }
 
-    fn has_uncommitted_changes(&self, repo: &Path) -> anyhow::Result<bool> {
+    fn has_uncommitted_changes(&self, repo: &Path) -> Result<bool, VcsError> {
         // `git status --porcelain` prints one line per dirty entry;
         // empty output means the tree is clean.
         let output = Self::run(&["status", "--porcelain"], repo)?;
         Ok(!output.is_empty())
     }
 
-    fn tag_at_head(&self, repo: &Path) -> anyhow::Result<Option<RefName>> {
+    fn tag_at_head(&self, repo: &Path) -> Result<Option<RefName>, VcsError> {
         // `git tag --points-at HEAD` lists tags that resolve to HEAD.
         let output = Self::run(&["tag", "--points-at", "HEAD"], repo)?;
         Ok(output.lines().next().map(RefName::new))
     }
 
-    fn checkout(&self, repo: &Path, revision: &RevisionId) -> anyhow::Result<()> {
+    fn checkout(&self, repo: &Path, revision: &RevisionId) -> Result<(), VcsError> {
         Self::run(&["checkout", revision.as_str()], repo)?;
         Ok(())
     }
 
-    fn delete_branch(&self, repo: &Path, branch: &str) -> anyhow::Result<()> {
+    fn delete_branch(&self, repo: &Path, branch: &str) -> Result<(), VcsError> {
         Self::run(&["branch", "-D", branch], repo)?;
         Ok(())
     }
 
-    fn worktree_prune(&self, repo: &Path) -> anyhow::Result<()> {
+    fn worktree_prune(&self, repo: &Path) -> Result<(), VcsError> {
         Self::run(&["worktree", "prune"], repo)?;
         Ok(())
     }
 
-    fn list_branches_with_prefix(&self, repo: &Path, prefix: &str) -> anyhow::Result<Vec<String>> {
+    fn list_branches_with_prefix(
+        &self,
+        repo: &Path,
+        prefix: &str,
+    ) -> Result<Vec<String>, VcsError> {
         // `git branch --list 'prefix/*'` lists all local branches under the prefix.
         let pattern = format!("{prefix}/*");
         let output = Self::run(&["branch", "--list", &pattern], repo)?;
@@ -258,7 +321,7 @@ impl Vcs for GitVcs {
         Ok(branches)
     }
 
-    fn default_branch(&self, repo: &Path) -> anyhow::Result<RefName> {
+    fn default_branch(&self, repo: &Path) -> Result<RefName, VcsError> {
         const FALLBACK: &str = "main";
         const PREFIX: &str = "refs/remotes/origin/";
 

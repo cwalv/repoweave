@@ -4,6 +4,7 @@
 //! the specific tool (git, jj, sl, hg) so core logic doesn't hardcode git.
 
 use std::fmt;
+use std::io;
 use std::path::{Path, PathBuf};
 
 /// A resolved commit identifier, independent of VCS.
@@ -118,35 +119,127 @@ pub(crate) fn vcs_for(vcs_type: crate::manifest::VcsType) -> Box<dyn Vcs> {
     }
 }
 
+/// Typed errors returned by [`Vcs`] trait methods.
+///
+/// Specific variants (`NotARepo`, `RevisionNotFound`, ...) let callers
+/// pattern-match on the failure mode and choose recovery — re-lock for
+/// `RevisionNotFound`, retry-or-abort for `Io`, surface stderr for
+/// `CommandFailed`.
+///
+/// Implementations should map to the most specific variant they can detect
+/// and fall back to `CommandFailed` for everything else.
+#[derive(Debug)]
+pub enum VcsError {
+    /// Path is not a VCS repository (or doesn't exist).
+    NotARepo(PathBuf),
+    /// A named revision (SHA, tag, branch) couldn't be resolved.
+    RevisionNotFound { repo: PathBuf, rev: String },
+    /// Branch already exists (when caller attempted to create one).
+    BranchAlreadyExists { repo: PathBuf, branch: RefName },
+    /// Worktree path already exists (when caller attempted to create one).
+    WorktreeExists(PathBuf),
+    /// Working tree has uncommitted changes when caller required clean state.
+    UncommittedChanges(PathBuf),
+    /// I/O failure spawning or reading process output.
+    Io { ctx: String, source: io::Error },
+    /// Underlying VCS command failed for a reason not modeled above.
+    /// Carries args and stderr so the caller can surface them.
+    CommandFailed {
+        args: Vec<String>,
+        repo: PathBuf,
+        stderr: String,
+    },
+}
+
+impl VcsError {
+    /// Stable variant tag suitable for `--json` output.
+    pub fn kind(&self) -> &'static str {
+        match self {
+            Self::NotARepo(_) => "not-a-repo",
+            Self::RevisionNotFound { .. } => "revision-not-found",
+            Self::BranchAlreadyExists { .. } => "branch-already-exists",
+            Self::WorktreeExists(_) => "worktree-exists",
+            Self::UncommittedChanges(_) => "uncommitted-changes",
+            Self::Io { .. } => "io",
+            Self::CommandFailed { .. } => "command-failed",
+        }
+    }
+}
+
+impl fmt::Display for VcsError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::NotARepo(p) => write!(f, "{} is not a vcs repository", p.display()),
+            Self::RevisionNotFound { repo, rev } => {
+                write!(f, "revision '{rev}' not found in {}", repo.display())
+            }
+            Self::BranchAlreadyExists { repo, branch } => write!(
+                f,
+                "branch '{branch}' already exists in {}",
+                repo.display()
+            ),
+            Self::WorktreeExists(p) => write!(f, "worktree path already exists: {}", p.display()),
+            Self::UncommittedChanges(p) => {
+                write!(f, "{} has uncommitted changes", p.display())
+            }
+            Self::Io { ctx, source } => write!(f, "{ctx}: {source}"),
+            Self::CommandFailed {
+                args,
+                repo,
+                stderr,
+            } => write!(
+                f,
+                "git {:?} in {} failed: {}",
+                args,
+                repo.display(),
+                stderr.trim()
+            ),
+        }
+    }
+}
+
+impl std::error::Error for VcsError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Io { source, .. } => Some(source),
+            _ => None,
+        }
+    }
+}
+
 /// Operations repoweave needs from a version control system.
 ///
 /// Implementations exist for git (and eventually jj, sl, hg). Each method
 /// takes a repo path and operates on it — the trait is stateless.
+///
+/// Methods return [`VcsError`] (rather than `anyhow::Error`) so callers
+/// can pattern-match on failure modes. Application-level glue may convert
+/// to `anyhow::Error` at the boundary via the `?` operator.
 pub trait Vcs {
     /// Human-readable name (e.g., `"git"`, `"jj"`).
     fn name(&self) -> &str;
 
     /// Clone a remote URL into `dest`.
-    fn clone_repo(&self, url: &str, dest: &Path) -> anyhow::Result<()>;
+    fn clone_repo(&self, url: &str, dest: &Path) -> Result<(), VcsError>;
 
     /// Resolve the current HEAD to a revision ID.
     ///
     /// The returned `RevisionId` carries the canonical commit SHA. When a
     /// tag points at HEAD, the implementation may also populate `display`
     /// to preserve the tag-form for human-readable output.
-    fn head_revision(&self, repo: &Path) -> anyhow::Result<RevisionId>;
+    fn head_revision(&self, repo: &Path) -> Result<RevisionId, VcsError>;
 
     /// Resolve a revision string (SHA, tag, branch) to a fully-resolved
     /// [`RevisionId`] with the canonical commit SHA filled in.
     ///
     /// When the input string differs from the canonical SHA, it is
     /// preserved as the display form for round-tripping in lock files and
-    /// human-readable output. Returns an error if the revision is unknown
-    /// in this repo.
-    fn resolve_revision(&self, repo: &Path, rev: &str) -> anyhow::Result<RevisionId>;
+    /// human-readable output. Returns [`VcsError::RevisionNotFound`] if
+    /// the revision is unknown in this repo.
+    fn resolve_revision(&self, repo: &Path, rev: &str) -> Result<RevisionId, VcsError>;
 
     /// Get the current branch/ref name, if on one.
-    fn current_ref(&self, repo: &Path) -> anyhow::Result<Option<RefName>>;
+    fn current_ref(&self, repo: &Path) -> Result<Option<RefName>, VcsError>;
 
     /// Create a worktree at `dest` from `repo`, on a new branch `branch_name`
     /// starting at `start_point`.
@@ -156,45 +249,49 @@ pub trait Vcs {
         dest: &Path,
         branch_name: &str,
         start_point: &RevisionId,
-    ) -> anyhow::Result<()>;
+    ) -> Result<(), VcsError>;
 
     /// Remove a worktree previously created at `worktree_path`.
-    fn remove_worktree(&self, repo: &Path, worktree_path: &Path) -> anyhow::Result<()>;
+    fn remove_worktree(&self, repo: &Path, worktree_path: &Path) -> Result<(), VcsError>;
 
     /// Check whether `path` is a repository (or worktree) managed by this VCS.
     fn is_repo(&self, path: &Path) -> bool;
 
     /// List worktrees for a repo, returning their paths.
-    fn list_worktrees(&self, repo: &Path) -> anyhow::Result<Vec<PathBuf>>;
+    fn list_worktrees(&self, repo: &Path) -> Result<Vec<PathBuf>, VcsError>;
 
     /// Return `true` if the working tree has uncommitted changes.
     ///
     /// This includes staged but uncommitted changes, unstaged modifications,
     /// and untracked files.
-    fn has_uncommitted_changes(&self, repo: &Path) -> anyhow::Result<bool>;
+    fn has_uncommitted_changes(&self, repo: &Path) -> Result<bool, VcsError>;
 
     /// Return the tag name pointing at HEAD, if any.
     ///
     /// When multiple tags point at HEAD the implementation may return any one
     /// of them. Returns `None` when no tag points at the current HEAD commit.
-    fn tag_at_head(&self, repo: &Path) -> anyhow::Result<Option<RefName>>;
+    fn tag_at_head(&self, repo: &Path) -> Result<Option<RefName>, VcsError>;
 
     /// Check out a specific revision in a repo.
-    fn checkout(&self, repo: &Path, revision: &RevisionId) -> anyhow::Result<()>;
+    fn checkout(&self, repo: &Path, revision: &RevisionId) -> Result<(), VcsError>;
 
     /// Delete a local branch by name. Uses force-delete semantics.
-    fn delete_branch(&self, repo: &Path, branch: &str) -> anyhow::Result<()>;
+    fn delete_branch(&self, repo: &Path, branch: &str) -> Result<(), VcsError>;
 
     /// Prune stale worktree administrative files from a repo.
-    fn worktree_prune(&self, repo: &Path) -> anyhow::Result<()>;
+    fn worktree_prune(&self, repo: &Path) -> Result<(), VcsError>;
 
     /// List local branch names that start with `prefix`.
-    fn list_branches_with_prefix(&self, repo: &Path, prefix: &str) -> anyhow::Result<Vec<String>>;
+    fn list_branches_with_prefix(
+        &self,
+        repo: &Path,
+        prefix: &str,
+    ) -> Result<Vec<String>, VcsError>;
 
     /// Return the default branch name for `repo`.
     ///
     /// Reads `refs/remotes/origin/HEAD` via `git symbolic-ref` and strips the
     /// `refs/remotes/origin/` prefix to obtain the branch name (e.g., `main`).
     /// Falls back to `"main"` when no remote or no `origin/HEAD` is configured.
-    fn default_branch(&self, repo: &Path) -> anyhow::Result<RefName>;
+    fn default_branch(&self, repo: &Path) -> Result<RefName, VcsError>;
 }

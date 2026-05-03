@@ -150,6 +150,55 @@ fn looks_path_like(s: &str) -> bool {
 // RepoSyncOutcome — per-repo result of a sync operation
 // ---------------------------------------------------------------------------
 
+/// Why a per-repo sync attempt failed.
+///
+/// Discriminates between the recoverable cases the caller may want to react
+/// to differently — directly maps to `--json` output for `rwv status` /
+/// `rwv sync`. The `error` payload is the underlying error string for
+/// human-readable display.
+#[derive(Debug)]
+pub enum SyncFailure {
+    /// Couldn't read HEAD on the repo (e.g. not a repo, or I/O failure).
+    HeadUnreadable { error: String },
+    /// `--strategy ff` cannot proceed (divergence, conflict).
+    FastForwardImpossible { error: String },
+    /// `--strategy rebase` failed (conflict or git error).
+    RebaseFailed { error: String },
+    /// `--strategy merge` failed (conflict or git error).
+    MergeFailed { error: String },
+}
+
+impl SyncFailure {
+    /// Stable variant tag suitable for `--json` output.
+    pub fn kind(&self) -> &'static str {
+        match self {
+            Self::HeadUnreadable { .. } => "head-unreadable",
+            Self::FastForwardImpossible { .. } => "ff-impossible",
+            Self::RebaseFailed { .. } => "rebase-failed",
+            Self::MergeFailed { .. } => "merge-failed",
+        }
+    }
+
+    fn for_strategy(strategy: SyncStrategy, error: String) -> Self {
+        match strategy {
+            SyncStrategy::Ff => Self::FastForwardImpossible { error },
+            SyncStrategy::Rebase => Self::RebaseFailed { error },
+            SyncStrategy::Merge => Self::MergeFailed { error },
+        }
+    }
+}
+
+impl fmt::Display for SyncFailure {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::HeadUnreadable { error }
+            | Self::FastForwardImpossible { error }
+            | Self::RebaseFailed { error }
+            | Self::MergeFailed { error } => f.write_str(error),
+        }
+    }
+}
+
 #[derive(Debug)]
 enum RepoSyncOutcome {
     /// HEAD advanced to the lock SHA.
@@ -159,12 +208,12 @@ enum RepoSyncOutcome {
     /// HEAD was already equal to the lock SHA before sync.
     NoOp,
     /// Strategy failed (conflict, divergence, etc.).
-    Failed { reason: String },
+    Failed(SyncFailure),
 }
 
 impl RepoSyncOutcome {
     fn is_failure(&self) -> bool {
-        matches!(self, Self::Failed { .. })
+        matches!(self, Self::Failed(_))
     }
 }
 
@@ -179,7 +228,7 @@ impl fmt::Display for RepoSyncOutcome {
                 s = if *commits_ahead == 1 { "" } else { "s" }
             ),
             Self::NoOp => f.write_str("up-to-date"),
-            Self::Failed { reason } => f.write_str(reason),
+            Self::Failed(failure) => fmt::Display::fmt(failure, f),
         }
     }
 }
@@ -188,9 +237,9 @@ fn sync_one_repo(repo: &Path, target: &RevisionId, strategy: SyncStrategy) -> Re
     let head = match GitVcs.head_revision(repo) {
         Ok(h) => h,
         Err(e) => {
-            return RepoSyncOutcome::Failed {
-                reason: e.to_string(),
-            }
+            return RepoSyncOutcome::Failed(SyncFailure::HeadUnreadable {
+                error: e.to_string(),
+            })
         }
     };
 
@@ -219,9 +268,7 @@ fn sync_one_repo(repo: &Path, target: &RevisionId, strategy: SyncStrategy) -> Re
 
     match apply_strategy(repo, target, strategy) {
         Ok(()) => RepoSyncOutcome::Converged,
-        Err(e) => RepoSyncOutcome::Failed {
-            reason: e.to_string(),
-        },
+        Err(e) => RepoSyncOutcome::Failed(SyncFailure::for_strategy(strategy, e.to_string())),
     }
 }
 
@@ -1232,5 +1279,47 @@ mod tests {
         let s = SyncSource::Path(PathBuf::from("/abs/path"));
         assert_eq!(s.to_string(), "/abs/path");
         assert_eq!(s.to_string().parse::<SyncSource>().unwrap(), s);
+    }
+
+    #[test]
+    fn sync_failure_kind_tags_are_stable() {
+        assert_eq!(
+            SyncFailure::HeadUnreadable {
+                error: "x".into()
+            }
+            .kind(),
+            "head-unreadable"
+        );
+        assert_eq!(
+            SyncFailure::FastForwardImpossible {
+                error: "x".into()
+            }
+            .kind(),
+            "ff-impossible"
+        );
+        assert_eq!(
+            SyncFailure::RebaseFailed { error: "x".into() }.kind(),
+            "rebase-failed"
+        );
+        assert_eq!(
+            SyncFailure::MergeFailed { error: "x".into() }.kind(),
+            "merge-failed"
+        );
+    }
+
+    #[test]
+    fn sync_failure_for_strategy_picks_matching_variant() {
+        assert!(matches!(
+            SyncFailure::for_strategy(SyncStrategy::Ff, "e".into()),
+            SyncFailure::FastForwardImpossible { .. }
+        ));
+        assert!(matches!(
+            SyncFailure::for_strategy(SyncStrategy::Rebase, "e".into()),
+            SyncFailure::RebaseFailed { .. }
+        ));
+        assert!(matches!(
+            SyncFailure::for_strategy(SyncStrategy::Merge, "e".into()),
+            SyncFailure::MergeFailed { .. }
+        ));
     }
 }
