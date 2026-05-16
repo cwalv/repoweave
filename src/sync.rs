@@ -5,7 +5,7 @@
 
 use crate::git::{git_command, GitVcs};
 use crate::lock::{commit_lock_file_with_message, generate_lock};
-use crate::manifest::{LockFile, Project, ProjectName, WorkweaveName};
+use crate::manifest::{LockFile, Manifest, Project, ProjectName, RepoPath, WorkweaveName};
 use crate::vcs::{RevisionId, Vcs};
 use crate::workspace::{read_active_project, WorkspaceContext, WorkspaceLocation};
 use crate::workweave::workweave_path_for;
@@ -690,6 +690,183 @@ fn find_project_name(ctx: &WorkspaceContext) -> anyhow::Result<ProjectName> {
 }
 
 // ---------------------------------------------------------------------------
+// Phase 3 helpers: materialize new repos / prune dropped repos
+// ---------------------------------------------------------------------------
+
+/// Materialize a repo that's listed in the (source) lock but missing from the
+/// CWD workspace on disk.
+///
+/// - In a workweave: `git worktree add` against the canonical clone at primary
+///   (mirrors what `create_workweave` does for initial materialization).
+/// - In a primary weave: `git clone` from the manifest URL (mirrors
+///   `rwv fetch`'s clone path).
+///
+/// `entry` carries the manifest URL; `target` is the lock revision to check
+/// out. Caller is responsible for the surrounding sync flow (Phase 2 will then
+/// call `sync_one_repo` to land HEAD on `target`).
+fn materialize_missing_repo(
+    ctx: &WorkspaceContext,
+    repo_path: &RepoPath,
+    entry: &crate::manifest::RepoEntry,
+    project_name: &ProjectName,
+) -> anyhow::Result<()> {
+    let dest = ctx.active_path().join(repo_path.as_path());
+    if let Some(parent) = dest.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| {
+            anyhow::anyhow!("failed to create {}: {e}", parent.display())
+        })?;
+    }
+
+    match &ctx.location {
+        WorkspaceLocation::Workweave { name, .. } => {
+            // Canonical clone lives at primary.
+            let canonical = ctx.primary_path().join(repo_path.as_path());
+            if !canonical.exists() {
+                anyhow::bail!(
+                    "canonical clone for {repo_path} missing at {}; \
+                     run `rwv sync` from primary first to materialize it there",
+                    canonical.display()
+                );
+            }
+            // Use the manifest's tracking branch as the start point. Workweave
+            // ephemeral branches are scoped by (project, workweave_name) to
+            // mirror create_workweave's naming.
+            let start_ref = entry.version.as_str();
+            let head_rev = GitVcs
+                .resolve_revision(&canonical, start_ref)
+                .map_err(|e| anyhow::anyhow!("failed to resolve {start_ref} in canonical clone: {e}"))?;
+            let branch = crate::vcs::RefName::new(format!(
+                "{}--{}/{}",
+                project_name.as_str(),
+                name.as_str(),
+                start_ref,
+            ));
+            GitVcs
+                .create_worktree(&canonical, &dest, &branch, &head_rev)
+                .map_err(|e| anyhow::anyhow!("worktree add for {repo_path} failed: {e}"))?;
+        }
+        WorkspaceLocation::Weave { .. } => {
+            GitVcs
+                .clone_repo(&entry.url.to_string(), &dest)
+                .map_err(|e| anyhow::anyhow!("clone of {repo_path} from {} failed: {e}", entry.url))?;
+        }
+    }
+    Ok(())
+}
+
+/// Conservatively remove a repo's worktree/clone after it has been dropped
+/// from the lock. Refuses (and warns) if the worktree has uncommitted changes
+/// or local-only commits (branch tip differs from canonical HEAD in workweave;
+/// any commits at all in primary).
+fn prune_dropped_repo(
+    ctx: &WorkspaceContext,
+    repo_path: &RepoPath,
+) -> anyhow::Result<()> {
+    let dest = ctx.active_path().join(repo_path.as_path());
+    if !dest.exists() {
+        return Ok(());
+    }
+    if GitVcs.has_uncommitted_changes(&dest).unwrap_or(true) {
+        anyhow::bail!(
+            "{repo_path}: dropped from lock but worktree has uncommitted changes; \
+             commit/discard and re-run sync, or remove manually"
+        );
+    }
+
+    match &ctx.location {
+        WorkspaceLocation::Workweave { .. } => {
+            // Diverged-from-canonical check: refuse if local commits would be lost.
+            let canonical = ctx.primary_path().join(repo_path.as_path());
+            if canonical.exists() {
+                let wt_head = GitVcs.head_revision(&dest).ok();
+                let canon_head = GitVcs.head_revision(&canonical).ok();
+                if let (Some(w), Some(c)) = (wt_head, canon_head) {
+                    if w != c {
+                        // Allow when w is ancestor of c (no unique commits in workweave).
+                        let is_ancestor = git_command()
+                            .args(["merge-base", "--is-ancestor", w.as_str(), c.as_str()])
+                            .current_dir(&dest)
+                            .status()
+                            .map(|s| s.success())
+                            .unwrap_or(false);
+                        if !is_ancestor {
+                            anyhow::bail!(
+                                "{repo_path}: dropped from lock but worktree has commits not in canonical clone; \
+                                 push/merge them and re-run, or remove manually"
+                            );
+                        }
+                    }
+                }
+                GitVcs
+                    .remove_worktree(&canonical, &dest)
+                    .map_err(|e| anyhow::anyhow!("worktree remove for {repo_path} failed: {e}"))?;
+                let _ = GitVcs.worktree_prune(&canonical);
+            } else {
+                // No canonical to compare to; remove the directory as a best effort.
+                std::fs::remove_dir_all(&dest)
+                    .map_err(|e| anyhow::anyhow!("failed to remove {}: {e}", dest.display()))?;
+            }
+        }
+        WorkspaceLocation::Weave { .. } => {
+            // Primary: refuse if local-only branches with unique commits exist.
+            // Conservative — any branch with commits not on origin is grounds.
+            let unique = git_command()
+                .args(["for-each-ref", "--format=%(refname)", "refs/heads/"])
+                .current_dir(&dest)
+                .output();
+            let any_local_only = match unique {
+                Ok(out) if out.status.success() => {
+                    let names: Vec<String> = String::from_utf8_lossy(&out.stdout)
+                        .lines()
+                        .map(|s| s.to_owned())
+                        .collect();
+                    let mut any = false;
+                    for name in &names {
+                        // Check whether the branch has any commits not in origin/<branch>.
+                        let short = name.trim_start_matches("refs/heads/");
+                        let upstream = format!("refs/remotes/origin/{short}");
+                        let has_upstream = git_command()
+                            .args(["rev-parse", "--verify", "--quiet", &upstream])
+                            .current_dir(&dest)
+                            .status()
+                            .map(|s| s.success())
+                            .unwrap_or(false);
+                        if !has_upstream {
+                            any = true;
+                            break;
+                        }
+                        let count = git_command()
+                            .args(["rev-list", "--count", &format!("{upstream}..{name}")])
+                            .current_dir(&dest)
+                            .output();
+                        if let Ok(out) = count {
+                            let s = String::from_utf8_lossy(&out.stdout)
+                                .trim()
+                                .to_string();
+                            if s.parse::<usize>().unwrap_or(0) > 0 {
+                                any = true;
+                                break;
+                            }
+                        }
+                    }
+                    any
+                }
+                _ => true, // conservative: refuse on uncertainty
+            };
+            if any_local_only {
+                anyhow::bail!(
+                    "{repo_path}: dropped from lock but clone has local-only commits; \
+                     push them and re-run, or remove manually"
+                );
+            }
+            std::fs::remove_dir_all(&dest)
+                .map_err(|e| anyhow::anyhow!("failed to remove {}: {e}", dest.display()))?;
+        }
+    }
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
 // rwv sync
 // ---------------------------------------------------------------------------
 
@@ -815,6 +992,51 @@ pub fn run_sync(
         .map_err(|e| anyhow::anyhow!("failed to read source lock: {e}"))?;
     let _ = source_lock.resolve_versions(&source_workspace_dir);
 
+    // Load source manifest so we have URLs for any repos newly added at source
+    // that need to be materialized on the CWD side.
+    let source_manifest_path = source_project_dir.join("rwv.yaml");
+    let source_manifest = Manifest::from_path(&source_manifest_path)
+        .map_err(|e| anyhow::anyhow!("failed to read source manifest: {e}"))?;
+
+    // Phase 3 materialize: for each repo listed in source's lock but missing
+    // from the CWD workspace, clone/worktree-add before Phase 2 tries to sync
+    // it. In a workweave this means `git worktree add` against the canonical
+    // clone at primary; in the primary weave it means `git clone`.
+    for (repo_path, _lock_entry) in &source_lock.repositories {
+        let abs = workspace_dir.join(repo_path.as_path());
+        if abs.exists() {
+            continue;
+        }
+        let entry = match source_manifest.repositories.get(repo_path) {
+            Some(e) => e,
+            None => continue, // lock entry without manifest entry — skip
+        };
+        match materialize_missing_repo(&ctx, repo_path, entry, &cwd_project_name) {
+            Ok(()) => println!("  {repo_path}: materialized"),
+            Err(e) => {
+                eprintln!("  {repo_path}: materialize failed: {e}");
+                // Don't bail outright — record as failure and continue so the
+                // rest of the sync proceeds; the per-repo skip below will then
+                // tag this repo as not-on-disk.
+            }
+        }
+    }
+
+    // Phase 3 prune: any repo present on disk in CWD but absent from source's
+    // new lock should be dropped. Conservative — refuse to delete worktrees
+    // with uncommitted changes or unique local commits.
+    if let Some(ref cwd_lock) = cwd_project.lock {
+        for repo_path in cwd_lock.repositories.keys() {
+            if source_lock.repositories.contains_key(repo_path) {
+                continue;
+            }
+            match prune_dropped_repo(&ctx, repo_path) {
+                Ok(()) => println!("  {repo_path}: pruned (dropped from lock)"),
+                Err(e) => eprintln!("  {repo_path}: prune skipped: {e}"),
+            }
+        }
+    }
+
     let mut any_failure = false;
 
     for (repo_path, lock_entry) in &source_lock.repositories {
@@ -867,10 +1089,18 @@ pub fn run_sync(
         anyhow::bail!("sync failed in Phase 1' (project repo); run `rwv abort` to restore");
     }
 
+    // Reload CWD project so Phase 3 sees the post-Phase-1' manifest (which
+    // may now include newly-added repos brought over from source). If reload
+    // fails, fall back to the pre-Phase-1' snapshot.
+    let cwd_project_phase3 = Project::from_dir(&cwd_project_dir).unwrap_or(cwd_project);
+
     // Phase 3: regenerate rwv.lock from current manifest tips and commit if changed.
-    if let Err(e) =
-        regenerate_lock_phase3(&ctx, &cwd_project_dir, &cwd_project, &source_workspace_name)
-    {
+    if let Err(e) = regenerate_lock_phase3(
+        &ctx,
+        &cwd_project_dir,
+        &cwd_project_phase3,
+        &source_workspace_name,
+    ) {
         eprintln!("Phase 3 (re-lock) failed: {e}");
         anyhow::bail!("sync failed in Phase 3 (re-lock); run `rwv abort` to restore");
     }
@@ -893,7 +1123,7 @@ pub fn run_sync(
             cwd_project_dir.display()
         );
     }
-    for repo_path in cwd_project.manifest.repositories.keys() {
+    for repo_path in cwd_project_phase3.manifest.repositories.keys() {
         let abs = workspace_dir.join(repo_path.as_path());
         if abs.exists() {
             delete_savepoint(&abs, &op_id);

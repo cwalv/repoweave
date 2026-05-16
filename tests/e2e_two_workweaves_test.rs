@@ -408,3 +408,85 @@ fn sync_rebase_surfaces_genuine_project_conflict() {
         "sync failure should name the conflicting path or mention conflict; got stderr:\n{stderr}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Test: Phase 3 materialize — add repo at primary, workweave sync clones it
+// ---------------------------------------------------------------------------
+
+/// Bead fo-62glp: When primary adds a new repo to its manifest + lock, an
+/// existing workweave running `rwv sync primary` should materialize the new
+/// repo as a worktree (not silently advance the lock and leave a dangling
+/// reference).
+#[test]
+fn sync_phase3_materializes_newly_added_repo_in_workweave() {
+    let tmp = tempfile::tempdir().unwrap();
+    let weaveroot = tmp.path().join(".workweaves");
+    std::fs::create_dir_all(&weaveroot).unwrap();
+
+    let main = make_main_workspace(tmp.path());
+    let ww1 = create_workweave(&main, &weaveroot, "ww1");
+
+    // At primary: create a second manifest repo, then `rwv add` it.
+    let new_repo_path = "github/org/extras";
+    let new_repo_abs = main.root.join(new_repo_path);
+    let new_repo_sha = init_repo(&new_repo_abs);
+    // Add an origin so `rwv add <path>` can infer the URL.
+    git(
+        &[
+            "remote",
+            "add",
+            "origin",
+            &format!("file://{}", new_repo_abs.display()),
+        ],
+        &new_repo_abs,
+    );
+
+    rwv()
+        .args(["add", new_repo_path])
+        .current_dir(&main.root)
+        .assert()
+        .success();
+
+    // Commit the manifest change and lock.
+    git(&["add", "rwv.yaml"], &main.project_dir);
+    git(&["commit", "-m", "add: extras"], &main.project_dir);
+    rwv_lock_commit(&main.root);
+
+    // Sanity: primary's lock now includes the new repo.
+    let primary_lock = std::fs::read_to_string(main.project_dir.join("rwv.lock")).unwrap();
+    assert!(
+        primary_lock.contains(new_repo_path),
+        "primary lock should list {new_repo_path}; got:\n{primary_lock}"
+    );
+
+    // From ww1: sync primary. Phase 3 should materialize the new repo as a
+    // worktree of the canonical clone at primary.
+    rwv()
+        .args(["sync", "primary"])
+        .current_dir(&ww1.root)
+        .assert()
+        .success();
+
+    let ww1_new_repo = ww1.root.join(new_repo_path);
+    assert!(
+        ww1_new_repo.exists(),
+        "Phase 3 should materialize {new_repo_path} in workweave; not found at {}",
+        ww1_new_repo.display()
+    );
+    assert!(
+        ww1_new_repo.join(".git").exists(),
+        "{new_repo_path} should be a git worktree (have a .git entry)"
+    );
+    let ww1_head = git_out(&["rev-parse", "HEAD"], &ww1_new_repo);
+    assert_eq!(
+        ww1_head, new_repo_sha,
+        "newly-materialized worktree should be at the locked SHA"
+    );
+
+    // doctor --locked should now pass cleanly.
+    rwv()
+        .args(["doctor", "--locked"])
+        .current_dir(&ww1.root)
+        .assert()
+        .success();
+}

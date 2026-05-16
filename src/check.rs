@@ -511,7 +511,10 @@ pub fn run_check_locked(cwd: &std::path::Path) -> anyhow::Result<bool> {
             let actual = match git.head_revision(&repo_abs) {
                 Ok(rev) => rev,
                 Err(_) => {
-                    println!("{repo_path}: not on disk (lock: {})", lock_entry.version);
+                    println!(
+                        "{repo_path}: missing on disk (lock pins {}); run `rwv sync` to materialize",
+                        lock_entry.version
+                    );
                     any_drift = true;
                     continue;
                 }

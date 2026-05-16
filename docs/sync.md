@@ -62,6 +62,12 @@ manifest tips. If the lock differs from what is in the project repo's
 working tree, sync commits it automatically with a message like
 `lock: auto-relock after sync from <source>`.
 
+Phase 3 also reconciles disk against source's lock: repos listed in
+source's lock but missing from CWD are materialized (clone in primary,
+`git worktree add` against the canonical clone in a workweave), and
+repos dropped from the lock are removed — conservatively, refusing to
+delete worktrees with uncommitted changes or unique local commits.
+
 The old Phase 1 (hard-reset project repo to source's tip) is superseded
 by Phase 1' + Phase 3. The effect is the same when CWD's project repo is
 a strict ancestor of source's (ff case): Phase 1' fast-forwards and Phase

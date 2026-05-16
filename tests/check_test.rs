@@ -467,6 +467,46 @@ fn check_locked_unknown_tag_reported_as_drift() {
         );
 }
 
+#[test]
+fn check_locked_missing_on_disk_reported_as_drift() {
+    // A repo listed in the lock but missing from disk should fail
+    // `rwv doctor --locked` with a clear message — this is the precondition
+    // `rwv sync` enforces so the operator notices the gap before syncing.
+    let tmp = tempfile::tempdir().unwrap();
+    let root = make_workspace(tmp.path(), "ws");
+
+    let present_repo = "github/acme/server";
+    let missing_repo = "github/acme/lib";
+    let sha = init_git_repo(&root.join(present_repo));
+
+    let project_dir = root.join("projects").join("my-app");
+    write_manifest(
+        &project_dir,
+        &[
+            (present_repo, "https://github.com/acme/server.git"),
+            (missing_repo, "https://github.com/acme/lib.git"),
+        ],
+    );
+    write_lock(
+        &project_dir,
+        &[
+            (present_repo, "https://github.com/acme/server.git", &sha),
+            (
+                missing_repo,
+                "https://github.com/acme/lib.git",
+                "0000000000000000000000000000000000000000",
+            ),
+        ],
+    );
+
+    rwv_cmd()
+        .args(["doctor", "--locked"])
+        .current_dir(&project_dir)
+        .assert()
+        .failure()
+        .stdout(predicate::str::contains("missing on disk"));
+}
+
 // ===========================================================================
 // Smoke test: `rwv check` CLI command is recognized
 // ===========================================================================
