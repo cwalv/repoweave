@@ -4,7 +4,7 @@
 //! representation. Parsing produces a `Manifest`; locking produces a `LockFile`.
 
 use crate::registry::RegistryName;
-use crate::vcs::{RefName, RevisionId};
+use crate::vcs::{RawRevisionId, RefName, RevisionId};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::fmt;
@@ -467,22 +467,54 @@ impl Manifest {
 // Lock file — pinned SHAs
 // ---------------------------------------------------------------------------
 
-/// A single entry in an `rwv.lock` file.
+/// A single entry in an `rwv.lock` file as parsed from YAML — version is
+/// the raw string scalar; it has not yet been verified against any repo.
+///
+/// Use [`LockFile::resolve_versions`] to upgrade to [`ResolvedLockEntry`].
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LockEntry {
     #[serde(rename = "type")]
     pub vcs_type: VcsType,
     pub url: RepoUrl,
-    pub version: RevisionId,
+    pub version: RawRevisionId,
 }
 
-/// A parsed `rwv.lock` file — pinned SHAs for reproducibility.
+/// A parsed `rwv.lock` file — entries carry raw, unresolved version
+/// strings (tag/branch/SHA — unknown which). This is the parse-boundary
+/// type: only [`LockFile::from_path`] / deserialization produces one.
+/// To compare against a real commit SHA, run
+/// [`LockFile::resolve_versions`] first.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LockFile {
     /// Which workweave this lock was generated from, if any.
     #[serde(default, skip_serializing_if = "Option::is_none", alias = "weave")]
     pub workweave: Option<WorkweaveName>,
     pub repositories: BTreeMap<RepoPath, LockEntry>,
+}
+
+/// A single lock entry whose `version` has been resolved against a real
+/// repo on disk and now carries the canonical commit SHA.
+#[derive(Debug, Clone, Serialize)]
+pub struct ResolvedLockEntry {
+    #[serde(rename = "type")]
+    pub vcs_type: VcsType,
+    pub url: RepoUrl,
+    pub version: RevisionId,
+}
+
+/// A lock file whose entries are all resolved [`ResolvedLockEntry`]s.
+///
+/// There is no [`serde::Deserialize`] impl on purpose — the only way to
+/// obtain a `ResolvedLockFile` is via [`LockFile::resolve_versions`] (or
+/// via [`crate::lock::generate_lock`], which constructs entries from
+/// [`crate::vcs::Vcs::head_revision`] return values that are already
+/// canonical-SHA-form). This makes the parse/resolve boundary visible in
+/// the type system.
+#[derive(Debug, Clone, Serialize)]
+pub struct ResolvedLockFile {
+    #[serde(default, skip_serializing_if = "Option::is_none", alias = "weave")]
+    pub workweave: Option<WorkweaveName>,
+    pub repositories: BTreeMap<RepoPath, ResolvedLockEntry>,
 }
 
 impl LockFile {
@@ -494,31 +526,68 @@ impl LockFile {
         Ok(lock)
     }
 
-    /// Resolve each entry's `version` against its on-disk repo so the
-    /// canonical SHA is filled in. After this, comparing a lock entry's
-    /// version against a value returned by [`crate::vcs::Vcs::head_revision`]
-    /// uses canonical SHAs and so works uniformly whether the lock pinned a
-    /// tag, branch, or SHA.
+    /// Consume the raw lock file and resolve each entry's `version`
+    /// against its on-disk repo, producing a [`ResolvedLockFile`] whose
+    /// entries carry canonical commit SHAs.
     ///
-    /// Repos missing on disk are skipped — their entries stay raw, which the
-    /// caller can treat as drift if appropriate. Returns the list of repo
-    /// paths whose `version` could not be resolved (i.e., the revision name
-    /// is unknown in that repo). Those entries are likewise left raw.
-    pub fn resolve_versions(&mut self, workspace_dir: &Path) -> Vec<RepoPath> {
-        let mut failures = Vec::new();
-        for (repo_path, entry) in &mut self.repositories {
+    /// Semantics (matches pre-split behaviour):
+    /// - Repos missing on disk are silently skipped; their entries are
+    ///   not present in the returned [`ResolvedLockFile`]. Callers that
+    ///   need an "all entries" view should iterate the raw [`LockFile`]
+    ///   before resolving (or keep a clone).
+    /// - Repos whose `version` cannot be resolved by the local repo
+    ///   (e.g. a tag or SHA the clone has never seen) are returned in
+    ///   the failure list as `(RepoPath, RawRevisionId)` so callers can
+    ///   surface the unresolved string in a diagnostic.
+    ///
+    /// Takes `self` (not `&mut self`) because the raw → resolved
+    /// transformation is one-way: once an entry is resolved, the raw
+    /// string would be misleading to keep around. Per
+    /// `fp-principles-in-rust.md`, prefer transformations that return
+    /// new immutable values.
+    pub fn resolve_versions(
+        self,
+        workspace_dir: &Path,
+    ) -> (ResolvedLockFile, Vec<(RepoPath, RawRevisionId)>) {
+        let LockFile {
+            workweave,
+            repositories,
+        } = self;
+        let mut resolved = BTreeMap::new();
+        let mut failures: Vec<(RepoPath, RawRevisionId)> = Vec::new();
+        for (repo_path, entry) in repositories {
             let repo_abs = workspace_dir.join(repo_path.as_path());
+            let LockEntry {
+                vcs_type,
+                url,
+                version,
+            } = entry;
             if !repo_abs.exists() {
+                // Missing on disk: silently skip (pre-split behaviour).
                 continue;
             }
-            let vcs = crate::vcs::vcs_for(entry.vcs_type);
-            let raw = entry.version.as_str().to_string();
-            match vcs.resolve_revision(&repo_abs, &raw) {
-                Ok(resolved) => entry.version = resolved,
-                Err(_) => failures.push(repo_path.clone()),
+            let vcs = crate::vcs::vcs_for(vcs_type);
+            match vcs.resolve_revision(&repo_abs, version.as_str()) {
+                Ok(resolved_rev) => {
+                    resolved.insert(
+                        repo_path,
+                        ResolvedLockEntry {
+                            vcs_type,
+                            url,
+                            version: resolved_rev,
+                        },
+                    );
+                }
+                Err(_) => failures.push((repo_path, version)),
             }
         }
-        failures
+        (
+            ResolvedLockFile {
+                workweave,
+                repositories: resolved,
+            },
+            failures,
+        )
     }
 }
 

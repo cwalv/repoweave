@@ -1,6 +1,8 @@
 //! Lock logic: snapshot repo HEADs into `rwv.lock`.
 
-use crate::manifest::{LockEntry, LockFile, Manifest, Project, WorkweaveName};
+use crate::manifest::{
+    LockFile, Manifest, Project, ResolvedLockEntry, ResolvedLockFile, WorkweaveName,
+};
 use crate::vcs::vcs_for;
 use crate::workspace::{WorkspaceContext, WorkspaceLocation};
 use std::collections::BTreeMap;
@@ -9,19 +11,21 @@ use std::path::Path;
 /// Build a commit message summarising which repos' lock entries changed.
 ///
 /// When `old_lock` is `None` (fresh lock), all repos appear in the list.
-/// Otherwise, only repos whose version advanced are listed. Versions are
-/// compared by canonical SHA and by display form to correctly handle
-/// tag-pinned entries that survived deserialization as raw strings.
-fn build_commit_message(new_lock: &LockFile, old_lock: Option<&LockFile>) -> String {
+/// Otherwise, only repos whose version advanced are listed. Both sides
+/// are [`ResolvedLockFile`]s, so the comparison is a straightforward
+/// canonical-SHA equality (no raw-vs-resolved ambiguity).
+fn build_commit_message(
+    new_lock: &ResolvedLockFile,
+    old_lock: Option<&ResolvedLockFile>,
+) -> String {
     let changed: Vec<_> = new_lock
         .repositories
         .iter()
         .filter(|(path, new_entry)| {
             old_lock.is_none_or(|old| {
-                old.repositories.get(*path).is_none_or(|old_entry| {
-                    old_entry.version != new_entry.version
-                        && old_entry.version.display_str() != new_entry.version.display_str()
-                })
+                old.repositories
+                    .get(*path)
+                    .is_none_or(|old_entry| old_entry.version != new_entry.version)
             })
         })
         .collect();
@@ -45,8 +49,13 @@ fn build_commit_message(new_lock: &LockFile, old_lock: Option<&LockFile>) -> Str
     msg.trim_end().to_string()
 }
 
-/// Generate a [`LockFile`] for a project, resolving HEAD revisions from the
-/// workspace (weave or workweave).
+/// Generate a [`ResolvedLockFile`] for a project, resolving HEAD revisions
+/// from the workspace (weave or workweave).
+///
+/// Returns a [`ResolvedLockFile`] (not a raw [`LockFile`]) because each
+/// entry's version comes from [`crate::vcs::Vcs::head_revision`], which
+/// already carries the canonical SHA — there is no parse step in this
+/// path that could leave the value unresolved.
 ///
 /// When `dirty` is false, each repo is checked for uncommitted changes and
 /// an error is returned if any are found. When `dirty` is true, the check
@@ -59,7 +68,7 @@ pub fn generate_lock(
     workspace_root: &Path,
     workweave: Option<(&WorkweaveName, &Path)>,
     dirty: bool,
-) -> anyhow::Result<LockFile> {
+) -> anyhow::Result<ResolvedLockFile> {
     let mut repositories = BTreeMap::new();
 
     for (repo_path, entry) in &manifest.repositories {
@@ -95,7 +104,7 @@ pub fn generate_lock(
 
         repositories.insert(
             repo_path.clone(),
-            LockEntry {
+            ResolvedLockEntry {
                 vcs_type: entry.vcs_type,
                 url: entry.url.clone(),
                 version,
@@ -103,14 +112,19 @@ pub fn generate_lock(
         );
     }
 
-    Ok(LockFile {
+    Ok(ResolvedLockFile {
         workweave: workweave.map(|(name, _)| name.clone()),
         repositories,
     })
 }
 
 /// Write a lock file as YAML to the given path.
-pub fn write_lock(lock: &LockFile, path: &Path) -> anyhow::Result<()> {
+///
+/// Generic over any serializable lock form so callers can write either a
+/// raw [`LockFile`] (round-trip) or a [`ResolvedLockFile`] (post-lock
+/// generation). Both serialize as the same YAML shape — a single scalar
+/// per `version`.
+pub fn write_lock<L: serde::Serialize>(lock: &L, path: &Path) -> anyhow::Result<()> {
     let yaml = serde_yaml::to_string(lock)
         .map_err(|e| anyhow::anyhow!("failed to serialize lock file: {e}"))?;
     std::fs::write(path, &yaml)
@@ -178,8 +192,8 @@ pub(crate) fn commit_lock_file_with_message(
 /// file — the auto-commit must not bundle unrelated work-in-progress.
 fn commit_lock_file(
     project_dir: &Path,
-    new_lock: &LockFile,
-    old_lock: Option<&LockFile>,
+    new_lock: &ResolvedLockFile,
+    old_lock: Option<&ResolvedLockFile>,
 ) -> anyhow::Result<()> {
     use crate::git::git_command;
 
@@ -253,9 +267,14 @@ pub fn lock(cwd: &Path, dirty: bool, commit: bool) -> anyhow::Result<()> {
     let lock = generate_lock(&project.manifest, ctx.primary_path(), workweave_pair, dirty)?;
 
     let lock_path = project_dir.join("rwv.lock");
-    // Read old lock before overwriting so the commit message can list what changed.
+    // Read old lock before overwriting so the commit message can list what
+    // changed. Resolve the raw lock against on-disk repos so the diff
+    // computed by `commit_lock_file` is a canonical-SHA comparison rather
+    // than a string comparison of possibly-tag-form values.
     let old_lock = if commit {
-        LockFile::from_path(&lock_path).ok()
+        LockFile::from_path(&lock_path)
+            .ok()
+            .map(|raw| raw.resolve_versions(ctx.primary_path()).0)
     } else {
         None
     };

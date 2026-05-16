@@ -839,8 +839,8 @@ fn lock_resolve_versions_makes_tag_form_equal_head() {
     )
     .unwrap();
 
-    let mut lock = repoweave::manifest::LockFile::from_path(&lock_path).unwrap();
-    let failures = lock.resolve_versions(&root);
+    let lock = repoweave::manifest::LockFile::from_path(&lock_path).unwrap();
+    let (resolved_lock, failures) = lock.resolve_versions(&root);
     assert!(
         failures.is_empty(),
         "resolution should succeed: {failures:?}"
@@ -850,7 +850,7 @@ fn lock_resolve_versions_makes_tag_form_equal_head() {
     let head = repoweave::git::GitVcs
         .head_revision(&root.join(repo_path))
         .unwrap();
-    let entry = &lock.repositories[&repoweave::manifest::RepoPath::new(repo_path)];
+    let entry = &resolved_lock.repositories[&repoweave::manifest::RepoPath::new(repo_path)];
     assert_eq!(
         entry.version, head,
         "tag-form lock entry should be == HEAD after resolve_versions"
@@ -886,18 +886,19 @@ fn lock_resolve_versions_unknown_revision_returns_failure() {
     )
     .unwrap();
 
-    let mut lock = repoweave::manifest::LockFile::from_path(&lock_path).unwrap();
-    let failures = lock.resolve_versions(&root);
+    let lock = repoweave::manifest::LockFile::from_path(&lock_path).unwrap();
+    let (resolved_lock, failures) = lock.resolve_versions(&root);
+    let repo = repoweave::manifest::RepoPath::new(repo_path);
+    assert_eq!(failures.len(), 1, "exactly one failure expected");
+    assert_eq!(failures[0].0, repo, "unknown revision should appear in failures");
     assert_eq!(
-        failures,
-        vec![repoweave::manifest::RepoPath::new(repo_path)],
-        "unknown revision should appear in failures"
-    );
-    let entry = &lock.repositories[&repoweave::manifest::RepoPath::new(repo_path)];
-    assert_eq!(
-        entry.version.as_str(),
+        failures[0].1.as_str(),
         "v9.9.9-nonexistent",
-        "unresolvable entry should retain its raw version"
+        "raw version preserved in failure tuple"
+    );
+    assert!(
+        !resolved_lock.repositories.contains_key(&repo),
+        "unresolvable entry must not appear in ResolvedLockFile"
     );
 }
 

@@ -93,13 +93,12 @@ pub fn run_status(cwd: &Path, json: bool) -> anyhow::Result<()> {
             Ok(p) => p,
             Err(_) => continue,
         };
-        let mut lock = project.lock;
         // Resolve lock entries against their on-disk repos so equality with
         // a tip RevisionId (which always carries the canonical SHA) works
         // whether the lock pinned a tag, branch, or raw SHA.
-        if let Some(ref mut l) = lock {
-            l.resolve_versions(&workspace_dir);
-        }
+        let lock = project
+            .lock
+            .map(|raw| raw.resolve_versions(&workspace_dir).0);
 
         for repo_path in project.manifest.repositories.keys() {
             let repo_abs = workspace_dir.join(repo_path.as_path());

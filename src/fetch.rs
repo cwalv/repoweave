@@ -167,7 +167,20 @@ pub fn run_fetch(source: &str, workspace_root: &Path, mode: FetchMode) -> anyhow
                         repo_path.as_str(),
                         lock_entry.version,
                     );
-                    if let Err(e) = git.checkout(&dest, &lock_entry.version) {
+                    let resolved = match git.resolve_revision(&dest, lock_entry.version.as_str()) {
+                        Ok(r) => r,
+                        Err(e) => {
+                            let msg = format!(
+                                "{}: failed to resolve {}: {e}",
+                                repo_path.as_str(),
+                                lock_entry.version,
+                            );
+                            eprintln!("rwv fetch: error: {msg}");
+                            errors.push(msg);
+                            continue;
+                        }
+                    };
+                    if let Err(e) = git.checkout(&dest, &resolved) {
                         let msg = format!(
                             "{}: failed to check out {}: {e}",
                             repo_path.as_str(),
@@ -227,7 +240,20 @@ pub fn run_fetch(source: &str, workspace_root: &Path, mode: FetchMode) -> anyhow
                     repo_path.as_str(),
                     lock_entry.version,
                 );
-                if let Err(e) = git.checkout(&dest, &lock_entry.version) {
+                let resolved = match git.resolve_revision(&dest, lock_entry.version.as_str()) {
+                    Ok(r) => r,
+                    Err(e) => {
+                        let msg = format!(
+                            "{}: failed to resolve {}: {e}",
+                            repo_path.as_str(),
+                            lock_entry.version,
+                        );
+                        eprintln!("rwv fetch: error: {msg}");
+                        errors.push(msg);
+                        continue;
+                    }
+                };
+                if let Err(e) = git.checkout(&dest, &resolved) {
                     let msg = format!(
                         "{}: failed to check out {}: {e}",
                         repo_path.as_str(),

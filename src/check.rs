@@ -105,6 +105,12 @@ pub struct CheckInput {
     pub projects: Vec<Project>,
     /// Resolved HEAD revisions for repos on disk, keyed by RepoPath.
     pub head_revisions: BTreeMap<RepoPath, RevisionId>,
+    /// Resolved lock files keyed by project name. Built by the caller via
+    /// [`crate::manifest::LockFile::resolve_versions`] before invoking
+    /// [`find_violations`]; only projects whose lock could be resolved
+    /// appear here. The split out of `Project.lock` (which stays raw)
+    /// keeps the parse/resolve boundary explicit at the type level.
+    pub resolved_locks: std::collections::HashMap<ProjectName, crate::manifest::ResolvedLockFile>,
 }
 
 /// Collect all convention violations from the check inputs.
@@ -136,10 +142,12 @@ pub fn find_violations(input: &CheckInput) -> Vec<CheckViolation> {
             }
         }
 
-        // Compare lock entries against resolved HEADs. The lock entries are
-        // expected to have been resolved already (see `LockFile::resolve_versions`),
-        // so equality compares canonical SHAs across tag-form and SHA-form alike.
-        if let Some(ref lock) = project.lock {
+        // Compare lock entries against resolved HEADs. The lock entries
+        // are pulled from `input.resolved_locks` (built by the caller via
+        // `LockFile::resolve_versions`), so equality is purely a
+        // canonical-SHA comparison — the raw-vs-resolved confusion that
+        // produced fo-4xhfp's B3/B6 is now a compile-time impossibility.
+        if let Some(lock) = input.resolved_locks.get(&project.name) {
             for (repo_path, lock_entry) in &lock.repositories {
                 if let Some(actual_rev) = input.head_revisions.get(repo_path) {
                     if &lock_entry.version != actual_rev {
@@ -494,18 +502,23 @@ pub fn run_check_locked(cwd: &std::path::Path) -> anyhow::Result<bool> {
             Err(_) => continue,
         };
 
-        let mut lock = match project.lock {
+        let raw_lock = match project.lock {
             Some(l) => l,
             None => continue,
         };
 
         // Resolve lock entries against on-disk repos. Repos whose revision
-        // can't be resolved (unknown tag/branch) come back in `unresolved`
-        // so we can report them with a distinct "unknown revision" message.
-        let unresolved: std::collections::BTreeSet<RepoPath> =
-            lock.resolve_versions(&workspace_dir).into_iter().collect();
+        // can't be resolved (unknown tag/branch) come back in `failures`
+        // along with the raw string, so we can report them with a distinct
+        // "unknown revision" message. The raw lock is iterated below so
+        // that "missing on disk" entries (which are silently dropped by
+        // `resolve_versions`) still get a diagnostic.
+        let raw_entries = raw_lock.repositories.clone();
+        let (resolved, failures) = raw_lock.resolve_versions(&workspace_dir);
+        let unresolved: std::collections::BTreeMap<RepoPath, crate::vcs::RawRevisionId> =
+            failures.into_iter().collect();
 
-        for (repo_path, lock_entry) in &lock.repositories {
+        for (repo_path, raw_entry) in &raw_entries {
             let repo_abs = workspace_dir.join(repo_path.as_path());
 
             let actual = match git.head_revision(&repo_abs) {
@@ -513,26 +526,33 @@ pub fn run_check_locked(cwd: &std::path::Path) -> anyhow::Result<bool> {
                 Err(_) => {
                     println!(
                         "{repo_path}: missing on disk (lock pins {}); run `rwv sync` to materialize",
-                        lock_entry.version
+                        raw_entry.version
                     );
                     any_drift = true;
                     continue;
                 }
             };
 
-            if unresolved.contains(repo_path) {
-                println!(
-                    "{repo_path}: lock pins unknown revision {}",
-                    lock_entry.version
-                );
+            if let Some(raw_rev) = unresolved.get(repo_path) {
+                println!("{repo_path}: lock pins unknown revision {}", raw_rev);
                 any_drift = true;
                 continue;
             }
 
-            if actual == lock_entry.version {
+            let Some(resolved_entry) = resolved.repositories.get(repo_path) else {
+                // Resolve dropped this entry without surfacing it as a
+                // failure — shouldn't happen for an on-disk repo with a
+                // valid rev, but stay defensive.
+                continue;
+            };
+
+            if actual == resolved_entry.version {
                 println!("{repo_path}: ok");
             } else {
-                println!("{repo_path}: tip {} ≠ lock {}", actual, lock_entry.version);
+                println!(
+                    "{repo_path}: tip {} ≠ lock {}",
+                    actual, resolved_entry.version
+                );
                 any_drift = true;
             }
         }
@@ -587,6 +607,11 @@ pub fn run_check(cwd: &std::path::Path, fix: bool) -> anyhow::Result<bool> {
     let mut known_repos = BTreeSet::new();
     let mut lock_resolve_failures: Vec<(crate::manifest::ProjectName, RepoPath)> = Vec::new();
 
+    let mut resolved_locks: std::collections::HashMap<
+        crate::manifest::ProjectName,
+        crate::manifest::ResolvedLockFile,
+    > = std::collections::HashMap::new();
+
     if projects_dir.is_dir() {
         let mut entries: Vec<_> = std::fs::read_dir(&projects_dir)?
             .filter_map(|e| e.ok())
@@ -626,17 +651,14 @@ pub fn run_check(cwd: &std::path::Path, fix: bool) -> anyhow::Result<bool> {
                     // diagnostic, `find_violations` either flags nothing
                     // (no head_revisions entry) or falsely reports StaleLock
                     // by comparing the raw tag string against a real SHA.
-                    if let Some(ref mut lock) = project.lock {
-                        let project_rel_name = rel_dir
-                            .strip_prefix("projects")
-                            .unwrap_or(rel_dir)
-                            .to_string_lossy()
-                            .into_owned();
-                        let project_name_for_issue =
-                            crate::manifest::ProjectName::new(project_rel_name);
-                        for unresolved in lock.resolve_versions(&workspace_dir) {
-                            lock_resolve_failures.push((project_name_for_issue.clone(), unresolved));
+                    if let Some(raw_lock) = project.lock.clone() {
+                        let project_name_for_issue = project.name.clone();
+                        let (resolved, failures) = raw_lock.resolve_versions(&workspace_dir);
+                        for (unresolved, _raw_rev) in failures {
+                            lock_resolve_failures
+                                .push((project_name_for_issue.clone(), unresolved));
                         }
+                        resolved_locks.insert(project.name.clone(), resolved);
                     }
 
                     for repo_path in project.manifest.repositories.keys() {
@@ -660,6 +682,7 @@ pub fn run_check(cwd: &std::path::Path, fix: bool) -> anyhow::Result<bool> {
         repos_on_disk: session.repos_on_disk().to_vec(),
         projects,
         head_revisions,
+        resolved_locks,
     };
 
     let violations = find_violations(&input);

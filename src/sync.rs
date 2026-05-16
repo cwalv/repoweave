@@ -426,13 +426,9 @@ fn check_lock_freshness(
     // Resolve lock entries against on-disk repos so the comparison below is
     // purely a canonical-SHA equality check. Tag-form entries (e.g. v0.3.4)
     // resolve to the canonical SHA; SHA-form entries pass through unchanged.
-    let mut resolved = lock.clone();
-    let failures = resolved.resolve_versions(workspace_dir);
-    if let Some(repo_path) = failures.first() {
-        let raw = resolved.repositories[repo_path]
-            .version
-            .as_str()
-            .to_string();
+    let (resolved, failures) = lock.clone().resolve_versions(workspace_dir);
+    if let Some((repo_path, raw_version)) = failures.first() {
+        let raw = raw_version.as_str().to_string();
         let side_str = side.as_str();
         let recovery = lock_recovery(side);
         anyhow::bail!(
@@ -1038,9 +1034,8 @@ pub fn run_sync(
     // project after a Phase-1 reset, as the old contract did) keeps the lock
     // out of the merge inputs entirely.
     let source_lock_path = source_project_dir.join("rwv.lock");
-    let mut source_lock = LockFile::from_path(&source_lock_path)
+    let raw_source_lock = LockFile::from_path(&source_lock_path)
         .map_err(|e| anyhow::anyhow!("failed to read source lock: {e}"))?;
-    let _ = source_lock.resolve_versions(&source_workspace_dir);
 
     // Load source manifest so we have URLs for any repos newly added at source
     // that need to be materialized on the CWD side.
@@ -1052,8 +1047,13 @@ pub fn run_sync(
     // from the CWD workspace, clone/worktree-add before Phase 2 tries to sync
     // it. In a workweave this means `git worktree add` against the canonical
     // clone at primary; in the primary weave it means `git clone`.
+    //
+    // Iterates the RAW source lock — materialize uses the manifest URL, not
+    // the lock version, and we must include every locked path (including
+    // ones whose canonical clone is missing on the source side) so failures
+    // surface as B6 prescribes.
     let mut materialize_failures: Vec<crate::manifest::RepoPath> = Vec::new();
-    for (repo_path, _lock_entry) in &source_lock.repositories {
+    for (repo_path, _raw_entry) in &raw_source_lock.repositories {
         let abs = workspace_dir.join(repo_path.as_path());
         if abs.exists() {
             continue;
@@ -1081,7 +1081,7 @@ pub fn run_sync(
     // with uncommitted changes or unique local commits.
     if let Some(ref cwd_lock) = cwd_project.lock {
         for repo_path in cwd_lock.repositories.keys() {
-            if source_lock.repositories.contains_key(repo_path) {
+            if raw_source_lock.repositories.contains_key(repo_path) {
                 continue;
             }
             match prune_dropped_repo(&ctx, repo_path) {
@@ -1097,12 +1097,37 @@ pub fn run_sync(
     // past a missing repo.
     let mut any_failure = !materialize_failures.is_empty();
 
-    for (repo_path, lock_entry) in &source_lock.repositories {
+    // Resolve the source lock against the CWD workspace (where repos now
+    // exist post-materialize) so sync_one_repo gets canonical-SHA targets.
+    // Resolution failures here mean the local clone of a repo hasn't yet
+    // pulled the SHA the lock pins — surface them via the per-repo loop
+    // below as a failure to keep with B3.
+    let (source_lock, source_lock_failures) =
+        raw_source_lock.clone().resolve_versions(&workspace_dir);
+    let unresolvable: std::collections::BTreeSet<crate::manifest::RepoPath> =
+        source_lock_failures
+            .iter()
+            .map(|(p, _)| p.clone())
+            .collect();
+
+    for (repo_path, raw_entry) in &raw_source_lock.repositories {
         let abs = workspace_dir.join(repo_path.as_path());
         if !abs.exists() {
             println!("  {repo_path}: skipped (not on disk)");
             continue;
         }
+        if unresolvable.contains(repo_path) {
+            eprintln!(
+                "  {repo_path}: lock pins unknown revision {} in local clone",
+                raw_entry.version
+            );
+            any_failure = true;
+            continue;
+        }
+        let lock_entry = match source_lock.repositories.get(repo_path) {
+            Some(e) => e,
+            None => continue,
+        };
 
         let outcome = sync_one_repo(&abs, &lock_entry.version, strategy);
         if outcome.is_failure() {
