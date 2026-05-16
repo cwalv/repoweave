@@ -24,10 +24,13 @@ jobs:
   # Build one platform-specific wheel per Rust target.
   build-wheel:
     # Only run when the Release workflow succeeded on a version tag.
+    # head_branch is the tag name when the upstream Release workflow was
+    # tag-triggered. Match the same v[0-9]+.[0-9]+.[0-9]+* shape that
+    # release.yml's trigger uses, so the two filters cannot drift.
     if: |
       github.event.workflow_run.conclusion == 'success' &&
-      (startsWith(github.event.workflow_run.head_branch, 'v') ||
-       contains(github.event.workflow_run.head_branch, '.'))
+      startsWith(github.event.workflow_run.head_branch, 'v') &&
+      contains(github.event.workflow_run.head_branch, '.')
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -112,10 +115,11 @@ jobs:
 
   # Build the sdist (platform-independent source distribution).
   build-sdist:
+    # Same gating as build-wheel — see comment there.
     if: |
       github.event.workflow_run.conclusion == 'success' &&
-      (startsWith(github.event.workflow_run.head_branch, 'v') ||
-       contains(github.event.workflow_run.head_branch, '.'))
+      startsWith(github.event.workflow_run.head_branch, 'v') &&
+      contains(github.event.workflow_run.head_branch, '.')
     runs-on: ubuntu-latest
 
     steps:
