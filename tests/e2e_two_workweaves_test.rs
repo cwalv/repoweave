@@ -490,3 +490,65 @@ fn sync_phase3_materializes_newly_added_repo_in_workweave() {
         .assert()
         .success();
 }
+
+/// B6: when Phase 3 materialize fails (e.g. canonical clone for a newly-added
+/// repo doesn't exist on primary), `rwv sync` must exit non-zero. Previously
+/// the failure was an stderr line and the loop fell through to a
+/// `skipped (not on disk)` print that did NOT flip `any_failure`, so the
+/// lock advanced past a never-materialised repo and sync exited 0 — same
+/// shape as fo-62glp.
+#[test]
+fn sync_phase3_materialize_failure_is_fatal() {
+    let tmp = tempfile::tempdir().unwrap();
+    let weaveroot = tmp.path().join(".workweaves");
+    std::fs::create_dir_all(&weaveroot).unwrap();
+
+    let main = make_main_workspace(tmp.path());
+    let ww1 = create_workweave(&main, &weaveroot, "ww1");
+
+    // At primary: add a second manifest repo and lock it.
+    let new_repo_path = "github/org/extras";
+    let new_repo_abs = main.root.join(new_repo_path);
+    init_repo(&new_repo_abs);
+    git(
+        &[
+            "remote",
+            "add",
+            "origin",
+            &format!("file://{}", new_repo_abs.display()),
+        ],
+        &new_repo_abs,
+    );
+    rwv()
+        .args(["add", new_repo_path])
+        .current_dir(&main.root)
+        .assert()
+        .success();
+    git(&["add", "rwv.yaml"], &main.project_dir);
+    git(&["commit", "-m", "add: extras"], &main.project_dir);
+    rwv_lock_commit(&main.root);
+
+    // Now sabotage the canonical clone: remove it so `git worktree add`
+    // against primary's path can't succeed.
+    std::fs::remove_dir_all(&new_repo_abs).unwrap();
+
+    // From ww1: sync primary should FAIL — materialize can't proceed and
+    // the workweave is missing the new repo. Sync must report this rather
+    // than silently skip and exit 0.
+    let assert = rwv()
+        .args(["sync", "primary"])
+        .current_dir(&ww1.root)
+        .assert()
+        .failure();
+    let stderr = String::from_utf8_lossy(&assert.get_output().stderr).into_owned();
+    assert!(
+        stderr.contains("materialize failed") || stderr.contains("sync completed with failures"),
+        "expected materialize/sync failure signal in stderr, got: {stderr}"
+    );
+
+    let ww1_new_repo = ww1.root.join(new_repo_path);
+    assert!(
+        !ww1_new_repo.exists(),
+        "workweave should not have a partially-materialised repo on failure"
+    );
+}

@@ -298,11 +298,18 @@ pub struct OpId(String);
 
 impl OpId {
     /// Generate a fresh `OpId` from the current wall-clock time.
+    ///
+    /// Panics if the system clock is before UNIX_EPOCH. The previous
+    /// fallback to a literal "0" sentinel masked a clock invariant: every
+    /// pre-epoch run would collide on a single `OpId`, and the savepoint
+    /// ref scheme this id keys depends on uniqueness. Per FP-in-Rust:
+    /// don't silently default away an invariant.
     pub fn new_now() -> Self {
         let s = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_nanos().to_string())
-            .unwrap_or_else(|_| "0".to_owned());
+            .expect("system clock before UNIX_EPOCH")
+            .as_nanos()
+            .to_string();
         Self(s)
     }
 
@@ -1045,6 +1052,7 @@ pub fn run_sync(
     // from the CWD workspace, clone/worktree-add before Phase 2 tries to sync
     // it. In a workweave this means `git worktree add` against the canonical
     // clone at primary; in the primary weave it means `git clone`.
+    let mut materialize_failures: Vec<crate::manifest::RepoPath> = Vec::new();
     for (repo_path, _lock_entry) in &source_lock.repositories {
         let abs = workspace_dir.join(repo_path.as_path());
         if abs.exists() {
@@ -1058,9 +1066,12 @@ pub fn run_sync(
             Ok(()) => println!("  {repo_path}: materialized"),
             Err(e) => {
                 eprintln!("  {repo_path}: materialize failed: {e}");
-                // Don't bail outright — record as failure and continue so the
-                // rest of the sync proceeds; the per-repo skip below will then
-                // tag this repo as not-on-disk.
+                // B6: previously this stderr line was the only signal; the
+                // per-repo `skipped (not on disk)` loop below didn't flip
+                // `any_failure`, so sync exited 0 with a lock that had
+                // advanced past a never-materialised repo (same shape as
+                // fo-62glp). Record the failure so the post-loop bail fires.
+                materialize_failures.push(repo_path.clone());
             }
         }
     }
@@ -1080,7 +1091,11 @@ pub fn run_sync(
         }
     }
 
-    let mut any_failure = false;
+    // B6: a failure in the materialize loop above is itself a sync failure.
+    // Without this, every materialize-failed repo silently becomes a
+    // `skipped (not on disk)` print and sync exits 0 with a lock advanced
+    // past a missing repo.
+    let mut any_failure = !materialize_failures.is_empty();
 
     for (repo_path, lock_entry) in &source_lock.repositories {
         let abs = workspace_dir.join(repo_path.as_path());
@@ -1134,8 +1149,20 @@ pub fn run_sync(
 
     // Reload CWD project so Phase 3 sees the post-Phase-1' manifest (which
     // may now include newly-added repos brought over from source). If reload
-    // fails, fall back to the pre-Phase-1' snapshot.
-    let cwd_project_phase3 = Project::from_dir(&cwd_project_dir).unwrap_or(cwd_project);
+    // fails, fall back to the pre-Phase-1' snapshot — but log loudly, since
+    // Phase 3 will then operate on a stale manifest and may miss newly-
+    // added repos. (Other architectural note in the audit.)
+    let cwd_project_phase3 = match Project::from_dir(&cwd_project_dir) {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!(
+                "warning: failed to reload project after Phase 1' ({e}); \
+                 Phase 3 will use the pre-Phase-1' manifest snapshot, which may \
+                 miss newly-added repos"
+            );
+            cwd_project
+        }
+    };
 
     // Phase 3: regenerate rwv.lock from current manifest tips and commit if changed.
     if let Err(e) = regenerate_lock_phase3(
