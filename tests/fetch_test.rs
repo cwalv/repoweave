@@ -739,6 +739,64 @@ fn fetch_locked_does_not_update_lock() {
 // ============================================================================
 
 #[test]
+fn fetch_locked_errors_on_missing_lock() {
+    // B5: --locked previously fell back to default-mode HEAD-of-branch
+    // fetches when the lock was absent. The user asked for locked
+    // behaviour; silently downgrading is the same shape the audit flagged
+    // throughout: do the wrong thing and print nothing the operator will
+    // notice. Mirror --frozen and bail with a clear message.
+    let tmp = tempfile::tempdir().unwrap();
+    let workspace = tmp.path().join("ws");
+    std::fs::create_dir_all(&workspace).unwrap();
+
+    let bare_repo = tmp.path().join("dep.git");
+    init_bare_repo_with_commit(&bare_repo);
+
+    let project_bare = tmp.path().join("project.git");
+    init_bare_repo(&project_bare);
+
+    let work = tmp.path().join("work");
+    let run = |args: &[&str], cwd: &Path| {
+        let status = common::git()
+            .args(args)
+            .current_dir(cwd)
+            .stdout(process::Stdio::null())
+            .stderr(process::Stdio::null())
+            .status()
+            .expect("git command failed");
+        assert!(status.success(), "git {:?} failed", args);
+    };
+
+    run(
+        &[
+            "clone",
+            &project_bare.to_string_lossy(),
+            &work.to_string_lossy(),
+        ],
+        tmp.path(),
+    );
+    run(&["config", "user.email", "test@test.com"], &work);
+    run(&["config", "user.name", "Test"], &work);
+
+    let dep_url = format!("file://{}", bare_repo.display());
+    write_manifest(&work, &[("local/team/dep", &dep_url)]);
+    // Deliberately do NOT create rwv.lock.
+    run(&["add", "rwv.yaml"], &work);
+    run(&["commit", "-m", "manifest without lock"], &work);
+    run(&["push", "origin", "main"], &work);
+
+    let source = format!("file://{}", project_bare.display());
+    rwv()
+        .args(["fetch", &source, "--locked"])
+        .current_dir(&workspace)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("--locked").and(
+            predicate::str::contains("does not exist").or(predicate::str::contains("lock file")),
+        ));
+}
+
+#[test]
 fn fetch_frozen_errors_on_missing_lock() {
     // --frozen should error if rwv.lock does not exist.
     let tmp = tempfile::tempdir().unwrap();

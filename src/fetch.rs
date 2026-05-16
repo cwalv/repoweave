@@ -126,13 +126,21 @@ pub fn run_fetch(source: &str, workspace_root: &Path, mode: FetchMode) -> anyhow
             Some(lock)
         }
         FetchMode::Locked => {
-            if lock_path.exists() {
-                Some(LockFile::from_path(&lock_path).with_context(|| {
-                    format!("failed to read lock file at {}", lock_path.display())
-                })?)
-            } else {
-                None
+            // B5: `--locked` previously fell back to default-mode HEAD-of-
+            // branch fetches when no lock was present. The user asked for
+            // locked behaviour; silently downgrading produced "fetch
+            // succeeded" with the wrong revisions checked out and no
+            // signal anything was off. Mirror `--frozen`: bail.
+            if !lock_path.exists() {
+                bail!(
+                    "rwv fetch --locked: lock file does not exist at {}; \
+                     run `rwv lock` first, or use `rwv fetch` without --locked",
+                    lock_path.display()
+                );
             }
+            Some(LockFile::from_path(&lock_path).with_context(|| {
+                format!("failed to read lock file at {}", lock_path.display())
+            })?)
         }
         FetchMode::Default => None,
     };
