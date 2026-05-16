@@ -758,11 +758,9 @@ pub fn handle_claude_hook() -> anyhow::Result<()> {
                     .map(|(_, n)| n)
                     .unwrap_or(dir_name);
 
-                if let Err(e) = delete_workweave(
-                    &marker.primary,
-                    &marker.project,
-                    &WorkweaveName::new(name),
-                ) {
+                if let Err(e) =
+                    delete_workweave(&marker.primary, &marker.project, &WorkweaveName::new(name))
+                {
                     eprintln!("rwv workweave --claude-hook WorktreeRemove: warning: {e}");
                 }
             }

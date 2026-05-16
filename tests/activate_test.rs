@@ -41,7 +41,7 @@ fn make_project(
         yaml.push_str(&format!(
             "  {}:\n    type: git\n    url: https://github.com/test/{}.git\n    version: main\n    role: {}\n",
             path,
-            path.split('/').last().unwrap(),
+            path.split('/').next_back().unwrap(),
             role,
         ));
 
@@ -52,12 +52,12 @@ fn make_project(
             let content = if *mf == "package.json" {
                 format!(
                     "{{ \"name\": \"{}\", \"version\": \"1.0.0\" }}\n",
-                    path.split('/').last().unwrap()
+                    path.split('/').next_back().unwrap()
                 )
             } else if *mf == "Cargo.toml" {
                 format!(
                     "[package]\nname = \"{}\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
-                    path.split('/').last().unwrap()
+                    path.split('/').next_back().unwrap()
                 )
             } else {
                 String::new()

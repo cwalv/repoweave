@@ -246,7 +246,11 @@ impl fmt::Display for RepoSyncOutcome {
     }
 }
 
-fn sync_one_repo(repo: &Path, target: &ResolvedRevisionId, strategy: SyncStrategy) -> RepoSyncOutcome {
+fn sync_one_repo(
+    repo: &Path,
+    target: &ResolvedRevisionId,
+    strategy: SyncStrategy,
+) -> RepoSyncOutcome {
     let head = match GitVcs.head_revision(repo) {
         Ok(h) => h,
         Err(e) => {
@@ -357,7 +361,11 @@ fn git(args: &[&str], dir: &Path) -> anyhow::Result<String> {
         .to_owned())
 }
 
-fn apply_strategy(repo: &Path, target: &ResolvedRevisionId, strategy: SyncStrategy) -> anyhow::Result<()> {
+fn apply_strategy(
+    repo: &Path,
+    target: &ResolvedRevisionId,
+    strategy: SyncStrategy,
+) -> anyhow::Result<()> {
     let target_ref = target.as_str();
     match strategy {
         SyncStrategy::Ff => {
@@ -752,9 +760,8 @@ fn materialize_missing_repo(
 ) -> anyhow::Result<()> {
     let dest = ctx.active_path().join(repo_path.as_path());
     if let Some(parent) = dest.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| {
-            anyhow::anyhow!("failed to create {}: {e}", parent.display())
-        })?;
+        std::fs::create_dir_all(parent)
+            .map_err(|e| anyhow::anyhow!("failed to create {}: {e}", parent.display()))?;
     }
 
     match &ctx.location {
@@ -774,7 +781,9 @@ fn materialize_missing_repo(
             let start_ref = entry.version.as_str();
             let head_rev = GitVcs
                 .resolve_revision(&canonical, start_ref)
-                .map_err(|e| anyhow::anyhow!("failed to resolve {start_ref} in canonical clone: {e}"))?;
+                .map_err(|e| {
+                    anyhow::anyhow!("failed to resolve {start_ref} in canonical clone: {e}")
+                })?;
             let branch = crate::vcs::RefName::new(format!(
                 "{}--{}/{}",
                 project_name.as_str(),
@@ -788,7 +797,9 @@ fn materialize_missing_repo(
         WorkspaceLocation::Weave { .. } => {
             GitVcs
                 .clone_repo(&entry.url.to_string(), &dest)
-                .map_err(|e| anyhow::anyhow!("clone of {repo_path} from {} failed: {e}", entry.url))?;
+                .map_err(|e| {
+                    anyhow::anyhow!("clone of {repo_path} from {} failed: {e}", entry.url)
+                })?;
         }
     }
     Ok(())
@@ -798,10 +809,7 @@ fn materialize_missing_repo(
 /// from the lock. Refuses (and warns) if the worktree has uncommitted changes
 /// or local-only commits (branch tip differs from canonical HEAD in workweave;
 /// any commits at all in primary).
-fn prune_dropped_repo(
-    ctx: &WorkspaceContext,
-    repo_path: &RepoPath,
-) -> anyhow::Result<()> {
+fn prune_dropped_repo(ctx: &WorkspaceContext, repo_path: &RepoPath) -> anyhow::Result<()> {
     let dest = ctx.active_path().join(repo_path.as_path());
     if !dest.exists() {
         return Ok(());
@@ -880,9 +888,7 @@ fn prune_dropped_repo(
                             .current_dir(&dest)
                             .output();
                         if let Ok(out) = count {
-                            let s = String::from_utf8_lossy(&out.stdout)
-                                .trim()
-                                .to_string();
+                            let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
                             if s.parse::<usize>().unwrap_or(0) > 0 {
                                 any = true;
                                 break;
@@ -1059,7 +1065,7 @@ pub fn run_sync(
     // ones whose canonical clone is missing on the source side) so failures
     // surface as B6 prescribes.
     let mut materialize_failures: Vec<crate::manifest::RepoPath> = Vec::new();
-    for (repo_path, _raw_entry) in &raw_source_lock.repositories {
+    for repo_path in raw_source_lock.repositories.keys() {
         let abs = workspace_dir.join(repo_path.as_path());
         if abs.exists() {
             continue;
@@ -1110,11 +1116,10 @@ pub fn run_sync(
     // below as a failure to keep with B3.
     let (source_lock, source_lock_failures) =
         raw_source_lock.clone().resolve_versions(&workspace_dir);
-    let unresolvable: std::collections::BTreeSet<crate::manifest::RepoPath> =
-        source_lock_failures
-            .iter()
-            .map(|(p, _)| p.clone())
-            .collect();
+    let unresolvable: std::collections::BTreeSet<crate::manifest::RepoPath> = source_lock_failures
+        .iter()
+        .map(|(p, _)| p.clone())
+        .collect();
 
     for (repo_path, raw_entry) in &raw_source_lock.repositories {
         let abs = workspace_dir.join(repo_path.as_path());
@@ -1672,12 +1677,7 @@ mod tests {
     #[test]
     fn check_active_projects_match_ok_when_equal() {
         let p = ProjectName::new("foundations");
-        let res = check_active_projects_match(
-            &p,
-            &p,
-            Path::new("/cwd/ws"),
-            Path::new("/src/ws"),
-        );
+        let res = check_active_projects_match(&p, &p, Path::new("/cwd/ws"), Path::new("/src/ws"));
         assert!(res.is_ok());
     }
 
@@ -1685,14 +1685,10 @@ mod tests {
     fn check_active_projects_match_errors_when_different() {
         let cwd = ProjectName::new("foundations-test");
         let src = ProjectName::new("foundations");
-        let err = check_active_projects_match(
-            &cwd,
-            &src,
-            Path::new("/cwd/ws"),
-            Path::new("/src/ws"),
-        )
-        .unwrap_err()
-        .to_string();
+        let err =
+            check_active_projects_match(&cwd, &src, Path::new("/cwd/ws"), Path::new("/src/ws"))
+                .unwrap_err()
+                .to_string();
         assert!(err.contains("active project mismatch"), "msg: {err}");
         assert!(err.contains("foundations-test"), "msg: {err}");
         assert!(err.contains("foundations"), "msg: {err}");

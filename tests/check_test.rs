@@ -540,11 +540,7 @@ fn check_flags_unresolvable_lock_revision() {
         )],
     );
 
-    let assert = rwv_cmd()
-        .arg("check")
-        .current_dir(&root)
-        .assert()
-        .failure();
+    let assert = rwv_cmd().arg("check").current_dir(&root).assert().failure();
     let out = String::from_utf8_lossy(&assert.get_output().stdout).into_owned();
     assert!(
         out.contains("lock references unknown revision"),
@@ -580,11 +576,7 @@ fn check_flags_unreadable_head() {
     let head_file = root.join(repo_path).join(".git/HEAD");
     std::fs::write(&head_file, "ref: refs/heads/nonexistent\n").unwrap();
 
-    let assert = rwv_cmd()
-        .arg("check")
-        .current_dir(&root)
-        .assert()
-        .failure();
+    let assert = rwv_cmd().arg("check").current_dir(&root).assert().failure();
     let out = String::from_utf8_lossy(&assert.get_output().stdout).into_owned();
     assert!(
         out.contains("HEAD unreadable"),

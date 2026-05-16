@@ -138,9 +138,11 @@ pub fn run_fetch(source: &str, workspace_root: &Path, mode: FetchMode) -> anyhow
                     lock_path.display()
                 );
             }
-            Some(LockFile::from_path(&lock_path).with_context(|| {
-                format!("failed to read lock file at {}", lock_path.display())
-            })?)
+            Some(
+                LockFile::from_path(&lock_path).with_context(|| {
+                    format!("failed to read lock file at {}", lock_path.display())
+                })?,
+            )
         }
         FetchMode::Default => None,
     };
@@ -218,8 +220,7 @@ pub fn run_fetch(source: &str, workspace_root: &Path, mode: FetchMode) -> anyhow
             repo_path.as_str(),
             entry.url
         );
-        if let Err(e) =
-            git.clone_repo_with_remote_name(&entry.url.to_string(), &dest, remote_name)
+        if let Err(e) = git.clone_repo_with_remote_name(&entry.url.to_string(), &dest, remote_name)
         {
             let msg = format!(
                 "{}: failed to clone {} into {}: {e}",

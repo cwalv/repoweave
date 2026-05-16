@@ -32,7 +32,7 @@ fn make_manifest(repos: Vec<(&str, Role)>) -> Manifest {
                 vcs_type: VcsType::Git,
                 url: format!(
                     "https://github.com/test/{}.git",
-                    path.split('/').last().unwrap()
+                    path.split('/').next_back().unwrap()
                 )
                 .parse()
                 .unwrap(),

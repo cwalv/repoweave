@@ -394,7 +394,10 @@ impl Vcs for GitVcs {
             let sym = format!("refs/remotes/{remote}/HEAD");
             if let Ok(sym_ref) = Self::run(&["symbolic-ref", &sym], repo) {
                 let prefix = format!("refs/remotes/{remote}/");
-                let branch = sym_ref.strip_prefix(&prefix).unwrap_or(FALLBACK).to_string();
+                let branch = sym_ref
+                    .strip_prefix(&prefix)
+                    .unwrap_or(FALLBACK)
+                    .to_string();
                 return Ok(RefName::new(branch));
             }
         }

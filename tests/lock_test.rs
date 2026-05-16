@@ -890,7 +890,10 @@ fn lock_resolve_versions_unknown_revision_returns_failure() {
     let (resolved_lock, failures) = lock.resolve_versions(&root);
     let repo = repoweave::manifest::RepoPath::new(repo_path);
     assert_eq!(failures.len(), 1, "exactly one failure expected");
-    assert_eq!(failures[0].0, repo, "unknown revision should appear in failures");
+    assert_eq!(
+        failures[0].0, repo,
+        "unknown revision should appear in failures"
+    );
     assert_eq!(
         failures[0].1.as_str(),
         "v9.9.9-nonexistent",

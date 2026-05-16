@@ -27,9 +27,7 @@ use crate::workspace::{set_active_project, WorkspaceContext, WorkspaceSession};
 /// would leave `.rwv-active` set without the files the integration was
 /// supposed to produce. Audit B2; Ousterhout: don't define errors away by
 /// logging-and-continuing. Warnings stay warnings.
-fn report_and_check_activation_issues(
-    issues: &[crate::integration::Issue],
-) -> anyhow::Result<()> {
+fn report_and_check_activation_issues(issues: &[crate::integration::Issue]) -> anyhow::Result<()> {
     let mut error_count = 0usize;
     for issue in issues {
         let prefix = match issue.severity {
@@ -265,6 +263,22 @@ pub fn activate_workweave(project: &str, workweave_dir: &Path) -> anyhow::Result
     activate_at(workweave_dir, project, true)
 }
 
+/// Deactivate the current project: remove symlinks and `.rwv-active`.
+#[allow(dead_code)]
+pub fn deactivate(cwd: &Path) -> anyhow::Result<()> {
+    let ctx = WorkspaceContext::resolve(cwd, None)?;
+    let root = ctx.primary_path();
+
+    remove_activation_symlinks(root)?;
+
+    let active_file = root.join(".rwv-active");
+    if active_file.exists() {
+        std::fs::remove_file(&active_file)?;
+    }
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -317,20 +331,4 @@ mod tests {
         let err = report_and_check_activation_issues(&issues).unwrap_err();
         assert!(err.to_string().contains("2 integration error"));
     }
-}
-
-/// Deactivate the current project: remove symlinks and `.rwv-active`.
-#[allow(dead_code)]
-pub fn deactivate(cwd: &Path) -> anyhow::Result<()> {
-    let ctx = WorkspaceContext::resolve(cwd, None)?;
-    let root = ctx.primary_path();
-
-    remove_activation_symlinks(root)?;
-
-    let active_file = root.join(".rwv-active");
-    if active_file.exists() {
-        std::fs::remove_file(&active_file)?;
-    }
-
-    Ok(())
 }

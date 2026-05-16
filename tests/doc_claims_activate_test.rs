@@ -289,9 +289,7 @@ fn activate_symlinks_cargo_toml_and_lock() {
     // Write a Cargo.lock next to the Cargo.toml (simulates a real project).
     std::fs::write(repo_dir.join("Cargo.lock"), "# generated\n").unwrap();
 
-    let manifest = format!(
-        "repositories:\n  github/org/mylib:\n    type: git\n    url: https://github.com/org/mylib.git\n    version: main\n    role: primary\n"
-    );
+    let manifest = "repositories:\n  github/org/mylib:\n    type: git\n    url: https://github.com/org/mylib.git\n    version: main\n    role: primary\n";
     std::fs::write(project_dir.join("rwv.yaml"), manifest).unwrap();
 
     rwv()

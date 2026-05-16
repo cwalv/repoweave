@@ -256,7 +256,7 @@ fn remove_delete_does_not_check_other_projects() {
     // --- Without --force: should fail and print a warning ---
     let output = rwv()
         .args(["remove", repo_path, "--delete"])
-        .current_dir(&workspace.join("projects").join("project-a"))
+        .current_dir(workspace.join("projects").join("project-a"))
         .output()
         .expect("rwv remove should run");
 
@@ -278,7 +278,7 @@ fn remove_delete_does_not_check_other_projects() {
     // --- With --force: should succeed and delete ---
     rwv()
         .args(["remove", repo_path, "--delete", "--force"])
-        .current_dir(&workspace.join("projects").join("project-a"))
+        .current_dir(workspace.join("projects").join("project-a"))
         .assert()
         .success();
 
