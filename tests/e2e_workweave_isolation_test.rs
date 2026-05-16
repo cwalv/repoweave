@@ -181,7 +181,8 @@ repositories:\n  \
     std::env::set_var("RWV_WORKWEAVE_DIR", &workweave_root);
 
     let ww_name = repoweave::manifest::WorkweaveName::new("agent-1");
-    let ww_dir = repoweave::workweave::create_workweave(&ws, &ws, "web-app", &ww_name, false)
+    let ww_project = repoweave::manifest::ProjectName::new("web-app");
+    let ww_dir = repoweave::workweave::create_workweave(&ws, &ws, &ww_project, &ww_name, false)
         .expect("create_workweave should succeed");
 
     // ------------------------------------------------------------------
@@ -286,7 +287,7 @@ func Greeting() string {
     // ------------------------------------------------------------------
     // 11. Delete the workweave
     // ------------------------------------------------------------------
-    repoweave::workweave::delete_workweave(&ws, "web-app", &ww_name)
+    repoweave::workweave::delete_workweave(&ws, &ww_project, &ww_name)
         .expect("delete_workweave should succeed");
 
     // ------------------------------------------------------------------

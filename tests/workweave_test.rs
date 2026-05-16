@@ -1719,6 +1719,134 @@ fn list_workweaves_includes_legacy_form_via_marker() {
     );
 }
 
+// ============================================================================
+// Pattern A4 — detached HEAD does not produce an ephemeral branch named "HEAD"
+// ============================================================================
+
+/// When the source repo is in detached-HEAD state, the workweave's ephemeral
+/// branch must not be `proj--ww/HEAD` (which masquerades as a real ref).
+/// Audit finding A4: emit `detached-<shortsha>` instead.
+#[test]
+fn create_workweave_detached_head_uses_detached_branch_name() {
+    let tmp = tempfile::tempdir().unwrap();
+    let ws = make_workspace(tmp.path(), "web-app");
+    let weaveroot = tmp.path().join(".workweaves");
+    std::fs::create_dir_all(&weaveroot).unwrap();
+
+    // Detach HEAD in the manifest repo by checking out the commit SHA.
+    let repo = ws.join("github/org/repo");
+    let head_sha = head_sha(&repo);
+    git(&["checkout", "--detach", &head_sha], &repo);
+
+    rwv()
+        .args(["workweave", "web-app", "create", "det"])
+        .env("RWV_WORKWEAVE_DIR", &weaveroot)
+        .current_dir(&ws)
+        .assert()
+        .success();
+
+    // List branches on the source repo and confirm we have a
+    // `web-app--det/detached-<shortsha>` branch — not `web-app--det/HEAD`.
+    let branches = common::git()
+        .args(["branch", "--list"])
+        .current_dir(&repo)
+        .output()
+        .expect("git branch --list");
+    let listing = String::from_utf8_lossy(&branches.stdout).to_string();
+    assert!(
+        !listing.contains("web-app--det/HEAD"),
+        "detached HEAD must not be encoded as a branch named '/HEAD': {listing}"
+    );
+    assert!(
+        listing.contains("web-app--det/detached-"),
+        "expected a 'web-app--det/detached-<sha>' ephemeral branch, got:\n{listing}"
+    );
+}
+
+// ============================================================================
+// Pattern B7 — `workweave create` cleans up partial state on bail
+// ============================================================================
+
+/// If `create_workweave` fails partway through, it must remove the workweave
+/// directory so a clean retry succeeds without `--force`. Audit finding B7.
+#[test]
+fn create_workweave_cleans_up_on_bail() {
+    let tmp = tempfile::tempdir().unwrap();
+    let ws = make_workspace(tmp.path(), "web-app");
+    let weaveroot = tmp.path().join(".workweaves");
+    std::fs::create_dir_all(&weaveroot).unwrap();
+
+    // Point the manifest at a non-existent repo path so per-repo worktree
+    // creation fails for every repo, causing the loop to bail.
+    let project_dir = ws.join("projects/web-app");
+    let bad_manifest = r#"repositories:
+  github/org/missing:
+    type: git
+    url: file:///nonexistent/repo
+    version: main
+    role: primary
+"#;
+    std::fs::write(project_dir.join("rwv.yaml"), bad_manifest).unwrap();
+
+    let ww_name = repoweave::manifest::WorkweaveName::new("retryme");
+    let project = repoweave::manifest::ProjectName::new("web-app");
+    std::env::set_var("RWV_WORKWEAVE_DIR", &weaveroot);
+    let res = repoweave::workweave::create_workweave(&ws, &ws, &project, &ww_name, false);
+    std::env::remove_var("RWV_WORKWEAVE_DIR");
+    assert!(res.is_err(), "expected create to bail on missing repo");
+
+    // The workweave directory must not be left on disk; otherwise the next
+    // attempt is forced down the `--force` path.
+    let ww_dir = weaveroot.join("web-app--retryme");
+    assert!(
+        !ww_dir.exists(),
+        "create_workweave must clean up partial workweave dir on bail, found: {}",
+        ww_dir.display()
+    );
+}
+
+// ============================================================================
+// Pattern B8 — project-repo worktree creation failure is fatal, not silent
+// ============================================================================
+
+/// When the project directory is a git repo but the worktree create itself
+/// fails (e.g. branch conflict), the call must bail with a clear error rather
+/// than silently fall through to `copy_dir_recursive` producing a static copy
+/// that is not a worktree. Audit finding B8.
+#[test]
+fn create_workweave_bails_on_project_worktree_failure() {
+    let tmp = tempfile::tempdir().unwrap();
+    let ws = make_workspace_with_project_repo(tmp.path(), "web-app");
+    let weaveroot = tmp.path().join(".workweaves");
+    std::fs::create_dir_all(&weaveroot).unwrap();
+
+    // Pre-populate the workweave's project-worktree destination with a
+    // non-empty directory so `git worktree add` refuses. This also blocks
+    // any silent `copy_dir_recursive` fallback from producing a fake
+    // worktree — which is exactly what B8 is about.
+    let ww_dir = weaveroot.join("web-app--conflict");
+    let project_dest = ww_dir.join("projects/web-app");
+    std::fs::create_dir_all(&project_dest).unwrap();
+    std::fs::write(project_dest.join("squat"), "blocker").unwrap();
+
+    let ww_name = repoweave::manifest::WorkweaveName::new("conflict");
+    let project = repoweave::manifest::ProjectName::new("web-app");
+    std::env::set_var("RWV_WORKWEAVE_DIR", &weaveroot);
+    let res = repoweave::workweave::create_workweave(&ws, &ws, &project, &ww_name, false);
+    std::env::remove_var("RWV_WORKWEAVE_DIR");
+
+    assert!(
+        res.is_err(),
+        "create_workweave must bail on project-repo worktree failure, not silently copy"
+    );
+
+    // And the partial workweave dir is cleaned up (B7 generalised).
+    assert!(
+        !ww_dir.exists() || !project_dest.join(".git").exists(),
+        "no silent static copy should land in place of a worktree"
+    );
+}
+
 #[test]
 fn claude_hook_no_project_arg_needed() {
     // --claude-hook should work without a project argument (derived from .rwv-active).

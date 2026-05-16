@@ -213,6 +213,7 @@ fn main() -> anyhow::Result<()> {
                 repoweave::workweave::handle_claude_hook()?;
             } else {
                 let project = project.expect("project is required unless --claude-hook is set");
+                let project = repoweave::manifest::ProjectName::new(project);
                 let cwd = std::env::current_dir()?;
                 let ctx = WorkspaceContext::resolve(&cwd, None)?;
                 let primary_root = ctx.primary_path();

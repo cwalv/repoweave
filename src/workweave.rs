@@ -42,11 +42,11 @@ fn workweave_parent(ws_root: &Path) -> PathBuf {
 /// may then create or report as missing).
 pub fn workweave_path_for(
     primary_root: &Path,
-    project: &str,
+    project: &ProjectName,
     name: &WorkweaveName,
 ) -> PathBuf {
     let parent = workweave_parent(primary_root);
-    let current = parent.join(weave_dir_name(project, name));
+    let current = parent.join(weave_dir_name(project.as_str(), name));
     if current.exists() {
         return current;
     }
@@ -72,7 +72,7 @@ pub fn workweave_path_for(
                 continue;
             }
             if let Ok(Some(marker)) = WorkweaveMarker::read(&dir) {
-                if marker.project.as_str() != project {
+                if &marker.project != project {
                     continue;
                 }
                 let m_primary = marker
@@ -95,22 +95,22 @@ pub fn workweave_path_for(
 /// different projects do not collide on shared repos (e.g., both
 /// `project-repoweave` and `foundations` referencing `github/gastownhall/beads`).
 fn ephemeral_branch_name(
-    project: &str,
+    project: &ProjectName,
     workweave_name: &WorkweaveName,
-    current_branch: &str,
+    current_branch: &RefName,
 ) -> RefName {
     RefName::new(format!(
         "{}--{}/{}",
-        project,
+        project.as_str(),
         workweave_name.as_str(),
-        current_branch
+        current_branch.as_str()
     ))
 }
 
 /// Build the branch prefix used to locate all ephemeral branches for a given
 /// (project, workweave_name) pair. Used to clean up branches on delete.
-fn ephemeral_branch_prefix(project: &str, workweave_name: &WorkweaveName) -> RefName {
-    RefName::new(format!("{}--{}", project, workweave_name.as_str()))
+fn ephemeral_branch_prefix(project: &ProjectName, workweave_name: &WorkweaveName) -> RefName {
+    RefName::new(format!("{}--{}", project.as_str(), workweave_name.as_str()))
 }
 
 /// Recursively copy a directory from `src` to `dst`.
@@ -161,7 +161,7 @@ fn copy_dir_recursive(src: &Path, dst: &Path) -> anyhow::Result<()> {
 pub fn create_workweave(
     primary_root: &Path,
     source_root: &Path,
-    project: &str,
+    project: &ProjectName,
     name: &WorkweaveName,
     force: bool,
 ) -> anyhow::Result<PathBuf> {
@@ -181,7 +181,7 @@ pub fn create_workweave(
             // `project` and would fail on wrong-marker / missing-marker
             // cases.
             let can_use_structured_delete = match WorkweaveMarker::read(&workweave_dir)? {
-                Some(m) => m.project.as_str() == project,
+                Some(m) => &m.project == project,
                 None => false,
             };
             if can_use_structured_delete {
@@ -213,16 +213,18 @@ pub fn create_workweave(
         let repo_abs = source_root.join(repo_path.as_path());
 
         let result = (|| -> anyhow::Result<()> {
-            // Get the current branch (or fall back to "HEAD").
-            let current_branch = vcs
-                .current_ref(&repo_abs)?
-                .map(|r| r.as_str().to_string())
-                .unwrap_or_else(|| "HEAD".to_string());
-
-            let ephemeral_branch = ephemeral_branch_name(project, name, &current_branch);
-
             // Get the current HEAD revision as the start point.
             let head = vcs.head_revision(&repo_abs)?;
+
+            // Distinguish a real branch from detached HEAD. Detached HEADs
+            // produce a `detached-<shortsha>` segment so the ephemeral
+            // branch name doesn't masquerade as a real ref called "HEAD".
+            let branch_segment = match vcs.current_ref(&repo_abs)? {
+                Some(r) => RefName::new(r.as_str().to_string()),
+                None => RefName::new(format!("detached-{}", short_sha(head.as_str()))),
+            };
+
+            let ephemeral_branch = ephemeral_branch_name(project, name, &branch_segment);
 
             let worktree_dest = workweave_dir.join(repo_path.as_path());
 
@@ -246,33 +248,40 @@ pub fn create_workweave(
     if !errors.is_empty() {
         let total = manifest.repositories.len();
         let failed = errors.len();
+        // B7: ensure atomic create-or-nothing. Leaving a partial workweave
+        // directory on disk turns a clean retry into a `--force` recovery.
+        let _ = std::fs::remove_dir_all(&workweave_dir);
         bail!("workweave create completed with {failed} failure(s) out of {total} repo(s)");
     }
 
     // Create worktree for the project repo (if it is a git repo).
     // If the project directory exists but is not a git repo, copy it into the
     // workweave so that activate_workweave can find rwv.yaml there.
-    let project_dir = source_root.join("projects").join(project);
-    let project_wt_dest = workweave_dir.join("projects").join(project);
+    let project_dir = source_root.join("projects").join(project.as_str());
+    let project_wt_dest = workweave_dir.join("projects").join(project.as_str());
     if GitVcs.is_repo(&project_dir) {
-        let result = (|| -> anyhow::Result<()> {
-            let current_branch = GitVcs
-                .current_ref(&project_dir)?
-                .map(|r| r.as_str().to_string())
-                .unwrap_or_else(|| "HEAD".to_string());
-            let ephemeral_branch = ephemeral_branch_name(project, name, &current_branch);
-            let head = GitVcs.head_revision(&project_dir)?;
-            std::fs::create_dir_all(project_wt_dest.parent().unwrap())?;
-            GitVcs.create_worktree(&project_dir, &project_wt_dest, &ephemeral_branch, &head)?;
-            Ok(())
-        })();
-
-        if let Err(e) = result {
-            eprintln!("rwv workweave create: warning: could not create project worktree projects/{project}: {e}");
-            // Non-fatal: fall through so we still create the directory copy below
-            if !project_wt_dest.exists() && project_dir.exists() {
-                copy_dir_recursive(&project_dir, &project_wt_dest)?;
-            }
+        // B8: project-worktree creation failure must NOT silently fall
+        // through to a static directory copy. The copy fallback is for
+        // the "project dir exists but is not a git repo" branch only.
+        // Producing a non-worktree copy here looks identical to a real
+        // workweave on disk but has no upstream — commits go nowhere.
+        let head = GitVcs.head_revision(&project_dir)?;
+        let branch_segment = match GitVcs.current_ref(&project_dir)? {
+            Some(r) => RefName::new(r.as_str().to_string()),
+            None => RefName::new(format!("detached-{}", short_sha(head.as_str()))),
+        };
+        let ephemeral_branch = ephemeral_branch_name(project, name, &branch_segment);
+        std::fs::create_dir_all(project_wt_dest.parent().unwrap())?;
+        if let Err(e) =
+            GitVcs.create_worktree(&project_dir, &project_wt_dest, &ephemeral_branch, &head)
+        {
+            // B7: clean up so a subsequent `rwv workweave create` without
+            // --force isn't stuck on a partial directory with no marker.
+            let _ = std::fs::remove_dir_all(&workweave_dir);
+            bail!(
+                "could not create project worktree projects/{}: {e}",
+                project.as_str()
+            );
         }
     } else if project_dir.exists() {
         // Project dir is not a git repo — copy it so activate has access to rwv.yaml.
@@ -320,15 +329,15 @@ pub fn create_workweave(
     // where they were forked from.
     let marker = WorkweaveMarker {
         primary: primary_root.to_path_buf(),
-        project: ProjectName::new(project),
+        project: project.clone(),
     };
     marker.write(&workweave_dir)?;
 
     // Write .rwv-active.
-    set_active_project(&workweave_dir, &ProjectName::new(project))?;
+    set_active_project(&workweave_dir, project)?;
 
     // Run activate in the workweave context.
-    crate::activate::activate_workweave(project, &workweave_dir)?;
+    crate::activate::activate_workweave(project.as_str(), &workweave_dir)?;
 
     Ok(workweave_dir)
 }
@@ -344,7 +353,7 @@ pub fn create_workweave(
 fn reuse_existing_workweave(
     primary_root: &Path,
     source_root: &Path,
-    project: &str,
+    project: &ProjectName,
     _name: &WorkweaveName,
     workweave_dir: &Path,
     manifest: &Manifest,
@@ -357,7 +366,7 @@ fn reuse_existing_workweave(
         )
     })?;
 
-    if marker.project.as_str() != project {
+    if &marker.project != project {
         bail!(
             "workweave at {} is for project '{}', refusing to recreate for project '{}'; \
              rerun with --force to overwrite",
@@ -428,7 +437,11 @@ fn short_sha(sha: &str) -> &str {
 }
 
 /// Delete a workweave: remove worktrees (including project repo) and delete the workweave directory.
-pub fn delete_workweave(ws_root: &Path, project: &str, name: &WorkweaveName) -> anyhow::Result<()> {
+pub fn delete_workweave(
+    ws_root: &Path,
+    project: &ProjectName,
+    name: &WorkweaveName,
+) -> anyhow::Result<()> {
     let manifest = load_manifest(ws_root, project)?;
     // Use `workweave_path_for` so old-form `<primary>--<name>` workweaves
     // (resolved via marker) are deleted correctly.
@@ -479,13 +492,13 @@ pub fn delete_workweave(ws_root: &Path, project: &str, name: &WorkweaveName) -> 
     // indicated by .git being a FILE (not a directory). If .git is a directory
     // (or absent), the workweave copy was a plain directory copy — just let
     // remove_dir_all below handle it.
-    let project_dir = ws_root.join("projects").join(project);
-    let project_worktree = workweave_dir.join("projects").join(project);
+    let project_dir = ws_root.join("projects").join(project.as_str());
+    let project_worktree = workweave_dir.join("projects").join(project.as_str());
     if project_worktree.exists() {
         let dot_git = project_worktree.join(".git");
         if dot_git.exists() && dot_git.is_file() {
             if let Err(e) = GitVcs.remove_worktree(&project_dir, &project_worktree) {
-                let msg = format!("projects/{project}: {e}");
+                let msg = format!("projects/{}: {e}", project.as_str());
                 eprintln!("rwv workweave delete: error: {msg}");
                 errors.push(msg);
             } else {
@@ -497,7 +510,8 @@ pub fn delete_workweave(ws_root: &Path, project: &str, name: &WorkweaveName) -> 
                     for branch in branches {
                         if let Err(e) = GitVcs.delete_branch(&project_dir, &branch) {
                             eprintln!(
-                                "rwv workweave delete: warning: could not delete branch {branch} in projects/{project}: {e}"
+                                "rwv workweave delete: warning: could not delete branch {branch} in projects/{}: {e}",
+                                project.as_str()
                             );
                         }
                     }
@@ -527,7 +541,7 @@ pub fn delete_workweave(ws_root: &Path, project: &str, name: &WorkweaveName) -> 
 /// directory's left component (legacy `{primary}--{name}`) is taken as the
 /// project name — matching how `WorkspaceContext::resolve` infers the project
 /// from such directories.
-pub fn list_workweaves(ws_root: &Path, project: &str) -> anyhow::Result<Vec<String>> {
+pub fn list_workweaves(ws_root: &Path, project: &ProjectName) -> anyhow::Result<Vec<String>> {
     let mut names: Vec<String> = list_workweave_dirs_for_project(ws_root, project)
         .into_iter()
         .map(|(n, _)| n)
@@ -538,7 +552,10 @@ pub fn list_workweaves(ws_root: &Path, project: &str) -> anyhow::Result<Vec<Stri
 
 /// Return `(name, path)` pairs for workweaves of `project` under `ws_root`'s
 /// primary. See [`list_workweaves`] for the marker / legacy resolution rules.
-fn list_workweave_dirs_for_project(ws_root: &Path, project: &str) -> Vec<(String, PathBuf)> {
+fn list_workweave_dirs_for_project(
+    ws_root: &Path,
+    project: &ProjectName,
+) -> Vec<(String, PathBuf)> {
     let parent = workweave_parent(ws_root);
     let primary_canonical = ws_root
         .canonicalize()
@@ -560,7 +577,7 @@ fn list_workweave_dirs_for_project(ws_root: &Path, project: &str) -> Vec<(String
 
             match WorkweaveMarker::read(&dir) {
                 Ok(Some(marker)) => {
-                    if marker.project.as_str() != project {
+                    if &marker.project != project {
                         continue;
                     }
                     let m_primary = marker
@@ -575,7 +592,7 @@ fn list_workweave_dirs_for_project(ws_root: &Path, project: &str) -> Vec<(String
                 _ => {
                     // No marker — fall back to legacy interpretation: left
                     // component is the project (same as resolve()).
-                    if left == project {
+                    if left == project.as_str() {
                         result.push((parsed_name.as_str().to_string(), dir));
                     }
                 }
@@ -641,8 +658,11 @@ pub fn list_workweave_dirs(ws_root: &Path) -> Vec<(String, PathBuf)> {
 }
 
 /// Load the project manifest from the workspace.
-fn load_manifest(ws_root: &Path, project: &str) -> anyhow::Result<Manifest> {
-    let manifest_path = ws_root.join("projects").join(project).join("rwv.yaml");
+fn load_manifest(ws_root: &Path, project: &ProjectName) -> anyhow::Result<Manifest> {
+    let manifest_path = ws_root
+        .join("projects")
+        .join(project.as_str())
+        .join("rwv.yaml");
     Manifest::from_path(&manifest_path)
 }
 
@@ -716,7 +736,7 @@ pub fn handle_claude_hook() -> anyhow::Result<()> {
             let path = create_workweave(
                 primary_root,
                 source_root,
-                project.as_str(),
+                &project,
                 &WorkweaveName::new(&name),
                 false,
             )?;
@@ -740,7 +760,7 @@ pub fn handle_claude_hook() -> anyhow::Result<()> {
 
                 if let Err(e) = delete_workweave(
                     &marker.primary,
-                    marker.project.as_str(),
+                    &marker.project,
                     &WorkweaveName::new(name),
                 ) {
                     eprintln!("rwv workweave --claude-hook WorktreeRemove: warning: {e}");

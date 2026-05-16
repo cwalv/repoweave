@@ -106,12 +106,11 @@ impl SyncSource {
                 // as the workspace we're syncing INTO (sync is per-project).
                 // Fall back to primary's `.rwv-active` when CWD is the weave.
                 let project = match &ctx.location {
-                    WorkspaceLocation::Workweave { project, .. } => project.as_str().to_string(),
+                    WorkspaceLocation::Workweave { project, .. } => project.clone(),
                     WorkspaceLocation::Weave { project } => project
                         .clone()
                         .or_else(|| read_active_project(ctx.primary_path()))
-                        .map(|p| p.as_str().to_string())
-                        .unwrap_or_default(),
+                        .unwrap_or_else(|| crate::manifest::ProjectName::new("")),
                 };
                 workweave_path_for(ctx.primary_path(), &project, name)
             }
