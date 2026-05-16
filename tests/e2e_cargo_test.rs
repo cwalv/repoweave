@@ -284,7 +284,7 @@ fn cargo_release_version_pin_workflow() {
         .get(&protocol_key)
         .expect("lock should contain protocol entry");
 
-    // After the typed-RevisionId refactor, `as_str` returns the canonical SHA
+    // After the typed-ResolvedRevisionId refactor, `as_str` returns the canonical SHA
     // and the tag-form is preserved as the display form (which is also what
     // gets serialized into rwv.lock).
     assert_eq!(

@@ -1,5 +1,5 @@
 use repoweave::git::GitVcs;
-use repoweave::vcs::{RevisionId, Vcs};
+use repoweave::vcs::{ResolvedRevisionId, Vcs};
 use std::fs;
 use tempfile::TempDir;
 
@@ -241,18 +241,19 @@ fn head_revision_picks_release_tag_when_mixed() {
 
 #[test]
 fn revision_id_tag_form_equals_sha_form_after_resolve() {
-    // Acceptance scenario (c) — at the RevisionId layer: a tag-form id
-    // resolved against the repo compares equal to the head-form SHA id.
+    // Acceptance scenario (c) — at the ResolvedRevisionId layer: a tag-form
+    // id resolved against the repo compares equal to the head-form SHA id.
+    // Post-split: a `RawRevisionId` cannot be compared to a
+    // `ResolvedRevisionId` at all (no `PartialEq`), so the only assertion
+    // that remains is the canonical-SHA equality after `resolve_revision`.
+    // The compile-time invariant is exercised by the `compile_fail`
+    // doc-test in `vcs.rs`.
     let dir = init_repo();
     let p = dir.path();
     git(p, &["tag", "v1.0.0"]);
 
     let vcs = GitVcs;
     let head_sha_form = vcs.head_revision(p).unwrap();
-    let tag_form_raw = RevisionId::raw("v1.0.0");
-    // Raw tag-form does NOT compare equal to a SHA — that's the bug class.
-    assert_ne!(tag_form_raw, head_sha_form);
-    // After resolution it does — this is the comparison rwv check/status use.
     let tag_form_resolved = vcs.resolve_revision(p, "v1.0.0").unwrap();
     assert_eq!(tag_form_resolved, head_sha_form);
 }
@@ -361,19 +362,22 @@ fn init_repo_is_recognized_by_is_repo() {
 }
 
 // ============================================================================
-// RevisionId — typed identity, equality, and serialization
+// ResolvedRevisionId — typed identity, equality, and serialization
 // ============================================================================
 
 #[test]
-fn revision_id_raw_canonical_equals_input() {
-    let r = RevisionId::raw("abc123");
+fn revision_id_from_canonical_no_display_uses_canonical_for_both() {
+    // Without an explicit display form, `as_str` and `display_str` both
+    // echo the canonical value. (The pre-split `ResolvedRevisionId::raw`
+    // helper has been removed; the public mint is `from_canonical`.)
+    let r = ResolvedRevisionId::from_canonical("abc123", None);
     assert_eq!(r.as_str(), "abc123");
     assert_eq!(r.display_str(), "abc123");
 }
 
 #[test]
 fn revision_id_from_canonical_with_display_form() {
-    let r = RevisionId::from_canonical(
+    let r = ResolvedRevisionId::from_canonical(
         "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         Some("v1.0.0".to_string()),
     );
@@ -384,7 +388,7 @@ fn revision_id_from_canonical_with_display_form() {
 #[test]
 fn revision_id_from_canonical_suppresses_redundant_display() {
     // When `display` equals canonical, suppress it so serialization is clean.
-    let r = RevisionId::from_canonical("abc123", Some("abc123".to_string()));
+    let r = ResolvedRevisionId::from_canonical("abc123", Some("abc123".to_string()));
     assert_eq!(r.as_str(), "abc123");
     assert_eq!(r.display_str(), "abc123");
 }
@@ -393,12 +397,12 @@ fn revision_id_from_canonical_suppresses_redundant_display() {
 fn revision_id_equality_compares_canonical() {
     // Tag-form and SHA-form referring to the same canonical commit compare equal.
     let sha = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_string();
-    let tag_form = RevisionId::from_canonical(sha.clone(), Some("v1.0.0".to_string()));
-    let sha_form = RevisionId::from_canonical(sha.clone(), None);
+    let tag_form = ResolvedRevisionId::from_canonical(sha.clone(), Some("v1.0.0".to_string()));
+    let sha_form = ResolvedRevisionId::from_canonical(sha.clone(), None);
     assert_eq!(tag_form, sha_form);
 
     // Different canonical SHAs are never equal, even with matching display.
-    let other = RevisionId::from_canonical(
+    let other = ResolvedRevisionId::from_canonical(
         "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
         Some("v1.0.0".to_string()),
     );
@@ -407,7 +411,7 @@ fn revision_id_equality_compares_canonical() {
 
 #[test]
 fn revision_id_serialize_prefers_display() {
-    let r = RevisionId::from_canonical(
+    let r = ResolvedRevisionId::from_canonical(
         "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         Some("v1.0.0".to_string()),
     );
@@ -418,32 +422,33 @@ fn revision_id_serialize_prefers_display() {
 
 #[test]
 fn revision_id_serialize_canonical_when_no_display() {
-    let r = RevisionId::raw("abc123");
+    let r = ResolvedRevisionId::from_canonical("abc123", None);
     let yaml = serde_yaml::to_string(&r).unwrap();
     assert_eq!(yaml.trim(), "abc123");
 }
 
 #[test]
-fn revision_id_deserialize_produces_raw_form() {
-    // Without a repo to resolve against, deserialization lands the string in
-    // `canonical` with `display: None` — resolution to a real SHA happens
-    // later via Vcs::resolve_revision.
-    let r: RevisionId = serde_yaml::from_str("v1.0.0").unwrap();
+fn raw_revision_id_deserializes_yaml_scalar_verbatim() {
+    // Post-split: lock-file YAML scalars deserialize into `RawRevisionId`,
+    // not `ResolvedRevisionId`. `ResolvedRevisionId` has no `Deserialize`
+    // impl on purpose — resolution to a canonical SHA is path-rooted and
+    // cannot happen at the deserializer layer.
+    let r: repoweave::vcs::RawRevisionId = serde_yaml::from_str("v1.0.0").unwrap();
     assert_eq!(r.as_str(), "v1.0.0");
-    assert_eq!(r.display_str(), "v1.0.0");
 }
 
 #[test]
 fn revision_id_round_trip_yaml_string() {
-    let original = RevisionId::from_canonical(
+    let original = ResolvedRevisionId::from_canonical(
         "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         Some("v1.0.0".to_string()),
     );
     let yaml = serde_yaml::to_string(&original).unwrap();
-    let restored: RevisionId = serde_yaml::from_str(&yaml).unwrap();
-    // After round-trip we have only the display form; canonical equals it.
+    // Round-trip through the parse boundary: a resolved value serializes
+    // as a single scalar, and re-parsing it lands in `RawRevisionId`
+    // (deserialize only ever yields raw — re-resolution requires a repo).
+    let restored: repoweave::vcs::RawRevisionId = serde_yaml::from_str(&yaml).unwrap();
     assert_eq!(restored.as_str(), "v1.0.0");
-    assert_eq!(restored.display_str(), "v1.0.0");
 }
 
 // ============================================================================
@@ -490,8 +495,8 @@ fn resolve_revision_unknown_revision_errors() {
 
 #[test]
 fn resolve_revision_then_equal_to_head_revision() {
-    // Equality between the tag-form lock entry's resolved RevisionId and
-    // the HEAD's RevisionId — the canonical-SHA equality the bead requires.
+    // Equality between the tag-form lock entry's resolved ResolvedRevisionId and
+    // the HEAD's ResolvedRevisionId — the canonical-SHA equality the bead requires.
     let dir = init_repo();
     let p = dir.path();
     git(p, &["tag", "v0.3.4"]);

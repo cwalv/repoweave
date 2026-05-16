@@ -2,7 +2,7 @@
 
 use crate::git::GitVcs;
 use crate::manifest::Project;
-use crate::vcs::{RevisionId, Vcs};
+use crate::vcs::{ResolvedRevisionId, Vcs};
 use crate::workspace::{WorkspaceContext, WorkspaceLocation};
 use serde::Serialize;
 use std::path::Path;
@@ -46,8 +46,8 @@ pub struct RepoStatus {
 
 fn compute_relation(
     repo_abs: &Path,
-    tip: &Option<RevisionId>,
-    lock_sha: &Option<RevisionId>,
+    tip: &Option<ResolvedRevisionId>,
+    lock_sha: &Option<ResolvedRevisionId>,
 ) -> LockRelation {
     let (tip, lock) = match (tip, lock_sha) {
         (Some(t), Some(l)) => (t, l),
@@ -94,7 +94,7 @@ pub fn run_status(cwd: &Path, json: bool) -> anyhow::Result<()> {
             Err(_) => continue,
         };
         // Resolve lock entries against their on-disk repos so equality with
-        // a tip RevisionId (which always carries the canonical SHA) works
+        // a tip ResolvedRevisionId (which always carries the canonical SHA) works
         // whether the lock pinned a tag, branch, or raw SHA.
         let lock = project
             .lock

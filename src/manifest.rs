@@ -4,7 +4,7 @@
 //! representation. Parsing produces a `Manifest`; locking produces a `LockFile`.
 
 use crate::registry::RegistryName;
-use crate::vcs::{RawRevisionId, RefName, RevisionId};
+use crate::vcs::{RawRevisionId, RefName, ResolvedRevisionId};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::fmt;
@@ -499,7 +499,7 @@ pub struct ResolvedLockEntry {
     #[serde(rename = "type")]
     pub vcs_type: VcsType,
     pub url: RepoUrl,
-    pub version: RevisionId,
+    pub version: ResolvedRevisionId,
 }
 
 /// A lock file whose entries are all resolved [`ResolvedLockEntry`]s.
@@ -651,7 +651,7 @@ impl Project {
 mod tests {
     use super::*;
     #[allow(unused_imports)]
-    use crate::vcs::{RefName, RevisionId};
+    use crate::vcs::{RefName, ResolvedRevisionId};
 
     // ========================================================================
     // IntegrationConfig — new transparent mapping API

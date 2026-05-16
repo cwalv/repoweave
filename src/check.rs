@@ -6,7 +6,7 @@
 use crate::git::git_command;
 use crate::integration::Issue;
 use crate::manifest::{Project, ProjectName, RepoPath, WorkweaveName};
-use crate::vcs::RevisionId;
+use crate::vcs::ResolvedRevisionId;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
@@ -36,8 +36,8 @@ pub enum CheckViolation {
     StaleLock {
         project: ProjectName,
         repo: RepoPath,
-        locked: RevisionId,
-        actual: RevisionId,
+        locked: ResolvedRevisionId,
+        actual: ResolvedRevisionId,
     },
 
     /// A worktree missing from a workweave, or an extra worktree not in the manifest.
@@ -104,7 +104,7 @@ pub struct CheckInput {
     /// Loaded projects.
     pub projects: Vec<Project>,
     /// Resolved HEAD revisions for repos on disk, keyed by RepoPath.
-    pub head_revisions: BTreeMap<RepoPath, RevisionId>,
+    pub head_revisions: BTreeMap<RepoPath, ResolvedRevisionId>,
     /// Resolved lock files keyed by project name. Built by the caller via
     /// [`crate::manifest::LockFile::resolve_versions`] before invoking
     /// [`find_violations`]; only projects whose lock could be resolved

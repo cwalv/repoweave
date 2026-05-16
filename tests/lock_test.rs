@@ -284,7 +284,7 @@ fn lock_file_format_has_correct_fields() {
     assert_eq!(
         entry.version.as_str().len(),
         40,
-        "RevisionId should be a full 40-char SHA"
+        "ResolvedRevisionId should be a full 40-char SHA"
     );
     assert!(
         entry
@@ -292,7 +292,7 @@ fn lock_file_format_has_correct_fields() {
             .as_str()
             .chars()
             .all(|c| c.is_ascii_hexdigit()),
-        "RevisionId should be hex"
+        "ResolvedRevisionId should be hex"
     );
 }
 
@@ -753,7 +753,7 @@ fn lock_all_is_removed_cli_error() {
 }
 
 // ---------------------------------------------------------------------------
-// 12. RevisionId round-trip via lock load + resolve
+// 12. ResolvedRevisionId round-trip via lock load + resolve
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -805,8 +805,8 @@ fn lock_round_trip_preserves_tag_form_in_yaml() {
 #[test]
 fn lock_resolve_versions_makes_tag_form_equal_head() {
     // After loading a lock with `version: v1.0.0` and calling
-    // `resolve_versions(workspace_dir)`, the entry's RevisionId compares equal
-    // to the head's RevisionId — equality goes through canonical SHAs.
+    // `resolve_versions(workspace_dir)`, the entry's ResolvedRevisionId compares equal
+    // to the head's ResolvedRevisionId — equality goes through canonical SHAs.
     let tmp = tempfile::tempdir().unwrap();
     let root = make_workspace(tmp.path(), "ws");
 

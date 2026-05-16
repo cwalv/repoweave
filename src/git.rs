@@ -1,6 +1,6 @@
 //! Git implementation of the [`Vcs`] trait.
 
-use crate::vcs::{RefName, RevisionId, Vcs, VcsError};
+use crate::vcs::{RefName, ResolvedRevisionId, Vcs, VcsError};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -208,16 +208,16 @@ impl Vcs for GitVcs {
         Ok(())
     }
 
-    fn head_revision(&self, repo: &Path) -> Result<RevisionId, VcsError> {
+    fn head_revision(&self, repo: &Path) -> Result<ResolvedRevisionId, VcsError> {
         let sha = Self::run(&["rev-parse", "HEAD"], repo)?;
         // If a tag points at HEAD, preserve it as the display form so callers
         // get human-readable round-trips (e.g., `v0.3.4`) without an extra
         // resolve step.
         let display = self.tag_at_head(repo)?.map(|t| t.as_str().to_string());
-        Ok(RevisionId::from_canonical(sha, display))
+        Ok(ResolvedRevisionId::from_canonical(sha, display))
     }
 
-    fn resolve_revision(&self, repo: &Path, rev: &str) -> Result<RevisionId, VcsError> {
+    fn resolve_revision(&self, repo: &Path, rev: &str) -> Result<ResolvedRevisionId, VcsError> {
         let deref = format!("{rev}^{{commit}}");
         match Self::run(&["rev-parse", "--verify", &deref], repo) {
             Ok(canonical) => {
@@ -226,7 +226,7 @@ impl Vcs for GitVcs {
                 } else {
                     Some(rev.to_string())
                 };
-                Ok(RevisionId::from_canonical(canonical, display))
+                Ok(ResolvedRevisionId::from_canonical(canonical, display))
             }
             Err(VcsError::CommandFailed { stderr, .. }) if is_revision_not_found(&stderr) => {
                 Err(VcsError::RevisionNotFound {
@@ -250,7 +250,7 @@ impl Vcs for GitVcs {
         repo: &Path,
         dest: &Path,
         branch_name: &RefName,
-        start_point: &RevisionId,
+        start_point: &ResolvedRevisionId,
     ) -> Result<(), VcsError> {
         let dest_str = dest.to_str().ok_or_else(|| VcsError::Io {
             ctx: format!("worktree path {} is not valid UTF-8", dest.display()),
@@ -349,7 +349,7 @@ impl Vcs for GitVcs {
         Ok(Some(RefName::new(chosen)))
     }
 
-    fn checkout(&self, repo: &Path, revision: &RevisionId) -> Result<(), VcsError> {
+    fn checkout(&self, repo: &Path, revision: &ResolvedRevisionId) -> Result<(), VcsError> {
         Self::run(&["checkout", revision.as_str()], repo)?;
         Ok(())
     }

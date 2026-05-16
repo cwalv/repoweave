@@ -7,44 +7,34 @@ use std::fmt;
 use std::io;
 use std::path::{Path, PathBuf};
 
-/// A resolved commit identifier, independent of VCS.
+/// A resolved commit identifier — `canonical` is always a 40-hex SHA.
 ///
-/// `canonical` is the resolved commit SHA. `display` optionally preserves a
-/// tag/branch name when the value was constructed from a tag-form input
-/// (e.g., `v0.3.4`). Equality compares only the canonical SHA so two
-/// `RevisionId`s referring to the same commit — one tag-form, one SHA-form
-/// — compare equal.
+/// `display` optionally preserves a tag/branch name when the value was
+/// constructed from a tag-form input (e.g., `v0.3.4`). Equality compares
+/// only the canonical SHA so two `ResolvedRevisionId`s referring to the
+/// same commit — one tag-form, one SHA-form — compare equal.
 ///
-/// Construction:
-/// - [`RevisionId::raw`] — a value where the canonical may not be a SHA yet
-///   (e.g., during YAML deserialization, before [`Vcs::resolve_revision`]
-///   runs against the on-disk repo).
-/// - [`RevisionId::from_canonical`] — a value where the canonical SHA is
-///   known (lock generation, head resolution, post-resolve).
+/// Construction is path-rooted: the only public constructors are
+/// [`Vcs::resolve_revision`] / [`Vcs::head_revision`] (which resolve
+/// against a real repo) and [`ResolvedRevisionId::from_canonical`]
+/// (mint with a known SHA, e.g. directly from `head_revision` output).
+/// There is no public way to mint a `ResolvedRevisionId` from a free
+/// string — the parse boundary lives in [`RawRevisionId`].
 ///
-/// Serde: a `RevisionId` round-trips through a single YAML string. On
-/// serialization the display form is preferred (preserves tag-form in lock
-/// files); on deserialization the string lands in `canonical` with
-/// `display: None` — resolution to a real SHA happens later via
-/// [`Vcs::resolve_revision`].
+/// Serde: only `Serialize`. Writes the display form when present, else
+/// the canonical SHA. Deserialization deliberately is not implemented;
+/// lock-file parsing yields [`RawRevisionId`] which must then be
+/// resolved against the on-disk repo. See
+/// `docs/agent-persona/fp-principles-in-rust.md` ("make illegal states
+/// unrepresentable") and `docs/agent-persona/ousterhout-philosophy-of-software-design.md`
+/// ("define errors out of existence by changing the data structure").
 #[derive(Debug, Clone)]
-pub struct RevisionId {
+pub struct ResolvedRevisionId {
     canonical: String,
     display: Option<String>,
 }
 
-impl RevisionId {
-    /// Construct from a raw string where `canonical` may be a tag/branch
-    /// rather than a SHA. Used for deserialization and tests; should be
-    /// resolved against a repo via [`Vcs::resolve_revision`] before being
-    /// compared against a SHA from `head_revision`.
-    pub fn raw(s: impl Into<String>) -> Self {
-        Self {
-            canonical: s.into(),
-            display: None,
-        }
-    }
-
+impl ResolvedRevisionId {
     /// Construct with a known canonical commit SHA and optional display
     /// form. When `display` equals `canonical` it is suppressed so
     /// serialization stays clean.
@@ -52,6 +42,25 @@ impl RevisionId {
         let canonical = canonical.into();
         let display = display.filter(|d| d != &canonical);
         Self { canonical, display }
+    }
+
+    /// Construct a `ResolvedRevisionId` from a string that the caller
+    /// asserts is already a canonical commit SHA, bypassing the usual
+    /// path-rooted resolution. `pub(crate)` to keep this assertion
+    /// crate-internal — there is no public way to mint a resolved value
+    /// from a free string.
+    ///
+    /// Sole legitimate caller: [`crate::sync::read_savepoint`], which
+    /// reads a value produced by `git rev-parse refs/rwv/pre-op/<id>` —
+    /// rev-parse on a fully-qualified ref-or-SHA always emits the
+    /// canonical 40-hex SHA. Re-resolving via `Vcs::resolve_revision`
+    /// would cost an extra git invocation per `rwv abort` without
+    /// strengthening the invariant.
+    pub(crate) fn from_canonical_unchecked(s: impl Into<String>) -> Self {
+        Self {
+            canonical: s.into(),
+            display: None,
+        }
     }
 
     /// The canonical SHA (after resolution) or the raw input (before).
@@ -65,31 +74,29 @@ impl RevisionId {
     }
 }
 
-impl PartialEq for RevisionId {
+impl PartialEq for ResolvedRevisionId {
     fn eq(&self, other: &Self) -> bool {
         self.canonical == other.canonical
     }
 }
 
-impl Eq for RevisionId {}
+impl Eq for ResolvedRevisionId {}
 
-impl fmt::Display for RevisionId {
+impl fmt::Display for ResolvedRevisionId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(self.display_str())
     }
 }
 
-impl serde::Serialize for RevisionId {
+impl serde::Serialize for ResolvedRevisionId {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         serializer.serialize_str(self.display_str())
     }
 }
 
-impl<'de> serde::Deserialize<'de> for RevisionId {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        String::deserialize(deserializer).map(Self::raw)
-    }
-}
+// Deliberately no `Deserialize` impl: see the type-level docs. Lock-file
+// scalars deserialize into `RawRevisionId`; the only way to obtain a
+// `ResolvedRevisionId` is via path-rooted resolution.
 
 /// A raw, unresolved revision identifier as it appears in a lock file.
 ///
@@ -97,7 +104,7 @@ impl<'de> serde::Deserialize<'de> for RevisionId {
 /// a branch name, or a 40-hex SHA, and at the type level we do not know
 /// which. This is the only revision type that participates in lock-file
 /// *parsing* (the [`serde::Deserialize`] entry point). It is intentionally
-/// not interchangeable with [`RevisionId`]: there is no `PartialEq`
+/// not interchangeable with [`ResolvedRevisionId`]: there is no `PartialEq`
 /// between the two, and `RawRevisionId` cannot be fed to commit-id
 /// operations such as `Vcs::checkout`. To turn a raw value into a value
 /// safe for SHA comparison, run it through
@@ -286,19 +293,19 @@ pub trait Vcs {
 
     /// Resolve the current HEAD to a revision ID.
     ///
-    /// The returned `RevisionId` carries the canonical commit SHA. When a
+    /// The returned `ResolvedRevisionId` carries the canonical commit SHA. When a
     /// tag points at HEAD, the implementation may also populate `display`
     /// to preserve the tag-form for human-readable output.
-    fn head_revision(&self, repo: &Path) -> Result<RevisionId, VcsError>;
+    fn head_revision(&self, repo: &Path) -> Result<ResolvedRevisionId, VcsError>;
 
     /// Resolve a revision string (SHA, tag, branch) to a fully-resolved
-    /// [`RevisionId`] with the canonical commit SHA filled in.
+    /// [`ResolvedRevisionId`] with the canonical commit SHA filled in.
     ///
     /// When the input string differs from the canonical SHA, it is
     /// preserved as the display form for round-tripping in lock files and
     /// human-readable output. Returns [`VcsError::RevisionNotFound`] if
     /// the revision is unknown in this repo.
-    fn resolve_revision(&self, repo: &Path, rev: &str) -> Result<RevisionId, VcsError>;
+    fn resolve_revision(&self, repo: &Path, rev: &str) -> Result<ResolvedRevisionId, VcsError>;
 
     /// Get the current branch/ref name, if on one.
     fn current_ref(&self, repo: &Path) -> Result<Option<RefName>, VcsError>;
@@ -310,7 +317,7 @@ pub trait Vcs {
         repo: &Path,
         dest: &Path,
         branch_name: &RefName,
-        start_point: &RevisionId,
+        start_point: &ResolvedRevisionId,
     ) -> Result<(), VcsError>;
 
     /// Remove a worktree previously created at `worktree_path`.
@@ -335,7 +342,7 @@ pub trait Vcs {
     fn tag_at_head(&self, repo: &Path) -> Result<Option<RefName>, VcsError>;
 
     /// Check out a specific revision in a repo.
-    fn checkout(&self, repo: &Path, revision: &RevisionId) -> Result<(), VcsError>;
+    fn checkout(&self, repo: &Path, revision: &ResolvedRevisionId) -> Result<(), VcsError>;
 
     /// Delete a local branch by name. Uses force-delete semantics.
     fn delete_branch(&self, repo: &Path, branch: &RefName) -> Result<(), VcsError>;

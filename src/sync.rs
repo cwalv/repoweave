@@ -6,7 +6,7 @@
 use crate::git::{git_command, GitVcs};
 use crate::lock::{commit_lock_file_with_message, generate_lock};
 use crate::manifest::{LockFile, Manifest, Project, ProjectName, RepoPath, WorkweaveName};
-use crate::vcs::{RevisionId, Vcs};
+use crate::vcs::{ResolvedRevisionId, Vcs};
 use crate::workspace::{read_active_project, WorkspaceContext, WorkspaceLocation};
 use crate::workweave::workweave_path_for;
 use std::fmt;
@@ -246,7 +246,7 @@ impl fmt::Display for RepoSyncOutcome {
     }
 }
 
-fn sync_one_repo(repo: &Path, target: &RevisionId, strategy: SyncStrategy) -> RepoSyncOutcome {
+fn sync_one_repo(repo: &Path, target: &ResolvedRevisionId, strategy: SyncStrategy) -> RepoSyncOutcome {
     let head = match GitVcs.head_revision(repo) {
         Ok(h) => h,
         Err(e) => {
@@ -357,7 +357,7 @@ fn git(args: &[&str], dir: &Path) -> anyhow::Result<String> {
         .to_owned())
 }
 
-fn apply_strategy(repo: &Path, target: &RevisionId, strategy: SyncStrategy) -> anyhow::Result<()> {
+fn apply_strategy(repo: &Path, target: &ResolvedRevisionId, strategy: SyncStrategy) -> anyhow::Result<()> {
     let target_ref = target.as_str();
     match strategy {
         SyncStrategy::Ff => {
@@ -380,7 +380,7 @@ fn apply_strategy(repo: &Path, target: &RevisionId, strategy: SyncStrategy) -> a
     Ok(())
 }
 
-fn create_savepoint(repo: &Path, op_id: &OpId) -> anyhow::Result<RevisionId> {
+fn create_savepoint(repo: &Path, op_id: &OpId) -> anyhow::Result<ResolvedRevisionId> {
     let head = GitVcs.head_revision(repo)?;
     git(
         &[
@@ -400,10 +400,16 @@ fn delete_savepoint(repo: &Path, op_id: &OpId) {
     );
 }
 
-fn read_savepoint(repo: &Path, op_id: &OpId) -> Option<RevisionId> {
+fn read_savepoint(repo: &Path, op_id: &OpId) -> Option<ResolvedRevisionId> {
+    // `git rev-parse <ref>` emits the canonical 40-hex SHA for a
+    // fully-qualified ref, so this is the one legitimate caller of
+    // `ResolvedRevisionId::from_canonical_unchecked` — the value is
+    // already in canonical form and re-running `resolve_revision` would
+    // add a git invocation without strengthening the invariant. See the
+    // constructor's doc-comment.
     git(&["rev-parse", &format!("{PRE_OP_REF}/{op_id}")], repo)
         .ok()
-        .map(RevisionId::raw)
+        .map(ResolvedRevisionId::from_canonical_unchecked)
 }
 
 /// The recovery instruction differs by side: source's lock is committed
@@ -460,8 +466,8 @@ fn check_lock_freshness(
 /// equal to) source — the safe cases.
 fn cwd_is_ancestor_or_equal(
     cwd_project_dir: &Path,
-    cwd_tip: &RevisionId,
-    source_tip: &RevisionId,
+    cwd_tip: &ResolvedRevisionId,
+    source_tip: &ResolvedRevisionId,
 ) -> bool {
     if cwd_tip == source_tip {
         return true;
@@ -498,8 +504,8 @@ fn cwd_is_ancestor_or_equal(
 /// onto source's tip.
 fn check_phase1_ancestor(
     cwd_project_dir: &Path,
-    cwd_tip: &RevisionId,
-    source_tip: &RevisionId,
+    cwd_tip: &ResolvedRevisionId,
+    source_tip: &ResolvedRevisionId,
     cwd_workspace_name: &str,
     source_workspace_name: &str,
 ) -> anyhow::Result<()> {
@@ -1246,8 +1252,8 @@ pub fn run_sync(
 /// `rwv abort`.
 fn apply_project_strategy_excluding_lock(
     cwd_project_dir: &Path,
-    source_tip: &RevisionId,
-    cwd_tip: &RevisionId,
+    source_tip: &ResolvedRevisionId,
+    cwd_tip: &ResolvedRevisionId,
     strategy: SyncStrategy,
 ) -> anyhow::Result<()> {
     if cwd_tip == source_tip {
@@ -1275,7 +1281,7 @@ fn apply_project_strategy_excluding_lock(
 
 /// Cherry-pick each CWD-unique commit (in chronological order) onto
 /// `source_tip`, with `rwv.lock` excluded from each commit's effective diff.
-fn apply_rebase_excluding_lock(repo: &Path, source_tip: &RevisionId) -> anyhow::Result<()> {
+fn apply_rebase_excluding_lock(repo: &Path, source_tip: &ResolvedRevisionId) -> anyhow::Result<()> {
     let source_ref = source_tip.as_str();
 
     // Find merge-base between CWD's HEAD and source.
@@ -1374,7 +1380,7 @@ fn apply_rebase_excluding_lock(repo: &Path, source_tip: &RevisionId) -> anyhow::
 
 /// Merge `source_tip` into CWD, dropping any `rwv.lock` change/conflict by
 /// taking HEAD's version (Phase 3 regenerates the lock from manifest tips).
-fn apply_merge_excluding_lock(repo: &Path, source_tip: &RevisionId) -> anyhow::Result<()> {
+fn apply_merge_excluding_lock(repo: &Path, source_tip: &ResolvedRevisionId) -> anyhow::Result<()> {
     let source_ref = source_tip.as_str();
 
     // Try a regular merge with --no-commit so we can manipulate the index/WT.
