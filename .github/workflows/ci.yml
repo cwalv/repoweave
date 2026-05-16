@@ -26,14 +26,8 @@ jobs:
           git config --global user.email "ci@example.com"
           git config --global user.name "CI"
 
-      - name: cargo check
-        run: cargo check
-
-      - name: cargo test
-        run: cargo test
-
-      - name: cargo clippy
-        run: cargo clippy -- -D warnings
-
-      - name: cargo fmt --check
-        run: cargo fmt --check
+      - name: Run CI checks
+        # Single source of truth: scripts/ci-local.sh runs the same four checks
+        # locally, in CI, and as release.yml's pre-tag gate.
+        shell: bash
+        run: ./scripts/ci-local.sh
