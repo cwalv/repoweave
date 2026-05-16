@@ -223,7 +223,6 @@ fn commit_lock_file(
 /// When `dirty` is true, the uncommitted-changes check is skipped.
 /// When `commit` is true, the lock file is staged and committed after writing.
 pub fn lock(cwd: &Path, dirty: bool, commit: bool) -> anyhow::Result<()> {
-    use crate::integration::Severity;
     use crate::integration_runner::run_lock_hooks;
     use crate::integrations::builtin_integrations;
 
@@ -279,17 +278,87 @@ pub fn lock(cwd: &Path, dirty: bool, commit: bool) -> anyhow::Result<()> {
         builtin.iter().map(|b| b.as_ref()).collect();
 
     let issues = run_lock_hooks(&integrations, &project.manifest, &ctx_base);
-    for issue in &issues {
-        let prefix = match issue.severity {
-            Severity::Warning => "warning",
-            Severity::Error => "error",
-        };
-        eprintln!("[{prefix}] {}: {}", issue.integration, issue.message);
-    }
+    report_and_check_lock_issues(&issues)?;
 
     if commit {
         commit_lock_file(&project_dir, &lock, old_lock.as_ref())?;
     }
 
     Ok(())
+}
+
+/// Report lock-hook issues to stderr and bail if any are `Severity::Error`.
+///
+/// B1: an integration's lock hook (e.g. `cargo generate-lockfile`) failing
+/// and being reported as `Severity::Error` is exactly the case the user
+/// cited: "should never be done in repoweave." Committing the lock here
+/// would produce an incoherent state — repoweave's lock says one thing,
+/// the ecosystem lock another — and the only signal would be a scroll-by
+/// stderr line. Bail before commit. Warnings stay warnings.
+fn report_and_check_lock_issues(issues: &[crate::integration::Issue]) -> anyhow::Result<()> {
+    use crate::integration::Severity;
+    let mut error_count = 0usize;
+    for issue in issues {
+        let prefix = match issue.severity {
+            Severity::Warning => "warning",
+            Severity::Error => {
+                error_count += 1;
+                "error"
+            }
+        };
+        eprintln!("[{prefix}] {}: {}", issue.integration, issue.message);
+    }
+    if error_count > 0 {
+        anyhow::bail!(
+            "lock: {error_count} integration lock-hook error(s); refusing to commit incoherent lock state"
+        );
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod lock_issue_tests {
+    use super::*;
+    use crate::integration::{Issue, Severity};
+
+    fn iss(integ: &str, sev: Severity, m: &str) -> Issue {
+        Issue {
+            integration: integ.into(),
+            severity: sev,
+            message: m.into(),
+        }
+    }
+
+    #[test]
+    fn no_issues_is_ok() {
+        assert!(report_and_check_lock_issues(&[]).is_ok());
+    }
+
+    #[test]
+    fn warnings_only_is_ok() {
+        let issues = vec![iss("cargo", Severity::Warning, "slow")];
+        assert!(report_and_check_lock_issues(&issues).is_ok());
+    }
+
+    #[test]
+    fn any_error_bails_before_commit() {
+        let issues = vec![iss("cargo", Severity::Error, "generate-lockfile failed")];
+        let err = report_and_check_lock_issues(&issues).unwrap_err();
+        let s = err.to_string();
+        assert!(
+            s.contains("1 integration lock-hook error") && s.contains("refusing to commit"),
+            "expected refusal message, got: {s}"
+        );
+    }
+
+    #[test]
+    fn aggregated_error_count_in_message() {
+        let issues = vec![
+            iss("a", Severity::Error, "e1"),
+            iss("b", Severity::Error, "e2"),
+            iss("c", Severity::Warning, "w"),
+        ];
+        let err = report_and_check_lock_issues(&issues).unwrap_err();
+        assert!(err.to_string().contains("2 integration lock-hook error"));
+    }
 }

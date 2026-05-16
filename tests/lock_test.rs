@@ -713,21 +713,26 @@ fn lock_runs_integration_lock_hooks() {
         &[(repo_path, "https://github.com/acme/server.git")],
     );
 
-    // Run lock — it should succeed and write the lock file.
-    // The integration lock hooks should run after the lock file is written.
-    // We verify this by checking that `rwv lock` completes successfully
-    // (integration errors would cause a non-zero exit or stderr warnings).
-    rwv_cmd()
+    // Run lock — the cargo integration's lock hook will run after the
+    // rwv.lock write and fail (no workspace-root Cargo.toml here). Per
+    // audit B1, that failure MUST cause `rwv lock` to exit non-zero with
+    // a message refusing to commit incoherent state; the previous
+    // behaviour (log + Ok) silently committed bad locks in CI. The lock
+    // file itself is still written, since the hook runs after the write.
+    let assert = rwv_cmd()
         .arg("lock")
         .current_dir(&project_dir)
         .assert()
-        .success();
-
-    // Lock file should exist (written before hooks ran)
+        .failure();
+    let stderr = String::from_utf8_lossy(&assert.get_output().stderr).into_owned();
+    assert!(
+        stderr.contains("integration lock-hook error") && stderr.contains("refusing"),
+        "expected B1 refusal message in stderr, got: {stderr}"
+    );
     let lock_path = project_dir.join("rwv.lock");
     assert!(
         lock_path.exists(),
-        "rwv.lock should be written before lock hooks"
+        "rwv.lock is written before hooks run; presence confirms hooks ran"
     );
 }
 
