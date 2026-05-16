@@ -39,11 +39,12 @@ enum Commands {
         #[command(subcommand)]
         action: Option<WorkweaveAction>,
     },
-    /// Clone a project and its repos
+    /// Clone a project and its repos (also re-pins already-cloned repos with --locked/--frozen)
     Fetch {
         /// Source to fetch from
         source: String,
-        /// Check out exact revisions from rwv.lock (reproducible builds)
+        /// Check out each repo at the SHA recorded in rwv.lock — works for existing repos too;
+        /// effectively a per-repo `git checkout` to bring tips back in line with the lock
         #[arg(long, conflicts_with = "frozen")]
         locked: bool,
         /// Like --locked, but error if lock file is missing or stale (CI mode)

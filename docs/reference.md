@@ -203,6 +203,8 @@ rwv fetch chatly/web-app
 
 `rwv fetch` clones the project repo to `projects/web-app/`, reads its `rwv.yaml`, creates regular clones for every listed repo at their canonical paths, and generates ecosystem files at the weave directory. One command, and you have the complete working environment.
 
+`rwv fetch` also handles the inverse case: re-running it with `--locked` (or `--frozen`) on an already-cloned workspace re-pins each existing repo to the SHA recorded in `rwv.lock`. It's effectively a per-repo `git checkout` driven by the lock file, useful for resetting tips back in line with a known-good snapshot without re-cloning.
+
 ### Overlap between projects
 
 Same repo, different projects — natural and expected:
@@ -299,7 +301,7 @@ Commands like `add`, `remove`, `lock`, and `check` infer the project and workspa
 | `rwv workweave {project} list` | List workweaves for a project. |
 | `rwv init {project}` | Create a new project directory with empty `rwv.yaml`. Optional `--provider {registry}/{owner}` sets up the remote. |
 | `rwv activate {project}` | Set the active project — generate ecosystem files in the project directory, symlink to the weave directory. |
-| `rwv fetch {source}` | Clone a project repo and all its listed repos, activate, update `rwv.lock`. `--locked` for exact reproduction, `--frozen` for CI (errors if lock is stale). |
+| `rwv fetch {source}` | Clone a project repo and all its listed repos, activate, update `rwv.lock`. `--locked` for exact reproduction (also re-pins already-cloned repos to the lock SHA — a per-repo `git checkout` driven by `rwv.lock`); `--frozen` for CI (errors if lock is stale). |
 | `rwv add {url}` | Clone a repo, register in `rwv.yaml`, re-run integration hooks. With `--role`, sets the role. With `--new`, initializes a new repo at the canonical path (infers URL). |
 | `rwv remove {path}` | Remove from `rwv.yaml`, re-run integration hooks. With `--delete`, also removes the clone (confirms unless `--force`). |
 | `rwv lock` | Snapshot repo versions into the project's `rwv.lock`. Errors on uncommitted changes (`--dirty` to bypass). Runs integration lock hooks. |

@@ -44,6 +44,8 @@ For exact reproduction (same revisions your colleague had):
 rwv fetch chatly/web-app --locked
 ```
 
+Re-running this on an already-cloned workspace also works — it acts as a per-repo `git checkout` to the SHAs in `rwv.lock`, snapping every tip back in line with the lock without re-cloning.
+
 For CI (errors if lock is stale):
 
 ```bash
