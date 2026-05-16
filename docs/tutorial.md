@@ -178,7 +178,7 @@ For large dependency differences, or when you need both projects active simultan
 
 ```bash
 rwv workweave mobile-app create dev
-cd .workweaves/dev
+cd .workweaves/mobile-app--dev
 # independent tool state, no reconciliation needed
 ```
 
@@ -190,10 +190,10 @@ Workweaves are worktree-based derivatives of the weave, created on demand for is
 rwv workweave web-app create payments
 ```
 
-Creates `.workweaves/payments/` with a git worktree for each repo on an ephemeral branch, plus ecosystem workspace files:
+Creates `.workweaves/web-app--payments/` (the directory name is `<project>--<workweave>`) with a git worktree for each repo on an ephemeral branch, plus ecosystem workspace files:
 
 ```
-.workweaves/payments/
+.workweaves/web-app--payments/
 ├── github/chatly/server/             # worktree, on web-app--payments/main
 ├── github/chatly/web/                # worktree, on web-app--payments/feature-A
 ├── github/chatly/protocol/           # worktree, on web-app--payments/main
@@ -210,7 +210,7 @@ Work in the workweave like you would in the weave — `cargo test --workspace`, 
 
 ```bash
 rwv workweave web-app create payments
-cd .workweaves/payments/github/chatly/server
+cd .workweaves/web-app--payments/github/chatly/server
 # ... make changes across server and protocol, test, commit ...
 ```
 
@@ -218,7 +218,7 @@ cd .workweaves/payments/github/chatly/server
 
 ```bash
 rwv workweave web-app create review-pr-42
-cd .workweaves/review-pr-42/github/chatly/server
+cd .workweaves/web-app--review-pr-42/github/chatly/server
 git fetch origin pull/42/head:pr-42 && git checkout pr-42
 cargo test --workspace
 rwv workweave web-app delete review-pr-42    # clean up when done
@@ -228,7 +228,7 @@ rwv workweave web-app delete review-pr-42    # clean up when done
 
 ```bash
 rwv workweave web-app create agent-task-99
-# agent works in .workweaves/agent-task-99/
+# agent works in .workweaves/web-app--agent-task-99/
 # ... agent runs rwv lock + commits project repo when done ...
 
 # bring completed work home:
@@ -242,7 +242,7 @@ rwv workweave web-app delete agent-task-99
 ```bash
 # web-app is active in the weave
 rwv workweave mobile-app create dev
-cd .workweaves/dev
+cd .workweaves/mobile-app--dev
 # mobile-app has its own tool state here
 ```
 
@@ -254,7 +254,7 @@ cd .workweaves/dev
 
 ```bash
 # in workweave: capture the cross-repo state
-cd .workweaves/payments
+cd .workweaves/web-app--payments
 (commit work across repos)
 rwv lock
 git -C projects/web-app commit -am "lock: payments feature"
@@ -272,7 +272,7 @@ rwv lock
 git -C projects/web-app commit -am "lock: upstream merge"
 
 # in the workweave that needs to catch up
-cd .workweaves/payments
+cd .workweaves/web-app--payments
 rwv sync primary               # same verb, opposite direction
 ```
 
@@ -306,7 +306,7 @@ cd ~/work
 rwv sync ww1              # primary fast-forwards to ww1's tip
 
 # ww2 is now diverged from primary; bring primary into ww2 first
-cd .workweaves/payments
+cd .workweaves/web-app--payments
 rwv sync primary --strategy rebase
 # Phase 2: ww2's manifest repos advance to primary's lock targets
 # Phase 1': ww2's project commits are replayed onto primary's tip
@@ -385,7 +385,7 @@ orphans:
   ⚠ github/example/old-experiment/ not in any project
 
 workweaves:
-  .workweaves/payments: web-app (3 repos)
-  .workweaves/agent-task-99: web-app (3 repos, stale — 7 days old)
+  .workweaves/web-app--payments: web-app (3 repos)
+  .workweaves/web-app--agent-task-99: web-app (3 repos, stale — 7 days old)
 ```
 

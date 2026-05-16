@@ -7,7 +7,7 @@ use crate::git::{git_command, GitVcs};
 use crate::lock::{commit_lock_file_with_message, generate_lock};
 use crate::manifest::{LockFile, Project, ProjectName, WorkweaveName};
 use crate::vcs::{RevisionId, Vcs};
-use crate::workspace::{WorkspaceContext, WorkspaceLocation};
+use crate::workspace::{read_active_project, WorkspaceContext, WorkspaceLocation};
 use crate::workweave::workweave_path_for;
 use std::fmt;
 use std::path::{Path, PathBuf};
@@ -100,7 +100,21 @@ impl SyncSource {
     pub fn resolve(&self, ctx: &WorkspaceContext) -> PathBuf {
         match self {
             Self::Primary => ctx.primary_path().to_path_buf(),
-            Self::Workweave(name) => workweave_path_for(ctx.primary_path(), name),
+            Self::Workweave(name) => {
+                // Resolve the project from the current context: the workweave
+                // we're syncing FROM is assumed to belong to the same project
+                // as the workspace we're syncing INTO (sync is per-project).
+                // Fall back to primary's `.rwv-active` when CWD is the weave.
+                let project = match &ctx.location {
+                    WorkspaceLocation::Workweave { project, .. } => project.as_str().to_string(),
+                    WorkspaceLocation::Weave { project } => project
+                        .clone()
+                        .or_else(|| read_active_project(ctx.primary_path()))
+                        .map(|p| p.as_str().to_string())
+                        .unwrap_or_default(),
+                };
+                workweave_path_for(ctx.primary_path(), &project, name)
+            }
             Self::Path(p) => {
                 if p.is_absolute() {
                     p.clone()

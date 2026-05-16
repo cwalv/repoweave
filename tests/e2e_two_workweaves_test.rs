@@ -142,7 +142,7 @@ fn make_main_workspace(tmp: &Path) -> MainWorkspace {
 }
 
 struct Workweave {
-    /// Workweave root, e.g. `{tmp}/.workweaves/ws--ww1/`.
+    /// Workweave root, e.g. `{tmp}/.workweaves/app--ww1/`.
     root: PathBuf,
     /// projects/app/ inside the workweave (a worktree of main's project repo).
     project_dir: PathBuf,
@@ -159,7 +159,7 @@ fn create_workweave(main: &MainWorkspace, weaveroot: &Path, name: &str) -> Workw
         .assert()
         .success();
 
-    let root = weaveroot.join(format!("ws--{name}"));
+    let root = weaveroot.join(format!("{PROJECT}--{name}"));
     Workweave {
         project_dir: root.join("projects").join(PROJECT),
         manifest_repo: root.join(MANIFEST_REPO_PATH),

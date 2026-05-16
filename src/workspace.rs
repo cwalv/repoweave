@@ -294,7 +294,10 @@ impl WorkspaceContext {
         //
         // For each ancestor directory we check (in order):
         //   1. Does it have a `.rwv-workweave` marker? If so, use that.
-        //   2. Does its name match `{primary}--{name}`? If so, use the sibling.
+        //   2. Does its name match `{project}--{name}` (or legacy
+        //      `{primary}--{name}`)? If so, fall back to sibling-resolution
+        //      using the parsed left component. The marker is authoritative;
+        //      this path only fires for workweaves missing a marker.
         //   3. Is it a workspace root itself?
         let mut current = cwd.as_path();
         loop {
@@ -321,19 +324,26 @@ impl WorkspaceContext {
                 }
             }
 
-            // 2. Check the `{primary}--{name}` naming convention (backward compat).
-            //    A workweave directory may also contain registry subdirs (e.g. github/),
-            //    so check this BEFORE workspace root markers.
+            // 2. Check the `{left}--{name}` naming convention (legacy
+            //    sibling-resolution fallback for workweaves missing a marker).
+            //    A workweave directory may also contain registry subdirs (e.g.
+            //    github/), so check this BEFORE workspace root markers.
+            //
+            //    The left component is taken as the legacy primary's basename
+            //    (the only form that ever shipped without a marker). If the
+            //    sibling resolves to a workspace root we use it; otherwise we
+            //    fall through.
             if let Some(dir_name) = current.file_name().and_then(|n| n.to_str()) {
-                if let Some((primary_name, workweave_name)) = parse_weave_dir_name(dir_name) {
-                    // The workspace root is the sibling with the primary name.
+                if let Some((left_name, workweave_name)) = parse_weave_dir_name(dir_name) {
+                    // The workspace root is the sibling named after the left
+                    // component (legacy primary-name convention).
                     let parent = current
                         .parent()
                         .ok_or_else(|| anyhow::anyhow!("workweave directory has no parent"))?;
-                    let root = parent.join(primary_name);
+                    let root = parent.join(left_name);
                     if is_workspace_root(&root) {
                         let project =
-                            project_override.unwrap_or_else(|| ProjectName::new(primary_name));
+                            project_override.unwrap_or_else(|| ProjectName::new(left_name));
                         return Ok(WorkspaceContext {
                             primary_root: root.clone(),
                             location: WorkspaceLocation::Workweave {
@@ -454,27 +464,30 @@ impl WorkspaceContext {
     }
 }
 
-/// Build a workweave directory name using the legacy `{primary}--{name}` convention.
+/// Build a workweave directory name using the `{project}--{name}` convention.
 ///
-/// This naming convention is used for backward compatibility with the old
-/// sibling-directory layout. The new convention uses `.workweaves/{name}/`
-/// with a `.rwv-workweave` marker file. Both are supported by
-/// [`WorkspaceContext::resolve`].
-pub fn weave_dir_name(primary_name: &str, workweave_name: &WorkweaveName) -> String {
-    format!("{primary_name}--{workweave_name}")
+/// Workweaves are keyed by the project they're created for so that the directory
+/// layout makes the project explicit and `<project>--<name>` is stable across
+/// fork sources. Old workweaves on disk may follow the legacy
+/// `{primary}--{name}` form (where the left side was the primary weave's
+/// directory basename); both are accepted by [`WorkspaceContext::resolve`] via
+/// the `.rwv-workweave` marker file (see [`WorkweaveMarker`]), which is
+/// authoritative.
+pub fn weave_dir_name(project_name: &str, workweave_name: &WorkweaveName) -> String {
+    format!("{project_name}--{workweave_name}")
 }
 
-/// Parse a directory name into `(primary_name, workweave_name)` if it
-/// matches the legacy `{primary}--{name}` convention.
-///
-/// Used for backward compatibility. The preferred resolution method is via
-/// the `.rwv-workweave` marker file (see [`WorkweaveMarker`]).
+/// Parse a directory name into `(left, workweave_name)` if it matches the
+/// `{left}--{name}` shape. The `left` component is the project name under the
+/// current convention; for legacy on-disk workweaves it is the primary weave's
+/// directory basename. Disambiguation, when it matters, is done by reading the
+/// `.rwv-workweave` marker.
 pub fn parse_weave_dir_name(dir_name: &str) -> Option<(&str, WorkweaveName)> {
-    let (primary, workweave) = dir_name.split_once("--")?;
-    if primary.is_empty() || workweave.is_empty() {
+    let (left, workweave) = dir_name.split_once("--")?;
+    if left.is_empty() || workweave.is_empty() {
         return None;
     }
-    Some((primary, WorkweaveName::new(workweave)))
+    Some((left, WorkweaveName::new(workweave)))
 }
 
 // ---------------------------------------------------------------------------

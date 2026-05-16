@@ -218,7 +218,7 @@ fn main() -> anyhow::Result<()> {
 
                 match action {
                     Some(WorkweaveAction::List) | None => {
-                        let names = repoweave::workweave::list_workweaves(primary_root)?;
+                        let names = repoweave::workweave::list_workweaves(primary_root, &project)?;
                         for n in &names {
                             println!("{}", n);
                         }

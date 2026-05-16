@@ -265,7 +265,7 @@ Roles are a first-class field in `rwv.yaml`:
 
 ## Workweaves
 
-A **workweave** is a worktree-based derivative of the weave, created on demand for isolation. Each repo gets a git worktree (not a clone) on an ephemeral branch, with its own ecosystem files and tool state. Workweaves live in `.workweaves/{name}/` under the weave directory.
+A **workweave** is a worktree-based derivative of the weave, created on demand for isolation. Each repo gets a git worktree (not a clone) on an ephemeral branch, with its own ecosystem files and tool state. Workweaves live in `.workweaves/{project}--{name}/` under the weave directory — the directory is keyed by the project the workweave was created for, so the same workweave name can coexist across projects without collision. The `.rwv-workweave` marker inside each workweave records the primary weave and project authoritatively; tools resolve workweaves through the marker (so legacy `<primary>--<name>` directories from earlier rwv versions still work without renaming).
 
 `node_modules/`, `.venv/`, branches, and generated files are all per-workweave. One workweave can be on `feature-A` while another is on `main`, while the weave stays undisturbed.
 
@@ -273,7 +273,7 @@ A **workweave** is a worktree-based derivative of the weave, created on demand f
 
 `rwv workweave {project} create {name}` forks the new workweave from CWD's active workspace by default — primary when invoked from primary, or the workweave itself when invoked from inside one. This makes peer workweaves rooted in their parent: a workweave created from inside another workweave starts at that workweave's HEADs, so the parent→peer relationship is a clean fast-forward and `rwv sync` works without ancestor divergence.
 
-Use `--from <source>` to override. Accepts `primary`, an absolute path, or a relative path (resolved against the primary weave so `--from .workweaves/foundations--rig` references a sibling workweave by directory name). Regardless of fork source, all workweaves live alongside each other under primary's `.workweaves/`, and the `.rwv-workweave` marker always records the primary.
+Use `--from <source>` to override. Accepts `primary`, an absolute path, or a relative path (resolved against the primary weave so `--from .workweaves/foundations--rig` references a sibling workweave by directory name — under the current convention this is `<project>--<name>`). Regardless of fork source, all workweaves live alongside each other under primary's `.workweaves/`, and the `.rwv-workweave` marker always records the primary and project.
 
 Use `rwv sync <source>` to align one workspace with another's committed `rwv.lock` — the direction-neutral primitive for bringing workweave work home or catching a workweave up to primary.
 

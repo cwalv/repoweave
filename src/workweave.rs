@@ -30,25 +30,63 @@ fn workweave_parent(ws_root: &Path) -> PathBuf {
     }
 }
 
-/// Compute the on-disk directory for a workweave by name, given the primary
-/// workspace root. The result is `<workweave_parent>/<primary>--<name>`.
+/// Compute the on-disk directory for a workweave by `(project, name)`, given
+/// the primary workspace root.
 ///
-/// Does not check whether the directory exists; callers that need that should
-/// call `.exists()` themselves.
-pub fn workweave_path_for(primary_root: &Path, name: &WorkweaveName) -> PathBuf {
+/// Under the current convention the result is
+/// `<workweave_parent>/<project>--<name>`. If that path does not exist, scans
+/// the workweave parent for a legacy-named directory (`<primary>--<name>` or
+/// other left-component) whose `.rwv-workweave` marker records the same
+/// `(primary, project)`; the marker is authoritative for old-form workweaves.
+/// If neither resolves, returns the current-convention path (which the caller
+/// may then create or report as missing).
+pub fn workweave_path_for(
+    primary_root: &Path,
+    project: &str,
+    name: &WorkweaveName,
+) -> PathBuf {
     let parent = workweave_parent(primary_root);
-    let pname = primary_name(primary_root);
-    parent.join(weave_dir_name(&pname, name))
-}
+    let current = parent.join(weave_dir_name(project, name));
+    if current.exists() {
+        return current;
+    }
 
-/// The primary directory name (last component of workspace root).
-fn primary_name(ws_root: &Path) -> String {
-    ws_root
-        .file_name()
-        .expect("workspace root should have a file name")
-        .to_str()
-        .expect("workspace root name should be valid UTF-8")
-        .to_string()
+    // Fall back to legacy-shaped sibling directories. We accept any
+    // `*--<name>` dir whose marker matches this (primary, project).
+    let primary_canonical = primary_root
+        .canonicalize()
+        .unwrap_or_else(|_| primary_root.to_path_buf());
+    if let Ok(entries) = std::fs::read_dir(&parent) {
+        for entry in entries.flatten() {
+            let dir = entry.path();
+            if !dir.is_dir() {
+                continue;
+            }
+            let dir_name = entry.file_name().to_string_lossy().into_owned();
+            let parsed = parse_weave_dir_name(&dir_name);
+            let matches_name = parsed
+                .as_ref()
+                .map(|(_, n)| n.as_str() == name.as_str())
+                .unwrap_or(false);
+            if !matches_name {
+                continue;
+            }
+            if let Ok(Some(marker)) = WorkweaveMarker::read(&dir) {
+                if marker.project.as_str() != project {
+                    continue;
+                }
+                let m_primary = marker
+                    .primary
+                    .canonicalize()
+                    .unwrap_or_else(|_| marker.primary.clone());
+                if m_primary == primary_canonical {
+                    return dir;
+                }
+            }
+        }
+    }
+
+    current
 }
 
 /// Build the ephemeral branch name used by workweave worktrees.
@@ -128,9 +166,11 @@ pub fn create_workweave(
     force: bool,
 ) -> anyhow::Result<PathBuf> {
     let manifest = load_manifest(source_root, project)?;
-    let pname = primary_name(primary_root);
-    let parent = workweave_parent(primary_root);
-    let workweave_dir = parent.join(weave_dir_name(&pname, name));
+    // Resolve to a legacy-shaped directory if one already exists for this
+    // (primary, project, name); otherwise use the current `<project>--<name>`
+    // form. `workweave_path_for` checks `.exists()`, so on a fresh create the
+    // returned path is the new-convention path.
+    let workweave_dir = workweave_path_for(primary_root, project, name);
 
     if workweave_dir.exists() {
         if force {
@@ -390,9 +430,9 @@ fn short_sha(sha: &str) -> &str {
 /// Delete a workweave: remove worktrees (including project repo) and delete the workweave directory.
 pub fn delete_workweave(ws_root: &Path, project: &str, name: &WorkweaveName) -> anyhow::Result<()> {
     let manifest = load_manifest(ws_root, project)?;
-    let pname = primary_name(ws_root);
-    let parent = workweave_parent(ws_root);
-    let workweave_dir = parent.join(weave_dir_name(&pname, name));
+    // Use `workweave_path_for` so old-form `<primary>--<name>` workweaves
+    // (resolved via marker) are deleted correctly.
+    let workweave_dir = workweave_path_for(ws_root, project, name);
 
     // Remove worktrees for each repo, collecting errors.
     let mut errors: Vec<String> = Vec::new();
@@ -480,32 +520,29 @@ pub fn delete_workweave(ws_root: &Path, project: &str, name: &WorkweaveName) -> 
     }
 }
 
-/// List workweaves: scan for directories matching the legacy `{primary}--*` convention.
-pub fn list_workweaves(ws_root: &Path) -> anyhow::Result<Vec<String>> {
-    let pname = primary_name(ws_root);
-    let parent = workweave_parent(ws_root);
-
-    let mut names = Vec::new();
-
-    if let Ok(entries) = std::fs::read_dir(&parent) {
-        for entry in entries.flatten() {
-            let dir_name = entry.file_name().to_string_lossy().into_owned();
-            if let Some((primary, workweave_name)) = parse_weave_dir_name(&dir_name) {
-                if primary == pname {
-                    names.push(workweave_name.as_str().to_string());
-                }
-            }
-        }
-    }
-
+/// List workweaves for `project` under `ws_root`'s primary.
+///
+/// A workweave belongs to `(primary, project)` when its `.rwv-workweave`
+/// marker records both. For old-form workweaves missing a marker, the
+/// directory's left component (legacy `{primary}--{name}`) is taken as the
+/// project name — matching how `WorkspaceContext::resolve` infers the project
+/// from such directories.
+pub fn list_workweaves(ws_root: &Path, project: &str) -> anyhow::Result<Vec<String>> {
+    let mut names: Vec<String> = list_workweave_dirs_for_project(ws_root, project)
+        .into_iter()
+        .map(|(n, _)| n)
+        .collect();
     names.sort();
     Ok(names)
 }
 
-/// Return `(name, path)` pairs for all workweave directories belonging to `ws_root`.
-pub fn list_workweave_dirs(ws_root: &Path) -> Vec<(String, PathBuf)> {
-    let pname = primary_name(ws_root);
+/// Return `(name, path)` pairs for workweaves of `project` under `ws_root`'s
+/// primary. See [`list_workweaves`] for the marker / legacy resolution rules.
+fn list_workweave_dirs_for_project(ws_root: &Path, project: &str) -> Vec<(String, PathBuf)> {
     let parent = workweave_parent(ws_root);
+    let primary_canonical = ws_root
+        .canonicalize()
+        .unwrap_or_else(|_| ws_root.to_path_buf());
     let mut result = Vec::new();
 
     if let Ok(entries) = std::fs::read_dir(&parent) {
@@ -515,9 +552,85 @@ pub fn list_workweave_dirs(ws_root: &Path) -> Vec<(String, PathBuf)> {
                 continue;
             }
             let dir_name = entry.file_name().to_string_lossy().into_owned();
-            if let Some((primary, workweave_name)) = parse_weave_dir_name(&dir_name) {
-                if primary == pname {
-                    result.push((workweave_name.as_str().to_string(), dir));
+            let parsed = parse_weave_dir_name(&dir_name);
+            if parsed.is_none() {
+                continue;
+            }
+            let (left, parsed_name) = parsed.unwrap();
+
+            match WorkweaveMarker::read(&dir) {
+                Ok(Some(marker)) => {
+                    if marker.project.as_str() != project {
+                        continue;
+                    }
+                    let m_primary = marker
+                        .primary
+                        .canonicalize()
+                        .unwrap_or_else(|_| marker.primary.clone());
+                    if m_primary != primary_canonical {
+                        continue;
+                    }
+                    result.push((parsed_name.as_str().to_string(), dir));
+                }
+                _ => {
+                    // No marker — fall back to legacy interpretation: left
+                    // component is the project (same as resolve()).
+                    if left == project {
+                        result.push((parsed_name.as_str().to_string(), dir));
+                    }
+                }
+            }
+        }
+    }
+
+    result.sort_by(|a, b| a.0.cmp(&b.0));
+    result
+}
+
+/// Return `(name, path)` pairs for all workweave directories belonging to
+/// `ws_root`'s primary, across every project. Used by `rwv doctor` /
+/// `rwv check` to scan all workweaves for drift.
+pub fn list_workweave_dirs(ws_root: &Path) -> Vec<(String, PathBuf)> {
+    let parent = workweave_parent(ws_root);
+    let primary_canonical = ws_root
+        .canonicalize()
+        .unwrap_or_else(|_| ws_root.to_path_buf());
+    let mut result = Vec::new();
+
+    if let Ok(entries) = std::fs::read_dir(&parent) {
+        for entry in entries.flatten() {
+            let dir = entry.path();
+            if !dir.is_dir() {
+                continue;
+            }
+            let dir_name = entry.file_name().to_string_lossy().into_owned();
+            let parsed = parse_weave_dir_name(&dir_name);
+            if parsed.is_none() {
+                continue;
+            }
+            let (_, parsed_name) = parsed.unwrap();
+
+            // Authoritative source: marker file. Accept any project under
+            // this primary.
+            match WorkweaveMarker::read(&dir) {
+                Ok(Some(marker)) => {
+                    let m_primary = marker
+                        .primary
+                        .canonicalize()
+                        .unwrap_or_else(|_| marker.primary.clone());
+                    if m_primary == primary_canonical {
+                        result.push((parsed_name.as_str().to_string(), dir));
+                    }
+                }
+                _ => {
+                    // No marker: fall back on legacy `{primary}--{name}` —
+                    // include only if the left component matches the actual
+                    // primary directory basename (the legacy convention).
+                    if let Some(pname) = ws_root.file_name().and_then(|n| n.to_str()) {
+                        if dir_name.starts_with(&format!("{pname}--")) {
+                            result.push((parsed_name.as_str().to_string(), dir));
+                        }
+                    }
                 }
             }
         }

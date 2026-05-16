@@ -114,7 +114,7 @@ fn workweave_recreate_preserves_non_git_state() {
         .assert()
         .success();
 
-    let ww_dir = weaveroot.join("ws--resume");
+    let ww_dir = weaveroot.join("web-app--resume");
     assert!(ww_dir.exists(), "workweave should exist after first create");
 
     // ---- Drop non-git state into the workweave. ----
@@ -239,7 +239,7 @@ fn workweave_recreate_refuses_on_local_modifications() {
         .assert()
         .success();
 
-    let ww_dir = weaveroot.join("ws--dirty");
+    let ww_dir = weaveroot.join("web-app--dirty");
     let weave_repo = ww_dir.join("github/org/repo");
     let head_before_dirty = head_sha(&weave_repo);
 
@@ -273,7 +273,7 @@ fn workweave_recreate_refuses_on_local_modifications() {
         .assert()
         .success();
 
-    let ww2_dir = weaveroot.join("ws--advanced");
+    let ww2_dir = weaveroot.join("web-app--advanced");
     let weave2_repo = ww2_dir.join("github/org/repo");
 
     std::fs::write(weave2_repo.join("new-file.txt"), "content\n").unwrap();
@@ -301,13 +301,12 @@ fn workweave_recreate_refuses_on_local_modifications() {
     );
 }
 
-/// Re-invoking `rwv workweave` with a project that does NOT match the
-/// existing marker in the target directory must refuse (without `--force`).
-///
-/// Without this check, a user who typoed the project name or reused a
-/// name across projects would silently clobber the existing workweave.
+/// Workweaves with the same name across different projects coexist under
+/// the `<project>--<name>` directory convention. The old layout used
+/// `<primary>--<name>`, which made this scenario a collision; under the new
+/// convention it's a simple peer-creation.
 #[test]
-fn workweave_recreate_refuses_on_wrong_project_marker() {
+fn workweave_same_name_different_projects_coexist() {
     let tmp = tempfile::tempdir().unwrap();
     let ws = make_workspace(tmp.path(), "project-a");
     // Add a second project manifest pointing at the same repo.
@@ -337,24 +336,27 @@ fn workweave_recreate_refuses_on_wrong_project_marker() {
         .assert()
         .success();
 
-    let ww_dir = weaveroot.join("ws--shared");
-    assert!(ww_dir.exists());
-    let marker_before = std::fs::read_to_string(ww_dir.join(".rwv-workweave")).unwrap();
+    let ww_a = weaveroot.join("project-a--shared");
+    assert!(ww_a.exists());
+    let marker_a_before = std::fs::read_to_string(ww_a.join(".rwv-workweave")).unwrap();
 
-    // Attempt to recreate the same workweave for project-b — must refuse.
+    // Create the same-named workweave for project-b — must succeed in its
+    // own directory, leaving project-a's untouched.
     rwv()
         .args(["workweave", "project-b", "create", "shared"])
         .env("RWV_WORKWEAVE_DIR", &weaveroot)
         .current_dir(&ws)
         .assert()
-        .failure()
-        .stderr(predicate::str::contains("project-a"));
+        .success();
 
-    // Marker unchanged: the existing workweave was not touched.
-    let marker_after = std::fs::read_to_string(ww_dir.join(".rwv-workweave")).unwrap();
+    let ww_b = weaveroot.join("project-b--shared");
+    assert!(ww_b.exists(), "project-b's workweave should exist");
+
+    // Project-a's marker is unchanged: peer coexistence, no overwrite.
+    let marker_a_after = std::fs::read_to_string(ww_a.join(".rwv-workweave")).unwrap();
     assert_eq!(
-        marker_after, marker_before,
-        ".rwv-workweave marker should be unchanged after refused cross-project recreate"
+        marker_a_after, marker_a_before,
+        ".rwv-workweave marker for project-a should be untouched"
     );
 }
 
@@ -375,7 +377,7 @@ fn workweave_recreate_with_force_destroys_and_recreates() {
         .assert()
         .success();
 
-    let ww_dir = weaveroot.join("ws--reset");
+    let ww_dir = weaveroot.join("web-app--reset");
     let weave_repo = ww_dir.join("github/org/repo");
 
     // Dirty it — a refused-recreate would have fired here without --force.

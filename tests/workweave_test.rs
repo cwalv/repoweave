@@ -169,10 +169,10 @@ fn workweave_create_makes_directory_under_weaveroot() {
         .success();
 
     // Workweave directory should be under RWV_WORKWEAVE_DIR.
-    let ww_dir = weaveroot.join("ws--hotfix");
+    let ww_dir = weaveroot.join("web-app--hotfix");
     assert!(
         ww_dir.exists(),
-        "workweave directory ws--hotfix should exist at {}",
+        "workweave directory web-app--hotfix should exist at {}",
         ww_dir.display()
     );
 }
@@ -195,7 +195,7 @@ fn workweave_create_worktrees_on_ephemeral_branches() {
     // The worktree in the workweave should be on an ephemeral branch
     // named {project}--{workweave-name}/{original-branch}, i.e.
     // "web-app--hotfix/main".
-    let weave_repo = weaveroot.join("ws--hotfix/github/org/repo");
+    let weave_repo = weaveroot.join("web-app--hotfix/github/org/repo");
     assert!(
         weave_repo.exists(),
         "workweave should contain worktree at github/org/repo"
@@ -231,7 +231,7 @@ fn workweave_create_mirrors_primary_layout() {
         .assert()
         .success();
 
-    let ww_dir = weaveroot.join("ws--feat-x");
+    let ww_dir = weaveroot.join("web-app--feat-x");
     // The workweave should mirror the primary layout: github/org/repo should exist.
     assert!(
         ww_dir.join("github/org/repo").exists(),
@@ -265,7 +265,7 @@ fn create_workweave_includes_project_repo() {
         .success();
 
     // projects/my-project/ should exist in the workweave as a worktree.
-    let project_wt = weaveroot.join("ws--feat/projects/my-project");
+    let project_wt = weaveroot.join("my-project--feat/projects/my-project");
     assert!(
         project_wt.exists(),
         "workweave should contain project worktree at projects/my-project, expected at {}",
@@ -301,7 +301,7 @@ fn delete_workweave_removes_project_worktree() {
         .assert()
         .success();
 
-    let ww_dir = weaveroot.join("ws--to-del");
+    let ww_dir = weaveroot.join("my-project--to-del");
     assert!(ww_dir.exists(), "workweave should exist before deletion");
 
     // Delete it.
@@ -326,7 +326,7 @@ fn delete_workweave_removes_project_worktree() {
         .expect("git worktree list should work");
     let listing = String::from_utf8_lossy(&output.stdout);
     assert!(
-        !listing.contains("ws--to-del"),
+        !listing.contains("my-project--to-del"),
         "project worktree should be cleaned up from primary repo, got: {listing}"
     );
 }
@@ -370,7 +370,7 @@ workweave:
         .assert()
         .success();
 
-    let ww_dir = weaveroot.join("ws--copy-test");
+    let ww_dir = weaveroot.join("web-app--copy-test");
     let copied_env = ww_dir.join(".env");
     assert!(
         copied_env.exists(),
@@ -428,7 +428,7 @@ workweave:
         .assert()
         .success();
 
-    let ww_dir = weaveroot.join("ws--link-test");
+    let ww_dir = weaveroot.join("web-app--link-test");
     let linked = ww_dir.join("shared-state");
     assert!(
         linked.exists(),
@@ -476,7 +476,7 @@ fn create_workweave_writes_marker() {
         .assert()
         .success();
 
-    let ww_dir = weaveroot.join("ws--marker-test");
+    let ww_dir = weaveroot.join("web-app--marker-test");
     let marker_file = ww_dir.join(".rwv-workweave");
     assert!(
         marker_file.exists(),
@@ -515,7 +515,7 @@ fn create_workweave_writes_rwv_active() {
         .assert()
         .success();
 
-    let ww_dir = weaveroot.join("ws--active-test");
+    let ww_dir = weaveroot.join("web-app--active-test");
     let active_file = ww_dir.join(".rwv-active");
     assert!(
         active_file.exists(),
@@ -551,7 +551,7 @@ fn workweave_delete_removes_directory_and_worktrees() {
         .assert()
         .success();
 
-    let ww_dir = weaveroot.join("ws--to-delete");
+    let ww_dir = weaveroot.join("web-app--to-delete");
     assert!(ww_dir.exists(), "workweave should exist before deletion");
 
     // Delete it.
@@ -575,7 +575,7 @@ fn workweave_delete_removes_directory_and_worktrees() {
         .expect("git worktree list should work");
     let listing = String::from_utf8_lossy(&output.stdout);
     assert!(
-        !listing.contains("ws--to-delete"),
+        !listing.contains("web-app--to-delete"),
         "worktree should be cleaned up from primary repo, got: {listing}"
     );
 }
@@ -652,7 +652,7 @@ fn workweave_respects_weaveroot_env() {
         .success();
 
     // The workweave should be created under the custom root.
-    let ww_in_custom = custom_root.join("ws--override-test");
+    let ww_in_custom = custom_root.join("web-app--override-test");
     assert!(
         ww_in_custom.exists(),
         "workweave should be created under RWV_WORKWEAVE_DIR at {}",
@@ -706,7 +706,7 @@ fn workweave_with_multiple_repos_creates_all_worktrees() {
         .assert()
         .success();
 
-    let ww_dir = weaveroot.join("ws--multi");
+    let ww_dir = weaveroot.join("full-stack--multi");
     assert!(
         ww_dir.join("github/org/server").exists(),
         "server worktree should exist in workweave"
@@ -751,8 +751,8 @@ fn cli_workweave_hook_mode_outputs_path() {
 
     // The path should end with the workweave directory name
     assert!(
-        stdout.ends_with("ws--hook-test"),
-        "--hook-mode stdout should end with the workweave dir name 'ws--hook-test', got: {stdout}"
+        stdout.ends_with("web-app--hook-test"),
+        "--hook-mode stdout should end with the workweave dir name 'web-app--hook-test', got: {stdout}"
     );
 }
 
@@ -844,7 +844,7 @@ fn workweave_full_round_trip() {
         .assert()
         .success();
 
-    let ww_dir = weaveroot.join("ws--rt");
+    let ww_dir = weaveroot.join("round-trip-project--rt");
 
     // Verify repo worktree exists.
     let repo_wt = ww_dir.join("github/org/repo");
@@ -899,7 +899,7 @@ fn workweave_full_round_trip() {
         .expect("git worktree list should work");
     let listing = String::from_utf8_lossy(&output.stdout);
     assert!(
-        !listing.contains("ws--rt"),
+        !listing.contains("round-trip-project--rt"),
         "repo worktree should be cleaned up from primary, got: {listing}"
     );
 
@@ -911,7 +911,7 @@ fn workweave_full_round_trip() {
         .expect("git worktree list should work");
     let listing = String::from_utf8_lossy(&output.stdout);
     assert!(
-        !listing.contains("ws--rt"),
+        !listing.contains("round-trip-project--rt"),
         "project worktree should be cleaned up from primary, got: {listing}"
     );
 }
@@ -970,7 +970,7 @@ fn create_workweave_generates_ecosystem_files() {
 
     // The cargo-workspace integration should have generated Cargo.toml
     // in the workweave's project directory.
-    let ww_dir = weaveroot.join("ws--eco");
+    let ww_dir = weaveroot.join("cargo-project--eco");
     let generated_cargo = ww_dir.join("projects/cargo-project/Cargo.toml");
     assert!(
         generated_cargo.exists(),
@@ -1009,7 +1009,7 @@ fn resolve_from_inside_workweave_returns_workweave_path() {
         .assert()
         .success();
 
-    let ww_dir = weaveroot.join("ws--resolve-test");
+    let ww_dir = weaveroot.join("web-app--resolve-test");
 
     // Run `rwv resolve` from inside the workweave directory.
     let output = rwv()
@@ -1058,7 +1058,7 @@ fn workweave_name_with_hyphens_and_underscores() {
         .assert()
         .success();
 
-    let ww_dir = weaveroot.join("ws--feat_my-feature_v2");
+    let ww_dir = weaveroot.join("web-app--feat_my-feature_v2");
     assert!(
         ww_dir.exists(),
         "workweave with hyphen/underscore name should be created at {}",
@@ -1094,7 +1094,7 @@ fn workweave_create_without_rwv_active_in_primary() {
         .assert()
         .success();
 
-    let ww_dir = weaveroot.join("ws--no-active");
+    let ww_dir = weaveroot.join("my-proj--no-active");
     assert!(
         ww_dir.exists(),
         "workweave should be created even when primary has no .rwv-active"
@@ -1240,7 +1240,7 @@ fn create_workweave_handles_stale_branches() {
         .success();
 
     // Verify the workweave was actually created.
-    let ww_dir = weaveroot.join("ws--stale-test");
+    let ww_dir = weaveroot.join("web-app--stale-test");
     assert!(
         ww_dir.join("github/org/repo").exists(),
         "workweave should be created successfully even with pre-existing stale branch"
@@ -1288,7 +1288,7 @@ fn workweave_create_from_workweave_cwd_forks_from_workweave() {
         .assert()
         .success();
 
-    let rig_dir = weaveroot.join("ws--rig");
+    let rig_dir = weaveroot.join("web-app--rig");
     let rig_repo = rig_dir.join("github/org/repo");
     let primary_repo = ws.join("github/org/repo");
 
@@ -1316,7 +1316,7 @@ fn workweave_create_from_workweave_cwd_forks_from_workweave() {
 
     // Peer should land in the same .workweaves/ as rig, not nested under
     // rig — workweaves are flat under primary's parent.
-    let peer_dir = weaveroot.join("ws--peer");
+    let peer_dir = weaveroot.join("web-app--peer");
     assert!(
         peer_dir.exists(),
         "peer workweave should live alongside rig at {}, not nested under rig",
@@ -1364,7 +1364,7 @@ fn workweave_create_from_primary_flag_overrides_active_path() {
         .assert()
         .success();
 
-    let rig_dir = weaveroot.join("ws--rig");
+    let rig_dir = weaveroot.join("web-app--rig");
     let rig_repo = rig_dir.join("github/org/repo");
     let primary_repo = ws.join("github/org/repo");
 
@@ -1390,7 +1390,7 @@ fn workweave_create_from_primary_flag_overrides_active_path() {
         .assert()
         .success();
 
-    let peer_repo = weaveroot.join("ws--peer/github/org/repo");
+    let peer_repo = weaveroot.join("web-app--peer/github/org/repo");
     let peer_head = head_sha(&peer_repo);
     assert_eq!(
         peer_head, primary_head,
@@ -1516,7 +1516,7 @@ fn claude_hook_remove_cleans_up() {
         .assert()
         .success();
 
-    let ww_dir = weaveroot.join("ws--to-remove");
+    let ww_dir = weaveroot.join("web-app--to-remove");
     assert!(ww_dir.exists(), "workweave should exist before removal");
 
     // Now delete it via --claude-hook WorktreeRemove.
@@ -1563,6 +1563,160 @@ fn claude_hook_conflicts_with_hook_mode_flag() {
         .assert()
         .failure()
         .stderr(predicate::str::contains("cannot be used with"));
+}
+
+// ============================================================================
+// `<project>--<name>` directory convention (fo-9g4sh)
+// ============================================================================
+
+/// `create_workweave` builds `<project>--<name>` when the project differs
+/// from the primary weave's directory basename.
+#[test]
+fn create_workweave_dir_name_uses_project_not_primary_basename() {
+    let tmp = tempfile::tempdir().unwrap();
+    // primary basename = "ws", project = "web-app". The directory must be
+    // `web-app--scratch`, not `ws--scratch`.
+    let ws = make_workspace(tmp.path(), "web-app");
+    let weaveroot = tmp.path().join(".workweaves");
+    std::fs::create_dir_all(&weaveroot).unwrap();
+
+    rwv()
+        .args(["workweave", "web-app", "create", "scratch"])
+        .env("RWV_WORKWEAVE_DIR", &weaveroot)
+        .current_dir(&ws)
+        .assert()
+        .success();
+
+    assert!(
+        weaveroot.join("web-app--scratch").exists(),
+        "workweave should land at .workweaves/web-app--scratch"
+    );
+    assert!(
+        !weaveroot.join("ws--scratch").exists(),
+        "must not use the legacy <primary>--<name> form"
+    );
+}
+
+/// `delete_workweave` finds and removes the workweave under the new convention.
+#[test]
+fn delete_workweave_resolves_project_form() {
+    let tmp = tempfile::tempdir().unwrap();
+    let ws = make_workspace(tmp.path(), "web-app");
+    let weaveroot = tmp.path().join(".workweaves");
+    std::fs::create_dir_all(&weaveroot).unwrap();
+
+    rwv()
+        .args(["workweave", "web-app", "create", "del-me"])
+        .env("RWV_WORKWEAVE_DIR", &weaveroot)
+        .current_dir(&ws)
+        .assert()
+        .success();
+    let ww_dir = weaveroot.join("web-app--del-me");
+    assert!(ww_dir.exists());
+
+    rwv()
+        .args(["workweave", "web-app", "delete", "del-me"])
+        .env("RWV_WORKWEAVE_DIR", &weaveroot)
+        .current_dir(&ws)
+        .assert()
+        .success();
+
+    assert!(!ww_dir.exists(), "workweave dir should be removed");
+}
+
+/// `list_workweaves` returns workweaves scoped by project; workweaves of a
+/// different project under the same primary are not included.
+#[test]
+fn list_workweaves_is_scoped_by_project() {
+    let tmp = tempfile::tempdir().unwrap();
+    let ws = make_workspace(tmp.path(), "project-a");
+    // Add a second project.
+    let project_b_dir = ws.join("projects/project-b");
+    std::fs::create_dir_all(&project_b_dir).unwrap();
+    let repo_path = ws.join("github/org/repo");
+    let manifest_b = format!(
+        r#"repositories:
+  github/org/repo:
+    type: git
+    url: file://{repo}
+    version: main
+    role: primary
+"#,
+        repo = repo_path.display()
+    );
+    std::fs::write(project_b_dir.join("rwv.yaml"), manifest_b).unwrap();
+
+    let weaveroot = tmp.path().join(".workweaves");
+    std::fs::create_dir_all(&weaveroot).unwrap();
+
+    rwv()
+        .args(["workweave", "project-a", "create", "a-only"])
+        .env("RWV_WORKWEAVE_DIR", &weaveroot)
+        .current_dir(&ws)
+        .assert()
+        .success();
+    rwv()
+        .args(["workweave", "project-b", "create", "b-only"])
+        .env("RWV_WORKWEAVE_DIR", &weaveroot)
+        .current_dir(&ws)
+        .assert()
+        .success();
+
+    let out = rwv()
+        .args(["workweave", "project-a", "list"])
+        .env("RWV_WORKWEAVE_DIR", &weaveroot)
+        .current_dir(&ws)
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let stdout = String::from_utf8(out).unwrap();
+    assert!(
+        stdout.contains("a-only"),
+        "project-a list should include 'a-only', got:\n{stdout}"
+    );
+    assert!(
+        !stdout.contains("b-only"),
+        "project-a list must not include 'b-only', got:\n{stdout}"
+    );
+}
+
+/// Old-form workweaves (legacy `<primary>--<name>`, marker recorded) are
+/// resolved by `workweave_path_for` via the marker scan, not the directory
+/// name. Verified through `rwv workweave list`, which is one of the surfaces
+/// that must work for legacy on-disk layouts.
+#[test]
+fn list_workweaves_includes_legacy_form_via_marker() {
+    let tmp = tempfile::tempdir().unwrap();
+    let ws = make_workspace(tmp.path(), "web-app");
+    let weaveroot = tmp.path().join(".workweaves");
+    std::fs::create_dir_all(&weaveroot).unwrap();
+
+    // Hand-craft an old-form workweave dir with a marker. No worktrees needed
+    // to test the listing surface — `list_workweaves` only scans markers.
+    let legacy = weaveroot.join("ws--from-old");
+    std::fs::create_dir_all(&legacy).unwrap();
+    let marker = format!(
+        "primary: {}\nproject: web-app\n",
+        ws.canonicalize().unwrap().display()
+    );
+    std::fs::write(legacy.join(".rwv-workweave"), marker).unwrap();
+
+    let out = rwv()
+        .args(["workweave", "web-app", "list"])
+        .env("RWV_WORKWEAVE_DIR", &weaveroot)
+        .current_dir(&ws)
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let stdout = String::from_utf8(out).unwrap();
+    assert!(
+        stdout.contains("from-old"),
+        "list should include legacy-form workweave via marker, got:\n{stdout}"
+    );
 }
 
 #[test]

@@ -2,7 +2,7 @@
 
 `rwv sync <source>` aligns the current workspace ("CWD") with another
 workspace's committed state. It looks symmetric on the surface — `cd primary &&
-rwv sync feat` and `cd .workweaves/feat && rwv sync primary` both compile
+rwv sync feat` and `cd .workweaves/web-app--feat && rwv sync primary` both compile
 to a `rwv sync <source>` invocation — but it is *not* symmetric in effect.
 This page explains how sync works, the lock-as-derived contract, and the
 phase ordering.

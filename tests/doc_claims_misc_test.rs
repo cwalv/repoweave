@@ -219,7 +219,7 @@ fn rwv_display_in_workweave() {
         .assert()
         .success();
 
-    let ww_dir = weaveroot.join("ws--display-test");
+    let ww_dir = weaveroot.join("web-app--display-test");
     assert!(ww_dir.exists(), "workweave directory should exist");
 
     // Run `rwv` (no subcommand) from inside the workweave directory.
