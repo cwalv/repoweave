@@ -265,6 +265,8 @@ Roles are a first-class field in `rwv.yaml`:
 
 **Directory owner as heuristic** — `github/chatly/` is likely primary, `github/{other}/` is likely reference or dependency. But this is a default, not a rule — projects override it.
 
+**Remote-name convention for `fork`.** When `rwv fetch` / `rwv add` clones a repo with `role: fork`, it names the remote `upstream` instead of the default `origin` — the source URL is the upstream-of-record, not a push target, so leaving `origin` unset prevents a stray `git push` from hitting the upstream (and getting 403'd). You're responsible for adding your own fork as `origin` (e.g. `git remote add origin git@github.com:you/repo.git`). For all other roles, the source URL is cloned as `origin` as usual. Existing clones are never modified; rwv only prints a one-line notice when a `role: fork` repo's `origin` already points at the source-of-record.
+
 ## Workweaves
 
 A **workweave** is a worktree-based derivative of the weave, created on demand for isolation. Each repo gets a git worktree (not a clone) on an ephemeral branch, with its own ecosystem files and tool state. Workweaves live in `.workweaves/{project}--{name}/` under the weave directory — the directory is keyed by the project the workweave was created for, so the same workweave name can coexist across projects without collision. The `.rwv-workweave` marker inside each workweave records the primary weave and project authoritatively; tools resolve workweaves through the marker (so legacy `<primary>--<name>` directories from earlier rwv versions still work without renaming).

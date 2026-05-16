@@ -569,3 +569,183 @@ fn add_new_existing_repo_in_manifest_handles_gracefully() {
         .assert()
         .success();
 }
+
+// ============================================================================
+// fork role -> remote name convention
+// ============================================================================
+
+/// Return the URL of the named remote in `repo`, if it exists.
+fn remote_url(repo: &Path, name: &str) -> Option<String> {
+    let out = common::git()
+        .args(["remote", "get-url", name])
+        .current_dir(repo)
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    Some(String::from_utf8_lossy(&out.stdout).trim().to_owned())
+}
+
+#[test]
+fn add_fork_clones_with_upstream_remote() {
+    let tmp = tempfile::tempdir().unwrap();
+
+    let bare = tmp.path().join("fork-src.git");
+    init_bare_repo_with_commit(&bare);
+    let remote_url_str = format!("file://{}", bare.display());
+
+    let (workspace, _project_dir) = setup_workspace_with_project(&tmp, &[]);
+
+    rwv()
+        .args(["add", &remote_url_str, "--role=fork"])
+        .current_dir(&workspace)
+        .assert()
+        .success();
+
+    // Find the cloned repo under the workspace by scanning for one with the
+    // matching remote URL — the canonical path depends on URL parsing.
+    let cloned = find_cloned_repo(&workspace, &bare);
+    let upstream = remote_url(&cloned, "upstream");
+    let origin = remote_url(&cloned, "origin");
+    assert!(
+        upstream.is_some(),
+        "role=fork clone should have an `upstream` remote, found none at {}",
+        cloned.display()
+    );
+    assert!(
+        origin.is_none(),
+        "role=fork clone should NOT have an `origin` remote, got {origin:?}"
+    );
+}
+
+#[test]
+fn add_primary_clones_with_origin_remote() {
+    let tmp = tempfile::tempdir().unwrap();
+
+    let bare = tmp.path().join("primary-src.git");
+    init_bare_repo_with_commit(&bare);
+    let remote_url_str = format!("file://{}", bare.display());
+
+    let (workspace, _project_dir) = setup_workspace_with_project(&tmp, &[]);
+
+    let assertion = rwv()
+        .args(["add", &remote_url_str, "--role=primary"])
+        .current_dir(&workspace)
+        .assert()
+        .success();
+
+    let stderr = String::from_utf8_lossy(&assertion.get_output().stderr).into_owned();
+    assert!(
+        !stderr.contains("role=fork"),
+        "primary add should not print the fork-remote warning; stderr was:\n{stderr}"
+    );
+
+    let cloned = find_cloned_repo(&workspace, &bare);
+    assert!(
+        remote_url(&cloned, "origin").is_some(),
+        "role=primary clone should have an `origin` remote"
+    );
+    assert!(
+        remote_url(&cloned, "upstream").is_none(),
+        "role=primary clone should NOT have an `upstream` remote"
+    );
+}
+
+#[test]
+fn add_fork_against_preexisting_origin_warns_and_leaves_remotes_unchanged() {
+    let tmp = tempfile::tempdir().unwrap();
+
+    // Put the bare repo under a directory named `srcdir` so the URL-derived
+    // local path is `srcdir/preexisting-fork` — same path we pre-clone to.
+    let srcdir = tmp.path().join("srcdir");
+    std::fs::create_dir_all(&srcdir).unwrap();
+    let bare = srcdir.join("preexisting-fork.git");
+    init_bare_repo_with_commit(&bare);
+    let remote_url_str = format!("file://{}", bare.display());
+
+    let repo_path = "srcdir/preexisting-fork";
+    let (workspace, _project_dir) = setup_workspace_with_project(&tmp, &[]);
+
+    // Pre-clone with conventional `origin` pointing at the source-of-record.
+    let repo_dir = workspace.join(repo_path);
+    std::fs::create_dir_all(repo_dir.parent().unwrap()).unwrap();
+    let status = common::git()
+        .args([
+            "clone",
+            &bare.to_string_lossy(),
+            &repo_dir.to_string_lossy(),
+        ])
+        .stdout(process::Stdio::null())
+        .stderr(process::Stdio::null())
+        .status()
+        .expect("pre-clone failed");
+    assert!(status.success());
+
+    let origin_before = remote_url(&repo_dir, "origin").expect("origin should exist after clone");
+
+    // Now `rwv add --role=fork` against the existing clone.
+    let assertion = rwv()
+        .args(["add", &remote_url_str, "--role=fork"])
+        .current_dir(&workspace)
+        .assert()
+        .success();
+    let stderr = String::from_utf8_lossy(&assertion.get_output().stderr).into_owned();
+
+    assert!(
+        stderr.contains("role=fork") && stderr.contains("origin"),
+        "expected fork-remote warning on stderr, got:\n{stderr}"
+    );
+
+    // Remotes must be left alone.
+    let origin_after = remote_url(&repo_dir, "origin");
+    assert_eq!(
+        origin_after.as_deref(),
+        Some(origin_before.as_str()),
+        "origin should be unchanged after `rwv add --role=fork`"
+    );
+    assert!(
+        remote_url(&repo_dir, "upstream").is_none(),
+        "rwv should not auto-create an `upstream` remote on the existing-clone path"
+    );
+}
+
+/// Locate the directory rwv cloned a given bare source into by scanning the
+/// workspace for git repos whose `origin` or `upstream` matches.
+fn find_cloned_repo(workspace: &Path, bare: &Path) -> std::path::PathBuf {
+    let want = format!("file://{}", bare.display());
+    let want_alt = bare.to_string_lossy().into_owned();
+    fn walk(dir: &Path, out: &mut Vec<std::path::PathBuf>) {
+        if let Ok(entries) = std::fs::read_dir(dir) {
+            for e in entries.flatten() {
+                let p = e.path();
+                if p.is_dir() {
+                    if p.join(".git").exists() {
+                        out.push(p.clone());
+                    }
+                    // Skip recursing into .git dirs.
+                    if p.file_name().and_then(|n| n.to_str()) != Some(".git") {
+                        walk(&p, out);
+                    }
+                }
+            }
+        }
+    }
+    let mut repos = Vec::new();
+    walk(workspace, &mut repos);
+    for r in &repos {
+        for remote in ["origin", "upstream"] {
+            if let Some(u) = remote_url(r, remote) {
+                if u == want || u == want_alt {
+                    return r.clone();
+                }
+            }
+        }
+    }
+    panic!(
+        "could not find a cloned repo under {} pointing at {}; found repos: {:?}",
+        workspace.display(),
+        bare.display(),
+        repos
+    );
+}

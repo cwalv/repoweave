@@ -95,6 +95,11 @@ pub fn run_add(url: &str, role: Role, cwd: &Path) -> anyhow::Result<()> {
             "Directory already exists at '{}', skipping clone",
             dest.display()
         );
+        // Existing-clone path: don't auto-rename remotes; just warn when a
+        // role=fork repo's `origin` already points at the source-of-record.
+        if role == Role::Fork {
+            crate::fetch::maybe_warn_fork_origin(&dest, repo_path.as_str(), url);
+        }
     } else {
         // Create parent directories.
         if let Some(parent) = dest.parent() {
@@ -102,7 +107,8 @@ pub fn run_add(url: &str, role: Role, cwd: &Path) -> anyhow::Result<()> {
                 .with_context(|| format!("failed to create directory {}", parent.display()))?;
         }
         let git = GitVcs;
-        git.clone_repo(url, &dest)
+        let remote_name = role.clone_remote_name();
+        git.clone_repo_with_remote_name(url, &dest, remote_name)
             .with_context(|| format!("failed to clone '{}' into {}", url, dest.display()))?;
     }
 

@@ -230,6 +230,38 @@ impl RepoUrl {
     }
 }
 
+/// Loose equivalence between two clone URL strings.
+///
+/// Returns `true` when both strings resolve to the same logical repo after
+/// stripping trailing slashes, a `.git` suffix, and normalising `git@host:`
+/// SCP-style URLs to `https://host/`. Used for the `fork`-role mismatch
+/// warning where we only need to recognise "origin already points at the
+/// source-of-record" — not a security-grade comparison.
+pub fn clone_urls_equivalent(a: &str, b: &str) -> bool {
+    normalize_clone_url(a) == normalize_clone_url(b)
+}
+
+fn normalize_clone_url(s: &str) -> String {
+    let s = s.trim().trim_end_matches('/');
+    // SCP-style: git@host:owner/repo(.git) -> host/owner/repo
+    let body = if let Some(rest) = s.strip_prefix("git@") {
+        rest.replacen(':', "/", 1)
+    } else if let Some(rest) = s.strip_prefix("https://") {
+        rest.to_owned()
+    } else if let Some(rest) = s.strip_prefix("http://") {
+        rest.to_owned()
+    } else if let Some(rest) = s.strip_prefix("ssh://") {
+        rest.trim_start_matches("git@").to_owned()
+    } else if let Some(rest) = s.strip_prefix("file://") {
+        rest.to_owned()
+    } else {
+        s.to_owned()
+    };
+    body.trim_end_matches('/')
+        .trim_end_matches(".git")
+        .to_ascii_lowercase()
+}
+
 impl fmt::Display for RepoUrl {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -305,6 +337,18 @@ impl Role {
             Role::Fork => "fork",
             Role::Dependency => "dependency",
             Role::Reference => "reference",
+        }
+    }
+
+    /// Git remote name to use when cloning a repo with this role.
+    ///
+    /// `Fork` clones to `upstream` so a stray `git push` does not target the
+    /// source-of-record (typically returning HTTP 403). All other roles clone
+    /// to the conventional `origin`.
+    pub fn clone_remote_name(&self) -> &'static str {
+        match self {
+            Role::Fork => "upstream",
+            Role::Primary | Role::Dependency | Role::Reference => "origin",
         }
     }
 }
@@ -671,6 +715,58 @@ repositories:
     #[test]
     fn role_primary_is_active() {
         assert!(Role::Primary.is_active());
+    }
+
+    // ========================================================================
+    // Role::clone_remote_name
+    // ========================================================================
+
+    #[test]
+    fn clone_remote_name_fork_is_upstream() {
+        assert_eq!(Role::Fork.clone_remote_name(), "upstream");
+    }
+
+    #[test]
+    fn clone_remote_name_non_fork_is_origin() {
+        assert_eq!(Role::Primary.clone_remote_name(), "origin");
+        assert_eq!(Role::Dependency.clone_remote_name(), "origin");
+        assert_eq!(Role::Reference.clone_remote_name(), "origin");
+    }
+
+    // ========================================================================
+    // clone_urls_equivalent
+    // ========================================================================
+
+    #[test]
+    fn urls_equivalent_strip_dot_git() {
+        assert!(clone_urls_equivalent(
+            "https://github.com/a/b.git",
+            "https://github.com/a/b"
+        ));
+    }
+
+    #[test]
+    fn urls_equivalent_ssh_vs_https() {
+        assert!(clone_urls_equivalent(
+            "git@github.com:a/b.git",
+            "https://github.com/a/b.git"
+        ));
+    }
+
+    #[test]
+    fn urls_equivalent_trailing_slash() {
+        assert!(clone_urls_equivalent(
+            "https://github.com/a/b/",
+            "https://github.com/a/b"
+        ));
+    }
+
+    #[test]
+    fn urls_equivalent_different_repos() {
+        assert!(!clone_urls_equivalent(
+            "https://github.com/a/b.git",
+            "https://github.com/a/c.git"
+        ));
     }
 
     #[test]

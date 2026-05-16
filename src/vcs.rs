@@ -216,6 +216,19 @@ pub trait Vcs {
     /// Clone a remote URL into `dest`.
     fn clone_repo(&self, url: &str, dest: &Path) -> Result<(), VcsError>;
 
+    /// Clone a remote URL into `dest`, naming the remote `remote_name`
+    /// instead of the VCS default (`origin` for git).
+    ///
+    /// Used to express the `fork` role convention: the source URL is the
+    /// upstream-of-record, not a push target, so it should not be aliased to
+    /// `origin`.
+    fn clone_repo_with_remote_name(
+        &self,
+        url: &str,
+        dest: &Path,
+        remote_name: &str,
+    ) -> Result<(), VcsError>;
+
     /// Resolve the current HEAD to a revision ID.
     ///
     /// The returned `RevisionId` carries the canonical commit SHA. When a

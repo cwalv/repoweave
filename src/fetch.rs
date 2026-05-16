@@ -3,9 +3,9 @@
 //! The source must be a URL (full URL or `owner/repo` shorthand resolved via
 //! the registry). Local paths are not accepted; use `rwv activate` instead.
 
-use crate::git::GitVcs;
+use crate::git::{git_command, GitVcs};
 use crate::lock;
-use crate::manifest::{LockFile, Manifest, RepoPath};
+use crate::manifest::{clone_urls_equivalent, LockFile, Manifest, RepoPath, Role};
 use crate::registry;
 use crate::vcs::Vcs;
 use anyhow::{bail, Context};
@@ -145,6 +145,12 @@ pub fn run_fetch(source: &str, workspace_root: &Path, mode: FetchMode) -> anyhow
     for (repo_path, entry) in &manifest.repositories {
         let dest = workspace_root.join(repo_path.as_path());
         if dest.exists() {
+            // If the existing clone is role=fork and its `origin` still points
+            // at the source-of-record, warn the user — `git push` would target
+            // the upstream and get 403'd. We leave remotes alone.
+            if entry.role == Role::Fork {
+                maybe_warn_fork_origin(&dest, repo_path.as_str(), &entry.url.to_string());
+            }
             // For Locked/Frozen, check out the pinned revision even if already cloned.
             if let Some(ref lock) = lock_file {
                 if let Some(lock_entry) = lock.repositories.get(repo_path) {
@@ -185,12 +191,15 @@ pub fn run_fetch(source: &str, workspace_root: &Path, mode: FetchMode) -> anyhow
             }
         }
 
+        let remote_name = entry.role.clone_remote_name();
         println!(
-            "rwv fetch: cloning {} from {}",
+            "rwv fetch: cloning {} from {} (remote: {remote_name})",
             repo_path.as_str(),
             entry.url
         );
-        if let Err(e) = git.clone_repo(&entry.url.to_string(), &dest) {
+        if let Err(e) =
+            git.clone_repo_with_remote_name(&entry.url.to_string(), &dest, remote_name)
+        {
             let msg = format!(
                 "{}: failed to clone {} into {}: {e}",
                 repo_path.as_str(),
@@ -266,6 +275,30 @@ pub fn run_fetch(source: &str, workspace_root: &Path, mode: FetchMode) -> anyhow
     }
 
     Ok(())
+}
+
+/// If `dest` is a git repo with `origin` pointing at `manifest_url`, print a
+/// short stderr notice telling the user to rename the remote to `upstream`.
+/// Non-fatal: silent on any git error or when remotes differ.
+pub(crate) fn maybe_warn_fork_origin(dest: &Path, repo_label: &str, manifest_url: &str) {
+    let out = match git_command()
+        .args(["remote", "get-url", "origin"])
+        .current_dir(dest)
+        .output()
+    {
+        Ok(o) if o.status.success() => o,
+        _ => return,
+    };
+    let origin_url = match String::from_utf8(out.stdout) {
+        Ok(s) => s.trim().to_owned(),
+        Err(_) => return,
+    };
+    if clone_urls_equivalent(&origin_url, manifest_url) {
+        eprintln!(
+            "note: {repo_label} is role=fork but origin points at the source-of-record; \
+rename with `git remote rename origin upstream` to avoid pushing there by accident"
+        );
+    }
 }
 
 #[cfg(test)]

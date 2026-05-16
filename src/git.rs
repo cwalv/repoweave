@@ -188,6 +188,26 @@ impl Vcs for GitVcs {
         Ok(())
     }
 
+    fn clone_repo_with_remote_name(
+        &self,
+        url: &str,
+        dest: &Path,
+        remote_name: &str,
+    ) -> Result<(), VcsError> {
+        let dest_str = dest.to_str().ok_or_else(|| VcsError::Io {
+            ctx: format!("destination path {} is not valid UTF-8", dest.display()),
+            source: std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "non-utf8 destination path",
+            ),
+        })?;
+        Self::run(
+            &["clone", "--origin", remote_name, url, dest_str],
+            Path::new("."),
+        )?;
+        Ok(())
+    }
+
     fn head_revision(&self, repo: &Path) -> Result<RevisionId, VcsError> {
         let sha = Self::run(&["rev-parse", "HEAD"], repo)?;
         // If a tag points at HEAD, preserve it as the display form so callers
@@ -366,14 +386,18 @@ impl Vcs for GitVcs {
 
     fn default_branch(&self, repo: &Path) -> Result<RefName, VcsError> {
         const FALLBACK: &str = "main";
-        const PREFIX: &str = "refs/remotes/origin/";
 
-        match Self::run(&["symbolic-ref", "refs/remotes/origin/HEAD"], repo) {
-            Ok(sym_ref) => {
-                let branch = sym_ref.strip_prefix(PREFIX).unwrap_or(FALLBACK).to_string();
-                Ok(RefName::new(branch))
+        // Try the conventional `origin` first, then `upstream` (the remote
+        // name rwv uses for role=fork clones). Strip the matching prefix to
+        // recover the bare branch name.
+        for remote in ["origin", "upstream"] {
+            let sym = format!("refs/remotes/{remote}/HEAD");
+            if let Ok(sym_ref) = Self::run(&["symbolic-ref", &sym], repo) {
+                let prefix = format!("refs/remotes/{remote}/");
+                let branch = sym_ref.strip_prefix(&prefix).unwrap_or(FALLBACK).to_string();
+                return Ok(RefName::new(branch));
             }
-            Err(_) => Ok(RefName::new(FALLBACK)),
         }
+        Ok(RefName::new(FALLBACK))
     }
 }
