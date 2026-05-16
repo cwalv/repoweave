@@ -522,3 +522,53 @@ fn head_revision_preserves_tag_at_head_as_display() {
     assert_eq!(head.as_str(), &head_sha);
     assert_eq!(head.display_str(), "v0.3.4");
 }
+
+// ============================================================================
+// Stage D (fo-gvb0v): raw-vs-resolved invariants
+// ============================================================================
+
+#[test]
+fn raw_revision_id_equality_is_string_identity() {
+    // RawRevisionId carries the YAML scalar verbatim; equality is string
+    // identity, not any kind of commit-identity. Two distinct strings are
+    // distinct values even if they would resolve to the same SHA in some
+    // repo — resolution is the boundary that produces SHA-identity.
+    use repoweave::vcs::RawRevisionId;
+    let a = RawRevisionId::new("v1.0.0");
+    let b = RawRevisionId::new("v1.0.0");
+    let c = RawRevisionId::new("v2.0.0");
+    assert_eq!(a, b);
+    assert_ne!(a, c);
+}
+
+#[test]
+fn raw_revision_id_roundtrips_through_yaml() {
+    // The parse boundary: a raw value serializes to a single YAML scalar
+    // and deserializes back into a RawRevisionId with the original string.
+    use repoweave::vcs::RawRevisionId;
+    let original = RawRevisionId::new("v0.3.4");
+    let yaml = serde_yaml::to_string(&original).unwrap();
+    let restored: RawRevisionId = serde_yaml::from_str(&yaml).unwrap();
+    assert_eq!(restored, original);
+    assert_eq!(restored.as_str(), "v0.3.4");
+}
+
+#[test]
+fn raw_revision_id_tag_resolves_to_head_sha() {
+    // The resolution boundary in miniature: given a repo whose HEAD is at
+    // a tag `v1.0.0`, a `RawRevisionId::new("v1.0.0")` fed through
+    // `Vcs::resolve_revision` produces a `ResolvedRevisionId` whose
+    // canonical SHA matches `Vcs::head_revision`.
+    use repoweave::vcs::RawRevisionId;
+    let dir = init_repo();
+    let p = dir.path();
+    git(p, &["tag", "v1.0.0"]);
+
+    let raw = RawRevisionId::new("v1.0.0");
+    let vcs = GitVcs;
+    let resolved = vcs.resolve_revision(p, raw.as_str()).unwrap();
+    let head = vcs.head_revision(p).unwrap();
+    assert_eq!(resolved, head);
+    // Display preserves the tag form for human-readable output / lock writes.
+    assert_eq!(resolved.display_str(), "v1.0.0");
+}

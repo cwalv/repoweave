@@ -119,6 +119,22 @@ impl serde::Serialize for ResolvedRevisionId {
 /// See `docs/agent-persona/fp-principles-in-rust.md` ("make illegal states
 /// unrepresentable") and `docs/agent-persona/ousterhout-philosophy-of-software-design.md`
 /// ("define errors out of existence by changing the data structure").
+///
+/// # Compile-time invariant
+///
+/// A `RawRevisionId` cannot be compared against a `ResolvedRevisionId`.
+/// The following doc-test fails to compile — this is the type system
+/// enforcing the contract that motivated the split (fo-gvb0v).
+///
+/// ```compile_fail
+/// use repoweave::vcs::{RawRevisionId, ResolvedRevisionId};
+/// let raw = RawRevisionId::new("v1.0.0");
+/// let resolved = ResolvedRevisionId::from_canonical(
+///     "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+///     Some("v1.0.0".to_string()),
+/// );
+/// let _ = raw == resolved; // E0277: PartialEq not implemented across types
+/// ```
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct RawRevisionId(String);
 

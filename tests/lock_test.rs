@@ -1304,3 +1304,129 @@ fn lock_commit_dirty_check_refuses_staged_non_lock_changes() {
                 .or(predicate::str::contains("stash")),
         );
 }
+
+// ============================================================================
+// Stage D (fo-gvb0v): LockFile<->ResolvedLockFile boundary invariants
+// ============================================================================
+
+#[test]
+fn lock_file_from_path_yields_raw_entries() {
+    // LockFile::from_path is the parse boundary: it produces a LockFile
+    // whose entries' versions are RawRevisionId — no canonical-SHA
+    // resolution has happened yet.
+    let tmp = tempfile::tempdir().unwrap();
+    let root = make_workspace(tmp.path(), "ws");
+    let repo_path = "github/acme/server";
+    let project_dir = root.join("projects").join("my-app");
+    write_manifest(
+        &project_dir,
+        &[(repo_path, "https://github.com/acme/server.git")],
+    );
+    let lock_path = project_dir.join("rwv.lock");
+    std::fs::write(
+        &lock_path,
+        r#"repositories:
+  github/acme/server:
+    type: git
+    url: https://github.com/acme/server.git
+    version: v1.0.0
+"#,
+    )
+    .unwrap();
+
+    let lock = repoweave::manifest::LockFile::from_path(&lock_path).unwrap();
+    let entry = &lock.repositories[&repoweave::manifest::RepoPath::new(repo_path)];
+    // The static type of `entry.version` is `RawRevisionId`. We can only
+    // ask for its string identity — there is no `display_str()` or
+    // canonical-SHA accessor (those live on ResolvedRevisionId).
+    assert_eq!(entry.version, repoweave::vcs::RawRevisionId::new("v1.0.0"));
+}
+
+#[test]
+fn resolve_versions_surfaces_unknown_ref_in_failures() {
+    // resolve_versions returns ResolvedLockFile + failure list. An unknown
+    // ref does not appear in the resolved view and surfaces in failures
+    // with its raw string intact, so callers can craft a precise
+    // diagnostic ("lock pins unknown revision X").
+    let tmp = tempfile::tempdir().unwrap();
+    let root = make_workspace(tmp.path(), "ws");
+    let repo_path = "github/acme/server";
+    init_git_repo(&root.join(repo_path));
+
+    let project_dir = root.join("projects").join("my-app");
+    write_manifest(
+        &project_dir,
+        &[(repo_path, "https://github.com/acme/server.git")],
+    );
+    let lock_path = project_dir.join("rwv.lock");
+    std::fs::write(
+        &lock_path,
+        r#"repositories:
+  github/acme/server:
+    type: git
+    url: https://github.com/acme/server.git
+    version: deadbeef-not-a-real-ref
+"#,
+    )
+    .unwrap();
+
+    let lock = repoweave::manifest::LockFile::from_path(&lock_path).unwrap();
+    let (resolved, failures) = lock.resolve_versions(&root);
+    let repo = repoweave::manifest::RepoPath::new(repo_path);
+    assert!(
+        !resolved.repositories.contains_key(&repo),
+        "unresolved entry must not appear in ResolvedLockFile"
+    );
+    assert_eq!(failures.len(), 1);
+    assert_eq!(failures[0].0, repo);
+    assert_eq!(failures[0].1.as_str(), "deadbeef-not-a-real-ref");
+}
+
+#[test]
+fn resolve_versions_roundtrip_raw_then_resolved_yaml_shape() {
+    // Both LockFile (raw) and ResolvedLockFile (post-resolve) serialize
+    // to a single YAML scalar per version — the parse-boundary type does
+    // not leak into the on-disk shape. A round-trip through
+    // `from_path` -> `resolve_versions` -> `write_lock` -> `from_path`
+    // preserves the version's display string for a tag-form entry.
+    let tmp = tempfile::tempdir().unwrap();
+    let root = make_workspace(tmp.path(), "ws");
+    let repo_path = "github/acme/server";
+    init_git_repo(&root.join(repo_path));
+    let _ = common::git()
+        .args(["tag", "v1.0.0"])
+        .current_dir(root.join(repo_path))
+        .output()
+        .unwrap();
+
+    let project_dir = root.join("projects").join("my-app");
+    write_manifest(
+        &project_dir,
+        &[(repo_path, "https://github.com/acme/server.git")],
+    );
+    let lock_path = project_dir.join("rwv.lock");
+    std::fs::write(
+        &lock_path,
+        r#"repositories:
+  github/acme/server:
+    type: git
+    url: https://github.com/acme/server.git
+    version: v1.0.0
+"#,
+    )
+    .unwrap();
+
+    let lock = repoweave::manifest::LockFile::from_path(&lock_path).unwrap();
+    let (resolved, _failures) = lock.resolve_versions(&root);
+    let out_path = project_dir.join("rwv.lock.out");
+    repoweave::lock::write_lock(&resolved, &out_path).unwrap();
+    let round = std::fs::read_to_string(&out_path).unwrap();
+    assert!(
+        round.contains("version: v1.0.0"),
+        "post-resolve YAML should preserve tag-form display string: {round}"
+    );
+    // And re-parsing through the parse boundary yields the same raw value.
+    let reparsed = repoweave::manifest::LockFile::from_path(&out_path).unwrap();
+    let entry = &reparsed.repositories[&repoweave::manifest::RepoPath::new(repo_path)];
+    assert_eq!(entry.version, repoweave::vcs::RawRevisionId::new("v1.0.0"));
+}
