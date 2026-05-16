@@ -508,6 +508,91 @@ fn check_locked_missing_on_disk_reported_as_drift() {
 }
 
 // ===========================================================================
+// B3: `rwv check` surfaces lock entries referencing unknown revisions.
+// ===========================================================================
+
+/// If the lock pins a SHA the local clone has never seen, `resolve_versions`
+/// can't resolve it. Previously this signal was silently dropped (the lock
+/// entry stayed raw, `find_violations` either ignored it or emitted a false
+/// StaleLock). Now: an `Error`-severity issue saying "lock references unknown
+/// revision". Doctor is the diagnostic of last resort — this is the place
+/// that most needs to know when resolution failed.
+#[test]
+fn check_flags_unresolvable_lock_revision() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = make_workspace(tmp.path(), "ws");
+
+    let repo_path = "github/acme/server";
+    init_git_repo(&root.join(repo_path));
+
+    let project_dir = root.join("projects").join("my-app");
+    write_manifest(
+        &project_dir,
+        &[(repo_path, "https://github.com/acme/server.git")],
+    );
+    // SHA the local repo has never seen — `resolve_revision` will fail.
+    write_lock(
+        &project_dir,
+        &[(
+            repo_path,
+            "https://github.com/acme/server.git",
+            "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
+        )],
+    );
+
+    let assert = rwv_cmd()
+        .arg("check")
+        .current_dir(&root)
+        .assert()
+        .failure();
+    let out = String::from_utf8_lossy(&assert.get_output().stdout).into_owned();
+    assert!(
+        out.contains("lock references unknown revision"),
+        "expected B3 unresolved-lock diagnostic, got stdout: {out}"
+    );
+}
+
+// ===========================================================================
+// B4: `rwv check` surfaces on-disk repos whose HEAD can't be read.
+// ===========================================================================
+
+/// A repo that's on disk but whose HEAD is unreadable (e.g. corrupted .git
+/// dir) previously produced zero violations — doctor reported clean. Now: an
+/// `Error`-severity issue. Simulated by removing `.git/HEAD` after init.
+#[test]
+fn check_flags_unreadable_head() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = make_workspace(tmp.path(), "ws");
+
+    let repo_path = "github/acme/server";
+    init_git_repo(&root.join(repo_path));
+
+    let project_dir = root.join("projects").join("my-app");
+    write_manifest(
+        &project_dir,
+        &[(repo_path, "https://github.com/acme/server.git")],
+    );
+
+    // Point HEAD at a ref that doesn't exist: `git rev-parse --git-dir`
+    // (used by `is_repo`) still succeeds so the repo is on-disk, but
+    // `git rev-parse HEAD` (used by `head_revision`) fails — exactly the
+    // mid-rebase / "unreadable HEAD" failure mode B4 targets.
+    let head_file = root.join(repo_path).join(".git/HEAD");
+    std::fs::write(&head_file, "ref: refs/heads/nonexistent\n").unwrap();
+
+    let assert = rwv_cmd()
+        .arg("check")
+        .current_dir(&root)
+        .assert()
+        .failure();
+    let out = String::from_utf8_lossy(&assert.get_output().stdout).into_owned();
+    assert!(
+        out.contains("HEAD unreadable"),
+        "expected B4 unreadable-HEAD diagnostic, got stdout: {out}"
+    );
+}
+
+// ===========================================================================
 // Smoke test: `rwv check` CLI command is recognized
 // ===========================================================================
 

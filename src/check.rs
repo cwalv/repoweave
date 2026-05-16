@@ -564,12 +564,20 @@ pub fn run_check(cwd: &std::path::Path, fix: bool) -> anyhow::Result<bool> {
     let session = WorkspaceSession::new(&workspace_dir);
     let git = GitVcs;
 
-    // Resolve HEAD revisions for each repo on disk.
+    // Resolve HEAD revisions for each repo on disk. Errors are kept (not
+    // dropped) so that `find_violations` can flag on-disk repos whose HEAD
+    // could not be read (corrupted, mid-rebase, permissions). Audit B4.
     let mut head_revisions = BTreeMap::new();
+    let mut head_read_failures: Vec<(RepoPath, String)> = Vec::new();
     for repo_path in session.repos_on_disk() {
         let abs = workspace_dir.join(repo_path.as_path());
-        if let Ok(rev) = git.head_revision(&abs) {
-            head_revisions.insert(repo_path.clone(), rev);
+        match git.head_revision(&abs) {
+            Ok(rev) => {
+                head_revisions.insert(repo_path.clone(), rev);
+            }
+            Err(e) => {
+                head_read_failures.push((repo_path.clone(), e.to_string()));
+            }
         }
     }
 
@@ -577,6 +585,7 @@ pub fn run_check(cwd: &std::path::Path, fix: bool) -> anyhow::Result<bool> {
     let projects_dir = workspace_dir.join("projects");
     let mut projects = Vec::new();
     let mut known_repos = BTreeSet::new();
+    let mut lock_resolve_failures: Vec<(crate::manifest::ProjectName, RepoPath)> = Vec::new();
 
     if projects_dir.is_dir() {
         let mut entries: Vec<_> = std::fs::read_dir(&projects_dir)?
@@ -610,8 +619,24 @@ pub fn run_check(cwd: &std::path::Path, fix: bool) -> anyhow::Result<bool> {
                     // Resolve lock entries against on-disk repos so the
                     // canonical-SHA equality used by `find_violations` works
                     // uniformly for tag-form, branch-form, and SHA-form locks.
+                    //
+                    // B3: capture unresolvable entries instead of discarding
+                    // them. An unresolvable rev means the local clone has
+                    // never seen the SHA/tag the lock pinned; without this
+                    // diagnostic, `find_violations` either flags nothing
+                    // (no head_revisions entry) or falsely reports StaleLock
+                    // by comparing the raw tag string against a real SHA.
                     if let Some(ref mut lock) = project.lock {
-                        let _ = lock.resolve_versions(&workspace_dir);
+                        let project_rel_name = rel_dir
+                            .strip_prefix("projects")
+                            .unwrap_or(rel_dir)
+                            .to_string_lossy()
+                            .into_owned();
+                        let project_name_for_issue =
+                            crate::manifest::ProjectName::new(project_rel_name);
+                        for unresolved in lock.resolve_versions(&workspace_dir) {
+                            lock_resolve_failures.push((project_name_for_issue.clone(), unresolved));
+                        }
                     }
 
                     for repo_path in project.manifest.repositories.keys() {
@@ -639,6 +664,30 @@ pub fn run_check(cwd: &std::path::Path, fix: bool) -> anyhow::Result<bool> {
 
     let violations = find_violations(&input);
     let mut all_issues = violations_to_issues(violations);
+
+    // B3: surface lock entries that couldn't be resolved against the local
+    // repo. Doctor is the diagnostic of last resort — swallowing this signal
+    // is exactly the wrong place to drop information.
+    for (project_name, repo_path) in &lock_resolve_failures {
+        all_issues.push(Issue {
+            integration: "core".into(),
+            severity: Severity::Error,
+            message: format!(
+                "{project_name}: lock references unknown revision for {repo_path}; run `rwv lock` or fetch"
+            ),
+        });
+    }
+
+    // B4: surface on-disk repos whose HEAD could not be read. Previously the
+    // Err was silently dropped, so `find_violations` produced zero
+    // violations for these repos and doctor reported clean.
+    for (repo_path, err_msg) in &head_read_failures {
+        all_issues.push(Issue {
+            integration: "core".into(),
+            severity: Severity::Error,
+            message: format!("{repo_path}: HEAD unreadable ({err_msg})"),
+        });
+    }
 
     // Run integration check hooks for each project
     let builtin = crate::integrations::builtin_integrations();
