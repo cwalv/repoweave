@@ -572,6 +572,64 @@ fn activate_same_project_twice_is_idempotent() {
 }
 
 // ============================================================================
+// A3: activation-symlink sweep skips ALL builtin registry dirs (not just the
+// hardcoded github/gitlab/bitbucket set) and otherwise descends.
+// ============================================================================
+
+/// The recursive sweep must (a) skip every builtin registry directory and
+/// (b) still descend into ordinary subdirectories to clean up nested
+/// activation symlinks. Verified via deactivate, which runs the sweep.
+#[test]
+fn deactivate_descends_into_nondir_registry_subtrees() {
+    use std::os::unix::fs::symlink;
+
+    let tmp = tempfile::tempdir().unwrap();
+    let ws = make_workspace(tmp.path());
+    make_project(
+        &ws,
+        "web-app",
+        &[("github/acme/server", "primary", &["package.json"])],
+    );
+
+    // Activate to create the top-level symlinks.
+    rwv()
+        .args(["activate", "web-app"])
+        .current_dir(&ws)
+        .assert()
+        .success();
+
+    // Now plant a nested activation symlink inside a non-registry
+    // subdirectory. The sweep should follow it on deactivate.
+    let nested_dir = ws.join("docs");
+    std::fs::create_dir_all(&nested_dir).unwrap();
+    let nested_target = ws.join("projects/web-app/package.json");
+    let nested_link = nested_dir.join("package.json");
+    symlink(&nested_target, &nested_link).unwrap();
+
+    // And plant one inside `github/` — it must NOT be removed because the
+    // sweep refuses to descend into registry dirs.
+    let registry_link = ws.join("github/squat.json");
+    symlink(&nested_target, &registry_link).unwrap();
+
+    // Re-activate: this runs `remove_activation_symlinks` before re-creating
+    // links, exercising the sweep.
+    rwv()
+        .args(["activate", "web-app"])
+        .current_dir(&ws)
+        .assert()
+        .success();
+
+    assert!(
+        !nested_link.exists(),
+        "nested activation symlink under non-registry dir must be swept"
+    );
+    assert!(
+        registry_link.symlink_metadata().is_ok(),
+        "symlink inside a registry-named dir must NOT be swept (skip set)"
+    );
+}
+
+// ============================================================================
 // No ecosystem files -- still activates and writes .rwv-active
 // ============================================================================
 

@@ -67,11 +67,15 @@ pub fn init(name: &str, provider: Option<&str>, cwd: &Path) -> anyhow::Result<()
             )
         })?;
 
-        // Look up the registry to get the clone URL pattern
+        // Look up the registry to get the clone URL pattern. Parse into
+        // `RegistryName` at the boundary so the comparison goes through the
+        // newtype's PartialEq — any future normalisation (case, prefixes)
+        // applies here automatically. (Audit A2.)
+        let target = crate::registry::RegistryName::new(registry_name);
         let registries = builtin_registries();
         let registry = registries
             .iter()
-            .find(|r| r.name().as_str() == registry_name)
+            .find(|r| r.name() == &target)
             .ok_or_else(|| {
                 anyhow::anyhow!(
                     "unknown registry '{}'. Known registries: github, gitlab, bitbucket",

@@ -16,7 +16,38 @@ use crate::integration::{is_enabled, Integration, IntegrationContext, Severity};
 use crate::integration_runner::{build_detection_cache, run_activations};
 use crate::integrations::builtin_integrations;
 use crate::manifest::{IntegrationConfig, Manifest, ProjectName};
+use crate::registry::builtin_registries;
 use crate::workspace::{set_active_project, WorkspaceContext, WorkspaceSession};
+
+/// Report integration issues to stderr and bail if any are `Severity::Error`.
+///
+/// `run_activations` runs BEFORE any symlinks are touched, so an error here
+/// means the project has not yet been put into the partially-activated state
+/// the comment downstream warns about. Continuing past an integration error
+/// would leave `.rwv-active` set without the files the integration was
+/// supposed to produce. Audit B2; Ousterhout: don't define errors away by
+/// logging-and-continuing. Warnings stay warnings.
+fn report_and_check_activation_issues(
+    issues: &[crate::integration::Issue],
+) -> anyhow::Result<()> {
+    let mut error_count = 0usize;
+    for issue in issues {
+        let prefix = match issue.severity {
+            Severity::Warning => "warning",
+            Severity::Error => {
+                error_count += 1;
+                "error"
+            }
+        };
+        eprintln!("[{prefix}] {}: {}", issue.integration, issue.message);
+    }
+    if error_count > 0 {
+        anyhow::bail!(
+            "activate: {error_count} integration error(s); aborting before any symlinks change"
+        );
+    }
+    Ok(())
+}
 
 /// Run `rwv activate PROJECT` from the given working directory.
 pub fn activate(project: &str, cwd: &Path) -> anyhow::Result<()> {
@@ -48,15 +79,7 @@ fn activate_at(root: &Path, project: &str, skip_missing_sources: bool) -> anyhow
     let ctx_base = session.context_base(&project_dir, &project_name, &detection_cache);
 
     let issues = run_activations(&integrations, &manifest, &ctx_base);
-
-    // Report errors but don't abort — partial activation is better than none.
-    for issue in &issues {
-        let prefix = match issue.severity {
-            Severity::Warning => "warning",
-            Severity::Error => "error",
-        };
-        eprintln!("[{prefix}] {}: {}", issue.integration, issue.message);
-    }
+    report_and_check_activation_issues(&issues)?;
 
     // 2. Collect generated files from all enabled integrations.
     let default_config = IntegrationConfig::default();
@@ -198,14 +221,17 @@ fn remove_activation_symlinks_in(dir: &Path, root: &Path) -> anyhow::Result<()> 
                 }
             }
         } else if meta.file_type().is_dir() {
-            // Skip well-known workspace directories to avoid unnecessary recursion.
+            // Skip well-known workspace directories to avoid unnecessary
+            // recursion. The set of registry directory names is the canonical
+            // source — open-coding it here means a new registry (e.g.
+            // codeberg) added to `registry.rs` would silently recurse into
+            // a registry tree. Derive from `builtin_registries()` + the
+            // workspace constants. Audit A3.
             if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
-                if name == "projects"
-                    || name == "github"
-                    || name == "gitlab"
-                    || name == "bitbucket"
-                    || name == ".git"
-                {
+                let is_registry_dir = builtin_registries()
+                    .iter()
+                    .any(|r| r.name().as_str() == name);
+                if is_registry_dir || name == "projects" || name == ".git" {
                     continue;
                 }
             }
@@ -237,6 +263,60 @@ fn remove_activation_symlinks_in(dir: &Path, root: &Path) -> anyhow::Result<()> 
 /// is a view onto an existing project, so dangling symlinks are not useful).
 pub fn activate_workweave(project: &str, workweave_dir: &Path) -> anyhow::Result<()> {
     activate_at(workweave_dir, project, true)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::integration::Issue;
+
+    fn issue(integration: &str, severity: Severity, message: &str) -> Issue {
+        Issue {
+            integration: integration.into(),
+            severity,
+            message: message.into(),
+        }
+    }
+
+    #[test]
+    fn report_and_check_no_issues_returns_ok() {
+        assert!(report_and_check_activation_issues(&[]).is_ok());
+    }
+
+    #[test]
+    fn report_and_check_warnings_only_returns_ok() {
+        let issues = vec![issue("npm", Severity::Warning, "w1")];
+        assert!(report_and_check_activation_issues(&issues).is_ok());
+    }
+
+    #[test]
+    fn report_and_check_any_error_bails() {
+        // B2: a single integration error must bail BEFORE the caller starts
+        // touching symlinks. Logging-and-continuing leaves .rwv-active set
+        // without the integration's outputs — Ousterhout: don't define
+        // errors away by silently degrading.
+        let issues = vec![
+            issue("cargo", Severity::Warning, "w"),
+            issue("npm", Severity::Error, "boom"),
+        ];
+        let err = report_and_check_activation_issues(&issues).unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("1 integration error") && msg.contains("before any symlinks"),
+            "expected aggregate error message about integration errors, got: {msg}"
+        );
+    }
+
+    #[test]
+    fn report_and_check_multiple_errors_aggregate_in_message() {
+        let issues = vec![
+            issue("a", Severity::Error, "e1"),
+            issue("b", Severity::Error, "e2"),
+            issue("c", Severity::Warning, "w"),
+        ];
+        let err = report_and_check_activation_issues(&issues).unwrap_err();
+        assert!(err.to_string().contains("2 integration error"));
+    }
 }
 
 /// Deactivate the current project: remove symlinks and `.rwv-active`.

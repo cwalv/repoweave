@@ -417,14 +417,16 @@ fn infer_url_from_path(path: &str, registries: &[&dyn Registry]) -> Option<RepoU
         return None;
     }
 
-    let registry_name = segments[0];
+    // Parse into `RegistryName` at the boundary so the comparison runs
+    // through the newtype rather than against its raw interior. (Audit A2.)
+    let registry_name = crate::registry::RegistryName::new(segments[0]);
     let owner = segments[1];
     let repo = segments[2];
 
     let id = crate::registry::RepoId::new(owner, repo);
 
     for reg in registries {
-        if reg.name().as_str() == registry_name {
+        if reg.name() == &registry_name {
             return reg.clone_url(&id);
         }
     }
