@@ -142,6 +142,35 @@ fn is_already_exists(stderr: &str) -> bool {
     stderr.contains("already exists") || stderr.contains("already a worktree")
 }
 
+/// True for transient/internal tags that must not be chosen as a lock's
+/// symbolic name. Mirrors the ref-spaces rwv uses for its own bookkeeping —
+/// `savepoint/*` (operator/tool savepoints) and `rwv/pre-op/*` (sync abort
+/// recovery refs under `refs/rwv/pre-op/*` when surfaced as tag names).
+fn is_transient_tag(tag: &str) -> bool {
+    tag.starts_with("savepoint/")
+        || tag.starts_with("rwv/pre-op/")
+        || tag.starts_with("refs/rwv/pre-op/")
+        || tag.starts_with("rwv-savepoint/")
+}
+
+/// True for release-shape tags (e.g., `v1.2.3`, `v0.3.4-rc1`). Used as a
+/// tiebreaker when multiple non-transient tags point at HEAD so a release
+/// tag wins over an arbitrary lightweight tag.
+fn is_release_shape_tag(tag: &str) -> bool {
+    let rest = match tag.strip_prefix('v') {
+        Some(r) => r,
+        None => return false,
+    };
+    // Require at least "N.N" (e.g., "1.0") to count as release-shape.
+    let mut parts = rest.split(['.', '-', '+']);
+    let first = parts.next().unwrap_or("");
+    let second = parts.next().unwrap_or("");
+    !first.is_empty()
+        && first.chars().all(|c| c.is_ascii_digit())
+        && !second.is_empty()
+        && second.chars().next().is_some_and(|c| c.is_ascii_digit())
+}
+
 impl Vcs for GitVcs {
     fn name(&self) -> &str {
         "git"
@@ -272,8 +301,32 @@ impl Vcs for GitVcs {
 
     fn tag_at_head(&self, repo: &Path) -> Result<Option<RefName>, VcsError> {
         // `git tag --points-at HEAD` lists tags that resolve to HEAD.
+        //
+        // Filter out transient/internal tags (savepoints and pre-op refs) so
+        // they're never chosen as the symbolic name when writing a lock. If
+        // only transient tags point at HEAD, we return `None` so callers fall
+        // back to the canonical SHA.
+        //
+        // Among remaining tags, prefer release-shape tags (e.g., `v1.2.3`)
+        // over arbitrary lightweight tags, so a workspace with both
+        // `v9.9.9` and `tmp-foo` writes `v9.9.9`.
         let output = Self::run(&["tag", "--points-at", "HEAD"], repo)?;
-        Ok(output.lines().next().map(RefName::new))
+        let candidates: Vec<&str> = output
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty())
+            .filter(|t| !is_transient_tag(t))
+            .collect();
+        if candidates.is_empty() {
+            return Ok(None);
+        }
+        // Prefer a release-shape tag; otherwise fall back to the first.
+        let chosen = candidates
+            .iter()
+            .find(|t| is_release_shape_tag(t))
+            .copied()
+            .unwrap_or(candidates[0]);
+        Ok(Some(RefName::new(chosen)))
     }
 
     fn checkout(&self, repo: &Path, revision: &RevisionId) -> Result<(), VcsError> {

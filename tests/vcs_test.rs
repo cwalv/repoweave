@@ -156,6 +156,108 @@ fn tag_at_head_multiple_tags() {
 }
 
 #[test]
+fn tag_at_head_skips_savepoint_only() {
+    // When only transient savepoint tags point at HEAD, tag_at_head returns
+    // None so the lock writer falls back to the canonical SHA.
+    let dir = init_repo();
+    let p = dir.path();
+
+    git(p, &["tag", "savepoint/2024-01-01-abc"]);
+
+    let vcs = GitVcs;
+    assert_eq!(vcs.tag_at_head(p).unwrap(), None);
+}
+
+#[test]
+fn tag_at_head_skips_pre_op_only() {
+    let dir = init_repo();
+    let p = dir.path();
+
+    git(p, &["tag", "rwv/pre-op/op-xyz"]);
+
+    let vcs = GitVcs;
+    assert_eq!(vcs.tag_at_head(p).unwrap(), None);
+}
+
+#[test]
+fn tag_at_head_prefers_release_over_transient() {
+    // Release-shape tag `v9.9.9` alongside transient savepoint tag — release wins.
+    let dir = init_repo();
+    let p = dir.path();
+
+    git(p, &["tag", "savepoint/old"]);
+    git(p, &["tag", "v9.9.9"]);
+
+    let vcs = GitVcs;
+    let tag = vcs.tag_at_head(p).unwrap();
+    assert_eq!(tag.as_ref().map(|t| t.as_str()), Some("v9.9.9"));
+}
+
+#[test]
+fn tag_at_head_prefers_release_over_lightweight() {
+    // When both a release-shape tag and an arbitrary tag point at HEAD, the
+    // release tag is preferred regardless of git's ordering.
+    let dir = init_repo();
+    let p = dir.path();
+
+    git(p, &["tag", "aaa-arbitrary"]);
+    git(p, &["tag", "v1.2.3"]);
+
+    let vcs = GitVcs;
+    let tag = vcs.tag_at_head(p).unwrap();
+    assert_eq!(tag.as_ref().map(|t| t.as_str()), Some("v1.2.3"));
+}
+
+#[test]
+fn head_revision_skips_savepoint_tag_display() {
+    // Acceptance scenario (a): only transient savepoint tags at HEAD →
+    // head_revision's display form falls back to the SHA, so generate_lock
+    // writes the SHA in `rwv.lock`.
+    let dir = init_repo();
+    let p = dir.path();
+
+    git(p, &["tag", "savepoint/op-1"]);
+
+    let vcs = GitVcs;
+    let head = vcs.head_revision(p).unwrap();
+    // canonical is the SHA, display falls back to canonical (no tag chosen).
+    assert_eq!(head.display_str(), head.as_str());
+    assert_eq!(head.display_str().len(), 40);
+}
+
+#[test]
+fn head_revision_picks_release_tag_when_mixed() {
+    // Acceptance scenario (b): release tag + transient tag → release tag wins.
+    let dir = init_repo();
+    let p = dir.path();
+
+    git(p, &["tag", "savepoint/op-1"]);
+    git(p, &["tag", "v9.9.9"]);
+
+    let vcs = GitVcs;
+    let head = vcs.head_revision(p).unwrap();
+    assert_eq!(head.display_str(), "v9.9.9");
+}
+
+#[test]
+fn revision_id_tag_form_equals_sha_form_after_resolve() {
+    // Acceptance scenario (c) — at the RevisionId layer: a tag-form id
+    // resolved against the repo compares equal to the head-form SHA id.
+    let dir = init_repo();
+    let p = dir.path();
+    git(p, &["tag", "v1.0.0"]);
+
+    let vcs = GitVcs;
+    let head_sha_form = vcs.head_revision(p).unwrap();
+    let tag_form_raw = RevisionId::raw("v1.0.0");
+    // Raw tag-form does NOT compare equal to a SHA — that's the bug class.
+    assert_ne!(tag_form_raw, head_sha_form);
+    // After resolution it does — this is the comparison rwv check/status use.
+    let tag_form_resolved = vcs.resolve_revision(p, "v1.0.0").unwrap();
+    assert_eq!(tag_form_resolved, head_sha_form);
+}
+
+#[test]
 fn has_uncommitted_changes_deleted_tracked_file() {
     let dir = init_repo();
     let p = dir.path();
