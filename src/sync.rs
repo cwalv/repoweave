@@ -689,6 +689,38 @@ fn find_project_name(ctx: &WorkspaceContext) -> anyhow::Result<ProjectName> {
     }
 }
 
+/// Precondition: CWD and source workspaces must have the same active project.
+///
+/// Phase 1' rebases CWD's project commits onto source's project tip. When the
+/// two sides have different active projects, those are commits from different
+/// git repos — `git merge-base` then fails with an opaque
+/// `fatal: Not a valid commit name <sha>`. Refuse early with a clear message
+/// that names both projects and both workspace paths.
+fn check_active_projects_match(
+    cwd_project: &ProjectName,
+    source_project: &ProjectName,
+    cwd_workspace_dir: &Path,
+    source_workspace_dir: &Path,
+) -> anyhow::Result<()> {
+    if cwd_project == source_project {
+        return Ok(());
+    }
+    anyhow::bail!(
+        "active project mismatch: CWD workspace ({}) has active project `{}`, but source \
+         workspace ({}) has active project `{}`.\n\
+         `rwv sync` rebases CWD's project commits onto the source project's tip, so both \
+         sides must share the same active project.\n\
+         Fix: run `rwv activate {}` on one side to match the other, or run sync against a \
+         workspace whose active project is `{}`.",
+        cwd_workspace_dir.display(),
+        cwd_project,
+        source_workspace_dir.display(),
+        source_project,
+        cwd_project,
+        cwd_project,
+    );
+}
+
 // ---------------------------------------------------------------------------
 // Phase 3 helpers: materialize new repos / prune dropped repos
 // ---------------------------------------------------------------------------
@@ -898,6 +930,18 @@ pub fn run_sync(
     // Find active projects.
     let cwd_project_name = find_project_name(&ctx)?;
     let source_project_name = find_project_name(&source_ctx)?;
+
+    // Precondition: active projects must match. Phase 1' rebases CWD's project
+    // commits onto source's project tip; if the two sides have different active
+    // projects, those are different repos and `git merge-base` fails deep in
+    // Phase 1' with an opaque error. Refuse early, before any savepoint or
+    // marker is written.
+    check_active_projects_match(
+        &cwd_project_name,
+        &source_project_name,
+        &workspace_dir,
+        &source_workspace_dir,
+    )?;
 
     let cwd_project_dir = workspace_dir.join("projects").join(&cwd_project_name);
     let source_project_dir = source_workspace_dir
@@ -1566,5 +1610,37 @@ mod tests {
             SyncFailure::for_strategy(SyncStrategy::Merge, "e".into()),
             SyncFailure::MergeFailed { .. }
         ));
+    }
+
+    #[test]
+    fn check_active_projects_match_ok_when_equal() {
+        let p = ProjectName::new("foundations");
+        let res = check_active_projects_match(
+            &p,
+            &p,
+            Path::new("/cwd/ws"),
+            Path::new("/src/ws"),
+        );
+        assert!(res.is_ok());
+    }
+
+    #[test]
+    fn check_active_projects_match_errors_when_different() {
+        let cwd = ProjectName::new("foundations-test");
+        let src = ProjectName::new("foundations");
+        let err = check_active_projects_match(
+            &cwd,
+            &src,
+            Path::new("/cwd/ws"),
+            Path::new("/src/ws"),
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(err.contains("active project mismatch"), "msg: {err}");
+        assert!(err.contains("foundations-test"), "msg: {err}");
+        assert!(err.contains("foundations"), "msg: {err}");
+        assert!(err.contains("/cwd/ws"), "msg: {err}");
+        assert!(err.contains("/src/ws"), "msg: {err}");
+        assert!(err.contains("rwv activate"), "msg: {err}");
     }
 }
