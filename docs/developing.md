@@ -2,7 +2,7 @@
 
 How to edit rwv's source, rebuild, install locally, and verify the new binary is picked up.
 
-This is the **dogfooding** path — distinct from the end-user install ([README](../README.md#install)) and the release path (tag + CI builds wheels + publish to PyPI/GitHub Releases; no dedicated doc yet). End users get pre-built wheels from GitHub Releases; contributors iterate with the loop below.
+This is the **dogfooding** path — distinct from the end-user install ([README](../README.md#install)) and the [rwv release path](./release-process.md). End users get pre-built wheels from GitHub Releases; contributors iterate with the loop below.
 
 ## Build
 
@@ -61,7 +61,7 @@ curl -fsSL https://cwalv.github.io/repoweave/install.sh | sh
 
 ## When to cut a release
 
-Local development is local-only — contributors and agents iterate against source. External consumers (`uv tool install repoweave`, `install.sh`) get whatever is on GitHub Releases. When a change needs to reach them, tag the commit and let CI build and publish platform wheels (no separate release doc; `releasing.md` covers user-project package releasing, not the rwv binary).
+Local development is local-only — contributors and agents iterate against source. External consumers (`uv tool install repoweave`, `install.sh`) get whatever is on GitHub Releases. When a change needs to reach them, tag the commit and let CI build and publish platform wheels — see [Releasing rwv](./release-process.md). (`releasing.md` covers user-project package releasing, not the rwv binary.)
 
 ## pip vs editable install
 
