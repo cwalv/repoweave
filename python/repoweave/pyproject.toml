@@ -4,7 +4,11 @@ build-backend = "hatchling.build"
 
 [project]
 name = "repoweave"
-version = "0.2.0"
+# Sentinel: rewritten by .github/workflows/publish-shims.yml at release time
+# from the git tag (see the "Update version in pyproject.toml" step). A real
+# value here would silently go stale; 0.0.0 makes the placeholder obvious if
+# anyone ever installs from a working tree (e.g. `pip install -e python/repoweave`).
+version = "0.0.0"
 description = "A cross-repo workspace manager"
 license = "MIT"
 requires-python = ">=3.8"
