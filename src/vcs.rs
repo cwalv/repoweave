@@ -91,6 +91,61 @@ impl<'de> serde::Deserialize<'de> for RevisionId {
     }
 }
 
+/// A raw, unresolved revision identifier as it appears in a lock file.
+///
+/// `RawRevisionId` wraps the YAML scalar verbatim — it may be a tag name,
+/// a branch name, or a 40-hex SHA, and at the type level we do not know
+/// which. This is the only revision type that participates in lock-file
+/// *parsing* (the [`serde::Deserialize`] entry point). It is intentionally
+/// not interchangeable with [`RevisionId`]: there is no `PartialEq`
+/// between the two, and `RawRevisionId` cannot be fed to commit-id
+/// operations such as `Vcs::checkout`. To turn a raw value into a value
+/// safe for SHA comparison, run it through
+/// [`crate::manifest::LockFile::resolve_versions`] (which calls
+/// [`Vcs::resolve_revision`] against the on-disk repo).
+///
+/// `Display`, `Serialize`, and `Eq` all operate on the string verbatim
+/// ("same name"). Useful for "did this lock entry change name between two
+/// reads"; not useful (and not provided) for "do these point at the same
+/// commit".
+///
+/// See `docs/agent-persona/fp-principles-in-rust.md` ("make illegal states
+/// unrepresentable") and `docs/agent-persona/ousterhout-philosophy-of-software-design.md`
+/// ("define errors out of existence by changing the data structure").
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct RawRevisionId(String);
+
+impl RawRevisionId {
+    /// Construct from any string. Public because lock-file deserialization
+    /// and tests need to mint raw values; the string is treated as opaque.
+    pub fn new(s: impl Into<String>) -> Self {
+        Self(s.into())
+    }
+
+    /// Borrow the underlying string.
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl fmt::Display for RawRevisionId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl serde::Serialize for RawRevisionId {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(&self.0)
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for RawRevisionId {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        String::deserialize(deserializer).map(Self)
+    }
+}
+
 /// A named ref (branch, tag, bookmark), independent of VCS.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(transparent)]
