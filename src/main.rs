@@ -85,6 +85,9 @@ enum Commands {
         /// Force-push every repo in the operation (manifest repos and the project repo). Default deny.
         #[arg(long)]
         force: bool,
+        /// Number of parallel per-repo workers for manifest-repo pushes. Default: min(nproc, 8). `-j 1` is explicit serial. Project-repo push always runs serially as the last step.
+        #[arg(short = 'j', long = "jobs")]
+        jobs: Option<usize>,
     },
     /// Add a repo to the active project
     Add {
@@ -399,10 +402,12 @@ fn main() -> anyhow::Result<()> {
             project,
             dry_run,
             force,
+            jobs,
         }) => {
             let cwd = std::env::current_dir()?;
             let project_override = project.map(repoweave::manifest::ProjectName::new);
-            push::run_push(&cwd, project_override, dry_run, force)?;
+            let jobs = repoweave::parallel::resolve_jobs(jobs);
+            push::run_push(&cwd, project_override, dry_run, force, jobs)?;
         }
         Some(Commands::Doctor {
             locked,

@@ -8,10 +8,12 @@
 
 use crate::git::GitVcs;
 use crate::manifest::{Project, ProjectName, RepoEntry, RepoPath, Role};
+use crate::parallel::{run_in_parallel, Reporter};
 use crate::vcs::{RawRevisionId, Vcs};
 use crate::workspace::{WorkspaceContext, WorkspaceLocation};
 use anyhow::Context;
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 
 /// Run `rwv push` for the current workspace context.
 ///
@@ -24,11 +26,18 @@ use std::path::{Path, PathBuf};
 ///
 /// `force` propagates to every git push in the operation. `dry_run` prints
 /// the plan without executing any pushes.
+///
+/// `jobs` is the resolved worker count (post-[`crate::parallel::resolve_jobs`])
+/// for the manifest-repo push loop. `jobs == 1` runs serially with no prefix;
+/// `jobs > 1` fans the manifest-repo pushes out over a bounded worker pool,
+/// prefixing per-repo lines with `[<repo-path>]`. The project-repo push always
+/// runs serially as the last step, regardless of `jobs`.
 pub fn run_push(
     cwd: &Path,
     project_override: Option<ProjectName>,
     dry_run: bool,
     force: bool,
+    jobs: usize,
 ) -> anyhow::Result<()> {
     let ctx = WorkspaceContext::resolve(cwd, project_override.clone())?;
 
@@ -242,30 +251,29 @@ pub fn run_push(
 
     // 6. Manifest-repo push loop. Attempt all and collect — same shape as
     //    update.rs. Role::Fork is skipped here with an info line; the
-    //    Vcs::push_with_role trait method stays neutral on Fork.
+    //    Vcs::push_with_role trait method stays neutral on Fork. Fans out
+    //    over `jobs` workers when `jobs > 1`; per-line `[<repo>]` prefix
+    //    under parallel mode, no prefix under `-j 1`.
+    let parallel = jobs > 1;
+    let write_lock: Mutex<()> = Mutex::new(());
+
+    let outcomes: Vec<PushOutcome> = run_in_parallel(&plan, jobs, |_idx, item| {
+        let reporter = if parallel {
+            Reporter::parallel(item.repo_path.as_str().to_string(), &write_lock)
+        } else {
+            Reporter::serial()
+        };
+        push_one(&git, item, &primary_root, &reporter, force)
+    });
+
     let mut push_errors: Vec<String> = Vec::new();
     let mut pushed = 0usize;
     let mut skipped = 0usize;
-    for item in &plan {
-        if item.role == Role::Fork {
-            println!(
-                "rwv push: skipping {} (Role::Fork — push via PR)",
-                item.repo_path.as_str()
-            );
-            skipped += 1;
-            continue;
-        }
-        let repo_dir = primary_root.join(item.repo_path.as_path());
-        println!(
-            "rwv push: pushing {} ({} -> {})",
-            item.repo_path.as_str(),
-            item.branch,
-            remote_label(item.role),
-        );
-        if let Err(e) = git.push_with_role(&repo_dir, item.role, force) {
-            push_errors.push(format!("{}: git push failed: {e}", item.repo_path.as_str()));
-        } else {
-            pushed += 1;
+    for outcome in outcomes {
+        match outcome {
+            PushOutcome::Pushed => pushed += 1,
+            PushOutcome::Skipped => skipped += 1,
+            PushOutcome::Failed(msg) => push_errors.push(msg),
         }
     }
 
@@ -319,6 +327,53 @@ struct PushPlanItem {
     repo_path: RepoPath,
     branch: String,
     role: Role,
+}
+
+/// Outcome of pushing a single manifest repo. Variants mirror the three
+/// branches of the previous serial loop (pushed / skipped-as-fork /
+/// failed-with-message) so error aggregation post-join stays the same shape.
+enum PushOutcome {
+    Pushed,
+    Skipped,
+    Failed(String),
+}
+
+/// Per-repo worker: push one manifest entry on its current branch via the
+/// role-conventional remote, or skip it if `Role::Fork`. All user-facing
+/// output is routed through `reporter`, which prefixes `[<repo>]` and
+/// serialises writes under `-j > 1`; under `-j 1` the reporter is a
+/// no-prefix passthrough that matches the pre-`-j` serial output exactly.
+///
+/// `Vcs::push_with_role` captures stdout/stderr; we don't stream git's
+/// output line-by-line. The user-visible signal under parallel mode is the
+/// pre/post "rwv push: pushing X" pair (lock-protected via reporter); on
+/// failure the captured stderr is surfaced through the aggregated error
+/// summary post-join.
+fn push_one(
+    git: &GitVcs,
+    item: &PushPlanItem,
+    primary_root: &Path,
+    reporter: &Reporter<'_>,
+    force: bool,
+) -> PushOutcome {
+    if item.role == Role::Fork {
+        reporter.out(&format!(
+            "rwv push: skipping {} (Role::Fork — push via PR)",
+            item.repo_path.as_str()
+        ));
+        return PushOutcome::Skipped;
+    }
+    let repo_dir = primary_root.join(item.repo_path.as_path());
+    reporter.out(&format!(
+        "rwv push: pushing {} ({} -> {})",
+        item.repo_path.as_str(),
+        item.branch,
+        remote_label(item.role),
+    ));
+    match git.push_with_role(&repo_dir, item.role, force) {
+        Ok(()) => PushOutcome::Pushed,
+        Err(e) => PushOutcome::Failed(format!("{}: git push failed: {e}", item.repo_path.as_str())),
+    }
 }
 
 /// Display the remote name for a role — matches the policy in
