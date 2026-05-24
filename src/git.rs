@@ -1,7 +1,7 @@
 //! Git implementation of the [`Vcs`] trait.
 
 use crate::manifest::Role;
-use crate::vcs::{RefName, ResolvedRevisionId, Vcs, VcsError};
+use crate::vcs::{ConflictOp, RefName, ResolvedRevisionId, Vcs, VcsError};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -141,6 +141,22 @@ fn remote_name_for_role(role: Role) -> &'static str {
         Role::Fork => "upstream",
         Role::Primary | Role::Dependency | Role::Reference => "origin",
     }
+}
+
+/// Git-specific "how do I resume this operation?" text for [`ConflictOp`].
+///
+/// Returned text is a short indented block (no trailing newline) that
+/// [`crate::sync`] splices into its conflict-bail messages, sandwiched
+/// between an opening "what happened" line and a closing "or `rwv abort`
+/// to roll back" line. Kept as a free helper so the VCS impl is the sole
+/// owner of git vocabulary — see fo-54gz8 for the rationale.
+fn git_conflict_resolution_hint(op: ConflictOp) -> String {
+    let continue_cmd = match op {
+        ConflictOp::Rebase => "git rebase --continue",
+        ConflictOp::Merge => "git merge --continue",
+        ConflictOp::CherryPick => "git cherry-pick --continue",
+    };
+    format!("  # edit conflicted files\n  git add <files>\n  {continue_cmd}")
 }
 
 /// True when stderr signals "revision unknown / no such object".
@@ -430,5 +446,9 @@ impl Vcs for GitVcs {
             }
         }
         Ok(RefName::new(FALLBACK))
+    }
+
+    fn conflict_resolution_hint(&self, op: ConflictOp) -> String {
+        git_conflict_resolution_hint(op)
     }
 }

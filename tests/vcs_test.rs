@@ -1,6 +1,6 @@
 use repoweave::git::GitVcs;
 use repoweave::manifest::Role;
-use repoweave::vcs::{RefName, ResolvedRevisionId, Vcs, VcsError};
+use repoweave::vcs::{ConflictOp, RefName, ResolvedRevisionId, Vcs, VcsError};
 use std::fs;
 use tempfile::TempDir;
 
@@ -686,4 +686,104 @@ fn resolve_branch_on_remote_missing_branch_errors() {
         matches!(err, VcsError::RevisionNotFound { ref rev, .. } if rev == "origin/nonexistent-branch"),
         "expected RevisionNotFound for origin/nonexistent-branch, got {err:?}"
     );
+}
+
+// ============================================================================
+// Vcs::conflict_resolution_hint — per-op resume guidance text (fo-54gz8)
+// ============================================================================
+//
+// The hint text is embedded verbatim in sync's conflict-bail messages and is
+// the user-visible "what do I type next?" for each VCS op. Lock in the
+// per-op `--continue` command name and the canonical "git add <files>" step
+// so a wording drift won't slip past CI.
+
+#[test]
+fn conflict_resolution_hint_rebase_uses_git_rebase_continue() {
+    let vcs = GitVcs;
+    let hint = vcs.conflict_resolution_hint(ConflictOp::Rebase);
+    assert!(
+        hint.contains("git rebase --continue"),
+        "rebase hint must mention `git rebase --continue`; got: {hint:?}"
+    );
+    assert!(
+        hint.contains("git add <files>"),
+        "rebase hint must mention `git add <files>`; got: {hint:?}"
+    );
+    // Sanity: the hint must NOT carry the wrong op's continue verb.
+    assert!(
+        !hint.contains("git merge --continue"),
+        "rebase hint leaked merge vocabulary: {hint:?}"
+    );
+    assert!(
+        !hint.contains("git cherry-pick --continue"),
+        "rebase hint leaked cherry-pick vocabulary: {hint:?}"
+    );
+}
+
+#[test]
+fn conflict_resolution_hint_merge_uses_git_merge_continue() {
+    let vcs = GitVcs;
+    let hint = vcs.conflict_resolution_hint(ConflictOp::Merge);
+    assert!(
+        hint.contains("git merge --continue"),
+        "merge hint must mention `git merge --continue`; got: {hint:?}"
+    );
+    assert!(
+        hint.contains("git add <files>"),
+        "merge hint must mention `git add <files>`; got: {hint:?}"
+    );
+    assert!(
+        !hint.contains("git rebase --continue"),
+        "merge hint leaked rebase vocabulary: {hint:?}"
+    );
+    assert!(
+        !hint.contains("git cherry-pick --continue"),
+        "merge hint leaked cherry-pick vocabulary: {hint:?}"
+    );
+}
+
+#[test]
+fn conflict_resolution_hint_cherry_pick_uses_git_cherry_pick_continue() {
+    let vcs = GitVcs;
+    let hint = vcs.conflict_resolution_hint(ConflictOp::CherryPick);
+    assert!(
+        hint.contains("git cherry-pick --continue"),
+        "cherry-pick hint must mention `git cherry-pick --continue`; got: {hint:?}"
+    );
+    assert!(
+        hint.contains("git add <files>"),
+        "cherry-pick hint must mention `git add <files>`; got: {hint:?}"
+    );
+    assert!(
+        !hint.contains("git rebase --continue"),
+        "cherry-pick hint leaked rebase vocabulary: {hint:?}"
+    );
+    assert!(
+        !hint.contains("git merge --continue"),
+        "cherry-pick hint leaked merge vocabulary: {hint:?}"
+    );
+}
+
+#[test]
+fn conflict_resolution_hint_does_not_mention_rwv_abort() {
+    // The trait method returns only the *resolution* steps; the surrounding
+    // sync.rs framing supplies the `rwv abort` rollback option. Keeping the
+    // VCS-vocabulary text and the rwv-CLI text in their own layers is the
+    // whole point of the trait (fo-54gz8) — verify the separation.
+    let vcs = GitVcs;
+    for op in [
+        ConflictOp::Rebase,
+        ConflictOp::Merge,
+        ConflictOp::CherryPick,
+    ] {
+        let hint = vcs.conflict_resolution_hint(op);
+        assert!(
+            !hint.contains("rwv abort"),
+            "trait hint for {op:?} leaked rwv-CLI vocabulary: {hint:?}"
+        );
+        assert!(
+            !hint.contains("rwv sync"),
+            "trait hint for {op:?} leaked rwv-CLI vocabulary: {hint:?}"
+        );
+    }
 }

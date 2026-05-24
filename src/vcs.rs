@@ -170,6 +170,22 @@ impl<'de> serde::Deserialize<'de> for RawRevisionId {
     }
 }
 
+/// In-flight VCS operation whose conflict needs human resolution.
+///
+/// Passed to [`Vcs::conflict_resolution_hint`] so sync's conflict-bail
+/// messages embed VCS-appropriate "how do I resume this?" text without
+/// hardcoding git vocabulary.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConflictOp {
+    /// Native rebase (`git rebase`) — resumes with `git rebase --continue`.
+    Rebase,
+    /// Merge (`git merge`) — resumes with `git merge --continue`.
+    Merge,
+    /// Cherry-pick (`git cherry-pick`) — resumes with `git cherry-pick --continue`.
+    /// Used by sync's project-repo rebase-with-lock-exclusion path.
+    CherryPick,
+}
+
 /// A named ref (branch, tag, bookmark), independent of VCS.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(transparent)]
@@ -408,4 +424,21 @@ pub trait Vcs {
     /// `refs/remotes/origin/` prefix to obtain the branch name (e.g., `main`).
     /// Falls back to `"main"` when no remote or no `origin/HEAD` is configured.
     fn default_branch(&self, repo: &Path) -> Result<RefName, VcsError>;
+
+    /// Human-readable hint text for resuming `op` after the user resolves
+    /// conflicts left in the working tree.
+    ///
+    /// Embedded verbatim in sync's conflict-bail messages so the operator
+    /// sees concrete next steps (`git add <files>`; `git rebase --continue`)
+    /// instead of an opaque "fix conflicts and re-run". Returned text is a
+    /// short multi-line block suitable for splicing into a larger message —
+    /// callers are expected to add surrounding context (which repo, how to
+    /// re-run sync, how to abort) themselves.
+    ///
+    /// `op` is the in-flight operation that produced the conflict (rebase,
+    /// merge, cherry-pick); the hint text varies per VCS and per op. No
+    /// `repo` param: the hint text for [`GitVcs`](crate::git::GitVcs)
+    /// doesn't vary per-repo, and adding a parameter we don't read would be
+    /// noise. Add one if a future VCS needs to inspect on-disk state.
+    fn conflict_resolution_hint(&self, op: ConflictOp) -> String;
 }

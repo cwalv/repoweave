@@ -6,7 +6,7 @@
 use crate::git::{git_command, GitVcs};
 use crate::lock::{commit_lock_file_with_message, generate_lock};
 use crate::manifest::{LockFile, Manifest, Project, ProjectName, RepoPath, WorkweaveName};
-use crate::vcs::{ResolvedRevisionId, Vcs};
+use crate::vcs::{ConflictOp, ResolvedRevisionId, Vcs};
 use crate::workspace::{read_active_project, WorkspaceContext, WorkspaceLocation};
 use crate::workweave::workweave_path_for;
 use std::fmt;
@@ -540,6 +540,123 @@ fn check_phase1_ancestor(
          to source, or use `--force` if you intend to discard them (preserved in refs/rwv/pre-op/<id> \
          for `rwv abort`).",
     );
+}
+
+// ---------------------------------------------------------------------------
+// Conflict-bail messages — see fo-54gz8
+// ---------------------------------------------------------------------------
+//
+// Sync's conflict messages lead with concrete resolution steps and mention
+// `rwv abort` last as the rollback option. The per-VCS step text comes from
+// [`Vcs::conflict_resolution_hint`] so a future non-git impl supplies its
+// own vocabulary.
+
+/// Which lock-phase emitted a top-level failure — for the message tag.
+#[derive(Debug, Clone, Copy)]
+enum Phase {
+    /// Phase 1' — project-repo strategy with `rwv.lock` excluded.
+    One,
+    /// Phase 3 — regenerate `rwv.lock` and commit if changed.
+    Three,
+}
+
+impl Phase {
+    fn label(self) -> &'static str {
+        match self {
+            Self::One => "Phase 1' (project repo)",
+            Self::Three => "Phase 3 (re-lock)",
+        }
+    }
+}
+
+/// Map a [`SyncStrategy`] to the in-flight VCS op a conflict would leave behind.
+///
+/// `Ff` cannot leave a conflict (fast-forward refuses without altering state);
+/// we still return a hint shape for the message — the user will likely want to
+/// rerun with `--strategy rebase` and resolve there.
+fn conflict_op_for_strategy(strategy: SyncStrategy) -> ConflictOp {
+    match strategy {
+        // `--strategy ff` cannot conflict; pick Rebase as the resolution
+        // mode the user is likely to fall back to.
+        SyncStrategy::Ff | SyncStrategy::Rebase => ConflictOp::Rebase,
+        SyncStrategy::Merge => ConflictOp::Merge,
+    }
+}
+
+/// Bail message for the manifest-repo per-repo sync loop (Site 1).
+///
+/// One or more repos in the loop emitted a per-repo failure (printed already).
+/// Lead with the resolution steps that apply uniformly to each conflicted
+/// repo; mention `rwv abort` last as the rollback option.
+fn manifest_repo_failure_message(strategy: SyncStrategy, resolved_source: &SyncSource) -> String {
+    let op = conflict_op_for_strategy(strategy);
+    let hint = GitVcs.conflict_resolution_hint(op);
+    format!(
+        "sync hit failures in one or more manifest repos (see per-repo lines above).\n\
+         \n\
+         To resolve each conflicted repo:\n\
+           cd <repo>\n\
+         {hint}\n\
+           rwv sync {resolved_source}   # re-run; already-converged repos are no-ops\n\
+         \n\
+         If you'd rather roll everything back: `rwv abort`."
+    )
+}
+
+/// Bail message for the Phase 1' / Phase 3 top-level failures (Sites 2 and 3).
+///
+/// Both phases print their inner error via `eprintln!` before bailing; this
+/// message gives the operator a uniform "what next?" block that leads with
+/// resolution steps (for the conflict sub-case the inner error implies) and
+/// closes with `rwv abort` as the rollback option.
+fn phase1_or_phase3_failure_message(
+    phase: Phase,
+    cwd_project_dir: &Path,
+    strategy: SyncStrategy,
+    resolved_source: &SyncSource,
+) -> String {
+    let op = conflict_op_for_strategy(strategy);
+    let hint = GitVcs.conflict_resolution_hint(op);
+    let phase_label = phase.label();
+    let repo_display = cwd_project_dir.display();
+    format!(
+        "sync failed in {phase_label} (see error above).\n\
+         \n\
+         If the failure is a conflict, resolve in {repo_display}:\n\
+           cd {repo_display}\n\
+         {hint}\n\
+           rwv sync {resolved_source}   # re-run; already-converged repos are no-ops\n\
+         \n\
+         For other failures: fix the underlying issue then `rwv sync {resolved_source}`.\n\
+         If you'd rather roll everything back: `rwv abort`."
+    )
+}
+
+/// Bail message for an inner per-conflict-site (Sites 4 and 5).
+///
+/// Used by `apply_rebase_excluding_lock` (cherry-pick path) and
+/// `apply_merge_excluding_lock` (merge path). The per-VCS resolution steps
+/// come from the trait method; this helper builds the surrounding framing
+/// (which repo, how to re-run, how to abort).
+fn per_conflict_bail_message(
+    repo: &Path,
+    op: ConflictOp,
+    op_label: &str,
+    detail: &str,
+    resolved_source: &SyncSource,
+) -> String {
+    let hint = GitVcs.conflict_resolution_hint(op);
+    let repo_display = repo.display();
+    format!(
+        "sync hit a conflict in {repo_display} during {op_label} ({detail}).\n\
+         \n\
+         To resolve:\n\
+           cd {repo_display}\n\
+         {hint}\n\
+           rwv sync {resolved_source}   # re-run; already-converged repos are no-ops\n\
+         \n\
+         If you'd rather roll everything back: `rwv abort`."
+    )
 }
 
 /// Refresh the git index to match HEAD, but only for the safely-auto-fixable class.
@@ -1233,7 +1350,10 @@ pub fn run_sync(
     }
 
     if any_failure {
-        anyhow::bail!("sync completed with failures; fix conflicts and re-run, or run `rwv abort`");
+        anyhow::bail!(
+            "{}",
+            manifest_repo_failure_message(strategy, &resolved_source)
+        );
     }
 
     // Phase 1': project repo strategy with rwv.lock excluded.
@@ -1252,12 +1372,21 @@ pub fn run_sync(
             &source_project_tip,
             &cwd_project_tip,
             strategy,
+            &resolved_source,
         )
     };
 
     if let Err(e) = phase1_outcome {
         eprintln!("Phase 1' (project repo) failed: {e}");
-        anyhow::bail!("sync failed in Phase 1' (project repo); run `rwv abort` to restore");
+        anyhow::bail!(
+            "{}",
+            phase1_or_phase3_failure_message(
+                Phase::One,
+                &cwd_project_dir,
+                strategy,
+                &resolved_source,
+            )
+        );
     }
 
     // Reload CWD project so Phase 3 sees the post-Phase-1' manifest (which
@@ -1285,7 +1414,15 @@ pub fn run_sync(
         &source_workspace_name,
     ) {
         eprintln!("Phase 3 (re-lock) failed: {e}");
-        anyhow::bail!("sync failed in Phase 3 (re-lock); run `rwv abort` to restore");
+        anyhow::bail!(
+            "{}",
+            phase1_or_phase3_failure_message(
+                Phase::Three,
+                &cwd_project_dir,
+                strategy,
+                &resolved_source,
+            )
+        );
     }
 
     // Successful completion: clean up savepoints and marker.
@@ -1469,6 +1606,7 @@ fn apply_project_strategy_excluding_lock(
     source_tip: &ResolvedRevisionId,
     cwd_tip: &ResolvedRevisionId,
     strategy: SyncStrategy,
+    resolved_source: &SyncSource,
 ) -> anyhow::Result<()> {
     if cwd_tip == source_tip {
         // No-op.
@@ -1484,10 +1622,10 @@ fn apply_project_strategy_excluding_lock(
             )?;
         }
         SyncStrategy::Rebase => {
-            apply_rebase_excluding_lock(cwd_project_dir, source_tip)?;
+            apply_rebase_excluding_lock(cwd_project_dir, source_tip, resolved_source)?;
         }
         SyncStrategy::Merge => {
-            apply_merge_excluding_lock(cwd_project_dir, source_tip)?;
+            apply_merge_excluding_lock(cwd_project_dir, source_tip, resolved_source)?;
         }
     }
     Ok(())
@@ -1495,7 +1633,11 @@ fn apply_project_strategy_excluding_lock(
 
 /// Cherry-pick each CWD-unique commit (in chronological order) onto
 /// `source_tip`, with `rwv.lock` excluded from each commit's effective diff.
-fn apply_rebase_excluding_lock(repo: &Path, source_tip: &ResolvedRevisionId) -> anyhow::Result<()> {
+fn apply_rebase_excluding_lock(
+    repo: &Path,
+    source_tip: &ResolvedRevisionId,
+    resolved_source: &SyncSource,
+) -> anyhow::Result<()> {
     let source_ref = source_tip.as_str();
 
     // Find merge-base between CWD's HEAD and source.
@@ -1558,10 +1700,14 @@ fn apply_rebase_excluding_lock(repo: &Path, source_tip: &ResolvedRevisionId) -> 
             .collect();
         if !real_conflicts.is_empty() {
             anyhow::bail!(
-                "rebase replay hit conflict at commit {sha} on paths: {}. \
-                 Resolve in {} and re-run sync, or run `rwv abort` to restore.",
-                real_conflicts.join(", "),
-                repo.display()
+                "{}",
+                per_conflict_bail_message(
+                    repo,
+                    ConflictOp::CherryPick,
+                    "cherry-pick (rebase replay)",
+                    &format!("commit {sha} on paths: {}", real_conflicts.join(", ")),
+                    resolved_source,
+                )
             );
         }
 
@@ -1594,7 +1740,11 @@ fn apply_rebase_excluding_lock(repo: &Path, source_tip: &ResolvedRevisionId) -> 
 
 /// Merge `source_tip` into CWD, dropping any `rwv.lock` change/conflict by
 /// taking HEAD's version (Phase 3 regenerates the lock from manifest tips).
-fn apply_merge_excluding_lock(repo: &Path, source_tip: &ResolvedRevisionId) -> anyhow::Result<()> {
+fn apply_merge_excluding_lock(
+    repo: &Path,
+    source_tip: &ResolvedRevisionId,
+    resolved_source: &SyncSource,
+) -> anyhow::Result<()> {
     let source_ref = source_tip.as_str();
 
     // Try a regular merge with --no-commit so we can manipulate the index/WT.
@@ -1628,10 +1778,14 @@ fn apply_merge_excluding_lock(repo: &Path, source_tip: &ResolvedRevisionId) -> a
         .collect();
     if !real_conflicts.is_empty() {
         anyhow::bail!(
-            "merge conflict in {} on paths: {}. \
-             Resolve and re-run sync, or run `rwv abort` to restore.",
-            repo.display(),
-            real_conflicts.join(", ")
+            "{}",
+            per_conflict_bail_message(
+                repo,
+                ConflictOp::Merge,
+                "merge",
+                &format!("paths: {}", real_conflicts.join(", ")),
+                resolved_source,
+            )
         );
     }
 
@@ -1902,7 +2056,167 @@ mod tests {
         assert!(err.contains("foundations-test"), "msg: {err}");
         assert!(err.contains("foundations"), "msg: {err}");
         assert!(err.contains("/cwd/ws"), "msg: {err}");
-        assert!(err.contains("/src/ws"), "msg: {err}");
         assert!(err.contains("rwv activate"), "msg: {err}");
+        assert!(err.contains("/src/ws"), "msg: {err}");
+    }
+
+    // -----------------------------------------------------------------------
+    // Conflict-bail messages — see fo-54gz8.
+    //
+    // One test per bail site asserts the message embeds the per-VCS
+    // resolution hint and mentions `rwv abort` last (after the steps).
+    // -----------------------------------------------------------------------
+
+    /// Acceptance shape predicate: the message contains a resolution hint
+    /// (the trait-method text via `git add <files>` token) and lists
+    /// `rwv abort` strictly AFTER it.
+    fn assert_resolution_first_abort_last(msg: &str) {
+        let add_pos = msg
+            .find("git add <files>")
+            .unwrap_or_else(|| panic!("expected resolution hint `git add <files>` in: {msg}"));
+        let abort_pos = msg
+            .find("rwv abort")
+            .unwrap_or_else(|| panic!("expected `rwv abort` mentioned in: {msg}"));
+        assert!(
+            abort_pos > add_pos,
+            "`rwv abort` must come AFTER the resolution steps; \
+             abort_pos={abort_pos}, add_pos={add_pos}, msg={msg}"
+        );
+    }
+
+    // Site 1 — manifest-repo per-repo sync loop failure summary.
+    #[test]
+    fn manifest_repo_failure_message_rebase_includes_rebase_hint() {
+        let src = SyncSource::Primary;
+        let msg = manifest_repo_failure_message(SyncStrategy::Rebase, &src);
+        assert!(
+            msg.contains("git rebase --continue"),
+            "expected rebase hint in: {msg}"
+        );
+        assert!(
+            msg.contains("rwv sync primary"),
+            "expected re-run hint: {msg}"
+        );
+        assert_resolution_first_abort_last(&msg);
+    }
+
+    #[test]
+    fn manifest_repo_failure_message_merge_includes_merge_hint() {
+        let src = SyncSource::Primary;
+        let msg = manifest_repo_failure_message(SyncStrategy::Merge, &src);
+        assert!(
+            msg.contains("git merge --continue"),
+            "expected merge hint in: {msg}"
+        );
+        assert_resolution_first_abort_last(&msg);
+    }
+
+    // Site 2 — Phase 1' (project repo) outer bail.
+    #[test]
+    fn phase1_bail_message_includes_resolution_steps_and_rwv_abort_last() {
+        let src = SyncSource::Workweave(WorkweaveName::new("ww1"));
+        let cwd = Path::new("/ws/projects/web-app");
+        let msg = phase1_or_phase3_failure_message(Phase::One, cwd, SyncStrategy::Rebase, &src);
+        assert!(
+            msg.contains("Phase 1' (project repo)"),
+            "expected phase label in: {msg}"
+        );
+        assert!(
+            msg.contains("git rebase --continue"),
+            "expected rebase hint in: {msg}"
+        );
+        assert!(
+            msg.contains("/ws/projects/web-app"),
+            "expected repo path: {msg}"
+        );
+        assert!(msg.contains("rwv sync ww1"), "expected re-run hint: {msg}");
+        assert_resolution_first_abort_last(&msg);
+    }
+
+    // Site 3 — Phase 3 (re-lock) outer bail.
+    #[test]
+    fn phase3_bail_message_includes_resolution_steps_and_rwv_abort_last() {
+        let src = SyncSource::Path(PathBuf::from("/abs/source"));
+        let cwd = Path::new("/ws/projects/web-app");
+        let msg = phase1_or_phase3_failure_message(Phase::Three, cwd, SyncStrategy::Merge, &src);
+        assert!(
+            msg.contains("Phase 3 (re-lock)"),
+            "expected phase label in: {msg}"
+        );
+        assert!(
+            msg.contains("git merge --continue"),
+            "expected merge hint in: {msg}"
+        );
+        assert!(
+            msg.contains("rwv sync /abs/source"),
+            "expected re-run hint: {msg}"
+        );
+        assert_resolution_first_abort_last(&msg);
+    }
+
+    // Site 4 — cherry-pick replay (inner) bail.
+    #[test]
+    fn per_conflict_bail_cherry_pick_includes_cherry_pick_hint() {
+        let src = SyncSource::Primary;
+        let repo = Path::new("/ws/projects/web-app");
+        let msg = per_conflict_bail_message(
+            repo,
+            ConflictOp::CherryPick,
+            "cherry-pick (rebase replay)",
+            "commit deadbeef on paths: foo.txt",
+            &src,
+        );
+        assert!(
+            msg.contains("git cherry-pick --continue"),
+            "expected cherry-pick hint in: {msg}"
+        );
+        assert!(
+            msg.contains("cherry-pick (rebase replay)"),
+            "expected op label in: {msg}"
+        );
+        assert!(msg.contains("deadbeef"), "expected detail in: {msg}");
+        assert!(msg.contains("foo.txt"), "expected detail in: {msg}");
+        assert!(
+            msg.contains("rwv sync primary"),
+            "expected re-run hint: {msg}"
+        );
+        assert_resolution_first_abort_last(&msg);
+    }
+
+    // Site 5 — apply_merge_excluding_lock (inner) bail.
+    #[test]
+    fn per_conflict_bail_merge_includes_merge_hint() {
+        let src = SyncSource::Primary;
+        let repo = Path::new("/ws/projects/web-app");
+        let msg =
+            per_conflict_bail_message(repo, ConflictOp::Merge, "merge", "paths: bar.txt", &src);
+        assert!(
+            msg.contains("git merge --continue"),
+            "expected merge hint in: {msg}"
+        );
+        assert!(msg.contains("bar.txt"), "expected detail in: {msg}");
+        assert!(
+            msg.contains("rwv sync primary"),
+            "expected re-run hint: {msg}"
+        );
+        assert_resolution_first_abort_last(&msg);
+    }
+
+    #[test]
+    fn conflict_op_for_strategy_maps_ff_to_rebase() {
+        // ff cannot leave a conflict; we still nominate Rebase as the
+        // fallback the user is likely to switch to.
+        assert_eq!(
+            conflict_op_for_strategy(SyncStrategy::Ff),
+            ConflictOp::Rebase
+        );
+        assert_eq!(
+            conflict_op_for_strategy(SyncStrategy::Rebase),
+            ConflictOp::Rebase
+        );
+        assert_eq!(
+            conflict_op_for_strategy(SyncStrategy::Merge),
+            ConflictOp::Merge
+        );
     }
 }
