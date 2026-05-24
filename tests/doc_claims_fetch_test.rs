@@ -4,6 +4,28 @@
 //! Each test is tied to a specific doc-claim ticket.  Where the implementation
 //! diverges from what the docs say, the test verifies the *current* behaviour
 //! and carries a `// TODO` comment pointing at the gap.
+//!
+//! ## fo-zvxff audit (fo-r982a, 2026-05-24)
+//!
+//! Post fo-zvxff, the verb-vocabulary split is:
+//!   - `rwv fetch <source>` is the read-only/align-to-lock verb. It reads
+//!     `rwv.lock` and pins each clone to the locked SHA. It does NOT
+//!     auto-bump the lock when the manifest is fully covered by the lock
+//!     (the headline guarantee tested in `tests/fetch_test.rs::
+//!     fetch_default_reads_lock_and_does_not_bump_it`).
+//!   - `rwv update` is the network-bumping verb that re-snapshots the
+//!     lock from each manifest repo's branch HEAD. Anchored in
+//!     `tests/doc_claims_update_test.rs`.
+//!   - `--frozen` errors when the lock is missing or stale (CI gate);
+//!     default mode bootstraps missing lock entries additively. There is
+//!     no `--locked` flag on `rwv fetch`.
+//!
+//! Audit result: none of the doc_claims_fetch tests below assert lock
+//! auto-bumping. The assertions cover name collision, --delete safety,
+//! local-path URL inference, shorthand resolution, and auto-activate
+//! suppression — all orthogonal to the fetch-vs-update split. No
+//! assertions needed updating; this header marker records that the
+//! audit was performed.
 
 use assert_cmd::Command;
 use std::path::Path;
