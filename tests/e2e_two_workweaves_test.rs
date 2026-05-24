@@ -116,6 +116,10 @@ fn make_main_workspace(tmp: &Path) -> MainWorkspace {
     let project_dir = ws.join("projects").join(PROJECT);
     init_repo(&project_dir);
 
+    // Mirror what `rwv init` writes (fo-w9ph9): `.gitattributes` so sync's
+    // native rebase keeps source's `rwv.lock` through the replay.
+    std::fs::write(project_dir.join(".gitattributes"), "rwv.lock merge=ours\n").unwrap();
+
     let manifest = format!(
         "repositories:\n  {path}:\n    type: git\n    url: file://{repo}\n    version: main\n    role: primary\n",
         path = MANIFEST_REPO_PATH,
@@ -131,7 +135,10 @@ fn make_main_workspace(tmp: &Path) -> MainWorkspace {
     );
     std::fs::write(project_dir.join("rwv.lock"), lock).unwrap();
 
-    git(&["add", "rwv.yaml", "rwv.lock"], &project_dir);
+    git(
+        &["add", ".gitattributes", "rwv.yaml", "rwv.lock"],
+        &project_dir,
+    );
     git(&["commit", "-m", "lock: initial"], &project_dir);
 
     // Post fo-h9prh: action verbs require `.rwv-active` (or --project).
@@ -775,5 +782,103 @@ fn sync_retire_with_dirty_worktree_refuses_to_delete() {
     assert!(
         ww1.root.exists(),
         "dirty --retire must NOT delete the workweave"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// fo-w9ph9: sync rebase no longer clobbers user resolutions on re-run
+// ---------------------------------------------------------------------------
+
+/// After a conflicted sync rebase, the operator resolves conflicts in-place
+/// and runs `git rebase --continue` followed by `rwv sync` again. Under the
+/// pre-fo-w9ph9 custom cherry-pick loop, the second sync did a fresh
+/// `git reset --hard` and clobbered the resolution. Native rebase leaves the
+/// repo in standard mid-rebase state — `git rebase --continue` completes the
+/// rebase, and the next `rwv sync` is a no-op for the converged project repo.
+#[test]
+fn sync_rebase_continue_then_resync_does_not_clobber_user_resolution() {
+    let tmp = tempfile::tempdir().unwrap();
+    let weaveroot = tmp.path().join(".workweaves");
+    std::fs::create_dir_all(&weaveroot).unwrap();
+
+    let main = make_main_workspace(tmp.path());
+    let ww1 = create_workweave(&main, &weaveroot, "ww1");
+    let ww2 = create_workweave(&main, &weaveroot, "ww2");
+
+    // Both workweaves edit notes/shared.md with conflicting content.
+    commit_file(
+        &ww1.project_dir,
+        "notes/shared.md",
+        "ww1 wrote this\n",
+        "docs: ww1 take",
+    );
+    rwv_lock_commit(&ww1.root);
+
+    commit_file(
+        &ww2.project_dir,
+        "notes/shared.md",
+        "ww2 wrote this\n",
+        "docs: ww2 take",
+    );
+    rwv_lock_commit(&ww2.root);
+
+    // main absorbs ww1's commit cleanly.
+    rwv()
+        .args(["sync", &ww1.root.to_string_lossy()])
+        .current_dir(&main.root)
+        .assert()
+        .success();
+
+    // ww2 → main rebase: expected to conflict on notes/shared.md.
+    rwv()
+        .args(["sync", "primary", "--strategy", "rebase"])
+        .current_dir(&ww2.root)
+        .assert()
+        .failure();
+
+    // Verify the repo is left mid-rebase (the contract: standard git state,
+    // not the custom-loop reset).
+    assert!(
+        ww2.project_dir.join(".git").exists() || ww2.project_dir.join(".git").is_file(),
+        "ww2 project repo should still exist"
+    );
+    let mid_op = repoweave::git::GitVcs::mid_op_state(&ww2.project_dir);
+    assert_eq!(
+        mid_op.as_deref(),
+        Some("mid-rebase"),
+        "conflicted sync rebase should leave the repo mid-rebase, got {mid_op:?}"
+    );
+
+    // Operator resolves: pick a different, deliberate value, then continue.
+    std::fs::write(
+        ww2.project_dir.join("notes/shared.md"),
+        "operator-resolved version\n",
+    )
+    .unwrap();
+    git(&["add", "notes/shared.md"], &ww2.project_dir);
+    git(&["rebase", "--continue"], &ww2.project_dir);
+
+    // After --continue, the repo is no longer mid-rebase.
+    assert!(
+        repoweave::git::GitVcs::mid_op_state(&ww2.project_dir).is_none(),
+        "after `git rebase --continue` the repo must not be mid-op"
+    );
+    let resolved_content =
+        std::fs::read_to_string(ww2.project_dir.join("notes/shared.md")).unwrap();
+    assert_eq!(resolved_content, "operator-resolved version\n");
+
+    // Now run `rwv sync primary` again. Phase 1' must NOT clobber the
+    // resolution — already-converged repos are no-ops.
+    rwv()
+        .args(["sync", "primary", "--strategy", "rebase"])
+        .current_dir(&ww2.root)
+        .assert()
+        .success();
+
+    let after_resync = std::fs::read_to_string(ww2.project_dir.join("notes/shared.md")).unwrap();
+    assert_eq!(
+        after_resync, "operator-resolved version\n",
+        "second `rwv sync` must NOT clobber the operator's resolution; \
+         got after_resync={after_resync:?}"
     );
 }

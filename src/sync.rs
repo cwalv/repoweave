@@ -6,7 +6,7 @@
 use crate::git::{git_command, GitVcs};
 use crate::lock::{commit_lock_file_with_message, generate_lock};
 use crate::manifest::{LockFile, Manifest, Project, ProjectName, RepoPath, WorkweaveName};
-use crate::vcs::{ConflictOp, ResolvedRevisionId, Vcs};
+use crate::vcs::{ConflictOp, ResolvedRevisionId, Vcs, VcsError};
 use crate::workspace::{read_active_project, WorkspaceContext, WorkspaceLocation};
 use crate::workweave::workweave_path_for;
 use std::fmt;
@@ -378,7 +378,14 @@ fn apply_strategy(
             }
         }
         SyncStrategy::Rebase => {
-            git(&["rebase", target_ref], repo)?;
+            // Route through the Vcs trait so the in-flight conflict signal
+            // (mid-rebase state + RebaseConflict) is the consolidated path
+            // for both manifest and project repos. `git rebase <target>` is
+            // equivalent to `git rebase --onto <target> <target>` — git
+            // computes the merge-base internally to bound the replay set.
+            GitVcs
+                .rebase(repo, target, target)
+                .map_err(|e| anyhow::anyhow!("{e}"))?;
         }
         SyncStrategy::Merge => {
             // Merge with auto-generated commit message.
@@ -632,12 +639,12 @@ fn phase1_or_phase3_failure_message(
     )
 }
 
-/// Bail message for an inner per-conflict-site (Sites 4 and 5).
+/// Bail message for an inner per-conflict-site.
 ///
-/// Used by `apply_rebase_excluding_lock` (cherry-pick path) and
-/// `apply_merge_excluding_lock` (merge path). The per-VCS resolution steps
-/// come from the trait method; this helper builds the surrounding framing
-/// (which repo, how to re-run, how to abort).
+/// Used by Phase 1' when a rebase or merge leaves the project repo in the
+/// VCS-native in-flight state. The per-VCS resolution steps come from the
+/// trait method; this helper builds the surrounding framing (which repo,
+/// how to re-run, how to abort).
 fn per_conflict_bail_message(
     repo: &Path,
     op: ConflictOp,
@@ -1367,7 +1374,7 @@ pub fn run_sync(
             Err(e) => Err(anyhow::anyhow!("project repo reset --force failed: {e}")),
         }
     } else {
-        apply_project_strategy_excluding_lock(
+        apply_project_strategy(
             &cwd_project_dir,
             &source_project_tip,
             &cwd_project_tip,
@@ -1587,21 +1594,22 @@ fn short_sha(sha: &str) -> &str {
 }
 
 /// Phase 1': replay CWD's unique project commits onto `source_tip` via
-/// `strategy`, with `rwv.lock` excluded from each commit's effective diff.
+/// `strategy`, relying on `.gitattributes rwv.lock merge=ours` (configured at
+/// `rwv init` time) to silently keep source's version of the lock through the
+/// replay. Phase 3 regenerates the lock from manifest tips afterwards.
 ///
 /// - `Ff`: requires CWD ancestor of source (caller already verified). Performs
 ///   a fast-forward via `git merge --ff-only`.
-/// - `Rebase`: cherry-picks each CWD-unique commit onto source, dropping
-///   `rwv.lock` from the staged changes. Lock-only commits become empty
-///   patches and are skipped silently.
-/// - `Merge`: produces a merge commit on top of CWD whose tree matches a
-///   regular merge with source, but with `rwv.lock` taken from source (Phase 3
-///   regenerates it).
+/// - `Rebase`: native `git rebase` via [`Vcs::rebase`]. On conflict, leaves
+///   the repo mid-rebase so `git rebase --continue` resumes after manual
+///   resolution.
+/// - `Merge`: native `git merge --no-edit`. The `merge=ours` attribute
+///   resolves any lock-line collision automatically.
 ///
-/// Conflicts on non-lock paths halt the operation with an error naming the
-/// conflicting paths; the operator resolves and re-runs sync, or invokes
+/// Conflicts on non-lock paths halt the operation, leaving the VCS-native
+/// in-flight state for the operator to resolve and re-run sync, or
 /// `rwv abort`.
-fn apply_project_strategy_excluding_lock(
+fn apply_project_strategy(
     cwd_project_dir: &Path,
     source_tip: &ResolvedRevisionId,
     cwd_tip: &ResolvedRevisionId,
@@ -1622,208 +1630,68 @@ fn apply_project_strategy_excluding_lock(
             )?;
         }
         SyncStrategy::Rebase => {
-            apply_rebase_excluding_lock(cwd_project_dir, source_tip, resolved_source)?;
-        }
-        SyncStrategy::Merge => {
-            apply_merge_excluding_lock(cwd_project_dir, source_tip, resolved_source)?;
-        }
-    }
-    Ok(())
-}
-
-/// Cherry-pick each CWD-unique commit (in chronological order) onto
-/// `source_tip`, with `rwv.lock` excluded from each commit's effective diff.
-fn apply_rebase_excluding_lock(
-    repo: &Path,
-    source_tip: &ResolvedRevisionId,
-    resolved_source: &SyncSource,
-) -> anyhow::Result<()> {
-    let source_ref = source_tip.as_str();
-
-    // Find merge-base between CWD's HEAD and source.
-    let merge_base = git(&["merge-base", "HEAD", source_ref], repo)
-        .map_err(|e| anyhow::anyhow!("failed to find merge-base with source: {e}"))?;
-
-    // List CWD's unique commits since merge-base, oldest-first.
-    let commits_str = git(
-        &["rev-list", "--reverse", &format!("{merge_base}..HEAD")],
-        repo,
-    )
-    .map_err(|e| anyhow::anyhow!("failed to list unique commits: {e}"))?;
-    let commits: Vec<String> = commits_str
-        .lines()
-        .filter(|s| !s.is_empty())
-        .map(String::from)
-        .collect();
-
-    if commits.is_empty() {
-        // CWD is ancestor of source — fast-forward.
-        git(&["reset", "--hard", source_ref], repo)?;
-        return Ok(());
-    }
-
-    // Reset onto source's tip; we'll replay each unique commit on top.
-    git(&["reset", "--hard", source_ref], repo)?;
-
-    for sha in &commits {
-        // Cherry-pick with --no-commit so we can manipulate the index/WT
-        // before deciding whether to commit.
-        let _ = git_command()
-            .args(["cherry-pick", "--allow-empty", "--no-commit", sha])
-            .current_dir(repo)
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .status();
-
-        // Drop any rwv.lock changes (resolves any lock conflict by taking
-        // HEAD's version, then unstages so it's effectively excluded).
-        let _ = git_command()
-            .args(["checkout", "HEAD", "--", "rwv.lock"])
-            .current_dir(repo)
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .status();
-        let _ = git_command()
-            .args(["reset", "HEAD", "--", "rwv.lock"])
-            .current_dir(repo)
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .status();
-
-        // Surface real (non-lock) conflicts as a halt.
-        let unmerged_str =
-            git(&["diff", "--name-only", "--diff-filter=U"], repo).unwrap_or_default();
-        let real_conflicts: Vec<String> = unmerged_str
-            .lines()
-            .filter(|p| !p.is_empty() && *p != "rwv.lock")
-            .map(String::from)
-            .collect();
-        if !real_conflicts.is_empty() {
-            anyhow::bail!(
-                "{}",
-                per_conflict_bail_message(
-                    repo,
-                    ConflictOp::CherryPick,
-                    "cherry-pick (rebase replay)",
-                    &format!("commit {sha} on paths: {}", real_conflicts.join(", ")),
-                    resolved_source,
-                )
-            );
-        }
-
-        // Empty-patch detection: nothing staged means the commit was
-        // lock-only (or otherwise empty after lock exclusion). Skip with a
-        // log line and clear cherry-pick state.
-        let nothing_staged = git_command()
-            .args(["diff", "--cached", "--quiet"])
-            .current_dir(repo)
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .status()
-            .map(|s| s.success())
-            .unwrap_or(true);
-
-        if nothing_staged {
-            // Clear CHERRY_PICK_HEAD if set so the next iteration is clean.
-            clear_cherry_pick_state(repo);
-            eprintln!("  (project): skipped lock-only commit {sha}");
-            continue;
-        }
-
-        // Commit with original commit's metadata (author, message, date).
-        git(&["commit", "-C", sha], repo)
-            .map_err(|e| anyhow::anyhow!("failed to commit replayed {sha}: {e}"))?;
-    }
-
-    Ok(())
-}
-
-/// Merge `source_tip` into CWD, dropping any `rwv.lock` change/conflict by
-/// taking HEAD's version (Phase 3 regenerates the lock from manifest tips).
-fn apply_merge_excluding_lock(
-    repo: &Path,
-    source_tip: &ResolvedRevisionId,
-    resolved_source: &SyncSource,
-) -> anyhow::Result<()> {
-    let source_ref = source_tip.as_str();
-
-    // Try a regular merge with --no-commit so we can manipulate the index/WT.
-    let _ = git_command()
-        .args(["merge", "--no-commit", "--no-edit", source_ref])
-        .current_dir(repo)
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status();
-
-    // Resolve any rwv.lock change/conflict by taking HEAD's version.
-    let _ = git_command()
-        .args(["checkout", "HEAD", "--", "rwv.lock"])
-        .current_dir(repo)
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status();
-    let _ = git_command()
-        .args(["reset", "HEAD", "--", "rwv.lock"])
-        .current_dir(repo)
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status();
-
-    // Surface real (non-lock) conflicts as a halt.
-    let unmerged_str = git(&["diff", "--name-only", "--diff-filter=U"], repo).unwrap_or_default();
-    let real_conflicts: Vec<String> = unmerged_str
-        .lines()
-        .filter(|p| !p.is_empty() && *p != "rwv.lock")
-        .map(String::from)
-        .collect();
-    if !real_conflicts.is_empty() {
-        anyhow::bail!(
-            "{}",
-            per_conflict_bail_message(
-                repo,
-                ConflictOp::Merge,
-                "merge",
-                &format!("paths: {}", real_conflicts.join(", ")),
-                resolved_source,
-            )
-        );
-    }
-
-    // Detect whether MERGE_HEAD is still set (i.e. there's a merge in
-    // progress). A clean fast-forward leaves no MERGE_HEAD and no commit to
-    // make; if we're already at source_tip, nothing to do.
-    let git_dir = git(&["rev-parse", "--git-dir"], repo)
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| repo.join(".git"));
-    let merge_head = if git_dir.is_absolute() {
-        git_dir.join("MERGE_HEAD")
-    } else {
-        repo.join(&git_dir).join("MERGE_HEAD")
-    };
-
-    if merge_head.exists() {
-        git(&["commit", "--no-edit"], repo)
-            .map_err(|e| anyhow::anyhow!("failed to commit merge: {e}"))?;
-    }
-
-    Ok(())
-}
-
-/// Clear cherry-pick mid-op state without aborting — used when a commit is
-/// dropped after lock exclusion.
-fn clear_cherry_pick_state(repo: &Path) {
-    let git_dir = match git(&["rev-parse", "--git-dir"], repo) {
-        Ok(s) => {
-            let p = PathBuf::from(&s);
-            if p.is_absolute() {
-                p
-            } else {
-                repo.join(p)
+            // `git rebase <source_tip>` is equivalent to `--onto <source_tip>
+            // <source_tip>` (git computes merge-base internally). The
+            // `merge=ours` driver on `rwv.lock` keeps source's lock through
+            // every replayed commit; lock-only commits become empty patches
+            // and git drops them by default.
+            match GitVcs.rebase(cwd_project_dir, source_tip, source_tip) {
+                Ok(()) => {}
+                Err(VcsError::RebaseConflict { repo, op }) => {
+                    anyhow::bail!(
+                        "{}",
+                        per_conflict_bail_message(
+                            &repo,
+                            op,
+                            "rebase (project repo)",
+                            "see in-flight rebase state for conflicting paths",
+                            resolved_source,
+                        )
+                    );
+                }
+                Err(e) => anyhow::bail!("project repo rebase failed: {e}"),
             }
         }
-        Err(_) => return,
-    };
-    let _ = std::fs::remove_file(git_dir.join("CHERRY_PICK_HEAD"));
+        SyncStrategy::Merge => {
+            // Native merge; the `merge=ours` driver (registered inline via
+            // `-c`, see `git.rs::rebase`) auto-resolves any rwv.lock
+            // collision in source's favour. Phase 3 then regenerates the
+            // lock from manifest tips.
+            match git(
+                &[
+                    "-c",
+                    "merge.ours.name=keep ours during replay (rwv replay-exclusion)",
+                    "-c",
+                    "merge.ours.driver=true",
+                    "merge",
+                    "--no-edit",
+                    source_tip.as_str(),
+                ],
+                cwd_project_dir,
+            ) {
+                Ok(_) => {}
+                Err(e) => {
+                    if matches!(
+                        crate::git::GitVcs::mid_op_state(cwd_project_dir).as_deref(),
+                        Some("mid-merge")
+                    ) {
+                        anyhow::bail!(
+                            "{}",
+                            per_conflict_bail_message(
+                                cwd_project_dir,
+                                ConflictOp::Merge,
+                                "merge (project repo)",
+                                "see in-flight merge state for conflicting paths",
+                                resolved_source,
+                            )
+                        );
+                    }
+                    anyhow::bail!("project repo merge failed: {e}");
+                }
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Phase 3: regenerate `rwv.lock` from the current manifest tips. Commit it
@@ -2154,7 +2022,9 @@ mod tests {
         assert_resolution_first_abort_last(&msg);
     }
 
-    // Site 4 — cherry-pick replay (inner) bail.
+    // Site 4 — cherry-pick op hint (trait surface; sync no longer uses
+    // cherry-pick directly but the message builder must still render the
+    // op's hint correctly for any VCS impl that does).
     #[test]
     fn per_conflict_bail_cherry_pick_includes_cherry_pick_hint() {
         let src = SyncSource::Primary;
@@ -2183,7 +2053,7 @@ mod tests {
         assert_resolution_first_abort_last(&msg);
     }
 
-    // Site 5 — apply_merge_excluding_lock (inner) bail.
+    // Site 5 — Phase 1' merge inner bail.
     #[test]
     fn per_conflict_bail_merge_includes_merge_hint() {
         let src = SyncSource::Primary;

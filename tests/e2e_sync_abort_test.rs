@@ -132,9 +132,16 @@ fn make_locked_workspace(parent: &Path, name: &str) -> (Workspace, String) {
 
     let project_dir = root.join("projects/web-app");
     init_repo(&project_dir);
+    // Mirror what `rwv init` writes: `.gitattributes` so `rwv sync`'s
+    // native rebase keeps source's rwv.lock through the replay (the
+    // `merge=ours` driver — see fo-w9ph9).
+    std::fs::write(project_dir.join(".gitattributes"), "rwv.lock merge=ours\n").unwrap();
     write_manifest(&project_dir, &[(SERVER_PATH, SERVER_URL)], None);
     write_lock(&project_dir, &[(SERVER_PATH, SERVER_URL, &sha)]);
-    git(&["add", "rwv.yaml", "rwv.lock"], &project_dir);
+    git(
+        &["add", ".gitattributes", "rwv.yaml", "rwv.lock"],
+        &project_dir,
+    );
     git(&["commit", "-m", "lock: initial"], &project_dir);
 
     // Post fo-h9prh: action verbs require `.rwv-active` (or --project).
@@ -680,9 +687,12 @@ fn sync_refusal_message_suggests_rebase_or_merge_strategy() {
 }
 
 /// Backward sync that ff refuses lands cleanly under `--strategy rebase`:
-/// CWD's lock-only divergence is replayed onto source's tip with `rwv.lock`
-/// excluded (skipped as empty), and Phase 3 leaves the lock consistent with
-/// manifest tips.
+/// CWD's lock-only divergence is replayed onto source's tip — under the
+/// post-fo-w9ph9 contract (`.gitattributes rwv.lock merge=ours` + native
+/// `git rebase` with `--force-rebase --no-keep-empty --empty=drop`), the
+/// lock-only commit becomes empty (or was already empty when produced by
+/// `--allow-empty`) and git drops it. Phase 3 then leaves the lock
+/// consistent with manifest tips.
 #[test]
 fn sync_rebase_lands_lock_only_divergence_without_force() {
     let tmp = tempfile::tempdir().unwrap();
@@ -692,9 +702,6 @@ fn sync_rebase_lands_lock_only_divergence_without_force() {
     primary_advance_project_one_commit(&primary, &c1);
     let ww_tip_before = git_out(&["rev-parse", "HEAD"], &ww.project_dir);
 
-    // Default ff would refuse (covered elsewhere). --strategy rebase replays
-    // primary's lock-only commit onto ww's tip, dropping rwv.lock from the
-    // patch → empty → skipped.
     rwv()
         .args(["sync", &ww.root.to_string_lossy(), "--strategy", "rebase"])
         .current_dir(&primary.root)
@@ -702,7 +709,7 @@ fn sync_rebase_lands_lock_only_divergence_without_force() {
         .success();
 
     // Primary's project tip should match ww's (the lock-only commit was
-    // skipped during replay; Phase 3 found no lock change to commit).
+    // dropped during replay; Phase 3 found no lock change to commit).
     let primary_tip_after = git_out(&["rev-parse", "HEAD"], &primary.project_dir);
     assert_eq!(
         primary_tip_after, ww_tip_before,

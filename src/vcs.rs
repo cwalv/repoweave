@@ -235,6 +235,14 @@ pub enum VcsError {
     WorktreeExists(PathBuf),
     /// Working tree has uncommitted changes when caller required clean state.
     UncommittedChanges(PathBuf),
+    /// In-flight VCS operation (rebase / merge / cherry-pick) hit a conflict.
+    ///
+    /// The repo is left in the VCS-native in-flight state — for git, that means
+    /// mid-rebase with conflict markers in the working tree. Callers pair this
+    /// with [`Vcs::conflict_resolution_hint`] to assemble the user-facing
+    /// "edit conflicted files; `git add <files>`; `git rebase --continue`"
+    /// message. The matching `op` tells the caller which hint to fetch.
+    RebaseConflict { repo: PathBuf, op: ConflictOp },
     /// I/O failure spawning or reading process output.
     Io { ctx: String, source: io::Error },
     /// Underlying VCS command failed for a reason not modeled above.
@@ -255,6 +263,7 @@ impl VcsError {
             Self::BranchAlreadyExists { .. } => "branch-already-exists",
             Self::WorktreeExists(_) => "worktree-exists",
             Self::UncommittedChanges(_) => "uncommitted-changes",
+            Self::RebaseConflict { .. } => "rebase-conflict",
             Self::Io { .. } => "io",
             Self::CommandFailed { .. } => "command-failed",
         }
@@ -274,6 +283,13 @@ impl fmt::Display for VcsError {
             Self::WorktreeExists(p) => write!(f, "worktree path already exists: {}", p.display()),
             Self::UncommittedChanges(p) => {
                 write!(f, "{} has uncommitted changes", p.display())
+            }
+            Self::RebaseConflict { repo, op } => {
+                write!(
+                    f,
+                    "{op:?} in {} hit a conflict; resolve and continue, or abort to roll back",
+                    repo.display()
+                )
             }
             Self::Io { ctx, source } => write!(f, "{ctx}: {source}"),
             Self::CommandFailed { args, repo, stderr } => write!(
@@ -441,4 +457,56 @@ pub trait Vcs {
     /// doesn't vary per-repo, and adding a parameter we don't read would be
     /// noise. Add one if a future VCS needs to inspect on-disk state.
     fn conflict_resolution_hint(&self, op: ConflictOp) -> String;
+
+    /// Rebase commits in the range `upstream..` of `repo`'s current branch
+    /// onto `onto`.
+    ///
+    /// For [`GitVcs`](crate::git::GitVcs): runs `git rebase --onto <onto>
+    /// <upstream>`. On conflict, leaves the repo in the VCS-native in-flight
+    /// state (for git: mid-rebase, with conflict markers in the working tree
+    /// and `.git/rebase-merge/`) and returns
+    /// [`VcsError::RebaseConflict { repo, op: ConflictOp::Rebase }`] so the
+    /// caller can pair with [`Vcs::conflict_resolution_hint`] to assemble the
+    /// user-facing resolution text.
+    ///
+    /// Lock-file exclusion happens via [`set_replay_exclusion`] — set it once
+    /// on the repo (e.g. at `rwv init` time) and every rebase silently keeps
+    /// the rebase target's version of the configured path. This is git's
+    /// built-in `merge=ours` driver wired through `.gitattributes`; the trait
+    /// hides the spelling so other VCS impls can use their own mechanism.
+    ///
+    /// [`set_replay_exclusion`]: Vcs::set_replay_exclusion
+    fn rebase(
+        &self,
+        repo: &Path,
+        onto: &ResolvedRevisionId,
+        upstream: &ResolvedRevisionId,
+    ) -> Result<(), VcsError>;
+
+    /// Configure `repo` so that during replay (rebase, merge) any changes to
+    /// `path` are silently overridden — the replay target's version of `path`
+    /// always wins.
+    ///
+    /// For [`GitVcs`](crate::git::GitVcs): appends a `<path> merge=ours` line
+    /// to `<repo>/.gitattributes` (idempotent — re-running is a no-op if the
+    /// line is already present). Other VCS impls choose their own mechanism.
+    ///
+    /// Used by rwv to keep `rwv.lock` out of the merge inputs during sync's
+    /// project-repo rebase: the lock is regenerated from manifest tips in
+    /// Phase 3, so carrying user lock-edits through a rebase would only
+    /// produce noise. Configuring this once (in `rwv init`) replaces the
+    /// custom cherry-pick loop that previously did per-commit exclusion.
+    fn set_replay_exclusion(&self, repo: &Path, path: &Path) -> Result<(), VcsError>;
+
+    /// `true` when [`set_replay_exclusion`] has been configured for `path` in
+    /// `repo`.
+    ///
+    /// For [`GitVcs`](crate::git::GitVcs): true iff `<repo>/.gitattributes`
+    /// contains a `<path> merge=ours` line.
+    ///
+    /// Used by `rwv doctor` to detect projects initialised before the
+    /// replay-exclusion path landed and offer to add the missing entry.
+    ///
+    /// [`set_replay_exclusion`]: Vcs::set_replay_exclusion
+    fn has_replay_exclusion(&self, repo: &Path, path: &Path) -> Result<bool, VcsError>;
 }

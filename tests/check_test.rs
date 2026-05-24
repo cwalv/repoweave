@@ -596,3 +596,97 @@ fn check_command_is_recognized() {
         .assert()
         .stdout(predicate::str::contains("unrecognized").not());
 }
+
+// ===========================================================================
+// fo-w9ph9: replay-exclusion (.gitattributes `rwv.lock merge=ours`)
+// ===========================================================================
+
+/// `rwv doctor` warns when a project repo is missing the
+/// `rwv.lock merge=ours` line in `.gitattributes`.
+#[test]
+fn check_warns_when_project_missing_replay_exclusion() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = make_workspace(tmp.path(), "ws");
+
+    let repo_path = "github/acme/server";
+    init_git_repo(&root.join(repo_path));
+
+    // Project dir exists with a manifest but no .gitattributes.
+    let project_dir = root.join("projects").join("my-app");
+    write_manifest(
+        &project_dir,
+        &[(repo_path, "https://github.com/acme/server.git")],
+    );
+
+    rwv_cmd().arg("check").current_dir(&root).assert().stdout(
+        predicate::str::contains("rwv.lock merge=ours")
+            .and(predicate::str::contains("my-app"))
+            .and(predicate::str::contains("rwv doctor --fix")),
+    );
+}
+
+/// `rwv doctor --fix` writes the missing `rwv.lock merge=ours` line.
+#[test]
+fn check_fix_writes_replay_exclusion() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = make_workspace(tmp.path(), "ws");
+
+    let repo_path = "github/acme/server";
+    init_git_repo(&root.join(repo_path));
+
+    let project_dir = root.join("projects").join("my-app");
+    write_manifest(
+        &project_dir,
+        &[(repo_path, "https://github.com/acme/server.git")],
+    );
+
+    // Pre-condition: no .gitattributes exists.
+    assert!(!project_dir.join(".gitattributes").exists());
+
+    rwv_cmd()
+        .args(["check", "--fix"])
+        .current_dir(&root)
+        .assert()
+        .stdout(predicate::str::contains("rwv.lock merge=ours"));
+
+    // Post-condition: .gitattributes now contains the line, and re-running
+    // `rwv check` no longer warns about this project.
+    let attrs = std::fs::read_to_string(project_dir.join(".gitattributes")).unwrap();
+    assert!(
+        attrs.contains("rwv.lock merge=ours"),
+        "post-fix .gitattributes should contain the line; got: {attrs:?}"
+    );
+
+    let assertion = rwv_cmd().arg("check").current_dir(&root).assert();
+    let output = assertion.get_output();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        !stdout.contains("missing `rwv.lock merge=ours`"),
+        "post-fix check must not re-warn; got stdout: {stdout}"
+    );
+}
+
+/// `rwv doctor` does NOT warn when the project carries the replay-exclusion entry.
+#[test]
+fn check_silent_when_project_has_replay_exclusion() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = make_workspace(tmp.path(), "ws");
+
+    let repo_path = "github/acme/server";
+    init_git_repo(&root.join(repo_path));
+
+    let project_dir = root.join("projects").join("my-app");
+    write_manifest(
+        &project_dir,
+        &[(repo_path, "https://github.com/acme/server.git")],
+    );
+    std::fs::write(project_dir.join(".gitattributes"), "rwv.lock merge=ours\n").unwrap();
+
+    let assertion = rwv_cmd().arg("check").current_dir(&root).assert();
+    let output = assertion.get_output();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        !stdout.contains("missing `rwv.lock merge=ours`"),
+        "check must not warn when the line is present; got stdout: {stdout}"
+    );
+}

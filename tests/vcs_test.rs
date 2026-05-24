@@ -787,3 +787,250 @@ fn conflict_resolution_hint_does_not_mention_rwv_abort() {
         );
     }
 }
+
+// ============================================================================
+// Vcs::set_replay_exclusion / has_replay_exclusion (fo-w9ph9)
+// ============================================================================
+//
+// The replay-exclusion mechanism wires git's per-path merge driver
+// (`.gitattributes <path> merge=ours`) so sync's native rebase keeps the
+// rebase target's version of `rwv.lock` through every replay. The trait
+// hides the file format so other VCS impls can use their own mechanism.
+
+#[test]
+fn set_replay_exclusion_creates_gitattributes_when_missing() {
+    let dir = init_repo();
+    let vcs = GitVcs;
+
+    vcs.set_replay_exclusion(dir.path(), std::path::Path::new("rwv.lock"))
+        .unwrap();
+
+    let attrs = fs::read_to_string(dir.path().join(".gitattributes")).unwrap();
+    assert!(
+        attrs.contains("rwv.lock merge=ours"),
+        ".gitattributes should contain the replay-exclusion line; got: {attrs:?}"
+    );
+}
+
+#[test]
+fn set_replay_exclusion_appends_to_existing_gitattributes() {
+    let dir = init_repo();
+    let vcs = GitVcs;
+    let attrs_path = dir.path().join(".gitattributes");
+
+    // Pre-existing user content (no trailing newline to exercise the
+    // newline-fixup branch in the impl).
+    fs::write(&attrs_path, "*.png binary").unwrap();
+
+    vcs.set_replay_exclusion(dir.path(), std::path::Path::new("rwv.lock"))
+        .unwrap();
+
+    let attrs = fs::read_to_string(&attrs_path).unwrap();
+    assert!(
+        attrs.contains("*.png binary"),
+        "pre-existing entries must be preserved; got: {attrs:?}"
+    );
+    assert!(
+        attrs.contains("rwv.lock merge=ours"),
+        "new entry must be added; got: {attrs:?}"
+    );
+}
+
+#[test]
+fn set_replay_exclusion_is_idempotent() {
+    let dir = init_repo();
+    let vcs = GitVcs;
+
+    vcs.set_replay_exclusion(dir.path(), std::path::Path::new("rwv.lock"))
+        .unwrap();
+    let after_first = fs::read_to_string(dir.path().join(".gitattributes")).unwrap();
+    vcs.set_replay_exclusion(dir.path(), std::path::Path::new("rwv.lock"))
+        .unwrap();
+    let after_second = fs::read_to_string(dir.path().join(".gitattributes")).unwrap();
+
+    assert_eq!(
+        after_first, after_second,
+        "second call must not duplicate the entry; got:\nafter_first={after_first:?}\nafter_second={after_second:?}"
+    );
+    let line_count = after_second
+        .lines()
+        .filter(|l| l.trim() == "rwv.lock merge=ours")
+        .count();
+    assert_eq!(
+        line_count, 1,
+        "exactly one replay-exclusion line expected; got {line_count} in: {after_second:?}"
+    );
+}
+
+#[test]
+fn has_replay_exclusion_false_when_gitattributes_missing() {
+    let dir = init_repo();
+    let vcs = GitVcs;
+
+    assert!(!vcs
+        .has_replay_exclusion(dir.path(), std::path::Path::new("rwv.lock"))
+        .unwrap());
+}
+
+#[test]
+fn has_replay_exclusion_false_when_line_absent() {
+    let dir = init_repo();
+    let vcs = GitVcs;
+    fs::write(dir.path().join(".gitattributes"), "*.png binary\n").unwrap();
+
+    assert!(!vcs
+        .has_replay_exclusion(dir.path(), std::path::Path::new("rwv.lock"))
+        .unwrap());
+}
+
+#[test]
+fn has_replay_exclusion_true_when_line_present() {
+    let dir = init_repo();
+    let vcs = GitVcs;
+    vcs.set_replay_exclusion(dir.path(), std::path::Path::new("rwv.lock"))
+        .unwrap();
+
+    assert!(vcs
+        .has_replay_exclusion(dir.path(), std::path::Path::new("rwv.lock"))
+        .unwrap());
+}
+
+// ============================================================================
+// Vcs::rebase (fo-w9ph9)
+// ============================================================================
+//
+// Native rebase consolidates sync's project-repo path. The three behaviours
+// codified: clean rebase succeeds, a real conflict surfaces as
+// VcsError::RebaseConflict (repo left mid-rebase for `git rebase --continue`),
+// and an rwv.lock collision is silently auto-resolved when replay-exclusion
+// is configured.
+
+/// Build a repo with `main` at C1 and a `feat` branch diverged on a
+/// non-conflicting path. Returns (tempdir, c1_sha).
+fn diverged_repo() -> (TempDir, ResolvedRevisionId) {
+    let dir = init_repo();
+    let p = dir.path();
+    let c1 = git(p, &["rev-parse", "HEAD"]);
+
+    // main: advance with a new file `main.txt`.
+    fs::write(p.join("main.txt"), "main\n").unwrap();
+    git(p, &["add", "main.txt"]);
+    git(p, &["commit", "-m", "main: advance"]);
+
+    // feat branch from C1 with a new file `feat.txt`.
+    git(p, &["checkout", "-b", "feat", &c1]);
+    fs::write(p.join("feat.txt"), "feat\n").unwrap();
+    git(p, &["add", "feat.txt"]);
+    git(p, &["commit", "-m", "feat: advance"]);
+
+    let c1 = ResolvedRevisionId::from_canonical(c1, None);
+    (dir, c1)
+}
+
+#[test]
+fn rebase_clean_advances_head_onto_target() {
+    let (dir, _c1) = diverged_repo();
+    let p = dir.path();
+    let main_tip = ResolvedRevisionId::from_canonical(git(p, &["rev-parse", "main"]), None);
+
+    // feat is checked out — rebase it onto main.
+    GitVcs.rebase(p, &main_tip, &main_tip).unwrap();
+
+    // feat's tip is now descended from main; both files exist.
+    assert!(p.join("main.txt").exists());
+    assert!(p.join("feat.txt").exists());
+    let is_descendant = common::git()
+        .args(["merge-base", "--is-ancestor", main_tip.as_str(), "HEAD"])
+        .current_dir(p)
+        .status()
+        .unwrap()
+        .success();
+    assert!(
+        is_descendant,
+        "feat's HEAD should be a descendant of main after rebase"
+    );
+}
+
+#[test]
+fn rebase_conflict_on_non_lock_file_returns_rebase_conflict_and_leaves_mid_op() {
+    // Build a repo where main and feat both modify the same line of `shared`.
+    let dir = init_repo();
+    let p = dir.path();
+    fs::write(p.join("shared"), "v0\n").unwrap();
+    git(p, &["add", "shared"]);
+    git(p, &["commit", "-m", "add shared"]);
+    let c1 = git(p, &["rev-parse", "HEAD"]);
+
+    fs::write(p.join("shared"), "main version\n").unwrap();
+    git(p, &["add", "shared"]);
+    git(p, &["commit", "-m", "main: change shared"]);
+
+    git(p, &["checkout", "-b", "feat", &c1]);
+    fs::write(p.join("shared"), "feat version\n").unwrap();
+    git(p, &["add", "shared"]);
+    git(p, &["commit", "-m", "feat: change shared"]);
+
+    let main_tip = ResolvedRevisionId::from_canonical(git(p, &["rev-parse", "main"]), None);
+
+    let result = GitVcs.rebase(p, &main_tip, &main_tip);
+
+    let err = result.expect_err("rebase with conflicting paths must surface an error");
+    assert!(
+        matches!(err, VcsError::RebaseConflict { ref op, .. } if *op == ConflictOp::Rebase),
+        "expected RebaseConflict, got {err:?}"
+    );
+    // Repo is left mid-rebase so `git rebase --continue` works.
+    let mid_op = repoweave::git::GitVcs::mid_op_state(p);
+    assert_eq!(
+        mid_op.as_deref(),
+        Some("mid-rebase"),
+        "repo should be left mid-rebase for the operator to resolve and continue"
+    );
+}
+
+#[test]
+fn rebase_auto_resolves_lock_collision_when_replay_exclusion_set() {
+    // Both sides modify the same `rwv.lock` content; with replay-exclusion
+    // configured, the rebase should keep main's version with no conflict.
+    let dir = init_repo();
+    let p = dir.path();
+    fs::write(p.join("rwv.lock"), "v0\n").unwrap();
+    git(p, &["add", "rwv.lock"]);
+    // Configure replay-exclusion BEFORE the commits that mutate the lock.
+    GitVcs
+        .set_replay_exclusion(p, std::path::Path::new("rwv.lock"))
+        .unwrap();
+    git(p, &["add", ".gitattributes"]);
+    git(p, &["commit", "-m", "lock + .gitattributes"]);
+    let c1 = git(p, &["rev-parse", "HEAD"]);
+
+    fs::write(p.join("rwv.lock"), "main version\n").unwrap();
+    git(p, &["add", "rwv.lock"]);
+    git(p, &["commit", "-m", "main: change lock"]);
+    let main_lock_content = fs::read_to_string(p.join("rwv.lock")).unwrap();
+
+    git(p, &["checkout", "-b", "feat", &c1]);
+    fs::write(p.join("rwv.lock"), "feat version\n").unwrap();
+    git(p, &["add", "rwv.lock"]);
+    git(p, &["commit", "-m", "feat: change lock"]);
+
+    let main_tip = ResolvedRevisionId::from_canonical(git(p, &["rev-parse", "main"]), None);
+
+    GitVcs
+        .rebase(p, &main_tip, &main_tip)
+        .expect("rebase should succeed thanks to replay-exclusion auto-resolve");
+
+    // Working tree should hold MAIN's lock content — replay-exclusion keeps
+    // the rebase target's version through every replayed commit.
+    let final_lock = fs::read_to_string(p.join("rwv.lock")).unwrap();
+    assert_eq!(
+        final_lock, main_lock_content,
+        "replay-exclusion should keep main's lock content after rebase; \
+         got {final_lock:?}, expected {main_lock_content:?}"
+    );
+    // And the repo should not be left in a mid-op state.
+    assert!(
+        repoweave::git::GitVcs::mid_op_state(p).is_none(),
+        "successful rebase must leave repo in a clean state"
+    );
+}

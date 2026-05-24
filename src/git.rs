@@ -451,4 +451,170 @@ impl Vcs for GitVcs {
     fn conflict_resolution_hint(&self, op: ConflictOp) -> String {
         git_conflict_resolution_hint(op)
     }
+
+    fn rebase(
+        &self,
+        repo: &Path,
+        onto: &ResolvedRevisionId,
+        upstream: &ResolvedRevisionId,
+    ) -> Result<(), VcsError> {
+        // Wire up the `ours` merge driver inline (no persistent
+        // `.git/config` change) so the `merge=ours` lines written by
+        // [`set_replay_exclusion`] resolve to "keep the rebase-target's
+        // version" — `driver = true` is the shell command `true`, which
+        // succeeds without modifying the merged file. Doing this per
+        // invocation (rather than at `rwv init` time) means the driver is
+        // available on every clone without per-clone setup.
+        //
+        // [`set_replay_exclusion`]: Vcs::set_replay_exclusion
+        // `git rebase --onto <onto> <upstream>` replays commits in
+        // <upstream>..HEAD onto <onto>. On conflict, git leaves the repo
+        // mid-rebase (rebase-merge/ + conflict markers in WT). We detect
+        // that state and surface VcsError::RebaseConflict so the caller can
+        // pair with conflict_resolution_hint(ConflictOp::Rebase).
+        // `--empty=drop`: drop commits that become empty after rebase. This
+        // is what makes lock-only commits silently disappear when the
+        // `merge=ours` driver on rwv.lock (configured via
+        // [`set_replay_exclusion`]) leaves nothing for the commit to record.
+        //
+        // `--no-keep-empty`: also drop commits that were originally empty
+        // (e.g. `git commit --allow-empty`). The old custom cherry-pick loop
+        // skipped these via empty-patch detection; preserve that behaviour
+        // so a relock-noise commit doesn't survive a rebase.
+        //
+        // `--force-rebase`: force a replay even when `upstream` is already
+        // an ancestor of HEAD. Without it, git short-circuits to "up to
+        // date" — and lock-only commits that should be dropped survive.
+        // sync's invariant is "the project repo's history past the source
+        // tip is a replayable subset"; forcing the replay makes that
+        // invariant true after every rebase regardless of which side moved.
+        //
+        // [`set_replay_exclusion`]: Vcs::set_replay_exclusion
+        let output = git_command()
+            .args([
+                "-c",
+                "merge.ours.name=keep ours during replay (rwv replay-exclusion)",
+                "-c",
+                "merge.ours.driver=true",
+                "rebase",
+                "--force-rebase",
+                "--no-keep-empty",
+                "--empty=drop",
+                "--onto",
+                onto.as_str(),
+                upstream.as_str(),
+            ])
+            .current_dir(repo)
+            .output()
+            .map_err(|e| VcsError::Io {
+                ctx: format!(
+                    "failed to spawn git rebase --onto {} {}",
+                    onto.as_str(),
+                    upstream.as_str()
+                ),
+                source: e,
+            })?;
+
+        if output.status.success() {
+            return Ok(());
+        }
+
+        // Non-zero exit. If the repo is in mid-rebase, this is a conflict;
+        // otherwise it's some other rebase error (bad refs, etc.).
+        if matches!(Self::mid_op_state(repo).as_deref(), Some("mid-rebase")) {
+            return Err(VcsError::RebaseConflict {
+                repo: repo.to_path_buf(),
+                op: ConflictOp::Rebase,
+            });
+        }
+
+        let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+        Err(VcsError::CommandFailed {
+            args: vec![
+                "rebase".to_owned(),
+                "--force-rebase".to_owned(),
+                "--no-keep-empty".to_owned(),
+                "--empty=drop".to_owned(),
+                "--onto".to_owned(),
+                onto.as_str().to_owned(),
+                upstream.as_str().to_owned(),
+            ],
+            repo: repo.to_path_buf(),
+            stderr,
+        })
+    }
+
+    fn set_replay_exclusion(&self, repo: &Path, path: &Path) -> Result<(), VcsError> {
+        let attrs_path = repo.join(".gitattributes");
+        let path_str = path.to_str().ok_or_else(|| VcsError::Io {
+            ctx: format!(
+                "replay-exclusion path {} is not valid UTF-8",
+                path.display()
+            ),
+            source: std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "non-utf8 replay-exclusion path",
+            ),
+        })?;
+        let needle = format!("{path_str} merge=ours");
+
+        let existing = match std::fs::read_to_string(&attrs_path) {
+            Ok(s) => s,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
+            Err(e) => {
+                return Err(VcsError::Io {
+                    ctx: format!("failed to read {}", attrs_path.display()),
+                    source: e,
+                })
+            }
+        };
+
+        if existing.lines().any(|line| line.trim() == needle) {
+            return Ok(());
+        }
+
+        // Append, preserving any existing entries. Ensure exactly one
+        // trailing newline before the new line so concatenation is clean
+        // whether the file ended with a newline or not.
+        let mut next = existing;
+        if !next.is_empty() && !next.ends_with('\n') {
+            next.push('\n');
+        }
+        next.push_str(&needle);
+        next.push('\n');
+
+        std::fs::write(&attrs_path, next).map_err(|e| VcsError::Io {
+            ctx: format!("failed to write {}", attrs_path.display()),
+            source: e,
+        })?;
+        Ok(())
+    }
+
+    fn has_replay_exclusion(&self, repo: &Path, path: &Path) -> Result<bool, VcsError> {
+        let attrs_path = repo.join(".gitattributes");
+        let path_str = path.to_str().ok_or_else(|| VcsError::Io {
+            ctx: format!(
+                "replay-exclusion path {} is not valid UTF-8",
+                path.display()
+            ),
+            source: std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "non-utf8 replay-exclusion path",
+            ),
+        })?;
+        let needle = format!("{path_str} merge=ours");
+
+        let contents = match std::fs::read_to_string(&attrs_path) {
+            Ok(s) => s,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+            Err(e) => {
+                return Err(VcsError::Io {
+                    ctx: format!("failed to read {}", attrs_path.display()),
+                    source: e,
+                })
+            }
+        };
+
+        Ok(contents.lines().any(|line| line.trim() == needle))
+    }
 }

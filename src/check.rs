@@ -63,6 +63,12 @@ pub enum CheckViolation {
         repo: RepoPath,
         kind: WorkingTreeDriftKind,
     },
+
+    /// A project repo is missing the `rwv.lock merge=ours` entry in
+    /// `.gitattributes`. Without it, `rwv sync`'s native rebase would carry
+    /// user lock-edits through the merge inputs instead of letting Phase 3
+    /// regenerate them. Auto-fixable: append the line. See fo-w9ph9.
+    MissingReplayExclusion { project: ProjectName },
 }
 
 #[derive(Debug)]
@@ -232,6 +238,13 @@ pub fn violations_to_issues(violations: Vec<CheckViolation>) -> Vec<Issue> {
                         format!("{location}: {detail}"),
                     )
                 }
+                CheckViolation::MissingReplayExclusion { project } => (
+                    crate::integration::Severity::Warning,
+                    format!(
+                        "{project}: project repo missing `rwv.lock merge=ours` in .gitattributes \
+                         (run `rwv doctor --fix` to add)"
+                    ),
+                ),
                 CheckViolation::WorkingTreeDrift {
                     workweave,
                     repo,
@@ -848,6 +861,57 @@ pub fn run_check(
                     });
                 }
             }
+        }
+    }
+
+    // Replay-exclusion check (fo-w9ph9): each project repo should carry
+    // `rwv.lock merge=ours` in `.gitattributes`. Pre-fo-w9ph9 projects don't
+    // have it; `--fix` writes the line in place (idempotent — re-running on
+    // a fixed repo is a no-op).
+    for project in &input.projects {
+        let project_repo = workspace_dir.join("projects").join(project.name.as_str());
+        if !project_repo.is_dir() {
+            continue;
+        }
+        match git.has_replay_exclusion(&project_repo, std::path::Path::new("rwv.lock")) {
+            Ok(true) => {}
+            Ok(false) => {
+                if fix {
+                    match git.set_replay_exclusion(&project_repo, std::path::Path::new("rwv.lock"))
+                    {
+                        Ok(()) => println!(
+                            "[fixed] core: wrote `rwv.lock merge=ours` to {}/.gitattributes",
+                            project.name
+                        ),
+                        Err(e) => all_issues.push(Issue {
+                            integration: "core".into(),
+                            severity: Severity::Error,
+                            message: format!(
+                                "{}: failed to write replay-exclusion: {e}",
+                                project.name
+                            ),
+                        }),
+                    }
+                } else {
+                    all_issues.push(Issue {
+                        integration: "core".into(),
+                        severity: Severity::Warning,
+                        message: format!(
+                            "{}: project repo missing `rwv.lock merge=ours` in .gitattributes \
+                             (run `rwv doctor --fix` to add)",
+                            project.name
+                        ),
+                    });
+                }
+            }
+            Err(e) => all_issues.push(Issue {
+                integration: "core".into(),
+                severity: Severity::Warning,
+                message: format!(
+                    "{}: failed to read .gitattributes for replay-exclusion check: {e}",
+                    project.name
+                ),
+            }),
         }
     }
 

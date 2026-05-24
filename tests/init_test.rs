@@ -146,6 +146,28 @@ fn init_runs_git_init_in_project_dir() {
     );
 }
 
+#[test]
+fn init_writes_gitattributes_with_replay_exclusion() {
+    // fo-w9ph9: `rwv init` must seed `.gitattributes` with the
+    // `rwv.lock merge=ours` line so future `rwv sync` rebases keep
+    // source's lock through the replay.
+    let tmp = tempfile::tempdir().unwrap();
+    let ws = make_empty_workspace(tmp.path());
+
+    rwv()
+        .args(["init", "my-app"])
+        .current_dir(&ws)
+        .assert()
+        .success();
+
+    let attrs = std::fs::read_to_string(ws.join("projects/my-app/.gitattributes"))
+        .expect("rwv init should create .gitattributes");
+    assert!(
+        attrs.contains("rwv.lock merge=ours"),
+        ".gitattributes should contain `rwv.lock merge=ours`; got: {attrs:?}"
+    );
+}
+
 // ============================================================================
 // Name collision handling
 // ============================================================================
