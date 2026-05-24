@@ -1,0 +1,91 @@
+# rwv sync
+
+## Purpose
+
+Reconcile each repo in the active project (or all projects in a weave) with
+its locked SHA, using a rebase-or-merge strategy chosen per-repo. `sync` is
+the central convergence command: it advances behind repos to the lock,
+records new locks when repos are ahead, and surfaces conflicts as
+structured outcomes rather than aborting the whole run.
+
+The wire shape is engineered for agent consumption: each per-repo outcome
+is a tagged record whose `kind` tells the agent what to do next (retry,
+abort, escalate to a human). Failures embed a `failure` sub-record with its
+own variant tag (e.g. `rebase-conflict`, `network-error`).
+
+## Invocation
+
+```
+rwv sync [--json] [--strategy <rebase|merge>] [-j <N>] [--project <name>]
+```
+
+- `--json` emits machine-readable output (see Output below).
+- `--strategy` picks the reconciliation strategy when both sides have
+  diverged. Default behavior is documented in `rwv --help sync`.
+- `-j <N>` runs up to `N` repos in parallel. Under `-j > 1` and `--json`,
+  output switches to NDJSON: one record per repo per line, streamed as
+  repos finish (consumers demux by `path`).
+
+Run `rwv --help sync` for the full clap surface.
+
+## Output
+
+Default text output is one line per repo summarizing the outcome.
+
+Under `--json` (serial mode), output is the envelope:
+
+```
+{
+  "$schema": "<url>",
+  "outcomes": [ { "kind": "...", "path": "...", "absolute_path": "...", ... }, ... ]
+}
+```
+
+Outcome `kind` tags include `converged`, `already-ahead`, `no-op`,
+`fast-forwarded`, `rebased`, `merged`, `failed`. The `failed` variant
+carries a nested `failure` record whose own `kind` tells you what failed
+(`rebase-conflict`, `merge-conflict`, `network-error`, etc.).
+
+Under `--json -j N` with `N > 1`, the wrapper is dropped and each line is a
+single `SyncOutcomeOutput` record (NDJSON). Consumers demux by `path`.
+
+Schema:
+
+{{SCHEMA}}
+
+## Exit codes
+
+- `0` — every repo reached a converged or already-ahead state.
+- non-zero — at least one repo failed; inspect outcomes with `kind:
+  "failed"` for details.
+
+## Examples
+
+Sync the active project and inspect outcomes:
+
+```
+rwv sync --json | jq '.outcomes[] | {path, kind}'
+```
+
+Find every failed repo and its failure kind:
+
+```
+rwv sync --json | jq '.outcomes[] | select(.kind == "failed") | {path, failure}'
+```
+
+Parallel sync, demux by path:
+
+```
+rwv sync --json -j 8 | jq -c 'select(.kind == "failed")'
+```
+
+## Common errors
+
+- *rebase-conflict* — a repo's HEAD diverged from the lock and replay
+  couldn't merge cleanly. Resolve manually in the repo, then commit and
+  re-run.
+- *missing-replay-exclusion* surfaced via `doctor` — the project repo
+  doesn't have `rwv.lock merge=ours` in `.gitattributes`; sync's native
+  rebase would carry user lock-edits through. Run `rwv doctor --fix`.
+- *network-error* — a remote fetch failed. Retry after checking
+  connectivity.

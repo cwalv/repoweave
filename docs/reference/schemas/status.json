@@ -1,0 +1,78 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Array_of_RepoStatus",
+  "type": "array",
+  "items": {
+    "$ref": "#/definitions/RepoStatus"
+  },
+  "definitions": {
+    "LockRelation": {
+      "description": "Relation between the current branch tip and the lock SHA.",
+      "type": "string",
+      "enum": [
+        "ok",
+        "ahead",
+        "behind",
+        "diverged",
+        "no_lock",
+        "unknown"
+      ]
+    },
+    "RepoStatus": {
+      "description": "Per-repo status entry.",
+      "type": "object",
+      "required": [
+        "absolute_path",
+        "path",
+        "project",
+        "relation",
+        "role",
+        "url"
+      ],
+      "properties": {
+        "absolute_path": {
+          "type": "string"
+        },
+        "branch": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "lock_sha": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "mid_op": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "path": {
+          "type": "string"
+        },
+        "project": {
+          "type": "string"
+        },
+        "relation": {
+          "$ref": "#/definitions/LockRelation"
+        },
+        "role": {
+          "type": "string"
+        },
+        "tip": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "url": {
+          "type": "string"
+        }
+      }
+    }
+  }
+}

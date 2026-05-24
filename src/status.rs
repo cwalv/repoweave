@@ -4,11 +4,23 @@ use crate::git::GitVcs;
 use crate::manifest::Project;
 use crate::vcs::{ResolvedRevisionId, Vcs};
 use crate::workspace::{WorkspaceContext, WorkspaceLocation};
+use schemars::JsonSchema;
 use serde::Serialize;
 use std::path::Path;
 
+/// Schema URL for `rwv status --json` output. Pins to the committed artifact
+/// under `docs/reference/schemas/status.json`.
+///
+/// Note: the current wire shape is a bare top-level array (legacy pre-dating
+/// the `$schema`-envelope convention adopted by doctor/sync). The committed
+/// schema describes that bare-array shape so consumers can validate today's
+/// output; migrating status to the envelope shape (with this URL embedded as
+/// a `$schema` field) is tracked as a follow-up.
+pub const STATUS_SCHEMA_URL: &str =
+    "https://raw.githubusercontent.com/cwalv/repoweave/main/docs/reference/schemas/status.json";
+
 /// Relation between the current branch tip and the lock SHA.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum LockRelation {
     Ok,
@@ -34,7 +46,7 @@ impl std::fmt::Display for LockRelation {
 }
 
 /// Per-repo status entry.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, JsonSchema)]
 pub struct RepoStatus {
     pub path: String,
     pub branch: Option<String>,

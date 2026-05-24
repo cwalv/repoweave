@@ -121,6 +121,11 @@ pub fn render_overview() -> String {
     out.push_str("| `rwv doctor --locked` | Zero exit iff every repo's tip matches its lock entry — the precondition `rwv sync` enforces. Scriptable |\n");
     out.push_str("| `rwv doctor` | Full convention audit (orphans, dangling refs, stale locks, workweave drift, integration checks) |\n");
 
+    out.push_str("\n## Agent integration surfaces\n\n");
+    out.push_str("- **Structured output:** `rwv status --json`, `rwv doctor --json`, `rwv sync --json`. Array-of-records with `path` + `absolute_path` identifiers; per-record `kind` for failure discrimination.\n");
+    out.push_str("- **Per-verb reflection:** `rwv explain <verb>` returns a markdown bundle (purpose, invocation, output description with JSON Schema). Use when scripting against an unfamiliar verb.\n");
+    out.push_str("- **Schemas:** committed at `docs/reference/schemas/<verb>.json`. Each `--json` output embeds a `$schema` URL pointing here.\n");
+
     out
 }
 
@@ -189,6 +194,12 @@ pub fn render_context(ctx: &WorkspaceContext) -> String {
 
     // -- Directory layout -------------------------------------------------------
     render_directory_layout(&mut out, ctx, project);
+
+    // -- Agent integration surfaces ---------------------------------------------
+    out.push_str("\n## Agent integration surfaces\n\n");
+    out.push_str("- **Structured output:** `rwv status --json`, `rwv doctor --json`, `rwv sync --json`. Array-of-records with `path` + `absolute_path` identifiers; per-record `kind` for failure discrimination.\n");
+    out.push_str("- **Per-verb reflection:** `rwv explain <verb>` returns a markdown bundle (purpose, invocation, output description with JSON Schema). Use when scripting against an unfamiliar verb.\n");
+    out.push_str("- **Schemas:** committed at `docs/reference/schemas/<verb>.json`. Each `--json` output embeds a `$schema` URL pointing here.\n");
 
     out
 }
@@ -333,6 +344,13 @@ mod tests {
         assert!(overview.contains("Essential commands"));
         assert!(overview.contains("Sync family"));
         assert!(overview.contains("rwv --help"));
+        // Agent integration surfaces (fo-tn9uk.7)
+        assert!(overview.contains("Agent integration surfaces"));
+        assert!(overview.contains("rwv status --json"));
+        assert!(overview.contains("rwv doctor --json"));
+        assert!(overview.contains("rwv sync --json"));
+        assert!(overview.contains("rwv explain"));
+        assert!(overview.contains("docs/reference/schemas"));
     }
 
     // -- render_overview is repoweave-only — no gc/city leakage ----------------
@@ -359,9 +377,10 @@ mod tests {
         let overview = render_overview();
         let lines = overview.lines().count();
         // v0.3.2 was ~32 lines; the amendment asked for noticeably richer.
-        // Treat 60 as a soft floor so trivial trims don't regress us silently.
+        // Bumped to 70 in fo-tn9uk.7 after the Agent integration surfaces
+        // section landed, so trivial trims don't regress us silently.
         assert!(
-            lines >= 60,
+            lines >= 70,
             "render_overview shrank to {lines} lines; amendment requires noticeably denser than v0.3.2 (~32)"
         );
     }
@@ -411,6 +430,13 @@ integrations:
         assert!(output.contains("- cargo"));
         assert!(output.contains("## Key commands"));
         assert!(output.contains("## Directory layout"));
+        // Agent integration surfaces (fo-tn9uk.7)
+        assert!(output.contains("## Agent integration surfaces"));
+        assert!(output.contains("rwv status --json"));
+        assert!(output.contains("rwv doctor --json"));
+        assert!(output.contains("rwv sync --json"));
+        assert!(output.contains("rwv explain"));
+        assert!(output.contains("docs/reference/schemas"));
     }
 
     // -- render_context in workweave ------------------------------------------

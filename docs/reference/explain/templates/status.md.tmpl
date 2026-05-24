@@ -1,0 +1,76 @@
+# rwv status
+
+## Purpose
+
+Report per-repo workspace state for the active project (or all projects in a
+weave): branch tip, lock SHA, lock relation, mid-operation state, role, and
+URL. This is the read-only orientation verb — it never mutates anything on
+disk. Agents call it to decide what to do next (sync, recover from a mid-op,
+inspect drift) without touching git plumbing themselves.
+
+## Invocation
+
+```
+rwv status [--json] [--project <name>]
+```
+
+- `--json` emits machine-readable output (see Output below).
+- `--project <name>` reports status for the named project without changing
+  the active project (`.rwv-active` is untouched).
+
+Run `rwv --help status` for the full clap surface.
+
+## Output
+
+Default text output is a fixed-column table: one repo per row, with
+`path branch tip lock: <sha> [<relation>] [<mid-op>]`.
+
+Under `--json`, the output is a bare JSON array (legacy shape; pre-dates the
+`$schema` envelope convention). Each element is a `RepoStatus` record:
+`path`, `absolute_path`, `branch`, `tip`, `lock_sha`, `relation`, `mid_op`,
+`role`, `url`, `project`.
+
+A follow-up will migrate this to the envelope shape
+`{ "$schema": "...", "repos": [...] }`; the committed schema today describes
+the bare-array shape that actually ships.
+
+Schema:
+
+{{SCHEMA}}
+
+## Exit codes
+
+- `0` — status rendered successfully (independent of whether repos are
+  drifted, ahead, behind, or mid-op — those are data, not failures).
+- non-zero — workspace could not be resolved, manifest parse failure, or an
+  I/O error.
+
+## Examples
+
+Read all repos in the active project as JSON, pipe to jq:
+
+```
+rwv status --json | jq -r '.[] | "\(.path)\t\(.relation)"'
+```
+
+Find every repo that has drifted from its lock:
+
+```
+rwv status --json | jq '.[] | select(.relation != "ok" and .relation != "no_lock")'
+```
+
+Get absolute paths for all forks (e.g. to run a command across each repo):
+
+```
+rwv status --json | jq -r '.[] | select(.role == "fork") | .absolute_path'
+```
+
+## Common errors
+
+- *workspace could not be resolved* — `cwd` is not inside a weave or
+  workweave. Run from inside the workspace tree.
+- *manifest parse failure* — a project's `rwv.yaml` is malformed; fix the
+  YAML and retry.
+- mid-op state populated (`merge`, `rebase`, `cherry-pick`, etc.) — the repo
+  is in the middle of a git operation. Resolve it before retrying mutating
+  commands.

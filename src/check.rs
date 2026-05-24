@@ -7,6 +7,8 @@ use crate::git::git_command;
 use crate::integration::Issue;
 use crate::manifest::{Project, ProjectName, RepoPath, Role, WorkweaveName};
 use crate::vcs::ResolvedRevisionId;
+use schemars::JsonSchema;
+use serde::Serialize;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
@@ -71,7 +73,8 @@ pub enum CheckViolation {
     MissingReplayExclusion { project: ProjectName },
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize, JsonSchema)]
+#[serde(rename_all = "kebab-case")]
 pub enum DriftKind {
     /// Manifest lists it, but no worktree exists.
     Missing,
@@ -80,7 +83,8 @@ pub enum DriftKind {
 }
 
 /// How a stale index should be treated.
-#[derive(Debug)]
+#[derive(Debug, Serialize, JsonSchema)]
+#[serde(rename_all = "kebab-case")]
 pub enum IndexDriftKind {
     /// Index tree matches the tree of some recent ancestor commit. Safe to
     /// auto-fix with `git reset` — the displaced tree is permanently in the DAG.
@@ -91,7 +95,8 @@ pub enum IndexDriftKind {
 }
 
 /// How stale working-tree files should be treated.
-#[derive(Debug)]
+#[derive(Debug, Serialize, JsonSchema)]
+#[serde(rename_all = "kebab-case")]
 pub enum WorkingTreeDriftKind {
     /// All modified files' on-disk content matches blobs reachable from HEAD.
     /// Safe to restore with `git checkout HEAD -- <files>` — no work is lost.
@@ -100,6 +105,195 @@ pub enum WorkingTreeDriftKind {
     /// ancestor's tree. The user has active edits; `--fix` must not touch this.
     LiveEdits,
 }
+
+// ---------------------------------------------------------------------------
+// ViolationOutput — wire-format mirror of CheckViolation for `--json`
+// ---------------------------------------------------------------------------
+//
+// The internal `CheckViolation` enum carries a `RepoPath` (manifest-relative).
+// The wire shape needs both `path` (manifest-relative string) and
+// `absolute_path` (resolved against the workspace root or workweave dir),
+// which the internal type cannot supply alone. We mirror the variants here
+// and convert at serialize time via [`ViolationOutput::from_violation`].
+//
+// The kebab-case tag mapping matches the table in `fo-tn9uk.3`:
+//     OrphanedClone       -> "orphaned-clone"
+//     DanglingReference   -> "dangling-reference"
+//     MissingRole         -> "missing-role"
+//     StaleLock           -> "stale-lock"
+//     WorkweaveDrift      -> "workweave-drift"  (sub-kind via `DriftKind`)
+//     IndexDrift          -> "index-drift"      (sub-kind via `IndexDriftKind`)
+//     WorkingTreeDrift    -> "working-tree-drift" (sub-kind via `WorkingTreeDriftKind`)
+//     MissingReplayExclusion -> "missing-replay-exclusion"
+
+/// One violation as it appears in `rwv doctor --json` output.
+#[derive(Debug, Serialize, JsonSchema)]
+#[serde(tag = "kind", rename_all = "kebab-case")]
+pub enum ViolationOutput {
+    OrphanedClone {
+        path: String,
+        absolute_path: String,
+    },
+    DanglingReference {
+        path: String,
+        absolute_path: String,
+        project: String,
+    },
+    MissingRole {
+        path: String,
+        absolute_path: String,
+        project: String,
+    },
+    StaleLock {
+        path: String,
+        absolute_path: String,
+        project: String,
+        locked: String,
+        actual: String,
+    },
+    WorkweaveDrift {
+        path: String,
+        absolute_path: String,
+        workweave: String,
+        #[serde(rename = "sub_kind")]
+        sub_kind: DriftKind,
+    },
+    IndexDrift {
+        path: String,
+        absolute_path: String,
+        /// `None` for the primary weave.
+        workweave: Option<String>,
+        #[serde(rename = "sub_kind")]
+        sub_kind: IndexDriftKind,
+    },
+    WorkingTreeDrift {
+        path: String,
+        absolute_path: String,
+        /// `None` for the primary weave.
+        workweave: Option<String>,
+        #[serde(rename = "sub_kind")]
+        sub_kind: WorkingTreeDriftKind,
+    },
+    MissingReplayExclusion {
+        project: String,
+    },
+}
+
+impl ViolationOutput {
+    /// Convert an internal [`CheckViolation`] into its wire-format
+    /// counterpart, resolving `path` against `workspace_dir` for
+    /// non-workweave variants and against `workweave_dirs` for
+    /// workweave-scoped variants.
+    pub fn from_violation(
+        violation: CheckViolation,
+        workspace_dir: &Path,
+        workweave_dirs: &std::collections::HashMap<WorkweaveName, std::path::PathBuf>,
+    ) -> Self {
+        fn abs(workspace_dir: &Path, repo: &RepoPath) -> String {
+            workspace_dir
+                .join(repo.as_path())
+                .to_string_lossy()
+                .into_owned()
+        }
+        fn abs_in(
+            workweave: &Option<WorkweaveName>,
+            workspace_dir: &Path,
+            workweave_dirs: &std::collections::HashMap<WorkweaveName, std::path::PathBuf>,
+            repo: &RepoPath,
+        ) -> String {
+            match workweave {
+                Some(ww) => match workweave_dirs.get(ww) {
+                    Some(dir) => dir.join(repo.as_path()).to_string_lossy().into_owned(),
+                    None => workspace_dir
+                        .join(repo.as_path())
+                        .to_string_lossy()
+                        .into_owned(),
+                },
+                None => workspace_dir
+                    .join(repo.as_path())
+                    .to_string_lossy()
+                    .into_owned(),
+            }
+        }
+
+        match violation {
+            CheckViolation::OrphanedClone { path } => Self::OrphanedClone {
+                absolute_path: abs(workspace_dir, &path),
+                path: path.to_string(),
+            },
+            CheckViolation::DanglingReference { project, repo } => Self::DanglingReference {
+                absolute_path: abs(workspace_dir, &repo),
+                path: repo.to_string(),
+                project: project.to_string(),
+            },
+            CheckViolation::MissingRole { project, repo } => Self::MissingRole {
+                absolute_path: abs(workspace_dir, &repo),
+                path: repo.to_string(),
+                project: project.to_string(),
+            },
+            CheckViolation::StaleLock {
+                project,
+                repo,
+                locked,
+                actual,
+            } => Self::StaleLock {
+                absolute_path: abs(workspace_dir, &repo),
+                path: repo.to_string(),
+                project: project.to_string(),
+                locked: locked.display_str().to_owned(),
+                actual: actual.display_str().to_owned(),
+            },
+            CheckViolation::WorkweaveDrift {
+                workweave,
+                kind,
+                repo,
+            } => {
+                let dir_for_ww = workweave_dirs
+                    .get(&workweave)
+                    .cloned()
+                    .unwrap_or_else(|| workspace_dir.to_path_buf());
+                Self::WorkweaveDrift {
+                    absolute_path: dir_for_ww
+                        .join(repo.as_path())
+                        .to_string_lossy()
+                        .into_owned(),
+                    path: repo.to_string(),
+                    workweave: workweave.to_string(),
+                    sub_kind: kind,
+                }
+            }
+            CheckViolation::IndexDrift {
+                workweave,
+                repo,
+                kind,
+            } => Self::IndexDrift {
+                absolute_path: abs_in(&workweave, workspace_dir, workweave_dirs, &repo),
+                path: repo.to_string(),
+                workweave: workweave.map(|w| w.to_string()),
+                sub_kind: kind,
+            },
+            CheckViolation::WorkingTreeDrift {
+                workweave,
+                repo,
+                kind,
+            } => Self::WorkingTreeDrift {
+                absolute_path: abs_in(&workweave, workspace_dir, workweave_dirs, &repo),
+                path: repo.to_string(),
+                workweave: workweave.map(|w| w.to_string()),
+                sub_kind: kind,
+            },
+            CheckViolation::MissingReplayExclusion { project } => Self::MissingReplayExclusion {
+                project: project.to_string(),
+            },
+        }
+    }
+}
+
+/// `$schema` URL embedded in `rwv doctor --json` output. Points at the
+/// committed schema artifact in the main branch (Agent D regenerates this
+/// file via `cargo run --bin generate-schemas` and CI fails on drift).
+pub const DOCTOR_SCHEMA_URL: &str =
+    "https://raw.githubusercontent.com/cwalv/repoweave/main/docs/reference/schemas/doctor.json";
 
 /// Inputs for running workspace-wide checks.
 pub struct CheckInput {
@@ -930,4 +1124,214 @@ pub fn run_check(
     }
 
     Ok(has_errors)
+}
+
+/// Build the JSON payload for `rwv doctor --json` from a vector of
+/// violations and the resolved workspace context. Extracted from
+/// [`run_check_json`] so tests can drive the serialization shape without
+/// reaching for a real workspace on disk.
+///
+/// Returns `{ "$schema": ..., "violations": [...] }`.
+pub fn build_doctor_json(
+    violations: Vec<CheckViolation>,
+    workspace_dir: &Path,
+    workweave_dirs: &std::collections::HashMap<WorkweaveName, std::path::PathBuf>,
+) -> serde_json::Value {
+    let outputs: Vec<ViolationOutput> = violations
+        .into_iter()
+        .map(|v| ViolationOutput::from_violation(v, workspace_dir, workweave_dirs))
+        .collect();
+    serde_json::json!({
+        "$schema": DOCTOR_SCHEMA_URL,
+        "violations": outputs,
+    })
+}
+
+/// Collect every `CheckViolation` `rwv doctor` knows how to produce.
+///
+/// Mirrors the scaffolding in [`run_check`] but returns a typed enum vector
+/// instead of mixing `Issue`s and `CheckViolation`s. Integration-runner
+/// findings and lock-resolution / HEAD-read failures are out of scope: they
+/// are not `CheckViolation` variants today and the bead explicitly excludes
+/// them from `--json` (the acceptance criterion is "each `CheckViolation`
+/// variant serializes").
+///
+/// Returns `(violations, workweave_dirs)` so the caller can resolve
+/// workweave-scoped `absolute_path` fields.
+fn collect_doctor_violations(
+    cwd: &Path,
+    project_override: Option<crate::manifest::ProjectName>,
+) -> anyhow::Result<(
+    Vec<CheckViolation>,
+    std::path::PathBuf,
+    std::collections::HashMap<WorkweaveName, std::path::PathBuf>,
+)> {
+    use crate::git::GitVcs;
+    use crate::vcs::Vcs;
+    use crate::workspace::{WorkspaceContext, WorkspaceLocation, WorkspaceSession};
+
+    let ctx = WorkspaceContext::resolve(cwd, project_override)?;
+    let workspace_dir = ctx.active_path().to_path_buf();
+
+    let session = WorkspaceSession::new(&workspace_dir);
+    let git = GitVcs;
+
+    // Resolve HEAD revisions for each repo on disk. HEAD-read failures are
+    // surfaced by the non-JSON `run_check` as `Issue`s; they have no
+    // `CheckViolation` variant and are therefore not emitted under `--json`.
+    let mut head_revisions = BTreeMap::new();
+    for repo_path in session.repos_on_disk() {
+        let abs = workspace_dir.join(repo_path.as_path());
+        if let Ok(rev) = git.head_revision(&abs) {
+            head_revisions.insert(repo_path.clone(), rev);
+        }
+    }
+
+    // Load projects + resolve lock files.
+    let projects_dir = workspace_dir.join("projects");
+    let mut projects = Vec::new();
+    let mut known_repos = BTreeSet::new();
+    let mut resolved_locks: std::collections::HashMap<
+        crate::manifest::ProjectName,
+        crate::manifest::ResolvedLockFile,
+    > = std::collections::HashMap::new();
+
+    if projects_dir.is_dir() {
+        let mut entries: Vec<_> = std::fs::read_dir(&projects_dir)?
+            .filter_map(|e| e.ok())
+            .collect();
+        entries.sort_by_key(|e| e.file_name());
+
+        for entry in entries {
+            let project_dir = entry.path();
+            if !project_dir.is_dir() {
+                continue;
+            }
+            let manifest_path = project_dir.join("rwv.yaml");
+            if !manifest_path.exists() {
+                continue;
+            }
+            let rel_dir = project_dir
+                .strip_prefix(&workspace_dir)
+                .unwrap_or(&project_dir);
+            match Project::from_dir(&project_dir) {
+                Ok(mut project) => {
+                    let name_from_rel = rel_dir
+                        .strip_prefix("projects")
+                        .unwrap_or(rel_dir)
+                        .to_string_lossy()
+                        .into_owned();
+                    project.name = crate::manifest::ProjectName::new(name_from_rel);
+
+                    if let Some(raw_lock) = project.lock.clone() {
+                        let (resolved, _failures) = raw_lock.resolve_versions(&workspace_dir);
+                        resolved_locks.insert(project.name.clone(), resolved);
+                    }
+                    for repo_path in project.manifest.repositories.keys() {
+                        known_repos.insert(repo_path.clone());
+                    }
+                    projects.push(project);
+                }
+                Err(_) => continue,
+            }
+        }
+    }
+
+    let input = CheckInput {
+        known_repos,
+        repos_on_disk: session.repos_on_disk().to_vec(),
+        projects,
+        head_revisions,
+        resolved_locks,
+    };
+
+    let mut violations = find_violations(&input);
+
+    // Index-drift + working-tree-drift detection. Same scan list as `run_check`:
+    // CWD workspace repos plus, from the primary weave, every known workweave.
+    let mut workweave_dirs: std::collections::HashMap<WorkweaveName, std::path::PathBuf> =
+        std::collections::HashMap::new();
+    let mut index_scan: Vec<(Option<WorkweaveName>, std::path::PathBuf, RepoPath)> = Vec::new();
+
+    for project in &input.projects {
+        for repo_path in project.manifest.repositories.keys() {
+            let abs = workspace_dir.join(repo_path.as_path());
+            if abs.exists() {
+                index_scan.push((None, abs, repo_path.clone()));
+            }
+        }
+    }
+
+    if matches!(ctx.location, WorkspaceLocation::Weave { .. }) {
+        for (ww_name_str, ww_dir) in crate::workweave::list_workweave_dirs(ctx.primary_path()) {
+            let ww_name = WorkweaveName::new(ww_name_str);
+            workweave_dirs.insert(ww_name.clone(), ww_dir.clone());
+            for project in &input.projects {
+                for repo_path in project.manifest.repositories.keys() {
+                    let abs = ww_dir.join(repo_path.as_path());
+                    if abs.exists() {
+                        index_scan.push((Some(ww_name.clone()), abs, repo_path.clone()));
+                    }
+                }
+            }
+        }
+    }
+
+    for (ww_label, repo_abs, repo_path) in &index_scan {
+        if let Some(drift_kind) = classify_index_drift(repo_abs) {
+            violations.push(CheckViolation::IndexDrift {
+                workweave: ww_label.clone(),
+                repo: repo_path.clone(),
+                kind: drift_kind,
+            });
+        }
+        if let Some(drift_kind) = classify_working_tree_drift(repo_abs) {
+            violations.push(CheckViolation::WorkingTreeDrift {
+                workweave: ww_label.clone(),
+                repo: repo_path.clone(),
+                kind: drift_kind,
+            });
+        }
+    }
+
+    // Replay-exclusion check (fo-w9ph9): each project repo should carry
+    // `rwv.lock merge=ours` in `.gitattributes`.
+    for project in &input.projects {
+        let project_repo = workspace_dir.join("projects").join(project.name.as_str());
+        if !project_repo.is_dir() {
+            continue;
+        }
+        if let Ok(false) = git.has_replay_exclusion(&project_repo, std::path::Path::new("rwv.lock"))
+        {
+            violations.push(CheckViolation::MissingReplayExclusion {
+                project: project.name.clone(),
+            });
+        }
+    }
+
+    Ok((violations, workspace_dir, workweave_dirs))
+}
+
+/// Run `rwv doctor --json`.
+///
+/// Emits `{ "$schema": "...", "violations": [...] }` to stdout. Exit
+/// semantics match [`run_check`]: returns `Ok(true)` iff any violations
+/// were found, so the caller can exit non-zero.
+///
+/// Only `CheckViolation` variants are surfaced — integration-runner
+/// findings (which are `Issue`s, not `CheckViolation`s) and ad-hoc
+/// failures (HEAD-unreadable, lock-resolve failures) are intentionally
+/// out of scope for the JSON channel (see the bead body for rationale).
+pub fn run_check_json(
+    cwd: &std::path::Path,
+    project_override: Option<crate::manifest::ProjectName>,
+) -> anyhow::Result<bool> {
+    let (violations, workspace_dir, workweave_dirs) =
+        collect_doctor_violations(cwd, project_override)?;
+    let has_violations = !violations.is_empty();
+    let payload = build_doctor_json(violations, &workspace_dir, &workweave_dirs);
+    let out = serde_json::to_string_pretty(&payload)
+        .map_err(|e| anyhow::anyhow!("failed to serialize doctor output: {e}"))?;
+    println!("{out}");
+    Ok(has_violations)
 }

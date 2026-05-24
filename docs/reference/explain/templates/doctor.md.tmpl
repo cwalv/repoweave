@@ -1,0 +1,86 @@
+# rwv doctor
+
+## Purpose
+
+Run workspace-wide convention checks: orphaned clones, dangling references,
+stale locks, workweave drift, index drift, working-tree drift, missing
+replay-exclusion attributes, and integration-specific issues. `doctor`
+exists so agents and humans can verify the workspace is structurally sound
+before running mutating commands.
+
+The check is intentionally pure: filesystem scanning happens up front, then
+a closed enum (`CheckViolation`) is reduced to violations. Each variant has
+a stable kebab-case `kind` tag — agents key off `kind` to dispatch
+follow-up actions.
+
+## Invocation
+
+```
+rwv doctor [--json] [--fix]
+```
+
+- `--json` emits machine-readable output (see Output below).
+- `--fix` attempts auto-remediation for variants that are safe to fix
+  (e.g. index drift where the displaced tree is a known ancestor).
+
+Run `rwv --help doctor` for the full clap surface.
+
+## Output
+
+Default text output is one human-readable line per violation, grouped by
+severity. Under `--json`, output is the envelope:
+
+```
+{
+  "$schema": "<url>",
+  "violations": [ { "kind": "...", ... }, ... ]
+}
+```
+
+The `$schema` URL points to the committed schema artifact. Variants are
+discriminated by the `kind` tag — `orphaned-clone`, `dangling-reference`,
+`missing-role`, `stale-lock`, `workweave-drift`, `index-drift`,
+`working-tree-drift`, `missing-replay-exclusion`. Every per-repo variant
+carries `path` (manifest-relative) and `absolute_path` (fully resolved).
+Variants with subkinds (`workweave-drift`, `index-drift`,
+`working-tree-drift`) carry an additional `sub_kind` field.
+
+Schema:
+
+{{SCHEMA}}
+
+## Exit codes
+
+- `0` — no violations found.
+- non-zero — violations found, or an error occurred resolving the
+  workspace.
+
+## Examples
+
+Get a JSON report of all violations:
+
+```
+rwv doctor --json
+```
+
+Find every stale lock and the paths involved:
+
+```
+rwv doctor --json | jq '.violations[] | select(.kind == "stale-lock")'
+```
+
+Auto-fix safe drift (index trees that match a known ancestor):
+
+```
+rwv doctor --fix
+```
+
+## Common errors
+
+- *missing-replay-exclusion* on a project repo — the project repo lacks
+  `rwv.lock merge=ours` in `.gitattributes`. Either run `rwv doctor --fix`
+  to append it, or add the line manually.
+- *index-drift* with `sub_kind: live-staged` — the user has staged content
+  that doesn't match a known tree. `--fix` will refuse; resolve manually.
+- *orphaned-clone* — a directory under a registry path that isn't listed in
+  any `rwv.yaml`. Either add it to a manifest or remove it.

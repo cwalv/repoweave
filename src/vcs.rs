@@ -4,6 +4,8 @@
 //! the specific tool (git, jj, sl, hg) so core logic doesn't hardcode git.
 
 use crate::manifest::Role;
+use schemars::JsonSchema;
+use serde::Serialize;
 use std::fmt;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -175,7 +177,8 @@ impl<'de> serde::Deserialize<'de> for RawRevisionId {
 /// Passed to [`Vcs::conflict_resolution_hint`] so sync's conflict-bail
 /// messages embed VCS-appropriate "how do I resume this?" text without
 /// hardcoding git vocabulary.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, JsonSchema)]
+#[serde(rename_all = "kebab-case")]
 pub enum ConflictOp {
     /// Native rebase (`git rebase`) — resumes with `git rebase --continue`.
     Rebase,
@@ -266,6 +269,81 @@ impl VcsError {
             Self::RebaseConflict { .. } => "rebase-conflict",
             Self::Io { .. } => "io",
             Self::CommandFailed { .. } => "command-failed",
+        }
+    }
+}
+
+/// Wire-output mirror of [`VcsError`] for `--json` emission.
+///
+/// `VcsError` itself can't derive `Serialize` cleanly because tuple variants
+/// (and `io::Error`) don't play nicely with serde's internally-tagged enum
+/// representation. This struct-only mirror does: every variant carries
+/// named fields, the tag matches [`VcsError::kind`], and a `From<&VcsError>`
+/// impl converts at JSON-emission time.
+#[derive(Debug, Serialize, JsonSchema)]
+#[serde(tag = "kind", rename_all = "kebab-case")]
+pub enum VcsErrorOutput {
+    NotARepo {
+        path: PathBuf,
+    },
+    RevisionNotFound {
+        repo: PathBuf,
+        rev: String,
+    },
+    BranchAlreadyExists {
+        repo: PathBuf,
+        branch: String,
+    },
+    WorktreeExists {
+        path: PathBuf,
+    },
+    UncommittedChanges {
+        path: PathBuf,
+    },
+    RebaseConflict {
+        repo: PathBuf,
+        op: ConflictOp,
+    },
+    Io {
+        ctx: String,
+        /// Display form of the underlying `io::Error`. The native source is
+        /// dropped at the wire boundary since `io::Error` does not serialize.
+        error: String,
+    },
+    CommandFailed {
+        args: Vec<String>,
+        repo: PathBuf,
+        stderr: String,
+    },
+}
+
+impl From<&VcsError> for VcsErrorOutput {
+    fn from(e: &VcsError) -> Self {
+        match e {
+            VcsError::NotARepo(p) => Self::NotARepo { path: p.clone() },
+            VcsError::RevisionNotFound { repo, rev } => Self::RevisionNotFound {
+                repo: repo.clone(),
+                rev: rev.clone(),
+            },
+            VcsError::BranchAlreadyExists { repo, branch } => Self::BranchAlreadyExists {
+                repo: repo.clone(),
+                branch: branch.as_str().to_owned(),
+            },
+            VcsError::WorktreeExists(p) => Self::WorktreeExists { path: p.clone() },
+            VcsError::UncommittedChanges(p) => Self::UncommittedChanges { path: p.clone() },
+            VcsError::RebaseConflict { repo, op } => Self::RebaseConflict {
+                repo: repo.clone(),
+                op: *op,
+            },
+            VcsError::Io { ctx, source } => Self::Io {
+                ctx: ctx.clone(),
+                error: source.to_string(),
+            },
+            VcsError::CommandFailed { args, repo, stderr } => Self::CommandFailed {
+                args: args.clone(),
+                repo: repo.clone(),
+                stderr: stderr.clone(),
+            },
         }
     }
 }

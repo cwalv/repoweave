@@ -6,9 +6,11 @@
 use crate::git::{git_command, GitVcs};
 use crate::lock::{commit_lock_file_with_message, generate_lock};
 use crate::manifest::{LockFile, Manifest, Project, ProjectName, RepoPath, WorkweaveName};
-use crate::vcs::{ConflictOp, ResolvedRevisionId, Vcs, VcsError};
+use crate::vcs::{ConflictOp, ResolvedRevisionId, Vcs, VcsError, VcsErrorOutput};
 use crate::workspace::{read_active_project, WorkspaceContext, WorkspaceLocation};
 use crate::workweave::workweave_path_for;
+use schemars::JsonSchema;
+use serde::Serialize;
 use std::fmt;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
@@ -169,16 +171,33 @@ fn looks_path_like(s: &str) -> bool {
 /// to differently — directly maps to `--json` output for `rwv status` /
 /// `rwv sync`. The `error` payload is the underlying error string for
 /// human-readable display.
+///
+/// `cause` optionally carries the underlying typed [`VcsError`] when the
+/// failure originated from a `Vcs` trait call (e.g. `RebaseConflict` from
+/// `Vcs::rebase`). This lets `--json` consumers pattern-match on the
+/// structured failure mode without parsing the human string.
 #[derive(Debug)]
 pub enum SyncFailure {
     /// Couldn't read HEAD on the repo (e.g. not a repo, or I/O failure).
-    HeadUnreadable { error: String },
+    HeadUnreadable {
+        error: String,
+        cause: Option<VcsError>,
+    },
     /// `--strategy ff` cannot proceed (divergence, conflict).
-    FastForwardImpossible { error: String },
+    FastForwardImpossible {
+        error: String,
+        cause: Option<VcsError>,
+    },
     /// `--strategy rebase` failed (conflict or git error).
-    RebaseFailed { error: String },
+    RebaseFailed {
+        error: String,
+        cause: Option<VcsError>,
+    },
     /// `--strategy merge` failed (conflict or git error).
-    MergeFailed { error: String },
+    MergeFailed {
+        error: String,
+        cause: Option<VcsError>,
+    },
 }
 
 impl SyncFailure {
@@ -192,28 +211,45 @@ impl SyncFailure {
         }
     }
 
-    fn for_strategy(strategy: SyncStrategy, error: String) -> Self {
+    pub fn error(&self) -> &str {
+        match self {
+            Self::HeadUnreadable { error, .. }
+            | Self::FastForwardImpossible { error, .. }
+            | Self::RebaseFailed { error, .. }
+            | Self::MergeFailed { error, .. } => error,
+        }
+    }
+
+    pub fn cause(&self) -> Option<&VcsError> {
+        match self {
+            Self::HeadUnreadable { cause, .. }
+            | Self::FastForwardImpossible { cause, .. }
+            | Self::RebaseFailed { cause, .. }
+            | Self::MergeFailed { cause, .. } => cause.as_ref(),
+        }
+    }
+
+    fn for_strategy(strategy: SyncStrategy, error: String, cause: Option<VcsError>) -> Self {
         match strategy {
-            SyncStrategy::Ff => Self::FastForwardImpossible { error },
-            SyncStrategy::Rebase => Self::RebaseFailed { error },
-            SyncStrategy::Merge => Self::MergeFailed { error },
+            SyncStrategy::Ff => Self::FastForwardImpossible { error, cause },
+            SyncStrategy::Rebase => Self::RebaseFailed { error, cause },
+            SyncStrategy::Merge => Self::MergeFailed { error, cause },
         }
     }
 }
 
 impl fmt::Display for SyncFailure {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::HeadUnreadable { error }
-            | Self::FastForwardImpossible { error }
-            | Self::RebaseFailed { error }
-            | Self::MergeFailed { error } => f.write_str(error),
-        }
+        f.write_str(self.error())
     }
 }
 
+/// Per-repo result of a sync operation.
+///
+/// Public so the `--json` wire-output layer can pattern-match on it. The
+/// JSON shape is produced by converting through [`SyncOutcomeOutput`].
 #[derive(Debug)]
-enum RepoSyncOutcome {
+pub enum RepoSyncOutcome {
     /// HEAD advanced to the lock SHA.
     Converged,
     /// Lock SHA is already an ancestor of HEAD; no change made.
@@ -225,10 +261,126 @@ enum RepoSyncOutcome {
 }
 
 impl RepoSyncOutcome {
-    fn is_failure(&self) -> bool {
+    pub fn is_failure(&self) -> bool {
         matches!(self, Self::Failed(_))
     }
 }
+
+// ---------------------------------------------------------------------------
+// JSON wire-output types for `rwv sync --json`
+// ---------------------------------------------------------------------------
+
+/// Wire-output mirror of [`SyncFailure`] for `--json` emission.
+///
+/// Carries the same payload as the in-memory enum but with a `cause`
+/// represented as the serialisable [`VcsErrorOutput`]. The hand-rolled tag
+/// strings match [`SyncFailure::kind`] (verified via snapshot tests).
+#[derive(Debug, Serialize, JsonSchema)]
+#[serde(tag = "kind", rename_all = "kebab-case")]
+pub enum SyncFailureOutput {
+    HeadUnreadable {
+        error: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        cause: Option<VcsErrorOutput>,
+    },
+    #[serde(rename = "ff-impossible")]
+    FastForwardImpossible {
+        error: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        cause: Option<VcsErrorOutput>,
+    },
+    RebaseFailed {
+        error: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        cause: Option<VcsErrorOutput>,
+    },
+    MergeFailed {
+        error: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        cause: Option<VcsErrorOutput>,
+    },
+}
+
+impl From<&SyncFailure> for SyncFailureOutput {
+    fn from(f: &SyncFailure) -> Self {
+        let error = f.error().to_owned();
+        let cause = f.cause().map(VcsErrorOutput::from);
+        match f {
+            SyncFailure::HeadUnreadable { .. } => Self::HeadUnreadable { error, cause },
+            SyncFailure::FastForwardImpossible { .. } => {
+                Self::FastForwardImpossible { error, cause }
+            }
+            SyncFailure::RebaseFailed { .. } => Self::RebaseFailed { error, cause },
+            SyncFailure::MergeFailed { .. } => Self::MergeFailed { error, cause },
+        }
+    }
+}
+
+/// One per-repo record in `rwv sync --json` output.
+#[derive(Debug, Serialize, JsonSchema)]
+#[serde(tag = "kind", rename_all = "kebab-case")]
+pub enum SyncOutcomeOutput {
+    Converged {
+        path: String,
+        absolute_path: String,
+    },
+    AlreadyAhead {
+        path: String,
+        absolute_path: String,
+        commits_ahead: usize,
+    },
+    NoOp {
+        path: String,
+        absolute_path: String,
+    },
+    Failed {
+        path: String,
+        absolute_path: String,
+        failure: SyncFailureOutput,
+    },
+}
+
+impl SyncOutcomeOutput {
+    pub fn from_outcome(path: String, absolute_path: String, outcome: &RepoSyncOutcome) -> Self {
+        match outcome {
+            RepoSyncOutcome::Converged => Self::Converged {
+                path,
+                absolute_path,
+            },
+            RepoSyncOutcome::AlreadyAhead { commits_ahead } => Self::AlreadyAhead {
+                path,
+                absolute_path,
+                commits_ahead: *commits_ahead,
+            },
+            RepoSyncOutcome::NoOp => Self::NoOp {
+                path,
+                absolute_path,
+            },
+            RepoSyncOutcome::Failed(failure) => Self::Failed {
+                path,
+                absolute_path,
+                failure: SyncFailureOutput::from(failure),
+            },
+        }
+    }
+
+    pub fn is_failure(&self) -> bool {
+        matches!(self, Self::Failed { .. })
+    }
+}
+
+/// Top-level envelope for `rwv sync --json` (serial mode).
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct SyncJsonOutput {
+    #[serde(rename = "$schema")]
+    pub schema: String,
+    pub outcomes: Vec<SyncOutcomeOutput>,
+}
+
+/// Schema URL embedded in `rwv sync --json` output. Pins to the committed
+/// artifact under `docs/reference/schemas/`.
+pub const SYNC_JSON_SCHEMA_URL: &str =
+    "https://raw.githubusercontent.com/cwalv/repoweave/main/docs/reference/schemas/sync.json";
 
 impl fmt::Display for RepoSyncOutcome {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -254,9 +406,11 @@ fn sync_one_repo(
     let head = match GitVcs.head_revision(repo) {
         Ok(h) => h,
         Err(e) => {
+            let error = e.to_string();
             return RepoSyncOutcome::Failed(SyncFailure::HeadUnreadable {
-                error: e.to_string(),
-            })
+                error,
+                cause: Some(e),
+            });
         }
     };
 
@@ -285,7 +439,9 @@ fn sync_one_repo(
 
     match apply_strategy(repo, target, strategy) {
         Ok(()) => RepoSyncOutcome::Converged,
-        Err(e) => RepoSyncOutcome::Failed(SyncFailure::for_strategy(strategy, e.to_string())),
+        Err(StrategyError { message, cause }) => {
+            RepoSyncOutcome::Failed(SyncFailure::for_strategy(strategy, message, cause))
+        }
     }
 }
 
@@ -361,20 +517,44 @@ fn git(args: &[&str], dir: &Path) -> anyhow::Result<String> {
         .to_owned())
 }
 
+/// Failure from [`apply_strategy`] carrying both the human-formatted error
+/// string and (when available) the underlying typed [`VcsError`] so callers
+/// can plumb structured cause info into `--json` output.
+struct StrategyError {
+    message: String,
+    cause: Option<VcsError>,
+}
+
+impl StrategyError {
+    fn from_message(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+            cause: None,
+        }
+    }
+
+    fn from_vcs(err: VcsError) -> Self {
+        Self {
+            message: err.to_string(),
+            cause: Some(err),
+        }
+    }
+}
+
 fn apply_strategy(
     repo: &Path,
     target: &ResolvedRevisionId,
     strategy: SyncStrategy,
-) -> anyhow::Result<()> {
+) -> Result<(), StrategyError> {
     let target_ref = target.as_str();
     match strategy {
         SyncStrategy::Ff => {
             let out = git(&["merge", "--ff-only", target_ref], repo);
             if let Err(e) = out {
-                anyhow::bail!(
+                return Err(StrategyError::from_message(format!(
                     "cannot fast-forward; rerun with --strategy rebase or --strategy merge. {}",
                     e
-                );
+                )));
             }
         }
         SyncStrategy::Rebase => {
@@ -385,11 +565,12 @@ fn apply_strategy(
             // computes the merge-base internally to bound the replay set.
             GitVcs
                 .rebase(repo, target, target)
-                .map_err(|e| anyhow::anyhow!("{e}"))?;
+                .map_err(StrategyError::from_vcs)?;
         }
         SyncStrategy::Merge => {
             // Merge with auto-generated commit message.
-            git(&["merge", "--no-edit", target_ref], repo)?;
+            git(&["merge", "--no-edit", target_ref], repo)
+                .map_err(|e| StrategyError::from_message(format!("merge failed: {e}")))?;
         }
     }
     Ok(())
@@ -1063,6 +1244,41 @@ pub fn run_sync(
     retire: bool,
     project_override: Option<ProjectName>,
 ) -> anyhow::Result<()> {
+    let mut records: Vec<SyncOutcomeOutput> = Vec::new();
+    run_sync_impl(
+        cwd,
+        source,
+        strategy,
+        force,
+        retire,
+        project_override,
+        true, // emit_text: preserve existing text-mode behavior
+        &mut records,
+    )
+}
+
+/// Shared sync orchestration body used by both text-mode (`run_sync`) and
+/// JSON-mode (`run_sync_json`).
+///
+/// `emit_text` toggles per-repo `println!`/`eprintln!` lines (kept identical
+/// to the pre-refactor `run_sync` output when `true`); `records` accumulates
+/// per-repo outcomes (always — text mode passes a Vec it then discards).
+///
+/// Project-level errors (lock freshness, materialize, manifest-repo failures
+/// post-loop, Phase 1' / Phase 3) still bail with `anyhow::Result::Err` —
+/// the JSON caller decides whether to emit collected records before
+/// propagating.
+#[allow(clippy::too_many_arguments)]
+fn run_sync_impl(
+    cwd: &Path,
+    source: Option<&SyncSource>,
+    strategy: SyncStrategy,
+    force: bool,
+    retire: bool,
+    project_override: Option<ProjectName>,
+    emit_text: bool,
+    records: &mut Vec<SyncOutcomeOutput>,
+) -> anyhow::Result<()> {
     // Resolve CWD and source workspaces.
     let ctx = WorkspaceContext::resolve(cwd, project_override.clone())?;
     let workspace_dir = ctx.active_path().to_path_buf();
@@ -1130,7 +1346,7 @@ pub fn run_sync(
                     .flatten()
                     .and_then(|m| m.parent)
                     .map(|p| p.canonicalize().unwrap_or(p));
-                if cwd_parent.as_ref() != Some(&source_canonical) {
+                if cwd_parent.as_ref() != Some(&source_canonical) && emit_text {
                     eprintln!(
                         "warning: syncing across workweave siblings ({} → {}); \
                          this skips the recorded parent (informational — proceeding).",
@@ -1276,9 +1492,15 @@ pub fn run_sync(
             None => continue, // lock entry without manifest entry — skip
         };
         match materialize_missing_repo(&ctx, repo_path, entry, &cwd_project_name) {
-            Ok(()) => println!("  {repo_path}: materialized"),
+            Ok(()) => {
+                if emit_text {
+                    println!("  {repo_path}: materialized");
+                }
+            }
             Err(e) => {
-                eprintln!("  {repo_path}: materialize failed: {e}");
+                if emit_text {
+                    eprintln!("  {repo_path}: materialize failed: {e}");
+                }
                 // B6: previously this stderr line was the only signal; the
                 // per-repo `skipped (not on disk)` loop below didn't flip
                 // `any_failure`, so sync exited 0 with a lock that had
@@ -1298,8 +1520,16 @@ pub fn run_sync(
                 continue;
             }
             match prune_dropped_repo(&ctx, repo_path) {
-                Ok(()) => println!("  {repo_path}: pruned (dropped from lock)"),
-                Err(e) => eprintln!("  {repo_path}: prune skipped: {e}"),
+                Ok(()) => {
+                    if emit_text {
+                        println!("  {repo_path}: pruned (dropped from lock)");
+                    }
+                }
+                Err(e) => {
+                    if emit_text {
+                        eprintln!("  {repo_path}: prune skipped: {e}");
+                    }
+                }
             }
         }
     }
@@ -1325,15 +1555,33 @@ pub fn run_sync(
     for (repo_path, raw_entry) in &raw_source_lock.repositories {
         let abs = workspace_dir.join(repo_path.as_path());
         if !abs.exists() {
-            println!("  {repo_path}: skipped (not on disk)");
+            if emit_text {
+                println!("  {repo_path}: skipped (not on disk)");
+            }
             continue;
         }
         if unresolvable.contains(repo_path) {
-            eprintln!(
-                "  {repo_path}: lock pins unknown revision {} in local clone",
+            if emit_text {
+                eprintln!(
+                    "  {repo_path}: lock pins unknown revision {} in local clone",
+                    raw_entry.version
+                );
+            }
+            any_failure = true;
+            // Surface as a JSON record so consumers see this in --json mode.
+            let head_unreadable_error = format!(
+                "lock pins unknown revision {} in local clone",
                 raw_entry.version
             );
-            any_failure = true;
+            let outcome = RepoSyncOutcome::Failed(SyncFailure::HeadUnreadable {
+                error: head_unreadable_error,
+                cause: None,
+            });
+            records.push(SyncOutcomeOutput::from_outcome(
+                repo_path.to_string(),
+                abs.to_string_lossy().into_owned(),
+                &outcome,
+            ));
             continue;
         }
         let lock_entry = match source_lock.repositories.get(repo_path) {
@@ -1343,7 +1591,9 @@ pub fn run_sync(
 
         let outcome = sync_one_repo(&abs, &lock_entry.version, strategy);
         if outcome.is_failure() {
-            eprintln!("  {repo_path}: {outcome}");
+            if emit_text {
+                eprintln!("  {repo_path}: {outcome}");
+            }
             any_failure = true;
         } else {
             // Post-sync: refresh index and working tree if stale. Fires on
@@ -1352,8 +1602,15 @@ pub fn run_sync(
             // AlreadyAhead (working tree should still reflect HEAD).
             refresh_index_if_safe(&abs);
             refresh_working_tree_if_safe(&abs);
-            println!("  {repo_path}: {outcome}");
+            if emit_text {
+                println!("  {repo_path}: {outcome}");
+            }
         }
+        records.push(SyncOutcomeOutput::from_outcome(
+            repo_path.to_string(),
+            abs.to_string_lossy().into_owned(),
+            &outcome,
+        ));
     }
 
     if any_failure {
@@ -1384,7 +1641,9 @@ pub fn run_sync(
     };
 
     if let Err(e) = phase1_outcome {
-        eprintln!("Phase 1' (project repo) failed: {e}");
+        if emit_text {
+            eprintln!("Phase 1' (project repo) failed: {e}");
+        }
         anyhow::bail!(
             "{}",
             phase1_or_phase3_failure_message(
@@ -1404,11 +1663,13 @@ pub fn run_sync(
     let cwd_project_phase3 = match Project::from_dir(&cwd_project_dir) {
         Ok(p) => p,
         Err(e) => {
-            eprintln!(
-                "warning: failed to reload project after Phase 1' ({e}); \
-                 Phase 3 will use the pre-Phase-1' manifest snapshot, which may \
-                 miss newly-added repos"
-            );
+            if emit_text {
+                eprintln!(
+                    "warning: failed to reload project after Phase 1' ({e}); \
+                     Phase 3 will use the pre-Phase-1' manifest snapshot, which may \
+                     miss newly-added repos"
+                );
+            }
             cwd_project
         }
     };
@@ -1420,7 +1681,9 @@ pub fn run_sync(
         &cwd_project_phase3,
         &source_workspace_name,
     ) {
-        eprintln!("Phase 3 (re-lock) failed: {e}");
+        if emit_text {
+            eprintln!("Phase 3 (re-lock) failed: {e}");
+        }
         anyhow::bail!(
             "{}",
             phase1_or_phase3_failure_message(
@@ -1442,7 +1705,7 @@ pub fn run_sync(
     // savepoints are still cleaned — they are not part of the discarded set.
     if !phase1_ancestor_bypassed {
         delete_savepoint(&cwd_project_dir, &op_id);
-    } else {
+    } else if emit_text {
         eprintln!(
             "note: --force discarded project commits; pre-sync state preserved at \
              refs/rwv/pre-op/{op_id} (recover with `git reset --hard refs/rwv/pre-op/{op_id}` \
@@ -1475,7 +1738,9 @@ pub fn run_sync(
                 )?;
             }
             WorkspaceLocation::Weave { .. } => {
-                eprintln!("warning: --retire is only meaningful inside a workweave; ignoring");
+                if emit_text {
+                    eprintln!("warning: --retire is only meaningful inside a workweave; ignoring");
+                }
             }
         }
     }
@@ -1811,6 +2076,81 @@ fn abort_one_repo(repo: &Path, op_id: &OpId) -> anyhow::Result<()> {
     }
 }
 
+/// Run `rwv sync --json`.
+///
+/// Emits per-repo outcomes as `{ "$schema": "...", "outcomes": [...] }` to
+/// stdout (pretty-printed) on completion. Suppresses the text-mode per-repo
+/// `println!` chatter that `run_sync` produces but lets stderr-side
+/// diagnostic warnings (e.g. `(project): re-locked after sync from ...`,
+/// `--retire` messages) flow through — those don't interfere with stdout
+/// JSON.
+///
+/// Exit semantics: when any per-repo outcome has kind `failed`, prints the
+/// JSON envelope to stdout and exits with code 1 directly (the wiring in
+/// `main.rs` calls this with `?`, which would otherwise route through
+/// anyhow's stderr error display and drop the JSON). When all repos succeed,
+/// returns `Ok(())` and main exits 0.
+///
+/// Project-level errors raised before any per-repo work (lock freshness,
+/// active-project mismatch, etc.) propagate via `Err` and main's anyhow
+/// printer surfaces them — no JSON is emitted in that case. This matches
+/// the bead's "non-zero iff at least one repo failed" semantic: when sync
+/// can't even reach the per-repo loop, there are no per-repo outcomes to
+/// emit, so the structured channel has nothing to say.
+///
+/// Parallel mode (`-j > 1` NDJSON) is NOT implemented here. `rwv sync`
+/// currently has no `-j` flag; adding it requires careful design around
+/// the savepoint / marker logic. See follow-up bead.
+pub fn run_sync_json(
+    cwd: &Path,
+    source: Option<&SyncSource>,
+    strategy: SyncStrategy,
+    force: bool,
+    retire: bool,
+    project_override: Option<ProjectName>,
+) -> anyhow::Result<()> {
+    let mut records: Vec<SyncOutcomeOutput> = Vec::new();
+    let project_level_result = run_sync_impl(
+        cwd,
+        source,
+        strategy,
+        force,
+        retire,
+        project_override,
+        false, // suppress text-mode per-repo output
+        &mut records,
+    );
+
+    // If we never reached the per-repo loop (project-level precondition
+    // failure), propagate the error so main prints it via anyhow.
+    if records.is_empty() {
+        return project_level_result;
+    }
+
+    let any_failure = records.iter().any(SyncOutcomeOutput::is_failure);
+    let payload = SyncJsonOutput {
+        schema: SYNC_JSON_SCHEMA_URL.to_owned(),
+        outcomes: records,
+    };
+    let out = serde_json::to_string_pretty(&payload)
+        .map_err(|e| anyhow::anyhow!("failed to serialize sync output: {e}"))?;
+    println!("{out}");
+
+    // Map exit code: non-zero iff any per-repo outcome was a failure.
+    // We use process::exit directly so the JSON we just printed is the
+    // only thing on stdout — bubbling Err would route through anyhow's
+    // stderr formatter (acceptable, but the test harness asserts only on
+    // stdout + exit code).
+    if any_failure {
+        std::process::exit(1);
+    }
+    // Also propagate any project-level error that fired AFTER per-repo
+    // outcomes were captured (e.g., Phase 1' or Phase 3 failure). The
+    // outcomes JSON has been emitted; surface the error via Err so
+    // main's anyhow display fires.
+    project_level_result
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1872,19 +2212,35 @@ mod tests {
     #[test]
     fn sync_failure_kind_tags_are_stable() {
         assert_eq!(
-            SyncFailure::HeadUnreadable { error: "x".into() }.kind(),
+            SyncFailure::HeadUnreadable {
+                error: "x".into(),
+                cause: None
+            }
+            .kind(),
             "head-unreadable"
         );
         assert_eq!(
-            SyncFailure::FastForwardImpossible { error: "x".into() }.kind(),
+            SyncFailure::FastForwardImpossible {
+                error: "x".into(),
+                cause: None
+            }
+            .kind(),
             "ff-impossible"
         );
         assert_eq!(
-            SyncFailure::RebaseFailed { error: "x".into() }.kind(),
+            SyncFailure::RebaseFailed {
+                error: "x".into(),
+                cause: None
+            }
+            .kind(),
             "rebase-failed"
         );
         assert_eq!(
-            SyncFailure::MergeFailed { error: "x".into() }.kind(),
+            SyncFailure::MergeFailed {
+                error: "x".into(),
+                cause: None
+            }
+            .kind(),
             "merge-failed"
         );
     }
@@ -1892,15 +2248,15 @@ mod tests {
     #[test]
     fn sync_failure_for_strategy_picks_matching_variant() {
         assert!(matches!(
-            SyncFailure::for_strategy(SyncStrategy::Ff, "e".into()),
+            SyncFailure::for_strategy(SyncStrategy::Ff, "e".into(), None),
             SyncFailure::FastForwardImpossible { .. }
         ));
         assert!(matches!(
-            SyncFailure::for_strategy(SyncStrategy::Rebase, "e".into()),
+            SyncFailure::for_strategy(SyncStrategy::Rebase, "e".into(), None),
             SyncFailure::RebaseFailed { .. }
         ));
         assert!(matches!(
-            SyncFailure::for_strategy(SyncStrategy::Merge, "e".into()),
+            SyncFailure::for_strategy(SyncStrategy::Merge, "e".into(), None),
             SyncFailure::MergeFailed { .. }
         ));
     }

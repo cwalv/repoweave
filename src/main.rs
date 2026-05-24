@@ -1,6 +1,7 @@
 use repoweave::activate;
 use repoweave::add_remove;
 use repoweave::check;
+use repoweave::explain;
 use repoweave::fetch;
 use repoweave::init;
 use repoweave::lock;
@@ -121,6 +122,9 @@ enum Commands {
         /// Auto-fix safely-fixable index drift and working-tree drift (see `rwv doctor` description for classification rules)
         #[arg(long, conflicts_with = "locked")]
         fix: bool,
+        /// Emit violations as JSON (array-of-records with stable per-variant `kind`). See `rwv explain doctor`.
+        #[arg(long, conflicts_with_all = ["locked", "fix"])]
+        json: bool,
         /// Operate on this project instead of the active project (does not change `.rwv-active`)
         #[arg(long)]
         project: Option<String>,
@@ -150,6 +154,9 @@ enum Commands {
         /// Sync then delete the workweave on success (requires clean worktree and manifest repos converged with parent)
         #[arg(long)]
         retire: bool,
+        /// Emit per-repo outcomes as JSON (array-of-records with stable per-variant `kind`). See `rwv explain sync`.
+        #[arg(long)]
+        json: bool,
         /// Operate on this project instead of the active project (does not change `.rwv-active`)
         #[arg(long)]
         project: Option<String>,
@@ -192,6 +199,11 @@ enum Commands {
     Completions {
         /// Shell to generate completions for
         shell: Shell,
+    },
+    /// Agent-oriented reflection: per-verb markdown bundle (purpose, invocation, output, JSON Schema)
+    Explain {
+        /// Verb to explain. Omit to list explainable verbs.
+        command: Option<String>,
     },
 }
 
@@ -373,6 +385,7 @@ fn main() -> anyhow::Result<()> {
         Some(Commands::Doctor {
             locked,
             fix,
+            json,
             project,
         }) => {
             let cwd = std::env::current_dir()?;
@@ -380,6 +393,11 @@ fn main() -> anyhow::Result<()> {
             if locked {
                 let has_drift = check::run_check_locked(&cwd, project_override)?;
                 if has_drift {
+                    std::process::exit(1);
+                }
+            } else if json {
+                let has_errors = check::run_check_json(&cwd, project_override)?;
+                if has_errors {
                     std::process::exit(1);
                 }
             } else {
@@ -399,18 +417,30 @@ fn main() -> anyhow::Result<()> {
             strategy,
             force,
             retire,
+            json,
             project,
         }) => {
             let cwd = std::env::current_dir()?;
             let project_override = project.map(repoweave::manifest::ProjectName::new);
-            sync::run_sync(
-                &cwd,
-                source.as_ref(),
-                strategy,
-                force,
-                retire,
-                project_override,
-            )?;
+            if json {
+                sync::run_sync_json(
+                    &cwd,
+                    source.as_ref(),
+                    strategy,
+                    force,
+                    retire,
+                    project_override,
+                )?;
+            } else {
+                sync::run_sync(
+                    &cwd,
+                    source.as_ref(),
+                    strategy,
+                    force,
+                    retire,
+                    project_override,
+                )?;
+            }
         }
         Some(Commands::Abort) => {
             let cwd = std::env::current_dir()?;
@@ -464,6 +494,9 @@ fn main() -> anyhow::Result<()> {
         Some(Commands::Completions { shell }) => {
             let mut cmd = Cli::command();
             clap_complete::generate(shell, &mut cmd, "rwv", &mut std::io::stdout());
+        }
+        Some(Commands::Explain { command }) => {
+            explain::explain(command.as_deref())?;
         }
     }
 
