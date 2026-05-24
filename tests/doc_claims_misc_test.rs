@@ -63,7 +63,7 @@ fn make_workspace(tmp: &Path, project: &str) -> std::path::PathBuf {
     type: git
     url: file://{repo}
     version: main
-    role: primary
+    role: owned
 "#,
         repo = repo_path.display()
     );
@@ -89,12 +89,12 @@ fn make_workspace_two_repos(tmp: &Path, project: &str) -> std::path::PathBuf {
     type: git
     url: file://{r1}
     version: main
-    role: primary
+    role: owned
   github/org/beta:
     type: git
     url: file://{r2}
     version: main
-    role: primary
+    role: owned
 "#,
         r1 = repo1.display(),
         r2 = repo2.display()

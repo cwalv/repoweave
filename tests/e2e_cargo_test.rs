@@ -117,12 +117,12 @@ repositories:
     type: git
     url: https://github.com/chatly/protocol.git
     version: main
-    role: primary
+    role: owned
   github/chatly/server:
     type: git
     url: https://github.com/chatly/server.git
     version: main
-    role: primary
+    role: owned
 ";
     std::fs::write(tmp.join("projects/web-app/rwv.yaml"), manifest).unwrap();
 

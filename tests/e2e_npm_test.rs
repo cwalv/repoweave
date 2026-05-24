@@ -130,12 +130,12 @@ console.log(types.greeting);
     type: git
     url: https://github.com/chatly/shared-types.git
     version: main
-    role: primary
+    role: owned
   github/chatly/server:
     type: git
     url: https://github.com/chatly/server.git
     version: main
-    role: primary
+    role: owned
 "#,
     )
     .unwrap();
@@ -299,12 +299,12 @@ console.log(types.greeting);
     type: git
     url: https://github.com/chatly/shared-types.git
     version: main
-    role: primary
+    role: owned
   github/chatly/server:
     type: git
     url: https://github.com/chatly/server.git
     version: main
-    role: primary
+    role: owned
 "#,
     )
     .unwrap();

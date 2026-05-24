@@ -629,7 +629,7 @@ fn resolve_branch_on_remote_primary_uses_origin() {
 
     let vcs = GitVcs;
     let resolved = vcs
-        .resolve_branch_on_remote(&local, Role::Primary, &RefName::new("main"))
+        .resolve_branch_on_remote(&local, Role::Owned, &RefName::new("main"))
         .unwrap();
 
     assert_eq!(resolved.as_str(), &expected_sha);
@@ -739,7 +739,7 @@ fn push_with_role_primary_pushes_to_origin() {
     let local_head = git(&local, &["rev-parse", "HEAD"]);
 
     let vcs = GitVcs;
-    vcs.push_with_role(&local, Role::Primary, false).unwrap();
+    vcs.push_with_role(&local, Role::Owned, false).unwrap();
 
     // The bare's `main` should now match the local HEAD.
     let bare_main = git(&bare, &["rev-parse", "main"]);
@@ -789,7 +789,7 @@ fn push_with_role_detached_head_errors() {
     let head_sha = git(&local, &["rev-parse", "HEAD"]);
     git(&local, &["checkout", &head_sha]);
 
-    let result = GitVcs.push_with_role(&local, Role::Primary, false);
+    let result = GitVcs.push_with_role(&local, Role::Owned, false);
     let err = result.expect_err("detached HEAD must error");
     let msg = format!("{err}");
     assert!(
@@ -825,7 +825,7 @@ fn push_with_role_non_fast_forward_errors_without_force() {
     git(&local, &["commit", "-m", "local advance"]);
 
     // Without --force the push must fail.
-    let result = GitVcs.push_with_role(&local, Role::Primary, false);
+    let result = GitVcs.push_with_role(&local, Role::Owned, false);
     assert!(
         result.is_err(),
         "non-fast-forward push without --force must fail"
@@ -833,7 +833,7 @@ fn push_with_role_non_fast_forward_errors_without_force() {
 
     // With force=true it should succeed.
     GitVcs
-        .push_with_role(&local, Role::Primary, true)
+        .push_with_role(&local, Role::Owned, true)
         .expect("force-push should overwrite the divergent remote tip");
     let local_head = git(&local, &["rev-parse", "HEAD"]);
     let bare_main = git(&bare, &["rev-parse", "main"]);
@@ -847,7 +847,7 @@ fn resolve_branch_on_remote_missing_branch_errors() {
 
     let vcs = GitVcs;
     let result =
-        vcs.resolve_branch_on_remote(&local, Role::Primary, &RefName::new("nonexistent-branch"));
+        vcs.resolve_branch_on_remote(&local, Role::Owned, &RefName::new("nonexistent-branch"));
 
     let err = result.expect_err("nonexistent branch on remote must error");
     assert!(

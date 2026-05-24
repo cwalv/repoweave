@@ -128,7 +128,7 @@ fn push_manifest_to_bare(bare: &Path, repos: &[(&str, &str)]) {
     let mut yaml = String::from("repositories:\n");
     for (path, url) in repos {
         yaml.push_str(&format!(
-            "  {path}:\n    type: git\n    url: {url}\n    version: main\n    role: primary\n"
+            "  {path}:\n    type: git\n    url: {url}\n    version: main\n    role: owned\n"
         ));
     }
     std::fs::write(work.join("rwv.yaml"), &yaml).unwrap();
@@ -162,7 +162,7 @@ fn setup_workspace_with_project(
     let mut yaml = String::from("repositories:\n");
     for (path, url) in repos {
         yaml.push_str(&format!(
-            "  {path}:\n    type: git\n    url: {url}\n    version: main\n    role: primary\n"
+            "  {path}:\n    type: git\n    url: {url}\n    version: main\n    role: owned\n"
         ));
     }
     std::fs::write(project_dir.join("rwv.yaml"), &yaml).unwrap();
@@ -261,7 +261,7 @@ fn remove_delete_does_not_check_other_projects() {
     let project_b_dir = workspace.join("projects").join("project-b");
     std::fs::create_dir_all(&project_b_dir).unwrap();
     let yaml_b = format!(
-        "repositories:\n  {repo_path}:\n    type: git\n    url: {shared_url}\n    version: main\n    role: primary\n"
+        "repositories:\n  {repo_path}:\n    type: git\n    url: {shared_url}\n    version: main\n    role: owned\n"
     );
     std::fs::write(project_b_dir.join("rwv.yaml"), &yaml_b).unwrap();
 

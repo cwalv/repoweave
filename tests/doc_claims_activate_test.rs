@@ -68,7 +68,7 @@ fn make_workspace_with_git_repo(parent: &Path, project: &str) -> (PathBuf, PathB
     std::fs::create_dir_all(&project_dir).unwrap();
 
     let manifest = format!(
-        "repositories:\n  github/org/repo:\n    type: git\n    url: file://{repo}\n    version: main\n    role: primary\n",
+        "repositories:\n  github/org/repo:\n    type: git\n    url: file://{repo}\n    version: main\n    role: owned\n",
         repo = repo_path.display()
     );
     std::fs::write(project_dir.join("rwv.yaml"), manifest).unwrap();
@@ -289,7 +289,7 @@ fn activate_symlinks_cargo_toml_and_lock() {
     // Write a Cargo.lock next to the Cargo.toml (simulates a real project).
     std::fs::write(repo_dir.join("Cargo.lock"), "# generated\n").unwrap();
 
-    let manifest = "repositories:\n  github/org/mylib:\n    type: git\n    url: https://github.com/org/mylib.git\n    version: main\n    role: primary\n";
+    let manifest = "repositories:\n  github/org/mylib:\n    type: git\n    url: https://github.com/org/mylib.git\n    version: main\n    role: owned\n";
     std::fs::write(project_dir.join("rwv.yaml"), manifest).unwrap();
 
     rwv()
@@ -498,7 +498,7 @@ fn activate_npm_no_install_run_during_activate() {
     )
     .unwrap();
 
-    let manifest = "repositories:\n  github/org/webapp:\n    type: git\n    url: https://github.com/org/webapp.git\n    version: main\n    role: primary\n";
+    let manifest = "repositories:\n  github/org/webapp:\n    type: git\n    url: https://github.com/org/webapp.git\n    version: main\n    role: owned\n";
     std::fs::write(project_dir.join("rwv.yaml"), manifest).unwrap();
 
     let output = rwv()
@@ -555,7 +555,7 @@ fn activate_graceful_when_npm_unavailable() {
     )
     .unwrap();
 
-    let manifest = "repositories:\n  github/org/frontend:\n    type: git\n    url: https://github.com/org/frontend.git\n    version: main\n    role: primary\n";
+    let manifest = "repositories:\n  github/org/frontend:\n    type: git\n    url: https://github.com/org/frontend.git\n    version: main\n    role: owned\n";
     std::fs::write(project_dir.join("rwv.yaml"), manifest).unwrap();
 
     // Activate must not fail regardless of available tools.

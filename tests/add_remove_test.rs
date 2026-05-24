@@ -109,7 +109,7 @@ fn write_manifest(dir: &Path, repos: &[(&str, &str)]) {
     }
     for (path, url) in repos {
         yaml.push_str(&format!(
-            "  {path}:\n    type: git\n    url: {url}\n    version: main\n    role: primary\n"
+            "  {path}:\n    type: git\n    url: {url}\n    version: main\n    role: owned\n"
         ));
     }
     std::fs::write(dir.join("rwv.yaml"), &yaml).unwrap();
@@ -480,11 +480,11 @@ fn add_new_sets_role_to_primary() {
     let manifest_content =
         std::fs::read_to_string(&manifest_path).expect("rwv.yaml should exist after add --new");
 
-    // Find the entry for our repo and verify it has role: primary.
-    // The YAML should contain "role: primary" in the newrepo entry.
+    // Find the entry for our repo and verify it has role: owned.
+    // The YAML should contain "role: owned" in the newrepo entry.
     assert!(
-        manifest_content.contains("role: primary"),
-        "new repo should have role primary, got:\n{manifest_content}"
+        manifest_content.contains("role: owned"),
+        "new repo should have role owned, got:\n{manifest_content}"
     );
 }
 
@@ -630,17 +630,17 @@ fn add_fork_clones_with_upstream_remote() {
 }
 
 #[test]
-fn add_primary_clones_with_origin_remote() {
+fn add_owned_clones_with_origin_remote() {
     let tmp = tempfile::tempdir().unwrap();
 
-    let bare = tmp.path().join("primary-src.git");
+    let bare = tmp.path().join("owned-src.git");
     init_bare_repo_with_commit(&bare);
     let remote_url_str = format!("file://{}", bare.display());
 
     let (workspace, _project_dir) = setup_workspace_with_project(&tmp, &[]);
 
     let assertion = rwv()
-        .args(["add", &remote_url_str, "--role=primary"])
+        .args(["add", &remote_url_str, "--role=owned"])
         .current_dir(&workspace)
         .assert()
         .success();
@@ -648,17 +648,49 @@ fn add_primary_clones_with_origin_remote() {
     let stderr = String::from_utf8_lossy(&assertion.get_output().stderr).into_owned();
     assert!(
         !stderr.contains("role=fork"),
-        "primary add should not print the fork-remote warning; stderr was:\n{stderr}"
+        "owned add should not print the fork-remote warning; stderr was:\n{stderr}"
     );
 
     let cloned = find_cloned_repo(&workspace, &bare);
     assert!(
         remote_url(&cloned, "origin").is_some(),
-        "role=primary clone should have an `origin` remote"
+        "role=owned clone should have an `origin` remote"
     );
     assert!(
         remote_url(&cloned, "upstream").is_none(),
-        "role=primary clone should NOT have an `upstream` remote"
+        "role=owned clone should NOT have an `upstream` remote"
+    );
+}
+
+/// Pins the `--role=primary` legacy CLI alias still maps to `Role::Owned` for
+/// back-compat. The rename to `owned` shipped with a clap alias so scripts
+/// passing `--role=primary` continue to work; new scripts should use `owned`.
+#[test]
+fn add_primary_cli_alias_maps_to_owned() {
+    let tmp = tempfile::tempdir().unwrap();
+
+    let bare = tmp.path().join("legacy-primary-src.git");
+    init_bare_repo_with_commit(&bare);
+    let remote_url_str = format!("file://{}", bare.display());
+
+    let (workspace, _project_dir) = setup_workspace_with_project(&tmp, &[]);
+
+    rwv()
+        .args(["add", &remote_url_str, "--role=primary"])
+        .current_dir(&workspace)
+        .assert()
+        .success();
+
+    // Behaviour is identical to --role=owned: origin remote is created, no
+    // upstream. The written manifest uses the canonical `owned` spelling.
+    let cloned = find_cloned_repo(&workspace, &bare);
+    assert!(
+        remote_url(&cloned, "origin").is_some(),
+        "legacy --role=primary should still create an `origin` remote"
+    );
+    assert!(
+        remote_url(&cloned, "upstream").is_none(),
+        "legacy --role=primary should NOT create an `upstream` remote"
     );
 }
 

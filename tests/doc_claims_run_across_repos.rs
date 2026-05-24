@@ -78,7 +78,7 @@ fn setup_two_repo_workspace() -> (tempfile::TempDir, std::path::PathBuf, std::pa
     type: git
     url: file://{r1}
     version: main
-    role: primary
+    role: owned
   github/org/fork:
     type: git
     url: file://{r2}
@@ -141,11 +141,11 @@ fn recipe_filter_by_role_owned_via_jq() {
 
     let (_tmp, ws, _project_dir) = setup_two_repo_workspace();
 
-    // Note: doc currently uses `role == "primary"` (the role rename to
-    // "owned" is planned but not shipped). When the rename lands, update
-    // this filter to match.
+    // Verbatim from docs/how-to/run-a-command-across-repos.md, recipe #1.
+    // The role rename (fo-s3i8j) shipped `owned` as the canonical wire
+    // spelling; this filter pins that the status JSON role field is `owned`.
     let recipe =
-        r#"rwv status --json | jq -r '.repos[] | select(.role == "primary") | .absolute_path'"#;
+        r#"rwv status --json | jq -r '.repos[] | select(.role == "owned") | .absolute_path'"#;
     let output = run_recipe(recipe, &ws);
     assert!(
         output.status.success(),
@@ -155,7 +155,7 @@ fn recipe_filter_by_role_owned_via_jq() {
 
     let paths = String::from_utf8(output.stdout).unwrap();
     let lines: Vec<&str> = paths.lines().collect();
-    assert_eq!(lines.len(), 1, "expected one primary repo, got: {paths:?}");
+    assert_eq!(lines.len(), 1, "expected one owned repo, got: {paths:?}");
     assert!(lines[0].ends_with("github/org/primary"));
     assert!(std::path::Path::new(lines[0]).is_absolute());
 }

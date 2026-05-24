@@ -63,7 +63,7 @@ fn make_workspace(tmp: &Path, project: &str) -> std::path::PathBuf {
     type: git
     url: file://{repo}
     version: main
-    role: primary
+    role: owned
 "#,
         repo = repo_path.display()
     );
@@ -319,7 +319,7 @@ fn workweave_same_name_different_projects_coexist() {
     type: git
     url: file://{repo}
     version: main
-    role: primary
+    role: owned
 "#,
         repo = repo_path.display()
     );

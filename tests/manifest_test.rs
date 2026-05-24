@@ -11,7 +11,7 @@ repositories:
     type: git
     url: https://github.com/acme/server.git
     version: main
-    role: primary
+    role: owned
   github/acme/client:
     type: git
     url: https://github.com/acme/client.git
@@ -40,7 +40,7 @@ repositories:
     type: git
     url: https://github.com/acme/server.git
     version: main
-    role: primary
+    role: owned
 "#;
 
 const LOCK_WITH_WORKWEAVE_YAML: &str = r#"
@@ -94,7 +94,7 @@ fn manifest_repo_entry_fields() {
     assert_eq!(server.vcs_type, VcsType::Git);
     assert_eq!(server.url.to_string(), "https://github.com/acme/server.git");
     assert_eq!(server.version, RefName::new("main"));
-    assert_eq!(server.role, Role::Primary);
+    assert_eq!(server.role, Role::Owned);
 }
 
 // ---------------------------------------------------------------------------
@@ -106,7 +106,7 @@ fn role_deserialization_all_variants() {
     let m: Manifest = serde_yaml::from_str(FULL_MANIFEST_YAML).unwrap();
     let role_of = |key: &str| m.repositories[&RepoPath::new(key)].role;
 
-    assert_eq!(role_of("github/acme/server"), Role::Primary);
+    assert_eq!(role_of("github/acme/server"), Role::Owned);
     assert_eq!(role_of("github/acme/client"), Role::Fork);
     assert_eq!(role_of("github/lib/openssl"), Role::Dependency);
     assert_eq!(role_of("github/docs/rfc"), Role::Reference);
@@ -114,7 +114,7 @@ fn role_deserialization_all_variants() {
 
 #[test]
 fn role_is_active() {
-    assert!(Role::Primary.is_active());
+    assert!(Role::Owned.is_active());
     assert!(Role::Fork.is_active());
     assert!(Role::Dependency.is_active());
     assert!(!Role::Reference.is_active());

@@ -89,7 +89,7 @@ fn bootstrap_via_fetch(tmp: &Path) -> (PathBuf, PathBuf, PathBuf, String) {
 
     let dep_url = format!("file://{}", dep_bare.display());
     let yaml = format!(
-        "repositories:\n  local/team/dep:\n    type: git\n    url: {dep_url}\n    version: main\n    role: primary\n"
+        "repositories:\n  local/team/dep:\n    type: git\n    url: {dep_url}\n    version: main\n    role: owned\n"
     );
     std::fs::write(work.join("rwv.yaml"), &yaml).unwrap();
     git_run(&["add", "rwv.yaml"], &work);
@@ -195,7 +195,7 @@ fn lock_does_not_write_ecosystem_files() {
     std::fs::create_dir_all(&project_dir).unwrap();
     std::fs::write(
         project_dir.join("rwv.yaml"),
-        "repositories:\n  github/acme/server:\n    type: git\n    url: https://github.com/acme/server.git\n    version: main\n    role: primary\n",
+        "repositories:\n  github/acme/server:\n    type: git\n    url: https://github.com/acme/server.git\n    version: main\n    role: owned\n",
     )
     .unwrap();
     std::fs::write(workspace.join(".rwv-active"), "app\n").unwrap();

@@ -343,7 +343,7 @@ fn update_advances_lock_while_fetch_does_not() {
     git_run(&project_work, &["config", "user.email", "test@test.com"]);
     git_run(&project_work, &["config", "user.name", "Test"]);
     let yaml = format!(
-        "repositories:\n  local/team/dep:\n    type: git\n    url: {manifest_url}\n    version: main\n    role: primary\n"
+        "repositories:\n  local/team/dep:\n    type: git\n    url: {manifest_url}\n    version: main\n    role: owned\n"
     );
     std::fs::write(project_work.join("rwv.yaml"), yaml).unwrap();
     let lock = format!(

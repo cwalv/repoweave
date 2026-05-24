@@ -84,7 +84,7 @@ fn make_project_source(tmp: &Path, name: &str, repos: &[(&str, &str)]) -> String
     let mut yaml = String::from("repositories:\n");
     for (path, url) in repos {
         yaml.push_str(&format!(
-            "  {path}:\n    type: git\n    url: {url}\n    version: main\n    role: primary\n"
+            "  {path}:\n    type: git\n    url: {url}\n    version: main\n    role: owned\n"
         ));
     }
     std::fs::write(work.join("rwv.yaml"), &yaml).unwrap();

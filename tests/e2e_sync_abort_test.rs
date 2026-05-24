@@ -77,7 +77,7 @@ fn write_manifest(project_dir: &Path, repos: &[(&str, &str)], integrations: Opti
     let mut yaml = String::from("repositories:\n");
     for (path, url) in repos {
         yaml.push_str(&format!(
-            "  {path}:\n    type: git\n    url: {url}\n    version: main\n    role: primary\n"
+            "  {path}:\n    type: git\n    url: {url}\n    version: main\n    role: owned\n"
         ));
     }
     if let Some(int) = integrations {
@@ -328,7 +328,7 @@ fn status_json_flag_produces_machine_readable_output() {
         .expect("server repo entry");
     assert_eq!(
         server.get("role").and_then(serde_json::Value::as_str),
-        Some("primary")
+        Some("owned")
     );
     assert_eq!(
         server.get("url").and_then(serde_json::Value::as_str),

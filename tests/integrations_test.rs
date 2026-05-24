@@ -105,9 +105,9 @@ mod npm_workspaces {
         touch(root, "github/acme/docs/README.md");
 
         let manifest = make_manifest(vec![
-            ("github/acme/server", Role::Primary),
-            ("github/acme/web", Role::Primary),
-            ("github/acme/docs", Role::Primary),
+            ("github/acme/server", Role::Owned),
+            ("github/acme/web", Role::Owned),
+            ("github/acme/docs", Role::Owned),
         ]);
         let project = ProjectName::new("test-project");
         let config = IntegrationConfig::default();
@@ -137,8 +137,8 @@ mod npm_workspaces {
         touch(root, "github/chatly/web/package.json");
 
         let manifest = make_manifest(vec![
-            ("github/chatly/protocol", Role::Primary),
-            ("github/chatly/server", Role::Primary),
+            ("github/chatly/protocol", Role::Owned),
+            ("github/chatly/server", Role::Owned),
             ("github/chatly/web", Role::Fork),
         ]);
         let project = ProjectName::new("test-project");
@@ -170,7 +170,7 @@ mod npm_workspaces {
         touch(root, "github/acme/reference-lib/package.json");
 
         let manifest = make_manifest(vec![
-            ("github/acme/server", Role::Primary),
+            ("github/acme/server", Role::Owned),
             ("github/acme/reference-lib", Role::Reference),
         ]);
         let project = ProjectName::new("test-project");
@@ -230,7 +230,7 @@ mod npm_workspaces {
 
         touch(root, "github/acme/server/package.json");
 
-        let manifest = make_manifest(vec![("github/acme/server", Role::Primary)]);
+        let manifest = make_manifest(vec![("github/acme/server", Role::Owned)]);
         let project = ProjectName::new("test-project");
         let config = IntegrationConfig::default();
         let cache = HashMap::new();
@@ -268,9 +268,9 @@ mod pnpm_workspaces {
         touch(root, "github/acme/docs/README.md");
 
         let manifest = make_manifest(vec![
-            ("github/acme/server", Role::Primary),
-            ("github/acme/web", Role::Primary),
-            ("github/acme/docs", Role::Primary),
+            ("github/acme/server", Role::Owned),
+            ("github/acme/web", Role::Owned),
+            ("github/acme/docs", Role::Owned),
         ]);
         let project = ProjectName::new("test-project");
         let config = IntegrationConfig::default();
@@ -296,8 +296,8 @@ mod pnpm_workspaces {
         touch(root, "github/chatly/web/package.json");
 
         let manifest = make_manifest(vec![
-            ("github/chatly/protocol", Role::Primary),
-            ("github/chatly/server", Role::Primary),
+            ("github/chatly/protocol", Role::Owned),
+            ("github/chatly/server", Role::Owned),
             ("github/chatly/web", Role::Fork),
         ]);
         let project = ProjectName::new("test-project");
@@ -322,7 +322,7 @@ mod pnpm_workspaces {
         touch(root, "github/acme/reference-lib/package.json");
 
         let manifest = make_manifest(vec![
-            ("github/acme/server", Role::Primary),
+            ("github/acme/server", Role::Owned),
             ("github/acme/reference-lib", Role::Reference),
         ]);
         let project = ProjectName::new("test-project");
@@ -358,7 +358,7 @@ mod pnpm_workspaces {
 
         touch(root, "github/acme/server/package.json");
 
-        let manifest = make_manifest(vec![("github/acme/server", Role::Primary)]);
+        let manifest = make_manifest(vec![("github/acme/server", Role::Owned)]);
         let project = ProjectName::new("test-project");
         let config = IntegrationConfig::default();
         let cache = HashMap::new();
@@ -393,9 +393,9 @@ mod go_work {
         touch(root, "github/acme/docs/README.md");
 
         let manifest = make_manifest(vec![
-            ("github/acme/server", Role::Primary),
-            ("github/acme/web", Role::Primary),
-            ("github/acme/docs", Role::Primary),
+            ("github/acme/server", Role::Owned),
+            ("github/acme/web", Role::Owned),
+            ("github/acme/docs", Role::Owned),
         ]);
         let project = ProjectName::new("test-project");
         let config = IntegrationConfig::default();
@@ -428,8 +428,8 @@ mod go_work {
         );
 
         let manifest = make_manifest(vec![
-            ("github/chatly/protocol", Role::Primary),
-            ("github/chatly/server", Role::Primary),
+            ("github/chatly/protocol", Role::Owned),
+            ("github/chatly/server", Role::Owned),
         ]);
         let project = ProjectName::new("test-project");
         let config = IntegrationConfig::default();
@@ -454,7 +454,7 @@ mod go_work {
         touch(root, "github/acme/reference-lib/go.mod");
 
         let manifest = make_manifest(vec![
-            ("github/acme/server", Role::Primary),
+            ("github/acme/server", Role::Owned),
             ("github/acme/reference-lib", Role::Reference),
         ]);
         let project = ProjectName::new("test-project");
@@ -490,7 +490,7 @@ mod go_work {
 
         touch(root, "github/acme/server/go.mod");
 
-        let manifest = make_manifest(vec![("github/acme/server", Role::Primary)]);
+        let manifest = make_manifest(vec![("github/acme/server", Role::Owned)]);
         let project = ProjectName::new("test-project");
         let config = IntegrationConfig::default();
         let cache = HashMap::new();
@@ -525,9 +525,9 @@ mod uv_workspace {
         touch(root, "github/acme/docs/README.md");
 
         let manifest = make_manifest(vec![
-            ("github/acme/server", Role::Primary),
-            ("github/acme/web", Role::Primary),
-            ("github/acme/docs", Role::Primary),
+            ("github/acme/server", Role::Owned),
+            ("github/acme/web", Role::Owned),
+            ("github/acme/docs", Role::Owned),
         ]);
         let project = ProjectName::new("test-project");
         let config = IntegrationConfig::default();
@@ -552,8 +552,8 @@ mod uv_workspace {
         touch(root, "github/chatly/server/pyproject.toml");
 
         let manifest = make_manifest(vec![
-            ("github/chatly/protocol", Role::Primary),
-            ("github/chatly/server", Role::Primary),
+            ("github/chatly/protocol", Role::Owned),
+            ("github/chatly/server", Role::Owned),
         ]);
         let project = ProjectName::new("test-project");
         let config = IntegrationConfig::default();
@@ -579,7 +579,7 @@ mod uv_workspace {
         touch(root, "github/acme/reference-lib/pyproject.toml");
 
         let manifest = make_manifest(vec![
-            ("github/acme/server", Role::Primary),
+            ("github/acme/server", Role::Owned),
             ("github/acme/reference-lib", Role::Reference),
         ]);
         let project = ProjectName::new("test-project");
@@ -637,7 +637,7 @@ mod uv_workspace {
 
         touch(root, "github/acme/server/pyproject.toml");
 
-        let manifest = make_manifest(vec![("github/acme/server", Role::Primary)]);
+        let manifest = make_manifest(vec![("github/acme/server", Role::Owned)]);
         let project = ProjectName::new("test-project");
         let config = IntegrationConfig::default();
         let cache = HashMap::new();
@@ -672,9 +672,9 @@ mod cargo_workspace {
         touch(root, "github/acme/docs/README.md");
 
         let manifest = make_manifest(vec![
-            ("github/acme/server", Role::Primary),
-            ("github/acme/web", Role::Primary),
-            ("github/acme/docs", Role::Primary),
+            ("github/acme/server", Role::Owned),
+            ("github/acme/web", Role::Owned),
+            ("github/acme/docs", Role::Owned),
         ]);
         let project = ProjectName::new("test-project");
         let config = IntegrationConfig::default();
@@ -699,8 +699,8 @@ mod cargo_workspace {
         touch(root, "github/chatly/server/Cargo.toml");
 
         let manifest = make_manifest(vec![
-            ("github/chatly/protocol", Role::Primary),
-            ("github/chatly/server", Role::Primary),
+            ("github/chatly/protocol", Role::Owned),
+            ("github/chatly/server", Role::Owned),
         ]);
         let project = ProjectName::new("test-project");
         let config = IntegrationConfig::default();
@@ -727,7 +727,7 @@ mod cargo_workspace {
         touch(root, "github/acme/reference-lib/Cargo.toml");
 
         let manifest = make_manifest(vec![
-            ("github/acme/server", Role::Primary),
+            ("github/acme/server", Role::Owned),
             ("github/acme/reference-lib", Role::Reference),
         ]);
         let project = ProjectName::new("test-project");
@@ -786,7 +786,7 @@ mod cargo_workspace {
 
         touch(root, "github/acme/server/Cargo.toml");
 
-        let manifest = make_manifest(vec![("github/acme/server", Role::Primary)]);
+        let manifest = make_manifest(vec![("github/acme/server", Role::Owned)]);
         let project = ProjectName::new("test-project");
         let config = IntegrationConfig::default();
         let cache = HashMap::new();
@@ -818,7 +818,7 @@ mod gita {
 
         // gita uses all repos, not just those with a specific manifest file
         let manifest = make_manifest(vec![
-            ("github/acme/server", Role::Primary),
+            ("github/acme/server", Role::Owned),
             ("github/acme/web", Role::Fork),
         ]);
         let project = ProjectName::new("test-project");
@@ -840,8 +840,8 @@ mod gita {
         let root = tmp.path();
 
         let manifest = make_manifest(vec![
-            ("github/chatly/server", Role::Primary),
-            ("github/chatly/web", Role::Primary),
+            ("github/chatly/server", Role::Owned),
+            ("github/chatly/web", Role::Owned),
             ("github/chatly/protocol", Role::Fork),
         ]);
         let project = ProjectName::new("test-project");
@@ -875,8 +875,8 @@ mod gita {
         let root = tmp.path();
 
         let manifest = make_manifest(vec![
-            ("github/chatly/server", Role::Primary),
-            ("github/chatly/web", Role::Primary),
+            ("github/chatly/server", Role::Owned),
+            ("github/chatly/web", Role::Owned),
             ("github/chatly/protocol", Role::Fork),
         ]);
         let project = ProjectName::new("test-project");
@@ -890,7 +890,7 @@ mod gita {
         let groups_csv = std::fs::read_to_string(root.join("gita/groups.csv")).unwrap();
         assert!(groups_csv.starts_with("group,repos\n"));
         assert!(groups_csv.contains("fork,protocol\n"));
-        assert!(groups_csv.contains("primary,server web\n"));
+        assert!(groups_csv.contains("owned,server web\n"));
     }
 
     #[test]
@@ -899,7 +899,7 @@ mod gita {
         let root = tmp.path();
 
         let manifest = make_manifest(vec![
-            ("github/acme/server", Role::Primary),
+            ("github/acme/server", Role::Owned),
             ("github/acme/reference-lib", Role::Reference),
         ]);
         let project = ProjectName::new("test-project");
@@ -940,7 +940,7 @@ mod gita {
         let weave_tmp = TempDir::new().unwrap();
         let output_dir = weave_tmp.path();
 
-        let manifest = make_manifest(vec![("github/acme/server", Role::Primary)]);
+        let manifest = make_manifest(vec![("github/acme/server", Role::Owned)]);
         let project = ProjectName::new("test-project");
         let config = IntegrationConfig::default();
         let cache = HashMap::new();
@@ -985,7 +985,7 @@ mod gita {
         let tmp = TempDir::new().unwrap();
         let root = tmp.path();
 
-        let manifest = make_manifest(vec![("github/acme/server", Role::Primary)]);
+        let manifest = make_manifest(vec![("github/acme/server", Role::Owned)]);
         let project = ProjectName::new("test-project");
         let config = IntegrationConfig::default();
         let cache = HashMap::new();
@@ -1017,7 +1017,7 @@ mod vscode_workspace {
 
         // vscode-workspace uses all repos (not filtered by manifest file)
         let manifest = make_manifest(vec![
-            ("github/acme/server", Role::Primary),
+            ("github/acme/server", Role::Owned),
             ("github/acme/web", Role::Fork),
         ]);
         let project = ProjectName::new("test-project");
@@ -1036,8 +1036,8 @@ mod vscode_workspace {
         let root = tmp.path();
 
         let manifest = make_manifest(vec![
-            ("github/chatly/server", Role::Primary),
-            ("github/chatly/web", Role::Primary),
+            ("github/chatly/server", Role::Owned),
+            ("github/chatly/web", Role::Owned),
         ]);
         let project = ProjectName::new("web-app");
         let config = IntegrationConfig::default();
@@ -1070,7 +1070,7 @@ mod vscode_workspace {
         let tmp = TempDir::new().unwrap();
         let root = tmp.path();
 
-        let manifest = make_manifest(vec![("github/acme/server", Role::Primary)]);
+        let manifest = make_manifest(vec![("github/acme/server", Role::Owned)]);
         let project = ProjectName::new("my-project");
         let config = IntegrationConfig::default();
         let cache = HashMap::new();
@@ -1103,7 +1103,7 @@ mod vscode_workspace {
 }"#,
         );
 
-        let manifest = make_manifest(vec![("github/acme/server", Role::Primary)]);
+        let manifest = make_manifest(vec![("github/acme/server", Role::Owned)]);
         let project = ProjectName::new("test-project");
         let config = IntegrationConfig::default();
         let cache = HashMap::new();
@@ -1178,7 +1178,7 @@ mod vscode_workspace {
         let root = tmp.path();
 
         // No .code-workspace file present
-        let manifest = make_manifest(vec![("github/acme/server", Role::Primary)]);
+        let manifest = make_manifest(vec![("github/acme/server", Role::Owned)]);
         let project = ProjectName::new("test-project");
         let config = IntegrationConfig::default();
         let cache = HashMap::new();
@@ -1198,7 +1198,7 @@ mod vscode_workspace {
 
         // Active project has github/chatly/server.
         // github/acme/web is on disk but not in the project.
-        let manifest = make_manifest(vec![("github/chatly/server", Role::Primary)]);
+        let manifest = make_manifest(vec![("github/chatly/server", Role::Owned)]);
         let project = ProjectName::new("test-project");
         let config = IntegrationConfig::default();
 
@@ -1239,7 +1239,7 @@ mod vscode_workspace {
         let tmp = TempDir::new().unwrap();
         let root = tmp.path();
 
-        let manifest = make_manifest(vec![("github/acme/server", Role::Primary)]);
+        let manifest = make_manifest(vec![("github/acme/server", Role::Owned)]);
         let project = ProjectName::new("proj-a");
         let config = IntegrationConfig::default();
 
@@ -1274,7 +1274,7 @@ mod vscode_workspace {
         let tmp = TempDir::new().unwrap();
         let root = tmp.path();
 
-        let manifest = make_manifest(vec![("github/acme/server", Role::Primary)]);
+        let manifest = make_manifest(vec![("github/acme/server", Role::Owned)]);
         let project = ProjectName::new("test-project");
         let config = IntegrationConfig::default();
         let cache = HashMap::new();
@@ -1297,7 +1297,7 @@ mod vscode_workspace {
         let tmp = TempDir::new().unwrap();
         let root = tmp.path();
 
-        let manifest = make_manifest(vec![("github/acme/server", Role::Primary)]);
+        let manifest = make_manifest(vec![("github/acme/server", Role::Owned)]);
         let project = ProjectName::new("test-project");
         let config = IntegrationConfig::from_yaml("hide-dotfiles: false");
         let cache = HashMap::new();
@@ -1321,7 +1321,7 @@ mod vscode_workspace {
 
         // Active project has only github/acme/server.
         // All other repos are under github/other — should collapse to github/other.
-        let manifest = make_manifest(vec![("github/acme/server", Role::Primary)]);
+        let manifest = make_manifest(vec![("github/acme/server", Role::Owned)]);
         let project = ProjectName::new("test-project");
         let config = IntegrationConfig::default();
 
@@ -1387,7 +1387,7 @@ mod activate_hooks {
             "{\"name\": \"server\", \"version\": \"0.1.0\"}",
         );
 
-        let manifest = make_manifest(vec![("github/acme/server", Role::Primary)]);
+        let manifest = make_manifest(vec![("github/acme/server", Role::Owned)]);
         let project = ProjectName::new("test-project");
         let config = IntegrationConfig::default();
         let cache = HashMap::new();
@@ -1424,7 +1424,7 @@ mod activate_hooks {
         let root = tmp.path();
 
         // No package.json in any repo
-        let manifest = make_manifest(vec![("github/acme/server", Role::Primary)]);
+        let manifest = make_manifest(vec![("github/acme/server", Role::Owned)]);
         let project = ProjectName::new("test-project");
         let config = IntegrationConfig::default();
         let cache = HashMap::new();
@@ -1458,7 +1458,7 @@ mod activate_hooks {
         );
         write_file(root, "github/acme/server/src/lib.rs", "");
 
-        let manifest = make_manifest(vec![("github/acme/server", Role::Primary)]);
+        let manifest = make_manifest(vec![("github/acme/server", Role::Owned)]);
         let project = ProjectName::new("test-project");
         let config = IntegrationConfig::default();
         let cache = HashMap::new();
@@ -1491,7 +1491,7 @@ mod activate_hooks {
         let tmp = TempDir::new().unwrap();
         let root = tmp.path();
 
-        let manifest = make_manifest(vec![("github/acme/server", Role::Primary)]);
+        let manifest = make_manifest(vec![("github/acme/server", Role::Owned)]);
         let project = ProjectName::new("test-project");
         let config = IntegrationConfig::default();
         let cache = HashMap::new();
@@ -1524,7 +1524,7 @@ mod activate_hooks {
             "[project]\nname = \"server\"\nversion = \"0.1.0\"\n",
         );
 
-        let manifest = make_manifest(vec![("github/acme/server", Role::Primary)]);
+        let manifest = make_manifest(vec![("github/acme/server", Role::Owned)]);
         let project = ProjectName::new("test-project");
         let config = IntegrationConfig::default();
         let cache = HashMap::new();
@@ -1557,7 +1557,7 @@ mod activate_hooks {
         let tmp = TempDir::new().unwrap();
         let root = tmp.path();
 
-        let manifest = make_manifest(vec![("github/acme/server", Role::Primary)]);
+        let manifest = make_manifest(vec![("github/acme/server", Role::Owned)]);
         let project = ProjectName::new("test-project");
         let config = IntegrationConfig::default();
         let cache = HashMap::new();
@@ -1590,7 +1590,7 @@ mod activate_hooks {
             "{\"name\": \"server\", \"version\": \"0.1.0\"}",
         );
 
-        let manifest = make_manifest(vec![("github/acme/server", Role::Primary)]);
+        let manifest = make_manifest(vec![("github/acme/server", Role::Owned)]);
         let project = ProjectName::new("test-project");
         let config = IntegrationConfig::from_yaml("enabled: true");
         let cache = HashMap::new();
@@ -1623,7 +1623,7 @@ mod activate_hooks {
         let tmp = TempDir::new().unwrap();
         let root = tmp.path();
 
-        let manifest = make_manifest(vec![("github/acme/server", Role::Primary)]);
+        let manifest = make_manifest(vec![("github/acme/server", Role::Owned)]);
         let project = ProjectName::new("test-project");
         let config = IntegrationConfig::from_yaml("enabled: true");
         let cache = HashMap::new();
@@ -1652,7 +1652,7 @@ mod activate_hooks {
 
         touch(root, "github/acme/server/go.mod");
 
-        let manifest = make_manifest(vec![("github/acme/server", Role::Primary)]);
+        let manifest = make_manifest(vec![("github/acme/server", Role::Owned)]);
         let project = ProjectName::new("test-project");
         let config = IntegrationConfig::default();
         let cache = HashMap::new();
@@ -1676,7 +1676,7 @@ mod activate_hooks {
         let tmp = TempDir::new().unwrap();
         let root = tmp.path();
 
-        let manifest = make_manifest(vec![("github/acme/server", Role::Primary)]);
+        let manifest = make_manifest(vec![("github/acme/server", Role::Owned)]);
         let project = ProjectName::new("test-project");
         let config = IntegrationConfig::default();
         let cache = HashMap::new();
@@ -1696,7 +1696,7 @@ mod activate_hooks {
         let tmp = TempDir::new().unwrap();
         let root = tmp.path();
 
-        let manifest = make_manifest(vec![("github/acme/server", Role::Primary)]);
+        let manifest = make_manifest(vec![("github/acme/server", Role::Owned)]);
         let project = ProjectName::new("test-project");
         let config = IntegrationConfig::default();
         let cache = HashMap::new();
@@ -1735,7 +1735,7 @@ mod static_files {
         let tmp = TempDir::new().unwrap();
         let root = tmp.path();
 
-        let manifest = make_manifest(vec![("github/acme/server", Role::Primary)]);
+        let manifest = make_manifest(vec![("github/acme/server", Role::Owned)]);
         let project = ProjectName::new("test-project");
         let config = IntegrationConfig::from_yaml(
             "enabled: true\nfiles: [turbo.json, .eslintrc.json, .prettierrc]",
@@ -1753,7 +1753,7 @@ mod static_files {
         let tmp = TempDir::new().unwrap();
         let root = tmp.path();
 
-        let manifest = make_manifest(vec![("github/acme/server", Role::Primary)]);
+        let manifest = make_manifest(vec![("github/acme/server", Role::Owned)]);
         let project = ProjectName::new("test-project");
         let config = IntegrationConfig::from_yaml("enabled: true");
         let cache = HashMap::new();
@@ -1773,7 +1773,7 @@ mod static_files {
         write_file(root, "turbo.json", r#"{"pipeline": {}}"#);
         write_file(root, ".eslintrc.json", "{}");
 
-        let manifest = make_manifest(vec![("github/acme/server", Role::Primary)]);
+        let manifest = make_manifest(vec![("github/acme/server", Role::Owned)]);
         let project = ProjectName::new("test-project");
         let config =
             IntegrationConfig::from_yaml("enabled: true\nfiles: [turbo.json, .eslintrc.json]");
@@ -1791,7 +1791,7 @@ mod static_files {
         let root = tmp.path();
 
         // Don't create the files — activate should still succeed (just warn)
-        let manifest = make_manifest(vec![("github/acme/server", Role::Primary)]);
+        let manifest = make_manifest(vec![("github/acme/server", Role::Owned)]);
         let project = ProjectName::new("test-project");
         let config = IntegrationConfig::from_yaml("enabled: true\nfiles: [turbo.json]");
         let cache = HashMap::new();
@@ -1813,7 +1813,7 @@ mod static_files {
         // Create one of two declared files
         write_file(root, "turbo.json", "{}");
 
-        let manifest = make_manifest(vec![("github/acme/server", Role::Primary)]);
+        let manifest = make_manifest(vec![("github/acme/server", Role::Owned)]);
         let project = ProjectName::new("test-project");
         let config =
             IntegrationConfig::from_yaml("enabled: true\nfiles: [turbo.json, .eslintrc.json]");
@@ -1836,7 +1836,7 @@ mod static_files {
         write_file(root, "turbo.json", "{}");
         write_file(root, ".prettierrc", "{}");
 
-        let manifest = make_manifest(vec![("github/acme/server", Role::Primary)]);
+        let manifest = make_manifest(vec![("github/acme/server", Role::Owned)]);
         let project = ProjectName::new("test-project");
         let config =
             IntegrationConfig::from_yaml("enabled: true\nfiles: [turbo.json, .prettierrc]");
@@ -1853,7 +1853,7 @@ mod static_files {
         let tmp = TempDir::new().unwrap();
         let root = tmp.path();
 
-        let manifest = make_manifest(vec![("github/acme/server", Role::Primary)]);
+        let manifest = make_manifest(vec![("github/acme/server", Role::Owned)]);
         let project = ProjectName::new("test-project");
         let config = IntegrationConfig::from_yaml("enabled: true");
         let cache = HashMap::new();
@@ -1879,7 +1879,7 @@ mod static_files {
         let tmp = TempDir::new().unwrap();
         let root = tmp.path();
 
-        let manifest = make_manifest(vec![("github/acme/server", Role::Primary)]);
+        let manifest = make_manifest(vec![("github/acme/server", Role::Owned)]);
         let project = ProjectName::new("test-project");
         let config = IntegrationConfig::from_yaml("enabled: true\nfiles: [turbo.json]");
         let cache = HashMap::new();

@@ -17,7 +17,7 @@ fn rp(s: &str) -> RepoPath {
 fn empty_filter_passes_everything() {
     let filter = RepoFilter::parse(&[], &[]).expect("empty parse");
     assert!(filter.is_empty());
-    assert!(filter.matches(&rp("github/a/b"), Role::Primary));
+    assert!(filter.matches(&rp("github/a/b"), Role::Owned));
     assert!(filter.matches(&rp("anywhere"), Role::Reference));
 }
 
@@ -25,40 +25,40 @@ fn empty_filter_passes_everything() {
 fn exact_selector_matches_full_path_only() {
     let filter = RepoFilter::parse(&[], &["github/cwalv/repoweave".into()]).unwrap();
     assert!(!filter.is_empty());
-    assert!(filter.matches(&rp("github/cwalv/repoweave"), Role::Primary));
-    assert!(!filter.matches(&rp("github/cwalv/repoweave-extra"), Role::Primary));
-    assert!(!filter.matches(&rp("repoweave"), Role::Primary));
+    assert!(filter.matches(&rp("github/cwalv/repoweave"), Role::Owned));
+    assert!(!filter.matches(&rp("github/cwalv/repoweave-extra"), Role::Owned));
+    assert!(!filter.matches(&rp("repoweave"), Role::Owned));
 }
 
 #[test]
 fn regex_selector_matches_via_re_prefix() {
     let filter = RepoFilter::parse(&[], &["re:^github/(cwalv|other)/".into()]).unwrap();
-    assert!(filter.matches(&rp("github/cwalv/x"), Role::Primary));
+    assert!(filter.matches(&rp("github/cwalv/x"), Role::Owned));
     assert!(filter.matches(&rp("github/other/y"), Role::Dependency));
-    assert!(!filter.matches(&rp("gitlab/cwalv/x"), Role::Primary));
+    assert!(!filter.matches(&rp("gitlab/cwalv/x"), Role::Owned));
 }
 
 #[test]
 fn glob_selector_matches_via_glob_prefix() {
     let filter = RepoFilter::parse(&[], &["glob:github/org/*".into()]).unwrap();
-    assert!(filter.matches(&rp("github/org/foo"), Role::Primary));
+    assert!(filter.matches(&rp("github/org/foo"), Role::Owned));
     assert!(filter.matches(&rp("github/org/bar"), Role::Reference));
     // Single * doesn't cross a `/` boundary (literal_separator true).
-    assert!(!filter.matches(&rp("github/org/sub/deep"), Role::Primary));
-    assert!(!filter.matches(&rp("github/other/foo"), Role::Primary));
+    assert!(!filter.matches(&rp("github/org/sub/deep"), Role::Owned));
+    assert!(!filter.matches(&rp("github/other/foo"), Role::Owned));
 }
 
 #[test]
 fn glob_double_star_crosses_slashes() {
     let filter = RepoFilter::parse(&[], &["glob:github/**".into()]).unwrap();
-    assert!(filter.matches(&rp("github/a"), Role::Primary));
-    assert!(filter.matches(&rp("github/a/b/c"), Role::Primary));
+    assert!(filter.matches(&rp("github/a"), Role::Owned));
+    assert!(filter.matches(&rp("github/a/b/c"), Role::Owned));
 }
 
 #[test]
 fn role_filter_includes_matching_role_only() {
     let filter = RepoFilter::parse(&["primary".into()], &[]).unwrap();
-    assert!(filter.matches(&rp("a"), Role::Primary));
+    assert!(filter.matches(&rp("a"), Role::Owned));
     assert!(!filter.matches(&rp("a"), Role::Dependency));
     assert!(!filter.matches(&rp("a"), Role::Fork));
     assert!(!filter.matches(&rp("a"), Role::Reference));
@@ -68,7 +68,7 @@ fn role_filter_includes_matching_role_only() {
 fn role_filter_is_case_insensitive() {
     for variant in ["primary", "PRIMARY", "Primary", "PrImArY"] {
         let filter = RepoFilter::parse(&[variant.into()], &[]).unwrap();
-        assert!(filter.matches(&rp("x"), Role::Primary), "case '{variant}'");
+        assert!(filter.matches(&rp("x"), Role::Owned), "case '{variant}'");
     }
 }
 
@@ -77,7 +77,7 @@ fn union_semantics_role_or_repo_selector() {
     // --role primary --repo github/external/dep
     let filter = RepoFilter::parse(&["primary".into()], &["github/external/dep".into()]).unwrap();
     // Matches because of role.
-    assert!(filter.matches(&rp("github/me/code"), Role::Primary));
+    assert!(filter.matches(&rp("github/me/code"), Role::Owned));
     // Matches because of selector even though role differs.
     assert!(filter.matches(&rp("github/external/dep"), Role::Dependency));
     // Neither role nor path match → excluded.
@@ -96,7 +96,7 @@ fn multiple_of_each_kind_accumulate_as_union() {
     )
     .unwrap();
     // role matches
-    assert!(filter.matches(&rp("any/path"), Role::Primary));
+    assert!(filter.matches(&rp("any/path"), Role::Owned));
     assert!(filter.matches(&rp("any/path"), Role::Fork));
     // exact match
     assert!(filter.matches(&rp("github/a/exact"), Role::Reference));

@@ -134,7 +134,7 @@ fn active_repos_excludes_reference() {
     repos.insert(RepoPath::new("ref-repo"), make_repo_entry(Role::Reference));
     repos.insert(
         RepoPath::new("primary-repo"),
-        make_repo_entry(Role::Primary),
+        make_repo_entry(Role::Owned),
     );
 
     let project = ProjectName::new("test-project");
@@ -159,7 +159,7 @@ fn active_repos_excludes_reference() {
 #[test]
 fn active_repos_includes_primary_fork_dependency() {
     let mut repos = BTreeMap::new();
-    repos.insert(RepoPath::new("a-primary"), make_repo_entry(Role::Primary));
+    repos.insert(RepoPath::new("a-primary"), make_repo_entry(Role::Owned));
     repos.insert(RepoPath::new("b-fork"), make_repo_entry(Role::Fork));
     repos.insert(RepoPath::new("c-dep"), make_repo_entry(Role::Dependency));
     repos.insert(RepoPath::new("d-ref"), make_repo_entry(Role::Reference));
@@ -195,7 +195,7 @@ fn active_repos_includes_primary_fork_dependency() {
 #[test]
 fn mock_activate_receives_correct_context() {
     let mut repos = BTreeMap::new();
-    repos.insert(RepoPath::new("repo-a"), make_repo_entry(Role::Primary));
+    repos.insert(RepoPath::new("repo-a"), make_repo_entry(Role::Owned));
 
     let project = ProjectName::new("my-project");
     let config = IntegrationConfig::default();
@@ -248,7 +248,7 @@ fn mock_check_returns_issues() {
     ];
 
     let mut repos = BTreeMap::new();
-    repos.insert(RepoPath::new("repo-a"), make_repo_entry(Role::Primary));
+    repos.insert(RepoPath::new("repo-a"), make_repo_entry(Role::Owned));
 
     let project = ProjectName::new("check-project");
     let config = IntegrationConfig::default();
@@ -339,11 +339,11 @@ fn detect_repos_with_manifest_uses_workspace_root_not_output_dir() {
     let mut repos = BTreeMap::new();
     repos.insert(
         RepoPath::new("github/acme/server"),
-        make_repo_entry(Role::Primary),
+        make_repo_entry(Role::Owned),
     );
     repos.insert(
         RepoPath::new("github/acme/web"),
-        make_repo_entry(Role::Primary),
+        make_repo_entry(Role::Owned),
     );
 
     let project = ProjectName::new("test-project");
@@ -380,7 +380,7 @@ fn detect_repos_with_manifest_ignores_output_dir_manifests() {
     let mut repos = BTreeMap::new();
     repos.insert(
         RepoPath::new("github/acme/server"),
-        make_repo_entry(Role::Primary),
+        make_repo_entry(Role::Owned),
     );
 
     let project = ProjectName::new("test-project");
@@ -412,7 +412,7 @@ fn context_output_dir_and_workspace_root_can_be_same() {
     let mut repos = BTreeMap::new();
     repos.insert(
         RepoPath::new("github/acme/server"),
-        make_repo_entry(Role::Primary),
+        make_repo_entry(Role::Owned),
     );
 
     let project = ProjectName::new("test-project");
@@ -601,7 +601,7 @@ fn cargo_workspace_generated_files() {
     let mut repos_with_manifest = BTreeMap::new();
     repos_with_manifest.insert(
         RepoPath::new("github/acme/mylib"),
-        make_repo_entry(Role::Primary),
+        make_repo_entry(Role::Owned),
     );
     touch(tmp.path(), "github/acme/mylib/Cargo.toml");
     let ctx2 = IntegrationContext {
@@ -646,7 +646,7 @@ fn npm_workspaces_generated_files() {
     let mut repos_with_manifest = BTreeMap::new();
     repos_with_manifest.insert(
         RepoPath::new("github/acme/webapp"),
-        make_repo_entry(Role::Primary),
+        make_repo_entry(Role::Owned),
     );
     touch(tmp.path(), "github/acme/webapp/package.json");
     let ctx2 = IntegrationContext {
@@ -691,7 +691,7 @@ fn pnpm_workspaces_generated_files() {
     let mut repos_with_manifest = BTreeMap::new();
     repos_with_manifest.insert(
         RepoPath::new("github/acme/frontend"),
-        make_repo_entry(Role::Primary),
+        make_repo_entry(Role::Owned),
     );
     touch(tmp.path(), "github/acme/frontend/package.json");
     let ctx2 = IntegrationContext {
@@ -736,7 +736,7 @@ fn go_work_generated_files() {
     let mut repos_with_manifest = BTreeMap::new();
     repos_with_manifest.insert(
         RepoPath::new("github/acme/svc"),
-        make_repo_entry(Role::Primary),
+        make_repo_entry(Role::Owned),
     );
     touch(tmp.path(), "github/acme/svc/go.mod");
     let ctx2 = IntegrationContext {
@@ -778,7 +778,7 @@ fn uv_workspace_generated_files() {
     let mut repos_with_manifest = BTreeMap::new();
     repos_with_manifest.insert(
         RepoPath::new("github/acme/pylib"),
-        make_repo_entry(Role::Primary),
+        make_repo_entry(Role::Owned),
     );
     touch(tmp.path(), "github/acme/pylib/pyproject.toml");
     let ctx2 = IntegrationContext {

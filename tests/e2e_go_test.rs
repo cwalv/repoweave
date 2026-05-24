@@ -117,12 +117,12 @@ repositories:\n  \
     type: git\n    \
     url: https://github.com/chatly/protocol.git\n    \
     version: main\n    \
-    role: primary\n  \
+    role: owned\n  \
   github/chatly/server:\n    \
     type: git\n    \
     url: https://github.com/chatly/server.git\n    \
     version: main\n    \
-    role: primary\n";
+    role: owned\n";
 
     std::fs::write(project_dir.join("rwv.yaml"), rwv_yaml).unwrap();
 
@@ -295,12 +295,12 @@ repositories:\n  \
     type: git\n    \
     url: https://github.com/chatly/protocol.git\n    \
     version: main\n    \
-    role: primary\n  \
+    role: owned\n  \
   github/chatly/server:\n    \
     type: git\n    \
     url: https://github.com/chatly/server.git\n    \
     version: main\n    \
-    role: primary\n";
+    role: owned\n";
 
     std::fs::write(project_dir.join("rwv.yaml"), rwv_yaml).unwrap();
 

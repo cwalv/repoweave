@@ -65,7 +65,7 @@ fn write_manifest(project_dir: &Path, repos: &[(&str, &str)]) {
     let mut yaml = String::from("repositories:\n");
     for (repo_path, url) in repos {
         yaml.push_str(&format!(
-            "  {repo_path}:\n    type: git\n    url: {url}\n    version: main\n    role: primary\n"
+            "  {repo_path}:\n    type: git\n    url: {url}\n    version: main\n    role: owned\n"
         ));
     }
     std::fs::write(project_dir.join("rwv.yaml"), &yaml).unwrap();

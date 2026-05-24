@@ -38,7 +38,7 @@ repositories:
     type: git
     url: https://github.com/acme/server.git
     version: main
-    role: primary
+    role: owned
 integrations:
   cargo:
     enabled: true

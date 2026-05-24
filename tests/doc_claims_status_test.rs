@@ -70,7 +70,7 @@ fn make_workspace(parent: &Path, project: &str) -> (PathBuf, PathBuf, String) {
 
     let url = format!("file://{}", repo_path.display());
     let manifest = format!(
-        "repositories:\n  github/org/repo:\n    type: git\n    url: {url}\n    version: main\n    role: primary\n"
+        "repositories:\n  github/org/repo:\n    type: git\n    url: {url}\n    version: main\n    role: owned\n"
     );
     std::fs::write(project_dir.join("rwv.yaml"), manifest).unwrap();
 
@@ -208,9 +208,11 @@ fn status_json_per_repo_record_has_lx3mc_fields() {
         "record.absolute_path must point at the on-disk clone; got: {abs}"
     );
 
-    // Role + url come straight from the manifest.
+    // Role + url come straight from the manifest. The canonical spelling is
+    // `owned`; legacy `primary` in YAML deserializes to the same variant and
+    // serializes back as `owned` on the wire.
     assert_eq!(
-        record["role"], "primary",
+        record["role"], "owned",
         "record.role should mirror the manifest entry; got:\n{stdout}"
     );
     assert_eq!(

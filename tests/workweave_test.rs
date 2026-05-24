@@ -67,7 +67,7 @@ fn make_workspace(tmp: &Path, project: &str) -> std::path::PathBuf {
     type: git
     url: file://{repo}
     version: main
-    role: primary
+    role: owned
 "#,
         repo = repo_path.display()
     );
@@ -97,7 +97,7 @@ fn make_workspace_with_project_repo(tmp: &Path, project: &str) -> std::path::Pat
     type: git
     url: file://{repo}
     version: main
-    role: primary
+    role: owned
 "#,
         repo = repo_path.display()
     );
@@ -355,7 +355,7 @@ fn create_workweave_processes_copy_entries() {
     type: git
     url: file://{repo}
     version: main
-    role: primary
+    role: owned
 workweave:
   copy:
     - .env
@@ -413,7 +413,7 @@ fn create_workweave_processes_link_entries() {
     type: git
     url: file://{repo}
     version: main
-    role: primary
+    role: owned
 workweave:
   link:
     - shared-state
@@ -688,7 +688,7 @@ fn workweave_with_multiple_repos_creates_all_worktrees() {
     type: git
     url: file://{server}
     version: main
-    role: primary
+    role: owned
   github/org/client:
     type: git
     url: file://{client}
@@ -954,7 +954,7 @@ fn make_workspace_with_cargo_repo(tmp: &Path, project: &str) -> std::path::PathB
     type: git
     url: file://{repo}
     version: main
-    role: primary
+    role: owned
 "#,
         repo = repo_path.display()
     );
@@ -1649,7 +1649,7 @@ fn list_workweaves_is_scoped_by_project() {
     type: git
     url: file://{repo}
     version: main
-    role: primary
+    role: owned
 "#,
         repo = repo_path.display()
     );
@@ -1793,7 +1793,7 @@ fn create_workweave_cleans_up_on_bail() {
     type: git
     url: file:///nonexistent/repo
     version: main
-    role: primary
+    role: owned
 "#;
     std::fs::write(project_dir.join("rwv.yaml"), bad_manifest).unwrap();
 

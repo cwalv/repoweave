@@ -55,7 +55,7 @@ repositories:
     type: git
     url: https://github.com/acme/server.git
     version: main
-    role: primary
+    role: owned
   github/acme/client:
     type: git
     url: https://github.com/acme/client.git
@@ -79,7 +79,7 @@ integrations:
         .stdout(predicate::str::contains("**Project**: `web-app`"))
         .stdout(predicate::str::contains("## Repositories"))
         .stdout(predicate::str::contains("github/acme/server"))
-        .stdout(predicate::str::contains("primary"))
+        .stdout(predicate::str::contains("owned"))
         .stdout(predicate::str::contains("github/acme/client"))
         .stdout(predicate::str::contains("fork"))
         .stdout(predicate::str::contains("## Integrations"))
@@ -126,7 +126,7 @@ repositories:
     type: git
     url: https://github.com/acme/server.git
     version: main
-    role: primary
+    role: owned
 "#,
     );
 
