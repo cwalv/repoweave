@@ -13,10 +13,10 @@ rwv status --json | jq .
 ## Canonical Recipes
 
 ### 1. Pull all owned repositories
-To update every repository that you "own" (role: primary), pipe the filtered paths to `xargs`.
+To update every repository that you "own" (role: owned), pipe the filtered paths to `xargs`.
 
 ```bash
-rwv status --json | jq -r '.repos[] | select(.role == "primary") | .absolute_path' | xargs -I {} git -C {} pull
+rwv status --json | jq -r '.repos[] | select(.role == "owned") | .absolute_path' | xargs -I {} git -C {} pull
 ```
 
 ### 2. Create a feature branch across all forks

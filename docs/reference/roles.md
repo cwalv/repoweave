@@ -2,8 +2,6 @@
 
 Roles classify a repo's relationship to a project — its *change resistance*. They are per-project (the same repo can have different roles in different projects) and a first-class field on every `rwv.yaml` entry.
 
-> **Naming note.** The role for "code you author/own" is being renamed from `primary` to `owned`. During the transition, both spellings parse; new docs use `owned`. The on-disk YAML examples may still show `role: primary` in places that haven't been swept yet.
-
 ## Roles
 
 | Role | Change resistance | Meaning |
@@ -108,6 +106,24 @@ See [push a cross-repo feature](../how-to/push-cross-repo-feature.md).
 ## Roles in `rwv status --json`
 
 Roles surface in `rwv status --json` output so agent harnesses and shell scripts can filter on them. See [run a command across repos](../how-to/run-a-command-across-repos.md) for filtering recipes (`jq '.repos[] | select(.role == "owned")'`).
+
+## Compatibility: `primary` as a legacy alias for `owned`
+
+The `owned` role was previously spelled `primary`. The rename to `owned` resolved an overload — "primary" is also the name for the *workspace* (the non-workweave weave root, as in `rwv sync primary`). Using one word for two distinct concepts caused enough confusion to justify the rename.
+
+For back-compat, **`primary` is accepted as a silent alias for `owned`** in:
+
+- `rwv.yaml` manifests on disk — `role: primary` deserializes to the same variant as `role: owned`.
+- The `--role` CLI argument — `rwv add --role primary` and `rwv push --role primary` behave identically to the `owned` spelling.
+
+The tool always **writes** the canonical spelling:
+
+- `rwv add` and `rwv init` produce `role: owned` in newly written YAML.
+- `rwv status --json` emits `"role": "owned"` for repos that were `Role::Owned` (regardless of how they were spelled on disk).
+
+If you are scripting against `rwv status --json` and have a filter like `select(.role == "primary")`, update it to `select(.role == "owned")`. The legacy alias only covers *input* — `rwv` does not emit `primary` on the wire.
+
+No deprecation warning is emitted yet. The alias will be accepted silently for at least one release; whether to warn later (and eventually drop the alias) is a separate decision.
 
 ## Related
 

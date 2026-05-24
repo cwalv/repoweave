@@ -29,8 +29,6 @@ npm install   # or: uv sync, cargo build, etc.
 
 If `--role` is omitted, the default is `owned`. See [reference/roles](../reference/roles.md) for the full definitions.
 
-Note: the on-disk YAML currently spells this `role: primary`; the docs use `owned` because the rename to `owned` is in progress. Both spellings will parse during the transition.
-
 ## Add as a reference repo
 
 ```bash

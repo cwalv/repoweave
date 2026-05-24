@@ -47,7 +47,7 @@ Keyed by canonical local path (`<registry>/<owner>/<repo>`). Each entry:
 | `version` | yes | Branch or tag (manifest); revision SHA (lock). |
 | `role` | yes | One of `owned`, `fork`, `dependency`, `reference`. |
 
-The on-disk YAML currently accepts both `role: primary` (legacy) and `role: owned` (current) during the rename transition.
+Both `role: owned` (canonical) and `role: primary` (legacy alias) parse. The tool always writes `role: owned`. See [reference/roles — Compatibility](./roles.md#compatibility-primary-as-a-legacy-alias-for-owned) for the migration path.
 
 Format is based on vcstool's `.repos` format, extended with `role` and optional `integrations`.
 

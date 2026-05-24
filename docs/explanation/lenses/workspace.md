@@ -41,7 +41,7 @@ Every repo in a project has a **role**. The role describes the repo's relationsh
 | `dependency` | Medium | You build against it. Changes need upstream acceptance. |
 | `reference` | High | Cloned for reading/study. No local changes. |
 
-Roles are *per-project*. The same repo can be `owned` in one project and `dependency` in another. The active project's `rwv.yaml` determines which role applies. (Note: on disk the YAML currently spells the first one `role: primary`; the docs use `owned` because the rename is in progress. Both spellings parse during the transition.)
+Roles are *per-project*. The same repo can be `owned` in one project and `dependency` in another. The active project's `rwv.yaml` determines which role applies.
 
 The role is doing three jobs at once:
 
