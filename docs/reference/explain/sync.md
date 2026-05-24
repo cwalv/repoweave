@@ -16,15 +16,22 @@ own variant tag (e.g. `rebase-conflict`, `network-error`).
 ## Invocation
 
 ```
-rwv sync [--json] [--strategy <rebase|merge>] [-j <N>] [--project <name>]
+rwv sync [<source>] [--json] [--strategy <ff|rebase|merge>] [-j <N>] [--force] [--retire] [--project <name>]
 ```
 
+- `<source>` is the source workspace: `primary`, a bare workweave name, or
+  a path. Omit to sync to the workweave's recorded parent.
 - `--json` emits machine-readable output (see Output below).
-- `--strategy` picks the reconciliation strategy when both sides have
-  diverged. Default behavior is documented in `rwv --help sync`.
-- `-j <N>` runs up to `N` repos in parallel. Under `-j > 1` and `--json`,
-  output switches to NDJSON: one record per repo per line, streamed as
-  repos finish (consumers demux by `path`).
+- `--strategy` picks the reconciliation strategy (`ff` default, `rebase`,
+  or `merge`). `rebase`/`merge` replay CWD's project commits onto the
+  source tip with `rwv.lock` excluded.
+- `-j <N>` runs up to `N` per-repo manifest syncs (Phase 2) in parallel.
+  Default is `1` (serial), unlike `rwv fetch` / `rwv update` whose default
+  auto-resolves to a small worker pool. Sync's default is `1` so that
+  the `--json` envelope shape is the unsurprising default and the
+  envelope/NDJSON switch only happens when the user opts in with `-j > 1`.
+  Phase 1' (project repo) and Phase 3 (re-lock + commit) are inherently
+  serial and run on the caller thread regardless of `-j`.
 
 Run `rwv --help sync` for the full clap surface.
 
@@ -32,7 +39,8 @@ Run `rwv --help sync` for the full clap surface.
 
 Default text output is one line per repo summarizing the outcome.
 
-Under `--json` (serial mode), output is the envelope:
+Under `--json` with `-j 1` (default) or `--json` alone, output is the
+pretty-printed envelope:
 
 ```
 {
@@ -41,13 +49,22 @@ Under `--json` (serial mode), output is the envelope:
 }
 ```
 
-Outcome `kind` tags include `converged`, `already-ahead`, `no-op`,
-`fast-forwarded`, `rebased`, `merged`, `failed`. The `failed` variant
-carries a nested `failure` record whose own `kind` tells you what failed
-(`rebase-conflict`, `merge-conflict`, `network-error`, etc.).
+Outcome `kind` tags include `converged`, `already-ahead`, `no-op`, and
+`failed`. The `failed` variant carries a nested `failure` record whose own
+`kind` tells you what failed (`head-unreadable`, `ff-impossible`,
+`rebase-failed`, `merge-failed`) plus an optional structured `cause`
+surfacing the underlying `VcsError`.
 
-Under `--json -j N` with `N > 1`, the wrapper is dropped and each line is a
-single `SyncOutcomeOutput` record (NDJSON). Consumers demux by `path`.
+Under `--json -j N` with `N > 1`, the envelope is dropped and output
+switches to NDJSON — one JSON record per line, streamed to stdout the
+moment each repo's sync completes. Lines arrive in completion order (not
+input order); consumers demux by `path`. Every line is self-describing:
+each record embeds its own `"$schema"` URL alongside the per-repo fields,
+so a consumer can identify any line without out-of-band context. Lines
+are mutex-guarded so concurrent workers can't tear a single record's
+bytes. The text-prefix Reporter wrapper (`[<repo>] <line>`) used by
+`fetch`/`update` under `-j > 1` is **bypassed** in JSON mode — workers
+never call into the subprocess Reporter, so JSON output is pristine.
 
 Schema:
 

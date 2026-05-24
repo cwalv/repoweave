@@ -535,6 +535,283 @@ fn conflict_op_serializes_kebab_case() {
     );
 }
 
+// ---------------------------------------------------------------------------
+// Parallel / NDJSON mode (fo-i5z14)
+// ---------------------------------------------------------------------------
+
+const REPO_PATHS: &[&str] = &[
+    "github/chatly/alpha",
+    "github/chatly/beta",
+    "github/chatly/gamma",
+    "github/chatly/delta",
+];
+
+fn url_for(repo_path: &str) -> String {
+    format!("https://github.com/{repo_path}.git")
+}
+
+/// Build a multi-repo workspace pair (primary + workweave) where the
+/// workweave has advanced each manifest repo by one commit and re-locked.
+/// Returns `(primary, workweave, advanced_shas)` keyed in `REPO_PATHS`
+/// order.
+fn make_multi_repo_workspaces(parent: &Path) -> (Workspace, Workspace, Vec<String>) {
+    // Primary setup: initialize each manifest repo, write manifest + lock.
+    let primary_root = parent.join("primary");
+    std::fs::create_dir_all(primary_root.join("github/chatly")).unwrap();
+    std::fs::create_dir_all(primary_root.join("projects")).unwrap();
+
+    let mut initial_shas = Vec::new();
+    for repo_path in REPO_PATHS {
+        let dir = primary_root.join(repo_path);
+        let sha = init_repo(&dir);
+        initial_shas.push(sha);
+    }
+
+    let primary_project_dir = primary_root.join("projects/web-app");
+    init_repo(&primary_project_dir);
+    std::fs::write(
+        primary_project_dir.join(".gitattributes"),
+        "rwv.lock merge=ours\n",
+    )
+    .unwrap();
+    let manifest_pairs: Vec<(&str, String)> = REPO_PATHS.iter().map(|p| (*p, url_for(p))).collect();
+    let manifest_refs: Vec<(&str, &str)> = manifest_pairs
+        .iter()
+        .map(|(p, u)| (*p, u.as_str()))
+        .collect();
+    write_manifest(&primary_project_dir, &manifest_refs);
+    let lock_triples: Vec<(&str, String, &str)> = REPO_PATHS
+        .iter()
+        .zip(&initial_shas)
+        .map(|(p, sha)| (*p, url_for(p), sha.as_str()))
+        .collect();
+    let lock_refs: Vec<(&str, &str, &str)> = lock_triples
+        .iter()
+        .map(|(p, u, s)| (*p, u.as_str(), *s))
+        .collect();
+    write_lock(&primary_project_dir, &lock_refs);
+    git(
+        &["add", ".gitattributes", "rwv.yaml", "rwv.lock"],
+        &primary_project_dir,
+    );
+    git(&["commit", "-m", "lock: initial"], &primary_project_dir);
+    std::fs::write(primary_root.join(".rwv-active"), "web-app\n").unwrap();
+
+    // Workweave: worktree-add each repo + the project repo.
+    let ww_root = parent.join("ww");
+    std::fs::create_dir_all(ww_root.join("github/chatly")).unwrap();
+    std::fs::create_dir_all(ww_root.join("projects")).unwrap();
+
+    for (i, repo_path) in REPO_PATHS.iter().enumerate() {
+        let dest = ww_root.join(repo_path);
+        let canonical = primary_root.join(repo_path);
+        let branch = format!("web-app--ww/main-{i}");
+        git(
+            &["worktree", "add", &dest.to_string_lossy(), "-b", &branch],
+            &canonical,
+        );
+    }
+    let ww_project_dir = ww_root.join("projects/web-app");
+    git(
+        &[
+            "worktree",
+            "add",
+            &ww_project_dir.to_string_lossy(),
+            "-b",
+            "ww/project",
+        ],
+        &primary_project_dir,
+    );
+    std::fs::write(ww_root.join(".rwv-active"), "web-app\n").unwrap();
+
+    // Advance each ww repo by one commit; collect new SHAs.
+    let mut advanced_shas = Vec::new();
+    for (i, repo_path) in REPO_PATHS.iter().enumerate() {
+        let dir = ww_root.join(repo_path);
+        let sha = make_commit(
+            &dir,
+            &format!("change-{i}.txt"),
+            &format!("ww change {i}\n"),
+            &format!("ww: advance {i}"),
+        );
+        advanced_shas.push(sha);
+    }
+
+    // Rewrite ww lock + commit.
+    let ww_lock_triples: Vec<(&str, String, &str)> = REPO_PATHS
+        .iter()
+        .zip(&advanced_shas)
+        .map(|(p, sha)| (*p, url_for(p), sha.as_str()))
+        .collect();
+    let ww_lock_refs: Vec<(&str, &str, &str)> = ww_lock_triples
+        .iter()
+        .map(|(p, u, s)| (*p, u.as_str(), *s))
+        .collect();
+    write_lock(&ww_project_dir, &ww_lock_refs);
+    git(&["add", "rwv.lock"], &ww_project_dir);
+    git(&["commit", "-m", "lock: ww advance"], &ww_project_dir);
+
+    let primary = Workspace {
+        root: primary_root,
+        project_dir: primary_project_dir,
+        server_dir: PathBuf::new(), // unused for multi-repo
+    };
+    let ww = Workspace {
+        root: ww_root,
+        project_dir: ww_project_dir,
+        server_dir: PathBuf::new(),
+    };
+    (primary, ww, advanced_shas)
+}
+
+#[test]
+fn sync_json_ndjson_emits_one_record_per_line_under_jobs_gt_one() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (primary, ww, _shas) = make_multi_repo_workspaces(tmp.path());
+
+    // Sync primary -> ww (so ww materializes nothing new; primary just
+    // advances 4 repos to ww's tips). `-j 2 --json` should produce NDJSON.
+    let assert = rwv()
+        .args(["sync", &ww.root.to_string_lossy(), "--json", "-j", "2"])
+        .current_dir(&primary.root)
+        .assert()
+        .success();
+    let stdout = String::from_utf8_lossy(&assert.get_output().stdout).into_owned();
+
+    // Acceptance: NO envelope wrapper. Every non-empty line parses
+    // as a self-describing JSON record with `$schema`, `kind`, and
+    // `path` fields.
+    let lines: Vec<&str> = stdout.lines().filter(|l| !l.trim().is_empty()).collect();
+    assert!(
+        lines.len() >= REPO_PATHS.len(),
+        "expected >= {} NDJSON lines, got {} in stdout:\n{stdout}",
+        REPO_PATHS.len(),
+        lines.len()
+    );
+
+    // The whole stdout must NOT parse as one big JSON document
+    // (proves it's NDJSON, not an envelope).
+    assert!(
+        serde_json::from_str::<Value>(&stdout).is_err(),
+        "NDJSON stdout must not parse as one document; got:\n{stdout}"
+    );
+
+    let mut seen_paths = std::collections::BTreeSet::new();
+    for line in &lines {
+        let v: Value = serde_json::from_str(line)
+            .unwrap_or_else(|e| panic!("line not parseable as JSON ({e}): {line}"));
+        let obj = v
+            .as_object()
+            .unwrap_or_else(|| panic!("line not an object: {line}"));
+        assert_eq!(
+            obj.get("$schema").and_then(Value::as_str),
+            Some(SYNC_JSON_SCHEMA_URL),
+            "every NDJSON record must embed `$schema`: {line}"
+        );
+        assert!(obj.contains_key("kind"), "missing `kind`: {line}");
+        assert!(obj.contains_key("path"), "missing `path`: {line}");
+        assert!(
+            obj.contains_key("absolute_path"),
+            "missing `absolute_path`: {line}"
+        );
+        if let Some(path) = obj.get("path").and_then(Value::as_str) {
+            seen_paths.insert(path.to_string());
+        }
+    }
+
+    // All four manifest repos appear in the stream.
+    for repo_path in REPO_PATHS {
+        assert!(
+            seen_paths.contains(*repo_path),
+            "expected path {repo_path} in NDJSON stream; got {:?}\nstdout:\n{stdout}",
+            seen_paths
+        );
+    }
+}
+
+#[test]
+fn sync_json_serial_emits_envelope_with_explicit_jobs_one() {
+    // Acceptance: -j 1 with --json emits the envelope (not NDJSON), even
+    // though we passed -j explicitly. This pins the "no-j or j=1" contract.
+    let tmp = tempfile::tempdir().unwrap();
+    let (primary, ww, _shas) = make_multi_repo_workspaces(tmp.path());
+
+    let assert = rwv()
+        .args(["sync", &ww.root.to_string_lossy(), "--json", "-j", "1"])
+        .current_dir(&primary.root)
+        .assert()
+        .success();
+    let stdout = String::from_utf8_lossy(&assert.get_output().stdout).into_owned();
+
+    let parsed: Value = serde_json::from_str(&stdout)
+        .unwrap_or_else(|e| panic!("-j 1 must emit envelope, not NDJSON ({e}):\n{stdout}"));
+    let obj = parsed.as_object().expect("top level should be object");
+    assert_eq!(
+        obj.get("$schema").and_then(Value::as_str),
+        Some(SYNC_JSON_SCHEMA_URL),
+        "envelope must include $schema URL"
+    );
+    let outcomes = obj
+        .get("outcomes")
+        .and_then(Value::as_array)
+        .expect("outcomes array");
+    assert_eq!(outcomes.len(), REPO_PATHS.len(), "all repos present");
+}
+
+#[test]
+fn sync_json_ndjson_no_text_prefix_wrapping() {
+    // Acceptance: under `--json -j > 1`, the `[<prefix>] <line>` Reporter
+    // wrapper must be bypassed. We verify by checking no line in stdout
+    // starts with `[github/...]` (the prefix format).
+    let tmp = tempfile::tempdir().unwrap();
+    let (primary, ww, _shas) = make_multi_repo_workspaces(tmp.path());
+
+    let assert = rwv()
+        .args(["sync", &ww.root.to_string_lossy(), "--json", "-j", "4"])
+        .current_dir(&primary.root)
+        .assert()
+        .success();
+    let stdout = String::from_utf8_lossy(&assert.get_output().stdout).into_owned();
+    for line in stdout.lines() {
+        let trimmed = line.trim_start();
+        assert!(
+            !trimmed.starts_with('['),
+            "NDJSON line must not start with `[` (Reporter prefix wrapper); line: {line}\nstdout:\n{stdout}"
+        );
+        // Each non-empty line should start with `{` (a JSON object).
+        if !trimmed.is_empty() {
+            assert!(
+                trimmed.starts_with('{'),
+                "NDJSON line must start with `{{`; line: {line}\nstdout:\n{stdout}"
+            );
+        }
+    }
+}
+
+#[test]
+fn sync_json_ndjson_lines_are_not_interleaved() {
+    // Each NDJSON line must be a complete JSON object. The mutex guard in
+    // OutputSink::record ensures workers can't tear bytes mid-line. Parse
+    // line-by-line — any failure indicates interleaving.
+    let tmp = tempfile::tempdir().unwrap();
+    let (primary, ww, _shas) = make_multi_repo_workspaces(tmp.path());
+
+    let assert = rwv()
+        .args(["sync", &ww.root.to_string_lossy(), "--json", "-j", "4"])
+        .current_dir(&primary.root)
+        .assert()
+        .success();
+    let stdout = String::from_utf8_lossy(&assert.get_output().stdout).into_owned();
+    for line in stdout.lines() {
+        if line.trim().is_empty() {
+            continue;
+        }
+        let parsed: Value = serde_json::from_str(line)
+            .unwrap_or_else(|e| panic!("torn / interleaved line ({e}): {line}\nstdout:\n{stdout}"));
+        assert!(parsed.is_object(), "line not an object: {line}");
+    }
+}
+
 #[test]
 fn sync_json_envelope_round_trips() {
     // Build a synthetic envelope and round-trip it through serde so we don't

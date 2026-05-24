@@ -191,6 +191,10 @@ enum Commands {
         /// Emit per-repo outcomes as JSON (array-of-records with stable per-variant `kind`). See `rwv explain sync`.
         #[arg(long)]
         json: bool,
+        /// Run up to N per-repo manifest syncs in parallel. Under `-j > 1` with `--json`,
+        /// output switches to NDJSON (one JSON record per repo, streamed as repos finish).
+        #[arg(short = 'j', long = "jobs")]
+        jobs: Option<usize>,
         /// Operate on this project instead of the active project (does not change `.rwv-active`)
         #[arg(long)]
         project: Option<String>,
@@ -475,10 +479,21 @@ fn main() -> anyhow::Result<()> {
             force,
             retire,
             json,
+            jobs,
             project,
         }) => {
             let cwd = std::env::current_dir()?;
             let project_override = project.map(repoweave::manifest::ProjectName::new);
+            // sync's default is serial (jobs=1). This differs from fetch/update
+            // (which auto-resolve to min(nproc, 8)) because sync's `--json`
+            // contract pins envelope output under `-j 1` and NDJSON under
+            // `-j > 1`; defaulting to auto would silently switch envelope ->
+            // NDJSON on multi-core hosts. See fo-i5z14: "no -j or -j 1 emits
+            // pretty envelope".
+            let jobs = match jobs {
+                Some(n) => repoweave::parallel::resolve_jobs(Some(n)),
+                None => 1,
+            };
             if json {
                 sync::run_sync_json(
                     &cwd,
@@ -487,6 +502,7 @@ fn main() -> anyhow::Result<()> {
                     force,
                     retire,
                     project_override,
+                    jobs,
                 )?;
             } else {
                 sync::run_sync(
@@ -496,6 +512,7 @@ fn main() -> anyhow::Result<()> {
                     force,
                     retire,
                     project_override,
+                    jobs,
                 )?;
             }
         }

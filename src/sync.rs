@@ -6,14 +6,17 @@
 use crate::git::{git_command, GitVcs};
 use crate::lock::{commit_lock_file_with_message, generate_lock};
 use crate::manifest::{LockFile, Manifest, Project, ProjectName, RepoPath, WorkweaveName};
+use crate::parallel::run_in_parallel;
 use crate::vcs::{ConflictOp, ResolvedRevisionId, Vcs, VcsError, VcsErrorOutput};
 use crate::workspace::{read_active_project, WorkspaceContext, WorkspaceLocation};
 use crate::workweave::workweave_path_for;
 use schemars::JsonSchema;
 use serde::Serialize;
 use std::fmt;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
+use std::sync::Mutex;
 
 /// Which side of a sync a check or error is reporting against.
 #[derive(Debug, Clone, Copy)]
@@ -375,6 +378,25 @@ pub struct SyncJsonOutput {
     #[serde(rename = "$schema")]
     pub schema: String,
     pub outcomes: Vec<SyncOutcomeOutput>,
+}
+
+/// One NDJSON record emitted by `rwv sync --json -j N` with `N > 1`.
+///
+/// Under NDJSON streaming mode, the envelope wrapper is dropped and each
+/// per-repo outcome becomes its own self-describing line. Per the fo-tn9uk
+/// epic convention ("every record embeds `$schema`"), every NDJSON record
+/// carries its own schema URL so consumers can identify a line without
+/// out-of-band context.
+///
+/// Serialised with `#[serde(flatten)]` on the inner outcome so the wire
+/// shape is a single flat object: `{"$schema": "...", "kind": "...", ...}`,
+/// not a nested wrapper.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct SyncOutcomeNdjsonRecord<'a> {
+    #[serde(rename = "$schema")]
+    pub schema: &'a str,
+    #[serde(flatten)]
+    pub outcome: &'a SyncOutcomeOutput,
 }
 
 /// Schema URL embedded in `rwv sync --json` output. Pins to the committed
@@ -1213,6 +1235,77 @@ fn prune_dropped_repo(ctx: &WorkspaceContext, repo_path: &RepoPath) -> anyhow::R
 }
 
 // ---------------------------------------------------------------------------
+// Output sink: routes per-repo text chatter + structured records.
+// ---------------------------------------------------------------------------
+
+/// Output mode for sync orchestration.
+///
+/// - `Text`: per-repo `println!` / `eprintln!` lines for human consumption;
+///   no JSON emission. Used by `rwv sync` (text mode).
+/// - `JsonEnvelope`: suppress text chatter; collect records into the sink's
+///   `records` Vec. The caller (`run_sync_json`) emits the
+///   `{ "$schema": ..., "outcomes": [...] }` envelope after orchestration
+///   returns. Used by `rwv sync --json` under `-j 1` (or unspecified).
+/// - `JsonNdjson`: suppress text chatter; collect records AND stream each
+///   one as a JSON line on stdout the moment it's recorded. Used by
+///   `rwv sync --json -j N` with `N > 1`. Streamed lines are guarded by
+///   `stdout_lock` so two workers can't tear a single line.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum OutputMode {
+    Text,
+    JsonEnvelope,
+    JsonNdjson,
+}
+
+/// Shared output sink threaded through `run_sync_impl` (and its
+/// per-repo workers under `-j > 1`).
+///
+/// `records` is `Mutex<Vec<_>>` so concurrent workers can push outcomes
+/// atomically. `stdout_lock` serialises raw stdout writes (NDJSON lines)
+/// so two workers don't tear each other's output. Under text mode the
+/// stdout_lock is unused — text mode is always serial today.
+struct OutputSink<'a> {
+    mode: OutputMode,
+    stdout_lock: &'a Mutex<()>,
+    records: &'a Mutex<Vec<SyncOutcomeOutput>>,
+}
+
+impl OutputSink<'_> {
+    fn emit_text(&self) -> bool {
+        self.mode == OutputMode::Text
+    }
+
+    /// Record a per-repo outcome.
+    ///
+    /// Always pushes onto `records` (consumers — `run_sync_json` for the
+    /// envelope, `run_sync` for an unused but accurately-sized `any_failure`
+    /// check). Under `JsonNdjson` additionally writes one self-describing
+    /// JSON line to stdout, taking `stdout_lock` so concurrent workers
+    /// can't interleave bytes.
+    fn record(&self, outcome: SyncOutcomeOutput) {
+        if matches!(self.mode, OutputMode::JsonNdjson) {
+            let record = SyncOutcomeNdjsonRecord {
+                schema: SYNC_JSON_SCHEMA_URL,
+                outcome: &outcome,
+            };
+            // Best-effort: a serialization failure here would mean the
+            // outcome type itself is malformed; we'd still want to retain
+            // the record in `records` (the post-loop bail message uses it),
+            // so swallow and continue.
+            if let Ok(line) = serde_json::to_string(&record) {
+                let _guard = self.stdout_lock.lock().unwrap_or_else(|e| e.into_inner());
+                let stdout = std::io::stdout();
+                let mut handle = stdout.lock();
+                let _ = writeln!(handle, "{line}");
+                let _ = handle.flush();
+            }
+        }
+        let mut guard = self.records.lock().unwrap_or_else(|e| e.into_inner());
+        guard.push(outcome);
+    }
+}
+
+// ---------------------------------------------------------------------------
 // rwv sync
 // ---------------------------------------------------------------------------
 
@@ -1243,8 +1336,15 @@ pub fn run_sync(
     force: bool,
     retire: bool,
     project_override: Option<ProjectName>,
+    jobs: usize,
 ) -> anyhow::Result<()> {
-    let mut records: Vec<SyncOutcomeOutput> = Vec::new();
+    let records: Mutex<Vec<SyncOutcomeOutput>> = Mutex::new(Vec::new());
+    let stdout_lock: Mutex<()> = Mutex::new(());
+    let sink = OutputSink {
+        mode: OutputMode::Text,
+        stdout_lock: &stdout_lock,
+        records: &records,
+    };
     run_sync_impl(
         cwd,
         source,
@@ -1252,17 +1352,25 @@ pub fn run_sync(
         force,
         retire,
         project_override,
-        true, // emit_text: preserve existing text-mode behavior
-        &mut records,
+        jobs,
+        &sink,
     )
 }
 
 /// Shared sync orchestration body used by both text-mode (`run_sync`) and
 /// JSON-mode (`run_sync_json`).
 ///
-/// `emit_text` toggles per-repo `println!`/`eprintln!` lines (kept identical
-/// to the pre-refactor `run_sync` output when `true`); `records` accumulates
-/// per-repo outcomes (always — text mode passes a Vec it then discards).
+/// `sink.mode` selects between text per-repo chatter, JSON envelope
+/// collection, and JSON NDJSON streaming. `sink.records` is the shared
+/// accumulator (always populated; text mode discards it on return). Under
+/// `JsonNdjson` mode the sink additionally streams each record to stdout
+/// at the moment it's recorded.
+///
+/// `jobs` is the resolved worker count (post-`parallel::resolve_jobs`).
+/// `jobs == 1` runs Phase 2 (per-repo manifest sync) serially on the
+/// caller thread; `jobs > 1` runs it on a bounded worker pool.
+/// Phases 1' (project repo) and 3 (re-lock + commit) are inherently
+/// serial and run on the caller thread regardless of `jobs`.
 ///
 /// Project-level errors (lock freshness, materialize, manifest-repo failures
 /// post-loop, Phase 1' / Phase 3) still bail with `anyhow::Result::Err` —
@@ -1276,9 +1384,10 @@ fn run_sync_impl(
     force: bool,
     retire: bool,
     project_override: Option<ProjectName>,
-    emit_text: bool,
-    records: &mut Vec<SyncOutcomeOutput>,
+    jobs: usize,
+    sink: &OutputSink<'_>,
 ) -> anyhow::Result<()> {
+    let emit_text = sink.emit_text();
     // Resolve CWD and source workspaces.
     let ctx = WorkspaceContext::resolve(cwd, project_override.clone())?;
     let workspace_dir = ctx.active_path().to_path_buf();
@@ -1552,6 +1661,26 @@ fn run_sync_impl(
         .map(|(p, _)| p.clone())
         .collect();
 
+    // Phase 2 (per-repo manifest sync) splits into three classes:
+    //
+    // - **skipped** (`!abs.exists()`): no on-disk clone, no work, no record.
+    // - **unresolvable** (lock pins a revision the local clone doesn't have):
+    //   surfaced as a `head-unreadable` failure record; no sync work.
+    // - **sync** (everything else): call `sync_one_repo` + post-sync refresh.
+    //
+    // The first two classes are pure record-keeping and run serially before
+    // the parallel pool; the third class is what `-j N` fans out across
+    // workers. Per-repo savepoint refs (created above) are per-ref-name so
+    // workers don't race; `sync_one_repo` and the refresh helpers touch
+    // only the repo's own working tree/index/refs and don't write to any
+    // workspace-wide state. See fo-i5z14 for the safety analysis.
+    struct SyncTask {
+        repo_path: crate::manifest::RepoPath,
+        abs: PathBuf,
+        target: ResolvedRevisionId,
+    }
+    let mut sync_tasks: Vec<SyncTask> = Vec::new();
+
     for (repo_path, raw_entry) in &raw_source_lock.repositories {
         let abs = workspace_dir.join(repo_path.as_path());
         if !abs.exists() {
@@ -1577,7 +1706,7 @@ fn run_sync_impl(
                 error: head_unreadable_error,
                 cause: None,
             });
-            records.push(SyncOutcomeOutput::from_outcome(
+            sink.record(SyncOutcomeOutput::from_outcome(
                 repo_path.to_string(),
                 abs.to_string_lossy().into_owned(),
                 &outcome,
@@ -1589,28 +1718,57 @@ fn run_sync_impl(
             None => continue,
         };
 
-        let outcome = sync_one_repo(&abs, &lock_entry.version, strategy);
-        if outcome.is_failure() {
-            if emit_text {
-                eprintln!("  {repo_path}: {outcome}");
-            }
-            any_failure = true;
-        } else {
+        sync_tasks.push(SyncTask {
+            repo_path: repo_path.clone(),
+            abs,
+            target: lock_entry.version.clone(),
+        });
+    }
+
+    // Fan out the sync tasks. Under `jobs == 1` `run_in_parallel` runs
+    // them serially on the caller thread without spawning — bit-identical
+    // to the pre-fo-i5z14 loop. Under `jobs > 1` each worker calls
+    // `sync_one_repo` + the post-sync refresh helpers on its own task; on
+    // completion it routes the outcome through `sink.record`, which under
+    // NDJSON mode writes one JSON line to stdout (mutex-guarded so
+    // concurrent workers don't tear bytes).
+    //
+    // Worker output order is completion order under `-j > 1` (matches
+    // fetch/update parallel UX); under `-j 1` it remains input order
+    // (the BTreeMap iteration above).
+    let task_outcomes: Vec<bool> = run_in_parallel(&sync_tasks, jobs, |_idx, task| {
+        let outcome = sync_one_repo(&task.abs, &task.target, strategy);
+        let is_failure = outcome.is_failure();
+        if !is_failure {
             // Post-sync: refresh index and working tree if stale. Fires on
             // every non-failure outcome — including NoOp (HEAD already at lock
             // but index/WT may have drifted from a shared-ref advance) and
             // AlreadyAhead (working tree should still reflect HEAD).
-            refresh_index_if_safe(&abs);
-            refresh_working_tree_if_safe(&abs);
-            if emit_text {
-                println!("  {repo_path}: {outcome}");
+            refresh_index_if_safe(&task.abs);
+            refresh_working_tree_if_safe(&task.abs);
+        }
+        if emit_text {
+            // Text-mode chatter. Acquire the shared stdout lock so the
+            // line doesn't interleave with a concurrent worker's line
+            // when jobs > 1 (defensive — text mode isn't a documented
+            // -j > 1 path, but the lock is cheap and prevents torn
+            // lines if a future caller wires that up).
+            let _guard = sink.stdout_lock.lock().unwrap_or_else(|e| e.into_inner());
+            if is_failure {
+                eprintln!("  {}: {outcome}", task.repo_path);
+            } else {
+                println!("  {}: {outcome}", task.repo_path);
             }
         }
-        records.push(SyncOutcomeOutput::from_outcome(
-            repo_path.to_string(),
-            abs.to_string_lossy().into_owned(),
+        sink.record(SyncOutcomeOutput::from_outcome(
+            task.repo_path.to_string(),
+            task.abs.to_string_lossy().into_owned(),
             &outcome,
         ));
+        is_failure
+    });
+    if task_outcomes.iter().any(|f| *f) {
+        any_failure = true;
     }
 
     if any_failure {
@@ -2078,18 +2236,30 @@ fn abort_one_repo(repo: &Path, op_id: &OpId) -> anyhow::Result<()> {
 
 /// Run `rwv sync --json`.
 ///
-/// Emits per-repo outcomes as `{ "$schema": "...", "outcomes": [...] }` to
-/// stdout (pretty-printed) on completion. Suppresses the text-mode per-repo
-/// `println!` chatter that `run_sync` produces but lets stderr-side
-/// diagnostic warnings (e.g. `(project): re-locked after sync from ...`,
-/// `--retire` messages) flow through — those don't interfere with stdout
-/// JSON.
+/// Two emission shapes, selected by `jobs`:
 ///
-/// Exit semantics: when any per-repo outcome has kind `failed`, prints the
-/// JSON envelope to stdout and exits with code 1 directly (the wiring in
-/// `main.rs` calls this with `?`, which would otherwise route through
-/// anyhow's stderr error display and drop the JSON). When all repos succeed,
-/// returns `Ok(())` and main exits 0.
+/// - **Serial / envelope** (`jobs == 1`): collect all per-repo outcomes,
+///   then emit `{ "$schema": "...", "outcomes": [...] }` pretty-printed to
+///   stdout on completion. Matches the shape pinned by fo-tn9uk.4.
+/// - **Parallel / NDJSON** (`jobs > 1`): each per-repo outcome is streamed
+///   as one JSON line to stdout the moment its worker finishes. Per the
+///   fo-tn9uk epic convention every line embeds its own `$schema` so
+///   consumers can identify a record without out-of-band context. No
+///   envelope is emitted — the bead's acceptance is one self-describing
+///   record per line.
+///
+/// In both modes the text-mode per-repo chatter that `run_sync` produces
+/// is suppressed; stderr-side diagnostic warnings (e.g. `(project):
+/// re-locked after sync from ...`, `--retire` messages) flow through.
+/// Reporter prefix wrapping is bypassed under NDJSON: workers don't run
+/// subprocesses through `parallel::Reporter`, so there's no
+/// `[<prefix>] <line>` text to interleave with JSON output.
+///
+/// Exit semantics: when any per-repo outcome has kind `failed`, exits with
+/// code 1 directly (under envelope mode after emitting the envelope;
+/// under NDJSON the failing record was already streamed). The
+/// `process::exit` avoids anyhow's stderr error display swallowing the
+/// JSON. When all repos succeed, returns `Ok(())` and main exits 0.
 ///
 /// Project-level errors raised before any per-repo work (lock freshness,
 /// active-project mismatch, etc.) propagate via `Err` and main's anyhow
@@ -2097,10 +2267,6 @@ fn abort_one_repo(repo: &Path, op_id: &OpId) -> anyhow::Result<()> {
 /// the bead's "non-zero iff at least one repo failed" semantic: when sync
 /// can't even reach the per-repo loop, there are no per-repo outcomes to
 /// emit, so the structured channel has nothing to say.
-///
-/// Parallel mode (`-j > 1` NDJSON) is NOT implemented here. `rwv sync`
-/// currently has no `-j` flag; adding it requires careful design around
-/// the savepoint / marker logic. See follow-up bead.
 pub fn run_sync_json(
     cwd: &Path,
     source: Option<&SyncSource>,
@@ -2108,8 +2274,20 @@ pub fn run_sync_json(
     force: bool,
     retire: bool,
     project_override: Option<ProjectName>,
+    jobs: usize,
 ) -> anyhow::Result<()> {
-    let mut records: Vec<SyncOutcomeOutput> = Vec::new();
+    let records: Mutex<Vec<SyncOutcomeOutput>> = Mutex::new(Vec::new());
+    let stdout_lock: Mutex<()> = Mutex::new(());
+    let mode = if jobs > 1 {
+        OutputMode::JsonNdjson
+    } else {
+        OutputMode::JsonEnvelope
+    };
+    let sink = OutputSink {
+        mode,
+        stdout_lock: &stdout_lock,
+        records: &records,
+    };
     let project_level_result = run_sync_impl(
         cwd,
         source,
@@ -2117,9 +2295,11 @@ pub fn run_sync_json(
         force,
         retire,
         project_override,
-        false, // suppress text-mode per-repo output
-        &mut records,
+        jobs,
+        &sink,
     );
+
+    let records = records.into_inner().unwrap_or_else(|e| e.into_inner());
 
     // If we never reached the per-repo loop (project-level precondition
     // failure), propagate the error so main prints it via anyhow.
@@ -2128,13 +2308,20 @@ pub fn run_sync_json(
     }
 
     let any_failure = records.iter().any(SyncOutcomeOutput::is_failure);
-    let payload = SyncJsonOutput {
-        schema: SYNC_JSON_SCHEMA_URL.to_owned(),
-        outcomes: records,
-    };
-    let out = serde_json::to_string_pretty(&payload)
-        .map_err(|e| anyhow::anyhow!("failed to serialize sync output: {e}"))?;
-    println!("{out}");
+
+    // Under envelope mode we still need to emit the envelope to stdout
+    // (NDJSON streamed each record as it arrived, so there's nothing
+    // extra to write). Per the bead spec, NDJSON does NOT emit an
+    // envelope wrapper around the stream.
+    if matches!(mode, OutputMode::JsonEnvelope) {
+        let payload = SyncJsonOutput {
+            schema: SYNC_JSON_SCHEMA_URL.to_owned(),
+            outcomes: records,
+        };
+        let out = serde_json::to_string_pretty(&payload)
+            .map_err(|e| anyhow::anyhow!("failed to serialize sync output: {e}"))?;
+        println!("{out}");
+    }
 
     // Map exit code: non-zero iff any per-repo outcome was a failure.
     // We use process::exit directly so the JSON we just printed is the
