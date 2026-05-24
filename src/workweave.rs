@@ -185,7 +185,12 @@ pub fn create_workweave(
                 None => false,
             };
             if can_use_structured_delete {
-                delete_workweave(primary_root, project, name)?;
+                // `force: true` on the internal delete: the caller already
+                // passed --force, signalling intent to overwrite uncommitted
+                // state. Re-checking here would just produce a confusing
+                // error when the operator's flag already authorised the
+                // destructive path.
+                delete_workweave(primary_root, project, name, true)?;
             } else {
                 std::fs::remove_dir_all(&workweave_dir)?;
             }
@@ -288,6 +293,49 @@ pub fn create_workweave(
         copy_dir_recursive(&project_dir, &project_wt_dest)?;
     }
 
+    // rwv-c7h fix: the project worktree above was checked out from a ref, so
+    // its `rwv.yaml` is the last committed version — any uncommitted edits
+    // in source_root's working tree were dropped. Overlay the source's
+    // working-tree `rwv.yaml` (and `rwv.lock` for completeness) so the
+    // workweave captures the operator's in-flight state. Warn loudly when
+    // we're doing this so dirty creates don't surprise.
+    //
+    // Limited to `rwv.yaml` / `rwv.lock` deliberately: these are the files
+    // that change workweave behavior (manifest = what worktrees to create,
+    // workweave config; lock = lockfile shared with downstream). Other
+    // uncommitted project files remain at their committed state, matching
+    // the existing worktree-from-ref contract for everything else.
+    if project_dir.exists() && project_wt_dest.exists() {
+        for fname in ["rwv.yaml", "rwv.lock"] {
+            let src = project_dir.join(fname);
+            let dst = project_wt_dest.join(fname);
+            if !src.exists() {
+                continue;
+            }
+            let src_bytes = std::fs::read(&src).ok();
+            let dst_bytes = if dst.exists() {
+                std::fs::read(&dst).ok()
+            } else {
+                None
+            };
+            if src_bytes != dst_bytes {
+                eprintln!(
+                    "rwv workweave create: using working-tree projects/{}/{fname} \
+                     (uncommitted changes; workweave captures dirty state)",
+                    project.as_str(),
+                );
+                if let Some(bytes) = &src_bytes {
+                    if let Err(e) = std::fs::write(&dst, bytes) {
+                        eprintln!(
+                            "rwv workweave create: warning: failed to overlay {}: {e}",
+                            dst.display()
+                        );
+                    }
+                }
+            }
+        }
+    }
+
     // Process WorkweaveConfig artifacts. Sources resolve against source_root
     // so artifacts follow the workspace being forked from.
     if let Some(ref ww_config) = manifest.workweave {
@@ -326,10 +374,18 @@ pub fn create_workweave(
 
     // Write .rwv-workweave marker file. The marker records the primary so
     // workweaves always know how to find their parent weave regardless of
-    // where they were forked from.
+    // where they were forked from. `parent` records the workspace this
+    // workweave was forked from (= source_root) so bare `rwv sync` knows
+    // where to sync to. For workweaves forked directly from primary, parent
+    // == primary; for workweaves forked from another workweave, parent is
+    // that workweave's directory.
+    let parent_path = source_root
+        .canonicalize()
+        .unwrap_or_else(|_| source_root.to_path_buf());
     let marker = WorkweaveMarker {
         primary: primary_root.to_path_buf(),
         project: project.clone(),
+        parent: Some(parent_path),
     };
     marker.write(&workweave_dir)?;
 
@@ -436,16 +492,81 @@ fn short_sha(sha: &str) -> &str {
     &sha[..sha.len().min(12)]
 }
 
-/// Delete a workweave: remove worktrees (including project repo) and delete the workweave directory.
+/// Return the relative paths within `workweave_dir` whose worktrees have
+/// uncommitted changes (staged, unstaged, or untracked).
+///
+/// Checks the project worktree (`projects/<project>`) and each manifest-repo
+/// worktree. A repo that is missing on disk is skipped; a repo whose dirty
+/// check itself fails is reported as dirty (conservative: "we couldn't
+/// confirm clean").
+pub fn collect_dirty_paths(
+    workweave_dir: &Path,
+    project: &ProjectName,
+    manifest: &Manifest,
+) -> Vec<String> {
+    let mut dirty = Vec::new();
+
+    // Project worktree.
+    let project_wt = workweave_dir.join("projects").join(project.as_str());
+    if GitVcs.is_repo(&project_wt) {
+        match GitVcs.has_uncommitted_changes(&project_wt) {
+            Ok(true) => dirty.push(format!("projects/{}", project.as_str())),
+            Ok(false) => {}
+            Err(e) => dirty.push(format!(
+                "projects/{}: status check failed: {e}",
+                project.as_str()
+            )),
+        }
+    }
+
+    // Manifest-repo worktrees.
+    for (repo_path, entry) in &manifest.repositories {
+        let wt = workweave_dir.join(repo_path.as_path());
+        if !wt.exists() {
+            continue;
+        }
+        let vcs = vcs_for(entry.vcs_type);
+        match vcs.has_uncommitted_changes(&wt) {
+            Ok(true) => dirty.push(repo_path.as_str().to_string()),
+            Ok(false) => {}
+            Err(e) => dirty.push(format!("{}: status check failed: {e}", repo_path.as_str())),
+        }
+    }
+
+    dirty
+}
+
+/// Delete a workweave: remove worktrees (including project repo) and delete
+/// the workweave directory.
+///
+/// Refuses to delete a workweave with uncommitted changes (in the project
+/// worktree or any manifest-repo worktree) unless `force` is true. The error
+/// lists the dirty paths so the operator knows what would have been lost.
+/// `force` matches the `git branch -D` pattern.
 pub fn delete_workweave(
     ws_root: &Path,
     project: &ProjectName,
     name: &WorkweaveName,
+    force: bool,
 ) -> anyhow::Result<()> {
     let manifest = load_manifest(ws_root, project)?;
     // Use `workweave_path_for` so old-form `<primary>--<name>` workweaves
     // (resolved via marker) are deleted correctly.
     let workweave_dir = workweave_path_for(ws_root, project, name);
+
+    // Safety check: refuse to delete dirty workweaves without --force.
+    // Skip the check if the workweave directory doesn't exist (nothing to
+    // lose) or if force was passed.
+    if !force && workweave_dir.exists() {
+        let dirty = collect_dirty_paths(&workweave_dir, project, &manifest);
+        if !dirty.is_empty() {
+            bail!(
+                "workweave {} has uncommitted changes; refusing to delete without --force:\n  {}",
+                name.as_str(),
+                dirty.join("\n  ")
+            );
+        }
+    }
 
     // Remove worktrees for each repo, collecting errors.
     let mut errors: Vec<String> = Vec::new();
@@ -758,9 +879,17 @@ pub fn handle_claude_hook() -> anyhow::Result<()> {
                     .map(|(_, n)| n)
                     .unwrap_or(dir_name);
 
-                if let Err(e) =
-                    delete_workweave(&marker.primary, &marker.project, &WorkweaveName::new(name))
-                {
+                // Claude's WorktreeRemove is fire-and-forget cleanup of a
+                // worktree Claude has decided to discard. Pass `force: true`
+                // because (a) the operator's intent is already expressed by
+                // the Claude action, and (b) any prompt for dirty state
+                // would land on stderr unseen — Claude has already moved on.
+                if let Err(e) = delete_workweave(
+                    &marker.primary,
+                    &marker.project,
+                    &WorkweaveName::new(name),
+                    true,
+                ) {
                     eprintln!("rwv workweave --claude-hook WorktreeRemove: warning: {e}");
                 }
             }

@@ -911,7 +911,7 @@ fn prune_dropped_repo(ctx: &WorkspaceContext, repo_path: &RepoPath) -> anyhow::R
 // rwv sync
 // ---------------------------------------------------------------------------
 
-/// Execute `rwv sync <source>`.
+/// Execute `rwv sync [source] [--retire]`.
 ///
 /// Phase ordering under the lock-as-derived contract:
 /// 1. **Phase 2 (manifest repos)** — advance each manifest repo to source's
@@ -922,22 +922,101 @@ fn prune_dropped_repo(ctx: &WorkspaceContext, repo_path: &RepoPath) -> anyhow::R
 ///    are skipped. `--force` retains hard-reset semantics.
 /// 3. **Phase 3 (re-lock)** — regenerate `rwv.lock` from the now-merged
 ///    manifest tips and commit if changed.
+///
+/// `source = None` means sync to the workweave's recorded parent (one hop).
+/// Only valid when CWD is inside a workweave with a `parent` field in its
+/// `.rwv-workweave` marker (backfilled to `primary` for legacy markers).
+///
+/// `retire = true` deletes the workweave on a successful sync, provided the
+/// workweave's project tip equals the parent's and the working tree is clean
+/// (the [`crate::workweave::collect_dirty_paths`] check). Conflicts leave the
+/// workweave intact for the operator to fix and re-run.
 pub fn run_sync(
     cwd: &Path,
-    source: &SyncSource,
+    source: Option<&SyncSource>,
     strategy: SyncStrategy,
     force: bool,
+    retire: bool,
     project_override: Option<ProjectName>,
 ) -> anyhow::Result<()> {
     // Resolve CWD and source workspaces.
     let ctx = WorkspaceContext::resolve(cwd, project_override.clone())?;
     let workspace_dir = ctx.active_path().to_path_buf();
 
-    let source_path = source.resolve(&ctx);
+    // Resolve sync target: explicit source if given, else parent from marker.
+    // Bare `rwv sync` only makes sense inside a workweave; the helpful error
+    // here is the entire reason we bothered to make `source` optional.
+    let resolved_source: SyncSource = match source {
+        Some(s) => s.clone(),
+        None => match &ctx.location {
+            WorkspaceLocation::Workweave { dir, .. } => {
+                let marker = crate::workspace::WorkweaveMarker::read(dir)?.ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "bare `rwv sync` requires a `.rwv-workweave` marker in the workweave; \
+                         found none at {} (re-create the workweave or pass an explicit source)",
+                        dir.display()
+                    )
+                })?;
+                let parent = marker.parent.ok_or_else(|| {
+                    // Defensive: WorkweaveMarker::read backfills parent so this
+                    // path should be unreachable; surface a clear error if a
+                    // future change breaks the invariant.
+                    anyhow::anyhow!(
+                        "workweave marker at {} has no `parent` (and backfill failed); \
+                         pass an explicit source to `rwv sync`",
+                        dir.display()
+                    )
+                })?;
+                SyncSource::Path(parent)
+            }
+            WorkspaceLocation::Weave { .. } => {
+                anyhow::bail!(
+                    "bare `rwv sync` syncs to the workweave's recorded parent, but CWD ({}) \
+                     is in the primary weave, not a workweave; pass an explicit source",
+                    cwd.display()
+                );
+            }
+        },
+    };
+
+    let source_path = resolved_source.resolve(&ctx);
     // The source side honours the same `--project` override so cross-project
     // syncs from a non-active project work.
     let source_ctx = WorkspaceContext::resolve(&source_path, project_override.clone())?;
     let source_workspace_dir = source_ctx.active_path().to_path_buf();
+
+    // Sibling-sync warning: if CWD is a workweave and source is another
+    // workweave that is NOT CWD's parent, the operation crosses tree
+    // branches. Warn (don't refuse — the operator may have a reason) so
+    // accidental sibling syncs are visible.
+    if let WorkspaceLocation::Workweave { dir: cwd_ww, .. } = &ctx.location {
+        if let WorkspaceLocation::Workweave { dir: source_ww, .. } = &source_ctx.location {
+            // Compare canonical paths for honest equality across symlinks.
+            let cwd_canonical = cwd_ww
+                .canonicalize()
+                .unwrap_or_else(|_| cwd_ww.to_path_buf());
+            let source_canonical = source_ww
+                .canonicalize()
+                .unwrap_or_else(|_| source_ww.to_path_buf());
+            if cwd_canonical != source_canonical {
+                // Is source actually our parent? If so, no warning — that's
+                // the documented bare-sync target.
+                let cwd_parent = crate::workspace::WorkweaveMarker::read(cwd_ww)
+                    .ok()
+                    .flatten()
+                    .and_then(|m| m.parent)
+                    .map(|p| p.canonicalize().unwrap_or(p));
+                if cwd_parent.as_ref() != Some(&source_canonical) {
+                    eprintln!(
+                        "warning: syncing across workweave siblings ({} → {}); \
+                         this skips the recorded parent (informational — proceeding).",
+                        cwd_canonical.display(),
+                        source_canonical.display(),
+                    );
+                }
+            }
+        }
+    }
 
     // Find active projects.
     let cwd_project_name = find_project_name(&ctx)?;
@@ -1235,7 +1314,139 @@ pub fn run_sync(
     }
     let _ = std::fs::remove_file(&marker_path);
 
+    // --retire: sync succeeded — verify we converged on parent's tip with a
+    // clean tree, then delete the workweave. Only meaningful inside a
+    // workweave; in a primary weave `--retire` is a no-op (warn instead of
+    // silently doing nothing so the operator notices the misuse).
+    if retire {
+        match &ctx.location {
+            WorkspaceLocation::Workweave { dir, name, project } => {
+                retire_workweave_after_sync(
+                    &ctx,
+                    dir,
+                    name,
+                    project,
+                    &cwd_project_dir,
+                    &source_project_dir,
+                )?;
+            }
+            WorkspaceLocation::Weave { .. } => {
+                eprintln!("warning: --retire is only meaningful inside a workweave; ignoring");
+            }
+        }
+    }
+
     Ok(())
+}
+
+/// `rwv sync --retire` post-sync cleanup.
+///
+/// Verify that the just-completed sync brought CWD's manifest repos into
+/// alignment with the parent's, and that no worktree has uncommitted changes,
+/// then delete the workweave. Bails (preserving the workweave) on any
+/// mismatch so the operator can fix and re-run.
+///
+/// We deliberately compare **manifest repo tips** rather than project repo
+/// tips. The project repo's post-sync state typically diverges from parent
+/// by exactly the auto-relock commit (Phase 3 always writes the workweave's
+/// `workweave:` field into the lock, which the primary's lock lacks). That
+/// commit is purely derived — the parent will regenerate it on its next
+/// sync — so refusing on project-tip inequality would refuse every retire,
+/// even the happy path the bead describes. Manifest tip equality is the
+/// honest "work has converged" signal: Phase 2 advances both sides to the
+/// same SHAs, so post-sync the manifest repos should be byte-equal.
+fn retire_workweave_after_sync(
+    ctx: &WorkspaceContext,
+    workweave_dir: &Path,
+    workweave_name: &WorkweaveName,
+    project: &crate::manifest::ProjectName,
+    cwd_project_dir: &Path,
+    _source_project_dir: &Path,
+) -> anyhow::Result<()> {
+    // Reload manifest post-Phase 3 so we see any repos newly added by sync.
+    let manifest_path = cwd_project_dir.join("rwv.yaml");
+    let manifest = Manifest::from_path(&manifest_path)
+        .map_err(|e| anyhow::anyhow!("--retire: failed to reload manifest: {e}"))?;
+
+    // Compare each manifest repo's HEAD in CWD vs. parent. Parent's repo
+    // lives under `source_workspace_dir.join(repo_path)`; here we reuse the
+    // parent path from the marker (single source of truth for the bare-sync
+    // target).
+    let marker = crate::workspace::WorkweaveMarker::read(workweave_dir)?.ok_or_else(|| {
+        anyhow::anyhow!(
+            "--retire: workweave at {} has no .rwv-workweave marker",
+            workweave_dir.display()
+        )
+    })?;
+    let parent_root = marker
+        .parent
+        .clone()
+        .unwrap_or_else(|| marker.primary.clone());
+
+    let mut diverged: Vec<String> = Vec::new();
+    for repo_path in manifest.repositories.keys() {
+        let cwd_repo = workweave_dir.join(repo_path.as_path());
+        let parent_repo = parent_root.join(repo_path.as_path());
+        if !cwd_repo.exists() || !parent_repo.exists() {
+            // Missing on one side — leave the workweave alone; this is
+            // unusual enough that the operator should look.
+            diverged.push(format!("{}: missing on one side", repo_path.as_str()));
+            continue;
+        }
+        let cwd_head = GitVcs
+            .head_revision(&cwd_repo)
+            .map_err(|e| anyhow::anyhow!("--retire: read CWD head for {}: {e}", repo_path))?;
+        let parent_head = GitVcs
+            .head_revision(&parent_repo)
+            .map_err(|e| anyhow::anyhow!("--retire: read parent head for {}: {e}", repo_path))?;
+        if cwd_head != parent_head {
+            diverged.push(format!(
+                "{}: CWD={} parent={}",
+                repo_path.as_str(),
+                short_sha(cwd_head.as_str()),
+                short_sha(parent_head.as_str())
+            ));
+        }
+    }
+
+    if !diverged.is_empty() {
+        anyhow::bail!(
+            "--retire: workweave's manifest repos differ from parent after sync; \
+             refusing to delete:\n  {}\n\
+             Push CWD's changes to parent (e.g. `cd {} && rwv sync {}`) and re-run, \
+             or `rwv workweave delete --force {}` to discard.",
+            diverged.join("\n  "),
+            parent_root.display(),
+            workweave_name.as_str(),
+            workweave_name.as_str(),
+        );
+    }
+
+    // Reuse the shared dirty-path check. Any dirty worktree blocks retire.
+    let dirty = crate::workweave::collect_dirty_paths(workweave_dir, project, &manifest);
+    if !dirty.is_empty() {
+        anyhow::bail!(
+            "--retire: workweave has uncommitted changes after sync; refusing to delete:\n  {}\n\
+             Commit/discard and re-run, or `rwv workweave delete --force {}` to discard.",
+            dirty.join("\n  "),
+            workweave_name.as_str(),
+        );
+    }
+
+    // Both invariants hold: delete the workweave. Pass `force: false` —
+    // collect_dirty_paths already returned empty, so the inner check is
+    // belt-and-braces. Use the primary path (delete_workweave needs to
+    // locate the workweave under the primary's parent dir).
+    crate::workweave::delete_workweave(ctx.primary_path(), project, workweave_name, false)
+        .map_err(|e| anyhow::anyhow!("--retire: workweave delete failed: {e}"))?;
+
+    eprintln!("retired workweave {}", workweave_name.as_str());
+    Ok(())
+}
+
+/// Truncate a SHA to 12 chars for display (matches workweave.rs convention).
+fn short_sha(sha: &str) -> &str {
+    &sha[..sha.len().min(12)]
 }
 
 /// Phase 1': replay CWD's unique project commits onto `source_tip` via

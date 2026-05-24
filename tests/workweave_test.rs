@@ -304,9 +304,13 @@ fn delete_workweave_removes_project_worktree() {
     let ww_dir = weaveroot.join("my-project--to-del");
     assert!(ww_dir.exists(), "workweave should exist before deletion");
 
-    // Delete it.
+    // Delete it. Pass --force: activation writes generated files into the
+    // workweave's project worktree (workspace config, ecosystem outputs)
+    // that the post-fo-gneid dirty check would otherwise treat as untracked
+    // changes. This test is verifying worktree cleanup, not dirty-check
+    // semantics, so the --force is incidental.
     rwv()
-        .args(["workweave", "my-project", "delete", "to-del"])
+        .args(["workweave", "my-project", "delete", "to-del", "--force"])
         .env("RWV_WORKWEAVE_DIR", &weaveroot)
         .current_dir(&ws)
         .assert()
@@ -878,8 +882,13 @@ fn workweave_full_round_trip() {
     );
 
     // --- Delete ---
+    // Pass --force: activation generates files in the project worktree
+    // (workspace config, ecosystem outputs) that count as untracked changes
+    // under the post-fo-gneid dirty check. The round-trip test isn't about
+    // dirty semantics; the --force is incidental to making delete work
+    // after the create-and-activate cycle.
     rwv()
-        .args(["workweave", "round-trip-project", "delete", "rt"])
+        .args(["workweave", "round-trip-project", "delete", "rt", "--force"])
         .env("RWV_WORKWEAVE_DIR", &weaveroot)
         .current_dir(&ws)
         .assert()
@@ -1861,4 +1870,266 @@ fn claude_hook_no_project_arg_needed() {
         !stderr.contains("required arguments"),
         "should not require project arg with --claude-hook, got: {stderr}"
     );
+}
+
+// ============================================================================
+// fo-gneid: workweave delete dirty-worktree safety
+// ============================================================================
+
+#[test]
+fn workweave_delete_refuses_dirty_manifest_repo() {
+    // Create a workweave, dirty up a manifest-repo worktree, verify that
+    // `rwv workweave delete` (no --force) refuses and names the dirty repo.
+    let tmp = tempfile::tempdir().unwrap();
+    let ws = make_workspace(tmp.path(), "web-app");
+
+    let weaveroot = tmp.path().join(".workweaves");
+    std::fs::create_dir_all(&weaveroot).unwrap();
+
+    rwv()
+        .args(["workweave", "web-app", "create", "dirty"])
+        .env("RWV_WORKWEAVE_DIR", &weaveroot)
+        .current_dir(&ws)
+        .assert()
+        .success();
+
+    // Dirty up a tracked file in the manifest-repo worktree.
+    let repo_wt = weaveroot.join("web-app--dirty/github/org/repo");
+    std::fs::write(repo_wt.join("README"), "DIRTY EDIT\n").unwrap();
+
+    // Plain delete: must refuse, must mention --force, must name the dirty repo.
+    rwv()
+        .args(["workweave", "web-app", "delete", "dirty"])
+        .env("RWV_WORKWEAVE_DIR", &weaveroot)
+        .current_dir(&ws)
+        .assert()
+        .failure()
+        .stderr(
+            predicate::str::contains("--force").and(predicate::str::contains("github/org/repo")),
+        );
+
+    // Workweave directory must still exist after the refused delete.
+    let ww_dir = weaveroot.join("web-app--dirty");
+    assert!(
+        ww_dir.exists(),
+        "refused delete must leave workweave intact"
+    );
+}
+
+#[test]
+fn workweave_delete_force_proceeds_on_dirty() {
+    let tmp = tempfile::tempdir().unwrap();
+    let ws = make_workspace(tmp.path(), "web-app");
+
+    let weaveroot = tmp.path().join(".workweaves");
+    std::fs::create_dir_all(&weaveroot).unwrap();
+
+    rwv()
+        .args(["workweave", "web-app", "create", "del-force"])
+        .env("RWV_WORKWEAVE_DIR", &weaveroot)
+        .current_dir(&ws)
+        .assert()
+        .success();
+
+    let repo_wt = weaveroot.join("web-app--del-force/github/org/repo");
+    std::fs::write(repo_wt.join("README"), "DIRTY\n").unwrap();
+    // And an untracked file (to cover that branch of `git status --porcelain`).
+    std::fs::write(repo_wt.join("LOCAL_TODO"), "todo\n").unwrap();
+
+    rwv()
+        .args(["workweave", "web-app", "delete", "del-force", "--force"])
+        .env("RWV_WORKWEAVE_DIR", &weaveroot)
+        .current_dir(&ws)
+        .assert()
+        .success();
+
+    let ww_dir = weaveroot.join("web-app--del-force");
+    assert!(!ww_dir.exists(), "--force must remove the workweave");
+}
+
+#[test]
+fn workweave_delete_clean_succeeds_without_force() {
+    // Make_workspace's project dir is NOT a git repo, so activation can't
+    // generate a worktree there. The single manifest repo is clean after a
+    // fresh create, so the dirty check should pass and delete should
+    // succeed without --force.
+    let tmp = tempfile::tempdir().unwrap();
+    let ws = make_workspace(tmp.path(), "web-app");
+
+    let weaveroot = tmp.path().join(".workweaves");
+    std::fs::create_dir_all(&weaveroot).unwrap();
+
+    rwv()
+        .args(["workweave", "web-app", "create", "clean"])
+        .env("RWV_WORKWEAVE_DIR", &weaveroot)
+        .current_dir(&ws)
+        .assert()
+        .success();
+
+    rwv()
+        .args(["workweave", "web-app", "delete", "clean"])
+        .env("RWV_WORKWEAVE_DIR", &weaveroot)
+        .current_dir(&ws)
+        .assert()
+        .success();
+
+    let ww_dir = weaveroot.join("web-app--clean");
+    assert!(!ww_dir.exists(), "clean delete should remove the workweave");
+}
+
+// ============================================================================
+// rwv-c7h: workweave create reads working-tree rwv.yaml (uncommitted edits)
+// ============================================================================
+
+#[test]
+fn workweave_create_picks_up_uncommitted_rwv_yaml() {
+    // make_workspace_with_project_repo commits the manifest. We then edit
+    // the working-tree rwv.yaml WITHOUT committing, create a workweave, and
+    // verify the workweave's project worktree sees the edited (working-tree)
+    // version — not the last committed one.
+    let tmp = tempfile::tempdir().unwrap();
+    let ws = make_workspace_with_project_repo(tmp.path(), "uncommit-test");
+
+    // Append a comment to rwv.yaml in the primary's working tree, without
+    // committing. The committed version still says no comment.
+    let primary_manifest = ws.join("projects/uncommit-test/rwv.yaml");
+    let original = std::fs::read_to_string(&primary_manifest).unwrap();
+    let edited = format!("{original}# UNCOMMITTED-MARKER\n");
+    std::fs::write(&primary_manifest, &edited).unwrap();
+
+    let weaveroot = tmp.path().join(".workweaves");
+    std::fs::create_dir_all(&weaveroot).unwrap();
+
+    let assert = rwv()
+        .args(["workweave", "uncommit-test", "create", "ww-uncommit"])
+        .env("RWV_WORKWEAVE_DIR", &weaveroot)
+        .current_dir(&ws)
+        .assert()
+        .success();
+
+    // The CLI must emit a warning about dirty state (so the operator
+    // notices the working tree was captured).
+    let stderr = String::from_utf8_lossy(&assert.get_output().stderr);
+    assert!(
+        stderr.contains("uncommitted") || stderr.contains("working-tree"),
+        "expected dirty-state warning, got stderr: {stderr}"
+    );
+
+    // The workweave's project worktree must have the UNCOMMITTED marker.
+    let ww_manifest = weaveroot.join("uncommit-test--ww-uncommit/projects/uncommit-test/rwv.yaml");
+    let ww_content = std::fs::read_to_string(&ww_manifest).unwrap();
+    assert!(
+        ww_content.contains("UNCOMMITTED-MARKER"),
+        "workweave's rwv.yaml should reflect the primary's uncommitted edit, got:\n{ww_content}"
+    );
+}
+
+#[test]
+fn workweave_create_with_clean_committed_manifest_emits_no_dirty_warning() {
+    // Sanity counterpart to the above: a clean workspace must NOT trigger
+    // the dirty-state warning, so users don't get noise on every create.
+    let tmp = tempfile::tempdir().unwrap();
+    let ws = make_workspace_with_project_repo(tmp.path(), "clean-test");
+
+    let weaveroot = tmp.path().join(".workweaves");
+    std::fs::create_dir_all(&weaveroot).unwrap();
+
+    let assert = rwv()
+        .args(["workweave", "clean-test", "create", "ww-clean"])
+        .env("RWV_WORKWEAVE_DIR", &weaveroot)
+        .current_dir(&ws)
+        .assert()
+        .success();
+
+    let stderr = String::from_utf8_lossy(&assert.get_output().stderr);
+    assert!(
+        !stderr.contains("uncommitted") && !stderr.contains("dirty state"),
+        "clean workspace must not warn about uncommitted state, got stderr: {stderr}"
+    );
+}
+
+// ============================================================================
+// fo-ran2c: workweave parent tracking + bare sync follows parent
+// ============================================================================
+
+#[test]
+fn workweave_create_records_primary_as_parent() {
+    let tmp = tempfile::tempdir().unwrap();
+    let ws = make_workspace(tmp.path(), "web-app");
+
+    let weaveroot = tmp.path().join(".workweaves");
+    std::fs::create_dir_all(&weaveroot).unwrap();
+
+    rwv()
+        .args(["workweave", "web-app", "create", "parented"])
+        .env("RWV_WORKWEAVE_DIR", &weaveroot)
+        .current_dir(&ws)
+        .assert()
+        .success();
+
+    let marker = weaveroot.join("web-app--parented/.rwv-workweave");
+    let content = std::fs::read_to_string(&marker).unwrap();
+    assert!(
+        content.contains("parent:"),
+        "marker must include `parent:` field, got:\n{content}"
+    );
+    // For a workweave forked from primary, parent should resolve to the
+    // canonicalised primary path.
+    let ws_canonical = ws.canonicalize().unwrap();
+    assert!(
+        content.contains(ws_canonical.to_str().unwrap()),
+        "parent must equal primary path {} for primary-forked workweave, got:\n{content}",
+        ws_canonical.display()
+    );
+}
+
+#[test]
+fn workweave_forked_from_other_workweave_records_that_parent() {
+    let tmp = tempfile::tempdir().unwrap();
+    let ws = make_workspace(tmp.path(), "web-app");
+
+    let weaveroot = tmp.path().join(".workweaves");
+    std::fs::create_dir_all(&weaveroot).unwrap();
+
+    // Step 1: create ww1 forked from primary.
+    rwv()
+        .args(["workweave", "web-app", "create", "ww1"])
+        .env("RWV_WORKWEAVE_DIR", &weaveroot)
+        .current_dir(&ws)
+        .assert()
+        .success();
+
+    // Step 2: from inside ww1, create ww2 — should fork from ww1.
+    let ww1 = weaveroot.join("web-app--ww1");
+    rwv()
+        .args(["workweave", "web-app", "create", "ww2"])
+        .env("RWV_WORKWEAVE_DIR", &weaveroot)
+        .current_dir(&ww1)
+        .assert()
+        .success();
+
+    let ww2_marker = weaveroot.join("web-app--ww2/.rwv-workweave");
+    let content = std::fs::read_to_string(&ww2_marker).unwrap();
+    let ww1_canonical = ww1.canonicalize().unwrap();
+    assert!(
+        content.contains(ww1_canonical.to_str().unwrap()),
+        "ww2's parent must be ww1's path (forked from ww1's CWD), got:\n{content}"
+    );
+}
+
+#[test]
+fn bare_sync_outside_workweave_errors_clearly() {
+    // make_workspace_with_project_repo gives us a primary weave with a git
+    // project repo. Running `rwv sync` (no source) from primary should
+    // refuse with a helpful message (parent-tracking only applies inside a
+    // workweave).
+    let tmp = tempfile::tempdir().unwrap();
+    let ws = make_workspace_with_project_repo(tmp.path(), "p");
+
+    rwv()
+        .args(["sync"])
+        .current_dir(&ws)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("workweave").or(predicate::str::contains("source")));
 }

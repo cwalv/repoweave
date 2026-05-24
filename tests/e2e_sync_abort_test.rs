@@ -232,14 +232,13 @@ fn abort_subcommand_is_recognized() {
 }
 
 #[test]
-fn sync_requires_source_argument() {
+fn sync_without_source_outside_workweave_errors() {
+    // Bare `rwv sync` is only valid inside a workweave (where it follows the
+    // recorded parent). Outside any workspace it should fail loudly — and
+    // outside a workweave (in a primary weave) it should also fail with a
+    // helpful message rather than silently doing nothing.
     let tmp = tempfile::tempdir().unwrap();
-    rwv()
-        .arg("sync")
-        .current_dir(tmp.path())
-        .assert()
-        .failure()
-        .stderr(predicate::str::contains("required"));
+    rwv().arg("sync").current_dir(tmp.path()).assert().failure();
 }
 
 // ---------------------------------------------------------------------------
@@ -1451,7 +1450,11 @@ fn sync_in_marker_workweave_refuses_when_workweave_own_lock_is_stale() {
         .assert()
         .failure()
         .stderr(
-            predicate::str::contains("destination workspace 'primary--feat'")
+            // Workweave name is the part after `<project>--` in the dir name
+            // (fo-pvfwz fix: previously the resolver returned the whole dir
+            // basename, so downstream lookups like delete_workweave would
+            // re-prefix and miss the actual on-disk path).
+            predicate::str::contains("destination workspace 'feat'")
                 .and(predicate::str::contains("stale lock")),
         );
 }

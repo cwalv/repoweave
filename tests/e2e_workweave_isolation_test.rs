@@ -287,7 +287,11 @@ func Greeting() string {
     // ------------------------------------------------------------------
     // 11. Delete the workweave
     // ------------------------------------------------------------------
-    repoweave::workweave::delete_workweave(&ws, &ww_project, &ww_name)
+    // Pass `force: true`: this isolation test intentionally modifies files
+    // in the workweave's protocol repo (step 8) to verify isolation from
+    // primary. The post-fo-gneid safety check correctly identifies those as
+    // uncommitted changes; the test wants to delete anyway.
+    repoweave::workweave::delete_workweave(&ws, &ww_project, &ww_name, true)
         .expect("delete_workweave should succeed");
 
     // ------------------------------------------------------------------

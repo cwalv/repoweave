@@ -332,11 +332,19 @@ impl WorkspaceContext {
                 // which project this workweave belongs to.
                 let root = marker.primary.clone();
                 if is_workspace_root(&root) {
-                    let workweave_name_str = current
+                    let dir_basename = current
                         .file_name()
                         .and_then(|n| n.to_str())
                         .unwrap_or("unknown");
-                    let workweave_name = WorkweaveName::new(workweave_name_str);
+                    // Workweave directories follow `<project>--<name>`. Strip
+                    // the `<project>--` prefix so the workweave name can be
+                    // round-tripped through `workweave_path_for` for delete /
+                    // retire flows. parse_weave_dir_name returns the
+                    // right-hand side; fall back to the full basename for
+                    // exotic shapes that don't parse.
+                    let workweave_name = parse_weave_dir_name(dir_basename)
+                        .map(|(_, n)| n)
+                        .unwrap_or_else(|| WorkweaveName::new(dir_basename));
                     let project = project_override.unwrap_or(marker.project);
                     let cwd_project_hint = detect_project(&cwd, &root);
                     return Ok(WorkspaceContext {
@@ -602,14 +610,35 @@ pub fn parse_weave_dir_name(dir_name: &str) -> Option<(&str, WorkweaveName)> {
 // ---------------------------------------------------------------------------
 
 /// Metadata written to `.rwv-workweave` in a workweave root.
-/// Records the relationship to the primary workspace.
+///
+/// Records the relationship to the primary workspace and the workspace this
+/// workweave was forked from.
+///
+/// `parent` is the workspace the workweave was created from: `primary` when
+/// created from the primary, the parent workweave's path when created from
+/// inside another workweave. Workweaves form a tree; `parent` lets `rwv sync`
+/// (with no explicit source) sync one hop toward the primary.
+///
+/// The field is optional on disk (`#[serde(default)]`) so that markers written
+/// before parent tracking parse cleanly; [`Self::read`] backfills missing
+/// values to `primary` so callers can rely on a `Some` parent for any marker
+/// that exists on disk.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WorkweaveMarker {
     pub primary: PathBuf,
     pub project: ProjectName,
+    /// Workspace this workweave was forked from. Backfilled to `primary` for
+    /// pre-existing markers that predate this field.
+    #[serde(default)]
+    pub parent: Option<PathBuf>,
 }
 
 impl WorkweaveMarker {
+    /// Read the marker file from `dir`.
+    ///
+    /// Returns `Ok(None)` if the marker is absent. When present, missing
+    /// `parent` (legacy markers written before parent tracking landed) is
+    /// backfilled to `primary` so callers always see a `Some(_)` value.
     pub fn read(dir: &Path) -> anyhow::Result<Option<Self>> {
         let path = dir.join(".rwv-workweave");
         if !path.exists() {
@@ -617,9 +646,14 @@ impl WorkweaveMarker {
         }
         let content = std::fs::read_to_string(&path)
             .map_err(|e| anyhow::anyhow!("failed to read {}: {e}", path.display()))?;
-        let marker: Self = serde_yaml::from_str(&content).map_err(|e| {
+        let mut marker: Self = serde_yaml::from_str(&content).map_err(|e| {
             anyhow::anyhow!("failed to parse .rwv-workweave at {}: {e}", path.display())
         })?;
+        // Backfill missing parent (legacy markers): default to primary so
+        // bare `rwv sync` works on workweaves that predate parent tracking.
+        if marker.parent.is_none() {
+            marker.parent = Some(marker.primary.clone());
+        }
         Ok(Some(marker))
     }
 
@@ -1030,6 +1064,7 @@ mod tests {
         let marker = WorkweaveMarker {
             primary: PathBuf::from("/home/user/weaveroot"),
             project: ProjectName::new("my-project"),
+            parent: None,
         };
         marker.write(dir).unwrap();
 
@@ -1045,6 +1080,63 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let result = WorkweaveMarker::read(tmp.path()).unwrap();
         assert!(result.is_none());
+    }
+
+    // fo-ran2c: parent field tests.
+    #[test]
+    fn workweave_marker_parent_round_trips() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path();
+        let primary = PathBuf::from("/home/user/weaveroot/primary");
+        let parent = PathBuf::from("/home/user/weaveroot/.workweaves/primary--ww1");
+        let marker = WorkweaveMarker {
+            primary: primary.clone(),
+            project: ProjectName::new("p"),
+            parent: Some(parent.clone()),
+        };
+        marker.write(dir).unwrap();
+
+        let read_back = WorkweaveMarker::read(dir).unwrap().unwrap();
+        assert_eq!(read_back.parent, Some(parent));
+    }
+
+    #[test]
+    fn workweave_marker_missing_parent_backfills_to_primary() {
+        // Legacy marker written before parent tracking: only primary and
+        // project fields present on disk. read() must backfill parent to
+        // primary so bare `rwv sync` works without re-writing the marker.
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path();
+        let legacy = "primary: /home/user/weaveroot/primary\nproject: legacy-project\n";
+        std::fs::write(dir.join(".rwv-workweave"), legacy).unwrap();
+
+        let marker = WorkweaveMarker::read(dir).unwrap().unwrap();
+        assert_eq!(
+            marker.parent,
+            Some(PathBuf::from("/home/user/weaveroot/primary")),
+            "missing parent should backfill to primary"
+        );
+    }
+
+    #[test]
+    fn workweave_marker_explicit_parent_not_backfilled() {
+        // A marker with an explicit parent (e.g. forked from another
+        // workweave) must round-trip without being overwritten by primary.
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path();
+        let yaml = "primary: /home/user/primary\n\
+                    project: p\n\
+                    parent: /home/user/.workweaves/primary--ww1\n";
+        std::fs::write(dir.join(".rwv-workweave"), yaml).unwrap();
+
+        let marker = WorkweaveMarker::read(dir).unwrap().unwrap();
+        assert_eq!(
+            marker.parent,
+            Some(PathBuf::from("/home/user/.workweaves/primary--ww1")),
+            "explicit parent must survive read"
+        );
+        // And primary remains its own value, not overwritten.
+        assert_eq!(marker.primary, PathBuf::from("/home/user/primary"));
     }
 
     // ========================================================================
@@ -1064,6 +1156,7 @@ mod tests {
         let marker = WorkweaveMarker {
             primary: root.canonicalize().unwrap(),
             project: ProjectName::new("web-app"),
+            parent: None,
         };
         marker.write(&weave_dir).unwrap();
 
@@ -1092,6 +1185,7 @@ mod tests {
         let marker = WorkweaveMarker {
             primary: root.canonicalize().unwrap(),
             project: ProjectName::new("web-app"),
+            parent: None,
         };
         marker.write(&weave_dir).unwrap();
 
@@ -1141,15 +1235,19 @@ mod tests {
         let marker = WorkweaveMarker {
             primary: root.canonicalize().unwrap(),
             project: ProjectName::new("marker-project"),
+            parent: None,
         };
         marker.write(&weave_dir).unwrap();
 
         let ctx = WorkspaceContext::resolve(&weave_dir, None).unwrap();
-        // Marker takes precedence: project should be from marker
+        // Marker takes precedence for project (from marker, not from the
+        // directory's left component). Workweave name comes from the
+        // right-hand side of `<project>--<name>` so downstream lookups
+        // (workweave_path_for, delete_workweave) can reconstruct the on-disk
+        // directory: `<workweave_parent>/<project-from-marker>--<name>`.
         match &ctx.location {
             WorkspaceLocation::Workweave { name, project, .. } => {
-                // The workweave name comes from the directory name (last component)
-                assert_eq!(name.as_str(), "ws--dash-name");
+                assert_eq!(name.as_str(), "dash-name");
                 assert_eq!(project.as_str(), "marker-project");
             }
             WorkspaceLocation::Weave { .. } => panic!("expected Workweave"),

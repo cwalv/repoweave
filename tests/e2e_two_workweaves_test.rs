@@ -555,3 +555,225 @@ fn sync_phase3_materialize_failure_is_fatal() {
         "workweave should not have a partially-materialised repo on failure"
     );
 }
+
+// ---------------------------------------------------------------------------
+// fo-ran2c + fo-kduyx: bare `rwv sync` follows parent + `--retire` cleanup
+// ---------------------------------------------------------------------------
+
+/// fo-ran2c happy path: a workweave forked from primary has `parent` recorded
+/// in its marker; bare `rwv sync` (no source) reads that parent and syncs to
+/// it. The end state matches `rwv sync primary`.
+#[test]
+fn bare_sync_follows_recorded_parent_to_primary() {
+    let tmp = tempfile::tempdir().unwrap();
+    let weaveroot = tmp.path().join(".workweaves");
+    std::fs::create_dir_all(&weaveroot).unwrap();
+
+    let main = make_main_workspace(tmp.path());
+    // rwv lock/sync require an active project at primary. make_main_workspace
+    // doesn't write .rwv-active; existing tests reach this state implicitly
+    // via `rwv add` (which calls activate). Set it explicitly here.
+    std::fs::write(main.root.join(".rwv-active"), format!("{PROJECT}\n")).unwrap();
+    let ww1 = create_workweave(&main, &weaveroot, "ww1");
+
+    // Primary advances the manifest repo and locks. ww1 is behind.
+    let primary_sha = commit_file(
+        &main.manifest_repo,
+        "primary.txt",
+        "from primary\n",
+        "primary: add primary.txt",
+    );
+    rwv_lock_commit(&main.root);
+
+    // Bare `rwv sync` from inside ww1 must follow parent (== primary) and
+    // bring ww1 forward.
+    rwv()
+        .args(["sync"])
+        .current_dir(&ww1.root)
+        .assert()
+        .success();
+
+    let ww1_lib_head = git_out(&["rev-parse", "HEAD"], &ww1.manifest_repo);
+    assert_eq!(
+        ww1_lib_head, primary_sha,
+        "after bare sync, ww1's lib HEAD must be at primary's tip"
+    );
+    assert!(
+        ww1.manifest_repo.join("primary.txt").exists(),
+        "after bare sync, ww1 must have primary's new file"
+    );
+}
+
+/// fo-ran2c + backfill: a workweave whose `.rwv-workweave` predates parent
+/// tracking still works under bare sync — `WorkweaveMarker::read` backfills
+/// the missing `parent` to `primary`. Simulate that by stripping `parent:`
+/// from the marker file after create, then run bare sync.
+#[test]
+fn bare_sync_works_after_parent_backfill_on_legacy_marker() {
+    let tmp = tempfile::tempdir().unwrap();
+    let weaveroot = tmp.path().join(".workweaves");
+    std::fs::create_dir_all(&weaveroot).unwrap();
+
+    let main = make_main_workspace(tmp.path());
+    std::fs::write(main.root.join(".rwv-active"), format!("{PROJECT}\n")).unwrap();
+    let ww1 = create_workweave(&main, &weaveroot, "ww1");
+
+    // Strip the `parent:` line from the marker to simulate a pre-fo-ran2c
+    // workweave on disk. The read path must backfill it to primary.
+    let marker_path = ww1.root.join(".rwv-workweave");
+    let marker_content = std::fs::read_to_string(&marker_path).unwrap();
+    let stripped: String = marker_content
+        .lines()
+        .filter(|line| !line.trim_start().starts_with("parent:"))
+        .collect::<Vec<_>>()
+        .join("\n")
+        + "\n";
+    std::fs::write(&marker_path, &stripped).unwrap();
+    assert!(
+        !stripped.contains("parent:"),
+        "legacy marker must not contain parent: field for this test"
+    );
+
+    // Make primary diverge so bare sync has work to do.
+    let primary_sha = commit_file(
+        &main.manifest_repo,
+        "legacy.txt",
+        "legacy parent backfill\n",
+        "primary: legacy backfill marker",
+    );
+    rwv_lock_commit(&main.root);
+
+    rwv()
+        .args(["sync"])
+        .current_dir(&ww1.root)
+        .assert()
+        .success();
+
+    let ww1_lib_head = git_out(&["rev-parse", "HEAD"], &ww1.manifest_repo);
+    assert_eq!(
+        ww1_lib_head, primary_sha,
+        "bare sync on legacy marker must follow backfilled parent (primary)"
+    );
+}
+
+/// fo-ran2c sibling-sync warning: when CWD is one workweave and an explicit
+/// source is another (non-parent) workweave, sync should emit a warning that
+/// names both paths and then proceed — the warning is informational, not a
+/// refusal.
+#[test]
+fn sibling_sync_emits_warning_and_proceeds() {
+    let tmp = tempfile::tempdir().unwrap();
+    let weaveroot = tmp.path().join(".workweaves");
+    std::fs::create_dir_all(&weaveroot).unwrap();
+
+    let main = make_main_workspace(tmp.path());
+    std::fs::write(main.root.join(".rwv-active"), format!("{PROJECT}\n")).unwrap();
+    let ww1 = create_workweave(&main, &weaveroot, "ww1");
+    let ww2 = create_workweave(&main, &weaveroot, "ww2");
+
+    // Both are forked from primary, so each has primary as `parent`. Syncing
+    // ww1 → ww2 crosses sibling branches.
+    let output = rwv()
+        .args(["sync", &ww2.root.to_string_lossy()])
+        .current_dir(&ww1.root)
+        .output()
+        .expect("rwv sync should run");
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("siblings") || stderr.contains("skips the recorded parent"),
+        "stderr should contain sibling-sync warning, got: {stderr}"
+    );
+    // The warning is non-fatal: the command should still attempt the sync and
+    // succeed (there are no divergent commits to merge — both forks are at
+    // the same primary tip).
+    assert!(
+        output.status.success(),
+        "sibling sync should succeed despite warning, stderr: {stderr}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// fo-kduyx: --retire
+// ---------------------------------------------------------------------------
+
+/// Happy path: `rwv sync --retire` from a workweave whose project repo is
+/// already at parent's tip (no divergent commits) syncs and deletes.
+#[test]
+fn sync_retire_clean_path_deletes_workweave() {
+    let tmp = tempfile::tempdir().unwrap();
+    let weaveroot = tmp.path().join(".workweaves");
+    std::fs::create_dir_all(&weaveroot).unwrap();
+
+    let main = make_main_workspace(tmp.path());
+    std::fs::write(main.root.join(".rwv-active"), format!("{PROJECT}\n")).unwrap();
+
+    // Gitignore activation-generated artifacts in the project repo before
+    // creating the workweave. Without this, the workweave's project worktree
+    // ends up with untracked files (`{project}.code-workspace`, `gita/`) that
+    // the dirty check counts as uncommitted state — same check fo-gneid
+    // requires, so --retire honors it. A real project would gitignore these
+    // (or commit them); the test fixture is just minimal-by-default.
+    std::fs::write(
+        main.project_dir.join(".gitignore"),
+        "*.code-workspace\ngita/\n",
+    )
+    .unwrap();
+    git(&["add", ".gitignore"], &main.project_dir);
+    git(
+        &["commit", "-m", "ignore activation outputs"],
+        &main.project_dir,
+    );
+
+    let ww1 = create_workweave(&main, &weaveroot, "ww1");
+
+    // No-op sync: nothing in ww1 has changed since fork. Manifest tips
+    // identical to parent's, working tree clean (modulo gitignored
+    // activation outputs) → retire should succeed.
+    assert!(ww1.root.exists(), "workweave must exist pre-retire");
+
+    rwv()
+        .args(["sync", "--retire"])
+        .current_dir(&ww1.root)
+        .assert()
+        .success();
+
+    assert!(
+        !ww1.root.exists(),
+        "--retire must delete the workweave on successful sync"
+    );
+}
+
+/// Dirty-after-sync path: if any worktree in the workweave has uncommitted
+/// changes when --retire runs the post-sync check, retire must refuse to
+/// delete and leave the workweave intact for the operator to fix.
+#[test]
+fn sync_retire_with_dirty_worktree_refuses_to_delete() {
+    let tmp = tempfile::tempdir().unwrap();
+    let weaveroot = tmp.path().join(".workweaves");
+    std::fs::create_dir_all(&weaveroot).unwrap();
+
+    let main = make_main_workspace(tmp.path());
+    std::fs::write(main.root.join(".rwv-active"), format!("{PROJECT}\n")).unwrap();
+    let ww1 = create_workweave(&main, &weaveroot, "ww1");
+
+    // Dirty up the manifest-repo worktree before retire runs. The sync
+    // itself will succeed (no manifest changes to apply), but the
+    // post-sync dirty check must catch the staged-edit and refuse delete.
+    std::fs::write(ww1.manifest_repo.join("README.md"), "dirtied\n").unwrap();
+
+    let assert = rwv()
+        .args(["sync", "--retire"])
+        .current_dir(&ww1.root)
+        .assert()
+        .failure();
+    let stderr = String::from_utf8_lossy(&assert.get_output().stderr).into_owned();
+    assert!(
+        stderr.contains("--retire") && stderr.contains("uncommitted"),
+        "expected --retire to surface dirty-state refusal, got stderr: {stderr}"
+    );
+    assert!(
+        ww1.root.exists(),
+        "dirty --retire must NOT delete the workweave"
+    );
+}

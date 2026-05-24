@@ -135,14 +135,19 @@ enum Commands {
     /// Align CWD workspace with another workspace's committed rwv.lock
     Sync {
         /// Source workspace: `primary`, a bare workweave name, or a path
-        /// (absolute, or relative to the primary workspace)
-        source: SyncSource,
+        /// (absolute, or relative to the primary workspace). Omit to sync
+        /// to the workweave's recorded parent (one hop toward primary);
+        /// errors if CWD is not in a workweave.
+        source: Option<SyncSource>,
         /// Sync strategy: ff (default), rebase, or merge
         #[arg(long, default_value = "ff", value_enum)]
         strategy: SyncStrategy,
         /// Bypass the lock-freshness precondition
         #[arg(long)]
         force: bool,
+        /// Sync then delete the workweave on success (requires clean worktree and manifest repos converged with parent)
+        #[arg(long)]
+        retire: bool,
         /// Operate on this project instead of the active project (does not change `.rwv-active`)
         #[arg(long)]
         project: Option<String>,
@@ -214,6 +219,11 @@ enum WorkweaveAction {
     Delete {
         /// Workweave name
         name: String,
+        /// Delete even if the workweave has uncommitted changes (matches
+        /// `git branch -D`). Without this flag, deletion refuses if the
+        /// project worktree or any manifest-repo worktree is dirty.
+        #[arg(long)]
+        force: bool,
     },
     /// List existing workweaves
     List,
@@ -262,11 +272,12 @@ fn main() -> anyhow::Result<()> {
                             println!("{}", n);
                         }
                     }
-                    Some(WorkweaveAction::Delete { name }) => {
+                    Some(WorkweaveAction::Delete { name, force }) => {
                         repoweave::workweave::delete_workweave(
                             primary_root,
                             &project,
                             &WorkweaveName::new(name),
+                            force,
                         )?;
                     }
                     Some(WorkweaveAction::Create { name, force, from }) => {
@@ -382,11 +393,19 @@ fn main() -> anyhow::Result<()> {
             source,
             strategy,
             force,
+            retire,
             project,
         }) => {
             let cwd = std::env::current_dir()?;
             let project_override = project.map(repoweave::manifest::ProjectName::new);
-            sync::run_sync(&cwd, &source, strategy, force, project_override)?;
+            sync::run_sync(
+                &cwd,
+                source.as_ref(),
+                strategy,
+                force,
+                retire,
+                project_override,
+            )?;
         }
         Some(Commands::Abort) => {
             let cwd = std::env::current_dir()?;
