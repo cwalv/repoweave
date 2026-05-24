@@ -20,8 +20,12 @@ rwv doctor [--json] [--fix]
 ```
 
 - `--json` emits machine-readable output (see Output below).
-- `--fix` attempts auto-remediation for variants that are safe to fix
-  (e.g. index drift where the displaced tree is a known ancestor).
+- `--fix` attempts auto-remediation for variants that are safe to fix:
+  index drift where the displaced tree is a known ancestor, working-tree
+  drift where on-disk content matches a known blob, missing
+  `rwv.lock merge=ours` replay-exclusion, and legacy `role: primary`
+  manifest spellings (rewritten to `role: owned` in place — preserves
+  comments and key order). Idempotent.
 
 Run `rwv --help doctor` for the full clap surface.
 
@@ -40,10 +44,12 @@ severity. Under `--json`, output is the envelope:
 The `$schema` URL points to the committed schema artifact. Variants are
 discriminated by the `kind` tag — `orphaned-clone`, `dangling-reference`,
 `missing-role`, `stale-lock`, `workweave-drift`, `index-drift`,
-`working-tree-drift`, `missing-replay-exclusion`. Every per-repo variant
-carries `path` (manifest-relative) and `absolute_path` (fully resolved).
-Variants with subkinds (`workweave-drift`, `index-drift`,
-`working-tree-drift`) carry an additional `sub_kind` field.
+`working-tree-drift`, `missing-replay-exclusion`, `legacy-role-primary`.
+Every per-repo variant carries `path` (manifest-relative) and
+`absolute_path` (fully resolved). Variants with subkinds
+(`workweave-drift`, `index-drift`, `working-tree-drift`) carry an
+additional `sub_kind` field. `legacy-role-primary` carries `project` and
+`manifest_path` so the caller can locate the file `--fix` will rewrite.
 
 Schema:
 
@@ -330,6 +336,28 @@ Schema:
               "type": "string"
             }
           }
+        },
+        {
+          "type": "object",
+          "required": [
+            "kind",
+            "manifest_path",
+            "project"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "legacy-role-primary"
+              ]
+            },
+            "manifest_path": {
+              "type": "string"
+            },
+            "project": {
+              "type": "string"
+            }
+          }
         }
       ]
     },
@@ -376,7 +404,8 @@ Find every stale lock and the paths involved:
 rwv doctor --json | jq '.violations[] | select(.kind == "stale-lock")'
 ```
 
-Auto-fix safe drift (index trees that match a known ancestor):
+Auto-fix safe drift (index trees that match a known ancestor) and
+migrate any manifests still using the legacy `role: primary` spelling:
 
 ```
 rwv doctor --fix
@@ -387,6 +416,10 @@ rwv doctor --fix
 - *missing-replay-exclusion* on a project repo — the project repo lacks
   `rwv.lock merge=ours` in `.gitattributes`. Either run `rwv doctor --fix`
   to append it, or add the line manually.
+- *legacy-role-primary* — a project `rwv.yaml` still uses `role: primary`
+  (renamed to `role: owned` in fo-s3i8j; the back-compat alias was dropped
+  in fo-fzf4n). Run `rwv doctor --fix` to migrate every affected manifest
+  in place; comments and key order are preserved.
 - *index-drift* with `sub_kind: live-staged` — the user has staged content
   that doesn't match a known tree. `--fix` will refuse; resolve manually.
 - *orphaned-clone* — a directory under a registry path that isn't listed in

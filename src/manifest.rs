@@ -311,18 +311,16 @@ impl<'de> Deserialize<'de> for RepoUrl {
 
 /// How freely code in this repo may be modified within the owning project.
 ///
-/// **Naming.** The `Owned` variant accepts both `owned` (canonical) and `primary`
-/// (legacy alias) when parsing manifests and CLI `--role` arguments. New YAML
-/// written by `rwv add` / `rwv init` and all `--json` output use `owned`. The
-/// `primary` alias is accepted silently for back-compat with manifests in the
-/// wild; see `reference/roles.md` for the migration path.
+/// **Naming.** The variant is spelled `owned` everywhere on the wire
+/// (manifest YAML, `--role` CLI arguments, `--json` output). The legacy
+/// `primary` spelling — used before the rename — is **not** accepted by
+/// the parser; manifests carrying it must be migrated via `rwv doctor --fix`.
+/// See `reference/roles.md` for the migration path.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, clap::ValueEnum)]
 #[serde(rename_all = "lowercase")]
 #[clap(rename_all = "lowercase")]
 pub enum Role {
     /// Your code. Change freely.
-    #[serde(alias = "primary")]
-    #[clap(alias = "primary")]
     Owned,
     /// Forked upstream. Changes ideally go upstream.
     Fork,
@@ -453,10 +451,89 @@ impl Manifest {
     pub fn from_path(path: &Path) -> anyhow::Result<Self> {
         let content = std::fs::read_to_string(path)
             .map_err(|e| anyhow::anyhow!("failed to read {}: {e}", path.display()))?;
-        let manifest: Self = serde_yaml::from_str(&content)
-            .map_err(|e| anyhow::anyhow!("failed to parse rwv.yaml at {}: {e}", path.display()))?;
-        Ok(manifest)
+        Self::from_yaml_str(&content).map_err(|e| {
+            anyhow::anyhow!("failed to parse rwv.yaml at {}: {e}", path.display())
+        })
     }
+
+    /// Parse a manifest from a YAML string, surfacing the
+    /// legacy-`role: primary` migration hint when the parser rejects an
+    /// otherwise-recognisable manifest.
+    ///
+    /// fo-fzf4n drops the back-compat alias on `role: primary`; manifests
+    /// using the legacy spelling now fail to parse. Detect that case up
+    /// front and emit a pointer at `rwv doctor --fix` so users find the
+    /// migration path instead of staring at a raw serde error.
+    pub fn from_yaml_str(content: &str) -> anyhow::Result<Self> {
+        match serde_yaml::from_str::<Self>(content) {
+            Ok(manifest) => Ok(manifest),
+            Err(err) => {
+                if manifest_has_legacy_role_primary(content) {
+                    Err(anyhow::anyhow!(
+                        "manifest uses the deprecated `role: primary` spelling; \
+                         run `rwv doctor --fix` to migrate to `role: owned`"
+                    ))
+                } else {
+                    Err(anyhow::anyhow!("{err}"))
+                }
+            }
+        }
+    }
+}
+
+/// True iff `content` contains at least one `role: primary` line where
+/// `primary` is the *full* value (not a prefix like `primary_repo`).
+///
+/// Used by the manifest loader and `rwv doctor` to detect the legacy
+/// spelling that lost its serde alias in fo-fzf4n. Targeted regex over
+/// raw text avoids a full YAML round-trip, which would destroy comments
+/// and key ordering when later rewriting the file under `--fix`.
+pub fn manifest_has_legacy_role_primary(content: &str) -> bool {
+    legacy_role_primary_regex().is_match(content)
+}
+
+/// Rewrite every `role: primary` in `content` to `role: owned`,
+/// preserving surrounding whitespace, comments, and key ordering.
+///
+/// Idempotent: calling on a migrated manifest leaves it unchanged.
+/// Returns `(new_content, replacements)`; `replacements` is `0` when no
+/// legacy spellings were present.
+pub fn migrate_legacy_role_primary(content: &str) -> (String, usize) {
+    let re = legacy_role_primary_regex();
+    let mut count = 0;
+    let out = re
+        .replace_all(content, |caps: &regex::Captures<'_>| {
+            count += 1;
+            // `$1` captures the indentation + `role:` + whitespace prefix.
+            // `$2` captures the trailing character (whitespace, '#', or
+            // newline) we need to preserve so that `role: primary  # foo`
+            // and `role: primary\n` keep their original shape.
+            format!("{}owned{}", &caps[1], &caps[2])
+        })
+        .into_owned();
+    (out, count)
+}
+
+fn legacy_role_primary_regex() -> &'static regex::Regex {
+    static RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    // (?m) — multiline so `^` matches line start.
+    //
+    // Capture 1: "<indent>role:<inter-token whitespace>" so the rewriter
+    // can swap the value while keeping the line shape identical.
+    //
+    // Capture 2: the boundary character following `primary` —
+    // whitespace, `#` (inline comment start), `\r`, or end-of-line. The
+    // `regex` crate doesn't support lookaround, so we capture-and-emit
+    // this character to fake the boundary; `primary_repo` and similar
+    // identifiers fail to match because `_` isn't in the boundary set.
+    //
+    // End-of-input is matched separately via the `$` alternative which
+    // consumes nothing (Capture 2 falls back to an empty match in that
+    // case, which `replace_all` re-emits as empty).
+    RE.get_or_init(|| {
+        regex::Regex::new(r"(?m)^([ \t]*role:[ \t]+)primary([ \t#\r\n]|$)")
+            .expect("legacy_role_primary regex compiles")
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -1057,14 +1134,108 @@ repositories:
         }
     }
 
-    /// Legacy `role: primary` YAML spelling must still deserialize to
-    /// `Role::Owned` for back-compat with manifests written before the rename.
-    /// Serialization is canonical (`owned`); only the input side accepts the
-    /// alias. See `reference/roles.md` for the migration path.
+    /// fo-fzf4n removed the back-compat alias on `role: primary`. A bare
+    /// `primary` scalar must no longer deserialize as `Role::Owned` —
+    /// otherwise the doctor-fix migration path wouldn't trigger.
     #[test]
-    fn role_legacy_primary_alias_deserializes_to_owned() {
-        let role: Role = serde_yaml::from_str("primary").unwrap();
-        assert_eq!(role, Role::Owned);
+    fn role_primary_yaml_no_longer_deserializes() {
+        assert!(
+            serde_yaml::from_str::<Role>("primary").is_err(),
+            "after fo-fzf4n, `primary` must not parse as Role"
+        );
+    }
+
+    /// Loading a full manifest with `role: primary` must surface a
+    /// migration hint pointing at `rwv doctor --fix`. Without this,
+    /// users hitting a legacy manifest see only the raw serde error.
+    #[test]
+    fn role_primary_yaml_fails_to_parse_with_helpful_error() {
+        let yaml = r#"
+repositories:
+  github/acme/lib:
+    type: git
+    url: https://example.com/acme/lib.git
+    version: main
+    role: primary
+"#;
+        let err = Manifest::from_yaml_str(yaml).unwrap_err();
+        let msg = format!("{err}");
+        assert!(
+            msg.contains("rwv doctor --fix"),
+            "legacy `role: primary` manifest should point users at `rwv doctor --fix`, got: {msg}"
+        );
+        assert!(
+            msg.contains("role: primary") || msg.contains("`role: primary`"),
+            "error should name the deprecated spelling, got: {msg}"
+        );
+    }
+
+    #[test]
+    fn manifest_has_legacy_role_primary_detects_canonical_line() {
+        let yaml = "    role: primary\n";
+        assert!(manifest_has_legacy_role_primary(yaml));
+    }
+
+    #[test]
+    fn manifest_has_legacy_role_primary_ignores_prefix_match() {
+        // `primary_repo` is not the legacy spelling — must not match.
+        let yaml = "    role: primary_repo\n";
+        assert!(!manifest_has_legacy_role_primary(yaml));
+    }
+
+    #[test]
+    fn manifest_has_legacy_role_primary_accepts_trailing_comment() {
+        let yaml = "    role: primary  # legacy spelling\n";
+        assert!(manifest_has_legacy_role_primary(yaml));
+    }
+
+    #[test]
+    fn migrate_legacy_role_primary_rewrites_to_owned() {
+        let yaml = "repositories:\n  github/acme/lib:\n    role: primary\n";
+        let (out, count) = migrate_legacy_role_primary(yaml);
+        assert_eq!(count, 1);
+        assert!(out.contains("role: owned"));
+        assert!(!out.contains("role: primary"));
+    }
+
+    #[test]
+    fn migrate_legacy_role_primary_is_idempotent() {
+        let yaml = "    role: owned\n";
+        let (out, count) = migrate_legacy_role_primary(yaml);
+        assert_eq!(count, 0);
+        assert_eq!(out, yaml);
+    }
+
+    #[test]
+    fn migrate_legacy_role_primary_preserves_comments_and_order() {
+        let yaml = "\
+# header comment
+repositories:
+  github/acme/lib:
+    type: git           # inline comment
+    url: https://example.com/acme/lib.git
+    version: main
+    role: primary       # legacy
+  github/acme/app:
+    type: git
+    url: https://example.com/acme/app.git
+    version: main
+    role: owned
+";
+        let (out, count) = migrate_legacy_role_primary(yaml);
+        assert_eq!(count, 1);
+        // Header comment retained.
+        assert!(out.contains("# header comment"));
+        // Inline comment after migration retained.
+        assert!(out.contains("# legacy"));
+        // Order preserved (lib appears before app).
+        let lib_pos = out.find("github/acme/lib").unwrap();
+        let app_pos = out.find("github/acme/app").unwrap();
+        assert!(lib_pos < app_pos);
+        // The lib entry now uses `owned`.
+        assert!(out.contains("role: owned       # legacy"));
+        // No stray `role: primary` left.
+        assert!(!out.contains("role: primary"));
     }
 
     /// Serialization is one-way: `Role::Owned` writes as `owned`, never

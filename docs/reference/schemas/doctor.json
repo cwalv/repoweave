@@ -280,6 +280,28 @@
               "type": "string"
             }
           }
+        },
+        {
+          "type": "object",
+          "required": [
+            "kind",
+            "manifest_path",
+            "project"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "legacy-role-primary"
+              ]
+            },
+            "manifest_path": {
+              "type": "string"
+            },
+            "project": {
+              "type": "string"
+            }
+          }
         }
       ]
     },
