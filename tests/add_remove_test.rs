@@ -759,3 +759,281 @@ fn find_cloned_repo(workspace: &Path, bare: &Path) -> std::path::PathBuf {
         repos
     );
 }
+
+// ============================================================================
+// fo-qb2er: rwv add must target CWD's workspace's rwv.yaml
+//
+// The bug: `rwv add` always wrote to primary's manifest, even when invoked
+// from inside a workweave. Per-workspace ownership (concepts.md "Per-workspace
+// lock ownership") extends from rwv.lock to rwv.yaml — both are tracked files
+// in the project repo and follow the same `active_path()` resolution rule
+// `rwv lock` already uses. See bead fo-qb2er.
+// ============================================================================
+
+/// Build a workspace plus a workweave directory ready for `rwv add` testing.
+///
+/// Layout produced (mirroring what `rwv workweave create` would build):
+///   {tmp}/ws/                                  -- primary workspace root
+///   {tmp}/ws/github/                           -- registry marker
+///   {tmp}/ws/projects/test-project/rwv.yaml    -- primary's manifest (initially empty)
+///   {tmp}/ws/.rwv-active                       -- "test-project"
+///   {tmp}/.workweaves/test-project--feat/
+///     .rwv-workweave                           -- marker pointing at primary
+///     .rwv-active                              -- "test-project"
+///     projects/test-project/rwv.yaml           -- workweave's manifest (initially empty)
+///     github/                                  -- registry marker (so workweave resolves)
+///
+/// The project dir in primary is a git repo so workspace resolution succeeds
+/// and the activation step can find rwv.yaml committed.
+///
+/// Returns (primary_root, workweave_dir).
+fn setup_workweave_for_add_tests(
+    tmp: &tempfile::TempDir,
+) -> (std::path::PathBuf, std::path::PathBuf) {
+    use std::process::Stdio;
+    let primary = tmp.path().join("ws");
+    std::fs::create_dir_all(primary.join("github")).unwrap();
+    std::fs::create_dir_all(primary.join("projects")).unwrap();
+
+    let primary_project_dir = primary.join("projects").join("test-project");
+    std::fs::create_dir_all(&primary_project_dir).unwrap();
+
+    let git_run = |args: &[&str], cwd: &Path| {
+        let status = common::git()
+            .args(args)
+            .current_dir(cwd)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .expect("git command failed");
+        assert!(status.success(), "git {:?} failed", args);
+    };
+    git_run(&["init", "--initial-branch=main"], &primary_project_dir);
+    git_run(
+        &["config", "user.email", "test@test.com"],
+        &primary_project_dir,
+    );
+    git_run(&["config", "user.name", "Test"], &primary_project_dir);
+    write_manifest(&primary_project_dir, &[]);
+    git_run(&["add", "rwv.yaml"], &primary_project_dir);
+    git_run(&["commit", "-m", "init"], &primary_project_dir);
+
+    std::fs::write(primary.join(".rwv-active"), "test-project\n").unwrap();
+
+    // Workweave directory — mirror what `rwv workweave create` produces.
+    let workweaves_parent = tmp.path().join(".workweaves");
+    std::fs::create_dir_all(&workweaves_parent).unwrap();
+    let workweave_dir = workweaves_parent.join("test-project--feat");
+    std::fs::create_dir_all(workweave_dir.join("github")).unwrap();
+
+    // Marker file pointing at primary (canonical, so resolve matches).
+    let primary_canonical = primary.canonicalize().unwrap();
+    let marker = format!(
+        "primary: {}\nproject: test-project\n",
+        primary_canonical.display()
+    );
+    std::fs::write(workweave_dir.join(".rwv-workweave"), marker).unwrap();
+    std::fs::write(workweave_dir.join(".rwv-active"), "test-project\n").unwrap();
+
+    // Workweave's own copy of the project dir (its own git repo to mirror
+    // the worktree contract — a worktree of primary's project repo. A plain
+    // copy with `git init` here is enough: the workweave's project repo
+    // just needs to be writable independently of primary's, and the test
+    // observes the rwv.yaml file directly).
+    let workweave_project_dir = workweave_dir.join("projects").join("test-project");
+    std::fs::create_dir_all(&workweave_project_dir).unwrap();
+    git_run(&["init", "--initial-branch=main"], &workweave_project_dir);
+    git_run(
+        &["config", "user.email", "test@test.com"],
+        &workweave_project_dir,
+    );
+    git_run(&["config", "user.name", "Test"], &workweave_project_dir);
+    write_manifest(&workweave_project_dir, &[]);
+    git_run(&["add", "rwv.yaml"], &workweave_project_dir);
+    git_run(&["commit", "-m", "init"], &workweave_project_dir);
+
+    (primary, workweave_dir)
+}
+
+#[test]
+fn add_from_primary_cwd_writes_to_primary_rwv_yaml() {
+    // Regression: `rwv add` from primary's CWD still writes to primary's
+    // manifest (the unchanged baseline behaviour).
+    let tmp = tempfile::tempdir().unwrap();
+
+    let bare = tmp.path().join("primary-add.git");
+    init_bare_repo_with_commit(&bare);
+    let remote_url = format!("file://{}", bare.display());
+
+    let (primary, _workweave_dir) = setup_workweave_for_add_tests(&tmp);
+
+    rwv()
+        .args(["add", &remote_url])
+        .current_dir(&primary)
+        .assert()
+        .success();
+
+    // Primary's rwv.yaml must contain the new entry.
+    let primary_manifest =
+        std::fs::read_to_string(primary.join("projects/test-project/rwv.yaml")).unwrap();
+    assert!(
+        primary_manifest.contains("file://") || primary_manifest.contains(&remote_url),
+        "primary's rwv.yaml should contain the added repo url, got:\n{primary_manifest}"
+    );
+}
+
+#[test]
+fn add_from_workweave_cwd_writes_to_workweave_rwv_yaml_not_primary() {
+    // fo-qb2er: `rwv add` from a workweave's CWD must mutate the workweave's
+    // own rwv.yaml, leaving primary's unchanged. This mirrors `rwv lock`'s
+    // existing per-workspace resolution (concepts.md Decision #4).
+    let tmp = tempfile::tempdir().unwrap();
+
+    let bare = tmp.path().join("workweave-add.git");
+    init_bare_repo_with_commit(&bare);
+    let remote_url = format!("file://{}", bare.display());
+
+    let (primary, workweave_dir) = setup_workweave_for_add_tests(&tmp);
+
+    // Snapshot primary's manifest before — it must not be mutated below.
+    let primary_manifest_path = primary.join("projects/test-project/rwv.yaml");
+    let primary_before = std::fs::read_to_string(&primary_manifest_path).unwrap();
+
+    rwv()
+        .args(["add", &remote_url])
+        .current_dir(&workweave_dir)
+        .assert()
+        .success();
+
+    // Workweave's rwv.yaml must contain the new entry.
+    let workweave_manifest_path = workweave_dir.join("projects/test-project/rwv.yaml");
+    let workweave_manifest = std::fs::read_to_string(&workweave_manifest_path).unwrap();
+    assert!(
+        workweave_manifest.contains("file://") || workweave_manifest.contains(&remote_url),
+        "workweave's rwv.yaml should contain the added repo url after add-from-workweave, got:\n{workweave_manifest}"
+    );
+
+    // Primary's rwv.yaml must NOT have been touched.
+    let primary_after = std::fs::read_to_string(&primary_manifest_path).unwrap();
+    assert_eq!(
+        primary_before, primary_after,
+        "primary's rwv.yaml must be untouched by `rwv add` from a workweave; \
+         before:\n{primary_before}\nafter:\n{primary_after}"
+    );
+    assert!(
+        !primary_after.contains(&remote_url) && !primary_after.contains("file://"),
+        "primary's rwv.yaml must not contain the added repo url, got:\n{primary_after}"
+    );
+}
+
+#[test]
+fn add_from_workweave_clones_to_primary_canonical_path() {
+    // The clone destination stays at primary's `github/<owner>/<repo>/` even
+    // when add runs from a workweave (clones are global infrastructure shared
+    // across workweaves via git worktree). See fo-qb2er and concepts.md.
+    let tmp = tempfile::tempdir().unwrap();
+
+    let bare = tmp.path().join("clone-target.git");
+    init_bare_repo_with_commit(&bare);
+    let remote_url = format!("file://{}", bare.display());
+
+    let (primary, workweave_dir) = setup_workweave_for_add_tests(&tmp);
+
+    rwv()
+        .args(["add", &remote_url])
+        .current_dir(&workweave_dir)
+        .assert()
+        .success();
+
+    // The canonical clone exists under primary, matching its remote.
+    let cloned = find_cloned_repo(&primary, &bare);
+    assert!(
+        cloned.starts_with(&primary),
+        "clone must live under primary's path, got {} (primary: {})",
+        cloned.display(),
+        primary.display()
+    );
+}
+
+#[test]
+fn add_from_workweave_creates_worktree_at_workweave() {
+    // Acceptance #4: from a workweave, `rwv add` must materialize the new
+    // repo as a worktree at the workweave so the operator's CWD sees the
+    // repo immediately (no separate sync step required for the add-from-
+    // workweave flow).
+    let tmp = tempfile::tempdir().unwrap();
+
+    let bare = tmp.path().join("wt-target.git");
+    init_bare_repo_with_commit(&bare);
+    let remote_url = format!("file://{}", bare.display());
+
+    let (primary, workweave_dir) = setup_workweave_for_add_tests(&tmp);
+
+    rwv()
+        .args(["add", &remote_url])
+        .current_dir(&workweave_dir)
+        .assert()
+        .success();
+
+    // Locate the cloned repo at primary so we know the canonical path.
+    let canonical = find_cloned_repo(&primary, &bare);
+    let rel = canonical
+        .strip_prefix(&primary)
+        .expect("canonical clone lives under primary");
+
+    // The same relative path should exist as a worktree at the workweave.
+    let workweave_repo = workweave_dir.join(rel);
+    assert!(
+        workweave_repo.exists(),
+        "after add-from-workweave, the new repo must exist at {} (workweave's worktree path)",
+        workweave_repo.display()
+    );
+    // It must be a git worktree, not just a directory. Worktrees have a
+    // `.git` *file* (the gitdir pointer) rather than a directory.
+    let dot_git = workweave_repo.join(".git");
+    assert!(
+        dot_git.exists(),
+        "workweave's add-materialized path must contain .git; got missing at {}",
+        dot_git.display()
+    );
+    assert!(
+        dot_git.is_file(),
+        "workweave's add-materialized path must be a worktree (.git as file), \
+         not an independent clone (.git as directory): {}",
+        dot_git.display()
+    );
+}
+
+#[test]
+fn add_from_workweave_does_not_modify_primary_rwv_active() {
+    // Side-effect regression: when running `rwv add` from a workweave, the
+    // activation step must not clobber primary's .rwv-active (or its
+    // ecosystem symlinks). The activation pass operates on the workweave's
+    // own .rwv-active when CWD is in a workweave.
+    let tmp = tempfile::tempdir().unwrap();
+
+    let bare = tmp.path().join("active-target.git");
+    init_bare_repo_with_commit(&bare);
+    let remote_url = format!("file://{}", bare.display());
+
+    let (primary, workweave_dir) = setup_workweave_for_add_tests(&tmp);
+
+    let primary_active_before = std::fs::read_to_string(primary.join(".rwv-active")).unwrap();
+
+    rwv()
+        .args(["add", &remote_url])
+        .current_dir(&workweave_dir)
+        .assert()
+        .success();
+
+    // Primary's .rwv-active should be untouched.
+    let primary_active_after = std::fs::read_to_string(primary.join(".rwv-active")).unwrap();
+    assert_eq!(
+        primary_active_before, primary_active_after,
+        "primary's .rwv-active must be untouched by `rwv add` from a workweave"
+    );
+
+    // Workweave's own .rwv-active still names the right project.
+    let workweave_active = std::fs::read_to_string(workweave_dir.join(".rwv-active")).unwrap();
+    assert_eq!(workweave_active.trim(), "test-project");
+}

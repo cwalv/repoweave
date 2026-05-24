@@ -1,25 +1,126 @@
 //! `rwv add` and `rwv remove` — manage repos in a project manifest.
 
-use crate::activate::activate;
+use crate::activate::{activate, activate_workweave};
 use crate::git::git_command;
 use crate::git::GitVcs;
 use crate::manifest::{Manifest, ProjectName, RepoEntry, RepoPath, RepoUrl, Role, VcsType};
 use crate::registry::{builtin_registries, Registry};
-use crate::vcs::Vcs;
-use crate::workspace::WorkspaceContext;
+use crate::vcs::{RefName, Vcs};
+use crate::workspace::{WorkspaceContext, WorkspaceLocation};
 use anyhow::{bail, Context};
 use std::path::{Path, PathBuf};
 
 /// Resolve the project directory for an action verb.
 ///
-/// Uses the workspace context (which has already absorbed `--project` and
-/// `.rwv-active`) to resolve to a project. If the context is in a
-/// workweave, the workweave's project is used. Otherwise we require an
-/// active project via `require_active_project`, which produces a helpful
-/// error when CWD is inside a non-active project directory.
+/// The manifest (`rwv.yaml`) is per-workspace state, so it lives under
+/// [`WorkspaceContext::active_path`] — the workweave directory when CWD
+/// is inside one, the primary weave when CWD is in the weave itself.
+/// This mirrors the resolution `rwv lock` uses for `rwv.lock` (see
+/// `src/lock.rs`) and the concepts.md "Per-workspace lock ownership"
+/// decision: lock and manifest are siblings in the project repo, so they
+/// follow the same per-workspace ownership rule.
+///
+/// The clone destination, in contrast, stays at [`WorkspaceContext::primary_path`]
+/// — clones are global infrastructure shared across workweaves via
+/// `git worktree`. Callers compose `find_project_dir` (workspace-owned
+/// state) with `primary_path()` (global clones) explicitly.
 fn find_project_dir(ctx: &WorkspaceContext) -> anyhow::Result<std::path::PathBuf> {
     let name = ctx.require_active_project()?;
-    Ok(ctx.primary_path().join("projects").join(name.as_str()))
+    Ok(ctx.active_path().join("projects").join(name.as_str()))
+}
+
+/// Create a worktree of `repo_path` in the workweave directory, pointing at
+/// the canonical clone at `primary_root`.
+///
+/// Used by `rwv add` from a workweave so the workweave gets the new repo's
+/// worktree as part of the add (see acceptance #4 in bead fo-qb2er and the
+/// pattern in `sync::materialize_missing_repo`). The ephemeral branch
+/// name follows the same `{project}--{workweave_name}/{branch}` convention
+/// used by `create_workweave`.
+///
+/// If the canonical clone has no HEAD (e.g. `rwv add --new` produced an
+/// empty `git init`), the worktree creation is skipped — `git worktree add`
+/// against an unborn HEAD would fail, and the user can materialize the
+/// worktree after the first commit via `rwv sync`.
+fn create_worktree_in_workweave(
+    canonical_clone: &Path,
+    workweave_dir: &Path,
+    repo_path: &RepoPath,
+    project: &ProjectName,
+    workweave_name: &crate::manifest::WorkweaveName,
+) -> anyhow::Result<()> {
+    let dest = workweave_dir.join(repo_path.as_path());
+    if dest.exists() {
+        // Nothing to do — operator may have pre-populated the workweave,
+        // or this is a re-run of `rwv add` for an already-materialized repo.
+        return Ok(());
+    }
+
+    // Skip if the canonical has no HEAD (empty `git init` from --new).
+    let head = match GitVcs.head_revision(canonical_clone) {
+        Ok(h) => h,
+        Err(_) => {
+            eprintln!(
+                "rwv add: canonical clone at {} has no commits yet; \
+                 skipping worktree creation in workweave \
+                 (commit upstream and run `rwv sync` to materialize)",
+                canonical_clone.display()
+            );
+            return Ok(());
+        }
+    };
+
+    // Mirror create_workweave's branch-naming convention so a later
+    // `rwv workweave delete` cleans this branch up via the prefix scan.
+    let branch_segment = match GitVcs.current_ref(canonical_clone)? {
+        Some(r) => r,
+        None => RefName::new(format!(
+            "detached-{}",
+            &head.as_str()[..head.as_str().len().min(12)]
+        )),
+    };
+    let ephemeral_branch = RefName::new(format!(
+        "{}--{}/{}",
+        project.as_str(),
+        workweave_name.as_str(),
+        branch_segment.as_str()
+    ));
+
+    if let Some(parent) = dest.parent() {
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("failed to create directory {}", parent.display()))?;
+    }
+
+    GitVcs
+        .create_worktree(canonical_clone, &dest, &ephemeral_branch, &head)
+        .with_context(|| {
+            format!(
+                "failed to create worktree at {} from canonical clone {}",
+                dest.display(),
+                canonical_clone.display()
+            )
+        })?;
+
+    Ok(())
+}
+
+/// Run the appropriate activation pass for the current workspace location.
+///
+/// In a workweave, [`activate_workweave`] updates the workweave-local
+/// `.rwv-active` and symlinks (no install hooks). In primary, [`activate`]
+/// runs the full activation pass against primary. Either way, the active
+/// project's `.rwv-active` and ecosystem files stay scoped to CWD's
+/// workspace — `rwv add` from a workweave no longer touches primary's
+/// `.rwv-active` as a side-effect.
+fn activate_for_workspace(
+    ctx: &WorkspaceContext,
+    project_name: &str,
+    cwd: &Path,
+) -> anyhow::Result<()> {
+    match &ctx.location {
+        WorkspaceLocation::Workweave { dir, .. } => activate_workweave(project_name, dir),
+        WorkspaceLocation::Weave { .. } => activate(project_name, cwd),
+    }
 }
 
 /// Execute `rwv add URL [--role=ROLE]`.
@@ -37,7 +138,8 @@ pub fn run_add(
     let manifest_path = project_dir.join("rwv.yaml");
 
     // Check if the argument is a local path (no URL scheme and directory exists
-    // relative to workspace root).
+    // relative to workspace root). Local-path resolution still scans primary
+    // for existing clones — that is the canonical layout regardless of CWD.
     if !url.contains("://") {
         let candidate = ctx.primary_path().join(url);
         if candidate.is_dir() {
@@ -46,7 +148,17 @@ pub fn run_add(
                 .file_name()
                 .and_then(|n| n.to_str())
                 .ok_or_else(|| anyhow::anyhow!("could not determine project name from path"))?;
-            return activate(project_name, cwd);
+            // Local-path add doesn't clone, but if we are in a workweave the
+            // operator may still expect the workweave to see the repo as a
+            // worktree. Mirror the URL path's worktree-creation step.
+            if let WorkspaceLocation::Workweave { name, dir, project } = &ctx.location {
+                let repo_path = RepoPath::new(url);
+                let canonical = ctx.primary_path().join(repo_path.as_path());
+                if canonical.exists() {
+                    create_worktree_in_workweave(&canonical, dir, &repo_path, project, name)?;
+                }
+            }
+            return activate_for_workspace(&ctx, project_name, cwd);
         }
     }
 
@@ -73,7 +185,10 @@ pub fn run_add(
         return Ok(());
     }
 
-    // Clone the repo if it doesn't exist on disk.
+    // Clone the repo if it doesn't exist on disk. The clone always lives at
+    // primary's canonical path — clones are global infrastructure shared
+    // across workspaces via `git worktree` (concepts.md "Per-workspace lock
+    // ownership"; bead fo-qb2er).
     let dest = ctx.primary_path().join(repo_path.as_path());
     if dest.exists() {
         eprintln!(
@@ -109,17 +224,24 @@ pub fn run_add(
     };
     manifest.repositories.insert(repo_path.clone(), entry);
 
-    // Write back the manifest.
+    // Write back the manifest (per-workspace state: workweave's own copy when
+    // CWD is in one, primary's otherwise).
     write_manifest(&manifest_path, &manifest)?;
 
     eprintln!("Added '{}' to manifest", repo_path.as_str());
+
+    // In a workweave, also create a worktree at the workweave so the new
+    // repo is materialized there (acceptance #4 in bead fo-qb2er).
+    if let WorkspaceLocation::Workweave { name, dir, project } = &ctx.location {
+        create_worktree_in_workweave(&dest, dir, &repo_path, project, name)?;
+    }
 
     // Re-run activation so ecosystem files (Cargo.toml, package.json, etc.) are updated.
     let project_name = project_dir
         .file_name()
         .and_then(|n| n.to_str())
         .ok_or_else(|| anyhow::anyhow!("could not determine project name from path"))?;
-    activate(project_name, cwd)?;
+    activate_for_workspace(&ctx, project_name, cwd)?;
 
     Ok(())
 }
@@ -225,12 +347,24 @@ pub fn run_remove(
 
     // Before writing anything, check for cross-project references when --delete
     // is requested.  If another project references the repo and --force is not
-    // set, bail early so the manifest is left untouched.
+    // set, bail early so the manifest is left untouched. The cross-project
+    // scan walks primary's `projects/` directory — that is the canonical
+    // enumeration of project manifests regardless of CWD.
     if delete {
         let repo_dir = ctx.primary_path().join(repo_path.as_path());
         if repo_dir.exists() {
-            let referencing_projects =
-                find_other_projects_referencing(ctx.primary_path(), &project_dir, &repo_path);
+            // Pass the primary-side project_dir so the scan correctly skips
+            // the active project even when CWD is in a workweave (where
+            // `project_dir` lives under the workweave, not primary).
+            let primary_project_dir = ctx
+                .primary_path()
+                .join("projects")
+                .join(project_dir.file_name().unwrap_or_default());
+            let referencing_projects = find_other_projects_referencing(
+                ctx.primary_path(),
+                &primary_project_dir,
+                &repo_path,
+            );
 
             if !referencing_projects.is_empty() {
                 for proj in &referencing_projects {
@@ -256,9 +390,14 @@ pub fn run_remove(
         .file_name()
         .and_then(|n| n.to_str())
         .ok_or_else(|| anyhow::anyhow!("could not determine project name from path"))?;
-    activate(project_name, cwd)?;
+    activate_for_workspace(&ctx, project_name, cwd)?;
 
-    // Optionally delete the clone directory.
+    // Optionally delete the clone directory. Always targets primary's
+    // canonical path — `--delete` semantics mean "remove the shared clone",
+    // independent of CWD's workspace. Operators in a workweave who want to
+    // drop just their workweave's view should use `rwv remove` without
+    // `--delete` (manifest-only) plus `rwv workweave delete` to clean up
+    // the worktree.
     if delete {
         let repo_dir = ctx.primary_path().join(repo_path.as_path());
         if repo_dir.exists() {
@@ -323,7 +462,8 @@ pub fn run_add_new(
         return Ok(());
     }
 
-    // Create the directory and run git init.
+    // Create the directory and run git init at primary's canonical path
+    // (clones are global infrastructure; see fo-qb2er).
     let dest = ctx.primary_path().join(repo_path.as_path());
     if dest.exists() {
         eprintln!(
@@ -352,17 +492,25 @@ pub fn run_add_new(
     };
     manifest.repositories.insert(repo_path.clone(), entry);
 
-    // Write back the manifest.
+    // Write back the manifest (per-workspace state).
     write_manifest(&manifest_path, &manifest)?;
 
     eprintln!("Added new repo '{}' to manifest", repo_path.as_str());
+
+    // In a workweave, attempt to create a worktree at the workweave so the
+    // new repo is materialized there. `git init` produces an unborn HEAD,
+    // so create_worktree_in_workweave silently skips until the first commit
+    // lands upstream (operator can then `rwv sync`).
+    if let WorkspaceLocation::Workweave { name, dir, project } = &ctx.location {
+        create_worktree_in_workweave(&dest, dir, &repo_path, project, name)?;
+    }
 
     // Re-run activation so ecosystem files (Cargo.toml, package.json, etc.) are updated.
     let project_name = project_dir
         .file_name()
         .and_then(|n| n.to_str())
         .ok_or_else(|| anyhow::anyhow!("could not determine project name from path"))?;
-    activate(project_name, cwd)?;
+    activate_for_workspace(&ctx, project_name, cwd)?;
 
     Ok(())
 }
