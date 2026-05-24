@@ -134,6 +134,9 @@ fn make_main_workspace(tmp: &Path) -> MainWorkspace {
     git(&["add", "rwv.yaml", "rwv.lock"], &project_dir);
     git(&["commit", "-m", "lock: initial"], &project_dir);
 
+    // Post fo-h9prh: action verbs require `.rwv-active` (or --project).
+    std::fs::write(ws.join(".rwv-active"), format!("{PROJECT}\n")).unwrap();
+
     MainWorkspace {
         root: ws,
         project_dir,

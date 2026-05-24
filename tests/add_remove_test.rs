@@ -59,6 +59,12 @@ fn init_bare_repo_with_commit(path: &Path) {
 
 /// Set up a workspace with a project directory containing an rwv.yaml manifest.
 /// Returns (workspace_dir, project_dir).
+///
+/// Also writes `.rwv-active` pointing at the project so action verbs
+/// resolve cleanly even when CWD is the workspace root. Post fo-h9prh
+/// the CWD-inside-projects/<name>/ override is gone, so without an
+/// active project most commands would emit a helpful error instead of
+/// proceeding.
 fn setup_workspace_with_project(
     tmp: &tempfile::TempDir,
     repos: &[(&str, &str)],
@@ -87,6 +93,10 @@ fn setup_workspace_with_project(
     write_manifest(&project_dir, repos);
     run(&["add", "rwv.yaml"], &project_dir);
     run(&["commit", "-m", "init"], &project_dir);
+
+    // Make the project active so action-verb tests don't need to pass
+    // --project explicitly.
+    std::fs::write(workspace.join(".rwv-active"), "test-project\n").unwrap();
 
     (workspace, project_dir)
 }

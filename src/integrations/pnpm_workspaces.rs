@@ -52,20 +52,26 @@ impl Integration for PnpmWorkspaces {
         Ok(issues)
     }
 
-    fn lock(&self, ctx: &IntegrationContext) -> anyhow::Result<()> {
+    fn activate_hook(&self, ctx: &IntegrationContext) -> anyhow::Result<()> {
         let paths = ctx.detect_repos_with_manifest("package.json");
         if paths.is_empty() {
             return Ok(());
         }
 
+        // Full `pnpm install` (not `--lockfile-only`): activation is the
+        // moment to bring `node_modules` in sync; the hook fired from
+        // `rwv lock` previously and used `--lockfile-only` for that
+        // reason. See fo-4t6iv. Run from workspace_root for the same
+        // reason npm does — that's where the symlinks make member paths
+        // resolve correctly.
         let status = std::process::Command::new("pnpm")
-            .args(["install", "--lockfile-only"])
-            .current_dir(ctx.output_dir)
+            .args(["install"])
+            .current_dir(ctx.workspace_root)
             .status()
             .map_err(|e| anyhow::anyhow!("failed to run pnpm: {e}"))?;
 
         if !status.success() {
-            anyhow::bail!("pnpm install --lockfile-only failed (exit {})", status);
+            anyhow::bail!("pnpm install failed (exit {})", status);
         }
 
         Ok(())

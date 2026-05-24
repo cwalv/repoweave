@@ -60,15 +60,20 @@ impl Integration for CargoWorkspace {
         Ok(issues)
     }
 
-    fn lock(&self, ctx: &IntegrationContext) -> anyhow::Result<()> {
+    fn activate_hook(&self, ctx: &IntegrationContext) -> anyhow::Result<()> {
         let paths = ctx.detect_repos_with_manifest("Cargo.toml");
         if paths.is_empty() {
             return Ok(());
         }
 
+        // Run from workspace_root: that's where activation symlinks are
+        // in place so cargo sees the workspace the user sees. output_dir
+        // (project_dir) is where the canonical Cargo.toml lives, but the
+        // member paths in it are resolved relative to the symlink at
+        // workspace_root.
         let status = std::process::Command::new("cargo")
             .arg("generate-lockfile")
-            .current_dir(ctx.output_dir)
+            .current_dir(ctx.workspace_root)
             .status()
             .map_err(|e| anyhow::anyhow!("failed to run cargo: {e}"))?;
 

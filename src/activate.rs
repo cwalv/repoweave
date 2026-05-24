@@ -13,7 +13,7 @@
 use std::path::Path;
 
 use crate::integration::{is_enabled, Integration, IntegrationContext, Severity};
-use crate::integration_runner::{build_detection_cache, run_activations};
+use crate::integration_runner::{build_detection_cache, run_activate_hooks, run_activations};
 use crate::integrations::builtin_integrations;
 use crate::manifest::{IntegrationConfig, Manifest, ProjectName};
 use crate::registry::builtin_registries;
@@ -48,9 +48,30 @@ fn report_and_check_activation_issues(issues: &[crate::integration::Issue]) -> a
 }
 
 /// Run `rwv activate PROJECT` from the given working directory.
+///
+/// Runs integration activate hooks (`npm install`, `uv sync`, etc.) by
+/// default. See [`activate_with_options`] to suppress them.
 pub fn activate(project: &str, cwd: &Path) -> anyhow::Result<()> {
+    activate_with_options(project, cwd, ActivateOptions::default())
+}
+
+/// Options for [`activate_with_options`].
+#[derive(Debug, Clone, Copy, Default)]
+pub struct ActivateOptions {
+    /// When true, skip integration activate hooks (install commands like
+    /// `npm install`). Used by `rwv activate --no-install` for fast
+    /// context-switches.
+    pub no_install: bool,
+}
+
+/// Run activate with options. Public so the CLI can pass `--no-install`.
+pub fn activate_with_options(
+    project: &str,
+    cwd: &Path,
+    opts: ActivateOptions,
+) -> anyhow::Result<()> {
     let ctx = WorkspaceContext::resolve(cwd, None)?;
-    activate_at(ctx.primary_path(), project, false)
+    activate_at(ctx.primary_path(), project, false, opts)
 }
 
 /// Shared activation logic.
@@ -60,7 +81,12 @@ pub fn activate(project: &str, cwd: &Path) -> anyhow::Result<()> {
 /// dangling symlinks are created intentionally so that lock files written by
 /// ecosystem tools (Cargo.lock, package-lock.json, …) flow back through the
 /// symlink into the project directory.
-fn activate_at(root: &Path, project: &str, skip_missing_sources: bool) -> anyhow::Result<()> {
+fn activate_at(
+    root: &Path,
+    project: &str,
+    skip_missing_sources: bool,
+    opts: ActivateOptions,
+) -> anyhow::Result<()> {
     let project_name = ProjectName::new(project);
     let project_dir = root.join("projects").join(project);
     let manifest_path = project_dir.join("rwv.yaml");
@@ -178,9 +204,49 @@ fn activate_at(root: &Path, project: &str, skip_missing_sources: bool) -> anyhow
         }
     }
 
-    // 5. Write .rwv-active.
+    // 5. Run integration activate hooks (install commands).
+    //    Per-integration hooks operate on the now-in-place symlinks at the
+    //    workspace root (e.g., `npm install` reads the symlinked
+    //    package.json). Suppressed by `--no-install` for fast
+    //    context-switches; the user can run install commands directly when
+    //    they need them.
+    if !opts.no_install {
+        let hook_issues = run_activate_hooks(&integrations, &manifest, &ctx_base);
+        report_and_check_activate_hook_issues(&hook_issues)?;
+    }
+
+    // 6. Write .rwv-active.
     set_active_project(root, &project_name)?;
 
+    Ok(())
+}
+
+/// Report integration activate-hook issues to stderr and bail if any are
+/// `Severity::Error`.
+///
+/// Treats activate-hook errors like generated-config errors: a single hook
+/// failure (e.g., `npm install` errored out) means the workspace is not
+/// fully ready to use, and `.rwv-active` should not record success.
+/// Warnings stay warnings.
+fn report_and_check_activate_hook_issues(
+    issues: &[crate::integration::Issue],
+) -> anyhow::Result<()> {
+    let mut error_count = 0usize;
+    for issue in issues {
+        let prefix = match issue.severity {
+            Severity::Warning => "warning",
+            Severity::Error => {
+                error_count += 1;
+                "error"
+            }
+        };
+        eprintln!("[{prefix}] {}: {}", issue.integration, issue.message);
+    }
+    if error_count > 0 {
+        anyhow::bail!(
+            "activate: {error_count} integration activate-hook error(s); workspace may be partially activated"
+        );
+    }
     Ok(())
 }
 
@@ -259,8 +325,19 @@ fn remove_activation_symlinks_in(dir: &Path, root: &Path) -> anyhow::Result<()> 
 ///
 /// Symlinks for files that do not yet exist on disk are skipped (the workweave
 /// is a view onto an existing project, so dangling symlinks are not useful).
+///
+/// Install hooks (`npm install`, `cargo generate-lockfile`, …) are
+/// skipped at workweave creation: the workweave shares clones with
+/// primary, so install state is typically inherited rather than
+/// regenerated. The user can run `rwv activate --reinstall`-style
+/// commands inside the workweave when they actually need a refresh.
 pub fn activate_workweave(project: &str, workweave_dir: &Path) -> anyhow::Result<()> {
-    activate_at(workweave_dir, project, true)
+    activate_at(
+        workweave_dir,
+        project,
+        true,
+        ActivateOptions { no_install: true },
+    )
 }
 
 /// Deactivate the current project: remove symlinks and `.rwv-active`.

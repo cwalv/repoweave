@@ -739,12 +739,12 @@ fn fetch_locked_does_not_update_lock() {
 // ============================================================================
 
 #[test]
-fn fetch_locked_errors_on_missing_lock() {
-    // B5: --locked previously fell back to default-mode HEAD-of-branch
-    // fetches when the lock was absent. The user asked for locked
-    // behaviour; silently downgrading is the same shape the audit flagged
-    // throughout: do the wrong thing and print nothing the operator will
-    // notice. Mirror --frozen and bail with a clear message.
+fn fetch_locked_alias_bootstraps_lock_when_missing() {
+    // Post fo-zvxff: `--locked` is a no-op alias kept for backward
+    // compatibility. The default `rwv fetch` already reads the lock; when
+    // the lock is absent it bootstraps from branch HEAD (a one-time
+    // event). Use `--frozen` for the CI-mode behaviour that errors on a
+    // missing lock.
     let tmp = tempfile::tempdir().unwrap();
     let workspace = tmp.path().join("ws");
     std::fs::create_dir_all(&workspace).unwrap();
@@ -786,14 +786,18 @@ fn fetch_locked_errors_on_missing_lock() {
     run(&["push", "origin", "main"], &work);
 
     let source = format!("file://{}", project_bare.display());
+    // --locked is a no-op alias; this should succeed and bootstrap.
     rwv()
         .args(["fetch", &source, "--locked"])
         .current_dir(&workspace)
         .assert()
-        .failure()
-        .stderr(predicate::str::contains("--locked").and(
-            predicate::str::contains("does not exist").or(predicate::str::contains("lock file")),
-        ));
+        .success();
+
+    let lock_path = workspace.join("projects/project/rwv.lock");
+    assert!(
+        lock_path.exists(),
+        "default fetch (with --locked alias) should bootstrap rwv.lock"
+    );
 }
 
 #[test]

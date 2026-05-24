@@ -148,13 +148,17 @@ pub fn run_checks(
     })
 }
 
-/// Run lock hooks for each enabled integration, collecting issues.
+/// Run activate hooks for each enabled integration, collecting issues.
 ///
-/// Called after `rwv lock` writes `rwv.lock`. Each integration's `lock()`
-/// method is invoked so it can run ecosystem-specific lock commands
-/// (e.g., `cargo generate-lockfile`). If a lock hook returns an error,
-/// it is captured as an `Issue` and execution continues.
-pub fn run_lock_hooks(
+/// Called from `rwv activate` after `run_activations` writes the
+/// generated config files. Each integration's `activate_hook()` runs
+/// ecosystem install commands (e.g., `npm install`, `uv sync`). If a hook
+/// returns an error, it is captured as an `Issue` and execution
+/// continues.
+///
+/// This was previously named `run_lock_hooks` and fired from `rwv lock`;
+/// see fo-4t6iv.
+pub fn run_activate_hooks(
     integrations: &[&dyn Integration],
     manifest: &Manifest,
     ctx_base: &IntegrationContextBase,
@@ -162,8 +166,8 @@ pub fn run_lock_hooks(
     for_each_enabled(integrations, manifest, |integration, config| {
         let ctx = ctx_base.build_context(config, manifest);
         integration
-            .lock(&ctx)
-            .map_err(|e| anyhow::anyhow!("lock hook failed: {e}"))?;
+            .activate_hook(&ctx)
+            .map_err(|e| anyhow::anyhow!("activate hook failed: {e}"))?;
         Ok(Vec::new())
     })
 }
@@ -298,11 +302,11 @@ mod tests {
             Ok(self.check_issues.clone())
         }
 
-        fn lock(&self, ctx: &IntegrationContext) -> anyhow::Result<()> {
-            self.call_log
-                .lock()
-                .unwrap()
-                .push(("lock".into(), format!("project={}", ctx.project.as_str())));
+        fn activate_hook(&self, ctx: &IntegrationContext) -> anyhow::Result<()> {
+            self.call_log.lock().unwrap().push((
+                "activate_hook".into(),
+                format!("project={}", ctx.project.as_str()),
+            ));
             if let Some(ref msg) = self.lock_err {
                 anyhow::bail!("{msg}");
             }
@@ -580,11 +584,11 @@ mod tests {
     }
 
     // ========================================================================
-    // run_lock_hooks tests
+    // run_activate_hooks tests
     // ========================================================================
 
     #[test]
-    fn lock_hooks_runs_enabled_skips_disabled() {
+    fn activate_hooks_runs_enabled_skips_disabled() {
         let enabled = MockIntegration::new("cargo", true);
         let disabled = MockIntegration::new("npm", false);
         let integrations: Vec<&dyn Integration> = vec![&enabled, &disabled];
@@ -594,22 +598,22 @@ mod tests {
         let cache = HashMap::new();
         let ctx_base = make_ctx_base(&project, &cache);
 
-        let issues = run_lock_hooks(&integrations, &manifest, &ctx_base);
+        let issues = run_activate_hooks(&integrations, &manifest, &ctx_base);
         assert!(issues.is_empty());
 
         let enabled_calls: Vec<_> = enabled
             .calls()
             .into_iter()
-            .filter(|(m, _)| m == "lock")
+            .filter(|(m, _)| m == "activate_hook")
             .collect();
         assert_eq!(enabled_calls.len(), 1);
         assert!(disabled.calls().is_empty());
     }
 
     #[test]
-    fn lock_hooks_error_captured_others_still_run() {
+    fn activate_hooks_error_captured_others_still_run() {
         let failing =
-            MockIntegration::new("cargo", true).with_lock_err("lockfile generation failed");
+            MockIntegration::new("cargo", true).with_lock_err("install command failed");
         let succeeding = MockIntegration::new("npm", true);
         let integrations: Vec<&dyn Integration> = vec![&failing, &succeeding];
 
@@ -618,23 +622,23 @@ mod tests {
         let cache = HashMap::new();
         let ctx_base = make_ctx_base(&project, &cache);
 
-        let issues = run_lock_hooks(&integrations, &manifest, &ctx_base);
+        let issues = run_activate_hooks(&integrations, &manifest, &ctx_base);
         assert_eq!(issues.len(), 1);
         assert_eq!(issues[0].integration, "cargo");
         assert_eq!(issues[0].severity, Severity::Error);
-        assert!(issues[0].message.contains("lockfile generation failed"));
+        assert!(issues[0].message.contains("install command failed"));
 
         // succeeding integration should still have been called
-        let npm_lock_calls: Vec<_> = succeeding
+        let npm_hook_calls: Vec<_> = succeeding
             .calls()
             .into_iter()
-            .filter(|(m, _)| m == "lock")
+            .filter(|(m, _)| m == "activate_hook")
             .collect();
-        assert_eq!(npm_lock_calls.len(), 1);
+        assert_eq!(npm_hook_calls.len(), 1);
     }
 
     #[test]
-    fn lock_hooks_config_override_enables_disabled() {
+    fn activate_hooks_config_override_enables_disabled() {
         let integration = MockIntegration::new("npm", false);
         let integrations: Vec<&dyn Integration> = vec![&integration];
 
@@ -648,19 +652,19 @@ mod tests {
         let cache = HashMap::new();
         let ctx_base = make_ctx_base(&project, &cache);
 
-        let issues = run_lock_hooks(&integrations, &manifest, &ctx_base);
+        let issues = run_activate_hooks(&integrations, &manifest, &ctx_base);
         assert!(issues.is_empty());
 
-        let lock_calls: Vec<_> = integration
+        let hook_calls: Vec<_> = integration
             .calls()
             .into_iter()
-            .filter(|(m, _)| m == "lock")
+            .filter(|(m, _)| m == "activate_hook")
             .collect();
-        assert_eq!(lock_calls.len(), 1);
+        assert_eq!(hook_calls.len(), 1);
     }
 
     #[test]
-    fn lock_hooks_passes_correct_project() {
+    fn activate_hooks_passes_correct_project() {
         let integration = MockIntegration::new("cargo", true);
         let integrations: Vec<&dyn Integration> = vec![&integration];
 
@@ -669,15 +673,15 @@ mod tests {
         let cache = HashMap::new();
         let ctx_base = make_ctx_base(&project, &cache);
 
-        let issues = run_lock_hooks(&integrations, &manifest, &ctx_base);
+        let issues = run_activate_hooks(&integrations, &manifest, &ctx_base);
         assert!(issues.is_empty());
 
-        let lock_calls: Vec<_> = integration
+        let hook_calls: Vec<_> = integration
             .calls()
             .into_iter()
-            .filter(|(m, _)| m == "lock")
+            .filter(|(m, _)| m == "activate_hook")
             .collect();
-        assert_eq!(lock_calls.len(), 1);
-        assert_eq!(lock_calls[0].1, "project=my-special-project");
+        assert_eq!(hook_calls.len(), 1);
+        assert_eq!(hook_calls[0].1, "project=my-special-project");
     }
 }

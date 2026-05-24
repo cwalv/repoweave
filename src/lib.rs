@@ -14,6 +14,7 @@ pub mod registry;
 pub mod setup;
 pub mod status;
 pub mod sync;
+pub mod update;
 pub mod vcs;
 pub mod workspace;
 pub mod workweave;

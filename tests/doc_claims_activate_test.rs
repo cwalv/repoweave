@@ -293,7 +293,7 @@ fn activate_symlinks_cargo_toml_and_lock() {
     std::fs::write(project_dir.join("rwv.yaml"), manifest).unwrap();
 
     rwv()
-        .args(["activate", "cargo-proj"])
+        .args(["activate", "cargo-proj", "--no-install"])
         .current_dir(&ws_root)
         .assert()
         .success();
@@ -367,7 +367,7 @@ integrations:
     std::fs::write(project_dir.join("rwv.yaml"), manifest).unwrap();
 
     let output = rwv()
-        .args(["activate", "my-project"])
+        .args(["activate", "my-project", "--no-install"])
         .current_dir(&ws)
         .output()
         .unwrap();
@@ -424,7 +424,7 @@ integrations:
     std::fs::write(project_dir.join("rwv.yaml"), manifest).unwrap();
 
     rwv()
-        .args(["activate", "my-project"])
+        .args(["activate", "my-project", "--no-install"])
         .current_dir(&ws)
         .assert()
         .success();
@@ -502,7 +502,7 @@ fn activate_npm_no_install_run_during_activate() {
     std::fs::write(project_dir.join("rwv.yaml"), manifest).unwrap();
 
     let output = rwv()
-        .args(["activate", "npm-proj"])
+        .args(["activate", "npm-proj", "--no-install"])
         .current_dir(&ws_root)
         .output()
         .unwrap();
@@ -560,7 +560,7 @@ fn activate_graceful_when_npm_unavailable() {
 
     // Activate must not fail regardless of available tools.
     rwv()
-        .args(["activate", "npm-proj"])
+        .args(["activate", "npm-proj", "--no-install"])
         .current_dir(&ws_root)
         .assert()
         .success();

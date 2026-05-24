@@ -80,8 +80,15 @@ fn project_names_for_ctx(ctx: &WorkspaceContext) -> Vec<String> {
 }
 
 /// Run `rwv status` for the CWD workspace.
-pub fn run_status(cwd: &Path, json: bool) -> anyhow::Result<()> {
-    let ctx = WorkspaceContext::resolve(cwd, None)?;
+///
+/// When `project_override` is `Some`, status is shown for that project
+/// (does not change `.rwv-active`).
+pub fn run_status(
+    cwd: &Path,
+    json: bool,
+    project_override: Option<crate::manifest::ProjectName>,
+) -> anyhow::Result<()> {
+    let ctx = WorkspaceContext::resolve(cwd, project_override)?;
     let git = GitVcs;
     let workspace_dir = ctx.active_path().to_path_buf();
 

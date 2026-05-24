@@ -236,20 +236,25 @@ fn commit_lock_file(
 ///
 /// When `dirty` is true, the uncommitted-changes check is skipped.
 /// When `commit` is true, the lock file is staged and committed after writing.
-pub fn lock(cwd: &Path, dirty: bool, commit: bool) -> anyhow::Result<()> {
-    use crate::integration_runner::run_lock_hooks;
-    use crate::integrations::builtin_integrations;
-
-    let ctx = WorkspaceContext::resolve(cwd, None)?;
+/// When `project_override` is `Some`, that project is operated on instead
+/// of `.rwv-active` (one-shot; does not change `.rwv-active`).
+///
+/// Pure git SHA snapshot — no integration hooks fire here. Install/build
+/// hooks are part of activation (`rwv activate`), since the trigger for
+/// ecosystem-lockfile refresh is workspace membership change, not
+/// cross-repo snapshot. See fo-4t6iv for the rationale.
+pub fn lock(
+    cwd: &Path,
+    dirty: bool,
+    commit: bool,
+    project_override: Option<crate::manifest::ProjectName>,
+) -> anyhow::Result<()> {
+    let ctx = WorkspaceContext::resolve(cwd, project_override)?;
 
     let (project_name, workweave_name, workweave_dir) = match &ctx.location {
-        WorkspaceLocation::Weave { project } => {
-            let name = project.as_ref().ok_or_else(|| {
-                anyhow::anyhow!(
-                    "no active project found; run from a project directory or use --project"
-                )
-            })?;
-            (name.clone(), None, None)
+        WorkspaceLocation::Weave { .. } => {
+            let name = ctx.require_active_project()?.clone();
+            (name, None, None)
         }
         WorkspaceLocation::Workweave { name, dir, project } => {
             (project.clone(), Some(name.clone()), Some(dir.clone()))
@@ -282,102 +287,9 @@ pub fn lock(cwd: &Path, dirty: bool, commit: bool) -> anyhow::Result<()> {
 
     eprintln!("Wrote {}", lock_path.display());
 
-    // Run integration lock hooks after writing the lock file.
-    let session = crate::workspace::WorkspaceSession::new(ctx.active_path());
-
-    let output_dir = ctx.active_path();
-    let detection_cache = crate::integration_runner::build_detection_cache(
-        ctx.active_path(),
-        &project.manifest.repositories,
-    );
-    let ctx_base = session.context_base(output_dir, &project_name, &detection_cache);
-
-    let builtin = builtin_integrations();
-    let integrations: Vec<&dyn crate::integration::Integration> =
-        builtin.iter().map(|b| b.as_ref()).collect();
-
-    let issues = run_lock_hooks(&integrations, &project.manifest, &ctx_base);
-    report_and_check_lock_issues(&issues)?;
-
     if commit {
         commit_lock_file(&project_dir, &lock, old_lock.as_ref())?;
     }
 
     Ok(())
-}
-
-/// Report lock-hook issues to stderr and bail if any are `Severity::Error`.
-///
-/// B1: an integration's lock hook (e.g. `cargo generate-lockfile`) failing
-/// and being reported as `Severity::Error` is exactly the case the user
-/// cited: "should never be done in repoweave." Committing the lock here
-/// would produce an incoherent state — repoweave's lock says one thing,
-/// the ecosystem lock another — and the only signal would be a scroll-by
-/// stderr line. Bail before commit. Warnings stay warnings.
-fn report_and_check_lock_issues(issues: &[crate::integration::Issue]) -> anyhow::Result<()> {
-    use crate::integration::Severity;
-    let mut error_count = 0usize;
-    for issue in issues {
-        let prefix = match issue.severity {
-            Severity::Warning => "warning",
-            Severity::Error => {
-                error_count += 1;
-                "error"
-            }
-        };
-        eprintln!("[{prefix}] {}: {}", issue.integration, issue.message);
-    }
-    if error_count > 0 {
-        anyhow::bail!(
-            "lock: {error_count} integration lock-hook error(s); refusing to commit incoherent lock state"
-        );
-    }
-    Ok(())
-}
-
-#[cfg(test)]
-mod lock_issue_tests {
-    use super::*;
-    use crate::integration::{Issue, Severity};
-
-    fn iss(integ: &str, sev: Severity, m: &str) -> Issue {
-        Issue {
-            integration: integ.into(),
-            severity: sev,
-            message: m.into(),
-        }
-    }
-
-    #[test]
-    fn no_issues_is_ok() {
-        assert!(report_and_check_lock_issues(&[]).is_ok());
-    }
-
-    #[test]
-    fn warnings_only_is_ok() {
-        let issues = vec![iss("cargo", Severity::Warning, "slow")];
-        assert!(report_and_check_lock_issues(&issues).is_ok());
-    }
-
-    #[test]
-    fn any_error_bails_before_commit() {
-        let issues = vec![iss("cargo", Severity::Error, "generate-lockfile failed")];
-        let err = report_and_check_lock_issues(&issues).unwrap_err();
-        let s = err.to_string();
-        assert!(
-            s.contains("1 integration lock-hook error") && s.contains("refusing to commit"),
-            "expected refusal message, got: {s}"
-        );
-    }
-
-    #[test]
-    fn aggregated_error_count_in_message() {
-        let issues = vec![
-            iss("a", Severity::Error, "e1"),
-            iss("b", Severity::Error, "e2"),
-            iss("c", Severity::Warning, "w"),
-        ];
-        let err = report_and_check_lock_issues(&issues).unwrap_err();
-        assert!(err.to_string().contains("2 integration lock-hook error"));
-    }
 }

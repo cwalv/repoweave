@@ -133,6 +133,10 @@ fn make_locked_workspace(parent: &Path, name: &str) -> (Workspace, String) {
     git(&["add", "rwv.yaml", "rwv.lock"], &project_dir);
     git(&["commit", "-m", "lock: initial"], &project_dir);
 
+    // Post fo-h9prh: action verbs require `.rwv-active` (or --project).
+    // Set it here so sync tests don't all need to pass --project.
+    std::fs::write(root.join(".rwv-active"), "web-app\n").unwrap();
+
     (
         Workspace {
             root,
@@ -186,6 +190,8 @@ fn make_shared_workspaces(parent: &Path) -> (Workspace, Workspace, String) {
     );
     // The worktree inherits primary's already-committed rwv.lock (same C1 SHA).
     // No additional commit needed.
+    // Post fo-h9prh: action verbs in this workweave also need `.rwv-active`.
+    std::fs::write(ww_root.join(".rwv-active"), "web-app\n").unwrap();
 
     let ww = Workspace {
         root: ww_root,

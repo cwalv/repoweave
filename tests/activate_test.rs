@@ -108,7 +108,7 @@ fn activate_writes_rwv_active_file() {
     );
 
     rwv()
-        .args(["activate", "web-app"])
+        .args(["activate", "web-app", "--no-install"])
         .current_dir(&ws)
         .assert()
         .success();
@@ -131,7 +131,7 @@ fn activate_generates_ecosystem_files_in_project_dir() {
     );
 
     rwv()
-        .args(["activate", "web-app"])
+        .args(["activate", "web-app", "--no-install"])
         .current_dir(&ws)
         .assert()
         .success();
@@ -166,7 +166,7 @@ fn activate_creates_symlinks_at_workspace_root() {
     );
 
     rwv()
-        .args(["activate", "web-app"])
+        .args(["activate", "web-app", "--no-install"])
         .current_dir(&ws)
         .assert()
         .success();
@@ -206,7 +206,7 @@ fn activate_symlinks_point_to_correct_project_dir() {
     );
 
     rwv()
-        .args(["activate", "web-app"])
+        .args(["activate", "web-app", "--no-install"])
         .current_dir(&ws)
         .assert()
         .success();
@@ -240,7 +240,7 @@ fn activate_handles_multiple_ecosystem_types() {
     );
 
     rwv()
-        .args(["activate", "polyglot"])
+        .args(["activate", "polyglot", "--no-install"])
         .current_dir(&ws)
         .assert()
         .success();
@@ -293,7 +293,7 @@ fn switching_projects_swaps_symlinks() {
 
     // Activate project A
     rwv()
-        .args(["activate", "project-a"])
+        .args(["activate", "project-a", "--no-install"])
         .current_dir(&ws)
         .assert()
         .success();
@@ -314,7 +314,7 @@ fn switching_projects_swaps_symlinks() {
 
     // Activate project B -- symlinks should swap
     rwv()
-        .args(["activate", "project-b"])
+        .args(["activate", "project-b", "--no-install"])
         .current_dir(&ws)
         .assert()
         .success();
@@ -354,7 +354,7 @@ fn switching_projects_updates_rwv_active() {
     );
 
     rwv()
-        .args(["activate", "proj-a"])
+        .args(["activate", "proj-a", "--no-install"])
         .current_dir(&ws)
         .assert()
         .success();
@@ -363,7 +363,7 @@ fn switching_projects_updates_rwv_active() {
     assert_eq!(active.trim(), "proj-a");
 
     rwv()
-        .args(["activate", "proj-b"])
+        .args(["activate", "proj-b", "--no-install"])
         .current_dir(&ws)
         .assert()
         .success();
@@ -395,7 +395,7 @@ fn switching_removes_stale_symlinks_from_previous_project() {
 
     // Activate A -- both symlinks appear
     rwv()
-        .args(["activate", "proj-a"])
+        .args(["activate", "proj-a", "--no-install"])
         .current_dir(&ws)
         .assert()
         .success();
@@ -405,7 +405,7 @@ fn switching_removes_stale_symlinks_from_previous_project() {
 
     // Activate B -- Cargo.toml symlink should be removed since B has no cargo repos
     rwv()
-        .args(["activate", "proj-b"])
+        .args(["activate", "proj-b", "--no-install"])
         .current_dir(&ws)
         .assert()
         .success();
@@ -460,17 +460,17 @@ fn switching_back_restores_original_symlinks() {
 
     // A -> B -> A
     rwv()
-        .args(["activate", "proj-a"])
+        .args(["activate", "proj-a", "--no-install"])
         .current_dir(&ws)
         .assert()
         .success();
     rwv()
-        .args(["activate", "proj-b"])
+        .args(["activate", "proj-b", "--no-install"])
         .current_dir(&ws)
         .assert()
         .success();
     rwv()
-        .args(["activate", "proj-a"])
+        .args(["activate", "proj-a", "--no-install"])
         .current_dir(&ws)
         .assert()
         .success();
@@ -504,7 +504,7 @@ fn activate_works_from_workspace_subdirectory() {
     );
 
     rwv()
-        .args(["activate", "my-proj"])
+        .args(["activate", "my-proj", "--no-install"])
         .current_dir(ws.join("github"))
         .assert()
         .success();
@@ -548,7 +548,7 @@ fn activate_same_project_twice_is_idempotent() {
     );
 
     rwv()
-        .args(["activate", "my-proj"])
+        .args(["activate", "my-proj", "--no-install"])
         .current_dir(&ws)
         .assert()
         .success();
@@ -556,7 +556,7 @@ fn activate_same_project_twice_is_idempotent() {
     let content1 = std::fs::read_to_string(ws.join("package.json")).unwrap();
 
     rwv()
-        .args(["activate", "my-proj"])
+        .args(["activate", "my-proj", "--no-install"])
         .current_dir(&ws)
         .assert()
         .success();
@@ -593,7 +593,7 @@ fn deactivate_descends_into_nondir_registry_subtrees() {
 
     // Activate to create the top-level symlinks.
     rwv()
-        .args(["activate", "web-app"])
+        .args(["activate", "web-app", "--no-install"])
         .current_dir(&ws)
         .assert()
         .success();
@@ -614,7 +614,7 @@ fn deactivate_descends_into_nondir_registry_subtrees() {
     // Re-activate: this runs `remove_activation_symlinks` before re-creating
     // links, exercising the sweep.
     rwv()
-        .args(["activate", "web-app"])
+        .args(["activate", "web-app", "--no-install"])
         .current_dir(&ws)
         .assert()
         .success();
@@ -642,7 +642,7 @@ fn activate_project_with_no_ecosystem_files() {
     make_project(&ws, "plain-proj", &[("github/acme/docs", "primary", &[])]);
 
     rwv()
-        .args(["activate", "plain-proj"])
+        .args(["activate", "plain-proj", "--no-install"])
         .current_dir(&ws)
         .assert()
         .success();

@@ -39,6 +39,14 @@ pub struct WorkspaceContext {
     primary_root: PathBuf,
     /// The current working location: weave or a specific workweave.
     pub location: WorkspaceLocation,
+    /// The project name inferred from CWD (when CWD is inside
+    /// `{root}/projects/{name}/...`), independent of the active project.
+    ///
+    /// Recorded for diagnostics — `rwv` bare status surfaces the
+    /// divergence, and command implementations use it to build the
+    /// "you're in projects/<X>/ but <Y> is active" error message after
+    /// fo-h9prh removed the CWD override.
+    cwd_project_hint: Option<ProjectName>,
 }
 
 /// Whether we're in the weave directory or inside a workweave.
@@ -80,7 +88,18 @@ fn is_workspace_root(dir: &Path) -> bool {
 }
 
 /// Detect the project name if `cwd` is inside `{root}/projects/{name}/...`.
-fn detect_project(cwd: &Path, root: &Path) -> Option<ProjectName> {
+///
+/// As of fo-h9prh this is a *soft hint* only: action verbs no longer use
+/// it to override `.rwv-active`. Two callers remain:
+/// - [`WorkspaceContext::cwd_project_hint`] for divergence warnings and
+///   for the helpful error when CWD ≠ active project.
+/// - `rwv` bare status, to flag the divergence to the user.
+///
+/// The previous behaviour — silently substituting this for the active
+/// project on `rwv lock`, `rwv add`, etc. — let symlinks and manifests
+/// disagree without any signal. Removing the override collapses the two
+/// notions of "active" into one (`.rwv-active`).
+pub fn detect_project(cwd: &Path, root: &Path) -> Option<ProjectName> {
     let rel = cwd.strip_prefix(root).ok()?;
     let mut components = rel.components();
     let first = components.next()?;
@@ -282,9 +301,15 @@ pub fn require_workspace_or_empty(cwd: &Path, force: bool) -> anyhow::Result<()>
 impl WorkspaceContext {
     /// Resolve the workspace context by walking up from `cwd`.
     ///
-    /// If `project_override` is `Some`, it overrides the auto-detected project.
-    /// In Weave location, `.rwv-active` is preferred over CWD inference when
-    /// no explicit override is given.
+    /// Project resolution order (post fo-h9prh):
+    ///   1. `project_override` — explicit `--project <name>` flag.
+    ///   2. `.rwv-active` — the single source of truth for the active
+    ///      project. There is no CWD override anymore.
+    ///
+    /// The "CWD is inside `projects/<X>/`" inference is still computed
+    /// and recorded on the context as [`cwd_project_hint`] so that
+    /// diagnostics and `rwv` bare status can surface a divergence
+    /// warning — it is no longer consulted for verb resolution.
     pub fn resolve(cwd: &Path, project_override: Option<ProjectName>) -> anyhow::Result<Self> {
         let cwd = cwd
             .canonicalize()
@@ -313,6 +338,7 @@ impl WorkspaceContext {
                         .unwrap_or("unknown");
                     let workweave_name = WorkweaveName::new(workweave_name_str);
                     let project = project_override.unwrap_or(marker.project);
+                    let cwd_project_hint = detect_project(&cwd, &root);
                     return Ok(WorkspaceContext {
                         primary_root: root,
                         location: WorkspaceLocation::Workweave {
@@ -320,6 +346,7 @@ impl WorkspaceContext {
                             dir: current.to_path_buf(),
                             project,
                         },
+                        cwd_project_hint,
                     });
                 }
             }
@@ -344,6 +371,7 @@ impl WorkspaceContext {
                     if is_workspace_root(&root) {
                         let project =
                             project_override.unwrap_or_else(|| ProjectName::new(left_name));
+                        let cwd_project_hint = detect_project(&cwd, &root);
                         return Ok(WorkspaceContext {
                             primary_root: root.clone(),
                             location: WorkspaceLocation::Workweave {
@@ -351,6 +379,7 @@ impl WorkspaceContext {
                                 dir: current.to_path_buf(),
                                 project,
                             },
+                            cwd_project_hint,
                         });
                     }
                 }
@@ -358,12 +387,12 @@ impl WorkspaceContext {
 
             // 3. Check if current directory IS the workspace root.
             if is_workspace_root(current) {
-                let project = project_override
-                    .or_else(|| detect_project(&cwd, current))
-                    .or_else(|| read_active_project(current));
+                let cwd_project_hint = detect_project(&cwd, current);
+                let project = project_override.or_else(|| read_active_project(current));
                 return Ok(WorkspaceContext {
                     primary_root: current.to_path_buf(),
                     location: WorkspaceLocation::Weave { project },
+                    cwd_project_hint,
                 });
             }
 
@@ -375,6 +404,71 @@ impl WorkspaceContext {
         }
 
         anyhow::bail!("no repoweave workspace found above {}", cwd.display())
+    }
+
+    /// The project name inferred from CWD's location under
+    /// `{root}/projects/{name}/...`, or `None` when CWD is not inside any
+    /// project directory.
+    ///
+    /// Use to (a) surface a "you are in projects/<X>/ but <Y> is active"
+    /// warning in `rwv` bare status, and (b) construct a helpful error
+    /// when action verbs are run from a project directory whose name
+    /// disagrees with `.rwv-active`. Do *not* use it as a project
+    /// override for action verbs — that is the bug fo-h9prh removed.
+    pub fn cwd_project_hint(&self) -> Option<&ProjectName> {
+        self.cwd_project_hint.as_ref()
+    }
+
+    /// The active project from the resolved context, or `None` when no
+    /// project is active (no `.rwv-active`, no `--project`).
+    pub fn active_project(&self) -> Option<&ProjectName> {
+        match &self.location {
+            WorkspaceLocation::Weave { project } => project.as_ref(),
+            WorkspaceLocation::Workweave { project, .. } => Some(project),
+        }
+    }
+
+    /// Returns `Ok(name)` for the active project, or an `Err` whose
+    /// message guides the user to either `rwv activate <X>` or
+    /// `--project <X>` when CWD is inside a non-active project directory.
+    ///
+    /// The CWD-vs-active divergence error is the user-facing successor to
+    /// the silent CWD override removed by fo-h9prh. Calling this from
+    /// every action-verb entry point keeps the error in one place.
+    pub fn require_active_project(&self) -> anyhow::Result<&ProjectName> {
+        if let Some(name) = self.active_project() {
+            // Active project is set; but if CWD hints at a different
+            // project, warn (stderr) so the user knows the divergence.
+            if let Some(hint) = self.cwd_project_hint() {
+                if hint != name {
+                    eprintln!(
+                        "warning: you are in projects/{}/, but the active project is {}; \
+                         pass `--project {}` to operate on the CWD project, or \
+                         `rwv activate {}` to switch.",
+                        hint.as_str(),
+                        name.as_str(),
+                        hint.as_str(),
+                        hint.as_str(),
+                    );
+                }
+            }
+            return Ok(name);
+        }
+
+        // No active project. Build a helpful error.
+        if let Some(hint) = self.cwd_project_hint() {
+            anyhow::bail!(
+                "no active project set, but CWD is inside projects/{}/. \
+                 Run `rwv activate {}` to make it active, or pass `--project {}` \
+                 for a one-shot operation.",
+                hint.as_str(),
+                hint.as_str(),
+                hint.as_str(),
+            );
+        }
+        anyhow::bail!(
+            "no active project found; run `rwv activate <name>` or pass `--project <name>`"
+        );
     }
 
     /// The primary weave directory.
@@ -406,16 +500,19 @@ impl WorkspaceContext {
     /// Display the workspace context to stdout.
     ///
     /// Shows weave path, workweave (if applicable), active project, and
-    /// available projects.
+    /// available projects. Post fo-h9prh: also surfaces a warning line
+    /// when CWD is inside a project directory whose name differs from
+    /// the active project, so the user sees the divergence the silent
+    /// CWD override used to hide.
     pub fn display(&self) -> String {
         let mut lines = Vec::new();
 
+        let active = self.active_project().cloned();
         match &self.location {
-            WorkspaceLocation::Weave { project } => {
+            WorkspaceLocation::Weave { .. } => {
                 lines.push(format!("Weave: {}", self.primary_root.display()));
-                if let Some(p) = project {
+                if let Some(p) = &active {
                     lines.push(format!("Project: {}", p.as_str()));
-                    // Try to load manifest and show repo count
                     let manifest_path = self
                         .primary_root
                         .join("projects")
@@ -426,23 +523,33 @@ impl WorkspaceContext {
                     }
                 }
             }
-            WorkspaceLocation::Workweave {
-                name: _,
-                dir,
-                project,
-            } => {
+            WorkspaceLocation::Workweave { name: _, dir, .. } => {
                 lines.push(format!("Workweave: {}", dir.display()));
                 lines.push(format!("Weave: {}", self.primary_root.display()));
-                lines.push(format!("Project: {}", project.as_str()));
-                // Try to load manifest and show repo count
-                let manifest_path = self
-                    .primary_root
-                    .join("projects")
-                    .join(project.as_str())
-                    .join("rwv.yaml");
-                if let Ok(manifest) = Manifest::from_path(&manifest_path) {
-                    lines.push(format!("Repos: {}", manifest.repositories.len()));
+                if let Some(p) = &active {
+                    lines.push(format!("Project: {}", p.as_str()));
+                    let manifest_path = self
+                        .primary_root
+                        .join("projects")
+                        .join(p.as_str())
+                        .join("rwv.yaml");
+                    if let Ok(manifest) = Manifest::from_path(&manifest_path) {
+                        lines.push(format!("Repos: {}", manifest.repositories.len()));
+                    }
                 }
+            }
+        }
+
+        // Surface CWD vs active divergence (fo-h9prh).
+        if let (Some(hint), Some(active_p)) = (self.cwd_project_hint(), active.as_ref()) {
+            if hint != active_p {
+                lines.push(format!(
+                    "Warning: CWD is in projects/{}/, but {} is the active project (pass `--project {}` for a one-shot, or `rwv activate {}` to switch)",
+                    hint.as_str(),
+                    active_p.as_str(),
+                    hint.as_str(),
+                    hint.as_str(),
+                ));
             }
         }
 
@@ -566,6 +673,10 @@ mod tests {
 
     // ========================================================================
     // Resolve from inside a project directory
+    //
+    // Post fo-h9prh: CWD location no longer drives the active project. The
+    // project is `None` (no `.rwv-active` set), but the cwd_project_hint
+    // records the directory's name for diagnostics.
     // ========================================================================
 
     #[test]
@@ -579,11 +690,16 @@ mod tests {
         assert_eq!(ctx.primary_path(), root.canonicalize().unwrap());
         match &ctx.location {
             WorkspaceLocation::Weave { project } => {
-                let p = project.as_ref().expect("project should be detected");
-                assert_eq!(p.as_str(), "web-app");
+                assert!(
+                    project.is_none(),
+                    "without .rwv-active or --project, location.project is None"
+                );
             }
             WorkspaceLocation::Workweave { .. } => panic!("expected Weave"),
         }
+        // The CWD hint must still be populated for diagnostics.
+        let hint = ctx.cwd_project_hint().expect("CWD hint should be set");
+        assert_eq!(hint.as_str(), "web-app");
     }
 
     // ========================================================================
@@ -814,26 +930,33 @@ mod tests {
     }
 
     #[test]
-    fn resolve_cwd_inference_takes_precedence_over_rwv_active() {
+    fn resolve_rwv_active_wins_over_cwd_location_post_fo_h9prh() {
+        // Post fo-h9prh: `.rwv-active` is the single source of truth.
+        // The previous behaviour — silently substituting CWD's project
+        // directory for the active one — let symlinks and manifests
+        // diverge.
         let tmp = tempfile::tempdir().unwrap();
         let root = make_workspace(tmp.path(), "ws");
-        // Create a project directory so CWD inference works.
         let project_dir = root.join("projects").join("from-cwd");
         std::fs::create_dir_all(&project_dir).unwrap();
-        // Set a different active project.
         std::fs::write(root.join(".rwv-active"), "from-file\n").unwrap();
 
-        // CWD is inside projects/from-cwd, so CWD inference should win.
+        // CWD is inside projects/from-cwd, but `.rwv-active` should still win.
         let ctx = WorkspaceContext::resolve(&project_dir, None).unwrap();
         match &ctx.location {
             WorkspaceLocation::Weave { project } => {
                 let p = project
                     .as_ref()
-                    .expect("project should be detected from CWD");
-                assert_eq!(p.as_str(), "from-cwd");
+                    .expect("project should come from .rwv-active");
+                assert_eq!(p.as_str(), "from-file");
             }
             WorkspaceLocation::Workweave { .. } => panic!("expected Weave"),
         }
+        // The hint should still record the CWD directory for diagnostics.
+        let hint = ctx
+            .cwd_project_hint()
+            .expect("CWD hint should be set when CWD is inside projects/<name>/");
+        assert_eq!(hint.as_str(), "from-cwd");
     }
 
     #[test]

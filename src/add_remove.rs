@@ -3,51 +3,36 @@
 use crate::activate::activate;
 use crate::git::git_command;
 use crate::git::GitVcs;
-use crate::manifest::{Manifest, RepoEntry, RepoPath, RepoUrl, Role, VcsType};
+use crate::manifest::{Manifest, ProjectName, RepoEntry, RepoPath, RepoUrl, Role, VcsType};
 use crate::registry::{builtin_registries, Registry};
 use crate::vcs::Vcs;
-use crate::workspace::{WorkspaceContext, WorkspaceLocation};
+use crate::workspace::WorkspaceContext;
 use anyhow::{bail, Context};
 use std::path::{Path, PathBuf};
 
-/// Find the active project directory from the workspace context.
-/// If no project is auto-detected (e.g., CWD is the workspace root),
-/// look for a single project under `projects/` and use that.
+/// Resolve the project directory for an action verb.
+///
+/// Uses the workspace context (which has already absorbed `--project` and
+/// `.rwv-active`) to resolve to a project. If the context is in a
+/// workweave, the workweave's project is used. Otherwise we require an
+/// active project via `require_active_project`, which produces a helpful
+/// error when CWD is inside a non-active project directory.
 fn find_project_dir(ctx: &WorkspaceContext) -> anyhow::Result<std::path::PathBuf> {
-    let project_name = match &ctx.location {
-        WorkspaceLocation::Weave { project } => project.clone(),
-        WorkspaceLocation::Workweave { project, .. } => Some(project.clone()),
-    };
-
-    if let Some(name) = project_name {
-        return Ok(ctx.primary_path().join("projects").join(name.as_str()));
-    }
-
-    // No project auto-detected. Scan projects/ for a single project.
-    let projects_dir = ctx.primary_path().join("projects");
-    if !projects_dir.is_dir() {
-        bail!("no projects/ directory found in workspace");
-    }
-
-    let mut project_dirs: Vec<std::path::PathBuf> = Vec::new();
-    for entry in std::fs::read_dir(&projects_dir).context("failed to read projects/")? {
-        let entry = entry?;
-        let path = entry.path();
-        if path.is_dir() && path.join("rwv.yaml").exists() {
-            project_dirs.push(path);
-        }
-    }
-
-    match project_dirs.len() {
-        0 => bail!("no projects with rwv.yaml found under projects/"),
-        1 => Ok(project_dirs.into_iter().next().unwrap()),
-        _ => bail!("multiple projects found; run from inside a project directory or use --project"),
-    }
+    let name = ctx.require_active_project()?;
+    Ok(ctx.primary_path().join("projects").join(name.as_str()))
 }
 
 /// Execute `rwv add URL [--role=ROLE]`.
-pub fn run_add(url: &str, role: Role, cwd: &Path) -> anyhow::Result<()> {
-    let ctx = WorkspaceContext::resolve(cwd, None)?;
+///
+/// When `project_override` is `Some`, operate on that project rather than
+/// the active one (one-shot; does not change `.rwv-active`).
+pub fn run_add(
+    url: &str,
+    role: Role,
+    cwd: &Path,
+    project_override: Option<ProjectName>,
+) -> anyhow::Result<()> {
+    let ctx = WorkspaceContext::resolve(cwd, project_override)?;
     let project_dir = find_project_dir(&ctx)?;
     let manifest_path = project_dir.join("rwv.yaml");
 
@@ -214,8 +199,17 @@ fn run_add_from_local_path(
 }
 
 /// Execute `rwv remove PATH [--delete] [--force]`.
-pub fn run_remove(path: &str, delete: bool, force: bool, cwd: &Path) -> anyhow::Result<()> {
-    let ctx = WorkspaceContext::resolve(cwd, None)?;
+///
+/// When `project_override` is `Some`, operate on that project rather than
+/// the active one (one-shot; does not change `.rwv-active`).
+pub fn run_remove(
+    path: &str,
+    delete: bool,
+    force: bool,
+    cwd: &Path,
+    project_override: Option<ProjectName>,
+) -> anyhow::Result<()> {
+    let ctx = WorkspaceContext::resolve(cwd, project_override)?;
     let project_dir = find_project_dir(&ctx)?;
     let manifest_path = project_dir.join("rwv.yaml");
 
@@ -283,8 +277,15 @@ pub fn run_remove(path: &str, delete: bool, force: bool, cwd: &Path) -> anyhow::
 /// path by running `git init`. The URL is inferred from the path convention
 /// via registries (e.g., `github/owner/repo` → `https://github.com/owner/repo.git`).
 /// The repo is added to the manifest with role `primary`.
-pub fn run_add_new(path_arg: &str, cwd: &Path) -> anyhow::Result<()> {
-    let ctx = WorkspaceContext::resolve(cwd, None)?;
+///
+/// When `project_override` is `Some`, operate on that project rather than
+/// the active one (one-shot; does not change `.rwv-active`).
+pub fn run_add_new(
+    path_arg: &str,
+    cwd: &Path,
+    project_override: Option<ProjectName>,
+) -> anyhow::Result<()> {
+    let ctx = WorkspaceContext::resolve(cwd, project_override)?;
     let project_dir = find_project_dir(&ctx)?;
     let manifest_path = project_dir.join("rwv.yaml");
 

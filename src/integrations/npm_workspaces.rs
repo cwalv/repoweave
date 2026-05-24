@@ -66,20 +66,29 @@ impl Integration for NpmWorkspaces {
         Ok(issues)
     }
 
-    fn lock(&self, ctx: &IntegrationContext) -> anyhow::Result<()> {
+    fn activate_hook(&self, ctx: &IntegrationContext) -> anyhow::Result<()> {
         let paths = ctx.detect_repos_with_manifest("package.json");
         if paths.is_empty() {
             return Ok(());
         }
 
+        // Full `npm install` (not `--package-lock-only`): activation is
+        // the moment the workspace's membership becomes current, so
+        // `node_modules` should be in sync. The hook used to be
+        // `--package-lock-only` because it fired from `rwv lock` — see
+        // fo-4t6iv for why that was wrong.
+        //
+        // Run from workspace_root: the symlink at the root points at the
+        // canonical package.json in output_dir, and workspace member
+        // paths are resolved relative to the symlink location.
         let status = std::process::Command::new("npm")
-            .args(["install", "--package-lock-only"])
-            .current_dir(ctx.output_dir)
+            .args(["install"])
+            .current_dir(ctx.workspace_root)
             .status()
             .map_err(|e| anyhow::anyhow!("failed to run npm: {e}"))?;
 
         if !status.success() {
-            anyhow::bail!("npm install --package-lock-only failed (exit {})", status);
+            anyhow::bail!("npm install failed (exit {})", status);
         }
 
         Ok(())

@@ -434,11 +434,11 @@ fn context_output_dir_and_workspace_root_can_be_same() {
 }
 
 // ---------------------------------------------------------------------------
-// Default lock hook (no-op)
+// Default activate hook (no-op)
 // ---------------------------------------------------------------------------
 
 #[test]
-fn default_lock_hook_is_noop() {
+fn default_activate_hook_is_noop() {
     let mock = MockIntegration::new("test-integration", true);
 
     let repos = BTreeMap::new();
@@ -456,22 +456,22 @@ fn default_lock_hook_is_noop() {
         detection_cache: &cache,
     };
 
-    // Default lock() should succeed and do nothing
-    let result = mock.lock(&ctx);
+    // Default activate_hook() should succeed and do nothing
+    let result = mock.activate_hook(&ctx);
     assert!(result.is_ok());
 
-    // No calls should have been logged (lock is a default no-op)
+    // No calls should have been logged (activate_hook is a default no-op)
     assert!(mock.calls().is_empty());
 }
 
-/// A mock integration that overrides the lock hook.
+/// A mock integration that overrides the activate hook.
 #[derive(Clone)]
-struct MockIntegrationWithLock {
+struct MockIntegrationWithActivateHook {
     name: String,
     call_log: Arc<Mutex<Vec<(String, String)>>>,
 }
 
-impl MockIntegrationWithLock {
+impl MockIntegrationWithActivateHook {
     fn new(name: &str) -> Self {
         Self {
             name: name.to_string(),
@@ -484,7 +484,7 @@ impl MockIntegrationWithLock {
     }
 }
 
-impl Integration for MockIntegrationWithLock {
+impl Integration for MockIntegrationWithActivateHook {
     fn name(&self) -> &str {
         &self.name
     }
@@ -505,18 +505,18 @@ impl Integration for MockIntegrationWithLock {
         Ok(vec![])
     }
 
-    fn lock(&self, ctx: &IntegrationContext) -> anyhow::Result<()> {
-        self.call_log
-            .lock()
-            .unwrap()
-            .push(("lock".into(), format!("project={}", ctx.project.as_str())));
+    fn activate_hook(&self, ctx: &IntegrationContext) -> anyhow::Result<()> {
+        self.call_log.lock().unwrap().push((
+            "activate_hook".into(),
+            format!("project={}", ctx.project.as_str()),
+        ));
         Ok(())
     }
 }
 
 #[test]
-fn overridden_lock_hook_is_called() {
-    let integration = MockIntegrationWithLock::new("cargo");
+fn overridden_activate_hook_is_called() {
+    let integration = MockIntegrationWithActivateHook::new("cargo");
 
     let repos = BTreeMap::new();
     let project = ProjectName::new("my-project");
@@ -533,11 +533,11 @@ fn overridden_lock_hook_is_called() {
         detection_cache: &cache,
     };
 
-    integration.lock(&ctx).unwrap();
+    integration.activate_hook(&ctx).unwrap();
 
     let calls = integration.calls();
     assert_eq!(calls.len(), 1);
-    assert_eq!(calls[0].0, "lock");
+    assert_eq!(calls[0].0, "activate_hook");
     assert_eq!(calls[0].1, "project=my-project");
 }
 

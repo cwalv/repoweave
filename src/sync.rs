@@ -693,14 +693,9 @@ fn find_project_name(ctx: &WorkspaceContext) -> anyhow::Result<ProjectName> {
         WorkspaceLocation::Weave { project: Some(p) } => Ok(p.clone()),
         WorkspaceLocation::Workweave { project, .. } => Ok(project.clone()),
         WorkspaceLocation::Weave { project: None } => {
-            let names = crate::workspace::discover_project_paths(ctx.active_path());
-            let name = names.into_iter().next().ok_or_else(|| {
-                anyhow::anyhow!(
-                    "no project found under {}; is this a workspace?",
-                    ctx.active_path().display()
-                )
-            })?;
-            Ok(ProjectName::new(name))
+            // require_active_project produces the same helpful error
+            // mentioning --project / rwv activate; defer to it.
+            ctx.require_active_project().map(|n| n.clone())
         }
     }
 }
@@ -932,13 +927,16 @@ pub fn run_sync(
     source: &SyncSource,
     strategy: SyncStrategy,
     force: bool,
+    project_override: Option<ProjectName>,
 ) -> anyhow::Result<()> {
     // Resolve CWD and source workspaces.
-    let ctx = WorkspaceContext::resolve(cwd, None)?;
+    let ctx = WorkspaceContext::resolve(cwd, project_override.clone())?;
     let workspace_dir = ctx.active_path().to_path_buf();
 
     let source_path = source.resolve(&ctx);
-    let source_ctx = WorkspaceContext::resolve(&source_path, None)?;
+    // The source side honours the same `--project` override so cross-project
+    // syncs from a non-active project work.
+    let source_ctx = WorkspaceContext::resolve(&source_path, project_override.clone())?;
     let source_workspace_dir = source_ctx.active_path().to_path_buf();
 
     // Find active projects.

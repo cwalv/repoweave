@@ -142,12 +142,18 @@ pub trait Integration {
     /// Called by `rwv doctor`.
     fn check(&self, ctx: &IntegrationContext) -> anyhow::Result<Vec<Issue>>;
 
-    /// Lock hook — run after `rwv lock` writes `rwv.lock`.
+    /// Activate hook — run after `rwv activate` generates config files,
+    /// before activation completes.
     ///
-    /// Integrations can override this to run ecosystem lock commands
-    /// (e.g., `npm install --package-lock-only`, `cargo generate-lockfile`).
-    /// The default implementation is a no-op.
-    fn lock(&self, _ctx: &IntegrationContext) -> anyhow::Result<()> {
+    /// Integrations override this to run ecosystem install commands
+    /// (e.g., `npm install`, `uv sync`, `cargo generate-lockfile`) that
+    /// follow membership changes. Fires whenever the workspace's set of
+    /// active repos may have changed; users can suppress with
+    /// `rwv activate --no-install`.
+    ///
+    /// This hook was previously named `lock` (fired on `rwv lock`); see
+    /// fo-4t6iv for the rationale of the move.
+    fn activate_hook(&self, _ctx: &IntegrationContext) -> anyhow::Result<()> {
         Ok(())
     }
 

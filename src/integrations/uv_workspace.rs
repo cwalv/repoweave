@@ -58,20 +58,24 @@ impl Integration for UvWorkspace {
         Ok(issues)
     }
 
-    fn lock(&self, ctx: &IntegrationContext) -> anyhow::Result<()> {
+    fn activate_hook(&self, ctx: &IntegrationContext) -> anyhow::Result<()> {
         let paths = ctx.detect_repos_with_manifest("pyproject.toml");
         if paths.is_empty() {
             return Ok(());
         }
 
+        // `uv sync` installs into `.venv` and refreshes `uv.lock`;
+        // formerly `uv lock` (lockfile-only) when this fired from
+        // `rwv lock`. See fo-4t6iv. Runs from workspace_root for the
+        // same reason as the other ecosystem hooks (symlinks).
         let status = std::process::Command::new("uv")
-            .arg("lock")
-            .current_dir(ctx.output_dir)
+            .arg("sync")
+            .current_dir(ctx.workspace_root)
             .status()
             .map_err(|e| anyhow::anyhow!("failed to run uv: {e}"))?;
 
         if !status.success() {
-            anyhow::bail!("uv lock failed (exit {})", status);
+            anyhow::bail!("uv sync failed (exit {})", status);
         }
 
         Ok(())

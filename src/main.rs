@@ -10,6 +10,7 @@ use repoweave::setup;
 use repoweave::status;
 use repoweave::sync;
 use repoweave::sync::{SyncSource, SyncStrategy};
+use repoweave::update;
 
 use clap::{CommandFactory, Parser, Subcommand};
 use clap_complete::Shell;
@@ -39,20 +40,32 @@ enum Commands {
         #[command(subcommand)]
         action: Option<WorkweaveAction>,
     },
-    /// Clone a project and its repos (also re-pins already-cloned repos with --locked/--frozen)
+    /// Clone a project and align repos to rwv.lock (no network bump). Use `rwv update` to advance to branch HEAD.
     Fetch {
         /// Source to fetch from
         source: String,
-        /// Check out each repo at the SHA recorded in rwv.lock — works for existing repos too;
-        /// effectively a per-repo `git checkout` to bring tips back in line with the lock
-        #[arg(long, conflicts_with = "frozen")]
+        /// No-op alias kept for compatibility — the default `rwv fetch`
+        /// already uses the lock. Will be removed in a future release.
+        #[arg(long, hide = true, conflicts_with = "frozen")]
         locked: bool,
-        /// Like --locked, but error if lock file is missing or stale (CI mode)
+        /// Error if the lock file is missing or stale (CI mode)
         #[arg(long, conflicts_with = "locked")]
         frozen: bool,
         /// Bootstrap into a non-empty directory that is not a workspace
         #[arg(long)]
         force: bool,
+    },
+    /// Advance each repo to its branch HEAD and re-snapshot the lock (network bump)
+    Update {
+        /// Allow update with uncommitted changes in repos when relocking
+        #[arg(long)]
+        dirty: bool,
+        /// Commit rwv.lock after writing it
+        #[arg(long)]
+        commit: bool,
+        /// Operate on this project instead of the active project (does not change `.rwv-active`)
+        #[arg(long)]
+        project: Option<String>,
     },
     /// Add a repo to the active project
     Add {
@@ -64,6 +77,9 @@ enum Commands {
         /// Create a new repo (git init) at the canonical path instead of cloning
         #[arg(long)]
         new: bool,
+        /// Operate on this project instead of the active project (does not change `.rwv-active`)
+        #[arg(long)]
+        project: Option<String>,
     },
     /// Remove a repo from the active project
     Remove {
@@ -75,6 +91,9 @@ enum Commands {
         /// Skip confirmation when deleting
         #[arg(long)]
         force: bool,
+        /// Operate on this project instead of the active project (does not change `.rwv-active`)
+        #[arg(long)]
+        project: Option<String>,
     },
     /// Snapshot repo versions
     Lock {
@@ -84,6 +103,9 @@ enum Commands {
         /// Commit rwv.lock after writing it
         #[arg(long)]
         commit: bool,
+        /// Operate on this project instead of the active project (does not change `.rwv-active`)
+        #[arg(long)]
+        project: Option<String>,
     },
     /// Convention enforcement and lock-freshness checking
     #[command(alias = "check")]
@@ -94,12 +116,18 @@ enum Commands {
         /// Auto-fix safely-fixable index drift and working-tree drift (see `rwv doctor` description for classification rules)
         #[arg(long, conflicts_with = "locked")]
         fix: bool,
+        /// Operate on this project instead of the active project (does not change `.rwv-active`)
+        #[arg(long)]
+        project: Option<String>,
     },
     /// Show per-repo state of the CWD workspace
     Status {
         /// Output as JSON
         #[arg(long)]
         json: bool,
+        /// Operate on this project instead of the active project (does not change `.rwv-active`)
+        #[arg(long)]
+        project: Option<String>,
     },
     /// Align CWD workspace with another workspace's committed rwv.lock
     Sync {
@@ -112,6 +140,9 @@ enum Commands {
         /// Bypass the lock-freshness precondition
         #[arg(long)]
         force: bool,
+        /// Operate on this project instead of the active project (does not change `.rwv-active`)
+        #[arg(long)]
+        project: Option<String>,
     },
     /// Restore CWD workspace to its pre-sync state using savepoint refs
     Abort,
@@ -128,10 +159,13 @@ enum Commands {
         #[arg(long)]
         adopt: bool,
     },
-    /// Activate a project (generate ecosystem files, create symlinks)
+    /// Activate a project (generate ecosystem files, create symlinks, run install commands)
     Activate {
         /// Project name
         project: String,
+        /// Skip integration install hooks (e.g., `npm install`, `uv sync`) for fast context-switch
+        #[arg(long)]
+        no_install: bool,
     },
     /// Print structured workspace context for agent system prompts
     Prime {
@@ -261,7 +295,7 @@ fn main() -> anyhow::Result<()> {
         }
         Some(Commands::Fetch {
             source,
-            locked,
+            locked: _locked, // no-op alias retained for compat (already the default)
             frozen,
             force,
         }) => {
@@ -269,58 +303,86 @@ fn main() -> anyhow::Result<()> {
             repoweave::workspace::require_workspace_or_empty(&cwd, force)?;
             let mode = if frozen {
                 fetch::FetchMode::Frozen
-            } else if locked {
-                fetch::FetchMode::Locked
             } else {
                 fetch::FetchMode::Default
             };
             fetch::run_fetch(&source, &cwd, mode)?;
         }
-        Some(Commands::Add { url, role, new }) => {
+        Some(Commands::Add {
+            url,
+            role,
+            new,
+            project,
+        }) => {
             let cwd = std::env::current_dir()?;
+            let project_override = project.map(repoweave::manifest::ProjectName::new);
             if new {
-                add_remove::run_add_new(&url, &cwd)?;
+                add_remove::run_add_new(&url, &cwd, project_override)?;
             } else {
-                add_remove::run_add(&url, role, &cwd)?;
+                add_remove::run_add(&url, role, &cwd, project_override)?;
             }
         }
         Some(Commands::Remove {
             path,
             delete,
             force,
+            project,
         }) => {
             let cwd = std::env::current_dir()?;
-            add_remove::run_remove(&path, delete, force, &cwd)?;
+            let project_override = project.map(repoweave::manifest::ProjectName::new);
+            add_remove::run_remove(&path, delete, force, &cwd, project_override)?;
         }
-        Some(Commands::Lock { dirty, commit }) => {
+        Some(Commands::Lock {
+            dirty,
+            commit,
+            project,
+        }) => {
             let cwd = std::env::current_dir()?;
-            lock::lock(&cwd, dirty, commit)?;
+            let project_override = project.map(repoweave::manifest::ProjectName::new);
+            lock::lock(&cwd, dirty, commit, project_override)?;
         }
-        Some(Commands::Doctor { locked, fix }) => {
+        Some(Commands::Update {
+            dirty,
+            commit,
+            project,
+        }) => {
             let cwd = std::env::current_dir()?;
+            let project_override = project.map(repoweave::manifest::ProjectName::new);
+            update::run_update(&cwd, dirty, commit, project_override)?;
+        }
+        Some(Commands::Doctor {
+            locked,
+            fix,
+            project,
+        }) => {
+            let cwd = std::env::current_dir()?;
+            let project_override = project.map(repoweave::manifest::ProjectName::new);
             if locked {
-                let has_drift = check::run_check_locked(&cwd)?;
+                let has_drift = check::run_check_locked(&cwd, project_override)?;
                 if has_drift {
                     std::process::exit(1);
                 }
             } else {
-                let has_errors = check::run_check(&cwd, fix)?;
+                let has_errors = check::run_check(&cwd, fix, project_override)?;
                 if has_errors {
                     std::process::exit(1);
                 }
             }
         }
-        Some(Commands::Status { json }) => {
+        Some(Commands::Status { json, project }) => {
             let cwd = std::env::current_dir()?;
-            status::run_status(&cwd, json)?;
+            let project_override = project.map(repoweave::manifest::ProjectName::new);
+            status::run_status(&cwd, json, project_override)?;
         }
         Some(Commands::Sync {
             source,
             strategy,
             force,
+            project,
         }) => {
             let cwd = std::env::current_dir()?;
-            sync::run_sync(&cwd, &source, strategy, force)?;
+            let project_override = project.map(repoweave::manifest::ProjectName::new);
+            sync::run_sync(&cwd, &source, strategy, force, project_override)?;
         }
         Some(Commands::Abort) => {
             let cwd = std::env::current_dir()?;
@@ -343,9 +405,16 @@ fn main() -> anyhow::Result<()> {
                 init::init(&project, provider.as_deref(), &cwd)?;
             }
         }
-        Some(Commands::Activate { project }) => {
+        Some(Commands::Activate {
+            project,
+            no_install,
+        }) => {
             let cwd = std::env::current_dir()?;
-            activate::activate(&project, &cwd)?;
+            activate::activate_with_options(
+                &project,
+                &cwd,
+                activate::ActivateOptions { no_install },
+            )?;
         }
         Some(Commands::Prime { no_suppress }) => {
             let cwd = std::env::current_dir()?;

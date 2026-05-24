@@ -1361,22 +1361,22 @@ mod vscode_workspace {
 }
 
 // ===========================================================================
-// Integration lock hooks
+// Integration activate hooks (post fo-4t6iv)
 // ===========================================================================
 //
-// Each ecosystem integration should have a lock hook that runs the
-// ecosystem's lock command. Non-ecosystem integrations (gita, vscode)
-// should have no-op lock hooks.
+// Each ecosystem integration should have an `activate_hook` that runs the
+// install command. Non-ecosystem integrations (gita, vscode) should have
+// no-op hooks.
 
-mod lock_hooks {
+mod activate_hooks {
     use super::*;
 
     // -----------------------------------------------------------------------
-    // npm-workspaces: `npm install --package-lock-only`
+    // npm-workspaces: `npm install`
     // -----------------------------------------------------------------------
 
     #[test]
-    fn npm_workspaces_lock_runs_npm_install_package_lock_only() {
+    fn npm_workspaces_activate_hook_runs_npm_install() {
         let tmp = TempDir::new().unwrap();
         let root = tmp.path();
 
@@ -1397,34 +1397,33 @@ mod lock_hooks {
         let integration = NpmWorkspaces;
         integration.activate(&ctx).unwrap();
 
-        // Lock should succeed (runs `npm install --package-lock-only`)
-        let result = integration.lock(&ctx);
+        // Activate hook should succeed (runs `npm install`)
+        let result = integration.activate_hook(&ctx);
         if which::which("npm").is_ok() {
             assert!(
                 result.is_ok(),
-                "npm lock hook should succeed when npm is available: {:?}",
+                "npm activate hook should succeed when npm is available: {:?}",
                 result.err()
             );
-            // After lock, a package-lock.json should exist
+            // After install, a package-lock.json should exist
             assert!(
                 root.join("package-lock.json").exists(),
-                "npm lock hook should create package-lock.json"
+                "npm activate hook should create package-lock.json"
             );
         } else {
-            // When npm is not on PATH, the lock hook should fail gracefully
             assert!(
                 result.is_err(),
-                "npm lock hook should fail when npm is not available"
+                "npm activate hook should fail when npm is not available"
             );
         }
     }
 
     #[test]
-    fn npm_workspaces_lock_noop_when_no_repos_detected() {
+    fn npm_workspaces_activate_hook_noop_when_no_repos_detected() {
         let tmp = TempDir::new().unwrap();
         let root = tmp.path();
 
-        // No package.json in any repo — lock should be a no-op
+        // No package.json in any repo
         let manifest = make_manifest(vec![("github/acme/server", Role::Primary)]);
         let project = ProjectName::new("test-project");
         let config = IntegrationConfig::default();
@@ -1432,10 +1431,10 @@ mod lock_hooks {
         let ctx = make_ctx(root, &project, &manifest, &config, &cache);
 
         let integration = NpmWorkspaces;
-        let result = integration.lock(&ctx);
+        let result = integration.activate_hook(&ctx);
         assert!(
             result.is_ok(),
-            "npm lock should be no-op when no repos detected"
+            "npm activate hook should be no-op when no repos detected"
         );
         assert!(
             !root.join("package-lock.json").exists(),
@@ -1448,11 +1447,10 @@ mod lock_hooks {
     // -----------------------------------------------------------------------
 
     #[test]
-    fn cargo_workspace_lock_runs_cargo_generate_lockfile() {
+    fn cargo_workspace_activate_hook_runs_cargo_generate_lockfile() {
         let tmp = TempDir::new().unwrap();
         let root = tmp.path();
 
-        // Create a minimal Cargo.toml and src/lib.rs in the repo
         write_file(
             root,
             "github/acme/server/Cargo.toml",
@@ -1466,37 +1464,33 @@ mod lock_hooks {
         let cache = HashMap::new();
         let ctx = make_ctx(root, &project, &manifest, &config, &cache);
 
-        // Activate first so the root Cargo.toml workspace exists
         let integration = CargoWorkspace;
         integration.activate(&ctx).unwrap();
 
-        // Lock should succeed (runs `cargo generate-lockfile`)
-        let result = integration.lock(&ctx);
+        let result = integration.activate_hook(&ctx);
         if which::which("cargo").is_ok() {
             assert!(
                 result.is_ok(),
-                "cargo lock hook should succeed when cargo is available: {:?}",
+                "cargo activate hook should succeed when cargo is available: {:?}",
                 result.err()
             );
-            // After lock, a Cargo.lock should exist
             assert!(
                 root.join("Cargo.lock").exists(),
-                "cargo lock hook should create Cargo.lock"
+                "cargo activate hook should create Cargo.lock"
             );
         } else {
             assert!(
                 result.is_err(),
-                "cargo lock hook should fail when cargo is not available"
+                "cargo activate hook should fail when cargo is not available"
             );
         }
     }
 
     #[test]
-    fn cargo_workspace_lock_noop_when_no_repos_detected() {
+    fn cargo_workspace_activate_hook_noop_when_no_repos_detected() {
         let tmp = TempDir::new().unwrap();
         let root = tmp.path();
 
-        // No Cargo.toml in any repo
         let manifest = make_manifest(vec![("github/acme/server", Role::Primary)]);
         let project = ProjectName::new("test-project");
         let config = IntegrationConfig::default();
@@ -1504,10 +1498,10 @@ mod lock_hooks {
         let ctx = make_ctx(root, &project, &manifest, &config, &cache);
 
         let integration = CargoWorkspace;
-        let result = integration.lock(&ctx);
+        let result = integration.activate_hook(&ctx);
         assert!(
             result.is_ok(),
-            "cargo lock should be no-op when no repos detected"
+            "cargo activate hook should be no-op when no repos detected"
         );
         assert!(
             !root.join("Cargo.lock").exists(),
@@ -1516,15 +1510,14 @@ mod lock_hooks {
     }
 
     // -----------------------------------------------------------------------
-    // uv-workspace: `uv lock`
+    // uv-workspace: `uv sync`
     // -----------------------------------------------------------------------
 
     #[test]
-    fn uv_workspace_lock_runs_uv_lock() {
+    fn uv_workspace_activate_hook_runs_uv_sync() {
         let tmp = TempDir::new().unwrap();
         let root = tmp.path();
 
-        // Create a minimal pyproject.toml in the repo
         write_file(
             root,
             "github/acme/server/pyproject.toml",
@@ -1537,37 +1530,33 @@ mod lock_hooks {
         let cache = HashMap::new();
         let ctx = make_ctx(root, &project, &manifest, &config, &cache);
 
-        // Activate first so the root pyproject.toml exists
         let integration = UvWorkspace;
         integration.activate(&ctx).unwrap();
 
-        // Lock should succeed (runs `uv lock`)
-        let result = integration.lock(&ctx);
+        let result = integration.activate_hook(&ctx);
         if which::which("uv").is_ok() {
             assert!(
                 result.is_ok(),
-                "uv lock hook should succeed when uv is available: {:?}",
+                "uv activate hook should succeed when uv is available: {:?}",
                 result.err()
             );
-            // After lock, a uv.lock should exist
             assert!(
                 root.join("uv.lock").exists(),
-                "uv lock hook should create uv.lock"
+                "uv activate hook should create uv.lock"
             );
         } else {
             assert!(
                 result.is_err(),
-                "uv lock hook should fail when uv is not available"
+                "uv activate hook should fail when uv is not available"
             );
         }
     }
 
     #[test]
-    fn uv_workspace_lock_noop_when_no_repos_detected() {
+    fn uv_workspace_activate_hook_noop_when_no_repos_detected() {
         let tmp = TempDir::new().unwrap();
         let root = tmp.path();
 
-        // No pyproject.toml in any repo
         let manifest = make_manifest(vec![("github/acme/server", Role::Primary)]);
         let project = ProjectName::new("test-project");
         let config = IntegrationConfig::default();
@@ -1575,10 +1564,10 @@ mod lock_hooks {
         let ctx = make_ctx(root, &project, &manifest, &config, &cache);
 
         let integration = UvWorkspace;
-        let result = integration.lock(&ctx);
+        let result = integration.activate_hook(&ctx);
         assert!(
             result.is_ok(),
-            "uv lock should be no-op when no repos detected"
+            "uv activate hook should be no-op when no repos detected"
         );
         assert!(
             !root.join("uv.lock").exists(),
@@ -1587,15 +1576,14 @@ mod lock_hooks {
     }
 
     // -----------------------------------------------------------------------
-    // pnpm-workspaces: `pnpm install --lockfile-only`
+    // pnpm-workspaces: `pnpm install`
     // -----------------------------------------------------------------------
 
     #[test]
-    fn pnpm_workspaces_lock_runs_pnpm_install_lockfile_only() {
+    fn pnpm_workspaces_activate_hook_runs_pnpm_install() {
         let tmp = TempDir::new().unwrap();
         let root = tmp.path();
 
-        // Set up a repo with a valid package.json so pnpm integration detects it
         write_file(
             root,
             "github/acme/server/package.json",
@@ -1608,37 +1596,33 @@ mod lock_hooks {
         let cache = HashMap::new();
         let ctx = make_ctx(root, &project, &manifest, &config, &cache);
 
-        // Activate first so the pnpm-workspace.yaml exists
         let integration = PnpmWorkspaces;
         integration.activate(&ctx).unwrap();
 
-        // Lock should succeed (runs `pnpm install --lockfile-only`)
-        let result = integration.lock(&ctx);
+        let result = integration.activate_hook(&ctx);
         if which::which("pnpm").is_ok() {
             assert!(
                 result.is_ok(),
-                "pnpm lock hook should succeed when pnpm is available: {:?}",
+                "pnpm activate hook should succeed when pnpm is available: {:?}",
                 result.err()
             );
-            // After lock, a pnpm-lock.yaml should exist
             assert!(
                 root.join("pnpm-lock.yaml").exists(),
-                "pnpm lock hook should create pnpm-lock.yaml"
+                "pnpm activate hook should create pnpm-lock.yaml"
             );
         } else {
             assert!(
                 result.is_err(),
-                "pnpm lock hook should fail when pnpm is not available"
+                "pnpm activate hook should fail when pnpm is not available"
             );
         }
     }
 
     #[test]
-    fn pnpm_workspaces_lock_noop_when_no_repos_detected() {
+    fn pnpm_workspaces_activate_hook_noop_when_no_repos_detected() {
         let tmp = TempDir::new().unwrap();
         let root = tmp.path();
 
-        // No package.json in any repo
         let manifest = make_manifest(vec![("github/acme/server", Role::Primary)]);
         let project = ProjectName::new("test-project");
         let config = IntegrationConfig::from_yaml("enabled: true");
@@ -1646,10 +1630,10 @@ mod lock_hooks {
         let ctx = make_ctx(root, &project, &manifest, &config, &cache);
 
         let integration = PnpmWorkspaces;
-        let result = integration.lock(&ctx);
+        let result = integration.activate_hook(&ctx);
         assert!(
             result.is_ok(),
-            "pnpm lock should be no-op when no repos detected"
+            "pnpm activate hook should be no-op when no repos detected"
         );
         assert!(
             !root.join("pnpm-lock.yaml").exists(),
@@ -1658,11 +1642,11 @@ mod lock_hooks {
     }
 
     // -----------------------------------------------------------------------
-    // go-work: no lock hook (uses default no-op)
+    // go-work: no activate hook (default no-op)
     // -----------------------------------------------------------------------
 
     #[test]
-    fn go_work_lock_is_noop() {
+    fn go_work_activate_hook_is_noop() {
         let tmp = TempDir::new().unwrap();
         let root = tmp.path();
 
@@ -1675,21 +1659,20 @@ mod lock_hooks {
         let ctx = make_ctx(root, &project, &manifest, &config, &cache);
 
         let integration = GoWork;
-        let result = integration.lock(&ctx);
-        assert!(result.is_ok(), "go-work lock should be a no-op");
-        // No lock file should be created
+        let result = integration.activate_hook(&ctx);
+        assert!(result.is_ok(), "go-work activate hook should be a no-op");
         assert!(
             !root.join("go.sum").exists(),
-            "go-work lock should not create go.sum"
+            "go-work activate hook should not create go.sum"
         );
     }
 
     // -----------------------------------------------------------------------
-    // gita: no-op lock hook
+    // gita: no-op activate hook
     // -----------------------------------------------------------------------
 
     #[test]
-    fn gita_lock_is_noop() {
+    fn gita_activate_hook_is_noop() {
         let tmp = TempDir::new().unwrap();
         let root = tmp.path();
 
@@ -1700,16 +1683,16 @@ mod lock_hooks {
         let ctx = make_ctx(root, &project, &manifest, &config, &cache);
 
         let integration = Gita;
-        let result = integration.lock(&ctx);
-        assert!(result.is_ok(), "gita lock should be a no-op");
+        let result = integration.activate_hook(&ctx);
+        assert!(result.is_ok(), "gita activate hook should be a no-op");
     }
 
     // -----------------------------------------------------------------------
-    // vscode-workspace: no-op lock hook
+    // vscode-workspace: no-op activate hook
     // -----------------------------------------------------------------------
 
     #[test]
-    fn vscode_workspace_lock_is_noop() {
+    fn vscode_workspace_activate_hook_is_noop() {
         let tmp = TempDir::new().unwrap();
         let root = tmp.path();
 
@@ -1720,8 +1703,11 @@ mod lock_hooks {
         let ctx = make_ctx(root, &project, &manifest, &config, &cache);
 
         let integration = VscodeWorkspace;
-        let result = integration.lock(&ctx);
-        assert!(result.is_ok(), "vscode-workspace lock should be a no-op");
+        let result = integration.activate_hook(&ctx);
+        assert!(
+            result.is_ok(),
+            "vscode-workspace activate hook should be a no-op"
+        );
     }
 }
 
@@ -1889,7 +1875,7 @@ mod static_files {
     }
 
     #[test]
-    fn lock_is_noop() {
+    fn activate_hook_is_noop() {
         let tmp = TempDir::new().unwrap();
         let root = tmp.path();
 
@@ -1900,7 +1886,10 @@ mod static_files {
         let ctx = make_ctx(root, &project, &manifest, &config, &cache);
 
         let integration = StaticFiles;
-        let result = integration.lock(&ctx);
-        assert!(result.is_ok(), "static-files lock should be a no-op");
+        let result = integration.activate_hook(&ctx);
+        assert!(
+            result.is_ok(),
+            "static-files activate hook should be a no-op"
+        );
     }
 }

@@ -475,13 +475,19 @@ pub fn restore_working_tree_to_head(repo: &Path) -> anyhow::Result<()> {
 /// Compares each repo's HEAD SHA against its `rwv.lock` entry. Outputs per-repo
 /// status to stdout. Returns `Ok(true)` if any repo's tip differs from its lock
 /// entry (exit 1), `Ok(false)` if all match (exit 0).
-pub fn run_check_locked(cwd: &std::path::Path) -> anyhow::Result<bool> {
+///
+/// When `project_override` is `Some`, only that project is checked
+/// (does not change `.rwv-active`).
+pub fn run_check_locked(
+    cwd: &std::path::Path,
+    project_override: Option<crate::manifest::ProjectName>,
+) -> anyhow::Result<bool> {
     use crate::git::GitVcs;
     use crate::manifest::Project;
     use crate::vcs::Vcs;
     use crate::workspace::{WorkspaceContext, WorkspaceLocation};
 
-    let ctx = WorkspaceContext::resolve(cwd, None)?;
+    let ctx = WorkspaceContext::resolve(cwd, project_override)?;
     let git = GitVcs;
     let workspace_dir = ctx.active_path().to_path_buf();
 
@@ -569,7 +575,14 @@ pub fn run_check_locked(cwd: &std::path::Path) -> anyhow::Result<bool> {
 /// in place with `git reset` (index ← HEAD, working tree untouched).
 ///
 /// Returns `Ok(true)` if there are errors (exit 1), `Ok(false)` if clean.
-pub fn run_check(cwd: &std::path::Path, fix: bool) -> anyhow::Result<bool> {
+/// When `project_override` is `Some`, the context resolves to that
+/// project for the purposes of activation/check scoping (does not
+/// change `.rwv-active`).
+pub fn run_check(
+    cwd: &std::path::Path,
+    fix: bool,
+    project_override: Option<crate::manifest::ProjectName>,
+) -> anyhow::Result<bool> {
     use crate::git::GitVcs;
     use crate::integration::Severity;
     use crate::integration_runner::run_checks;
@@ -577,7 +590,7 @@ pub fn run_check(cwd: &std::path::Path, fix: bool) -> anyhow::Result<bool> {
     use crate::vcs::Vcs;
     use crate::workspace::{WorkspaceContext, WorkspaceLocation, WorkspaceSession};
 
-    let ctx = WorkspaceContext::resolve(cwd, None)?;
+    let ctx = WorkspaceContext::resolve(cwd, project_override)?;
     let workspace_dir = ctx.active_path().to_path_buf();
 
     // Build session (runs builtin_registries → scan_repos_on_disk → discover_project_paths).

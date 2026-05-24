@@ -118,6 +118,9 @@ fn push_manifest_to_bare(bare: &Path, repos: &[(&str, &str)]) {
 /// Set up a workspace with a single project that has an `rwv.yaml` and is
 /// itself a git repo (required by workspace resolution).
 ///
+/// Also writes `.rwv-active` to the new project so action verbs resolve
+/// cleanly post fo-h9prh (no CWD override anymore).
+///
 /// Returns `(workspace_root, project_dir)`.
 fn setup_workspace_with_project(
     tmp: &tempfile::TempDir,
@@ -143,6 +146,12 @@ fn setup_workspace_with_project(
     std::fs::write(project_dir.join("rwv.yaml"), &yaml).unwrap();
     git(&["add", "rwv.yaml"], &project_dir);
     git(&["commit", "-m", "init"], &project_dir);
+
+    std::fs::write(
+        workspace.join(".rwv-active"),
+        format!("{project_name}\n"),
+    )
+    .unwrap();
 
     (workspace, project_dir)
 }

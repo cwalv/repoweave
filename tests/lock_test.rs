@@ -56,6 +56,10 @@ fn init_git_repo(path: &Path) -> String {
 }
 
 /// Write an `rwv.yaml` manifest into a project directory.
+///
+/// Also writes `.rwv-active` at the workspace root pointing at the
+/// project, so lock-test scenarios that run `rwv lock` (an action verb)
+/// resolve the project correctly post fo-h9prh.
 fn write_manifest(project_dir: &Path, repos: &[(&str, &str)]) {
     std::fs::create_dir_all(project_dir).unwrap();
     let mut yaml = String::from("repositories:\n");
@@ -65,6 +69,16 @@ fn write_manifest(project_dir: &Path, repos: &[(&str, &str)]) {
         ));
     }
     std::fs::write(project_dir.join("rwv.yaml"), &yaml).unwrap();
+
+    // Derive (workspace_root, project_name) and set .rwv-active. The
+    // project_dir is `<root>/projects/<name>/`, so the root is two
+    // ancestors up.
+    if let (Some(name), Some(root)) = (
+        project_dir.file_name().and_then(|n| n.to_str()),
+        project_dir.parent().and_then(|p| p.parent()),
+    ) {
+        let _ = std::fs::write(root.join(".rwv-active"), format!("{name}\n"));
+    }
 }
 
 /// Build a `Command` for the `rwv` binary.
@@ -669,25 +683,28 @@ fn lock_records_tag_per_repo_independently() {
 }
 
 // ---------------------------------------------------------------------------
-// 10. Integration lock hooks run after rwv.lock write
+// 10. `rwv lock` does NOT run integration hooks (fo-4t6iv)
 // ---------------------------------------------------------------------------
 
 #[test]
-fn lock_runs_integration_lock_hooks() {
+fn lock_does_not_run_integration_hooks() {
+    // Post fo-4t6iv: `rwv lock` is a pure git SHA snapshot. The cargo
+    // integration's hook (which would run `cargo generate-lockfile` and
+    // fail with no workspace-root Cargo.toml) now fires on `rwv activate`,
+    // not on `rwv lock`. So `rwv lock` should succeed cleanly without
+    // touching ecosystem state.
     let tmp = tempfile::tempdir().unwrap();
     let root = make_workspace(tmp.path(), "ws");
 
     let repo_path = "github/acme/server";
     init_git_repo(&root.join(repo_path));
 
-    // Create a project with a Cargo.toml in the repo so cargo integration detects it
     let repo_dir = root.join(repo_path);
     std::fs::write(
         repo_dir.join("Cargo.toml"),
         "[package]\nname = \"server\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
     )
     .unwrap();
-    // Commit the Cargo.toml so the repo is clean
     let _ = common::git()
         .args(["add", "."])
         .current_dir(&repo_dir)
@@ -713,26 +730,25 @@ fn lock_runs_integration_lock_hooks() {
         &[(repo_path, "https://github.com/acme/server.git")],
     );
 
-    // Run lock — the cargo integration's lock hook will run after the
-    // rwv.lock write and fail (no workspace-root Cargo.toml here). Per
-    // audit B1, that failure MUST cause `rwv lock` to exit non-zero with
-    // a message refusing to commit incoherent state; the previous
-    // behaviour (log + Ok) silently committed bad locks in CI. The lock
-    // file itself is still written, since the hook runs after the write.
-    let assert = rwv_cmd()
+    rwv_cmd()
         .arg("lock")
         .current_dir(&project_dir)
         .assert()
-        .failure();
-    let stderr = String::from_utf8_lossy(&assert.get_output().stderr).into_owned();
-    assert!(
-        stderr.contains("integration lock-hook error") && stderr.contains("refusing"),
-        "expected B1 refusal message in stderr, got: {stderr}"
-    );
+        .success();
+
     let lock_path = project_dir.join("rwv.lock");
     assert!(
         lock_path.exists(),
-        "rwv.lock is written before hooks run; presence confirms hooks ran"
+        "rwv.lock should be written by `rwv lock`"
+    );
+
+    // The workspace-root Cargo.toml would only be created by activation
+    // (run_activations). Since we never activated, it should be absent.
+    // This is a sanity check that `rwv lock` is not running activations
+    // as a side effect either.
+    assert!(
+        !root.join("Cargo.toml").exists(),
+        "rwv lock must not generate the workspace-root Cargo.toml"
     );
 }
 
