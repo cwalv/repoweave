@@ -323,14 +323,14 @@ pub fn run_push(
     //    the manifest SHAs we just pushed — pushing it last preserves the
     //    invariant that the remote-side lock never references unpushed
     //    objects. Use the same trait method so role policy stays in one
-    //    place; the project repo is always Role::Primary at the trait
+    //    place; the project repo is always Role::Owned at the trait
     //    layer (it's the canonical-tip carrier; not declared in any
     //    manifest).
     println!(
         "rwv push: pushing project repo projects/{} ({} -> origin)",
         project_name, project_current,
     );
-    if let Err(e) = git.push_with_role(&project_dir, Role::Primary, force) {
+    if let Err(e) = git.push_with_role(&project_dir, Role::Owned, force) {
         anyhow::bail!(
             "project-repo push failed after all manifest repos pushed cleanly: {e}. \
              Manifest-side state is published; the lock carrier is not. \
@@ -403,7 +403,7 @@ fn push_one(
 fn remote_label(role: Role) -> &'static str {
     match role {
         Role::Fork => "upstream",
-        Role::Primary | Role::Dependency | Role::Reference => "origin",
+        Role::Owned | Role::Dependency | Role::Reference => "origin",
     }
 }
 

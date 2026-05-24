@@ -256,7 +256,7 @@ mod tests {
                 lock_sha: Some("abc123".into()),
                 relation: LockRelation::Ok,
                 mid_op: None,
-                role: "primary".into(),
+                role: "owned".into(),
                 url: "https://example.com/repo.git".into(),
                 project: "demo".into(),
                 absolute_path: "/abs/github/org/repo".into(),

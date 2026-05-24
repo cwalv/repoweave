@@ -672,7 +672,7 @@ mod tests {
         let reference = RepoPath::new("github/org/reference");
         manifest
             .repositories
-            .insert(primary.clone(), make_entry(Role::Primary));
+            .insert(primary.clone(), make_entry(Role::Owned));
         manifest
             .repositories
             .insert(reference.clone(), make_entry(Role::Reference));
@@ -699,7 +699,7 @@ mod tests {
         let reference = RepoPath::new("github/org/reference");
         manifest
             .repositories
-            .insert(primary.clone(), make_entry(Role::Primary));
+            .insert(primary.clone(), make_entry(Role::Owned));
         manifest
             .repositories
             .insert(reference, make_entry(Role::Reference));

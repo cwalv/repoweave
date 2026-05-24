@@ -6,7 +6,7 @@
 //!
 //! Silent (exit 0, no output) when not inside a repoweave workspace.
 
-use crate::manifest::{Manifest, ProjectName, RepoPath, Role};
+use crate::manifest::{Manifest, ProjectName, RepoPath};
 use crate::workspace::{WorkspaceContext, WorkspaceLocation};
 use std::path::Path;
 
@@ -218,16 +218,10 @@ fn render_repo_table(out: &mut String, manifest: &Manifest) {
     repos.sort_by_key(|(rp, _)| rp.as_str().to_string());
 
     for (rp, entry) in repos {
-        let role_str = match entry.role {
-            Role::Primary => "primary",
-            Role::Fork => "fork",
-            Role::Dependency => "dependency",
-            Role::Reference => "reference",
-        };
         out.push_str(&format!(
             "| `{}` | {} | {} | {} |\n",
             rp.as_str(),
-            role_str,
+            entry.role.as_str(),
             entry.version,
             entry.url
         ));
@@ -401,7 +395,7 @@ repositories:
     type: git
     url: https://github.com/acme/server.git
     version: main
-    role: primary
+    role: owned
   github/acme/client:
     type: git
     url: https://github.com/acme/client.git
@@ -423,7 +417,7 @@ integrations:
         assert!(output.contains("**Project**: `web-app`"));
         assert!(output.contains("## Repositories"));
         assert!(output.contains("github/acme/server"));
-        assert!(output.contains("primary"));
+        assert!(output.contains("owned"));
         assert!(output.contains("github/acme/client"));
         assert!(output.contains("fork"));
         assert!(output.contains("## Integrations"));
@@ -457,7 +451,7 @@ repositories:
     type: git
     url: https://github.com/acme/server.git
     version: main
-    role: primary
+    role: owned
 "#,
         );
 

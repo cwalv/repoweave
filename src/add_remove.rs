@@ -487,7 +487,7 @@ pub fn run_add_new(
         vcs_type: VcsType::Git,
         url,
         version: default_branch,
-        role: Role::Primary,
+        role: Role::Owned,
     };
     manifest.repositories.insert(repo_path.clone(), entry);
 

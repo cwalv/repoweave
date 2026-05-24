@@ -310,12 +310,20 @@ impl<'de> Deserialize<'de> for RepoUrl {
 // ---------------------------------------------------------------------------
 
 /// How freely code in this repo may be modified within the owning project.
+///
+/// **Naming.** The `Owned` variant accepts both `owned` (canonical) and `primary`
+/// (legacy alias) when parsing manifests and CLI `--role` arguments. New YAML
+/// written by `rwv add` / `rwv init` and all `--json` output use `owned`. The
+/// `primary` alias is accepted silently for back-compat with manifests in the
+/// wild; see `reference/roles.md` for the migration path.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, clap::ValueEnum)]
 #[serde(rename_all = "lowercase")]
 #[clap(rename_all = "lowercase")]
 pub enum Role {
     /// Your code. Change freely.
-    Primary,
+    #[serde(alias = "primary")]
+    #[clap(alias = "primary")]
+    Owned,
     /// Forked upstream. Changes ideally go upstream.
     Fork,
     /// Build dependency. Changes need upstream acceptance.
@@ -333,7 +341,7 @@ impl Role {
 
     pub fn as_str(&self) -> &'static str {
         match self {
-            Role::Primary => "primary",
+            Role::Owned => "owned",
             Role::Fork => "fork",
             Role::Dependency => "dependency",
             Role::Reference => "reference",
@@ -728,7 +736,7 @@ repositories:
     type: git
     url: https://github.com/acme/server.git
     version: main
-    role: primary
+    role: owned
   github/acme/client:
     type: git
     url: https://github.com/acme/client.git
@@ -745,7 +753,7 @@ repositories:
     type: git
     url: https://github.com/acme/server.git
     version: main
-    role: primary
+    role: owned
 "#;
 
     const VALID_LOCK: &str = r#"
@@ -770,8 +778,8 @@ repositories:
     // ========================================================================
 
     #[test]
-    fn role_primary_is_active() {
-        assert!(Role::Primary.is_active());
+    fn role_owned_is_active() {
+        assert!(Role::Owned.is_active());
     }
 
     // ========================================================================
@@ -922,7 +930,7 @@ repositories:
   foo:
     type: git
     version: main
-    role: primary
+    role: owned
 "#,
         )
         .unwrap();
@@ -1042,11 +1050,30 @@ repositories:
 
     #[test]
     fn role_serde_round_trip_all_variants() {
-        for role in [Role::Primary, Role::Fork, Role::Dependency, Role::Reference] {
+        for role in [Role::Owned, Role::Fork, Role::Dependency, Role::Reference] {
             let yaml = serde_yaml::to_string(&role).unwrap();
             let restored: Role = serde_yaml::from_str(&yaml).unwrap();
             assert_eq!(role, restored);
         }
+    }
+
+    /// Legacy `role: primary` YAML spelling must still deserialize to
+    /// `Role::Owned` for back-compat with manifests written before the rename.
+    /// Serialization is canonical (`owned`); only the input side accepts the
+    /// alias. See `reference/roles.md` for the migration path.
+    #[test]
+    fn role_legacy_primary_alias_deserializes_to_owned() {
+        let role: Role = serde_yaml::from_str("primary").unwrap();
+        assert_eq!(role, Role::Owned);
+    }
+
+    /// Serialization is one-way: `Role::Owned` writes as `owned`, never
+    /// `primary`. New manifests produced by the tool stay on the canonical
+    /// spelling.
+    #[test]
+    fn role_owned_serializes_as_owned_not_primary() {
+        let yaml = serde_yaml::to_string(&Role::Owned).unwrap();
+        assert_eq!(yaml.trim(), "owned");
     }
 
     #[test]
@@ -1182,7 +1209,7 @@ repositories:
     type: git
     url: https://github.com/acme/server.git
     version: main
-    role: primary
+    role: owned
 workweave:
   link:
     - target/

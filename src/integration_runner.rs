@@ -324,7 +324,7 @@ mod tests {
                 vcs_type: crate::manifest::VcsType::Git,
                 url: "https://github.com/acme/server.git".parse().unwrap(),
                 version: RefName::new("main"),
-                role: crate::manifest::Role::Primary,
+                role: crate::manifest::Role::Owned,
             },
         );
         Manifest {

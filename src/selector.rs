@@ -252,7 +252,9 @@ impl FromStr for Role {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.to_ascii_lowercase().as_str() {
-            "primary" => Ok(Role::Primary),
+            // `primary` is the legacy alias for `owned`. Accepted silently
+            // for back-compat; new docs / scripts should use `owned`.
+            "owned" | "primary" => Ok(Role::Owned),
             "fork" => Ok(Role::Fork),
             "dependency" => Ok(Role::Dependency),
             "reference" => Ok(Role::Reference),
@@ -273,14 +275,14 @@ mod tests {
     fn empty_filter_matches_everything() {
         let f = RepoFilter::parse(&[], &[]).unwrap();
         assert!(f.is_empty());
-        assert!(f.matches(&rp("github/cwalv/repoweave"), Role::Primary));
+        assert!(f.matches(&rp("github/cwalv/repoweave"), Role::Owned));
         assert!(f.matches(&rp("anywhere/else"), Role::Reference));
     }
 
     #[test]
     fn parse_role_is_case_insensitive() {
         let f = RepoFilter::parse(&["Primary".into()], &[]).unwrap();
-        assert!(f.matches(&rp("x"), Role::Primary));
+        assert!(f.matches(&rp("x"), Role::Owned));
         let f = RepoFilter::parse(&["DEPENDENCY".into()], &[]).unwrap();
         assert!(f.matches(&rp("x"), Role::Dependency));
     }
@@ -297,7 +299,7 @@ mod tests {
     #[test]
     fn role_filter_includes_matching_role_excludes_others() {
         let f = RepoFilter::parse(&["primary".into()], &[]).unwrap();
-        assert!(f.matches(&rp("any/path"), Role::Primary));
+        assert!(f.matches(&rp("any/path"), Role::Owned));
         assert!(!f.matches(&rp("any/path"), Role::Dependency));
         assert!(!f.matches(&rp("any/path"), Role::Fork));
         assert!(!f.matches(&rp("any/path"), Role::Reference));
@@ -306,7 +308,7 @@ mod tests {
     #[test]
     fn multiple_roles_accumulate_as_union() {
         let f = RepoFilter::parse(&["primary".into(), "fork".into()], &[]).unwrap();
-        assert!(f.matches(&rp("x"), Role::Primary));
+        assert!(f.matches(&rp("x"), Role::Owned));
         assert!(f.matches(&rp("x"), Role::Fork));
         assert!(!f.matches(&rp("x"), Role::Reference));
     }
@@ -322,17 +324,17 @@ mod tests {
     #[test]
     fn regex_selector_matches_pattern() {
         let f = RepoFilter::parse(&[], &["re:^github/cwalv/".into()]).unwrap();
-        assert!(f.matches(&rp("github/cwalv/repoweave"), Role::Primary));
+        assert!(f.matches(&rp("github/cwalv/repoweave"), Role::Owned));
         assert!(f.matches(&rp("github/cwalv/other"), Role::Reference));
-        assert!(!f.matches(&rp("github/other/repoweave"), Role::Primary));
+        assert!(!f.matches(&rp("github/other/repoweave"), Role::Owned));
     }
 
     #[test]
     fn glob_selector_matches_pattern() {
         let f = RepoFilter::parse(&[], &["glob:github/cwalv/*".into()]).unwrap();
-        assert!(f.matches(&rp("github/cwalv/repoweave"), Role::Primary));
+        assert!(f.matches(&rp("github/cwalv/repoweave"), Role::Owned));
         assert!(f.matches(&rp("github/cwalv/foo"), Role::Reference));
-        assert!(!f.matches(&rp("github/other/foo"), Role::Primary));
+        assert!(!f.matches(&rp("github/other/foo"), Role::Owned));
     }
 
     #[test]
@@ -341,12 +343,12 @@ mod tests {
         // component only. `**` is required to cross `/`. This mirrors
         // .gitignore / ripgrep / cargo conventions.
         let f = RepoFilter::parse(&[], &["glob:github/*".into()]).unwrap();
-        assert!(f.matches(&rp("github/cwalv"), Role::Primary));
-        assert!(!f.matches(&rp("github/cwalv/repoweave"), Role::Primary));
+        assert!(f.matches(&rp("github/cwalv"), Role::Owned));
+        assert!(!f.matches(&rp("github/cwalv/repoweave"), Role::Owned));
 
         let f = RepoFilter::parse(&[], &["glob:github/**".into()]).unwrap();
-        assert!(f.matches(&rp("github/cwalv"), Role::Primary));
-        assert!(f.matches(&rp("github/cwalv/repoweave"), Role::Primary));
+        assert!(f.matches(&rp("github/cwalv"), Role::Owned));
+        assert!(f.matches(&rp("github/cwalv/repoweave"), Role::Owned));
     }
 
     #[test]
@@ -382,7 +384,7 @@ mod tests {
         // --role primary --repo github/external/dep — match either.
         let f = RepoFilter::parse(&["primary".into()], &["github/external/dep".into()]).unwrap();
         // Primary-role repo at arbitrary path passes (role match).
-        assert!(f.matches(&rp("github/me/code"), Role::Primary));
+        assert!(f.matches(&rp("github/me/code"), Role::Owned));
         // Path-matched repo with non-primary role passes (selector match).
         assert!(f.matches(&rp("github/external/dep"), Role::Dependency));
         // Other dependency-role repos at other paths do not pass.
@@ -400,10 +402,10 @@ mod tests {
             ],
         )
         .unwrap();
-        assert!(f.matches(&rp("github/a/exact"), Role::Primary));
+        assert!(f.matches(&rp("github/a/exact"), Role::Owned));
         assert!(f.matches(&rp("lib/foo"), Role::Dependency));
         assert!(f.matches(&rp("vendor/acme/proj"), Role::Reference));
-        assert!(!f.matches(&rp("nothing/matches"), Role::Primary));
+        assert!(!f.matches(&rp("nothing/matches"), Role::Owned));
     }
 
     #[test]

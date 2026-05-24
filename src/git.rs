@@ -139,7 +139,7 @@ impl GitVcs {
 fn remote_name_for_role(role: Role) -> &'static str {
     match role {
         Role::Fork => "upstream",
-        Role::Primary | Role::Dependency | Role::Reference => "origin",
+        Role::Owned | Role::Dependency | Role::Reference => "origin",
     }
 }
 
