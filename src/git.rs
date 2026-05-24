@@ -1,5 +1,6 @@
 //! Git implementation of the [`Vcs`] trait.
 
+use crate::manifest::Role;
 use crate::vcs::{RefName, ResolvedRevisionId, Vcs, VcsError};
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -129,6 +130,19 @@ impl GitVcs {
     }
 }
 
+/// Git remote name convention for a given [`Role`].
+///
+/// `Role::Fork` clones to `upstream` so a stray `git push` does not target
+/// the source-of-record (typically returning HTTP 403). All other roles
+/// clone to the conventional `origin`. This policy belongs in the VCS
+/// layer rather than the manifest layer — see fo-mb2y9.
+fn remote_name_for_role(role: Role) -> &'static str {
+    match role {
+        Role::Fork => "upstream",
+        Role::Primary | Role::Dependency | Role::Reference => "origin",
+    }
+}
+
 /// True when stderr signals "revision unknown / no such object".
 fn is_revision_not_found(stderr: &str) -> bool {
     stderr.contains("unknown revision")
@@ -206,6 +220,20 @@ impl Vcs for GitVcs {
             Path::new("."),
         )?;
         Ok(())
+    }
+
+    fn clone_with_role(&self, url: &str, dest: &Path, role: Role) -> Result<(), VcsError> {
+        self.clone_repo_with_remote_name(url, dest, remote_name_for_role(role))
+    }
+
+    fn resolve_branch_on_remote(
+        &self,
+        repo: &Path,
+        role: Role,
+        branch: &RefName,
+    ) -> Result<ResolvedRevisionId, VcsError> {
+        let qualified = format!("{}/{}", remote_name_for_role(role), branch.as_str());
+        self.resolve_revision(repo, &qualified)
     }
 
     fn head_revision(&self, repo: &Path) -> Result<ResolvedRevisionId, VcsError> {

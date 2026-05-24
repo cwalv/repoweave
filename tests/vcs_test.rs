@@ -1,5 +1,6 @@
 use repoweave::git::GitVcs;
-use repoweave::vcs::{ResolvedRevisionId, Vcs};
+use repoweave::manifest::Role;
+use repoweave::vcs::{RefName, ResolvedRevisionId, Vcs, VcsError};
 use std::fs;
 use tempfile::TempDir;
 
@@ -571,4 +572,118 @@ fn raw_revision_id_tag_resolves_to_head_sha() {
     assert_eq!(resolved, head);
     // Display preserves the tag form for human-readable output / lock writes.
     assert_eq!(resolved.display_str(), "v1.0.0");
+}
+
+// ============================================================================
+// Vcs::resolve_branch_on_remote — role-aware remote ref resolution (fo-mb2y9)
+// ============================================================================
+
+/// Build a workspace with two repos: a "remote" with one commit on `main`,
+/// and a "local" clone whose remote is named `remote_name`. Returns the
+/// workspace tempdir and the path to the local clone.
+fn repo_with_remote(remote_name: &str) -> (TempDir, std::path::PathBuf) {
+    let workspace = TempDir::new().unwrap();
+    let remote_path = workspace.path().join("remote");
+    let local_path = workspace.path().join("local");
+
+    // Build the remote repo with one commit on `main`.
+    fs::create_dir_all(&remote_path).unwrap();
+    git(&remote_path, &["init", "--initial-branch=main"]);
+    git(&remote_path, &["config", "user.email", "test@test.com"]);
+    git(&remote_path, &["config", "user.name", "Test"]);
+    fs::write(remote_path.join("README.md"), "remote").unwrap();
+    git(&remote_path, &["add", "."]);
+    git(&remote_path, &["commit", "-m", "initial"]);
+
+    // Clone into local with the requested remote name and fetch.
+    let remote_url = remote_path.to_str().unwrap();
+    let local_str = local_path.to_str().unwrap();
+    git(
+        workspace.path(),
+        &["clone", "--origin", remote_name, remote_url, local_str],
+    );
+
+    (workspace, local_path)
+}
+
+#[test]
+fn resolve_branch_on_remote_fork_uses_upstream() {
+    // Role::Fork resolves `upstream/{branch}`.
+    let (_ws, local) = repo_with_remote("upstream");
+    let expected_sha = git(&local, &["rev-parse", "upstream/main"]);
+
+    let vcs = GitVcs;
+    let resolved = vcs
+        .resolve_branch_on_remote(&local, Role::Fork, &RefName::new("main"))
+        .unwrap();
+
+    assert_eq!(resolved.as_str(), &expected_sha);
+    // Display form preserves the qualified ref we asked for.
+    assert_eq!(resolved.display_str(), "upstream/main");
+}
+
+#[test]
+fn resolve_branch_on_remote_primary_uses_origin() {
+    let (_ws, local) = repo_with_remote("origin");
+    let expected_sha = git(&local, &["rev-parse", "origin/main"]);
+
+    let vcs = GitVcs;
+    let resolved = vcs
+        .resolve_branch_on_remote(&local, Role::Primary, &RefName::new("main"))
+        .unwrap();
+
+    assert_eq!(resolved.as_str(), &expected_sha);
+    assert_eq!(resolved.display_str(), "origin/main");
+}
+
+#[test]
+fn resolve_branch_on_remote_dependency_uses_origin() {
+    let (_ws, local) = repo_with_remote("origin");
+    let vcs = GitVcs;
+    let resolved = vcs
+        .resolve_branch_on_remote(&local, Role::Dependency, &RefName::new("main"))
+        .unwrap();
+    assert_eq!(resolved.display_str(), "origin/main");
+}
+
+#[test]
+fn resolve_branch_on_remote_reference_uses_origin() {
+    let (_ws, local) = repo_with_remote("origin");
+    let vcs = GitVcs;
+    let resolved = vcs
+        .resolve_branch_on_remote(&local, Role::Reference, &RefName::new("main"))
+        .unwrap();
+    assert_eq!(resolved.display_str(), "origin/main");
+}
+
+#[test]
+fn resolve_branch_on_remote_missing_remote_errors() {
+    // Repo has no `upstream` remote — Role::Fork resolution must fail
+    // clearly rather than silently falling back to a local branch tip.
+    let (_ws, local) = repo_with_remote("origin");
+
+    let vcs = GitVcs;
+    let result = vcs.resolve_branch_on_remote(&local, Role::Fork, &RefName::new("main"));
+
+    let err = result.expect_err("missing upstream remote must error");
+    assert!(
+        matches!(err, VcsError::RevisionNotFound { ref rev, .. } if rev == "upstream/main"),
+        "expected RevisionNotFound for upstream/main, got {err:?}"
+    );
+}
+
+#[test]
+fn resolve_branch_on_remote_missing_branch_errors() {
+    // Remote exists but branch doesn't — also a clear error.
+    let (_ws, local) = repo_with_remote("origin");
+
+    let vcs = GitVcs;
+    let result =
+        vcs.resolve_branch_on_remote(&local, Role::Primary, &RefName::new("nonexistent-branch"));
+
+    let err = result.expect_err("nonexistent branch on remote must error");
+    assert!(
+        matches!(err, VcsError::RevisionNotFound { ref rev, .. } if rev == "origin/nonexistent-branch"),
+        "expected RevisionNotFound for origin/nonexistent-branch, got {err:?}"
+    );
 }

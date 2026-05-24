@@ -339,18 +339,6 @@ impl Role {
             Role::Reference => "reference",
         }
     }
-
-    /// Git remote name to use when cloning a repo with this role.
-    ///
-    /// `Fork` clones to `upstream` so a stray `git push` does not target the
-    /// source-of-record (typically returning HTTP 403). All other roles clone
-    /// to the conventional `origin`.
-    pub fn clone_remote_name(&self) -> &'static str {
-        match self {
-            Role::Fork => "upstream",
-            Role::Primary | Role::Dependency | Role::Reference => "origin",
-        }
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -784,22 +772,6 @@ repositories:
     #[test]
     fn role_primary_is_active() {
         assert!(Role::Primary.is_active());
-    }
-
-    // ========================================================================
-    // Role::clone_remote_name
-    // ========================================================================
-
-    #[test]
-    fn clone_remote_name_fork_is_upstream() {
-        assert_eq!(Role::Fork.clone_remote_name(), "upstream");
-    }
-
-    #[test]
-    fn clone_remote_name_non_fork_is_origin() {
-        assert_eq!(Role::Primary.clone_remote_name(), "origin");
-        assert_eq!(Role::Dependency.clone_remote_name(), "origin");
-        assert_eq!(Role::Reference.clone_remote_name(), "origin");
     }
 
     // ========================================================================

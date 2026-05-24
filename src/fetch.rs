@@ -262,14 +262,13 @@ pub fn run_fetch(
             }
         }
 
-        let remote_name = entry.role.clone_remote_name();
         println!(
-            "rwv fetch: cloning {} from {} (remote: {remote_name})",
+            "rwv fetch: cloning {} from {} (role: {})",
             repo_path.as_str(),
-            entry.url
+            entry.url,
+            entry.role.as_str()
         );
-        if let Err(e) = git.clone_repo_with_remote_name(&entry.url.to_string(), &dest, remote_name)
-        {
+        if let Err(e) = git.clone_with_role(&entry.url.to_string(), &dest, entry.role) {
             let msg = format!(
                 "{}: failed to clone {} into {}: {e}",
                 repo_path.as_str(),

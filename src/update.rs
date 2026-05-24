@@ -9,7 +9,7 @@
 use crate::git::{git_command, GitVcs};
 use crate::lock;
 use crate::manifest::{Project, ProjectName};
-use crate::vcs::Vcs;
+use crate::vcs::{RefName, Vcs};
 use crate::workspace::{WorkspaceContext, WorkspaceLocation};
 use anyhow::Context;
 use std::path::Path;
@@ -136,29 +136,17 @@ fn update_for_project(
             continue;
         }
 
-        // Resolve the branch HEAD as it now appears in the local clone
-        // (post-fetch). Try `origin/<branch>` first (mirrors what
-        // contributors usually want), then `upstream/<branch>` (used for
-        // role=fork clones), then a bare branch reference.
-        let candidates = [
-            format!("origin/{branch}"),
-            format!("upstream/{branch}"),
-            branch.to_string(),
-        ];
-
-        let mut resolved_opt = None;
-        for candidate in &candidates {
-            if let Ok(resolved) = git.resolve_revision(&repo_dir, candidate) {
-                resolved_opt = Some(resolved);
-                break;
-            }
-        }
-
-        let resolved = match resolved_opt {
-            Some(r) => r,
-            None => {
+        // Resolve the branch HEAD on the role-conventional remote. The VCS
+        // layer owns the per-role naming policy (see fo-mb2y9), so this is
+        // one call rather than a fallback chain. No bare-branch fallback —
+        // missing-remote produces a clear error rather than silently
+        // resolving to the local branch tip.
+        let branch_ref = RefName::new(branch);
+        let resolved = match git.resolve_branch_on_remote(&repo_dir, entry.role, &branch_ref) {
+            Ok(r) => r,
+            Err(e) => {
                 errors.push(format!(
-                    "{}: could not resolve branch '{branch}' on any remote (tried origin/{branch}, upstream/{branch}, {branch})",
+                    "{}: could not resolve branch '{branch}' on role-conventional remote: {e}",
                     repo_path.as_str()
                 ));
                 continue;

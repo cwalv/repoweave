@@ -207,8 +207,7 @@ pub fn run_add(
                 .with_context(|| format!("failed to create directory {}", parent.display()))?;
         }
         let git = GitVcs;
-        let remote_name = role.clone_remote_name();
-        git.clone_repo_with_remote_name(url, &dest, remote_name)
+        git.clone_with_role(url, &dest, role)
             .with_context(|| format!("failed to clone '{}' into {}", url, dest.display()))?;
     }
 

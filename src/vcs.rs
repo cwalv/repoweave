@@ -3,6 +3,7 @@
 //! repoweave operates on repos and worktrees. The VCS layer abstracts over
 //! the specific tool (git, jj, sl, hg) so core logic doesn't hardcode git.
 
+use crate::manifest::Role;
 use std::fmt;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -306,6 +307,34 @@ pub trait Vcs {
         dest: &Path,
         remote_name: &str,
     ) -> Result<(), VcsError>;
+
+    /// Clone `url` into `dest`, naming the remote according to the
+    /// convention this VCS uses for the given [`Role`].
+    ///
+    /// Pushing remote-naming policy into the VCS layer keeps git-specific
+    /// vocabulary (`upstream` vs `origin`) out of the manifest types. For
+    /// [`GitVcs`](crate::git::GitVcs): `Role::Fork` clones to `upstream`
+    /// (so a stray `git push` does not target the source-of-record); all
+    /// other roles clone to `origin`. Other VCS impls choose their own
+    /// conventions.
+    fn clone_with_role(&self, url: &str, dest: &Path, role: Role) -> Result<(), VcsError>;
+
+    /// Resolve `branch` on the remote associated with `role` in `repo`.
+    ///
+    /// For [`GitVcs`](crate::git::GitVcs): builds the qualified ref
+    /// `"upstream/{branch}"` for `Role::Fork`, `"origin/{branch}"` for all
+    /// other roles, and resolves it via [`resolve_revision`]. There is no
+    /// bare-branch fallback — a missing role-conventional remote yields
+    /// [`VcsError::RevisionNotFound`] so callers don't silently advance to
+    /// the local branch tip.
+    ///
+    /// [`resolve_revision`]: Vcs::resolve_revision
+    fn resolve_branch_on_remote(
+        &self,
+        repo: &Path,
+        role: Role,
+        branch: &RefName,
+    ) -> Result<ResolvedRevisionId, VcsError>;
 
     /// Resolve the current HEAD to a revision ID.
     ///
