@@ -49,4 +49,4 @@ rwv status --json | jq -r '.repos[] | .absolute_path' | xargs -P 4 -I {} git -C 
 
 ## Alternative: Gita
 
-For users who prefer a dedicated tool with "summary sugar" and built-in bulk commands, repoweave still supports the [Gita integration](../integrations.md#gita). Gita is now **opt-in**; see the integration docs for how to enable it.
+For users who prefer a dedicated tool with "summary sugar" and built-in bulk commands, repoweave still supports the [gita integration](../reference/integrations/gita.md). Gita is now **opt-in**; see the integration docs for how to enable it.
