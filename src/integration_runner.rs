@@ -612,8 +612,7 @@ mod tests {
 
     #[test]
     fn activate_hooks_error_captured_others_still_run() {
-        let failing =
-            MockIntegration::new("cargo", true).with_lock_err("install command failed");
+        let failing = MockIntegration::new("cargo", true).with_lock_err("install command failed");
         let succeeding = MockIntegration::new("npm", true);
         let integrations: Vec<&dyn Integration> = vec![&failing, &succeeding];
 

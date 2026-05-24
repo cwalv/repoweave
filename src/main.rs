@@ -54,6 +54,9 @@ enum Commands {
         /// Bootstrap into a non-empty directory that is not a workspace
         #[arg(long)]
         force: bool,
+        /// Skip cloning/fetching repositories with role: reference
+        #[arg(long)]
+        no_reference: bool,
     },
     /// Advance each repo to its branch HEAD and re-snapshot the lock (network bump)
     Update {
@@ -298,6 +301,7 @@ fn main() -> anyhow::Result<()> {
             locked: _locked, // no-op alias retained for compat (already the default)
             frozen,
             force,
+            no_reference,
         }) => {
             let cwd = std::env::current_dir()?;
             repoweave::workspace::require_workspace_or_empty(&cwd, force)?;
@@ -306,7 +310,7 @@ fn main() -> anyhow::Result<()> {
             } else {
                 fetch::FetchMode::Default
             };
-            fetch::run_fetch(&source, &cwd, mode)?;
+            fetch::run_fetch(&source, &cwd, mode, no_reference)?;
         }
         Some(Commands::Add {
             url,

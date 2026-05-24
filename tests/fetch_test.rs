@@ -1142,3 +1142,267 @@ fn fetch_locked_and_frozen_are_mutually_exclusive() {
                 .or(predicate::str::contains("cannot be used with")),
         );
 }
+
+// ============================================================================
+// --no-reference: skip reference-role repos
+// ============================================================================
+
+/// Write a manifest with mixed primary/reference roles.
+fn write_manifest_with_roles(dir: &Path, repos: &[(&str, &str, &str)]) {
+    let mut yaml = String::from("repositories:\n");
+    for (path, url, role) in repos {
+        yaml.push_str(&format!(
+            "  {path}:\n    type: git\n    url: {url}\n    version: main\n    role: {role}\n"
+        ));
+    }
+    std::fs::write(dir.join("rwv.yaml"), &yaml).unwrap();
+}
+
+#[test]
+fn fetch_no_reference_skips_reference_role_repos() {
+    // `rwv fetch <source> --no-reference` should clone primary/fork/dependency
+    // repos but skip any repo with `role: reference`.
+    let tmp = tempfile::tempdir().unwrap();
+    let workspace = tmp.path().join("ws");
+    std::fs::create_dir_all(&workspace).unwrap();
+
+    let primary_bare = tmp.path().join("primary.git");
+    init_bare_repo_with_commit(&primary_bare);
+    let reference_bare = tmp.path().join("reference.git");
+    init_bare_repo_with_commit(&reference_bare);
+
+    let project_bare = tmp.path().join("project.git");
+    init_bare_repo(&project_bare);
+
+    let work = tmp.path().join("work");
+    let run = |args: &[&str], cwd: &Path| {
+        let status = common::git()
+            .args(args)
+            .current_dir(cwd)
+            .stdout(process::Stdio::null())
+            .stderr(process::Stdio::null())
+            .status()
+            .expect("git command failed");
+        assert!(status.success(), "git {:?} failed", args);
+    };
+
+    run(
+        &[
+            "clone",
+            &project_bare.to_string_lossy(),
+            &work.to_string_lossy(),
+        ],
+        tmp.path(),
+    );
+    run(&["config", "user.email", "test@test.com"], &work);
+    run(&["config", "user.name", "Test"], &work);
+
+    let primary_url = format!("file://{}", primary_bare.display());
+    let reference_url = format!("file://{}", reference_bare.display());
+    write_manifest_with_roles(
+        &work,
+        &[
+            ("local/team/primary", &primary_url, "primary"),
+            ("local/team/reference", &reference_url, "reference"),
+        ],
+    );
+    run(&["add", "rwv.yaml"], &work);
+    run(&["commit", "-m", "manifest"], &work);
+    run(&["push", "origin", "main"], &work);
+
+    let source = format!("file://{}", project_bare.display());
+    rwv()
+        .args(["fetch", &source, "--no-reference"])
+        .current_dir(&workspace)
+        .assert()
+        .success();
+
+    assert!(
+        workspace.join("local/team/primary").exists(),
+        "primary repo should be cloned"
+    );
+    assert!(
+        !workspace.join("local/team/reference").exists(),
+        "reference repo should be skipped with --no-reference"
+    );
+}
+
+#[test]
+fn fetch_frozen_no_reference_tolerates_reference_missing_from_lock() {
+    // Regression test for find_stale_repos: with --frozen --no-reference,
+    // a reference repo present in the manifest but missing from rwv.lock
+    // must NOT cause failure — the user has explicitly opted out of
+    // fetching reference repos, so missing lock entries for them are fine.
+    let tmp = tempfile::tempdir().unwrap();
+    let workspace = tmp.path().join("ws");
+    std::fs::create_dir_all(&workspace).unwrap();
+
+    let primary_bare = tmp.path().join("primary.git");
+    init_bare_repo_with_commit(&primary_bare);
+    let reference_bare = tmp.path().join("reference.git");
+    init_bare_repo_with_commit(&reference_bare);
+
+    let project_bare = tmp.path().join("project.git");
+    init_bare_repo(&project_bare);
+
+    let work = tmp.path().join("work");
+    let run = |args: &[&str], cwd: &Path| -> String {
+        let out = common::git()
+            .args(args)
+            .current_dir(cwd)
+            .stdout(process::Stdio::piped())
+            .stderr(process::Stdio::null())
+            .output()
+            .expect("git command failed");
+        assert!(out.status.success(), "git {:?} failed", args);
+        String::from_utf8(out.stdout).unwrap().trim().to_string()
+    };
+    let run_quiet = |args: &[&str], cwd: &Path| {
+        let status = common::git()
+            .args(args)
+            .current_dir(cwd)
+            .stdout(process::Stdio::null())
+            .stderr(process::Stdio::null())
+            .status()
+            .expect("git command failed");
+        assert!(status.success(), "git {:?} failed", args);
+    };
+
+    run_quiet(
+        &[
+            "clone",
+            &project_bare.to_string_lossy(),
+            &work.to_string_lossy(),
+        ],
+        tmp.path(),
+    );
+    run_quiet(&["config", "user.email", "test@test.com"], &work);
+    run_quiet(&["config", "user.name", "Test"], &work);
+
+    // Get the primary HEAD SHA so we can write a valid lock for it.
+    let primary_clone = tmp.path().join("primary_clone");
+    run_quiet(
+        &[
+            "clone",
+            &primary_bare.to_string_lossy(),
+            &primary_clone.to_string_lossy(),
+        ],
+        tmp.path(),
+    );
+    let primary_sha = run(&["rev-parse", "HEAD"], &primary_clone);
+
+    let primary_url = format!("file://{}", primary_bare.display());
+    let reference_url = format!("file://{}", reference_bare.display());
+    write_manifest_with_roles(
+        &work,
+        &[
+            ("local/team/primary", &primary_url, "primary"),
+            ("local/team/reference", &reference_url, "reference"),
+        ],
+    );
+
+    // Lock file covers ONLY the primary — reference is intentionally absent.
+    // Without --no-reference this would be "stale"; with --no-reference,
+    // find_stale_repos must skip the reference entry.
+    let lock_yaml = format!(
+        "repositories:\n  local/team/primary:\n    type: git\n    url: {primary_url}\n    version: {primary_sha}\n"
+    );
+    std::fs::write(work.join("rwv.lock"), &lock_yaml).unwrap();
+
+    run_quiet(&["add", "."], &work);
+    run_quiet(&["commit", "-m", "manifest+partial-lock"], &work);
+    run_quiet(&["push", "origin", "main"], &work);
+
+    let source = format!("file://{}", project_bare.display());
+    rwv()
+        .args(["fetch", &source, "--frozen", "--no-reference"])
+        .current_dir(&workspace)
+        .assert()
+        .success();
+
+    assert!(
+        workspace.join("local/team/primary").exists(),
+        "primary repo should be cloned with --frozen --no-reference"
+    );
+    assert!(
+        !workspace.join("local/team/reference").exists(),
+        "reference repo should be skipped"
+    );
+}
+
+#[test]
+fn fetch_frozen_without_no_reference_errors_when_reference_missing_from_lock() {
+    // Sibling check for the test above: WITHOUT --no-reference, a reference
+    // repo missing from the lock must still trigger the stale-lock error.
+    // This guards against the find_stale_repos fix accidentally exempting
+    // reference repos unconditionally.
+    let tmp = tempfile::tempdir().unwrap();
+    let workspace = tmp.path().join("ws");
+    std::fs::create_dir_all(&workspace).unwrap();
+
+    let primary_bare = tmp.path().join("primary.git");
+    init_bare_repo_with_commit(&primary_bare);
+    let reference_bare = tmp.path().join("reference.git");
+    init_bare_repo_with_commit(&reference_bare);
+
+    let project_bare = tmp.path().join("project.git");
+    init_bare_repo(&project_bare);
+
+    let work = tmp.path().join("work");
+    let run_quiet = |args: &[&str], cwd: &Path| {
+        let status = common::git()
+            .args(args)
+            .current_dir(cwd)
+            .stdout(process::Stdio::null())
+            .stderr(process::Stdio::null())
+            .status()
+            .expect("git command failed");
+        assert!(status.success(), "git {:?} failed", args);
+    };
+
+    run_quiet(
+        &[
+            "clone",
+            &project_bare.to_string_lossy(),
+            &work.to_string_lossy(),
+        ],
+        tmp.path(),
+    );
+    run_quiet(&["config", "user.email", "test@test.com"], &work);
+    run_quiet(&["config", "user.name", "Test"], &work);
+
+    let primary_url = format!("file://{}", primary_bare.display());
+    let reference_url = format!("file://{}", reference_bare.display());
+    write_manifest_with_roles(
+        &work,
+        &[
+            ("local/team/primary", &primary_url, "primary"),
+            ("local/team/reference", &reference_url, "reference"),
+        ],
+    );
+
+    // Lock covers only primary; reference absent.
+    let lock_yaml = format!(
+        "repositories:\n  local/team/primary:\n    type: git\n    url: {primary_url}\n    version: {}\n",
+        "a".repeat(40)
+    );
+    std::fs::write(work.join("rwv.lock"), &lock_yaml).unwrap();
+
+    run_quiet(&["add", "."], &work);
+    run_quiet(&["commit", "-m", "manifest+partial-lock"], &work);
+    run_quiet(&["push", "origin", "main"], &work);
+
+    let source = format!("file://{}", project_bare.display());
+    rwv()
+        .args(["fetch", &source, "--frozen"])
+        .current_dir(&workspace)
+        .assert()
+        .failure()
+        .stderr(
+            predicate::str::contains("stale")
+                .or(predicate::str::contains("mismatch"))
+                .or(predicate::str::contains("does not match"))
+                .or(predicate::str::contains("out of date"))
+                .or(predicate::str::contains("missing")),
+        );
+}

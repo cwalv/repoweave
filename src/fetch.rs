@@ -61,10 +61,15 @@ fn resolve_source(source: &str) -> anyhow::Result<(crate::manifest::RepoUrl, Str
 /// Validate that a lock file covers all repos in the manifest.
 ///
 /// Returns a list of repo paths present in the manifest but missing from the lock.
-fn find_stale_repos(manifest: &Manifest, lock: &LockFile) -> Vec<RepoPath> {
+/// When `no_reference` is set, `reference`-role repos are excluded from the
+/// check — the user has opted out of fetching them, so missing lock entries
+/// for them shouldn't fail `--frozen`.
+fn find_stale_repos(manifest: &Manifest, lock: &LockFile, no_reference: bool) -> Vec<RepoPath> {
     manifest
         .repositories
-        .keys()
+        .iter()
+        .filter(|(_, entry)| !(no_reference && entry.role == Role::Reference))
+        .map(|(rp, _)| rp)
         .filter(|rp| !lock.repositories.contains_key(*rp))
         .cloned()
         .collect()
@@ -80,7 +85,12 @@ fn find_stale_repos(manifest: &Manifest, lock: &LockFile) -> Vec<RepoPath> {
 ///   read existing entries and additively add missing ones at branch HEAD.
 ///   Never advances entries that already exist in the lock.
 /// - `Frozen`: never writes the lock; errors if missing or stale (CI mode).
-pub fn run_fetch(source: &str, workspace_root: &Path, mode: FetchMode) -> anyhow::Result<()> {
+pub fn run_fetch(
+    source: &str,
+    workspace_root: &Path,
+    mode: FetchMode,
+    no_reference: bool,
+) -> anyhow::Result<()> {
     let git = GitVcs;
 
     // Resolve source to a clone URL (supports full URLs and owner/repo shorthand).
@@ -132,7 +142,7 @@ pub fn run_fetch(source: &str, workspace_root: &Path, mode: FetchMode) -> anyhow
                     lock_path.display()
                 )
             })?;
-            let missing = find_stale_repos(&manifest, lock);
+            let missing = find_stale_repos(&manifest, lock, no_reference);
             if !missing.is_empty() {
                 let names: Vec<&str> = missing.iter().map(|rp| rp.as_str()).collect();
                 bail!(
@@ -169,6 +179,13 @@ pub fn run_fetch(source: &str, workspace_root: &Path, mode: FetchMode) -> anyhow
     let mut added_to_lock: Vec<RepoPath> = Vec::new();
 
     for (repo_path, entry) in &manifest.repositories {
+        if no_reference && entry.role == Role::Reference {
+            println!(
+                "rwv fetch: skipping {} (role: reference)",
+                repo_path.as_str()
+            );
+            continue;
+        }
         let dest = workspace_root.join(repo_path.as_path());
 
         // Look up the corresponding lock entry, if any.
@@ -327,9 +344,24 @@ pub fn run_fetch(source: &str, workspace_root: &Path, mode: FetchMode) -> anyhow
         let needs_bootstrap = existing_lock.is_none();
         let has_additions = !added_to_lock.is_empty();
 
+        // generate_lock walks every entry in the manifest and runs
+        // `git rev-parse HEAD` against each on-disk repo. When --no-reference
+        // is set, reference repos were skipped above and their directories
+        // don't exist on disk — drop them from the manifest used for lock
+        // generation so we don't trip on the missing paths.
+        let lock_manifest = if no_reference {
+            let mut filtered = manifest.clone();
+            filtered
+                .repositories
+                .retain(|_, entry| entry.role != Role::Reference);
+            std::borrow::Cow::Owned(filtered)
+        } else {
+            std::borrow::Cow::Borrowed(&manifest)
+        };
+
         if needs_bootstrap {
             // Snapshot the full set of manifest repos from disk.
-            let new_lock = lock::generate_lock(&manifest, workspace_root, None, true)?;
+            let new_lock = lock::generate_lock(&lock_manifest, workspace_root, None, true)?;
             lock::write_lock(&new_lock, &lock_path)?;
             eprintln!("rwv fetch: wrote {}", lock_path.display());
         } else if has_additions {
@@ -341,7 +373,7 @@ pub fn run_fetch(source: &str, workspace_root: &Path, mode: FetchMode) -> anyhow
                 .expect("existing_lock is Some when !needs_bootstrap")
                 .clone();
             // Generate a fresh lock for new entries only.
-            let new_lock = lock::generate_lock(&manifest, workspace_root, None, true)?;
+            let new_lock = lock::generate_lock(&lock_manifest, workspace_root, None, true)?;
             for repo_path in &added_to_lock {
                 if let Some(entry) = new_lock.repositories.get(repo_path) {
                     // Convert ResolvedLockEntry to LockEntry for the merge
@@ -495,6 +527,79 @@ mod tests {
     #[test]
     fn resolve_source_rejects_four_part_shorthand() {
         assert!(resolve_source("a/b/c/d").is_err());
+    }
+
+    // find_stale_repos: --no-reference should exempt reference repos
+
+    fn make_entry(role: Role) -> crate::manifest::RepoEntry {
+        crate::manifest::RepoEntry {
+            vcs_type: crate::manifest::VcsType::Git,
+            url: "https://example.com/repo.git".parse().unwrap(),
+            version: crate::vcs::RefName::new("main"),
+            role,
+        }
+    }
+
+    fn make_lock_entry() -> crate::manifest::LockEntry {
+        crate::manifest::LockEntry {
+            vcs_type: crate::manifest::VcsType::Git,
+            url: "https://example.com/repo.git".parse().unwrap(),
+            version: crate::vcs::RawRevisionId::new("abc123"),
+        }
+    }
+
+    #[test]
+    fn find_stale_repos_flags_reference_when_no_reference_is_false() {
+        let mut manifest = Manifest {
+            repositories: Default::default(),
+            integrations: Default::default(),
+            workweave: None,
+        };
+        let primary = RepoPath::new("github/org/primary");
+        let reference = RepoPath::new("github/org/reference");
+        manifest
+            .repositories
+            .insert(primary.clone(), make_entry(Role::Primary));
+        manifest
+            .repositories
+            .insert(reference.clone(), make_entry(Role::Reference));
+
+        // Lock covers only the primary — reference is "stale".
+        let mut lock = LockFile {
+            workweave: None,
+            repositories: Default::default(),
+        };
+        lock.repositories.insert(primary, make_lock_entry());
+
+        let stale = find_stale_repos(&manifest, &lock, false);
+        assert_eq!(stale, vec![reference]);
+    }
+
+    #[test]
+    fn find_stale_repos_excludes_reference_when_no_reference_is_true() {
+        let mut manifest = Manifest {
+            repositories: Default::default(),
+            integrations: Default::default(),
+            workweave: None,
+        };
+        let primary = RepoPath::new("github/org/primary");
+        let reference = RepoPath::new("github/org/reference");
+        manifest
+            .repositories
+            .insert(primary.clone(), make_entry(Role::Primary));
+        manifest
+            .repositories
+            .insert(reference, make_entry(Role::Reference));
+
+        let mut lock = LockFile {
+            workweave: None,
+            repositories: Default::default(),
+        };
+        lock.repositories.insert(primary, make_lock_entry());
+
+        // With no_reference=true, the missing reference entry is not flagged.
+        let stale = find_stale_repos(&manifest, &lock, true);
+        assert!(stale.is_empty(), "expected empty, got {stale:?}");
     }
 
     // FetchMode enum tests

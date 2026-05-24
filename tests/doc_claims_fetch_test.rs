@@ -147,11 +147,7 @@ fn setup_workspace_with_project(
     git(&["add", "rwv.yaml"], &project_dir);
     git(&["commit", "-m", "init"], &project_dir);
 
-    std::fs::write(
-        workspace.join(".rwv-active"),
-        format!("{project_name}\n"),
-    )
-    .unwrap();
+    std::fs::write(workspace.join(".rwv-active"), format!("{project_name}\n")).unwrap();
 
     (workspace, project_dir)
 }

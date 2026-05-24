@@ -5,7 +5,7 @@
 
 use crate::git::git_command;
 use crate::integration::Issue;
-use crate::manifest::{Project, ProjectName, RepoPath, WorkweaveName};
+use crate::manifest::{Project, ProjectName, RepoPath, Role, WorkweaveName};
 use crate::vcs::ResolvedRevisionId;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
@@ -132,9 +132,10 @@ pub fn find_violations(input: &CheckInput) -> Vec<CheckViolation> {
 
     // Per-project checks
     for project in &input.projects {
-        for repo_path in project.manifest.repositories.keys() {
-            // Dangling reference: in manifest but not on disk
-            if !input.repos_on_disk.contains(repo_path) {
+        for (repo_path, entry) in &project.manifest.repositories {
+            // Dangling reference: in manifest but not on disk.
+            // Reference repos are allowed to be missing (e.g. after fetch --no-reference).
+            if !input.repos_on_disk.contains(repo_path) && entry.role != Role::Reference {
                 violations.push(CheckViolation::DanglingReference {
                     project: project.name.clone(),
                     repo: repo_path.clone(),

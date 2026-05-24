@@ -42,6 +42,10 @@ pub struct RepoStatus {
     pub lock_sha: Option<String>,
     pub relation: LockRelation,
     pub mid_op: Option<String>,
+    pub role: String,
+    pub url: String,
+    pub project: String,
+    pub absolute_path: String,
 }
 
 fn compute_relation(
@@ -107,7 +111,7 @@ pub fn run_status(
             .lock
             .map(|raw| raw.resolve_versions(&workspace_dir).0);
 
-        for repo_path in project.manifest.repositories.keys() {
+        for (repo_path, entry) in &project.manifest.repositories {
             let repo_abs = workspace_dir.join(repo_path.as_path());
 
             let branch = git
@@ -134,6 +138,10 @@ pub fn run_status(
                 lock_sha: lock_sha.map(|r| r.display_str().to_owned()),
                 relation,
                 mid_op,
+                role: entry.role.as_str().to_string(),
+                url: entry.url.to_string(),
+                project: pname.to_string(),
+                absolute_path: repo_abs.to_string_lossy().to_string(),
             });
         }
     }

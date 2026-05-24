@@ -10,7 +10,7 @@ impl Integration for Gita {
     }
 
     fn default_enabled(&self) -> bool {
-        true
+        false
     }
 
     fn activate(&self, ctx: &IntegrationContext) -> anyhow::Result<()> {

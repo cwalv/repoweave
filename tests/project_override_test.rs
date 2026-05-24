@@ -25,7 +25,12 @@ fn git(args: &[&str], dir: &Path) {
         .stderr(process::Stdio::null())
         .status()
         .expect("git command failed");
-    assert!(status.success(), "git {:?} failed in {}", args, dir.display());
+    assert!(
+        status.success(),
+        "git {:?} failed in {}",
+        args,
+        dir.display()
+    );
 }
 
 fn init_repo(path: &Path) -> String {
@@ -94,11 +99,7 @@ fn action_verb_in_project_dir_without_active_errors_helpfully() {
     let tmp = tempfile::tempdir().unwrap();
     let (_ws, proj_a, _proj_b, _sha) = make_two_project_workspace(tmp.path());
 
-    let out = rwv()
-        .args(["lock"])
-        .current_dir(&proj_a)
-        .assert()
-        .failure();
+    let out = rwv().args(["lock"]).current_dir(&proj_a).assert().failure();
     let stderr = String::from_utf8_lossy(&out.get_output().stderr).into_owned();
 
     assert!(
@@ -166,11 +167,7 @@ fn divergence_warning_when_cwd_project_differs_from_active() {
     // proj-a is active; CWD is proj-b — divergence.
     std::fs::write(ws.join(".rwv-active"), "proj-a\n").unwrap();
 
-    let out = rwv()
-        .args(["lock"])
-        .current_dir(&proj_b)
-        .assert()
-        .success();
+    let out = rwv().args(["lock"]).current_dir(&proj_b).assert().success();
     let stderr = String::from_utf8_lossy(&out.get_output().stderr).into_owned();
 
     assert!(

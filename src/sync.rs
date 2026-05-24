@@ -695,7 +695,7 @@ fn find_project_name(ctx: &WorkspaceContext) -> anyhow::Result<ProjectName> {
         WorkspaceLocation::Weave { project: None } => {
             // require_active_project produces the same helpful error
             // mentioning --project / rwv activate; defer to it.
-            ctx.require_active_project().map(|n| n.clone())
+            ctx.require_active_project().cloned()
         }
     }
 }
