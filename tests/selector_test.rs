@@ -143,3 +143,81 @@ fn unknown_role_is_parse_error() {
     let msg = format!("{err}");
     assert!(msg.contains("mainline"), "got: {msg}");
 }
+
+// --- fo-a7ekj coverage audit: spot-check gaps ---------------------------------
+
+/// Globs use globset's `literal_separator(true)` so `?` (single-character
+/// wildcard) must not match `/`. Combined with the `*` test above, this pins
+/// the "wildcards never cross `/`" contract that selectors inherit.
+#[test]
+fn glob_question_mark_does_not_cross_slash() {
+    let filter = RepoFilter::parse(&[], &["glob:github/org?repo".into()]).unwrap();
+    // The `?` cannot match `/`, so `github/org/repo` should NOT match.
+    assert!(!filter.matches(&rp("github/org/repo"), Role::Owned));
+}
+
+/// Glob character classes (`[ab]`) work and are scoped within one path
+/// component — `literal_separator(true)` keeps the class from matching `/`.
+#[test]
+fn glob_character_class_within_component() {
+    let filter = RepoFilter::parse(&[], &["glob:github/[ab]/repo".into()]).unwrap();
+    assert!(filter.matches(&rp("github/a/repo"), Role::Owned));
+    assert!(filter.matches(&rp("github/b/repo"), Role::Owned));
+    assert!(!filter.matches(&rp("github/c/repo"), Role::Owned));
+}
+
+/// Regex selectors do NOT inherit `literal_separator` — that's a glob-only
+/// option. A regex `.*` matches `/`; pin this so the asymmetric semantics
+/// between regex and glob stays documented in tests.
+#[test]
+fn regex_dot_star_crosses_slash() {
+    let filter = RepoFilter::parse(&[], &["re:^github/.*/repo$".into()]).unwrap();
+    assert!(filter.matches(&rp("github/a/repo"), Role::Owned));
+    assert!(filter.matches(&rp("github/a/b/repo"), Role::Owned));
+    assert!(!filter.matches(&rp("github/a/other"), Role::Owned));
+}
+
+/// Regex selectors are **unanchored by default** — the regex crate does
+/// substring matching unless the pattern uses `^` / `$`. This is the same
+/// behaviour as `grep -E`; pin it explicitly so docs that show `re:foo` can
+/// rely on substring semantics.
+#[test]
+fn regex_unanchored_by_default() {
+    let filter = RepoFilter::parse(&[], &["re:cwalv".into()]).unwrap();
+    assert!(filter.matches(&rp("github/cwalv/repoweave"), Role::Owned));
+    assert!(filter.matches(&rp("anywhere/cwalv-anything"), Role::Owned));
+    assert!(!filter.matches(&rp("github/other/repo"), Role::Owned));
+}
+
+/// Special characters in exact-match selectors (no prefix) are not
+/// interpreted — they're compared as plain strings. Pin this so a path that
+/// looks regexy doesn't accidentally invoke a regex code path.
+#[test]
+fn exact_selector_does_not_interpret_special_characters() {
+    let filter = RepoFilter::parse(&[], &["github/cwalv/*".into()]).unwrap();
+    // Treated as exact — only matches the literal path with a `*`.
+    assert!(!filter.matches(&rp("github/cwalv/anything"), Role::Owned));
+}
+
+/// Whitespace and unicode in regex/glob patterns: the parsers don't trim
+/// or normalise; pin the verbatim-match contract.
+#[test]
+fn glob_with_unicode_passes_through() {
+    let filter = RepoFilter::parse(&[], &["glob:github/café/*".into()]).unwrap();
+    assert!(filter.matches(&rp("github/café/repo"), Role::Owned));
+    assert!(!filter.matches(&rp("github/cafe/repo"), Role::Owned));
+}
+
+/// The legacy `--role primary` error must direct the user at
+/// `rwv doctor --fix` — the migration path the docs (`reference/roles.md`)
+/// promise. Mirrors the inline test in `src/selector.rs` so external
+/// callers see it via the public API too.
+#[test]
+fn legacy_role_primary_directs_at_doctor_fix() {
+    let err = RepoFilter::parse(&["primary".into()], &[]).unwrap_err();
+    let msg = format!("{err}");
+    assert!(
+        msg.contains("rwv doctor --fix"),
+        "legacy --role primary must surface migration hint, got: {msg}"
+    );
+}

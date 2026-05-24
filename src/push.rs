@@ -424,3 +424,203 @@ fn short_sha(s: &str) -> String {
 pub(crate) fn project_repo_dir(primary_root: &Path, project: &ProjectName) -> PathBuf {
     primary_root.join("projects").join(project.as_str())
 }
+
+#[cfg(test)]
+mod tests {
+    //! Unit tests for the small private helpers `push.rs` uses to format
+    //! its output. These helpers are only reachable through the verb's
+    //! integration tests; the unit tests below pin them directly so
+    //! refactors of either helper can't quietly change the verb's
+    //! user-visible strings. fo-a7ekj.
+    use super::*;
+    use crate::manifest::RepoPath;
+    use crate::vcs::RawRevisionId;
+    use std::collections::BTreeMap;
+
+    // --- remote_label ------------------------------------------------------
+
+    #[test]
+    fn remote_label_owned_is_origin() {
+        assert_eq!(remote_label(Role::Owned), "origin");
+    }
+
+    #[test]
+    fn remote_label_dependency_is_origin() {
+        assert_eq!(remote_label(Role::Dependency), "origin");
+    }
+
+    #[test]
+    fn remote_label_reference_is_origin() {
+        assert_eq!(remote_label(Role::Reference), "origin");
+    }
+
+    /// Forks push to `upstream`, never `origin` — the role-conventional
+    /// remote-name policy documented in how-to/push-cross-repo-feature.md.
+    /// Drift here would silently push fork branches to the wrong remote
+    /// in dry-run plan output even if the runtime path agreed.
+    #[test]
+    fn remote_label_fork_is_upstream() {
+        assert_eq!(remote_label(Role::Fork), "upstream");
+    }
+
+    /// remote_label returns `&'static str` — no allocation per call.
+    /// (Compile-time check via the function signature; this test just
+    /// keeps the intent grep-discoverable.)
+    #[test]
+    fn remote_label_returns_static_str() {
+        let _s: &'static str = remote_label(Role::Owned);
+    }
+
+    // --- short_sha ---------------------------------------------------------
+
+    /// A canonical 40-char hex SHA abbreviates to its 7-char prefix —
+    /// the same convention the lock-mismatch error message uses, and
+    /// the same default `git log --oneline` uses.
+    #[test]
+    fn short_sha_truncates_40_hex_to_7() {
+        let sha = "abcdef0123456789abcdef0123456789abcdef01";
+        assert_eq!(sha.len(), 40);
+        assert_eq!(short_sha(sha), "abcdef0");
+    }
+
+    #[test]
+    fn short_sha_uppercase_hex_truncates_too() {
+        // is_ascii_hexdigit accepts both cases; we exercise that path.
+        let sha = "ABCDEF0123456789ABCDEF0123456789ABCDEF01";
+        assert_eq!(short_sha(sha), "ABCDEF0");
+    }
+
+    /// Non-40-char strings are passed through untouched — already
+    /// abbreviated SHAs (e.g. 12 chars), tag-form lock entries
+    /// (`v1.2.3`), and human-friendly labels alike.
+    #[test]
+    fn short_sha_passes_through_short_input() {
+        assert_eq!(short_sha("abc"), "abc");
+        assert_eq!(short_sha("abc1234"), "abc1234");
+        assert_eq!(short_sha(""), "");
+    }
+
+    #[test]
+    fn short_sha_passes_through_tag_form() {
+        // `v1.2.3` is a legitimate lock-entry value when HEAD is tagged.
+        // It is not 40 hex chars; short_sha must not mangle it.
+        assert_eq!(short_sha("v1.2.3"), "v1.2.3");
+    }
+
+    /// A 40-char string that is *not* hex (one non-hex character) must
+    /// be passed through — short_sha must never silently truncate a
+    /// non-SHA blob to "look like" a SHA.
+    #[test]
+    fn short_sha_passes_through_40_char_non_hex() {
+        // 40 chars, one is `z` (non-hex).
+        let s = "zbcdef0123456789abcdef0123456789abcdef01";
+        assert_eq!(s.len(), 40);
+        assert_eq!(short_sha(s), s);
+    }
+
+    /// A 41-char hex string is *not* a git SHA (the upstream length is
+    /// always 40 for SHA-1); pass through.
+    #[test]
+    fn short_sha_passes_through_41_char_hex() {
+        let s = "abcdef0123456789abcdef0123456789abcdef011";
+        assert_eq!(s.len(), 41);
+        assert_eq!(short_sha(s), s);
+    }
+
+    // --- PushPlanItem round-trip ------------------------------------------
+
+    /// PushPlanItem is the in-memory shape we hand to the parallel push
+    /// loop and to dry-run printing. Pin construction-via-fields-and-
+    /// readback so an accidental field rename doesn't silently change
+    /// the dry-run output format.
+    #[test]
+    fn push_plan_item_round_trip_fields_readable() {
+        let item = PushPlanItem {
+            repo_path: RepoPath::new("github/cwalv/repoweave"),
+            branch: "main".to_string(),
+            role: Role::Owned,
+        };
+        assert_eq!(item.repo_path.as_str(), "github/cwalv/repoweave");
+        assert_eq!(item.branch, "main");
+        assert_eq!(item.role, Role::Owned);
+    }
+
+    /// Sorted iteration is what the verb actually does — pin the
+    /// shape we hand into `run_in_parallel`. (Selector-filtered
+    /// subset preserves manifest order; the manifest is a BTreeMap.)
+    #[test]
+    fn push_plan_item_vec_preserves_order() {
+        let plan = vec![
+            PushPlanItem {
+                repo_path: RepoPath::new("a"),
+                branch: "main".into(),
+                role: Role::Owned,
+            },
+            PushPlanItem {
+                repo_path: RepoPath::new("b"),
+                branch: "main".into(),
+                role: Role::Fork,
+            },
+            PushPlanItem {
+                repo_path: RepoPath::new("c"),
+                branch: "main".into(),
+                role: Role::Dependency,
+            },
+        ];
+        let labels: Vec<&str> = plan
+            .iter()
+            .map(|i| remote_label(i.role))
+            .collect();
+        assert_eq!(labels, vec!["origin", "upstream", "origin"]);
+        let paths: Vec<&str> = plan.iter().map(|i| i.repo_path.as_str()).collect();
+        assert_eq!(paths, vec!["a", "b", "c"]);
+    }
+
+    // --- defensive: lock-mismatch message shape stays stable ---------------
+
+    /// The lock-mismatch error line that drives the recovery how-to in
+    /// docs/how-to/push-cross-repo-feature.md uses `short_sha`
+    /// directly. Spell out the composition so a contributor can search
+    /// for the message shape from a doc snippet.
+    #[test]
+    fn lock_mismatch_uses_short_sha_for_both_sides() {
+        let head = "1111111111111111111111111111111111111111";
+        let lock = "2222222222222222222222222222222222222222";
+        let msg = format!(
+            "{}: HEAD {} differs from lock {}",
+            "github/x/y",
+            short_sha(head),
+            short_sha(lock),
+        );
+        assert_eq!(msg, "github/x/y: HEAD 1111111 differs from lock 2222222");
+    }
+
+    /// The `BTreeMap<RepoPath, RawRevisionId>` shape used by the
+    /// lock-precondition block is part of the verb's contract with
+    /// `project.lock.repositories`. Spot-check the round-trip via a
+    /// throwaway map so a future refactor of `RawRevisionId` would
+    /// break this test before it broke the verb.
+    #[test]
+    fn lock_entries_btreemap_round_trip() {
+        let mut entries: BTreeMap<RepoPath, RawRevisionId> = BTreeMap::new();
+        entries.insert(
+            RepoPath::new("github/x/y"),
+            RawRevisionId::new("v1.0.0"),
+        );
+        entries.insert(
+            RepoPath::new("github/a/b"),
+            RawRevisionId::new("abcdef0123456789abcdef0123456789abcdef01"),
+        );
+        // BTreeMap orders by key — manifest order, lexicographic.
+        let keys: Vec<&str> = entries.keys().map(|k| k.as_str()).collect();
+        assert_eq!(keys, vec!["github/a/b", "github/x/y"]);
+        // Values stay intact through insertion.
+        assert_eq!(
+            entries
+                .get(&RepoPath::new("github/x/y"))
+                .unwrap()
+                .as_str(),
+            "v1.0.0"
+        );
+    }
+}

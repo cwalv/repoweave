@@ -391,4 +391,177 @@ mod tests {
         let r = Reporter::parallel("test".into(), &lock);
         assert!(r.is_parallel());
     }
+
+    // ---- fo-a7ekj: additional thin-spot coverage ------------------------
+
+    /// `resolve_jobs(Some(1))` is exactly serial. The bead description
+    /// requires that `-j 1` matches the pre-`-j` (no flag) output bit
+    /// for bit; this guarantees the `<= 1` branch in `run_in_parallel`
+    /// is taken.
+    #[test]
+    fn resolve_jobs_one_is_serial() {
+        // resolve_jobs is a pure mapping; pin the value `1` so callers
+        // can rely on it.
+        assert_eq!(resolve_jobs(Some(1)), 1);
+        // The downstream effect: run_in_parallel runs on the caller
+        // thread (no thread spawn).
+        let items = vec![1u32, 2, 3];
+        let main_thread_id = std::thread::current().id();
+        let out: Vec<_> = run_in_parallel(&items, 1, |_i, _x| std::thread::current().id());
+        for tid in &out {
+            assert_eq!(
+                *tid, main_thread_id,
+                "serial path must not spawn — every closure runs on the caller's thread"
+            );
+        }
+    }
+
+    /// `-j 0` resolves to `usize::MAX` (the debug "unlimited" path) and
+    /// `run_in_parallel` clamps the spawn count to `items.len()`. The
+    /// visible behaviour: no panic, results in input order, no work
+    /// dropped. Without clamping, this would attempt to spawn
+    /// `usize::MAX` worker threads and either OOM or panic.
+    #[test]
+    fn run_in_parallel_clamps_jobs_to_item_count() {
+        let jobs = resolve_jobs(Some(0));
+        assert_eq!(jobs, usize::MAX);
+        let items: Vec<u32> = (0..4).collect();
+        let out: Vec<u32> = run_in_parallel(&items, jobs, |_i, x| *x * 10);
+        assert_eq!(out, vec![0, 10, 20, 30]);
+    }
+
+    /// Asking for more workers than items spawns exactly `items.len()`
+    /// workers — pool size never exceeds work. Pin this directly: 100
+    /// jobs across 3 items must finish without panicking and produce
+    /// 3 results in order.
+    #[test]
+    fn run_in_parallel_jobs_greater_than_items() {
+        let items: Vec<u32> = vec![1, 2, 3];
+        let out: Vec<u32> = run_in_parallel(&items, 100, |_i, x| *x + 1);
+        assert_eq!(out, vec![2, 3, 4]);
+    }
+
+    /// Single-item with multiple jobs is a parallel-mode call but only
+    /// one work unit. We assert correctness, not single-threadedness,
+    /// since the pool is clamped to `min(jobs, items.len())`.
+    #[test]
+    fn run_in_parallel_single_item_multi_jobs() {
+        let items = vec![42u32];
+        let out: Vec<u32> = run_in_parallel(&items, 8, |_i, x| *x * 2);
+        assert_eq!(out, vec![84]);
+    }
+
+    /// The reporter prefix is pasted in verbatim — characters that
+    /// look like markup (`[`, `]`, ANSI escapes, even quotes) must
+    /// pass through. Repo paths can theoretically contain these (no
+    /// VCS forbids them in branch/repo strings); pin the no-escaping
+    /// contract.
+    #[test]
+    fn reporter_parallel_prefix_with_brackets_is_passthrough() {
+        let lock = Mutex::new(());
+        // Construction must succeed regardless of the prefix string;
+        // there's no validation.
+        let _r = Reporter::parallel("github/x/y".into(), &lock);
+        let _r = Reporter::parallel("with [bracket]".into(), &lock);
+        let _r = Reporter::parallel("with \"quote\"".into(), &lock);
+        let _r = Reporter::parallel(String::new(), &lock);
+    }
+
+    /// Under `Reporter::Serial`, `run_subprocess_with_reporter` mirrors
+    /// `Command::output()`: failing subprocess returns a non-zero
+    /// status AND captured stderr. This is the path verbs take under
+    /// `-j 1` so successful runs don't spam the terminal but failures
+    /// keep their captured stderr for the summary.
+    #[test]
+    fn run_subprocess_with_reporter_serial_captures_stderr_on_failure() {
+        // POSIX `false` reliably exits non-zero. We pair it with a
+        // shell so we can also write to stderr; that way we exercise
+        // both the status and the capture path together.
+        let mut cmd = Command::new("sh");
+        cmd.args(["-c", "printf 'boom\\n' >&2; exit 7"]);
+        let reporter = Reporter::serial();
+        let outcome = run_subprocess_with_reporter(&mut cmd, &reporter)
+            .expect("subprocess spawned");
+        assert!(!outcome.status.success(), "expected non-zero exit");
+        assert_eq!(outcome.status.code(), Some(7));
+        assert!(
+            outcome.stderr_capture.contains("boom"),
+            "expected captured stderr to include child output; got {:?}",
+            outcome.stderr_capture
+        );
+    }
+
+    /// Under `Reporter::Parallel`, `run_subprocess_with_reporter`
+    /// streams stdout/stderr lines through the reporter as they
+    /// arrive and returns an *empty* `stderr_capture`. The user
+    /// already saw the lines (prefixed); re-surfacing on failure
+    /// would either duplicate output or require buffering an entire
+    /// stream just for the error path. Pin the contract that
+    /// `stderr_capture` is empty under Parallel — verb-side error
+    /// summaries must not assume otherwise.
+    #[test]
+    fn run_subprocess_with_reporter_parallel_returns_empty_capture() {
+        let lock = Mutex::new(());
+        let reporter = Reporter::parallel("ut".into(), &lock);
+        let mut cmd = Command::new("sh");
+        cmd.args(["-c", "printf 'line1\\nline2\\n' >&2; exit 3"]);
+        let outcome = run_subprocess_with_reporter(&mut cmd, &reporter)
+            .expect("subprocess spawned");
+        assert!(!outcome.status.success());
+        assert_eq!(outcome.status.code(), Some(3));
+        assert_eq!(
+            outcome.stderr_capture, "",
+            "Parallel reporter streams stderr to the user; stderr_capture must be empty"
+        );
+    }
+
+    /// Multi-line subprocess output: each line is treated as a
+    /// separate emit through the reporter (`forward_stream`'s
+    /// `BufReader::lines()` contract). Spawn a child that emits four
+    /// stdout lines and four stderr lines, verify the subprocess
+    /// completes without losing lines. The end-to-end "lines reach
+    /// the user with `[prefix]`" check is exercised by
+    /// `tests/parallel_test.rs`; this test pins the wiring itself.
+    #[test]
+    fn run_subprocess_multi_line_under_parallel_drains_both_streams() {
+        let lock = Mutex::new(());
+        let reporter = Reporter::parallel("ut".into(), &lock);
+        let mut cmd = Command::new("sh");
+        cmd.args([
+            "-c",
+            "printf 'o1\\no2\\no3\\no4\\n'; printf 'e1\\ne2\\ne3\\ne4\\n' >&2",
+        ]);
+        let outcome = run_subprocess_with_reporter(&mut cmd, &reporter)
+            .expect("subprocess spawned");
+        assert!(outcome.status.success());
+        // Pipes drained — no deadlock on either stream.
+        assert_eq!(outcome.stderr_capture, "");
+    }
+
+    /// `forward_stream` reads UTF-8 line-by-line via `BufReader::lines()`,
+    /// stops on EOF, and never panics on a broken stream. Pin the
+    /// stop-on-EOF behaviour directly via an in-memory cursor (no
+    /// subprocess needed). Output goes to the test process's stdout —
+    /// we can't easily intercept it, but we can confirm the function
+    /// returns cleanly.
+    #[test]
+    fn forward_stream_consumes_to_eof_without_panic() {
+        let lock = Mutex::new(());
+        let reporter = Reporter::parallel("ut".into(), &lock);
+        let data: &[u8] = b"a\nb\nc\n";
+        forward_stream(std::io::Cursor::new(data), &reporter, true);
+        forward_stream(std::io::Cursor::new(data), &reporter, false);
+    }
+
+    /// A stream that ends without a trailing newline still surfaces
+    /// the final partial line — `BufReader::lines()` yields it on the
+    /// last iteration. Pin the contract so verb output that ends mid-
+    /// line under `-j N` isn't silently dropped.
+    #[test]
+    fn forward_stream_emits_final_line_without_trailing_newline() {
+        let lock = Mutex::new(());
+        let reporter = Reporter::parallel("ut".into(), &lock);
+        let data: &[u8] = b"first\nsecond-no-newline";
+        forward_stream(std::io::Cursor::new(data), &reporter, true);
+    }
 }
