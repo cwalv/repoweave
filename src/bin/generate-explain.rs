@@ -17,7 +17,7 @@ use schemars::schema_for;
 use serde::Serialize;
 
 use repoweave::check::ViolationOutput;
-use repoweave::status::RepoStatus;
+use repoweave::status::StatusJsonOutput;
 use repoweave::sync::{SyncJsonOutput, SYNC_JSON_SCHEMA_URL};
 
 /// Generator-local mirror of the `rwv doctor --json` envelope. The runtime
@@ -44,7 +44,7 @@ struct Verb {
 }
 
 fn schema_status() -> String {
-    let schema = schema_for!(Vec<RepoStatus>);
+    let schema = schema_for!(StatusJsonOutput);
     serde_json::to_string_pretty(&schema).expect("status schema serializes")
 }
 

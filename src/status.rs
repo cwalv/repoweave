@@ -5,22 +5,27 @@ use crate::manifest::Project;
 use crate::vcs::{ResolvedRevisionId, Vcs};
 use crate::workspace::{WorkspaceContext, WorkspaceLocation};
 use schemars::JsonSchema;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::path::Path;
 
 /// Schema URL for `rwv status --json` output. Pins to the committed artifact
-/// under `docs/reference/schemas/status.json`.
-///
-/// Note: the current wire shape is a bare top-level array (legacy pre-dating
-/// the `$schema`-envelope convention adopted by doctor/sync). The committed
-/// schema describes that bare-array shape so consumers can validate today's
-/// output; migrating status to the envelope shape (with this URL embedded as
-/// a `$schema` field) is tracked as a follow-up.
+/// under `docs/reference/schemas/status.json`. Emitted as the top-level
+/// `$schema` field of the [`StatusJsonOutput`] envelope.
 pub const STATUS_SCHEMA_URL: &str =
     "https://raw.githubusercontent.com/cwalv/repoweave/main/docs/reference/schemas/status.json";
 
+/// Top-level envelope for `rwv status --json`. Matches the convention adopted
+/// by doctor (`$schema` + `violations`) and sync (`$schema` + `outcomes`):
+/// `{ "$schema": "<url>", "repos": [<RepoStatus>, ...] }`.
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+pub struct StatusJsonOutput {
+    #[serde(rename = "$schema")]
+    pub schema_url: String,
+    pub repos: Vec<RepoStatus>,
+}
+
 /// Relation between the current branch tip and the lock SHA.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum LockRelation {
     Ok,
@@ -46,7 +51,7 @@ impl std::fmt::Display for LockRelation {
 }
 
 /// Per-repo status entry.
-#[derive(Debug, Serialize, JsonSchema)]
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct RepoStatus {
     pub path: String,
     pub branch: Option<String>,
@@ -159,7 +164,11 @@ pub fn run_status(
     }
 
     if json {
-        let out = serde_json::to_string_pretty(&entries)
+        let envelope = StatusJsonOutput {
+            schema_url: STATUS_SCHEMA_URL.to_string(),
+            repos: entries,
+        };
+        let out = serde_json::to_string_pretty(&envelope)
             .map_err(|e| anyhow::anyhow!("failed to serialize status to JSON: {e}"))?;
         println!("{out}");
     } else {
@@ -227,5 +236,51 @@ fn print_table(entries: &[RepoStatus]) {
             tip_w = tip_w,
             lock_w = lock_w,
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Round-trip the envelope through serde so the `$schema` rename and the
+    /// `repos` array shape are pinned independent of the live status path.
+    #[test]
+    fn status_json_envelope_round_trips() {
+        let envelope = StatusJsonOutput {
+            schema_url: STATUS_SCHEMA_URL.to_string(),
+            repos: vec![RepoStatus {
+                path: "github/org/repo".into(),
+                branch: Some("main".into()),
+                tip: Some("abc123".into()),
+                lock_sha: Some("abc123".into()),
+                relation: LockRelation::Ok,
+                mid_op: None,
+                role: "primary".into(),
+                url: "https://example.com/repo.git".into(),
+                project: "demo".into(),
+                absolute_path: "/abs/github/org/repo".into(),
+            }],
+        };
+
+        let json = serde_json::to_string(&envelope).expect("serializes");
+        let v: serde_json::Value = serde_json::from_str(&json).expect("parses");
+
+        // Wire-shape: top-level $schema + repos array.
+        assert_eq!(
+            v["$schema"],
+            serde_json::Value::String(STATUS_SCHEMA_URL.to_string())
+        );
+        let repos = v["repos"].as_array().expect("repos is an array");
+        assert_eq!(repos.len(), 1);
+        assert_eq!(repos[0]["path"], "github/org/repo");
+        assert_eq!(repos[0]["relation"], "ok");
+
+        // Typed round-trip back to the envelope struct.
+        let decoded: StatusJsonOutput = serde_json::from_str(&json).expect("deserializes");
+        assert_eq!(decoded.schema_url, STATUS_SCHEMA_URL);
+        assert_eq!(decoded.repos.len(), 1);
+        assert_eq!(decoded.repos[0].path, "github/org/repo");
+        assert_eq!(decoded.repos[0].relation, LockRelation::Ok);
     }
 }

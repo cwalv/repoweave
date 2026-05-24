@@ -16,21 +16,21 @@ rwv status --json | jq .
 To update every repository that you "own" (role: primary), pipe the filtered paths to `xargs`.
 
 ```bash
-rwv status --json | jq -r '.[] | select(.role == "primary") | .absolute_path' | xargs -I {} git -C {} pull
+rwv status --json | jq -r '.repos[] | select(.role == "primary") | .absolute_path' | xargs -I {} git -C {} pull
 ```
 
 ### 2. Create a feature branch across all forks
 When starting a cross-cutting feature, you can create a branch in every fork simultaneously.
 
 ```bash
-rwv status --json | jq -r '.[] | select(.role == "fork") | .absolute_path' | xargs -I {} git -C {} checkout -b feat/my-big-change
+rwv status --json | jq -r '.repos[] | select(.role == "fork") | .absolute_path' | xargs -I {} git -C {} checkout -b feat/my-big-change
 ```
 
 ### 3. Run tests in repos with a Makefile
 You can combine `jq` filtering with shell existence checks.
 
 ```bash
-rwv status --json | jq -r '.[] | .absolute_path' | while read path; do
+rwv status --json | jq -r '.repos[] | .absolute_path' | while read path; do
   if [ -f "$path/Makefile" ]; then
     echo "--- Testing $path ---"
     make -C "$path" test
@@ -44,7 +44,7 @@ For large projects, running commands sequentially can be slow. Use `parallel` (G
 
 ```bash
 # Fetch all repositories in parallel (4 at a time)
-rwv status --json | jq -r '.[] | .absolute_path' | xargs -P 4 -I {} git -C {} fetch --all
+rwv status --json | jq -r '.repos[] | .absolute_path' | xargs -P 4 -I {} git -C {} fetch --all
 ```
 
 ## Alternative: Gita

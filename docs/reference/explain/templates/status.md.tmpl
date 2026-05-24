@@ -25,14 +25,20 @@ Run `rwv --help status` for the full clap surface.
 Default text output is a fixed-column table: one repo per row, with
 `path branch tip lock: <sha> [<relation>] [<mid-op>]`.
 
-Under `--json`, the output is a bare JSON array (legacy shape; pre-dates the
-`$schema` envelope convention). Each element is a `RepoStatus` record:
-`path`, `absolute_path`, `branch`, `tip`, `lock_sha`, `relation`, `mid_op`,
-`role`, `url`, `project`.
+Under `--json`, output is the envelope:
 
-A follow-up will migrate this to the envelope shape
-`{ "$schema": "...", "repos": [...] }`; the committed schema today describes
-the bare-array shape that actually ships.
+```
+{
+  "$schema": "<url>",
+  "repos": [ { "path": "...", ... }, ... ]
+}
+```
+
+The `$schema` URL points to the committed schema artifact. Each element of
+`repos` is a `RepoStatus` record: `path` (manifest-relative), `absolute_path`
+(fully resolved), `branch`, `tip`, `lock_sha`, `relation`
+(`ok`/`ahead`/`behind`/`diverged`/`no_lock`/`unknown`), `mid_op`, `role`,
+`url`, `project`.
 
 Schema:
 
@@ -50,19 +56,19 @@ Schema:
 Read all repos in the active project as JSON, pipe to jq:
 
 ```
-rwv status --json | jq -r '.[] | "\(.path)\t\(.relation)"'
+rwv status --json | jq -r '.repos[] | "\(.path)\t\(.relation)"'
 ```
 
 Find every repo that has drifted from its lock:
 
 ```
-rwv status --json | jq '.[] | select(.relation != "ok" and .relation != "no_lock")'
+rwv status --json | jq '.repos[] | select(.relation != "ok" and .relation != "no_lock")'
 ```
 
 Get absolute paths for all forks (e.g. to run a command across each repo):
 
 ```
-rwv status --json | jq -r '.[] | select(.role == "fork") | .absolute_path'
+rwv status --json | jq -r '.repos[] | select(.role == "fork") | .absolute_path'
 ```
 
 ## Common errors

@@ -1,9 +1,22 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "title": "Array_of_RepoStatus",
-  "type": "array",
-  "items": {
-    "$ref": "#/definitions/RepoStatus"
+  "title": "StatusJsonOutput",
+  "description": "Top-level envelope for `rwv status --json`. Matches the convention adopted by doctor (`$schema` + `violations`) and sync (`$schema` + `outcomes`): `{ \"$schema\": \"<url>\", \"repos\": [<RepoStatus>, ...] }`.",
+  "type": "object",
+  "required": [
+    "$schema",
+    "repos"
+  ],
+  "properties": {
+    "$schema": {
+      "type": "string"
+    },
+    "repos": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/RepoStatus"
+      }
+    }
   },
   "definitions": {
     "LockRelation": {

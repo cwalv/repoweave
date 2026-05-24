@@ -107,7 +107,7 @@ fn recipe_checkout_branch_across_forks_via_jq_xargs() {
     let (_tmp, ws, _project_dir) = setup_two_repo_workspace();
 
     // Verbatim from docs/how-to/run-a-command-across-repos.md, recipe #2.
-    let recipe = r#"rwv status --json | jq -r '.[] | select(.role == "fork") | .absolute_path' | xargs -I {} git -C {} checkout -b feat/doc-claim"#;
+    let recipe = r#"rwv status --json | jq -r '.repos[] | select(.role == "fork") | .absolute_path' | xargs -I {} git -C {} checkout -b feat/doc-claim"#;
     let output = run_recipe(recipe, &ws);
     assert!(
         output.status.success(),
@@ -144,7 +144,8 @@ fn recipe_filter_by_role_owned_via_jq() {
     // Note: doc currently uses `role == "primary"` (the role rename to
     // "owned" is planned but not shipped). When the rename lands, update
     // this filter to match.
-    let recipe = r#"rwv status --json | jq -r '.[] | select(.role == "primary") | .absolute_path'"#;
+    let recipe =
+        r#"rwv status --json | jq -r '.repos[] | select(.role == "primary") | .absolute_path'"#;
     let output = run_recipe(recipe, &ws);
     assert!(
         output.status.success(),

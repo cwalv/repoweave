@@ -299,22 +299,46 @@ fn status_shows_per_repo_state() {
 fn status_json_flag_produces_machine_readable_output() {
     let tmp = tempfile::tempdir().unwrap();
     let (ws, _) = make_locked_workspace(tmp.path(), "primary");
-    rwv()
+    let assert = rwv()
         .args(["status", "--json"])
         .current_dir(&ws.root)
         .assert()
-        .success()
-        .stdout(
-            predicate::str::contains("\"role\": \"primary\"")
-                .and(predicate::str::contains(
-                    "\"url\": \"https://github.com/chatly/server.git\"",
-                ))
-                .and(predicate::str::contains("\"project\": \"web-app\""))
-                .and(predicate::str::contains("\"absolute_path\":"))
-                .and(predicate::str::contains(
-                    "\"path\": \"github/chatly/server\"",
-                )),
-        );
+        .success();
+    let stdout = String::from_utf8_lossy(&assert.get_output().stdout).into_owned();
+
+    // Envelope shape: { "$schema": "...", "repos": [...] }
+    let parsed: serde_json::Value = serde_json::from_str(&stdout)
+        .unwrap_or_else(|e| panic!("stdout not parseable as JSON ({e}):\n{stdout}"));
+    let obj = parsed.as_object().expect("top level should be object");
+    assert_eq!(
+        obj.get("$schema").and_then(serde_json::Value::as_str),
+        Some(repoweave::status::STATUS_SCHEMA_URL),
+        "envelope must include $schema URL"
+    );
+    let repos = obj
+        .get("repos")
+        .and_then(serde_json::Value::as_array)
+        .expect("repos should be an array");
+    assert!(!repos.is_empty(), "repos should not be empty");
+
+    // Per-repo content checks (pre-migration assertions, now on `.repos[]`).
+    let server = repos
+        .iter()
+        .find(|r| r.get("path").and_then(serde_json::Value::as_str) == Some("github/chatly/server"))
+        .expect("server repo entry");
+    assert_eq!(
+        server.get("role").and_then(serde_json::Value::as_str),
+        Some("primary")
+    );
+    assert_eq!(
+        server.get("url").and_then(serde_json::Value::as_str),
+        Some("https://github.com/chatly/server.git")
+    );
+    assert_eq!(
+        server.get("project").and_then(serde_json::Value::as_str),
+        Some("web-app")
+    );
+    assert!(server.get("absolute_path").is_some());
 }
 
 // ---------------------------------------------------------------------------
