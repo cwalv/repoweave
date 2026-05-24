@@ -13,7 +13,7 @@
 //! rwv <verb> [--role ROLE]... [--repo SELECTOR]...
 //! ```
 //!
-//! `--role` values are the existing [`Role`] variants (`primary`, `dependency`,
+//! `--role` values are the existing [`Role`] variants (`owned`, `dependency`,
 //! `fork`, `reference`), case-insensitive.
 //!
 //! `--repo` selectors dispatch on prefix:
@@ -111,10 +111,20 @@ pub enum FilterError {
 impl fmt::Display for FilterError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::UnknownRole(value) => write!(
-                f,
-                "--role: '{value}' is not a recognised role (expected primary, dependency, fork, or reference)"
-            ),
+            Self::UnknownRole(value) => {
+                if value.eq_ignore_ascii_case("primary") {
+                    write!(
+                        f,
+                        "--role: 'primary' is no longer accepted (the role is spelled `owned`); \
+                         run `rwv doctor --fix` to migrate any manifests still using `role: primary`"
+                    )
+                } else {
+                    write!(
+                        f,
+                        "--role: '{value}' is not a recognised role (expected owned, dependency, fork, or reference)"
+                    )
+                }
+            }
             Self::EmptyPattern { kind } => {
                 write!(f, "--repo {kind}: pattern is empty after the '{kind}:' prefix")
             }
@@ -251,10 +261,12 @@ impl FromStr for Role {
     type Err = ();
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
+        // No `primary` alias here: fo-fzf4n drops the back-compat surface
+        // in favour of `rwv doctor --fix`. `FilterError::UnknownRole`
+        // detects the legacy spelling and emits the migration hint, so
+        // matching `primary` here would mask that diagnostic.
         match s.to_ascii_lowercase().as_str() {
-            // `primary` is the legacy alias for `owned`. Accepted silently
-            // for back-compat; new docs / scripts should use `owned`.
-            "owned" | "primary" => Ok(Role::Owned),
+            "owned" => Ok(Role::Owned),
             "fork" => Ok(Role::Fork),
             "dependency" => Ok(Role::Dependency),
             "reference" => Ok(Role::Reference),
@@ -281,10 +293,23 @@ mod tests {
 
     #[test]
     fn parse_role_is_case_insensitive() {
-        let f = RepoFilter::parse(&["Primary".into()], &[]).unwrap();
+        let f = RepoFilter::parse(&["Owned".into()], &[]).unwrap();
         assert!(f.matches(&rp("x"), Role::Owned));
         let f = RepoFilter::parse(&["DEPENDENCY".into()], &[]).unwrap();
         assert!(f.matches(&rp("x"), Role::Dependency));
+    }
+
+    /// `--role primary` is no longer accepted; the error must direct
+    /// users at `rwv doctor --fix` so the migration path is discoverable.
+    /// fo-fzf4n.
+    #[test]
+    fn parse_role_rejects_legacy_primary_with_doctor_hint() {
+        let err = RepoFilter::parse(&["primary".into()], &[]).unwrap_err();
+        let msg = format!("{err}");
+        assert!(
+            msg.contains("rwv doctor --fix"),
+            "legacy --role primary error must direct at `rwv doctor --fix`, got: {msg}"
+        );
     }
 
     #[test]
@@ -298,7 +323,7 @@ mod tests {
 
     #[test]
     fn role_filter_includes_matching_role_excludes_others() {
-        let f = RepoFilter::parse(&["primary".into()], &[]).unwrap();
+        let f = RepoFilter::parse(&["owned".into()], &[]).unwrap();
         assert!(f.matches(&rp("any/path"), Role::Owned));
         assert!(!f.matches(&rp("any/path"), Role::Dependency));
         assert!(!f.matches(&rp("any/path"), Role::Fork));
@@ -307,7 +332,7 @@ mod tests {
 
     #[test]
     fn multiple_roles_accumulate_as_union() {
-        let f = RepoFilter::parse(&["primary".into(), "fork".into()], &[]).unwrap();
+        let f = RepoFilter::parse(&["owned".into(), "fork".into()], &[]).unwrap();
         assert!(f.matches(&rp("x"), Role::Owned));
         assert!(f.matches(&rp("x"), Role::Fork));
         assert!(!f.matches(&rp("x"), Role::Reference));
@@ -381,11 +406,11 @@ mod tests {
 
     #[test]
     fn union_role_or_selector() {
-        // --role primary --repo github/external/dep — match either.
-        let f = RepoFilter::parse(&["primary".into()], &["github/external/dep".into()]).unwrap();
-        // Primary-role repo at arbitrary path passes (role match).
+        // --role owned --repo github/external/dep — match either.
+        let f = RepoFilter::parse(&["owned".into()], &["github/external/dep".into()]).unwrap();
+        // Owned-role repo at arbitrary path passes (role match).
         assert!(f.matches(&rp("github/me/code"), Role::Owned));
-        // Path-matched repo with non-primary role passes (selector match).
+        // Path-matched repo with non-owned role passes (selector match).
         assert!(f.matches(&rp("github/external/dep"), Role::Dependency));
         // Other dependency-role repos at other paths do not pass.
         assert!(!f.matches(&rp("github/other/dep"), Role::Dependency));
@@ -416,16 +441,19 @@ mod tests {
 
     #[test]
     fn non_empty_filter_reports_not_empty() {
-        let f = RepoFilter::parse(&["primary".into()], &[]).unwrap();
+        let f = RepoFilter::parse(&["owned".into()], &[]).unwrap();
         assert!(!f.is_empty());
         let f = RepoFilter::parse(&[], &["x".into()]).unwrap();
         assert!(!f.is_empty());
     }
 
     #[test]
-    fn role_from_str_unknown_errors() {
-        assert!(Role::from_str("Primary").is_ok());
-        assert!(Role::from_str("primary").is_ok());
+    fn role_from_str_accepts_owned_rejects_legacy_primary() {
+        assert!(Role::from_str("Owned").is_ok());
+        assert!(Role::from_str("owned").is_ok());
+        // Legacy spelling is rejected here so that `RepoFilter::parse`'s
+        // helpful diagnostic isn't bypassed.
+        assert!(Role::from_str("primary").is_err());
         assert!(Role::from_str("bogus").is_err());
     }
 }
