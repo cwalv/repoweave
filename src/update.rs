@@ -10,6 +10,7 @@ use crate::git::{git_command, GitVcs};
 use crate::lock;
 use crate::manifest::{Project, ProjectName, RepoEntry, RepoPath};
 use crate::parallel::{run_in_parallel, run_subprocess_with_reporter, Reporter};
+use crate::selector::RepoFilter;
 use crate::vcs::{RefName, Vcs};
 use crate::workspace::{WorkspaceContext, WorkspaceLocation};
 use anyhow::Context;
@@ -42,6 +43,7 @@ pub fn run_update(
     dirty: bool,
     commit: bool,
     project_override: Option<ProjectName>,
+    filter: &RepoFilter,
     jobs: usize,
 ) -> anyhow::Result<()> {
     let ctx = WorkspaceContext::resolve(cwd, project_override.clone())?;
@@ -64,6 +66,7 @@ pub fn run_update(
         dirty,
         commit,
         project_override,
+        filter,
         jobs,
     )
 }
@@ -84,6 +87,7 @@ fn update_for_project(
     dirty: bool,
     commit: bool,
     project_override: Option<ProjectName>,
+    filter: &RepoFilter,
     jobs: usize,
 ) -> anyhow::Result<()> {
     let project_dir = active_root.join("projects").join(project_name.as_str());
@@ -95,10 +99,17 @@ fn update_for_project(
     // Snapshot the repo list into a Vec so the parallel loop can index by
     // position. The BTreeMap iteration is deterministic, so the resulting
     // Vec mirrors the previous serial loop's order exactly.
+    //
+    // Apply the `--role` / `--repo` filter so only selected repos are
+    // advanced. Empty filter is a no-op (every repo passes). The post-loop
+    // lock re-snapshot below still walks the *full* manifest, so unfiltered
+    // repos remain at their previous lock SHAs — see the comment by the
+    // `lock::lock` call.
     let work_items: Vec<(RepoPath, RepoEntry)> = project
         .manifest
         .repositories
         .iter()
+        .filter(|(rp, entry)| filter.matches(rp, entry.role))
         .map(|(rp, entry)| (rp.clone(), entry.clone()))
         .collect();
 
@@ -154,6 +165,15 @@ fn update_for_project(
     // The lock file is shared project-wide state; concurrent writes would
     // race. Keeping it serial post-join is the natural fit for the
     // existing structure.
+    //
+    // Filter scope: the `--role` / `--repo` filter narrows the *advance*
+    // loop above, not the lock snapshot. `lock::lock` walks the full
+    // manifest and records HEAD of every repo on disk: filtered repos are
+    // at their newly-advanced HEAD; unfiltered repos are at whatever HEAD
+    // they were already on. This preserves the invariant that the lock
+    // always describes the whole manifest. See fo-9kweo "Open questions"
+    // — resolved as "filter narrows the loop, not the lock-shape" — and
+    // the parallel decision for push in `src/push.rs`.
     let _ = workweave; // suppress unused warning if generate_lock signature changes
     lock::lock(active_root, dirty, commit, project_override)
         .context("failed to write lock after update")?;

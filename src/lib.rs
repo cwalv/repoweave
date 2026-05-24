@@ -14,6 +14,7 @@ pub mod parallel;
 pub mod prime;
 pub mod push;
 pub mod registry;
+pub mod selector;
 pub mod setup;
 pub mod status;
 pub mod sync;

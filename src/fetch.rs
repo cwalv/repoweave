@@ -8,6 +8,7 @@ use crate::lock;
 use crate::manifest::{clone_urls_equivalent, LockFile, Manifest, RepoEntry, RepoPath, Role};
 use crate::parallel::{run_in_parallel, Reporter};
 use crate::registry;
+use crate::selector::RepoFilter;
 use crate::vcs::Vcs;
 use anyhow::{bail, Context};
 use std::path::{Path, PathBuf};
@@ -114,6 +115,7 @@ pub fn run_fetch(
     workspace_root: &Path,
     mode: FetchMode,
     no_reference: bool,
+    filter: &RepoFilter,
     jobs: usize,
 ) -> anyhow::Result<()> {
     let git = GitVcs;
@@ -198,9 +200,14 @@ pub fn run_fetch(
     // Snapshot the work list. BTreeMap iteration is deterministic, so the
     // resulting Vec preserves the serial loop's ordering (acceptance: -j 1
     // matches the previous behaviour exactly).
+    //
+    // Apply the `--role` / `--repo` filter here so the worker pool only sees
+    // selected repos. Empty filter is a no-op (every repo passes). See
+    // `src/selector.rs` for the grammar and union semantics.
     let work_items: Vec<(RepoPath, RepoEntry)> = manifest
         .repositories
         .iter()
+        .filter(|(rp, entry)| filter.matches(rp, entry.role))
         .map(|(rp, e)| (rp.clone(), e.clone()))
         .collect();
 
@@ -266,7 +273,16 @@ pub fn run_fetch(
     println!("rwv fetch: done ({succeeded} repo(s) ready)");
 
     // Default mode: bootstrap or additively extend the lock; then maybe auto-activate.
-    if mode == FetchMode::Default {
+    //
+    // A non-empty `--role` / `--repo` filter narrows the fetch to a subset of
+    // the manifest; non-filtered repos are not on disk (in a fresh workspace)
+    // or have not been touched (in an existing workspace). Either way, the
+    // lock-write paths below — both bootstrap and additive — assume they can
+    // read HEAD from every manifest repo; under a filter that's false. Skip
+    // the lock-write entirely under a filter: the filtered fetch is a
+    // targeted-sync operation, not a lock-bumping one. Use `rwv update` or
+    // unfiltered `rwv fetch` to refresh the lock.
+    if mode == FetchMode::Default && filter.is_empty() {
         let needs_bootstrap = existing_lock.is_none();
         let has_additions = !added_to_lock.is_empty();
 

@@ -9,6 +9,7 @@
 use crate::git::GitVcs;
 use crate::manifest::{Project, ProjectName, RepoEntry, RepoPath, Role};
 use crate::parallel::{run_in_parallel, Reporter};
+use crate::selector::RepoFilter;
 use crate::vcs::{RawRevisionId, Vcs};
 use crate::workspace::{WorkspaceContext, WorkspaceLocation};
 use anyhow::Context;
@@ -37,6 +38,7 @@ pub fn run_push(
     project_override: Option<ProjectName>,
     dry_run: bool,
     force: bool,
+    filter: &RepoFilter,
     jobs: usize,
 ) -> anyhow::Result<()> {
     let ctx = WorkspaceContext::resolve(cwd, project_override.clone())?;
@@ -96,6 +98,16 @@ pub fn run_push(
     // 3. Lock-matches-state precondition. Compare each manifest repo's HEAD
     //    SHA to the lock's recorded SHA. Bail before touching the network so
     //    we don't half-publish state the committed lock doesn't reference.
+    //
+    //    Filter scope: this check ALWAYS runs against the full manifest, even
+    //    when `--role` / `--repo` narrows the actual push loop below. The
+    //    committed lock describes every manifest repo; publishing a
+    //    project-repo lock that doesn't match the unfiltered repos breaks
+    //    collaborators' `rwv fetch` (they hit "object missing" against the
+    //    pinned-but-unpublished SHAs). Resolved design decision for fo-9kweo:
+    //    the filter narrows the push loop, not the precondition. See bead
+    //    fo-9kweo "Open questions" and the corresponding shape note in
+    //    fo-nxba7.
     let lock_path = project_dir.join("rwv.lock");
     let lock_entries: std::collections::BTreeMap<RepoPath, RawRevisionId> =
         if let Some(raw_lock) = &project.lock {
@@ -178,9 +190,19 @@ pub fn run_push(
     // 4. Per-repo branch sanity. Detached HEAD is fatal; off-version branch
     //    is a warning (footgun catcher — operator may have a topic branch
     //    they intend to push; we warn but don't override).
+    //
+    //    Filter scope: the per-repo branch check runs only over the FILTERED
+    //    subset — there's no reason to fail a filtered push because of a
+    //    detached HEAD in a repo we aren't going to push. Contrast with the
+    //    lock-precondition above, which runs over the full manifest because
+    //    the *lock* describes the full manifest.
+    let filtered_repos: Vec<&(RepoPath, RepoEntry)> = manifest_repos
+        .iter()
+        .filter(|(rp, entry)| filter.matches(rp, entry.role))
+        .collect();
     let mut branch_errors: Vec<String> = Vec::new();
-    let mut plan: Vec<PushPlanItem> = Vec::with_capacity(manifest_repos.len());
-    for (repo_path, entry) in &manifest_repos {
+    let mut plan: Vec<PushPlanItem> = Vec::with_capacity(filtered_repos.len());
+    for (repo_path, entry) in &filtered_repos {
         let repo_dir = primary_root.join(repo_path.as_path());
         let current = match git.current_ref(&repo_dir) {
             Ok(c) => c,

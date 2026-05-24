@@ -721,3 +721,270 @@ fn push_requires_a_workspace() {
         "error should mention no workspace; got: {stderr}"
     );
 }
+
+// ============================================================================
+// `--role` / `--repo` filter (fo-9kweo)
+// ============================================================================
+
+/// Build a workspace + advance every manifest repo + write a matching lock.
+/// Common setup for the filter tests so each test can focus on the
+/// flag-specific assertions.
+fn build_workspace_with_advances(
+    project_name: &str,
+    repos: &[(&str, &str)],
+) -> (PushWorkspace, Vec<(String, String)>) {
+    let ws = build_workspace(project_name, repos);
+
+    // Advance each manifest repo with a distinct commit so SHAs differ.
+    let mut manifest_yaml = String::from("repositories:\n");
+    let mut lock_yaml = String::from("repositories:\n");
+    let mut expected_shas: Vec<(String, String)> = Vec::new();
+    for ((rp, bare), (_, role)) in ws.manifest_bares.iter().zip(repos.iter()) {
+        let local = ws.workspace.join(rp);
+        std::fs::write(local.join(format!("{}.txt", rp.replace('/', "_"))), rp).unwrap();
+        git_run(&local, &["add", "."]);
+        git_run(&local, &["commit", "-m", &format!("advance {rp}")]);
+        let sha = git_run(&local, &["rev-parse", "HEAD"]);
+        let bare_url = bare.to_str().unwrap();
+        manifest_yaml.push_str(&format!(
+            "  {rp}:\n    type: git\n    url: {bare_url}\n    version: main\n    role: {role}\n"
+        ));
+        lock_yaml.push_str(&format!(
+            "  {rp}:\n    type: git\n    url: {bare_url}\n    version: {sha}\n"
+        ));
+        expected_shas.push((rp.clone(), sha));
+    }
+    let project_dir = ws.workspace.join("projects").join(&ws.project_name);
+    std::fs::write(project_dir.join("rwv.yaml"), &manifest_yaml).unwrap();
+    std::fs::write(project_dir.join("rwv.lock"), &lock_yaml).unwrap();
+    git_run(&project_dir, &["add", "."]);
+    git_run(&project_dir, &["commit", "-m", "advance lock"]);
+
+    (ws, expected_shas)
+}
+
+#[test]
+fn push_role_filter_only_pushes_matching_role() {
+    let (ws, expected_shas) = build_workspace_with_advances(
+        "alpha",
+        &[("local/org/p", "primary"), ("local/org/d", "dependency")],
+    );
+    let baseline_d = bare_main_sha(&ws.manifest_bares[1].1);
+
+    rwv()
+        .args(["push", "--role", "primary"])
+        .current_dir(&ws.workspace)
+        .assert()
+        .success();
+
+    let (p_path, p_expected) = &expected_shas[0];
+    let (_, p_bare) = ws.manifest_bares.iter().find(|(p, _)| p == p_path).unwrap();
+    assert_eq!(
+        bare_main_sha(p_bare),
+        Some(p_expected.clone()),
+        "primary repo bare must advance"
+    );
+
+    assert_eq!(
+        bare_main_sha(&ws.manifest_bares[1].1),
+        baseline_d,
+        "dependency bare must NOT advance under --role primary"
+    );
+}
+
+#[test]
+fn push_repo_exact_filter_pushes_only_that_path() {
+    let (ws, expected_shas) = build_workspace_with_advances(
+        "alpha",
+        &[("local/org/a", "primary"), ("local/org/b", "primary")],
+    );
+    let baseline_b = bare_main_sha(&ws.manifest_bares[1].1);
+
+    rwv()
+        .args(["push", "--repo", "local/org/a"])
+        .current_dir(&ws.workspace)
+        .assert()
+        .success();
+
+    assert_eq!(
+        bare_main_sha(&ws.manifest_bares[0].1),
+        Some(expected_shas[0].1.clone())
+    );
+    assert_eq!(
+        bare_main_sha(&ws.manifest_bares[1].1),
+        baseline_b,
+        "b bare must NOT advance"
+    );
+}
+
+#[test]
+fn push_repo_glob_filter_pushes_matching() {
+    let (ws, expected_shas) = build_workspace_with_advances(
+        "alpha",
+        &[
+            ("local/org/a", "primary"),
+            ("local/org/b", "primary"),
+            ("local/other/c", "primary"),
+        ],
+    );
+    let baseline_c = bare_main_sha(&ws.manifest_bares[2].1);
+
+    rwv()
+        .args(["push", "--repo", "glob:local/org/*"])
+        .current_dir(&ws.workspace)
+        .assert()
+        .success();
+
+    for (i, (rp, expected)) in expected_shas.iter().enumerate() {
+        let bare = &ws.manifest_bares[i].1;
+        if rp.starts_with("local/org/") {
+            assert_eq!(bare_main_sha(bare), Some(expected.clone()), "{rp}");
+        }
+    }
+    assert_eq!(
+        bare_main_sha(&ws.manifest_bares[2].1),
+        baseline_c,
+        "other/c must NOT advance"
+    );
+}
+
+#[test]
+fn push_repo_regex_filter_pushes_matching() {
+    let (ws, expected_shas) = build_workspace_with_advances(
+        "alpha",
+        &[
+            ("local/cwalv/a", "primary"),
+            ("local/cwalv/b", "primary"),
+            ("local/other/c", "primary"),
+        ],
+    );
+    let baseline_c = bare_main_sha(&ws.manifest_bares[2].1);
+
+    rwv()
+        .args(["push", "--repo", "re:^local/cwalv/"])
+        .current_dir(&ws.workspace)
+        .assert()
+        .success();
+
+    for (i, (rp, expected)) in expected_shas.iter().enumerate() {
+        if rp.starts_with("local/cwalv/") {
+            assert_eq!(
+                bare_main_sha(&ws.manifest_bares[i].1),
+                Some(expected.clone())
+            );
+        }
+    }
+    assert_eq!(bare_main_sha(&ws.manifest_bares[2].1), baseline_c);
+}
+
+#[test]
+fn push_union_role_and_repo_selectors() {
+    let (ws, expected_shas) = build_workspace_with_advances(
+        "alpha",
+        &[
+            ("local/me/p", "primary"),
+            ("local/external/dep", "dependency"),
+            ("local/external/other", "dependency"),
+        ],
+    );
+    let baseline_other = bare_main_sha(&ws.manifest_bares[2].1);
+
+    rwv()
+        .args(["push", "--role", "primary", "--repo", "local/external/dep"])
+        .current_dir(&ws.workspace)
+        .assert()
+        .success();
+
+    // Primary advances via --role; external/dep via --repo.
+    assert_eq!(
+        bare_main_sha(&ws.manifest_bares[0].1),
+        Some(expected_shas[0].1.clone()),
+        "primary should advance"
+    );
+    assert_eq!(
+        bare_main_sha(&ws.manifest_bares[1].1),
+        Some(expected_shas[1].1.clone()),
+        "exact-named dep should advance"
+    );
+    assert_eq!(
+        bare_main_sha(&ws.manifest_bares[2].1),
+        baseline_other,
+        "unmatched dep must NOT advance"
+    );
+}
+
+// ----------------------------------------------------------------------------
+// Lock-precondition always runs against the FULL manifest, never the filter
+// (resolved design decision for fo-9kweo).
+// ----------------------------------------------------------------------------
+
+#[test]
+fn push_filter_still_runs_lock_precondition_against_full_manifest() {
+    // Build a 2-repo workspace. Advance BOTH local clones but only update the
+    // lock for repo A. Push with --repo local/org/a (the in-sync one). The
+    // push must still refuse — repo B's HEAD drifts from the committed lock,
+    // and the committed lock is shared with collaborators regardless of
+    // which subset the operator pushes today.
+    let ws = build_workspace(
+        "alpha",
+        &[("local/org/a", "primary"), ("local/org/b", "primary")],
+    );
+
+    let baseline_a = bare_main_sha(&ws.manifest_bares[0].1);
+    let baseline_b = bare_main_sha(&ws.manifest_bares[1].1);
+
+    // Advance both locals.
+    let mut new_shas: Vec<String> = Vec::new();
+    for (rp, _) in &ws.manifest_bares {
+        let local = ws.workspace.join(rp);
+        std::fs::write(local.join(format!("{}.txt", rp.replace('/', "_"))), rp).unwrap();
+        git_run(&local, &["add", "."]);
+        git_run(&local, &["commit", "-m", &format!("advance {rp}")]);
+        new_shas.push(git_run(&local, &["rev-parse", "HEAD"]));
+    }
+
+    // Update lock for A only — leaving B's lock entry stale.
+    let (_, a_bare) = &ws.manifest_bares[0];
+    let (_, b_bare) = &ws.manifest_bares[1];
+    let stale_b_lock_sha = git_run(
+        &ws.workspace.join("local/org/b"),
+        &["rev-parse", "HEAD~1"], // the original lock SHA from build_workspace
+    );
+    let lock = format!(
+        "repositories:\n  local/org/a:\n    type: git\n    url: {a}\n    version: {a_sha}\n  local/org/b:\n    type: git\n    url: {b}\n    version: {b_stale}\n",
+        a = a_bare.to_str().unwrap(),
+        a_sha = new_shas[0],
+        b = b_bare.to_str().unwrap(),
+        b_stale = stale_b_lock_sha,
+    );
+    let project_dir = ws.workspace.join("projects").join(&ws.project_name);
+    std::fs::write(project_dir.join("rwv.lock"), &lock).unwrap();
+    git_run(&project_dir, &["add", "."]);
+    git_run(&project_dir, &["commit", "-m", "partial relock"]);
+
+    let output = rwv()
+        .args(["push", "--repo", "local/org/a"])
+        .current_dir(&ws.workspace)
+        .output()
+        .expect("rwv push");
+    assert!(
+        !output.status.success(),
+        "filtered push must still refuse when an unfiltered repo's lock disagrees with HEAD; stdout: {}, stderr: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("local/org/b"),
+        "error should name the unfiltered repo with the lock mismatch; got: {stderr}"
+    );
+
+    // Neither bare should have advanced: lock-precondition bails before
+    // touching the network.
+    assert_eq!(
+        bare_main_sha(&ws.manifest_bares[0].1),
+        baseline_a,
+        "lock-precondition refusal must happen before any network call"
+    );
+    assert_eq!(bare_main_sha(&ws.manifest_bares[1].1), baseline_b);
+}

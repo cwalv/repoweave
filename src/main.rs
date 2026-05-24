@@ -55,6 +55,12 @@ enum Commands {
         /// Skip cloning/fetching repositories with role: reference
         #[arg(long)]
         no_reference: bool,
+        /// Limit the operation to repos with this role. Repeat to union multiple roles. Combined as a union with --repo.
+        #[arg(long = "role")]
+        roles: Vec<String>,
+        /// Limit the operation to repos matching this selector. Bare strings match exactly; `re:<pat>` matches as regex; `glob:<pat>` matches as glob. Repeat for union. Combined as a union with --role.
+        #[arg(long = "repo")]
+        repos: Vec<String>,
         /// Number of parallel per-repo workers. Default: min(nproc, 8). `-j 1` is explicit serial.
         #[arg(short = 'j', long = "jobs")]
         jobs: Option<usize>,
@@ -70,6 +76,12 @@ enum Commands {
         /// Operate on this project instead of the active project (does not change `.rwv-active`)
         #[arg(long)]
         project: Option<String>,
+        /// Limit the operation to repos with this role. Repeat to union multiple roles. Combined as a union with --repo.
+        #[arg(long = "role")]
+        roles: Vec<String>,
+        /// Limit the operation to repos matching this selector. Bare strings match exactly; `re:<pat>` matches as regex; `glob:<pat>` matches as glob. Repeat for union. Combined as a union with --role.
+        #[arg(long = "repo")]
+        repos: Vec<String>,
         /// Number of parallel per-repo workers. Default: min(nproc, 8). `-j 1` is explicit serial.
         #[arg(short = 'j', long = "jobs")]
         jobs: Option<usize>,
@@ -85,6 +97,12 @@ enum Commands {
         /// Force-push every repo in the operation (manifest repos and the project repo). Default deny.
         #[arg(long)]
         force: bool,
+        /// Limit the push to repos with this role. Repeat to union multiple roles. Combined as a union with --repo. Lock-precondition still runs against the full manifest.
+        #[arg(long = "role")]
+        roles: Vec<String>,
+        /// Limit the push to repos matching this selector. Bare strings match exactly; `re:<pat>` matches as regex; `glob:<pat>` matches as glob. Repeat for union. Combined as a union with --role. Lock-precondition still runs against the full manifest.
+        #[arg(long = "repo")]
+        repos: Vec<String>,
         /// Number of parallel per-repo workers for manifest-repo pushes. Default: min(nproc, 8). `-j 1` is explicit serial. Project-repo push always runs serially as the last step.
         #[arg(short = 'j', long = "jobs")]
         jobs: Option<usize>,
@@ -342,6 +360,8 @@ fn main() -> anyhow::Result<()> {
             frozen,
             force,
             no_reference,
+            roles,
+            repos,
             jobs,
         }) => {
             let cwd = std::env::current_dir()?;
@@ -351,8 +371,10 @@ fn main() -> anyhow::Result<()> {
             } else {
                 fetch::FetchMode::Default
             };
+            let filter = repoweave::selector::RepoFilter::parse(&roles, &repos)
+                .map_err(|e| anyhow::anyhow!("{e}"))?;
             let jobs = repoweave::parallel::resolve_jobs(jobs);
-            fetch::run_fetch(&source, &cwd, mode, no_reference, jobs)?;
+            fetch::run_fetch(&source, &cwd, mode, no_reference, &filter, jobs)?;
         }
         Some(Commands::Add {
             url,
@@ -391,23 +413,31 @@ fn main() -> anyhow::Result<()> {
             dirty,
             commit,
             project,
+            roles,
+            repos,
             jobs,
         }) => {
             let cwd = std::env::current_dir()?;
             let project_override = project.map(repoweave::manifest::ProjectName::new);
+            let filter = repoweave::selector::RepoFilter::parse(&roles, &repos)
+                .map_err(|e| anyhow::anyhow!("{e}"))?;
             let jobs = repoweave::parallel::resolve_jobs(jobs);
-            update::run_update(&cwd, dirty, commit, project_override, jobs)?;
+            update::run_update(&cwd, dirty, commit, project_override, &filter, jobs)?;
         }
         Some(Commands::Push {
             project,
             dry_run,
             force,
+            roles,
+            repos,
             jobs,
         }) => {
             let cwd = std::env::current_dir()?;
             let project_override = project.map(repoweave::manifest::ProjectName::new);
+            let filter = repoweave::selector::RepoFilter::parse(&roles, &repos)
+                .map_err(|e| anyhow::anyhow!("{e}"))?;
             let jobs = repoweave::parallel::resolve_jobs(jobs);
-            push::run_push(&cwd, project_override, dry_run, force, jobs)?;
+            push::run_push(&cwd, project_override, dry_run, force, &filter, jobs)?;
         }
         Some(Commands::Doctor {
             locked,

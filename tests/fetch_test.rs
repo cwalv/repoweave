@@ -1267,3 +1267,213 @@ fn fetch_frozen_without_no_reference_errors_when_reference_missing_from_lock() {
                 .or(predicate::str::contains("missing")),
         );
 }
+
+// ============================================================================
+// `--role` / `--repo` filter (fo-9kweo)
+// ============================================================================
+
+/// Build a project bare and a working clone with `repos` declared in
+/// rwv.yaml at the given roles. Returns the project bare URL ready to feed
+/// `rwv fetch`. Each `(canonical_path, role)` repo gets its own bare remote
+/// behind a `file://` URL so no network is required.
+fn build_filter_fixture(
+    tmp: &tempfile::TempDir,
+    repos: &[(&str, &str)], // (canonical_path, role)
+) -> String {
+    let run = |args: &[&str], cwd: &Path| {
+        let status = common::git()
+            .args(args)
+            .current_dir(cwd)
+            .stdout(process::Stdio::null())
+            .stderr(process::Stdio::null())
+            .status()
+            .expect("git command failed");
+        assert!(
+            status.success(),
+            "git {:?} failed in {}",
+            args,
+            cwd.display()
+        );
+    };
+
+    let mut entries: Vec<(String, String, String)> = Vec::new();
+    for (path, role) in repos {
+        let bare = tmp.path().join(format!("{}.git", path.replace('/', "_")));
+        init_bare_repo_with_commit(&bare);
+        let url = format!("file://{}", bare.display());
+        entries.push((path.to_string(), url, role.to_string()));
+    }
+
+    // Build the project bare with rwv.yaml.
+    let project_bare = tmp.path().join("project.git");
+    init_bare_repo(&project_bare);
+    let project_work = tmp.path().join("project_work");
+    run(
+        &[
+            "clone",
+            &project_bare.to_string_lossy(),
+            &project_work.to_string_lossy(),
+        ],
+        tmp.path(),
+    );
+    run(&["config", "user.email", "test@test.com"], &project_work);
+    run(&["config", "user.name", "Test"], &project_work);
+
+    let triples: Vec<(&str, &str, &str)> = entries
+        .iter()
+        .map(|(p, u, r)| (p.as_str(), u.as_str(), r.as_str()))
+        .collect();
+    write_manifest_with_roles(&project_work, &triples);
+    run(&["add", "rwv.yaml"], &project_work);
+    run(&["commit", "-m", "add manifest"], &project_work);
+    run(&["push", "origin", "main"], &project_work);
+
+    format!("file://{}", project_bare.display())
+}
+
+#[test]
+fn fetch_role_filter_only_clones_matching_role() {
+    let tmp = tempfile::tempdir().unwrap();
+    let workspace = tmp.path().join("ws");
+    std::fs::create_dir_all(&workspace).unwrap();
+
+    let source = build_filter_fixture(
+        &tmp,
+        &[("local/org/p", "primary"), ("local/org/d", "dependency")],
+    );
+
+    rwv()
+        .args(["fetch", &source, "--role", "primary"])
+        .current_dir(&workspace)
+        .assert()
+        .success();
+
+    assert!(
+        workspace.join("local/org/p").exists(),
+        "primary repo should be cloned"
+    );
+    assert!(
+        !workspace.join("local/org/d").exists(),
+        "dependency repo should NOT be cloned under --role primary"
+    );
+}
+
+#[test]
+fn fetch_repo_exact_selector_clones_only_that_path() {
+    let tmp = tempfile::tempdir().unwrap();
+    let workspace = tmp.path().join("ws");
+    std::fs::create_dir_all(&workspace).unwrap();
+
+    let source = build_filter_fixture(
+        &tmp,
+        &[("local/org/a", "primary"), ("local/org/b", "primary")],
+    );
+
+    rwv()
+        .args(["fetch", &source, "--repo", "local/org/a"])
+        .current_dir(&workspace)
+        .assert()
+        .success();
+
+    assert!(workspace.join("local/org/a").exists(), "a should be cloned");
+    assert!(
+        !workspace.join("local/org/b").exists(),
+        "b should NOT be cloned"
+    );
+}
+
+#[test]
+fn fetch_repo_glob_selector_clones_matching_paths() {
+    let tmp = tempfile::tempdir().unwrap();
+    let workspace = tmp.path().join("ws");
+    std::fs::create_dir_all(&workspace).unwrap();
+
+    let source = build_filter_fixture(
+        &tmp,
+        &[
+            ("local/org/a", "primary"),
+            ("local/org/b", "primary"),
+            ("local/other/c", "primary"),
+        ],
+    );
+
+    rwv()
+        .args(["fetch", &source, "--repo", "glob:local/org/*"])
+        .current_dir(&workspace)
+        .assert()
+        .success();
+
+    assert!(workspace.join("local/org/a").exists());
+    assert!(workspace.join("local/org/b").exists());
+    assert!(
+        !workspace.join("local/other/c").exists(),
+        "glob:local/org/* should not match local/other/c"
+    );
+}
+
+#[test]
+fn fetch_repo_regex_selector_clones_matching_paths() {
+    let tmp = tempfile::tempdir().unwrap();
+    let workspace = tmp.path().join("ws");
+    std::fs::create_dir_all(&workspace).unwrap();
+
+    let source = build_filter_fixture(
+        &tmp,
+        &[
+            ("local/cwalv/a", "primary"),
+            ("local/cwalv/b", "primary"),
+            ("local/other/c", "primary"),
+        ],
+    );
+
+    rwv()
+        .args(["fetch", &source, "--repo", "re:^local/cwalv/"])
+        .current_dir(&workspace)
+        .assert()
+        .success();
+
+    assert!(workspace.join("local/cwalv/a").exists());
+    assert!(workspace.join("local/cwalv/b").exists());
+    assert!(!workspace.join("local/other/c").exists());
+}
+
+#[test]
+fn fetch_union_role_and_repo_selectors() {
+    let tmp = tempfile::tempdir().unwrap();
+    let workspace = tmp.path().join("ws");
+    std::fs::create_dir_all(&workspace).unwrap();
+
+    // primary repo at local/me/a; dependency at local/external/dep; another
+    // dependency at local/external/other (must NOT match).
+    let source = build_filter_fixture(
+        &tmp,
+        &[
+            ("local/me/a", "primary"),
+            ("local/external/dep", "dependency"),
+            ("local/external/other", "dependency"),
+        ],
+    );
+
+    rwv()
+        .args([
+            "fetch",
+            &source,
+            "--role",
+            "primary",
+            "--repo",
+            "local/external/dep",
+        ])
+        .current_dir(&workspace)
+        .assert()
+        .success();
+
+    assert!(workspace.join("local/me/a").exists(), "primary via --role");
+    assert!(
+        workspace.join("local/external/dep").exists(),
+        "dep via --repo exact"
+    );
+    assert!(
+        !workspace.join("local/external/other").exists(),
+        "other dep not matched by either flag"
+    );
+}
