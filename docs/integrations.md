@@ -78,7 +78,7 @@ The `active_repos()` method filters out `reference` repos, which should not be i
 | `go-work` | yes | repos with `go.mod` | `go.work` | -- |
 | `uv-workspace` | yes | repos with `pyproject.toml` | `pyproject.toml` | `uv sync` |
 | `cargo-workspace` | yes | repos with `Cargo.toml` | `Cargo.toml` | `cargo generate-lockfile` |
-| `gita` | yes | all repos | `gita/` directory | -- |
+| `gita` | no (opt-in) | all repos | `gita/` directory | -- |
 | `vscode-workspace` | yes | all repos | `{project}.code-workspace` | -- |
 | `static-files` | no | n/a (configured explicitly) | symlinks declared files to weave directory | -- |
 
@@ -219,7 +219,17 @@ No checks currently. Could warn if `cargo` is not on PATH when Rust repos are pr
 
 ## gita
 
-[gita](https://github.com/nosarthur/gita) provides the multi-repo dashboard (`gita ll`), cross-repo git delegation (`gita super`), cross-repo shell commands (`gita shell`), groups, and context scoping. Rather than reimplement these in `rwv`, we use gita directly via this integration.
+[gita](https://github.com/nosarthur/gita) provides a multi-repo dashboard (`gita ll`), cross-repo git delegation (`gita super`), groups, and context scoping.
+
+**Note:** The gita integration is **opt-in**. Repoweave's default recommendation for bulk multi-repo operations is [Unix Composition](how-to/run-a-command-across-repos.md) using `rwv status --json`, `jq`, and `xargs`.
+
+To enable gita, add the following to your `rwv.yaml`:
+
+```yaml
+integrations:
+  gita:
+    enabled: true
+```
 
 The activation hook generates gita's config files into a `gita/` directory inside the weave (or workweave) directory, scoped to the project's repos. Point gita at this directory via `GITA_PROJECT_HOME`:
 
