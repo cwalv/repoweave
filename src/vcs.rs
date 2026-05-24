@@ -446,6 +446,30 @@ pub trait Vcs {
         branch: &RefName,
     ) -> Result<ResolvedRevisionId, VcsError>;
 
+    /// Push the currently-checked-out branch in `repo` to the remote
+    /// associated with `role`.
+    ///
+    /// For [`GitVcs`](crate::git::GitVcs): resolves the current branch via
+    /// [`current_ref`] (returning [`VcsError::CommandFailed`] with a
+    /// "detached HEAD" stderr when there is no current branch — the
+    /// [`crate::push`] caller is expected to refuse detached HEAD before
+    /// reaching this point), then runs `git push <remote> <branch>` from
+    /// the repo dir. The remote is selected by the same role convention as
+    /// [`clone_with_role`] — `upstream` for `Role::Fork`, `origin`
+    /// otherwise. Other VCS impls choose their own conventions.
+    ///
+    /// Trait-level Fork policy is neutral: `push_with_role(Role::Fork)`
+    /// will push to `upstream` if that is what the role convention selects.
+    /// Caller-side policy ("skip forks with an info line") lives in
+    /// [`crate::push`]; the trait stays a thin shell over the VCS surface.
+    ///
+    /// When `force` is `true`, the push uses force semantics (for git,
+    /// `--force`); when `false`, the push refuses non-fast-forward updates.
+    ///
+    /// [`current_ref`]: Vcs::current_ref
+    /// [`clone_with_role`]: Vcs::clone_with_role
+    fn push_with_role(&self, repo: &Path, role: Role, force: bool) -> Result<(), VcsError>;
+
     /// Resolve the current HEAD to a revision ID.
     ///
     /// The returned `ResolvedRevisionId` carries the canonical commit SHA. When a

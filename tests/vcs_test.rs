@@ -672,6 +672,174 @@ fn resolve_branch_on_remote_missing_remote_errors() {
     );
 }
 
+// ============================================================================
+// Vcs::push_with_role — role-aware push (fo-nxba7)
+// ============================================================================
+
+/// Build a workspace with a bare "remote" and a local clone whose remote is
+/// named `remote_name`. Returns (workspace, local_clone, bare_remote).
+fn repo_with_bare_remote(remote_name: &str) -> (TempDir, std::path::PathBuf, std::path::PathBuf) {
+    let workspace = TempDir::new().unwrap();
+    let bare_path = workspace.path().join("remote.git");
+    let local_path = workspace.path().join("local");
+
+    // Initialise the bare remote.
+    git(
+        workspace.path(),
+        &[
+            "init",
+            "--bare",
+            "--initial-branch=main",
+            bare_path.to_str().unwrap(),
+        ],
+    );
+
+    // Build a seed clone, commit, push, so the bare repo has `main`.
+    let seed_path = workspace.path().join("seed");
+    git(
+        workspace.path(),
+        &[
+            "clone",
+            bare_path.to_str().unwrap(),
+            seed_path.to_str().unwrap(),
+        ],
+    );
+    git(&seed_path, &["config", "user.email", "test@test.com"]);
+    git(&seed_path, &["config", "user.name", "Test"]);
+    fs::write(seed_path.join("README.md"), "seed").unwrap();
+    git(&seed_path, &["add", "."]);
+    git(&seed_path, &["commit", "-m", "initial"]);
+    git(&seed_path, &["push", "origin", "main"]);
+
+    // Now make the *test*'s local clone with the requested remote name.
+    git(
+        workspace.path(),
+        &[
+            "clone",
+            "--origin",
+            remote_name,
+            bare_path.to_str().unwrap(),
+            local_path.to_str().unwrap(),
+        ],
+    );
+    git(&local_path, &["config", "user.email", "test@test.com"]);
+    git(&local_path, &["config", "user.name", "Test"]);
+
+    (workspace, local_path, bare_path)
+}
+
+#[test]
+fn push_with_role_primary_pushes_to_origin() {
+    let (_ws, local, bare) = repo_with_bare_remote("origin");
+
+    // Make a local commit so there's something to push.
+    fs::write(local.join("new.txt"), "added").unwrap();
+    git(&local, &["add", "."]);
+    git(&local, &["commit", "-m", "local advance"]);
+    let local_head = git(&local, &["rev-parse", "HEAD"]);
+
+    let vcs = GitVcs;
+    vcs.push_with_role(&local, Role::Primary, false).unwrap();
+
+    // The bare's `main` should now match the local HEAD.
+    let bare_main = git(&bare, &["rev-parse", "main"]);
+    assert_eq!(
+        bare_main, local_head,
+        "push should land local HEAD on bare main"
+    );
+}
+
+#[test]
+fn push_with_role_fork_pushes_to_upstream() {
+    // Trait-level neutrality: Role::Fork uses the `upstream` remote. The
+    // "skip forks at the rwv-push loop" policy lives in src/push.rs, not
+    // in the trait method.
+    let (_ws, local, bare) = repo_with_bare_remote("upstream");
+
+    fs::write(local.join("new.txt"), "added").unwrap();
+    git(&local, &["add", "."]);
+    git(&local, &["commit", "-m", "local advance"]);
+    let local_head = git(&local, &["rev-parse", "HEAD"]);
+
+    let vcs = GitVcs;
+    vcs.push_with_role(&local, Role::Fork, false).unwrap();
+
+    let bare_main = git(&bare, &["rev-parse", "main"]);
+    assert_eq!(bare_main, local_head);
+}
+
+#[test]
+fn push_with_role_dependency_pushes_to_origin() {
+    let (_ws, local, bare) = repo_with_bare_remote("origin");
+    fs::write(local.join("new.txt"), "added").unwrap();
+    git(&local, &["add", "."]);
+    git(&local, &["commit", "-m", "advance"]);
+    let local_head = git(&local, &["rev-parse", "HEAD"]);
+
+    GitVcs
+        .push_with_role(&local, Role::Dependency, false)
+        .unwrap();
+    assert_eq!(git(&bare, &["rev-parse", "main"]), local_head);
+}
+
+#[test]
+fn push_with_role_detached_head_errors() {
+    let (_ws, local, _bare) = repo_with_bare_remote("origin");
+    // Detach HEAD by checking out the SHA directly.
+    let head_sha = git(&local, &["rev-parse", "HEAD"]);
+    git(&local, &["checkout", &head_sha]);
+
+    let result = GitVcs.push_with_role(&local, Role::Primary, false);
+    let err = result.expect_err("detached HEAD must error");
+    let msg = format!("{err}");
+    assert!(
+        msg.contains("detached"),
+        "expected detached-HEAD message, got: {msg}"
+    );
+}
+
+#[test]
+fn push_with_role_non_fast_forward_errors_without_force() {
+    // Set up a divergence: bare advances via a seed-clone-and-push, then the
+    // local repo gets its own non-ancestor commit. A non-force push must
+    // refuse the non-fast-forward update.
+    let (ws, local, bare) = repo_with_bare_remote("origin");
+
+    // Push a divergent commit through a second clone so bare/main moves
+    // past the local clone's current HEAD.
+    let other = ws.path().join("other");
+    git(
+        ws.path(),
+        &["clone", bare.to_str().unwrap(), other.to_str().unwrap()],
+    );
+    git(&other, &["config", "user.email", "test@test.com"]);
+    git(&other, &["config", "user.name", "Test"]);
+    fs::write(other.join("other.txt"), "other").unwrap();
+    git(&other, &["add", "."]);
+    git(&other, &["commit", "-m", "other advance"]);
+    git(&other, &["push", "origin", "main"]);
+
+    // Now make a local commit that doesn't have the new tip as an ancestor.
+    fs::write(local.join("local.txt"), "local").unwrap();
+    git(&local, &["add", "."]);
+    git(&local, &["commit", "-m", "local advance"]);
+
+    // Without --force the push must fail.
+    let result = GitVcs.push_with_role(&local, Role::Primary, false);
+    assert!(
+        result.is_err(),
+        "non-fast-forward push without --force must fail"
+    );
+
+    // With force=true it should succeed.
+    GitVcs
+        .push_with_role(&local, Role::Primary, true)
+        .expect("force-push should overwrite the divergent remote tip");
+    let local_head = git(&local, &["rev-parse", "HEAD"]);
+    let bare_main = git(&bare, &["rev-parse", "main"]);
+    assert_eq!(bare_main, local_head);
+}
+
 #[test]
 fn resolve_branch_on_remote_missing_branch_errors() {
     // Remote exists but branch doesn't — also a clear error.

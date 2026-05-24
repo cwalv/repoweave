@@ -7,6 +7,7 @@ use repoweave::init;
 use repoweave::lock;
 use repoweave::manifest;
 use repoweave::prime;
+use repoweave::push;
 use repoweave::setup;
 use repoweave::status;
 use repoweave::sync;
@@ -72,6 +73,18 @@ enum Commands {
         /// Number of parallel per-repo workers. Default: min(nproc, 8). `-j 1` is explicit serial.
         #[arg(short = 'j', long = "jobs")]
         jobs: Option<usize>,
+    },
+    /// Push manifest repos and then the project repo, in that order. Refuses from a workweave. Manifest pushes are attempt-all-and-collect; project repo is gated on every manifest repo succeeding.
+    Push {
+        /// Operate on this project instead of the active project (does not change `.rwv-active`)
+        #[arg(long)]
+        project: Option<String>,
+        /// Print the push plan without executing
+        #[arg(long)]
+        dry_run: bool,
+        /// Force-push every repo in the operation (manifest repos and the project repo). Default deny.
+        #[arg(long)]
+        force: bool,
     },
     /// Add a repo to the active project
     Add {
@@ -381,6 +394,15 @@ fn main() -> anyhow::Result<()> {
             let project_override = project.map(repoweave::manifest::ProjectName::new);
             let jobs = repoweave::parallel::resolve_jobs(jobs);
             update::run_update(&cwd, dirty, commit, project_override, jobs)?;
+        }
+        Some(Commands::Push {
+            project,
+            dry_run,
+            force,
+        }) => {
+            let cwd = std::env::current_dir()?;
+            let project_override = project.map(repoweave::manifest::ProjectName::new);
+            push::run_push(&cwd, project_override, dry_run, force)?;
         }
         Some(Commands::Doctor {
             locked,

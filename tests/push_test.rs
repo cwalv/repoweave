@@ -1,0 +1,723 @@
+//! E2E tests for `rwv push` (fo-nxba7).
+//!
+//! Each test sets up a workspace with:
+//!   - one or more bare "manifest" remotes
+//!   - local manifest-repo clones at canonical paths
+//!   - a bare "project" remote with rwv.yaml + rwv.lock committed
+//!   - a local project-repo clone under `projects/<name>/`
+//!   - `.rwv-active` pointing at the project
+//!
+//! Then exercises `rwv push` via the CLI and asserts the publish-ordering
+//! invariant and the precondition refuse-paths from the bead.
+
+use assert_cmd::Command;
+use std::path::{Path, PathBuf};
+
+mod common;
+
+fn rwv() -> Command {
+    common::rwv()
+}
+
+/// Run `git` with the given args in `cwd`; panic on failure.
+fn git_run(cwd: &Path, args: &[&str]) -> String {
+    let output = common::git()
+        .args(args)
+        .current_dir(cwd)
+        .output()
+        .expect("git should be available");
+    if !output.status.success() {
+        panic!(
+            "git {:?} in {} failed: {}",
+            args,
+            cwd.display(),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    String::from_utf8(output.stdout).unwrap().trim().to_string()
+}
+
+/// Initialize a bare repo and seed it with one commit on `main` so it can
+/// be cloned by `--origin` consumers and act as a push target.
+fn init_bare_repo_with_commit(bare: &Path) {
+    let parent = bare.parent().expect("bare repo path needs a parent");
+    let stem = bare.file_stem().unwrap().to_string_lossy().into_owned();
+    git_run(
+        parent,
+        &[
+            "init",
+            "--bare",
+            "--initial-branch=main",
+            bare.to_str().unwrap(),
+        ],
+    );
+    let seed = parent.join(format!("__seed_{stem}"));
+    git_run(
+        parent,
+        &["clone", bare.to_str().unwrap(), seed.to_str().unwrap()],
+    );
+    git_run(&seed, &["config", "user.email", "test@test.com"]);
+    git_run(&seed, &["config", "user.name", "Test"]);
+    std::fs::write(seed.join("README"), "seed").unwrap();
+    git_run(&seed, &["add", "."]);
+    git_run(&seed, &["commit", "-m", "initial"]);
+    git_run(&seed, &["push", "origin", "main"]);
+}
+
+/// A test workspace ready to be driven by `rwv push`.
+///
+/// Holds the workspace root and the bare-remote paths so tests can both
+/// invoke `rwv push` against it and inspect the bare remotes to verify
+/// what was pushed.
+struct PushWorkspace {
+    _tmp: tempfile::TempDir,
+    workspace: PathBuf,
+    project_name: String,
+    project_bare: PathBuf,
+    manifest_bares: Vec<(String, PathBuf)>,
+}
+
+/// Build a workspace with `repos.len()` manifest repos plus a project repo.
+///
+/// Each manifest repo gets a bare remote, a canonical-path local clone, and
+/// is referenced by `rwv.yaml`. The project repo gets a bare remote and a
+/// clone under `projects/<project_name>/`. `rwv.lock` is generated to match
+/// the manifest repos' local HEAD SHAs. Returns the workspace handle.
+fn build_workspace(project_name: &str, repos: &[(&str, &str)]) -> PushWorkspace {
+    // repos is &[(canonical_path, role)]
+    let tmp = tempfile::tempdir().unwrap();
+    let workspace = tmp.path().join("ws");
+    std::fs::create_dir_all(&workspace).unwrap();
+    std::fs::create_dir_all(workspace.join("projects")).unwrap();
+
+    // Build manifest bare remotes and local clones.
+    let mut manifest_bares: Vec<(String, PathBuf)> = Vec::new();
+    let mut manifest_shas: Vec<(String, String)> = Vec::new();
+    let mut manifest_yaml = String::from("repositories:\n");
+    for (repo_path, role) in repos {
+        let bare = tmp
+            .path()
+            .join(format!("{}.git", repo_path.replace('/', "_")));
+        init_bare_repo_with_commit(&bare);
+
+        let canonical = workspace.join(repo_path);
+        std::fs::create_dir_all(canonical.parent().unwrap()).unwrap();
+        let remote_name = if *role == "fork" {
+            "upstream"
+        } else {
+            "origin"
+        };
+        git_run(
+            workspace.parent().unwrap(),
+            &[
+                "clone",
+                "--origin",
+                remote_name,
+                bare.to_str().unwrap(),
+                canonical.to_str().unwrap(),
+            ],
+        );
+        git_run(&canonical, &["config", "user.email", "test@test.com"]);
+        git_run(&canonical, &["config", "user.name", "Test"]);
+        let head = git_run(&canonical, &["rev-parse", "HEAD"]);
+        manifest_shas.push(((*repo_path).to_string(), head));
+        manifest_bares.push(((*repo_path).to_string(), bare.clone()));
+        let bare_url = bare.to_str().unwrap();
+        manifest_yaml.push_str(&format!(
+            "  {repo_path}:\n    type: git\n    url: {bare_url}\n    version: main\n    role: {role}\n"
+        ));
+    }
+
+    // Build a project bare and a `projects/<name>/` clone, then commit
+    // rwv.yaml + rwv.lock and push back to the bare.
+    let project_bare = tmp.path().join("project.git");
+    init_bare_repo_with_commit(&project_bare);
+    let project_dir = workspace.join("projects").join(project_name);
+    git_run(
+        workspace.parent().unwrap(),
+        &[
+            "clone",
+            project_bare.to_str().unwrap(),
+            project_dir.to_str().unwrap(),
+        ],
+    );
+    git_run(&project_dir, &["config", "user.email", "test@test.com"]);
+    git_run(&project_dir, &["config", "user.name", "Test"]);
+
+    std::fs::write(project_dir.join("rwv.yaml"), &manifest_yaml).unwrap();
+
+    // Write a lock that exactly matches manifest HEAD SHAs.
+    let mut lock_yaml = String::from("repositories:\n");
+    for (rp, sha) in &manifest_shas {
+        let (_, bare) = manifest_bares.iter().find(|(p, _)| p == rp).unwrap();
+        let bare_url = bare.to_str().unwrap();
+        lock_yaml.push_str(&format!(
+            "  {rp}:\n    type: git\n    url: {bare_url}\n    version: {sha}\n"
+        ));
+    }
+    std::fs::write(project_dir.join("rwv.lock"), lock_yaml).unwrap();
+
+    git_run(&project_dir, &["add", "."]);
+    git_run(&project_dir, &["commit", "-m", "manifest + lock"]);
+
+    // Mark this project active.
+    std::fs::write(workspace.join(".rwv-active"), format!("{project_name}\n")).unwrap();
+
+    PushWorkspace {
+        _tmp: tmp,
+        workspace,
+        project_name: project_name.to_string(),
+        project_bare,
+        manifest_bares,
+    }
+}
+
+/// Get the `main` SHA in a bare repo, or `None` if `main` doesn't exist
+/// (e.g. nothing was ever pushed).
+fn bare_main_sha(bare: &Path) -> Option<String> {
+    let output = common::git()
+        .args(["rev-parse", "main"])
+        .current_dir(bare)
+        .output()
+        .expect("git should be available");
+    if output.status.success() {
+        Some(String::from_utf8(output.stdout).unwrap().trim().to_string())
+    } else {
+        None
+    }
+}
+
+// ============================================================================
+// Happy path
+// ============================================================================
+
+#[test]
+fn push_happy_path_pushes_manifest_then_project() {
+    let ws = build_workspace(
+        "alpha",
+        &[("local/org/a", "primary"), ("local/org/b", "dependency")],
+    );
+
+    // Advance each manifest repo with a new commit so there's something to
+    // push. Re-write the lock to match new HEADs.
+    let mut manifest_yaml = String::from("repositories:\n");
+    let mut lock_yaml = String::from("repositories:\n");
+    let mut expected_shas: Vec<(String, String)> = Vec::new();
+    for (rp, bare) in &ws.manifest_bares {
+        let local = ws.workspace.join(rp);
+        std::fs::write(local.join("changed.txt"), "new").unwrap();
+        git_run(&local, &["add", "."]);
+        git_run(&local, &["commit", "-m", "advance"]);
+        let sha = git_run(&local, &["rev-parse", "HEAD"]);
+        let bare_url = bare.to_str().unwrap();
+        let role = if rp == "local/org/a" {
+            "primary"
+        } else {
+            "dependency"
+        };
+        manifest_yaml.push_str(&format!(
+            "  {rp}:\n    type: git\n    url: {bare_url}\n    version: main\n    role: {role}\n"
+        ));
+        lock_yaml.push_str(&format!(
+            "  {rp}:\n    type: git\n    url: {bare_url}\n    version: {sha}\n"
+        ));
+        expected_shas.push((rp.clone(), sha));
+    }
+    let project_dir = ws.workspace.join("projects").join(&ws.project_name);
+    std::fs::write(project_dir.join("rwv.yaml"), &manifest_yaml).unwrap();
+    std::fs::write(project_dir.join("rwv.lock"), &lock_yaml).unwrap();
+    git_run(&project_dir, &["add", "."]);
+    git_run(&project_dir, &["commit", "-m", "advance lock"]);
+    let project_head = git_run(&project_dir, &["rev-parse", "HEAD"]);
+
+    rwv()
+        .args(["push"])
+        .current_dir(&ws.workspace)
+        .assert()
+        .success();
+
+    // Every manifest bare must now hold the local HEAD; project bare too.
+    for (rp, expected_sha) in &expected_shas {
+        let (_, bare) = ws.manifest_bares.iter().find(|(p, _)| p == rp).unwrap();
+        let bare_sha = bare_main_sha(bare).expect("bare main must exist after push");
+        assert_eq!(&bare_sha, expected_sha, "{rp} bare should match local HEAD");
+    }
+    assert_eq!(
+        bare_main_sha(&ws.project_bare),
+        Some(project_head),
+        "project bare should match local project HEAD"
+    );
+}
+
+#[test]
+fn push_dry_run_prints_plan_and_pushes_nothing() {
+    let ws = build_workspace("alpha", &[("local/org/a", "primary")]);
+
+    // Capture the baseline manifest-bare SHA before dry-run.
+    let (_, manifest_bare) = &ws.manifest_bares[0];
+    let baseline_manifest = bare_main_sha(manifest_bare);
+    let baseline_project = bare_main_sha(&ws.project_bare);
+
+    // Make a local advance so a real push would change things.
+    let local = ws.workspace.join("local/org/a");
+    std::fs::write(local.join("x.txt"), "x").unwrap();
+    git_run(&local, &["add", "."]);
+    git_run(&local, &["commit", "-m", "advance"]);
+    let new_sha = git_run(&local, &["rev-parse", "HEAD"]);
+
+    // Rewrite lock to match the new HEAD so the precondition passes.
+    let bare_url = manifest_bare.to_str().unwrap();
+    let lock = format!(
+        "repositories:\n  local/org/a:\n    type: git\n    url: {bare_url}\n    version: {new_sha}\n"
+    );
+    let project_dir = ws.workspace.join("projects").join(&ws.project_name);
+    std::fs::write(project_dir.join("rwv.lock"), lock).unwrap();
+    git_run(&project_dir, &["add", "."]);
+    git_run(&project_dir, &["commit", "-m", "relock"]);
+
+    let output = rwv()
+        .args(["push", "--dry-run"])
+        .current_dir(&ws.workspace)
+        .output()
+        .expect("rwv push --dry-run");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(output.status.success(), "dry-run should succeed: {stdout}");
+    assert!(
+        stdout.contains("dry-run"),
+        "dry-run output should announce itself; got: {stdout}"
+    );
+    assert!(
+        stdout.contains("local/org/a"),
+        "dry-run should list manifest repo; got: {stdout}"
+    );
+    assert!(
+        stdout.contains("projects/alpha"),
+        "dry-run should list project repo; got: {stdout}"
+    );
+
+    // Nothing should have moved.
+    assert_eq!(
+        bare_main_sha(manifest_bare),
+        baseline_manifest,
+        "dry-run must not touch the manifest bare"
+    );
+    assert_eq!(
+        bare_main_sha(&ws.project_bare),
+        baseline_project,
+        "dry-run must not touch the project bare"
+    );
+}
+
+#[test]
+fn push_skips_fork_repos_with_info_line() {
+    let ws = build_workspace(
+        "alpha",
+        &[("local/org/lib", "fork"), ("local/org/app", "primary")],
+    );
+
+    // Advance both repos and the lock so the precondition passes.
+    let mut lock = String::from("repositories:\n");
+    let mut expected_shas: Vec<(String, String)> = Vec::new();
+    let fork_baseline;
+    {
+        let (rp, bare) = &ws.manifest_bares[0]; // fork repo
+        let local = ws.workspace.join(rp);
+        std::fs::write(local.join("x.txt"), "x").unwrap();
+        git_run(&local, &["add", "."]);
+        git_run(&local, &["commit", "-m", "fork advance"]);
+        let sha = git_run(&local, &["rev-parse", "HEAD"]);
+        let bare_url = bare.to_str().unwrap();
+        lock.push_str(&format!(
+            "  {rp}:\n    type: git\n    url: {bare_url}\n    version: {sha}\n"
+        ));
+        expected_shas.push((rp.clone(), sha));
+        fork_baseline = bare_main_sha(bare); // pre-push baseline for fork bare
+    }
+    {
+        let (rp, bare) = &ws.manifest_bares[1]; // primary repo
+        let local = ws.workspace.join(rp);
+        std::fs::write(local.join("y.txt"), "y").unwrap();
+        git_run(&local, &["add", "."]);
+        git_run(&local, &["commit", "-m", "primary advance"]);
+        let sha = git_run(&local, &["rev-parse", "HEAD"]);
+        let bare_url = bare.to_str().unwrap();
+        lock.push_str(&format!(
+            "  {rp}:\n    type: git\n    url: {bare_url}\n    version: {sha}\n"
+        ));
+        expected_shas.push((rp.clone(), sha));
+    }
+    let project_dir = ws.workspace.join("projects").join(&ws.project_name);
+    std::fs::write(project_dir.join("rwv.lock"), &lock).unwrap();
+    git_run(&project_dir, &["add", "."]);
+    git_run(&project_dir, &["commit", "-m", "relock"]);
+
+    let output = rwv()
+        .args(["push"])
+        .current_dir(&ws.workspace)
+        .output()
+        .expect("rwv push");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(output.status.success(), "push should succeed: {stdout}");
+    assert!(
+        stdout.contains("Role::Fork") || stdout.contains("fork"),
+        "expected an info line about skipped fork repo; got: {stdout}"
+    );
+
+    // The fork bare must NOT have moved.
+    assert_eq!(
+        bare_main_sha(&ws.manifest_bares[0].1),
+        fork_baseline,
+        "fork bare must not be touched"
+    );
+    // The primary repo bare DID move.
+    assert_eq!(
+        bare_main_sha(&ws.manifest_bares[1].1),
+        Some(expected_shas[1].1.clone()),
+        "primary repo bare should match local HEAD"
+    );
+}
+
+// ============================================================================
+// Negative: workweave invocation refused
+// ============================================================================
+
+#[test]
+fn push_refuses_from_workweave() {
+    let ws = build_workspace("alpha", &[("local/org/a", "primary")]);
+
+    // Drop a `.rwv-workweave` marker in a sibling dir so resolve sees a
+    // Workweave. This sidesteps the need to actually run `rwv workweave
+    // create` (which requires a much heavier setup).
+    let workweave_dir = ws.workspace.parent().unwrap().join("alpha--feat");
+    std::fs::create_dir_all(&workweave_dir).unwrap();
+    let marker = format!(
+        "primary: {}\nproject: {}\n",
+        ws.workspace.display(),
+        ws.project_name
+    );
+    std::fs::write(workweave_dir.join(".rwv-workweave"), marker).unwrap();
+
+    let output = rwv()
+        .args(["push"])
+        .current_dir(&workweave_dir)
+        .output()
+        .expect("rwv push");
+    assert!(
+        !output.status.success(),
+        "push from workweave must fail; stdout: {}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("workweave"),
+        "error should mention workweave; got: {stderr}"
+    );
+}
+
+// ============================================================================
+// Negative: lock-state mismatch — bail before touching the network
+// ============================================================================
+
+#[test]
+fn push_refuses_when_lock_disagrees_with_local_state() {
+    let ws = build_workspace("alpha", &[("local/org/a", "primary")]);
+    let (_, manifest_bare) = &ws.manifest_bares[0];
+    let baseline_manifest = bare_main_sha(manifest_bare);
+
+    // Advance the local repo WITHOUT updating the lock.
+    let local = ws.workspace.join("local/org/a");
+    std::fs::write(local.join("drift.txt"), "drift").unwrap();
+    git_run(&local, &["add", "."]);
+    git_run(&local, &["commit", "-m", "drift past lock"]);
+
+    let output = rwv()
+        .args(["push"])
+        .current_dir(&ws.workspace)
+        .output()
+        .expect("rwv push");
+    assert!(
+        !output.status.success(),
+        "push must refuse when lock and state disagree"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("lock") || stderr.contains("rwv lock") || stderr.contains("git checkout"),
+        "error should hint at `rwv lock` or `git checkout`; got: {stderr}"
+    );
+    // Network must not have been touched.
+    assert_eq!(
+        bare_main_sha(manifest_bare),
+        baseline_manifest,
+        "lock-mismatch refuse must happen before any push"
+    );
+}
+
+// ============================================================================
+// Negative: detached HEAD refused
+// ============================================================================
+
+#[test]
+fn push_refuses_detached_head() {
+    let ws = build_workspace("alpha", &[("local/org/a", "primary")]);
+    // Detach HEAD in the manifest repo.
+    let local = ws.workspace.join("local/org/a");
+    let head_sha = git_run(&local, &["rev-parse", "HEAD"]);
+    git_run(&local, &["checkout", &head_sha]);
+
+    let output = rwv()
+        .args(["push"])
+        .current_dir(&ws.workspace)
+        .output()
+        .expect("rwv push");
+    assert!(!output.status.success(), "detached HEAD must refuse");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("detached"),
+        "error should mention detached HEAD; got: {stderr}"
+    );
+}
+
+// ============================================================================
+// Negative: project repo off canonical branch refused
+// ============================================================================
+
+#[test]
+fn push_refuses_when_project_repo_off_canonical_branch() {
+    let ws = build_workspace("alpha", &[("local/org/a", "primary")]);
+    let project_dir = ws.workspace.join("projects").join(&ws.project_name);
+    // Move project repo to a non-canonical branch.
+    git_run(&project_dir, &["checkout", "-b", "feat/x"]);
+
+    let output = rwv()
+        .args(["push"])
+        .current_dir(&ws.workspace)
+        .output()
+        .expect("rwv push");
+    assert!(
+        !output.status.success(),
+        "off-canonical-branch project must refuse"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("canonical") || stderr.contains("branch"),
+        "error should mention canonical branch; got: {stderr}"
+    );
+}
+
+// ============================================================================
+// Branch-mismatch warning is non-fatal
+// ============================================================================
+
+#[test]
+fn push_warns_but_succeeds_when_manifest_repo_on_other_branch() {
+    let ws = build_workspace("alpha", &[("local/org/a", "primary")]);
+
+    // Create a new branch in the manifest repo and commit there — the
+    // manifest declares `main`, so this should warn.
+    let local = ws.workspace.join("local/org/a");
+    git_run(&local, &["checkout", "-b", "feat-x"]);
+    std::fs::write(local.join("f.txt"), "f").unwrap();
+    git_run(&local, &["add", "."]);
+    git_run(&local, &["commit", "-m", "feat advance"]);
+    let feat_sha = git_run(&local, &["rev-parse", "HEAD"]);
+
+    // Update lock to point at the new SHA (HEAD on feat-x).
+    let (_, bare) = &ws.manifest_bares[0];
+    let bare_url = bare.to_str().unwrap();
+    let lock = format!(
+        "repositories:\n  local/org/a:\n    type: git\n    url: {bare_url}\n    version: {feat_sha}\n"
+    );
+    let project_dir = ws.workspace.join("projects").join(&ws.project_name);
+    std::fs::write(project_dir.join("rwv.lock"), lock).unwrap();
+    git_run(&project_dir, &["add", "."]);
+    git_run(&project_dir, &["commit", "-m", "relock"]);
+
+    let output = rwv()
+        .args(["push"])
+        .current_dir(&ws.workspace)
+        .output()
+        .expect("rwv push");
+    assert!(
+        output.status.success(),
+        "branch-mismatch is non-fatal warn; stdout={}, stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("warning") && (stderr.contains("feat-x") || stderr.contains("main")),
+        "expected branch-mismatch warning; got stderr: {stderr}"
+    );
+
+    // The bare's `feat-x` ref should now exist and equal feat_sha.
+    let bare_feat = common::git()
+        .args(["rev-parse", "feat-x"])
+        .current_dir(bare)
+        .output()
+        .unwrap();
+    assert!(bare_feat.status.success(), "feat-x must exist on bare");
+    let bare_feat_sha = String::from_utf8(bare_feat.stdout)
+        .unwrap()
+        .trim()
+        .to_string();
+    assert_eq!(bare_feat_sha, feat_sha);
+}
+
+// ============================================================================
+// Negative: manifest-repo push failure — project repo NOT pushed
+// ============================================================================
+
+#[test]
+fn push_aborts_before_project_when_manifest_push_fails() {
+    // Build a workspace; then break a manifest bare so its push fails. The
+    // project bare must remain untouched.
+    let ws = build_workspace(
+        "alpha",
+        &[("local/org/a", "primary"), ("local/org/b", "primary")],
+    );
+
+    let baseline_project = bare_main_sha(&ws.project_bare);
+
+    // Advance both local repos.
+    let mut lock = String::from("repositories:\n");
+    let mut expected_shas: Vec<String> = Vec::new();
+    for (rp, bare) in &ws.manifest_bares {
+        let local = ws.workspace.join(rp);
+        std::fs::write(local.join("x.txt"), "x").unwrap();
+        git_run(&local, &["add", "."]);
+        git_run(&local, &["commit", "-m", "advance"]);
+        let sha = git_run(&local, &["rev-parse", "HEAD"]);
+        expected_shas.push(sha.clone());
+        let bare_url = bare.to_str().unwrap();
+        lock.push_str(&format!(
+            "  {rp}:\n    type: git\n    url: {bare_url}\n    version: {sha}\n"
+        ));
+    }
+    let project_dir = ws.workspace.join("projects").join(&ws.project_name);
+    std::fs::write(project_dir.join("rwv.lock"), &lock).unwrap();
+    git_run(&project_dir, &["add", "."]);
+    git_run(&project_dir, &["commit", "-m", "relock"]);
+
+    // Sabotage repo B's remote URL so push fails (point at a nonexistent
+    // location). Repo A pushes succeed; B fails; project must not be pushed.
+    let local_b = ws.workspace.join("local/org/b");
+    let bad_url = ws.workspace.join("nonexistent-remote.git");
+    git_run(
+        &local_b,
+        &["remote", "set-url", "origin", bad_url.to_str().unwrap()],
+    );
+
+    let output = rwv()
+        .args(["push"])
+        .current_dir(&ws.workspace)
+        .output()
+        .expect("rwv push");
+    assert!(
+        !output.status.success(),
+        "push must fail when any manifest push fails"
+    );
+    assert_eq!(
+        bare_main_sha(&ws.project_bare),
+        baseline_project,
+        "project bare must NOT advance when a manifest push fails"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("project repo not pushed")
+            || stderr.contains("manifest-side partial state"),
+        "error should mention partial state / project-not-pushed; got: {stderr}"
+    );
+}
+
+// ============================================================================
+// Negative: project-repo push failure — manifest repos already pushed
+// ============================================================================
+
+#[test]
+fn push_surfaces_project_push_failure_after_manifest_pushed() {
+    let ws = build_workspace("alpha", &[("local/org/a", "primary")]);
+
+    // Advance the manifest repo and the lock so the precondition passes.
+    let (_, manifest_bare) = &ws.manifest_bares[0];
+    let local = ws.workspace.join("local/org/a");
+    std::fs::write(local.join("x.txt"), "x").unwrap();
+    git_run(&local, &["add", "."]);
+    git_run(&local, &["commit", "-m", "advance"]);
+    let manifest_sha = git_run(&local, &["rev-parse", "HEAD"]);
+
+    let bare_url = manifest_bare.to_str().unwrap();
+    let lock = format!(
+        "repositories:\n  local/org/a:\n    type: git\n    url: {bare_url}\n    version: {manifest_sha}\n"
+    );
+    let project_dir = ws.workspace.join("projects").join(&ws.project_name);
+    std::fs::write(project_dir.join("rwv.lock"), lock).unwrap();
+    git_run(&project_dir, &["add", "."]);
+    git_run(&project_dir, &["commit", "-m", "relock"]);
+
+    // Sabotage the project repo's origin so its push fails.
+    let bad_url = ws.workspace.join("nonexistent-project.git");
+    git_run(
+        &project_dir,
+        &["remote", "set-url", "origin", bad_url.to_str().unwrap()],
+    );
+
+    let output = rwv()
+        .args(["push"])
+        .current_dir(&ws.workspace)
+        .output()
+        .expect("rwv push");
+    assert!(
+        !output.status.success(),
+        "push must fail when project-repo push fails"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("project-repo push") || stderr.contains("lock carrier is not"),
+        "error should surface project-side failure clearly; got: {stderr}"
+    );
+
+    // The manifest bare DID move (manifest repos pushed before the project
+    // attempt). This is the surface-clearly behaviour the bead requires.
+    assert_eq!(
+        bare_main_sha(manifest_bare),
+        Some(manifest_sha),
+        "manifest repo should already be pushed before project-repo failure"
+    );
+}
+
+// ============================================================================
+// CLI plumbing
+// ============================================================================
+
+#[test]
+fn push_command_is_registered() {
+    let output = rwv()
+        .args(["push", "--help"])
+        .output()
+        .expect("rwv push --help");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let combined = format!("{stdout}{}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        combined.contains("--dry-run") && combined.contains("--force"),
+        "push --help should list --dry-run and --force; got: {combined}"
+    );
+}
+
+#[test]
+fn push_requires_a_workspace() {
+    let tmp = tempfile::tempdir().unwrap();
+    let output = rwv()
+        .args(["push"])
+        .current_dir(tmp.path())
+        .output()
+        .expect("rwv push");
+    assert!(
+        !output.status.success(),
+        "push outside a workspace must fail"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("no repoweave workspace"),
+        "error should mention no workspace; got: {stderr}"
+    );
+}

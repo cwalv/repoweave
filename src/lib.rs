@@ -12,6 +12,7 @@ pub mod lock;
 pub mod manifest;
 pub mod parallel;
 pub mod prime;
+pub mod push;
 pub mod registry;
 pub mod setup;
 pub mod status;

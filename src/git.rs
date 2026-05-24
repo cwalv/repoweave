@@ -252,6 +252,32 @@ impl Vcs for GitVcs {
         self.resolve_revision(repo, &qualified)
     }
 
+    fn push_with_role(&self, repo: &Path, role: Role, force: bool) -> Result<(), VcsError> {
+        // Resolve the currently-checked-out branch. A detached HEAD has no
+        // branch to push as a ref update; surface a `CommandFailed` with a
+        // stderr that names the condition so callers without an out-of-band
+        // pre-check still see a clear message.
+        let branch = match self.current_ref(repo)? {
+            Some(b) => b,
+            None => {
+                return Err(VcsError::CommandFailed {
+                    args: vec!["push".to_owned()],
+                    repo: repo.to_path_buf(),
+                    stderr: "cannot push: HEAD is detached (no branch)".to_owned(),
+                });
+            }
+        };
+        let remote = remote_name_for_role(role);
+        let mut args: Vec<&str> = vec!["push"];
+        if force {
+            args.push("--force");
+        }
+        args.push(remote);
+        args.push(branch.as_str());
+        Self::run(&args, repo)?;
+        Ok(())
+    }
+
     fn head_revision(&self, repo: &Path) -> Result<ResolvedRevisionId, VcsError> {
         let sha = Self::run(&["rev-parse", "HEAD"], repo)?;
         // If a tag points at HEAD, preserve it as the display form so callers
