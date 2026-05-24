@@ -561,13 +561,15 @@ fn fetch_default_auto_activates_project() {
 }
 
 // ============================================================================
-// --locked mode: check out exact lock revisions
+// Default fetch reads rwv.lock (pins to lock SHA, does NOT bump to HEAD)
 // ============================================================================
 
 #[test]
-fn fetch_locked_checks_out_exact_lock_revisions() {
-    // With --locked, fetch should check out each repo at the exact revision
-    // recorded in rwv.lock, not the branch HEAD from rwv.yaml.
+fn fetch_default_reads_lock_and_does_not_bump_it() {
+    // Default `rwv fetch` reads rwv.lock and aligns each repo to the lock
+    // SHA, NOT the manifest's branch HEAD. The lock file itself must not
+    // be mutated when the lock already covers every manifest entry —
+    // that is the headline guarantee of fo-zvxff.
     let tmp = tempfile::tempdir().unwrap();
     let workspace = tmp.path().join("ws");
     std::fs::create_dir_all(&workspace).unwrap();
@@ -648,10 +650,15 @@ fn fetch_locked_checks_out_exact_lock_revisions() {
 
     run_quiet(&["push", "origin", "main"], &work);
 
-    // Fetch with --locked: should check out dep at first_sha, not HEAD.
+    // Capture the committed lock content so we can verify fetch did not
+    // bump it to branch HEAD.
+    let lock_before = std::fs::read_to_string(work.join("rwv.lock")).unwrap();
+
+    // Default fetch: should check out dep at first_sha (the lock value),
+    // not HEAD (the branch tip, which is now ahead).
     let source = format!("file://{}", project_bare.display());
     rwv()
-        .args(["fetch", &source, "--locked"])
+        .args(["fetch", &source])
         .current_dir(&workspace)
         .assert()
         .success();
@@ -662,143 +669,21 @@ fn fetch_locked_checks_out_exact_lock_revisions() {
     let checked_out_sha = run(&["rev-parse", "HEAD"], &dep_dir);
     assert_eq!(
         checked_out_sha, first_sha,
-        "--locked should check out the exact revision from rwv.lock"
+        "default fetch should check out the exact revision from rwv.lock"
     );
-}
 
-#[test]
-fn fetch_locked_does_not_update_lock() {
-    // --locked should NOT modify rwv.lock — it's a reproducibility mode.
-    let tmp = tempfile::tempdir().unwrap();
-    let workspace = tmp.path().join("ws");
-    std::fs::create_dir_all(&workspace).unwrap();
-
-    let bare_repo = tmp.path().join("dep.git");
-    init_bare_repo_with_commit(&bare_repo);
-
-    let project_bare = tmp.path().join("project.git");
-    init_bare_repo(&project_bare);
-
-    let work = tmp.path().join("work");
-    let run = |args: &[&str], cwd: &Path| {
-        let status = common::git()
-            .args(args)
-            .current_dir(cwd)
-            .stdout(process::Stdio::null())
-            .stderr(process::Stdio::null())
-            .status()
-            .expect("git command failed");
-        assert!(status.success(), "git {:?} failed", args);
-    };
-
-    run(
-        &[
-            "clone",
-            &project_bare.to_string_lossy(),
-            &work.to_string_lossy(),
-        ],
-        tmp.path(),
+    // The committed lock fully covered the manifest, so fetch had nothing
+    // to bootstrap or additively add — lock content must be byte-identical.
+    let lock_after = std::fs::read_to_string(workspace.join("projects/project/rwv.lock")).unwrap();
+    assert_eq!(
+        lock_before, lock_after,
+        "default fetch must not mutate rwv.lock when it already covers every manifest entry"
     );
-    run(&["config", "user.email", "test@test.com"], &work);
-    run(&["config", "user.name", "Test"], &work);
-
-    let dep_url = format!("file://{}", bare_repo.display());
-    write_manifest(&work, &[("local/team/dep", &dep_url)]);
-
-    let lock_yaml = format!(
-        "repositories:\n  local/team/dep:\n    type: git\n    url: {dep_url}\n    version: aaaa{}\n",
-        "a".repeat(36) // fake 40-char SHA
-    );
-    std::fs::write(work.join("rwv.lock"), &lock_yaml).unwrap();
-    let lock_before = std::fs::read_to_string(work.join("rwv.lock")).unwrap();
-
-    run(&["add", "."], &work);
-    run(&["commit", "-m", "manifest+lock"], &work);
-    run(&["push", "origin", "main"], &work);
-
-    let source = format!("file://{}", project_bare.display());
-    // This will fail because the SHA is fake, but it tests the principle:
-    // if it did succeed, the lock file should be unchanged.
-    let _ = rwv()
-        .args(["fetch", &source, "--locked"])
-        .current_dir(&workspace)
-        .output();
-
-    let lock_path = workspace.join("projects/project/rwv.lock");
-    if lock_path.exists() {
-        let lock_after = std::fs::read_to_string(&lock_path).unwrap();
-        assert_eq!(
-            lock_before, lock_after,
-            "--locked should not modify rwv.lock"
-        );
-    }
 }
 
 // ============================================================================
 // --frozen mode: error on missing or stale lock
 // ============================================================================
-
-#[test]
-fn fetch_locked_alias_bootstraps_lock_when_missing() {
-    // Post fo-zvxff: `--locked` is a no-op alias kept for backward
-    // compatibility. The default `rwv fetch` already reads the lock; when
-    // the lock is absent it bootstraps from branch HEAD (a one-time
-    // event). Use `--frozen` for the CI-mode behaviour that errors on a
-    // missing lock.
-    let tmp = tempfile::tempdir().unwrap();
-    let workspace = tmp.path().join("ws");
-    std::fs::create_dir_all(&workspace).unwrap();
-
-    let bare_repo = tmp.path().join("dep.git");
-    init_bare_repo_with_commit(&bare_repo);
-
-    let project_bare = tmp.path().join("project.git");
-    init_bare_repo(&project_bare);
-
-    let work = tmp.path().join("work");
-    let run = |args: &[&str], cwd: &Path| {
-        let status = common::git()
-            .args(args)
-            .current_dir(cwd)
-            .stdout(process::Stdio::null())
-            .stderr(process::Stdio::null())
-            .status()
-            .expect("git command failed");
-        assert!(status.success(), "git {:?} failed", args);
-    };
-
-    run(
-        &[
-            "clone",
-            &project_bare.to_string_lossy(),
-            &work.to_string_lossy(),
-        ],
-        tmp.path(),
-    );
-    run(&["config", "user.email", "test@test.com"], &work);
-    run(&["config", "user.name", "Test"], &work);
-
-    let dep_url = format!("file://{}", bare_repo.display());
-    write_manifest(&work, &[("local/team/dep", &dep_url)]);
-    // Deliberately do NOT create rwv.lock.
-    run(&["add", "rwv.yaml"], &work);
-    run(&["commit", "-m", "manifest without lock"], &work);
-    run(&["push", "origin", "main"], &work);
-
-    let source = format!("file://{}", project_bare.display());
-    // --locked is a no-op alias; this should succeed and bootstrap.
-    rwv()
-        .args(["fetch", &source, "--locked"])
-        .current_dir(&workspace)
-        .assert()
-        .success();
-
-    let lock_path = workspace.join("projects/project/rwv.lock");
-    assert!(
-        lock_path.exists(),
-        "default fetch (with --locked alias) should bootstrap rwv.lock"
-    );
-}
 
 #[test]
 fn fetch_frozen_errors_on_missing_lock() {
@@ -1106,18 +991,8 @@ fn fetch_second_invocation_is_idempotent() {
 }
 
 // ============================================================================
-// CLI flag plumbing: --locked and --frozen are recognized
+// CLI flag plumbing: --frozen is recognized
 // ============================================================================
-
-#[test]
-fn fetch_locked_flag_is_recognized() {
-    // `rwv fetch <source> --locked` should not fail with "unrecognized argument".
-    rwv()
-        .args(["fetch", "some-source", "--locked"])
-        .assert()
-        .failure()
-        .stderr(predicate::str::contains("unrecognized").not());
-}
 
 #[test]
 fn fetch_frozen_flag_is_recognized() {
@@ -1127,20 +1002,6 @@ fn fetch_frozen_flag_is_recognized() {
         .assert()
         .failure()
         .stderr(predicate::str::contains("unrecognized").not());
-}
-
-#[test]
-fn fetch_locked_and_frozen_are_mutually_exclusive() {
-    // Using both --locked and --frozen should produce an error.
-    rwv()
-        .args(["fetch", "some-source", "--locked", "--frozen"])
-        .assert()
-        .failure()
-        .stderr(
-            predicate::str::contains("conflict")
-                .or(predicate::str::contains("mutually exclusive"))
-                .or(predicate::str::contains("cannot be used with")),
-        );
 }
 
 // ============================================================================

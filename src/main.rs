@@ -44,12 +44,8 @@ enum Commands {
     Fetch {
         /// Source to fetch from
         source: String,
-        /// No-op alias kept for compatibility — the default `rwv fetch`
-        /// already uses the lock. Will be removed in a future release.
-        #[arg(long, hide = true, conflicts_with = "frozen")]
-        locked: bool,
         /// Error if the lock file is missing or stale (CI mode)
-        #[arg(long, conflicts_with = "locked")]
+        #[arg(long)]
         frozen: bool,
         /// Bootstrap into a non-empty directory that is not a workspace
         #[arg(long)]
@@ -58,7 +54,7 @@ enum Commands {
         #[arg(long)]
         no_reference: bool,
     },
-    /// Advance each repo to its branch HEAD and re-snapshot the lock (network bump)
+    /// Advance each repo to its branch HEAD and re-snapshot the lock (network bump; analogous to `cargo update` / `npm update`). Use `rwv fetch` for the read-only counterpart that aligns clones to the existing lock.
     Update {
         /// Allow update with uncommitted changes in repos when relocking
         #[arg(long)]
@@ -98,7 +94,7 @@ enum Commands {
         #[arg(long)]
         project: Option<String>,
     },
-    /// Snapshot repo versions
+    /// Snapshot repo versions (pure git SHA snapshot — no integration hooks fire). Run `rwv activate` after lock changes the workspace membership to refresh node_modules / .venv / etc.
     Lock {
         /// Allow locking repos with uncommitted changes
         #[arg(long)]
@@ -167,7 +163,7 @@ enum Commands {
         #[arg(long)]
         adopt: bool,
     },
-    /// Activate a project (generate ecosystem files, create symlinks, run install commands)
+    /// Activate a project (generate ecosystem files, create symlinks, then run integration install hooks like `npm install` / `uv sync` / `cargo generate-lockfile`)
     Activate {
         /// Project name
         project: String,
@@ -309,7 +305,6 @@ fn main() -> anyhow::Result<()> {
         }
         Some(Commands::Fetch {
             source,
-            locked: _locked, // no-op alias retained for compat (already the default)
             frozen,
             force,
             no_reference,

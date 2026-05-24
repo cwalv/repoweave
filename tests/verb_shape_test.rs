@@ -107,61 +107,8 @@ fn bootstrap_via_fetch(tmp: &Path) -> (PathBuf, PathBuf, PathBuf, String) {
     (workspace, project_dir, dep_bare, initial_sha)
 }
 
-// ---------------------------------------------------------------------------
-// fo-zvxff: rwv fetch default reads the lock (does NOT bump it on second run)
-// ---------------------------------------------------------------------------
-
-#[test]
-fn fetch_default_does_not_bump_lock_on_re_fetch() {
-    // Bootstrap once; record the lock content. Advance the upstream dep
-    // branch. Re-running `rwv fetch` against a workspace that already has a
-    // lock must NOT mutate the lock — that is the bug the bead removed.
-    let tmp = tempfile::tempdir().unwrap();
-    let (workspace, project_dir, dep_bare, initial_sha) = bootstrap_via_fetch(tmp.path());
-
-    let lock_path = project_dir.join("rwv.lock");
-    let lock_before = std::fs::read_to_string(&lock_path).unwrap();
-    assert!(
-        lock_before.contains(&initial_sha[..7]) || lock_before.contains(&initial_sha),
-        "lock should reference the initial dep SHA after bootstrap"
-    );
-
-    // Advance the dep on its bare remote.
-    let work = tmp.path().join("dep-work");
-    git_run(
-        &[
-            "clone",
-            &dep_bare.to_string_lossy(),
-            &work.to_string_lossy(),
-        ],
-        tmp.path(),
-    );
-    git_run(&["config", "user.email", "test@test.com"], &work);
-    git_run(&["config", "user.name", "Test"], &work);
-    std::fs::write(work.join("advance.txt"), "newer\n").unwrap();
-    git_run(&["add", "advance.txt"], &work);
-    git_run(&["commit", "-m", "advance"], &work);
-    git_run(&["push", "origin", "main"], &work);
-
-    // Wipe the projects/<name>/ dir so we can fetch again into the same
-    // workspace. The project itself does not need re-cloning — but the
-    // re-fetch test below operates on the existing dep clone.
-    // Actually, fetch hits the "project already exists" error on a
-    // second fetch. We instead test that the existing dep clone is held
-    // at the lock SHA (the workspace already has the lock + dep clone).
-    //
-    // The simpler check: the lock file is byte-identical after re-fetch
-    // wouldn't work because we'd need a way to re-run fetch on an
-    // existing workspace. Instead, just assert the lock didn't change
-    // after bootstrap + activate: lock should still reference initial_sha.
-    let lock_after = std::fs::read_to_string(&lock_path).unwrap();
-    assert_eq!(
-        lock_before, lock_after,
-        "lock content must not change between bootstrap and any subsequent reads"
-    );
-
-    let _ = workspace; // keep the workspace alive for inspection.
-}
+// Note: "default fetch reads lock without bumping" is exercised end-to-end
+// by `fetch_default_reads_lock_and_does_not_bump_it` in fetch_test.rs.
 
 // ---------------------------------------------------------------------------
 // fo-zvxff: rwv update advances repos to branch HEAD and re-snapshots
