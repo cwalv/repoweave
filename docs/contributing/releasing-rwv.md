@@ -1,7 +1,7 @@
 # Releasing rwv
 
 How the `rwv` binary itself gets published. Distinct from
-[Releasing](./releasing.md), which covers user-project package releases.
+[Release a package](../how-to/release-a-package.md), which covers user-project package releases.
 
 ## Pipeline
 

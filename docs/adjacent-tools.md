@@ -35,7 +35,7 @@ go = "1.22"
 rust = "1.78"
 ```
 
-Place `.mise.toml` in the project directory and use the `static-files` integration to symlink it to the weave directory on activation. See [static-files — `.mise.toml` example](integrations.md#toolchain-versions-misetoml).
+Place `.mise.toml` in the project directory and use the `static-files` integration to symlink it to the weave directory on activation. See [static-files — toolchain versions](reference/integrations/static-files.md#toolchain-versions-misetoml).
 
 ## direnv — environment activation
 
@@ -47,7 +47,7 @@ use mise                                      # activate toolchain versions
 export GITA_PROJECT_HOME="$PWD/gita"          # point gita at derived config
 ```
 
-Place `.envrc` in the project directory and use the `static-files` integration to symlink it to the weave directory on activation. See [static-files — `.envrc` example](integrations.md#environment-activation-envrc).
+Place `.envrc` in the project directory and use the `static-files` integration to symlink it to the weave directory on activation. See [static-files — environment activation](reference/integrations/static-files.md#environment-activation-envrc).
 
 ## Devcontainers / Codespaces
 
