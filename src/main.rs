@@ -53,6 +53,9 @@ enum Commands {
         /// Skip cloning/fetching repositories with role: reference
         #[arg(long)]
         no_reference: bool,
+        /// Number of parallel per-repo workers. Default: min(nproc, 8). `-j 1` is explicit serial.
+        #[arg(short = 'j', long = "jobs")]
+        jobs: Option<usize>,
     },
     /// Advance each repo to its branch HEAD and re-snapshot the lock (network bump; analogous to `cargo update` / `npm update`). Use `rwv fetch` for the read-only counterpart that aligns clones to the existing lock.
     Update {
@@ -65,6 +68,9 @@ enum Commands {
         /// Operate on this project instead of the active project (does not change `.rwv-active`)
         #[arg(long)]
         project: Option<String>,
+        /// Number of parallel per-repo workers. Default: min(nproc, 8). `-j 1` is explicit serial.
+        #[arg(short = 'j', long = "jobs")]
+        jobs: Option<usize>,
     },
     /// Add a repo to the active project
     Add {
@@ -308,6 +314,7 @@ fn main() -> anyhow::Result<()> {
             frozen,
             force,
             no_reference,
+            jobs,
         }) => {
             let cwd = std::env::current_dir()?;
             repoweave::workspace::require_workspace_or_empty(&cwd, force)?;
@@ -316,7 +323,8 @@ fn main() -> anyhow::Result<()> {
             } else {
                 fetch::FetchMode::Default
             };
-            fetch::run_fetch(&source, &cwd, mode, no_reference)?;
+            let jobs = repoweave::parallel::resolve_jobs(jobs);
+            fetch::run_fetch(&source, &cwd, mode, no_reference, jobs)?;
         }
         Some(Commands::Add {
             url,
@@ -355,10 +363,12 @@ fn main() -> anyhow::Result<()> {
             dirty,
             commit,
             project,
+            jobs,
         }) => {
             let cwd = std::env::current_dir()?;
             let project_override = project.map(repoweave::manifest::ProjectName::new);
-            update::run_update(&cwd, dirty, commit, project_override)?;
+            let jobs = repoweave::parallel::resolve_jobs(jobs);
+            update::run_update(&cwd, dirty, commit, project_override, jobs)?;
         }
         Some(Commands::Doctor {
             locked,

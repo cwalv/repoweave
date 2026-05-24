@@ -9,6 +9,7 @@ pub mod integration_runner;
 pub mod integrations;
 pub mod lock;
 pub mod manifest;
+pub mod parallel;
 pub mod prime;
 pub mod registry;
 pub mod setup;

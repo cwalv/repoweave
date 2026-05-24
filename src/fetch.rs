@@ -5,11 +5,13 @@
 
 use crate::git::{git_command, GitVcs};
 use crate::lock;
-use crate::manifest::{clone_urls_equivalent, LockFile, Manifest, RepoPath, Role};
+use crate::manifest::{clone_urls_equivalent, LockFile, Manifest, RepoEntry, RepoPath, Role};
+use crate::parallel::{run_in_parallel, Reporter};
 use crate::registry;
 use crate::vcs::Vcs;
 use anyhow::{bail, Context};
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 
 /// Controls how `rwv fetch` resolves repo versions.
 ///
@@ -75,6 +77,21 @@ fn find_stale_repos(manifest: &Manifest, lock: &LockFile, no_reference: bool) ->
         .collect()
 }
 
+/// Per-repo outcome of the fetch loop body. Communicates back to the
+/// caller (1) whether the repo succeeded, (2) whether it should be added
+/// to the lock under additive bootstrap rules, and (3) what to print in
+/// the error report on failure.
+enum FetchOutcome {
+    /// Repo handled successfully. `add_to_lock` is set iff the repo was
+    /// new to an existing lock and needs an additive entry post-join.
+    Ok { add_to_lock: Option<RepoPath> },
+    /// Repo intentionally skipped (e.g. `--no-reference` on a reference
+    /// repo). Not counted as failure; not counted as success.
+    Skipped,
+    /// Repo failed; `msg` carries the aggregated-error-report message.
+    Failed { msg: String },
+}
+
 /// Run the fetch command: clone a project source, then align repos to the
 /// lock file (bootstrapping it if necessary in Default mode).
 ///
@@ -85,11 +102,19 @@ fn find_stale_repos(manifest: &Manifest, lock: &LockFile, no_reference: bool) ->
 ///   read existing entries and additively add missing ones at branch HEAD.
 ///   Never advances entries that already exist in the lock.
 /// - `Frozen`: never writes the lock; errors if missing or stale (CI mode).
+///
+/// `jobs` is the resolved worker count (post-[`crate::parallel::resolve_jobs`]).
+/// `jobs == 1` runs serially with no prefix; `jobs > 1` runs the per-repo
+/// clone/checkout loop on a bounded worker pool, prefixing each line with
+/// the repo path. Project-level steps (cloning the project repo,
+/// validating the lock, writing the lock at the end, auto-activate) all
+/// happen serially.
 pub fn run_fetch(
     source: &str,
     workspace_root: &Path,
     mode: FetchMode,
     no_reference: bool,
+    jobs: usize,
 ) -> anyhow::Result<()> {
     let git = GitVcs;
 
@@ -170,154 +195,56 @@ pub fn run_fetch(
         }
     }
 
-    // Clone each repo to its canonical path, collecting errors so that one
-    // failure does not prevent the remaining repos from being attempted.
+    // Snapshot the work list. BTreeMap iteration is deterministic, so the
+    // resulting Vec preserves the serial loop's ordering (acceptance: -j 1
+    // matches the previous behaviour exactly).
+    let work_items: Vec<(RepoPath, RepoEntry)> = manifest
+        .repositories
+        .iter()
+        .map(|(rp, e)| (rp.clone(), e.clone()))
+        .collect();
+
+    let parallel = jobs > 1;
+    let write_lock: Mutex<()> = Mutex::new(());
+
+    let outcomes: Vec<FetchOutcome> = run_in_parallel(&work_items, jobs, |_idx, item| {
+        let (repo_path, entry) = item;
+        let reporter = if parallel {
+            Reporter::parallel(repo_path.as_str().to_string(), &write_lock)
+        } else {
+            Reporter::serial()
+        };
+        fetch_one(
+            &git,
+            repo_path,
+            entry,
+            workspace_root,
+            existing_lock.as_ref(),
+            no_reference,
+            &reporter,
+        )
+    });
+
+    // Aggregate outcomes serially in input order — preserves the existing
+    // error-report shape and gives the lock-write step a deterministic
+    // `added_to_lock` list.
     let mut succeeded = 0usize;
     let mut errors: Vec<String> = Vec::new();
-    // Repos that were added to (or bootstrapped into) the lock during this
-    // fetch — used to drive the Default-mode lock-write step at the end.
     let mut added_to_lock: Vec<RepoPath> = Vec::new();
-
-    for (repo_path, entry) in &manifest.repositories {
-        if no_reference && entry.role == Role::Reference {
-            println!(
-                "rwv fetch: skipping {} (role: reference)",
-                repo_path.as_str()
-            );
-            continue;
-        }
-        let dest = workspace_root.join(repo_path.as_path());
-
-        // Look up the corresponding lock entry, if any.
-        let lock_entry = existing_lock
-            .as_ref()
-            .and_then(|l| l.repositories.get(repo_path).cloned());
-
-        if dest.exists() {
-            // If the existing clone is role=fork and its `origin` still points
-            // at the source-of-record, warn the user — `git push` would target
-            // the upstream and get 403'd. We leave remotes alone.
-            if entry.role == Role::Fork {
-                maybe_warn_fork_origin(&dest, repo_path.as_str(), &entry.url.to_string());
-            }
-            if let Some(lock_entry) = lock_entry {
-                println!(
-                    "rwv fetch: checking out {} at {}",
-                    repo_path.as_str(),
-                    lock_entry.version,
-                );
-                let resolved = match git.resolve_revision(&dest, lock_entry.version.as_str()) {
-                    Ok(r) => r,
-                    Err(e) => {
-                        let msg = format!(
-                            "{}: failed to resolve {}: {e}",
-                            repo_path.as_str(),
-                            lock_entry.version,
-                        );
-                        eprintln!("rwv fetch: error: {msg}");
-                        errors.push(msg);
-                        continue;
-                    }
-                };
-                if let Err(e) = git.checkout(&dest, &resolved) {
-                    let msg = format!(
-                        "{}: failed to check out {}: {e}",
-                        repo_path.as_str(),
-                        lock_entry.version,
-                    );
-                    eprintln!("rwv fetch: error: {msg}");
-                    errors.push(msg);
-                    continue;
+    for outcome in outcomes {
+        match outcome {
+            FetchOutcome::Ok { add_to_lock } => {
+                succeeded += 1;
+                if let Some(rp) = add_to_lock {
+                    added_to_lock.push(rp);
                 }
-            } else if existing_lock.is_some() {
-                // Lock exists but doesn't cover this repo — additive add at
-                // branch HEAD. The clone already exists; nothing to do
-                // beyond marking it for the lock write below.
-                println!(
-                    "rwv fetch: adding {} to lock at branch HEAD (additive)",
-                    repo_path.as_str()
-                );
-                added_to_lock.push(repo_path.clone());
-            } else {
-                // Bootstrap (no lock yet) — clone is pre-existing, just
-                // record it. The lock-write step below will snapshot
-                // everything from disk.
-                println!("rwv fetch: skip {} (already exists)", repo_path.as_str());
             }
-            succeeded += 1;
-            continue;
-        }
-
-        // Create parent directories
-        if let Some(parent) = dest.parent() {
-            if let Err(e) = std::fs::create_dir_all(parent) {
-                let msg = format!(
-                    "{}: failed to create directory {}: {e}",
-                    repo_path.as_str(),
-                    parent.display()
-                );
+            FetchOutcome::Skipped => {}
+            FetchOutcome::Failed { msg } => {
                 eprintln!("rwv fetch: error: {msg}");
                 errors.push(msg);
-                continue;
             }
         }
-
-        println!(
-            "rwv fetch: cloning {} from {} (role: {})",
-            repo_path.as_str(),
-            entry.url,
-            entry.role.as_str()
-        );
-        if let Err(e) = git.clone_with_role(&entry.url.to_string(), &dest, entry.role) {
-            let msg = format!(
-                "{}: failed to clone {} into {}: {e}",
-                repo_path.as_str(),
-                entry.url,
-                dest.display()
-            );
-            eprintln!("rwv fetch: error: {msg}");
-            errors.push(msg);
-            continue;
-        }
-
-        // After clone, check out the lock-pinned revision when one exists.
-        if let Some(lock_entry) = lock_entry {
-            println!(
-                "rwv fetch: checking out {} at {}",
-                repo_path.as_str(),
-                lock_entry.version,
-            );
-            let resolved = match git.resolve_revision(&dest, lock_entry.version.as_str()) {
-                Ok(r) => r,
-                Err(e) => {
-                    let msg = format!(
-                        "{}: failed to resolve {}: {e}",
-                        repo_path.as_str(),
-                        lock_entry.version,
-                    );
-                    eprintln!("rwv fetch: error: {msg}");
-                    errors.push(msg);
-                    continue;
-                }
-            };
-            if let Err(e) = git.checkout(&dest, &resolved) {
-                let msg = format!(
-                    "{}: failed to check out {}: {e}",
-                    repo_path.as_str(),
-                    lock_entry.version,
-                );
-                eprintln!("rwv fetch: error: {msg}");
-                errors.push(msg);
-                continue;
-            }
-        } else if existing_lock.is_some() {
-            // Lock exists but doesn't cover this repo — leave at branch HEAD
-            // (where the clone landed) and mark for additive lock entry.
-            added_to_lock.push(repo_path.clone());
-        }
-        // else: bootstrap, will be picked up wholesale below.
-
-        succeeded += 1;
     }
 
     // Summary
@@ -406,10 +333,181 @@ pub fn run_fetch(
     Ok(())
 }
 
+/// Per-repo worker for `rwv fetch`. Encapsulates one iteration of the
+/// previous serial loop body.
+///
+/// Returns [`FetchOutcome`]. The caller threads `add_to_lock` into the
+/// post-join lock-write step and aggregates failures.
+fn fetch_one(
+    git: &GitVcs,
+    repo_path: &RepoPath,
+    entry: &RepoEntry,
+    workspace_root: &Path,
+    existing_lock: Option<&LockFile>,
+    no_reference: bool,
+    reporter: &Reporter<'_>,
+) -> FetchOutcome {
+    if no_reference && entry.role == Role::Reference {
+        reporter.out(&format!(
+            "rwv fetch: skipping {} (role: reference)",
+            repo_path.as_str()
+        ));
+        return FetchOutcome::Skipped;
+    }
+
+    let dest: PathBuf = workspace_root.join(repo_path.as_path());
+
+    let lock_entry = existing_lock.and_then(|l| l.repositories.get(repo_path).cloned());
+
+    if dest.exists() {
+        // If the existing clone is role=fork and its `origin` still points
+        // at the source-of-record, warn the user — `git push` would target
+        // the upstream and get 403'd. We leave remotes alone.
+        if entry.role == Role::Fork {
+            maybe_warn_fork_origin_reporter(
+                &dest,
+                repo_path.as_str(),
+                &entry.url.to_string(),
+                reporter,
+            );
+        }
+        if let Some(lock_entry) = lock_entry {
+            reporter.out(&format!(
+                "rwv fetch: checking out {} at {}",
+                repo_path.as_str(),
+                lock_entry.version,
+            ));
+            let resolved = match git.resolve_revision(&dest, lock_entry.version.as_str()) {
+                Ok(r) => r,
+                Err(e) => {
+                    return FetchOutcome::Failed {
+                        msg: format!(
+                            "{}: failed to resolve {}: {e}",
+                            repo_path.as_str(),
+                            lock_entry.version,
+                        ),
+                    };
+                }
+            };
+            if let Err(e) = git.checkout(&dest, &resolved) {
+                return FetchOutcome::Failed {
+                    msg: format!(
+                        "{}: failed to check out {}: {e}",
+                        repo_path.as_str(),
+                        lock_entry.version,
+                    ),
+                };
+            }
+            return FetchOutcome::Ok { add_to_lock: None };
+        } else if existing_lock.is_some() {
+            // Lock exists but doesn't cover this repo — additive add at
+            // branch HEAD. The clone already exists; nothing to do
+            // beyond marking it for the lock write below.
+            reporter.out(&format!(
+                "rwv fetch: adding {} to lock at branch HEAD (additive)",
+                repo_path.as_str()
+            ));
+            return FetchOutcome::Ok {
+                add_to_lock: Some(repo_path.clone()),
+            };
+        } else {
+            // Bootstrap (no lock yet) — clone is pre-existing, just
+            // record it. The lock-write step below will snapshot
+            // everything from disk.
+            reporter.out(&format!(
+                "rwv fetch: skip {} (already exists)",
+                repo_path.as_str()
+            ));
+            return FetchOutcome::Ok { add_to_lock: None };
+        }
+    }
+
+    // Create parent directories
+    if let Some(parent) = dest.parent() {
+        if let Err(e) = std::fs::create_dir_all(parent) {
+            return FetchOutcome::Failed {
+                msg: format!(
+                    "{}: failed to create directory {}: {e}",
+                    repo_path.as_str(),
+                    parent.display()
+                ),
+            };
+        }
+    }
+
+    reporter.out(&format!(
+        "rwv fetch: cloning {} from {} (role: {})",
+        repo_path.as_str(),
+        entry.url,
+        entry.role.as_str()
+    ));
+    if let Err(e) = git.clone_with_role(&entry.url.to_string(), &dest, entry.role) {
+        return FetchOutcome::Failed {
+            msg: format!(
+                "{}: failed to clone {} into {}: {e}",
+                repo_path.as_str(),
+                entry.url,
+                dest.display()
+            ),
+        };
+    }
+
+    let mut add_to_lock: Option<RepoPath> = None;
+    // After clone, check out the lock-pinned revision when one exists.
+    if let Some(lock_entry) = lock_entry {
+        reporter.out(&format!(
+            "rwv fetch: checking out {} at {}",
+            repo_path.as_str(),
+            lock_entry.version,
+        ));
+        let resolved = match git.resolve_revision(&dest, lock_entry.version.as_str()) {
+            Ok(r) => r,
+            Err(e) => {
+                return FetchOutcome::Failed {
+                    msg: format!(
+                        "{}: failed to resolve {}: {e}",
+                        repo_path.as_str(),
+                        lock_entry.version,
+                    ),
+                };
+            }
+        };
+        if let Err(e) = git.checkout(&dest, &resolved) {
+            return FetchOutcome::Failed {
+                msg: format!(
+                    "{}: failed to check out {}: {e}",
+                    repo_path.as_str(),
+                    lock_entry.version,
+                ),
+            };
+        }
+    } else if existing_lock.is_some() {
+        // Lock exists but doesn't cover this repo — leave at branch HEAD
+        // (where the clone landed) and mark for additive lock entry.
+        add_to_lock = Some(repo_path.clone());
+    }
+    // else: bootstrap, will be picked up wholesale below.
+
+    FetchOutcome::Ok { add_to_lock }
+}
+
 /// If `dest` is a git repo with `origin` pointing at `manifest_url`, print a
 /// short stderr notice telling the user to rename the remote to `upstream`.
 /// Non-fatal: silent on any git error or when remotes differ.
 pub(crate) fn maybe_warn_fork_origin(dest: &Path, repo_label: &str, manifest_url: &str) {
+    let reporter = Reporter::serial();
+    maybe_warn_fork_origin_reporter(dest, repo_label, manifest_url, &reporter);
+}
+
+/// Reporter-aware variant of [`maybe_warn_fork_origin`]. Routes the
+/// warning through the per-repo reporter so it gets prefixed under
+/// `-j > 1` and serialised across workers.
+fn maybe_warn_fork_origin_reporter(
+    dest: &Path,
+    repo_label: &str,
+    manifest_url: &str,
+    reporter: &Reporter<'_>,
+) {
     let out = match git_command()
         .args(["remote", "get-url", "origin"])
         .current_dir(dest)
@@ -423,10 +521,10 @@ pub(crate) fn maybe_warn_fork_origin(dest: &Path, repo_label: &str, manifest_url
         Err(_) => return,
     };
     if clone_urls_equivalent(&origin_url, manifest_url) {
-        eprintln!(
+        reporter.err(&format!(
             "note: {repo_label} is role=fork but origin points at the source-of-record; \
 rename with `git remote rename origin upstream` to avoid pushing there by accident"
-        );
+        ));
     }
 }
 
