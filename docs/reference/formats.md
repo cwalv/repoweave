@@ -47,7 +47,7 @@ Keyed by canonical local path (`<registry>/<owner>/<repo>`). Each entry:
 | `version` | yes | Branch or tag (manifest); revision SHA (lock). |
 | `role` | yes | One of `owned`, `fork`, `dependency`, `reference`. |
 
-Both `role: owned` (canonical) and `role: primary` (legacy alias) parse. The tool always writes `role: owned`. See [reference/roles — Compatibility](./roles.md#compatibility-primary-as-a-legacy-alias-for-owned) for the migration path.
+Manifests must use `role: owned`. The pre-rename `role: primary` spelling no longer parses; running `rwv doctor --fix` migrates affected manifests in place. See [reference/roles — Migrating from `role: primary`](./roles.md#migrating-from-role-primary) for the migration path.
 
 Format is based on vcstool's `.repos` format, extended with `role` and optional `integrations`.
 

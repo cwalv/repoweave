@@ -195,7 +195,7 @@ fn bare_main_sha(bare: &Path) -> Option<String> {
 fn push_happy_path_pushes_manifest_then_project() {
     let ws = build_workspace(
         "alpha",
-        &[("local/org/a", "primary"), ("local/org/b", "dependency")],
+        &[("local/org/a", "owned"), ("local/org/b", "dependency")],
     );
 
     // Advance each manifest repo with a new commit so there's something to
@@ -211,7 +211,7 @@ fn push_happy_path_pushes_manifest_then_project() {
         let sha = git_run(&local, &["rev-parse", "HEAD"]);
         let bare_url = bare.to_str().unwrap();
         let role = if rp == "local/org/a" {
-            "primary"
+            "owned"
         } else {
             "dependency"
         };
@@ -251,7 +251,7 @@ fn push_happy_path_pushes_manifest_then_project() {
 
 #[test]
 fn push_dry_run_prints_plan_and_pushes_nothing() {
-    let ws = build_workspace("alpha", &[("local/org/a", "primary")]);
+    let ws = build_workspace("alpha", &[("local/org/a", "owned")]);
 
     // Capture the baseline manifest-bare SHA before dry-run.
     let (_, manifest_bare) = &ws.manifest_bares[0];
@@ -312,7 +312,7 @@ fn push_dry_run_prints_plan_and_pushes_nothing() {
 fn push_skips_fork_repos_with_info_line() {
     let ws = build_workspace(
         "alpha",
-        &[("local/org/lib", "fork"), ("local/org/app", "primary")],
+        &[("local/org/lib", "fork"), ("local/org/app", "owned")],
     );
 
     // Advance both repos and the lock so the precondition passes.
@@ -383,7 +383,7 @@ fn push_skips_fork_repos_with_info_line() {
 
 #[test]
 fn push_refuses_from_workweave() {
-    let ws = build_workspace("alpha", &[("local/org/a", "primary")]);
+    let ws = build_workspace("alpha", &[("local/org/a", "owned")]);
 
     // Drop a `.rwv-workweave` marker in a sibling dir so resolve sees a
     // Workweave. This sidesteps the need to actually run `rwv workweave
@@ -420,7 +420,7 @@ fn push_refuses_from_workweave() {
 
 #[test]
 fn push_refuses_when_lock_disagrees_with_local_state() {
-    let ws = build_workspace("alpha", &[("local/org/a", "primary")]);
+    let ws = build_workspace("alpha", &[("local/org/a", "owned")]);
     let (_, manifest_bare) = &ws.manifest_bares[0];
     let baseline_manifest = bare_main_sha(manifest_bare);
 
@@ -458,7 +458,7 @@ fn push_refuses_when_lock_disagrees_with_local_state() {
 
 #[test]
 fn push_refuses_detached_head() {
-    let ws = build_workspace("alpha", &[("local/org/a", "primary")]);
+    let ws = build_workspace("alpha", &[("local/org/a", "owned")]);
     // Detach HEAD in the manifest repo.
     let local = ws.workspace.join("local/org/a");
     let head_sha = git_run(&local, &["rev-parse", "HEAD"]);
@@ -483,7 +483,7 @@ fn push_refuses_detached_head() {
 
 #[test]
 fn push_refuses_when_project_repo_off_canonical_branch() {
-    let ws = build_workspace("alpha", &[("local/org/a", "primary")]);
+    let ws = build_workspace("alpha", &[("local/org/a", "owned")]);
     let project_dir = ws.workspace.join("projects").join(&ws.project_name);
     // Move project repo to a non-canonical branch.
     git_run(&project_dir, &["checkout", "-b", "feat/x"]);
@@ -510,7 +510,7 @@ fn push_refuses_when_project_repo_off_canonical_branch() {
 
 #[test]
 fn push_warns_but_succeeds_when_manifest_repo_on_other_branch() {
-    let ws = build_workspace("alpha", &[("local/org/a", "primary")]);
+    let ws = build_workspace("alpha", &[("local/org/a", "owned")]);
 
     // Create a new branch in the manifest repo and commit there — the
     // manifest declares `main`, so this should warn.
@@ -573,7 +573,7 @@ fn push_aborts_before_project_when_manifest_push_fails() {
     // project bare must remain untouched.
     let ws = build_workspace(
         "alpha",
-        &[("local/org/a", "primary"), ("local/org/b", "primary")],
+        &[("local/org/a", "owned"), ("local/org/b", "owned")],
     );
 
     let baseline_project = bare_main_sha(&ws.project_bare);
@@ -635,7 +635,7 @@ fn push_aborts_before_project_when_manifest_push_fails() {
 
 #[test]
 fn push_surfaces_project_push_failure_after_manifest_pushed() {
-    let ws = build_workspace("alpha", &[("local/org/a", "primary")]);
+    let ws = build_workspace("alpha", &[("local/org/a", "owned")]);
 
     // Advance the manifest repo and the lock so the precondition passes.
     let (_, manifest_bare) = &ws.manifest_bares[0];
@@ -767,12 +767,12 @@ fn build_workspace_with_advances(
 fn push_role_filter_only_pushes_matching_role() {
     let (ws, expected_shas) = build_workspace_with_advances(
         "alpha",
-        &[("local/org/p", "primary"), ("local/org/d", "dependency")],
+        &[("local/org/p", "owned"), ("local/org/d", "dependency")],
     );
     let baseline_d = bare_main_sha(&ws.manifest_bares[1].1);
 
     rwv()
-        .args(["push", "--role", "primary"])
+        .args(["push", "--role", "owned"])
         .current_dir(&ws.workspace)
         .assert()
         .success();
@@ -788,7 +788,7 @@ fn push_role_filter_only_pushes_matching_role() {
     assert_eq!(
         bare_main_sha(&ws.manifest_bares[1].1),
         baseline_d,
-        "dependency bare must NOT advance under --role primary"
+        "dependency bare must NOT advance under --role owned"
     );
 }
 
@@ -796,7 +796,7 @@ fn push_role_filter_only_pushes_matching_role() {
 fn push_repo_exact_filter_pushes_only_that_path() {
     let (ws, expected_shas) = build_workspace_with_advances(
         "alpha",
-        &[("local/org/a", "primary"), ("local/org/b", "primary")],
+        &[("local/org/a", "owned"), ("local/org/b", "owned")],
     );
     let baseline_b = bare_main_sha(&ws.manifest_bares[1].1);
 
@@ -822,9 +822,9 @@ fn push_repo_glob_filter_pushes_matching() {
     let (ws, expected_shas) = build_workspace_with_advances(
         "alpha",
         &[
-            ("local/org/a", "primary"),
-            ("local/org/b", "primary"),
-            ("local/other/c", "primary"),
+            ("local/org/a", "owned"),
+            ("local/org/b", "owned"),
+            ("local/other/c", "owned"),
         ],
     );
     let baseline_c = bare_main_sha(&ws.manifest_bares[2].1);
@@ -853,9 +853,9 @@ fn push_repo_regex_filter_pushes_matching() {
     let (ws, expected_shas) = build_workspace_with_advances(
         "alpha",
         &[
-            ("local/cwalv/a", "primary"),
-            ("local/cwalv/b", "primary"),
-            ("local/other/c", "primary"),
+            ("local/cwalv/a", "owned"),
+            ("local/cwalv/b", "owned"),
+            ("local/other/c", "owned"),
         ],
     );
     let baseline_c = bare_main_sha(&ws.manifest_bares[2].1);
@@ -882,7 +882,7 @@ fn push_union_role_and_repo_selectors() {
     let (ws, expected_shas) = build_workspace_with_advances(
         "alpha",
         &[
-            ("local/me/p", "primary"),
+            ("local/me/p", "owned"),
             ("local/external/dep", "dependency"),
             ("local/external/other", "dependency"),
         ],
@@ -890,7 +890,7 @@ fn push_union_role_and_repo_selectors() {
     let baseline_other = bare_main_sha(&ws.manifest_bares[2].1);
 
     rwv()
-        .args(["push", "--role", "primary", "--repo", "local/external/dep"])
+        .args(["push", "--role", "owned", "--repo", "local/external/dep"])
         .current_dir(&ws.workspace)
         .assert()
         .success();
@@ -927,7 +927,7 @@ fn push_filter_still_runs_lock_precondition_against_full_manifest() {
     // which subset the operator pushes today.
     let ws = build_workspace(
         "alpha",
-        &[("local/org/a", "primary"), ("local/org/b", "primary")],
+        &[("local/org/a", "owned"), ("local/org/b", "owned")],
     );
 
     let baseline_a = bare_main_sha(&ws.manifest_bares[0].1);

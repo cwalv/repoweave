@@ -209,8 +209,8 @@ fn status_json_per_repo_record_has_lx3mc_fields() {
     );
 
     // Role + url come straight from the manifest. The canonical spelling is
-    // `owned`; legacy `primary` in YAML deserializes to the same variant and
-    // serializes back as `owned` on the wire.
+    // `owned` — fo-fzf4n removed the legacy `role: primary` alias, so the
+    // wire form and the manifest form must agree.
     assert_eq!(
         record["role"], "owned",
         "record.role should mirror the manifest entry; got:\n{stdout}"

@@ -221,7 +221,7 @@ fn read_lock_sha(workspace: &Path, project_name: &str, repo_path: &str) -> Strin
 
 #[test]
 fn update_re_snapshots_lock_from_branch_head() {
-    let repos = [("local/org/a", "primary")];
+    let repos = [("local/org/a", "owned")];
     let ws = build_workspace("alpha", &repos);
 
     let initial_lock_sha = read_lock_sha(&ws.workspace, &ws.project_name, "local/org/a");
@@ -275,7 +275,7 @@ fn update_advances_lock_while_fetch_does_not() {
     //
     // The lock SHA in ws_fetch must be unchanged; the lock SHA in
     // ws_update must equal the new branch HEAD.
-    let repos = [("local/org/a", "primary")];
+    let repos = [("local/org/a", "owned")];
 
     // --- ws_update --------------------------------------------------------
     let ws_update = build_workspace("alpha", &repos);
@@ -390,9 +390,9 @@ fn update_advances_lock_while_fetch_does_not() {
 #[test]
 fn update_dash_j_parallel_advances_all_and_emits_prefix() {
     let repos = [
-        ("local/org/a", "primary"),
-        ("local/org/b", "primary"),
-        ("local/org/c", "primary"),
+        ("local/org/a", "owned"),
+        ("local/org/b", "owned"),
+        ("local/org/c", "owned"),
     ];
     let ws = build_workspace("alpha", &repos);
 

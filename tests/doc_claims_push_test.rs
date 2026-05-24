@@ -227,7 +227,7 @@ fn advance_all_and_relock(
 fn push_skips_role_fork_at_loop_level() {
     let repos = [
         ("local/org/fork-repo", "fork"),
-        ("local/org/main-repo", "primary"),
+        ("local/org/main-repo", "owned"),
     ];
     let ws = build_workspace("alpha", &repos);
     let fork_baseline = bare_main_sha(&ws.manifest_bares[0].1);
@@ -270,7 +270,7 @@ fn push_skips_role_fork_at_loop_level() {
 
 #[test]
 fn push_project_repo_pushed_after_manifest_repos() {
-    let repos = [("local/org/a", "primary"), ("local/org/b", "primary")];
+    let repos = [("local/org/a", "owned"), ("local/org/b", "owned")];
     let ws = build_workspace("alpha", &repos);
     let baseline_project = bare_main_sha(&ws.project_bare);
     let _expected_shas = advance_all_and_relock(&ws, &repos);
@@ -318,7 +318,7 @@ fn push_project_repo_pushed_after_manifest_repos() {
 
 #[test]
 fn push_refuses_on_lock_precondition_before_network() {
-    let repos = [("local/org/a", "primary")];
+    let repos = [("local/org/a", "owned")];
     let ws = build_workspace("alpha", &repos);
     let (_, manifest_bare) = &ws.manifest_bares[0];
     let baseline_manifest = bare_main_sha(manifest_bare);
@@ -370,7 +370,7 @@ fn push_refuses_on_lock_precondition_before_network() {
 #[test]
 fn push_dry_run_prints_plan_and_does_not_push() {
     let repos = [
-        ("local/org/lib", "primary"),
+        ("local/org/lib", "owned"),
         ("local/org/forklib", "fork"),
     ];
     let ws = build_workspace("alpha", &repos);
@@ -440,13 +440,13 @@ fn push_dry_run_prints_plan_and_does_not_push() {
 
 #[test]
 fn push_role_filter_advances_only_matching_role() {
-    let repos = [("local/org/p", "primary"), ("local/org/d", "dependency")];
+    let repos = [("local/org/p", "owned"), ("local/org/d", "dependency")];
     let ws = build_workspace("alpha", &repos);
     let baseline_d = bare_main_sha(&ws.manifest_bares[1].1);
     let expected = advance_all_and_relock(&ws, &repos);
 
     rwv()
-        .args(["push", "--role", "primary"])
+        .args(["push", "--role", "owned"])
         .current_dir(&ws.workspace)
         .assert()
         .success();
@@ -455,12 +455,12 @@ fn push_role_filter_advances_only_matching_role() {
     assert_eq!(
         bare_main_sha(p_bare),
         Some(expected[0].1.clone()),
-        "primary repo should advance under --role primary"
+        "owned repo should advance under --role owned"
     );
     assert_eq!(
         bare_main_sha(&ws.manifest_bares[1].1),
         baseline_d,
-        "dependency repo should NOT advance under --role primary"
+        "dependency repo should NOT advance under --role owned"
     );
 }
 
@@ -468,7 +468,7 @@ fn push_role_filter_advances_only_matching_role() {
 fn push_repo_selector_supports_exact_regex_and_glob() {
     // Exact match
     {
-        let repos = [("local/org/a", "primary"), ("local/org/b", "primary")];
+        let repos = [("local/org/a", "owned"), ("local/org/b", "owned")];
         let ws = build_workspace("alpha", &repos);
         let baseline_b = bare_main_sha(&ws.manifest_bares[1].1);
         let expected = advance_all_and_relock(&ws, &repos);
@@ -494,9 +494,9 @@ fn push_repo_selector_supports_exact_regex_and_glob() {
     // Regex match
     {
         let repos = [
-            ("local/cwalv/a", "primary"),
-            ("local/cwalv/b", "primary"),
-            ("local/other/c", "primary"),
+            ("local/cwalv/a", "owned"),
+            ("local/cwalv/b", "owned"),
+            ("local/other/c", "owned"),
         ];
         let ws = build_workspace("alpha", &repos);
         let baseline_c = bare_main_sha(&ws.manifest_bares[2].1);
@@ -525,9 +525,9 @@ fn push_repo_selector_supports_exact_regex_and_glob() {
     // Glob match
     {
         let repos = [
-            ("local/org/a", "primary"),
-            ("local/org/b", "primary"),
-            ("local/other/c", "primary"),
+            ("local/org/a", "owned"),
+            ("local/org/b", "owned"),
+            ("local/other/c", "owned"),
         ];
         let ws = build_workspace("alpha", &repos);
         let baseline_c = bare_main_sha(&ws.manifest_bares[2].1);
@@ -557,7 +557,7 @@ fn push_repo_selector_supports_exact_regex_and_glob() {
 #[test]
 fn push_role_and_repo_filters_union() {
     let repos = [
-        ("local/me/p", "primary"),
+        ("local/me/p", "owned"),
         ("local/external/dep", "dependency"),
         ("local/external/other", "dependency"),
     ];
@@ -566,7 +566,7 @@ fn push_role_and_repo_filters_union() {
     let expected = advance_all_and_relock(&ws, &repos);
 
     rwv()
-        .args(["push", "--role", "primary", "--repo", "local/external/dep"])
+        .args(["push", "--role", "owned", "--repo", "local/external/dep"])
         .current_dir(&ws.workspace)
         .assert()
         .success();
@@ -599,7 +599,7 @@ fn push_role_and_repo_filters_union() {
 
 #[test]
 fn push_dash_j_parallel_emits_repo_prefix() {
-    let repos = [("local/org/a", "primary"), ("local/org/b", "primary")];
+    let repos = [("local/org/a", "owned"), ("local/org/b", "owned")];
     let ws = build_workspace("alpha", &repos);
     let _expected = advance_all_and_relock(&ws, &repos);
 
@@ -622,7 +622,7 @@ fn push_dash_j_parallel_emits_repo_prefix() {
 
 #[test]
 fn push_dash_j_one_emits_no_repo_prefix() {
-    let repos = [("local/org/a", "primary"), ("local/org/b", "primary")];
+    let repos = [("local/org/a", "owned"), ("local/org/b", "owned")];
     let ws = build_workspace("alpha", &repos);
     let _expected = advance_all_and_relock(&ws, &repos);
 
@@ -662,9 +662,9 @@ fn push_dash_j_one_emits_no_repo_prefix() {
 #[test]
 fn push_outcome_variants_show_in_output() {
     let repos = [
-        ("local/org/ok", "primary"),
+        ("local/org/ok", "owned"),
         ("local/org/forked", "fork"),
-        ("local/org/broken", "primary"),
+        ("local/org/broken", "owned"),
     ];
     let ws = build_workspace("alpha", &repos);
     let _expected = advance_all_and_relock(&ws, &repos);

@@ -142,7 +142,7 @@ fn make_locked_workspace(parent: &Path, name: &str) -> (Workspace, String) {
 }
 
 fn make_shared_workspaces(parent: &Path) -> (Workspace, Workspace, String) {
-    let (primary, c1) = make_locked_workspace(parent, "primary");
+    let (primary, c1) = make_locked_workspace(parent, "owned");
 
     let ww_root = parent.join("ww");
     std::fs::create_dir_all(ww_root.join("github/chatly")).unwrap();

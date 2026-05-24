@@ -104,7 +104,7 @@ fn activate_writes_rwv_active_file() {
     make_project(
         &ws,
         "web-app",
-        &[("github/acme/server", "primary", &["package.json"])],
+        &[("github/acme/server", "owned", &["package.json"])],
     );
 
     rwv()
@@ -125,8 +125,8 @@ fn activate_generates_ecosystem_files_in_project_dir() {
         &ws,
         "web-app",
         &[
-            ("github/acme/server", "primary", &["package.json"]),
-            ("github/acme/web", "primary", &["package.json"]),
+            ("github/acme/server", "owned", &["package.json"]),
+            ("github/acme/web", "owned", &["package.json"]),
         ],
     );
 
@@ -162,7 +162,7 @@ fn activate_creates_symlinks_at_workspace_root() {
     make_project(
         &ws,
         "web-app",
-        &[("github/acme/server", "primary", &["package.json"])],
+        &[("github/acme/server", "owned", &["package.json"])],
     );
 
     rwv()
@@ -202,7 +202,7 @@ fn activate_symlinks_point_to_correct_project_dir() {
     make_project(
         &ws,
         "web-app",
-        &[("github/acme/server", "primary", &["package.json"])],
+        &[("github/acme/server", "owned", &["package.json"])],
     );
 
     rwv()
@@ -234,8 +234,8 @@ fn activate_handles_multiple_ecosystem_types() {
         &ws,
         "polyglot",
         &[
-            ("github/acme/web", "primary", &["package.json"]),
-            ("github/acme/svc", "primary", &["Cargo.toml"]),
+            ("github/acme/web", "owned", &["package.json"]),
+            ("github/acme/svc", "owned", &["Cargo.toml"]),
         ],
     );
 
@@ -282,13 +282,13 @@ fn switching_projects_swaps_symlinks() {
     make_project(
         &ws,
         "project-a",
-        &[("github/acme/alpha", "primary", &["package.json"])],
+        &[("github/acme/alpha", "owned", &["package.json"])],
     );
     // Project B: has a different npm repo
     make_project(
         &ws,
         "project-b",
-        &[("github/acme/beta", "primary", &["package.json"])],
+        &[("github/acme/beta", "owned", &["package.json"])],
     );
 
     // Activate project A
@@ -345,12 +345,12 @@ fn switching_projects_updates_rwv_active() {
     make_project(
         &ws,
         "proj-a",
-        &[("github/acme/alpha", "primary", &["package.json"])],
+        &[("github/acme/alpha", "owned", &["package.json"])],
     );
     make_project(
         &ws,
         "proj-b",
-        &[("github/acme/beta", "primary", &["package.json"])],
+        &[("github/acme/beta", "owned", &["package.json"])],
     );
 
     rwv()
@@ -382,15 +382,15 @@ fn switching_removes_stale_symlinks_from_previous_project() {
         &ws,
         "proj-a",
         &[
-            ("github/acme/web", "primary", &["package.json"]),
-            ("github/acme/svc", "primary", &["Cargo.toml"]),
+            ("github/acme/web", "owned", &["package.json"]),
+            ("github/acme/svc", "owned", &["Cargo.toml"]),
         ],
     );
     // Project B has only npm (no cargo)
     make_project(
         &ws,
         "proj-b",
-        &[("github/acme/frontend", "primary", &["package.json"])],
+        &[("github/acme/frontend", "owned", &["package.json"])],
     );
 
     // Activate A -- both symlinks appear
@@ -450,12 +450,12 @@ fn switching_back_restores_original_symlinks() {
     make_project(
         &ws,
         "proj-a",
-        &[("github/acme/alpha", "primary", &["package.json"])],
+        &[("github/acme/alpha", "owned", &["package.json"])],
     );
     make_project(
         &ws,
         "proj-b",
-        &[("github/acme/beta", "primary", &["package.json"])],
+        &[("github/acme/beta", "owned", &["package.json"])],
     );
 
     // A -> B -> A
@@ -500,7 +500,7 @@ fn activate_works_from_workspace_subdirectory() {
     make_project(
         &ws,
         "my-proj",
-        &[("github/acme/repo", "primary", &["package.json"])],
+        &[("github/acme/repo", "owned", &["package.json"])],
     );
 
     rwv()
@@ -544,7 +544,7 @@ fn activate_same_project_twice_is_idempotent() {
     make_project(
         &ws,
         "my-proj",
-        &[("github/acme/repo", "primary", &["package.json"])],
+        &[("github/acme/repo", "owned", &["package.json"])],
     );
 
     rwv()
@@ -588,7 +588,7 @@ fn deactivate_descends_into_nondir_registry_subtrees() {
     make_project(
         &ws,
         "web-app",
-        &[("github/acme/server", "primary", &["package.json"])],
+        &[("github/acme/server", "owned", &["package.json"])],
     );
 
     // Activate to create the top-level symlinks.
@@ -639,7 +639,7 @@ fn activate_project_with_no_ecosystem_files() {
     let ws = make_workspace(tmp.path());
 
     // Project with repos that have no ecosystem manifest files
-    make_project(&ws, "plain-proj", &[("github/acme/docs", "primary", &[])]);
+    make_project(&ws, "plain-proj", &[("github/acme/docs", "owned", &[])]);
 
     rwv()
         .args(["activate", "plain-proj", "--no-install"])

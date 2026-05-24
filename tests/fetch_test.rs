@@ -1063,7 +1063,7 @@ fn fetch_no_reference_skips_reference_role_repos() {
     write_manifest_with_roles(
         &work,
         &[
-            ("local/team/primary", &primary_url, "primary"),
+            ("local/team/primary", &primary_url, "owned"),
             ("local/team/reference", &reference_url, "reference"),
         ],
     );
@@ -1157,7 +1157,7 @@ fn fetch_frozen_no_reference_tolerates_reference_missing_from_lock() {
     write_manifest_with_roles(
         &work,
         &[
-            ("local/team/primary", &primary_url, "primary"),
+            ("local/team/primary", &primary_url, "owned"),
             ("local/team/reference", &reference_url, "reference"),
         ],
     );
@@ -1237,7 +1237,7 @@ fn fetch_frozen_without_no_reference_errors_when_reference_missing_from_lock() {
     write_manifest_with_roles(
         &work,
         &[
-            ("local/team/primary", &primary_url, "primary"),
+            ("local/team/primary", &primary_url, "owned"),
             ("local/team/reference", &reference_url, "reference"),
         ],
     );
@@ -1339,11 +1339,11 @@ fn fetch_role_filter_only_clones_matching_role() {
 
     let source = build_filter_fixture(
         &tmp,
-        &[("local/org/p", "primary"), ("local/org/d", "dependency")],
+        &[("local/org/p", "owned"), ("local/org/d", "dependency")],
     );
 
     rwv()
-        .args(["fetch", &source, "--role", "primary"])
+        .args(["fetch", &source, "--role", "owned"])
         .current_dir(&workspace)
         .assert()
         .success();
@@ -1354,7 +1354,7 @@ fn fetch_role_filter_only_clones_matching_role() {
     );
     assert!(
         !workspace.join("local/org/d").exists(),
-        "dependency repo should NOT be cloned under --role primary"
+        "dependency repo should NOT be cloned under --role owned"
     );
 }
 
@@ -1366,7 +1366,7 @@ fn fetch_repo_exact_selector_clones_only_that_path() {
 
     let source = build_filter_fixture(
         &tmp,
-        &[("local/org/a", "primary"), ("local/org/b", "primary")],
+        &[("local/org/a", "owned"), ("local/org/b", "owned")],
     );
 
     rwv()
@@ -1391,9 +1391,9 @@ fn fetch_repo_glob_selector_clones_matching_paths() {
     let source = build_filter_fixture(
         &tmp,
         &[
-            ("local/org/a", "primary"),
-            ("local/org/b", "primary"),
-            ("local/other/c", "primary"),
+            ("local/org/a", "owned"),
+            ("local/org/b", "owned"),
+            ("local/other/c", "owned"),
         ],
     );
 
@@ -1420,9 +1420,9 @@ fn fetch_repo_regex_selector_clones_matching_paths() {
     let source = build_filter_fixture(
         &tmp,
         &[
-            ("local/cwalv/a", "primary"),
-            ("local/cwalv/b", "primary"),
-            ("local/other/c", "primary"),
+            ("local/cwalv/a", "owned"),
+            ("local/cwalv/b", "owned"),
+            ("local/other/c", "owned"),
         ],
     );
 
@@ -1448,7 +1448,7 @@ fn fetch_union_role_and_repo_selectors() {
     let source = build_filter_fixture(
         &tmp,
         &[
-            ("local/me/a", "primary"),
+            ("local/me/a", "owned"),
             ("local/external/dep", "dependency"),
             ("local/external/other", "dependency"),
         ],
@@ -1459,7 +1459,7 @@ fn fetch_union_role_and_repo_selectors() {
             "fetch",
             &source,
             "--role",
-            "primary",
+            "owned",
             "--repo",
             "local/external/dep",
         ])
@@ -1467,7 +1467,7 @@ fn fetch_union_role_and_repo_selectors() {
         .assert()
         .success();
 
-    assert!(workspace.join("local/me/a").exists(), "primary via --role");
+    assert!(workspace.join("local/me/a").exists(), "owned via --role");
     assert!(
         workspace.join("local/external/dep").exists(),
         "dep via --repo exact"

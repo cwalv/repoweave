@@ -205,7 +205,7 @@ fn update_help_lists_role_and_repo_flags() {
 fn update_role_filter_only_advances_matching_role() {
     let ws = build_workspace(
         "alpha",
-        &[("local/org/p", "primary"), ("local/org/d", "dependency")],
+        &[("local/org/p", "owned"), ("local/org/d", "dependency")],
     );
 
     // Advance both bares on `main` — only the primary local clone should
@@ -225,7 +225,7 @@ fn update_role_filter_only_advances_matching_role() {
     assert_ne!(new_p_sha, new_d_sha);
 
     rwv()
-        .args(["update", "--role", "primary", "--dirty"])
+        .args(["update", "--role", "owned", "--dirty"])
         .current_dir(&ws.workspace)
         .assert()
         .success();
@@ -252,7 +252,7 @@ fn update_role_filter_only_advances_matching_role() {
 fn update_repo_exact_filter_advances_only_that_path() {
     let ws = build_workspace(
         "alpha",
-        &[("local/org/a", "primary"), ("local/org/b", "primary")],
+        &[("local/org/a", "owned"), ("local/org/b", "owned")],
     );
     let (_, a_bare) = ws
         .manifest_bares
@@ -288,9 +288,9 @@ fn update_repo_glob_filter_advances_matching() {
     let ws = build_workspace(
         "alpha",
         &[
-            ("local/org/a", "primary"),
-            ("local/org/b", "primary"),
-            ("local/other/c", "primary"),
+            ("local/org/a", "owned"),
+            ("local/org/b", "owned"),
+            ("local/other/c", "owned"),
         ],
     );
     let new_shas: Vec<(String, String)> = ws
@@ -325,9 +325,9 @@ fn update_repo_regex_filter_advances_matching() {
     let ws = build_workspace(
         "alpha",
         &[
-            ("local/cwalv/a", "primary"),
-            ("local/cwalv/b", "primary"),
-            ("local/other/c", "primary"),
+            ("local/cwalv/a", "owned"),
+            ("local/cwalv/b", "owned"),
+            ("local/other/c", "owned"),
         ],
     );
     let new_shas: Vec<(String, String)> = ws
@@ -361,7 +361,7 @@ fn update_union_role_and_repo_selectors() {
     let ws = build_workspace(
         "alpha",
         &[
-            ("local/me/p", "primary"),
+            ("local/me/p", "owned"),
             ("local/external/dep", "dependency"),
             ("local/external/other", "dependency"),
         ],
@@ -376,7 +376,7 @@ fn update_union_role_and_repo_selectors() {
         .args([
             "update",
             "--role",
-            "primary",
+            "owned",
             "--repo",
             "local/external/dep",
             "--dirty",

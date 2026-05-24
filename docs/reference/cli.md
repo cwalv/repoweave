@@ -137,7 +137,7 @@ Convention audit. Reports orphaned clones, dangling references, missing roles, s
 | Flag | Effect |
 |---|---|
 | `--locked` | Zero exit iff every repo tip matches its lock entry (precondition for `rwv sync`) |
-| `--fix` | Auto-remediate safely-fixable index drift and working-tree drift; never touches live staged content or live edits |
+| `--fix` | Auto-remediate safely-fixable findings: index drift, working-tree drift, missing `rwv.lock merge=ours` replay-exclusion, and legacy `role: primary` manifest spellings. Never touches live staged content or live edits. Idempotent. |
 | `--json` | Emits envelope `{"$schema": "...", "violations": [...]}` |
 
 | Check | Description |
@@ -149,6 +149,8 @@ Convention audit. Reports orphaned clones, dangling references, missing roles, s
 | Workweave drift | Worktrees missing from a workweave or extra worktrees not in manifest |
 | Index drift | A repo's index doesn't match HEAD tree (shared-refs side effect) |
 | Working-tree drift | A repo's on-disk files don't match HEAD tree (shared-refs side effect) |
+| Missing replay-exclusion | A project repo's `.gitattributes` lacks `rwv.lock merge=ours` (`--fix` appends it) |
+| Legacy `role: primary` | A project `rwv.yaml` uses the pre-rename spelling; `--fix` rewrites each `role: primary` line to `role: owned`, preserving comments and key order |
 | Integration checks | Per-integration check hooks (tool availability, stale config) |
 
 ### `rwv workweave <project> create <name>`

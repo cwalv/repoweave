@@ -57,7 +57,7 @@ fn glob_double_star_crosses_slashes() {
 
 #[test]
 fn role_filter_includes_matching_role_only() {
-    let filter = RepoFilter::parse(&["primary".into()], &[]).unwrap();
+    let filter = RepoFilter::parse(&["owned".into()], &[]).unwrap();
     assert!(filter.matches(&rp("a"), Role::Owned));
     assert!(!filter.matches(&rp("a"), Role::Dependency));
     assert!(!filter.matches(&rp("a"), Role::Fork));
@@ -66,7 +66,7 @@ fn role_filter_includes_matching_role_only() {
 
 #[test]
 fn role_filter_is_case_insensitive() {
-    for variant in ["primary", "PRIMARY", "Primary", "PrImArY"] {
+    for variant in ["owned", "OWNED", "Owned", "OwNeD"] {
         let filter = RepoFilter::parse(&[variant.into()], &[]).unwrap();
         assert!(filter.matches(&rp("x"), Role::Owned), "case '{variant}'");
     }
@@ -74,8 +74,8 @@ fn role_filter_is_case_insensitive() {
 
 #[test]
 fn union_semantics_role_or_repo_selector() {
-    // --role primary --repo github/external/dep
-    let filter = RepoFilter::parse(&["primary".into()], &["github/external/dep".into()]).unwrap();
+    // --role owned --repo github/external/dep
+    let filter = RepoFilter::parse(&["owned".into()], &["github/external/dep".into()]).unwrap();
     // Matches because of role.
     assert!(filter.matches(&rp("github/me/code"), Role::Owned));
     // Matches because of selector even though role differs.
@@ -87,7 +87,7 @@ fn union_semantics_role_or_repo_selector() {
 #[test]
 fn multiple_of_each_kind_accumulate_as_union() {
     let filter = RepoFilter::parse(
-        &["primary".into(), "fork".into()],
+        &["owned".into(), "fork".into()],
         &[
             "github/a/exact".into(),
             "re:^lib/".into(),

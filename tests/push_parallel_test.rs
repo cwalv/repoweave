@@ -220,11 +220,11 @@ fn advance_all_and_relock(
 #[test]
 fn push_dash_j_pushes_all_manifest_then_project() {
     let repos = [
-        ("local/org/a", "primary"),
-        ("local/org/b", "primary"),
+        ("local/org/a", "owned"),
+        ("local/org/b", "owned"),
         ("local/org/c", "dependency"),
         ("local/org/d", "dependency"),
-        ("local/org/e", "primary"),
+        ("local/org/e", "owned"),
     ];
     let ws = build_workspace("alpha", &repos);
     let (expected_shas, project_head) = advance_all_and_relock(&ws, &repos);
@@ -254,7 +254,7 @@ fn push_dash_j_pushes_all_manifest_then_project() {
 /// interleaved output is parseable. Mirrors `make -j` / `ninja`.
 #[test]
 fn push_dash_j_emits_repo_prefix() {
-    let repos = [("local/org/a", "primary"), ("local/org/b", "primary")];
+    let repos = [("local/org/a", "owned"), ("local/org/b", "owned")];
     let ws = build_workspace("alpha", &repos);
     let (_, _) = advance_all_and_relock(&ws, &repos);
 
@@ -280,7 +280,7 @@ fn push_dash_j_emits_repo_prefix() {
 /// still be present, just unprefixed.
 #[test]
 fn push_dash_j_one_emits_no_prefix() {
-    let repos = [("local/org/a", "primary"), ("local/org/b", "primary")];
+    let repos = [("local/org/a", "owned"), ("local/org/b", "owned")];
     let ws = build_workspace("alpha", &repos);
     let (_, _) = advance_all_and_relock(&ws, &repos);
 
@@ -314,9 +314,9 @@ fn push_dash_j_one_emits_no_prefix() {
 #[test]
 fn push_dash_j_mid_batch_failure_skips_project_repo() {
     let repos = [
-        ("local/org/ok1", "primary"),
-        ("local/org/ok2", "primary"),
-        ("local/org/bad", "primary"),
+        ("local/org/ok1", "owned"),
+        ("local/org/ok2", "owned"),
+        ("local/org/bad", "owned"),
     ];
     let ws = build_workspace("alpha", &repos);
     let baseline_project = bare_main_sha(&ws.project_bare);
@@ -379,9 +379,9 @@ fn push_dash_j_mid_batch_failure_skips_project_repo() {
 #[test]
 fn push_dash_j_project_repo_runs_after_manifest_pushes() {
     let repos = [
-        ("local/org/a", "primary"),
-        ("local/org/b", "primary"),
-        ("local/org/c", "primary"),
+        ("local/org/a", "owned"),
+        ("local/org/b", "owned"),
+        ("local/org/c", "owned"),
     ];
     let ws = build_workspace("alpha", &repos);
     let (expected_shas, _) = advance_all_and_relock(&ws, &repos);

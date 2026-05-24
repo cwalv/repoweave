@@ -107,23 +107,22 @@ See [push a cross-repo feature](../how-to/push-cross-repo-feature.md).
 
 Roles surface in `rwv status --json` output so agent harnesses and shell scripts can filter on them. See [run a command across repos](../how-to/run-a-command-across-repos.md) for filtering recipes (`jq '.repos[] | select(.role == "owned")'`).
 
-## Compatibility: `primary` as a legacy alias for `owned`
+## Migrating from `role: primary`
 
 The `owned` role was previously spelled `primary`. The rename to `owned` resolved an overload — "primary" is also the name for the *workspace* (the non-workweave weave root, as in `rwv sync primary`). Using one word for two distinct concepts caused enough confusion to justify the rename.
 
-For back-compat, **`primary` is accepted as a silent alias for `owned`** in:
+**Manifests using `role: primary` must be migrated via `rwv doctor --fix`; the parser does not accept the legacy spelling.** A `rwv.yaml` carrying `role: primary` fails to load with a message directing you at `rwv doctor --fix`:
 
-- `rwv.yaml` manifests on disk — `role: primary` deserializes to the same variant as `role: owned`.
-- The `--role` CLI argument — `rwv add --role primary` and `rwv push --role primary` behave identically to the `owned` spelling.
+```
+$ rwv check
+error: failed to parse rwv.yaml at projects/<name>/rwv.yaml: manifest uses the deprecated `role: primary` spelling; run `rwv doctor --fix` to migrate to `role: owned`
+```
 
-The tool always **writes** the canonical spelling:
+`rwv doctor` (without `--fix`) reports each affected manifest as a `legacy-role-primary` violation. `rwv doctor --fix` rewrites every `role: primary` line to `role: owned` in place, preserving comments and key order. The migration is idempotent — running `--fix` against a clean tree is a no-op.
 
-- `rwv add` and `rwv init` produce `role: owned` in newly written YAML.
-- `rwv status --json` emits `"role": "owned"` for repos that were `Role::Owned` (regardless of how they were spelled on disk).
+The `--role` CLI flag (`rwv add --role`, `rwv push --role`, etc.) also rejects the legacy spelling. `--role primary` returns an error pointing at the same `rwv doctor --fix` migration path.
 
-If you are scripting against `rwv status --json` and have a filter like `select(.role == "primary")`, update it to `select(.role == "owned")`. The legacy alias only covers *input* — `rwv` does not emit `primary` on the wire.
-
-No deprecation warning is emitted yet. The alias will be accepted silently for at least one release; whether to warn later (and eventually drop the alias) is a separate decision.
+`rwv status --json` and other machine-readable outputs always emit the canonical `"owned"` spelling; that contract was unchanged by this revision.
 
 ## Related
 

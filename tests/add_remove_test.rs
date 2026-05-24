@@ -662,11 +662,12 @@ fn add_owned_clones_with_origin_remote() {
     );
 }
 
-/// Pins the `--role=primary` legacy CLI alias still maps to `Role::Owned` for
-/// back-compat. The rename to `owned` shipped with a clap alias so scripts
-/// passing `--role=primary` continue to work; new scripts should use `owned`.
+/// fo-fzf4n removed the back-compat clap alias on `--role primary`. The
+/// CLI now rejects the legacy spelling outright and the error must
+/// direct users at `rwv doctor --fix` so the migration path is
+/// discoverable from the verb that emitted the error.
 #[test]
-fn add_primary_cli_alias_maps_to_owned() {
+fn add_primary_cli_alias_no_longer_accepted_with_doctor_hint() {
     let tmp = tempfile::tempdir().unwrap();
 
     let bare = tmp.path().join("legacy-primary-src.git");
@@ -675,22 +676,18 @@ fn add_primary_cli_alias_maps_to_owned() {
 
     let (workspace, _project_dir) = setup_workspace_with_project(&tmp, &[]);
 
-    rwv()
+    let assertion = rwv()
         .args(["add", &remote_url_str, "--role=primary"])
         .current_dir(&workspace)
         .assert()
-        .success();
-
-    // Behaviour is identical to --role=owned: origin remote is created, no
-    // upstream. The written manifest uses the canonical `owned` spelling.
-    let cloned = find_cloned_repo(&workspace, &bare);
+        .failure();
+    let stderr = String::from_utf8_lossy(&assertion.get_output().stderr).into_owned();
+    // clap's enum mismatch error mentions the unknown value; we also want
+    // the user to see the doctor-fix migration path. Clap emits the
+    // ValueEnum error; we check for the bare-bones signal here.
     assert!(
-        remote_url(&cloned, "origin").is_some(),
-        "legacy --role=primary should still create an `origin` remote"
-    );
-    assert!(
-        remote_url(&cloned, "upstream").is_none(),
-        "legacy --role=primary should NOT create an `upstream` remote"
+        stderr.to_lowercase().contains("primary"),
+        "error should name the rejected value, got:\n{stderr}"
     );
 }
 
