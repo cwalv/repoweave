@@ -51,11 +51,7 @@ The recovery decision tree:
    git -C projects/web-app commit -am "lock: feature X"
    rwv push
    ```
-2. **You meant to push the existing lock.** The lock is what's authoritative; reset the manifest-repo tips back to what the lock says:
-   ```bash
-   rwv fetch --locked
-   rwv push
-   ```
+2. **You meant to push the existing lock.** The lock is what's authoritative; reset each diverged manifest repo to the SHA recorded in `rwv.lock` (use `rwv status` to find which repos are ahead or diverged), then re-run `rwv push`.
 3. **You meant to push past a divergence.** The lock-precondition is a safety check; `--force` bypasses it. Use with care:
    ```bash
    rwv push --force

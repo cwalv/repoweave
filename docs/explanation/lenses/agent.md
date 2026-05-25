@@ -36,15 +36,13 @@ rwv setup agents-md                # generate AGENTS.md for Cursor/Copilot/etc.
 Agent harnesses should *not* scrape `rwv --help`. The reflection endpoint is `rwv explain`:
 
 ```bash
-rwv explain                        # list every verb
-rwv explain <verb>                 # human-readable
-rwv explain <verb> --json          # machine-readable verb spec
-rwv explain <verb> --json-schema   # JSON Schema for the verb's --json output
+rwv explain                        # list every explainable verb
+rwv explain <verb>                 # markdown bundle for that verb
 ```
 
-`rwv explain` is reflection over the same clap-derive that powers the CLI, so the output is always in sync with the binary. An agent that wants to know "does `rwv push` support `--force`?" asks `rwv explain push --json`, not its training data.
+The bundle has a fixed shape: *Purpose*, *Invocation* (flags, types, defaults), *Output* (a prose description plus, for `--json`-capable verbs, the JSON Schema as a fenced code block), *Exit codes*, *Examples*, *Common errors*. An agent that wants to know "does `rwv push` support `--force`?" parses the *Invocation* section of `rwv explain push`, not its training data.
 
-The rendered output is committed at `docs/reference/explain/` for offline browsing — those files are build artifacts, not hand-authored. CI fails if they diverge from the source.
+The rendered bundles are committed at `docs/reference/explain/` for offline browsing — those files are build artifacts of `cargo run --bin generate-explain`, not hand-authored. CI fails if they diverge from the templates.
 
 ### Structured output — the `--json` envelope
 
@@ -54,7 +52,7 @@ Every JSON-capable verb emits a self-describing envelope:
 { "$schema": "<url>", "<key>": [...] }
 ```
 
-The key is verb-specific (`repos` for status, `violations` for doctor, `outcomes` for sync). Schemas live at `docs/reference/schemas/<verb>.json` and are reachable via `rwv explain <verb> --json-schema`. Agents resolve `$schema` once and cache the schema; they don't assume any shape.
+The key is verb-specific (`repos` for status, `violations` for doctor, `outcomes` for sync). Schemas live at `docs/reference/schemas/<verb>.json` and are also embedded inside the corresponding `rwv explain <verb>` bundle. Agents resolve `$schema` once and cache the schema; they don't assume any shape.
 
 Under parallel mode (`rwv sync -j N > 1`), output switches to NDJSON: one JSON record per line as workers finish, no envelope, each line carrying its own `$schema`. The branch-on-shape pattern lets consumers handle both modes uniformly: read the first record; if subsequent lines also have `$schema`, parse as NDJSON.
 

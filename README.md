@@ -14,7 +14,7 @@ A monorepo eliminates most of the coordination pain — at the cost of vendoring
 - **One command reproduces the workspace.** `rwv fetch <url>` clones the project, every repo it lists, generates ecosystem workspace files where they apply, and runs install commands. For toolchain pins, env activation, or full OS-level reproduction, drop a `.mise.toml` / `.envrc` / `devcontainer.json` into the project repo (they're cross-cutting artifacts) — `rwv fetch` carries them with everything else. See [adjacent-tools](docs/adjacent-tools.md).
 - **A natural home for cross-cutting artifacts that don't quite fit anywhere else.** Operational scripts, k8s manifests, ADRs, demos, release notes, devcontainer configs, `.mise.toml` toolchain pins, Nix flakes — they live in the project repo without contaminating any single library's history, and they come along on every `rwv fetch`.
 - **Isolated parallel work via workweaves.** `git worktree` extended across N repos, with per-workweave `node_modules` / `.venv` / `target`. Use for feature branches, PR review, or agent sandboxes — the primary weave stays undisturbed.
-- **A bounded surface for automation.** `rwv prime` advertises the workspace; `rwv explain --json` reflects every verb against a versioned schema; roles act as a machine-readable allow-list (`reference` and `dependency` are read-only); workweaves isolate the blast radius. Together they give an agent harness everything it needs to drive the workspace without scraping help text.
+- **A bounded surface for automation.** `rwv prime` advertises the workspace; `rwv explain <verb>` returns a markdown bundle with the verb's JSON Schema embedded; roles act as a machine-readable allow-list (`reference` and `dependency` are read-only); workweaves isolate the blast radius. Together they give an agent harness everything it needs to drive the workspace without scraping help text.
 
 Where your repos share a language (Rust + Rust, TS + TS, Go + Go, ...), the generated workspace files mean cross-repo imports resolve locally — a change in a shared library is immediately visible to its consumer with no publish step. Internal-only repos (typical in proprietary projects) can drop semver maintenance entirely; for repos that publish externally, the dance amortizes to external-release cadence rather than firing on every dev iteration. See the [monorepo lens](docs/explanation/lenses/monorepo.md) for the full cadence story.
 
@@ -72,7 +72,7 @@ Create an isolated working copy when you need parallel work, PR review, or agent
 
 ```bash
 rwv workweave web-app create payments    # creates isolated working copy with git worktrees
-cd .workweaves/payments
+cd .workweaves/web-app--payments
 # independent branches, node_modules, .venv — weave is undisturbed
 ```
 
@@ -81,7 +81,7 @@ cd .workweaves/payments
 | Command | Description |
 |---|---|
 | `rwv` | Show current context (weave, project, workweave, repos) |
-| `rwv fetch <source>` | Clone a project and all its repos; activate and install. `--locked` for exact reproduction, `--frozen` for CI |
+| `rwv fetch <source>` | Clone a project and all its repos; align repos to `rwv.lock`; activate and install. `--frozen` errors if the lock is stale (CI) |
 | `rwv init <project>` | Create a new project with empty `rwv.yaml`. Optional `--provider registry/owner` sets up the remote |
 | `rwv activate <project>` | Set the active project — generate ecosystem files, symlink to weave directory, run install |
 | `rwv add <url>` | Clone a repo, add to `rwv.yaml`, re-run integrations. `--role` sets the role, `--new` for `git init` |

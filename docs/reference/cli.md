@@ -18,7 +18,7 @@ Read `rwv.lock` and align clones to it. Bootstrap when lock is absent.
 |---|---|
 | `--frozen` | Error if lock is stale; never advance. Suitable for CI |
 | `--role` / `--repo` | Selector filters (see [Selector grammar](#selector-grammar)) |
-| `--json` / `-j N` | Structured output / parallel fetch |
+| `-j N` | Parallel per-repo workers (default: min(nproc, 8)) |
 
 The lock is **read-only**. To advance tips and re-snapshot, use `rwv update`.
 
@@ -31,7 +31,7 @@ Anchored by `tests/doc_claims_fetch_test.rs`.
 | Flag | Effect |
 |---|---|
 | `--role` / `--repo` | Selector filters |
-| `--json` / `-j N` | Structured output / parallel update |
+| `-j N` | Parallel per-repo workers (default: min(nproc, 8)) |
 
 Anchored by `tests/doc_claims_update_test.rs`.
 
@@ -190,20 +190,18 @@ cd $(rwv resolve)
 
 Use case: one-shot path resolution from anywhere inside a workspace.
 
-#### `rwv explain [<verb>] [--json | --json-schema]`
+#### `rwv explain [<verb>]`
 
-JIT reflection over verbs, flags, and JSON output schemas — *replaces hand-maintained `--help` scraping* in agent harnesses.
+Per-verb reflection — *replaces hand-maintained `--help` scraping* in agent harnesses.
 
 | Invocation | Returns |
 |---|---|
-| `rwv explain` | List of all verbs |
-| `rwv explain <verb>` | Human-readable explanation of a verb |
-| `rwv explain <verb> --json` | Machine-readable verb spec (flags, types) |
-| `rwv explain <verb> --json-schema` | JSON Schema for the verb's `--json` output |
+| `rwv explain` | List of explainable verbs |
+| `rwv explain <verb>` | Markdown bundle: purpose, invocation, output description, JSON Schema (for `--json`-capable verbs), exit codes, examples, common errors |
 
-Use case: agent harness asks "does `rwv push` support `--force`?" — reflection is authoritative.
+Use case: agent harness asks "what flags does `rwv push` take, and what does it print?" — the bundle is authoritative. For `--json`-capable verbs (`status`, `doctor`, `sync`), the JSON Schema is embedded as a fenced code block inside the bundle.
 
-The rendered output is checked in at `docs/reference/explain/` for offline browsing.
+The rendered bundles are checked in at `docs/reference/explain/` for offline browsing. CI fails if they diverge from the generator output.
 
 ### `rwv setup claude [--uninstall]`
 
@@ -273,11 +271,8 @@ Every JSON-capable verb emits a self-describing envelope:
 | `rwv status --json` | `repos` |
 | `rwv doctor --json` | `violations` |
 | `rwv sync --json` | `outcomes` |
-| `rwv fetch --json` | `outcomes` |
-| `rwv update --json` | `outcomes` |
-| `rwv push --json` | `outcomes` |
 
-Schemas live at `docs/reference/schemas/<verb>.json` and are reachable via `rwv explain <verb> --json-schema`.
+Schemas live at `docs/reference/schemas/<verb>.json` and are also embedded as fenced code blocks inside the corresponding `rwv explain <verb>` bundle.
 
 ### NDJSON under parallel mode
 

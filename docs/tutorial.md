@@ -110,7 +110,7 @@ Anyone else can now reproduce your exact state:
 rwv fetch chatly/web-app --frozen
 ```
 
-`--frozen` errors if the lock is stale (suitable for CI). `--locked` checks out exactly what the lock says without erroring on staleness.
+`--frozen` errors if the lock is stale (suitable for CI). Without `--frozen`, `rwv fetch` aligns each repo to the SHA recorded in `rwv.lock` and proceeds; staleness is reported by `rwv doctor`.
 
 ## Where to go next
 

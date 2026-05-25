@@ -260,8 +260,8 @@ record on the next line is NDJSON.
 
 Exit semantics under `--json` are the same in both modes: non-zero iff
 at least one per-repo outcome is `failed`. The schema is committed at
-`docs/reference/schemas/sync.json` and reachable via `rwv explain sync
---json-schema`.
+`docs/reference/schemas/sync.json` and embedded inside the `rwv explain
+sync` bundle.
 
 Anchored by `tests/doc_claims_sync_test.rs` (envelope shape; `outcomes`
 key) and `tests/sync_json_test.rs` (NDJSON streaming).

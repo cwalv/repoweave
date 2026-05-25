@@ -29,13 +29,11 @@ rwv setup agents-md
 The agent's harness should not scrape `rwv --help`. The reflection endpoint is `rwv explain`:
 
 ```bash
-rwv explain <verb>                 # human-readable explanation
-rwv explain <verb> --json          # machine-readable verb spec
-rwv explain <verb> --json-schema   # JSON Schema for the verb's --json output
-rwv explain                        # list every verb
+rwv explain                        # list every explainable verb
+rwv explain <verb>                 # markdown bundle for that verb
 ```
 
-`rwv explain` is reflection over the same clap-derive that powers the CLI, so the output is always in sync with the binary. Use it to discover available flags, JSON-output shapes, and selector grammar without round-tripping through documentation.
+The bundle has a fixed shape — *Purpose*, *Invocation* (flags, types, defaults), *Output* (a description plus, for `--json`-capable verbs, the JSON Schema as a fenced code block), *Exit codes*, *Examples*, *Common errors*. Build artifact of `cargo run --bin generate-explain`; always in sync with the binary. Use it to discover available flags, JSON-output shapes, and selector grammar without round-tripping through documentation.
 
 The rendered output is committed at `docs/reference/explain/` for offline browsing. Those files are build artifacts — do not hand-edit them. CI fails when the rendered output diverges from the source.
 
@@ -55,7 +53,7 @@ The key is verb-specific:
 | `rwv doctor --json` | `violations` |
 | `rwv sync --json` | `outcomes` |
 
-Schemas live at `docs/reference/schemas/<verb>.json` and are reachable via `rwv explain <verb> --json-schema`. Agents should resolve `$schema` once and cache, not assume any shape.
+Schemas live at `docs/reference/schemas/<verb>.json` and are also embedded inside the corresponding `rwv explain <verb>` bundle. Agents should resolve `$schema` once and cache, not assume any shape.
 
 ### NDJSON under `-j N > 1`
 

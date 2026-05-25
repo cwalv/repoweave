@@ -61,7 +61,7 @@ pub fn render_overview() -> String {
 
     out.push_str("**Lock & sync** — every project owns an `rwv.lock` that pins each repo to an exact revision (tag name when HEAD is tagged, SHA otherwise). ");
     out.push_str("The lock is *load-bearing*, not a passive snapshot: `rwv sync <source>` aligns the CWD workspace with `<source>`'s committed lock. ");
-    out.push_str("It is direction-neutral — `cd primary && rwv sync payments` brings a workweave's work home; `cd .workweaves/payments && rwv sync primary` catches the workweave up. ");
+    out.push_str("It is direction-neutral — from primary, `rwv sync <workweave>` brings a workweave's work home; from `.workweaves/<project>--<workweave>/`, `rwv sync primary` catches the workweave up. ");
     out.push_str("Both sides must satisfy `rwv doctor --locked` first (bypass with `--force`); `rwv abort` rolls back via savepoint refs under `refs/rwv/pre-op/`. ");
     out.push_str("`sha256sum rwv.lock` is the project fingerprint — the multi-repo equivalent of `git rev-parse HEAD` on a monorepo.\n\n");
 
@@ -81,7 +81,7 @@ pub fn render_overview() -> String {
     );
     out.push_str("rwv activate <project>                  # generate ecosystem workspace files; set active project\n");
     out.push_str("rwv workweave <project> create <name>   # spin up an isolated workspace for the feature/agent\n");
-    out.push_str("# ... edit, test, commit across repos in .workweaves/<name>/ ...\n");
+    out.push_str("# ... edit, test, commit across repos in .workweaves/<project>--<name>/ ...\n");
     out.push_str("rwv lock                                # snapshot revisions to rwv.lock\n");
     out.push_str("git -C projects/<project> commit -am 'lock: <name>'   # commit the lock in the project repo\n");
     out.push_str(
@@ -97,14 +97,14 @@ pub fn render_overview() -> String {
     out.push_str("| `rwv` | Show workspace context |\n");
     out.push_str("| `rwv prime [--no-suppress]` | Emit structured context; `--no-suppress` always emits, even outside a weave |\n");
     out.push_str("| `rwv resolve` | Print effective workspace root path (handy for scripting: `cd $(rwv resolve)`) |\n");
-    out.push_str("| `rwv fetch SOURCE [--locked\\|--frozen]` | Clone a project and every repo it lists; activate it |\n");
+    out.push_str("| `rwv fetch SOURCE [--frozen]` | Clone a project and every repo it lists; align to its `rwv.lock`; activate |\n");
     out.push_str("| `rwv activate PROJECT` | Set active project; (re)generate ecosystem workspace files and symlinks |\n");
     out.push_str("| `rwv init PROJECT [--provider REG/OWNER]` | Create a new project directory with empty `rwv.yaml` |\n");
     out.push_str("| `rwv add URL [--role ROLE\\|--new]` | Clone and register a repo; `--new` initializes a brand-new repo at the canonical path |\n");
     out.push_str(
         "| `rwv remove PATH [--delete]` | Unregister a repo; `--delete` also removes the clone |\n",
     );
-    out.push_str("| `rwv lock [--dirty]` | Snapshot repo revisions to the project's `rwv.lock`; runs integration lock hooks |\n");
+    out.push_str("| `rwv lock [--dirty]` | Snapshot repo revisions to the project's `rwv.lock`. Pure git SHA snapshot — no integration hooks fire; run `rwv activate` afterward if membership changed |\n");
     out.push_str(
         "| `rwv workweave PROJECT create NAME` | Spin up a worktree-based isolated workspace |\n",
     );
@@ -184,7 +184,7 @@ pub fn render_context(ctx: &WorkspaceContext) -> String {
     out.push_str("| `rwv resolve` | Print effective root path |\n");
     out.push_str("| `rwv activate PROJECT` | Set active project, generate ecosystem configs |\n");
     out.push_str(
-        "| `rwv workweave PROJECT NAME` | Create a workweave (worktree-based workspace) |\n",
+        "| `rwv workweave PROJECT create NAME` | Create a workweave (worktree-based workspace) |\n",
     );
     out.push_str("| `rwv add URL [--role ROLE]` | Add a repo to the active project |\n");
     out.push_str("| `rwv remove PATH` | Remove a repo from the active project |\n");

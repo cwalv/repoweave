@@ -247,8 +247,9 @@ elements of the design. They:
 
 The status JSON envelope shape (`{"$schema": "...", "repos": [...]}`)
 is intentionally designed for composition — every record carries
-enough metadata to identify the repo, and the schema URL is reachable
-via `rwv explain status --json-schema`. This is rwv as a *data source*,
+enough metadata to identify the repo, and the schema is committed at
+`docs/reference/schemas/status.json` and embedded inside the
+`rwv explain status` bundle. This is rwv as a *data source*,
 not as a runner.
 
 ## Anchoring
