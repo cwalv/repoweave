@@ -1797,12 +1797,12 @@ fn create_workweave_cleans_up_on_bail() {
 "#;
     std::fs::write(project_dir.join("rwv.yaml"), bad_manifest).unwrap();
 
-    let ww_name = repoweave::manifest::WorkweaveName::new("retryme");
-    let project = repoweave::manifest::ProjectName::new("web-app");
-    std::env::set_var("RWV_WORKWEAVE_DIR", &weaveroot);
-    let res = repoweave::workweave::create_workweave(&ws, &ws, &project, &ww_name, false);
-    std::env::remove_var("RWV_WORKWEAVE_DIR");
-    assert!(res.is_err(), "expected create to bail on missing repo");
+    rwv()
+        .args(["workweave", "web-app", "create", "retryme"])
+        .env("RWV_WORKWEAVE_DIR", &weaveroot)
+        .current_dir(&ws)
+        .assert()
+        .failure();
 
     // The workweave directory must not be left on disk; otherwise the next
     // attempt is forced down the `--force` path.
@@ -1838,16 +1838,12 @@ fn create_workweave_bails_on_project_worktree_failure() {
     std::fs::create_dir_all(&project_dest).unwrap();
     std::fs::write(project_dest.join("squat"), "blocker").unwrap();
 
-    let ww_name = repoweave::manifest::WorkweaveName::new("conflict");
-    let project = repoweave::manifest::ProjectName::new("web-app");
-    std::env::set_var("RWV_WORKWEAVE_DIR", &weaveroot);
-    let res = repoweave::workweave::create_workweave(&ws, &ws, &project, &ww_name, false);
-    std::env::remove_var("RWV_WORKWEAVE_DIR");
-
-    assert!(
-        res.is_err(),
-        "create_workweave must bail on project-repo worktree failure, not silently copy"
-    );
+    rwv()
+        .args(["workweave", "web-app", "create", "conflict"])
+        .env("RWV_WORKWEAVE_DIR", &weaveroot)
+        .current_dir(&ws)
+        .assert()
+        .failure();
 
     // And the partial workweave dir is cleaned up (B7 generalised).
     assert!(
@@ -1908,16 +1904,12 @@ fn create_workweave_rollback_prunes_orphan_worktree_registrations() {
     let weaveroot = tmp.path().join(".workweaves");
     std::fs::create_dir_all(&weaveroot).unwrap();
 
-    let ww_name = repoweave::manifest::WorkweaveName::new("partial");
-    let project = repoweave::manifest::ProjectName::new("web-app");
-    std::env::set_var("RWV_WORKWEAVE_DIR", &weaveroot);
-    let res = repoweave::workweave::create_workweave(&ws, &ws, &project, &ww_name, false);
-    std::env::remove_var("RWV_WORKWEAVE_DIR");
-
-    assert!(
-        res.is_err(),
-        "create should fail because repo2 does not exist"
-    );
+    rwv()
+        .args(["workweave", "web-app", "create", "partial"])
+        .env("RWV_WORKWEAVE_DIR", &weaveroot)
+        .current_dir(&ws)
+        .assert()
+        .failure();
 
     // 1. Workweave directory must not be left on disk.
     let ww_dir = weaveroot.join("web-app--partial");
@@ -2008,13 +2000,12 @@ fn create_workweave_rollback_prunes_all_registered_worktrees_not_just_failed() {
     let weaveroot = tmp.path().join(".workweaves");
     std::fs::create_dir_all(&weaveroot).unwrap();
 
-    let ww_name = repoweave::manifest::WorkweaveName::new("multi-partial");
-    let project = repoweave::manifest::ProjectName::new("web-app");
-    std::env::set_var("RWV_WORKWEAVE_DIR", &weaveroot);
-    let res = repoweave::workweave::create_workweave(&ws, &ws, &project, &ww_name, false);
-    std::env::remove_var("RWV_WORKWEAVE_DIR");
-
-    assert!(res.is_err(), "create must fail because repo2 is missing");
+    rwv()
+        .args(["workweave", "web-app", "create", "multi-partial"])
+        .env("RWV_WORKWEAVE_DIR", &weaveroot)
+        .current_dir(&ws)
+        .assert()
+        .failure();
 
     let ww_dir = weaveroot.join("web-app--multi-partial");
     assert!(!ww_dir.exists(), "workweave dir must be removed on rollback");
@@ -2071,11 +2062,12 @@ fn create_workweave_clean_retry_after_failure_succeeds() {
     );
     std::fs::write(project_dir.join("rwv.yaml"), &bad_manifest).unwrap();
 
-    std::env::set_var("RWV_WORKWEAVE_DIR", &weaveroot);
-    let project = repoweave::manifest::ProjectName::new("web-app");
-    let ww_name = repoweave::manifest::WorkweaveName::new("retry-me");
-    let res = repoweave::workweave::create_workweave(&ws, &ws, &project, &ww_name, false);
-    assert!(res.is_err(), "first create must fail due to missing repo");
+    rwv()
+        .args(["workweave", "web-app", "create", "retry-me"])
+        .env("RWV_WORKWEAVE_DIR", &weaveroot)
+        .current_dir(&ws)
+        .assert()
+        .failure();
 
     // Fix the manifest — only real repos remain.
     let good_manifest = format!(
@@ -2092,14 +2084,12 @@ fn create_workweave_clean_retry_after_failure_succeeds() {
 
     // Second create (same name, no --force): must succeed because rollback
     // cleaned up all state from the first attempt.
-    let res2 = repoweave::workweave::create_workweave(&ws, &ws, &project, &ww_name, false);
-    std::env::remove_var("RWV_WORKWEAVE_DIR");
-
-    assert!(
-        res2.is_ok(),
-        "clean retry after rollback must succeed without --force; got: {:?}",
-        res2.err()
-    );
+    rwv()
+        .args(["workweave", "web-app", "create", "retry-me"])
+        .env("RWV_WORKWEAVE_DIR", &weaveroot)
+        .current_dir(&ws)
+        .assert()
+        .success();
 
     let ww_dir = weaveroot.join("web-app--retry-me");
     assert!(
@@ -2129,23 +2119,17 @@ fn no_marker_diagnostic_names_partial_create_as_likely_cause() {
     std::fs::create_dir_all(&ww_dir).unwrap();
     // Deliberately do NOT write .rwv-workweave.
 
-    let ww_name = repoweave::manifest::WorkweaveName::new("orphan");
-    let project = repoweave::manifest::ProjectName::new("web-app");
-    std::env::set_var("RWV_WORKWEAVE_DIR", &weaveroot);
-    let res = repoweave::workweave::create_workweave(&ws, &ws, &project, &ww_name, false);
-    std::env::remove_var("RWV_WORKWEAVE_DIR");
-
-    assert!(res.is_err(), "create must fail when marker is missing");
-
-    let err_msg = format!("{:#}", res.unwrap_err());
-    assert!(
-        err_msg.contains("partially created") || err_msg.contains("previous failed"),
-        "diagnostic must mention 'partially created' or 'previous failed attempt', got: {err_msg}"
-    );
-    assert!(
-        err_msg.contains("--force"),
-        "diagnostic must recommend --force, got: {err_msg}"
-    );
+    rwv()
+        .args(["workweave", "web-app", "create", "orphan"])
+        .env("RWV_WORKWEAVE_DIR", &weaveroot)
+        .current_dir(&ws)
+        .assert()
+        .failure()
+        .stderr(
+            predicate::str::contains("partially created")
+                .or(predicate::str::contains("previous failed")),
+        )
+        .stderr(predicate::str::contains("--force"));
 }
 
 #[test]
