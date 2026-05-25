@@ -16,16 +16,22 @@ follow-up actions.
 ## Invocation
 
 ```
-rwv doctor [--json] [--fix]
+rwv doctor [--locked] [--json] [--fix]
 ```
 
-- `--json` emits machine-readable output (see Output below).
+- `--locked` exits zero iff every repo's tip matches its `rwv.lock`
+  entry. Prints per-repo `ok` / `tip ≠ lock` lines to stdout. Useful
+  as a scriptable precondition before `rwv sync`. Mutually exclusive
+  with `--fix` and `--json`.
+- `--json` emits machine-readable output (see Output below). Mutually
+  exclusive with `--locked` and `--fix`.
 - `--fix` attempts auto-remediation for variants that are safe to fix:
   index drift where the displaced tree is a known ancestor, working-tree
   drift where on-disk content matches a known blob, missing
   `rwv.lock merge=ours` replay-exclusion, and legacy `role: primary`
   manifest spellings (rewritten to `role: owned` in place — preserves
-  comments and key order). Idempotent.
+  comments and key order). Idempotent. Mutually exclusive with
+  `--locked` and `--json`.
 
 Run `rwv --help doctor` for the full clap surface.
 
