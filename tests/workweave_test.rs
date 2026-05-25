@@ -306,8 +306,8 @@ fn delete_workweave_removes_project_worktree() {
 
     // Delete it. Pass --force: activation writes generated files into the
     // workweave's project worktree (workspace config, ecosystem outputs)
-    // that the post-fo-gneid dirty check would otherwise treat as untracked
-    // changes. This test is verifying worktree cleanup, not dirty-check
+    // that the dirty check would otherwise treat as untracked changes.
+    // This test is verifying worktree cleanup, not dirty-check
     // semantics, so the --force is incidental.
     rwv()
         .args(["workweave", "my-project", "delete", "to-del", "--force"])
@@ -884,9 +884,9 @@ fn workweave_full_round_trip() {
     // --- Delete ---
     // Pass --force: activation generates files in the project worktree
     // (workspace config, ecosystem outputs) that count as untracked changes
-    // under the post-fo-gneid dirty check. The round-trip test isn't about
-    // dirty semantics; the --force is incidental to making delete work
-    // after the create-and-activate cycle.
+    // under the dirty check. The round-trip test isn't about dirty
+    // semantics; the --force is incidental to making delete work after
+    // the create-and-activate cycle.
     rwv()
         .args(["workweave", "round-trip-project", "delete", "rt", "--force"])
         .env("RWV_WORKWEAVE_DIR", &weaveroot)
@@ -1575,7 +1575,7 @@ fn claude_hook_conflicts_with_hook_mode_flag() {
 }
 
 // ============================================================================
-// `<project>--<name>` directory convention (fo-9g4sh)
+// `<project>--<name>` directory convention
 // ============================================================================
 
 /// `create_workweave` builds `<project>--<name>` when the project differs
@@ -1853,7 +1853,7 @@ fn create_workweave_bails_on_project_worktree_failure() {
 }
 
 // ============================================================================
-// fo-cc40k.2 — atomic rollback: orphan worktree pruning on mid-create failure
+// Atomic rollback: orphan worktree pruning on mid-create failure
 // ============================================================================
 
 /// Create a workspace with TWO repos in the manifest.  The first repo is real;
@@ -2133,7 +2133,7 @@ fn no_marker_diagnostic_names_partial_create_as_likely_cause() {
 }
 
 // ============================================================================
-// fo-cc40k.3 — --force prunes orphan worktree refs from prior partial creates
+// --force prunes orphan worktree refs from prior partial creates
 // ============================================================================
 
 /// `rwv workweave create --force` must succeed even when the primary repo
@@ -2254,7 +2254,7 @@ fn claude_hook_no_project_arg_needed() {
 }
 
 // ============================================================================
-// fo-gneid: workweave delete dirty-worktree safety
+// workweave delete dirty-worktree safety
 // ============================================================================
 
 #[test]
@@ -2430,7 +2430,7 @@ fn workweave_create_with_clean_committed_manifest_emits_no_dirty_warning() {
 }
 
 // ============================================================================
-// fo-ran2c: workweave parent tracking + bare sync follows parent
+// Workweave parent tracking + bare sync follows parent
 // ============================================================================
 
 #[test]
@@ -2516,7 +2516,7 @@ fn bare_sync_outside_workweave_errors_clearly() {
 }
 
 // ============================================================================
-// Pre-flight HEAD check (fo-cc40k.1)
+// Pre-flight HEAD check
 // ============================================================================
 
 /// Build a workspace where the project directory is a git-init'd repo with
@@ -2667,9 +2667,9 @@ fn assert_preflight_fails_with_actionable_message(
 
 #[test]
 fn create_workweave_fails_actionably_when_project_repo_has_no_commits() {
-    // Regression test for fo-cc40k failure mode 1: project git-init'd but not committed.
-    // The pre-flight check must fire before any disk mutation and produce an
-    // error that names projects/<project> and tells the user to commit.
+    // Regression: project git-init'd but not committed. The pre-flight
+    // check must fire before any disk mutation and produce an error that
+    // names projects/<project> and tells the user to commit.
     let tmp = tempfile::tempdir().unwrap();
     let ws = make_workspace_with_uncommitted_project(tmp.path(), "fresh-project");
 

@@ -1,14 +1,11 @@
-//! Integration tests anchoring documented behavior of `rwv sync --json`
-//! (fo-r982a; envelope/NDJSON shape from fo-i5z14; per-record `kind` tags
-//! from fo-tn9uk).
+//! Integration tests anchoring documented behavior of `rwv sync --json`.
 //!
 //! Doc claims pinned here:
 //!
 //!   - `rwv sync --json` (serial, `-j 1` or no `-j`) emits the envelope
 //!     `{"$schema": "<url>", "outcomes": [<RepoSyncOutcome>, ...]}`.
-//!     This shape was named `outcomes` in fo-tn9uk; the bead description
-//!     uses "results" informally — we pin to the actual implementation
-//!     here.
+//!     The field is `outcomes` (we pin to the actual implementation
+//!     rather than the informal "results" phrasing in prose).
 //!   - Under `-j N` with `N > 1`, `--json` switches to NDJSON streaming:
 //!     one record per line, no envelope, each line is a complete JSON
 //!     object that embeds its own `$schema`.
@@ -192,7 +189,7 @@ fn make_shared(parent: &Path) -> (Workspace, Workspace, String) {
 const SCHEMA_FRAGMENT: &str = "docs/reference/schemas/sync.json";
 
 // ===========================================================================
-// 1. Envelope shape under serial mode (fo-i5z14)
+// 1. Envelope shape under serial mode
 //
 // Doc claim: `rwv sync --json` (no `-j` or `-j 1`) emits an object with
 // `$schema` + `outcomes` (an array). The $schema URL is embedded.
@@ -247,7 +244,7 @@ fn sync_json_serial_emits_envelope_with_schema_and_outcomes() {
         "outcomes array must not be empty; got:\n{stdout}"
     );
 
-    // Each outcome has `kind` + `path` + `absolute_path` (the fo-lx3mc
+    // Each outcome has `kind` + `path` + `absolute_path` (the
     // identifying triple).
     for o in outcomes {
         let entry = o.as_object().expect("each outcome is an object");
@@ -261,7 +258,7 @@ fn sync_json_serial_emits_envelope_with_schema_and_outcomes() {
 }
 
 // ===========================================================================
-// 2. NDJSON shape under `-j N` (N > 1) (fo-i5z14)
+// 2. NDJSON shape under `-j N` (N > 1)
 //
 // Doc claim: under `-j > 1` with `--json`, output switches to NDJSON: each
 // non-empty line parses as a self-describing JSON record with `$schema`,
@@ -404,7 +401,7 @@ fn sync_json_parallel_emits_ndjson_records_with_embedded_schema() {
         let obj = v
             .as_object()
             .unwrap_or_else(|| panic!("line not an object: {line}"));
-        // $schema embedded per-record (doc claim from fo-i5z14).
+        // $schema embedded per-record.
         let schema = obj["$schema"]
             .as_str()
             .unwrap_or_else(|| panic!("line missing `$schema`: {line}"));
@@ -412,7 +409,7 @@ fn sync_json_parallel_emits_ndjson_records_with_embedded_schema() {
             schema.contains(SCHEMA_FRAGMENT),
             "per-line $schema must point at {SCHEMA_FRAGMENT}; got: {schema}"
         );
-        // Identifying fields (doc claim from fo-lx3mc).
+        // Identifying fields.
         for field in ["kind", "path", "absolute_path"] {
             assert!(
                 obj.contains_key(field),
@@ -434,8 +431,7 @@ fn sync_json_parallel_emits_ndjson_records_with_embedded_schema() {
 }
 
 // ===========================================================================
-// 3. Per-failure records carry stable kebab-case `kind` tags (fo-i5z14 /
-//    fo-tn9uk)
+// 3. Per-failure records carry stable kebab-case `kind` tags
 //
 // Doc claim: when a per-repo sync fails, the outcome's `kind` is `failed`
 // and the inner `failure.kind` is a stable kebab-case tag (e.g.

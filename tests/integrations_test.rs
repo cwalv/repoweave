@@ -787,7 +787,7 @@ mod cargo_workspace {
     }
 
     // -----------------------------------------------------------------------
-    // Nested-workspace handling (fo-418ma)
+    // Nested-workspace handling
     // -----------------------------------------------------------------------
 
     #[test]
@@ -1538,7 +1538,7 @@ mod vscode_workspace {
 }
 
 // ===========================================================================
-// Integration activate hooks (post fo-4t6iv)
+// Integration activate hooks
 // ===========================================================================
 //
 // Each ecosystem integration should have an `activate_hook` that runs the

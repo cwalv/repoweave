@@ -1,5 +1,5 @@
 //! Doc-claim test: `rwv explain <verb>` matches `docs/reference/explain/<verb>.md`
-//! byte-for-byte (fo-a7ekj).
+//! byte-for-byte.
 //!
 //! Belt-and-suspenders with `scripts/ci-local.sh` and the existing
 //! `explain_test.rs::generator_produces_no_drift_against_committed_artifacts`

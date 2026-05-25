@@ -1,18 +1,17 @@
-//! Integration tests anchoring documented behavior of `rwv status --json`
-//! (fo-r982a; envelope shape from fo-81x22; per-record fields from fo-lx3mc).
+//! Integration tests anchoring documented behavior of `rwv status --json`.
 //!
 //! Doc claims pinned here:
 //!
 //!   - `rwv status --json` emits the envelope object
 //!     `{"$schema": "<url>", "repos": [<RepoStatus>, ...]}` — NOT a bare
-//!     array of records (which was the pre-fo-81x22 shape).
+//!     array of records (which was the earlier shape).
 //!   - The `$schema` URL points at
 //!     `docs/reference/schemas/status.json` under the repoweave repo's main
 //!     branch (the canonical published artifact location).
-//!   - Each per-repo record includes the fo-lx3mc fields: `path`,
-//!     `absolute_path`, `role`, `url`, `project`. The pre-fo-lx3mc shape
-//!     had only `path`; downstream tooling now reads `absolute_path` for
-//!     workweave/primary disambiguation.
+//!   - Each per-repo record includes `path`, `absolute_path`, `role`,
+//!     `url`, `project`. Earlier the shape had only `path`; downstream
+//!     tooling now reads `absolute_path` for workweave/primary
+//!     disambiguation.
 //!
 //! Style note: mirrors `doc_claims_activate_test.rs`'s
 //! `make_workspace_with_git_repo` pattern. `rwv status` doesn't need a
@@ -80,7 +79,7 @@ fn make_workspace(parent: &Path, project: &str) -> (PathBuf, PathBuf, String) {
 }
 
 // ===========================================================================
-// 1. Envelope shape: `{ "$schema", "repos" }`, not a bare array (fo-81x22)
+// 1. Envelope shape: `{ "$schema", "repos" }`, not a bare array
 // ===========================================================================
 
 #[test]
@@ -104,7 +103,7 @@ fn status_json_emits_envelope_object_not_bare_array() {
     let parsed: Value = serde_json::from_str(&stdout)
         .unwrap_or_else(|e| panic!("stdout should parse as JSON ({e}):\n{stdout}"));
 
-    // Post fo-81x22: the top level is an object envelope, not an array.
+    // The top level is an object envelope, not an array.
     assert!(
         parsed.is_object(),
         "status --json must emit an object envelope (not a bare array); got:\n{stdout}"
@@ -125,7 +124,7 @@ fn status_json_emits_envelope_object_not_bare_array() {
 }
 
 // ===========================================================================
-// 2. `$schema` URL points at docs/reference/schemas/status.json (fo-81x22)
+// 2. `$schema` URL points at docs/reference/schemas/status.json
 //
 // Doc claim: the embedded schema URL pins to the committed schema artifact
 // at `docs/reference/schemas/status.json` under repoweave's main branch.
@@ -164,7 +163,7 @@ fn status_json_schema_url_points_to_committed_artifact() {
 }
 
 // ===========================================================================
-// 3. Each repo record carries the fo-lx3mc fields (fo-r982a / fo-lx3mc)
+// 3. Each repo record carries the identifying fields
 //
 // Doc claim: per-repo records include `path`, `absolute_path`, `role`,
 // `url`, and `project`. `absolute_path` is the disk path the user can `cd`
@@ -173,7 +172,7 @@ fn status_json_schema_url_points_to_committed_artifact() {
 // ===========================================================================
 
 #[test]
-fn status_json_per_repo_record_has_lx3mc_fields() {
+fn status_json_per_repo_record_has_identifying_fields() {
     let tmp = tempfile::tempdir().unwrap();
     let (ws, repo_dir, url) = make_workspace(tmp.path(), "alpha");
 
@@ -208,9 +207,9 @@ fn status_json_per_repo_record_has_lx3mc_fields() {
         "record.absolute_path must point at the on-disk clone; got: {abs}"
     );
 
-    // Role + url come straight from the manifest. The canonical spelling is
-    // `owned` — fo-fzf4n removed the legacy `role: primary` alias, so the
-    // wire form and the manifest form must agree.
+    // Role + url come straight from the manifest. The canonical spelling
+    // is `owned` — the legacy `role: primary` alias has been removed, so
+    // the wire form and the manifest form must agree.
     assert_eq!(
         record["role"], "owned",
         "record.role should mirror the manifest entry; got:\n{stdout}"
@@ -220,7 +219,7 @@ fn status_json_per_repo_record_has_lx3mc_fields() {
         "record.url should mirror the manifest entry; got:\n{stdout}"
     );
 
-    // Project name discriminates multi-project workspaces (fo-lx3mc).
+    // Project name discriminates multi-project workspaces.
     assert_eq!(
         record["project"], "alpha",
         "record.project should name the owning project; got:\n{stdout}"

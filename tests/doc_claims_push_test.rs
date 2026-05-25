@@ -1,4 +1,4 @@
-//! Integration tests anchoring documented behavior of `rwv push` (fo-r982a).
+//! Integration tests anchoring documented behavior of `rwv push`.
 //!
 //! Doc claims pinned here (one #[test] per claim; if a single test exercises
 //! multiple claims it lists them all):
@@ -216,7 +216,7 @@ fn advance_all_and_relock(
 }
 
 // ===========================================================================
-// 1. Role::Fork repos are skipped at the loop level (fo-r982a / fo-nxba7)
+// 1. Role::Fork repos are skipped at the loop level
 //
 // Doc claim: even when a selector matches a fork-role repo, `rwv push` does
 // not push it — instead it emits an info line referencing the skip. The
@@ -261,7 +261,7 @@ fn push_skips_role_fork_at_loop_level() {
 }
 
 // ===========================================================================
-// 2. Project repo pushed last (fo-r982a / fo-nxba7)
+// 2. Project repo pushed last
 //
 // Doc claim: the lock-carrying project repo is pushed only after every
 // manifest repo's push succeeds. Verified via a failure path: if a
@@ -310,7 +310,7 @@ fn push_project_repo_pushed_after_manifest_repos() {
 }
 
 // ===========================================================================
-// 3. Lock-precondition: refuse before any push when HEAD != lock (fo-r982a)
+// 3. Lock-precondition: refuse before any push when HEAD != lock
 //
 // Doc claim: if any manifest repo's HEAD differs from its recorded lock SHA,
 // `rwv push` refuses *before* touching the network. No bare advances.
@@ -360,7 +360,7 @@ fn push_refuses_on_lock_precondition_before_network() {
 }
 
 // ===========================================================================
-// 4. --dry-run prints plan but pushes nothing (fo-r982a / fo-nxba7)
+// 4. --dry-run prints plan but pushes nothing
 //
 // Doc claim: under `--dry-run`, `rwv push` prints one plan line per filtered
 // manifest repo + a trailing project-repo line; the "(dry-run)" preamble is
@@ -431,7 +431,7 @@ fn push_dry_run_prints_plan_and_does_not_push() {
 }
 
 // ===========================================================================
-// 5. --role / --repo selectors with union semantics (fo-r982a / fo-9kweo)
+// 5. --role / --repo selectors with union semantics
 //
 // Doc claim: `--role <r>` and `--repo <selector>` narrow the push loop;
 // combined they union (a repo matched by EITHER flag pushes). `--repo`
@@ -591,7 +591,7 @@ fn push_role_and_repo_filters_union() {
 }
 
 // ===========================================================================
-// 6. -j N parallel mode emits [<repo>] prefix; -j 1 does not (fo-r982a / fo-ysnuz)
+// 6. -j N parallel mode emits [<repo>] prefix; -j 1 does not
 //
 // Doc claim: under `-j > 1` per-repo lines carry the `[<repo-path>]` prefix
 // (Reporter::Parallel); under `-j 1` the prefix is absent (Reporter::Serial).
@@ -651,7 +651,7 @@ fn push_dash_j_one_emits_no_repo_prefix() {
 }
 
 // ===========================================================================
-// 7. PushOutcome variants surface in output (fo-r982a)
+// 7. PushOutcome variants surface in output
 //
 // Doc claim: the three PushOutcome variants reach the user-visible output.
 //   - Pushed   -> "rwv push: pushing <path>" pre-message

@@ -142,8 +142,8 @@ fn recipe_filter_by_role_owned_via_jq() {
     let (_tmp, ws, _project_dir) = setup_two_repo_workspace();
 
     // Verbatim from docs/how-to/run-a-command-across-repos.md, recipe #1.
-    // The role rename (fo-s3i8j) shipped `owned` as the canonical wire
-    // spelling; this filter pins that the status JSON role field is `owned`.
+    // The role rename shipped `owned` as the canonical wire spelling;
+    // this filter pins that the status JSON role field is `owned`.
     let recipe =
         r#"rwv status --json | jq -r '.repos[] | select(.role == "owned") | .absolute_path'"#;
     let output = run_recipe(recipe, &ws);

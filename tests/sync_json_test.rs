@@ -1,4 +1,4 @@
-//! Tests for `rwv sync --json` (fo-tn9uk.4).
+//! Tests for `rwv sync --json`.
 //!
 //! Two layers:
 //! 1. End-to-end: drive `rwv sync --json` through the binary, parse stdout
@@ -536,7 +536,7 @@ fn conflict_op_serializes_kebab_case() {
 }
 
 // ---------------------------------------------------------------------------
-// Parallel / NDJSON mode (fo-i5z14)
+// Parallel / NDJSON mode
 // ---------------------------------------------------------------------------
 
 const REPO_PATHS: &[&str] = &[

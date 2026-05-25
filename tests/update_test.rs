@@ -1,5 +1,4 @@
-//! E2E tests for the `--role` / `--repo` selector grammar on `rwv update`
-//! (fo-9kweo).
+//! E2E tests for the `--role` / `--repo` selector grammar on `rwv update`.
 //!
 //! `rwv update` advances each manifest repo to its remote branch HEAD and
 //! re-snapshots the lock. The filter narrows the *advance* loop but the

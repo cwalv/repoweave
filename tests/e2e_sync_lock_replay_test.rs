@@ -1,5 +1,5 @@
-//! E2E integration tests for fo-4c8b1: `rwv sync` lock+replay semantics
-//! across all sync strategies with concurrent lock-bumping workweaves.
+//! E2E integration tests for `rwv sync` lock+replay semantics across all
+//! sync strategies with concurrent lock-bumping workweaves.
 //!
 //! ## What these tests cover
 //!
@@ -43,8 +43,7 @@
 //! ## Fixture shape
 //!
 //! Primary workspace `P` owns one manifest repo `R`. Workweaves are created
-//! via `rwv workweave create`, which sets up git worktrees. Each test follows
-//! the reproduction recipe in fo-4c8b1.
+//! via `rwv workweave create`, which sets up git worktrees.
 
 use assert_cmd::Command as AssertCommand;
 use std::path::{Path, PathBuf};
@@ -156,7 +155,7 @@ fn make_primary(tmp: &Path) -> PrimaryWorkspace {
     let project_dir = ws.join("projects").join(PROJECT);
     init_repo(&project_dir);
 
-    // The replay-exclusion line that sync depends on (fo-w9ph9).
+    // The replay-exclusion line that sync depends on.
     std::fs::write(
         project_dir.join(".gitattributes"),
         "rwv.lock merge=ours\n",
@@ -228,8 +227,6 @@ fn rwv_lock_commit(workspace_root: &Path) {
 /// the lock. Primary absorbs WA (ff); WB then syncs primary with
 /// `--strategy=rebase`. WB's lock-only commit should drop silently via the
 /// `merge=ours` + `--empty=drop` mechanism. No manual `git rebase --continue`.
-///
-/// This is the exact reproduction from fo-4c8b1.
 #[test]
 fn sync_two_workweaves_lock_only_rebase_converges() {
     let tmp = tempfile::tempdir().unwrap();
@@ -268,8 +265,8 @@ fn sync_two_workweaves_lock_only_rebase_converges() {
     // post-WA lock on the same lines. With `.gitattributes merge=ours`, the
     // lock-only commit produces an empty patch and is dropped silently.
     //
-    // Before fo-4c8b1's fix: this step would fail with a `git rebase --continue`
-    // conflict on rwv.lock. After the fix: success.
+    // Before the lock-replay fix landed this step would fail with a
+    // `git rebase --continue` conflict on rwv.lock. After: success.
     rwv()
         .args(["sync", "primary", "--strategy", "rebase"])
         .current_dir(&wb.root)
@@ -689,8 +686,8 @@ fn sync_ff_preserves_lock_only_commits() {
 /// `.gitattributes` assignment must auto-resolve the rwv.lock conflict during
 /// the 3-way merge, so the sync converges without operator intervention.
 ///
-/// Companion coverage for `verify_replay_exclusion_invariant` firing on merge
-/// — the original fo-4c8b1 implementation only tested rebase, which missed
+/// Companion coverage for `verify_replay_exclusion_invariant` firing on
+/// merge — the original implementation only tested rebase, which missed
 /// the parallel bug on the merge path.
 #[test]
 fn sync_two_workweaves_lock_only_merge_converges() {
@@ -741,11 +738,10 @@ fn sync_two_workweaves_lock_only_merge_converges() {
 // Test 6: merge without .gitattributes — hard-bail before any git ops
 // ---------------------------------------------------------------------------
 
-/// Mirror of test 3 but with `--strategy=merge`. The precondition check fires
-/// for both Rebase and Merge — only Ff is exempt. Without this coverage the
-/// original fo-4c8b1 implementation incorrectly scoped the check to Rebase
-/// only and shipped a bug where merge would still fall back to a 3-way
-/// conflict on rwv.lock.
+/// Mirror of test 3 but with `--strategy=merge`. The precondition check
+/// fires for both Rebase and Merge — only Ff is exempt. Without this
+/// coverage the check could be scoped to Rebase only, leaving merge to
+/// fall back to a 3-way conflict on rwv.lock.
 #[test]
 fn sync_merge_without_gitattributes_bails_cleanly() {
     let tmp = tempfile::tempdir().unwrap();

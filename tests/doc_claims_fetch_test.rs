@@ -5,9 +5,9 @@
 //! diverges from what the docs say, the test verifies the *current* behaviour
 //! and carries a `// TODO` comment pointing at the gap.
 //!
-//! ## fo-zvxff audit (fo-r982a, 2026-05-24)
+//! ## Verb-vocabulary audit (2026-05-24)
 //!
-//! Post fo-zvxff, the verb-vocabulary split is:
+//! The verb-vocabulary split is:
 //!   - `rwv fetch <source>` is the read-only/align-to-lock verb. It reads
 //!     `rwv.lock` and pins each clone to the locked SHA. It does NOT
 //!     auto-bump the lock when the manifest is fully covered by the lock
@@ -141,7 +141,7 @@ fn push_manifest_to_bare(bare: &Path, repos: &[(&str, &str)]) {
 /// itself a git repo (required by workspace resolution).
 ///
 /// Also writes `.rwv-active` to the new project so action verbs resolve
-/// cleanly post fo-h9prh (no CWD override anymore).
+/// cleanly (there is no CWD override).
 ///
 /// Returns `(workspace_root, project_dir)`.
 fn setup_workspace_with_project(

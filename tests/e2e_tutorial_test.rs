@@ -1,7 +1,7 @@
-//! End-to-end tests for the slim tutorial path (fo-a7ekj).
+//! End-to-end tests for the slim tutorial path.
 //!
-//! The docs/tutorial.md walkthrough — post fo-2hj1h — is the single
-//! beginner-facing flow: `fetch` → `update` → edit → `lock`. The
+//! The docs/tutorial.md walkthrough is the single beginner-facing flow:
+//! `fetch` → `update` → edit → `lock`. The
 //! tutorial drops sync / workweave / release / multi-machine fan-out
 //! to dedicated how-to guides. This test file anchors the tutorial's
 //! central promise: a user who copies these commands gets a working

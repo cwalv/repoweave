@@ -134,7 +134,7 @@ fn make_locked_workspace(parent: &Path, name: &str) -> (Workspace, String) {
     init_repo(&project_dir);
     // Mirror what `rwv init` writes: `.gitattributes` so `rwv sync`'s
     // native rebase keeps source's rwv.lock through the replay (the
-    // `merge=ours` driver — see fo-w9ph9).
+    // `merge=ours` driver).
     std::fs::write(project_dir.join(".gitattributes"), "rwv.lock merge=ours\n").unwrap();
     write_manifest(&project_dir, &[(SERVER_PATH, SERVER_URL)], None);
     write_lock(&project_dir, &[(SERVER_PATH, SERVER_URL, &sha)]);
@@ -144,8 +144,8 @@ fn make_locked_workspace(parent: &Path, name: &str) -> (Workspace, String) {
     );
     git(&["commit", "-m", "lock: initial"], &project_dir);
 
-    // Post fo-h9prh: action verbs require `.rwv-active` (or --project).
-    // Set it here so sync tests don't all need to pass --project.
+    // Action verbs require `.rwv-active` (or --project). Set it here so
+    // sync tests don't all need to pass --project.
     std::fs::write(root.join(".rwv-active"), "web-app\n").unwrap();
 
     (
@@ -201,7 +201,7 @@ fn make_shared_workspaces(parent: &Path) -> (Workspace, Workspace, String) {
     );
     // The worktree inherits primary's already-committed rwv.lock (same C1 SHA).
     // No additional commit needed.
-    // Post fo-h9prh: action verbs in this workweave also need `.rwv-active`.
+    // Action verbs in this workweave also need `.rwv-active`.
     std::fs::write(ww_root.join(".rwv-active"), "web-app\n").unwrap();
 
     let ww = Workspace {
@@ -711,12 +711,12 @@ fn sync_refusal_message_suggests_rebase_or_merge_strategy() {
 }
 
 /// Backward sync that ff refuses lands cleanly under `--strategy rebase`:
-/// CWD's lock-only divergence is replayed onto source's tip — under the
-/// post-fo-w9ph9 contract (`.gitattributes rwv.lock merge=ours` + native
-/// `git rebase` with `--force-rebase --no-keep-empty --empty=drop`), the
-/// lock-only commit becomes empty (or was already empty when produced by
-/// `--allow-empty`) and git drops it. Phase 3 then leaves the lock
-/// consistent with manifest tips.
+/// CWD's lock-only divergence is replayed onto source's tip — the
+/// `.gitattributes rwv.lock merge=ours` contract plus native `git rebase`
+/// with `--force-rebase --no-keep-empty --empty=drop` makes the lock-only
+/// commit become empty (or it was already empty via `--allow-empty`) and
+/// git drops it. Phase 3 then leaves the lock consistent with manifest
+/// tips.
 #[test]
 fn sync_rebase_lands_lock_only_divergence_without_force() {
     let tmp = tempfile::tempdir().unwrap();
@@ -1091,8 +1091,8 @@ fn abort_restores_repos_to_pre_op_state() {
     );
 }
 
-/// fo-9abkv regression: `rwv abort` must succeed when `rwv.lock` contains
-/// git conflict markers (the loader too-strict-for-recovery bug).
+/// Regression: `rwv abort` must succeed when `rwv.lock` contains git
+/// conflict markers (the loader was once too strict to recover).
 ///
 /// Setup mirrors the real-world scenario: a sync left the project repo
 /// mid-rebase and `rwv.lock` contains conflict markers. The operator's only
@@ -1164,8 +1164,8 @@ fn abort_succeeds_when_rwv_lock_contains_conflict_markers() {
         "expected mid-rebase state (.git/rebase-merge should exist)"
     );
 
-    // Now write conflict markers into rwv.lock — simulating the exact symptom
-    // from fo-9abkv: a sync that left rwv.lock with conflict markers.
+    // Now write conflict markers into rwv.lock — simulating a sync that
+    // left rwv.lock with conflict markers.
     std::fs::write(
         project_dir.join("rwv.lock"),
         "<<<<<<< HEAD workweave\nrepositories: {}\n=======\nrepositories: {}\n>>>>>>> abc1234\n",
@@ -1583,10 +1583,10 @@ fn sync_in_marker_workweave_refuses_when_workweave_own_lock_is_stale() {
         .assert()
         .failure()
         .stderr(
-            // Workweave name is the part after `<project>--` in the dir name
-            // (fo-pvfwz fix: previously the resolver returned the whole dir
+            // Workweave name is the part after `<project>--` in the dir
+            // name; previously the resolver returned the whole dir
             // basename, so downstream lookups like delete_workweave would
-            // re-prefix and miss the actual on-disk path).
+            // re-prefix and miss the actual on-disk path.
             predicate::str::contains("destination workspace 'feat'")
                 .and(predicate::str::contains("stale lock")),
         );

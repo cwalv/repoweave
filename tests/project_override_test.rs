@@ -1,12 +1,12 @@
-//! End-to-end tests for the `--project` flag and CWD-vs-active divergence
-//! handling introduced by fo-h9prh.
+//! End-to-end tests for the `--project` flag and CWD-vs-active
+//! divergence handling.
 //!
-//! Pre fo-h9prh: `rwv lock`, `rwv add`, etc. silently substituted the
+//! Previously `rwv lock`, `rwv add`, etc. silently substituted the
 //! CWD-inferred project for `.rwv-active`, letting symlinks and manifest
-//! diverge. Post fo-h9prh: `.rwv-active` is the single source of truth;
+//! diverge. Now `.rwv-active` is the single source of truth;
 //! `--project <name>` is the one-shot escape hatch; a divergence emits a
-//! helpful error or warning depending on whether the divergent project is
-//! active at all.
+//! helpful error or warning depending on whether the divergent project
+//! is active at all.
 
 use std::path::{Path, PathBuf};
 use std::process;

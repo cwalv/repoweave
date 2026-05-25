@@ -525,7 +525,7 @@ fn head_revision_preserves_tag_at_head_as_display() {
 }
 
 // ============================================================================
-// Stage D (fo-gvb0v): raw-vs-resolved invariants
+// Stage D: raw-vs-resolved invariants
 // ============================================================================
 
 #[test]
@@ -575,7 +575,7 @@ fn raw_revision_id_tag_resolves_to_head_sha() {
 }
 
 // ============================================================================
-// Vcs::resolve_branch_on_remote — role-aware remote ref resolution (fo-mb2y9)
+// Vcs::resolve_branch_on_remote — role-aware remote ref resolution
 // ============================================================================
 
 /// Build a workspace with two repos: a "remote" with one commit on `main`,
@@ -673,7 +673,7 @@ fn resolve_branch_on_remote_missing_remote_errors() {
 }
 
 // ============================================================================
-// Vcs::push_with_role — role-aware push (fo-nxba7)
+// Vcs::push_with_role — role-aware push
 // ============================================================================
 
 /// Build a workspace with a bare "remote" and a local clone whose remote is
@@ -857,7 +857,7 @@ fn resolve_branch_on_remote_missing_branch_errors() {
 }
 
 // ============================================================================
-// Vcs::conflict_resolution_hint — per-op resume guidance text (fo-54gz8)
+// Vcs::conflict_resolution_hint — per-op resume guidance text
 // ============================================================================
 //
 // The hint text is embedded verbatim in sync's conflict-bail messages and is
@@ -937,7 +937,7 @@ fn conflict_resolution_hint_does_not_mention_rwv_abort() {
     // The trait method returns only the *resolution* steps; the surrounding
     // sync.rs framing supplies the `rwv abort` rollback option. Keeping the
     // VCS-vocabulary text and the rwv-CLI text in their own layers is the
-    // whole point of the trait (fo-54gz8) — verify the separation.
+    // whole point of the trait — verify the separation.
     let vcs = GitVcs;
     for op in [
         ConflictOp::Rebase,
@@ -957,7 +957,7 @@ fn conflict_resolution_hint_does_not_mention_rwv_abort() {
 }
 
 // ============================================================================
-// Vcs::set_replay_exclusion / has_replay_exclusion (fo-w9ph9)
+// Vcs::set_replay_exclusion / has_replay_exclusion
 // ============================================================================
 //
 // The replay-exclusion mechanism wires git's per-path merge driver
@@ -1064,7 +1064,7 @@ fn has_replay_exclusion_true_when_line_present() {
 }
 
 // ============================================================================
-// Vcs::rebase (fo-w9ph9)
+// Vcs::rebase
 // ============================================================================
 //
 // Native rebase consolidates sync's project-repo path. The three behaviours

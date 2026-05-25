@@ -1,4 +1,4 @@
-//! E2E tests for `rwv push` (fo-nxba7).
+//! E2E tests for `rwv push`.
 //!
 //! Each test sets up a workspace with:
 //!   - one or more bare "manifest" remotes
@@ -723,7 +723,7 @@ fn push_requires_a_workspace() {
 }
 
 // ============================================================================
-// `--role` / `--repo` filter (fo-9kweo)
+// `--role` / `--repo` filter
 // ============================================================================
 
 /// Build a workspace + advance every manifest repo + write a matching lock.
@@ -914,8 +914,8 @@ fn push_union_role_and_repo_selectors() {
 }
 
 // ----------------------------------------------------------------------------
-// Lock-precondition always runs against the FULL manifest, never the filter
-// (resolved design decision for fo-9kweo).
+// Lock-precondition always runs against the FULL manifest, never the
+// filter — the filter narrows the push loop, not the precondition.
 // ----------------------------------------------------------------------------
 
 #[test]

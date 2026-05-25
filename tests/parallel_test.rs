@@ -1,4 +1,4 @@
-//! Acceptance tests for `rwv fetch -j N` and `rwv update -j N` (fo-dkyfs).
+//! Acceptance tests for `rwv fetch -j N` and `rwv update -j N`.
 //!
 //! These cover the visible behaviours pinned in the bead notes:
 //!

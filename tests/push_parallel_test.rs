@@ -1,6 +1,6 @@
-//! Acceptance tests for `rwv push -j N` (fo-ysnuz).
+//! Acceptance tests for `rwv push -j N`.
 //!
-//! Mirrors the shape of `tests/parallel_test.rs` (fo-dkyfs's fetch/update
+//! Mirrors the shape of `tests/parallel_test.rs` (fetch/update
 //! coverage) but for push. The fixtures duplicate `tests/push_test.rs`'s
 //! setup helpers (bare-remote + local-clone + project-repo + lock) so
 //! these tests stand alone — the same pattern parallel_test.rs uses
@@ -310,7 +310,7 @@ fn push_dash_j_one_emits_no_prefix() {
 /// Under `-j > 1` a failing manifest push doesn't prevent the other
 /// manifest pushes from being attempted; the failure surfaces in the
 /// trailing aggregated summary; the project bare is NOT touched (the
-/// publish-ordering invariant from fo-nxba7 holds under parallelism).
+/// publish-ordering invariant holds under parallelism).
 #[test]
 fn push_dash_j_mid_batch_failure_skips_project_repo() {
     let repos = [

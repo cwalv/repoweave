@@ -569,7 +569,7 @@ fn fetch_default_reads_lock_and_does_not_bump_it() {
     // Default `rwv fetch` reads rwv.lock and aligns each repo to the lock
     // SHA, NOT the manifest's branch HEAD. The lock file itself must not
     // be mutated when the lock already covers every manifest entry —
-    // that is the headline guarantee of fo-zvxff.
+    // that is the headline guarantee of the fetch/update split.
     let tmp = tempfile::tempdir().unwrap();
     let workspace = tmp.path().join("ws");
     std::fs::create_dir_all(&workspace).unwrap();
@@ -1269,7 +1269,7 @@ fn fetch_frozen_without_no_reference_errors_when_reference_missing_from_lock() {
 }
 
 // ============================================================================
-// `--role` / `--repo` filter (fo-9kweo)
+// `--role` / `--repo` filter
 // ============================================================================
 
 /// Build a project bare and a working clone with `repos` declared in

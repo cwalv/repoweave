@@ -598,7 +598,7 @@ fn doctor_command_is_recognized() {
 }
 
 // ===========================================================================
-// fo-w9ph9: replay-exclusion (.gitattributes `rwv.lock merge=ours`)
+// Replay-exclusion (.gitattributes `rwv.lock merge=ours`)
 // ===========================================================================
 
 /// `rwv doctor` warns when a project repo is missing the
@@ -667,7 +667,7 @@ fn check_fix_writes_replay_exclusion() {
 }
 
 // ===========================================================================
-// fo-tn9uk.3: `rwv doctor --json`
+// `rwv doctor --json`
 // ===========================================================================
 //
 // These tests exercise the JSON wire shape end-to-end. They:

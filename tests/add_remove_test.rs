@@ -61,9 +61,9 @@ fn init_bare_repo_with_commit(path: &Path) {
 /// Returns (workspace_dir, project_dir).
 ///
 /// Also writes `.rwv-active` pointing at the project so action verbs
-/// resolve cleanly even when CWD is the workspace root. Post fo-h9prh
-/// the CWD-inside-projects/<name>/ override is gone, so without an
-/// active project most commands would emit a helpful error instead of
+/// resolve cleanly even when CWD is the workspace root. The
+/// CWD-inside-projects/<name>/ override is gone, so without an active
+/// project most commands would emit a helpful error instead of
 /// proceeding.
 fn setup_workspace_with_project(
     tmp: &tempfile::TempDir,
@@ -662,10 +662,10 @@ fn add_owned_clones_with_origin_remote() {
     );
 }
 
-/// fo-fzf4n removed the back-compat clap alias on `--role primary`. The
-/// CLI now rejects the legacy spelling outright and the error must
-/// direct users at `rwv doctor --fix` so the migration path is
-/// discoverable from the verb that emitted the error.
+/// The back-compat clap alias on `--role primary` is gone. The CLI now
+/// rejects the legacy spelling outright and the error must direct users
+/// at `rwv doctor --fix` so the migration path is discoverable from the
+/// verb that emitted the error.
 #[test]
 fn add_primary_cli_alias_no_longer_accepted_with_doctor_hint() {
     let tmp = tempfile::tempdir().unwrap();
@@ -790,13 +790,13 @@ fn find_cloned_repo(workspace: &Path, bare: &Path) -> std::path::PathBuf {
 }
 
 // ============================================================================
-// fo-qb2er: rwv add must target CWD's workspace's rwv.yaml
+// `rwv add` must target CWD's workspace's rwv.yaml
 //
-// The bug: `rwv add` always wrote to primary's manifest, even when invoked
-// from inside a workweave. Per-workspace ownership (concepts.md "Per-workspace
-// lock ownership") extends from rwv.lock to rwv.yaml — both are tracked files
-// in the project repo and follow the same `active_path()` resolution rule
-// `rwv lock` already uses. See bead fo-qb2er.
+// The bug: `rwv add` always wrote to primary's manifest, even when
+// invoked from inside a workweave. Per-workspace ownership (concepts.md
+// "Per-workspace lock ownership") extends from rwv.lock to rwv.yaml —
+// both are tracked files in the project repo and follow the same
+// `active_path()` resolution rule `rwv lock` already uses.
 // ============================================================================
 
 /// Build a workspace plus a workweave directory ready for `rwv add` testing.
@@ -913,8 +913,8 @@ fn add_from_primary_cwd_writes_to_primary_rwv_yaml() {
 
 #[test]
 fn add_from_workweave_cwd_writes_to_workweave_rwv_yaml_not_primary() {
-    // fo-qb2er: `rwv add` from a workweave's CWD must mutate the workweave's
-    // own rwv.yaml, leaving primary's unchanged. This mirrors `rwv lock`'s
+    // `rwv add` from a workweave's CWD must mutate the workweave's own
+    // rwv.yaml, leaving primary's unchanged. This mirrors `rwv lock`'s
     // existing per-workspace resolution (concepts.md Decision #4).
     let tmp = tempfile::tempdir().unwrap();
 
@@ -957,9 +957,10 @@ fn add_from_workweave_cwd_writes_to_workweave_rwv_yaml_not_primary() {
 
 #[test]
 fn add_from_workweave_clones_to_primary_canonical_path() {
-    // The clone destination stays at primary's `github/<owner>/<repo>/` even
-    // when add runs from a workweave (clones are global infrastructure shared
-    // across workweaves via git worktree). See fo-qb2er and concepts.md.
+    // The clone destination stays at primary's `github/<owner>/<repo>/`
+    // even when add runs from a workweave (clones are global
+    // infrastructure shared across workweaves via git worktree).
+    // See concepts.md.
     let tmp = tempfile::tempdir().unwrap();
 
     let bare = tmp.path().join("clone-target.git");

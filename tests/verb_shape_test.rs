@@ -1,6 +1,6 @@
-//! End-to-end tests for the verb-shape overhaul (epic fo-44ffy):
-//!   - fo-zvxff: `rwv fetch` reads lock by default; `rwv update` bumps it
-//!   - fo-4t6iv: `rwv lock` has no hooks; install moves to `rwv activate`
+//! End-to-end tests for the verb-shape overhaul:
+//!   - `rwv fetch` reads lock by default; `rwv update` bumps it
+//!   - `rwv lock` has no hooks; install moves to `rwv activate`
 //!
 //! Lives alongside the existing fetch / lock / activate suites; the focus
 //! here is the new verb shape, not the per-feature corner cases.
@@ -111,7 +111,7 @@ fn bootstrap_via_fetch(tmp: &Path) -> (PathBuf, PathBuf, PathBuf, String) {
 // by `fetch_default_reads_lock_and_does_not_bump_it` in fetch_test.rs.
 
 // ---------------------------------------------------------------------------
-// fo-zvxff: rwv update advances repos to branch HEAD and re-snapshots
+// `rwv update` advances repos to branch HEAD and re-snapshots
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -164,7 +164,7 @@ fn update_advances_dep_to_branch_head_and_relocks() {
 }
 
 // ---------------------------------------------------------------------------
-// fo-4t6iv: `rwv lock` does not produce ecosystem files (no hooks)
+// `rwv lock` does not produce ecosystem files (no hooks)
 // ---------------------------------------------------------------------------
 
 #[test]

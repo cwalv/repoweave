@@ -1,12 +1,11 @@
-//! Integration tests anchoring documented behavior of `rwv update` (fo-r982a,
-//! verb-vocabulary split landed in fo-zvxff).
+//! Integration tests anchoring documented behavior of `rwv update`.
 //!
 //! Doc claims pinned here:
 //!
 //!   - update re-snapshots `rwv.lock` from each manifest repo's branch HEAD
 //!     (not from the previous lock SHA)
-//!   - update is the network-bumping counterpart to `rwv fetch` (which post
-//!     fo-zvxff is lock-aligning only); the two verbs are distinct
+//!   - update is the network-bumping counterpart to `rwv fetch` (which is
+//!     lock-aligning only); the two verbs are distinct
 //!   - update advances disk state to the freshly-fetched branch HEAD before
 //!     re-snapshotting the lock
 //!   - update -j N runs the per-repo advance loop in parallel and still
@@ -213,7 +212,7 @@ fn read_lock_sha(workspace: &Path, project_name: &str, repo_path: &str) -> Strin
 }
 
 // ===========================================================================
-// 1. update re-snapshots the lock from branch HEAD (fo-r982a / fo-zvxff)
+// 1. update re-snapshots the lock from branch HEAD
 //
 // Doc claim: after `rwv update`, the rwv.lock entry for each updated repo
 // equals the new branch-HEAD SHA on the remote (not the prior lock SHA).
@@ -253,7 +252,7 @@ fn update_re_snapshots_lock_from_branch_head() {
 }
 
 // ===========================================================================
-// 2. update is distinct from fetch (post fo-zvxff verb-vocabulary split)
+// 2. update is distinct from fetch (verb-vocabulary split)
 //
 // Doc claim: `rwv fetch` (default mode) aligns the clone to the existing
 // rwv.lock and does not advance to remote HEAD. `rwv update` advances to
@@ -379,7 +378,7 @@ fn update_advances_lock_while_fetch_does_not() {
 }
 
 // ===========================================================================
-// 3. update -j N parallel mode (fo-r982a / fo-ysnuz)
+// 3. update -j N parallel mode
 //
 // Doc claim: `rwv update -j N` (N > 1) advances each manifest repo on a
 // bounded worker pool; the lock write happens serially after the pool

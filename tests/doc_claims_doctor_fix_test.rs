@@ -12,7 +12,7 @@
 //! whose target repos are never cloned, which produces unrelated
 //! `dangling-reference` errors. The contract under test is the
 //! migration: detection text in stdout, and the on-disk manifest
-//! content after `--fix`. Filed under fo-fzf4n.
+//! content after `--fix`.
 
 mod common;
 

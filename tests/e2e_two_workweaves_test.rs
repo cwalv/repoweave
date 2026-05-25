@@ -116,8 +116,8 @@ fn make_main_workspace(tmp: &Path) -> MainWorkspace {
     let project_dir = ws.join("projects").join(PROJECT);
     init_repo(&project_dir);
 
-    // Mirror what `rwv init` writes (fo-w9ph9): `.gitattributes` so sync's
-    // native rebase keeps source's `rwv.lock` through the replay.
+    // Mirror what `rwv init` writes: `.gitattributes` so sync's native
+    // rebase keeps source's `rwv.lock` through the replay.
     std::fs::write(project_dir.join(".gitattributes"), "rwv.lock merge=ours\n").unwrap();
 
     let manifest = format!(
@@ -141,7 +141,7 @@ fn make_main_workspace(tmp: &Path) -> MainWorkspace {
     );
     git(&["commit", "-m", "lock: initial"], &project_dir);
 
-    // Post fo-h9prh: action verbs require `.rwv-active` (or --project).
+    // Action verbs require `.rwv-active` (or --project).
     std::fs::write(ws.join(".rwv-active"), format!("{PROJECT}\n")).unwrap();
 
     MainWorkspace {
@@ -423,9 +423,9 @@ fn sync_rebase_surfaces_genuine_project_conflict() {
 // Test: Phase 3 materialize — add repo at primary, workweave sync clones it
 // ---------------------------------------------------------------------------
 
-/// Bead fo-62glp: When primary adds a new repo to its manifest + lock, an
-/// existing workweave running `rwv sync primary` should materialize the new
-/// repo as a worktree (not silently advance the lock and leave a dangling
+/// When primary adds a new repo to its manifest + lock, an existing
+/// workweave running `rwv sync primary` should materialize the new repo
+/// as a worktree (not silently advance the lock and leave a dangling
 /// reference).
 #[test]
 fn sync_phase3_materializes_newly_added_repo_in_workweave() {
@@ -505,8 +505,7 @@ fn sync_phase3_materializes_newly_added_repo_in_workweave() {
 /// repo doesn't exist on primary), `rwv sync` must exit non-zero. Previously
 /// the failure was an stderr line and the loop fell through to a
 /// `skipped (not on disk)` print that did NOT flip `any_failure`, so the
-/// lock advanced past a never-materialised repo and sync exited 0 — same
-/// shape as fo-62glp.
+/// lock advanced past a never-materialised repo and sync exited 0.
 #[test]
 fn sync_phase3_materialize_failure_is_fatal() {
     let tmp = tempfile::tempdir().unwrap();
@@ -564,12 +563,12 @@ fn sync_phase3_materialize_failure_is_fatal() {
 }
 
 // ---------------------------------------------------------------------------
-// fo-ran2c + fo-kduyx: bare `rwv sync` follows parent + `--retire` cleanup
+// Bare `rwv sync` follows parent + `--retire` cleanup
 // ---------------------------------------------------------------------------
 
-/// fo-ran2c happy path: a workweave forked from primary has `parent` recorded
-/// in its marker; bare `rwv sync` (no source) reads that parent and syncs to
-/// it. The end state matches `rwv sync primary`.
+/// Happy path: a workweave forked from primary has `parent` recorded in
+/// its marker; bare `rwv sync` (no source) reads that parent and syncs
+/// to it. The end state matches `rwv sync primary`.
 #[test]
 fn bare_sync_follows_recorded_parent_to_primary() {
     let tmp = tempfile::tempdir().unwrap();
@@ -611,9 +610,9 @@ fn bare_sync_follows_recorded_parent_to_primary() {
     );
 }
 
-/// fo-ran2c + backfill: a workweave whose `.rwv-workweave` predates parent
-/// tracking still works under bare sync — `WorkweaveMarker::read` backfills
-/// the missing `parent` to `primary`. Simulate that by stripping `parent:`
+/// Backfill: a workweave whose `.rwv-workweave` predates parent tracking
+/// still works under bare sync — `WorkweaveMarker::read` backfills the
+/// missing `parent` to `primary`. Simulate that by stripping `parent:`
 /// from the marker file after create, then run bare sync.
 #[test]
 fn bare_sync_works_after_parent_backfill_on_legacy_marker() {
@@ -625,8 +624,9 @@ fn bare_sync_works_after_parent_backfill_on_legacy_marker() {
     std::fs::write(main.root.join(".rwv-active"), format!("{PROJECT}\n")).unwrap();
     let ww1 = create_workweave(&main, &weaveroot, "ww1");
 
-    // Strip the `parent:` line from the marker to simulate a pre-fo-ran2c
-    // workweave on disk. The read path must backfill it to primary.
+    // Strip the `parent:` line from the marker to simulate a workweave
+    // that predates parent tracking. The read path must backfill it to
+    // primary.
     let marker_path = ww1.root.join(".rwv-workweave");
     let marker_content = std::fs::read_to_string(&marker_path).unwrap();
     let stripped: String = marker_content
@@ -663,10 +663,10 @@ fn bare_sync_works_after_parent_backfill_on_legacy_marker() {
     );
 }
 
-/// fo-ran2c sibling-sync warning: when CWD is one workweave and an explicit
-/// source is another (non-parent) workweave, sync should emit a warning that
-/// names both paths and then proceed — the warning is informational, not a
-/// refusal.
+/// Sibling-sync warning: when CWD is one workweave and an explicit
+/// source is another (non-parent) workweave, sync should emit a warning
+/// that names both paths and then proceed — the warning is informational,
+/// not a refusal.
 #[test]
 fn sibling_sync_emits_warning_and_proceeds() {
     let tmp = tempfile::tempdir().unwrap();
@@ -701,7 +701,7 @@ fn sibling_sync_emits_warning_and_proceeds() {
 }
 
 // ---------------------------------------------------------------------------
-// fo-kduyx: --retire
+// --retire
 // ---------------------------------------------------------------------------
 
 /// Happy path: `rwv sync --retire` from a workweave whose project repo is
@@ -718,9 +718,9 @@ fn sync_retire_clean_path_deletes_workweave() {
     // Gitignore activation-generated artifacts in the project repo before
     // creating the workweave. Without this, the workweave's project worktree
     // ends up with untracked files (`{project}.code-workspace`, `gita/`) that
-    // the dirty check counts as uncommitted state — same check fo-gneid
-    // requires, so --retire honors it. A real project would gitignore these
-    // (or commit them); the test fixture is just minimal-by-default.
+    // the dirty check counts as uncommitted state, which --retire
+    // honors. A real project would gitignore these (or commit them);
+    // the test fixture is just minimal-by-default.
     std::fs::write(
         main.project_dir.join(".gitignore"),
         "*.code-workspace\ngita/\n",
@@ -786,15 +786,16 @@ fn sync_retire_with_dirty_worktree_refuses_to_delete() {
 }
 
 // ---------------------------------------------------------------------------
-// fo-w9ph9: sync rebase no longer clobbers user resolutions on re-run
+// Sync rebase no longer clobbers user resolutions on re-run
 // ---------------------------------------------------------------------------
 
-/// After a conflicted sync rebase, the operator resolves conflicts in-place
-/// and runs `git rebase --continue` followed by `rwv sync` again. Under the
-/// pre-fo-w9ph9 custom cherry-pick loop, the second sync did a fresh
-/// `git reset --hard` and clobbered the resolution. Native rebase leaves the
-/// repo in standard mid-rebase state — `git rebase --continue` completes the
-/// rebase, and the next `rwv sync` is a no-op for the converged project repo.
+/// After a conflicted sync rebase, the operator resolves conflicts
+/// in-place and runs `git rebase --continue` followed by `rwv sync`
+/// again. Under the legacy custom cherry-pick loop, the second sync did
+/// a fresh `git reset --hard` and clobbered the resolution. Native
+/// rebase leaves the repo in standard mid-rebase state —
+/// `git rebase --continue` completes the rebase, and the next
+/// `rwv sync` is a no-op for the converged project repo.
 #[test]
 fn sync_rebase_continue_then_resync_does_not_clobber_user_resolution() {
     let tmp = tempfile::tempdir().unwrap();

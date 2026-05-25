@@ -127,10 +127,11 @@ fn init_creates_empty_rwv_yaml() {
     }
 }
 
-/// fo-cc40k.4: after `rwv init`, projects/<name>/rwv.yaml must exist, be
-/// non-empty, and parse cleanly via the manifest loader.  This is the exact
-/// precondition that `rwv workweave create` depends on — the file must be
-/// present at the time of the initial `git commit` so the commit captures it.
+/// After `rwv init`, projects/<name>/rwv.yaml must exist, be non-empty,
+/// and parse cleanly via the manifest loader.  This is the exact
+/// precondition that `rwv workweave create` depends on — the file must
+/// be present at the time of the initial `git commit` so the commit
+/// captures it.
 #[test]
 fn init_rwv_yaml_parses_via_manifest_loader() {
     let tmp = tempfile::tempdir().unwrap();
@@ -163,7 +164,7 @@ fn init_rwv_yaml_parses_via_manifest_loader() {
 
     // 4. Empty repositories map — no repos have been added yet.
     assert!(
-        manifest.repositories.is_empty(),
+        manifest.is_empty(),
         "repositories map should be empty in a freshly initialised project"
     );
 }
@@ -190,7 +191,7 @@ fn init_runs_git_init_in_project_dir() {
 
 #[test]
 fn init_writes_gitattributes_with_replay_exclusion() {
-    // fo-w9ph9: `rwv init` must seed `.gitattributes` with the
+    // `rwv init` must seed `.gitattributes` with the
     // `rwv.lock merge=ours` line so future `rwv sync` rebases keep
     // source's lock through the replay.
     let tmp = tempfile::tempdir().unwrap();

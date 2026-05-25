@@ -1,4 +1,4 @@
-//! Tests for the `--role` / `--repo` selector grammar (fo-9kweo).
+//! Tests for the `--role` / `--repo` selector grammar.
 //!
 //! These exercise `RepoFilter::parse` and `RepoFilter::matches` through the
 //! public module boundary so the surface stays stable for downstream verbs
@@ -144,7 +144,7 @@ fn unknown_role_is_parse_error() {
     assert!(msg.contains("mainline"), "got: {msg}");
 }
 
-// --- fo-a7ekj coverage audit: spot-check gaps ---------------------------------
+// --- Coverage audit: spot-check gaps ------------------------------------------
 
 /// Globs use globset's `literal_separator(true)` so `?` (single-character
 /// wildcard) must not match `/`. Combined with the `*` test above, this pins

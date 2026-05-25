@@ -59,7 +59,7 @@ fn init_git_repo(path: &Path) -> String {
 ///
 /// Also writes `.rwv-active` at the workspace root pointing at the
 /// project, so lock-test scenarios that run `rwv lock` (an action verb)
-/// resolve the project correctly post fo-h9prh.
+/// resolve the project correctly.
 fn write_manifest(project_dir: &Path, repos: &[(&str, &str)]) {
     std::fs::create_dir_all(project_dir).unwrap();
     let mut yaml = String::from("repositories:\n");
@@ -683,16 +683,16 @@ fn lock_records_tag_per_repo_independently() {
 }
 
 // ---------------------------------------------------------------------------
-// 10. `rwv lock` does NOT run integration hooks (fo-4t6iv)
+// 10. `rwv lock` does NOT run integration hooks
 // ---------------------------------------------------------------------------
 
 #[test]
 fn lock_does_not_run_integration_hooks() {
-    // Post fo-4t6iv: `rwv lock` is a pure git SHA snapshot. The cargo
-    // integration's hook (which would run `cargo generate-lockfile` and
-    // fail with no workspace-root Cargo.toml) now fires on `rwv activate`,
-    // not on `rwv lock`. So `rwv lock` should succeed cleanly without
-    // touching ecosystem state.
+    // `rwv lock` is a pure git SHA snapshot. The cargo integration's
+    // hook (which would run `cargo generate-lockfile` and fail with no
+    // workspace-root Cargo.toml) fires on `rwv activate`, not on
+    // `rwv lock`. So `rwv lock` should succeed cleanly without touching
+    // ecosystem state.
     let tmp = tempfile::tempdir().unwrap();
     let root = make_workspace(tmp.path(), "ws");
 
@@ -1325,7 +1325,7 @@ fn lock_commit_dirty_check_refuses_staged_non_lock_changes() {
 }
 
 // ============================================================================
-// Stage D (fo-gvb0v): LockFile<->ResolvedLockFile boundary invariants
+// Stage D: LockFile<->ResolvedLockFile boundary invariants
 // ============================================================================
 
 #[test]

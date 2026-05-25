@@ -207,7 +207,7 @@ fn make_workspace_with_ww(parent: &Path) -> (Workspace, String) {
         primary_root.canonicalize().unwrap().display()
     );
     std::fs::write(ww_root.join(".rwv-workweave"), marker_content).unwrap();
-    // Post fo-h9prh: also set `.rwv-active` in both workspaces.
+    // Set `.rwv-active` in both workspaces.
     std::fs::write(primary_root.join(".rwv-active"), "web-app\n").unwrap();
     std::fs::write(ww_root.join(".rwv-active"), "web-app\n").unwrap();
 
@@ -425,7 +425,7 @@ fn sync_post_refresh_clears_stale_index() {
         primary_root.canonicalize().unwrap().display()
     );
     std::fs::write(ww_root.join(".rwv-workweave"), marker_content).unwrap();
-    // Post fo-h9prh: action verbs need `.rwv-active` (or --project).
+    // Action verbs need `.rwv-active` (or --project).
     std::fs::write(primary_root.join(".rwv-active"), "web-app\n").unwrap();
     std::fs::write(ww_root.join(".rwv-active"), "web-app\n").unwrap();
 
