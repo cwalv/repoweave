@@ -1560,7 +1560,7 @@ fn run_sync_impl(
 
     // Create savepoints for all CWD repos (including project repo).
     create_savepoint(&cwd_project_dir, &op_id)?;
-    for repo_path in cwd_project.manifest.repositories.keys() {
+    for repo_path in cwd_project.manifest.iter_repo_paths() {
         let abs = workspace_dir.join(repo_path.as_path());
         if abs.exists() {
             let _ = create_savepoint(&abs, &op_id);
@@ -1596,7 +1596,7 @@ fn run_sync_impl(
         if abs.exists() {
             continue;
         }
-        let entry = match source_manifest.repositories.get(repo_path) {
+        let entry = match source_manifest.get_entry(repo_path) {
             Some(e) => e,
             None => continue, // lock entry without manifest entry — skip
         };
@@ -1871,7 +1871,7 @@ fn run_sync_impl(
             cwd_project_dir.display()
         );
     }
-    for repo_path in cwd_project_phase3.manifest.repositories.keys() {
+    for repo_path in cwd_project_phase3.manifest.iter_repo_paths() {
         let abs = workspace_dir.join(repo_path.as_path());
         if abs.exists() {
             delete_savepoint(&abs, &op_id);
@@ -1951,7 +1951,7 @@ fn retire_workweave_after_sync(
         .unwrap_or_else(|| marker.primary.clone());
 
     let mut diverged: Vec<String> = Vec::new();
-    for repo_path in manifest.repositories.keys() {
+    for repo_path in manifest.iter_repo_paths() {
         let cwd_repo = workweave_dir.join(repo_path.as_path());
         let parent_repo = parent_root.join(repo_path.as_path());
         if !cwd_repo.exists() || !parent_repo.exists() {
@@ -2176,7 +2176,7 @@ pub fn run_abort(cwd: &Path) -> anyhow::Result<()> {
     let mut any_failure = false;
 
     // Restore code repos first.
-    for repo_path in cwd_project.manifest.repositories.keys() {
+    for repo_path in cwd_project.manifest.iter_repo_paths() {
         let abs = workspace_dir.join(repo_path.as_path());
         if !abs.exists() {
             continue;
