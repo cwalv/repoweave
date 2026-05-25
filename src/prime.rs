@@ -338,7 +338,7 @@ mod tests {
         assert!(overview.contains("Essential commands"));
         assert!(overview.contains("Sync family"));
         assert!(overview.contains("rwv --help"));
-        // Agent integration surfaces (fo-tn9uk.7)
+        // Agent integration surfaces.
         assert!(overview.contains("Agent integration surfaces"));
         assert!(overview.contains("rwv status --json"));
         assert!(overview.contains("rwv doctor --json"));
@@ -371,8 +371,8 @@ mod tests {
         let overview = render_overview();
         let lines = overview.lines().count();
         // v0.3.2 was ~32 lines; the amendment asked for noticeably richer.
-        // Bumped to 70 in fo-tn9uk.7 after the Agent integration surfaces
-        // section landed, so trivial trims don't regress us silently.
+        // Bumped to 70 after the Agent integration surfaces section
+        // landed, so trivial trims don't regress us silently.
         assert!(
             lines >= 70,
             "render_overview shrank to {lines} lines; amendment requires noticeably denser than v0.3.2 (~32)"
@@ -424,7 +424,7 @@ integrations:
         assert!(output.contains("- cargo"));
         assert!(output.contains("## Key commands"));
         assert!(output.contains("## Directory layout"));
-        // Agent integration surfaces (fo-tn9uk.7)
+        // Agent integration surfaces.
         assert!(output.contains("## Agent integration surfaces"));
         assert!(output.contains("rwv status --json"));
         assert!(output.contains("rwv doctor --json"));

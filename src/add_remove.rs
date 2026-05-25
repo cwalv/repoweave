@@ -33,8 +33,8 @@ fn find_project_dir(ctx: &WorkspaceContext) -> anyhow::Result<std::path::PathBuf
 /// the canonical clone at `primary_root`.
 ///
 /// Used by `rwv add` from a workweave so the workweave gets the new repo's
-/// worktree as part of the add (see acceptance #4 in bead fo-qb2er and the
-/// pattern in `sync::materialize_missing_repo`). The ephemeral branch
+/// worktree as part of the add (mirrors the pattern in
+/// `sync::materialize_missing_repo`). The ephemeral branch
 /// name follows the same `{project}--{workweave_name}/{branch}` convention
 /// used by `create_workweave`.
 ///
@@ -187,8 +187,8 @@ pub fn run_add(
 
     // Clone the repo if it doesn't exist on disk. The clone always lives at
     // primary's canonical path — clones are global infrastructure shared
-    // across workspaces via `git worktree` (concepts.md "Per-workspace lock
-    // ownership"; bead fo-qb2er).
+    // across workspaces via `git worktree` (see concepts.md
+    // "Per-workspace lock ownership").
     let dest = ctx.primary_path().join(repo_path.as_path());
     if dest.exists() {
         eprintln!(
@@ -230,7 +230,7 @@ pub fn run_add(
     eprintln!("Added '{}' to manifest", repo_path.as_str());
 
     // In a workweave, also create a worktree at the workweave so the new
-    // repo is materialized there (acceptance #4 in bead fo-qb2er).
+    // repo is materialized there.
     if let WorkspaceLocation::Workweave { name, dir, project } = &ctx.location {
         create_worktree_in_workweave(&dest, dir, &repo_path, project, name)?;
     }
@@ -462,7 +462,7 @@ pub fn run_add_new(
     }
 
     // Create the directory and run git init at primary's canonical path
-    // (clones are global infrastructure; see fo-qb2er).
+    // (clones are global infrastructure).
     let dest = ctx.primary_path().join(repo_path.as_path());
     if dest.exists() {
         eprintln!(

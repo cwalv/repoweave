@@ -44,8 +44,8 @@ pub struct WorkspaceContext {
     ///
     /// Recorded for diagnostics — `rwv` bare status surfaces the
     /// divergence, and command implementations use it to build the
-    /// "you're in projects/<X>/ but <Y> is active" error message after
-    /// fo-h9prh removed the CWD override.
+    /// "you're in projects/<X>/ but <Y> is active" error message now
+    /// that the CWD override has been removed.
     cwd_project_hint: Option<ProjectName>,
 }
 
@@ -89,8 +89,8 @@ fn is_workspace_root(dir: &Path) -> bool {
 
 /// Detect the project name if `cwd` is inside `{root}/projects/{name}/...`.
 ///
-/// As of fo-h9prh this is a *soft hint* only: action verbs no longer use
-/// it to override `.rwv-active`. Two callers remain:
+/// This is a *soft hint* only: action verbs no longer use it to override
+/// `.rwv-active`. Two callers remain:
 /// - [`WorkspaceContext::cwd_project_hint`] for divergence warnings and
 ///   for the helpful error when CWD ≠ active project.
 /// - `rwv` bare status, to flag the divergence to the user.
@@ -301,7 +301,7 @@ pub fn require_workspace_or_empty(cwd: &Path, force: bool) -> anyhow::Result<()>
 impl WorkspaceContext {
     /// Resolve the workspace context by walking up from `cwd`.
     ///
-    /// Project resolution order (post fo-h9prh):
+    /// Project resolution order:
     ///   1. `project_override` — explicit `--project <name>` flag.
     ///   2. `.rwv-active` — the single source of truth for the active
     ///      project. There is no CWD override anymore.
@@ -422,7 +422,8 @@ impl WorkspaceContext {
     /// warning in `rwv` bare status, and (b) construct a helpful error
     /// when action verbs are run from a project directory whose name
     /// disagrees with `.rwv-active`. Do *not* use it as a project
-    /// override for action verbs — that is the bug fo-h9prh removed.
+    /// override for action verbs — that silent override was the bug we
+    /// removed.
     pub fn cwd_project_hint(&self) -> Option<&ProjectName> {
         self.cwd_project_hint.as_ref()
     }
@@ -440,9 +441,9 @@ impl WorkspaceContext {
     /// message guides the user to either `rwv activate <X>` or
     /// `--project <X>` when CWD is inside a non-active project directory.
     ///
-    /// The CWD-vs-active divergence error is the user-facing successor to
-    /// the silent CWD override removed by fo-h9prh. Calling this from
-    /// every action-verb entry point keeps the error in one place.
+    /// The CWD-vs-active divergence error is the user-facing successor
+    /// to the silent CWD override that used to live here. Calling this
+    /// from every action-verb entry point keeps the error in one place.
     pub fn require_active_project(&self) -> anyhow::Result<&ProjectName> {
         if let Some(name) = self.active_project() {
             // Active project is set; but if CWD hints at a different
@@ -508,10 +509,10 @@ impl WorkspaceContext {
     /// Display the workspace context to stdout.
     ///
     /// Shows weave path, workweave (if applicable), active project, and
-    /// available projects. Post fo-h9prh: also surfaces a warning line
-    /// when CWD is inside a project directory whose name differs from
-    /// the active project, so the user sees the divergence the silent
-    /// CWD override used to hide.
+    /// available projects. Also surfaces a warning line when CWD is
+    /// inside a project directory whose name differs from the active
+    /// project, so the user sees the divergence the silent CWD override
+    /// used to hide.
     pub fn display(&self) -> String {
         let mut lines = Vec::new();
 
@@ -548,7 +549,7 @@ impl WorkspaceContext {
             }
         }
 
-        // Surface CWD vs active divergence (fo-h9prh).
+        // Surface CWD vs active divergence.
         if let (Some(hint), Some(active_p)) = (self.cwd_project_hint(), active.as_ref()) {
             if hint != active_p {
                 lines.push(format!(
@@ -708,9 +709,9 @@ mod tests {
     // ========================================================================
     // Resolve from inside a project directory
     //
-    // Post fo-h9prh: CWD location no longer drives the active project. The
-    // project is `None` (no `.rwv-active` set), but the cwd_project_hint
-    // records the directory's name for diagnostics.
+    // CWD location no longer drives the active project. The project is
+    // `None` (no `.rwv-active` set), but the cwd_project_hint records
+    // the directory's name for diagnostics.
     // ========================================================================
 
     #[test]
@@ -964,11 +965,10 @@ mod tests {
     }
 
     #[test]
-    fn resolve_rwv_active_wins_over_cwd_location_post_fo_h9prh() {
-        // Post fo-h9prh: `.rwv-active` is the single source of truth.
-        // The previous behaviour — silently substituting CWD's project
-        // directory for the active one — let symlinks and manifests
-        // diverge.
+    fn resolve_rwv_active_wins_over_cwd_location() {
+        // `.rwv-active` is the single source of truth. The previous
+        // behaviour — silently substituting CWD's project directory for
+        // the active one — let symlinks and manifests diverge.
         let tmp = tempfile::tempdir().unwrap();
         let root = make_workspace(tmp.path(), "ws");
         let project_dir = root.join("projects").join("from-cwd");
@@ -1082,7 +1082,6 @@ mod tests {
         assert!(result.is_none());
     }
 
-    // fo-ran2c: parent field tests.
     #[test]
     fn workweave_marker_parent_round_trips() {
         let tmp = tempfile::tempdir().unwrap();

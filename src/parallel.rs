@@ -23,7 +23,7 @@
 //!   streams lines through the reporter so the user can watch per-repo
 //!   progress as it happens.
 //!
-//! Design notes (fo-dkyfs):
+//! Design notes:
 //!
 //! - The worker pool is built on `std::thread::scope` rather than rayon /
 //!   tokio. The crate is otherwise std-only; adding a heavy dep for two
@@ -392,7 +392,7 @@ mod tests {
         assert!(r.is_parallel());
     }
 
-    // ---- fo-a7ekj: additional thin-spot coverage ------------------------
+    // ---- additional thin-spot coverage ----------------------------------
 
     /// `resolve_jobs(Some(1))` is exactly serial. The bead description
     /// requires that `-j 1` matches the pre-`-j` (no flag) output bit

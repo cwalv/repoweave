@@ -61,9 +61,8 @@ impl Integration for PnpmWorkspaces {
         // Full `pnpm install` (not `--lockfile-only`): activation is the
         // moment to bring `node_modules` in sync; the hook fired from
         // `rwv lock` previously and used `--lockfile-only` for that
-        // reason. See fo-4t6iv. Run from workspace_root for the same
-        // reason npm does — that's where the symlinks make member paths
-        // resolve correctly.
+        // reason. Run from workspace_root for the same reason npm does —
+        // that's where the symlinks make member paths resolve correctly.
         let status = std::process::Command::new("pnpm")
             .args(["install"])
             .current_dir(ctx.workspace_root)

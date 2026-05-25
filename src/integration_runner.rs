@@ -163,8 +163,9 @@ pub fn run_checks(
 /// returns an error, it is captured as an `Issue` and execution
 /// continues.
 ///
-/// This was previously named `run_lock_hooks` and fired from `rwv lock`;
-/// see fo-4t6iv.
+/// This was previously named `run_lock_hooks` and fired from `rwv lock`,
+/// which is the wrong trigger — ecosystem-lockfile refresh follows
+/// workspace membership changes, not cross-repo SHA snapshots.
 pub fn run_activate_hooks(
     integrations: &[&dyn Integration],
     manifest: &Manifest,

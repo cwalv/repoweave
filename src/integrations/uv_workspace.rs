@@ -66,8 +66,8 @@ impl Integration for UvWorkspace {
 
         // `uv sync` installs into `.venv` and refreshes `uv.lock`;
         // formerly `uv lock` (lockfile-only) when this fired from
-        // `rwv lock`. See fo-4t6iv. Runs from workspace_root for the
-        // same reason as the other ecosystem hooks (symlinks).
+        // `rwv lock`. Runs from workspace_root for the same reason as
+        // the other ecosystem hooks (symlinks).
         let status = std::process::Command::new("uv")
             .arg("sync")
             .current_dir(ctx.workspace_root)

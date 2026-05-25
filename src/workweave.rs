@@ -375,8 +375,8 @@ pub fn create_workweave(
                 // partial create may have left `.git/worktrees/<name>`
                 // entries in the primary repos even though the workweave
                 // directory survived (or had its marker stripped).
-                // fo-cc40k.3: build (repo_abs, worktree_dest) pairs from
-                // the manifest and prune before the raw remove.
+                // Build (repo_abs, worktree_dest) pairs from the
+                // manifest and prune before the raw remove.
                 let orphan_pairs: Vec<(PathBuf, PathBuf)> = manifest
                     .repositories
                     .iter()

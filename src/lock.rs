@@ -242,7 +242,7 @@ fn commit_lock_file(
 /// Pure git SHA snapshot — no integration hooks fire here. Install/build
 /// hooks are part of activation (`rwv activate`), since the trigger for
 /// ecosystem-lockfile refresh is workspace membership change, not
-/// cross-repo snapshot. See fo-4t6iv for the rationale.
+/// cross-repo snapshot.
 pub fn lock(
     cwd: &Path,
     dirty: bool,

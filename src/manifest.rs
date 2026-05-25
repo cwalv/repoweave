@@ -526,7 +526,7 @@ impl Manifest {
     /// legacy-`role: primary` migration hint when the parser rejects an
     /// otherwise-recognisable manifest.
     ///
-    /// fo-fzf4n drops the back-compat alias on `role: primary`; manifests
+    /// The back-compat alias on `role: primary` has been dropped; manifests
     /// using the legacy spelling now fail to parse. Detect that case up
     /// front and emit a pointer at `rwv doctor --fix` so users find the
     /// migration path instead of staring at a raw serde error.
@@ -551,9 +551,9 @@ impl Manifest {
 /// `primary` is the *full* value (not a prefix like `primary_repo`).
 ///
 /// Used by the manifest loader and `rwv doctor` to detect the legacy
-/// spelling that lost its serde alias in fo-fzf4n. Targeted regex over
-/// raw text avoids a full YAML round-trip, which would destroy comments
-/// and key ordering when later rewriting the file under `--fix`.
+/// spelling now that its serde alias is gone. Targeted regex over raw
+/// text avoids a full YAML round-trip, which would destroy comments and
+/// key ordering when later rewriting the file under `--fix`.
 pub fn manifest_has_legacy_role_primary(content: &str) -> bool {
     legacy_role_primary_regex().is_match(content)
 }
@@ -1238,14 +1238,14 @@ repositories:
         }
     }
 
-    /// fo-fzf4n removed the back-compat alias on `role: primary`. A bare
-    /// `primary` scalar must no longer deserialize as `Role::Owned` —
-    /// otherwise the doctor-fix migration path wouldn't trigger.
+    /// The back-compat alias on `role: primary` is gone. A bare `primary`
+    /// scalar must no longer deserialize as `Role::Owned` — otherwise the
+    /// doctor-fix migration path wouldn't trigger.
     #[test]
     fn role_primary_yaml_no_longer_deserializes() {
         assert!(
             serde_yaml::from_str::<Role>("primary").is_err(),
-            "after fo-fzf4n, `primary` must not parse as Role"
+            "`primary` must not parse as Role"
         );
     }
 
@@ -1417,7 +1417,7 @@ repositories:
     // The strict loader (from_dir) must fail on all three failure modes;
     // the lockless loader must succeed on all three, returning lock: None.
 
-    /// Conflict markers in rwv.lock (the primary symptom from fo-9abkv).
+    /// Conflict markers in rwv.lock are the primary symptom.
     /// from_dir fails; from_dir_skip_lock returns a usable project.
     #[test]
     fn project_from_dir_skip_lock_succeeds_with_conflict_markers() {

@@ -72,7 +72,7 @@ uses." For git, fork repos use `upstream` as the remote name (so a stray
 `git push` does not target the source-of-record); other roles use
 `origin`.
 
-**Anchor:** fo-mb2y9, commit `1b76456`.
+**Anchor:** commit `1b76456`.
 
 **Trait surface** (`src/vcs.rs:430`, `src/vcs.rs:442`):
 
@@ -142,7 +142,7 @@ messages explaining how to resume after the user resolves conflicts.
 For git, this is "edit conflicted files; `git add <files>`; `git
 rebase --continue`" — specific commands a user will type.
 
-**Anchor:** fo-54gz8, commit `26ba786`.
+**Anchor:** commit `26ba786`.
 
 **Trait surface** (`src/vcs.rs:561`):
 
@@ -205,7 +205,7 @@ target's version. For git, this is a `merge=ours` entry in
 `.gitattributes` paired with the inline `merge.ours.driver=true`
 config wired up per-rebase.
 
-**Anchor:** fo-w9ph9, commit `d29bb2f`.
+**Anchor:** commit `d29bb2f`.
 
 **Trait surface** (`src/vcs.rs:601`, with the companion query at
 `src/vcs.rs:613`):
@@ -253,7 +253,7 @@ branch via `current_ref` (refusing detached HEAD with a typed
 `CommandFailed`), selects the remote via the role convention from
 example (a), and runs `git push <remote> <branch>`.
 
-**Anchor:** fo-nxba7, commit `6066ce1`.
+**Anchor:** commit `6066ce1`.
 
 **Trait surface** (`src/vcs.rs:471`):
 

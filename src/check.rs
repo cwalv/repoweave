@@ -69,12 +69,12 @@ pub enum CheckViolation {
     /// A project repo is missing the `rwv.lock merge=ours` entry in
     /// `.gitattributes`. Without it, `rwv sync`'s native rebase would carry
     /// user lock-edits through the merge inputs instead of letting Phase 3
-    /// regenerate them. Auto-fixable: append the line. See fo-w9ph9.
+    /// regenerate them. Auto-fixable: append the line.
     MissingReplayExclusion { project: ProjectName },
 
     /// A project's `rwv.yaml` uses the legacy `role: primary` spelling
-    /// (replaced by `role: owned` in fo-s3i8j, alias removed in
-    /// fo-fzf4n). Auto-fixable: rewrite each affected line in place,
+    /// (replaced by `role: owned`; the back-compat alias has since been
+    /// dropped). Auto-fixable: rewrite each affected line in place,
     /// preserving comments and key order.
     LegacyRolePrimary {
         /// Project the manifest belongs to (or a synthetic name when the
@@ -130,7 +130,7 @@ pub enum WorkingTreeDriftKind {
 // which the internal type cannot supply alone. We mirror the variants here
 // and convert at serialize time via [`ViolationOutput::from_violation`].
 //
-// The kebab-case tag mapping matches the table in `fo-tn9uk.3`:
+// The kebab-case tag mapping:
 //     OrphanedClone       -> "orphaned-clone"
 //     DanglingReference   -> "dangling-reference"
 //     MissingRole         -> "missing-role"
@@ -486,7 +486,8 @@ pub fn find_violations(input: &CheckInput) -> Vec<CheckViolation> {
         // are pulled from `input.resolved_locks` (built by the caller via
         // `LockFile::resolve_versions`), so equality is purely a
         // canonical-SHA comparison — the raw-vs-resolved confusion that
-        // produced fo-4xhfp's B3/B6 is now a compile-time impossibility.
+        // produced the historical B3/B6 bugs is now a compile-time
+        // impossibility.
         if let Some(lock) = input.resolved_locks.get(&project.name) {
             for (repo_path, lock_entry) in &lock.repositories {
                 if let Some(actual_rev) = input.head_revisions.get(repo_path) {
@@ -957,8 +958,9 @@ pub fn run_check(
 
     // Legacy `role: primary` scan + optional --fix migration. Runs before
     // `Project::from_dir`, since manifests with the legacy spelling fail
-    // to parse post-fo-fzf4n. With `--fix`, the rewrite happens here so
-    // subsequent loaders see the migrated manifests.
+    // to parse now that the back-compat alias is gone. With `--fix`, the
+    // rewrite happens here so subsequent loaders see the migrated
+    // manifests.
     let legacy_role_primary = scan_workspace_for_legacy_role_primary(&workspace_dir);
     let mut legacy_role_primary_warnings: Vec<(crate::manifest::ProjectName, PathBuf)> =
         Vec::new();
@@ -1254,10 +1256,10 @@ pub fn run_check(
         }
     }
 
-    // Replay-exclusion check (fo-w9ph9): each project repo should carry
-    // `rwv.lock merge=ours` in `.gitattributes`. Pre-fo-w9ph9 projects don't
-    // have it; `--fix` writes the line in place (idempotent — re-running on
-    // a fixed repo is a no-op).
+    // Replay-exclusion check: each project repo should carry
+    // `rwv.lock merge=ours` in `.gitattributes`. Older projects don't
+    // have it; `--fix` writes the line in place (idempotent — re-running
+    // on a fixed repo is a no-op).
     for project in &input.projects {
         let project_repo = workspace_dir.join("projects").join(project.name.as_str());
         if !project_repo.is_dir() {
@@ -1501,7 +1503,7 @@ fn collect_doctor_violations(
         }
     }
 
-    // Replay-exclusion check (fo-w9ph9): each project repo should carry
+    // Replay-exclusion check: each project repo should carry
     // `rwv.lock merge=ours` in `.gitattributes`.
     for project in &input.projects {
         let project_repo = workspace_dir.join("projects").join(project.name.as_str());

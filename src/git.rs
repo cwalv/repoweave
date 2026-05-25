@@ -135,7 +135,7 @@ impl GitVcs {
 /// `Role::Fork` clones to `upstream` so a stray `git push` does not target
 /// the source-of-record (typically returning HTTP 403). All other roles
 /// clone to the conventional `origin`. This policy belongs in the VCS
-/// layer rather than the manifest layer — see fo-mb2y9.
+/// layer rather than the manifest layer.
 fn remote_name_for_role(role: Role) -> &'static str {
     match role {
         Role::Fork => "upstream",
@@ -149,7 +149,8 @@ fn remote_name_for_role(role: Role) -> &'static str {
 /// [`crate::sync`] splices into its conflict-bail messages, sandwiched
 /// between an opening "what happened" line and a closing "or `rwv abort`
 /// to roll back" line. Kept as a free helper so the VCS impl is the sole
-/// owner of git vocabulary — see fo-54gz8 for the rationale.
+/// owner of git vocabulary; rwv core never spells "git add" or
+/// "git rebase --continue".
 fn git_conflict_resolution_hint(op: ConflictOp) -> String {
     let continue_cmd = match op {
         ConflictOp::Rebase => "git rebase --continue",

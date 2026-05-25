@@ -75,8 +75,8 @@ impl Integration for NpmWorkspaces {
         // Full `npm install` (not `--package-lock-only`): activation is
         // the moment the workspace's membership becomes current, so
         // `node_modules` should be in sync. The hook used to be
-        // `--package-lock-only` because it fired from `rwv lock` — see
-        // fo-4t6iv for why that was wrong.
+        // `--package-lock-only` because it fired from `rwv lock`, which
+        // is the wrong trigger.
         //
         // Run from workspace_root: the symlink at the root points at the
         // canonical package.json in output_dir, and workspace member

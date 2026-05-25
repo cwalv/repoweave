@@ -88,9 +88,9 @@ rwv doctor --fix
   `rwv.lock merge=ours` in `.gitattributes`. Either run `rwv doctor --fix`
   to append it, or add the line manually.
 - *legacy-role-primary* — a project `rwv.yaml` still uses `role: primary`
-  (renamed to `role: owned` in fo-s3i8j; the back-compat alias was dropped
-  in fo-fzf4n). Run `rwv doctor --fix` to migrate every affected manifest
-  in place; comments and key order are preserved.
+  (renamed to `role: owned`; the back-compat alias has since been dropped).
+  Run `rwv doctor --fix` to migrate every affected manifest in place;
+  comments and key order are preserved.
 - *index-drift* with `sub_kind: live-staged` — the user has staged content
   that doesn't match a known tree. `--fix` will refuse; resolve manually.
 - *orphaned-clone* — a directory under a registry path that isn't listed in

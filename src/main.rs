@@ -487,8 +487,8 @@ fn main() -> anyhow::Result<()> {
             // (which auto-resolve to min(nproc, 8)) because sync's `--json`
             // contract pins envelope output under `-j 1` and NDJSON under
             // `-j > 1`; defaulting to auto would silently switch envelope ->
-            // NDJSON on multi-core hosts. See fo-i5z14: "no -j or -j 1 emits
-            // pretty envelope".
+            // NDJSON on multi-core hosts. No `-j` or `-j 1` emits the
+            // pretty envelope.
             let jobs = match jobs {
                 Some(n) => repoweave::parallel::resolve_jobs(Some(n)),
                 None => 1,

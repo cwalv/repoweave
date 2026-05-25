@@ -171,9 +171,8 @@ fn update_for_project(
     // manifest and records HEAD of every repo on disk: filtered repos are
     // at their newly-advanced HEAD; unfiltered repos are at whatever HEAD
     // they were already on. This preserves the invariant that the lock
-    // always describes the whole manifest. See fo-9kweo "Open questions"
-    // — resolved as "filter narrows the loop, not the lock-shape" — and
-    // the parallel decision for push in `src/push.rs`.
+    // always describes the whole manifest. The filter narrows the loop,
+    // not the lock-shape — same decision as push in `src/push.rs`.
     let _ = workweave; // suppress unused warning if generate_lock signature changes
     lock::lock(active_root, dirty, commit, project_override)
         .context("failed to write lock after update")?;
@@ -246,8 +245,8 @@ fn advance_one(
     }
 
     // Resolve the branch HEAD on the role-conventional remote. The VCS
-    // layer owns the per-role naming policy (see fo-mb2y9), so this is
-    // one call rather than a fallback chain. No bare-branch fallback —
+    // layer owns the per-role naming policy, so this is one call rather
+    // than a fallback chain. No bare-branch fallback —
     // missing-remote produces a clear error rather than silently
     // resolving to the local branch tip.
     let branch_ref = RefName::new(branch);

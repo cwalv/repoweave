@@ -1,5 +1,5 @@
 //! Shared `--role` / `--repo` selector grammar for `rwv fetch`, `rwv update`,
-//! and `rwv push` (fo-9kweo).
+//! and `rwv push`.
 //!
 //! A [`RepoFilter`] narrows a verb's per-repo loop to a subset of the manifest.
 //! Construction is once-per-invocation via [`RepoFilter::parse`]; the caller
@@ -32,15 +32,14 @@
 //!   verb behaviour is preserved bit-for-bit.
 //! - **Union accumulation:** a repo is included if it matches *any* `--role`
 //!   value OR *any* `--repo` selector. This matches the common case of
-//!   "these specific repos plus everything in this role" (see fo-9kweo
-//!   "Open questions" — resolved as union).
+//!   "these specific repos plus everything in this role".
 //! - **Repeated flags only** for multi-value forms (no comma-splitting). Pattern
 //!   bodies for `re:` / `glob:` legitimately contain commas, so comma-as-
 //!   separator would be a footgun.
 //!
 //! ## Lock-precondition note (push specifically)
 //!
-//! The push verb's lock-vs-state precondition (`fo-nxba7`) checks the *full*
+//! The push verb's lock-vs-state precondition checks the *full*
 //! manifest, not the filtered subset. The committed lock describes every
 //! manifest repo; publishing a project-repo lock that doesn't match the
 //! unfiltered repos breaks collaborators. See the comment at the
@@ -261,7 +260,7 @@ impl FromStr for Role {
     type Err = ();
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        // No `primary` alias here: fo-fzf4n drops the back-compat surface
+        // No `primary` alias here: the back-compat surface was dropped
         // in favour of `rwv doctor --fix`. `FilterError::UnknownRole`
         // detects the legacy spelling and emits the migration hint, so
         // matching `primary` here would mask that diagnostic.
@@ -301,7 +300,6 @@ mod tests {
 
     /// `--role primary` is no longer accepted; the error must direct
     /// users at `rwv doctor --fix` so the migration path is discoverable.
-    /// fo-fzf4n.
     #[test]
     fn parse_role_rejects_legacy_primary_with_doctor_hint() {
         let err = RepoFilter::parse(&["primary".into()], &[]).unwrap_err();

@@ -4,7 +4,6 @@
 //! first, then the project repo last — the project repo carries the
 //! committed lock that pins manifest SHAs, so collaborators' `rwv fetch`
 //! must never see a committed lock referencing unpushed manifest commits.
-//! See fo-nxba7 for the full design.
 
 use crate::git::GitVcs;
 use crate::manifest::{Project, ProjectName, RepoEntry, RepoPath, Role};
@@ -104,10 +103,8 @@ pub fn run_push(
     //    committed lock describes every manifest repo; publishing a
     //    project-repo lock that doesn't match the unfiltered repos breaks
     //    collaborators' `rwv fetch` (they hit "object missing" against the
-    //    pinned-but-unpublished SHAs). Resolved design decision for fo-9kweo:
-    //    the filter narrows the push loop, not the precondition. See bead
-    //    fo-9kweo "Open questions" and the corresponding shape note in
-    //    fo-nxba7.
+    //    pinned-but-unpublished SHAs). The filter narrows the push loop,
+    //    not the precondition.
     let lock_path = project_dir.join("rwv.lock");
     let lock_entries: std::collections::BTreeMap<RepoPath, RawRevisionId> =
         if let Some(raw_lock) = &project.lock {
@@ -249,7 +246,7 @@ pub fn run_push(
         anyhow::bail!("aborted before network — fix per-repo branch state and retry");
     }
 
-    // 5. Dry-run: print the plan in the format from fo-nxba7's bead body.
+    // 5. Dry-run: print the plan.
     if dry_run {
         println!("rwv push (dry-run):");
         for item in &plan {
@@ -431,7 +428,7 @@ mod tests {
     //! its output. These helpers are only reachable through the verb's
     //! integration tests; the unit tests below pin them directly so
     //! refactors of either helper can't quietly change the verb's
-    //! user-visible strings. fo-a7ekj.
+    //! user-visible strings.
     use super::*;
     use crate::manifest::RepoPath;
     use crate::vcs::RawRevisionId;

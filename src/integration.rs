@@ -151,8 +151,9 @@ pub trait Integration {
     /// active repos may have changed; users can suppress with
     /// `rwv activate --no-install`.
     ///
-    /// This hook was previously named `lock` (fired on `rwv lock`); see
-    /// fo-4t6iv for the rationale of the move.
+    /// This hook was previously named `lock` (fired on `rwv lock`); the
+    /// trigger for ecosystem-lockfile refresh is workspace membership
+    /// change, which is what `rwv activate` represents.
     fn activate_hook(&self, _ctx: &IntegrationContext) -> anyhow::Result<()> {
         Ok(())
     }

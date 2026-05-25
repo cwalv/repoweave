@@ -383,10 +383,9 @@ pub struct SyncJsonOutput {
 /// One NDJSON record emitted by `rwv sync --json -j N` with `N > 1`.
 ///
 /// Under NDJSON streaming mode, the envelope wrapper is dropped and each
-/// per-repo outcome becomes its own self-describing line. Per the fo-tn9uk
-/// epic convention ("every record embeds `$schema`"), every NDJSON record
-/// carries its own schema URL so consumers can identify a line without
-/// out-of-band context.
+/// per-repo outcome becomes its own self-describing line. Every NDJSON
+/// record carries its own `$schema` URL so consumers can identify a line
+/// without out-of-band context.
 ///
 /// Serialised with `#[serde(flatten)]` on the inner outcome so the wire
 /// shape is a single flat object: `{"$schema": "...", "kind": "...", ...}`,
@@ -753,7 +752,7 @@ fn check_phase1_ancestor(
 }
 
 // ---------------------------------------------------------------------------
-// Conflict-bail messages — see fo-54gz8
+// Conflict-bail messages
 // ---------------------------------------------------------------------------
 //
 // Sync's conflict messages lead with concrete resolution steps and mention
@@ -1595,9 +1594,9 @@ fn run_sync_impl(
     // Precondition: rebase and merge strategies require `rwv.lock merge=ours`
     // in the project repo's committed `.gitattributes`. Without it, git's
     // 3-way merge runs on rwv.lock and conflicts whenever both sides have
-    // lock edits — the bug from fo-w9ph9. Check before any git ops so the
-    // operator is never left mid-rebase or mid-merge. FF never merges, so
-    // it doesn't need the precondition.
+    // lock edits. Check before any git ops so the operator is never left
+    // mid-rebase or mid-merge. FF never merges, so it doesn't need the
+    // precondition.
     if matches!(strategy, SyncStrategy::Rebase | SyncStrategy::Merge) {
         verify_replay_exclusion_invariant(&cwd_project_dir)?;
     }
@@ -1688,8 +1687,8 @@ fn run_sync_impl(
                 // B6: previously this stderr line was the only signal; the
                 // per-repo `skipped (not on disk)` loop below didn't flip
                 // `any_failure`, so sync exited 0 with a lock that had
-                // advanced past a never-materialised repo (same shape as
-                // fo-62glp). Record the failure so the post-loop bail fires.
+                // advanced past a never-materialised repo. Record the
+                // failure so the post-loop bail fires.
                 materialize_failures.push(repo_path.clone());
             }
         }
@@ -1748,7 +1747,7 @@ fn run_sync_impl(
     // workers. Per-repo savepoint refs (created above) are per-ref-name so
     // workers don't race; `sync_one_repo` and the refresh helpers touch
     // only the repo's own working tree/index/refs and don't write to any
-    // workspace-wide state. See fo-i5z14 for the safety analysis.
+    // workspace-wide state, which is what makes parallel safe.
     struct SyncTask {
         repo_path: crate::manifest::RepoPath,
         abs: PathBuf,
@@ -1802,7 +1801,7 @@ fn run_sync_impl(
 
     // Fan out the sync tasks. Under `jobs == 1` `run_in_parallel` runs
     // them serially on the caller thread without spawning — bit-identical
-    // to the pre-fo-i5z14 loop. Under `jobs > 1` each worker calls
+    // to the pre-parallel loop. Under `jobs > 1` each worker calls
     // `sync_one_repo` + the post-sync refresh helpers on its own task; on
     // completion it routes the outcome through `sink.record`, which under
     // NDJSON mode writes one JSON line to stdout (mutex-guarded so
@@ -2319,12 +2318,11 @@ fn abort_one_repo(repo: &Path, op_id: &OpId) -> anyhow::Result<()> {
 ///
 /// - **Serial / envelope** (`jobs == 1`): collect all per-repo outcomes,
 ///   then emit `{ "$schema": "...", "outcomes": [...] }` pretty-printed to
-///   stdout on completion. Matches the shape pinned by fo-tn9uk.4.
+///   stdout on completion.
 /// - **Parallel / NDJSON** (`jobs > 1`): each per-repo outcome is streamed
-///   as one JSON line to stdout the moment its worker finishes. Per the
-///   fo-tn9uk epic convention every line embeds its own `$schema` so
-///   consumers can identify a record without out-of-band context. No
-///   envelope is emitted — the bead's acceptance is one self-describing
+///   as one JSON line to stdout the moment its worker finishes. Every line
+///   embeds its own `$schema` so consumers can identify a record without
+///   out-of-band context. No envelope is emitted — one self-describing
 ///   record per line.
 ///
 /// In both modes the text-mode per-repo chatter that `run_sync` produces
@@ -2551,7 +2549,7 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // Conflict-bail messages — see fo-54gz8.
+    // Conflict-bail messages.
     //
     // One test per bail site asserts the message embeds the per-VCS
     // resolution hint and mentions `rwv abort` last (after the steps).

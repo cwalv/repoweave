@@ -127,7 +127,7 @@ impl serde::Serialize for ResolvedRevisionId {
 ///
 /// A `RawRevisionId` cannot be compared against a `ResolvedRevisionId`.
 /// The following doc-test fails to compile — this is the type system
-/// enforcing the contract that motivated the split (fo-gvb0v).
+/// enforcing the contract that motivated the split.
 ///
 /// ```compile_fail
 /// use repoweave::vcs::{RawRevisionId, ResolvedRevisionId};
