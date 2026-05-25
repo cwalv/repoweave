@@ -16,7 +16,23 @@ use std::str::FromStr;
 // ---------------------------------------------------------------------------
 
 /// A local path relative to the workspace root (e.g., `github/chatly/server`).
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+///
+/// ## Separator contract
+///
+/// `RepoPath` values are always forward-slash (`/`) separated, matching the
+/// portable YAML convention described in the repoweave manifest spec.
+/// Backslashes are rejected at the serde deserialization boundary so that a
+/// manifest authored on Windows (which might produce `github\acme\server`) is
+/// caught immediately rather than silently mismatching the forward-slash paths
+/// written by sync/fetch. This mirrors the approach Cargo uses for
+/// `Cargo.toml` — YAML stays portable; conversion to native OS paths happens
+/// at filesystem-boundary calls via [`RepoPath::as_path`].
+///
+/// `RepoPath::new` is intentionally unchecked — it is used internally where
+/// the caller guarantees forward-slash paths (e.g., from registry logic or
+/// tests). All YAML deserialization goes through the custom [`Deserialize`]
+/// impl which enforces the no-backslash invariant.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
 #[serde(transparent)]
 pub struct RepoPath(String);
 
@@ -37,6 +53,19 @@ impl RepoPath {
 impl fmt::Display for RepoPath {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(&self.0)
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for RepoPath {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let s = String::deserialize(deserializer)?;
+        if s.contains('\\') {
+            return Err(serde::de::Error::custom(
+                "backslash not allowed in RepoPath; use forward slash (e.g. \
+                 `github/acme/server` not `github\\acme\\server`)",
+            ));
+        }
+        Ok(RepoPath(s))
     }
 }
 
@@ -1365,6 +1394,84 @@ repositories:
     fn repo_path_as_path() {
         let rp = RepoPath::new("github/acme/server");
         assert_eq!(rp.as_path(), Path::new("github/acme/server"));
+    }
+
+    // ========================================================================
+    // RepoPath deserialize — separator validation
+    // ========================================================================
+
+    /// A valid forward-slash path must deserialize without error.
+    #[test]
+    fn repo_path_deserialize_forward_slash_accepted() {
+        let rp: RepoPath = serde_yaml::from_str("github/acme/server").unwrap();
+        assert_eq!(rp.as_str(), "github/acme/server");
+    }
+
+    /// A path containing only a backslash must be rejected at parse time.
+    #[test]
+    fn repo_path_deserialize_backslash_rejected() {
+        let result: Result<RepoPath, _> = serde_yaml::from_str("github\\acme\\server");
+        assert!(result.is_err(), "backslash path must be rejected");
+        let msg = format!("{}", result.unwrap_err());
+        assert!(
+            msg.contains("backslash not allowed"),
+            "error should mention 'backslash not allowed', got: {msg}"
+        );
+        assert!(
+            msg.contains("forward slash"),
+            "error should mention 'forward slash', got: {msg}"
+        );
+    }
+
+    /// A mixed-slash path (forward and back) must also be rejected.
+    #[test]
+    fn repo_path_deserialize_mixed_slash_rejected() {
+        let result: Result<RepoPath, _> = serde_yaml::from_str("github/acme\\server");
+        assert!(result.is_err(), "mixed-slash path must be rejected");
+        let msg = format!("{}", result.unwrap_err());
+        assert!(
+            msg.contains("backslash not allowed"),
+            "error should mention 'backslash not allowed', got: {msg}"
+        );
+    }
+
+    /// Backslash rejection surfaces correctly when embedded as a YAML map key
+    /// in a full manifest, so users get a clear error rather than a generic one.
+    #[test]
+    fn repo_path_deserialize_backslash_rejected_in_manifest() {
+        let yaml = r#"
+repositories:
+  github\acme\server:
+    type: git
+    url: https://github.com/acme/server.git
+    version: main
+    role: owned
+"#;
+        let result = Manifest::from_yaml_str(yaml);
+        assert!(result.is_err(), "manifest with backslash key must be rejected");
+        let msg = format!("{}", result.unwrap_err());
+        assert!(
+            msg.contains("backslash not allowed"),
+            "error should mention 'backslash not allowed', got: {msg}"
+        );
+    }
+
+    /// An empty string is accepted — it is the degenerate case and current
+    /// internal code never produces it; we preserve the prior (unchecked)
+    /// behavior rather than adding a new restriction outside this bead's scope.
+    #[test]
+    fn repo_path_deserialize_empty_string_accepted() {
+        let rp: RepoPath = serde_yaml::from_str("''").unwrap();
+        assert_eq!(rp.as_str(), "");
+    }
+
+    /// Serialization of a RepoPath round-trips correctly through YAML.
+    #[test]
+    fn repo_path_serde_round_trip() {
+        let rp = RepoPath::new("github/acme/server");
+        let yaml = serde_yaml::to_string(&rp).unwrap();
+        let restored: RepoPath = serde_yaml::from_str(&yaml).unwrap();
+        assert_eq!(rp, restored);
     }
 
     // ========================================================================
