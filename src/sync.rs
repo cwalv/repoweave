@@ -1016,23 +1016,23 @@ fn refresh_working_tree_if_safe(repo: &Path) {
 }
 
 /// Precondition: the CWD project repo's committed `.gitattributes` must contain
-/// `rwv.lock merge=ours` before any rebase-based sync.
+/// `rwv.lock merge=ours` before any sync strategy that performs a 3-way merge
+/// (`Rebase` or `Merge`).
 ///
-/// The `--empty=drop` + `merge=ours` driver combination is what makes lock-only
-/// commits silently drop during Phase 1' replay. Without this line in the
-/// **committed** `.gitattributes`, `git rebase` has no special instruction for
-/// `rwv.lock` and falls back to a 3-way textual merge — which produces a
-/// conflict when both sides have lock edits.
+/// The mechanism has two halves: the inline `-c merge.ours.driver=true` flag
+/// *defines* a merge driver named "ours", and the `.gitattributes` line
+/// *assigns* that driver to `rwv.lock`. Without the assignment, git's default
+/// 3-way merge runs on `rwv.lock` and conflicts whenever both sides have
+/// lock edits — regardless of which drivers are defined in config.
 ///
-/// This is checked against the committed file (via `git show HEAD:.gitattributes`)
-/// rather than just the working-tree file because:
+/// `Ff` does not perform any merge — it advances the branch pointer — so
+/// the invariant is not required.
+///
+/// Checked against the committed file (via `git show HEAD:.gitattributes`)
+/// rather than the working-tree file because:
 /// 1. The invariant must survive rebases (which replay committed trees).
-/// 2. A `.gitattributes` that exists only in the working tree and is not
-///    committed is not durable — it won't be present after a `git reset --hard`
-///    or fresh clone.
-///
-/// Fires only when `strategy == Rebase`. FF does not replay commits; merge
-/// uses inline `-c merge.ours.driver=true` which doesn't rely on `.gitattributes`.
+/// 2. A `.gitattributes` that exists only in the working tree is not
+///    durable — it won't be present after a `git reset --hard` or fresh clone.
 ///
 /// If absent, bails with an actionable message naming the file path, the exact
 /// missing line, and the command to fix (`rwv doctor --fix`). Does NOT write
@@ -1064,11 +1064,12 @@ fn verify_replay_exclusion_invariant(
     }
 
     anyhow::bail!(
-        "sync --strategy=rebase requires `rwv.lock merge=ours` in the project repo's \
-         committed .gitattributes, but {ga} does not contain that line.\n\
+        "sync --strategy=rebase and --strategy=merge require `rwv.lock merge=ours` \
+         in the project repo's committed .gitattributes, but {ga} does not contain \
+         that line.\n\
          \n\
-         Without it, git rebase falls back to a 3-way textual merge on rwv.lock, \
-         which conflicts whenever both sides have lock-only commits.\n\
+         Without it, git's 3-way merge runs on rwv.lock and conflicts whenever \
+         both sides have lock edits.\n\
          \n\
          To fix: run `rwv doctor --fix` from this workspace, then commit the result:\n\
            cd {dir}\n\
@@ -1591,11 +1592,13 @@ fn run_sync_impl(
         .head_revision(&cwd_project_dir)
         .map_err(|e| anyhow::anyhow!("failed to read CWD project HEAD: {e}"))?;
 
-    // Precondition: rebase strategy requires `rwv.lock merge=ours` in the
-    // project repo's committed `.gitattributes`. Without it, `git rebase`
-    // falls back to a 3-way textual merge on rwv.lock — the bug from fo-w9ph9.
-    // Check before any git ops so the operator is never left mid-rebase.
-    if strategy == SyncStrategy::Rebase {
+    // Precondition: rebase and merge strategies require `rwv.lock merge=ours`
+    // in the project repo's committed `.gitattributes`. Without it, git's
+    // 3-way merge runs on rwv.lock and conflicts whenever both sides have
+    // lock edits — the bug from fo-w9ph9. Check before any git ops so the
+    // operator is never left mid-rebase or mid-merge. FF never merges, so
+    // it doesn't need the precondition.
+    if matches!(strategy, SyncStrategy::Rebase | SyncStrategy::Merge) {
         verify_replay_exclusion_invariant(&cwd_project_dir)?;
     }
 

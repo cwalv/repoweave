@@ -88,20 +88,27 @@ lock-only commits in the history. This is intentional: FF is for the
 clean landing path (workweave → primary, already linear) where history
 fidelity matters more than compaction.
 
-#### The `.gitattributes` precondition for rebase
+#### The `.gitattributes` precondition for rebase and merge
 
-`--strategy=rebase` depends on `rwv.lock merge=ours` being present in
-the project repo's **committed** `.gitattributes` before the rebase
-starts. If that line is absent, git falls back to a textual 3-way merge
-on `rwv.lock` — which conflicts when both sides have lock-only commits,
-as in the N-way serial landing scenario above.
+Both `--strategy=rebase` and `--strategy=merge` depend on `rwv.lock
+merge=ours` being present in the project repo's **committed**
+`.gitattributes` before the operation starts. The mechanism has two
+halves that must both be in place: rwv passes `-c
+merge.ours.driver=true` on each git invocation, which *defines* a
+driver named "ours"; the `.gitattributes` line *assigns* that driver
+to `rwv.lock`. Without the assignment, git's default 3-way merge runs
+on `rwv.lock` and conflicts whenever both sides have lock edits — as
+in the N-way serial landing scenario above.
 
-`sync --strategy=rebase` checks this precondition before any git
-operation and bails with an actionable message if the line is absent:
+`--strategy=ff` does not need the precondition: FF advances the
+branch pointer without performing a merge, so no driver is consulted.
+
+Sync checks the precondition before any git operation and bails with
+an actionable message if the line is absent:
 
 ```
-sync --strategy=rebase requires `rwv.lock merge=ours` in the project
-repo's committed .gitattributes …
+sync --strategy=rebase and --strategy=merge require `rwv.lock merge=ours`
+in the project repo's committed .gitattributes …
 
 To fix: run `rwv doctor --fix` from this workspace …
 ```
