@@ -71,7 +71,7 @@ repositories:
 #[test]
 fn parse_full_manifest() {
     let m: Manifest = serde_yaml::from_str(FULL_MANIFEST_YAML).unwrap();
-    assert_eq!(m.repositories.len(), 4);
+    assert_eq!(m.len(), 4);
     assert_eq!(m.integrations.len(), 2);
 }
 
@@ -80,7 +80,7 @@ fn manifest_repo_paths_are_btreemap_keys() {
     let m: Manifest = serde_yaml::from_str(FULL_MANIFEST_YAML).unwrap();
 
     // BTreeMap iterates in sorted order — verify keys come out sorted.
-    let keys: Vec<&RepoPath> = m.repositories.keys().collect();
+    let keys: Vec<&RepoPath> = m.iter_repo_paths().collect();
     assert_eq!(keys[0].as_str(), "github/acme/client");
     assert_eq!(keys[1].as_str(), "github/acme/server");
     assert_eq!(keys[2].as_str(), "github/docs/rfc");
@@ -90,7 +90,7 @@ fn manifest_repo_paths_are_btreemap_keys() {
 #[test]
 fn manifest_repo_entry_fields() {
     let m: Manifest = serde_yaml::from_str(FULL_MANIFEST_YAML).unwrap();
-    let server = &m.repositories[&RepoPath::new("github/acme/server")];
+    let server = m.get_entry(&RepoPath::new("github/acme/server")).unwrap();
     assert_eq!(server.vcs_type, VcsType::Git);
     assert_eq!(server.url.to_string(), "https://github.com/acme/server.git");
     assert_eq!(server.version, RefName::new("main"));
@@ -104,7 +104,7 @@ fn manifest_repo_entry_fields() {
 #[test]
 fn role_deserialization_all_variants() {
     let m: Manifest = serde_yaml::from_str(FULL_MANIFEST_YAML).unwrap();
-    let role_of = |key: &str| m.repositories[&RepoPath::new(key)].role;
+    let role_of = |key: &str| m.get_entry(&RepoPath::new(key)).unwrap().role;
 
     assert_eq!(role_of("github/acme/server"), Role::Owned);
     assert_eq!(role_of("github/acme/client"), Role::Fork);
@@ -127,7 +127,7 @@ fn role_is_active() {
 #[test]
 fn vcs_type_git() {
     let m: Manifest = serde_yaml::from_str(FULL_MANIFEST_YAML).unwrap();
-    for entry in m.repositories.values() {
+    for (_, entry) in m.iter_entries() {
         assert_eq!(entry.vcs_type, VcsType::Git);
     }
 }
@@ -140,7 +140,7 @@ fn vcs_type_git() {
 fn manifest_without_integrations() {
     let m: Manifest = serde_yaml::from_str(MINIMAL_MANIFEST_YAML).unwrap();
     assert!(m.integrations.is_empty());
-    assert_eq!(m.repositories.len(), 1);
+    assert_eq!(m.len(), 1);
 }
 
 #[test]
@@ -194,9 +194,9 @@ fn manifest_round_trip() {
     let serialized = serde_yaml::to_string(&original).unwrap();
     let deserialized: Manifest = serde_yaml::from_str(&serialized).unwrap();
 
-    assert_eq!(original.repositories.len(), deserialized.repositories.len());
-    for (key, orig_entry) in &original.repositories {
-        let de_entry = &deserialized.repositories[key];
+    assert_eq!(original.len(), deserialized.len());
+    for (key, orig_entry) in original.iter_entries() {
+        let de_entry = deserialized.get_entry(key).unwrap();
         assert_eq!(orig_entry.vcs_type, de_entry.vcs_type);
         assert_eq!(orig_entry.url, de_entry.url);
         assert_eq!(orig_entry.version, de_entry.version);
@@ -242,7 +242,7 @@ fn project_from_dir_manifest_only() {
     std::fs::write(dir.path().join("rwv.yaml"), MINIMAL_MANIFEST_YAML).unwrap();
 
     let project = Project::from_dir(dir.path()).unwrap();
-    assert_eq!(project.manifest.repositories.len(), 1);
+    assert_eq!(project.manifest.len(), 1);
     assert!(project.lock.is_none());
     assert_eq!(project.dir, dir.path());
 }
@@ -254,7 +254,7 @@ fn project_from_dir_manifest_and_lock() {
     std::fs::write(dir.path().join("rwv.lock"), LOCK_WITH_WORKWEAVE_YAML).unwrap();
 
     let project = Project::from_dir(dir.path()).unwrap();
-    assert_eq!(project.manifest.repositories.len(), 4);
+    assert_eq!(project.manifest.len(), 4);
     let lock = project.lock.as_ref().unwrap();
     assert_eq!(lock.workweave, Some(WorkweaveName::new("hotfix-42")));
     assert_eq!(lock.repositories.len(), 2);

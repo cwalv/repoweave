@@ -9,11 +9,7 @@
 
 use repoweave::integration::{Integration, IntegrationContext, Severity};
 use repoweave::integrations::*;
-use repoweave::manifest::{
-    IntegrationConfig, Manifest, ProjectName, RepoEntry, RepoPath, Role, VcsType,
-};
-use repoweave::vcs::RefName;
-use std::collections::BTreeMap;
+use repoweave::manifest::{IntegrationConfig, Manifest, ProjectName, RepoPath, Role};
 use std::collections::HashMap;
 use std::path::Path;
 use tempfile::TempDir;
@@ -24,28 +20,15 @@ use tempfile::TempDir;
 
 /// Build a Manifest with the given repo entries and no integration config overrides.
 fn make_manifest(repos: Vec<(&str, Role)>) -> Manifest {
-    let mut repositories = BTreeMap::new();
-    for (path, role) in repos {
-        repositories.insert(
-            RepoPath::new(path),
-            RepoEntry {
-                vcs_type: VcsType::Git,
-                url: format!(
-                    "https://github.com/test/{}.git",
-                    path.split('/').next_back().unwrap()
-                )
-                .parse()
-                .unwrap(),
-                version: RefName::new("main"),
-                role,
-            },
-        );
+    let mut yaml = String::from("repositories:\n");
+    for (path, role) in &repos {
+        let last = path.split('/').next_back().unwrap();
+        yaml.push_str(&format!(
+            "  {path}:\n    type: git\n    url: https://github.com/test/{last}.git\n    version: main\n    role: {}\n",
+            role.as_str()
+        ));
     }
-    Manifest {
-        repositories,
-        integrations: BTreeMap::new(),
-        workweave: None,
-    }
+    Manifest::from_yaml_str(&yaml).unwrap()
 }
 
 /// Build an IntegrationContext from parts.
@@ -61,7 +44,7 @@ fn make_ctx<'a>(
         output_dir: root,
         workspace_root: root,
         project,
-        repos: &manifest.repositories,
+        repos: manifest.repo_map(),
         config,
         all_repos_on_disk: &[],
         all_project_paths: &[],
@@ -1142,7 +1125,7 @@ mod gita {
             output_dir,
             workspace_root,
             project: &project,
-            repos: &manifest.repositories,
+            repos: manifest.repo_map(),
             config: &config,
             all_repos_on_disk: &[],
             all_project_paths: &[],
@@ -1406,7 +1389,7 @@ mod vscode_workspace {
             output_dir: root,
             workspace_root: root,
             project: &project,
-            repos: &manifest.repositories,
+            repos: manifest.repo_map(),
             config: &config,
             all_repos_on_disk: &all_repos_on_disk,
             all_project_paths: &[],
@@ -1444,7 +1427,7 @@ mod vscode_workspace {
             output_dir: root,
             workspace_root: root,
             project: &project,
-            repos: &manifest.repositories,
+            repos: manifest.repo_map(),
             config: &config,
             all_repos_on_disk: &all_repos_on_disk,
             all_project_paths: &all_project_paths,
@@ -1530,7 +1513,7 @@ mod vscode_workspace {
             output_dir: root,
             workspace_root: root,
             project: &project,
-            repos: &manifest.repositories,
+            repos: manifest.repo_map(),
             config: &config,
             all_repos_on_disk: &all_repos_on_disk,
             all_project_paths: &[],
