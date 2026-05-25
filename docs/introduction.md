@@ -13,6 +13,18 @@ The repos themselves stay independent — separately ownable, with normal git hi
 
 The fundamental unit is the **project**: a small repo at `projects/<name>/` carrying a manifest (`rwv.yaml`) of which repos belong to the project, a lock (`rwv.lock`) pinning their revisions, and any cross-cutting docs. `rwv fetch <project-url>` clones the project repo and every repo it lists; one command, complete environment.
 
+## Core vocabulary
+
+Five terms recur throughout the docs:
+
+- **weave** — a repoweave workspace; a directory containing repos and projects.
+- **workweave** — a worktree-derived sandbox of a weave (isolated parallel cross-repo work).
+- **project** — the small coordination repo under `projects/<name>/`, carrying `rwv.yaml` and `rwv.lock`.
+- **manifest repo** — a repo listed in a project's `rwv.yaml`. The work surfaces; regular clones at `<registry>/<owner>/<repo>/`.
+- **lock** (`rwv.lock`) — pins each manifest repo to a specific revision. Derived from manifest-repo tips; never edited by hand.
+
+For the full vocabulary, see [reference/glossary](./reference/glossary.md).
+
 ## Who is this for?
 
 You'll get the most out of repoweave if any of these describe your setup:
@@ -58,9 +70,3 @@ Then read [hand task to agent](./how-to/hand-task-to-agent.md) for the harness r
 | **Reference** | Lookup-shaped facts | [reference/](./reference/cli.md) — verbs, file formats, roles, glossary, integrations |
 
 If you're building or maintaining `rwv` itself, see [contributing/](./contributing/developing.md).
-
-## A note on terminology
-
-A **weave** is a repoweave workspace — a directory containing repos and projects. A **workweave** is a worktree-derived sandbox of a weave. A **project** is the small coordination repo under `projects/`. A **manifest repo** is a repo listed in a project's `rwv.yaml`.
-
-For the full vocabulary, see [reference/glossary](./reference/glossary.md).
