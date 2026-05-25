@@ -213,7 +213,7 @@ pub fn create_workweave(
     // Create worktrees for each repo in the manifest. Forks come from
     // source_root so peer workweaves rooted in another workweave's HEADs
     // diverge cleanly from that parent rather than from primary.
-    for (repo_path, entry) in &manifest.repositories {
+    for (repo_path, entry) in manifest.iter_entries() {
         let vcs = vcs_for(entry.vcs_type);
         let repo_abs = source_root.join(repo_path.as_path());
 
@@ -251,7 +251,7 @@ pub fn create_workweave(
     }
 
     if !errors.is_empty() {
-        let total = manifest.repositories.len();
+        let total = manifest.len();
         let failed = errors.len();
         // B7: ensure atomic create-or-nothing. Leaving a partial workweave
         // directory on disk turns a clean retry into a `--force` recovery.
@@ -454,7 +454,7 @@ fn reuse_existing_workweave(
     // "modified" — a manifest may have grown since the workweave was
     // created; `rwv workweave sync` is the path for adding them.
     let mut modified: Vec<String> = Vec::new();
-    for (repo_path, entry) in &manifest.repositories {
+    for (repo_path, entry) in manifest.iter_entries() {
         let vcs = vcs_for(entry.vcs_type);
         let worktree_dest = workweave_dir.join(repo_path.as_path());
         if !worktree_dest.exists() {
@@ -520,7 +520,7 @@ pub fn collect_dirty_paths(
     }
 
     // Manifest-repo worktrees.
-    for (repo_path, entry) in &manifest.repositories {
+    for (repo_path, entry) in manifest.iter_entries() {
         let wt = workweave_dir.join(repo_path.as_path());
         if !wt.exists() {
             continue;
@@ -571,7 +571,7 @@ pub fn delete_workweave(
     // Remove worktrees for each repo, collecting errors.
     let mut errors: Vec<String> = Vec::new();
 
-    for (repo_path, entry) in &manifest.repositories {
+    for (repo_path, entry) in manifest.iter_entries() {
         let vcs = vcs_for(entry.vcs_type);
         let repo_abs = ws_root.join(repo_path.as_path());
         let worktree_path = workweave_dir.join(repo_path.as_path());
@@ -649,7 +649,7 @@ pub fn delete_workweave(
     if errors.is_empty() {
         Ok(())
     } else {
-        let total = manifest.repositories.len() + 1;
+        let total = manifest.len() + 1;
         let failed = errors.len();
         bail!("workweave delete completed with {failed} failure(s) out of {total} repo(s)")
     }
