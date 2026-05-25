@@ -1015,6 +1015,70 @@ fn refresh_working_tree_if_safe(repo: &Path) {
     let _ = git_command().args(&args).current_dir(repo).output();
 }
 
+/// Precondition: the CWD project repo's committed `.gitattributes` must contain
+/// `rwv.lock merge=ours` before any rebase-based sync.
+///
+/// The `--empty=drop` + `merge=ours` driver combination is what makes lock-only
+/// commits silently drop during Phase 1' replay. Without this line in the
+/// **committed** `.gitattributes`, `git rebase` has no special instruction for
+/// `rwv.lock` and falls back to a 3-way textual merge — which produces a
+/// conflict when both sides have lock edits.
+///
+/// This is checked against the committed file (via `git show HEAD:.gitattributes`)
+/// rather than just the working-tree file because:
+/// 1. The invariant must survive rebases (which replay committed trees).
+/// 2. A `.gitattributes` that exists only in the working tree and is not
+///    committed is not durable — it won't be present after a `git reset --hard`
+///    or fresh clone.
+///
+/// Fires only when `strategy == Rebase`. FF does not replay commits; merge
+/// uses inline `-c merge.ours.driver=true` which doesn't rely on `.gitattributes`.
+///
+/// If absent, bails with an actionable message naming the file path, the exact
+/// missing line, and the command to fix (`rwv doctor --fix`). Does NOT write
+/// the file — that is `rwv doctor --fix`'s job; sync's invariant is "only
+/// change what the source says to change".
+fn verify_replay_exclusion_invariant(
+    cwd_project_dir: &Path,
+) -> anyhow::Result<()> {
+    let attrs_committed = git_command()
+        .args(["show", "HEAD:.gitattributes"])
+        .current_dir(cwd_project_dir)
+        .output();
+
+    let has_line = match attrs_committed {
+        Ok(ref out) if out.status.success() => {
+            let content = String::from_utf8_lossy(&out.stdout);
+            content
+                .lines()
+                .any(|l| l.trim() == "rwv.lock merge=ours")
+        }
+        // `.gitattributes` is not committed (exit non-zero from `git show`) —
+        // the line is definitely absent.
+        Ok(_) => false,
+        Err(_) => false,
+    };
+
+    if has_line {
+        return Ok(());
+    }
+
+    anyhow::bail!(
+        "sync --strategy=rebase requires `rwv.lock merge=ours` in the project repo's \
+         committed .gitattributes, but {ga} does not contain that line.\n\
+         \n\
+         Without it, git rebase falls back to a 3-way textual merge on rwv.lock, \
+         which conflicts whenever both sides have lock-only commits.\n\
+         \n\
+         To fix: run `rwv doctor --fix` from this workspace, then commit the result:\n\
+           cd {dir}\n\
+           rwv doctor --fix\n\
+           git add .gitattributes && git commit -m \"chore: add rwv.lock replay-exclusion\"",
+        ga = cwd_project_dir.join(".gitattributes").display(),
+        dir = cwd_project_dir.display(),
+    )
+}
+
 fn find_project_name(ctx: &WorkspaceContext) -> anyhow::Result<ProjectName> {
     match &ctx.location {
         WorkspaceLocation::Weave { project: Some(p) } => Ok(p.clone()),
@@ -1526,6 +1590,14 @@ fn run_sync_impl(
     let cwd_project_tip = GitVcs
         .head_revision(&cwd_project_dir)
         .map_err(|e| anyhow::anyhow!("failed to read CWD project HEAD: {e}"))?;
+
+    // Precondition: rebase strategy requires `rwv.lock merge=ours` in the
+    // project repo's committed `.gitattributes`. Without it, `git rebase`
+    // falls back to a 3-way textual merge on rwv.lock — the bug from fo-w9ph9.
+    // Check before any git ops so the operator is never left mid-rebase.
+    if strategy == SyncStrategy::Rebase {
+        verify_replay_exclusion_invariant(&cwd_project_dir)?;
+    }
 
     // Precondition: ff strategy refuses divergence; rebase/merge handle it
     // by replaying CWD's commits onto source's tip with `rwv.lock` excluded.

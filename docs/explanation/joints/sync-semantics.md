@@ -63,6 +63,59 @@ The exclusion mechanism is owned by the VCS layer
 in `.gitattributes` for `rwv.lock`; the merge driver is wired up
 per-rebase invocation so no persistent `.git/config` change is needed.
 
+#### Why rebased lock-only commits drop silently — and why FF keeps them
+
+A lock-only commit is, from the replay's point of view, a husk: its
+diff was computed against its original parent. After rebase onto a
+different parent — one that already has a different lock — the diff
+either conflicts textually (without `merge=ours`) or, with `merge=ours`,
+produces an empty patch. In both cases the semantic the commit captured
+(pinning a specific manifest tip) is unreachable from the new parent:
+Phase 3 will regenerate the correct lock from the post-Phase-2 manifest
+tips regardless.
+
+The empty-patch outcome is what `--empty=drop` and `--no-keep-empty`
+act on: git drops the commit rather than recording an empty change.
+The result is that the history stays linear and meaningful — lock churn
+that happened at an earlier parent isn't replayed as a do-nothing
+commit.
+
+Fast-forward is different. FF does not replay anything — it advances
+the branch pointer, so a lock-only commit retains its original parents
+and its attribution is preserved verbatim. There is no "patch against a
+new parent" step; the commit object doesn't change. FF therefore keeps
+lock-only commits in the history. This is intentional: FF is for the
+clean landing path (workweave → primary, already linear) where history
+fidelity matters more than compaction.
+
+#### The `.gitattributes` precondition for rebase
+
+`--strategy=rebase` depends on `rwv.lock merge=ours` being present in
+the project repo's **committed** `.gitattributes` before the rebase
+starts. If that line is absent, git falls back to a textual 3-way merge
+on `rwv.lock` — which conflicts when both sides have lock-only commits,
+as in the N-way serial landing scenario above.
+
+`sync --strategy=rebase` checks this precondition before any git
+operation and bails with an actionable message if the line is absent:
+
+```
+sync --strategy=rebase requires `rwv.lock merge=ours` in the project
+repo's committed .gitattributes …
+
+To fix: run `rwv doctor --fix` from this workspace …
+```
+
+The check fires against the **committed** file (via `git show
+HEAD:.gitattributes`) not just the working tree, because the invariant
+must survive rebases: an uncommitted `.gitattributes` would not be
+carried through a `git reset --hard` or a fresh clone.
+
+`rwv doctor --fix` is the prescribed repair path: it writes the line,
+leaving a clean commit for the operator to make. Sync intentionally
+does not auto-write the file mid-operation — that would violate sync's
+invariant of "only change what the source says to change".
+
 ### Phase 3 — re-lock + commit
 
 Regenerate `rwv.lock` from the post-Phase-2 manifest tips. If the
