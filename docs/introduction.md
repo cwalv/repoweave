@@ -50,16 +50,12 @@ Then read [hand task to agent](./how-to/hand-task-to-agent.md) for the harness r
 
 ## How the docs are organized
 
-The docs follow the [Diátaxis](https://diataxis.fr) framework — four quadrants, each with one job:
-
 | | What you want | Where to go |
 |---|---|---|
 | **Tutorial** | A first walkthrough | [tutorial.md](./tutorial.md) — one path, no choice points |
 | **How-to** | A focused recipe | [how-to/](./how-to/index.md) — task-shaped, terse |
-| **Explanation** | The "why" and the model | [explanation/lenses/](./explanation/lenses/) (motivational) + [explanation/joints/](./explanation/joints/) (cross-cutting) |
+| **Explanation** | The "why" and the model | [explanation/](./explanation/lenses/workspace.md) — motivational pages plus cross-cutting concepts |
 | **Reference** | Lookup-shaped facts | [reference/](./reference/cli.md) — verbs, file formats, roles, glossary, integrations |
-
-The **lenses** are three ways of looking at repoweave, pitched to different audiences. The **joints** are cross-cutting concepts (lock-as-derived, sync semantics, workweave hierarchy, ...) that all lenses reference — they define the vocabulary.
 
 If you're building or maintaining `rwv` itself, see [contributing/](./contributing/developing.md).
 
