@@ -33,6 +33,14 @@ pub fn git() -> Command {
     for var in GIT_ENV_VARS {
         cmd.env_remove(var);
     }
+    // Make `git` non-interactive. `git rebase --continue` and any other
+    // commit-completing path invoke `$EDITOR` for the commit message. In CI
+    // there is no editor and no TTY, so git aborts with "Terminal is dumb,
+    // but EDITOR unset". `GIT_EDITOR=true` substitutes the `true` command,
+    // which exits 0 without modifying the prepared message — git uses
+    // whatever it already has.
+    cmd.env("GIT_EDITOR", "true");
+    cmd.env("GIT_SEQUENCE_EDITOR", "true");
     cmd
 }
 
