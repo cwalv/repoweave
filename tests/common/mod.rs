@@ -41,6 +41,16 @@ pub fn git() -> Command {
     // whatever it already has.
     cmd.env("GIT_EDITOR", "true");
     cmd.env("GIT_SEQUENCE_EDITOR", "true");
+    // Pin `init.defaultBranch=main` for every subprocess git call. CI runners
+    // don't ship a user-level `init.defaultBranch` config, so `git init`
+    // falls back to `master` and tests that later do `git rev-parse main`
+    // explode. Locally this is invisible because most dev machines have
+    // `init.defaultBranch = main` set globally. Injecting via
+    // `GIT_CONFIG_*` env vars (see git-config(1)) stacks on top of any
+    // existing config without touching files.
+    cmd.env("GIT_CONFIG_COUNT", "1");
+    cmd.env("GIT_CONFIG_KEY_0", "init.defaultBranch");
+    cmd.env("GIT_CONFIG_VALUE_0", "main");
     cmd
 }
 
@@ -55,5 +65,12 @@ pub fn rwv() -> assert_cmd::Command {
     for var in GIT_ENV_VARS {
         cmd.env_remove(var);
     }
+    // Mirror the `init.defaultBranch=main` pin from [`git`] — rwv shells out
+    // to git internally and those subprocesses inherit this env, so any
+    // `git init` rwv runs on behalf of a test gets `main` as the default
+    // branch regardless of CI runner config.
+    cmd.env("GIT_CONFIG_COUNT", "1");
+    cmd.env("GIT_CONFIG_KEY_0", "init.defaultBranch");
+    cmd.env("GIT_CONFIG_VALUE_0", "main");
     cmd
 }
