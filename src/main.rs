@@ -148,7 +148,6 @@ enum Commands {
         project: Option<String>,
     },
     /// Convention enforcement and lock-freshness checking
-    #[command(alias = "check")]
     Doctor {
         /// Zero exit iff every repo's tip matches its rwv.lock entry (scriptable precondition for rwv sync)
         #[arg(long)]

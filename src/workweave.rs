@@ -727,7 +727,7 @@ fn list_workweave_dirs_for_project(
 
 /// Return `(name, path)` pairs for all workweave directories belonging to
 /// `ws_root`'s primary, across every project. Used by `rwv doctor` /
-/// `rwv check` to scan all workweaves for drift.
+/// `rwv doctor` to scan all workweaves for drift.
 pub fn list_workweave_dirs(ws_root: &Path) -> Vec<(String, PathBuf)> {
     let parent = workweave_parent(ws_root);
     let primary_canonical = ws_root

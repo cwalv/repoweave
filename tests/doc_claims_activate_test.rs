@@ -1,4 +1,4 @@
-//! Integration tests for documentation claims about `rwv activate`, `rwv check`,
+//! Integration tests for documentation claims about `rwv activate`, `rwv doctor`,
 //! and the `static-files` integration.
 //!
 //! Tests are keyed to their bead/claim IDs:
@@ -154,7 +154,7 @@ fn workspace_context_from_project_dir_no_subcommand() {
 // ===========================================================================
 // 2. check_missing_role (project-reporoot-85h9)
 //
-// Doc claim: `rwv check` reports entries without a `role` field.
+// Doc claim: `rwv doctor` reports entries without a `role` field.
 //
 // Behavior under test: serde requires `role` because it has no default.
 // We verify whether the error surfaces as a parse failure (serde rejects it)
@@ -177,7 +177,7 @@ fn check_missing_role_field() {
 "#;
     std::fs::write(ws.join("projects/my-project/rwv.yaml"), bad_manifest).unwrap();
 
-    let output = rwv().arg("check").current_dir(&ws).output().unwrap();
+    let output = rwv().arg("doctor").current_dir(&ws).output().unwrap();
 
     // Either serde rejects the manifest at parse time (non-zero exit, stderr
     // contains a parse error) OR the check phase produces a diagnostic.
@@ -216,7 +216,7 @@ fn check_missing_role_field() {
 // 3. check_workweave_drift — extra worktree (project-reporoot-85h9)
 //
 // A git repo directory lives inside the workspace that is not referenced by
-// any project's rwv.yaml.  `rwv check` should report drift (orphan).
+// any project's rwv.yaml.  `rwv doctor` should report drift (orphan).
 // ===========================================================================
 
 #[test]
@@ -228,7 +228,7 @@ fn check_workweave_drift_extra_repo() {
     let extra_repo = ws.join("github/org/extra-repo");
     init_repo_with_commit(&extra_repo);
 
-    let output = rwv().arg("check").current_dir(&ws).output().unwrap();
+    let output = rwv().arg("doctor").current_dir(&ws).output().unwrap();
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);

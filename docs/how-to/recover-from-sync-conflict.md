@@ -57,7 +57,7 @@ After abort, the workspace is in its exact pre-sync state. Discarded commits rem
 
 **Phase 2 (manifest repo) conflict.** A manifest repo's branch needs `rebase` or `merge` to advance, and the cross-history has a genuine textual conflict. Same procedure: resolve in the repo, complete the in-progress VCS op, re-run sync.
 
-**Lock precondition failure.** Sync refused before any repo was touched because `rwv check --locked` failed. Fix the unlocked repos (commit, then `rwv lock`, then commit the lock) and re-run. This is not a conflict — there's no savepoint to abort because nothing was mutated.
+**Lock precondition failure.** Sync refused before any repo was touched because `rwv doctor --locked` failed. Fix the unlocked repos (commit, then `rwv lock`, then commit the lock) and re-run. This is not a conflict — there's no savepoint to abort because nothing was mutated.
 
 ## Related
 

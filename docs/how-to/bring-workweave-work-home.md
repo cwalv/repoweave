@@ -22,7 +22,7 @@ See [sync-semantics](../explanation/joints/sync-semantics.md) for the full phase
 
 ## Preconditions
 
-Before `rwv sync` (or `--retire`) will run, both workspaces must satisfy `rwv check --locked`: each repo's tip must match its `rwv.lock`. Concretely:
+Before `rwv sync` (or `--retire`) will run, both workspaces must satisfy `rwv doctor --locked`: each repo's tip must match its `rwv.lock`. Concretely:
 
 ```bash
 # in the workweave

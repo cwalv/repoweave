@@ -88,7 +88,6 @@ cd .workweaves/payments
 | `rwv remove <path>` | Remove from `rwv.yaml`, re-run integrations. `--delete` removes the clone |
 | `rwv lock` | Snapshot repo HEADs into `rwv.lock`. Errors on uncommitted changes (`--dirty` to bypass) |
 | `rwv doctor` | Convention enforcement: orphans, dangling refs, stale locks, integration checks. `--locked` for scriptable lock-freshness check |
-| `rwv check --locked` | Alias for `rwv doctor --locked` — zero exit iff every repo tip matches its lock entry |
 | `rwv status` | Show per-repo state: branch, tip, lock entry, relation, mid-op state. `--json` for machine-readable output |
 | `rwv sync <source>` | Align CWD workspace with another workspace's committed `rwv.lock`. `--strategy ff\|rebase\|merge`, `--force` to bypass lock-freshness precondition |
 | `rwv abort` | Restore CWD workspace to its pre-sync state using savepoint refs |

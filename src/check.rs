@@ -828,7 +828,7 @@ pub fn restore_working_tree_to_head(repo: &Path) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Execute `rwv check --locked` for the current workspace context.
+/// Execute `rwv doctor --locked` for the current workspace context.
 ///
 /// Compares each repo's HEAD SHA against its `rwv.lock` entry. Outputs per-repo
 /// status to stdout. Returns `Ok(true)` if any repo's tip differs from its lock

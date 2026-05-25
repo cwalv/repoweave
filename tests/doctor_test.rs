@@ -1,4 +1,4 @@
-//! E2E tests for `rwv check` — convention enforcement.
+//! E2E tests for `rwv doctor` — convention enforcement.
 //!
 //! These tests exercise the CLI binary via `assert_cmd`. Tests that depend on
 //! the full check implementation (bead 8b) are marked `#[ignore]`.
@@ -89,7 +89,7 @@ fn rwv_cmd() -> Command {
 }
 
 // ===========================================================================
-// 1. `rwv check` with no issues — clean workspace, exits 0
+// 1. `rwv doctor` with no issues — clean workspace, exits 0
 // ===========================================================================
 
 #[test]
@@ -109,7 +109,7 @@ fn check_clean_workspace_exits_zero() {
         &[(repo_path, "https://github.com/acme/server.git")],
     );
 
-    rwv_cmd().arg("check").current_dir(&root).assert().success();
+    rwv_cmd().arg("doctor").current_dir(&root).assert().success();
 }
 
 // ===========================================================================
@@ -136,7 +136,7 @@ fn check_orphaned_clone_reported() {
     );
 
     rwv_cmd()
-        .arg("check")
+        .arg("doctor")
         .current_dir(&root)
         .assert()
         .failure()
@@ -169,7 +169,7 @@ fn check_dangling_reference_reported() {
     );
 
     rwv_cmd()
-        .arg("check")
+        .arg("doctor")
         .current_dir(&root)
         .assert()
         .failure()
@@ -206,7 +206,7 @@ fn check_stale_lock_reported() {
     );
 
     rwv_cmd()
-        .arg("check")
+        .arg("doctor")
         .current_dir(&root)
         .assert()
         .failure()
@@ -245,11 +245,11 @@ fn check_multi_project_no_false_orphan() {
     );
 
     // Both repos are known across projects — no orphans expected
-    rwv_cmd().arg("check").current_dir(&root).assert().success();
+    rwv_cmd().arg("doctor").current_dir(&root).assert().success();
 }
 
 // ===========================================================================
-// 6. `rwv check` outside a workspace — should error
+// 6. `rwv doctor` outside a workspace — should error
 // ===========================================================================
 
 #[test]
@@ -259,7 +259,7 @@ fn check_outside_workspace_errors() {
     // No workspace markers here — just an empty temp dir
 
     rwv_cmd()
-        .arg("check")
+        .arg("doctor")
         .current_dir(tmp.path())
         .assert()
         .failure()
@@ -300,7 +300,7 @@ integrations:
     // Even with integration hooks, a clean workspace should not error.
     // Any integration warnings should be printed but not cause failure
     // (only errors cause non-zero exit).
-    rwv_cmd().arg("check").current_dir(&root).assert().success();
+    rwv_cmd().arg("doctor").current_dir(&root).assert().success();
 }
 
 // ===========================================================================
@@ -508,7 +508,7 @@ fn check_locked_missing_on_disk_reported_as_drift() {
 }
 
 // ===========================================================================
-// B3: `rwv check` surfaces lock entries referencing unknown revisions.
+// B3: `rwv doctor` surfaces lock entries referencing unknown revisions.
 // ===========================================================================
 
 /// If the lock pins a SHA the local clone has never seen, `resolve_versions`
@@ -540,7 +540,7 @@ fn check_flags_unresolvable_lock_revision() {
         )],
     );
 
-    let assert = rwv_cmd().arg("check").current_dir(&root).assert().failure();
+    let assert = rwv_cmd().arg("doctor").current_dir(&root).assert().failure();
     let out = String::from_utf8_lossy(&assert.get_output().stdout).into_owned();
     assert!(
         out.contains("lock references unknown revision"),
@@ -549,7 +549,7 @@ fn check_flags_unresolvable_lock_revision() {
 }
 
 // ===========================================================================
-// B4: `rwv check` surfaces on-disk repos whose HEAD can't be read.
+// B4: `rwv doctor` surfaces on-disk repos whose HEAD can't be read.
 // ===========================================================================
 
 /// A repo that's on disk but whose HEAD is unreadable (e.g. corrupted .git
@@ -576,7 +576,7 @@ fn check_flags_unreadable_head() {
     let head_file = root.join(repo_path).join(".git/HEAD");
     std::fs::write(&head_file, "ref: refs/heads/nonexistent\n").unwrap();
 
-    let assert = rwv_cmd().arg("check").current_dir(&root).assert().failure();
+    let assert = rwv_cmd().arg("doctor").current_dir(&root).assert().failure();
     let out = String::from_utf8_lossy(&assert.get_output().stdout).into_owned();
     assert!(
         out.contains("HEAD unreadable"),
@@ -585,14 +585,14 @@ fn check_flags_unreadable_head() {
 }
 
 // ===========================================================================
-// Smoke test: `rwv check` CLI command is recognized
+// Smoke test: `rwv doctor` CLI command is recognized
 // ===========================================================================
 
 #[test]
-fn check_command_is_recognized() {
+fn doctor_command_is_recognized() {
     // The command should parse successfully (not fail with "unrecognized subcommand").
     rwv_cmd()
-        .arg("check")
+        .arg("doctor")
         .assert()
         .stdout(predicate::str::contains("unrecognized").not());
 }
@@ -618,7 +618,7 @@ fn check_warns_when_project_missing_replay_exclusion() {
         &[(repo_path, "https://github.com/acme/server.git")],
     );
 
-    rwv_cmd().arg("check").current_dir(&root).assert().stdout(
+    rwv_cmd().arg("doctor").current_dir(&root).assert().stdout(
         predicate::str::contains("rwv.lock merge=ours")
             .and(predicate::str::contains("my-app"))
             .and(predicate::str::contains("rwv doctor --fix")),
@@ -644,25 +644,25 @@ fn check_fix_writes_replay_exclusion() {
     assert!(!project_dir.join(".gitattributes").exists());
 
     rwv_cmd()
-        .args(["check", "--fix"])
+        .args(["doctor", "--fix"])
         .current_dir(&root)
         .assert()
         .stdout(predicate::str::contains("rwv.lock merge=ours"));
 
     // Post-condition: .gitattributes now contains the line, and re-running
-    // `rwv check` no longer warns about this project.
+    // `rwv doctor` no longer warns about this project.
     let attrs = std::fs::read_to_string(project_dir.join(".gitattributes")).unwrap();
     assert!(
         attrs.contains("rwv.lock merge=ours"),
         "post-fix .gitattributes should contain the line; got: {attrs:?}"
     );
 
-    let assertion = rwv_cmd().arg("check").current_dir(&root).assert();
+    let assertion = rwv_cmd().arg("doctor").current_dir(&root).assert();
     let output = assertion.get_output();
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
         !stdout.contains("missing `rwv.lock merge=ours`"),
-        "post-fix check must not re-warn; got stdout: {stdout}"
+        "post-fix doctor must not re-warn; got stdout: {stdout}"
     );
 }
 
@@ -1319,11 +1319,11 @@ fn check_silent_when_project_has_replay_exclusion() {
     );
     std::fs::write(project_dir.join(".gitattributes"), "rwv.lock merge=ours\n").unwrap();
 
-    let assertion = rwv_cmd().arg("check").current_dir(&root).assert();
+    let assertion = rwv_cmd().arg("doctor").current_dir(&root).assert();
     let output = assertion.get_output();
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
         !stdout.contains("missing `rwv.lock merge=ours`"),
-        "check must not warn when the line is present; got stdout: {stdout}"
+        "doctor must not warn when the line is present; got stdout: {stdout}"
     );
 }

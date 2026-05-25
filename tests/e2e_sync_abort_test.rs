@@ -1,4 +1,4 @@
-//! E2E integration tests for `rwv sync`, `rwv abort`, `rwv check --locked`, and `rwv status`.
+//! E2E integration tests for `rwv sync`, `rwv abort`, `rwv doctor --locked`, and `rwv status`.
 //!
 //! These are the acceptance criteria for fo-wws-sync (rwv sync) and fo-wws-abort (rwv abort).
 //! They are expected to FAIL until those implementations land.
@@ -249,7 +249,7 @@ fn sync_without_source_outside_workweave_errors() {
 }
 
 // ---------------------------------------------------------------------------
-// rwv check --locked
+// rwv doctor --locked
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -257,7 +257,7 @@ fn check_locked_passes_when_lock_matches_head() {
     let tmp = tempfile::tempdir().unwrap();
     let (ws, _) = make_locked_workspace(tmp.path(), "primary");
     rwv()
-        .args(["check", "--locked"])
+        .args(["doctor", "--locked"])
         .current_dir(&ws.root)
         .assert()
         .success();
@@ -272,7 +272,7 @@ fn check_locked_fails_when_repo_has_advanced_past_lock() {
     make_commit(&ws.server_dir, "extra.txt", "extra\n", "advance past lock");
 
     rwv()
-        .args(["check", "--locked"])
+        .args(["doctor", "--locked"])
         .current_dir(&ws.root)
         .assert()
         .failure()

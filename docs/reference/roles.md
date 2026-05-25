@@ -114,7 +114,7 @@ The `owned` role was previously spelled `primary`. The rename to `owned` resolve
 **Manifests using `role: primary` must be migrated via `rwv doctor --fix`; the parser does not accept the legacy spelling.** A `rwv.yaml` carrying `role: primary` fails to load with a message directing you at `rwv doctor --fix`:
 
 ```
-$ rwv check
+$ rwv doctor
 error: failed to parse rwv.yaml at projects/<name>/rwv.yaml: manifest uses the deprecated `role: primary` spelling; run `rwv doctor --fix` to migrate to `role: owned`
 ```
 
