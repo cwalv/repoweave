@@ -446,6 +446,8 @@ pub struct WorkweaveConfig {
 /// - [`Manifest::iter_repo_paths`] — iterate over every [`RepoPath`] key.
 /// - [`Manifest::get_entry`] — look up a single [`RepoEntry`] by path.
 /// - [`Manifest::iter_entries`] — iterate over `(path, entry)` pairs.
+/// - [`Manifest::len`] — number of repositories.
+/// - [`Manifest::is_empty`] — true when there are no repositories.
 ///
 /// The `repositories` field is currently `pub` for backwards-compat while
 /// call-site migrations (fo-lokti.2, fo-lokti.3) are in progress. Once those
@@ -485,6 +487,22 @@ impl Manifest {
     /// needed, and [`get_entry`][Self::get_entry] for random access.
     pub fn iter_entries(&self) -> impl Iterator<Item = (&RepoPath, &RepoEntry)> {
         self.repositories.iter()
+    }
+
+    /// Return the number of repositories in the manifest.
+    ///
+    /// Equivalent to `manifest.repositories.len()` but avoids direct field
+    /// access. Prefer this over touching `repositories` directly.
+    pub fn len(&self) -> usize {
+        self.repositories.len()
+    }
+
+    /// Return `true` if the manifest contains no repositories.
+    ///
+    /// Equivalent to `manifest.repositories.is_empty()` but avoids direct
+    /// field access. Prefer this over touching `repositories` directly.
+    pub fn is_empty(&self) -> bool {
+        self.repositories.is_empty()
     }
 
     /// Load from a YAML file.
@@ -1596,5 +1614,43 @@ repositories:
             assert_eq!(entry.role, looked_up.role);
             assert_eq!(entry.version, looked_up.version);
         }
+    }
+
+    // -- len / is_empty -------------------------------------------------------
+
+    #[test]
+    fn len_empty_manifest() {
+        let m: Manifest = serde_yaml::from_str("repositories: {}\n").unwrap();
+        assert_eq!(m.len(), 0);
+    }
+
+    #[test]
+    fn len_single_repo() {
+        let m: Manifest = serde_yaml::from_str(MINIMAL_MANIFEST).unwrap();
+        assert_eq!(m.len(), 1);
+    }
+
+    #[test]
+    fn len_multi_repo() {
+        let m: Manifest = serde_yaml::from_str(VALID_MANIFEST).unwrap();
+        assert_eq!(m.len(), 2);
+    }
+
+    #[test]
+    fn is_empty_empty_manifest() {
+        let m: Manifest = serde_yaml::from_str("repositories: {}\n").unwrap();
+        assert!(m.is_empty());
+    }
+
+    #[test]
+    fn is_empty_single_repo() {
+        let m: Manifest = serde_yaml::from_str(MINIMAL_MANIFEST).unwrap();
+        assert!(!m.is_empty());
+    }
+
+    #[test]
+    fn is_empty_multi_repo() {
+        let m: Manifest = serde_yaml::from_str(VALID_MANIFEST).unwrap();
+        assert!(!m.is_empty());
     }
 }
