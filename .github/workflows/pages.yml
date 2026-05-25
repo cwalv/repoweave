@@ -25,6 +25,14 @@ jobs:
         with:
           mdbook-version: latest
 
+      - name: Install mdbook-mermaid
+        uses: taiki-e/install-action@v2
+        with:
+          tool: mdbook-mermaid
+
+      - name: Generate mermaid assets
+        run: mdbook-mermaid install .
+
       - name: Build docs
         run: mdbook build
 

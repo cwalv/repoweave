@@ -12,6 +12,27 @@ In a monorepo, you change a library and its consumer in the same commit. In a po
 
 repoweave eliminates the development-time version dance by generating ecosystem workspace files (`package.json` workspaces, `go.work`, `Cargo.toml`'s `[workspace]`, etc.) that point at the local clones. To the build tool, the manifest repos *are* the workspace members — it doesn't look on the registry for `@chatly/protocol`, it looks in `github/chatly/protocol/` on disk.
 
+```mermaid
+flowchart LR
+    subgraph Before["Before: every dev iteration"]
+        L1[shared lib]
+        R1[(registry)]
+        CA1[consumer A]
+        CB1[consumer B]
+        L1 -->|"bump + publish"| R1
+        R1 -->|"reinstall"| CA1
+        R1 -->|"reinstall"| CB1
+    end
+
+    subgraph After["After: workspace files point at local clones"]
+        L2[shared lib<br/>local clone]
+        CA2[consumer A]
+        CB2[consumer B]
+        L2 -->|"import"| CA2
+        L2 -->|"import"| CB2
+    end
+```
+
 The iteration loop collapses from minutes (or hours) down to seconds:
 
 ```bash
@@ -23,7 +44,19 @@ cargo test --workspace             # picks up the new protocol immediately
 
 No bump, no publish, no install. This collapses the feedback loop enough that small, iterative refactors that would otherwise be "too much work" become the default.
 
-The version dance is *deferred* to release time, where it happens once instead of every iteration. Ecosystem tools (Cargo, Go, npm) catch incompatible version bumps during development — you discover constraint mismatches in the workspace before publishing, not after. See [release a package](../../how-to/release-a-package.md) for the release-time recipe.
+### Three cadences, stacked
+
+"Eliminates the version dance" is true at dev-iteration time, but the win is bigger than that — it amortizes across three distinct cadences:
+
+| Cadence | Frequency | Version dance? |
+|---|---|---|
+| **Dev iteration** (edit-test-iterate) | Many per day | None. Workspace points at local clones. |
+| **Project release / deploy** | Many per week | None. The project's `rwv.lock` *is* the release artifact: it pins every constituent repo at a specific SHA. Cutting a tag on the project repo names a coherent multi-repo state without bumping any constituent-repo version. |
+| **External-consumer release** of a constituent repo | Monthly, quarterly, or on demand | The dance lives here, at the *external consumer's* cadence. |
+
+For constituent repos with no external consumers — common in proprietary projects where most repos are services or internal components — no semver is needed at all; the project lock is sufficient. For repos that do publish externally, the dance moves from every-dev-iteration cadence (painful) to external-consumer cadence (rare, usually negligible).
+
+Ecosystem tools (Cargo, Go, npm) catch incompatible bumps during development — you discover constraint mismatches in the workspace before publishing, not after. See [release a package](../../how-to/release-a-package.md) for the external-release recipe.
 
 ## The pyramid of stability
 

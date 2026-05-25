@@ -31,20 +31,16 @@ recording is the project's job, not any individual repo's.
 
 Real projects have multiple canonical tips, not one. A working metaphor:
 
-```
-                    release tag (immutable)
-                          ▲
-                          │ promote
-                          │
-                    stable branch
-                          ▲
-                          │ promote
-                          │
-                    default branch  ← project repo HEAD on `main`
-                          ▲
-                          │ commit
-                          │
-                    workweave branches (in flight)
+```mermaid
+flowchart BT
+    W[workweave branches<br/>in flight]
+    D[default branch<br/>project repo HEAD on main]
+    S[stable branch<br/>release-gated]
+    R[release tag<br/>immutable]
+
+    W -->|commit / sync| D
+    D -->|promote| S
+    S -->|cut tag| R
 ```
 
 Each tier is a *channel* — a place a collaborator might point `rwv

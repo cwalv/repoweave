@@ -11,6 +11,9 @@ Cargo.lock
 
 # mdbook output
 /book/
+# mdbook-mermaid generated assets (created by `mdbook-mermaid install .`)
+/mermaid.min.js
+/mermaid-init.js
 tests/fixtures/**/target/
 tests/fixtures/**/dist/
 tests/fixtures/**/node_modules/

@@ -7,5 +7,9 @@ src = "docs"
 [build]
 build-dir = "book"
 
+[preprocessor.mermaid]
+command = "mdbook-mermaid"
+
 [output.html]
 git-repository-url = "https://github.com/cwalv/repoweave"
+additional-js = ["mermaid.min.js", "mermaid-init.js"]

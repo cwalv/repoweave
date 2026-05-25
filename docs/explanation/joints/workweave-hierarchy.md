@@ -33,11 +33,23 @@ ancestor.
 
 ## Flow direction
 
-Work flows along edges of the tree in a specific direction:
+Work flows along edges of the tree in a specific direction. Creation
+runs down the edges (solid); sync runs back up them (dotted):
 
-```
-primary → workweave → child workweave    (creation, fetch)
-primary ← workweave ← child workweave    (sync, retire)
+```mermaid
+flowchart TD
+    P[primary weave]
+    A[workweave A]
+    AC[workweave A-child]
+    B[workweave B]
+
+    P -->|create| A
+    P -->|create| B
+    A -->|create| AC
+
+    A -.->|rwv sync| P
+    B -.->|rwv sync| P
+    AC -.->|rwv sync| A
 ```
 
 - **Creation direction** (primary → workweave). `rwv workweave create`

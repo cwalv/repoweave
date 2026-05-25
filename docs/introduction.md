@@ -1,11 +1,15 @@
 # Introduction
 
-**repoweave** coordinates work across multiple repositories that share a project. It gives you:
+**repoweave** coordinates work across multiple repos that share a project. It gives you:
 
-- **Monorepo ergonomics** — cross-repo imports resolve locally; no version-bump dance during development.
-- **Polyrepo sovereignty** — repos stay independent, separately ownable, with normal git history.
-- **Reproducibility** — a single `rwv.lock` pins every repo to an exact revision; `rwv fetch` reproduces the whole world from one URL.
-- **Isolation on demand** — workweaves give you parallel, sandboxed copies of an entire workspace without disturbing the primary weave.
+- **A committable manifest and lock.** `rwv.yaml` says which repos belong; `rwv.lock` pins every revision. `sha256sum rwv.lock` is the project fingerprint — the multi-repo equivalent of `git rev-parse HEAD`.
+- **One-command reproduction.** `rwv fetch <url>` clones the project and every repo it lists, generates ecosystem workspace files where they apply, and runs install commands. New machine to working environment in one step.
+- **A home for cross-cutting artifacts.** Operational scripts, k8s manifests, demos, design notes, decision records — anything that doesn't belong to a single library — lives in the project repo without contaminating any library's commit history.
+- **Isolated parallel work via workweaves.** Worktree-derived sandboxed copies of the whole workspace. Use them for feature branches, PR review, or agent sandboxes; the primary weave stays undisturbed.
+- **Structured agent context.** `rwv prime` and `rwv explain --json` give AI harnesses a machine-readable view of the workspace, with roles (`owned` / `fork` / `dependency` / `reference`) acting as a read-only allow-list.
+- **Local cross-repo imports where languages line up.** Generated workspace files (`Cargo.toml [workspace]`, `go.work`, `package.json` workspaces, `pyproject.toml [tool.uv.workspace]`, ...) mean a change in a shared library is immediately visible to its consumer — no publish step during development.
+
+The repos themselves stay independent — separately ownable, with normal git history. repoweave is a coordination layer, not a monorepo migration. You still commit and push per repo; the project lock and ecosystem wiring make that feel less expensive than it usually does.
 
 The fundamental unit is the **project**: a small repo at `projects/<name>/` carrying a manifest (`rwv.yaml`) of which repos belong to the project, a lock (`rwv.lock`) pinning their revisions, and any cross-cutting docs. `rwv fetch <project-url>` clones the project repo and every repo it lists; one command, complete environment.
 
@@ -13,12 +17,14 @@ The fundamental unit is the **project**: a small repo at `projects/<name>/` carr
 
 You'll get the most out of repoweave if any of these describe your setup:
 
-- A product that spans **two or more repositories** that have to work together.
+- A product that spans **two or more repos** that have to work together.
+- A **single product whose source build needs sibling clones** — your README says "clone these seven repos next to this one" but nothing pins the revisions.
 - A **shared internal library** consumed by other repos in your project.
 - An ambition to do **agent-driven refactoring** across repos with safe blast radius.
 - An existing **polyrepo setup** suffering from "wrong-version clone" ambient confusion.
+- **Cross-cutting artifacts** (scripts, manifests, demos, decision records) that have nowhere obvious to live.
 
-You can use repoweave with a single repo, but most of the value shows up at N ≥ 2.
+The unit is *repos your dev environment depends on*, not *repos under your project directory*. A project that looks like one repo from the outside can still be a strong fit if its build pulls in several siblings.
 
 ## Where to start
 
