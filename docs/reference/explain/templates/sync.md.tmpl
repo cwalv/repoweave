@@ -2,16 +2,22 @@
 
 ## Purpose
 
-Reconcile each repo in the active project (or all projects in a weave) with
-its locked SHA, using a rebase-or-merge strategy chosen per-repo. `sync` is
-the central convergence command: it advances behind repos to the lock,
-records new locks when repos are ahead, and surfaces conflicts as
-structured outcomes rather than aborting the whole run.
+Replicate accepted commits between two workspaces — typically a workweave
+and its parent — with `--strategy=ff|rebase|merge` applied uniformly across
+the manifest's repos. The source workspace's `rwv.lock` drives Phase 2:
+each manifest repo in the destination is advanced to the SHA the source has
+locked. Phase 1' then replays the destination's unique project-repo commits
+onto the source's tip (with `rwv.lock` excluded so lock-only commits become
+no-ops). Phase 3 regenerates the destination's `rwv.lock` from the
+now-merged manifest tips and commits it. `--retire` syncs the current
+workweave back to its parent and deletes it on success. Per-repo conflicts
+are reported with non-zero exit; already-converged repos are no-ops, so
+re-runs are cheap.
 
 The wire shape is engineered for agent consumption: each per-repo outcome
 is a tagged record whose `kind` tells the agent what to do next (retry,
 abort, escalate to a human). Failures embed a `failure` sub-record with its
-own variant tag (e.g. `rebase-conflict`, `network-error`).
+own variant tag (e.g. `rebase-failed`, `ff-impossible`).
 
 ## Invocation
 
@@ -25,6 +31,11 @@ rwv sync [<source>] [--json] [--strategy <ff|rebase|merge>] [-j <N>] [--force] [
 - `--strategy` picks the reconciliation strategy (`ff` default, `rebase`,
   or `merge`). `rebase`/`merge` replay CWD's project commits onto the
   source tip with `rwv.lock` excluded.
+- `--force` bypasses both the lock-freshness precondition and the
+  ff-strategy ancestor check. For the project repo it performs a hard-reset
+  to the source tip, discarding any destination-only commits; the pre-op
+  savepoint is kept as a tombstone at `refs/rwv/pre-op/<id>` so `git reset
+  --hard` can recover them manually.
 - `-j <N>` runs up to `N` per-repo manifest syncs (Phase 2) in parallel.
   Default is `1` (serial), unlike `rwv fetch` / `rwv update` whose default
   auto-resolves to a small worker pool. Sync's default is `1` so that
