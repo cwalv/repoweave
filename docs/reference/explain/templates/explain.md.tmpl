@@ -28,6 +28,7 @@ rwv explain [<verb>]
 
 - With no argument, prints the index of explainable verbs.
 - With a verb, prints that verb's markdown bundle.
+- `check` is accepted as an alias for `doctor`.
 - Unknown verbs return non-zero with a friendly pointer to the index.
 
 Run `rwv --help explain` for the full clap surface.
