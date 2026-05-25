@@ -566,18 +566,20 @@ mod tests {
 
     #[test]
     fn project_name_from_file_url() {
-        assert_eq!(
-            project_name_from_source("file:///tmp/project.git"),
-            "project"
+        let url = format!(
+            "file://{}",
+            std::env::temp_dir().join("project.git").display()
         );
+        assert_eq!(project_name_from_source(&url), "project");
     }
 
     #[test]
     fn project_name_from_file_url_trailing_slash() {
-        assert_eq!(
-            project_name_from_source("file:///tmp/project.git/"),
-            "project"
+        let url = format!(
+            "file://{}/",
+            std::env::temp_dir().join("project.git").display()
         );
+        assert_eq!(project_name_from_source(&url), "project");
     }
 
     #[test]
@@ -611,8 +613,11 @@ mod tests {
 
     #[test]
     fn resolve_source_passes_through_file_urls() {
-        let url = "file:///tmp/repo.git";
-        let (resolved_url, owner) = resolve_source(url).unwrap();
+        let url = format!(
+            "file://{}",
+            std::env::temp_dir().join("repo.git").display()
+        );
+        let (resolved_url, owner) = resolve_source(&url).unwrap();
         assert_eq!(resolved_url.to_string(), url);
         // file:// URLs that don't match any registry have an empty owner
         let _ = owner; // owner may be empty or a path segment; just verify no panic

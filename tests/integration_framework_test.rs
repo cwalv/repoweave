@@ -137,9 +137,10 @@ fn active_repos_excludes_reference() {
     let project = ProjectName::new("test-project");
     let config = IntegrationConfig::default();
     let cache = HashMap::new();
+    let tmp = TempDir::new().unwrap();
     let ctx = IntegrationContext {
-        output_dir: Path::new("/tmp/test"),
-        workspace_root: Path::new("/tmp/test"),
+        output_dir: tmp.path(),
+        workspace_root: tmp.path(),
         project: &project,
         repos: &repos,
         config: &config,
@@ -164,9 +165,10 @@ fn active_repos_includes_primary_fork_dependency() {
     let project = ProjectName::new("test-project");
     let config = IntegrationConfig::default();
     let cache = HashMap::new();
+    let tmp = TempDir::new().unwrap();
     let ctx = IntegrationContext {
-        output_dir: Path::new("/tmp/test"),
-        workspace_root: Path::new("/tmp/test"),
+        output_dir: tmp.path(),
+        workspace_root: tmp.path(),
         project: &project,
         repos: &repos,
         config: &config,

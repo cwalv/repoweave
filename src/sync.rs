@@ -2446,8 +2446,10 @@ mod tests {
 
     #[test]
     fn sync_source_parses_absolute_path() {
-        let parsed: SyncSource = "/tmp/some/path".parse().unwrap();
-        assert_eq!(parsed, SyncSource::Path(PathBuf::from("/tmp/some/path")));
+        let abs_path = std::env::temp_dir().join("some/path");
+        let abs_str = abs_path.to_str().unwrap();
+        let parsed: SyncSource = abs_str.parse().unwrap();
+        assert_eq!(parsed, SyncSource::Path(abs_path));
     }
 
     #[test]

@@ -1206,19 +1206,23 @@ mod tests {
 
     #[test]
     fn claude_hook_input_deserialises_fully() {
-        let json = r#"{
+        let wt_path = std::env::temp_dir().join("wt");
+        let wt_str = wt_path.to_str().unwrap();
+        let json = format!(
+            r#"{{
             "cwd": "/home/user/ws",
             "branch_name": "feat/new-thing",
             "session_id": "sess-001",
             "hook_event_name": "WorktreeCreate",
-            "worktree_path": "/tmp/wt"
-        }"#;
-        let input: ClaudeHookInput = serde_json::from_str(json).unwrap();
+            "worktree_path": "{wt_str}"
+        }}"#
+        );
+        let input: ClaudeHookInput = serde_json::from_str(&json).unwrap();
         assert_eq!(input.cwd.as_deref(), Some("/home/user/ws"));
         assert_eq!(input.branch_name.as_deref(), Some("feat/new-thing"));
         assert_eq!(input.session_id.as_deref(), Some("sess-001"));
         assert_eq!(input.hook_event_name.as_deref(), Some("WorktreeCreate"));
-        assert_eq!(input.worktree_path.as_deref(), Some("/tmp/wt"));
+        assert_eq!(input.worktree_path.as_deref(), Some(wt_str));
     }
 
     #[test]
