@@ -2425,3 +2425,261 @@ fn bare_sync_outside_workweave_errors_clearly() {
         .failure()
         .stderr(predicate::str::contains("workweave").or(predicate::str::contains("source")));
 }
+
+// ============================================================================
+// Pre-flight HEAD check (fo-cc40k.1)
+// ============================================================================
+
+/// Build a workspace where the project directory is a git-init'd repo with
+/// NO commits yet. This mirrors the state after `rwv init <project>` before
+/// any activation artifacts are committed.
+///
+/// Layout:
+///   {tmp}/ws/                          -- workspace root
+///   {tmp}/ws/github/                   -- registry marker
+///   {tmp}/ws/projects/{project}/       -- git-init'd but NO commits
+///   {tmp}/ws/github/org/repo/          -- manifest repo (has commits)
+fn make_workspace_with_uncommitted_project(tmp: &Path, project: &str) -> std::path::PathBuf {
+    let ws = tmp.join("ws");
+    let repo_path = ws.join("github/org/repo");
+    init_repo_with_commit(&repo_path);
+
+    let project_dir = ws.join("projects").join(project);
+    std::fs::create_dir_all(&project_dir).unwrap();
+    // git init — no commit.
+    let status = common::git()
+        .args(["init", "--initial-branch=main"])
+        .current_dir(&project_dir)
+        .status()
+        .expect("git init should work");
+    assert!(status.success(), "git init in project dir should succeed");
+    common::git()
+        .args(["config", "user.email", "test@test.com"])
+        .current_dir(&project_dir)
+        .status()
+        .ok();
+    common::git()
+        .args(["config", "user.name", "Test"])
+        .current_dir(&project_dir)
+        .status()
+        .ok();
+
+    let manifest = format!(
+        r#"repositories:
+  github/org/repo:
+    type: git
+    url: file://{repo}
+    version: main
+    role: owned
+"#,
+        repo = repo_path.display()
+    );
+    std::fs::write(project_dir.join("rwv.yaml"), manifest).unwrap();
+    // NOTE: rwv.yaml is NOT committed — no commit exists yet.
+
+    ws
+}
+
+/// Build a workspace where one manifest repo has been git-init'd but has no
+/// commits yet. The project repo is fine; this exercises the manifest-repo
+/// preflight path.
+fn make_workspace_with_uncommitted_manifest_repo(
+    tmp: &Path,
+    project: &str,
+) -> std::path::PathBuf {
+    let ws = tmp.join("ws");
+
+    // Good manifest repo.
+    let good_repo = ws.join("github/org/good");
+    init_repo_with_commit(&good_repo);
+
+    // Bad manifest repo — git-init'd, no commits.
+    let bad_repo = ws.join("github/org/empty");
+    std::fs::create_dir_all(&bad_repo).unwrap();
+    let status = common::git()
+        .args(["init", "--initial-branch=main"])
+        .current_dir(&bad_repo)
+        .status()
+        .expect("git init should work");
+    assert!(status.success());
+    common::git()
+        .args(["config", "user.email", "test@test.com"])
+        .current_dir(&bad_repo)
+        .status()
+        .ok();
+    common::git()
+        .args(["config", "user.name", "Test"])
+        .current_dir(&bad_repo)
+        .status()
+        .ok();
+
+    let project_dir = ws.join("projects").join(project);
+    std::fs::create_dir_all(&project_dir).unwrap();
+
+    let manifest = format!(
+        r#"repositories:
+  github/org/good:
+    type: git
+    url: file://{good}
+    version: main
+    role: owned
+  github/org/empty:
+    type: git
+    url: file://{bad}
+    version: main
+    role: owned
+"#,
+        good = good_repo.display(),
+        bad = bad_repo.display()
+    );
+    std::fs::write(project_dir.join("rwv.yaml"), manifest).unwrap();
+
+    ws
+}
+
+/// Core assertion: create fails, error names the path, no workweave dir left.
+fn assert_preflight_fails_with_actionable_message(
+    ws: &std::path::Path,
+    weaveroot: &std::path::Path,
+    project: &str,
+    ww_name: &str,
+    expected_path_fragment: &str,
+) {
+    let assert = rwv()
+        .args(["workweave", project, "create", ww_name])
+        .env("RWV_WORKWEAVE_DIR", weaveroot)
+        .current_dir(ws)
+        .assert()
+        .failure();
+
+    let output = assert.get_output();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    // Error must name the specific path.
+    assert!(
+        stderr.contains(expected_path_fragment),
+        "preflight error should name the path '{expected_path_fragment}', got:\n{stderr}"
+    );
+
+    // Error must mention "no commits" or "commit" so the user knows what to do.
+    assert!(
+        stderr.contains("commit"),
+        "preflight error should mention 'commit' as the fix, got:\n{stderr}"
+    );
+
+    // No partial workweave directory should be left on disk.
+    let ww_dir = weaveroot.join(format!("{project}--{ww_name}"));
+    assert!(
+        !ww_dir.exists(),
+        "preflight failure should leave no partial workweave directory at {}",
+        ww_dir.display()
+    );
+}
+
+#[test]
+fn create_workweave_fails_actionably_when_project_repo_has_no_commits() {
+    // Regression test for fo-cc40k failure mode 1: project git-init'd but not committed.
+    // The pre-flight check must fire before any disk mutation and produce an
+    // error that names projects/<project> and tells the user to commit.
+    let tmp = tempfile::tempdir().unwrap();
+    let ws = make_workspace_with_uncommitted_project(tmp.path(), "fresh-project");
+
+    let weaveroot = tmp.path().join(".workweaves");
+    std::fs::create_dir_all(&weaveroot).unwrap();
+
+    assert_preflight_fails_with_actionable_message(
+        &ws,
+        &weaveroot,
+        "fresh-project",
+        "preflight-check",
+        // Error must name the project.
+        "fresh-project",
+    );
+}
+
+#[test]
+fn create_workweave_preflight_error_names_project_path() {
+    // Verify the exact shape of the error message matches the bead spec:
+    //   "project <name> has no commits yet — run "git -C projects/<name> commit" ..."
+    let tmp = tempfile::tempdir().unwrap();
+    let ws = make_workspace_with_uncommitted_project(tmp.path(), "myproj");
+
+    let weaveroot = tmp.path().join(".workweaves");
+    std::fs::create_dir_all(&weaveroot).unwrap();
+
+    let output = rwv()
+        .args(["workweave", "myproj", "create", "check-msg"])
+        .env("RWV_WORKWEAVE_DIR", &weaveroot)
+        .current_dir(&ws)
+        .assert()
+        .failure()
+        .get_output()
+        .stderr
+        .clone();
+
+    let stderr = String::from_utf8_lossy(&output);
+
+    // Must name the project by name.
+    assert!(
+        stderr.contains("myproj"),
+        "error must name the project 'myproj', got:\n{stderr}"
+    );
+
+    // Must tell the user to commit.
+    assert!(
+        stderr.contains("commit"),
+        "error must suggest running a commit, got:\n{stderr}"
+    );
+
+    // Must not leave a workweave directory.
+    let ww_dir = weaveroot.join("myproj--check-msg");
+    assert!(
+        !ww_dir.exists(),
+        "no workweave directory should exist after preflight failure"
+    );
+}
+
+#[test]
+fn create_workweave_fails_actionably_when_manifest_repo_has_no_commits() {
+    // Verify that the preflight check also fires for manifest repos (not just
+    // the project repo). The error must name the specific repo path.
+    let tmp = tempfile::tempdir().unwrap();
+    let ws =
+        make_workspace_with_uncommitted_manifest_repo(tmp.path(), "multiproj");
+
+    let weaveroot = tmp.path().join(".workweaves");
+    std::fs::create_dir_all(&weaveroot).unwrap();
+
+    assert_preflight_fails_with_actionable_message(
+        &ws,
+        &weaveroot,
+        "multiproj",
+        "manifest-preflight",
+        // Error must name the specific repo path.
+        "github/org/empty",
+    );
+}
+
+#[test]
+fn create_workweave_succeeds_when_all_repos_have_commits() {
+    // Positive control: a well-formed workspace (all repos have commits) should
+    // sail through the preflight check without error.
+    let tmp = tempfile::tempdir().unwrap();
+    let ws = make_workspace(tmp.path(), "good-project");
+
+    let weaveroot = tmp.path().join(".workweaves");
+    std::fs::create_dir_all(&weaveroot).unwrap();
+
+    rwv()
+        .args(["workweave", "good-project", "create", "preflight-ok"])
+        .env("RWV_WORKWEAVE_DIR", &weaveroot)
+        .current_dir(&ws)
+        .assert()
+        .success();
+
+    let ww_dir = weaveroot.join("good-project--preflight-ok");
+    assert!(
+        ww_dir.exists(),
+        "workweave should be created successfully when all repos have commits"
+    );
+}

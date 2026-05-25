@@ -247,6 +247,64 @@ impl Drop for CreateRollbackGuard {
     }
 }
 
+/// Pre-flight check: verify that every git repo involved in a workweave create
+/// has at least one commit (i.e., HEAD resolves).
+///
+/// Checks:
+/// - The project repo at `source_root/projects/<project>/` (if it is a git repo).
+/// - Every repo listed in `manifest.repositories` at `source_root/<repo_path>/`.
+///
+/// Returns `Ok(())` when all repos are commit-bearing. Returns a structured
+/// error naming every missing-HEAD path and the suggested fix for each.
+///
+/// Designed to be called BEFORE any disk mutation so that a fresh-project
+/// failure leaves no partial workweave directory on disk.
+///
+/// Siblings `.2` (rollback) and `.3` (--force prune) may call this same
+/// function before their own mutations.
+pub fn preflight_check_heads(
+    source_root: &Path,
+    project: &ProjectName,
+    manifest: &Manifest,
+) -> anyhow::Result<()> {
+    let mut missing: Vec<String> = Vec::new();
+
+    // Check project repo.
+    let project_dir = source_root.join("projects").join(project.as_str());
+    if GitVcs.is_repo(&project_dir) && GitVcs.head_revision(&project_dir).is_err() {
+        missing.push(format!(
+            "project {name} has no commits yet — run \
+             \"git -C projects/{name} commit\" to land the activate-generated \
+             artifacts before creating a workweave.",
+            name = project.as_str(),
+        ));
+    }
+
+    // Check each manifest repo.
+    for (repo_path, entry) in &manifest.repositories {
+        let vcs = vcs_for(entry.vcs_type);
+        let repo_abs = source_root.join(repo_path.as_path());
+        if vcs.is_repo(&repo_abs) && vcs.head_revision(&repo_abs).is_err() {
+            missing.push(format!(
+                "repo {path} has no commits yet — run \
+                 \"git -C {path} commit\" to create an initial commit before \
+                 creating a workweave.",
+                path = repo_path.as_str(),
+            ));
+        }
+    }
+
+    if missing.is_empty() {
+        return Ok(());
+    }
+
+    bail!(
+        "rwv workweave create: cannot create workweave — the following repos \
+         have no commits yet:\n  {}",
+        missing.join("\n  ")
+    )
+}
+
 /// Create a workweave: for each repo in the manifest, create a worktree in the
 /// workweave directory on an ephemeral branch `{project}--{workweave_name}/{current_branch}`.
 /// Also creates a worktree for the project repo, processes `workweave:` artifacts,
@@ -324,6 +382,13 @@ pub fn create_workweave(
             );
         }
     }
+
+    // Pre-flight: verify every repo we are about to worktree has at least one
+    // commit. `git worktree add` requires a resolvable HEAD; without this check
+    // the user gets a raw "fatal: ambiguous argument 'HEAD'" from git, which
+    // names no path and suggests no fix. We run this BEFORE any disk mutation
+    // so a missing-HEAD failure leaves no partial workweave directory behind.
+    preflight_check_heads(source_root, project, &manifest)?;
 
     std::fs::create_dir_all(&workweave_dir)?;
 
