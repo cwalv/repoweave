@@ -802,6 +802,200 @@ mod cargo_workspace {
             assert!(issues.is_empty());
         }
     }
+
+    // -----------------------------------------------------------------------
+    // Nested-workspace handling (fo-418ma)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn nested_workspace_without_opt_out_fails_with_named_repo_error() {
+        // A member repo declares its own [workspace]. Activation must fail
+        // before any cargo invocation, naming the conflicting repo and
+        // listing the three resolutions.
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+
+        write_file(
+            root,
+            "github/cwalv/plain/Cargo.toml",
+            "[package]\nname = \"plain\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+        );
+        write_file(
+            root,
+            "github/cwalv/forked/Cargo.toml",
+            "[package]\nname = \"forked\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n\
+             [workspace]\nmembers = [\"crates/*\"]\n",
+        );
+
+        let manifest = make_manifest(vec![
+            ("github/cwalv/plain", Role::Owned),
+            ("github/cwalv/forked", Role::Fork),
+        ]);
+        let project = ProjectName::new("test-project");
+        let config = IntegrationConfig::default();
+        let cache = HashMap::new();
+        let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+
+        let err = CargoWorkspace.activate(&ctx).unwrap_err().to_string();
+        assert!(
+            err.contains("github/cwalv/forked"),
+            "error should name the conflicting repo, got: {err}"
+        );
+        assert!(
+            err.contains("[workspace]"),
+            "error should explain the cause, got: {err}"
+        );
+        assert!(
+            err.contains("exclude"),
+            "error should point at the opt-out key, got: {err}"
+        );
+        // Generated Cargo.toml must NOT have been written on the failure path.
+        assert!(
+            !root.join("Cargo.toml").exists(),
+            "no Cargo.toml should be written when activation fails"
+        );
+    }
+
+    #[test]
+    fn nested_workspace_with_opt_out_succeeds_and_emits_excluded_comment() {
+        // With the opt-out set, the conflicting repo is dropped from members
+        // and surfaced as a `# excluded:` comment in the generated file.
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+
+        write_file(
+            root,
+            "github/cwalv/plain/Cargo.toml",
+            "[package]\nname = \"plain\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+        );
+        write_file(
+            root,
+            "github/cwalv/forked/Cargo.toml",
+            "[package]\nname = \"forked\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n\
+             [workspace]\nmembers = [\"crates/*\"]\n",
+        );
+
+        let manifest = make_manifest(vec![
+            ("github/cwalv/plain", Role::Owned),
+            ("github/cwalv/forked", Role::Fork),
+        ]);
+        let project = ProjectName::new("test-project");
+        let config = IntegrationConfig::from_yaml("exclude: [github/cwalv/forked]");
+        let cache = HashMap::new();
+        let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+
+        CargoWorkspace.activate(&ctx).unwrap();
+
+        let content = std::fs::read_to_string(root.join("Cargo.toml")).unwrap();
+        assert!(
+            content.contains("# excluded: github/cwalv/forked (opted out)"),
+            "missing excluded comment, got:\n{content}"
+        );
+        assert!(
+            content.contains("\"github/cwalv/plain\""),
+            "non-conflicting repo should still be a member, got:\n{content}"
+        );
+        assert!(
+            !content.contains("\"github/cwalv/forked\""),
+            "opted-out repo should not appear as a member, got:\n{content}"
+        );
+    }
+
+    #[test]
+    fn virtual_workspace_without_opt_out_fails_with_named_repo_error() {
+        // Virtual workspace = `[workspace]` and no `[package]`. Same failure
+        // mode as a hybrid workspace+package file.
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+
+        write_file(
+            root,
+            "github/cwalv/plain/Cargo.toml",
+            "[package]\nname = \"plain\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+        );
+        write_file(
+            root,
+            "github/cwalv/virtual_ws/Cargo.toml",
+            "[workspace]\nmembers = [\"crate-a\", \"crate-b\"]\nresolver = \"2\"\n",
+        );
+
+        let manifest = make_manifest(vec![
+            ("github/cwalv/plain", Role::Owned),
+            ("github/cwalv/virtual_ws", Role::Fork),
+        ]);
+        let project = ProjectName::new("test-project");
+        let config = IntegrationConfig::default();
+        let cache = HashMap::new();
+        let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+
+        let err = CargoWorkspace.activate(&ctx).unwrap_err().to_string();
+        assert!(
+            err.contains("github/cwalv/virtual_ws"),
+            "virtual-workspace conflict should name the repo, got: {err}"
+        );
+    }
+
+    #[test]
+    fn opt_out_for_non_rust_repo_is_silently_ignored() {
+        // Operators should be able to pre-emptively opt out a repo path even
+        // if that repo isn't a Rust repo today; the integration should not
+        // complain. (No-op fallback per bead spec.)
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+
+        write_file(
+            root,
+            "github/cwalv/plain/Cargo.toml",
+            "[package]\nname = \"plain\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+        );
+
+        let manifest = make_manifest(vec![
+            ("github/cwalv/plain", Role::Owned),
+            ("github/cwalv/docs-only", Role::Owned),
+        ]);
+        let project = ProjectName::new("test-project");
+        let config =
+            IntegrationConfig::from_yaml("exclude: [github/cwalv/docs-only, github/missing/repo]");
+        let cache = HashMap::new();
+        let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+
+        // No panic, no error — non-Rust opt-out entries are dropped.
+        CargoWorkspace.activate(&ctx).unwrap();
+
+        let content = std::fs::read_to_string(root.join("Cargo.toml")).unwrap();
+        // The non-Rust opt-out doesn't appear as a `# excluded:` comment
+        // because the repo never made it through Cargo.toml detection.
+        assert!(!content.contains("# excluded: github/cwalv/docs-only"));
+        assert!(!content.contains("# excluded: github/missing/repo"));
+        assert!(content.contains("\"github/cwalv/plain\""));
+    }
+
+    #[test]
+    fn check_reports_nested_workspace_conflict_as_error_issue() {
+        // `rwv doctor` should surface the same diagnostic as activation
+        // would, so operators see it without having to attempt a lock.
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+
+        write_file(
+            root,
+            "github/cwalv/forked/Cargo.toml",
+            "[workspace]\nmembers = [\"crate-a\"]\n",
+        );
+
+        let manifest = make_manifest(vec![("github/cwalv/forked", Role::Fork)]);
+        let project = ProjectName::new("test-project");
+        let config = IntegrationConfig::default();
+        let cache = HashMap::new();
+        let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+
+        let issues = CargoWorkspace.check(&ctx).unwrap();
+        assert!(
+            issues.iter().any(|i| i.severity == Severity::Error
+                && i.message.contains("github/cwalv/forked")),
+            "check should report a nested-workspace error, got: {issues:?}"
+        );
+    }
 }
 
 // ===========================================================================
