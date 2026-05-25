@@ -780,6 +780,44 @@ impl Project {
             lock,
         })
     }
+
+    /// Load a project from its directory without parsing `rwv.lock`.
+    ///
+    /// This is the recovery-path loader used by `rwv abort`. When a sync
+    /// leaves the project repo in a mid-rebase state, `rwv.lock` may contain
+    /// git conflict markers and fail strict YAML parsing. Abort only needs
+    /// the project identity and manifest (to find repo paths); it never reads
+    /// the lock. Using this variant makes that contract explicit so reviewers
+    /// can see "this caller intentionally skips the lock".
+    ///
+    /// The returned `Project` always has `lock: None`, regardless of whether
+    /// `rwv.lock` exists or what it contains.
+    pub fn from_dir_skip_lock(dir: &Path) -> anyhow::Result<Self> {
+        let manifest_path = dir.join("rwv.yaml");
+        let manifest = Manifest::from_path(&manifest_path).map_err(|e| {
+            anyhow::anyhow!(
+                "failed to load manifest at {}: {}",
+                manifest_path.display(),
+                e
+            )
+        })?;
+
+        // Derive project name from directory structure.
+        // `projects/web-app/` → "web-app"
+        // `projects/chatly/web-app/` → "chatly/web-app"
+        let name = dir
+            .strip_prefix("projects")
+            .unwrap_or(dir)
+            .to_string_lossy()
+            .into_owned();
+
+        Ok(Self {
+            dir: dir.to_path_buf(),
+            name: ProjectName::new(name),
+            manifest,
+            lock: None,
+        })
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1369,6 +1407,97 @@ repositories:
         assert!(
             msg.contains("failed to load lock"),
             "error should mention lock: {msg}"
+        );
+    }
+
+    // ========================================================================
+    // Project::from_dir_skip_lock — lockless recovery-path loader
+    // ========================================================================
+    //
+    // The strict loader (from_dir) must fail on all three failure modes;
+    // the lockless loader must succeed on all three, returning lock: None.
+
+    /// Conflict markers in rwv.lock (the primary symptom from fo-9abkv).
+    /// from_dir fails; from_dir_skip_lock returns a usable project.
+    #[test]
+    fn project_from_dir_skip_lock_succeeds_with_conflict_markers() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("rwv.yaml"), MINIMAL_MANIFEST).unwrap();
+        let conflict_content = "\
+<<<<<<< HEAD\nworkweave: hotfix\nrepositories: {}\n=======\nrepositories: {}\n>>>>>>> abc1234\n";
+        std::fs::write(dir.path().join("rwv.lock"), conflict_content).unwrap();
+
+        // Strict loader must fail.
+        assert!(
+            Project::from_dir(dir.path()).is_err(),
+            "from_dir must fail when rwv.lock contains conflict markers"
+        );
+
+        // Lockless loader must succeed and return lock: None.
+        let project = Project::from_dir_skip_lock(dir.path()).unwrap();
+        assert!(
+            project.lock.is_none(),
+            "from_dir_skip_lock must return lock: None regardless of rwv.lock content"
+        );
+        assert_eq!(
+            project.manifest.repositories.len(),
+            1,
+            "manifest should still be loaded"
+        );
+    }
+
+    /// rwv.lock is missing entirely.
+    /// from_dir succeeds with lock: None; from_dir_skip_lock also succeeds.
+    #[test]
+    fn project_from_dir_skip_lock_succeeds_with_missing_lock() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("rwv.yaml"), MINIMAL_MANIFEST).unwrap();
+        // No rwv.lock written.
+
+        let project = Project::from_dir_skip_lock(dir.path()).unwrap();
+        assert!(
+            project.lock.is_none(),
+            "from_dir_skip_lock must return lock: None when rwv.lock is absent"
+        );
+        assert_eq!(project.manifest.repositories.len(), 1);
+    }
+
+    /// rwv.lock exists but is empty (zero bytes).
+    /// from_dir fails (empty YAML parses as null, which is not a valid LockFile struct);
+    /// from_dir_skip_lock succeeds.
+    #[test]
+    fn project_from_dir_skip_lock_succeeds_with_empty_lock() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("rwv.yaml"), MINIMAL_MANIFEST).unwrap();
+        std::fs::write(dir.path().join("rwv.lock"), "").unwrap();
+
+        // Strict loader must fail on an empty file.
+        assert!(
+            Project::from_dir(dir.path()).is_err(),
+            "from_dir must fail when rwv.lock is empty"
+        );
+
+        // Lockless loader must succeed.
+        let project = Project::from_dir_skip_lock(dir.path()).unwrap();
+        assert!(
+            project.lock.is_none(),
+            "from_dir_skip_lock must return lock: None when rwv.lock is empty"
+        );
+        assert_eq!(project.manifest.repositories.len(), 1);
+    }
+
+    /// No rwv.yaml either — from_dir_skip_lock must still fail (manifest is required).
+    #[test]
+    fn project_from_dir_skip_lock_fails_without_manifest() {
+        let dir = tempfile::tempdir().unwrap();
+        // Neither rwv.yaml nor rwv.lock is present.
+
+        let result = Project::from_dir_skip_lock(dir.path());
+        assert!(result.is_err());
+        let msg = format!("{}", result.unwrap_err());
+        assert!(
+            msg.contains("failed to load manifest"),
+            "error should mention manifest: {msg}"
         );
     }
 

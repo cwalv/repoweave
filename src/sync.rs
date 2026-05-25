@@ -2242,7 +2242,11 @@ pub fn run_abort(cwd: &Path) -> anyhow::Result<()> {
 
     let cwd_project_name = find_project_name(&ctx)?;
     let cwd_project_dir = workspace_dir.join("projects").join(&cwd_project_name);
-    let cwd_project = Project::from_dir(&cwd_project_dir)
+    // Use the lockless loader: abort's contract is "the state is bad, get me
+    // out". rwv.lock may contain git conflict markers from the half-completed
+    // rebase, so we must not try to parse it. The abort path only needs the
+    // manifest (to enumerate repo paths); it never reads lock contents.
+    let cwd_project = Project::from_dir_skip_lock(&cwd_project_dir)
         .map_err(|e| anyhow::anyhow!("failed to load CWD project: {e}"))?;
 
     let mut any_failure = false;

@@ -1091,6 +1091,108 @@ fn abort_restores_repos_to_pre_op_state() {
     );
 }
 
+/// fo-9abkv regression: `rwv abort` must succeed when `rwv.lock` contains
+/// git conflict markers (the loader too-strict-for-recovery bug).
+///
+/// Setup mirrors the real-world scenario: a sync left the project repo
+/// mid-rebase and `rwv.lock` contains conflict markers. The operator's only
+/// viable escape should be `rwv abort`.
+///
+/// Strategy: use `make_locked_workspace` to get a valid project repo, then
+/// manually plant the `.rwv-sync-op` marker, a savepoint ref, a mid-rebase
+/// state, and conflict markers in `rwv.lock` — then drive `rwv abort` and
+/// assert exit 0 + clean git state (`.git/rebase-merge/` gone, working tree
+/// clean).
+#[test]
+fn abort_succeeds_when_rwv_lock_contains_conflict_markers() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (ws, sha) = make_locked_workspace(tmp.path(), "primary");
+    let project_dir = &ws.project_dir;
+
+    // Make a second commit so we have something to rebase onto.
+    let sha2 = make_commit(project_dir, "extra.txt", "extra\n", "extra commit");
+
+    // Invent an op-id that abort will read from the marker file.
+    let op_id = "20991231T000000Z";
+
+    // Create the savepoint ref pointing at sha2 (the pre-op HEAD).
+    git(
+        &[
+            "update-ref",
+            &format!("refs/rwv/pre-op/{op_id}"),
+            &sha2,
+        ],
+        project_dir,
+    );
+
+    // Write the sync-op marker file so `rwv abort` thinks an op is in progress.
+    std::fs::write(ws.root.join(".rwv-sync-op"), op_id).unwrap();
+
+    // Manufacture a mid-rebase state: create a diverging commit on a temp
+    // branch, then start a rebase that will conflict.
+    //
+    // We need two commits that touch the same line so git rebase stalls.
+    // `sha` is the initial commit. We'll:
+    //   1. Create branch `diverge` at `sha` with conflict content in conflict.txt
+    //   2. Create a commit on main (after sha2) with different conflict.txt content
+    //   3. git rebase diverge onto current HEAD → conflict on conflict.txt
+    //   4. Rebase will stop mid-way, leaving .git/rebase-merge/.
+
+    // Step 1: make a conflicting commit on the current branch (after sha2).
+    make_commit(project_dir, "conflict.txt", "main version\n", "main: conflict base");
+
+    // Step 2: create branch `diverge` starting from sha (before sha2), add conflicting file.
+    git(&["checkout", "-b", "diverge", &sha], project_dir);
+    make_commit(project_dir, "conflict.txt", "diverge version\n", "diverge: conflict");
+
+    // Step 3: return to main, start rebase of diverge onto main — this will conflict.
+    git(&["checkout", "main"], project_dir);
+    // git rebase may fail; we just need it to leave the rebase-merge dir.
+    let _ = std::process::Command::new("git")
+        .args(["rebase", "diverge"])
+        .current_dir(project_dir)
+        .env("GIT_AUTHOR_NAME", "Test")
+        .env("GIT_AUTHOR_EMAIL", "test@test.com")
+        .env("GIT_COMMITTER_NAME", "Test")
+        .env("GIT_COMMITTER_EMAIL", "test@test.com")
+        .output();
+
+    // Verify we're in mid-rebase state (the test harness only proceeds if so).
+    let rebase_merge = project_dir.join(".git/rebase-merge");
+    assert!(
+        rebase_merge.exists(),
+        "expected mid-rebase state (.git/rebase-merge should exist)"
+    );
+
+    // Now write conflict markers into rwv.lock — simulating the exact symptom
+    // from fo-9abkv: a sync that left rwv.lock with conflict markers.
+    std::fs::write(
+        project_dir.join("rwv.lock"),
+        "<<<<<<< HEAD workweave\nrepositories: {}\n=======\nrepositories: {}\n>>>>>>> abc1234\n",
+    )
+    .unwrap();
+
+    // Run `rwv abort` — must exit 0 despite the malformed rwv.lock.
+    rwv()
+        .arg("abort")
+        .current_dir(&ws.root)
+        .assert()
+        .success();
+
+    // Assert the rebase state is gone.
+    assert!(
+        !rebase_merge.exists(),
+        "after abort, .git/rebase-merge/ should be gone"
+    );
+
+    // Assert the working tree is clean (no uncommitted changes).
+    let status = git_out(&["status", "--porcelain"], project_dir);
+    assert!(
+        status.is_empty(),
+        "after abort, working tree should be clean; got: {status}"
+    );
+}
+
 // ---------------------------------------------------------------------------
 // Round-trip convergence
 // ---------------------------------------------------------------------------
