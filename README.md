@@ -132,13 +132,12 @@ Both commands are idempotent and safe to re-run.
 
 Full docs at **[cwalv.github.io/repoweave](https://cwalv.github.io/repoweave/)**, or browse the source:
 
-- [tutorial.md](docs/tutorial.md) — walkthrough of common workflows (fetch, add/remove, lock, workweave, agent isolation, CI)
-- [concepts.md](docs/concepts.md) — why repoweave exists, design rationale, prior art, design decisions
-- [releasing.md](docs/releasing.md) — locking, releasing, per-ecosystem constraint checking and publishing
-- [developing.md](docs/developing.md) — build from source, install locally, verify (the dogfood loop)
-- [reference.md](docs/reference.md) — directory layout, weaves and workweaves, projects, roles, lock files, commands
-- [integrations.md](docs/integrations.md) — built-in ecosystem integrations (npm, pnpm, Go, uv, Cargo, gita, VS Code, static-files)
-- [adjacent-tools.md](docs/adjacent-tools.md) — mise, direnv, devcontainers, CI multi-repo checkout
+- **New here?** [tutorial.md](docs/tutorial.md) — fetch a project, make changes, lock, workweave
+- **Task-shaped recipes:** [how-to/](docs/how-to/index.md) — add a repo, create a workweave, push a cross-repo feature, hand off to an agent, release a package
+- **Command & format lookup:** [reference/cli.md](docs/reference/cli.md) — all verbs, flags, file formats, roles, glossary, and integrations
+- **The "why":** [explanation/lenses/](docs/explanation/lenses/workspace.md) — workspace, monorepo, and agent lenses; plus [joints/](docs/explanation/joints/) for cross-cutting concepts
+- **Contributing:** [contributing/developing.md](docs/contributing/developing.md) — build from source, the dogfood loop, releasing
+- **Adjacent tools:** [adjacent-tools.md](docs/adjacent-tools.md) — mise, direnv, devcontainers, CI multi-repo checkout
 
 ### License
 
