@@ -66,14 +66,14 @@ const WORKWEAVE_HOOK_EVENTS: &[&str] = &["WorktreeCreate", "WorktreeRemove"];
 
 /// Resolve `~/.claude/settings.json`.
 fn claude_settings_path() -> anyhow::Result<PathBuf> {
-    let home = std::env::var("HOME").context("HOME environment variable not set")?;
-    Ok(Path::new(&home).join(".claude").join("settings.json"))
+    let home = dirs::home_dir().context("home directory not available")?;
+    Ok(home.join(".claude").join("settings.json"))
 }
 
 /// Resolve `~/.claude/hooks/` directory.
 fn claude_hooks_dir() -> anyhow::Result<PathBuf> {
-    let home = std::env::var("HOME").context("HOME environment variable not set")?;
-    Ok(Path::new(&home).join(".claude").join("hooks"))
+    let home = dirs::home_dir().context("home directory not available")?;
+    Ok(home.join(".claude").join("hooks"))
 }
 
 /// Command substrings that identify rwv-registered hooks.
