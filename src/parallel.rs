@@ -480,8 +480,8 @@ mod tests {
         let mut cmd = Command::new("sh");
         cmd.args(["-c", "printf 'boom\\n' >&2; exit 7"]);
         let reporter = Reporter::serial();
-        let outcome = run_subprocess_with_reporter(&mut cmd, &reporter)
-            .expect("subprocess spawned");
+        let outcome =
+            run_subprocess_with_reporter(&mut cmd, &reporter).expect("subprocess spawned");
         assert!(!outcome.status.success(), "expected non-zero exit");
         assert_eq!(outcome.status.code(), Some(7));
         assert!(
@@ -505,8 +505,8 @@ mod tests {
         let reporter = Reporter::parallel("ut".into(), &lock);
         let mut cmd = Command::new("sh");
         cmd.args(["-c", "printf 'line1\\nline2\\n' >&2; exit 3"]);
-        let outcome = run_subprocess_with_reporter(&mut cmd, &reporter)
-            .expect("subprocess spawned");
+        let outcome =
+            run_subprocess_with_reporter(&mut cmd, &reporter).expect("subprocess spawned");
         assert!(!outcome.status.success());
         assert_eq!(outcome.status.code(), Some(3));
         assert_eq!(
@@ -531,8 +531,8 @@ mod tests {
             "-c",
             "printf 'o1\\no2\\no3\\no4\\n'; printf 'e1\\ne2\\ne3\\ne4\\n' >&2",
         ]);
-        let outcome = run_subprocess_with_reporter(&mut cmd, &reporter)
-            .expect("subprocess spawned");
+        let outcome =
+            run_subprocess_with_reporter(&mut cmd, &reporter).expect("subprocess spawned");
         assert!(outcome.status.success());
         // Pipes drained — no deadlock on either stream.
         assert_eq!(outcome.stderr_capture, "");

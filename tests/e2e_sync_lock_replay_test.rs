@@ -156,11 +156,7 @@ fn make_primary(tmp: &Path) -> PrimaryWorkspace {
     init_repo(&project_dir);
 
     // The replay-exclusion line that sync depends on.
-    std::fs::write(
-        project_dir.join(".gitattributes"),
-        "rwv.lock merge=ours\n",
-    )
-    .unwrap();
+    std::fs::write(project_dir.join(".gitattributes"), "rwv.lock merge=ours\n").unwrap();
 
     let manifest = format!(
         "repositories:\n  {path}:\n    type: git\n    url: file://{repo}\n    version: main\n    role: owned\n",
@@ -238,8 +234,7 @@ fn sync_two_workweaves_lock_only_rebase_converges() {
     let wb = create_workweave(&primary, &weaveroot, "wb");
 
     // WA: advance manifest repo and lock.
-    let wa_lib_sha =
-        commit_file(&wa.manifest_repo, "wa.txt", "from wa\n", "wa: add wa.txt");
+    let wa_lib_sha = commit_file(&wa.manifest_repo, "wa.txt", "from wa\n", "wa: add wa.txt");
     rwv_lock_commit(&wa.root);
 
     // WB: advance manifest repo on a different file and lock.
@@ -490,12 +485,7 @@ fn sync_rebase_without_gitattributes_bails_cleanly() {
     };
 
     // WW: advance the manifest repo and bump the lock.
-    commit_file(
-        &ww.manifest_repo,
-        "ww.txt",
-        "from ww\n",
-        "ww: add ww.txt",
-    );
+    commit_file(&ww.manifest_repo, "ww.txt", "from ww\n", "ww: add ww.txt");
     // Run `rwv lock --commit` in the workweave. The workweave also has no
     // .gitattributes (inherited from primary via worktree).
     rwv()
@@ -515,12 +505,7 @@ fn sync_rebase_without_gitattributes_bails_cleanly() {
     let wa = create_workweave(&primary_struct, &weaveroot, "wa");
     // But wa's project repo also has no .gitattributes, so we need to add one
     // for wa to land via ff (ff doesn't need .gitattributes — only rebase does).
-    commit_file(
-        &wa.manifest_repo,
-        "wa.txt",
-        "from wa\n",
-        "wa: add wa.txt",
-    );
+    commit_file(&wa.manifest_repo, "wa.txt", "from wa\n", "wa: add wa.txt");
     rwv()
         .args(["lock", "--commit"])
         .current_dir(&wa.root)
@@ -621,18 +606,12 @@ fn sync_ff_preserves_lock_only_commits() {
 
     // WW: bump the manifest repo and lock. This produces exactly one lock-only
     // commit in the project repo.
-    commit_file(
-        &ww.manifest_repo,
-        "ww.txt",
-        "from ww\n",
-        "ww: add ww.txt",
-    );
+    commit_file(&ww.manifest_repo, "ww.txt", "from ww\n", "ww: add ww.txt");
     rwv_lock_commit(&ww.root);
 
     // Capture WW's lock commit SHA.
     let ww_lock_commit_sha = git_out(&["rev-parse", "HEAD"], &ww.project_dir);
-    let ww_project_log_count =
-        git_out(&["rev-list", "--count", "HEAD"], &ww.project_dir);
+    let ww_project_log_count = git_out(&["rev-list", "--count", "HEAD"], &ww.project_dir);
 
     // From primary: sync WW → primary via ff (the default).
     rwv()
@@ -646,11 +625,7 @@ fn sync_ff_preserves_lock_only_commits() {
     // its parent (or grandparent, depending on whether Phase 3 committed).
     // The key assertion: WW's lock-only commit SHA exists in primary's history.
     let primary_log = git_out(
-        &[
-            "log",
-            "--format=%H",
-            &format!("{primary_tip_before}..HEAD"),
-        ],
+        &["log", "--format=%H", &format!("{primary_tip_before}..HEAD")],
         &primary.project_dir,
     );
     assert!(
@@ -727,7 +702,10 @@ fn sync_two_workweaves_lock_only_merge_converges() {
         .current_dir(&wb.project_dir)
         .output()
         .expect("git status failed");
-    assert!(status.status.success(), "git status should succeed after merge");
+    assert!(
+        status.status.success(),
+        "git status should succeed after merge"
+    );
 
     // WB's manifest repo carries both contributions.
     assert!(wb.manifest_repo.join("wa.txt").exists());
@@ -850,7 +828,10 @@ fn sync_merge_without_gitattributes_bails_cleanly() {
         .current_dir(&ww.project_dir)
         .output()
         .expect("git status should not fail");
-    assert!(status.status.success(), "git status must succeed after bail");
+    assert!(
+        status.status.success(),
+        "git status must succeed after bail"
+    );
     let status_out = String::from_utf8_lossy(&status.stdout).to_string();
     let tracked_changes: Vec<&str> = status_out
         .lines()

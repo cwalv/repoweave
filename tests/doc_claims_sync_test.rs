@@ -204,12 +204,7 @@ fn sync_json_serial_emits_envelope_with_schema_and_outcomes() {
     // has something to converge on (otherwise we'd get no-op, which would
     // still exercise the envelope, but using a real advance also pins the
     // happy-path outcome shape).
-    let c2 = make_commit(
-        &ww.server_dir,
-        "ww.txt",
-        "workweave\n",
-        "ww: advance",
-    );
+    let c2 = make_commit(&ww.server_dir, "ww.txt", "workweave\n", "ww: advance");
     write_lock(&ww.project_dir, &[(SERVER_PATH, SERVER_URL, &c2)]);
     git(&["add", "rwv.lock"], &ww.project_dir);
     git(&["commit", "-m", "lock: ww advance"], &ww.project_dir);
@@ -249,10 +244,7 @@ fn sync_json_serial_emits_envelope_with_schema_and_outcomes() {
     for o in outcomes {
         let entry = o.as_object().expect("each outcome is an object");
         for field in ["kind", "path", "absolute_path"] {
-            assert!(
-                entry.contains_key(field),
-                "outcome missing `{field}`: {o}"
-            );
+            assert!(entry.contains_key(field), "outcome missing `{field}`: {o}");
         }
     }
 }
@@ -306,11 +298,13 @@ fn sync_json_parallel_emits_ndjson_records_with_embedded_schema() {
     let lock_owned: Vec<(String, String, String)> = repo_paths
         .iter()
         .zip(&initial_shas)
-        .map(|(p, sha)| (
-            (*p).to_string(),
-            format!("https://github.com/{p}.git"),
-            sha.clone(),
-        ))
+        .map(|(p, sha)| {
+            (
+                (*p).to_string(),
+                format!("https://github.com/{p}.git"),
+                sha.clone(),
+            )
+        })
         .collect();
     let lock_refs: Vec<(&str, &str, &str)> = lock_owned
         .iter()
@@ -358,11 +352,13 @@ fn sync_json_parallel_emits_ndjson_records_with_embedded_schema() {
     let ww_lock_owned: Vec<(String, String, String)> = repo_paths
         .iter()
         .zip(&advanced)
-        .map(|(p, sha)| (
-            (*p).to_string(),
-            format!("https://github.com/{p}.git"),
-            sha.clone(),
-        ))
+        .map(|(p, sha)| {
+            (
+                (*p).to_string(),
+                format!("https://github.com/{p}.git"),
+                sha.clone(),
+            )
+        })
         .collect();
     let ww_lock_refs: Vec<(&str, &str, &str)> = ww_lock_owned
         .iter()
@@ -411,10 +407,7 @@ fn sync_json_parallel_emits_ndjson_records_with_embedded_schema() {
         );
         // Identifying fields.
         for field in ["kind", "path", "absolute_path"] {
-            assert!(
-                obj.contains_key(field),
-                "line missing `{field}`: {line}"
-            );
+            assert!(obj.contains_key(field), "line missing `{field}`: {line}");
         }
         if let Some(p) = obj["path"].as_str() {
             seen_paths.insert(p.to_string());
@@ -456,12 +449,7 @@ fn sync_json_failed_outcome_has_stable_kebab_kind() {
     git(&["add", "rwv.lock"], &primary.project_dir);
     git(&["commit", "-m", "lock: C2"], &primary.project_dir);
 
-    let c_ww = make_commit(
-        &ww.server_dir,
-        "ww.txt",
-        "ww\n",
-        "ww: diverge",
-    );
+    let c_ww = make_commit(&ww.server_dir, "ww.txt", "ww\n", "ww: diverge");
     write_lock(&ww.project_dir, &[(SERVER_PATH, SERVER_URL, &c_ww)]);
     git(&["add", "rwv.lock"], &ww.project_dir);
     git(&["commit", "-m", "lock: ww"], &ww.project_dir);
@@ -470,12 +458,7 @@ fn sync_json_failed_outcome_has_stable_kebab_kind() {
     // in Phase 2 (where the per-repo outcome is produced) rather than
     // failing fast pre-outcome-generation.
     let assert = rwv()
-        .args([
-            "sync",
-            &primary.root.to_string_lossy(),
-            "--json",
-            "--force",
-        ])
+        .args(["sync", &primary.root.to_string_lossy(), "--json", "--force"])
         .current_dir(&ww.root)
         .assert()
         .failure();

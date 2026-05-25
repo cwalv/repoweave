@@ -517,9 +517,8 @@ impl Manifest {
     pub fn from_path(path: &Path) -> anyhow::Result<Self> {
         let content = std::fs::read_to_string(path)
             .map_err(|e| anyhow::anyhow!("failed to read {}: {e}", path.display()))?;
-        Self::from_yaml_str(&content).map_err(|e| {
-            anyhow::anyhow!("failed to parse rwv.yaml at {}: {e}", path.display())
-        })
+        Self::from_yaml_str(&content)
+            .map_err(|e| anyhow::anyhow!("failed to parse rwv.yaml at {}: {e}", path.display()))
     }
 
     /// Parse a manifest from a YAML string, surfacing the
@@ -1746,7 +1745,9 @@ repositories:
         // Every (path, entry) pair from iter_entries must agree with get_entry.
         let m: Manifest = serde_yaml::from_str(VALID_MANIFEST).unwrap();
         for (path, entry) in m.iter_entries() {
-            let looked_up = m.get_entry(path).expect("get_entry must find iter_entries path");
+            let looked_up = m
+                .get_entry(path)
+                .expect("get_entry must find iter_entries path");
             // Compare a stable field to confirm it's the same entry.
             assert_eq!(entry.role, looked_up.role);
             assert_eq!(entry.version, looked_up.version);

@@ -77,9 +77,8 @@ impl CargoWorkspace {
 
         for repo in rust_repos {
             let cargo_toml = ctx.workspace_root.join(&repo).join("Cargo.toml");
-            let content = std::fs::read_to_string(&cargo_toml).map_err(|e| {
-                anyhow::anyhow!("failed to read {}: {e}", cargo_toml.display())
-            })?;
+            let content = std::fs::read_to_string(&cargo_toml)
+                .map_err(|e| anyhow::anyhow!("failed to read {}: {e}", cargo_toml.display()))?;
             let has_workspace = declares_workspace(&content);
 
             if opt_out.contains(repo.as_str()) {

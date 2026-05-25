@@ -1037,9 +1037,7 @@ fn refresh_working_tree_if_safe(repo: &Path) {
 /// missing line, and the command to fix (`rwv doctor --fix`). Does NOT write
 /// the file — that is `rwv doctor --fix`'s job; sync's invariant is "only
 /// change what the source says to change".
-fn verify_replay_exclusion_invariant(
-    cwd_project_dir: &Path,
-) -> anyhow::Result<()> {
+fn verify_replay_exclusion_invariant(cwd_project_dir: &Path) -> anyhow::Result<()> {
     let attrs_committed = git_command()
         .args(["show", "HEAD:.gitattributes"])
         .current_dir(cwd_project_dir)
@@ -1048,9 +1046,7 @@ fn verify_replay_exclusion_invariant(
     let has_line = match attrs_committed {
         Ok(ref out) if out.status.success() => {
             let content = String::from_utf8_lossy(&out.stdout);
-            content
-                .lines()
-                .any(|l| l.trim() == "rwv.lock merge=ours")
+            content.lines().any(|l| l.trim() == "rwv.lock merge=ours")
         }
         // `.gitattributes` is not committed (exit non-zero from `git show`) —
         // the line is definitely absent.

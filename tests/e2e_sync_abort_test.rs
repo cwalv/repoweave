@@ -1117,11 +1117,7 @@ fn abort_succeeds_when_rwv_lock_contains_conflict_markers() {
 
     // Create the savepoint ref pointing at sha2 (the pre-op HEAD).
     git(
-        &[
-            "update-ref",
-            &format!("refs/rwv/pre-op/{op_id}"),
-            &sha2,
-        ],
+        &["update-ref", &format!("refs/rwv/pre-op/{op_id}"), &sha2],
         project_dir,
     );
 
@@ -1139,11 +1135,21 @@ fn abort_succeeds_when_rwv_lock_contains_conflict_markers() {
     //   4. Rebase will stop mid-way, leaving .git/rebase-merge/.
 
     // Step 1: make a conflicting commit on the current branch (after sha2).
-    make_commit(project_dir, "conflict.txt", "main version\n", "main: conflict base");
+    make_commit(
+        project_dir,
+        "conflict.txt",
+        "main version\n",
+        "main: conflict base",
+    );
 
     // Step 2: create branch `diverge` starting from sha (before sha2), add conflicting file.
     git(&["checkout", "-b", "diverge", &sha], project_dir);
-    make_commit(project_dir, "conflict.txt", "diverge version\n", "diverge: conflict");
+    make_commit(
+        project_dir,
+        "conflict.txt",
+        "diverge version\n",
+        "diverge: conflict",
+    );
 
     // Step 3: return to main, start rebase of diverge onto main — this will conflict.
     git(&["checkout", "main"], project_dir);
@@ -1173,11 +1179,7 @@ fn abort_succeeds_when_rwv_lock_contains_conflict_markers() {
     .unwrap();
 
     // Run `rwv abort` — must exit 0 despite the malformed rwv.lock.
-    rwv()
-        .arg("abort")
-        .current_dir(&ws.root)
-        .assert()
-        .success();
+    rwv().arg("abort").current_dir(&ws.root).assert().success();
 
     // Assert the rebase state is gone.
     assert!(

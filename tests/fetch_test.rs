@@ -1364,10 +1364,7 @@ fn fetch_repo_exact_selector_clones_only_that_path() {
     let workspace = tmp.path().join("ws");
     std::fs::create_dir_all(&workspace).unwrap();
 
-    let source = build_filter_fixture(
-        &tmp,
-        &[("local/org/a", "owned"), ("local/org/b", "owned")],
-    );
+    let source = build_filter_fixture(&tmp, &[("local/org/a", "owned"), ("local/org/b", "owned")]);
 
     rwv()
         .args(["fetch", &source, "--repo", "local/org/a"])

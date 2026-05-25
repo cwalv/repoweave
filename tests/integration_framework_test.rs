@@ -132,10 +132,7 @@ fn is_enabled_default_disabled_no_override() {
 fn active_repos_excludes_reference() {
     let mut repos = BTreeMap::new();
     repos.insert(RepoPath::new("ref-repo"), make_repo_entry(Role::Reference));
-    repos.insert(
-        RepoPath::new("primary-repo"),
-        make_repo_entry(Role::Owned),
-    );
+    repos.insert(RepoPath::new("primary-repo"), make_repo_entry(Role::Owned));
 
     let project = ProjectName::new("test-project");
     let config = IntegrationConfig::default();

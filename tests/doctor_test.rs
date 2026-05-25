@@ -109,7 +109,11 @@ fn check_clean_workspace_exits_zero() {
         &[(repo_path, "https://github.com/acme/server.git")],
     );
 
-    rwv_cmd().arg("doctor").current_dir(&root).assert().success();
+    rwv_cmd()
+        .arg("doctor")
+        .current_dir(&root)
+        .assert()
+        .success();
 }
 
 // ===========================================================================
@@ -245,7 +249,11 @@ fn check_multi_project_no_false_orphan() {
     );
 
     // Both repos are known across projects — no orphans expected
-    rwv_cmd().arg("doctor").current_dir(&root).assert().success();
+    rwv_cmd()
+        .arg("doctor")
+        .current_dir(&root)
+        .assert()
+        .success();
 }
 
 // ===========================================================================
@@ -300,7 +308,11 @@ integrations:
     // Even with integration hooks, a clean workspace should not error.
     // Any integration warnings should be printed but not cause failure
     // (only errors cause non-zero exit).
-    rwv_cmd().arg("doctor").current_dir(&root).assert().success();
+    rwv_cmd()
+        .arg("doctor")
+        .current_dir(&root)
+        .assert()
+        .success();
 }
 
 // ===========================================================================
@@ -540,7 +552,11 @@ fn check_flags_unresolvable_lock_revision() {
         )],
     );
 
-    let assert = rwv_cmd().arg("doctor").current_dir(&root).assert().failure();
+    let assert = rwv_cmd()
+        .arg("doctor")
+        .current_dir(&root)
+        .assert()
+        .failure();
     let out = String::from_utf8_lossy(&assert.get_output().stdout).into_owned();
     assert!(
         out.contains("lock references unknown revision"),
@@ -576,7 +592,11 @@ fn check_flags_unreadable_head() {
     let head_file = root.join(repo_path).join(".git/HEAD");
     std::fs::write(&head_file, "ref: refs/heads/nonexistent\n").unwrap();
 
-    let assert = rwv_cmd().arg("doctor").current_dir(&root).assert().failure();
+    let assert = rwv_cmd()
+        .arg("doctor")
+        .current_dir(&root)
+        .assert()
+        .failure();
     let out = String::from_utf8_lossy(&assert.get_output().stdout).into_owned();
     assert!(
         out.contains("HEAD unreadable"),

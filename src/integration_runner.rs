@@ -46,7 +46,12 @@ pub const KNOWN_MANIFESTS: &[&str] = &[
 /// directly.
 pub fn build_detection_cache<'a>(
     workspace_root: &Path,
-    repos: impl IntoIterator<Item = (&'a crate::manifest::RepoPath, &'a crate::manifest::RepoEntry)>,
+    repos: impl IntoIterator<
+        Item = (
+            &'a crate::manifest::RepoPath,
+            &'a crate::manifest::RepoEntry,
+        ),
+    >,
 ) -> HashMap<String, Vec<String>> {
     let repos: Vec<_> = repos.into_iter().collect();
     let mut cache = HashMap::new();
@@ -54,7 +59,12 @@ pub fn build_detection_cache<'a>(
         let mut paths: Vec<String> = repos
             .iter()
             .filter(|(_, e)| e.role.is_active())
-            .filter(|(rp, _)| workspace_root.join(rp.as_str()).join(manifest_file).exists())
+            .filter(|(rp, _)| {
+                workspace_root
+                    .join(rp.as_str())
+                    .join(manifest_file)
+                    .exists()
+            })
             .map(|(rp, _)| rp.as_str().to_string())
             .collect();
         paths.sort();

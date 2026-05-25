@@ -126,7 +126,10 @@ fn make_project_source(tmp: &Path, name: &str, repos: &[(&str, &str)]) -> String
 /// Advance a bare repo's `main` by one commit. Returns the new tip SHA.
 fn advance_bare(tmp: &Path, bare: &Path, label: &str) -> String {
     let work = tmp.join(format!("{label}-work"));
-    run_git(&["clone", &bare.to_string_lossy(), &work.to_string_lossy()], tmp);
+    run_git(
+        &["clone", &bare.to_string_lossy(), &work.to_string_lossy()],
+        tmp,
+    );
     run_git(&["config", "user.email", "t@t.com"], &work);
     run_git(&["config", "user.name", "T"], &work);
     std::fs::write(work.join("advance.txt"), label).unwrap();

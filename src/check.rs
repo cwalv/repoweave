@@ -411,10 +411,7 @@ fn scan_project_dir_for_legacy(
 /// rewritten lines so the caller can print a meaningful "[fixed]" line.
 pub fn fix_legacy_role_primary(manifest_path: &Path) -> anyhow::Result<usize> {
     let content = std::fs::read_to_string(manifest_path).map_err(|e| {
-        anyhow::anyhow!(
-            "failed to read {} for --fix: {e}",
-            manifest_path.display()
-        )
+        anyhow::anyhow!("failed to read {} for --fix: {e}", manifest_path.display())
     })?;
     let (new_content, count) = crate::manifest::migrate_legacy_role_primary(&content);
     if count > 0 {
@@ -962,8 +959,7 @@ pub fn run_check(
     // rewrite happens here so subsequent loaders see the migrated
     // manifests.
     let legacy_role_primary = scan_workspace_for_legacy_role_primary(&workspace_dir);
-    let mut legacy_role_primary_warnings: Vec<(crate::manifest::ProjectName, PathBuf)> =
-        Vec::new();
+    let mut legacy_role_primary_warnings: Vec<(crate::manifest::ProjectName, PathBuf)> = Vec::new();
     let mut legacy_role_primary_errors: Vec<(crate::manifest::ProjectName, String)> = Vec::new();
     for finding in &legacy_role_primary {
         if fix {
@@ -979,8 +975,7 @@ pub fn run_check(
                     );
                 }
                 Err(e) => {
-                    legacy_role_primary_errors
-                        .push((finding.project.clone(), e.to_string()));
+                    legacy_role_primary_errors.push((finding.project.clone(), e.to_string()));
                 }
             }
         } else {

@@ -125,7 +125,10 @@ impl fmt::Display for FilterError {
                 }
             }
             Self::EmptyPattern { kind } => {
-                write!(f, "--repo {kind}: pattern is empty after the '{kind}:' prefix")
+                write!(
+                    f,
+                    "--repo {kind}: pattern is empty after the '{kind}:' prefix"
+                )
             }
             Self::InvalidRegex { pattern, source } => {
                 write!(f, "--repo re:{pattern}: invalid regex: {source}")
