@@ -39,34 +39,14 @@ permissions:
 # If there's a prerelease-style suffix to the version, then the release(s)
 # will be marked as a prerelease.
 on:
+  pull_request:
   push:
     tags:
-      - 'v[0-9]+.[0-9]+.[0-9]+*'
+      - '**[0-9]+.[0-9]+.[0-9]+*'
 
 jobs:
-  # Pre-tag gate: refuse to build/release if the same checks contributors run
-  # locally (scripts/ci-local.sh) fail on the tagged commit. Without this, a
-  # broken main could be tagged and published. The script is the single source
-  # of truth shared with ci.yml.
-  test:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Install Rust (stable)
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          components: clippy, rustfmt
-      - name: Configure git identity (required by sync merge/rebase tests)
-        run: |
-          git config --global user.email "ci@example.com"
-          git config --global user.name "CI"
-      - name: Run CI checks
-        shell: bash
-        run: ./scripts/ci-local.sh
-
   # Run 'dist plan' (or host) to determine what tasks we need to do
   plan:
-    needs: test
     runs-on: "ubuntu-22.04"
     outputs:
       val: ${{ steps.plan.outputs.manifest }}

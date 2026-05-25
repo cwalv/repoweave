@@ -17,9 +17,3 @@ publish-jobs = ["homebrew"]
 targets = ["aarch64-apple-darwin", "aarch64-unknown-linux-gnu", "x86_64-apple-darwin", "x86_64-unknown-linux-gnu", "x86_64-pc-windows-msvc"]
 # Where to host releases
 hosting = "github"
-# Tell `dist host` not to fail when release.yml diverges from what `dist init`
-# would regenerate. We deliberately customize the workflow (see commit
-# 5ac23e2): hand-rolled `test:` pre-tag gate that runs scripts/ci-local.sh,
-# tightened tag pattern `v[0-9]+.[0-9]+.[0-9]+*`, no `pull_request:` trigger.
-# Without `allow-dirty = ["ci"]`, `dist host` exits non-zero on every release.
-allow-dirty = ["ci"]
