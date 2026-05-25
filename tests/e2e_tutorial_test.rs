@@ -293,8 +293,8 @@ fn tutorial_step1_fetch_auto_activates() {
     let target = std::fs::read_link(&root_cargo).unwrap();
     assert!(
         target
-            .to_string_lossy()
-            .contains("projects/tutorial-project"),
+            .ancestors()
+            .any(|a| a.ends_with("projects/tutorial-project")),
         "Cargo.toml should symlink into projects/tutorial-project, got: {}",
         target.display()
     );

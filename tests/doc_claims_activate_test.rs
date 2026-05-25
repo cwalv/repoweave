@@ -315,7 +315,7 @@ fn activate_symlinks_cargo_toml_and_lock() {
     );
     let target = std::fs::read_link(&root_cargo).unwrap();
     assert!(
-        target.to_string_lossy().contains("projects/cargo-proj"),
+        target.ancestors().any(|a| a.ends_with("projects/cargo-proj")),
         "Cargo.toml symlink should point into projects/cargo-proj, got: {}",
         target.display()
     );
@@ -334,8 +334,8 @@ fn activate_symlinks_cargo_toml_and_lock() {
     let lock_target = std::fs::read_link(&root_lock).unwrap();
     assert!(
         lock_target
-            .to_string_lossy()
-            .contains("projects/cargo-proj"),
+            .ancestors()
+            .any(|a| a.ends_with("projects/cargo-proj")),
         "Cargo.lock symlink should point into projects/cargo-proj, got: {}",
         lock_target.display()
     );
@@ -442,10 +442,10 @@ integrations:
 
     // The symlink should point to the project directory's copy.
     let target = std::fs::read_link(&link).unwrap();
-    let target_str = target.to_string_lossy();
     assert!(
-        target_str.contains("projects/my-project/turbo.json"),
-        "turbo.json symlink should point to projects/my-project/turbo.json, got: {target_str}"
+        target.ends_with("projects/my-project/turbo.json"),
+        "turbo.json symlink should point to projects/my-project/turbo.json, got: {}",
+        target.display()
     );
 
     // Reading through the symlink should give the original content.

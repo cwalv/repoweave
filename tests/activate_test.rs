@@ -188,10 +188,10 @@ fn activate_creates_symlinks_at_workspace_root() {
 
     let target = std::fs::read_link(&root_pkg).unwrap();
     // The symlink target should reference the project directory.
-    let target_str = target.to_string_lossy();
     assert!(
-        target_str.contains("projects/web-app/package.json"),
-        "symlink should point to projects/web-app/package.json, got: {target_str}"
+        target.ends_with("projects/web-app/package.json"),
+        "symlink should point to projects/web-app/package.json, got: {}",
+        target.display()
     );
 }
 
@@ -300,10 +300,10 @@ fn switching_projects_swaps_symlinks() {
 
     let root_pkg = ws.join("package.json");
     let link_a = std::fs::read_link(&root_pkg).unwrap();
-    let link_a_str = link_a.to_string_lossy().to_string();
     assert!(
-        link_a_str.contains("project-a"),
-        "after activating A, symlink should point to project-a, got: {link_a_str}"
+        link_a.components().any(|c| c.as_os_str() == "project-a"),
+        "after activating A, symlink should point to project-a, got: {}",
+        link_a.display()
     );
 
     let content_a = std::fs::read_to_string(&root_pkg).unwrap();
@@ -320,10 +320,10 @@ fn switching_projects_swaps_symlinks() {
         .success();
 
     let link_b = std::fs::read_link(&root_pkg).unwrap();
-    let link_b_str = link_b.to_string_lossy().to_string();
     assert!(
-        link_b_str.contains("project-b"),
-        "after activating B, symlink should point to project-b, got: {link_b_str}"
+        link_b.components().any(|c| c.as_os_str() == "project-b"),
+        "after activating B, symlink should point to project-b, got: {}",
+        link_b.display()
     );
 
     let content_b = std::fs::read_to_string(&root_pkg).unwrap();
@@ -428,10 +428,10 @@ fn switching_removes_stale_symlinks_from_previous_project() {
             .is_symlink()
         {
             let target = std::fs::read_link(&cargo_path).unwrap();
-            let target_str = target.to_string_lossy();
             assert!(
-                !target_str.contains("proj-a"),
-                "stale Cargo.toml symlink to proj-a should be removed, got: {target_str}"
+                !target.components().any(|c| c.as_os_str() == "proj-a"),
+                "stale Cargo.toml symlink to proj-a should be removed, got: {}",
+                target.display()
             );
         }
     }
@@ -476,10 +476,10 @@ fn switching_back_restores_original_symlinks() {
         .success();
 
     let link = std::fs::read_link(ws.join("package.json")).unwrap();
-    let link_str = link.to_string_lossy();
     assert!(
-        link_str.contains("proj-a"),
-        "after switching back to A, symlink should point to proj-a, got: {link_str}"
+        link.components().any(|c| c.as_os_str() == "proj-a"),
+        "after switching back to A, symlink should point to proj-a, got: {}",
+        link.display()
     );
 
     let content = std::fs::read_to_string(ws.join("package.json")).unwrap();
