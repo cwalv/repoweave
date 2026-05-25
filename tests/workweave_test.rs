@@ -1856,6 +1856,298 @@ fn create_workweave_bails_on_project_worktree_failure() {
     );
 }
 
+// ============================================================================
+// fo-cc40k.2 — atomic rollback: orphan worktree pruning on mid-create failure
+// ============================================================================
+
+/// Create a workspace with TWO repos in the manifest.  The first repo is real;
+/// the second points at a nonexistent path so worktree creation fails for it.
+/// After the failed create:
+///   1. The workweave directory must not exist.
+///   2. The primary's first repo must have no orphan worktree registration
+///      (the `.git/worktrees/<name>` entry created when the first worktree
+///      succeeded must have been pruned).
+fn make_workspace_two_repos(tmp: &std::path::Path, project: &str) -> std::path::PathBuf {
+    let ws = tmp.join("ws");
+    let repo1 = ws.join("github/org/repo1");
+    let repo2_path = "/nonexistent/repo2"; // will cause worktree-add to fail
+
+    init_repo_with_commit(&repo1);
+
+    let project_dir = ws.join("projects").join(project);
+    std::fs::create_dir_all(&project_dir).unwrap();
+
+    // Manifest: repo1 (real) + repo2 (missing) — forces a partial create.
+    let manifest = format!(
+        r#"repositories:
+  github/org/repo1:
+    type: git
+    url: file://{repo1}
+    version: main
+    role: owned
+  github/org/repo2:
+    type: git
+    url: file://{repo2_path}
+    version: main
+    role: owned
+"#,
+        repo1 = repo1.display(),
+    );
+    std::fs::write(project_dir.join("rwv.yaml"), manifest).unwrap();
+    ws
+}
+
+#[test]
+fn create_workweave_rollback_prunes_orphan_worktree_registrations() {
+    // When create fails after some repos succeed, the successfully-registered
+    // worktrees must be pruned from the primary repos' `.git/worktrees/`
+    // metadata. Without this, the primary repo still knows about the partial
+    // worktree, producing git warnings and blocking re-creates.
+    let tmp = tempfile::tempdir().unwrap();
+    let ws = make_workspace_two_repos(tmp.path(), "web-app");
+    let weaveroot = tmp.path().join(".workweaves");
+    std::fs::create_dir_all(&weaveroot).unwrap();
+
+    let ww_name = repoweave::manifest::WorkweaveName::new("partial");
+    let project = repoweave::manifest::ProjectName::new("web-app");
+    std::env::set_var("RWV_WORKWEAVE_DIR", &weaveroot);
+    let res = repoweave::workweave::create_workweave(&ws, &ws, &project, &ww_name, false);
+    std::env::remove_var("RWV_WORKWEAVE_DIR");
+
+    assert!(
+        res.is_err(),
+        "create should fail because repo2 does not exist"
+    );
+
+    // 1. Workweave directory must not be left on disk.
+    let ww_dir = weaveroot.join("web-app--partial");
+    assert!(
+        !ww_dir.exists(),
+        "workweave dir must be removed on rollback, found: {}",
+        ww_dir.display()
+    );
+
+    // 2. repo1's `.git/worktrees/` must have no entry referencing this workweave.
+    //    `git worktree list --porcelain` shows only live registrations; a stale
+    //    registration will show up here until pruned.
+    let primary_repo1 = ws.join("github/org/repo1");
+    let output = common::git()
+        .args(["worktree", "list", "--porcelain"])
+        .current_dir(&primary_repo1)
+        .output()
+        .expect("git worktree list should work");
+    let listing = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        !listing.contains("web-app--partial"),
+        "rollback must prune orphan worktree registration from repo1; \
+         git worktree list still shows it:\n{listing}"
+    );
+}
+
+/// When create fails with multiple manifest repos (some succeeding before the
+/// failure), ALL successfully-registered worktrees must be pruned — not just
+/// the one that failed.
+///
+/// This test exercises the "multi-repo partial success" path: repo1 and repo3
+/// succeed (registered), repo2 fails. All three repos must end up with clean
+/// worktree metadata after rollback.
+fn make_workspace_three_repos(tmp: &std::path::Path, project: &str) -> std::path::PathBuf {
+    let ws = tmp.join("ws");
+    let repo1 = ws.join("github/org/repo1");
+    let repo3 = ws.join("github/org/repo3");
+
+    init_repo_with_commit(&repo1);
+    init_repo_with_commit(&repo3);
+
+    let project_dir = ws.join("projects").join(project);
+    std::fs::create_dir_all(&project_dir).unwrap();
+
+    // BTreeMap ordering: repo1 < repo2 < repo3 alphabetically.
+    // repo1 succeeds, repo2 fails (missing), repo3 is never attempted
+    // (once errors is non-empty, bail fires). Actually, the code collects
+    // ALL errors and bails at the end. So repo3 IS attempted but also fails
+    // because it doesn't exist... wait, repo3 DOES exist. Let me re-read.
+    //
+    // The manifest loop continues even on per-repo failure (collects errors),
+    // bailing only after the full loop. So:
+    //   repo1 → success (registered)
+    //   repo2 → failure (missing, skipped)
+    //   repo3 → success (registered)
+    // Then bail fires, rollback must prune BOTH repo1 and repo3.
+    let manifest = format!(
+        r#"repositories:
+  github/org/repo1:
+    type: git
+    url: file://{repo1}
+    version: main
+    role: owned
+  github/org/repo2:
+    type: git
+    url: file:///nonexistent/repo2
+    version: main
+    role: owned
+  github/org/repo3:
+    type: git
+    url: file://{repo3}
+    version: main
+    role: owned
+"#,
+        repo1 = repo1.display(),
+        repo3 = repo3.display(),
+    );
+    std::fs::write(project_dir.join("rwv.yaml"), manifest).unwrap();
+    ws
+}
+
+#[test]
+fn create_workweave_rollback_prunes_all_registered_worktrees_not_just_failed() {
+    // repo1 and repo3 succeed (both registered); repo2 fails (missing).
+    // After rollback, BOTH repo1 and repo3 must have clean worktree metadata.
+    let tmp = tempfile::tempdir().unwrap();
+    let ws = make_workspace_three_repos(tmp.path(), "web-app");
+    let weaveroot = tmp.path().join(".workweaves");
+    std::fs::create_dir_all(&weaveroot).unwrap();
+
+    let ww_name = repoweave::manifest::WorkweaveName::new("multi-partial");
+    let project = repoweave::manifest::ProjectName::new("web-app");
+    std::env::set_var("RWV_WORKWEAVE_DIR", &weaveroot);
+    let res = repoweave::workweave::create_workweave(&ws, &ws, &project, &ww_name, false);
+    std::env::remove_var("RWV_WORKWEAVE_DIR");
+
+    assert!(res.is_err(), "create must fail because repo2 is missing");
+
+    let ww_dir = weaveroot.join("web-app--multi-partial");
+    assert!(!ww_dir.exists(), "workweave dir must be removed on rollback");
+
+    // Both real repos must have their orphan registrations pruned.
+    for repo_name in &["repo1", "repo3"] {
+        let repo = ws.join(format!("github/org/{repo_name}"));
+        let output = common::git()
+            .args(["worktree", "list", "--porcelain"])
+            .current_dir(&repo)
+            .output()
+            .expect("git worktree list should work");
+        let listing = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            !listing.contains("web-app--multi-partial"),
+            "rollback must prune orphan registration from {repo_name}; \
+             git worktree list still shows it:\n{listing}"
+        );
+    }
+}
+
+/// A clean retry after a failed create must succeed without --force.
+/// This is the end-to-end version of the atomicity contract.
+#[test]
+fn create_workweave_clean_retry_after_failure_succeeds() {
+    let tmp = tempfile::tempdir().unwrap();
+    let ws = tmp.path().join("ws");
+
+    // Set up a real repo at repo1.
+    let repo1 = ws.join("github/org/repo1");
+    init_repo_with_commit(&repo1);
+
+    let project_dir = ws.join("projects/web-app");
+    std::fs::create_dir_all(&project_dir).unwrap();
+
+    let weaveroot = tmp.path().join(".workweaves");
+    std::fs::create_dir_all(&weaveroot).unwrap();
+
+    // First create: manifest with a bad repo — fails.
+    let bad_manifest = format!(
+        r#"repositories:
+  github/org/repo1:
+    type: git
+    url: file://{repo1}
+    version: main
+    role: owned
+  github/org/missing:
+    type: git
+    url: file:///nonexistent/missing
+    version: main
+    role: owned
+"#,
+        repo1 = repo1.display(),
+    );
+    std::fs::write(project_dir.join("rwv.yaml"), &bad_manifest).unwrap();
+
+    std::env::set_var("RWV_WORKWEAVE_DIR", &weaveroot);
+    let project = repoweave::manifest::ProjectName::new("web-app");
+    let ww_name = repoweave::manifest::WorkweaveName::new("retry-me");
+    let res = repoweave::workweave::create_workweave(&ws, &ws, &project, &ww_name, false);
+    assert!(res.is_err(), "first create must fail due to missing repo");
+
+    // Fix the manifest — only real repos remain.
+    let good_manifest = format!(
+        r#"repositories:
+  github/org/repo1:
+    type: git
+    url: file://{repo1}
+    version: main
+    role: owned
+"#,
+        repo1 = repo1.display(),
+    );
+    std::fs::write(project_dir.join("rwv.yaml"), &good_manifest).unwrap();
+
+    // Second create (same name, no --force): must succeed because rollback
+    // cleaned up all state from the first attempt.
+    let res2 = repoweave::workweave::create_workweave(&ws, &ws, &project, &ww_name, false);
+    std::env::remove_var("RWV_WORKWEAVE_DIR");
+
+    assert!(
+        res2.is_ok(),
+        "clean retry after rollback must succeed without --force; got: {:?}",
+        res2.err()
+    );
+
+    let ww_dir = weaveroot.join("web-app--retry-me");
+    assert!(
+        ww_dir.exists(),
+        "workweave must exist after successful retry at {}",
+        ww_dir.display()
+    );
+    assert!(
+        ww_dir.join(".rwv-workweave").exists(),
+        "marker must be written on successful retry"
+    );
+}
+
+/// When the no-marker detection fires (workweave dir exists, marker absent),
+/// the diagnostic must name the likely cause — partial create — and recommend
+/// --force as the fix. This lets users understand the error without reading
+/// source code.
+#[test]
+fn no_marker_diagnostic_names_partial_create_as_likely_cause() {
+    let tmp = tempfile::tempdir().unwrap();
+    let ws = make_workspace(tmp.path(), "web-app");
+    let weaveroot = tmp.path().join(".workweaves");
+    std::fs::create_dir_all(&weaveroot).unwrap();
+
+    // Simulate a partial workweave: directory exists but no marker file.
+    let ww_dir = weaveroot.join("web-app--orphan");
+    std::fs::create_dir_all(&ww_dir).unwrap();
+    // Deliberately do NOT write .rwv-workweave.
+
+    let ww_name = repoweave::manifest::WorkweaveName::new("orphan");
+    let project = repoweave::manifest::ProjectName::new("web-app");
+    std::env::set_var("RWV_WORKWEAVE_DIR", &weaveroot);
+    let res = repoweave::workweave::create_workweave(&ws, &ws, &project, &ww_name, false);
+    std::env::remove_var("RWV_WORKWEAVE_DIR");
+
+    assert!(res.is_err(), "create must fail when marker is missing");
+
+    let err_msg = format!("{:#}", res.unwrap_err());
+    assert!(
+        err_msg.contains("partially created") || err_msg.contains("previous failed"),
+        "diagnostic must mention 'partially created' or 'previous failed attempt', got: {err_msg}"
+    );
+    assert!(
+        err_msg.contains("--force"),
+        "diagnostic must recommend --force, got: {err_msg}"
+    );
+}
+
 #[test]
 fn claude_hook_no_project_arg_needed() {
     // --claude-hook should work without a project argument (derived from .rwv-active).

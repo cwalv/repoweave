@@ -128,6 +128,125 @@ fn copy_dir_recursive(src: &Path, dst: &Path) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Remove orphan worktree registrations from a list of repos.
+///
+/// For each `(repo_abs, worktree_path)` pair, attempts `git worktree remove
+/// --force <worktree_path>` first (cleans up both the on-disk directory and
+/// the `.git/worktrees/` registration). If `remove` fails because the
+/// on-disk directory is already gone, falls back to `git worktree prune` to
+/// clear the stale administrative entry.
+///
+/// This is the canonical cleanup path used by:
+/// - `create_workweave` rollback — called on any mid-create failure.
+/// - Sibling bead .3's `--force` path — call this before recreating to clear
+///   any orphan registrations left by a previous partial create.
+///
+/// # API contract for callers (bead .3)
+///
+/// ```text
+/// prune_orphan_worktrees_for(&[
+///     (repo_abs_path, worktree_dest_path),
+///     ...
+/// ]);
+/// ```
+///
+/// The function is best-effort: errors are logged to stderr but do not
+/// propagate, so a single prune failure does not block cleanup of subsequent
+/// repos. This matches `delete_workweave`'s existing "continue on error, collect
+/// at the end" pattern — orphan refs in a secondary repo should not prevent
+/// the workweave dir from being removed.
+pub fn prune_orphan_worktrees_for(pairs: &[(PathBuf, PathBuf)]) {
+    for (repo_abs, worktree_path) in pairs {
+        let vcs = GitVcs;
+        if worktree_path.exists() {
+            // Directory still on disk — use `remove --force` which handles
+            // both the on-disk tree and the `.git/worktrees/` registration.
+            if let Err(e) = vcs.remove_worktree(repo_abs, worktree_path) {
+                eprintln!(
+                    "rwv workweave rollback: warning: could not remove worktree {}: {e}",
+                    worktree_path.display()
+                );
+                // Fall through to prune to at least clear the admin entry.
+            }
+        }
+        // Always prune stale entries regardless of remove outcome.
+        if let Err(e) = vcs.worktree_prune(repo_abs) {
+            eprintln!(
+                "rwv workweave rollback: warning: git worktree prune failed in {}: {e}",
+                repo_abs.display()
+            );
+        }
+    }
+}
+
+/// Scope guard that rolls back a partial workweave create on drop.
+///
+/// Tracks:
+/// - The workweave directory (`workweave_dir`): removed with `remove_dir_all`.
+/// - Registered worktrees (`registered_worktrees`): each entry is
+///   `(repo_abs, worktree_path)`; pruned via [`prune_orphan_worktrees_for`].
+///
+/// Call `defuse()` to commit the create — the guard then does nothing on drop.
+/// If the guard is dropped without being defused (i.e. due to any failure path,
+/// including `bail!` / `?` propagation), the rollback runs automatically.
+///
+/// **Design:** A single drop-based guard centralises rollback so future code
+/// cannot accidentally bypass it. Adding a new failure point that returns early
+/// (via `?` or `bail!`) automatically triggers cleanup — no extra boilerplate
+/// required.
+struct CreateRollbackGuard {
+    /// The top-level workweave directory created for this attempt.
+    workweave_dir: PathBuf,
+    /// Pairs of `(repo_abs, worktree_dest)` for every worktree that was
+    /// successfully registered during this create attempt.
+    registered_worktrees: Vec<(PathBuf, PathBuf)>,
+    /// Set to `true` when the create completes successfully. Prevents rollback.
+    defused: bool,
+}
+
+impl CreateRollbackGuard {
+    fn new(workweave_dir: PathBuf) -> Self {
+        Self {
+            workweave_dir,
+            registered_worktrees: Vec::new(),
+            defused: false,
+        }
+    }
+
+    /// Record a successfully-registered worktree so it can be rolled back on failure.
+    fn record_worktree(&mut self, repo_abs: PathBuf, worktree_dest: PathBuf) {
+        self.registered_worktrees.push((repo_abs, worktree_dest));
+    }
+
+    /// Commit the create — disable rollback. Call this only after
+    /// `create_workweave` has fully succeeded.
+    fn defuse(&mut self) {
+        self.defused = true;
+    }
+}
+
+impl Drop for CreateRollbackGuard {
+    fn drop(&mut self) {
+        if self.defused {
+            return;
+        }
+
+        // 1. Prune orphan worktree registrations in every repo that got a
+        //    worktree added during this create attempt.
+        prune_orphan_worktrees_for(&self.registered_worktrees);
+
+        // 2. Remove the partially-created workweave directory itself.
+        if self.workweave_dir.exists() {
+            if let Err(e) = std::fs::remove_dir_all(&self.workweave_dir) {
+                eprintln!(
+                    "rwv workweave rollback: warning: could not remove partial workweave dir {}: {e}",
+                    self.workweave_dir.display()
+                );
+            }
+        }
+    }
+}
+
 /// Create a workweave: for each repo in the manifest, create a worktree in the
 /// workweave directory on an ephemeral branch `{project}--{workweave_name}/{current_branch}`.
 /// Also creates a worktree for the project repo, processes `workweave:` artifacts,
@@ -208,6 +327,12 @@ pub fn create_workweave(
 
     std::fs::create_dir_all(&workweave_dir)?;
 
+    // B7: Rollback guard — automatically undoes partial state on any failure
+    // path (including `bail!` / `?` propagation). Tracks which repos got
+    // worktrees added so orphan `.git/worktrees/` registrations can be pruned
+    // in addition to removing the workweave directory.
+    let mut rollback = CreateRollbackGuard::new(workweave_dir.clone());
+
     let mut errors: Vec<String> = Vec::new();
 
     // Create worktrees for each repo in the manifest. Forks come from
@@ -239,23 +364,28 @@ pub fn create_workweave(
             }
 
             vcs.create_worktree(&repo_abs, &worktree_dest, &ephemeral_branch, &head)?;
-
             Ok(())
         })();
 
-        if let Err(e) = result {
-            let msg = format!("{}: {e}", repo_path.as_str());
-            eprintln!("rwv workweave create: error: {msg}");
-            errors.push(msg);
+        match result {
+            Ok(()) => {
+                // Record the successful registration so rollback can prune it.
+                let worktree_dest = workweave_dir.join(repo_path.as_path());
+                rollback.record_worktree(repo_abs, worktree_dest);
+            }
+            Err(e) => {
+                let msg = format!("{}: {e}", repo_path.as_str());
+                eprintln!("rwv workweave create: error: {msg}");
+                errors.push(msg);
+            }
         }
     }
 
     if !errors.is_empty() {
         let total = manifest.len();
         let failed = errors.len();
-        // B7: ensure atomic create-or-nothing. Leaving a partial workweave
-        // directory on disk turns a clean retry into a `--force` recovery.
-        let _ = std::fs::remove_dir_all(&workweave_dir);
+        // B7: rollback guard's Drop will clean up the workweave dir AND prune
+        // orphan worktree registrations in all repos that succeeded so far.
         bail!("workweave create completed with {failed} failure(s) out of {total} repo(s)");
     }
 
@@ -277,16 +407,19 @@ pub fn create_workweave(
         };
         let ephemeral_branch = ephemeral_branch_name(project, name, &branch_segment);
         std::fs::create_dir_all(project_wt_dest.parent().unwrap())?;
-        if let Err(e) =
-            GitVcs.create_worktree(&project_dir, &project_wt_dest, &ephemeral_branch, &head)
-        {
-            // B7: clean up so a subsequent `rwv workweave create` without
-            // --force isn't stuck on a partial directory with no marker.
-            let _ = std::fs::remove_dir_all(&workweave_dir);
-            bail!(
-                "could not create project worktree projects/{}: {e}",
-                project.as_str()
-            );
+        match GitVcs.create_worktree(&project_dir, &project_wt_dest, &ephemeral_branch, &head) {
+            Ok(()) => {
+                // Record the project worktree for rollback.
+                rollback.record_worktree(project_dir.clone(), project_wt_dest.clone());
+            }
+            Err(e) => {
+                // B7+B8: rollback guard will clean up the workweave dir and
+                // prune all previously-registered worktrees. We just bail.
+                bail!(
+                    "could not create project worktree projects/{}: {e}",
+                    project.as_str()
+                );
+            }
         }
     } else if project_dir.exists() {
         // Project dir is not a git repo — copy it so activate has access to rwv.yaml.
@@ -395,6 +528,9 @@ pub fn create_workweave(
     // Run activate in the workweave context.
     crate::activate::activate_workweave(project.as_str(), &workweave_dir)?;
 
+    // All steps complete — defuse the rollback guard so Drop is a no-op.
+    rollback.defuse();
+
     Ok(workweave_dir)
 }
 
@@ -416,8 +552,9 @@ fn reuse_existing_workweave(
 ) -> anyhow::Result<PathBuf> {
     let marker = WorkweaveMarker::read(workweave_dir)?.ok_or_else(|| {
         anyhow!(
-            "workweave directory {} exists but has no .rwv-workweave marker; \
-             rerun with --force to recreate it",
+            "workweave directory {} exists but has no .rwv-workweave marker — \
+             likely a partially created workweave from a previous failed attempt; \
+             safe to recreate with --force",
             workweave_dir.display()
         )
     })?;
