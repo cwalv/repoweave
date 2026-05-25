@@ -11,7 +11,7 @@
 
 The repos themselves stay independent — separately ownable, with normal git history. repoweave is a coordination layer, not a monorepo migration. You still commit and push per repo; the project lock and ecosystem wiring make that feel less expensive than it usually does.
 
-The fundamental unit is the **project**: a small repo at `projects/<name>/` carrying a manifest (`rwv.yaml`) of which repos belong to the project, a lock (`rwv.lock`) pinning their revisions, and any cross-cutting docs. `rwv fetch <project-url>` clones the project repo and every repo it lists; one command, complete environment.
+The fundamental unit is the **project**: a small repo at `projects/<name>/` carrying a manifest (`rwv.yaml`) of which repos belong to the project, a lock (`rwv.lock`) pinning their revisions, and any cross-cutting docs. `rwv fetch <project-url>` clones the project repo and every repo it lists; one command, reproducible workspace.
 
 ## Core vocabulary
 
