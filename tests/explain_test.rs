@@ -112,16 +112,6 @@ fn explain_unknown_verb_exits_nonzero_with_friendly_pointer() {
 }
 
 #[test]
-fn explain_doctor_alias_check_works() {
-    // The dispatch alias `check` -> doctor (preserves legacy verb spelling).
-    rwv()
-        .args(["explain", "check"])
-        .assert()
-        .success()
-        .stdout(predicate::str::contains("# rwv doctor"));
-}
-
-#[test]
 fn every_acceptance_verb_has_a_discoverable_explain_entry() {
     for verb in ACCEPTANCE_VERBS {
         rwv()

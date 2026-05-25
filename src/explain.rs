@@ -30,7 +30,7 @@ pub fn explain(cmd: Option<&str>) -> anyhow::Result<()> {
             print!("{INDEX_EXPLAIN}");
         }
         Some("status") => print!("{STATUS_EXPLAIN}"),
-        Some("doctor") | Some("check") => print!("{DOCTOR_EXPLAIN}"),
+        Some("doctor") => print!("{DOCTOR_EXPLAIN}"),
         Some("sync") => print!("{SYNC_EXPLAIN}"),
         Some("fetch") => print!("{FETCH_EXPLAIN}"),
         Some("update") => print!("{UPDATE_EXPLAIN}"),
