@@ -437,8 +437,23 @@ pub struct WorkweaveConfig {
 // ---------------------------------------------------------------------------
 
 /// A parsed `rwv.yaml` file — the source of truth for a project's repos.
+///
+/// ## Accessor contract
+///
+/// Callers outside this module should use the accessor methods to traverse
+/// the repository set rather than touching `repositories` directly:
+///
+/// - [`Manifest::iter_repo_paths`] — iterate over every [`RepoPath`] key.
+/// - [`Manifest::get_entry`] — look up a single [`RepoEntry`] by path.
+/// - [`Manifest::iter_entries`] — iterate over `(path, entry)` pairs.
+///
+/// The `repositories` field is currently `pub` for backwards-compat while
+/// call-site migrations (fo-lokti.2, fo-lokti.3) are in progress. Once those
+/// siblings close, the field will be narrowed to `pub(crate)` or private.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Manifest {
+    // `pub` temporarily while call-sites migrate to accessor methods
+    // (fo-lokti.2, fo-lokti.3). Will become `pub(crate)` once both close.
     pub repositories: BTreeMap<RepoPath, RepoEntry>,
     #[serde(default)]
     pub integrations: BTreeMap<String, IntegrationConfig>,
@@ -447,6 +462,31 @@ pub struct Manifest {
 }
 
 impl Manifest {
+    /// Iterate over every [`RepoPath`] in the manifest, in sorted order.
+    ///
+    /// This is the preferred accessor for callers that only need keys;
+    /// use [`iter_entries`][Self::iter_entries] when you also need the
+    /// corresponding [`RepoEntry`].
+    pub fn iter_repo_paths(&self) -> impl Iterator<Item = &RepoPath> {
+        self.repositories.keys()
+    }
+
+    /// Look up a single [`RepoEntry`] by its [`RepoPath`].
+    ///
+    /// Returns `None` when the path is not present in the manifest.
+    pub fn get_entry(&self, path: &RepoPath) -> Option<&RepoEntry> {
+        self.repositories.get(path)
+    }
+
+    /// Iterate over `(path, entry)` pairs in the manifest, in sorted order.
+    ///
+    /// Use this when you need both the key and the value; prefer
+    /// [`iter_repo_paths`][Self::iter_repo_paths] when only the path is
+    /// needed, and [`get_entry`][Self::get_entry] for random access.
+    pub fn iter_entries(&self) -> impl Iterator<Item = (&RepoPath, &RepoEntry)> {
+        self.repositories.iter()
+    }
+
     /// Load from a YAML file.
     pub fn from_path(path: &Path) -> anyhow::Result<Self> {
         let content = std::fs::read_to_string(path)
@@ -1442,5 +1482,119 @@ repositories:
         assert!(project.lock.is_some());
         let lock = project.lock.unwrap();
         assert_eq!(lock.workweave, Some(WorkweaveName::new("hotfix-42")));
+    }
+
+    // ========================================================================
+    // Manifest accessor methods — iter_repo_paths / get_entry / iter_entries
+    // ========================================================================
+
+    // -- iter_repo_paths ------------------------------------------------------
+
+    #[test]
+    fn iter_repo_paths_empty_manifest() {
+        let m: Manifest = serde_yaml::from_str("repositories: {}\n").unwrap();
+        let paths: Vec<_> = m.iter_repo_paths().collect();
+        assert!(paths.is_empty());
+    }
+
+    #[test]
+    fn iter_repo_paths_single_repo() {
+        let m: Manifest = serde_yaml::from_str(MINIMAL_MANIFEST).unwrap();
+        let paths: Vec<_> = m.iter_repo_paths().collect();
+        assert_eq!(paths.len(), 1);
+        assert_eq!(paths[0], &RepoPath::new("github/acme/server"));
+    }
+
+    #[test]
+    fn iter_repo_paths_multi_repo_sorted() {
+        // VALID_MANIFEST has two repos; BTreeMap keeps them in sorted order.
+        let m: Manifest = serde_yaml::from_str(VALID_MANIFEST).unwrap();
+        let paths: Vec<_> = m.iter_repo_paths().collect();
+        assert_eq!(paths.len(), 2);
+        // BTreeMap guarantees ascending key order.
+        assert!(paths[0] < paths[1], "paths should be in sorted order");
+        // Both repos present.
+        let path_strs: Vec<&str> = paths.iter().map(|p| p.as_str()).collect();
+        assert!(path_strs.contains(&"github/acme/server"));
+        assert!(path_strs.contains(&"github/acme/client"));
+    }
+
+    // -- get_entry ------------------------------------------------------------
+
+    #[test]
+    fn get_entry_empty_manifest_returns_none() {
+        let m: Manifest = serde_yaml::from_str("repositories: {}\n").unwrap();
+        let result = m.get_entry(&RepoPath::new("github/acme/server"));
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn get_entry_present_returns_some() {
+        let m: Manifest = serde_yaml::from_str(MINIMAL_MANIFEST).unwrap();
+        let entry = m.get_entry(&RepoPath::new("github/acme/server"));
+        assert!(entry.is_some());
+        let entry = entry.unwrap();
+        assert_eq!(entry.role, Role::Owned);
+        assert_eq!(entry.version, RefName::new("main"));
+    }
+
+    #[test]
+    fn get_entry_absent_path_returns_none() {
+        let m: Manifest = serde_yaml::from_str(MINIMAL_MANIFEST).unwrap();
+        let result = m.get_entry(&RepoPath::new("github/acme/nonexistent"));
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn get_entry_multi_repo_each_lookup() {
+        let m: Manifest = serde_yaml::from_str(VALID_MANIFEST).unwrap();
+        let server = m.get_entry(&RepoPath::new("github/acme/server"));
+        let client = m.get_entry(&RepoPath::new("github/acme/client"));
+        assert!(server.is_some());
+        assert!(client.is_some());
+        assert_eq!(server.unwrap().role, Role::Owned);
+        assert_eq!(client.unwrap().role, Role::Fork);
+    }
+
+    // -- iter_entries ---------------------------------------------------------
+
+    #[test]
+    fn iter_entries_empty_manifest() {
+        let m: Manifest = serde_yaml::from_str("repositories: {}\n").unwrap();
+        let entries: Vec<_> = m.iter_entries().collect();
+        assert!(entries.is_empty());
+    }
+
+    #[test]
+    fn iter_entries_single_repo() {
+        let m: Manifest = serde_yaml::from_str(MINIMAL_MANIFEST).unwrap();
+        let entries: Vec<_> = m.iter_entries().collect();
+        assert_eq!(entries.len(), 1);
+        let (path, entry) = entries[0];
+        assert_eq!(path, &RepoPath::new("github/acme/server"));
+        assert_eq!(entry.role, Role::Owned);
+    }
+
+    #[test]
+    fn iter_entries_multi_repo_all_present() {
+        let m: Manifest = serde_yaml::from_str(VALID_MANIFEST).unwrap();
+        let entries: Vec<_> = m.iter_entries().collect();
+        assert_eq!(entries.len(), 2);
+        // Paths reported by iter_entries must match iter_repo_paths.
+        let paths_from_entries: Vec<&RepoPath> = entries.iter().map(|(p, _)| *p).collect();
+        let paths_direct: Vec<&RepoPath> = m.iter_repo_paths().collect();
+        assert_eq!(paths_from_entries, paths_direct);
+    }
+
+    #[test]
+    fn iter_entries_consistent_with_get_entry() {
+        // Every (path, entry) pair from iter_entries must agree with get_entry.
+        let m: Manifest = serde_yaml::from_str(VALID_MANIFEST).unwrap();
+        for (path, entry) in m.iter_entries() {
+            let looked_up = m.get_entry(path).expect("get_entry must find iter_entries path");
+            // Compare a stable field to confirm it's the same entry.
+            assert_eq!(entry.role, looked_up.role);
+            assert_eq!(entry.version, looked_up.version);
+        }
     }
 }
