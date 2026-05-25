@@ -16,7 +16,6 @@ Read `rwv.lock` and align clones to it. Bootstrap when lock is absent.
 
 | Flag | Effect |
 |---|---|
-| `--locked` | Re-pin already-cloned repos to lock SHAs (per-repo checkout) |
 | `--frozen` | Error if lock is stale; never advance. Suitable for CI |
 | `--role` / `--repo` | Selector filters (see [Selector grammar](#selector-grammar)) |
 | `--json` / `-j N` | Structured output / parallel fetch |
@@ -46,7 +45,7 @@ Reads HEAD from each repo; records the tag name if HEAD is tagged, otherwise the
 |---|---|
 | `--dirty` | Lock anyway when working trees have uncommitted changes |
 
-Integration lock hooks run after writing `rwv.lock` to refresh ecosystem lock files (`npm install --package-lock-only`, `uv lock`, `cargo generate-lockfile`).
+Pure git SHA snapshot — no integration hooks fire. To refresh ecosystem lockfiles (`node_modules`, `.venv`, etc.) after membership changes, run `rwv activate`.
 
 ### `rwv activate <project>`
 
@@ -73,7 +72,7 @@ Clone a repo (if not present), register it in the *active workspace*'s `rwv.yaml
 
 ### `rwv remove <path> [--delete] [--force]`
 
-Remove from `rwv.yaml`, re-run integration hooks.
+Remove from `rwv.yaml`, re-run activation (regenerates ecosystem workspace files).
 
 | Flag | Effect |
 |---|---|

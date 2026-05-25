@@ -112,7 +112,7 @@ enum Commands {
         /// Repository URL or path (with --new)
         url: String,
         /// Role for the repo
-        #[arg(long, default_value = "dependency", value_enum)]
+        #[arg(long, default_value = "owned", value_enum)]
         role: manifest::Role,
         /// Create a new repo (git init) at the canonical path instead of cloning
         #[arg(long)]
