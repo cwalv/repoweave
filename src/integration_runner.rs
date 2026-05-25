@@ -10,9 +10,7 @@
 use std::collections::HashMap;
 use std::path::Path;
 
-use crate::integration::{
-    detect_repos_with_manifest_impl, is_enabled, Integration, IntegrationContext, Issue, Severity,
-};
+use crate::integration::{is_enabled, Integration, IntegrationContext, Issue, Severity};
 use crate::manifest::{IntegrationConfig, Manifest, ProjectName, RepoPath};
 
 /// Shared base data for constructing `IntegrationContext` per integration.
@@ -42,16 +40,25 @@ pub const KNOWN_MANIFESTS: &[&str] = &[
 ];
 
 /// Build a detection cache for the given workspace root and repos.
-pub fn build_detection_cache(
+///
+/// `repos` may be any iterator of `(&RepoPath, &RepoEntry)` pairs — callers
+/// should pass `manifest.iter_entries()` rather than `&manifest.repositories`
+/// directly.
+pub fn build_detection_cache<'a>(
     workspace_root: &Path,
-    repos: &std::collections::BTreeMap<crate::manifest::RepoPath, crate::manifest::RepoEntry>,
+    repos: impl IntoIterator<Item = (&'a crate::manifest::RepoPath, &'a crate::manifest::RepoEntry)>,
 ) -> HashMap<String, Vec<String>> {
+    let repos: Vec<_> = repos.into_iter().collect();
     let mut cache = HashMap::new();
-    for &manifest in KNOWN_MANIFESTS {
-        cache.insert(
-            manifest.to_string(),
-            detect_repos_with_manifest_impl(workspace_root, repos, manifest),
-        );
+    for &manifest_file in KNOWN_MANIFESTS {
+        let mut paths: Vec<String> = repos
+            .iter()
+            .filter(|(_, e)| e.role.is_active())
+            .filter(|(rp, _)| workspace_root.join(rp.as_str()).join(manifest_file).exists())
+            .map(|(rp, _)| rp.as_str().to_string())
+            .collect();
+        paths.sort();
+        cache.insert(manifest_file.to_string(), paths);
     }
     cache
 }

@@ -99,7 +99,7 @@ fn activate_at(
     let integrations: Vec<&dyn Integration> = builtin.iter().map(|b| b.as_ref()).collect();
 
     // 1. Run integrations with output_dir = project_dir.
-    let detection_cache = build_detection_cache(root, &manifest.repositories);
+    let detection_cache = build_detection_cache(root, manifest.iter_entries());
     let ctx_base = session.context_base(&project_dir, &project_name, &detection_cache);
 
     let issues = run_activations(&integrations, &manifest, &ctx_base);

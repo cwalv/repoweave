@@ -471,7 +471,7 @@ pub fn find_violations(input: &CheckInput) -> Vec<CheckViolation> {
 
     // Per-project checks
     for project in &input.projects {
-        for (repo_path, entry) in &project.manifest.repositories {
+        for (repo_path, entry) in project.manifest.iter_entries() {
             // Dangling reference: in manifest but not on disk.
             // Reference repos are allowed to be missing (e.g. after fetch --no-reference).
             if !input.repos_on_disk.contains(repo_path) && entry.role != Role::Reference {
@@ -1064,7 +1064,7 @@ pub fn run_check(
                         resolved_locks.insert(project.name.clone(), resolved);
                     }
 
-                    for repo_path in project.manifest.repositories.keys() {
+                    for repo_path in project.manifest.iter_repo_paths() {
                         known_repos.insert(repo_path.clone());
                     }
                     projects.push(project);
@@ -1137,7 +1137,7 @@ pub fn run_check(
     for project in &input.projects {
         let detection_cache = crate::integration_runner::build_detection_cache(
             &workspace_dir,
-            &project.manifest.repositories,
+            project.manifest.iter_entries(),
         );
         let ctx_base = session.context_base(&workspace_dir, &project.name, &detection_cache);
         let integration_issues = run_checks(&integrations, &project.manifest, &ctx_base);
@@ -1151,7 +1151,7 @@ pub fn run_check(
     let mut index_scan: Vec<(Option<String>, std::path::PathBuf, String)> = Vec::new();
 
     for project in &input.projects {
-        for repo_path in project.manifest.repositories.keys() {
+        for repo_path in project.manifest.iter_repo_paths() {
             let abs = workspace_dir.join(repo_path.as_path());
             if abs.exists() {
                 index_scan.push((None, abs, repo_path.to_string()));
@@ -1163,7 +1163,7 @@ pub fn run_check(
     if matches!(ctx.location, WorkspaceLocation::Weave { .. }) {
         for (ww_name, ww_dir) in crate::workweave::list_workweave_dirs(ctx.primary_path()) {
             for project in &input.projects {
-                for repo_path in project.manifest.repositories.keys() {
+                for repo_path in project.manifest.iter_repo_paths() {
                     let abs = ww_dir.join(repo_path.as_path());
                     if abs.exists() {
                         index_scan.push((Some(ww_name.clone()), abs, repo_path.to_string()));
@@ -1423,7 +1423,7 @@ fn collect_doctor_violations(
                         let (resolved, _failures) = raw_lock.resolve_versions(&workspace_dir);
                         resolved_locks.insert(project.name.clone(), resolved);
                     }
-                    for repo_path in project.manifest.repositories.keys() {
+                    for repo_path in project.manifest.iter_repo_paths() {
                         known_repos.insert(repo_path.clone());
                     }
                     projects.push(project);
@@ -1461,7 +1461,7 @@ fn collect_doctor_violations(
     let mut index_scan: Vec<(Option<WorkweaveName>, std::path::PathBuf, RepoPath)> = Vec::new();
 
     for project in &input.projects {
-        for repo_path in project.manifest.repositories.keys() {
+        for repo_path in project.manifest.iter_repo_paths() {
             let abs = workspace_dir.join(repo_path.as_path());
             if abs.exists() {
                 index_scan.push((None, abs, repo_path.clone()));
@@ -1474,7 +1474,7 @@ fn collect_doctor_violations(
             let ww_name = WorkweaveName::new(ww_name_str);
             workweave_dirs.insert(ww_name.clone(), ww_dir.clone());
             for project in &input.projects {
-                for repo_path in project.manifest.repositories.keys() {
+                for repo_path in project.manifest.iter_repo_paths() {
                     let abs = ww_dir.join(repo_path.as_path());
                     if abs.exists() {
                         index_scan.push((Some(ww_name.clone()), abs, repo_path.clone()));
