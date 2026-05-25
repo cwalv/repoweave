@@ -6,6 +6,7 @@
 
 use assert_cmd::Command;
 use predicates::prelude::*;
+use repoweave::manifest::Manifest;
 use std::path::Path;
 use std::process;
 
@@ -124,6 +125,47 @@ fn init_creates_empty_rwv_yaml() {
         serde_yaml::Value::Null => {} // `repositories:` with no value is fine for empty
         other => panic!("repositories should be empty map or null, got: {:?}", other),
     }
+}
+
+/// fo-cc40k.4: after `rwv init`, projects/<name>/rwv.yaml must exist, be
+/// non-empty, and parse cleanly via the manifest loader.  This is the exact
+/// precondition that `rwv workweave create` depends on — the file must be
+/// present at the time of the initial `git commit` so the commit captures it.
+#[test]
+fn init_rwv_yaml_parses_via_manifest_loader() {
+    let tmp = tempfile::tempdir().unwrap();
+    let ws = make_empty_workspace(tmp.path());
+
+    rwv()
+        .args(["init", "fresh-proj"])
+        .current_dir(&ws)
+        .assert()
+        .success();
+
+    let manifest_path = ws.join("projects/fresh-proj/rwv.yaml");
+
+    // 1. File exists.
+    assert!(
+        manifest_path.exists(),
+        "projects/fresh-proj/rwv.yaml must exist immediately after `rwv init`"
+    );
+
+    // 2. File is non-empty.
+    let content = std::fs::read_to_string(&manifest_path).unwrap();
+    assert!(
+        !content.trim().is_empty(),
+        "rwv.yaml must not be empty after init"
+    );
+
+    // 3. Parses cleanly through the manifest loader (not just as generic YAML).
+    let manifest = Manifest::from_path(&manifest_path)
+        .expect("rwv.yaml written by `rwv init` must parse via Manifest::from_path");
+
+    // 4. Empty repositories map — no repos have been added yet.
+    assert!(
+        manifest.repositories.is_empty(),
+        "repositories map should be empty in a freshly initialised project"
+    );
 }
 
 #[test]

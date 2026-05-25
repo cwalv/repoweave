@@ -54,9 +54,16 @@ pub fn init(name: &str, provider: Option<&str>, cwd: &Path) -> anyhow::Result<()
         anyhow::bail!("git init failed in {}", project_dir.display());
     }
 
-    // Write empty rwv.yaml
-    std::fs::write(project_dir.join("rwv.yaml"), "repositories: {}\n")
-        .map_err(|e| anyhow::anyhow!("failed to write rwv.yaml: {e}"))?;
+    // Write skeletal rwv.yaml.  The file is intentionally minimal — just the
+    // required `repositories:` key — so it round-trips through the manifest
+    // loader without error and is captured by the initial `git commit` the
+    // workweave-create pre-flight requires (fo-cc40k.4).  Run `rwv add` to
+    // populate it with real repos.
+    std::fs::write(
+        project_dir.join("rwv.yaml"),
+        "# Repoweave manifest — run `rwv add <url> --role <role>` to add repos.\nrepositories: {}\n",
+    )
+    .map_err(|e| anyhow::anyhow!("failed to write rwv.yaml: {e}"))?;
 
     // Configure replay-exclusion for `rwv.lock` so future `rwv sync` runs
     // rebase the project repo natively without dragging the lock through
@@ -154,11 +161,16 @@ pub fn init_adopt(source: &str, cwd: &Path) -> anyhow::Result<()> {
     git.clone_repo(&clone_url.to_string(), &project_dir)
         .map_err(|e| anyhow::anyhow!("failed to clone {}: {e}", clone_url))?;
 
-    // Write rwv.yaml if missing
+    // Write skeletal rwv.yaml if the cloned repo does not already carry one.
+    // Keeps the same format as `rwv init` (without --adopt) so the file is
+    // self-documenting and round-trips through the manifest loader cleanly.
     let manifest_path = project_dir.join("rwv.yaml");
     if !manifest_path.exists() {
-        std::fs::write(&manifest_path, "repositories: {}\n")
-            .map_err(|e| anyhow::anyhow!("failed to write rwv.yaml: {e}"))?;
+        std::fs::write(
+            &manifest_path,
+            "# Repoweave manifest — run `rwv add <url> --role <role>` to add repos.\nrepositories: {}\n",
+        )
+        .map_err(|e| anyhow::anyhow!("failed to write rwv.yaml: {e}"))?;
     }
 
     // Configure replay-exclusion for `rwv.lock`. Idempotent — adopted repos
