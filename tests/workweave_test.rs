@@ -2132,6 +2132,111 @@ fn no_marker_diagnostic_names_partial_create_as_likely_cause() {
         .stderr(predicate::str::contains("--force"));
 }
 
+// ============================================================================
+// fo-cc40k.3 — --force prunes orphan worktree refs from prior partial creates
+// ============================================================================
+
+/// `rwv workweave create --force` must succeed even when the primary repo
+/// already has a stale `.git/worktrees/<name>` registration pointing at the
+/// (now-absent) workweave worktree path.
+///
+/// Scenario:
+///   1. Workspace with one real repo.
+///   2. Workweave directory exists on disk but has NO `.rwv-workweave` marker
+///      (simulates a partial create that survived after interruption).
+///   3. Primary repo has an orphan `.git/worktrees/<name>` registration pointing
+///      at a path inside the workweave dir — created by a prior `git worktree add`
+///      whose directory was subsequently removed.
+///   4. `rwv workweave <proj> create <ww> --force` must:
+///      a. Prune the orphan registration before re-creating.
+///      b. Succeed — exit 0 and produce a valid workweave with marker.
+///      c. Leave no orphan registrations in the primary repo.
+#[test]
+fn create_workweave_force_prunes_orphan_worktree_registrations() {
+    let tmp = tempfile::tempdir().unwrap();
+    let ws = make_workspace(tmp.path(), "web-app");
+    let weaveroot = tmp.path().join(".workweaves");
+    std::fs::create_dir_all(&weaveroot).unwrap();
+
+    // ── Step 1: manufacture the "stale partial create" state ──────────────
+    // Create the workweave dir without a marker.
+    let ww_dir = weaveroot.join("web-app--stale-ww");
+    let wt_dest = ww_dir.join("github/org/repo");
+    std::fs::create_dir_all(&wt_dest).unwrap();
+
+    // Run `git worktree add` in the primary repo, pointing into the workweave
+    // dir.  This writes a `.git/worktrees/<name>` registration in the primary
+    // repo.  Use a fresh branch name so it does not conflict with main.
+    let primary_repo = ws.join("github/org/repo");
+    git(
+        &[
+            "worktree",
+            "add",
+            "--force",
+            wt_dest.to_str().unwrap(),
+            "-b",
+            "web-app--stale-ww/main",
+        ],
+        &primary_repo,
+    );
+
+    // Remove the worktree directory to create an orphan registration —
+    // the `.git/worktrees/<name>` entry now points at a missing path.
+    std::fs::remove_dir_all(&wt_dest).unwrap();
+
+    // Verify that the primary repo sees the stale registration before --force.
+    let before = common::git()
+        .args(["worktree", "list", "--porcelain"])
+        .current_dir(&primary_repo)
+        .output()
+        .expect("git worktree list should work");
+    let before_listing = String::from_utf8_lossy(&before.stdout);
+    assert!(
+        before_listing.contains("stale-ww"),
+        "precondition: orphan registration must be present before --force; \
+         got:\n{before_listing}"
+    );
+
+    // ── Step 2: --force create must succeed ───────────────────────────────
+    rwv()
+        .args(["workweave", "web-app", "create", "stale-ww", "--force"])
+        .env("RWV_WORKWEAVE_DIR", &weaveroot)
+        .current_dir(&ws)
+        .assert()
+        .success();
+
+    // Workweave directory must exist with a marker.
+    assert!(
+        ww_dir.exists(),
+        "workweave dir must exist after --force create"
+    );
+    assert!(
+        ww_dir.join(".rwv-workweave").exists(),
+        "--force create must write the .rwv-workweave marker"
+    );
+
+    // ── Step 3: primary repo must have no leftover orphan registrations ───
+    let after = common::git()
+        .args(["worktree", "list", "--porcelain"])
+        .current_dir(&primary_repo)
+        .output()
+        .expect("git worktree list should work");
+    let after_listing = String::from_utf8_lossy(&after.stdout);
+
+    // The only worktree entry remaining should be the newly-created one inside
+    // the fresh workweave — not a duplicate stale entry.
+    let stale_count = after_listing
+        .lines()
+        .filter(|l| l.starts_with("worktree ") && l.contains("stale-ww") && !l.contains(&ww_dir.join("github/org/repo").to_string_lossy().as_ref()))
+        .count();
+    assert_eq!(
+        stale_count,
+        0,
+        "--force must prune orphan worktree registrations; \
+         git worktree list after:\n{after_listing}"
+    );
+}
+
 #[test]
 fn claude_hook_no_project_arg_needed() {
     // --claude-hook should work without a project argument (derived from .rwv-active).

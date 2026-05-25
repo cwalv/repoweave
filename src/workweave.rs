@@ -369,6 +369,24 @@ pub fn create_workweave(
                 // destructive path.
                 delete_workweave(primary_root, project, name, true)?;
             } else {
+                // No valid marker for this project, so delete_workweave
+                // cannot be used (it would load the wrong manifest).
+                // Still prune orphan worktree registrations — a previous
+                // partial create may have left `.git/worktrees/<name>`
+                // entries in the primary repos even though the workweave
+                // directory survived (or had its marker stripped).
+                // fo-cc40k.3: build (repo_abs, worktree_dest) pairs from
+                // the manifest and prune before the raw remove.
+                let orphan_pairs: Vec<(PathBuf, PathBuf)> = manifest
+                    .repositories
+                    .iter()
+                    .map(|(repo_path, _)| {
+                        let repo_abs = source_root.join(repo_path.as_path());
+                        let worktree_dest = workweave_dir.join(repo_path.as_path());
+                        (repo_abs, worktree_dest)
+                    })
+                    .collect();
+                prune_orphan_worktrees_for(&orphan_pairs);
                 std::fs::remove_dir_all(&workweave_dir)?;
             }
         } else {
