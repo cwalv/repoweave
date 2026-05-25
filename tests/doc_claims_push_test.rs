@@ -184,10 +184,7 @@ fn bare_main_sha(bare: &Path) -> Option<String> {
 
 /// Advance every manifest repo with one new commit and rewrite the lock
 /// to match. Returns the (repo_path, new SHA) pairs.
-fn advance_all_and_relock(
-    ws: &PushWorkspace,
-    repos: &[(&str, &str)],
-) -> Vec<(String, String)> {
+fn advance_all_and_relock(ws: &PushWorkspace, repos: &[(&str, &str)]) -> Vec<(String, String)> {
     let mut manifest_yaml = String::from("repositories:\n");
     let mut lock_yaml = String::from("repositories:\n");
     let mut expected_shas: Vec<(String, String)> = Vec::new();
@@ -369,10 +366,7 @@ fn push_refuses_on_lock_precondition_before_network() {
 
 #[test]
 fn push_dry_run_prints_plan_and_does_not_push() {
-    let repos = [
-        ("local/org/lib", "owned"),
-        ("local/org/forklib", "fork"),
-    ];
+    let repos = [("local/org/lib", "owned"), ("local/org/forklib", "fork")];
     let ws = build_workspace("alpha", &repos);
     let baseline_primary = bare_main_sha(&ws.manifest_bares[0].1);
     let baseline_fork = bare_main_sha(&ws.manifest_bares[1].1);
@@ -508,10 +502,10 @@ fn push_repo_selector_supports_exact_regex_and_glob() {
             .assert()
             .success();
 
-        for i in 0..2 {
+        for (i, item) in expected.iter().enumerate().take(2) {
             assert_eq!(
                 bare_main_sha(&ws.manifest_bares[i].1),
-                Some(expected[i].1.clone()),
+                Some(item.1.clone()),
                 "regex selector should advance local/cwalv/* repos"
             );
         }
@@ -539,10 +533,10 @@ fn push_repo_selector_supports_exact_regex_and_glob() {
             .assert()
             .success();
 
-        for i in 0..2 {
+        for (i, item) in expected.iter().enumerate().take(2) {
             assert_eq!(
                 bare_main_sha(&ws.manifest_bares[i].1),
-                Some(expected[i].1.clone()),
+                Some(item.1.clone()),
                 "glob selector should advance local/org/* repos"
             );
         }

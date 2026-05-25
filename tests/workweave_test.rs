@@ -2008,7 +2008,10 @@ fn create_workweave_rollback_prunes_all_registered_worktrees_not_just_failed() {
         .failure();
 
     let ww_dir = weaveroot.join("web-app--multi-partial");
-    assert!(!ww_dir.exists(), "workweave dir must be removed on rollback");
+    assert!(
+        !ww_dir.exists(),
+        "workweave dir must be removed on rollback"
+    );
 
     // Both real repos must have their orphan registrations pruned.
     for repo_name in &["repo1", "repo3"] {
@@ -2227,11 +2230,14 @@ fn create_workweave_force_prunes_orphan_worktree_registrations() {
     // the fresh workweave — not a duplicate stale entry.
     let stale_count = after_listing
         .lines()
-        .filter(|l| l.starts_with("worktree ") && l.contains("stale-ww") && !l.contains(&ww_dir.join("github/org/repo").to_string_lossy().as_ref()))
+        .filter(|l| {
+            l.starts_with("worktree ")
+                && l.contains("stale-ww")
+                && !l.contains(ww_dir.join("github/org/repo").to_string_lossy().as_ref())
+        })
         .count();
     assert_eq!(
-        stale_count,
-        0,
+        stale_count, 0,
         "--force must prune orphan worktree registrations; \
          git worktree list after:\n{after_listing}"
     );
@@ -2572,10 +2578,7 @@ fn make_workspace_with_uncommitted_project(tmp: &Path, project: &str) -> std::pa
 /// Build a workspace where one manifest repo has been git-init'd but has no
 /// commits yet. The project repo is fine; this exercises the manifest-repo
 /// preflight path.
-fn make_workspace_with_uncommitted_manifest_repo(
-    tmp: &Path,
-    project: &str,
-) -> std::path::PathBuf {
+fn make_workspace_with_uncommitted_manifest_repo(tmp: &Path, project: &str) -> std::path::PathBuf {
     let ws = tmp.join("ws");
 
     // Good manifest repo.
@@ -2733,8 +2736,7 @@ fn create_workweave_fails_actionably_when_manifest_repo_has_no_commits() {
     // Verify that the preflight check also fires for manifest repos (not just
     // the project repo). The error must name the specific repo path.
     let tmp = tempfile::tempdir().unwrap();
-    let ws =
-        make_workspace_with_uncommitted_manifest_repo(tmp.path(), "multiproj");
+    let ws = make_workspace_with_uncommitted_manifest_repo(tmp.path(), "multiproj");
 
     let weaveroot = tmp.path().join(".workweaves");
     std::fs::create_dir_all(&weaveroot).unwrap();

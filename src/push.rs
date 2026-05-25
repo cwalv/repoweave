@@ -547,7 +547,7 @@ mod tests {
     /// subset preserves manifest order; the manifest is a BTreeMap.)
     #[test]
     fn push_plan_item_vec_preserves_order() {
-        let plan = vec![
+        let plan = [
             PushPlanItem {
                 repo_path: RepoPath::new("a"),
                 branch: "main".into(),
@@ -564,10 +564,7 @@ mod tests {
                 role: Role::Dependency,
             },
         ];
-        let labels: Vec<&str> = plan
-            .iter()
-            .map(|i| remote_label(i.role))
-            .collect();
+        let labels: Vec<&str> = plan.iter().map(|i| remote_label(i.role)).collect();
         assert_eq!(labels, vec!["origin", "upstream", "origin"]);
         let paths: Vec<&str> = plan.iter().map(|i| i.repo_path.as_str()).collect();
         assert_eq!(paths, vec!["a", "b", "c"]);
@@ -600,10 +597,7 @@ mod tests {
     #[test]
     fn lock_entries_btreemap_round_trip() {
         let mut entries: BTreeMap<RepoPath, RawRevisionId> = BTreeMap::new();
-        entries.insert(
-            RepoPath::new("github/x/y"),
-            RawRevisionId::new("v1.0.0"),
-        );
+        entries.insert(RepoPath::new("github/x/y"), RawRevisionId::new("v1.0.0"));
         entries.insert(
             RepoPath::new("github/a/b"),
             RawRevisionId::new("abcdef0123456789abcdef0123456789abcdef01"),
@@ -613,10 +607,7 @@ mod tests {
         assert_eq!(keys, vec!["github/a/b", "github/x/y"]);
         // Values stay intact through insertion.
         assert_eq!(
-            entries
-                .get(&RepoPath::new("github/x/y"))
-                .unwrap()
-                .as_str(),
+            entries.get(&RepoPath::new("github/x/y")).unwrap().as_str(),
             "v1.0.0"
         );
     }

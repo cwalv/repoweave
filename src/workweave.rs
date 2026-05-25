@@ -379,8 +379,8 @@ pub fn create_workweave(
                 // manifest and prune before the raw remove.
                 let orphan_pairs: Vec<(PathBuf, PathBuf)> = manifest
                     .repositories
-                    .iter()
-                    .map(|(repo_path, _)| {
+                    .keys()
+                    .map(|repo_path| {
                         let repo_abs = source_root.join(repo_path.as_path());
                         let worktree_dest = workweave_dir.join(repo_path.as_path());
                         (repo_abs, worktree_dest)
