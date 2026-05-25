@@ -1106,8 +1106,13 @@ fn abort_restores_repos_to_pre_op_state() {
 #[test]
 fn abort_succeeds_when_rwv_lock_contains_conflict_markers() {
     let tmp = tempfile::tempdir().unwrap();
-    let (ws, sha) = make_locked_workspace(tmp.path(), "primary");
+    let (ws, _server_sha) = make_locked_workspace(tmp.path(), "primary");
     let project_dir = &ws.project_dir;
+
+    // Capture the project repo's HEAD (the "lock: initial" commit). The SHA
+    // returned by make_locked_workspace is the *server* repo's commit, which
+    // doesn't exist in the project repo's history.
+    let sha = git_out(&["rev-parse", "HEAD"], project_dir);
 
     // Make a second commit so we have something to rebase onto.
     let sha2 = make_commit(project_dir, "extra.txt", "extra\n", "extra commit");
