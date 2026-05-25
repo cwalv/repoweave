@@ -14,7 +14,7 @@ pub trait Integration {
     fn activate(&self, ctx: &IntegrationContext) -> Result<()>;
     fn deactivate(&self, root: &Path) -> Result<()>;
     fn check(&self, ctx: &IntegrationContext) -> Result<Vec<Issue>>;
-    fn lock(&self, ctx: &IntegrationContext) -> Result<()> { Ok(()) }
+    fn activate_hook(&self, ctx: &IntegrationContext) -> Result<()> { Ok(()) }
     fn generated_files(&self, ctx: &IntegrationContext) -> Vec<String> { Vec::new() }
 }
 ```
@@ -29,7 +29,7 @@ pub trait Integration {
 
 ### Optional methods
 
-- **`lock`** — run install commands to update ecosystem lock files (`npm install`, `uv sync`, `cargo generate-lockfile`). Called during `rwv lock`. Default impl is a no-op.
+- **`activate_hook`** — run install commands to update ecosystem lock files (`npm install`, `uv sync`, `cargo generate-lockfile`) after `activate` has generated config files. Fires whenever the workspace's set of active repos may have changed; users can suppress with `rwv activate --no-install`. Default impl is a no-op. (Previously named `lock` and fired on `rwv lock`; the trigger for ecosystem-lockfile refresh is workspace membership change, which is what `rwv activate` represents.)
 - **`generated_files`** — list of paths this integration produces, relative to `output_dir`. Used by the activation framework to detect orphaned files. Default impl returns an empty vec.
 
 ## `IntegrationContext`

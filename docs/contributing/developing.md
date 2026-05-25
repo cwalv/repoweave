@@ -14,7 +14,7 @@ From the repo root:
 cargo build --release
 ```
 
-Use `--release`, not debug. Hooks (`WorktreeCreate`, `WorktreeRemove`, Gas City `pre_start`) invoke rwv per event, and debug builds are noticeably slower to start.
+Use `--release`, not debug. Hooks (e.g. `WorktreeCreate`, `WorktreeRemove`) invoke rwv per event, and debug builds are noticeably slower to start.
 
 The binary lands at `target/release/rwv`.
 
@@ -51,7 +51,7 @@ rwv --version       # matches the freshly built version
 
 ## Hook interaction
 
-`rwv` is invoked fresh per event — there's no daemon. Any hook that shells out to `rwv` (the built-in `WorktreeCreate` / `WorktreeRemove` hooks, Gas City `pre_start`, editor integrations) picks up the new binary on the next invocation. No restart required.
+`rwv` is invoked fresh per event — there's no daemon. Any hook that shells out to `rwv` (the built-in `WorktreeCreate` / `WorktreeRemove` hooks, editor integrations) picks up the new binary on the next invocation. No restart required.
 
 ## Going back to the released version
 
