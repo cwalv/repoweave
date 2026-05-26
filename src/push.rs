@@ -533,7 +533,7 @@ mod tests {
     #[test]
     fn push_plan_item_round_trip_fields_readable() {
         let item = PushPlanItem {
-            repo_path: RepoPath::new("github/cwalv/repoweave"),
+            repo_path: RepoPath::new("github/cwalv/repoweave").expect("known-safe literal"),
             branch: "main".to_string(),
             role: Role::Owned,
         };
@@ -549,17 +549,17 @@ mod tests {
     fn push_plan_item_vec_preserves_order() {
         let plan = [
             PushPlanItem {
-                repo_path: RepoPath::new("a"),
+                repo_path: RepoPath::new("a").expect("known-safe literal"),
                 branch: "main".into(),
                 role: Role::Owned,
             },
             PushPlanItem {
-                repo_path: RepoPath::new("b"),
+                repo_path: RepoPath::new("b").expect("known-safe literal"),
                 branch: "main".into(),
                 role: Role::Fork,
             },
             PushPlanItem {
-                repo_path: RepoPath::new("c"),
+                repo_path: RepoPath::new("c").expect("known-safe literal"),
                 branch: "main".into(),
                 role: Role::Dependency,
             },
@@ -597,9 +597,9 @@ mod tests {
     #[test]
     fn lock_entries_btreemap_round_trip() {
         let mut entries: BTreeMap<RepoPath, RawRevisionId> = BTreeMap::new();
-        entries.insert(RepoPath::new("github/x/y"), RawRevisionId::new("v1.0.0"));
+        entries.insert(RepoPath::new("github/x/y").expect("known-safe literal"), RawRevisionId::new("v1.0.0"));
         entries.insert(
-            RepoPath::new("github/a/b"),
+            RepoPath::new("github/a/b").expect("known-safe literal"),
             RawRevisionId::new("abcdef0123456789abcdef0123456789abcdef01"),
         );
         // BTreeMap orders by key — manifest order, lexicographic.
@@ -607,7 +607,7 @@ mod tests {
         assert_eq!(keys, vec!["github/a/b", "github/x/y"]);
         // Values stay intact through insertion.
         assert_eq!(
-            entries.get(&RepoPath::new("github/x/y")).unwrap().as_str(),
+            entries.get(&RepoPath::new("github/x/y").expect("known-safe literal")).unwrap().as_str(),
             "v1.0.0"
         );
     }

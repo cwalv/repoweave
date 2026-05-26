@@ -1380,8 +1380,8 @@ mod vscode_workspace {
         let config = IntegrationConfig::default();
 
         let all_repos_on_disk: Vec<RepoPath> = vec![
-            RepoPath::new("github/chatly/server"),
-            RepoPath::new("github/acme/web"),
+            RepoPath::new("github/chatly/server").expect("known-safe literal"),
+            RepoPath::new("github/acme/web").expect("known-safe literal"),
         ];
 
         let cache = HashMap::new();
@@ -1420,7 +1420,7 @@ mod vscode_workspace {
         let project = ProjectName::new("proj-a");
         let config = IntegrationConfig::default();
 
-        let all_repos_on_disk: Vec<RepoPath> = vec![RepoPath::new("github/acme/server")];
+        let all_repos_on_disk: Vec<RepoPath> = vec![RepoPath::new("github/acme/server").expect("known-safe literal")];
         let all_project_paths = vec!["proj-a".to_string(), "proj-b".to_string()];
 
         let ctx = IntegrationContext {
@@ -1503,9 +1503,9 @@ mod vscode_workspace {
         let config = IntegrationConfig::default();
 
         let all_repos_on_disk: Vec<RepoPath> = vec![
-            RepoPath::new("github/acme/server"),
-            RepoPath::new("github/other/alpha"),
-            RepoPath::new("github/other/beta"),
+            RepoPath::new("github/acme/server").expect("known-safe literal"),
+            RepoPath::new("github/other/alpha").expect("known-safe literal"),
+            RepoPath::new("github/other/beta").expect("known-safe literal"),
         ];
 
         let cache = HashMap::new();

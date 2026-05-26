@@ -337,7 +337,7 @@ mod tests {
     fn make_manifest(integration_configs: BTreeMap<String, IntegrationConfig>) -> Manifest {
         let mut repos = BTreeMap::new();
         repos.insert(
-            RepoPath::new("github/acme/server"),
+            RepoPath::new("github/acme/server").expect("known-safe literal"),
             RepoEntry {
                 vcs_type: crate::manifest::VcsType::Git,
                 url: "https://github.com/acme/server.git".parse().unwrap(),

@@ -949,7 +949,7 @@ mod doctor_json {
     fn wire_missing_role_kind_tag_and_fields() {
         let v = CheckViolation::MissingRole {
             project: ProjectName::new("alpha"),
-            repo: RepoPath::new("github/a/b"),
+            repo: RepoPath::new("github/a/b").expect("known-safe literal"),
         };
         let json = serde_json::to_value(ViolationOutput::from_violation(
             v,
@@ -977,7 +977,7 @@ mod doctor_json {
         let v = CheckViolation::WorkweaveDrift {
             workweave: WorkweaveName::new("ww1"),
             kind: DriftKind::Missing,
-            repo: RepoPath::new("github/a/b"),
+            repo: RepoPath::new("github/a/b").expect("known-safe literal"),
         };
         let mut ww_dirs = empty_workweave_dirs();
         ww_dirs.insert(
@@ -1010,7 +1010,7 @@ mod doctor_json {
         let v = CheckViolation::WorkweaveDrift {
             workweave: WorkweaveName::new("ww1"),
             kind: DriftKind::Extra,
-            repo: RepoPath::new("github/a/b"),
+            repo: RepoPath::new("github/a/b").expect("known-safe literal"),
         };
         let json = serde_json::to_value(ViolationOutput::from_violation(
             v,
@@ -1029,7 +1029,7 @@ mod doctor_json {
         ] {
             let v = CheckViolation::IndexDrift {
                 workweave: None,
-                repo: RepoPath::new("github/a/b"),
+                repo: RepoPath::new("github/a/b").expect("known-safe literal"),
                 kind,
             };
             let json = serde_json::to_value(ViolationOutput::from_violation(
@@ -1059,7 +1059,7 @@ mod doctor_json {
         ] {
             let v = CheckViolation::WorkingTreeDrift {
                 workweave: Some(WorkweaveName::new("ww1")),
-                repo: RepoPath::new("github/a/b"),
+                repo: RepoPath::new("github/a/b").expect("known-safe literal"),
                 kind,
             };
             let json = serde_json::to_value(ViolationOutput::from_violation(
@@ -1089,7 +1089,7 @@ mod doctor_json {
         let ws = workspace_dir();
         let no_ww = empty_workweave_dirs();
         let pn = || ProjectName::new("p");
-        let rp = || RepoPath::new("github/a/b");
+        let rp = || RepoPath::new("github/a/b").expect("known-safe literal");
 
         let cases: Vec<(CheckViolation, &str)> = vec![
             (
@@ -1171,11 +1171,11 @@ mod doctor_json {
         let ww_dirs = empty_workweave_dirs();
         let violations = vec![
             CheckViolation::OrphanedClone {
-                path: RepoPath::new("github/a/b"),
+                path: RepoPath::new("github/a/b").expect("known-safe literal"),
             },
             CheckViolation::StaleLock {
                 project: ProjectName::new("p"),
-                repo: RepoPath::new("github/c/d"),
+                repo: RepoPath::new("github/c/d").expect("known-safe literal"),
                 locked: ResolvedRevisionId::from_canonical("dead", None),
                 actual: ResolvedRevisionId::from_canonical("beef", None),
             },
@@ -1266,35 +1266,35 @@ mod doctor_json {
         let no_ww = empty_workweave_dirs();
         let violations = vec![
             CheckViolation::OrphanedClone {
-                path: RepoPath::new("github/a/b"),
+                path: RepoPath::new("github/a/b").expect("known-safe literal"),
             },
             CheckViolation::DanglingReference {
                 project: ProjectName::new("p"),
-                repo: RepoPath::new("github/a/c"),
+                repo: RepoPath::new("github/a/c").expect("known-safe literal"),
             },
             CheckViolation::MissingRole {
                 project: ProjectName::new("p"),
-                repo: RepoPath::new("github/a/d"),
+                repo: RepoPath::new("github/a/d").expect("known-safe literal"),
             },
             CheckViolation::StaleLock {
                 project: ProjectName::new("p"),
-                repo: RepoPath::new("github/a/e"),
+                repo: RepoPath::new("github/a/e").expect("known-safe literal"),
                 locked: ResolvedRevisionId::from_canonical("aaa", None),
                 actual: ResolvedRevisionId::from_canonical("bbb", None),
             },
             CheckViolation::WorkweaveDrift {
                 workweave: WorkweaveName::new("ww1"),
                 kind: DriftKind::Missing,
-                repo: RepoPath::new("github/a/f"),
+                repo: RepoPath::new("github/a/f").expect("known-safe literal"),
             },
             CheckViolation::IndexDrift {
                 workweave: None,
-                repo: RepoPath::new("github/a/g"),
+                repo: RepoPath::new("github/a/g").expect("known-safe literal"),
                 kind: IndexDriftKind::SafeToFix,
             },
             CheckViolation::WorkingTreeDrift {
                 workweave: Some(WorkweaveName::new("ww1")),
-                repo: RepoPath::new("github/a/h"),
+                repo: RepoPath::new("github/a/h").expect("known-safe literal"),
                 kind: WorkingTreeDriftKind::LiveEdits,
             },
             CheckViolation::MissingReplayExclusion {

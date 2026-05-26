@@ -152,7 +152,7 @@ pub fn run_add(
             // operator may still expect the workweave to see the repo as a
             // worktree. Mirror the URL path's worktree-creation step.
             if let WorkspaceLocation::Workweave { name, dir, project } = &ctx.location {
-                let repo_path = RepoPath::new(url);
+                let repo_path = RepoPath::new(url)?;
                 let canonical = ctx.primary_path().join(repo_path.as_path());
                 if canonical.exists() {
                     create_worktree_in_workweave(&canonical, dir, &repo_path, project, name)?;
@@ -171,7 +171,7 @@ pub fn run_add(
             anyhow::anyhow!("Error: unrecognized URL '{url}' — could not derive a local path")
         })?;
 
-    let repo_path = RepoPath::new(local_path.to_string_lossy().to_string());
+    let repo_path = RepoPath::new(local_path.to_string_lossy().to_string())?;
 
     // Load and check existing manifest.
     let mut manifest = Manifest::from_path(&manifest_path)
@@ -283,7 +283,7 @@ fn run_add_from_local_path(
         raw_url
     };
 
-    let repo_path = RepoPath::new(path_arg);
+    let repo_path = RepoPath::new(path_arg)?;
 
     // Load and check existing manifest.
     let mut manifest = Manifest::from_path(manifest_path)
@@ -334,7 +334,7 @@ pub fn run_remove(
     let project_dir = find_project_dir(&ctx)?;
     let manifest_path = project_dir.join("rwv.yaml");
 
-    let repo_path = RepoPath::new(path);
+    let repo_path = RepoPath::new(path)?;
 
     // Load existing manifest.
     let mut manifest = Manifest::from_path(&manifest_path)
@@ -447,7 +447,7 @@ pub fn run_add_new(
         )
     })?;
 
-    let repo_path = RepoPath::new(path_arg);
+    let repo_path = RepoPath::new(path_arg)?;
 
     // Load and check existing manifest.
     let mut manifest = Manifest::from_path(&manifest_path)

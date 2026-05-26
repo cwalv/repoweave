@@ -21,24 +21,44 @@ use std::str::FromStr;
 ///
 /// `RepoPath` values are always forward-slash (`/`) separated, matching the
 /// portable YAML convention described in the repoweave manifest spec.
-/// Backslashes are rejected at the serde deserialization boundary so that a
-/// manifest authored on Windows (which might produce `github\acme\server`) is
-/// caught immediately rather than silently mismatching the forward-slash paths
-/// written by sync/fetch. This mirrors the approach Cargo uses for
-/// `Cargo.toml` — YAML stays portable; conversion to native OS paths happens
-/// at filesystem-boundary calls via [`RepoPath::as_path`].
-///
-/// `RepoPath::new` is intentionally unchecked — it is used internally where
-/// the caller guarantees forward-slash paths (e.g., from registry logic or
-/// tests). All YAML deserialization goes through the custom [`Deserialize`]
-/// impl which enforces the no-backslash invariant.
+/// Backslashes are rejected at every construction site — both at serde
+/// deserialization and via [`RepoPath::new`] — so a manifest authored on
+/// Windows (which might produce `github\acme\server`) is caught immediately
+/// rather than silently mismatching the forward-slash paths written by
+/// sync/fetch. This mirrors the approach Cargo uses for `Cargo.toml` — YAML
+/// stays portable; conversion to native OS paths happens at
+/// filesystem-boundary calls via [`RepoPath::as_path`].
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
 #[serde(transparent)]
 pub struct RepoPath(String);
 
+/// Validate that a `RepoPath` string contains no backslashes.
+///
+/// Returns `Err` with a human-readable message when the string contains `\`.
+/// Shared by [`RepoPath::new`] and the [`serde::Deserialize`] impl so both
+/// paths produce the same error text.
+fn validate_repo_path(s: &str) -> Result<(), String> {
+    if s.contains('\\') {
+        Err(
+            "backslash not allowed in RepoPath; use forward slash (e.g. \
+             `github/acme/server` not `github\\acme\\server`)"
+                .to_owned(),
+        )
+    } else {
+        Ok(())
+    }
+}
+
 impl RepoPath {
-    pub fn new(s: impl Into<String>) -> Self {
-        Self(s.into())
+    /// Construct a `RepoPath`, returning an error if `s` contains a backslash.
+    ///
+    /// All `RepoPath` values must use forward-slash separators. Use
+    /// [`RepoPath::as_path`] to convert to a native OS path at
+    /// filesystem-boundary calls.
+    pub fn new(s: impl Into<String>) -> anyhow::Result<Self> {
+        let s = s.into();
+        validate_repo_path(&s).map_err(|msg| anyhow::anyhow!("{msg}"))?;
+        Ok(Self(s))
     }
 
     pub fn as_str(&self) -> &str {
@@ -59,12 +79,7 @@ impl fmt::Display for RepoPath {
 impl<'de> serde::Deserialize<'de> for RepoPath {
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         let s = String::deserialize(deserializer)?;
-        if s.contains('\\') {
-            return Err(serde::de::Error::custom(
-                "backslash not allowed in RepoPath; use forward slash (e.g. \
-                 `github/acme/server` not `github\\acme\\server`)",
-            ));
-        }
+        validate_repo_path(&s).map_err(serde::de::Error::custom)?;
         Ok(RepoPath(s))
     }
 }
@@ -1392,7 +1407,7 @@ repositories:
 
     #[test]
     fn repo_path_as_path() {
-        let rp = RepoPath::new("github/acme/server");
+        let rp = RepoPath::new("github/acme/server").expect("known-safe literal");
         assert_eq!(rp.as_path(), Path::new("github/acme/server"));
     }
 
@@ -1468,10 +1483,69 @@ repositories:
     /// Serialization of a RepoPath round-trips correctly through YAML.
     #[test]
     fn repo_path_serde_round_trip() {
-        let rp = RepoPath::new("github/acme/server");
+        let rp = RepoPath::new("github/acme/server").expect("known-safe literal");
         let yaml = serde_yaml::to_string(&rp).unwrap();
         let restored: RepoPath = serde_yaml::from_str(&yaml).unwrap();
         assert_eq!(rp, restored);
+    }
+
+    // ========================================================================
+    // RepoPath::new — strict constructor invariant
+    // ========================================================================
+
+    /// `RepoPath::new` with a valid forward-slash path succeeds.
+    #[test]
+    fn repo_path_new_forward_slash_accepted() {
+        let result = RepoPath::new("github/acme/server");
+        assert!(result.is_ok(), "forward-slash path must succeed");
+        assert_eq!(result.unwrap().as_str(), "github/acme/server");
+    }
+
+    /// `RepoPath::new` with a pure-backslash path returns Err with a clear message.
+    #[test]
+    fn repo_path_new_backslash_rejected() {
+        let result = RepoPath::new("github\\acme\\server");
+        assert!(result.is_err(), "backslash path must be rejected by new()");
+        let msg = format!("{}", result.unwrap_err());
+        assert!(
+            msg.contains("backslash not allowed"),
+            "error should mention 'backslash not allowed', got: {msg}"
+        );
+        assert!(
+            msg.contains("forward slash"),
+            "error should mention 'forward slash', got: {msg}"
+        );
+    }
+
+    /// `RepoPath::new` with a mixed-slash path (both forward and back) also returns Err.
+    #[test]
+    fn repo_path_new_mixed_slash_rejected() {
+        let result = RepoPath::new("github/acme\\server");
+        assert!(result.is_err(), "mixed-slash path must be rejected by new()");
+        let msg = format!("{}", result.unwrap_err());
+        assert!(
+            msg.contains("backslash not allowed"),
+            "error should mention 'backslash not allowed', got: {msg}"
+        );
+    }
+
+    /// The error message from `RepoPath::new` and the serde Deserialize impl
+    /// share the same wording — callers get a consistent diagnostic regardless
+    /// of whether the value came from YAML or internal code.
+    #[test]
+    fn repo_path_new_and_serde_produce_same_error_wording() {
+        let new_msg = format!("{}", RepoPath::new("foo\\bar").unwrap_err());
+        let serde_result: Result<RepoPath, _> = serde_yaml::from_str("foo\\bar");
+        let serde_msg = format!("{}", serde_result.unwrap_err());
+        // Both messages must contain the canonical diagnostic phrase.
+        assert!(
+            new_msg.contains("backslash not allowed"),
+            "new() error must mention 'backslash not allowed', got: {new_msg}"
+        );
+        assert!(
+            serde_msg.contains("backslash not allowed"),
+            "serde error must mention 'backslash not allowed', got: {serde_msg}"
+        );
     }
 
     // ========================================================================
@@ -1763,7 +1837,7 @@ repositories:
         let m: Manifest = serde_yaml::from_str(MINIMAL_MANIFEST).unwrap();
         let paths: Vec<_> = m.iter_repo_paths().collect();
         assert_eq!(paths.len(), 1);
-        assert_eq!(paths[0], &RepoPath::new("github/acme/server"));
+        assert_eq!(paths[0], &RepoPath::new("github/acme/server").expect("known-safe literal"));
     }
 
     #[test]
@@ -1785,14 +1859,14 @@ repositories:
     #[test]
     fn get_entry_empty_manifest_returns_none() {
         let m: Manifest = serde_yaml::from_str("repositories: {}\n").unwrap();
-        let result = m.get_entry(&RepoPath::new("github/acme/server"));
+        let result = m.get_entry(&RepoPath::new("github/acme/server").expect("known-safe literal"));
         assert!(result.is_none());
     }
 
     #[test]
     fn get_entry_present_returns_some() {
         let m: Manifest = serde_yaml::from_str(MINIMAL_MANIFEST).unwrap();
-        let entry = m.get_entry(&RepoPath::new("github/acme/server"));
+        let entry = m.get_entry(&RepoPath::new("github/acme/server").expect("known-safe literal"));
         assert!(entry.is_some());
         let entry = entry.unwrap();
         assert_eq!(entry.role, Role::Owned);
@@ -1802,15 +1876,15 @@ repositories:
     #[test]
     fn get_entry_absent_path_returns_none() {
         let m: Manifest = serde_yaml::from_str(MINIMAL_MANIFEST).unwrap();
-        let result = m.get_entry(&RepoPath::new("github/acme/nonexistent"));
+        let result = m.get_entry(&RepoPath::new("github/acme/nonexistent").expect("known-safe literal"));
         assert!(result.is_none());
     }
 
     #[test]
     fn get_entry_multi_repo_each_lookup() {
         let m: Manifest = serde_yaml::from_str(VALID_MANIFEST).unwrap();
-        let server = m.get_entry(&RepoPath::new("github/acme/server"));
-        let client = m.get_entry(&RepoPath::new("github/acme/client"));
+        let server = m.get_entry(&RepoPath::new("github/acme/server").expect("known-safe literal"));
+        let client = m.get_entry(&RepoPath::new("github/acme/client").expect("known-safe literal"));
         assert!(server.is_some());
         assert!(client.is_some());
         assert_eq!(server.unwrap().role, Role::Owned);
@@ -1832,7 +1906,7 @@ repositories:
         let entries: Vec<_> = m.iter_entries().collect();
         assert_eq!(entries.len(), 1);
         let (path, entry) = entries[0];
-        assert_eq!(path, &RepoPath::new("github/acme/server"));
+        assert_eq!(path, &RepoPath::new("github/acme/server").expect("known-safe literal"));
         assert_eq!(entry.role, Role::Owned);
     }
 

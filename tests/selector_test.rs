@@ -10,7 +10,7 @@ use repoweave::manifest::{RepoPath, Role};
 use repoweave::selector::{FilterError, RepoFilter};
 
 fn rp(s: &str) -> RepoPath {
-    RepoPath::new(s)
+    RepoPath::new(s).expect("test helper: caller must pass forward-slash paths")
 }
 
 #[test]

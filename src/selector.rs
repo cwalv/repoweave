@@ -282,7 +282,7 @@ mod tests {
     use super::*;
 
     fn rp(s: &str) -> RepoPath {
-        RepoPath::new(s)
+        RepoPath::new(s).expect("test helper: caller must pass forward-slash paths")
     }
 
     #[test]

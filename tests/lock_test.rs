@@ -149,14 +149,14 @@ fn lock_in_primary_creates_lock_file() {
 
     let entry_a = lock
         .repositories
-        .get(&repoweave::manifest::RepoPath::new(repo_a_path))
+        .get(&repoweave::manifest::RepoPath::new(repo_a_path).expect("known-safe literal"))
         .expect("lock should contain repo A");
     assert_eq!(entry_a.version.as_str(), &sha_a);
     assert_eq!(entry_a.vcs_type, repoweave::manifest::VcsType::Git);
 
     let entry_b = lock
         .repositories
-        .get(&repoweave::manifest::RepoPath::new(repo_b_path))
+        .get(&repoweave::manifest::RepoPath::new(repo_b_path).expect("known-safe literal"))
         .expect("lock should contain repo B");
     assert_eq!(entry_b.version.as_str(), &sha_b);
 }
@@ -221,7 +221,7 @@ fn lock_in_workweave_writes_to_workweave_project_dir_not_primary() {
     );
     let entry = workweave_lock
         .repositories
-        .get(&repoweave::manifest::RepoPath::new(repo_path))
+        .get(&repoweave::manifest::RepoPath::new(repo_path).expect("known-safe literal"))
         .expect("workweave lock should contain repo");
     assert_eq!(
         entry.version.as_str(),
@@ -289,7 +289,7 @@ fn lock_file_format_has_correct_fields() {
 
     // Parse and validate types
     let lock = repoweave::manifest::LockFile::from_path(&lock_path).unwrap();
-    let entry = &lock.repositories[&repoweave::manifest::RepoPath::new(repo_path)];
+    let entry = &lock.repositories[&repoweave::manifest::RepoPath::new(repo_path).expect("known-safe literal")];
     assert_eq!(entry.vcs_type, repoweave::manifest::VcsType::Git);
     assert_eq!(entry.version.as_str(), &sha);
     assert_eq!(entry.url.to_string(), "https://github.com/acme/server.git");
@@ -355,7 +355,7 @@ fn stale_lock_detected_after_new_commit() {
 
     let lock_path = project_dir.join("rwv.lock");
     let lock_before = repoweave::manifest::LockFile::from_path(&lock_path).unwrap();
-    let pinned_sha = lock_before.repositories[&repoweave::manifest::RepoPath::new(repo_path)]
+    let pinned_sha = lock_before.repositories[&repoweave::manifest::RepoPath::new(repo_path).expect("known-safe literal")]
         .version
         .as_str()
         .to_string();
@@ -384,7 +384,7 @@ fn stale_lock_detected_after_new_commit() {
 
     // The existing lock file still has the old SHA — it's stale
     let stale_lock = repoweave::manifest::LockFile::from_path(&lock_path).unwrap();
-    let stale_sha = stale_lock.repositories[&repoweave::manifest::RepoPath::new(repo_path)]
+    let stale_sha = stale_lock.repositories[&repoweave::manifest::RepoPath::new(repo_path).expect("known-safe literal")]
         .version
         .as_str()
         .to_string();
@@ -405,7 +405,7 @@ fn stale_lock_detected_after_new_commit() {
         .success();
 
     let updated_lock = repoweave::manifest::LockFile::from_path(&lock_path).unwrap();
-    let updated_sha = updated_lock.repositories[&repoweave::manifest::RepoPath::new(repo_path)]
+    let updated_sha = updated_lock.repositories[&repoweave::manifest::RepoPath::new(repo_path).expect("known-safe literal")]
         .version
         .as_str()
         .to_string();
@@ -541,7 +541,7 @@ fn lock_dirty_flag_bypasses_uncommitted_check() {
     let lock = repoweave::manifest::LockFile::from_path(&lock_path).unwrap();
     let entry = lock
         .repositories
-        .get(&repoweave::manifest::RepoPath::new(repo_path))
+        .get(&repoweave::manifest::RepoPath::new(repo_path).expect("known-safe literal"))
         .expect("lock should contain repo");
     assert_eq!(entry.version.as_str(), &sha);
 }
@@ -584,7 +584,7 @@ fn lock_records_tag_name_when_head_is_tagged() {
     let lock = repoweave::manifest::LockFile::from_path(&lock_path).unwrap();
     let entry = lock
         .repositories
-        .get(&repoweave::manifest::RepoPath::new(repo_path))
+        .get(&repoweave::manifest::RepoPath::new(repo_path).expect("known-safe literal"))
         .expect("lock should contain repo");
 
     // Version should be the tag name, not the raw SHA
@@ -619,7 +619,7 @@ fn lock_records_sha_when_head_is_not_tagged() {
     let lock = repoweave::manifest::LockFile::from_path(&lock_path).unwrap();
     let entry = lock
         .repositories
-        .get(&repoweave::manifest::RepoPath::new(repo_path))
+        .get(&repoweave::manifest::RepoPath::new(repo_path).expect("known-safe literal"))
         .expect("lock should contain repo");
 
     // Version should be the raw SHA when no tag points at HEAD
@@ -667,14 +667,14 @@ fn lock_records_tag_per_repo_independently() {
     let lock_path = project_dir.join("rwv.lock");
     let lock = repoweave::manifest::LockFile::from_path(&lock_path).unwrap();
 
-    let entry_a = &lock.repositories[&repoweave::manifest::RepoPath::new(repo_a)];
+    let entry_a = &lock.repositories[&repoweave::manifest::RepoPath::new(repo_a).expect("known-safe literal")];
     assert_eq!(
         entry_a.version.as_str(),
         "v2.0.0",
         "tagged repo should use tag name"
     );
 
-    let entry_b = &lock.repositories[&repoweave::manifest::RepoPath::new(repo_b)];
+    let entry_b = &lock.repositories[&repoweave::manifest::RepoPath::new(repo_b).expect("known-safe literal")];
     assert_eq!(
         entry_b.version.as_str(),
         &sha_b,
@@ -866,7 +866,7 @@ fn lock_resolve_versions_makes_tag_form_equal_head() {
     let head = repoweave::git::GitVcs
         .head_revision(&root.join(repo_path))
         .unwrap();
-    let entry = &resolved_lock.repositories[&repoweave::manifest::RepoPath::new(repo_path)];
+    let entry = &resolved_lock.repositories[&repoweave::manifest::RepoPath::new(repo_path).expect("known-safe literal")];
     assert_eq!(
         entry.version, head,
         "tag-form lock entry should be == HEAD after resolve_versions"
@@ -904,7 +904,7 @@ fn lock_resolve_versions_unknown_revision_returns_failure() {
 
     let lock = repoweave::manifest::LockFile::from_path(&lock_path).unwrap();
     let (resolved_lock, failures) = lock.resolve_versions(&root);
-    let repo = repoweave::manifest::RepoPath::new(repo_path);
+    let repo = repoweave::manifest::RepoPath::new(repo_path).expect("known-safe literal");
     assert_eq!(failures.len(), 1, "exactly one failure expected");
     assert_eq!(
         failures[0].0, repo,
@@ -1354,7 +1354,7 @@ fn lock_file_from_path_yields_raw_entries() {
     .unwrap();
 
     let lock = repoweave::manifest::LockFile::from_path(&lock_path).unwrap();
-    let entry = &lock.repositories[&repoweave::manifest::RepoPath::new(repo_path)];
+    let entry = &lock.repositories[&repoweave::manifest::RepoPath::new(repo_path).expect("known-safe literal")];
     // The static type of `entry.version` is `RawRevisionId`. We can only
     // ask for its string identity — there is no `display_str()` or
     // canonical-SHA accessor (those live on ResolvedRevisionId).
@@ -1391,7 +1391,7 @@ fn resolve_versions_surfaces_unknown_ref_in_failures() {
 
     let lock = repoweave::manifest::LockFile::from_path(&lock_path).unwrap();
     let (resolved, failures) = lock.resolve_versions(&root);
-    let repo = repoweave::manifest::RepoPath::new(repo_path);
+    let repo = repoweave::manifest::RepoPath::new(repo_path).expect("known-safe literal");
     assert!(
         !resolved.repositories.contains_key(&repo),
         "unresolved entry must not appear in ResolvedLockFile"
@@ -1446,6 +1446,6 @@ fn resolve_versions_roundtrip_raw_then_resolved_yaml_shape() {
     );
     // And re-parsing through the parse boundary yields the same raw value.
     let reparsed = repoweave::manifest::LockFile::from_path(&out_path).unwrap();
-    let entry = &reparsed.repositories[&repoweave::manifest::RepoPath::new(repo_path)];
+    let entry = &reparsed.repositories[&repoweave::manifest::RepoPath::new(repo_path).expect("known-safe literal")];
     assert_eq!(entry.version, repoweave::vcs::RawRevisionId::new("v1.0.0"));
 }

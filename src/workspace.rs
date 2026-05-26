@@ -177,7 +177,15 @@ pub fn scan_repos_on_disk(
                     continue;
                 }
                 if let Ok(rel) = repo_path.strip_prefix(root) {
-                    repos.push(RepoPath::new(rel.to_string_lossy()));
+                    // Normalize to forward slashes before constructing a RepoPath
+                    // so the invariant holds on all platforms. On Windows,
+                    // Path::to_string_lossy() produces backslashes; replace them
+                    // here at the OS boundary before the validated constructor runs.
+                    let fwd = rel.to_string_lossy().replace('\\', "/");
+                    repos.push(
+                        RepoPath::new(fwd)
+                            .expect("path after backslash-to-slash normalization cannot fail"),
+                    );
                 }
             }
         }

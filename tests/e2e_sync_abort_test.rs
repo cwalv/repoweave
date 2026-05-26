@@ -1479,7 +1479,7 @@ fn lock_in_marker_workweave_does_not_mutate_primary_lock_file() {
     let ww_lock = repoweave::manifest::LockFile::from_path(&ww_lock_path).unwrap();
     let entry = ww_lock
         .repositories
-        .get(&repoweave::manifest::RepoPath::new(SERVER_PATH))
+        .get(&repoweave::manifest::RepoPath::new(SERVER_PATH).expect("SERVER_PATH is a forward-slash constant"))
         .expect("workweave lock should contain server entry");
     assert_eq!(
         entry.version.as_str(),

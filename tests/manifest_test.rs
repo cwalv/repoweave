@@ -90,7 +90,7 @@ fn manifest_repo_paths_are_btreemap_keys() {
 #[test]
 fn manifest_repo_entry_fields() {
     let m: Manifest = serde_yaml::from_str(FULL_MANIFEST_YAML).unwrap();
-    let server = m.get_entry(&RepoPath::new("github/acme/server")).unwrap();
+    let server = m.get_entry(&RepoPath::new("github/acme/server").expect("known-safe literal")).unwrap();
     assert_eq!(server.vcs_type, VcsType::Git);
     assert_eq!(server.url.to_string(), "https://github.com/acme/server.git");
     assert_eq!(server.version, RefName::new("main"));
@@ -104,7 +104,7 @@ fn manifest_repo_entry_fields() {
 #[test]
 fn role_deserialization_all_variants() {
     let m: Manifest = serde_yaml::from_str(FULL_MANIFEST_YAML).unwrap();
-    let role_of = |key: &str| m.get_entry(&RepoPath::new(key)).unwrap().role;
+    let role_of = |key: &str| m.get_entry(&RepoPath::new(key).expect("test helper: forward-slash paths only")).unwrap().role;
 
     assert_eq!(role_of("github/acme/server"), Role::Owned);
     assert_eq!(role_of("github/acme/client"), Role::Fork);
@@ -165,7 +165,7 @@ fn lock_with_workweave_provenance() {
     assert_eq!(lock.workweave, Some(WorkweaveName::new("hotfix-42")));
     assert_eq!(lock.repositories.len(), 2);
 
-    let server = &lock.repositories[&RepoPath::new("github/acme/server")];
+    let server = &lock.repositories[&RepoPath::new("github/acme/server").expect("known-safe literal")];
     assert_eq!(server.vcs_type, VcsType::Git);
     assert_eq!(server.version, RawRevisionId::new("abc123def456"));
 }

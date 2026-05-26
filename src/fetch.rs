@@ -673,8 +673,8 @@ mod tests {
             integrations: Default::default(),
             workweave: None,
         };
-        let primary = RepoPath::new("github/org/primary");
-        let reference = RepoPath::new("github/org/reference");
+        let primary = RepoPath::new("github/org/primary").expect("known-safe literal");
+        let reference = RepoPath::new("github/org/reference").expect("known-safe literal");
         manifest
             .repositories
             .insert(primary.clone(), make_entry(Role::Owned));
@@ -700,8 +700,8 @@ mod tests {
             integrations: Default::default(),
             workweave: None,
         };
-        let primary = RepoPath::new("github/org/primary");
-        let reference = RepoPath::new("github/org/reference");
+        let primary = RepoPath::new("github/org/primary").expect("known-safe literal");
+        let reference = RepoPath::new("github/org/reference").expect("known-safe literal");
         manifest
             .repositories
             .insert(primary.clone(), make_entry(Role::Owned));

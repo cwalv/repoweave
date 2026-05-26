@@ -278,7 +278,7 @@ fn cargo_release_version_pin_workflow() {
     let lock = repoweave::lock::generate_lock(&manifest, root, None, /*dirty=*/ true)
         .expect("generate_lock should succeed");
 
-    let protocol_key = repoweave::manifest::RepoPath::new("github/chatly/protocol");
+    let protocol_key = repoweave::manifest::RepoPath::new("github/chatly/protocol").expect("known-safe literal");
     let protocol_entry = lock
         .repositories
         .get(&protocol_key)
@@ -300,7 +300,7 @@ fn cargo_release_version_pin_workflow() {
     );
 
     // Server has no tag, so its display form is the SHA (no tag form).
-    let server_key = repoweave::manifest::RepoPath::new("github/chatly/server");
+    let server_key = repoweave::manifest::RepoPath::new("github/chatly/server").expect("known-safe literal");
     let server_entry = lock
         .repositories
         .get(&server_key)
