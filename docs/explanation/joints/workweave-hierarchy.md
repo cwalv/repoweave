@@ -34,7 +34,7 @@ ancestor.
 ## Flow direction
 
 Work flows along edges of the tree in a specific direction. Creation
-runs down the edges (solid); sync runs back up them (dotted):
+runs down the edges (solid); landing runs back up them (dotted):
 
 ```mermaid
 flowchart TD
@@ -47,22 +47,23 @@ flowchart TD
     P -->|create| B
     A -->|create| AC
 
-    A -.->|rwv sync| P
-    B -.->|rwv sync| P
-    AC -.->|rwv sync| A
+    A -.->|rwv sync-to| P
+    B -.->|rwv sync-to| P
+    AC -.->|rwv sync-to| A
 ```
 
 - **Creation direction** (primary → workweave). `rwv workweave create`
   forks from the current workspace. The child starts pinned to the
   parent's lock.
-- **Landing direction** (workweave → primary). `rwv sync` brings the
-  child's committed work *up* toward the root. Each `rwv sync` advances
-  exactly one edge (one hop, see below).
+- **Landing direction** (workweave → parent). `rwv sync-to` pushes the
+  child's committed work *up* toward the root. Each `rwv sync-to`
+  advances exactly one edge (one hop, see below). `rwv sync` goes the
+  other direction: CWD absorbs the named source.
 
 The two directions are not symmetric — see
-[sync-semantics](./sync-semantics.md) for the asymmetry-in-effect
-discussion. The flow-direction discipline is *don't skip edges and don't
-cross edges*: a child syncs to its parent, not to a sibling or to a
+[sync-semantics](./sync-semantics.md) for the full direction-pair
+contract. The flow-direction discipline is *don't skip edges and don't
+cross edges*: a child pushes to its parent, not to a sibling or to a
 grandparent.
 
 ## Parent tracking is tool behavior
@@ -89,12 +90,13 @@ so callers always see a value.
 
 This shifts two things from discipline to tool behavior:
 
-1. **Bare `rwv sync` has a target.** Running `rwv sync` with no
-   argument syncs to the recorded parent. From a child workweave that
-   means the parent workweave, not the primary.
-2. **`rwv sync --retire` knows what to retire to.** The retire flag
-   syncs to the parent, verifies convergence, and deletes the workweave
-   on success.
+1. **Bare `rwv sync-to` has a target.** Running `rwv sync-to` with no
+   argument pushes to the recorded parent. From a child workweave that
+   means the parent workweave, not the primary. `rwv sync` (CWD absorbs
+   a source) always requires an explicit argument — it has no auto-target.
+2. **`rwv sync-to --retire` knows what to retire to.** The retire flag
+   pushes to the recorded parent, verifies convergence, and deletes the
+   workweave on success.
 
 Anchored by the `.rwv-workweave` parent field plumbed through
 `src/workspace.rs::WorkweaveMarker` and consumed by
@@ -102,28 +104,28 @@ Anchored by the `.rwv-workweave` parent field plumbed through
 
 ## One hop, not transitive
 
-Bare `rwv sync` follows the parent edge — one hop. It does not chase
+Bare `rwv sync-to` follows the parent edge — one hop. It does not chase
 the tree up to the primary on its own. From a child of a workweave,
-reaching primary takes two syncs:
+reaching primary takes two sync-to invocations:
 
 ```bash
 cd .workweaves/web-app--feat-child
-rwv sync                  # → parent workweave (web-app--feat)
+rwv sync-to               # → parent workweave (web-app--feat)
 cd ../web-app--feat
-rwv sync                  # → primary
+rwv sync-to               # → primary
 ```
 
-Or one explicit sync that names the target:
+Or one explicit sync-to that names the target:
 
 ```bash
 cd .workweaves/web-app--feat-child
-rwv sync primary
+rwv sync-to primary
 ```
 
-The one-hop default is intentional. Transitive sync would silently land
-the child's work in a workspace it was never forked from, bypassing the
-intermediate review step. Explicit-target sync is always available when
-the operator means it.
+The one-hop default is intentional. Transitive sync-to would silently
+land the child's work in a workspace it was never forked from, bypassing
+the intermediate review step. Explicit-target sync-to is always available
+when the operator means it.
 
 ## What rwv tracks vs. what is discipline
 
@@ -133,9 +135,9 @@ operator-managed. Worth being explicit:
 | Behavior | Tool support | Discipline |
 |---|---|---|
 | Recording the parent edge | Yes (`.rwv-workweave`) | — |
-| Bare-sync auto-targets the parent | Yes | — |
-| `--retire` lands one hop and deletes on success | Yes | — |
-| Sibling-to-sibling coordination | No | Sync via shared parent |
+| Bare `rwv sync-to` auto-targets the parent | Yes | — |
+| `rwv sync-to --retire` lands one hop and deletes on success | Yes | — |
+| Sibling-to-sibling coordination | No | Sync-to via shared parent |
 | Cross-picking commits across branches | No | Use `git cherry-pick` directly |
 | Promotion between branches in the project repo | No | Ordinary git workflow |
 | Detecting unusual flow (skip-rebase, sibling sync) | Limited | Operator awareness |
@@ -168,10 +170,31 @@ A workweave's `.workweaves/` directory is its own children's parent;
 the tree is naturally reflected in the filesystem path. This means
 `find` and editor file pickers see the tree without any special tooling.
 
+## Ephemeral branch names and the git worktree constraint
+
+Each workweave runs on a per-workweave ephemeral branch name — e.g.
+`foundations--fo-pte54.5/main` rather than `main`. This is what lets
+`rwv sync-to` work cleanly as a local-to-local primitive.
+
+Git imposes a constraint: only one worktree can have a given branch
+checked out at a time. If two workweaves both tracked `main`, checking
+out the second would require the first to detach its HEAD, and the
+sequence `sync-to primary` would be trying to push into a branch another
+worktree owns. The analogous single-repo operation — `git push
+<local-path> feature:main` — is similarly awkward when `main` is already
+checked out at the destination.
+
+rwv sidesteps this entirely. Because primary's `main` and a workweave's
+`foundations--fo-pte54.5/main` are different branch names, no two
+workweaves compete for the same named branch. `rwv sync-to` can push
+directly into primary's `main` without any detach-or-stash dance. The
+ephemeral naming scheme is not just bookkeeping — it is what makes
+`sync-to` a clean primitive where the single-repo git analog is not.
+
 ## Related joints
 
 - [sync-semantics](./sync-semantics.md) — what happens when a sync runs
-  between two workspaces on the tree.
+  between two workspaces on the tree; the full direction-pair contract.
 - [pyramid-of-stability](./pyramid-of-stability.md) — the project-repo
   side of the canonical-tip story; orthogonal to workweave hierarchy.
 - [verb-vs-composition](./verb-vs-composition.md) — why "sync through

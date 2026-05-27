@@ -1,17 +1,26 @@
 # Sync semantics
 
-`rwv sync <source>` aligns the current workspace ("CWD") with another
-workspace's committed state. It is repoweave's most load-bearing verb —
-the one that makes the [pyramid of stability](./pyramid-of-stability.md)
-move and the [workweave hierarchy](./workweave-hierarchy.md) navigable.
-This joint covers the phase model, the strategy choices, the auto-target
-behavior, the `--retire` cleanup step, and the parallel/NDJSON output
-modes.
+Two verbs, two directions:
 
-The verb is direction-neutral on the surface: any workspace can be
-source, any can be destination. But it is *not* symmetric in effect —
-exactly the CWD's state changes; the source is read-only. See
-"Symmetries and asymmetries" below.
+- **`rwv sync <source>`** — CWD absorbs the source workspace's committed
+  state. The source is read; CWD changes.
+- **`rwv sync-to <target>`** — CWD's committed state is pushed into the
+  target workspace. CWD is read; the target changes.
+
+Together they form a direction-explicit pair. The mental model is the
+same as `cp` vs. the destination-first convention in `rsync --dest`: the
+argument position identifies what moves where. See "Symmetries and
+asymmetries" below for the full contract.
+
+Both verbs run the same three-phase engine — Phase 2 (manifest repos),
+Phase 1' (project repo, lock-excluded), Phase 3 (re-lock). They are
+repoweave's most load-bearing verbs, the ones that make the
+[pyramid of stability](./pyramid-of-stability.md) move and the
+[workweave hierarchy](./workweave-hierarchy.md) navigable.
+
+This joint covers the phase model, the strategy choices, the auto-target
+behavior for `sync-to`, the `--retire` cleanup step (a `sync-to`
+flag), and the parallel/NDJSON output modes.
 
 ## The three phases
 
@@ -22,21 +31,23 @@ runtime order.
 
 ### Phase 2 — manifest repos
 
-Advance each manifest repo's branch to the source's lock target, using
-the chosen `--strategy` (see below). This runs first because the
-project repo's eventual lock is derived from these manifest tips — they
-need to be at their final positions before Phase 3 captures them.
+Advance each of the destination's manifest repo branches to the source's
+lock target, using the chosen `--strategy` (see below). This runs first
+because the project repo's eventual lock is derived from these manifest
+tips — they need to be at their final positions before Phase 3 captures
+them.
 
 Three classes of repos fall out:
 
 - **Repos already at the target SHA.** Marked `up-to-date`; no work.
 - **Repos behind the target.** Advanced via the strategy. Fast-forward
-  succeeds when the lock target is a descendant of CWD's HEAD; rebase
-  and merge handle divergence.
+  succeeds when the lock target is a descendant of the destination's
+  HEAD; rebase and merge handle divergence.
 - **Repos ahead of the target.** Surfaced as `already-ahead` — the
-  lock is a strict ancestor of CWD's HEAD. Sync does not silently rewind
-  the working state; the operator decides (rerun with `--strategy
-  rebase`, accept the divergence, or relock from this side).
+  lock is a strict ancestor of the destination's HEAD. The engine does
+  not silently rewind the destination's working state; the operator
+  decides (rerun with `--strategy rebase`, accept the divergence, or
+  relock from the destination side).
 
 Each repo's outcome is captured as a typed `RepoSyncOutcome`
 (converged / already-ahead / no-op / failed); the `--json` output
@@ -44,10 +55,15 @@ serializes the same enum.
 
 ### Phase 1' — project repo, lock-excluded
 
-Replay CWD's unique project commits — commits reachable from CWD's
-project tip but not from source's — onto source's project tip using
-`--strategy`, with `rwv.lock` excluded from each commit's effective
-diff.
+Replay the source workspace's unique project commits — commits reachable
+from the source's project tip but not from the destination's — onto the
+destination's project tip using `--strategy`, with `rwv.lock` excluded
+from each commit's effective diff.
+
+For `rwv sync <source>`: the source is the named workspace, the
+destination is CWD. For `rwv sync-to <target>`: the source is CWD, the
+destination is the named target. The engine is the same; the direction
+of replay follows whichever workspace is the source.
 
 This is the structural fix that made [lock-as-derived](./lock-as-derived.md)
 operationally tractable. Without exclusion, every cross-workweave sync
@@ -103,8 +119,9 @@ in the N-way serial landing scenario above.
 `--strategy=ff` does not need the precondition: FF advances the
 branch pointer without performing a merge, so no driver is consulted.
 
-Sync checks the precondition before any git operation and bails with
-an actionable message if the line is absent:
+The sync engine (used by both `rwv sync` and `rwv sync-to`) checks the
+precondition before any git operation and bails with an actionable
+message if the line is absent:
 
 ```
 sync --strategy=rebase and --strategy=merge require `rwv.lock merge=ours`
@@ -119,22 +136,23 @@ must survive rebases: an uncommitted `.gitattributes` would not be
 carried through a `git reset --hard` or a fresh clone.
 
 `rwv doctor --fix` is the prescribed repair path: it writes the line,
-leaving a clean commit for the operator to make. Sync intentionally
-does not auto-write the file mid-operation — that would violate sync's
-invariant of "only change what the source says to change".
+leaving a clean commit for the operator to make. The sync engine
+intentionally does not auto-write the file mid-operation — that would
+violate the invariant of "only change what the source says to change".
 
 ### Phase 3 — re-lock + commit
 
-Regenerate `rwv.lock` from the post-Phase-2 manifest tips. If the
-result differs from what is in the project repo's working tree, sync
-commits it automatically with a message like `lock: auto-relock after
-sync from <source>`.
+Regenerate `rwv.lock` from the post-Phase-2 manifest tips in the
+destination workspace. If the result differs from what is in the
+destination's project repo working tree, the engine commits it
+automatically with a message like `lock: auto-relock after sync from
+<source>`.
 
-Phase 3 also reconciles disk against source's lock: repos listed in
-source's lock but missing from CWD are materialized (clone in primary,
-`git worktree add` in a workweave), and repos dropped from the lock are
-removed — conservatively, refusing to delete worktrees with
-uncommitted changes or unique local commits.
+Phase 3 also reconciles the destination's disk against the source's
+lock: repos listed in the source's lock but missing from the destination
+are materialized (clone in primary, `git worktree add` in a workweave),
+and repos dropped from the lock are removed — conservatively, refusing
+to delete worktrees with uncommitted changes or unique local commits.
 
 The reconciliation is intentional: the lock describes the *complete*
 manifest, so a sync that advances to a new lock must also add and
@@ -148,8 +166,8 @@ same `--strategy` choice. The values:
 | Strategy | Project repo treatment | Manifest repo treatment |
 |---|---|---|
 | `ff` (default) | Fast-forward only; refuse on divergence | Fast-forward only; refuse on divergence |
-| `rebase` | Replay CWD's commits onto source's tip; lock excluded | Replay CWD's commits onto source's tip |
-| `merge` | Merge source's tip into CWD; lock excluded | Merge source's tip into CWD |
+| `rebase` | Replay source's unique commits onto destination's tip; lock excluded | Replay source's unique commits onto destination's tip |
+| `merge` | Merge source's tip into destination; lock excluded | Merge source's tip into destination |
 
 `ff` is the default because it produces the least surprise: it cannot
 mangle history, cannot create unexpected merge commits, and refuses
@@ -170,42 +188,49 @@ commits are recoverable via `rwv abort`.
 
 ### The Phase 1' ancestor precondition
 
-Before Phase 1', sync checks the ancestor relationship between the two
-project tips and applies strategy-aware logic:
+Before Phase 1', the engine checks the ancestor relationship between
+the source and destination project tips and applies strategy-aware logic:
 
 | Relation | `ff` | `rebase` / `merge` |
 |---|---|---|
 | Equal tips | No-op, allowed | No-op, allowed |
-| CWD is ancestor of source | Allowed — fast-forward | Allowed |
-| Source is ancestor of CWD (CWD ahead) | Refused | Handled by strategy |
+| Destination is ancestor of source | Allowed — fast-forward | Allowed |
+| Source is ancestor of destination (destination ahead) | Refused | Handled by strategy |
 | Diverged (neither ancestor) | Refused | Handled by strategy |
 
-With `ff`, sync refuses when CWD has project commits not reachable
-from source. The error message points at `--strategy rebase` or
-`--strategy merge` as the paths that *land* CWD's commits, and at
-`--force` as the path that *discards* them.
+With `ff`, the engine refuses when the destination has project commits
+not reachable from the source. The error message points at `--strategy
+rebase` or `--strategy merge` as the paths that *land* those commits,
+and at `--force` as the path that *discards* them.
 
 With `rebase` or `merge`, the strategy itself is the answer to
 divergence; the precondition is bypassed.
 
 ## `--retire` — close out a workweave in one step
 
-`rwv sync --retire` adds a post-sync cleanup step: when the sync
-succeeds, the workweave is deleted. The full sequence:
+`rwv sync-to --retire` is the one-shot landing verb: it pushes the
+current workweave's committed state into the recorded parent and then
+deletes the workweave on success. The full sequence:
 
-1. Run a normal sync to the recorded parent (see "Auto-target via
-   parent tracking" below). Strategy and conflict behavior are
-   unchanged.
-2. Verify the workweave's manifest-repo tips equal the parent's after
-   sync. (The project repo will typically have an extra auto-relock
-   commit beyond the parent; that's expected and not a divergence.)
+1. Push CWD's state to the recorded parent (see "Auto-target via parent
+   tracking" below). Strategy and conflict behavior are unchanged.
+2. Verify the parent's manifest-repo tips match the workweave's after
+   the push. (The parent's project repo will typically have an extra
+   auto-relock commit beyond the workweave's tip; that's expected and
+   not a divergence.)
 3. Verify no worktree in the workweave has uncommitted changes.
 4. If both invariants hold, delete the workweave (worktrees + ephemeral
    branches + directory).
 
-If sync hits a conflict, the workweave is preserved; the operator
-resolves and re-runs `rwv sync --retire` (or uses `rwv workweave
-delete` manually after resolving).
+If the operation hits a conflict, the workweave is preserved; the
+operator resolves and re-runs `rwv sync-to --retire` (or uses `rwv
+workweave delete` manually after resolving).
+
+Why `--retire` lives on `sync-to` and not on `sync`: the dominant
+"land my work" workflow goes workweave → parent, which is the
+`sync-to` direction. `sync` (CWD absorbs source) is the wrong
+direction for retirement — syncing from the parent into the workweave
+before deleting the workweave is the inverse of what the operator wants.
 
 Why `--retire` and not `--land`: "land" overloads PR-merge vocabulary
 and misleads when parent isn't primary. "Retire" is honest about what
@@ -222,19 +247,26 @@ delta).
 
 ## Auto-target via parent tracking
 
-Running `rwv sync` with no `<source>` argument syncs to the recorded
+Running `rwv sync-to` with no `<target>` argument pushes to the recorded
 parent of the current workweave. The parent is whatever workspace was
 CWD when `rwv workweave create` ran; it lives in the workweave's
 `.rwv-workweave` marker. See
 [workweave-hierarchy](./workweave-hierarchy.md) for the marker shape and
 the one-hop semantics.
 
-In a primary weave, bare `rwv sync` has no parent to follow and is an
-error. The operator must name a source.
+In a primary weave, bare `rwv sync-to` has no parent to follow and is an
+error. The operator must name an explicit target.
+
+`rwv sync` (CWD absorbs a source) never has an auto-target — it always
+requires an explicit `<source>` argument, in both primary and workweave
+contexts. The auto-target is `sync-to`'s feature because `sync-to` is
+the dominant landing direction: most invocations are from a workweave
+pushing its work toward its parent.
 
 ## Parallel sync (`-j N`) and NDJSON
 
-The manifest-repo loop in Phase 2 fans out across a bounded worker pool
+Both `rwv sync` and `rwv sync-to` support parallel execution. The
+manifest-repo loop in Phase 2 fans out across a bounded worker pool
 when `-j N` is set with `N > 1`. Workers run independently per repo
 (syncing a manifest repo does not depend on any other repo's
 in-progress sync); their outputs are surfaced live with a `[<repo>]`
@@ -268,43 +300,53 @@ key) and `tests/sync_json_test.rs` (NDJSON streaming).
 
 ## Symmetries and asymmetries
 
-### Symmetric in surface
+### Explicit direction pair: `sync` vs. `sync-to`
 
-Any workspace can be source for any other. `cd primary && rwv sync
-feat` and `cd .workweaves/web-app--feat && rwv sync primary` invoke the
-same code path. There is no per-direction branching in `run_sync`;
-direction-of-effect is parameterized by which workspace is CWD.
+`rwv sync <source>` and `rwv sync-to <target>` are a direction-explicit
+pair, not two spellings of the same thing:
+
+| Verb | CWD role | Named workspace role | What changes |
+|---|---|---|---|
+| `rwv sync <source>` | destination | source (read-only) | CWD |
+| `rwv sync-to <target>` | source (read-only) | destination | target |
+
+The mental model is the `cp`/`rsync` convention: the argument is the
+source in `cp src dest` (source first), and the argument is the
+destination in `rsync --dest <target>` (dest-explicit). Here, `sync
+<source>` names what CWD will absorb; `sync-to <target>` names where
+CWD's state will land.
 
 ### Symmetric in mechanism
 
-Both directions run the same Phase 2 → Phase 1' → Phase 3. The
+Both verbs run the same Phase 2 → Phase 1' → Phase 3 engine. The
 savepoint protocol (`refs/rwv/pre-op/<id>`) and abort contract are
-direction-neutral.
+direction-neutral. There is no per-direction branching in the phase
+engine; direction-of-effect is parameterized by which workspace is
+treated as source and which as destination.
 
-### Asymmetric in direction-of-effect
+### Asymmetric in which workspace changes
 
-A single sync invocation updates **CWD only**. There is no `git push`
-counterpart that updates the source workspace. To propagate state the
-other direction, run sync from the other workspace.
+Each invocation updates exactly one workspace — the destination. The
+source is always read-only. For `rwv sync <source>`, the destination is
+CWD; for `rwv sync-to <target>`, the destination is the named target.
+This is what makes the auto-target-to-parent safe for `sync-to`: a
+workweave pushing to its parent updates the parent, which is the
+intended direction for landing work.
 
-This is the same shape as `git pull`: pulls update the local repo,
-never the upstream. To propagate the other direction, you push (or, here,
-run sync from the other side).
+### Asymmetric in auto-target
 
-### Asymmetric in cost-of-operation
-
-`rwv sync <source>` modifies CWD's project repo and manifest repos. It
-only **reads** from the source. So source can safely be a stable or
-shared workspace; destination is the workspace that absorbs change.
-This is what makes parent-tracking auto-target safe: a workweave
-syncing to its parent never disturbs the parent.
+`rwv sync-to` (no argument) auto-targets the recorded parent.
+`rwv sync` always requires an explicit source — there is no "absorb
+from parent" default because the primary use case for the bare invocation
+is landing work upward, not pulling downward.
 
 ## Abort and recovery
 
-Before any mutating phase, sync writes savepoints under
-`refs/rwv/pre-op/<id>` capturing each repo's pre-op HEAD. The
-identifier is wall-clock nanosecond-resolution so concurrent or
-interleaved sync attempts cannot collide.
+Before any mutating phase, the sync engine (for both `rwv sync` and
+`rwv sync-to`) writes savepoints under `refs/rwv/pre-op/<id>` capturing
+each repo's pre-op HEAD. The identifier is wall-clock
+nanosecond-resolution so concurrent or interleaved invocations cannot
+collide.
 
 `rwv abort` rolls every repo back to its savepoint. The discarded
 commits remain reachable from the savepoint ref until git's normal
@@ -314,14 +356,15 @@ even after an abort.
 Conflict resolution hint text (the "edit conflicted files; `git add
 <files>`; `git rebase --continue`" block) is owned by the VCS layer —
 see `Vcs::conflict_resolution_hint` in
-[vcs-as-seam](./vcs-as-seam.md). Sync embeds that text verbatim into
-its bail messages so the operator sees concrete next steps.
+[vcs-as-seam](./vcs-as-seam.md). The sync engine embeds that text
+verbatim into its bail messages so the operator sees concrete next steps.
 
 ## Two worked scenarios
 
 ### Forward sync (clean case)
 
-A workweave finishes work, locks, and primary syncs in:
+A workweave finishes work and the workweave operator runs `sync-to`
+to land:
 
 ```text
 primary/project: ─── C1
@@ -329,19 +372,21 @@ primary/project: ─── C1
 workweave/project: ──── C1 ─── C2-lock
 ```
 
-`cd /path/to/primary && rwv sync feat`:
+From inside the workweave: `rwv sync-to primary` (or bare `rwv sync-to`,
+which auto-targets the recorded parent):
 
-- Phase 2: manifest repos fast-forward to workweave's lock targets.
+- Phase 2: primary's manifest repos fast-forward to workweave's lock
+  targets.
 - Phase 1': primary's project tip (C1) is an ancestor of workweave's
   (C2-lock). Fast-forward. C2-lock's only change is `rwv.lock`, which
   is excluded — so Phase 1' fast-forwards the non-lock project content
   (none here) and Phase 3 picks up the lock.
-- Phase 3: lock regenerated and committed.
+- Phase 3: lock regenerated and committed into primary.
 
 ### N-way merge (two workweaves, serial landing)
 
 Two workweaves both have project commits. `ww1` lands first; `ww2`
-syncs in and lands second.
+rebases and lands second.
 
 ```text
 primary/project: ─── C1
@@ -350,20 +395,23 @@ ww1/project: ──────── C1 ─── CA   (doc + lock)
 ww2/project: ──────── C1 ─── CB   (doc + lock)
 ```
 
-Step 1 — sync ww1 into primary (ff):
+Step 1 — land ww1 into primary (ff):
 
 ```
-cd /path/to/primary && rwv sync ww1
+cd /path/to/ww1
+rwv sync-to primary         # or bare: rwv sync-to
 # primary now at CA; manifest repos at ww1's lock targets
 ```
 
-Step 2 — bring primary into ww2 (rebase):
+Step 2 — rebase ww2 onto primary's new tip:
 
-ww2's project tip (CB) is now diverged from primary (CA). `ff` would
-refuse — use rebase:
+ww2's project tip (CB) is now diverged from primary (CA). A bare
+`sync-to` from ww2 would refuse with `ff` — the workweave operator
+must first absorb primary's state into ww2:
 
 ```
-cd /path/to/ww2 && rwv sync primary --strategy rebase
+cd /path/to/ww2
+rwv sync primary --strategy rebase
 # Phase 2: ww2's manifest repos advance to primary's lock targets
 # Phase 1': CB replayed onto CA with rwv.lock excluded
 #           CB's lock-only lines produce an empty patch and are skipped;
@@ -373,11 +421,12 @@ cd /path/to/ww2 && rwv sync primary --strategy rebase
 
 ww2 is now rebased on top of primary; its project history is linear.
 
-Step 3 — sync ww2 into primary (ff):
+Step 3 — land ww2 into primary (ff):
 
 ```
-cd /path/to/primary && rwv sync ww2
-# fast-forward; ww2 is ahead of primary in a straight line
+cd /path/to/ww2
+rwv sync-to primary
+# fast-forward; ww2 is strictly ahead of primary in a straight line
 ```
 
 Both workweaves' project commits land without manual intervention.

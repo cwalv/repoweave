@@ -78,6 +78,57 @@ deciding which and where. VCS verb.
 Checkpoints local state into `rwv.lock`. Pure lockfile mutation; no
 network. The lockfile is the entire artifact. Package-manager verb.
 
+### `rwv sync` / `rwv sync-to` (not `pull` / `push`)
+
+`rwv sync <source>` absorbs another workspace's committed state into
+CWD. `rwv sync-to <target>` pushes CWD's committed state into another
+workspace. Together they are a direction-explicit pair for local-to-local
+workspace alignment. The question is why these are *their own* vocabulary
+rather than `pull`/`push` variants.
+
+**The `push` argument fails first.** `rwv push` is already taken: it
+moves commits from local repos to their VCS remotes, manifest-aware and
+ordered. Reusing the name for a local-to-local operation would be a
+vocabulary collision, not a symmetry.
+
+**The `pull` argument fails on composition grounds.** `rwv pull` was
+explicitly considered and rejected in
+[verb-vs-composition](./verb-vs-composition.md): the work it would do
+collapses into either `rwv update` (fetch + re-snapshot the lock) or
+shell composition. The verb doesn't earn its keep.
+
+**The deeper reason: strategy choice.** No VCS `push` command accepts a
+`--rebase` option. The reason is structural: the remote is not yours to
+rewrite. `git push --force` exists but it replaces the remote's tip
+wholesale; there is no "rebase my local commits onto the remote and then
+fast-forward it" because the remote is a shared, authoritative ref that
+you cannot mutate mid-operation.
+
+`rwv sync` and `rwv sync-to` have no such constraint. Both sides are
+local workweaves — each is owned by the operator running the command.
+That ownership is what makes `--strategy rebase` meaningful: the
+destination's commits can be replayed onto the source's tip because the
+destination is yours to rewrite. A `push`/`pull` vocabulary would imply
+the VCS-remote contract (remote is authoritative; local rewrites are
+dangerous) and obscure the local-ownership property that makes
+`--strategy` sensible.
+
+The single-repo analog is `sl rebase --dest <bookmark>` or `git rebase
+<branch> && git merge --ff-only`: strategy is available, just without a
+dedicated cross-workspace verb. rwv's contribution is not a new concept —
+single-repo VCSes can do local-to-local alignment too — it is the
+multi-repo bundling: loop over N manifest repos with lock-excluded replay,
+regenerate `rwv.lock` in Phase 3, and handle workspace lifecycle
+(`--retire`). The sync vocabulary is doing real work, not inventing a new
+direction concept.
+
+The naming convention is the `cp`/`rsync` source-first vs. dest-first
+pattern: `sync <source>` identifies what CWD will absorb (argument is
+source); `sync-to <target>` identifies where CWD's state will land
+(argument is destination). That argument-position convention is the right
+mental model for the pair. See [sync-semantics](./sync-semantics.md) for
+the direction-explicit pair contract.
+
 ## Implication for future verbs
 
 When proposing a new verb, after it has cleared the
@@ -103,7 +154,11 @@ Surfaced during `rwv push` design review. The `publish` → `push` rename
 made the asymmetry with `update` visible. The resolution was not to
 chase consistency (renaming `update` → `pull` would have lost the
 cargo/npm analogue that makes the verb's behavior obvious); it was to
-state the two-vocabulary choice explicitly.
+state the two-vocabulary choice explicitly. The `sync`/`sync-to`
+analysis was added when the direction-explicit pair was introduced; its
+third worked example consolidates the prior reasoning from the `rwv pull`
+rejection in [verb-vs-composition](./verb-vs-composition.md) and the
+`sync --retire` direction fix.
 
 ## Related joints
 

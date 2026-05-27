@@ -124,10 +124,13 @@ Strong pass. All three criteria fire. See
 [verb-vs-vocabulary](./verb-vs-vocabulary.md) for why this is `push`
 and not `publish`.
 
-### `rwv sync`
+### `rwv sync` / `rwv sync-to`
 
-Aligns CWD with another workspace's committed state — Phase 2 (manifest
-repos), Phase 1' (project repo, lock-excluded), Phase 3 (re-lock).
+A direction-explicit pair. `rwv sync <source>` aligns CWD with another
+workspace's committed state; `rwv sync-to <target>` pushes CWD's
+committed state into another workspace. Both run Phase 2 (manifest
+repos), Phase 1' (project repo, lock-excluded), Phase 3 (re-lock) on
+the destination workspace.
 See [sync-semantics](./sync-semantics.md).
 
 - *Per-repo policy from role?* Yes — manifest repos and project repo
@@ -138,7 +141,8 @@ See [sync-semantics](./sync-semantics.md).
   can capture the resulting manifest tips into the new lock.
 - *rwv-owned state?* The lock is the principal output of Phase 3.
 
-Strong pass.
+Strong pass. See [verb-vs-vocabulary](./verb-vs-vocabulary.md) for why
+these are `sync`/`sync-to` and not `pull`/`push`.
 
 ### `rwv activate`
 
