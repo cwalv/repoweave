@@ -3,17 +3,24 @@
 Two verbs, two directions:
 
 - **`rwv sync <source>`** — CWD absorbs the source workspace's committed
-  state. The source is read; CWD changes.
-- **`rwv sync-to <target>`** — CWD's committed state is pushed into the
-  target workspace. CWD is read; the target changes.
+  state; CWD's unique commits land on top of source's tip. CWD changes;
+  source is read-only.
+- **`rwv sync-to <target>`** — CWD's committed state lands in the target
+  workspace. CWD absorbs target's state first (CWD's commits on top),
+  then the target fast-forwards to CWD's new tip. Both CWD and target
+  change; the named target ends up with CWD's commits linearly above
+  its prior state.
 
 Together they form a direction-explicit pair. The mental model is the
 same as `cp` vs. the destination-first convention in `rsync --dest`: the
 argument position identifies what moves where. See "Symmetries and
 asymmetries" below for the full contract.
 
-Both verbs run the same three-phase engine — Phase 2 (manifest repos),
-Phase 1' (project repo, lock-excluded), Phase 3 (re-lock). They are
+`rwv sync` runs the core three-phase engine — Phase 2 (manifest repos),
+Phase 1' (project repo, lock-excluded), Phase 3 (re-lock) — in CWD.
+`rwv sync-to` wraps that engine in a 3-step orchestration: (1) run the
+core engine in CWD against the target; (2) auto-relock CWD if manifest
+tips moved; (3) FF-advance the target to CWD's new tip. They are
 repoweave's most load-bearing verbs, the ones that make the
 [pyramid of stability](./pyramid-of-stability.md) move and the
 [workweave hierarchy](./workweave-hierarchy.md) navigable.
@@ -31,7 +38,7 @@ runtime order.
 
 ### Phase 2 — manifest repos
 
-Advance each of the destination's manifest repo branches to the source's
+Advance each of CWD's manifest repo branches to the named workspace's
 lock target, using the chosen `--strategy` (see below). This runs first
 because the project repo's eventual lock is derived from these manifest
 tips — they need to be at their final positions before Phase 3 captures
@@ -41,13 +48,12 @@ Three classes of repos fall out:
 
 - **Repos already at the target SHA.** Marked `up-to-date`; no work.
 - **Repos behind the target.** Advanced via the strategy. Fast-forward
-  succeeds when the lock target is a descendant of the destination's
-  HEAD; rebase and merge handle divergence.
+  succeeds when the lock target is a descendant of CWD's HEAD; rebase
+  and merge handle divergence.
 - **Repos ahead of the target.** Surfaced as `already-ahead` — the
-  lock is a strict ancestor of the destination's HEAD. The engine does
-  not silently rewind the destination's working state; the operator
-  decides (rerun with `--strategy rebase`, accept the divergence, or
-  relock from the destination side).
+  lock is a strict ancestor of CWD's HEAD. The engine does not silently
+  rewind CWD's working state; the operator decides (rerun with
+  `--strategy rebase`, accept the divergence, or relock from CWD).
 
 Each repo's outcome is captured as a typed `RepoSyncOutcome`
 (converged / already-ahead / no-op / failed); the `--json` output
@@ -55,15 +61,23 @@ serializes the same enum.
 
 ### Phase 1' — project repo, lock-excluded
 
-Replay the source workspace's unique project commits — commits reachable
-from the source's project tip but not from the destination's — onto the
-destination's project tip using `--strategy`, with `rwv.lock` excluded
+Replay CWD's unique project commits — commits reachable from CWD's
+project tip but not from the named workspace's — onto the named
+workspace's project tip using `--strategy`, with `rwv.lock` excluded
 from each commit's effective diff.
 
-For `rwv sync <source>`: the source is the named workspace, the
-destination is CWD. For `rwv sync-to <target>`: the source is CWD, the
-destination is the named target. The engine is the same; the direction
-of replay follows whichever workspace is the source.
+This framing is accurate for both verbs:
+
+- For `rwv sync <source>`: CWD's unique commits replay onto the named
+  source's project tip. CWD lands at the new tip (CWD absorbs source's
+  state with CWD's commits sitting linearly on top).
+- For `rwv sync-to <target>`: the same replay runs first (CWD's unique
+  commits onto the named target's tip; CWD lands at the new tip). Then,
+  in step 3, the target FF-advances to CWD's new tip — so the target
+  ends up with CWD's commits linearly above the target's prior state.
+
+The engine is the same in both cases; what differs is where the final
+result is written (CWD for `sync`, target for `sync-to`).
 
 This is the structural fix that made [lock-as-derived](./lock-as-derived.md)
 operationally tractable. Without exclusion, every cross-workweave sync
@@ -142,17 +156,16 @@ violate the invariant of "only change what the source says to change".
 
 ### Phase 3 — re-lock + commit
 
-Regenerate `rwv.lock` from the post-Phase-2 manifest tips in the
-destination workspace. If the result differs from what is in the
-destination's project repo working tree, the engine commits it
-automatically with a message like `lock: auto-relock after sync from
-<source>`.
+Regenerate `rwv.lock` from the post-Phase-2 manifest tips in CWD. If
+the result differs from what is in CWD's project repo working tree, the
+engine commits it automatically with a message like `lock: auto-relock
+after sync from <named-workspace>`.
 
-Phase 3 also reconciles the destination's disk against the source's
-lock: repos listed in the source's lock but missing from the destination
-are materialized (clone in primary, `git worktree add` in a workweave),
-and repos dropped from the lock are removed — conservatively, refusing
-to delete worktrees with uncommitted changes or unique local commits.
+Phase 3 also reconciles CWD's disk against the named workspace's lock:
+repos listed in the named workspace's lock but missing from CWD are
+materialized (clone in primary, `git worktree add` in a workweave), and
+repos dropped from the lock are removed — conservatively, refusing to
+delete worktrees with uncommitted changes or unique local commits.
 
 The reconciliation is intentional: the lock describes the *complete*
 manifest, so a sync that advances to a new lock must also add and
@@ -166,8 +179,8 @@ same `--strategy` choice. The values:
 | Strategy | Project repo treatment | Manifest repo treatment |
 |---|---|---|
 | `ff` (default) | Fast-forward only; refuse on divergence | Fast-forward only; refuse on divergence |
-| `rebase` | Replay source's unique commits onto destination's tip; lock excluded | Replay source's unique commits onto destination's tip |
-| `merge` | Merge source's tip into destination; lock excluded | Merge source's tip into destination |
+| `rebase` | Replay CWD's unique commits onto named-workspace's tip; lock excluded | Advance CWD's repos to named-workspace's lock targets |
+| `merge` | Merge named-workspace's tip into CWD's history; lock excluded | Advance CWD's repos to named-workspace's lock targets |
 
 `ff` is the default because it produces the least surprise: it cannot
 mangle history, cannot create unexpected merge commits, and refuses
@@ -189,17 +202,18 @@ commits are recoverable via `rwv abort`.
 ### The Phase 1' ancestor precondition
 
 Before Phase 1', the engine checks the ancestor relationship between
-the source and destination project tips and applies strategy-aware logic:
+CWD's project tip and the named workspace's project tip and applies
+strategy-aware logic:
 
 | Relation | `ff` | `rebase` / `merge` |
 |---|---|---|
 | Equal tips | No-op, allowed | No-op, allowed |
-| Destination is ancestor of source | Allowed — fast-forward | Allowed |
-| Source is ancestor of destination (destination ahead) | Refused | Handled by strategy |
+| CWD is ancestor of named workspace | Allowed — fast-forward | Allowed |
+| Named workspace is ancestor of CWD (CWD ahead) | Refused | Handled by strategy |
 | Diverged (neither ancestor) | Refused | Handled by strategy |
 
-With `ff`, the engine refuses when the destination has project commits
-not reachable from the source. The error message points at `--strategy
+With `ff`, the engine refuses when CWD has project commits not reachable
+from the named workspace. The error message points at `--strategy
 rebase` or `--strategy merge` as the paths that *land* those commits,
 and at `--force` as the path that *discards* them.
 
@@ -208,23 +222,33 @@ divergence; the precondition is bypassed.
 
 ## `--retire` — close out a workweave in one step
 
-`rwv sync-to --retire` is the one-shot landing verb: it pushes the
-current workweave's committed state into the recorded parent and then
-deletes the workweave on success. The full sequence:
+`rwv sync-to --retire` is the one-shot landing verb: it runs the full
+sync-to orchestration against the recorded parent and then deletes the
+workweave on success. The orchestration is three steps, not one:
 
-1. Push CWD's state to the recorded parent (see "Auto-target via parent
-   tracking" below). Strategy and conflict behavior are unchanged.
-2. Verify the parent's manifest-repo tips match the workweave's after
-   the push. (The parent's project repo will typically have an extra
-   auto-relock commit beyond the workweave's tip; that's expected and
-   not a divergence.)
-3. Verify no worktree in the workweave has uncommitted changes.
-4. If both invariants hold, delete the workweave (worktrees + ephemeral
-   branches + directory).
+1. **Replay CWD's commits onto the parent's tip.** CWD's unique project
+   commits are replayed onto the parent's project tip (with `rwv.lock`
+   excluded), and CWD advances to the new tip. Manifest repos in CWD
+   are aligned to the parent's lock targets via `--strategy`. This is
+   the same engine as `rwv sync <parent>` — CWD absorbs the parent's
+   state with CWD's commits sitting linearly on top.
+2. **Auto-relock CWD if manifest tips moved.** If step 1's manifest-repo
+   advances changed any lock targets, `rwv.lock` is regenerated and
+   committed into CWD automatically (message: `lock: auto-relock after
+   sync-to`). This keeps CWD's lock consistent before step 3.
+3. **Parent fast-forwards to CWD's new tip.** The parent's project repo
+   fast-forwards to CWD's tip. The parent now has CWD's commits linearly
+   above the parent's prior state. Manifest tips are already aligned from
+   step 1; the parent's lock is regenerated to match.
 
-If the operation hits a conflict, the workweave is preserved; the
-operator resolves and re-runs `rwv sync-to --retire` (or uses `rwv
-workweave delete` manually after resolving).
+Then, if all three steps succeed: verify no worktree in the workweave
+has uncommitted changes, then delete the workweave (worktrees + ephemeral
+branches + directory).
+
+If any step hits a conflict, the workweave is preserved and multi-step
+op-state is written so the operation can be resumed. The operator
+resolves conflicts and re-runs `rwv sync-to --retire --continue` (or
+uses `rwv workweave delete` manually after resolving).
 
 Why `--retire` lives on `sync-to` and not on `sync`: the dominant
 "land my work" workflow goes workweave → parent, which is the
@@ -303,12 +327,14 @@ key) and `tests/sync_json_test.rs` (NDJSON streaming).
 ### Explicit direction pair: `sync` vs. `sync-to`
 
 `rwv sync <source>` and `rwv sync-to <target>` are a direction-explicit
-pair, not two spellings of the same thing:
+pair, not two spellings of the same thing. In both verbs, CWD's unique
+commits are replayed onto the named workspace's tip; what differs is
+where the result is written:
 
-| Verb | CWD role | Named workspace role | What changes |
+| Verb | Named workspace role | CWD's commits replay onto… | Final result written to |
 |---|---|---|---|
-| `rwv sync <source>` | destination | source (read-only) | CWD |
-| `rwv sync-to <target>` | source (read-only) | destination | target |
+| `rwv sync <source>` | State base (read-only) | Named source's tip | CWD |
+| `rwv sync-to <target>` | State base + final recipient | Named target's tip (step 1) | CWD, then target FF-advances (step 3) |
 
 The mental model is the `cp`/`rsync` convention: the argument is the
 source in `cp src dest` (source first), and the argument is the
@@ -316,22 +342,35 @@ destination in `rsync --dest <target>` (dest-explicit). Here, `sync
 <source>` names what CWD will absorb; `sync-to <target>` names where
 CWD's state will land.
 
-### Symmetric in mechanism
+The argument-position mnemonic works because in both cases the *named*
+workspace is the base CWD aligns against — the distinction is
+whether the final landing is in CWD (sync) or in the named workspace
+(sync-to).
 
-Both verbs run the same Phase 2 → Phase 1' → Phase 3 engine. The
-savepoint protocol (`refs/rwv/pre-op/<id>`) and abort contract are
-direction-neutral. There is no per-direction branching in the phase
-engine; direction-of-effect is parameterized by which workspace is
-treated as source and which as destination.
+### Shared core engine; sync-to adds orchestration
 
-### Asymmetric in which workspace changes
+Both verbs use the same Phase 2 → Phase 1' → Phase 3 engine for the
+core replay step. The savepoint protocol (`refs/rwv/pre-op/<id>`) and
+abort contract are shared.
 
-Each invocation updates exactly one workspace — the destination. The
-source is always read-only. For `rwv sync <source>`, the destination is
-CWD; for `rwv sync-to <target>`, the destination is the named target.
-This is what makes the auto-target-to-parent safe for `sync-to`: a
-workweave pushing to its parent updates the parent, which is the
-intended direction for landing work.
+`rwv sync-to` wraps that engine in a 3-step orchestration: (1) run the
+core sync engine with CWD as destination and named target as source of
+state; (2) auto-relock CWD if manifest tips moved; (3) FF-advance the
+target to CWD's new tip. The core engine is unchanged; `sync-to` adds
+the steps that land the result in the named workspace.
+
+### Asymmetric in which workspace(s) change
+
+`rwv sync <source>` changes exactly CWD. The named source is read-only.
+
+`rwv sync-to <target>` changes CWD first (step 1: CWD absorbs target's
+state with CWD's commits on top; step 2: auto-relock CWD), then changes
+the target (step 3: target FF-advances to CWD's new tip). Both
+workspaces are mutated, in that sequence.
+
+This is what makes the auto-target-to-parent the right default for
+`sync-to`: a workweave landing to its parent should update the parent,
+which is the intended direction for closing out work.
 
 ### Asymmetric in auto-target
 
@@ -373,15 +412,27 @@ workweave/project: ──── C1 ─── C2-lock
 ```
 
 From inside the workweave: `rwv sync-to primary` (or bare `rwv sync-to`,
-which auto-targets the recorded parent):
+which auto-targets the recorded parent). Under Option B's 3-step
+orchestration:
 
-- Phase 2: primary's manifest repos fast-forward to workweave's lock
-  targets.
-- Phase 1': primary's project tip (C1) is an ancestor of workweave's
-  (C2-lock). Fast-forward. C2-lock's only change is `rwv.lock`, which
-  is excluded — so Phase 1' fast-forwards the non-lock project content
-  (none here) and Phase 3 picks up the lock.
-- Phase 3: lock regenerated and committed into primary.
+Step 1 (core sync engine runs in CWD against primary):
+
+- Phase 2: align CWD's manifest repos to primary's lock targets. CWD's
+  repos are already ahead of primary's (C2-lock pinned them further
+  along) — each shows `already-ahead`. No advancement needed.
+- Phase 1': CWD's unique commits (C2-lock) replayed onto primary's
+  project tip (C1). C2-lock is a linear descendant of C1 — fast-forward.
+  C2-lock's only change is `rwv.lock`, which is excluded from replay,
+  so the non-lock project content (none here) fast-forwards as an
+  empty-patch no-op. CWD remains at C2-lock.
+- Phase 3: lock regenerated in CWD from CWD's post-Phase-2 manifest
+  tips (unchanged). Lock is identical to C2-lock's; no new commit.
+
+Step 2: auto-relock CWD — no-op, lock didn't change.
+
+Step 3: primary fast-forwards to CWD's tip (C2-lock). Primary now holds
+C2-lock, which records the workweave's final manifest state.
+`rwv.lock` in primary now reflects those manifest tips.
 
 ### N-way merge (two workweaves, serial landing)
 

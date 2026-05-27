@@ -106,12 +106,12 @@ you cannot mutate mid-operation.
 
 `rwv sync` and `rwv sync-to` have no such constraint. Both sides are
 local workweaves — each is owned by the operator running the command.
-That ownership is what makes `--strategy rebase` meaningful: the
-destination's commits can be replayed onto the source's tip because the
-destination is yours to rewrite. A `push`/`pull` vocabulary would imply
-the VCS-remote contract (remote is authoritative; local rewrites are
-dangerous) and obscure the local-ownership property that makes
-`--strategy` sensible.
+That ownership is what makes `--strategy rebase` meaningful: in both
+verbs, CWD's commits are replayed onto the named workspace's tip. That
+replay rewrites CWD's history — which is safe only because CWD is yours
+to rewrite. A `push`/`pull` vocabulary would imply the VCS-remote
+contract (remote is authoritative; local rewrites are dangerous) and
+obscure the local-ownership property that makes `--strategy` sensible.
 
 The single-repo analog is `sl rebase --dest <bookmark>` or `git rebase
 <branch> && git merge --ff-only`: strategy is available, just without a
