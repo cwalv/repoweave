@@ -6,6 +6,7 @@
 use crate::git::{git_command, GitVcs};
 use crate::lock::{commit_lock_file_with_message, generate_lock};
 use crate::manifest::{LockFile, Manifest, Project, ProjectName, RepoPath, WorkweaveName};
+use crate::op_state::{self, OpState, OpVerb, SyncParams};
 use crate::parallel::run_in_parallel;
 use crate::vcs::{ConflictOp, ResolvedRevisionId, Vcs, VcsError, VcsErrorOutput};
 use crate::workspace::{read_active_project, WorkspaceContext, WorkspaceLocation};
@@ -48,7 +49,6 @@ fn workspace_name(ctx: &WorkspaceContext) -> String {
     }
 }
 
-const SYNC_OP_MARKER: &str = ".rwv-sync-op";
 const PRE_OP_REF: &str = "refs/rwv/pre-op";
 
 // ---------------------------------------------------------------------------
@@ -1389,6 +1389,12 @@ impl OutputSink<'_> {
 /// workweave's project tip equals the parent's and the working tree is clean
 /// (the [`crate::workweave::collect_dirty_paths`] check). Conflicts leave the
 /// workweave intact for the operator to fix and re-run.
+///
+/// `do_continue = true` activates `--continue` mode: instead of refusing when
+/// an op-state file is present, the call validates that the recorded parameters
+/// match and resumes from the recorded phase. Without `--continue`, a present
+/// op-state file is always an error.
+#[allow(clippy::too_many_arguments)]
 pub fn run_sync(
     cwd: &Path,
     source: Option<&SyncSource>,
@@ -1397,6 +1403,7 @@ pub fn run_sync(
     retire: bool,
     project_override: Option<ProjectName>,
     jobs: usize,
+    do_continue: bool,
 ) -> anyhow::Result<()> {
     let records: Mutex<Vec<SyncOutcomeOutput>> = Mutex::new(Vec::new());
     let stdout_lock: Mutex<()> = Mutex::new(());
@@ -1414,6 +1421,7 @@ pub fn run_sync(
         project_override,
         jobs,
         &sink,
+        do_continue,
     )
 }
 
@@ -1446,6 +1454,7 @@ fn run_sync_impl(
     project_override: Option<ProjectName>,
     jobs: usize,
     sink: &OutputSink<'_>,
+    do_continue: bool,
 ) -> anyhow::Result<()> {
     let emit_text = sink.emit_text();
     // Resolve CWD and source workspaces.
@@ -1621,12 +1630,50 @@ fn run_sync_impl(
         false
     };
 
-    let op_id = OpId::new_now();
+    // --continue / pre-op guard: check whether a sync is already in progress.
+    //
+    // For `rwv sync` the only involved workspace is CWD. For `rwv sync-to`
+    // (future, bead 1) both CWD and the target workspace are checked.
+    //
+    // - `--continue` absent, no op-state → fresh start (normal path below).
+    // - `--continue` absent, op-state present → refuse with "in-progress" error.
+    // - `--continue` present, op-state absent → error "nothing to continue".
+    // - `--continue` present, op-state present, params match → resume (fall through).
+    // - `--continue` present, op-state present, params mismatch → error.
+    let op_id: OpId;
+    if do_continue {
+        // Build the params struct for comparison with the recorded state.
+        let continue_params = SyncParams {
+            verb: OpVerb::Sync,
+            strategy: strategy.to_string(),
+            source: source_workspace_dir.clone(),
+            target: workspace_dir.clone(),
+            retire,
+        };
+        let recorded = op_state::check_continue(&workspace_dir, &continue_params)?;
+        op_id = OpId::from_string(recorded.id);
+        if emit_text {
+            eprintln!(
+                "continuing sync (op {op_id}, mid `{phase}`)",
+                phase = recorded.phase
+            );
+        }
+    } else {
+        // Check that no op is already in progress (concurrency guard).
+        op_state::check_no_op_in_progress(&[workspace_dir.as_path()])?;
 
-    // Write op marker to CWD workspace.
-    let marker_path = workspace_dir.join(SYNC_OP_MARKER);
-    std::fs::write(&marker_path, op_id.as_str())
-        .map_err(|e| anyhow::anyhow!("failed to write sync op marker: {e}"))?;
+        op_id = OpId::new_now();
+
+        // Write the richer op-state file to the CWD workspace.
+        let state = OpState::new_sync(
+            &op_id,
+            strategy,
+            source_workspace_dir.clone(),
+            workspace_dir.clone(),
+        );
+        op_state::write(&workspace_dir, &state)
+            .map_err(|e| anyhow::anyhow!("failed to write op-state: {e}"))?;
+    }
 
     // Create savepoints for all CWD repos (including project repo).
     create_savepoint(&cwd_project_dir, &op_id)?;
@@ -1947,7 +1994,8 @@ fn run_sync_impl(
             delete_savepoint(&abs, &op_id);
         }
     }
-    let _ = std::fs::remove_file(&marker_path);
+    // Remove the op-state file from CWD workspace on successful completion.
+    op_state::clear(&workspace_dir);
 
     // --retire: sync succeeded — verify we converged on parent's tip with a
     // clean tree, then delete the workweave. Only meaningful inside a
@@ -2223,20 +2271,38 @@ fn regenerate_lock_phase3(
 // ---------------------------------------------------------------------------
 
 /// Execute `rwv abort` — restore CWD workspace to its pre-sync state.
+///
+/// Reads the op-state file (`.rwv-op`) to find the op-id and the involved
+/// workspaces. For `sync-to` ops, both CWD and the recorded target workspace
+/// are rolled back.
+///
+/// Falls back to the legacy `.rwv-sync-op` marker for workspaces written
+/// before the op-state upgrade (bead fo-pte54.7). The legacy path only
+/// restores CWD repos (no cross-workspace rollback).
 pub fn run_abort(cwd: &Path) -> anyhow::Result<()> {
     let ctx = WorkspaceContext::resolve(cwd, None)?;
     let workspace_dir = ctx.active_path().to_path_buf();
 
-    // Read the op marker.
-    let marker_path = workspace_dir.join(SYNC_OP_MARKER);
-    if !marker_path.exists() {
-        anyhow::bail!("no operation in progress");
-    }
-    let op_id = std::fs::read_to_string(&marker_path)
-        .map_err(|e| anyhow::anyhow!("failed to read sync op marker: {e}"))?
-        .trim()
-        .to_owned();
-    let op_id = OpId::from_string(op_id);
+    // Try to read the new op-state file first.
+    let (op_id, extra_workspace_dirs): (OpId, Vec<PathBuf>) =
+        match op_state::read(&workspace_dir)? {
+            Some(state) => {
+                // For sync-to: we also need to roll back the target workspace.
+                let extras = if state.verb == crate::op_state::OpVerb::SyncTo {
+                    vec![state.target.clone()]
+                } else {
+                    vec![]
+                };
+                (OpId::from_string(state.id), extras)
+            }
+            None => {
+                // Fall back to the legacy `.rwv-sync-op` marker.
+                match op_state::read_legacy(&workspace_dir) {
+                    Some(id) => (OpId::from_string(id), vec![]),
+                    None => anyhow::bail!("no operation in progress"),
+                }
+            }
+        };
 
     let cwd_project_name = find_project_name(&ctx)?;
     let cwd_project_dir = workspace_dir.join("projects").join(&cwd_project_name);
@@ -2249,7 +2315,7 @@ pub fn run_abort(cwd: &Path) -> anyhow::Result<()> {
 
     let mut any_failure = false;
 
-    // Restore code repos first.
+    // Restore CWD manifest repos first.
     for repo_path in cwd_project.manifest.iter_repo_paths() {
         let abs = workspace_dir.join(repo_path.as_path());
         if !abs.exists() {
@@ -2263,14 +2329,73 @@ pub fn run_abort(cwd: &Path) -> anyhow::Result<()> {
         }
     }
 
-    // Restore project repo.
+    // Restore CWD project repo.
     if let Err(e) = abort_one_repo(&cwd_project_dir, &op_id) {
         eprintln!("  (project): {e}");
         any_failure = true;
     }
 
-    // Remove marker file.
-    let _ = std::fs::remove_file(&marker_path);
+    // For sync-to: also roll back repos in the extra (target) workspaces.
+    for extra_dir in &extra_workspace_dirs {
+        // Resolve the target workspace's project context. Best-effort: if the
+        // project name cannot be determined, skip with a warning.
+        match WorkspaceContext::resolve(extra_dir, None) {
+            Ok(extra_ctx) => {
+                let extra_project_name = match find_project_name(&extra_ctx) {
+                    Ok(n) => n,
+                    Err(e) => {
+                        eprintln!(
+                            "  warning: could not determine project for {}: {e}; skipping",
+                            extra_dir.display()
+                        );
+                        continue;
+                    }
+                };
+                let extra_project_dir =
+                    extra_ctx.active_path().join("projects").join(&extra_project_name);
+                let extra_project = match Project::from_dir_skip_lock(&extra_project_dir) {
+                    Ok(p) => p,
+                    Err(e) => {
+                        eprintln!(
+                            "  warning: could not load project at {}: {e}; skipping",
+                            extra_project_dir.display()
+                        );
+                        continue;
+                    }
+                };
+                let extra_ws_dir = extra_ctx.active_path().to_path_buf();
+                for repo_path in extra_project.manifest.iter_repo_paths() {
+                    let abs = extra_ws_dir.join(repo_path.as_path());
+                    if !abs.exists() {
+                        continue;
+                    }
+                    if let Err(e) = abort_one_repo(&abs, &op_id) {
+                        eprintln!("  [target] {repo_path}: {e}");
+                        any_failure = true;
+                    } else {
+                        println!("  [target] {repo_path}: restored");
+                    }
+                }
+                if let Err(e) = abort_one_repo(&extra_project_dir, &op_id) {
+                    eprintln!("  [target] (project): {e}");
+                    any_failure = true;
+                }
+                // Remove op-state from the extra (target) workspace too.
+                op_state::clear(&extra_ws_dir);
+            }
+            Err(e) => {
+                eprintln!(
+                    "  warning: could not resolve workspace at {}: {e}; skipping",
+                    extra_dir.display()
+                );
+            }
+        }
+    }
+
+    // Remove op-state from CWD workspace (covers both new format and legacy).
+    op_state::clear(&workspace_dir);
+    // Also remove the legacy marker if present (for workspaces with both).
+    let _ = std::fs::remove_file(workspace_dir.join(op_state::LEGACY_OP_MARKER));
 
     if any_failure {
         anyhow::bail!("abort completed with failures");
@@ -2340,6 +2465,7 @@ fn abort_one_repo(repo: &Path, op_id: &OpId) -> anyhow::Result<()> {
 /// the bead's "non-zero iff at least one repo failed" semantic: when sync
 /// can't even reach the per-repo loop, there are no per-repo outcomes to
 /// emit, so the structured channel has nothing to say.
+#[allow(clippy::too_many_arguments)]
 pub fn run_sync_json(
     cwd: &Path,
     source: Option<&SyncSource>,
@@ -2348,6 +2474,7 @@ pub fn run_sync_json(
     retire: bool,
     project_override: Option<ProjectName>,
     jobs: usize,
+    do_continue: bool,
 ) -> anyhow::Result<()> {
     let records: Mutex<Vec<SyncOutcomeOutput>> = Mutex::new(Vec::new());
     let stdout_lock: Mutex<()> = Mutex::new(());
@@ -2370,6 +2497,7 @@ pub fn run_sync_json(
         project_override,
         jobs,
         &sink,
+        do_continue,
     );
 
     let records = records.into_inner().unwrap_or_else(|e| e.into_inner());

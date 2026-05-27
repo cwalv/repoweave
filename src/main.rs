@@ -197,6 +197,11 @@ enum Commands {
         /// Operate on this project instead of the active project (does not change `.rwv-active`)
         #[arg(long)]
         project: Option<String>,
+        /// Resume a sync that was interrupted mid-op (e.g. after resolving a conflict).
+        /// Without this flag, an in-progress op-state file causes an error. With this
+        /// flag, the recorded parameters must match — mismatch is itself an error.
+        #[arg(long = "continue")]
+        do_continue: bool,
     },
     /// Restore CWD workspace to its pre-sync state using savepoint refs
     Abort,
@@ -480,6 +485,7 @@ fn main() -> anyhow::Result<()> {
             json,
             jobs,
             project,
+            do_continue,
         }) => {
             let cwd = std::env::current_dir()?;
             let project_override = project.map(repoweave::manifest::ProjectName::new);
@@ -502,6 +508,7 @@ fn main() -> anyhow::Result<()> {
                     retire,
                     project_override,
                     jobs,
+                    do_continue,
                 )?;
             } else {
                 sync::run_sync(
@@ -512,6 +519,7 @@ fn main() -> anyhow::Result<()> {
                     retire,
                     project_override,
                     jobs,
+                    do_continue,
                 )?;
             }
         }
