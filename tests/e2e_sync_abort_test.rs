@@ -1748,6 +1748,106 @@ fn gita_is_opt_in() {
     );
 }
 
+// ---------------------------------------------------------------------------
+// fo-vsldv.3 — post-Phase-1' manifest reload failure is a hard bail, not
+// a warn-and-proceed.
+//
+// Before the fix: if Project::from_dir fails after Phase 1', sync emitted a
+// warning (suppressed in --json mode) and fell through to Phase 3, which then
+// regenerated a lock from the pre-Phase-1' snapshot — silently omitting newly-
+// added repos.
+//
+// After the fix: sync bails immediately with an error that names `rwv abort`
+// as the recovery path.
+// ---------------------------------------------------------------------------
+
+/// Regression test: sync bails hard when the project manifest is corrupted
+/// immediately after Phase 1' (project repo fast-forward merge).
+///
+/// We simulate post-Phase-1' corruption via a `post-merge` git hook installed
+/// in the shared git hooks directory.  `git merge --ff-only` (the default
+/// Phase 1' path when CWD is behind source) triggers `post-merge`, which
+/// replaces `rwv.yaml` with invalid YAML.  The reload at the fixed code site
+/// sees garbage and must bail — not warn and proceed.
+///
+/// The workweave's project repo is a git worktree of primary's project, so
+/// hooks live in primary.project_dir/.git/hooks/ and fire for both repos.
+/// The `post-merge` hook writes its corruption to `rwv.yaml` relative to the
+/// git work tree, which at hook time is the workweave's project directory.
+///
+/// Assertions:
+///   - sync exits non-zero
+///   - stderr contains "rwv abort" (recovery hint)
+///   - stderr does NOT contain "warning:" (old warn-and-proceed fingerprint)
+#[test]
+fn sync_bails_hard_when_post_phase1_manifest_reload_fails() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (primary, ww, _c1) = make_shared_workspaces(tmp.path());
+
+    // Primary: advance server to C2 and commit an updated lock.  The WW
+    // project is behind (no extra WW commits), so Phase 1' can fast-forward.
+    let c2 = make_commit(
+        &primary.server_dir,
+        "primary_advance.txt",
+        "primary advance\n",
+        "primary: advance",
+    );
+    write_lock(&primary.project_dir, &[(SERVER_PATH, SERVER_URL, &c2)]);
+    git(&["add", "rwv.lock"], &primary.project_dir);
+    git(
+        &["commit", "-m", "lock: primary advance (fo-vsldv.3 test)"],
+        &primary.project_dir,
+    );
+
+    // Install a `post-merge` hook in the shared git hooks directory.
+    // Because ww.project_dir is a worktree of primary.project_dir, both
+    // share the same hooks directory (primary.project_dir/.git/hooks/).
+    // `git merge --ff-only` (the default Phase 1' path) triggers post-merge.
+    // The hook writes invalid YAML to rwv.yaml in the current working tree
+    // (the workweave's project dir at hook-call time).
+    let hooks_dir = primary.project_dir.join(".git").join("hooks");
+    std::fs::create_dir_all(&hooks_dir).unwrap();
+    let hook_path = hooks_dir.join("post-merge");
+    // The hook receives a single squash-merge flag argument.  We ignore it
+    // and unconditionally corrupt the manifest.
+    std::fs::write(
+        &hook_path,
+        "#!/bin/sh\nprintf '!!!invalid yaml!!!\\n' > rwv.yaml\n",
+    )
+    .unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&hook_path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+
+    // Run sync with the default FF strategy.  Phase 1' calls
+    // `git merge --ff-only <source_project_tip>` in the WW project dir,
+    // which fires the post-merge hook and corrupts rwv.yaml on disk.
+    // The fixed reload code should bail immediately rather than proceeding
+    // with a stale snapshot.
+    let out = rwv()
+        .args(["sync", &primary.root.to_string_lossy()])
+        .current_dir(&ww.root)
+        .output()
+        .expect("rwv process should start");
+
+    let stderr = String::from_utf8_lossy(&out.stderr);
+
+    assert!(
+        !out.status.success(),
+        "sync should fail when post-Phase-1' manifest reload fails; stderr: {stderr}"
+    );
+    assert!(
+        stderr.contains("rwv abort"),
+        "error must mention `rwv abort` as recovery path; stderr: {stderr}"
+    );
+    assert!(
+        !stderr.contains("warning:"),
+        "must not emit the old warn-and-proceed fingerprint; stderr: {stderr}"
+    );
+}
+
 // NOTE: A previous `fetch_no_reference_skips_reference_repos` integration
 // test was removed — it was broken at commit time (asserted `rwv lock`
 // success when a referenced repo had no on-disk clone, which fails at the
