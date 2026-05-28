@@ -418,6 +418,19 @@ fn sync_to_merge_strategy_works() {
         primary_server_tip, ww_server_tip,
         "primary and ww server repos should be at the same tip after merge sync-to"
     );
+
+    // History-shape assertion: after --strategy=merge from ww → primary, the
+    // merge commit (or ww's latest lock commit) must sit ON TOP of primary's
+    // prior lock commit in primary's project history. The merge commit is the
+    // newest entry; primary's last lock commit must appear below it.
+    //
+    // We verify this using the project repo log on primary's side. The most
+    // recent commit should reference ww's contribution (lock: ww C2), and
+    // primary's lock commit (lock: primary C2) should appear further down.
+    common::assert_log_ordering(
+        &primary.project_dir,
+        &["lock: ww C2", "lock: primary C2"],
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -593,6 +606,15 @@ fn sync_to_auto_relock_commit_appears_after_rebase() {
     let primary_tip = git_out(&["rev-parse", "HEAD"], &primary.project_dir);
     let ww_tip = git_out(&["rev-parse", "HEAD"], &ww.project_dir);
     assert_eq!(primary_tip, ww_tip, "primary and ww project tips should converge");
+
+    // History-shape assertion: the auto-relock commit must sit ON TOP of
+    // ww's unique non-lock commit in the project log — it was emitted by
+    // Phase 3 after replaying ww's commits, so it must be the newest entry.
+    // ww's unique non-lock commit must appear below it.
+    common::assert_log_ordering(
+        &ww.project_dir,
+        &["auto-relock", "feat: ww unique commit"],
+    );
 }
 
 // ---------------------------------------------------------------------------

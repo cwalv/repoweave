@@ -54,6 +54,79 @@ pub fn git() -> Command {
     cmd
 }
 
+/// Assert that `commit_messages` appear in top-down order (newest-first) in
+/// the log of `repo`.
+///
+/// This is the canonical "history shape" helper for the silent-fallback
+/// elimination suite (fo-vsldv). Use it whenever a sync test must verify that
+/// CWD's commits land *on top of* a target's prior tip — not below it.
+///
+/// `commit_messages` is a slice of substrings; each element must match exactly
+/// one line in `git log --oneline --no-decorate` output, and the *position* of
+/// the first match must be in strictly ascending order (i.e. earlier elements
+/// appear higher / newer in the log).
+///
+/// Panics with a diagnostic showing the full log and the expected ordering if
+/// any element is not found or the ordering is violated.
+///
+/// # Example
+/// ```ignore
+/// assert_log_ordering(
+///     &project_dir,
+///     &["feat: ww unique commit", "feat: primary unique commit"],
+/// );
+/// ```
+pub fn assert_log_ordering(repo: &std::path::Path, commit_messages: &[&str]) {
+    let out = git()
+        .args(["log", "--oneline", "--no-decorate"])
+        .current_dir(repo)
+        .env("GIT_AUTHOR_NAME", "Test")
+        .env("GIT_AUTHOR_EMAIL", "test@test.com")
+        .env("GIT_COMMITTER_NAME", "Test")
+        .env("GIT_COMMITTER_EMAIL", "test@test.com")
+        .output()
+        .expect("git log failed to start");
+    assert!(
+        out.status.success(),
+        "git log failed in {}:\n{}",
+        repo.display(),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let log = String::from_utf8(out.stdout).unwrap();
+
+    let positions: Vec<(usize, &str)> = commit_messages
+        .iter()
+        .map(|msg| {
+            let pos = log
+                .lines()
+                .position(|l| l.contains(msg))
+                .unwrap_or_else(|| {
+                    panic!(
+                        "commit message {:?} not found in log of {}.\nLog:\n{log}",
+                        msg,
+                        repo.display()
+                    )
+                });
+            (pos, *msg)
+        })
+        .collect();
+
+    for window in positions.windows(2) {
+        let (pos_a, msg_a) = window[0];
+        let (pos_b, msg_b) = window[1];
+        assert!(
+            pos_a < pos_b,
+            "History shape violation in {}:\n\
+             Expected {:?} (pos {pos_a}) to appear ABOVE {:?} (pos {pos_b}) in the log.\n\
+             (Lower position number = newer commit = higher in `git log` output.)\n\
+             Full log:\n{log}",
+            repo.display(),
+            msg_a,
+            msg_b
+        );
+    }
+}
+
 /// Build an `assert_cmd::Command` for the `rwv` binary with inherited
 /// `GIT_*` environment variables stripped.
 ///

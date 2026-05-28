@@ -960,6 +960,18 @@ fn sync_rebase_replays_local_commits_on_source_tip() {
         is_descendant,
         "after rebase, ww/main ({ww_head}) should be a descendant of primary C2 ({c2})"
     );
+
+    // History-shape assertion: after the rebase, ww's local commit must sit ON
+    // TOP of primary's C2 commit in the manifest repo log. The descendant-check
+    // above only verifies reachability; this verifies the actual commit ordering
+    // (CWD's commit replayed above, not below, the source's base).
+    //
+    // We check the manifest repo (server) log at the ww/main branch.
+    // "ww: local commit" must appear above "primary: advance".
+    common::assert_log_ordering(
+        &ww.server_dir,
+        &["ww: local commit", "primary: advance"],
+    );
 }
 
 /// When both sides have diverged, --strategy merge creates a merge commit.

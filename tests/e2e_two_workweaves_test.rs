@@ -271,6 +271,20 @@ fn sync_two_workweaves_lock_only_changes() {
     // Sanity: the final SHA must be a descendant of both ww1's and ww2's
     // original commits (i.e. ww2's commit was rebased onto ww1's).
     let _ = ww2_lib_sha; // referenced for symmetry
+
+    // History-shape assertion: after ww2 rebases onto ww1's tip and then main
+    // ff-absorbs ww2, the manifest repo log on main must show ww2's commit ON
+    // TOP of ww1's commit. This catches any implementation that replays in the
+    // wrong order (Option A vs Option B semantics).
+    //
+    // We assert on the manifest repo (github/org/lib) because that is where
+    // the two workweaves' contributions land. The project repo's lock-only
+    // commits are skipped/dropped during rebase (merge=ours), so there is no
+    // meaningful project-repo shape to assert here.
+    common::assert_log_ordering(
+        &main.manifest_repo,
+        &["ww2: add bar", "ww1: add foo"],
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -356,6 +370,23 @@ fn sync_two_workweaves_with_project_doc_changes() {
     assert!(
         main_lock.contains(&final_main_lib_head),
         "main's lock should pin lib at the final lib HEAD ({final_main_lib_head}); lock contents:\n{main_lock}"
+    );
+
+    // History-shape assertions: after ww2 rebases onto ww1's tip and main
+    // ff-absorbs ww2, both the project repo and the manifest repo must show
+    // the correct commit ordering — ww2's contribution ON TOP of ww1's.
+    //
+    // Project repo: feat-b.md's commit must appear above feat-a.md's commit.
+    // This is the specific instance called out in the bead spec.
+    common::assert_log_ordering(
+        &main.project_dir,
+        &["docs: add feat-b notes", "docs: add feat-a notes"],
+    );
+
+    // Manifest repo: ww2's bar commit must appear above ww1's foo commit.
+    common::assert_log_ordering(
+        &main.manifest_repo,
+        &["ww2: add bar", "ww1: add foo"],
     );
 }
 
