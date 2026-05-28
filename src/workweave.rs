@@ -343,6 +343,14 @@ pub fn preflight_check_heads(
 ///   scratch. Intended for explicit rebuild scenarios (corruption
 ///   recovery, or switching a slot to a different project).
 ///
+/// `capture_dirty` controls how uncommitted changes in the source project
+/// directory are handled at create time:
+/// - `false` (default): refuse with a clear error if `projects/<project>/`
+///   has uncommitted changes. The error names the dirty files and suggests
+///   committing, stashing, or passing `--capture-dirty`.
+/// - `true`: capture the dirty state into the workweave (legacy behavior).
+///   The workweave's project worktree will reflect the uncommitted edits.
+///
 /// Returns the absolute path of the created workweave directory.
 pub fn create_workweave(
     primary_root: &Path,
@@ -350,6 +358,7 @@ pub fn create_workweave(
     project: &ProjectName,
     name: &WorkweaveName,
     force: bool,
+    capture_dirty: bool,
 ) -> anyhow::Result<PathBuf> {
     let manifest = load_manifest(source_root, project)?;
     // Resolve to a legacy-shaped directory if one already exists for this
@@ -407,6 +416,47 @@ pub fn create_workweave(
                 &workweave_dir,
                 &manifest,
             );
+        }
+    }
+
+    // Pre-flight: refuse to create a workweave when the source project directory
+    // has uncommitted changes, unless the caller explicitly opted in with
+    // `capture_dirty`. Dirty state captured into a workweave becomes an
+    // obstacle at retire time ("Your local changes to the following files would
+    // be overwritten by merge").
+    //
+    // Only the project directory is checked here — manifest-repo worktrees are
+    // forked at HEAD (committed state) by `git worktree add`, so dirty state
+    // in those repos is not captured. The project dir is special because we
+    // explicitly overlay its working-tree `rwv.yaml`/`rwv.lock` below.
+    if !capture_dirty {
+        let project_dir = source_root.join("projects").join(project.as_str());
+        if GitVcs.is_repo(&project_dir) {
+            match crate::git::GitVcs::dirty_file_names(&project_dir) {
+                Ok(dirty) if !dirty.is_empty() => {
+                    bail!(
+                        "rwv workweave create: refusing to create workweave — \
+                         projects/{project} has uncommitted changes:\n  {files}\n\n\
+                         To proceed, do one of:\n  \
+                         1. commit the changes: git -C projects/{project} commit\n  \
+                         2. stash the changes: git -C projects/{project} stash\n  \
+                         3. capture them into the workweave: rwv workweave {project} create {name} --capture-dirty",
+                        project = project.as_str(),
+                        name = name.as_str(),
+                        files = dirty.join("\n  "),
+                    );
+                }
+                Ok(_) => {}
+                Err(e) => {
+                    // Cannot determine dirty status — be conservative and refuse.
+                    bail!(
+                        "rwv workweave create: refusing to create workweave — \
+                         could not check projects/{project} for uncommitted changes: {e}\n\n\
+                         To bypass this check, use --capture-dirty.",
+                        project = project.as_str(),
+                    );
+                }
+            }
         }
     }
 
@@ -1088,6 +1138,7 @@ pub fn handle_claude_hook() -> anyhow::Result<()> {
                 source_root,
                 &project,
                 &WorkweaveName::new(&name),
+                false,
                 false,
             )?;
             println!("{}", path.display());

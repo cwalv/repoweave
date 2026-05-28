@@ -645,3 +645,41 @@ impl Vcs for GitVcs {
         Ok(contents.lines().any(|line| line.trim() == needle))
     }
 }
+
+impl GitVcs {
+    /// Return the list of dirty file paths in `repo` as reported by
+    /// `git status --porcelain`.
+    ///
+    /// Each entry is the path portion of the status line after the two-char
+    /// status code and its trailing space. Returns an empty vec when the tree
+    /// is clean; returns an `Err` only when git itself fails.
+    ///
+    /// **Parsing note:** `run()` trims the overall output, which can strip the
+    /// leading space of a single-entry `" M filename"` result. We normalize
+    /// each line by trimming leading spaces before extracting the path so that
+    /// both `"?? file"` and `"M file"` (after trim) parse correctly: skip the
+    /// first two non-space characters (the XY status code) and any following
+    /// whitespace to obtain the filename.
+    pub(crate) fn dirty_file_names(repo: &Path) -> Result<Vec<String>, VcsError> {
+        let output = Self::run(&["status", "--porcelain"], repo)?;
+        if output.is_empty() {
+            return Ok(Vec::new());
+        }
+        let names = output
+            .lines()
+            .filter_map(|line| {
+                // Strip leading spaces introduced by run()'s global trim on
+                // single-entry output (e.g. " M rwv.yaml" → "M rwv.yaml").
+                let trimmed = line.trim_start();
+                // Porcelain v1: XY + space + path. After trim_start the XY
+                // code is at most 2 chars; skip them, then strip the space.
+                trimmed
+                    .get(2..)
+                    .map(|s| s.trim_start_matches(' '))
+                    .filter(|s| !s.is_empty())
+                    .map(|s| s.to_string())
+            })
+            .collect();
+        Ok(names)
+    }
+}

@@ -15,7 +15,25 @@ This forks from CWD's active workspace (primary when invoked from primary, the s
 - generated ecosystem files (`package.json`, `go.work`, `Cargo.toml`, ...)
 - a `.rwv-workweave` marker recording the parent workspace and project
 
-`rwv workweave create` snapshots the parent's *committed* `rwv.yaml`. Commit any pending manifest edits before creating the workweave or they will be silently dropped.
+`rwv workweave create` checks for uncommitted changes in `projects/<project>/` before proceeding. If the project directory is dirty it refuses with a clear error naming the dirty files and suggests three remediation paths:
+
+```
+Error: rwv workweave create: refusing to create workweave — projects/web-app has uncommitted changes:
+  rwv.yaml
+
+To proceed, do one of:
+  1. commit the changes: git -C projects/web-app commit
+  2. stash the changes: git -C projects/web-app stash
+  3. capture them into the workweave: rwv workweave web-app create payments --capture-dirty
+```
+
+If the dirty state is intentional — for example, you are editing `rwv.yaml` specifically to configure the new workweave — pass `--capture-dirty` to opt in:
+
+```bash
+rwv workweave web-app create payments --capture-dirty
+```
+
+The workweave will then reflect the uncommitted edits. Note that captured dirty state becomes an obstacle at retire time if the changes are also present in the primary; commit or stash them in the workweave before running `rwv sync-to`.
 
 ## Work across repos
 

@@ -305,6 +305,13 @@ enum WorkweaveAction {
         /// `--from .workweaves/foundations--fo-city`).
         #[arg(long)]
         from: Option<String>,
+        /// Allow creation even when the source project directory has
+        /// uncommitted changes. The dirty state is captured into the new
+        /// workweave's project worktree. Without this flag, `create` refuses
+        /// and names the dirty files so you can commit, stash, or opt in
+        /// explicitly.
+        #[arg(long)]
+        capture_dirty: bool,
     },
     /// Delete a workweave
     Delete {
@@ -387,7 +394,12 @@ fn main() -> anyhow::Result<()> {
                             force,
                         )?;
                     }
-                    Some(WorkweaveAction::Create { name, force, from }) => {
+                    Some(WorkweaveAction::Create {
+                        name,
+                        force,
+                        from,
+                        capture_dirty,
+                    }) => {
                         let source_root = match from.as_deref() {
                             None => ctx.active_path().to_path_buf(),
                             Some("primary") => primary_root.to_path_buf(),
@@ -406,6 +418,7 @@ fn main() -> anyhow::Result<()> {
                             &project,
                             &WorkweaveName::new(name),
                             force,
+                            capture_dirty,
                         )?;
                         if hook_mode {
                             println!("{}", workweave_path.display());

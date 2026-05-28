@@ -2373,9 +2373,9 @@ fn workweave_delete_clean_succeeds_without_force() {
 #[test]
 fn workweave_create_picks_up_uncommitted_rwv_yaml() {
     // make_workspace_with_project_repo commits the manifest. We then edit
-    // the working-tree rwv.yaml WITHOUT committing, create a workweave, and
-    // verify the workweave's project worktree sees the edited (working-tree)
-    // version — not the last committed one.
+    // the working-tree rwv.yaml WITHOUT committing and verify that:
+    //   (a) plain `create` refuses and names the dirty file
+    //   (b) `create --capture-dirty` succeeds and the workweave sees the edit
     let tmp = tempfile::tempdir().unwrap();
     let ws = make_workspace_with_project_repo(tmp.path(), "uncommit-test");
 
@@ -2389,8 +2389,44 @@ fn workweave_create_picks_up_uncommitted_rwv_yaml() {
     let weaveroot = tmp.path().join(".workweaves");
     std::fs::create_dir_all(&weaveroot).unwrap();
 
-    let assert = rwv()
+    // --- (a) plain create must refuse and name the dirty file ---
+    let refuse_assert = rwv()
         .args(["workweave", "uncommit-test", "create", "ww-uncommit"])
+        .env("RWV_WORKWEAVE_DIR", &weaveroot)
+        .current_dir(&ws)
+        .assert()
+        .failure();
+    let refuse_stderr = String::from_utf8_lossy(&refuse_assert.get_output().stderr);
+    assert!(
+        refuse_stderr.contains("uncommitted changes"),
+        "expected 'uncommitted changes' in refusal message, got:\n{refuse_stderr}"
+    );
+    assert!(
+        refuse_stderr.contains("rwv.yaml"),
+        "refusal message should name the dirty file (rwv.yaml), got:\n{refuse_stderr}"
+    );
+    assert!(
+        refuse_stderr.contains("--capture-dirty"),
+        "refusal message should hint at --capture-dirty, got:\n{refuse_stderr}"
+    );
+
+    // The workweave must not be left on disk after the refusal.
+    let ww_dir = weaveroot.join("uncommit-test--ww-uncommit");
+    assert!(
+        !ww_dir.exists(),
+        "create must not leave a partial workweave dir on refusal, found: {}",
+        ww_dir.display()
+    );
+
+    // --- (b) --capture-dirty succeeds and captures the edit ---
+    let capture_assert = rwv()
+        .args([
+            "workweave",
+            "uncommit-test",
+            "create",
+            "ww-uncommit",
+            "--capture-dirty",
+        ])
         .env("RWV_WORKWEAVE_DIR", &weaveroot)
         .current_dir(&ws)
         .assert()
@@ -2398,10 +2434,10 @@ fn workweave_create_picks_up_uncommitted_rwv_yaml() {
 
     // The CLI must emit a warning about dirty state (so the operator
     // notices the working tree was captured).
-    let stderr = String::from_utf8_lossy(&assert.get_output().stderr);
+    let capture_stderr = String::from_utf8_lossy(&capture_assert.get_output().stderr);
     assert!(
-        stderr.contains("uncommitted") || stderr.contains("working-tree"),
-        "expected dirty-state warning, got stderr: {stderr}"
+        capture_stderr.contains("uncommitted") || capture_stderr.contains("working-tree"),
+        "expected dirty-state warning with --capture-dirty, got stderr: {capture_stderr}"
     );
 
     // The workweave's project worktree must have the UNCOMMITTED marker.
@@ -2409,7 +2445,7 @@ fn workweave_create_picks_up_uncommitted_rwv_yaml() {
     let ww_content = std::fs::read_to_string(&ww_manifest).unwrap();
     assert!(
         ww_content.contains("UNCOMMITTED-MARKER"),
-        "workweave's rwv.yaml should reflect the primary's uncommitted edit, got:\n{ww_content}"
+        "workweave's rwv.yaml should reflect the primary's uncommitted edit with --capture-dirty, got:\n{ww_content}"
     );
 }
 
@@ -2435,6 +2471,122 @@ fn workweave_create_with_clean_committed_manifest_emits_no_dirty_warning() {
         !stderr.contains("uncommitted") && !stderr.contains("dirty state"),
         "clean workspace must not warn about uncommitted state, got stderr: {stderr}"
     );
+}
+
+// ============================================================================
+// --capture-dirty: refuse dirty primary by default
+// ============================================================================
+
+/// Default `create` refuses when the project dir has uncommitted changes,
+/// names the dirty files, and hints at all three remediation options.
+#[test]
+fn workweave_create_refuses_dirty_primary_by_default() {
+    let tmp = tempfile::tempdir().unwrap();
+    let ws = make_workspace_with_project_repo(tmp.path(), "dirty-proj");
+
+    // Write an uncommitted file in the project dir.
+    let project_dir = ws.join("projects/dirty-proj");
+    std::fs::write(project_dir.join("in-progress.txt"), "work in progress").unwrap();
+
+    let weaveroot = tmp.path().join(".workweaves");
+    std::fs::create_dir_all(&weaveroot).unwrap();
+
+    let assert = rwv()
+        .args(["workweave", "dirty-proj", "create", "blocked"])
+        .env("RWV_WORKWEAVE_DIR", &weaveroot)
+        .current_dir(&ws)
+        .assert()
+        .failure();
+
+    let stderr = String::from_utf8_lossy(&assert.get_output().stderr);
+
+    // Must name the dirty file.
+    assert!(
+        stderr.contains("in-progress.txt"),
+        "error must name the dirty file, got:\n{stderr}"
+    );
+    // Must hint at all three remediation options.
+    assert!(
+        stderr.contains("commit"),
+        "error must hint at committing, got:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("stash"),
+        "error must hint at stashing, got:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("--capture-dirty"),
+        "error must hint at --capture-dirty, got:\n{stderr}"
+    );
+
+    // No partial workweave dir must be left behind.
+    let ww_dir = weaveroot.join("dirty-proj--blocked");
+    assert!(
+        !ww_dir.exists(),
+        "create must not leave a partial workweave dir after refusal, found: {}",
+        ww_dir.display()
+    );
+}
+
+/// `--capture-dirty` opts in to the old behavior: create succeeds even when
+/// the project dir has uncommitted changes.
+#[test]
+fn workweave_create_capture_dirty_allows_dirty_primary() {
+    let tmp = tempfile::tempdir().unwrap();
+    let ws = make_workspace_with_project_repo(tmp.path(), "dirty-ok");
+
+    // Write an uncommitted file in the project dir.
+    let project_dir = ws.join("projects/dirty-ok");
+    std::fs::write(project_dir.join("draft.txt"), "draft content").unwrap();
+
+    let weaveroot = tmp.path().join(".workweaves");
+    std::fs::create_dir_all(&weaveroot).unwrap();
+
+    rwv()
+        .args([
+            "workweave",
+            "dirty-ok",
+            "create",
+            "allowed",
+            "--capture-dirty",
+        ])
+        .env("RWV_WORKWEAVE_DIR", &weaveroot)
+        .current_dir(&ws)
+        .assert()
+        .success();
+
+    // The workweave directory must exist.
+    let ww_dir = weaveroot.join("dirty-ok--allowed");
+    assert!(
+        ww_dir.exists(),
+        "--capture-dirty create must succeed and leave the workweave dir at {}",
+        ww_dir.display()
+    );
+}
+
+/// A workspace without a git-backed project dir (plain directory) is not
+/// subject to the dirty check — there is nothing to check. Create must
+/// succeed without `--capture-dirty`.
+#[test]
+fn workweave_create_no_project_repo_skips_dirty_check() {
+    // `make_workspace` creates a plain (non-git) project dir.
+    let tmp = tempfile::tempdir().unwrap();
+    let ws = make_workspace(tmp.path(), "plain-proj");
+
+    // Write an arbitrary file into the plain project dir to confirm it's
+    // not git-tracked (and thus the dirty check should not fire).
+    let project_dir = ws.join("projects/plain-proj");
+    std::fs::write(project_dir.join("extra.txt"), "extra").unwrap();
+
+    let weaveroot = tmp.path().join(".workweaves");
+    std::fs::create_dir_all(&weaveroot).unwrap();
+
+    rwv()
+        .args(["workweave", "plain-proj", "create", "no-git-check"])
+        .env("RWV_WORKWEAVE_DIR", &weaveroot)
+        .current_dir(&ws)
+        .assert()
+        .success();
 }
 
 // ============================================================================
