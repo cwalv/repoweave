@@ -7,7 +7,7 @@ Generates a `Cargo.toml` with a `[workspace]` section listing every project repo
 | Default enabled | yes |
 | Auto-detects | repos with `Cargo.toml` |
 | Generates | `Cargo.toml` |
-| Lock hook | `cargo generate-lockfile` |
+| Install hook | `cargo generate-lockfile` |
 
 ## Generated file
 
@@ -20,6 +20,18 @@ resolver = "2"
 ```
 
 Generated in the project directory, symlinked to the weave directory. Committable. The corresponding `Cargo.lock` and `target/` are produced by Cargo — `Cargo.lock` is committable persistent state, `target/` is gitignored tool state.
+
+## Three Rust artifacts
+
+A Cargo workspace weave produces three distinct lock/manifest artifacts with separate roles:
+
+| Artifact | Produced by | Pins | Committable |
+|---|---|---|---|
+| `Cargo.toml` (generated) | `rwv activate` | Workspace shape — which repos are members | Yes |
+| `Cargo.lock` | `cargo generate-lockfile` (install hook) | External crate versions from crates.io | Yes |
+| `rwv.lock` | `rwv lock` | Internal repo revisions (git SHAs) | Yes |
+
+`Cargo.lock` answers "which version of `serde`?"; `rwv.lock` answers "which commit of `github/chatly/protocol`?". They operate at different layers — external ecosystem vs. internal repo graph — and neither subsumes the other.
 
 ## Nested workspaces
 
@@ -57,7 +69,7 @@ members = ["github/cwalv/repoweave"]
 resolver = "2"
 ```
 
-Excluded repos are still on disk and still buildable on their own (e.g., by `cd`-ing into the repo and running `cargo build`) — they're just not part of the foundations workspace.
+**Tradeoff:** opted-out repos remain in the weave (their clones are still on disk, still reachable from the workweave) but are absent from the unified workspace. That means `cargo test --workspace`, `cargo build --workspace`, and similar workspace-scoped commands do not cover them. If an opted-out repo depends on a workspace member (or vice versa), the dependency is resolved via the registry rather than the local clone — the zero-version-change shortcut does not apply across the opt-out boundary. Work inside the opted-out repo must be built and tested by `cd`-ing into it directly.
 
 Opt-out entries that don't match any active Rust repo (because the repo was removed from the manifest, or it's not a Rust repo) are silently ignored.
 

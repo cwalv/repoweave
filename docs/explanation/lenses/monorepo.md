@@ -10,7 +10,7 @@ Pick this lens up if you've ever lost an iteration to the version-bump dance: ed
 
 In a monorepo, you change a library and its consumer in the same commit. In a polyrepo, the typical workflow forces a version dance for every iteration — even when you know the change is small and the consumer is going to be fine.
 
-repoweave eliminates the development-time version dance by generating ecosystem workspace files (`package.json` workspaces, `go.work`, `Cargo.toml`'s `[workspace]`, etc.) that point at the local clones. To the build tool, the manifest repos *are* the workspace members — it doesn't look on the registry for `@chatly/protocol`, it looks in `github/chatly/protocol/` on disk.
+repoweave eliminates the development-time version dance by generating ecosystem workspace files (`package.json` workspaces, `go.work`, `Cargo.toml`'s `[workspace]`, etc.) that point at the local clones. To the build tool, the manifest repos *are* the workspace members — it doesn't look on the registry for `@chatly/protocol`, it looks in `github/chatly/protocol/` on disk. This holds where the ecosystem can legally represent the active repos as one workspace; repos that declare their own nested workspace root (a Cargo limitation) must be opted out and are resolved via the registry instead (see [cargo-workspace opt-out](../../reference/integrations/cargo-workspace.md#nested-workspaces)).
 
 ```mermaid
 flowchart LR

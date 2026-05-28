@@ -6,7 +6,7 @@ For the conceptual frame, see the [workspace lens](../../explanation/lenses/work
 
 ## Built-in integrations
 
-| Integration | Default enabled | Auto-detects | Generates | Lock hook (during `rwv lock`) |
+| Integration | Default enabled | Auto-detects | Generates | Install hook (during `rwv activate`) |
 |---|---|---|---|---|
 | [`npm-workspaces`](./npm-workspaces.md) | yes | repos with `package.json` | `package.json` | `npm install` |
 | [`pnpm-workspaces`](./pnpm-workspaces.md) | no | repos with `package.json` | `pnpm-workspace.yaml` | `pnpm install` |
@@ -22,7 +22,7 @@ For the conceptual frame, see the [workspace lens](../../explanation/lenses/work
 Each integration participates in three hook points:
 
 - **Activation hooks** (run during `rwv activate`, workweave creation, `rwv sync`, `rwv add`, `rwv remove`) — generate config files and symlinks. This is the *write path*.
-- **Lock hooks** (run during `rwv lock`) — run install commands (`npm install`, `uv sync`, `cargo generate-lockfile`, etc.) to ensure ecosystem lock files are up to date.
+- **Install hooks** (run during `rwv activate`, after config generation) — run install commands (`npm install`, `uv sync`, `cargo generate-lockfile`, etc.) to keep ecosystem lock files current with the active membership. Suppressed with `rwv activate --no-install`.
 - **Check hooks** (run during `rwv doctor`) — read-only inspection. Verify the environment is healthy, report missing tools or stale config.
 
 When a project is activated, a workweave is created, or `rwv sync` materializes repo changes, integrations run: the deactivation hook cleans up first, then the activation hook generates fresh config. Each integration auto-detects relevant repos — if none are found, it is a no-op.

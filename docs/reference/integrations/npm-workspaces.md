@@ -7,7 +7,7 @@ Generates a `package.json` with a `workspaces` array listing every project repo 
 | Default enabled | yes |
 | Auto-detects | repos with `package.json` |
 | Generates | `package.json` |
-| Lock hook | `npm install` (if `npm` is on PATH) |
+| Install hook | `npm install` (if `npm` is on PATH) |
 
 ## Generated file
 
@@ -25,9 +25,9 @@ Generates a `package.json` with a `workspaces` array listing every project repo 
 
 Generated in the project directory, symlinked to the weave directory. Committable. The corresponding `package-lock.json` and `node_modules/` are produced by `npm install` — `package-lock.json` is committable persistent state, `node_modules/` is gitignored tool state.
 
-## Lock hook
+## Install hook
 
-Runs `npm install` during `rwv lock` to update `package-lock.json` and `node_modules/`. To install immediately after activation, run `npm install` manually.
+Runs `npm install` during `rwv activate` to update `package-lock.json` and `node_modules/`. Suppress with `rwv activate --no-install`.
 
 ## Deactivation
 

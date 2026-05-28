@@ -7,7 +7,7 @@ Generates a `pnpm-workspace.yaml` listing every project repo (excluding `referen
 | Default enabled | no (opt-in) |
 | Auto-detects | repos with `package.json` |
 | Generates | `pnpm-workspace.yaml` |
-| Lock hook | `pnpm install` (if `pnpm` is on PATH) |
+| Install hook | `pnpm install` (if `pnpm` is on PATH) |
 
 Disabled by default. Enable explicitly in `rwv.yaml` for projects using pnpm:
 
@@ -30,9 +30,9 @@ packages:
 
 Generated in the project directory, symlinked to the weave directory. Committable. The corresponding `pnpm-lock.yaml` and `node_modules/` are produced by `pnpm install` — `pnpm-lock.yaml` is committable persistent state, `node_modules/` is gitignored tool state.
 
-## Lock hook
+## Install hook
 
-Runs `pnpm install` during `rwv lock` to update `pnpm-lock.yaml` and `node_modules/`.
+Runs `pnpm install` during `rwv activate` to update `pnpm-lock.yaml` and `node_modules/`. Suppress with `rwv activate --no-install`.
 
 ## Deactivation
 

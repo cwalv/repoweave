@@ -7,7 +7,7 @@ Generates a `pyproject.toml` with a `[tool.uv.workspace]` section listing every 
 | Default enabled | yes |
 | Auto-detects | repos with `pyproject.toml` |
 | Generates | `pyproject.toml` |
-| Lock hook | `uv sync` (if `uv` is on PATH) |
+| Install hook | `uv sync` (if `uv` is on PATH) |
 
 ## Generated file
 
@@ -22,9 +22,9 @@ members = [
 
 Generated in the project directory, symlinked to the weave directory. Committable. The corresponding `uv.lock` and `.venv/` are produced by `uv sync` — `uv.lock` is committable persistent state, `.venv/` is gitignored tool state.
 
-## Lock hook
+## Install hook
 
-Runs `uv sync` during `rwv lock` to update `uv.lock` and `.venv/`. To install immediately after activation, run `uv sync` manually.
+Runs `uv sync` during `rwv activate` to update `uv.lock` and `.venv/`. Suppress with `rwv activate --no-install`.
 
 ## Deactivation
 
