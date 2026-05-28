@@ -107,6 +107,21 @@ pub enum CheckViolation {
         /// The `primary:` value from the marker, used as the backfill value.
         primary: PathBuf,
     },
+
+    /// A project's `rwv.yaml` exists but cannot be parsed.
+    ///
+    /// Reported as an `Error`-severity violation so the operator is not
+    /// left with zero violations (i.e. an apparent "clean" result) for a
+    /// project whose manifest is broken. `--fix` does NOT auto-repair this
+    /// — the operator must fix the YAML by hand and re-run `rwv doctor`.
+    UnparseableProject {
+        /// Relative project path (e.g. `my-app`, `org/repo`).
+        project: ProjectName,
+        /// Absolute path to the offending `rwv.yaml`.
+        manifest_path: PathBuf,
+        /// The parse error returned by `Project::from_dir`.
+        error: String,
+    },
 }
 
 #[derive(Debug, Serialize, JsonSchema)]
@@ -224,6 +239,11 @@ pub enum ViolationOutput {
     LegacyWorkweaveMarker {
         marker_path: String,
         primary: String,
+    },
+    UnparseableProject {
+        project: String,
+        manifest_path: String,
+        error: String,
     },
 }
 
@@ -353,6 +373,15 @@ impl ViolationOutput {
             } => Self::LegacyWorkweaveMarker {
                 marker_path: marker_path.to_string_lossy().into_owned(),
                 primary: primary.to_string_lossy().into_owned(),
+            },
+            CheckViolation::UnparseableProject {
+                project,
+                manifest_path,
+                error,
+            } => Self::UnparseableProject {
+                project: project.to_string(),
+                manifest_path: manifest_path.to_string_lossy().into_owned(),
+                error,
             },
         }
     }
@@ -737,6 +766,17 @@ pub fn violations_to_issues(violations: Vec<CheckViolation>) -> Vec<Issue> {
                         marker_path.display()
                     ),
                 ),
+                CheckViolation::UnparseableProject {
+                    project,
+                    manifest_path,
+                    error,
+                } => (
+                    crate::integration::Severity::Error,
+                    format!(
+                        "{project}: manifest at {} cannot be parsed: {error}",
+                        manifest_path.display()
+                    ),
+                ),
                 CheckViolation::WorkingTreeDrift {
                     workweave,
                     repo,
@@ -1023,7 +1063,15 @@ pub fn run_check_locked(
         let project_dir = workspace_dir.join("projects").join(pname);
         let project = match Project::from_dir(&project_dir) {
             Ok(p) => p,
-            Err(_) => continue,
+            Err(e) => {
+                // Warn and skip; `rwv doctor` surfaces the canonical
+                // `unparseable-project` violation for this project.
+                eprintln!(
+                    "warning: skipping project {pname}: manifest unreadable ({e}); \
+                     run `rwv doctor` for details"
+                );
+                continue;
+            }
         };
 
         let raw_lock = match project.lock {
@@ -1220,6 +1268,11 @@ pub fn run_check(
     let mut projects = Vec::new();
     let mut known_repos = BTreeSet::new();
     let mut lock_resolve_failures: Vec<(crate::manifest::ProjectName, RepoPath)> = Vec::new();
+    // Projects whose rwv.yaml exists but fails to parse — surfaced as
+    // `unparseable-project` violations so the workspace is never silent-clean
+    // when a manifest is broken.
+    let mut unparseable_projects: Vec<(crate::manifest::ProjectName, PathBuf, String)> =
+        Vec::new();
 
     let mut resolved_locks: std::collections::HashMap<
         crate::manifest::ProjectName,
@@ -1281,10 +1334,25 @@ pub fn run_check(
                     projects.push(project);
                 }
                 Err(e) => {
-                    eprintln!(
-                        "warning: failed to load project at {}: {e}",
-                        project_dir.display()
-                    );
+                    // Surface unparseable manifests as a violation so
+                    // operators get a clear signal instead of zero findings
+                    // (which looks identical to a healthy project). --fix
+                    // does not auto-repair broken YAML; the operator must
+                    // fix by hand and re-run.
+                    let project_name = rel_dir
+                        .strip_prefix("projects")
+                        .unwrap_or(rel_dir)
+                        .to_string_lossy()
+                        .into_owned();
+                    // Defer: collect violations after the input is built.
+                    // We push directly into `all_issues` at display time.
+                    // Store for now in a side-channel parallel to the other
+                    // failure vecs already used in this function.
+                    unparseable_projects.push((
+                        crate::manifest::ProjectName::new(project_name),
+                        manifest_path,
+                        e.to_string(),
+                    ));
                 }
             }
         }
@@ -1342,6 +1410,16 @@ pub fn run_check(
         violations.push(CheckViolation::LegacyWorkweaveMarker {
             marker_path: finding.marker_path.clone(),
             primary: finding.primary.clone(),
+        });
+    }
+
+    // Surface unparseable manifests as first-class violations so the
+    // workspace is never reported as "clean" when a manifest is broken.
+    for (project, manifest_path, error) in &unparseable_projects {
+        violations.push(CheckViolation::UnparseableProject {
+            project: project.clone(),
+            manifest_path: manifest_path.clone(),
+            error: error.clone(),
         });
     }
 
@@ -1656,6 +1734,9 @@ fn collect_doctor_violations(
         crate::manifest::ProjectName,
         crate::manifest::ResolvedLockFile,
     > = std::collections::HashMap::new();
+    // Unparseable manifests collected here and emitted as violations below.
+    let mut unparseable_projects_json: Vec<(crate::manifest::ProjectName, PathBuf, String)> =
+        Vec::new();
 
     if projects_dir.is_dir() {
         let mut entries: Vec<_> = std::fs::read_dir(&projects_dir)?
@@ -1693,7 +1774,18 @@ fn collect_doctor_violations(
                     }
                     projects.push(project);
                 }
-                Err(_) => continue,
+                Err(e) => {
+                    let project_name = rel_dir
+                        .strip_prefix("projects")
+                        .unwrap_or(rel_dir)
+                        .to_string_lossy()
+                        .into_owned();
+                    unparseable_projects_json.push((
+                        crate::manifest::ProjectName::new(project_name),
+                        manifest_path,
+                        e.to_string(),
+                    ));
+                }
             }
         }
     }
@@ -1724,6 +1816,15 @@ fn collect_doctor_violations(
                 });
             }
         }
+    }
+
+    // Unparseable manifests: surface as violations in the JSON channel too.
+    for (project, manifest_path, error) in unparseable_projects_json {
+        violations.push(CheckViolation::UnparseableProject {
+            project,
+            manifest_path,
+            error,
+        });
     }
 
     // Legacy `role: primary` findings — text-scan over `projects/*/rwv.yaml`

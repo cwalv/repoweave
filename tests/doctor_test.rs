@@ -1147,6 +1147,14 @@ mod doctor_json {
                 CheckViolation::MissingReplayExclusion { project: pn() },
                 "missing-replay-exclusion",
             ),
+            (
+                CheckViolation::UnparseableProject {
+                    project: pn(),
+                    manifest_path: std::path::PathBuf::from("/ws/projects/p/rwv.yaml"),
+                    error: "bad yaml".to_owned(),
+                },
+                "unparseable-project",
+            ),
         ];
 
         for (violation, expected) in cases {
@@ -1258,6 +1266,11 @@ mod doctor_json {
         MissingReplayExclusion {
             project: String,
         },
+        UnparseableProject {
+            project: String,
+            manifest_path: String,
+            error: String,
+        },
     }
 
     #[test]
@@ -1300,6 +1313,11 @@ mod doctor_json {
             CheckViolation::MissingReplayExclusion {
                 project: ProjectName::new("p"),
             },
+            CheckViolation::UnparseableProject {
+                project: ProjectName::new("p"),
+                manifest_path: std::path::PathBuf::from("/ws/projects/p/rwv.yaml"),
+                error: "bad yaml".to_owned(),
+            },
         ];
         let expected_len = violations.len();
 
@@ -1319,6 +1337,10 @@ mod doctor_json {
         assert!(matches!(
             parsed[7],
             WireViolation::MissingReplayExclusion { .. }
+        ));
+        assert!(matches!(
+            parsed[8],
+            WireViolation::UnparseableProject { .. }
         ));
     }
 }
@@ -1461,5 +1483,122 @@ fn check_silent_when_project_has_replay_exclusion() {
     assert!(
         !stdout.contains("missing `rwv.lock merge=ours`"),
         "doctor must not warn when the line is present; got stdout: {stdout}"
+    );
+}
+
+// ===========================================================================
+// fo-vsldv.5: unparseable-project violation
+// ===========================================================================
+
+/// A project with a syntactically broken `rwv.yaml` must surface an
+/// `unparseable-project` violation — not silently report a clean workspace.
+///
+/// Regression test for the silent-skip pattern: previously `run_check` hit
+/// `Err(_) => eprintln!(...)` and continued, leaving zero violations for the
+/// broken project (indistinguishable from a healthy workspace).
+#[test]
+fn check_unparseable_project_reported_as_violation() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = make_workspace(tmp.path(), "ws");
+
+    // Write a syntactically broken rwv.yaml — invalid YAML.
+    let project_dir = root.join("projects").join("broken-app");
+    std::fs::create_dir_all(&project_dir).unwrap();
+    std::fs::write(
+        project_dir.join("rwv.yaml"),
+        "repositories: {\n  this is not: valid yaml: [ unclosed\n",
+    )
+    .unwrap();
+
+    let assert = rwv_cmd()
+        .arg("doctor")
+        .current_dir(&root)
+        .assert()
+        .failure();
+    let out = String::from_utf8_lossy(&assert.get_output().stdout).into_owned();
+    assert!(
+        out.contains("unparseable-project") || out.contains("cannot be parsed"),
+        "expected unparseable-project violation, got stdout: {out}"
+    );
+    assert!(
+        out.contains("broken-app"),
+        "violation message should name the project, got stdout: {out}"
+    );
+}
+
+/// `rwv doctor --json` against a workspace with a broken manifest emits an
+/// `unparseable-project` entry in the violations array and exits non-zero.
+#[test]
+fn check_unparseable_project_in_json_output() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = make_workspace(tmp.path(), "ws");
+
+    let project_dir = root.join("projects").join("broken-app");
+    std::fs::create_dir_all(&project_dir).unwrap();
+    std::fs::write(
+        project_dir.join("rwv.yaml"),
+        "repositories: {\n  this is not: valid yaml: [ unclosed\n",
+    )
+    .unwrap();
+
+    let assertion = rwv_cmd()
+        .args(["doctor", "--json"])
+        .current_dir(&root)
+        .assert()
+        .failure();
+    let stdout = String::from_utf8(assertion.get_output().stdout.clone()).unwrap();
+    let parsed: serde_json::Value =
+        serde_json::from_str(&stdout).unwrap_or_else(|e| panic!("invalid JSON: {e}\n{stdout}"));
+
+    let violations = parsed
+        .get("violations")
+        .and_then(|v| v.as_array())
+        .unwrap_or_else(|| panic!("violations missing: {parsed}"));
+
+    let entry = violations
+        .iter()
+        .find(|v| v.get("kind").and_then(|k| k.as_str()) == Some("unparseable-project"))
+        .unwrap_or_else(|| panic!("no unparseable-project entry in {parsed}"));
+
+    assert_eq!(
+        entry.get("project").and_then(|s| s.as_str()),
+        Some("broken-app"),
+        "project field should name the broken project"
+    );
+    assert!(
+        entry.get("manifest_path").and_then(|s| s.as_str()).is_some(),
+        "manifest_path field should be present"
+    );
+    assert!(
+        entry.get("error").and_then(|s| s.as_str()).is_some(),
+        "error field should contain the parse error"
+    );
+}
+
+/// `rwv doctor --fix` against a workspace with a broken manifest does NOT
+/// auto-repair the YAML; the violation persists after --fix. This confirms
+/// that no automated unsafe mutation is attempted.
+#[test]
+fn check_unparseable_project_not_fixed_by_fix_flag() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = make_workspace(tmp.path(), "ws");
+
+    let bad_yaml = "repositories: {\n  this is not: valid yaml: [ unclosed\n";
+    let project_dir = root.join("projects").join("broken-app");
+    std::fs::create_dir_all(&project_dir).unwrap();
+    std::fs::write(project_dir.join("rwv.yaml"), bad_yaml).unwrap();
+
+    // --fix should not crash and should still exit non-zero (violation remains).
+    rwv_cmd()
+        .args(["doctor", "--fix"])
+        .current_dir(&root)
+        .assert()
+        .failure();
+
+    // The manifest must be unchanged — --fix must not touch broken YAML.
+    let content_after = std::fs::read_to_string(project_dir.join("rwv.yaml")).unwrap();
+    assert_eq!(
+        content_after, bad_yaml,
+        "--fix must not modify an unparseable manifest"
     );
 }
