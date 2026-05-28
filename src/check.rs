@@ -823,12 +823,69 @@ pub fn violations_to_issues(violations: Vec<CheckViolation>) -> Vec<Issue> {
 // Index-drift helpers
 // ---------------------------------------------------------------------------
 
+/// Combined index + working-tree drift classification using one git
+/// invocation for the common "clean worktree" fast path.
+///
+/// The doctor's per-worktree scan calls both [`classify_index_drift`] and
+/// [`classify_working_tree_drift`] for every worktree it sees. Each of those
+/// functions previously paid the cost of a fresh `git diff-index` subprocess
+/// just to determine "clean vs dirty" before doing any further work — so the
+/// minimum cost per worktree was two `git` invocations, and at workspace
+/// scale (80+ workweaves × ~13 repos = ~1000 worktrees) the doubled
+/// process-startup overhead dominated wall-clock time (bead fo-v8hq4.4).
+///
+/// This helper runs `git status --porcelain` once. If the output is empty
+/// (workspace and index both clean against HEAD), both classifiers return
+/// `None` without spawning any further subprocesses. If the output is
+/// non-empty, the caller falls back to the per-kind classifiers, which
+/// continue to issue the detail probes needed to bucket the drift into
+/// `SafeToFix` / `LiveStaged` / `LiveEdits`.
+///
+/// Returns `(index_drift, working_tree_drift)`. Either side may be `None`
+/// independently — e.g., index dirty but working tree clean.
+pub fn classify_drift(repo: &Path) -> (Option<IndexDriftKind>, Option<WorkingTreeDriftKind>) {
+    // `git status --porcelain` (without `-z`) emits one record per dirty
+    // entry; an empty stdout means both the index and the working tree
+    // match HEAD, which is the overwhelmingly common case in a healthy
+    // workspace. We only need the empty/non-empty signal here; the
+    // detail-level classification still goes through the per-kind helpers
+    // below when drift is detected.
+    let status_out = git_command()
+        .args(["status", "--porcelain"])
+        .current_dir(repo)
+        .stderr(std::process::Stdio::null())
+        .output();
+    let porcelain = match status_out {
+        Ok(out) if out.status.success() => out.stdout,
+        // Treat any error reading status as "potentially dirty" and fall
+        // through to the per-kind classifiers — they're already defensive
+        // about transient git failures.
+        _ => {
+            return (
+                classify_index_drift(repo),
+                classify_working_tree_drift(repo),
+            )
+        }
+    };
+    if porcelain.is_empty() {
+        return (None, None);
+    }
+    (
+        classify_index_drift(repo),
+        classify_working_tree_drift(repo),
+    )
+}
+
 /// Classify the index-drift state of a git repo at `repo`.
 ///
 /// Returns `None` when the index matches HEAD (no drift).  Otherwise returns
 /// `Some(IndexDriftKind)` — either `SafeToFix` (index tree is an ancestor
 /// commit's tree, safely replaceable) or `LiveStaged` (user has staged content
 /// that is not a committed tree; must not be auto-fixed).
+///
+/// For workspace-scale scans (where most worktrees are clean), prefer
+/// [`classify_drift`] — it short-circuits both this check and
+/// [`classify_working_tree_drift`] with a single `git status` invocation.
 pub fn classify_index_drift(repo: &Path) -> Option<IndexDriftKind> {
     // Exit-0 means index matches HEAD tree — no drift.
     let clean = git_command()
@@ -901,6 +958,10 @@ pub fn reset_index_to_head(repo: &Path) -> anyhow::Result<()> {
 ///
 /// Uses `git diff-index HEAD` (without `--cached`) so detection works
 /// regardless of whether index drift has already been resolved.
+///
+/// For workspace-scale scans, prefer [`classify_drift`] — it short-circuits
+/// the clean-worktree case with a single `git status` invocation that
+/// covers both this check and [`classify_index_drift`].
 pub fn classify_working_tree_drift(repo: &Path) -> Option<WorkingTreeDriftKind> {
     // Exit-0 means working tree matches HEAD — no drift.
     let clean = git_command()
@@ -1486,16 +1547,24 @@ pub fn run_check(
         all_issues.extend(integration_issues);
     }
 
-    // Index-drift detection: check repos in the current workspace and, when
-    // running from the primary weave, all workweave repos too.
+    // Index-drift + working-tree-drift detection.
     //
-    // Collects (workweave_label, repo_abs, repo_path_display) triples.
+    // Scan list: every materialized worktree referenced by a manifest. From
+    // the primary weave we additionally enumerate each workweave's repos.
+    // The build loop dedupes by absolute path so multiple projects that share
+    // a repo only pay one round of git subprocess cost per physical worktree
+    // (bead fo-v8hq4.4). The two drift kinds are then classified in a single
+    // pass using [`classify_drift`], which collapses the common
+    // "worktree is clean" case to one `git status` invocation instead of two
+    // back-to-back `git diff-index` invocations.
     let mut index_scan: Vec<(Option<String>, std::path::PathBuf, String)> = Vec::new();
+    let mut scan_seen: std::collections::HashSet<(Option<String>, std::path::PathBuf)> =
+        std::collections::HashSet::new();
 
     for project in &input.projects {
         for repo_path in project.manifest.iter_repo_paths() {
             let abs = workspace_dir.join(repo_path.as_path());
-            if abs.exists() {
+            if abs.exists() && scan_seen.insert((None, abs.clone())) {
                 index_scan.push((None, abs, repo_path.to_string()));
             }
         }
@@ -1507,21 +1576,39 @@ pub fn run_check(
             for project in &input.projects {
                 for repo_path in project.manifest.iter_repo_paths() {
                     let abs = ww_dir.join(repo_path.as_path());
-                    if abs.exists() {
+                    if abs.exists() && scan_seen.insert((Some(ww_name.clone()), abs.clone())) {
                         index_scan.push((Some(ww_name.clone()), abs, repo_path.to_string()));
                     }
                 }
             }
         }
     }
+    drop(scan_seen);
 
-    for (ww_label, repo_abs, repo_display) in &index_scan {
+    // Progress output: workspace-scale doctor runs (80+ workweaves × ~13
+    // repos) were previously silent for many seconds. Emit a heartbeat
+    // to stderr so the operator can tell "in progress" from "hung". The
+    // line goes to stderr to keep stdout free of noise for the human-
+    // facing report below. JSON callers go through `run_check_json` and
+    // don't see this.
+    let total_scans = index_scan.len();
+    let progress_every = total_scans.div_ceil(20).max(1);
+    if total_scans > 0 {
+        eprintln!("doctor: scanning {total_scans} worktree(s) for drift...");
+    }
+
+    for (i, (ww_label, repo_abs, repo_display)) in index_scan.iter().enumerate() {
+        if total_scans >= 50 && (i + 1) % progress_every == 0 {
+            eprintln!("doctor: scanned {}/{total_scans}", i + 1);
+        }
         let location = match ww_label {
             Some(ww) => format!("{ww}/{repo_display}"),
             None => repo_display.clone(),
         };
 
-        if let Some(drift_kind) = classify_index_drift(repo_abs) {
+        let (idx_drift, wt_drift) = classify_drift(repo_abs);
+
+        if let Some(drift_kind) = idx_drift {
             match drift_kind {
                 IndexDriftKind::SafeToFix => {
                     if fix {
@@ -1552,18 +1639,8 @@ pub fn run_check(
                 }
             }
         }
-    }
 
-    // Working-tree drift detection: same scan list, same workweave scope.
-    // Uses `git diff-index HEAD` (without --cached) so it works whether or not
-    // index drift has just been fixed above.
-    for (ww_label, repo_abs, repo_display) in &index_scan {
-        let location = match ww_label {
-            Some(ww) => format!("{ww}/{repo_display}"),
-            None => repo_display.clone(),
-        };
-
-        if let Some(drift_kind) = classify_working_tree_drift(repo_abs) {
+        if let Some(drift_kind) = wt_drift {
             match drift_kind {
                 WorkingTreeDriftKind::SafeToFix => {
                     if fix {
@@ -1845,16 +1922,22 @@ fn collect_doctor_violations(
         });
     }
 
-    // Index-drift + working-tree-drift detection. Same scan list as `run_check`:
-    // CWD workspace repos plus, from the primary weave, every known workweave.
+    // Index-drift + working-tree-drift detection. Same scan list as
+    // `run_check`: CWD workspace repos plus, from the primary weave, every
+    // known workweave. Dedupe by `(workweave, abs)` so multiple projects
+    // referencing the same physical worktree don't multiply git subprocess
+    // cost. Drift is classified via [`classify_drift`] (single `git status`
+    // fast-path for clean worktrees — see bead fo-v8hq4.4).
     let mut workweave_dirs: std::collections::HashMap<WorkweaveName, std::path::PathBuf> =
         std::collections::HashMap::new();
     let mut index_scan: Vec<(Option<WorkweaveName>, std::path::PathBuf, RepoPath)> = Vec::new();
+    let mut scan_seen: std::collections::HashSet<(Option<WorkweaveName>, std::path::PathBuf)> =
+        std::collections::HashSet::new();
 
     for project in &input.projects {
         for repo_path in project.manifest.iter_repo_paths() {
             let abs = workspace_dir.join(repo_path.as_path());
-            if abs.exists() {
+            if abs.exists() && scan_seen.insert((None, abs.clone())) {
                 index_scan.push((None, abs, repo_path.clone()));
             }
         }
@@ -1867,23 +1950,25 @@ fn collect_doctor_violations(
             for project in &input.projects {
                 for repo_path in project.manifest.iter_repo_paths() {
                     let abs = ww_dir.join(repo_path.as_path());
-                    if abs.exists() {
+                    if abs.exists() && scan_seen.insert((Some(ww_name.clone()), abs.clone())) {
                         index_scan.push((Some(ww_name.clone()), abs, repo_path.clone()));
                     }
                 }
             }
         }
     }
+    drop(scan_seen);
 
     for (ww_label, repo_abs, repo_path) in &index_scan {
-        if let Some(drift_kind) = classify_index_drift(repo_abs) {
+        let (idx_drift, wt_drift) = classify_drift(repo_abs);
+        if let Some(drift_kind) = idx_drift {
             violations.push(CheckViolation::IndexDrift {
                 workweave: ww_label.clone(),
                 repo: repo_path.clone(),
                 kind: drift_kind,
             });
         }
-        if let Some(drift_kind) = classify_working_tree_drift(repo_abs) {
+        if let Some(drift_kind) = wt_drift {
             violations.push(CheckViolation::WorkingTreeDrift {
                 workweave: ww_label.clone(),
                 repo: repo_path.clone(),
