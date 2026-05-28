@@ -119,7 +119,15 @@ pub fn run_status(
         let project_dir = workspace_dir.join("projects").join(&pname);
         let project = match Project::from_dir(&project_dir) {
             Ok(p) => p,
-            Err(_) => continue,
+            Err(e) => {
+                // Warn and skip; run `rwv doctor` to get the canonical
+                // `unparseable-project` violation with full detail.
+                eprintln!(
+                    "warning: skipping project {pname}: manifest unreadable ({e}); \
+                     run `rwv doctor` for details"
+                );
+                continue;
+            }
         };
         // Resolve lock entries against their on-disk repos so equality with
         // a tip ResolvedRevisionId (which always carries the canonical SHA) works

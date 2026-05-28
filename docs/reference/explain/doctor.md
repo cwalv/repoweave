@@ -364,6 +364,32 @@ Schema:
               "type": "string"
             }
           }
+        },
+        {
+          "type": "object",
+          "required": [
+            "error",
+            "kind",
+            "manifest_path",
+            "project"
+          ],
+          "properties": {
+            "error": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "enum": [
+                "unparseable-project"
+              ]
+            },
+            "manifest_path": {
+              "type": "string"
+            },
+            "project": {
+              "type": "string"
+            }
+          }
         }
       ]
     },
