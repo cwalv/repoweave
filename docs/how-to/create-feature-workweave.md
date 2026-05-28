@@ -49,15 +49,15 @@ git -C projects/web-app commit -am "lock: payments feature"
 
 `rwv lock` is per-workspace — it updates the workweave's `rwv.lock`, not primary's. Each workspace owns its own lock (see [lock-as-derived](../explanation/joints/lock-as-derived.md)).
 
-## Sync back to the parent
+## Land back to the parent
 
 Bring the work home with one verb:
 
 ```bash
-rwv sync --retire
+rwv sync-to --retire
 ```
 
-Bare `rwv sync` follows the parent edge recorded in `.rwv-workweave`. `--retire` adds a post-sync cleanup step: if the workweave converges with its parent and no worktree is dirty, the workweave is deleted. See [bring workweave work home](./bring-workweave-work-home.md) for the manual ceremony and conflict recovery.
+Bare `rwv sync-to` auto-targets the parent edge recorded in `.rwv-workweave`. `--retire` adds a post-landing cleanup step: if the workweave converges with its parent and no worktree is dirty, the workweave is deleted. See [bring workweave work home](./bring-workweave-work-home.md) for the manual ceremony and conflict recovery.
 
 ## Related
 

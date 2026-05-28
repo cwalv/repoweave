@@ -6,23 +6,24 @@ Land work from a workweave into its parent (typically primary). The one-liner ha
 
 ```bash
 cd .workweaves/web-app--payments
-rwv sync --retire
+rwv sync-to --retire
 ```
 
-`--retire` adds a post-sync cleanup to a normal sync:
+`rwv sync-to` is the landing verb: CWD's committed state lands in the target workspace. Bare `rwv sync-to` auto-targets the recorded parent from `.rwv-workweave` (one hop toward primary). `--retire` adds a post-landing cleanup step so the workweave is deleted on success.
 
-1. Run a normal sync to the recorded parent (one hop). Bare `rwv sync` follows `.rwv-workweave`'s `parent` field.
-2. Verify the workweave's manifest tips equal the parent's after sync. (The project repo will typically have an auto-relock commit on top of the parent's tip — that's expected, not a divergence.)
-3. Verify no worktree is dirty.
-4. If both invariants hold, delete the workweave (worktrees + ephemeral branches + directory).
+The full orchestration is three steps, not one:
 
-If sync hits a conflict, the workweave is preserved; resolve and re-run `rwv sync --retire` (or fix manually and `rwv workweave delete`).
+1. **Replay CWD's commits onto the parent's tip.** CWD's unique project commits are replayed onto the parent's project tip, with `rwv.lock` excluded from each commit's diff. Manifest repos in CWD are aligned to the parent's lock targets. CWD advances to the new tip, sitting linearly on top of the parent's prior state.
+2. **Auto-relock CWD if manifest tips moved.** If step 1's manifest-repo advances changed any lock targets, `rwv.lock` is regenerated and committed into CWD automatically.
+3. **Parent fast-forwards to CWD's new tip.** The parent's project repo fast-forwards to CWD's tip. The parent now has CWD's commits linearly above its prior state.
+
+Then, if all three steps succeed and `--retire` was given: verify no worktree is dirty, then delete the workweave (worktrees + ephemeral branches + directory).
 
 See [sync-semantics](../explanation/joints/sync-semantics.md) for the full phase model and the auto-relock detail.
 
 ## Preconditions
 
-Before `rwv sync` (or `--retire`) will run, both workspaces must satisfy `rwv doctor --locked`: each repo's tip must match its `rwv.lock`. Concretely:
+Before `rwv sync-to` (or `--retire`) will run, both workspaces must satisfy `rwv doctor --locked`: each repo's tip must match its `rwv.lock`. Concretely:
 
 ```bash
 # in the workweave
@@ -34,71 +35,111 @@ git -C projects/web-app commit -am "lock: payments feature"
 
 The lock-precondition check is what makes sync deterministic — the lock is the target, not the working tree.
 
-## Manual ceremony
+## Explicit target
 
-When `--retire` doesn't fit (you want to keep the workweave for follow-up work, the parent isn't primary, you want different strategies for different repos), do it by hand:
+To land into a workspace other than the recorded parent, name it explicitly:
 
 ```bash
-# from the workweave: commit and lock
-cd .workweaves/web-app--payments
-rwv lock
-git -C projects/web-app commit -am "lock: payments feature"
-
-# from the parent (primary): bring the work in
-cd ~/work
-rwv sync payments
+rwv sync-to primary
+rwv sync-to /path/to/other-weave
+rwv sync-to other-workweave-name
 ```
 
-`rwv sync payments` aligns CWD (primary) with the workweave's committed `rwv.lock`. The phases are:
+With an explicit target, `--retire` still applies: the workweave is deleted on success if the flag is given.
 
-1. **Phase 2** — manifest repos advance to the workweave's lock targets.
-2. **Phase 1'** — the workweave's unique project commits replay onto primary's project tip, with `rwv.lock` excluded.
-3. **Phase 3** — `rwv.lock` regenerated from the post-Phase-2 manifest tips.
+## What `--retire` actually does
 
-Then optionally clean up:
+`--retire` does not skip or alter any of the three sync steps. It runs after a successful step 3:
+
+1. Verify every worktree in the workweave is clean (no uncommitted edits).
+2. Verify the workweave's manifest tips equal the parent's (confirming convergence).
+3. Delete the workweave: worktrees, ephemeral branches, and the directory.
+
+If any step 1–3 of the sync itself hits a conflict, the workweave is preserved and the `--retire` cleanup is not reached. Resolve the conflict and re-run; see [If sync-to hits a conflict](#if-sync-to-hits-a-conflict) below.
+
+## If sync-to hits a conflict
+
+When step 1 hits a real conflict (a manifest-repo rebase or the project-repo replay encounters a textual conflict), `rwv sync-to` bails with a message naming the affected repo and the concrete resolution steps. Op-state is written so the operation can be resumed.
+
+After resolving conflicts in the indicated repo:
 
 ```bash
+# resolve conflicts in the repo named in the error message
+cd github/chatly/server
+# edit conflicted files
+git add <files>
+git rebase --continue
+
+# then resume from the workweave root
+cd <workweave-root>
+rwv sync-to --continue          # or: rwv sync-to primary --continue
+```
+
+`--continue` resumes from where the operation paused; it reads the recorded parameters from op-state, so the target and strategy are preserved. Pass `--retire` with `--continue` if the original invocation had it.
+
+If step 3 (the parent's FF-advance) fails — rare; requires a concurrent op on the parent between steps 2 and 3 — op-state is similarly preserved. `rwv sync-to --continue` retries step 3.
+
+To give up entirely:
+
+```bash
+rwv abort
+```
+
+`rwv abort` reads the in-progress op-state, restores every repo in both CWD and the target to its savepoint ref, runs any VCS-native abort (`git rebase --abort`, etc.) for in-progress operations, then removes the marker and savepoint refs. After abort, both workspaces are in their exact pre-op state.
+
+## Manual ceremony
+
+When `--retire` doesn't fit (you want to keep the workweave for follow-up work, the parent isn't primary, you want to inspect the result before deleting), do it in two steps:
+
+```bash
+# step 1 — land the work (without retire)
+cd .workweaves/web-app--payments
+rwv sync-to
+
+# step 2 — delete manually when satisfied
 rwv workweave web-app delete payments
 ```
 
-## Choosing a strategy
-
-`rwv sync` defaults to `--strategy ff` (fast-forward only). When CWD has commits not reachable from `<source>`, `ff` refuses and the error names the alternatives:
-
-| Strategy | When to use |
-|---|---|
-| `ff` (default) | One-way alignment; no commits to land from CWD |
-| `rebase` | CWD has commits to land; you want linear history |
-| `merge` | CWD has commits to land; you want explicit join commits |
-
-Example — bringing primary into a feature workweave that has its own commits:
+Or, if you want to absorb new work from primary into the workweave before landing (e.g., a sibling workweave already landed):
 
 ```bash
-cd .workweaves/web-app--payments
+# absorb primary's new commits into the workweave first
 rwv sync primary --strategy rebase
-```
 
-For the project repo, `rebase` and `merge` both honor the lock-as-derived contract: `rwv.lock` is excluded from the replayed/merged commits and regenerated in Phase 3, so lock-only commits become empty patches and are skipped automatically.
+# then land
+rwv sync-to --retire
+```
 
 ## n-way landing (two workweaves)
 
-When two workweaves both have project commits, land them serially. The first lands clean; the second rebases through primary first:
+When two workweaves both have project commits, land them serially. The first lands with a clean fast-forward (the default `rebase` strategy in `sync-to` step 1 becomes a no-op when CWD is already strictly ahead). The second must first absorb the primary's new state:
 
 ```bash
-# ww1 lands first (clean ff)
-cd ~/work
-rwv sync ww1
+# ww1 lands first (clean)
+cd .workweaves/web-app--ww1
+rwv sync-to --retire
 
-# ww2 is now diverged from primary; rebase ww2 over primary
+# ww2 is now diverged from primary; absorb primary into ww2 first
 cd .workweaves/web-app--ww2
 rwv sync primary --strategy rebase
 
-# now land ww2 (clean ff again)
-cd ~/work
-rwv sync ww2
+# then land ww2
+rwv sync-to --retire
 ```
 
 `rwv.lock` is never merged — it is recomputed in Phase 3 each time, so lock-file conflicts never arise regardless of how many workweaves are in flight. See [sync-semantics — N-way merge](../explanation/joints/sync-semantics.md#n-way-merge-two-workweaves-serial-landing) for the worked example.
+
+## Choosing a strategy
+
+`rwv sync-to` defaults to `--strategy rebase` for step 1 (aligning CWD against the target before the FF-advance). When the workweave is strictly ahead of the target (clean landing path, no divergence), step 1 is a fast-forward no-op. The strategy only matters when the target has advanced since the workweave was created:
+
+| Strategy | Step 1 behavior |
+|---|---|
+| `rebase` (default) | Replay CWD's unique commits onto target's tip; produces linear history |
+| `ff` | Refuse if CWD and target have diverged; only works if CWD is strictly ahead |
+| `merge` | Merge target into CWD with an explicit join commit |
+
+Step 3 (FF-advance the target) is always fast-forward regardless of this flag.
 
 ## Related
 

@@ -52,12 +52,13 @@ The key is verb-specific:
 | `rwv status --json` | `repos` |
 | `rwv doctor --json` | `violations` |
 | `rwv sync --json` | `outcomes` |
+| `rwv sync-to --json` | `outcomes` |
 
 Schemas live at `docs/reference/schemas/<verb>.json` and are also embedded inside the corresponding `rwv explain <verb>` bundle. Agents should resolve `$schema` once and cache, not assume any shape.
 
 ### NDJSON under `-j N > 1`
 
-`rwv sync` switches to NDJSON when run with `-j N > 1` and `--json`:
+`rwv sync` and `rwv sync-to` both switch to NDJSON when run with `-j N > 1` and `--json`:
 
 - **Serial / envelope mode** (`-j 1`, the default): one envelope document on stdout at the end of the run.
 - **Parallel / NDJSON mode** (`-j N > 1`): each per-repo outcome streamed as one JSON line as its worker finishes. The envelope wrapper is dropped; every line carries its own `$schema` field so a consumer can identify it without context.
@@ -84,10 +85,10 @@ The agent runs in this directory:
 When the agent is done, bring the work home with one verb:
 
 ```bash
-rwv sync --retire
+rwv sync-to --retire
 ```
 
-This syncs the workweave to its recorded parent (primary in this case) and deletes the workweave on success. If sync hits a conflict, the workweave is preserved for the operator to fix and re-run; see [recover from sync conflict](./recover-from-sync-conflict.md).
+This lands the workweave's commits into its recorded parent (primary in this case) and deletes the workweave on success. Bare `rwv sync-to` auto-targets the parent recorded in `.rwv-workweave`; `--retire` deletes the workweave after the landing succeeds. If step 1 hits a conflict, the workweave is preserved for the operator to fix and re-run with `rwv sync-to --continue`; see [recover from sync conflict](./recover-from-sync-conflict.md).
 
 ## Selector grammar (filtering for agent tasks)
 
