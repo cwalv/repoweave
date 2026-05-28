@@ -58,5 +58,6 @@
 # Contributing
 
 - [Developing](./contributing/developing.md)
+- [Code style](./contributing/code-style.md)
 - [Releasing rwv](./contributing/releasing-rwv.md)
 - [Writing integrations](./contributing/writing-integrations.md)
