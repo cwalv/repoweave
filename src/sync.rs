@@ -2809,9 +2809,8 @@ fn run_sync_to_impl(
         }
     } else {
         // Fresh start: target_source is Some (the caller resolved it).
-        let ts = target_source.expect(
-            "target_source must be Some for non-continue sync-to invocations",
-        );
+        let ts =
+            target_source.expect("target_source must be Some for non-continue sync-to invocations");
         let tgt_path = ts.resolve(&cwd_ctx)?;
         let tgt_ctx = WorkspaceContext::resolve(&tgt_path, project_override.clone())?;
         let tgt_workspace_dir = tgt_ctx.active_path().to_path_buf();

@@ -579,7 +579,8 @@ fn continue_with_no_op_in_progress_errors_clearly() {
     let stderr = String::from_utf8_lossy(&assertion.get_output().stderr).to_string();
 
     assert!(
-        stderr.contains("no sync") || stderr.contains("nothing to continue")
+        stderr.contains("no sync")
+            || stderr.contains("nothing to continue")
             || stderr.contains("in progress"),
         "expected 'no sync/sync-to op in progress' error when --continue has no op; got: {stderr}"
     );

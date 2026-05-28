@@ -180,8 +180,7 @@ enum Commands {
         #[arg(required_unless_present = "do_continue")]
         source: Option<SyncSource>,
         /// Sync strategy: ff (default), rebase, or merge
-        #[arg(long, default_value = "ff", value_enum,
-              conflicts_with = "do_continue")]
+        #[arg(long, default_value = "ff", value_enum, conflicts_with = "do_continue")]
         strategy: SyncStrategy,
         /// Bypass the lock-freshness precondition
         #[arg(long, conflicts_with = "do_continue")]
@@ -219,8 +218,12 @@ enum Commands {
         /// rebase replays CWD's unique commits onto target's tip.
         /// merge merges target into CWD with an auto-generated commit.
         /// Step 3 (FF-advance target) is always ff regardless of this flag.
-        #[arg(long, default_value = "rebase", value_enum,
-              conflicts_with = "do_continue")]
+        #[arg(
+            long,
+            default_value = "rebase",
+            value_enum,
+            conflicts_with = "do_continue"
+        )]
         strategy: SyncStrategy,
         /// Bypass the lock-freshness precondition
         #[arg(long, conflicts_with = "do_continue")]
@@ -624,22 +627,18 @@ fn main() -> anyhow::Result<()> {
                     Some(t) => t,
                     None => {
                         // Bare `rwv sync-to` — must be inside a workweave.
-                        let ctx =
-                            repoweave::workspace::WorkspaceContext::resolve(&cwd, None)?;
+                        let ctx = repoweave::workspace::WorkspaceContext::resolve(&cwd, None)?;
                         match &ctx.location {
-                            repoweave::workspace::WorkspaceLocation::Workweave {
-                                dir, ..
-                            } => {
-                                let marker =
-                                    repoweave::workspace::WorkweaveMarker::read(dir)?
-                                        .ok_or_else(|| {
-                                            anyhow::anyhow!(
-                                                "bare `rwv sync-to` requires a \
+                            repoweave::workspace::WorkspaceLocation::Workweave { dir, .. } => {
+                                let marker = repoweave::workspace::WorkweaveMarker::read(dir)?
+                                    .ok_or_else(|| {
+                                        anyhow::anyhow!(
+                                            "bare `rwv sync-to` requires a \
                                                  `.rwv-workweave` marker in the workweave; \
                                                  found none at {}",
-                                                dir.display()
-                                            )
-                                        })?;
+                                            dir.display()
+                                        )
+                                    })?;
                                 sync::SyncSource::Path(marker.parent)
                             }
                             repoweave::workspace::WorkspaceLocation::Weave { .. } => {
