@@ -131,8 +131,14 @@ fn is_enabled_default_disabled_no_override() {
 #[test]
 fn active_repos_excludes_reference() {
     let mut repos = BTreeMap::new();
-    repos.insert(RepoPath::new("ref-repo").expect("known-safe literal"), make_repo_entry(Role::Reference));
-    repos.insert(RepoPath::new("primary-repo").expect("known-safe literal"), make_repo_entry(Role::Owned));
+    repos.insert(
+        RepoPath::new("ref-repo").expect("known-safe literal"),
+        make_repo_entry(Role::Reference),
+    );
+    repos.insert(
+        RepoPath::new("primary-repo").expect("known-safe literal"),
+        make_repo_entry(Role::Owned),
+    );
 
     let project = ProjectName::new("test-project");
     let config = IntegrationConfig::default();
@@ -157,10 +163,22 @@ fn active_repos_excludes_reference() {
 #[test]
 fn active_repos_includes_primary_fork_dependency() {
     let mut repos = BTreeMap::new();
-    repos.insert(RepoPath::new("a-primary").expect("known-safe literal"), make_repo_entry(Role::Owned));
-    repos.insert(RepoPath::new("b-fork").expect("known-safe literal"), make_repo_entry(Role::Fork));
-    repos.insert(RepoPath::new("c-dep").expect("known-safe literal"), make_repo_entry(Role::Dependency));
-    repos.insert(RepoPath::new("d-ref").expect("known-safe literal"), make_repo_entry(Role::Reference));
+    repos.insert(
+        RepoPath::new("a-primary").expect("known-safe literal"),
+        make_repo_entry(Role::Owned),
+    );
+    repos.insert(
+        RepoPath::new("b-fork").expect("known-safe literal"),
+        make_repo_entry(Role::Fork),
+    );
+    repos.insert(
+        RepoPath::new("c-dep").expect("known-safe literal"),
+        make_repo_entry(Role::Dependency),
+    );
+    repos.insert(
+        RepoPath::new("d-ref").expect("known-safe literal"),
+        make_repo_entry(Role::Reference),
+    );
 
     let project = ProjectName::new("test-project");
     let config = IntegrationConfig::default();
@@ -194,7 +212,10 @@ fn active_repos_includes_primary_fork_dependency() {
 #[test]
 fn mock_activate_receives_correct_context() {
     let mut repos = BTreeMap::new();
-    repos.insert(RepoPath::new("repo-a").expect("known-safe literal"), make_repo_entry(Role::Owned));
+    repos.insert(
+        RepoPath::new("repo-a").expect("known-safe literal"),
+        make_repo_entry(Role::Owned),
+    );
 
     let project = ProjectName::new("my-project");
     let config = IntegrationConfig::default();
@@ -247,7 +268,10 @@ fn mock_check_returns_issues() {
     ];
 
     let mut repos = BTreeMap::new();
-    repos.insert(RepoPath::new("repo-a").expect("known-safe literal"), make_repo_entry(Role::Owned));
+    repos.insert(
+        RepoPath::new("repo-a").expect("known-safe literal"),
+        make_repo_entry(Role::Owned),
+    );
 
     let project = ProjectName::new("check-project");
     let config = IntegrationConfig::default();

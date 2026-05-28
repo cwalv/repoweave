@@ -521,10 +521,7 @@ impl WorkspaceContext {
         let hint = if existing.is_empty() {
             String::new()
         } else {
-            format!(
-                " Existing projects: {}.",
-                existing.join(", ")
-            )
+            format!(" Existing projects: {}.", existing.join(", "))
         };
         anyhow::bail!(
             "active project `{}` is set in `.rwv-active` but `projects/{}/` does not exist; \
@@ -709,11 +706,7 @@ impl WorkweaveMarker {
         let raw: serde_yaml::Value = serde_yaml::from_str(&content).map_err(|e| {
             anyhow::anyhow!("failed to parse .rwv-workweave at {}: {e}", path.display())
         })?;
-        if raw
-            .get("parent")
-            .map(|v| v.is_null())
-            .unwrap_or(true)
-        {
+        if raw.get("parent").map(|v| v.is_null()).unwrap_or(true) {
             anyhow::bail!(
                 "{} is a legacy workweave marker missing the required `parent:` field. \
                  Run `rwv doctor --fix` to migrate it before using this workweave.",
@@ -1178,7 +1171,10 @@ mod tests {
         std::fs::write(dir.join(".rwv-workweave"), legacy).unwrap();
 
         let result = WorkweaveMarker::read(dir);
-        assert!(result.is_err(), "read() should fail for a legacy marker missing parent:");
+        assert!(
+            result.is_err(),
+            "read() should fail for a legacy marker missing parent:"
+        );
         let msg = result.unwrap_err().to_string();
         assert!(
             msg.contains("legacy workweave marker") || msg.contains("parent"),

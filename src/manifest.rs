@@ -1463,7 +1463,10 @@ repositories:
     role: owned
 "#;
         let result = Manifest::from_yaml_str(yaml);
-        assert!(result.is_err(), "manifest with backslash key must be rejected");
+        assert!(
+            result.is_err(),
+            "manifest with backslash key must be rejected"
+        );
         let msg = format!("{}", result.unwrap_err());
         assert!(
             msg.contains("backslash not allowed"),
@@ -1521,7 +1524,10 @@ repositories:
     #[test]
     fn repo_path_new_mixed_slash_rejected() {
         let result = RepoPath::new("github/acme\\server");
-        assert!(result.is_err(), "mixed-slash path must be rejected by new()");
+        assert!(
+            result.is_err(),
+            "mixed-slash path must be rejected by new()"
+        );
         let msg = format!("{}", result.unwrap_err());
         assert!(
             msg.contains("backslash not allowed"),
@@ -1837,7 +1843,10 @@ repositories:
         let m: Manifest = serde_yaml::from_str(MINIMAL_MANIFEST).unwrap();
         let paths: Vec<_> = m.iter_repo_paths().collect();
         assert_eq!(paths.len(), 1);
-        assert_eq!(paths[0], &RepoPath::new("github/acme/server").expect("known-safe literal"));
+        assert_eq!(
+            paths[0],
+            &RepoPath::new("github/acme/server").expect("known-safe literal")
+        );
     }
 
     #[test]
@@ -1876,7 +1885,8 @@ repositories:
     #[test]
     fn get_entry_absent_path_returns_none() {
         let m: Manifest = serde_yaml::from_str(MINIMAL_MANIFEST).unwrap();
-        let result = m.get_entry(&RepoPath::new("github/acme/nonexistent").expect("known-safe literal"));
+        let result =
+            m.get_entry(&RepoPath::new("github/acme/nonexistent").expect("known-safe literal"));
         assert!(result.is_none());
     }
 
@@ -1906,7 +1916,10 @@ repositories:
         let entries: Vec<_> = m.iter_entries().collect();
         assert_eq!(entries.len(), 1);
         let (path, entry) = entries[0];
-        assert_eq!(path, &RepoPath::new("github/acme/server").expect("known-safe literal"));
+        assert_eq!(
+            path,
+            &RepoPath::new("github/acme/server").expect("known-safe literal")
+        );
         assert_eq!(entry.role, Role::Owned);
     }
 

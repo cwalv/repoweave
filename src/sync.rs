@@ -2309,25 +2309,25 @@ pub fn run_abort(cwd: &Path) -> anyhow::Result<()> {
     let workspace_dir = ctx.active_path().to_path_buf();
 
     // Try to read the new op-state file first.
-    let (op_id, extra_workspace_dirs): (OpId, Vec<PathBuf>) =
-        match op_state::read(&workspace_dir)? {
-            Some(state) => {
-                // For sync-to: we also need to roll back the target workspace.
-                let extras = if state.verb == crate::op_state::OpVerb::SyncTo {
-                    vec![state.target.clone()]
-                } else {
-                    vec![]
-                };
-                (OpId::from_string(state.id), extras)
+    let (op_id, extra_workspace_dirs): (OpId, Vec<PathBuf>) = match op_state::read(&workspace_dir)?
+    {
+        Some(state) => {
+            // For sync-to: we also need to roll back the target workspace.
+            let extras = if state.verb == crate::op_state::OpVerb::SyncTo {
+                vec![state.target.clone()]
+            } else {
+                vec![]
+            };
+            (OpId::from_string(state.id), extras)
+        }
+        None => {
+            // Fall back to the legacy `.rwv-sync-op` marker.
+            match op_state::read_legacy(&workspace_dir) {
+                Some(id) => (OpId::from_string(id), vec![]),
+                None => anyhow::bail!("no operation in progress"),
             }
-            None => {
-                // Fall back to the legacy `.rwv-sync-op` marker.
-                match op_state::read_legacy(&workspace_dir) {
-                    Some(id) => (OpId::from_string(id), vec![]),
-                    None => anyhow::bail!("no operation in progress"),
-                }
-            }
-        };
+        }
+    };
 
     let cwd_project_name = find_project_name(&ctx)?;
     let cwd_project_dir = workspace_dir.join("projects").join(&cwd_project_name);
@@ -2376,8 +2376,10 @@ pub fn run_abort(cwd: &Path) -> anyhow::Result<()> {
                         continue;
                     }
                 };
-                let extra_project_dir =
-                    extra_ctx.active_path().join("projects").join(&extra_project_name);
+                let extra_project_dir = extra_ctx
+                    .active_path()
+                    .join("projects")
+                    .join(&extra_project_name);
                 let extra_project = match Project::from_dir_skip_lock(&extra_project_dir) {
                     Ok(p) => p,
                     Err(e) => {
@@ -2528,7 +2530,13 @@ pub fn run_sync_json(
 
     let records = records.into_inner().unwrap_or_else(|e| e.into_inner());
 
-    run_sync_json_impl(mode, records, SYNC_JSON_SCHEMA_URL, project_level_result, false)
+    run_sync_json_impl(
+        mode,
+        records,
+        SYNC_JSON_SCHEMA_URL,
+        project_level_result,
+        false,
+    )
 }
 
 /// Shared post-impl JSON emitter: emits the envelope (serial) or a no-op
@@ -2693,7 +2701,13 @@ pub fn run_sync_to_json(
 
     let records = records.into_inner().unwrap_or_else(|e| e.into_inner());
 
-    run_sync_json_impl(mode, records, SYNC_TO_JSON_SCHEMA_URL, project_level_result, true)
+    run_sync_json_impl(
+        mode,
+        records,
+        SYNC_TO_JSON_SCHEMA_URL,
+        project_level_result,
+        true,
+    )
 }
 
 /// Shared sync-to orchestration body.
@@ -2732,9 +2746,7 @@ fn run_sync_to_impl(
         &target_workspace_dir,
     )?;
 
-    let cwd_project_dir = cwd_workspace_dir
-        .join("projects")
-        .join(&cwd_project_name);
+    let cwd_project_dir = cwd_workspace_dir.join("projects").join(&cwd_project_name);
     let target_project_dir = target_workspace_dir
         .join("projects")
         .join(&target_project_name);
@@ -2756,9 +2768,7 @@ fn run_sync_to_impl(
         let phase_display = recorded.phase.to_string();
         resume_phase = Some(recorded.phase);
         if emit_text {
-            eprintln!(
-                "continuing sync-to (op {op_id}, mid `{phase_display}`)",
-            );
+            eprintln!("continuing sync-to (op {op_id}, mid `{phase_display}`)",);
         }
     } else {
         // Concurrency guard: check both CWD and target.
@@ -2822,7 +2832,8 @@ fn run_sync_to_impl(
                 "sync-to --strategy=ff requires CWD to be strictly ahead of target, \
                  but CWD's project tip ({}) is not an ancestor-or-equal of target's tip ({}).\n\
                  Rerun with `--strategy=rebase` to rebase CWD's commits onto target's tip first.",
-                cwd_tip, target_tip
+                cwd_tip,
+                target_tip
             );
         }
         // CWD is strictly ahead: skip step 1 (no-op), go directly to step 3.
@@ -2832,8 +2843,7 @@ fn run_sync_to_impl(
     let skip_step1 = strategy == SyncStrategy::Ff
         || matches!(
             resume_phase,
-            Some(crate::op_state::OpPhase::Step1Complete)
-                | Some(crate::op_state::OpPhase::Step3Ff)
+            Some(crate::op_state::OpPhase::Step1Complete) | Some(crate::op_state::OpPhase::Step3Ff)
         );
 
     let skip_step3 = false; // step 3 is always needed unless already done (not tracked as a skippable phase here)
@@ -2844,7 +2854,10 @@ fn run_sync_to_impl(
     // engine with CWD as destination and target as source.
     if !skip_step1 {
         if emit_text {
-            eprintln!("sync-to step 1: rebasing CWD against target ({})...", target_path.display());
+            eprintln!(
+                "sync-to step 1: rebasing CWD against target ({})...",
+                target_path.display()
+            );
         }
 
         // For --continue with resume_phase = Step1Rebase, pass do_continue=true
@@ -2888,8 +2901,11 @@ fn run_sync_to_impl(
         // Advance phase to Step1Complete in both workspaces.
         op_state::advance_phase(&cwd_workspace_dir, crate::op_state::OpPhase::Step1Complete)
             .map_err(|e| anyhow::anyhow!("failed to advance phase after step 1: {e}"))?;
-        op_state::advance_phase(&target_workspace_dir, crate::op_state::OpPhase::Step1Complete)
-            .map_err(|e| anyhow::anyhow!("failed to advance phase in target after step 1: {e}"))?;
+        op_state::advance_phase(
+            &target_workspace_dir,
+            crate::op_state::OpPhase::Step1Complete,
+        )
+        .map_err(|e| anyhow::anyhow!("failed to advance phase in target after step 1: {e}"))?;
     } else if !matches!(resume_phase, Some(crate::op_state::OpPhase::Step3Ff)) {
         // When resuming from step1-complete, advance phase to mark we're moving to step 3.
         // (Already at step1-complete; advancing to step3-ff happens below before step 3.)
@@ -2936,10 +2952,7 @@ fn run_sync_to_impl(
         if !target_repo.exists() {
             // Repo not materialized in target — skip with warning.
             if emit_text {
-                eprintln!(
-                    "  {}: skipped (not on disk in target)",
-                    repo_path
-                );
+                eprintln!("  {}: skipped (not on disk in target)", repo_path);
             }
             continue;
         }
@@ -2959,7 +2972,11 @@ fn run_sync_to_impl(
         match ff_advance_repo(&target_repo, &cwd_repo, &cwd_tip) {
             Ok(()) => {
                 if emit_text {
-                    println!("  {}: ff-advanced to {}", repo_path, &cwd_tip.as_str()[..8.min(cwd_tip.as_str().len())]);
+                    println!(
+                        "  {}: ff-advanced to {}",
+                        repo_path,
+                        &cwd_tip.as_str()[..8.min(cwd_tip.as_str().len())]
+                    );
                 }
             }
             Err(e) => {
@@ -3029,9 +3046,7 @@ fn run_sync_to_impl(
             }
             WorkspaceLocation::Weave { .. } => {
                 if emit_text {
-                    eprintln!(
-                        "warning: --retire is only meaningful inside a workweave; ignoring"
-                    );
+                    eprintln!("warning: --retire is only meaningful inside a workweave; ignoring");
                 }
             }
         }
@@ -3096,11 +3111,8 @@ fn ff_advance_repo(
 
     // Fast-forward: reset --hard to cwd_tip. For worktrees sharing an object
     // store this is safe; for independent clones we already fetched above.
-    git(
-        &["reset", "--hard", cwd_tip.as_str()],
-        target_repo,
-    )
-    .map_err(|e| anyhow::anyhow!("git reset --hard failed in target: {e}"))?;
+    git(&["reset", "--hard", cwd_tip.as_str()], target_repo)
+        .map_err(|e| anyhow::anyhow!("git reset --hard failed in target: {e}"))?;
 
     Ok(())
 }

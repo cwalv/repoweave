@@ -613,10 +613,7 @@ mod tests {
 
     #[test]
     fn resolve_source_passes_through_file_urls() {
-        let url = format!(
-            "file://{}",
-            std::env::temp_dir().join("repo.git").display()
-        );
+        let url = format!("file://{}", std::env::temp_dir().join("repo.git").display());
         let (resolved_url, owner) = resolve_source(&url).unwrap();
         assert_eq!(resolved_url.to_string(), url);
         // file:// URLs that don't match any registry have an empty owner

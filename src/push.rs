@@ -597,7 +597,10 @@ mod tests {
     #[test]
     fn lock_entries_btreemap_round_trip() {
         let mut entries: BTreeMap<RepoPath, RawRevisionId> = BTreeMap::new();
-        entries.insert(RepoPath::new("github/x/y").expect("known-safe literal"), RawRevisionId::new("v1.0.0"));
+        entries.insert(
+            RepoPath::new("github/x/y").expect("known-safe literal"),
+            RawRevisionId::new("v1.0.0"),
+        );
         entries.insert(
             RepoPath::new("github/a/b").expect("known-safe literal"),
             RawRevisionId::new("abcdef0123456789abcdef0123456789abcdef01"),
@@ -607,7 +610,10 @@ mod tests {
         assert_eq!(keys, vec!["github/a/b", "github/x/y"]);
         // Values stay intact through insertion.
         assert_eq!(
-            entries.get(&RepoPath::new("github/x/y").expect("known-safe literal")).unwrap().as_str(),
+            entries
+                .get(&RepoPath::new("github/x/y").expect("known-safe literal"))
+                .unwrap()
+                .as_str(),
             "v1.0.0"
         );
     }

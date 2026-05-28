@@ -1420,7 +1420,8 @@ mod vscode_workspace {
         let project = ProjectName::new("proj-a");
         let config = IntegrationConfig::default();
 
-        let all_repos_on_disk: Vec<RepoPath> = vec![RepoPath::new("github/acme/server").expect("known-safe literal")];
+        let all_repos_on_disk: Vec<RepoPath> =
+            vec![RepoPath::new("github/acme/server").expect("known-safe literal")];
         let all_project_paths = vec!["proj-a".to_string(), "proj-b".to_string()];
 
         let ctx = IntegrationContext {

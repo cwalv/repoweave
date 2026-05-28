@@ -666,11 +666,7 @@ fn abort_from_cwd_cleans_cross_workspace_op_state() {
     std::fs::write(primary.root.join(".rwv-op"), &primary_op_state_yaml).unwrap();
 
     // Run `rwv abort` from ww.
-    rwv()
-        .arg("abort")
-        .current_dir(&ww.root)
-        .assert()
-        .success();
+    rwv().arg("abort").current_dir(&ww.root).assert().success();
 
     // Both op-state files should be removed.
     assert!(
@@ -717,11 +713,7 @@ fn abort_restores_repos_and_removes_op_state() {
     std::fs::write(ww.root.join(".rwv-op"), &op_state_yaml).unwrap();
 
     // Run abort.
-    rwv()
-        .arg("abort")
-        .current_dir(&ww.root)
-        .assert()
-        .success();
+    rwv().arg("abort").current_dir(&ww.root).assert().success();
 
     // Op-state file should be removed.
     assert!(
@@ -774,11 +766,7 @@ fn abort_recognizes_legacy_rwv_sync_op_marker() {
     std::fs::write(ws.root.join(".rwv-sync-op"), op_id).unwrap();
 
     // `rwv abort` must recognise the legacy marker and not error with "no op in progress".
-    rwv()
-        .arg("abort")
-        .current_dir(&ws.root)
-        .assert()
-        .success();
+    rwv().arg("abort").current_dir(&ws.root).assert().success();
 
     // Legacy marker should be cleaned up.
     assert!(

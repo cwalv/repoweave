@@ -210,8 +210,8 @@ impl OpState {
 /// on all involved workspaces before calling this.
 pub fn write(workspace_dir: &Path, state: &OpState) -> anyhow::Result<()> {
     let path = OpState::path_in(workspace_dir);
-    let yaml =
-        serde_yaml::to_string(state).map_err(|e| anyhow::anyhow!("failed to serialize op-state: {e}"))?;
+    let yaml = serde_yaml::to_string(state)
+        .map_err(|e| anyhow::anyhow!("failed to serialize op-state: {e}"))?;
     std::fs::write(&path, yaml)
         .map_err(|e| anyhow::anyhow!("failed to write op-state to {}: {e}", path.display()))
 }
@@ -342,17 +342,17 @@ pub fn check_continue(workspace_dir: &Path, params: &SyncParams) -> anyhow::Resu
                     workspace_dir.display()
                 );
             }
-            anyhow::bail!("no sync/sync-to in progress to continue at {}", workspace_dir.display());
+            anyhow::bail!(
+                "no sync/sync-to in progress to continue at {}",
+                workspace_dir.display()
+            );
         }
     };
 
     // Collect all parameter mismatches.
     let mut mismatches: Vec<String> = Vec::new();
     if state.verb != params.verb {
-        mismatches.push(format!(
-            "verb: recorded={} got={}",
-            state.verb, params.verb
-        ));
+        mismatches.push(format!("verb: recorded={} got={}", state.verb, params.verb));
     }
     if state.strategy != params.strategy {
         mismatches.push(format!(
@@ -639,7 +639,12 @@ mod tests {
         let op_id = OpId::new_now();
         let src = PathBuf::from("/abs/src");
         let tgt = PathBuf::from("/abs/tgt");
-        let state = OpState::new_sync(&op_id, crate::sync::SyncStrategy::Rebase, src.clone(), tgt.clone());
+        let state = OpState::new_sync(
+            &op_id,
+            crate::sync::SyncStrategy::Rebase,
+            src.clone(),
+            tgt.clone(),
+        );
         write(dir, &state).unwrap();
 
         let params = SyncParams {
@@ -660,7 +665,12 @@ mod tests {
         let op_id = OpId::new_now();
         let src = PathBuf::from("/abs/src");
         let tgt = PathBuf::from("/abs/tgt");
-        let state = OpState::new_sync(&op_id, crate::sync::SyncStrategy::Rebase, src.clone(), tgt.clone());
+        let state = OpState::new_sync(
+            &op_id,
+            crate::sync::SyncStrategy::Rebase,
+            src.clone(),
+            tgt.clone(),
+        );
         write(dir, &state).unwrap();
 
         let params = SyncParams {

@@ -151,10 +151,7 @@ fn assert_log_ordering_fails_for_missing_commit() {
 
     let repo_clone = repo.clone();
     let result = std::panic::catch_unwind(move || {
-        common::assert_log_ordering(
-            &repo_clone,
-            &["feat: commit-A", "feat: nonexistent-commit"],
-        );
+        common::assert_log_ordering(&repo_clone, &["feat: commit-A", "feat: nonexistent-commit"]);
     });
 
     assert!(

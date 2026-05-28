@@ -426,9 +426,10 @@ console.log(types.greeting);
 
     let shared_types_entry = lock
         .repositories
-        .get(&repoweave::manifest::RepoPath::new(
-            "github/chatly/shared-types",
-        ).expect("known-safe literal"))
+        .get(
+            &repoweave::manifest::RepoPath::new("github/chatly/shared-types")
+                .expect("known-safe literal"),
+        )
         .expect("lock should contain shared-types entry");
 
     assert_eq!(

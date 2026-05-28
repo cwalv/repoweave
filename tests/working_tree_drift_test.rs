@@ -481,7 +481,12 @@ fn doctor_detects_working_tree_drift_in_three_worktrees() {
         &project_primary,
     );
 
-    let primary_canon2 = ws.primary_root.canonicalize().unwrap().display().to_string();
+    let primary_canon2 = ws
+        .primary_root
+        .canonicalize()
+        .unwrap()
+        .display()
+        .to_string();
     let marker2 = format!(
         "primary: {p}\nproject: web-app\nparent: {p}\n",
         p = primary_canon2

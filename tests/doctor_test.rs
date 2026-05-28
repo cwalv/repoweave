@@ -1376,7 +1376,7 @@ fn legacy_workweave_marker_causes_error_on_rwv_invocation() {
         .failure()
         .stderr(
             predicate::str::contains("legacy workweave marker")
-                .or(predicate::str::contains("parent"))
+                .or(predicate::str::contains("parent")),
         )
         .stderr(predicate::str::contains("rwv doctor --fix"));
 }
@@ -1409,7 +1409,7 @@ fn doctor_reports_legacy_workweave_marker() {
         // The important invariant is that the message appears.
         .stdout(
             predicate::str::contains("legacy workweave marker")
-                .or(predicate::str::contains(".rwv-workweave"))
+                .or(predicate::str::contains(".rwv-workweave")),
         )
         .stdout(predicate::str::contains("rwv doctor --fix"));
 }
@@ -1566,7 +1566,10 @@ fn check_unparseable_project_in_json_output() {
         "project field should name the broken project"
     );
     assert!(
-        entry.get("manifest_path").and_then(|s| s.as_str()).is_some(),
+        entry
+            .get("manifest_path")
+            .and_then(|s| s.as_str())
+            .is_some(),
         "manifest_path field should be present"
     );
     assert!(

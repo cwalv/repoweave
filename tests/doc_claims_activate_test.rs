@@ -315,7 +315,9 @@ fn activate_symlinks_cargo_toml_and_lock() {
     );
     let target = std::fs::read_link(&root_cargo).unwrap();
     assert!(
-        target.ancestors().any(|a| a.ends_with("projects/cargo-proj")),
+        target
+            .ancestors()
+            .any(|a| a.ends_with("projects/cargo-proj")),
         "Cargo.toml symlink should point into projects/cargo-proj, got: {}",
         target.display()
     );

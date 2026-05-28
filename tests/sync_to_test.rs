@@ -229,11 +229,7 @@ fn sync_to_ff_clean_advances_target() {
 
     // Run sync-to from ww → primary with ff strategy.
     rwv()
-        .args([
-            "sync-to",
-            &primary.root.to_string_lossy(),
-            "--strategy=ff",
-        ])
+        .args(["sync-to", &primary.root.to_string_lossy(), "--strategy=ff"])
         .current_dir(&ww.root)
         .assert()
         .success();
@@ -286,9 +282,16 @@ fn sync_to_rebase_cwd_commits_land_on_top_of_target() {
     //
     // We keep the lock unchanged (both sides use initial_sha for the server)
     // so lock freshness is satisfied without --force.
-    std::fs::write(primary.project_dir.join("primary-note.txt"), "primary note\n").unwrap();
+    std::fs::write(
+        primary.project_dir.join("primary-note.txt"),
+        "primary note\n",
+    )
+    .unwrap();
     git(&["add", "primary-note.txt"], &primary.project_dir);
-    git(&["commit", "-m", "feat: primary unique commit"], &primary.project_dir);
+    git(
+        &["commit", "-m", "feat: primary unique commit"],
+        &primary.project_dir,
+    );
     let primary_project_tip = git_out(&["rev-parse", "HEAD"], &primary.project_dir);
 
     // Workweave makes a different non-lock project commit that primary doesn't have.
@@ -310,10 +313,7 @@ fn sync_to_rebase_cwd_commits_land_on_top_of_target() {
 
     // Read the log of primary's project repo after sync-to.
     // Format: one line per commit, newest first.
-    let log = git_out(
-        &["log", "--oneline", "--no-decorate"],
-        &primary.project_dir,
-    );
+    let log = git_out(&["log", "--oneline", "--no-decorate"], &primary.project_dir);
 
     // The CRITICAL assertion: ww's non-lock commit must appear BEFORE (higher
     // in log) than primary's unique commit. In git log --oneline, newer commits
@@ -324,15 +324,11 @@ fn sync_to_rebase_cwd_commits_land_on_top_of_target() {
     let ww_commit_pos = log
         .lines()
         .position(|l| l.contains("feat: ww unique commit"))
-        .unwrap_or_else(|| {
-            panic!("ww unique commit not found in primary's log:\n{log}")
-        });
+        .unwrap_or_else(|| panic!("ww unique commit not found in primary's log:\n{log}"));
     let primary_commit_pos = log
         .lines()
         .position(|l| l.contains("feat: primary unique commit"))
-        .unwrap_or_else(|| {
-            panic!("primary unique commit not found in primary's log:\n{log}")
-        });
+        .unwrap_or_else(|| panic!("primary unique commit not found in primary's log:\n{log}"));
 
     assert!(
         ww_commit_pos < primary_commit_pos,
@@ -379,7 +375,10 @@ fn sync_to_merge_strategy_works() {
         "primary work\n",
         "primary: C2",
     );
-    write_lock(&primary.project_dir, &[(SERVER_PATH, SERVER_URL, &primary_c2)]);
+    write_lock(
+        &primary.project_dir,
+        &[(SERVER_PATH, SERVER_URL, &primary_c2)],
+    );
     git(&["add", "rwv.lock"], &primary.project_dir);
     git(&["commit", "-m", "lock: primary C2"], &primary.project_dir);
 
@@ -427,10 +426,7 @@ fn sync_to_merge_strategy_works() {
     // We verify this using the project repo log on primary's side. The most
     // recent commit should reference ww's contribution (lock: ww C2), and
     // primary's lock commit (lock: primary C2) should appear further down.
-    common::assert_log_ordering(
-        &primary.project_dir,
-        &["lock: ww C2", "lock: primary C2"],
-    );
+    common::assert_log_ordering(&primary.project_dir, &["lock: ww C2", "lock: primary C2"]);
 }
 
 // ---------------------------------------------------------------------------
@@ -468,7 +464,10 @@ fn sync_to_conflict_leaves_op_state_in_both_workspaces() {
         &[(SERVER_PATH, SERVER_URL, &primary_server_tip)],
     );
     git(&["add", "rwv.lock"], &primary.project_dir);
-    git(&["commit", "-m", "lock: primary conflict"], &primary.project_dir);
+    git(
+        &["commit", "-m", "lock: primary conflict"],
+        &primary.project_dir,
+    );
 
     // For the ww side, we need to force (bypass lock freshness check since
     // ww's lock pins a SHA the primary server doesn't have after rebase).
@@ -545,7 +544,10 @@ fn sync_to_auto_relock_commit_appears_after_rebase() {
         "primary work\n",
         "primary: advance server",
     );
-    write_lock(&primary.project_dir, &[(SERVER_PATH, SERVER_URL, &primary_c2)]);
+    write_lock(
+        &primary.project_dir,
+        &[(SERVER_PATH, SERVER_URL, &primary_c2)],
+    );
     git(&["add", "rwv.lock"], &primary.project_dir);
     git(&["commit", "-m", "lock: primary C2"], &primary.project_dir);
 
@@ -590,10 +592,7 @@ fn sync_to_auto_relock_commit_appears_after_rebase() {
         .success();
 
     // Read the log of ww's project repo.
-    let log = git_out(
-        &["log", "--oneline", "--no-decorate"],
-        &ww.project_dir,
-    );
+    let log = git_out(&["log", "--oneline", "--no-decorate"], &ww.project_dir);
 
     // Phase 3 detects the rebased-server sha != primary_c2 and emits
     // "lock: auto-relock after sync from <source>".
@@ -605,16 +604,16 @@ fn sync_to_auto_relock_commit_appears_after_rebase() {
     // Primary's project should be at the same tip as ww after step 3 ff-advances.
     let primary_tip = git_out(&["rev-parse", "HEAD"], &primary.project_dir);
     let ww_tip = git_out(&["rev-parse", "HEAD"], &ww.project_dir);
-    assert_eq!(primary_tip, ww_tip, "primary and ww project tips should converge");
+    assert_eq!(
+        primary_tip, ww_tip,
+        "primary and ww project tips should converge"
+    );
 
     // History-shape assertion: the auto-relock commit must sit ON TOP of
     // ww's unique non-lock commit in the project log — it was emitted by
     // Phase 3 after replaying ww's commits, so it must be the newest entry.
     // ww's unique non-lock commit must appear below it.
-    common::assert_log_ordering(
-        &ww.project_dir,
-        &["auto-relock", "feat: ww unique commit"],
-    );
+    common::assert_log_ordering(&ww.project_dir, &["auto-relock", "feat: ww unique commit"]);
 }
 
 // ---------------------------------------------------------------------------
@@ -633,11 +632,7 @@ fn sync_to_clears_op_state_on_success() {
     git(&["commit", "-m", "lock: ww advance"], &ww.project_dir);
 
     rwv()
-        .args([
-            "sync-to",
-            &primary.root.to_string_lossy(),
-            "--strategy=ff",
-        ])
+        .args(["sync-to", &primary.root.to_string_lossy(), "--strategy=ff"])
         .current_dir(&ww.root)
         .assert()
         .success();
@@ -676,11 +671,7 @@ fn sync_to_continue_from_step3_ff() {
     // Then test --continue from clean state (should be a no-op on re-run
     // since there's no op-state).
     rwv()
-        .args([
-            "sync-to",
-            &primary.root.to_string_lossy(),
-            "--strategy=ff",
-        ])
+        .args(["sync-to", &primary.root.to_string_lossy(), "--strategy=ff"])
         .current_dir(&ww.root)
         .assert()
         .success();
@@ -704,7 +695,9 @@ fn sync_to_continue_from_step3_ff() {
         .clone();
     let stderr = String::from_utf8_lossy(&err_output.stderr);
     assert!(
-        stderr.contains("no sync") || stderr.contains("nothing to continue") || stderr.contains("no sync/sync-to"),
+        stderr.contains("no sync")
+            || stderr.contains("nothing to continue")
+            || stderr.contains("no sync/sync-to"),
         "expected 'no sync' or 'nothing to continue' error; got:\n{stderr}"
     );
 }
@@ -725,17 +718,19 @@ fn sync_to_ff_refuses_when_cwd_not_ahead() {
         "primary\n",
         "primary: advance",
     );
-    write_lock(&primary.project_dir, &[(SERVER_PATH, SERVER_URL, &primary_c2)]);
+    write_lock(
+        &primary.project_dir,
+        &[(SERVER_PATH, SERVER_URL, &primary_c2)],
+    );
     git(&["add", "rwv.lock"], &primary.project_dir);
-    git(&["commit", "-m", "lock: primary advance"], &primary.project_dir);
+    git(
+        &["commit", "-m", "lock: primary advance"],
+        &primary.project_dir,
+    );
 
     // Trying sync-to with --strategy=ff from ww (which is behind primary) should fail.
     let err_output = rwv()
-        .args([
-            "sync-to",
-            &primary.root.to_string_lossy(),
-            "--strategy=ff",
-        ])
+        .args(["sync-to", &primary.root.to_string_lossy(), "--strategy=ff"])
         .current_dir(&ww.root)
         .assert()
         .failure()

@@ -1271,8 +1271,7 @@ pub fn run_check(
     // Projects whose rwv.yaml exists but fails to parse — surfaced as
     // `unparseable-project` violations so the workspace is never silent-clean
     // when a manifest is broken.
-    let mut unparseable_projects: Vec<(crate::manifest::ProjectName, PathBuf, String)> =
-        Vec::new();
+    let mut unparseable_projects: Vec<(crate::manifest::ProjectName, PathBuf, String)> = Vec::new();
 
     let mut resolved_locks: std::collections::HashMap<
         crate::manifest::ProjectName,

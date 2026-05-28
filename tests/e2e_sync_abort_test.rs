@@ -968,10 +968,7 @@ fn sync_rebase_replays_local_commits_on_source_tip() {
     //
     // We check the manifest repo (server) log at the ww/main branch.
     // "ww: local commit" must appear above "primary: advance".
-    common::assert_log_ordering(
-        &ww.server_dir,
-        &["ww: local commit", "primary: advance"],
-    );
+    common::assert_log_ordering(&ww.server_dir, &["ww: local commit", "primary: advance"]);
 }
 
 /// When both sides have diverged, --strategy merge creates a merge commit.
@@ -1492,7 +1489,10 @@ fn lock_in_marker_workweave_does_not_mutate_primary_lock_file() {
     let ww_lock = repoweave::manifest::LockFile::from_path(&ww_lock_path).unwrap();
     let entry = ww_lock
         .repositories
-        .get(&repoweave::manifest::RepoPath::new(SERVER_PATH).expect("SERVER_PATH is a forward-slash constant"))
+        .get(
+            &repoweave::manifest::RepoPath::new(SERVER_PATH)
+                .expect("SERVER_PATH is a forward-slash constant"),
+        )
         .expect("workweave lock should contain server entry");
     assert_eq!(
         entry.version.as_str(),

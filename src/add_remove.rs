@@ -729,9 +729,7 @@ mod tests {
     fn derive_path_from_file_url() {
         let url = format!(
             "file://{}",
-            std::env::temp_dir()
-                .join("foo/bar/remote.git")
-                .display()
+            std::env::temp_dir().join("foo/bar/remote.git").display()
         );
         let path = derive_local_path_from_url(&url).unwrap();
         assert_eq!(path, PathBuf::from("bar/remote"));

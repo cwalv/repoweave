@@ -392,9 +392,10 @@ repositories:\n  \
 
     let protocol_entry = lock
         .repositories
-        .get(&repoweave::manifest::RepoPath::new(
-            "github/chatly/protocol",
-        ).expect("known-safe literal"))
+        .get(
+            &repoweave::manifest::RepoPath::new("github/chatly/protocol")
+                .expect("known-safe literal"),
+        )
         .expect("lock should contain github/chatly/protocol");
 
     // Tag-form is preserved as the display form (round-trips into rwv.lock as

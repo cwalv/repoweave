@@ -18,7 +18,9 @@ use serde::Serialize;
 
 use repoweave::check::ViolationOutput;
 use repoweave::status::StatusJsonOutput;
-use repoweave::sync::{SyncJsonOutput, SyncToJsonOutput, SYNC_JSON_SCHEMA_URL, SYNC_TO_JSON_SCHEMA_URL};
+use repoweave::sync::{
+    SyncJsonOutput, SyncToJsonOutput, SYNC_JSON_SCHEMA_URL, SYNC_TO_JSON_SCHEMA_URL,
+};
 
 /// Generator-local mirror of the `rwv doctor --json` envelope. The runtime
 /// envelope in `src/check.rs` is built via `serde_json::json!` (no real

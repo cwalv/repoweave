@@ -281,10 +281,7 @@ fn sync_two_workweaves_lock_only_changes() {
     // the two workweaves' contributions land. The project repo's lock-only
     // commits are skipped/dropped during rebase (merge=ours), so there is no
     // meaningful project-repo shape to assert here.
-    common::assert_log_ordering(
-        &main.manifest_repo,
-        &["ww2: add bar", "ww1: add foo"],
-    );
+    common::assert_log_ordering(&main.manifest_repo, &["ww2: add bar", "ww1: add foo"]);
 }
 
 // ---------------------------------------------------------------------------
@@ -384,10 +381,7 @@ fn sync_two_workweaves_with_project_doc_changes() {
     );
 
     // Manifest repo: ww2's bar commit must appear above ww1's foo commit.
-    common::assert_log_ordering(
-        &main.manifest_repo,
-        &["ww2: add bar", "ww1: add foo"],
-    );
+    common::assert_log_ordering(&main.manifest_repo, &["ww2: add bar", "ww1: add foo"]);
 }
 
 // ---------------------------------------------------------------------------
@@ -693,7 +687,9 @@ fn bare_sync_to_from_primary_errors_with_no_parent_message() {
         .failure();
     let stderr = String::from_utf8_lossy(&assert.get_output().stderr).into_owned();
     assert!(
-        stderr.contains("primary weave") || stderr.contains("workweave") || stderr.contains("target"),
+        stderr.contains("primary weave")
+            || stderr.contains("workweave")
+            || stderr.contains("target"),
         "expected error message about needing a workweave or explicit target; got: {stderr}"
     );
 }

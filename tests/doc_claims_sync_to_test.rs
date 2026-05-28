@@ -277,10 +277,7 @@ fn sync_to_json_schema_url_differs_from_sync_schema_url() {
 
 #[test]
 fn explain_sync_to_returns_content() {
-    let assert = rwv()
-        .args(["explain", "sync-to"])
-        .assert()
-        .success();
+    let assert = rwv().args(["explain", "sync-to"]).assert().success();
     let stdout = String::from_utf8_lossy(&assert.get_output().stdout).into_owned();
 
     assert!(
