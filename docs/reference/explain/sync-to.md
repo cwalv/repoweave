@@ -1,0 +1,584 @@
+# rwv sync-to
+
+## Purpose
+
+Advance a target workspace to CWD's tip via a three-step orchestration. The
+user-facing promise: CWD's unique commits land linearly on top of target's
+prior history; target absorbs CWD's state with CWD as the newest contribution.
+
+This is the inverse of `rwv sync`: rather than pulling from a source into CWD,
+`rwv sync-to` pushes CWD's state into a target — but all rewriting happens in
+CWD, and target is only ever advanced via fast-forward.
+
+### The three steps
+
+1. **Step 1 — rebase/merge CWD against target.** Equivalent to `rwv sync <target>
+   --strategy=<X>` from CWD: the existing sync engine is called with target as
+   source and CWD as destination. End state: CWD has target's history with CWD's
+   unique commits replayed on top (per `--strategy`).
+
+2. **Step 2 — auto-relock.** If step 1 moved any manifest-repo tip in CWD,
+   regenerate `rwv.lock` and commit it in CWD's project repo with the message
+   `lock: post-rebase refresh`. This keeps the lock consistent without requiring
+   a separate `rwv lock` invocation.
+
+3. **Step 3 — FF-advance target.** Fast-forward each manifest repo and the
+   project repo in target to CWD's converged tips. This step is always FF
+   regardless of `--strategy` — all rewriting happened in CWD during step 1.
+   If FF is not possible (e.g. concurrent modification), the operation bails
+   with an actionable error.
+
+### End-state semantics
+
+After `rwv sync-to <target> --strategy=rebase`:
+- CWD: unique commits rebased onto target's prior tip (plus auto-relock commit).
+- Target: fast-forwarded to CWD's new tip — same history as CWD.
+- If target had unique commits since CWD's fork point, those form the BASE of
+  the resulting linear history, with CWD's contributions ON TOP.
+
+### Strategy semantics
+
+- `--strategy=ff` — step 1 is a no-op; CWD must already be strictly ahead of
+  target. Step 3 FFs target. If CWD isn't strictly ahead, bail with an error
+  pointing at `--strategy=rebase`.
+- `--strategy=rebase` (default) — step 1 rebases CWD's unique commits onto
+  target's tip. Step 2 auto-relocks. Step 3 FFs target.
+- `--strategy=merge` — step 1 merges target into CWD with an auto-generated
+  commit. Step 2 auto-relocks. Step 3 FFs target.
+
+### Multi-workspace op-state
+
+Op-state is written to both CWD and target before step 1. If any step fails,
+op-state is left in place so the operator can resolve and rerun with `--continue`,
+or use `rwv abort` to roll back both workspaces.
+
+## Invocation
+
+```
+rwv sync-to <target> [--json] [--strategy <ff|rebase|merge>] [-j <N>] [--force] [--project <name>] [--continue]
+```
+
+- `<target>` is the target workspace: `primary`, a bare workweave name, or
+  a path (absolute, or relative to the primary workspace root).
+- `--json` emits machine-readable output (see Output below).
+- `--strategy` picks the step-1 strategy (`rebase` default, `ff`, or `merge`).
+  Step 3 is always FF regardless of this flag.
+- `--force` bypasses the lock-freshness precondition.
+- `-j <N>` runs up to `N` per-repo manifest syncs in parallel during step 1.
+  Default is `1` (serial).
+- `--continue` resumes a sync-to that was interrupted mid-op (e.g. after
+  resolving a conflict). The recorded parameters must match — mismatch is an error.
+
+Run `rwv --help sync-to` for the full clap surface.
+
+## Output
+
+Default text output reports each step with one line per repo.
+
+Under `--json` with `-j 1` (default) or `--json` alone, output is the
+pretty-printed envelope:
+
+```
+{
+  "$schema": "<url>",
+  "outcomes": [ { "kind": "...", "path": "...", "absolute_path": "...", ... }, ... ]
+}
+```
+
+Outcome `kind` tags and the `--json` / NDJSON shape are identical to `rwv sync`
+— only the `$schema` URL differs (pointing at `docs/reference/schemas/sync-to.json`).
+
+Schema:
+
+```json
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "SyncToJsonOutput",
+  "description": "Top-level envelope for `rwv sync-to --json` (serial mode).\n\nIdentical shape to [`SyncJsonOutput`]; differs only in the `$schema` URL embedded at runtime. Kept as a separate type so the generated schema artifact (`docs/reference/schemas/sync-to.json`) has its own title/description.",
+  "type": "object",
+  "required": [
+    "$schema",
+    "outcomes"
+  ],
+  "properties": {
+    "$schema": {
+      "type": "string"
+    },
+    "outcomes": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/SyncOutcomeOutput"
+      }
+    }
+  },
+  "definitions": {
+    "ConflictOp": {
+      "description": "In-flight VCS operation whose conflict needs human resolution.\n\nPassed to [`Vcs::conflict_resolution_hint`] so sync's conflict-bail messages embed VCS-appropriate \"how do I resume this?\" text without hardcoding git vocabulary.",
+      "oneOf": [
+        {
+          "description": "Native rebase (`git rebase`) — resumes with `git rebase --continue`.",
+          "type": "string",
+          "enum": [
+            "rebase"
+          ]
+        },
+        {
+          "description": "Merge (`git merge`) — resumes with `git merge --continue`.",
+          "type": "string",
+          "enum": [
+            "merge"
+          ]
+        },
+        {
+          "description": "Cherry-pick (`git cherry-pick`) — resumes with `git cherry-pick --continue`. Used by sync's project-repo rebase-with-lock-exclusion path.",
+          "type": "string",
+          "enum": [
+            "cherry-pick"
+          ]
+        }
+      ]
+    },
+    "SyncFailureOutput": {
+      "description": "Wire-output mirror of [`SyncFailure`] for `--json` emission.\n\nCarries the same payload as the in-memory enum but with a `cause` represented as the serialisable [`VcsErrorOutput`]. The hand-rolled tag strings match [`SyncFailure::kind`] (verified via snapshot tests).",
+      "oneOf": [
+        {
+          "type": "object",
+          "required": [
+            "error",
+            "kind"
+          ],
+          "properties": {
+            "cause": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/VcsErrorOutput"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "error": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "enum": [
+                "head-unreadable"
+              ]
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "error",
+            "kind"
+          ],
+          "properties": {
+            "cause": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/VcsErrorOutput"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "error": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "enum": [
+                "ff-impossible"
+              ]
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "error",
+            "kind"
+          ],
+          "properties": {
+            "cause": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/VcsErrorOutput"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "error": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "enum": [
+                "rebase-failed"
+              ]
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "error",
+            "kind"
+          ],
+          "properties": {
+            "cause": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/VcsErrorOutput"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "error": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "enum": [
+                "merge-failed"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "SyncOutcomeOutput": {
+      "description": "One per-repo record in `rwv sync --json` output.",
+      "oneOf": [
+        {
+          "type": "object",
+          "required": [
+            "absolute_path",
+            "kind",
+            "path"
+          ],
+          "properties": {
+            "absolute_path": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "enum": [
+                "converged"
+              ]
+            },
+            "path": {
+              "type": "string"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "absolute_path",
+            "commits_ahead",
+            "kind",
+            "path"
+          ],
+          "properties": {
+            "absolute_path": {
+              "type": "string"
+            },
+            "commits_ahead": {
+              "type": "integer",
+              "format": "uint",
+              "minimum": 0.0
+            },
+            "kind": {
+              "type": "string",
+              "enum": [
+                "already-ahead"
+              ]
+            },
+            "path": {
+              "type": "string"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "absolute_path",
+            "kind",
+            "path"
+          ],
+          "properties": {
+            "absolute_path": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "enum": [
+                "no-op"
+              ]
+            },
+            "path": {
+              "type": "string"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "absolute_path",
+            "failure",
+            "kind",
+            "path"
+          ],
+          "properties": {
+            "absolute_path": {
+              "type": "string"
+            },
+            "failure": {
+              "$ref": "#/definitions/SyncFailureOutput"
+            },
+            "kind": {
+              "type": "string",
+              "enum": [
+                "failed"
+              ]
+            },
+            "path": {
+              "type": "string"
+            }
+          }
+        }
+      ]
+    },
+    "VcsErrorOutput": {
+      "description": "Wire-output mirror of [`VcsError`] for `--json` emission.\n\n`VcsError` itself can't derive `Serialize` cleanly because tuple variants (and `io::Error`) don't play nicely with serde's internally-tagged enum representation. This struct-only mirror does: every variant carries named fields, the tag matches [`VcsError::kind`], and a `From<&VcsError>` impl converts at JSON-emission time.",
+      "oneOf": [
+        {
+          "type": "object",
+          "required": [
+            "kind",
+            "path"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "not-a-repo"
+              ]
+            },
+            "path": {
+              "type": "string"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "kind",
+            "repo",
+            "rev"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "revision-not-found"
+              ]
+            },
+            "repo": {
+              "type": "string"
+            },
+            "rev": {
+              "type": "string"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "branch",
+            "kind",
+            "repo"
+          ],
+          "properties": {
+            "branch": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "enum": [
+                "branch-already-exists"
+              ]
+            },
+            "repo": {
+              "type": "string"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "kind",
+            "path"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "worktree-exists"
+              ]
+            },
+            "path": {
+              "type": "string"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "kind",
+            "path"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "uncommitted-changes"
+              ]
+            },
+            "path": {
+              "type": "string"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "kind",
+            "op",
+            "repo"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "rebase-conflict"
+              ]
+            },
+            "op": {
+              "$ref": "#/definitions/ConflictOp"
+            },
+            "repo": {
+              "type": "string"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "ctx",
+            "error",
+            "kind"
+          ],
+          "properties": {
+            "ctx": {
+              "type": "string"
+            },
+            "error": {
+              "description": "Display form of the underlying `io::Error`. The native source is dropped at the wire boundary since `io::Error` does not serialize.",
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "enum": [
+                "io"
+              ]
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "args",
+            "kind",
+            "repo",
+            "stderr"
+          ],
+          "properties": {
+            "args": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "kind": {
+              "type": "string",
+              "enum": [
+                "command-failed"
+              ]
+            },
+            "repo": {
+              "type": "string"
+            },
+            "stderr": {
+              "type": "string"
+            }
+          }
+        }
+      ]
+    }
+  }
+}
+```
+
+## Exit codes
+
+- `0` — all three steps completed; target is at CWD's tip.
+- non-zero — at least one step failed; inspect the error output for details.
+
+## Examples
+
+Advance primary from a workweave:
+
+```
+rwv sync-to primary
+```
+
+Advance primary, show per-repo outcomes:
+
+```
+rwv sync-to primary --json | jq '.outcomes[] | {path, kind}'
+```
+
+Resume after resolving a conflict:
+
+```
+# (resolve conflicts in the relevant repos)
+rwv sync-to primary --continue
+```
+
+Roll back after a failed sync-to:
+
+```
+rwv abort
+```
+
+## Common errors
+
+- *step 1 conflict* — a repo's HEAD diverged from the lock and replay couldn't
+  merge cleanly. Resolve manually in the repo, then `rwv sync-to <target> --continue`.
+- *ff-impossible (--strategy=ff)* — CWD is not strictly ahead of target. Use
+  `--strategy=rebase` to replay CWD's commits onto target's tip first.
+- *step 3 FF-advance failed* — target's repo was modified concurrently after
+  step 1 completed. Investigate, then `rwv sync-to <target> --continue` or
+  `rwv abort`.
+- *missing-replay-exclusion* — the project repo doesn't have `rwv.lock merge=ours`
+  in `.gitattributes`. Run `rwv doctor --fix`.

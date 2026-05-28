@@ -18,7 +18,7 @@ use serde::Serialize;
 
 use repoweave::check::ViolationOutput;
 use repoweave::status::StatusJsonOutput;
-use repoweave::sync::{SyncJsonOutput, SYNC_JSON_SCHEMA_URL};
+use repoweave::sync::{SyncJsonOutput, SyncToJsonOutput, SYNC_JSON_SCHEMA_URL, SYNC_TO_JSON_SCHEMA_URL};
 
 /// Generator-local mirror of the `rwv doctor --json` envelope. The runtime
 /// envelope in `src/check.rs` is built via `serde_json::json!` (no real
@@ -58,6 +58,11 @@ fn schema_sync() -> String {
     serde_json::to_string_pretty(&schema).expect("sync schema serializes")
 }
 
+fn schema_sync_to() -> String {
+    let schema = schema_for!(SyncToJsonOutput);
+    serde_json::to_string_pretty(&schema).expect("sync-to schema serializes")
+}
+
 fn verbs() -> Vec<Verb> {
     vec![
         Verb {
@@ -74,6 +79,11 @@ fn verbs() -> Vec<Verb> {
             name: "sync",
             summary: "reconcile each repo with its locked SHA",
             schema: Some(schema_sync),
+        },
+        Verb {
+            name: "sync-to",
+            summary: "advance target workspace to CWD's tip (3-step orchestration: rebase, relock, FF-advance)",
+            schema: Some(schema_sync_to),
         },
         Verb {
             name: "fetch",
@@ -229,6 +239,10 @@ fn main() -> anyhow::Result<()> {
     assert!(
         SYNC_JSON_SCHEMA_URL.ends_with("/docs/reference/schemas/sync.json"),
         "SYNC_JSON_SCHEMA_URL no longer points at the committed artifact"
+    );
+    assert!(
+        SYNC_TO_JSON_SCHEMA_URL.ends_with("/docs/reference/schemas/sync-to.json"),
+        "SYNC_TO_JSON_SCHEMA_URL no longer points at the committed artifact"
     );
     assert!(
         repoweave::check::DOCTOR_SCHEMA_URL.ends_with("/docs/reference/schemas/doctor.json"),

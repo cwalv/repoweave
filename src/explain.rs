@@ -15,6 +15,7 @@ const INDEX_EXPLAIN: &str = include_str!("../docs/reference/explain/index.md");
 const STATUS_EXPLAIN: &str = include_str!("../docs/reference/explain/status.md");
 const DOCTOR_EXPLAIN: &str = include_str!("../docs/reference/explain/doctor.md");
 const SYNC_EXPLAIN: &str = include_str!("../docs/reference/explain/sync.md");
+const SYNC_TO_EXPLAIN: &str = include_str!("../docs/reference/explain/sync-to.md");
 const FETCH_EXPLAIN: &str = include_str!("../docs/reference/explain/fetch.md");
 const UPDATE_EXPLAIN: &str = include_str!("../docs/reference/explain/update.md");
 const PRIME_EXPLAIN: &str = include_str!("../docs/reference/explain/prime.md");
@@ -32,6 +33,7 @@ pub fn explain(cmd: Option<&str>) -> anyhow::Result<()> {
         Some("status") => print!("{STATUS_EXPLAIN}"),
         Some("doctor") => print!("{DOCTOR_EXPLAIN}"),
         Some("sync") => print!("{SYNC_EXPLAIN}"),
+        Some("sync-to") => print!("{SYNC_TO_EXPLAIN}"),
         Some("fetch") => print!("{FETCH_EXPLAIN}"),
         Some("update") => print!("{UPDATE_EXPLAIN}"),
         Some("prime") => print!("{PRIME_EXPLAIN}"),

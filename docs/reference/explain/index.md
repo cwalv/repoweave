@@ -13,6 +13,7 @@ rwv explain <verb>
 - **status** — per-repo workspace state (branch, tip, lock, relation) (`--json` available)
 - **doctor** — convention-violation checks (orphans, drift, stale locks) (`--json` available)
 - **sync** — reconcile each repo with its locked SHA (`--json` available)
+- **sync-to** — advance target workspace to CWD's tip (3-step orchestration: rebase, relock, FF-advance) (`--json` available)
 - **fetch** — clone or fetch every repo in the active project
 - **update** — advance the lock to current HEADs
 - **prime** — agent-oriented orientation context for the workspace

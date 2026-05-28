@@ -380,6 +380,18 @@ pub struct SyncJsonOutput {
     pub outcomes: Vec<SyncOutcomeOutput>,
 }
 
+/// Top-level envelope for `rwv sync-to --json` (serial mode).
+///
+/// Identical shape to [`SyncJsonOutput`]; differs only in the `$schema` URL
+/// embedded at runtime. Kept as a separate type so the generated schema
+/// artifact (`docs/reference/schemas/sync-to.json`) has its own title/description.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct SyncToJsonOutput {
+    #[serde(rename = "$schema")]
+    pub schema: String,
+    pub outcomes: Vec<SyncOutcomeOutput>,
+}
+
 /// One NDJSON record emitted by `rwv sync --json -j N` with `N > 1`.
 ///
 /// Under NDJSON streaming mode, the envelope wrapper is dropped and each
@@ -402,6 +414,11 @@ pub struct SyncOutcomeNdjsonRecord<'a> {
 /// artifact under `docs/reference/schemas/`.
 pub const SYNC_JSON_SCHEMA_URL: &str =
     "https://raw.githubusercontent.com/cwalv/repoweave/main/docs/reference/schemas/sync.json";
+
+/// Schema URL embedded in `rwv sync-to --json` output. Pins to the committed
+/// artifact under `docs/reference/schemas/`.
+pub const SYNC_TO_JSON_SCHEMA_URL: &str =
+    "https://raw.githubusercontent.com/cwalv/repoweave/main/docs/reference/schemas/sync-to.json";
 
 impl fmt::Display for RepoSyncOutcome {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -1324,10 +1341,16 @@ enum OutputMode {
 /// atomically. `stdout_lock` serialises raw stdout writes (NDJSON lines)
 /// so two workers don't tear each other's output. Under text mode the
 /// stdout_lock is unused — text mode is always serial today.
+///
+/// `schema_url` is the `$schema` URL embedded in NDJSON records and the
+/// envelope. Both `run_sync_json` (using `SYNC_JSON_SCHEMA_URL`) and
+/// `run_sync_to_json` (using `SYNC_TO_JSON_SCHEMA_URL`) reuse this sink,
+/// each passing its own URL.
 struct OutputSink<'a> {
     mode: OutputMode,
     stdout_lock: &'a Mutex<()>,
     records: &'a Mutex<Vec<SyncOutcomeOutput>>,
+    schema_url: &'a str,
 }
 
 impl OutputSink<'_> {
@@ -1345,7 +1368,7 @@ impl OutputSink<'_> {
     fn record(&self, outcome: SyncOutcomeOutput) {
         if matches!(self.mode, OutputMode::JsonNdjson) {
             let record = SyncOutcomeNdjsonRecord {
-                schema: SYNC_JSON_SCHEMA_URL,
+                schema: self.schema_url,
                 outcome: &outcome,
             };
             // Best-effort: a serialization failure here would mean the
@@ -1411,6 +1434,7 @@ pub fn run_sync(
         mode: OutputMode::Text,
         stdout_lock: &stdout_lock,
         records: &records,
+        schema_url: SYNC_JSON_SCHEMA_URL,
     };
     run_sync_impl(
         cwd,
@@ -1455,6 +1479,38 @@ fn run_sync_impl(
     jobs: usize,
     sink: &OutputSink<'_>,
     do_continue: bool,
+) -> anyhow::Result<()> {
+    run_sync_impl_with_op_id(
+        cwd,
+        source,
+        strategy,
+        force,
+        retire,
+        project_override,
+        jobs,
+        sink,
+        do_continue,
+        None,
+    )
+}
+
+/// Internal: same as `run_sync_impl` but accepts an optional pre-existing `OpId`.
+///
+/// When `pre_existing_op_id` is `Some`, the op-state check/write is bypassed
+/// entirely — the caller (e.g. sync-to step 1) has already set up op-state.
+/// The provided `OpId` is used for savepoints.
+#[allow(clippy::too_many_arguments)]
+fn run_sync_impl_with_op_id(
+    cwd: &Path,
+    source: Option<&SyncSource>,
+    strategy: SyncStrategy,
+    force: bool,
+    retire: bool,
+    project_override: Option<ProjectName>,
+    jobs: usize,
+    sink: &OutputSink<'_>,
+    do_continue: bool,
+    pre_existing_op_id: Option<&OpId>,
 ) -> anyhow::Result<()> {
     let emit_text = sink.emit_text();
     // Resolve CWD and source workspaces.
@@ -1633,15 +1689,21 @@ fn run_sync_impl(
     // --continue / pre-op guard: check whether a sync is already in progress.
     //
     // For `rwv sync` the only involved workspace is CWD. For `rwv sync-to`
-    // (future, bead 1) both CWD and the target workspace are checked.
+    // (bead fo-pte54.1) both CWD and the target workspace are checked.
     //
     // - `--continue` absent, no op-state → fresh start (normal path below).
     // - `--continue` absent, op-state present → refuse with "in-progress" error.
     // - `--continue` present, op-state absent → error "nothing to continue".
     // - `--continue` present, op-state present, params match → resume (fall through).
     // - `--continue` present, op-state present, params mismatch → error.
+    //
+    // When `pre_existing_op_id` is `Some`, the caller (sync-to step 1) has already
+    // set up op-state and savepoints — bypass the check/write entirely.
     let op_id: OpId;
-    if do_continue {
+    if let Some(existing_id) = pre_existing_op_id {
+        // Caller-managed op-state: use the provided id, skip all op-state machinery.
+        op_id = existing_id.clone();
+    } else if do_continue {
         // Build the params struct for comparison with the recorded state.
         let continue_params = SyncParams {
             verb: OpVerb::Sync,
@@ -1995,7 +2057,11 @@ fn run_sync_impl(
         }
     }
     // Remove the op-state file from CWD workspace on successful completion.
-    op_state::clear(&workspace_dir);
+    // Skip when pre_existing_op_id is set — the outer caller (sync-to) manages
+    // op-state lifecycle across both workspaces.
+    if pre_existing_op_id.is_none() {
+        op_state::clear(&workspace_dir);
+    }
 
     // --retire: sync succeeded — verify we converged on parent's tip with a
     // clean tree, then delete the workweave. Only meaningful inside a
@@ -2487,6 +2553,7 @@ pub fn run_sync_json(
         mode,
         stdout_lock: &stdout_lock,
         records: &records,
+        schema_url: SYNC_JSON_SCHEMA_URL,
     };
     let project_level_result = run_sync_impl(
         cwd,
@@ -2502,9 +2569,29 @@ pub fn run_sync_json(
 
     let records = records.into_inner().unwrap_or_else(|e| e.into_inner());
 
+    run_sync_json_impl(mode, records, SYNC_JSON_SCHEMA_URL, project_level_result, false)
+}
+
+/// Shared post-impl JSON emitter: emits the envelope (serial) or a no-op
+/// (NDJSON already streamed), then maps exit codes.
+///
+/// Factored out so both `run_sync_json` and `run_sync_to_json` can share
+/// the envelope/NDJSON emission logic with their respective schema URLs.
+///
+/// When `emit_empty_envelope` is true, an envelope with an empty `outcomes`
+/// array is emitted even when `records` is empty (used by sync-to where
+/// step 1 may be skipped for ff-clean with no per-repo manifest outcomes).
+/// When false (sync's behavior), empty records propagates the error.
+fn run_sync_json_impl(
+    mode: OutputMode,
+    records: Vec<SyncOutcomeOutput>,
+    schema_url: &str,
+    project_level_result: anyhow::Result<()>,
+    emit_empty_envelope: bool,
+) -> anyhow::Result<()> {
     // If we never reached the per-repo loop (project-level precondition
     // failure), propagate the error so main prints it via anyhow.
-    if records.is_empty() {
+    if records.is_empty() && !emit_empty_envelope {
         return project_level_result;
     }
 
@@ -2516,7 +2603,7 @@ pub fn run_sync_json(
     // envelope wrapper around the stream.
     if matches!(mode, OutputMode::JsonEnvelope) {
         let payload = SyncJsonOutput {
-            schema: SYNC_JSON_SCHEMA_URL.to_owned(),
+            schema: schema_url.to_owned(),
             outcomes: records,
         };
         let out = serde_json::to_string_pretty(&payload)
@@ -2537,6 +2624,509 @@ pub fn run_sync_json(
     // outcomes JSON has been emitted; surface the error via Err so
     // main's anyhow display fires.
     project_level_result
+}
+
+// ---------------------------------------------------------------------------
+// rwv sync-to
+// ---------------------------------------------------------------------------
+//
+// Three-step orchestration:
+//
+//   Step 1 — rebase/merge CWD against target.
+//             Calls run_sync_impl(cwd=CWD, source=target, strategy=<X>).
+//             This is identical to what `rwv sync <target>` does, except the
+//             source path is target and CWD is the destination.
+//
+//   Step 2 — auto-relock if step 1 moved manifest tips.
+//             Regenerate rwv.lock in CWD's project repo. If the lock
+//             changed, commit it with message "lock: post-rebase refresh".
+//             This is folded into the sync-to orchestration (not a bolt-on).
+//
+//   Step 3 — FF-advance target to CWD's new tip.
+//             Fast-forward each manifest repo and the project repo in target
+//             to match CWD's converged tips. Always FF; if FF fails, bail
+//             with an actionable error.
+//
+// Op-state is written to BOTH workspaces (CWD + target) before step 1.
+// Phase advances: step1-rebase → step1-complete → step3-ff → both cleared.
+// On any failure, op-state is left in place for --continue or rwv abort.
+
+/// Execute `rwv sync-to <target>`.
+///
+/// `target` is the workspace to advance. Step 1 calls the existing sync
+/// engine to rebase/merge CWD against target (CWD absorbs target's history
+/// with CWD's commits on top). Step 2 auto-relocks if tips moved. Step 3
+/// fast-forwards target's repos to CWD's converged tips.
+///
+/// `do_continue` resumes a mid-op sync-to by reading the recorded phase
+/// from op-state and skipping already-completed steps.
+#[allow(clippy::too_many_arguments)]
+pub fn run_sync_to(
+    cwd: &Path,
+    target: &SyncSource,
+    strategy: SyncStrategy,
+    force: bool,
+    project_override: Option<ProjectName>,
+    jobs: usize,
+    do_continue: bool,
+) -> anyhow::Result<()> {
+    let records: Mutex<Vec<SyncOutcomeOutput>> = Mutex::new(Vec::new());
+    let stdout_lock: Mutex<()> = Mutex::new(());
+    let sink = OutputSink {
+        mode: OutputMode::Text,
+        stdout_lock: &stdout_lock,
+        records: &records,
+        schema_url: SYNC_TO_JSON_SCHEMA_URL,
+    };
+    run_sync_to_impl(
+        cwd,
+        target,
+        strategy,
+        force,
+        project_override,
+        jobs,
+        &sink,
+        do_continue,
+    )
+}
+
+/// Execute `rwv sync-to <target> --json`.
+#[allow(clippy::too_many_arguments)]
+pub fn run_sync_to_json(
+    cwd: &Path,
+    target: &SyncSource,
+    strategy: SyncStrategy,
+    force: bool,
+    project_override: Option<ProjectName>,
+    jobs: usize,
+    do_continue: bool,
+) -> anyhow::Result<()> {
+    let records: Mutex<Vec<SyncOutcomeOutput>> = Mutex::new(Vec::new());
+    let stdout_lock: Mutex<()> = Mutex::new(());
+    let mode = if jobs > 1 {
+        OutputMode::JsonNdjson
+    } else {
+        OutputMode::JsonEnvelope
+    };
+    let sink = OutputSink {
+        mode,
+        stdout_lock: &stdout_lock,
+        records: &records,
+        schema_url: SYNC_TO_JSON_SCHEMA_URL,
+    };
+    let project_level_result = run_sync_to_impl(
+        cwd,
+        target,
+        strategy,
+        force,
+        project_override,
+        jobs,
+        &sink,
+        do_continue,
+    );
+
+    let records = records.into_inner().unwrap_or_else(|e| e.into_inner());
+
+    run_sync_json_impl(mode, records, SYNC_TO_JSON_SCHEMA_URL, project_level_result, true)
+}
+
+/// Shared sync-to orchestration body.
+#[allow(clippy::too_many_arguments)]
+fn run_sync_to_impl(
+    cwd: &Path,
+    target_source: &SyncSource,
+    strategy: SyncStrategy,
+    force: bool,
+    project_override: Option<ProjectName>,
+    jobs: usize,
+    sink: &OutputSink<'_>,
+    do_continue: bool,
+) -> anyhow::Result<()> {
+    let emit_text = sink.emit_text();
+
+    // Resolve CWD workspace.
+    let cwd_ctx = WorkspaceContext::resolve(cwd, project_override.clone())?;
+    let cwd_workspace_dir = cwd_ctx.active_path().to_path_buf();
+
+    // Resolve target workspace.
+    let target_path = target_source.resolve(&cwd_ctx);
+    let target_ctx = WorkspaceContext::resolve(&target_path, project_override.clone())?;
+    let target_workspace_dir = target_ctx.active_path().to_path_buf();
+
+    // Find project names.
+    let cwd_project_name = find_project_name(&cwd_ctx)?;
+    let target_project_name = find_project_name(&target_ctx)?;
+
+    // Projects must match.
+    check_active_projects_match(
+        &cwd_project_name,
+        &target_project_name,
+        &cwd_workspace_dir,
+        &target_workspace_dir,
+    )?;
+
+    let cwd_project_dir = cwd_workspace_dir
+        .join("projects")
+        .join(&cwd_project_name);
+    let target_project_dir = target_workspace_dir
+        .join("projects")
+        .join(&target_project_name);
+
+    // --continue / pre-op guard.
+    let op_id: OpId;
+    let resume_phase: Option<crate::op_state::OpPhase>;
+
+    if do_continue {
+        let continue_params = crate::op_state::SyncParams {
+            verb: crate::op_state::OpVerb::SyncTo,
+            strategy: strategy.to_string(),
+            source: cwd_workspace_dir.clone(),
+            target: target_workspace_dir.clone(),
+            retire: false,
+        };
+        let recorded = op_state::check_continue(&cwd_workspace_dir, &continue_params)?;
+        op_id = OpId::from_string(recorded.id.clone());
+        let phase_display = recorded.phase.to_string();
+        resume_phase = Some(recorded.phase);
+        if emit_text {
+            eprintln!(
+                "continuing sync-to (op {op_id}, mid `{phase_display}`)",
+            );
+        }
+    } else {
+        // Concurrency guard: check both CWD and target.
+        op_state::check_no_op_in_progress(&[
+            cwd_workspace_dir.as_path(),
+            target_workspace_dir.as_path(),
+        ])?;
+
+        op_id = OpId::new_now();
+
+        // Write op-state to both workspaces.
+        let state = OpState::new_sync_to(
+            &op_id,
+            strategy,
+            cwd_workspace_dir.clone(),
+            target_workspace_dir.clone(),
+            false, // retire: bead 2
+        );
+        op_state::write(&cwd_workspace_dir, &state)
+            .map_err(|e| anyhow::anyhow!("failed to write op-state to CWD: {e}"))?;
+        op_state::write(&target_workspace_dir, &state)
+            .map_err(|e| anyhow::anyhow!("failed to write op-state to target: {e}"))?;
+        resume_phase = None;
+    }
+
+    // For --strategy=ff: step 1 is a no-op only if CWD is strictly ahead of target.
+    // If CWD is not strictly ahead, bail with an actionable error.
+    if strategy == SyncStrategy::Ff {
+        let cwd_tip = GitVcs
+            .head_revision(&cwd_project_dir)
+            .map_err(|e| anyhow::anyhow!("failed to read CWD project HEAD: {e}"))?;
+        let target_tip = GitVcs
+            .head_revision(&target_project_dir)
+            .map_err(|e| anyhow::anyhow!("failed to read target project HEAD: {e}"))?;
+
+        if cwd_tip == target_tip {
+            // No-op: already at same tip.
+            if emit_text {
+                eprintln!("sync-to: CWD and target are already at the same tip; nothing to do");
+            }
+            op_state::clear_all(&[cwd_workspace_dir.as_path(), target_workspace_dir.as_path()]);
+            return Ok(());
+        }
+
+        // CWD must be strictly ahead of target for ff to work.
+        let cwd_ahead = git_command()
+            .args([
+                "merge-base",
+                "--is-ancestor",
+                target_tip.as_str(),
+                cwd_tip.as_str(),
+            ])
+            .current_dir(&cwd_project_dir)
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false);
+
+        if !cwd_ahead {
+            op_state::clear_all(&[cwd_workspace_dir.as_path(), target_workspace_dir.as_path()]);
+            anyhow::bail!(
+                "sync-to --strategy=ff requires CWD to be strictly ahead of target, \
+                 but CWD's project tip ({}) is not an ancestor-or-equal of target's tip ({}).\n\
+                 Rerun with `--strategy=rebase` to rebase CWD's commits onto target's tip first.",
+                cwd_tip, target_tip
+            );
+        }
+        // CWD is strictly ahead: skip step 1 (no-op), go directly to step 3.
+    }
+
+    // Determine which phase to start from.
+    let skip_step1 = strategy == SyncStrategy::Ff
+        || matches!(
+            resume_phase,
+            Some(crate::op_state::OpPhase::Step1Complete)
+                | Some(crate::op_state::OpPhase::Step3Ff)
+        );
+
+    let skip_step3 = false; // step 3 is always needed unless already done (not tracked as a skippable phase here)
+
+    // === Step 1: rebase/merge CWD against target ===
+    //
+    // Equivalent to `rwv sync <target>` from CWD: use the existing sync
+    // engine with CWD as destination and target as source.
+    if !skip_step1 {
+        if emit_text {
+            eprintln!("sync-to step 1: rebasing CWD against target ({})...", target_path.display());
+        }
+
+        // For --continue with resume_phase = Step1Rebase, pass do_continue=true
+        // to run_sync_impl so it resumes the in-progress rebase/merge.
+        let step1_continue = matches!(resume_phase, Some(crate::op_state::OpPhase::Step1Rebase));
+
+        // Call the existing sync engine with target as source.
+        // CWD is the destination (implicit from cwd arg).
+        // Note: run_sync_impl expects source as a SyncSource. We use Path(target_path).
+        let step1_source = SyncSource::Path(target_path.clone());
+
+        // Call the existing sync engine with pre_existing_op_id so it bypasses
+        // the op-state check/write (sync-to already set it up). We pass the same
+        // op_id so savepoints created inside run_sync_impl_with_op_id are keyed
+        // consistently with the op we already opened.
+        let step1_result = run_sync_impl_with_op_id(
+            cwd,
+            Some(&step1_source),
+            strategy,
+            force,
+            false, // retire: not applicable for step 1
+            project_override.clone(),
+            jobs,
+            sink,
+            step1_continue,
+            Some(&op_id),
+        );
+
+        if let Err(e) = step1_result {
+            // Leave op-state in both workspaces so --continue or rwv abort can recover.
+            anyhow::bail!(
+                "sync-to step 1 failed: {e}\n\
+                 \n\
+                 Op-state has been left in both workspaces.\n\
+                 Resolve conflicts, then: `rwv sync-to {} --continue`\n\
+                 To roll everything back: `rwv abort`",
+                target_source,
+            );
+        }
+
+        // Advance phase to Step1Complete in both workspaces.
+        op_state::advance_phase(&cwd_workspace_dir, crate::op_state::OpPhase::Step1Complete)
+            .map_err(|e| anyhow::anyhow!("failed to advance phase after step 1: {e}"))?;
+        op_state::advance_phase(&target_workspace_dir, crate::op_state::OpPhase::Step1Complete)
+            .map_err(|e| anyhow::anyhow!("failed to advance phase in target after step 1: {e}"))?;
+    } else if !matches!(resume_phase, Some(crate::op_state::OpPhase::Step3Ff)) {
+        // When resuming from step1-complete, advance phase to mark we're moving to step 3.
+        // (Already at step1-complete; advancing to step3-ff happens below before step 3.)
+    }
+
+    // Step 2 (auto-relock) is handled by Phase 3 inside run_sync_impl_with_op_id
+    // called above. The existing sync engine regenerates and commits rwv.lock in
+    // CWD's project repo as part of its own Phase 3 completion. No separate
+    // re-lock step is needed here.
+
+    // Advance phase to Step3Ff in both workspaces.
+    if !matches!(resume_phase, Some(crate::op_state::OpPhase::Step3Ff)) {
+        op_state::advance_phase(&cwd_workspace_dir, crate::op_state::OpPhase::Step3Ff)
+            .map_err(|e| anyhow::anyhow!("failed to advance phase to step3-ff: {e}"))?;
+        op_state::advance_phase(&target_workspace_dir, crate::op_state::OpPhase::Step3Ff)
+            .map_err(|e| anyhow::anyhow!("failed to advance phase to step3-ff in target: {e}"))?;
+    }
+
+    // === Step 3: FF-advance target to CWD's new tip ===
+    //
+    // For each manifest repo and the project repo in target, fast-forward
+    // to CWD's converged tip. This is always FF; if FF fails (e.g. concurrent
+    // modification), bail with an actionable error.
+    let _ = skip_step3; // always run step 3
+
+    if emit_text {
+        eprintln!("sync-to step 3: fast-forwarding target to CWD's tips...");
+    }
+
+    // Reload CWD project (post-relock).
+    let cwd_project_final = crate::manifest::Project::from_dir(&cwd_project_dir)
+        .map_err(|e| anyhow::anyhow!("failed to reload CWD project for step 3: {e}"))?;
+
+    // FF-advance each manifest repo in target.
+    let mut any_ff_failure = false;
+    for repo_path in cwd_project_final.manifest.iter_repo_paths() {
+        let cwd_repo = cwd_workspace_dir.join(repo_path.as_path());
+        let target_repo = target_workspace_dir.join(repo_path.as_path());
+
+        if !cwd_repo.exists() {
+            // Repo not materialized in CWD — skip.
+            continue;
+        }
+        if !target_repo.exists() {
+            // Repo not materialized in target — skip with warning.
+            if emit_text {
+                eprintln!(
+                    "  {}: skipped (not on disk in target)",
+                    repo_path
+                );
+            }
+            continue;
+        }
+
+        let cwd_tip = match GitVcs.head_revision(&cwd_repo) {
+            Ok(tip) => tip,
+            Err(e) => {
+                if emit_text {
+                    eprintln!("  {}: failed to read CWD tip: {e}", repo_path);
+                }
+                any_ff_failure = true;
+                continue;
+            }
+        };
+
+        // FF-advance target repo to cwd_tip.
+        match ff_advance_repo(&target_repo, &cwd_repo, &cwd_tip) {
+            Ok(()) => {
+                if emit_text {
+                    println!("  {}: ff-advanced to {}", repo_path, &cwd_tip.as_str()[..8.min(cwd_tip.as_str().len())]);
+                }
+            }
+            Err(e) => {
+                if emit_text {
+                    eprintln!("  {}: ff-advance failed: {e}", repo_path);
+                }
+                any_ff_failure = true;
+            }
+        }
+    }
+
+    // FF-advance target's project repo.
+    let cwd_project_tip = GitVcs
+        .head_revision(&cwd_project_dir)
+        .map_err(|e| anyhow::anyhow!("failed to read CWD project HEAD for step 3: {e}"))?;
+
+    match ff_advance_repo(&target_project_dir, &cwd_project_dir, &cwd_project_tip) {
+        Ok(()) => {
+            if emit_text {
+                println!(
+                    "  (project): ff-advanced to {}",
+                    &cwd_project_tip.as_str()[..8.min(cwd_project_tip.as_str().len())]
+                );
+            }
+        }
+        Err(e) => {
+            if emit_text {
+                eprintln!("  (project): ff-advance failed: {e}");
+            }
+            any_ff_failure = true;
+        }
+    }
+
+    if any_ff_failure {
+        anyhow::bail!(
+            "sync-to step 3 (FF-advance target) failed for one or more repos (see above).\n\
+             This should not happen after a clean step 1; possible concurrent modification.\n\
+             Op-state remains in both workspaces.\n\
+             Rerun `rwv sync-to {} --continue` after resolving, or `rwv abort` to roll back.",
+            target_source,
+        );
+    }
+
+    // Success: clear op-state from both workspaces.
+    op_state::clear_all(&[cwd_workspace_dir.as_path(), target_workspace_dir.as_path()]);
+
+    if emit_text {
+        eprintln!("sync-to complete: target fast-forwarded to CWD's tip");
+    }
+
+    Ok(())
+}
+
+/// Fast-forward `target_repo` to `cwd_tip`.
+///
+/// We need the objects to be reachable in `target_repo`. For a worktree
+/// pair (workweave + primary), they share the same object store, so any
+/// SHA reachable in the CWD worktree is also reachable in the target
+/// worktree. We use `git fetch <cwd_repo_path> HEAD` to ensure the object
+/// is present in the target's object store before the reset, then
+/// `git reset --hard <sha>` to advance the branch.
+///
+/// The "fetch then reset" approach works for both worktrees (same object
+/// store, fetch is a no-op) and independent clones (fetch copies objects).
+fn ff_advance_repo(
+    target_repo: &Path,
+    cwd_repo: &Path,
+    cwd_tip: &ResolvedRevisionId,
+) -> anyhow::Result<()> {
+    // Verify that target_repo's HEAD is an ancestor of (or equal to) cwd_tip.
+    // If not, this is a concurrent-modification scenario — bail.
+    let target_tip = GitVcs
+        .head_revision(target_repo)
+        .map_err(|e| anyhow::anyhow!("failed to read target HEAD: {e}"))?;
+
+    if target_tip == *cwd_tip {
+        return Ok(()); // already at the right tip
+    }
+
+    // Check that target is an ancestor of cwd_tip (ff precondition).
+    // We need to fetch first to ensure the object is reachable for merge-base.
+    fetch_objects_from(target_repo, cwd_repo)?;
+
+    let is_ancestor = git_command()
+        .args([
+            "merge-base",
+            "--is-ancestor",
+            target_tip.as_str(),
+            cwd_tip.as_str(),
+        ])
+        .current_dir(target_repo)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
+
+    if !is_ancestor {
+        anyhow::bail!(
+            "target repo at {} cannot be fast-forwarded: target tip ({}) is not an ancestor \
+             of CWD tip ({}). This indicates concurrent modification after step 1 completed.",
+            target_repo.display(),
+            target_tip,
+            cwd_tip,
+        );
+    }
+
+    // Fast-forward: reset --hard to cwd_tip. For worktrees sharing an object
+    // store this is safe; for independent clones we already fetched above.
+    git(
+        &["reset", "--hard", cwd_tip.as_str()],
+        target_repo,
+    )
+    .map_err(|e| anyhow::anyhow!("git reset --hard failed in target: {e}"))?;
+
+    Ok(())
+}
+
+/// Fetch objects from `src_repo` into `dst_repo` so SHAs reachable in `src`
+/// are reachable in `dst`. Uses `git fetch <src_path> HEAD` which works for
+/// both worktrees (no-op, shared object store) and independent clones.
+fn fetch_objects_from(dst_repo: &Path, src_repo: &Path) -> anyhow::Result<()> {
+    let src_path = src_repo.to_string_lossy().into_owned();
+    git_command()
+        .args(["fetch", &src_path, "HEAD"])
+        .current_dir(dst_repo)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map_err(|e| anyhow::anyhow!("failed to fetch from {}: {e}", src_repo.display()))?;
+    // fetch may fail for worktrees (FETCH_HEAD is unavailable) — that's fine,
+    // the object is already reachable in the shared store. Ignore errors here;
+    // ff_advance_repo will catch any real problem at reset --hard.
+    Ok(())
 }
 
 #[cfg(test)]

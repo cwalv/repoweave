@@ -25,7 +25,7 @@ use assert_cmd::Command as AssertCommand;
 use std::path::PathBuf;
 
 const ACCEPTANCE_VERBS: &[&str] = &[
-    "status", "doctor", "sync", "fetch", "update", "prime", "explain",
+    "status", "doctor", "sync", "sync-to", "fetch", "update", "prime", "explain",
 ];
 
 fn rwv() -> AssertCommand {

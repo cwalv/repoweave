@@ -203,6 +203,40 @@ enum Commands {
         #[arg(long = "continue")]
         do_continue: bool,
     },
+    /// Advance target workspace to CWD's tip (3-step orchestration: rebase CWD against target,
+    /// auto-relock, then fast-forward target to CWD's converged tip). CWD's unique commits land
+    /// on top of target's prior history; target absorbs CWD's state with CWD as the newest
+    /// contribution.
+    SyncTo {
+        /// Target workspace: `primary`, a bare workweave name, or a path
+        /// (absolute, or relative to the primary workspace root).
+        target: SyncSource,
+        /// Sync strategy for step 1 (rebase CWD against target). Default: rebase.
+        /// ff means CWD must already be strictly ahead of target (no-op step 1).
+        /// rebase replays CWD's unique commits onto target's tip.
+        /// merge merges target into CWD with an auto-generated commit.
+        /// Step 3 (FF-advance target) is always ff regardless of this flag.
+        #[arg(long, default_value = "rebase", value_enum)]
+        strategy: SyncStrategy,
+        /// Bypass the lock-freshness precondition
+        #[arg(long)]
+        force: bool,
+        /// Emit per-repo outcomes as JSON (array-of-records with stable per-variant `kind`). See `rwv explain sync-to`.
+        #[arg(long)]
+        json: bool,
+        /// Run up to N per-repo manifest syncs in parallel. Under `-j > 1` with `--json`,
+        /// output switches to NDJSON (one JSON record per repo, streamed as repos finish).
+        #[arg(short = 'j', long = "jobs")]
+        jobs: Option<usize>,
+        /// Operate on this project instead of the active project (does not change `.rwv-active`)
+        #[arg(long)]
+        project: Option<String>,
+        /// Resume a sync-to that was interrupted mid-op (e.g. after resolving a conflict).
+        /// Without this flag, an in-progress op-state file causes an error. With this
+        /// flag, the recorded parameters must match — mismatch is itself an error.
+        #[arg(long = "continue")]
+        do_continue: bool,
+    },
     /// Restore CWD workspace to its pre-sync state using savepoint refs
     Abort,
     /// Print workspace root path
@@ -517,6 +551,43 @@ fn main() -> anyhow::Result<()> {
                     strategy,
                     force,
                     retire,
+                    project_override,
+                    jobs,
+                    do_continue,
+                )?;
+            }
+        }
+        Some(Commands::SyncTo {
+            target,
+            strategy,
+            force,
+            json,
+            jobs,
+            project,
+            do_continue,
+        }) => {
+            let cwd = std::env::current_dir()?;
+            let project_override = project.map(repoweave::manifest::ProjectName::new);
+            let jobs = match jobs {
+                Some(n) => repoweave::parallel::resolve_jobs(Some(n)),
+                None => 1,
+            };
+            if json {
+                sync::run_sync_to_json(
+                    &cwd,
+                    &target,
+                    strategy,
+                    force,
+                    project_override,
+                    jobs,
+                    do_continue,
+                )?;
+            } else {
+                sync::run_sync_to(
+                    &cwd,
+                    &target,
+                    strategy,
+                    force,
                     project_override,
                     jobs,
                     do_continue,
