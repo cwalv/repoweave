@@ -9,7 +9,7 @@ use crate::manifest::{LockFile, Manifest, Project, ProjectName, RepoPath, Workwe
 use crate::op_state::{self, OpState, OpVerb, SyncParams};
 use crate::parallel::run_in_parallel;
 use crate::vcs::{ConflictOp, ResolvedRevisionId, Vcs, VcsError, VcsErrorOutput};
-use crate::workspace::{read_active_project, WorkspaceContext, WorkspaceLocation};
+use crate::workspace::{WorkspaceContext, WorkspaceLocation};
 use crate::workweave::workweave_path_for;
 use schemars::JsonSchema;
 use serde::Serialize;
@@ -102,28 +102,32 @@ pub enum SyncSource {
 impl SyncSource {
     /// Resolve to an on-disk workspace path using the surrounding context to
     /// locate `primary`.
-    pub fn resolve(&self, ctx: &WorkspaceContext) -> PathBuf {
+    ///
+    /// Returns `Err` when the variant is `Workweave` and the context is a
+    /// primary weave with no active project set (neither from `.rwv-active`
+    /// nor via `--project`). In that case the workweave path cannot be
+    /// constructed, and proceeding would silently produce a garbage path.
+    /// `require_active_project` emits an actionable error message.
+    pub fn resolve(&self, ctx: &WorkspaceContext) -> anyhow::Result<PathBuf> {
         match self {
-            Self::Primary => ctx.primary_path().to_path_buf(),
+            Self::Primary => Ok(ctx.primary_path().to_path_buf()),
             Self::Workweave(name) => {
                 // Resolve the project from the current context: the workweave
                 // we're syncing FROM is assumed to belong to the same project
                 // as the workspace we're syncing INTO (sync is per-project).
-                // Fall back to primary's `.rwv-active` when CWD is the weave.
+                // When CWD is the primary weave, require an active project
+                // rather than silently falling back to an empty string.
                 let project = match &ctx.location {
                     WorkspaceLocation::Workweave { project, .. } => project.clone(),
-                    WorkspaceLocation::Weave { project } => project
-                        .clone()
-                        .or_else(|| read_active_project(ctx.primary_path()))
-                        .unwrap_or_else(|| crate::manifest::ProjectName::new("")),
+                    WorkspaceLocation::Weave { .. } => ctx.require_active_project()?.clone(),
                 };
-                workweave_path_for(ctx.primary_path(), &project, name)
+                Ok(workweave_path_for(ctx.primary_path(), &project, name))
             }
             Self::Path(p) => {
                 if p.is_absolute() {
-                    p.clone()
+                    Ok(p.clone())
                 } else {
-                    ctx.primary_path().join(p)
+                    Ok(ctx.primary_path().join(p))
                 }
             }
         }
@@ -1542,7 +1546,7 @@ fn run_sync_impl_with_op_id(
         },
     };
 
-    let source_path = resolved_source.resolve(&ctx);
+    let source_path = resolved_source.resolve(&ctx)?;
     // The source side honours the same `--project` override so cross-project
     // syncs from a non-active project work.
     let source_ctx = WorkspaceContext::resolve(&source_path, project_override.clone())?;
@@ -2712,7 +2716,7 @@ fn run_sync_to_impl(
     let cwd_workspace_dir = cwd_ctx.active_path().to_path_buf();
 
     // Resolve target workspace.
-    let target_path = target_source.resolve(&cwd_ctx);
+    let target_path = target_source.resolve(&cwd_ctx)?;
     let target_ctx = WorkspaceContext::resolve(&target_path, project_override.clone())?;
     let target_workspace_dir = target_ctx.active_path().to_path_buf();
 
@@ -3413,6 +3417,38 @@ mod tests {
         assert_eq!(
             conflict_op_for_strategy(SyncStrategy::Merge),
             ConflictOp::Merge
+        );
+    }
+
+    // fo-vsldv.2 — SyncSource::resolve(Workweave) from a primary weave with no
+    // active project must error rather than silently producing a garbage path.
+    #[test]
+    fn sync_source_workweave_resolve_errors_when_no_active_project() {
+        // Build a minimal workspace directory so WorkspaceContext::resolve
+        // succeeds and recognises it as a Weave (no .rwv-active).
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("ws");
+        std::fs::create_dir_all(root.join("projects")).unwrap();
+
+        // Resolve context from the weave root — no .rwv-active, no override.
+        let ctx = crate::workspace::WorkspaceContext::resolve(&root, None).unwrap();
+        assert!(
+            matches!(ctx.location, WorkspaceLocation::Weave { project: None }),
+            "expected Weave with no project, got something else"
+        );
+
+        let src = SyncSource::Workweave(WorkweaveName::new("some-ww"));
+        let err = src.resolve(&ctx).unwrap_err().to_string();
+
+        // require_active_project produces this message when no project is set
+        // and no CWD hint is available.
+        assert!(
+            err.contains("no active project"),
+            "expected 'no active project' error, got: {err}"
+        );
+        assert!(
+            err.contains("rwv activate") || err.contains("--project"),
+            "expected actionable hint (rwv activate / --project) in error, got: {err}"
         );
     }
 
