@@ -61,7 +61,7 @@ rwv sync-to --continue
 rwv sync-to primary --continue
 ```
 
-`--continue` reads the recorded parameters from op-state (target, strategy, `--retire` flag) so you do not need to repeat them. If the original invocation had `--retire`, that cleanup step runs after the resumed operation completes successfully.
+`--continue` validates that your invocation parameters match what op-state recorded (target, strategy, `--retire` flag). Repeat the same flags you used originally — a mismatch errors out so you don't accidentally resume with different intent. If the original invocation had `--retire`, pass it again on the `--continue` resume; the cleanup step runs after the resumed operation completes successfully.
 
 ### Step 3 failure (FF-advance failure)
 
@@ -87,7 +87,7 @@ After abort, both workspaces are in their exact pre-op state. Discarded commits 
 
 **Lock precondition failure.** The operation refused before any repo was touched because `rwv doctor --locked` failed. Fix the unlocked repos (commit, then `rwv lock`, then commit the lock) and re-run. This is not a conflict — there's no savepoint to abort because nothing was mutated.
 
-**`--retire` conflict.** When `rwv sync-to --retire` hits a conflict in steps 1–3, the workweave is preserved (the `--retire` cleanup is not reached until all three steps succeed). Resolve the conflict, then resume with `rwv sync-to --continue` (op-state records that `--retire` was requested, so the cleanup runs after the resumed steps complete successfully).
+**`--retire` conflict.** When `rwv sync-to --retire` hits a conflict in steps 1–3, the workweave is preserved (the `--retire` cleanup is not reached until all three steps succeed). Resolve the conflict, then resume with `rwv sync-to --retire --continue` — pass `--retire` again so the parameter-match check passes. The cleanup runs after the resumed steps complete successfully.
 
 ## Related
 

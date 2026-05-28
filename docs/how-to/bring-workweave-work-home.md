@@ -75,7 +75,7 @@ cd <workweave-root>
 rwv sync-to --continue          # or: rwv sync-to primary --continue
 ```
 
-`--continue` resumes from where the operation paused; it reads the recorded parameters from op-state, so the target and strategy are preserved. Pass `--retire` with `--continue` if the original invocation had it.
+`--continue` resumes from where the operation paused. It validates that the invocation parameters match what op-state recorded (target, strategy, `--retire` flag) — a mismatch errors out so you don't accidentally resume with different intent. Repeat the same flags you used originally; in particular, pass `--retire` again if the original invocation had it.
 
 If step 3 (the parent's FF-advance) fails — rare; requires a concurrent op on the parent between steps 2 and 3 — op-state is similarly preserved. `rwv sync-to --continue` retries step 3.
 
