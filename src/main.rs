@@ -174,28 +174,32 @@ enum Commands {
     /// Align CWD workspace with another workspace's committed rwv.lock
     Sync {
         /// Source workspace: `primary`, a bare workweave name, or a path
-        /// (absolute, or relative to the primary workspace). Required; if you
-        /// meant to land work upward, use `rwv sync-to`.
-        source: SyncSource,
+        /// (absolute, or relative to the primary workspace). Required unless
+        /// `--continue` is passed (source is then read from the in-progress
+        /// op-state file). If you meant to land work upward, use `rwv sync-to`.
+        #[arg(required_unless_present = "do_continue")]
+        source: Option<SyncSource>,
         /// Sync strategy: ff (default), rebase, or merge
-        #[arg(long, default_value = "ff", value_enum)]
+        #[arg(long, default_value = "ff", value_enum,
+              conflicts_with = "do_continue")]
         strategy: SyncStrategy,
         /// Bypass the lock-freshness precondition
-        #[arg(long)]
+        #[arg(long, conflicts_with = "do_continue")]
         force: bool,
         /// Emit per-repo outcomes as JSON (array-of-records with stable per-variant `kind`). See `rwv explain sync`.
-        #[arg(long)]
+        #[arg(long, conflicts_with = "do_continue")]
         json: bool,
         /// Run up to N per-repo manifest syncs in parallel. Under `-j > 1` with `--json`,
         /// output switches to NDJSON (one JSON record per repo, streamed as repos finish).
-        #[arg(short = 'j', long = "jobs")]
+        #[arg(short = 'j', long = "jobs", conflicts_with = "do_continue")]
         jobs: Option<usize>,
         /// Operate on this project instead of the active project (does not change `.rwv-active`)
         #[arg(long)]
         project: Option<String>,
         /// Resume a sync that was interrupted mid-op (e.g. after resolving a conflict).
-        /// Without this flag, an in-progress op-state file causes an error. With this
-        /// flag, the recorded parameters must match — mismatch is itself an error.
+        /// All parameters (source, strategy, force, etc.) are read from the in-progress
+        /// op-state file. No other flags may be passed alongside `--continue` (except
+        /// `--project`). To change parameters mid-op, run `rwv abort` and re-invoke.
         #[arg(long = "continue")]
         do_continue: bool,
     },
@@ -207,34 +211,38 @@ enum Commands {
         /// Target workspace: `primary`, a bare workweave name, or a path
         /// (absolute, or relative to the primary workspace root). Omit to target
         /// the recorded parent from `.rwv-workweave`; errors if not in a workweave.
+        /// Must not be passed alongside `--continue` (target is then read from op-state).
+        #[arg(conflicts_with = "do_continue")]
         target: Option<SyncSource>,
         /// Sync strategy for step 1 (rebase CWD against target). Default: rebase.
         /// ff means CWD must already be strictly ahead of target (no-op step 1).
         /// rebase replays CWD's unique commits onto target's tip.
         /// merge merges target into CWD with an auto-generated commit.
         /// Step 3 (FF-advance target) is always ff regardless of this flag.
-        #[arg(long, default_value = "rebase", value_enum)]
+        #[arg(long, default_value = "rebase", value_enum,
+              conflicts_with = "do_continue")]
         strategy: SyncStrategy,
         /// Bypass the lock-freshness precondition
-        #[arg(long)]
+        #[arg(long, conflicts_with = "do_continue")]
         force: bool,
         /// Land work then delete the workweave on success (requires clean worktree and
         /// manifest repos converged with target after sync-to completes).
-        #[arg(long)]
+        #[arg(long, conflicts_with = "do_continue")]
         retire: bool,
         /// Emit per-repo outcomes as JSON (array-of-records with stable per-variant `kind`). See `rwv explain sync-to`.
-        #[arg(long)]
+        #[arg(long, conflicts_with = "do_continue")]
         json: bool,
         /// Run up to N per-repo manifest syncs in parallel. Under `-j > 1` with `--json`,
         /// output switches to NDJSON (one JSON record per repo, streamed as repos finish).
-        #[arg(short = 'j', long = "jobs")]
+        #[arg(short = 'j', long = "jobs", conflicts_with = "do_continue")]
         jobs: Option<usize>,
         /// Operate on this project instead of the active project (does not change `.rwv-active`)
         #[arg(long)]
         project: Option<String>,
         /// Resume a sync-to that was interrupted mid-op (e.g. after resolving a conflict).
-        /// Without this flag, an in-progress op-state file causes an error. With this
-        /// flag, the recorded parameters must match — mismatch is itself an error.
+        /// All parameters (target, strategy, retire, force, etc.) are read from the
+        /// in-progress op-state file. No other flags may be passed alongside `--continue`
+        /// (except `--project`). To change parameters mid-op, run `rwv abort` and re-invoke.
         #[arg(long = "continue")]
         do_continue: bool,
     },
@@ -562,10 +570,13 @@ fn main() -> anyhow::Result<()> {
                 Some(n) => repoweave::parallel::resolve_jobs(Some(n)),
                 None => 1,
             };
+            // When --continue is set, source is None (read from op-state).
+            // When --continue is absent, source is Some (required by clap).
+            let source_ref = source.as_ref();
             if json {
                 sync::run_sync_json(
                     &cwd,
-                    Some(&source),
+                    source_ref,
                     strategy,
                     force,
                     false,
@@ -576,7 +587,7 @@ fn main() -> anyhow::Result<()> {
             } else {
                 sync::run_sync(
                     &cwd,
-                    Some(&source),
+                    source_ref,
                     strategy,
                     force,
                     false,
@@ -602,39 +613,51 @@ fn main() -> anyhow::Result<()> {
                 Some(n) => repoweave::parallel::resolve_jobs(Some(n)),
                 None => 1,
             };
-            // Resolve target: if None, read .rwv-workweave marker's parent field.
-            let resolved_target = match target {
-                Some(t) => t,
-                None => {
-                    // Bare `rwv sync-to` — must be inside a workweave.
-                    let ctx = repoweave::workspace::WorkspaceContext::resolve(&cwd, None)?;
-                    match &ctx.location {
-                        repoweave::workspace::WorkspaceLocation::Workweave { dir, .. } => {
-                            let marker = repoweave::workspace::WorkweaveMarker::read(dir)?
-                                .ok_or_else(|| {
-                                    anyhow::anyhow!(
-                                        "bare `rwv sync-to` requires a `.rwv-workweave` marker \
-                                         in the workweave; found none at {}",
-                                        dir.display()
-                                    )
-                                })?;
-                            sync::SyncSource::Path(marker.parent)
-                        }
-                        repoweave::workspace::WorkspaceLocation::Weave { .. } => {
-                            anyhow::bail!(
-                                "bare `rwv sync-to` targets the workweave's recorded parent, \
-                                 but CWD ({}) is in the primary weave, not a workweave. \
-                                 Provide a target explicitly.",
-                                cwd.display()
-                            );
+            // Resolve target: if None and not --continue, read .rwv-workweave marker's
+            // parent field. If --continue, target is read from op-state inside
+            // run_sync_to (target is always None when --continue due to clap conflict).
+            let resolved_target = if do_continue {
+                // --continue: target comes from op-state; pass None sentinel.
+                None
+            } else {
+                Some(match target {
+                    Some(t) => t,
+                    None => {
+                        // Bare `rwv sync-to` — must be inside a workweave.
+                        let ctx =
+                            repoweave::workspace::WorkspaceContext::resolve(&cwd, None)?;
+                        match &ctx.location {
+                            repoweave::workspace::WorkspaceLocation::Workweave {
+                                dir, ..
+                            } => {
+                                let marker =
+                                    repoweave::workspace::WorkweaveMarker::read(dir)?
+                                        .ok_or_else(|| {
+                                            anyhow::anyhow!(
+                                                "bare `rwv sync-to` requires a \
+                                                 `.rwv-workweave` marker in the workweave; \
+                                                 found none at {}",
+                                                dir.display()
+                                            )
+                                        })?;
+                                sync::SyncSource::Path(marker.parent)
+                            }
+                            repoweave::workspace::WorkspaceLocation::Weave { .. } => {
+                                anyhow::bail!(
+                                    "bare `rwv sync-to` targets the workweave's recorded \
+                                     parent, but CWD ({}) is in the primary weave, not a \
+                                     workweave. Provide a target explicitly.",
+                                    cwd.display()
+                                );
+                            }
                         }
                     }
-                }
+                })
             };
             if json {
                 sync::run_sync_to_json(
                     &cwd,
-                    &resolved_target,
+                    resolved_target.as_ref(),
                     strategy,
                     force,
                     retire,
@@ -645,7 +668,7 @@ fn main() -> anyhow::Result<()> {
             } else {
                 sync::run_sync_to(
                     &cwd,
-                    &resolved_target,
+                    resolved_target.as_ref(),
                     strategy,
                     force,
                     retire,

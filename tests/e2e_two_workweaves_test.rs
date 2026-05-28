@@ -935,12 +935,12 @@ fn sync_rebase_continue_then_resync_does_not_clobber_user_resolution() {
         std::fs::read_to_string(ww2.project_dir.join("notes/shared.md")).unwrap();
     assert_eq!(resolved_content, "operator-resolved version\n");
 
-    // Now run `rwv sync primary --continue` to resume from the recorded op-state.
-    // The `--continue` flag is required because the previous sync left an op-state
-    // file in the workspace (the new explicit-continue behavior). Phase 1' must NOT
-    // clobber the resolution — already-converged repos are no-ops.
+    // Now run `rwv sync --continue` to resume from the recorded op-state.
+    // --continue is passed alone; all parameters (source, strategy) are read from
+    // the in-progress op-state file. Phase 1' must NOT clobber the resolution —
+    // already-converged repos are no-ops.
     rwv()
-        .args(["sync", "primary", "--strategy", "rebase", "--continue"])
+        .args(["sync", "--continue"])
         .current_dir(&ww2.root)
         .assert()
         .success();

@@ -302,14 +302,47 @@ pub fn check_no_op_in_progress(workspace_dirs: &[&Path]) -> anyhow::Result<()> {
 }
 
 // ---------------------------------------------------------------------------
-// --continue compatibility check
+// --continue: read op-state for resume
+// ---------------------------------------------------------------------------
+
+/// Resume a `--continue` attempt by reading the in-progress op-state.
+///
+/// Returns the recorded [`OpState`] if an op-state file exists in
+/// `workspace_dir`.
+///
+/// Returns an error if:
+/// - No op-state file is present ("no sync/sync-to op in progress to continue").
+/// - A legacy `.rwv-sync-op` marker is present (instructs operator to abort first).
+pub fn resume(workspace_dir: &Path) -> anyhow::Result<OpState> {
+    match read(workspace_dir)? {
+        Some(s) => Ok(s),
+        None => {
+            // Check for legacy marker.
+            if read_legacy(workspace_dir).is_some() {
+                anyhow::bail!(
+                    "a legacy sync marker (`.rwv-sync-op`) is present at {}. \
+                     Run `rwv abort` to discard the old state, then rerun without `--continue`.",
+                    workspace_dir.display()
+                );
+            }
+            anyhow::bail!(
+                "no sync/sync-to op in progress to continue at {}. \
+                 If you meant to start a new op, omit `--continue`.",
+                workspace_dir.display()
+            );
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// --continue compatibility check (kept for unit tests; not called by sync.rs)
 // ---------------------------------------------------------------------------
 
 /// Parameters extracted from a `rwv sync` invocation for comparison with an
 /// existing op-state file.
 ///
-/// All fields must match the recorded op-state for `--continue` to be valid.
-/// A mismatch produces a descriptive error naming the conflicting fields.
+/// Retained for unit-test coverage; the sync engine no longer calls
+/// [`check_continue`] — it uses [`resume`] instead.
 #[derive(Debug, Clone)]
 pub struct SyncParams {
     pub verb: OpVerb,
@@ -321,15 +354,10 @@ pub struct SyncParams {
     pub retire: bool,
 }
 
-/// Validate a `--continue` attempt.
+/// Validate a `--continue` attempt against a set of expected parameters.
 ///
-/// Returns the recorded [`OpState`] if:
-/// - An op-state file exists in `workspace_dir`.
-/// - All `params` fields match the recorded state.
-///
-/// Returns an error if:
-/// - No op-state file is present ("no op to continue").
-/// - Any parameter mismatches ("in-progress op was ... got ...").
+/// Kept for unit-test coverage. The sync engine uses [`resume`] instead and
+/// reads all parameters from the op-state file directly.
 pub fn check_continue(workspace_dir: &Path, params: &SyncParams) -> anyhow::Result<OpState> {
     let state = match read(workspace_dir)? {
         Some(s) => s,

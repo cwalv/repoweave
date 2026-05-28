@@ -6,7 +6,7 @@
 use crate::git::{git_command, GitVcs};
 use crate::lock::{commit_lock_file_with_message, generate_lock};
 use crate::manifest::{LockFile, Manifest, Project, ProjectName, RepoPath, WorkweaveName};
-use crate::op_state::{self, OpState, OpVerb, SyncParams};
+use crate::op_state::{self, OpState};
 use crate::parallel::run_in_parallel;
 use crate::vcs::{ConflictOp, ResolvedRevisionId, Vcs, VcsError, VcsErrorOutput};
 use crate::workspace::{WorkspaceContext, WorkspaceLocation};
@@ -74,6 +74,21 @@ impl fmt::Display for SyncStrategy {
             Self::Rebase => "rebase",
             Self::Merge => "merge",
         })
+    }
+}
+
+impl FromStr for SyncStrategy {
+    type Err = anyhow::Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "ff" => Ok(Self::Ff),
+            "rebase" => Ok(Self::Rebase),
+            "merge" => Ok(Self::Merge),
+            other => anyhow::bail!(
+                "unknown sync strategy `{other}` in op-state; expected ff, rebase, or merge"
+            ),
+        }
     }
 }
 
@@ -1508,7 +1523,7 @@ fn run_sync_impl_with_op_id(
     source: Option<&SyncSource>,
     strategy: SyncStrategy,
     force: bool,
-    retire: bool,
+    _retire: bool,
     project_override: Option<ProjectName>,
     jobs: usize,
     sink: &OutputSink<'_>,
@@ -1516,34 +1531,55 @@ fn run_sync_impl_with_op_id(
     pre_existing_op_id: Option<&OpId>,
 ) -> anyhow::Result<()> {
     let emit_text = sink.emit_text();
-    // Resolve CWD and source workspaces.
+    // Resolve CWD workspace.
     let ctx = WorkspaceContext::resolve(cwd, project_override.clone())?;
     let workspace_dir = ctx.active_path().to_path_buf();
 
-    // Resolve sync target: explicit source if given, else parent from marker.
-    // Bare `rwv sync` only makes sense inside a workweave; the helpful error
-    // here is the entire reason we bothered to make `source` optional.
-    let resolved_source: SyncSource = match source {
-        Some(s) => s.clone(),
-        None => match &ctx.location {
-            WorkspaceLocation::Workweave { dir, .. } => {
-                let marker = crate::workspace::WorkweaveMarker::read(dir)?.ok_or_else(|| {
-                    anyhow::anyhow!(
-                        "bare `rwv sync` requires a `.rwv-workweave` marker in the workweave; \
-                         found none at {} (re-create the workweave or pass an explicit source)",
-                        dir.display()
-                    )
-                })?;
-                SyncSource::Path(marker.parent)
-            }
-            WorkspaceLocation::Weave { .. } => {
-                anyhow::bail!(
-                    "bare `rwv sync` syncs to the workweave's recorded parent, but CWD ({}) \
-                     is in the primary weave, not a workweave; pass an explicit source",
-                    cwd.display()
-                );
-            }
-        },
+    // When --continue (and no pre_existing_op_id), read op-state early so we
+    // can derive the source path and strategy from the recorded values rather
+    // than from CLI arguments (which are not passed when --continue is set).
+    // We also need to derive `strategy` from op-state in this path.
+    let (resolved_source, strategy, pre_read_op_state): (
+        SyncSource,
+        SyncStrategy,
+        Option<crate::op_state::OpState>,
+    ) = if do_continue && pre_existing_op_id.is_none() {
+        let recorded = op_state::resume(&workspace_dir)?;
+        let strat = recorded
+            .strategy
+            .parse::<SyncStrategy>()
+            .map_err(|e| anyhow::anyhow!("op-state has invalid strategy: {e}"))?;
+        let src = SyncSource::Path(recorded.source.clone());
+        (src, strat, Some(recorded))
+    } else {
+        // Resolve sync source: explicit if given, else parent from marker.
+        // Bare `rwv sync` only makes sense inside a workweave; the helpful error
+        // here is the entire reason we bothered to make `source` optional.
+        let resolved = match source {
+            Some(s) => s.clone(),
+            None => match &ctx.location {
+                WorkspaceLocation::Workweave { dir, .. } => {
+                    let marker =
+                        crate::workspace::WorkweaveMarker::read(dir)?.ok_or_else(|| {
+                            anyhow::anyhow!(
+                                "bare `rwv sync` requires a `.rwv-workweave` marker in the \
+                                 workweave; found none at {} (re-create the workweave or pass \
+                                 an explicit source)",
+                                dir.display()
+                            )
+                        })?;
+                    SyncSource::Path(marker.parent)
+                }
+                WorkspaceLocation::Weave { .. } => {
+                    anyhow::bail!(
+                        "bare `rwv sync` syncs to the workweave's recorded parent, but CWD \
+                         ({}) is in the primary weave, not a workweave; pass an explicit source",
+                        cwd.display()
+                    );
+                }
+            },
+        };
+        (resolved, strategy, None)
     };
 
     let source_path = resolved_source.resolve(&ctx)?;
@@ -1686,9 +1722,10 @@ fn run_sync_impl_with_op_id(
     //
     // - `--continue` absent, no op-state → fresh start (normal path below).
     // - `--continue` absent, op-state present → refuse with "in-progress" error.
-    // - `--continue` present, op-state absent → error "nothing to continue".
-    // - `--continue` present, op-state present, params match → resume (fall through).
-    // - `--continue` present, op-state present, params mismatch → error.
+    // - `--continue` present, op-state absent → error "no op in progress to continue".
+    // - `--continue` present, op-state present → resume; all parameters are read from
+    //   the recorded state (source, strategy). No mismatch check — `--continue` is
+    //   exclusive: the operator cannot pass conflicting flags (enforced at parse time).
     //
     // When `pre_existing_op_id` is `Some`, the caller (sync-to step 1) has already
     // set up op-state and savepoints — bypass the check/write entirely.
@@ -1697,16 +1734,12 @@ fn run_sync_impl_with_op_id(
         // Caller-managed op-state: use the provided id, skip all op-state machinery.
         op_id = existing_id.clone();
     } else if do_continue {
-        // Build the params struct for comparison with the recorded state.
-        let continue_params = SyncParams {
-            verb: OpVerb::Sync,
-            strategy: strategy.to_string(),
-            source: source_workspace_dir.clone(),
-            target: workspace_dir.clone(),
-            retire,
-        };
-        let recorded = op_state::check_continue(&workspace_dir, &continue_params)?;
-        op_id = OpId::from_string(recorded.id);
+        // Resume: all parameters were already read from op-state above (in the
+        // `pre_read_op_state` path). Unwrap is safe: `pre_read_op_state` is
+        // `Some` whenever `do_continue && pre_existing_op_id.is_none()`.
+        let recorded = pre_read_op_state
+            .expect("pre_read_op_state must be Some when do_continue && no pre_existing_op_id");
+        op_id = OpId::from_string(recorded.id.clone());
         if emit_text {
             eprintln!(
                 "continuing sync (op {op_id}, mid `{phase}`)",
@@ -2620,20 +2653,21 @@ fn run_sync_json_impl(
 
 /// Execute `rwv sync-to <target>`.
 ///
-/// `target` is the workspace to advance. Step 1 calls the existing sync
-/// engine to rebase/merge CWD against target (CWD absorbs target's history
-/// with CWD's commits on top). Step 2 auto-relocks if tips moved. Step 3
-/// fast-forwards target's repos to CWD's converged tips.
+/// `target` is the workspace to advance, or `None` when `--continue` is set
+/// (target is then read from the in-progress op-state file). Step 1 calls the
+/// existing sync engine to rebase/merge CWD against target (CWD absorbs
+/// target's history with CWD's commits on top). Step 2 auto-relocks if tips
+/// moved. Step 3 fast-forwards target's repos to CWD's converged tips.
 ///
 /// If `retire` is true and all steps succeed, the workweave is deleted after
 /// step 3 (requires clean worktree and manifest repos converged with target).
 ///
-/// `do_continue` resumes a mid-op sync-to by reading the recorded phase
-/// from op-state and skipping already-completed steps.
+/// `do_continue` resumes a mid-op sync-to by reading the recorded phase and
+/// all parameters from op-state, skipping already-completed steps.
 #[allow(clippy::too_many_arguments)]
 pub fn run_sync_to(
     cwd: &Path,
-    target: &SyncSource,
+    target: Option<&SyncSource>,
     strategy: SyncStrategy,
     force: bool,
     retire: bool,
@@ -2666,7 +2700,7 @@ pub fn run_sync_to(
 #[allow(clippy::too_many_arguments)]
 pub fn run_sync_to_json(
     cwd: &Path,
-    target: &SyncSource,
+    target: Option<&SyncSource>,
     strategy: SyncStrategy,
     force: bool,
     retire: bool,
@@ -2714,7 +2748,7 @@ pub fn run_sync_to_json(
 #[allow(clippy::too_many_arguments)]
 fn run_sync_to_impl(
     cwd: &Path,
-    target_source: &SyncSource,
+    target_source: Option<&SyncSource>,
     strategy: SyncStrategy,
     force: bool,
     retire: bool,
@@ -2729,13 +2763,99 @@ fn run_sync_to_impl(
     let cwd_ctx = WorkspaceContext::resolve(cwd, project_override.clone())?;
     let cwd_workspace_dir = cwd_ctx.active_path().to_path_buf();
 
-    // Resolve target workspace.
-    let target_path = target_source.resolve(&cwd_ctx)?;
-    let target_ctx = WorkspaceContext::resolve(&target_path, project_override.clone())?;
-    let target_workspace_dir = target_ctx.active_path().to_path_buf();
+    // --continue / pre-op guard.
+    //
+    // When `--continue` is set (`do_continue`), read ALL parameters from the
+    // in-progress op-state file. The CLI has already rejected any co-flags via
+    // clap `conflicts_with`, so `target_source`, `strategy`, and `retire` from
+    // the function signature must not be used in this path.
+    //
+    // When not `--continue`, `target_source` is always `Some` (the caller
+    // resolved it) and `strategy`/`retire`/`force` come from function params.
+    struct ResolvedParams {
+        op_id: OpId,
+        resume_phase: Option<crate::op_state::OpPhase>,
+        target_path: PathBuf,
+        target_workspace_dir: PathBuf,
+        strategy: SyncStrategy,
+        retire: bool,
+    }
+
+    let params: ResolvedParams = if do_continue {
+        // Resume: read all parameters from the recorded op-state.
+        let recorded = op_state::resume(&cwd_workspace_dir)?;
+        let oid = OpId::from_string(recorded.id.clone());
+        let phase_display = recorded.phase.to_string();
+        let phase = Some(recorded.phase);
+        // Derive target, strategy, retire from recorded state.
+        let tgt_path = recorded.target.clone();
+        let strat = recorded
+            .strategy
+            .parse::<SyncStrategy>()
+            .map_err(|e| anyhow::anyhow!("op-state has invalid strategy: {e}"))?;
+        let ret = recorded.retire;
+        if emit_text {
+            eprintln!("continuing sync-to (op {oid}, mid `{phase_display}`)",);
+        }
+        let tgt_ctx = WorkspaceContext::resolve(&tgt_path, project_override.clone())?;
+        let tgt_workspace_dir = tgt_ctx.active_path().to_path_buf();
+        ResolvedParams {
+            op_id: oid,
+            resume_phase: phase,
+            target_path: tgt_path,
+            target_workspace_dir: tgt_workspace_dir,
+            strategy: strat,
+            retire: ret,
+        }
+    } else {
+        // Fresh start: target_source is Some (the caller resolved it).
+        let ts = target_source.expect(
+            "target_source must be Some for non-continue sync-to invocations",
+        );
+        let tgt_path = ts.resolve(&cwd_ctx)?;
+        let tgt_ctx = WorkspaceContext::resolve(&tgt_path, project_override.clone())?;
+        let tgt_workspace_dir = tgt_ctx.active_path().to_path_buf();
+
+        // Concurrency guard: check both CWD and target.
+        op_state::check_no_op_in_progress(&[
+            cwd_workspace_dir.as_path(),
+            tgt_workspace_dir.as_path(),
+        ])?;
+
+        let oid = OpId::new_now();
+
+        // Write op-state to both workspaces.
+        let state = OpState::new_sync_to(
+            &oid,
+            strategy,
+            cwd_workspace_dir.clone(),
+            tgt_workspace_dir.clone(),
+            retire,
+        );
+        op_state::write(&cwd_workspace_dir, &state)
+            .map_err(|e| anyhow::anyhow!("failed to write op-state to CWD: {e}"))?;
+        op_state::write(&tgt_workspace_dir, &state)
+            .map_err(|e| anyhow::anyhow!("failed to write op-state to target: {e}"))?;
+        ResolvedParams {
+            op_id: oid,
+            resume_phase: None,
+            target_path: tgt_path,
+            target_workspace_dir: tgt_workspace_dir,
+            strategy,
+            retire,
+        }
+    };
+
+    let op_id = params.op_id;
+    let resume_phase = params.resume_phase;
+    let target_workspace_dir = params.target_workspace_dir;
+    let target_path = params.target_path;
+    let strategy = params.strategy;
+    let retire = params.retire;
 
     // Find project names.
     let cwd_project_name = find_project_name(&cwd_ctx)?;
+    let target_ctx = WorkspaceContext::resolve(&target_path, project_override.clone())?;
     let target_project_name = find_project_name(&target_ctx)?;
 
     // Projects must match.
@@ -2750,49 +2870,6 @@ fn run_sync_to_impl(
     let target_project_dir = target_workspace_dir
         .join("projects")
         .join(&target_project_name);
-
-    // --continue / pre-op guard.
-    let op_id: OpId;
-    let resume_phase: Option<crate::op_state::OpPhase>;
-
-    if do_continue {
-        let continue_params = crate::op_state::SyncParams {
-            verb: crate::op_state::OpVerb::SyncTo,
-            strategy: strategy.to_string(),
-            source: cwd_workspace_dir.clone(),
-            target: target_workspace_dir.clone(),
-            retire,
-        };
-        let recorded = op_state::check_continue(&cwd_workspace_dir, &continue_params)?;
-        op_id = OpId::from_string(recorded.id.clone());
-        let phase_display = recorded.phase.to_string();
-        resume_phase = Some(recorded.phase);
-        if emit_text {
-            eprintln!("continuing sync-to (op {op_id}, mid `{phase_display}`)",);
-        }
-    } else {
-        // Concurrency guard: check both CWD and target.
-        op_state::check_no_op_in_progress(&[
-            cwd_workspace_dir.as_path(),
-            target_workspace_dir.as_path(),
-        ])?;
-
-        op_id = OpId::new_now();
-
-        // Write op-state to both workspaces.
-        let state = OpState::new_sync_to(
-            &op_id,
-            strategy,
-            cwd_workspace_dir.clone(),
-            target_workspace_dir.clone(),
-            retire,
-        );
-        op_state::write(&cwd_workspace_dir, &state)
-            .map_err(|e| anyhow::anyhow!("failed to write op-state to CWD: {e}"))?;
-        op_state::write(&target_workspace_dir, &state)
-            .map_err(|e| anyhow::anyhow!("failed to write op-state to target: {e}"))?;
-        resume_phase = None;
-    }
 
     // For --strategy=ff: step 1 is a no-op only if CWD is strictly ahead of target.
     // If CWD is not strictly ahead, bail with an actionable error.
@@ -2892,9 +2969,8 @@ fn run_sync_to_impl(
                 "sync-to step 1 failed: {e}\n\
                  \n\
                  Op-state has been left in both workspaces.\n\
-                 Resolve conflicts, then: `rwv sync-to {} --continue`\n\
+                 Resolve conflicts, then: `rwv sync-to --continue`\n\
                  To roll everything back: `rwv abort`",
-                target_source,
             );
         }
 
@@ -3015,8 +3091,7 @@ fn run_sync_to_impl(
             "sync-to step 3 (FF-advance target) failed for one or more repos (see above).\n\
              This should not happen after a clean step 1; possible concurrent modification.\n\
              Op-state remains in both workspaces.\n\
-             Rerun `rwv sync-to {} --continue` after resolving, or `rwv abort` to roll back.",
-            target_source,
+             Rerun `rwv sync-to --continue` after resolving, or `rwv abort` to roll back.",
         );
     }
 

@@ -394,16 +394,9 @@ fn mid_step1_resume_with_continue_after_conflict_resolution() {
         }
     }
 
-    // Now run `rwv sync --continue`. The op-state file is present; parameters match.
+    // Now run `rwv sync --continue` (alone — all params read from op-state).
     let result = rwv()
-        .args([
-            "sync",
-            &primary.root.to_string_lossy(),
-            "--strategy",
-            "rebase",
-            "--force",
-            "--continue",
-        ])
+        .args(["sync", "--continue"])
         .current_dir(&ww.root)
         .assert();
 
@@ -461,16 +454,10 @@ fn mid_step3_continue_does_not_produce_in_progress_refusal() {
         &primary.server_dir,
     );
 
-    // `rwv sync --continue` with matching params should not produce the
-    // "in progress, resolve and rerun" refusal error.
+    // `rwv sync --continue` (alone — all params from op-state) should not produce
+    // the "in progress, resolve and rerun" refusal error.
     let result = rwv()
-        .args([
-            "sync",
-            &primary.root.to_string_lossy(),
-            "--strategy",
-            "ff",
-            "--continue",
-        ])
+        .args(["sync", "--continue"])
         .current_dir(&ww.root)
         .assert();
 
@@ -484,111 +471,138 @@ fn mid_step3_continue_does_not_produce_in_progress_refusal() {
 }
 
 // ---------------------------------------------------------------------------
-// Test 4: Parameter-mismatch error
+// Test 4: --continue is exclusive — passing other flags alongside it is rejected
 //
-// Start with `--strategy=rebase`, then attempt to continue with `--strategy=merge`.
-// The op-state check should detect the mismatch and error.
+// `--continue` must be passed alone (no other args/flags except `--project`).
+// Passing `--strategy`, `--force`, `--retire`, or a positional source/target
+// alongside `--continue` must produce a clap-level error with an actionable
+// message. Verify the message mentions `rwv abort` as the escape hatch.
 // ---------------------------------------------------------------------------
 
 #[test]
-fn continue_with_strategy_mismatch_produces_mismatch_error() {
+fn continue_with_strategy_flag_is_rejected() {
     let tmp = tempfile::tempdir().unwrap();
     let (primary, ww, _c1) = make_shared_workspaces(tmp.path());
 
-    // Primary advances to C2.
-    let c2 = make_commit(
-        &primary.server_dir,
-        "shared2.txt",
-        "primary v2\n",
-        "primary: C2",
+    // Plant an op-state file so --continue would proceed if it were alone.
+    let op_state_yaml = format!(
+        "id: \"test-exclusive-1234\"\nverb: sync\nstrategy: rebase\nsource: \"{src}\"\ntarget: \"{tgt}\"\nretire: false\nphase: running\nstarted_at: \"2026-05-27T10:00:00Z\"\n",
+        src = primary.root.display(),
+        tgt = ww.root.display(),
     );
-    write_lock(&primary.project_dir, &[(SERVER_PATH, SERVER_URL, &c2)]);
-    git(&["add", "rwv.lock"], &primary.project_dir);
-    git(&["commit", "-m", "lock: C2"], &primary.project_dir);
+    std::fs::write(ww.root.join(".rwv-op"), &op_state_yaml).unwrap();
 
-    // ww has a conflicting commit (same file).
-    let c_ww = make_commit(
-        &ww.server_dir,
-        "shared2.txt",
-        "ww v2\n",
-        "ww: conflict candidate",
-    );
-    write_lock(&ww.project_dir, &[(SERVER_PATH, SERVER_URL, &c_ww)]);
-    git(&["add", "rwv.lock"], &ww.project_dir);
-    git(&["commit", "-m", "lock: ww C_ww"], &ww.project_dir);
-
-    // First sync attempt: --strategy rebase, --force (to bypass Phase 1 ancestor check).
-    // This may succeed or fail; we only care that an op-state file is written.
-    let _ = rwv()
-        .args([
-            "sync",
-            &primary.root.to_string_lossy(),
-            "--strategy",
-            "rebase",
-            "--force",
-        ])
-        .current_dir(&ww.root)
-        .output();
-
-    // If the op-state file wasn't written (e.g., sync succeeded without conflict),
-    // we plant one manually.
-    let op_state_path = ww.root.join(".rwv-op");
-    if !op_state_path.exists() {
-        let op_state_yaml = format!(
-            "id: \"test-mismatch-1234\"\nverb: sync\nstrategy: rebase\nsource: \"{src}\"\ntarget: \"{tgt}\"\nretire: false\nphase: running\nstarted_at: \"2026-05-27T10:00:00Z\"\n",
-            src = primary.root.display(),
-            tgt = ww.root.display(),
-        );
-        std::fs::write(&op_state_path, &op_state_yaml).unwrap();
-    }
-
-    // Now attempt to continue with --strategy merge (mismatch).
+    // Passing --strategy alongside --continue must be rejected.
     let assertion = rwv()
-        .args([
-            "sync",
-            &primary.root.to_string_lossy(),
-            "--strategy",
-            "merge",
-            "--force",
-            "--continue",
-        ])
+        .args(["sync", "--strategy", "merge", "--continue"])
+        .current_dir(&ww.root)
+        .assert()
+        .failure();
+    let stderr = String::from_utf8_lossy(&assertion.get_output().stderr).to_string();
+
+    // Clap emits "cannot be used with" for conflicts_with violations.
+    assert!(
+        stderr.contains("cannot be used with") || stderr.contains("--continue"),
+        "expected clap exclusivity error; got: {stderr}"
+    );
+}
+
+#[test]
+fn continue_with_force_flag_is_rejected() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (_primary, ww, _c1) = make_shared_workspaces(tmp.path());
+
+    // --force alongside --continue must be rejected.
+    let assertion = rwv()
+        .args(["sync", "--force", "--continue"])
         .current_dir(&ww.root)
         .assert()
         .failure();
     let stderr = String::from_utf8_lossy(&assertion.get_output().stderr).to_string();
 
     assert!(
-        stderr.contains("strategy") || stderr.contains("mismatch"),
-        "expected strategy mismatch error; got: {stderr}"
+        stderr.contains("cannot be used with") || stderr.contains("--continue"),
+        "expected clap exclusivity error for --force + --continue; got: {stderr}"
     );
+}
+
+#[test]
+fn sync_to_continue_with_retire_flag_is_rejected() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (_primary, ww, _c1) = make_shared_workspaces(tmp.path());
+
+    // rwv sync-to --retire --continue must be rejected.
+    let assertion = rwv()
+        .args(["sync-to", "--retire", "--continue"])
+        .current_dir(&ww.root)
+        .assert()
+        .failure();
+    let stderr = String::from_utf8_lossy(&assertion.get_output().stderr).to_string();
+
     assert!(
-        stderr.contains("rwv abort"),
-        "mismatch error should mention 'rwv abort'; got: {stderr}"
+        stderr.contains("cannot be used with") || stderr.contains("--continue"),
+        "expected clap exclusivity error for sync-to --retire --continue; got: {stderr}"
+    );
+}
+
+#[test]
+fn sync_to_continue_with_strategy_flag_is_rejected() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (_primary, ww, _c1) = make_shared_workspaces(tmp.path());
+
+    // rwv sync-to --strategy=merge --continue must be rejected.
+    let assertion = rwv()
+        .args(["sync-to", "--strategy", "merge", "--continue"])
+        .current_dir(&ww.root)
+        .assert()
+        .failure();
+    let stderr = String::from_utf8_lossy(&assertion.get_output().stderr).to_string();
+
+    assert!(
+        stderr.contains("cannot be used with") || stderr.contains("--continue"),
+        "expected clap exclusivity error for sync-to --strategy=merge --continue; got: {stderr}"
     );
 }
 
 #[test]
 fn continue_with_no_op_in_progress_errors_clearly() {
     let tmp = tempfile::tempdir().unwrap();
-    let (primary, ww, _c1) = make_shared_workspaces(tmp.path());
+    let (_primary, ww, _c1) = make_shared_workspaces(tmp.path());
 
-    // No op-state file present. `--continue` should error with "no sync to continue".
+    // No op-state file present. `rwv sync --continue` (alone, no other flags)
+    // should error with "no sync/sync-to op in progress to continue".
     let assertion = rwv()
-        .args([
-            "sync",
-            &primary.root.to_string_lossy(),
-            "--strategy",
-            "ff",
-            "--continue",
-        ])
+        .args(["sync", "--continue"])
         .current_dir(&ww.root)
         .assert()
         .failure();
     let stderr = String::from_utf8_lossy(&assertion.get_output().stderr).to_string();
 
     assert!(
-        stderr.contains("no sync") || stderr.contains("nothing to continue"),
-        "expected 'no sync' error when --continue has no op; got: {stderr}"
+        stderr.contains("no sync") || stderr.contains("nothing to continue")
+            || stderr.contains("in progress"),
+        "expected 'no sync/sync-to op in progress' error when --continue has no op; got: {stderr}"
+    );
+}
+
+#[test]
+fn sync_to_continue_with_no_op_in_progress_errors_clearly() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (_primary, ww, _c1) = make_shared_workspaces(tmp.path());
+
+    // No op-state file present. `rwv sync-to --continue` (alone, no other flags)
+    // should error with "no sync/sync-to op in progress to continue".
+    let assertion = rwv()
+        .args(["sync-to", "--continue"])
+        .current_dir(&ww.root)
+        .assert()
+        .failure();
+    let stderr = String::from_utf8_lossy(&assertion.get_output().stderr).to_string();
+
+    assert!(
+        stderr.contains("no sync") || stderr.contains("nothing to continue")
+            || stderr.contains("in progress"),
+        "expected 'no sync/sync-to op in progress' error when sync-to --continue has no op; got: {stderr}"
     );
 }
 

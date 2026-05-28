@@ -681,13 +681,9 @@ fn sync_to_continue_from_step3_ff() {
     assert_eq!(primary_tip, ww_tip);
 
     // --continue with no op-state should fail with "nothing to continue".
+    // --continue must be passed alone (exclusive); no target or --strategy.
     let err_output = rwv()
-        .args([
-            "sync-to",
-            &primary.root.to_string_lossy(),
-            "--strategy=ff",
-            "--continue",
-        ])
+        .args(["sync-to", "--continue"])
         .current_dir(&ww.root)
         .assert()
         .failure()
@@ -697,8 +693,9 @@ fn sync_to_continue_from_step3_ff() {
     assert!(
         stderr.contains("no sync")
             || stderr.contains("nothing to continue")
-            || stderr.contains("no sync/sync-to"),
-        "expected 'no sync' or 'nothing to continue' error; got:\n{stderr}"
+            || stderr.contains("no sync/sync-to")
+            || stderr.contains("in progress"),
+        "expected 'no sync/sync-to op in progress' error; got:\n{stderr}"
     );
 }
 
