@@ -2,31 +2,33 @@
 
 ## Purpose
 
-Replicate accepted commits between two workspaces — typically a workweave
-and its parent — with `--strategy=ff|rebase|merge` applied uniformly across
-the manifest's repos. The source workspace's `rwv.lock` drives Phase 2:
-each manifest repo in the destination is advanced to the SHA the source has
-locked. Phase 1' then replays the destination's unique project-repo commits
-onto the source's tip (with `rwv.lock` excluded so lock-only commits become
-no-ops). Phase 3 regenerates the destination's `rwv.lock` from the
-now-merged manifest tips and commits it. `--retire` syncs the current
-workweave back to its parent and deletes it on success. Per-repo conflicts
-are reported with non-zero exit; already-converged repos are no-ops, so
-re-runs are cheap.
+Absorb a named workspace's committed state into CWD. `<source>` is required:
+`rwv sync` always names an explicit source (`primary`, a bare workweave name,
+or a path). The source workspace's `rwv.lock` drives Phase 2: each manifest
+repo in CWD is advanced to the SHA the source has locked. Phase 1' then
+replays CWD's unique project-repo commits onto the source's tip (with
+`rwv.lock` excluded so lock-only commits become no-ops). Phase 3 regenerates
+CWD's `rwv.lock` from the now-merged manifest tips and commits it. Per-repo
+conflicts are reported with non-zero exit; already-converged repos are
+no-ops, so re-runs are cheap.
 
 The wire shape is engineered for agent consumption: each per-repo outcome
 is a tagged record whose `kind` tells the agent what to do next (retry,
 abort, escalate to a human). Failures embed a `failure` sub-record with its
 own variant tag (e.g. `rebase-failed`, `ff-impossible`).
 
+To push CWD's state into a target workspace instead (the landing direction),
+use `rwv sync-to`. See [sync semantics](../explanation/joints/sync-semantics.md)
+for the direction-explicit pair contract.
+
 ## Invocation
 
 ```
-rwv sync [<source>] [--json] [--strategy <ff|rebase|merge>] [-j <N>] [--force] [--retire] [--project <name>]
+rwv sync <source> [--json] [--strategy <ff|rebase|merge>] [-j <N>] [--force] [--project <name>]
 ```
 
 - `<source>` is the source workspace: `primary`, a bare workweave name, or
-  a path. Omit to sync to the workweave's recorded parent.
+  a path. Required — `rwv sync` has no auto-target.
 - `--json` emits machine-readable output (see Output below).
 - `--strategy` picks the reconciliation strategy (`ff` default, `rebase`,
   or `merge`). `rebase`/`merge` replay CWD's project commits onto the

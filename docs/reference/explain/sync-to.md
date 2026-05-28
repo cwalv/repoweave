@@ -55,15 +55,20 @@ or use `rwv abort` to roll back both workspaces.
 ## Invocation
 
 ```
-rwv sync-to <target> [--json] [--strategy <ff|rebase|merge>] [-j <N>] [--force] [--project <name>] [--continue]
+rwv sync-to [<target>] [--json] [--strategy <ff|rebase|merge>] [-j <N>] [--force] [--retire] [--project <name>] [--continue]
 ```
 
 - `<target>` is the target workspace: `primary`, a bare workweave name, or
-  a path (absolute, or relative to the primary workspace root).
+  a path (absolute, or relative to the primary workspace root). Omit inside
+  a workweave to auto-target the parent recorded in `.rwv-workweave`. Required
+  in a primary weave.
 - `--json` emits machine-readable output (see Output below).
 - `--strategy` picks the step-1 strategy (`rebase` default, `ff`, or `merge`).
   Step 3 is always FF regardless of this flag.
 - `--force` bypasses the lock-freshness precondition.
+- `--retire` deletes the current workweave on success (after all three steps
+  complete). Requires a workweave context; emits a warning and is a no-op in
+  a primary weave. Use to close out a workweave in one step.
 - `-j <N>` runs up to `N` per-repo manifest syncs in parallel during step 1.
   Default is `1` (serial).
 - `--continue` resumes a sync-to that was interrupted mid-op (e.g. after
@@ -546,7 +551,19 @@ Schema:
 
 ## Examples
 
-Advance primary from a workweave:
+Advance the recorded parent (bare form, inside a workweave):
+
+```
+rwv sync-to
+```
+
+Land work and delete the workweave in one step:
+
+```
+rwv sync-to --retire
+```
+
+Advance an explicit target:
 
 ```
 rwv sync-to primary
@@ -582,3 +599,5 @@ rwv abort
   `rwv abort`.
 - *missing-replay-exclusion* — the project repo doesn't have `rwv.lock merge=ours`
   in `.gitattributes`. Run `rwv doctor --fix`.
+- *bare sync-to in primary weave* — `rwv sync-to` (no target) requires a
+  workweave context. Provide an explicit `<target>` or run from inside a workweave.

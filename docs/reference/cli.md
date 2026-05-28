@@ -81,18 +81,48 @@ Remove from `rwv.yaml`, re-run activation (regenerates ecosystem workspace files
 
 ### `rwv sync <source> [...]`
 
-Align CWD's workspace with `<source>`'s committed `rwv.lock`. `<source>` is a workspace name (`primary`, a workweave name) or a path. Bare `rwv sync` (no `<source>`) syncs to the parent recorded in `.rwv-workweave`.
+Absorb `<source>`'s committed state into CWD. `<source>` is required: a workspace name (`primary`, a workweave name) or a path. Bare `rwv sync` (no `<source>`) is an error with a hint pointing at `rwv sync-to`.
 
 | Flag | Effect |
 |---|---|
 | `--strategy ff\|rebase\|merge` | Default `ff`. Applies uniformly to project and manifest repos; `rwv.lock` is excluded from project-repo merge inputs and regenerated in Phase 3 |
-| `--retire` | After successful sync, delete the workweave |
 | `--force` | Bypass lock-freshness precondition; hard-reset project repo to source tip |
 | `--json` / `-j N` | Structured output / parallel sync (NDJSON when N > 1) |
 
-See [sync semantics](../explanation/joints/sync-semantics.md) for the three-phase model.
+See [sync semantics](../explanation/joints/sync-semantics.md) for the three-phase model and the direction-explicit pair with `rwv sync-to`.
 
 Anchored by `tests/doc_claims_sync_test.rs`.
+
+### `rwv sync-to [<target>] [...]`
+
+Advance `<target>` to CWD's tip via a three-step orchestration: (1) rebase/merge CWD against target; (2) auto-relock CWD if manifest tips moved; (3) FF-advance target to CWD's new tip. All rewriting happens in CWD; target is only ever advanced via fast-forward.
+
+`<target>` is a workspace name (`primary`, a workweave name) or a path. Omit inside a workweave to auto-target the parent recorded in `.rwv-workweave`. Required in a primary weave.
+
+| Flag | Effect |
+|---|---|
+| `--strategy ff\|rebase\|merge` | Default `rebase` (unlike `rwv sync`). Step 3 is always FF regardless |
+| `--retire` | Delete the workweave on success. Requires a workweave context; warning + no-op in a primary weave |
+| `--force` | Bypass lock-freshness precondition |
+| `--continue` | Resume after resolving a mid-op conflict |
+| `--json` / `-j N` | Structured output / parallel step-1 sync (NDJSON when N > 1) |
+
+See [sync semantics](../explanation/joints/sync-semantics.md) for the full three-step model, strategy semantics, and the `--retire` contract.
+
+Anchored by `tests/doc_claims_sync_test.rs` (shared schema; `$schema` URL differs).
+
+### Direction conventions: `sync` vs. `sync-to`
+
+`rwv sync` and `rwv sync-to` are a direction-explicit pair. The verb names where CWD's state goes — *to* CWD, or *from* CWD *to* a named target.
+
+| Invocation | CWD context | State source | What changes |
+|---|---|---|---|
+| `rwv sync <source>` | any workspace | `<source>` | CWD absorbs source's state; CWD's commits land on top |
+| `rwv sync-to <target>` | any workspace | CWD | both: CWD aligns with target's state first (CWD's commits on top); target then FF-advances to CWD's new tip |
+| `rwv sync-to` (bare) | workweave | CWD | same as above; target = parent recorded in `.rwv-workweave` |
+| `rwv sync-to --retire` | workweave | CWD | same as above, plus delete the workweave on success |
+
+The `<source>` argument in `rwv sync` is always required — there is no auto-target. The `<target>` argument in `rwv sync-to` is optional inside a workweave (auto-targets parent); required in a primary weave.
 
 ### `rwv push [...]`
 
@@ -271,6 +301,7 @@ Every JSON-capable verb emits a self-describing envelope:
 | `rwv status --json` | `repos` |
 | `rwv doctor --json` | `violations` |
 | `rwv sync --json` | `outcomes` |
+| `rwv sync-to --json` | `outcomes` |
 
 Schemas live at `docs/reference/schemas/<verb>.json` and are also embedded as fenced code blocks inside the corresponding `rwv explain <verb>` bundle.
 

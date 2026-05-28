@@ -25,8 +25,9 @@ Terminology lookup. For deeper material on each concept, follow the cross-links.
 | **Phase 1'** | Second runtime phase of `rwv sync`: replay CWD's unique project commits onto source's project tip, with `rwv.lock` excluded. |
 | **Phase 3** | Third runtime phase of `rwv sync`: regenerate `rwv.lock` from post-Phase-2 manifest tips. |
 | **Strategy** | Sync strategy: `ff` (fast-forward, default), `rebase`, or `merge`. Applies uniformly to project and manifest repos. |
-| **Retire** | `rwv sync --retire` — post-sync cleanup that deletes the workweave on success. |
-| **Parent (of a workweave)** | The workspace the workweave was forked from. Recorded in `.rwv-workweave`'s `parent` field. Bare `rwv sync` targets the parent. |
+| **Retire** | `rwv sync-to --retire` — post-sync-to cleanup that deletes the workweave on success. The `--retire` flag lives on `rwv sync-to` (the landing direction), not `rwv sync`. |
+| **Parent (of a workweave)** | The workspace the workweave was forked from. Recorded in `.rwv-workweave`'s `parent` field. Bare `rwv sync-to` (no target) auto-targets the parent. |
+| **sync-to** | `rwv sync-to [<target>]` — the landing verb. Advances a named target to CWD's tip via a three-step orchestration: (1) rebase CWD against target, (2) auto-relock CWD, (3) FF-advance target. Bare invocation inside a workweave auto-targets the recorded parent. Contrast with `rwv sync <source>`, which absorbs state into CWD. See [sync semantics](../explanation/joints/sync-semantics.md). |
 | **Selector** | The shared `--role` / `--repo` flag surface on `fetch`, `update`, `push`. See [reference/cli — Selector grammar](./cli.md#selector-grammar). |
 | **Savepoint** | A git ref under `refs/rwv/pre-op/<op-id>/` snapshotting a repo's pre-op tip. Used by `rwv abort` to roll back. |
 | **`--json` envelope** | The shape `{"$schema": "...", "<key>": [...]}` emitted by JSON-capable verbs. Key is verb-specific. See [reference/cli — JSON envelope convention](./cli.md#--json-envelope-convention). |

@@ -133,8 +133,8 @@ Legacy markers (pre-parent-field) parse cleanly — the read path backfills `par
 
 Consumed by:
 
-- `rwv sync` (bare) — targets the recorded parent.
-- `rwv sync --retire` — verifies convergence with parent before deleting.
+- `rwv sync-to` (bare) — auto-targets the recorded parent.
+- `rwv sync-to --retire` — advances parent, then deletes the workweave on success.
 
 See [workweave hierarchy](../explanation/joints/workweave-hierarchy.md) for one-hop semantics.
 
