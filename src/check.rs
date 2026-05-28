@@ -97,6 +97,16 @@ pub enum CheckViolation {
         /// The `projects/` directory that does not exist on disk.
         missing_dir: PathBuf,
     },
+
+    /// A `.rwv-workweave` marker file is missing the required `parent:` field
+    /// (written before parent tracking landed). Auto-fixable: append
+    /// `parent: <primary value>` to the file on disk.
+    LegacyWorkweaveMarker {
+        /// Absolute path to the offending `.rwv-workweave` file.
+        marker_path: PathBuf,
+        /// The `primary:` value from the marker, used as the backfill value.
+        primary: PathBuf,
+    },
 }
 
 #[derive(Debug, Serialize, JsonSchema)]
@@ -210,6 +220,10 @@ pub enum ViolationOutput {
     DanglingActiveProject {
         project: String,
         missing_dir: String,
+    },
+    LegacyWorkweaveMarker {
+        marker_path: String,
+        primary: String,
     },
 }
 
@@ -333,6 +347,13 @@ impl ViolationOutput {
                 project: project.to_string(),
                 missing_dir: missing_dir.to_string_lossy().into_owned(),
             },
+            CheckViolation::LegacyWorkweaveMarker {
+                marker_path,
+                primary,
+            } => Self::LegacyWorkweaveMarker {
+                marker_path: marker_path.to_string_lossy().into_owned(),
+                primary: primary.to_string_lossy().into_owned(),
+            },
         }
     }
 }
@@ -446,6 +467,104 @@ pub fn fix_legacy_role_primary(manifest_path: &Path) -> anyhow::Result<usize> {
         })?;
     }
     Ok(count)
+}
+
+// ---------------------------------------------------------------------------
+// Legacy-workweave-marker scanning and fixing
+// ---------------------------------------------------------------------------
+
+/// One workweave directory whose `.rwv-workweave` file is missing `parent:`.
+#[derive(Debug, Clone)]
+pub struct LegacyWorkweaveMarkerFile {
+    /// Absolute path to the `.rwv-workweave` file.
+    pub marker_path: PathBuf,
+    /// The `primary:` value read from the file (used as the backfill value).
+    pub primary: PathBuf,
+}
+
+/// Walk the workweave parent directory and collect `.rwv-workweave` files that
+/// are missing the required `parent:` field.
+///
+/// A marker is "legacy" if the YAML is valid but `parent:` is absent or null.
+/// Files that fail to parse at all are not included (they are a different
+/// failure mode).
+pub fn scan_for_legacy_workweave_markers(ws_root: &Path) -> Vec<LegacyWorkweaveMarkerFile> {
+    let parent_dir = crate::workweave::workweave_parent_pub(ws_root);
+    let mut found = Vec::new();
+    let entries = match std::fs::read_dir(&parent_dir) {
+        Ok(e) => e,
+        Err(_) => return found,
+    };
+    for entry in entries.flatten() {
+        let dir = entry.path();
+        if !dir.is_dir() {
+            continue;
+        }
+        let marker_path = dir.join(".rwv-workweave");
+        if !marker_path.is_file() {
+            continue;
+        }
+        let content = match std::fs::read_to_string(&marker_path) {
+            Ok(c) => c,
+            Err(_) => continue,
+        };
+        let raw: serde_yaml::Value = match serde_yaml::from_str(&content) {
+            Ok(v) => v,
+            Err(_) => continue, // unparseable — not our concern here
+        };
+        // Legacy if `parent` is absent or null.
+        if raw.get("parent").map(|v| v.is_null()).unwrap_or(true) {
+            // Extract primary path.
+            if let Some(primary_str) = raw.get("primary").and_then(|v| v.as_str()) {
+                found.push(LegacyWorkweaveMarkerFile {
+                    marker_path,
+                    primary: PathBuf::from(primary_str),
+                });
+            }
+        }
+    }
+    found.sort_by(|a, b| a.marker_path.cmp(&b.marker_path));
+    found
+}
+
+/// Append `parent: <primary>` to a legacy `.rwv-workweave` file.
+///
+/// Idempotent: if `parent:` is already present, the file is not rewritten.
+/// Returns `true` if the file was rewritten, `false` if it was already
+/// up to date.
+pub fn fix_legacy_workweave_marker(finding: &LegacyWorkweaveMarkerFile) -> anyhow::Result<bool> {
+    let content = std::fs::read_to_string(&finding.marker_path).map_err(|e| {
+        anyhow::anyhow!(
+            "failed to read {} for --fix: {e}",
+            finding.marker_path.display()
+        )
+    })?;
+    let raw: serde_yaml::Value = serde_yaml::from_str(&content).map_err(|e| {
+        anyhow::anyhow!(
+            "failed to re-parse {} for --fix: {e}",
+            finding.marker_path.display()
+        )
+    })?;
+    // Re-check: don't rewrite if already has a non-null parent.
+    if !raw.get("parent").map(|v| v.is_null()).unwrap_or(true) {
+        return Ok(false);
+    }
+    // Append the parent line. Using a simple string append preserves any
+    // comments and existing key order, consistent with fix_legacy_role_primary.
+    let primary_str = finding.primary.to_string_lossy();
+    let line = format!("parent: {primary_str}\n");
+    let new_content = if content.ends_with('\n') {
+        format!("{content}{line}")
+    } else {
+        format!("{content}\n{line}")
+    };
+    std::fs::write(&finding.marker_path, new_content).map_err(|e| {
+        anyhow::anyhow!(
+            "failed to write {} during --fix: {e}",
+            finding.marker_path.display()
+        )
+    })?;
+    Ok(true)
 }
 
 /// `$schema` URL embedded in `rwv doctor --json` output. Points at the
@@ -608,6 +727,14 @@ pub fn violations_to_issues(violations: Vec<CheckViolation>) -> Vec<Issue> {
                         "{project}: manifest at {} uses deprecated `role: primary`; \
                          run `rwv doctor --fix` to migrate to `role: owned`",
                         manifest_path.display()
+                    ),
+                ),
+                CheckViolation::LegacyWorkweaveMarker { marker_path, .. } => (
+                    crate::integration::Severity::Warning,
+                    format!(
+                        "{} is a legacy workweave marker missing `parent:`; \
+                         run `rwv doctor --fix` to migrate",
+                        marker_path.display()
                     ),
                 ),
                 CheckViolation::WorkingTreeDrift {
@@ -1043,6 +1170,34 @@ pub fn run_check(
         }
     }
 
+    // Legacy workweave-marker scan + optional --fix migration. Runs from the
+    // primary weave only (workweave markers live in the workweave-parent dir
+    // which is sibling to the primary). Scans even from a workweave CWD so
+    // `rwv doctor --fix` works from wherever the operator runs it.
+    let legacy_ww_markers = scan_for_legacy_workweave_markers(ctx.primary_path());
+    let mut legacy_ww_marker_warnings: Vec<LegacyWorkweaveMarkerFile> = Vec::new();
+    let mut legacy_ww_marker_errors: Vec<String> = Vec::new();
+    for finding in &legacy_ww_markers {
+        if fix {
+            match fix_legacy_workweave_marker(finding) {
+                Ok(true) => {
+                    println!(
+                        "[fixed] core: appended `parent:` to {}",
+                        finding.marker_path.display()
+                    );
+                }
+                Ok(false) => {
+                    // Race: already had parent: by the time we tried to fix.
+                }
+                Err(e) => {
+                    legacy_ww_marker_errors.push(e.to_string());
+                }
+            }
+        } else {
+            legacy_ww_marker_warnings.push(finding.clone());
+        }
+    }
+
     // Resolve HEAD revisions for each repo on disk. Errors are kept (not
     // dropped) so that `find_violations` can flag on-disk repos whose HEAD
     // could not be read (corrupted, mid-rebase, permissions). Audit B4.
@@ -1183,6 +1338,13 @@ pub fn run_check(
         }
     }
 
+    for finding in &legacy_ww_marker_warnings {
+        violations.push(CheckViolation::LegacyWorkweaveMarker {
+            marker_path: finding.marker_path.clone(),
+            primary: finding.primary.clone(),
+        });
+    }
+
     let mut all_issues = violations_to_issues(violations);
 
     for msg in dangling_fix_errors {
@@ -1198,6 +1360,13 @@ pub fn run_check(
             integration: "core".into(),
             severity: Severity::Error,
             message: format!("{project_name}: legacy `role: primary` fix failed: {err}"),
+        });
+    }
+    for err in &legacy_ww_marker_errors {
+        all_issues.push(Issue {
+            integration: "core".into(),
+            severity: Severity::Error,
+            message: format!("legacy workweave marker fix failed: {err}"),
         });
     }
 
@@ -1565,6 +1734,14 @@ fn collect_doctor_violations(
         violations.push(CheckViolation::LegacyRolePrimary {
             project: finding.project,
             manifest_path: finding.manifest_path,
+        });
+    }
+
+    // Legacy workweave-marker findings — scan the workweave-parent directory.
+    for finding in scan_for_legacy_workweave_markers(ctx.primary_path()) {
+        violations.push(CheckViolation::LegacyWorkweaveMarker {
+            marker_path: finding.marker_path,
+            primary: finding.primary,
         });
     }
 

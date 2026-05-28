@@ -386,6 +386,28 @@ Schema:
               "type": "string"
             }
           }
+        },
+        {
+          "type": "object",
+          "required": [
+            "kind",
+            "marker_path",
+            "primary"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "legacy-workweave-marker"
+              ]
+            },
+            "marker_path": {
+              "type": "string"
+            },
+            "primary": {
+              "type": "string"
+            }
+          }
         }
       ]
     },

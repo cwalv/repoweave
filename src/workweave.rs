@@ -30,6 +30,15 @@ fn workweave_parent(ws_root: &Path) -> PathBuf {
     }
 }
 
+/// Public accessor for the workweave parent directory.
+///
+/// Exposed for `check.rs` (legacy-workweave-marker scanning). Callers outside
+/// this module should treat the returned path as the container for all
+/// workweave directories belonging to `ws_root`.
+pub fn workweave_parent_pub(ws_root: &Path) -> PathBuf {
+    workweave_parent(ws_root)
+}
+
 /// Compute the on-disk directory for a workweave by `(project, name)`, given
 /// the primary workspace root.
 ///
@@ -601,7 +610,7 @@ pub fn create_workweave(
     let marker = WorkweaveMarker {
         primary: primary_root.to_path_buf(),
         project: project.clone(),
-        parent: Some(parent_path),
+        parent: parent_path,
     };
     marker.write(&workweave_dir)?;
 

@@ -390,10 +390,11 @@ fn push_refuses_from_workweave() {
     // create` (which requires a much heavier setup).
     let workweave_dir = ws.workspace.parent().unwrap().join("alpha--feat");
     std::fs::create_dir_all(&workweave_dir).unwrap();
+    let primary_path = ws.workspace.display().to_string();
     let marker = format!(
-        "primary: {}\nproject: {}\n",
-        ws.workspace.display(),
-        ws.project_name
+        "primary: {p}\nproject: {proj}\nparent: {p}\n",
+        p = primary_path,
+        proj = ws.project_name
     );
     std::fs::write(workweave_dir.join(".rwv-workweave"), marker).unwrap();
 

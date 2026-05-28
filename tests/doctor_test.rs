@@ -1323,6 +1323,122 @@ mod doctor_json {
     }
 }
 
+// ===========================================================================
+// Legacy workweave marker (fo-v8hq4.7) — missing `parent:` field
+// ===========================================================================
+
+/// A `.rwv-workweave` marker missing `parent:` causes any rwv invocation from
+/// inside that workweave to fail with a clear, actionable error.
+#[test]
+fn legacy_workweave_marker_causes_error_on_rwv_invocation() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = make_workspace(tmp.path(), "ws");
+    let ww_dir_container = tmp.path().join("ww-container");
+    std::fs::create_dir_all(&ww_dir_container).unwrap();
+    let ww_dir = ww_dir_container.join("ws--feat");
+    std::fs::create_dir_all(&ww_dir).unwrap();
+
+    // Write a legacy marker without `parent:`.
+    let legacy_marker = format!(
+        "primary: {}\nproject: my-app\n",
+        root.canonicalize().unwrap().display()
+    );
+    std::fs::write(ww_dir.join(".rwv-workweave"), &legacy_marker).unwrap();
+
+    // Any rwv invocation from the workweave should fail with a helpful message.
+    rwv_cmd()
+        .arg("status")
+        .current_dir(&ww_dir)
+        .env("RWV_WORKWEAVE_DIR", &ww_dir_container)
+        .assert()
+        .failure()
+        .stderr(
+            predicate::str::contains("legacy workweave marker")
+                .or(predicate::str::contains("parent"))
+        )
+        .stderr(predicate::str::contains("rwv doctor --fix"));
+}
+
+/// `rwv doctor` reports `legacy-workweave-marker` for every workweave
+/// with a marker missing `parent:`.
+#[test]
+fn doctor_reports_legacy_workweave_marker() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = make_workspace(tmp.path(), "ws");
+    let ww_dir_container = tmp.path().join("ww-container");
+    std::fs::create_dir_all(&ww_dir_container).unwrap();
+    let ww_dir = ww_dir_container.join("ws--feat");
+    std::fs::create_dir_all(&ww_dir).unwrap();
+
+    // Write a legacy marker without `parent:`.
+    let legacy_marker = format!(
+        "primary: {}\nproject: my-app\n",
+        root.canonicalize().unwrap().display()
+    );
+    std::fs::write(ww_dir.join(".rwv-workweave"), &legacy_marker).unwrap();
+
+    rwv_cmd()
+        .arg("doctor")
+        .current_dir(&root)
+        .env("RWV_WORKWEAVE_DIR", &ww_dir_container)
+        .assert()
+        // Exits non-zero because there is a warning (exit 0 = no issues).
+        // doctor currently exits 1 only on errors; warnings produce exit 0.
+        // The important invariant is that the message appears.
+        .stdout(
+            predicate::str::contains("legacy workweave marker")
+                .or(predicate::str::contains(".rwv-workweave"))
+        )
+        .stdout(predicate::str::contains("rwv doctor --fix"));
+}
+
+/// `rwv doctor --fix` appends `parent:` to a legacy marker, then doctor
+/// reports clean (no more legacy-marker violation).
+#[test]
+fn doctor_fix_migrates_legacy_workweave_marker() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = make_workspace(tmp.path(), "ws");
+    let primary_canon = root.canonicalize().unwrap();
+    let ww_dir_container = tmp.path().join("ww-container");
+    std::fs::create_dir_all(&ww_dir_container).unwrap();
+    let ww_dir = ww_dir_container.join("ws--feat");
+    std::fs::create_dir_all(&ww_dir).unwrap();
+
+    // Write a legacy marker without `parent:`.
+    let legacy_marker = format!("primary: {}\nproject: my-app\n", primary_canon.display());
+    std::fs::write(ww_dir.join(".rwv-workweave"), &legacy_marker).unwrap();
+
+    // `rwv doctor --fix` should migrate the marker.
+    rwv_cmd()
+        .args(["doctor", "--fix"])
+        .current_dir(&root)
+        .env("RWV_WORKWEAVE_DIR", &ww_dir_container)
+        .assert()
+        .stdout(predicate::str::contains("[fixed]").and(predicate::str::contains("parent")));
+
+    // After fix, the marker file must contain `parent:`.
+    let migrated = std::fs::read_to_string(ww_dir.join(".rwv-workweave")).unwrap();
+    assert!(
+        migrated.contains("parent:"),
+        "marker must contain parent: after --fix, got:\n{migrated}"
+    );
+
+    // A second `rwv doctor` run should no longer report the violation.
+    let stdout = rwv_cmd()
+        .arg("doctor")
+        .current_dir(&root)
+        .env("RWV_WORKWEAVE_DIR", &ww_dir_container)
+        .assert()
+        .get_output()
+        .stdout
+        .clone();
+    let stdout_str = String::from_utf8_lossy(&stdout);
+    assert!(
+        !stdout_str.contains("legacy workweave marker"),
+        "doctor must not report legacy-workweave-marker after --fix; got:\n{stdout_str}"
+    );
+}
+
 /// `rwv doctor` does NOT warn when the project carries the replay-exclusion entry.
 #[test]
 fn check_silent_when_project_has_replay_exclusion() {

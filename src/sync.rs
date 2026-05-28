@@ -1530,17 +1530,7 @@ fn run_sync_impl_with_op_id(
                         dir.display()
                     )
                 })?;
-                let parent = marker.parent.ok_or_else(|| {
-                    // Defensive: WorkweaveMarker::read backfills parent so this
-                    // path should be unreachable; surface a clear error if a
-                    // future change breaks the invariant.
-                    anyhow::anyhow!(
-                        "workweave marker at {} has no `parent` (and backfill failed); \
-                         pass an explicit source to `rwv sync`",
-                        dir.display()
-                    )
-                })?;
-                SyncSource::Path(parent)
+                SyncSource::Path(marker.parent)
             }
             WorkspaceLocation::Weave { .. } => {
                 anyhow::bail!(
@@ -1577,7 +1567,7 @@ fn run_sync_impl_with_op_id(
                 let cwd_parent = crate::workspace::WorkweaveMarker::read(cwd_ww)
                     .ok()
                     .flatten()
-                    .and_then(|m| m.parent)
+                    .map(|m| m.parent)
                     .map(|p| p.canonicalize().unwrap_or(p));
                 if cwd_parent.as_ref() != Some(&source_canonical) && emit_text {
                     eprintln!(

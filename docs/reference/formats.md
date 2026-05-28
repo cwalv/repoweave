@@ -129,7 +129,7 @@ parent: /home/user/work/.workweaves/web-app--feat
 | `project` | Project name this workweave is forked for |
 | `parent` | Absolute path to the workspace the workweave was forked from. `primary` value when forked from primary; the parent-workweave path when forked from inside another workweave |
 
-Legacy markers (pre-parent-field) parse cleanly — the read path backfills `parent` to `primary`.
+All three fields are required. Markers written before `parent:` was introduced (legacy markers) must be migrated before the workweave can be used — any `rwv` invocation from inside a workweave with a legacy marker will fail with a clear error message naming the file. Run `rwv doctor --fix` to append `parent:` automatically.
 
 Consumed by:
 

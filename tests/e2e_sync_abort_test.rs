@@ -1432,9 +1432,10 @@ fn make_marker_workweave(parent: &Path, ww_name: &str) -> MarkerSharedWorkspaces
         &primary.project_dir,
     );
 
+    let primary_canon = primary.root.canonicalize().unwrap().display().to_string();
     let marker = format!(
-        "primary: {}\nproject: web-app\n",
-        primary.root.canonicalize().unwrap().display()
+        "primary: {p}\nproject: web-app\nparent: {p}\n",
+        p = primary_canon
     );
     std::fs::write(ww_root.join(".rwv-workweave"), marker).unwrap();
 

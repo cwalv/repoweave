@@ -1702,13 +1702,15 @@ fn list_workweaves_includes_legacy_form_via_marker() {
     let weaveroot = tmp.path().join(".workweaves");
     std::fs::create_dir_all(&weaveroot).unwrap();
 
-    // Hand-craft an old-form workweave dir with a marker. No worktrees needed
-    // to test the listing surface — `list_workweaves` only scans markers.
+    // Hand-craft an old-form workweave dir with a fully-migrated marker
+    // (primary + project + parent). No worktrees needed — `list_workweaves`
+    // only scans markers.
     let legacy = weaveroot.join("ws--from-old");
     std::fs::create_dir_all(&legacy).unwrap();
+    let ws_canon = ws.canonicalize().unwrap().display().to_string();
     let marker = format!(
-        "primary: {}\nproject: web-app\n",
-        ws.canonicalize().unwrap().display()
+        "primary: {p}\nproject: web-app\nparent: {p}\n",
+        p = ws_canon
     );
     std::fs::write(legacy.join(".rwv-workweave"), marker).unwrap();
 

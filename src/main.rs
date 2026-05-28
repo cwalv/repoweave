@@ -605,14 +605,7 @@ fn main() -> anyhow::Result<()> {
                                         dir.display()
                                     )
                                 })?;
-                            let parent = marker.parent.ok_or_else(|| {
-                                anyhow::anyhow!(
-                                    "workweave marker at {} has no `parent` field; \
-                                     pass an explicit target to `rwv sync-to`",
-                                    dir.display()
-                                )
-                            })?;
-                            sync::SyncSource::Path(parent)
+                            sync::SyncSource::Path(marker.parent)
                         }
                         repoweave::workspace::WorkspaceLocation::Weave { .. } => {
                             anyhow::bail!(

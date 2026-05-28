@@ -172,9 +172,10 @@ fn make_workspace_with_ww(parent: &Path) -> (Workspace, String) {
         &project_primary,
     );
 
+    let primary_canon = primary_root.canonicalize().unwrap().display().to_string();
     let marker_content = format!(
-        "primary: {}\nproject: web-app\n",
-        primary_root.canonicalize().unwrap().display()
+        "primary: {p}\nproject: web-app\nparent: {p}\n",
+        p = primary_canon
     );
     std::fs::write(ww_root.join(".rwv-workweave"), marker_content).unwrap();
 
@@ -380,9 +381,10 @@ fn sync_post_refresh_clears_stale_working_tree() {
         &project_primary,
     );
 
+    let primary_canon = primary_root.canonicalize().unwrap().display().to_string();
     let marker_content = format!(
-        "primary: {}\nproject: web-app\n",
-        primary_root.canonicalize().unwrap().display()
+        "primary: {p}\nproject: web-app\nparent: {p}\n",
+        p = primary_canon
     );
     std::fs::write(ww_root.join(".rwv-workweave"), marker_content).unwrap();
     // Action verbs need `.rwv-active` (or --project).
@@ -479,9 +481,10 @@ fn doctor_detects_working_tree_drift_in_three_worktrees() {
         &project_primary,
     );
 
+    let primary_canon2 = ws.primary_root.canonicalize().unwrap().display().to_string();
     let marker2 = format!(
-        "primary: {}\nproject: web-app\n",
-        ws.primary_root.canonicalize().unwrap().display()
+        "primary: {p}\nproject: web-app\nparent: {p}\n",
+        p = primary_canon2
     );
     std::fs::write(ww2_root.join(".rwv-workweave"), marker2).unwrap();
 
