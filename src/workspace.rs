@@ -488,6 +488,49 @@ impl WorkspaceContext {
         );
     }
 
+    /// Returns `Ok(name)` for the active project after verifying the project
+    /// directory exists on disk under `projects/<name>/`.
+    ///
+    /// Distinguishes three cases:
+    /// - No active project set (no `.rwv-active`, no `--project`): delegates
+    ///   to [`require_active_project`] for the standard "no active project"
+    ///   error message.
+    /// - Active project named **and** directory exists: returns `Ok(name)`.
+    /// - Active project named **but** directory is missing on disk (dangling
+    ///   pointer): returns a clear, actionable error.
+    ///
+    /// All action verbs (`lock`, `add`, `remove`, `sync`, `sync-to`, `push`,
+    /// `fetch`, `update`, `status`) must call this instead of
+    /// [`require_active_project`] so that a stale `.rwv-active` file does not
+    /// silently proceed into confusing downstream errors.
+    pub fn require_active_project_on_disk(&self) -> anyhow::Result<&ProjectName> {
+        let name = self.require_active_project()?;
+
+        // Check that `projects/<name>/` exists on disk.
+        let project_dir = self.primary_path().join("projects").join(name.as_str());
+        if project_dir.is_dir() {
+            return Ok(name);
+        }
+
+        // Dangling pointer: named but missing. Build the actionable error.
+        let existing = discover_project_paths(self.primary_path());
+        let hint = if existing.is_empty() {
+            String::new()
+        } else {
+            format!(
+                " Existing projects: {}.",
+                existing.join(", ")
+            )
+        };
+        anyhow::bail!(
+            "active project `{}` is set in `.rwv-active` but `projects/{}/` does not exist; \
+             run `rwv activate <existing-project>` or remove `.rwv-active`.{}",
+            name.as_str(),
+            name.as_str(),
+            hint,
+        )
+    }
+
     /// The primary weave directory.
     ///
     /// Use this for state owned by the workspace as a whole — the

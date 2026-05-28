@@ -110,6 +110,15 @@ pub fn run_status(
     project_override: Option<crate::manifest::ProjectName>,
 ) -> anyhow::Result<()> {
     let ctx = WorkspaceContext::resolve(cwd, project_override)?;
+
+    // When a specific project is named (via .rwv-active or --project), verify
+    // it exists on disk before proceeding. When no project is active, the
+    // no-active-project path in project_names_for_ctx falls back to listing
+    // all projects — that path is fine and does not need the disk check here.
+    if ctx.active_project().is_some() {
+        ctx.require_active_project_on_disk()?;
+    }
+
     let git = GitVcs;
     let workspace_dir = ctx.active_path().to_path_buf();
 

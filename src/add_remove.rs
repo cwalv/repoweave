@@ -25,7 +25,7 @@ use std::path::{Path, PathBuf};
 /// `git worktree`. Callers compose `find_project_dir` (workspace-owned
 /// state) with `primary_path()` (global clones) explicitly.
 fn find_project_dir(ctx: &WorkspaceContext) -> anyhow::Result<std::path::PathBuf> {
-    let name = ctx.require_active_project()?;
+    let name = ctx.require_active_project_on_disk()?;
     Ok(ctx.active_path().join("projects").join(name.as_str()))
 }
 

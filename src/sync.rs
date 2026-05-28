@@ -1094,7 +1094,12 @@ fn verify_replay_exclusion_invariant(cwd_project_dir: &Path) -> anyhow::Result<(
 
 fn find_project_name(ctx: &WorkspaceContext) -> anyhow::Result<ProjectName> {
     match &ctx.location {
-        WorkspaceLocation::Weave { project: Some(p) } => Ok(p.clone()),
+        WorkspaceLocation::Weave { project: Some(_) } => {
+            // Delegate to require_active_project_on_disk so a dangling
+            // .rwv-active fails early with a clear message rather than
+            // producing confusing downstream git errors.
+            ctx.require_active_project_on_disk().cloned()
+        }
         WorkspaceLocation::Workweave { project, .. } => Ok(project.clone()),
         WorkspaceLocation::Weave { project: None } => {
             // require_active_project produces the same helpful error

@@ -364,6 +364,28 @@ Schema:
               "type": "string"
             }
           }
+        },
+        {
+          "type": "object",
+          "required": [
+            "kind",
+            "missing_dir",
+            "project"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "dangling-active-project"
+              ]
+            },
+            "missing_dir": {
+              "type": "string"
+            },
+            "project": {
+              "type": "string"
+            }
+          }
         }
       ]
     },

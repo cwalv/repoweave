@@ -85,6 +85,18 @@ pub enum CheckViolation {
         /// Absolute path to the offending `rwv.yaml`.
         manifest_path: PathBuf,
     },
+
+    /// `.rwv-active` names a project whose `projects/<name>/` directory does
+    /// not exist on disk. Any action verb that reads the active project will
+    /// fail with a confusing downstream error. Auto-fixable: clear
+    /// `.rwv-active` (or prompt to pick from existing projects under
+    /// `--fix`).
+    DanglingActiveProject {
+        /// The project name recorded in `.rwv-active`.
+        project: ProjectName,
+        /// The `projects/` directory that does not exist on disk.
+        missing_dir: PathBuf,
+    },
 }
 
 #[derive(Debug, Serialize, JsonSchema)]
@@ -194,6 +206,10 @@ pub enum ViolationOutput {
     LegacyRolePrimary {
         project: String,
         manifest_path: String,
+    },
+    DanglingActiveProject {
+        project: String,
+        missing_dir: String,
     },
 }
 
@@ -309,6 +325,13 @@ impl ViolationOutput {
             } => Self::LegacyRolePrimary {
                 project: project.to_string(),
                 manifest_path: manifest_path.to_string_lossy().into_owned(),
+            },
+            CheckViolation::DanglingActiveProject {
+                project,
+                missing_dir,
+            } => Self::DanglingActiveProject {
+                project: project.to_string(),
+                missing_dir: missing_dir.to_string_lossy().into_owned(),
             },
         }
     }
@@ -607,6 +630,18 @@ pub fn violations_to_issues(violations: Vec<CheckViolation>) -> Vec<Issue> {
                         format!("{location}: {detail}"),
                     )
                 }
+                CheckViolation::DanglingActiveProject {
+                    project,
+                    missing_dir,
+                } => (
+                    crate::integration::Severity::Error,
+                    format!(
+                        "active project `{}` is set in `.rwv-active` but `{}` does not exist; \
+                         run `rwv activate <existing-project>` or remove `.rwv-active`",
+                        project,
+                        missing_dir.display()
+                    ),
+                ),
             };
             Issue {
                 integration: "core".into(),
@@ -949,6 +984,30 @@ pub fn run_check(
     let ctx = WorkspaceContext::resolve(cwd, project_override)?;
     let workspace_dir = ctx.active_path().to_path_buf();
 
+    // Dangling active-project check: if `.rwv-active` names a project whose
+    // `projects/<name>/` directory does not exist on disk, report it as an
+    // error. With `--fix`, clear `.rwv-active` so the workspace is no longer
+    // broken. Either way, doctor continues to report other violations.
+    let dangling_active: Option<CheckViolation> = {
+        use crate::workspace::read_active_project;
+        if let Some(active_name) = read_active_project(ctx.primary_path()) {
+            let project_dir = ctx
+                .primary_path()
+                .join("projects")
+                .join(active_name.as_str());
+            if !project_dir.is_dir() {
+                Some(CheckViolation::DanglingActiveProject {
+                    project: active_name.clone(),
+                    missing_dir: project_dir.clone(),
+                })
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    };
+
     // Build session (runs builtin_registries → scan_repos_on_disk → discover_project_paths).
     let session = WorkspaceSession::new(&workspace_dir);
     let git = GitVcs;
@@ -1092,7 +1151,47 @@ pub fn run_check(
             manifest_path: manifest_path.clone(),
         });
     }
+
+    // Dangling active-project: emit the violation or apply the --fix.
+    // Fix errors are collected here so they can be appended to all_issues
+    // after the violations batch is converted below.
+    let mut dangling_fix_errors: Vec<String> = Vec::new();
+    if let Some(CheckViolation::DanglingActiveProject {
+        project: dap_project,
+        missing_dir: dap_dir,
+    }) = dangling_active
+    {
+        if fix {
+            let active_file = ctx.primary_path().join(".rwv-active");
+            match std::fs::remove_file(&active_file) {
+                Ok(()) => println!(
+                    "[fixed] core: cleared `.rwv-active` (was pointing at missing project `{}`)",
+                    dap_project
+                ),
+                Err(e) => {
+                    dangling_fix_errors.push(format!(
+                        "dangling-active-project fix failed for `{}`: {e}",
+                        dap_project
+                    ));
+                }
+            }
+        } else {
+            violations.push(CheckViolation::DanglingActiveProject {
+                project: dap_project,
+                missing_dir: dap_dir,
+            });
+        }
+    }
+
     let mut all_issues = violations_to_issues(violations);
+
+    for msg in dangling_fix_errors {
+        all_issues.push(Issue {
+            integration: "core".into(),
+            severity: Severity::Error,
+            message: msg,
+        });
+    }
 
     for (project_name, err) in &legacy_role_primary_errors {
         all_issues.push(Issue {
@@ -1439,6 +1538,24 @@ fn collect_doctor_violations(
     };
 
     let mut violations = find_violations(&input);
+
+    // Dangling active-project: .rwv-active names a project whose directory
+    // doesn't exist. The JSON channel never auto-fixes; that's for run_check.
+    {
+        use crate::workspace::read_active_project;
+        if let Some(active_name) = read_active_project(ctx.primary_path()) {
+            let project_dir = ctx
+                .primary_path()
+                .join("projects")
+                .join(active_name.as_str());
+            if !project_dir.is_dir() {
+                violations.push(CheckViolation::DanglingActiveProject {
+                    project: active_name,
+                    missing_dir: project_dir,
+                });
+            }
+        }
+    }
 
     // Legacy `role: primary` findings — text-scan over `projects/*/rwv.yaml`
     // since the parser rejects the spelling and a `Project` wouldn't load.

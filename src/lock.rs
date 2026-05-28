@@ -253,7 +253,7 @@ pub fn lock(
 
     let (project_name, workweave_name, workweave_dir) = match &ctx.location {
         WorkspaceLocation::Weave { .. } => {
-            let name = ctx.require_active_project()?.clone();
+            let name = ctx.require_active_project_on_disk()?.clone();
             (name, None, None)
         }
         WorkspaceLocation::Workweave { name, dir, project } => {
