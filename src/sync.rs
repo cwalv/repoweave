@@ -1392,7 +1392,7 @@ impl OutputSink<'_> {
 // rwv sync
 // ---------------------------------------------------------------------------
 
-/// Execute `rwv sync [source] [--retire]`.
+/// Execute `rwv sync <source>`.
 ///
 /// Phase ordering under the lock-as-derived contract:
 /// 1. **Phase 2 (manifest repos)** — advance each manifest repo to source's
@@ -1404,14 +1404,8 @@ impl OutputSink<'_> {
 /// 3. **Phase 3 (re-lock)** — regenerate `rwv.lock` from the now-merged
 ///    manifest tips and commit if changed.
 ///
-/// `source = None` means sync to the workweave's recorded parent (one hop).
-/// Only valid when CWD is inside a workweave with a `parent` field in its
-/// `.rwv-workweave` marker (backfilled to `primary` for legacy markers).
-///
-/// `retire = true` deletes the workweave on a successful sync, provided the
-/// workweave's project tip equals the parent's and the working tree is clean
-/// (the [`crate::workweave::collect_dirty_paths`] check). Conflicts leave the
-/// workweave intact for the operator to fix and re-run.
+/// `source` is required; bare `rwv sync` (no source) is no longer supported.
+/// Use `rwv sync-to` to land work upward.
 ///
 /// `do_continue = true` activates `--continue` mode: instead of refusing when
 /// an op-state file is present, the call validates that the recorded parameters
@@ -2063,42 +2057,18 @@ fn run_sync_impl_with_op_id(
         op_state::clear(&workspace_dir);
     }
 
-    // --retire: sync succeeded — verify we converged on parent's tip with a
-    // clean tree, then delete the workweave. Only meaningful inside a
-    // workweave; in a primary weave `--retire` is a no-op (warn instead of
-    // silently doing nothing so the operator notices the misuse).
-    if retire {
-        match &ctx.location {
-            WorkspaceLocation::Workweave { dir, name, project } => {
-                retire_workweave_after_sync(
-                    &ctx,
-                    dir,
-                    name,
-                    project,
-                    &cwd_project_dir,
-                    &source_project_dir,
-                )?;
-            }
-            WorkspaceLocation::Weave { .. } => {
-                if emit_text {
-                    eprintln!("warning: --retire is only meaningful inside a workweave; ignoring");
-                }
-            }
-        }
-    }
-
     Ok(())
 }
 
-/// `rwv sync --retire` post-sync cleanup.
+/// `rwv sync-to --retire` post-sync-to cleanup.
 ///
-/// Verify that the just-completed sync brought CWD's manifest repos into
-/// alignment with the parent's, and that no worktree has uncommitted changes,
+/// Verify that the just-completed sync-to brought CWD's manifest repos into
+/// alignment with the target's, and that no worktree has uncommitted changes,
 /// then delete the workweave. Bails (preserving the workweave) on any
 /// mismatch so the operator can fix and re-run.
 ///
 /// We deliberately compare **manifest repo tips** rather than project repo
-/// tips. The project repo's post-sync state typically diverges from parent
+/// tips. The project repo's post-sync state typically diverges from the target
 /// by exactly the auto-relock commit (Phase 3 always writes the workweave's
 /// `workweave:` field into the lock, which the primary's lock lacks). That
 /// commit is purely derived — the parent will regenerate it on its next
@@ -2106,39 +2076,30 @@ fn run_sync_impl_with_op_id(
 /// even the happy path the bead describes. Manifest tip equality is the
 /// honest "work has converged" signal: Phase 2 advances both sides to the
 /// same SHAs, so post-sync the manifest repos should be byte-equal.
-fn retire_workweave_after_sync(
+fn retire_workweave_after_sync_to(
     ctx: &WorkspaceContext,
     workweave_dir: &Path,
     workweave_name: &WorkweaveName,
     project: &crate::manifest::ProjectName,
     cwd_project_dir: &Path,
-    _source_project_dir: &Path,
+    target_workspace_dir: &Path,
 ) -> anyhow::Result<()> {
     // Reload manifest post-Phase 3 so we see any repos newly added by sync.
     let manifest_path = cwd_project_dir.join("rwv.yaml");
     let manifest = Manifest::from_path(&manifest_path)
         .map_err(|e| anyhow::anyhow!("--retire: failed to reload manifest: {e}"))?;
 
-    // Compare each manifest repo's HEAD in CWD vs. parent. Parent's repo
-    // lives under `source_workspace_dir.join(repo_path)`; here we reuse the
-    // parent path from the marker (single source of truth for the bare-sync
-    // target).
-    let marker = crate::workspace::WorkweaveMarker::read(workweave_dir)?.ok_or_else(|| {
-        anyhow::anyhow!(
-            "--retire: workweave at {} has no .rwv-workweave marker",
-            workweave_dir.display()
-        )
-    })?;
-    let parent_root = marker
-        .parent
-        .clone()
-        .unwrap_or_else(|| marker.primary.clone());
+    // Compare each manifest repo's HEAD in CWD vs. target. After a successful
+    // sync-to, step 3 has fast-forwarded the target's repos to CWD's tips, so
+    // both sides should be at the same SHAs. We compare against the target
+    // workspace directory (which sync-to already advanced in step 3).
+    let target_root = target_workspace_dir;
 
     let mut diverged: Vec<String> = Vec::new();
     for repo_path in manifest.iter_repo_paths() {
         let cwd_repo = workweave_dir.join(repo_path.as_path());
-        let parent_repo = parent_root.join(repo_path.as_path());
-        if !cwd_repo.exists() || !parent_repo.exists() {
+        let target_repo = target_root.join(repo_path.as_path());
+        if !cwd_repo.exists() || !target_repo.exists() {
             // Missing on one side — leave the workweave alone; this is
             // unusual enough that the operator should look.
             diverged.push(format!("{}: missing on one side", repo_path.as_str()));
@@ -2147,28 +2108,26 @@ fn retire_workweave_after_sync(
         let cwd_head = GitVcs
             .head_revision(&cwd_repo)
             .map_err(|e| anyhow::anyhow!("--retire: read CWD head for {}: {e}", repo_path))?;
-        let parent_head = GitVcs
-            .head_revision(&parent_repo)
-            .map_err(|e| anyhow::anyhow!("--retire: read parent head for {}: {e}", repo_path))?;
-        if cwd_head != parent_head {
+        let target_head = GitVcs
+            .head_revision(&target_repo)
+            .map_err(|e| anyhow::anyhow!("--retire: read target head for {}: {e}", repo_path))?;
+        if cwd_head != target_head {
             diverged.push(format!(
-                "{}: CWD={} parent={}",
+                "{}: CWD={} target={}",
                 repo_path.as_str(),
                 short_sha(cwd_head.as_str()),
-                short_sha(parent_head.as_str())
+                short_sha(target_head.as_str())
             ));
         }
     }
 
     if !diverged.is_empty() {
         anyhow::bail!(
-            "--retire: workweave's manifest repos differ from parent after sync; \
+            "--retire: workweave's manifest repos differ from target after sync-to; \
              refusing to delete:\n  {}\n\
-             Push CWD's changes to parent (e.g. `cd {} && rwv sync {}`) and re-run, \
+             Resolve the divergence and re-run, \
              or `rwv workweave delete --force {}` to discard.",
             diverged.join("\n  "),
-            parent_root.display(),
-            workweave_name.as_str(),
             workweave_name.as_str(),
         );
     }
@@ -2177,7 +2136,7 @@ fn retire_workweave_after_sync(
     let dirty = crate::workweave::collect_dirty_paths(workweave_dir, project, &manifest);
     if !dirty.is_empty() {
         anyhow::bail!(
-            "--retire: workweave has uncommitted changes after sync; refusing to delete:\n  {}\n\
+            "--retire: workweave has uncommitted changes after sync-to; refusing to delete:\n  {}\n\
              Commit/discard and re-run, or `rwv workweave delete --force {}` to discard.",
             dirty.join("\n  "),
             workweave_name.as_str(),
@@ -2658,6 +2617,9 @@ fn run_sync_json_impl(
 /// with CWD's commits on top). Step 2 auto-relocks if tips moved. Step 3
 /// fast-forwards target's repos to CWD's converged tips.
 ///
+/// If `retire` is true and all steps succeed, the workweave is deleted after
+/// step 3 (requires clean worktree and manifest repos converged with target).
+///
 /// `do_continue` resumes a mid-op sync-to by reading the recorded phase
 /// from op-state and skipping already-completed steps.
 #[allow(clippy::too_many_arguments)]
@@ -2666,6 +2628,7 @@ pub fn run_sync_to(
     target: &SyncSource,
     strategy: SyncStrategy,
     force: bool,
+    retire: bool,
     project_override: Option<ProjectName>,
     jobs: usize,
     do_continue: bool,
@@ -2683,6 +2646,7 @@ pub fn run_sync_to(
         target,
         strategy,
         force,
+        retire,
         project_override,
         jobs,
         &sink,
@@ -2697,6 +2661,7 @@ pub fn run_sync_to_json(
     target: &SyncSource,
     strategy: SyncStrategy,
     force: bool,
+    retire: bool,
     project_override: Option<ProjectName>,
     jobs: usize,
     do_continue: bool,
@@ -2719,6 +2684,7 @@ pub fn run_sync_to_json(
         target,
         strategy,
         force,
+        retire,
         project_override,
         jobs,
         &sink,
@@ -2737,6 +2703,7 @@ fn run_sync_to_impl(
     target_source: &SyncSource,
     strategy: SyncStrategy,
     force: bool,
+    retire: bool,
     project_override: Option<ProjectName>,
     jobs: usize,
     sink: &OutputSink<'_>,
@@ -2782,7 +2749,7 @@ fn run_sync_to_impl(
             strategy: strategy.to_string(),
             source: cwd_workspace_dir.clone(),
             target: target_workspace_dir.clone(),
-            retire: false,
+            retire,
         };
         let recorded = op_state::check_continue(&cwd_workspace_dir, &continue_params)?;
         op_id = OpId::from_string(recorded.id.clone());
@@ -2808,7 +2775,7 @@ fn run_sync_to_impl(
             strategy,
             cwd_workspace_dir.clone(),
             target_workspace_dir.clone(),
-            false, // retire: bead 2
+            retire,
         );
         op_state::write(&cwd_workspace_dir, &state)
             .map_err(|e| anyhow::anyhow!("failed to write op-state to CWD: {e}"))?;
@@ -3041,6 +3008,33 @@ fn run_sync_to_impl(
 
     if emit_text {
         eprintln!("sync-to complete: target fast-forwarded to CWD's tip");
+    }
+
+    // --retire: all three steps succeeded — verify manifest repos converged
+    // with the target and the working tree is clean, then delete the workweave.
+    // Only meaningful inside a workweave; in a primary weave, warn and skip.
+    // If any step above failed, we already bailed before reaching this point,
+    // so the workweave is always preserved on failure.
+    if retire {
+        match &cwd_ctx.location {
+            WorkspaceLocation::Workweave { dir, name, project } => {
+                retire_workweave_after_sync_to(
+                    &cwd_ctx,
+                    dir,
+                    name,
+                    project,
+                    &cwd_project_dir,
+                    &target_workspace_dir,
+                )?;
+            }
+            WorkspaceLocation::Weave { .. } => {
+                if emit_text {
+                    eprintln!(
+                        "warning: --retire is only meaningful inside a workweave; ignoring"
+                    );
+                }
+            }
+        }
     }
 
     Ok(())

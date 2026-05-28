@@ -2508,8 +2508,8 @@ fn workweave_forked_from_other_workweave_records_that_parent() {
 fn bare_sync_outside_workweave_errors_clearly() {
     // make_workspace_with_project_repo gives us a primary weave with a git
     // project repo. Running `rwv sync` (no source) from primary should
-    // refuse with a helpful message (parent-tracking only applies inside a
-    // workweave).
+    // refuse because `source` is now a required argument. The error must
+    // be non-zero and mention source or SOURCE (clap capitalizes args).
     let tmp = tempfile::tempdir().unwrap();
     let ws = make_workspace_with_project_repo(tmp.path(), "p");
 
@@ -2518,7 +2518,7 @@ fn bare_sync_outside_workweave_errors_clearly() {
         .current_dir(&ws)
         .assert()
         .failure()
-        .stderr(predicate::str::contains("workweave").or(predicate::str::contains("source")));
+        .stderr(predicate::str::contains("SOURCE").or(predicate::str::contains("source")));
 }
 
 // ============================================================================

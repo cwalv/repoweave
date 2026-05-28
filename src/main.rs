@@ -174,19 +174,15 @@ enum Commands {
     /// Align CWD workspace with another workspace's committed rwv.lock
     Sync {
         /// Source workspace: `primary`, a bare workweave name, or a path
-        /// (absolute, or relative to the primary workspace). Omit to sync
-        /// to the workweave's recorded parent (one hop toward primary);
-        /// errors if CWD is not in a workweave.
-        source: Option<SyncSource>,
+        /// (absolute, or relative to the primary workspace). Required; if you
+        /// meant to land work upward, use `rwv sync-to`.
+        source: SyncSource,
         /// Sync strategy: ff (default), rebase, or merge
         #[arg(long, default_value = "ff", value_enum)]
         strategy: SyncStrategy,
         /// Bypass the lock-freshness precondition
         #[arg(long)]
         force: bool,
-        /// Sync then delete the workweave on success (requires clean worktree and manifest repos converged with parent)
-        #[arg(long)]
-        retire: bool,
         /// Emit per-repo outcomes as JSON (array-of-records with stable per-variant `kind`). See `rwv explain sync`.
         #[arg(long)]
         json: bool,
@@ -209,8 +205,9 @@ enum Commands {
     /// contribution.
     SyncTo {
         /// Target workspace: `primary`, a bare workweave name, or a path
-        /// (absolute, or relative to the primary workspace root).
-        target: SyncSource,
+        /// (absolute, or relative to the primary workspace root). Omit to target
+        /// the recorded parent from `.rwv-workweave`; errors if not in a workweave.
+        target: Option<SyncSource>,
         /// Sync strategy for step 1 (rebase CWD against target). Default: rebase.
         /// ff means CWD must already be strictly ahead of target (no-op step 1).
         /// rebase replays CWD's unique commits onto target's tip.
@@ -221,6 +218,10 @@ enum Commands {
         /// Bypass the lock-freshness precondition
         #[arg(long)]
         force: bool,
+        /// Land work then delete the workweave on success (requires clean worktree and
+        /// manifest repos converged with target after sync-to completes).
+        #[arg(long)]
+        retire: bool,
         /// Emit per-repo outcomes as JSON (array-of-records with stable per-variant `kind`). See `rwv explain sync-to`.
         #[arg(long)]
         json: bool,
@@ -332,6 +333,22 @@ enum SetupAction {
 }
 
 fn main() -> anyhow::Result<()> {
+    // Early-dispatch did-you-mean hints for removed/relocated flags.
+    // These run before clap's full parse so we can produce a friendly error
+    // instead of clap's generic "unexpected argument" message.
+    {
+        let raw_args: Vec<String> = std::env::args().collect();
+        // Detect: rwv sync --retire (--retire has moved to sync-to)
+        if raw_args.get(1).map(|s| s.as_str()) == Some("sync")
+            && raw_args.iter().any(|a| a == "--retire")
+        {
+            eprintln!(
+                "error: `--retire` has moved to `rwv sync-to`; use `rwv sync-to --retire` instead"
+            );
+            std::process::exit(2);
+        }
+    }
+
     let cli = Cli::parse();
 
     match cli.command {
@@ -515,7 +532,6 @@ fn main() -> anyhow::Result<()> {
             source,
             strategy,
             force,
-            retire,
             json,
             jobs,
             project,
@@ -536,10 +552,10 @@ fn main() -> anyhow::Result<()> {
             if json {
                 sync::run_sync_json(
                     &cwd,
-                    source.as_ref(),
+                    Some(&source),
                     strategy,
                     force,
-                    retire,
+                    false,
                     project_override,
                     jobs,
                     do_continue,
@@ -547,10 +563,10 @@ fn main() -> anyhow::Result<()> {
             } else {
                 sync::run_sync(
                     &cwd,
-                    source.as_ref(),
+                    Some(&source),
                     strategy,
                     force,
-                    retire,
+                    false,
                     project_override,
                     jobs,
                     do_continue,
@@ -561,6 +577,7 @@ fn main() -> anyhow::Result<()> {
             target,
             strategy,
             force,
+            retire,
             json,
             jobs,
             project,
@@ -572,12 +589,49 @@ fn main() -> anyhow::Result<()> {
                 Some(n) => repoweave::parallel::resolve_jobs(Some(n)),
                 None => 1,
             };
+            // Resolve target: if None, read .rwv-workweave marker's parent field.
+            let resolved_target = match target {
+                Some(t) => t,
+                None => {
+                    // Bare `rwv sync-to` — must be inside a workweave.
+                    let ctx = repoweave::workspace::WorkspaceContext::resolve(&cwd, None)?;
+                    match &ctx.location {
+                        repoweave::workspace::WorkspaceLocation::Workweave { dir, .. } => {
+                            let marker = repoweave::workspace::WorkweaveMarker::read(dir)?
+                                .ok_or_else(|| {
+                                    anyhow::anyhow!(
+                                        "bare `rwv sync-to` requires a `.rwv-workweave` marker \
+                                         in the workweave; found none at {}",
+                                        dir.display()
+                                    )
+                                })?;
+                            let parent = marker.parent.ok_or_else(|| {
+                                anyhow::anyhow!(
+                                    "workweave marker at {} has no `parent` field; \
+                                     pass an explicit target to `rwv sync-to`",
+                                    dir.display()
+                                )
+                            })?;
+                            sync::SyncSource::Path(parent)
+                        }
+                        repoweave::workspace::WorkspaceLocation::Weave { .. } => {
+                            anyhow::bail!(
+                                "bare `rwv sync-to` targets the workweave's recorded parent, \
+                                 but CWD ({}) is in the primary weave, not a workweave. \
+                                 Provide a target explicitly.",
+                                cwd.display()
+                            );
+                        }
+                    }
+                }
+            };
             if json {
                 sync::run_sync_to_json(
                     &cwd,
-                    &target,
+                    &resolved_target,
                     strategy,
                     force,
+                    retire,
                     project_override,
                     jobs,
                     do_continue,
@@ -585,9 +639,10 @@ fn main() -> anyhow::Result<()> {
             } else {
                 sync::run_sync_to(
                     &cwd,
-                    &target,
+                    &resolved_target,
                     strategy,
                     force,
+                    retire,
                     project_override,
                     jobs,
                     do_continue,

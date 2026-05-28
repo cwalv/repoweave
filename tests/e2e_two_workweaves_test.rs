@@ -563,14 +563,14 @@ fn sync_phase3_materialize_failure_is_fatal() {
 }
 
 // ---------------------------------------------------------------------------
-// Bare `rwv sync` follows parent + `--retire` cleanup
+// `rwv sync primary` (explicit source) + bare `rwv sync-to` + `--retire` cleanup
 // ---------------------------------------------------------------------------
 
-/// Happy path: a workweave forked from primary has `parent` recorded in
-/// its marker; bare `rwv sync` (no source) reads that parent and syncs
-/// to it. The end state matches `rwv sync primary`.
+/// Happy path: a workweave forked from primary syncs from primary using
+/// an explicit source. `rwv sync <source>` always requires an explicit source
+/// now; bare `rwv sync` was removed (use `rwv sync-to` to land work upward).
 #[test]
-fn bare_sync_follows_recorded_parent_to_primary() {
+fn sync_with_explicit_primary_source_advances_workweave() {
     let tmp = tempfile::tempdir().unwrap();
     let weaveroot = tmp.path().join(".workweaves");
     std::fs::create_dir_all(&weaveroot).unwrap();
@@ -591,10 +591,9 @@ fn bare_sync_follows_recorded_parent_to_primary() {
     );
     rwv_lock_commit(&main.root);
 
-    // Bare `rwv sync` from inside ww1 must follow parent (== primary) and
-    // bring ww1 forward.
+    // `rwv sync primary` from inside ww1 brings ww1 forward.
     rwv()
-        .args(["sync"])
+        .args(["sync", "primary"])
         .current_dir(&ww1.root)
         .assert()
         .success();
@@ -602,20 +601,19 @@ fn bare_sync_follows_recorded_parent_to_primary() {
     let ww1_lib_head = git_out(&["rev-parse", "HEAD"], &ww1.manifest_repo);
     assert_eq!(
         ww1_lib_head, primary_sha,
-        "after bare sync, ww1's lib HEAD must be at primary's tip"
+        "after sync primary, ww1's lib HEAD must be at primary's tip"
     );
     assert!(
         ww1.manifest_repo.join("primary.txt").exists(),
-        "after bare sync, ww1 must have primary's new file"
+        "after sync primary, ww1 must have primary's new file"
     );
 }
 
-/// Backfill: a workweave whose `.rwv-workweave` predates parent tracking
-/// still works under bare sync — `WorkweaveMarker::read` backfills the
-/// missing `parent` to `primary`. Simulate that by stripping `parent:`
-/// from the marker file after create, then run bare sync.
+/// Bare `rwv sync-to` (no target) from a workweave reads the recorded
+/// parent from `.rwv-workweave` and lands work upward. This is the new
+/// "bare" behavior — upward landing without requiring an explicit target.
 #[test]
-fn bare_sync_works_after_parent_backfill_on_legacy_marker() {
+fn bare_sync_to_follows_recorded_parent_to_primary() {
     let tmp = tempfile::tempdir().unwrap();
     let weaveroot = tmp.path().join(".workweaves");
     std::fs::create_dir_all(&weaveroot).unwrap();
@@ -624,43 +622,85 @@ fn bare_sync_works_after_parent_backfill_on_legacy_marker() {
     std::fs::write(main.root.join(".rwv-active"), format!("{PROJECT}\n")).unwrap();
     let ww1 = create_workweave(&main, &weaveroot, "ww1");
 
-    // Strip the `parent:` line from the marker to simulate a workweave
-    // that predates parent tracking. The read path must backfill it to
-    // primary.
-    let marker_path = ww1.root.join(".rwv-workweave");
-    let marker_content = std::fs::read_to_string(&marker_path).unwrap();
-    let stripped: String = marker_content
-        .lines()
-        .filter(|line| !line.trim_start().starts_with("parent:"))
-        .collect::<Vec<_>>()
-        .join("\n")
-        + "\n";
-    std::fs::write(&marker_path, &stripped).unwrap();
-    assert!(
-        !stripped.contains("parent:"),
-        "legacy marker must not contain parent: field for this test"
+    // Workweave advances the manifest repo and locks.
+    let ww1_sha = commit_file(
+        &ww1.manifest_repo,
+        "ww1.txt",
+        "from ww1\n",
+        "ww1: add ww1.txt",
     );
+    rwv_lock_commit(&ww1.root);
 
-    // Make primary diverge so bare sync has work to do.
-    let primary_sha = commit_file(
-        &main.manifest_repo,
-        "legacy.txt",
-        "legacy parent backfill\n",
-        "primary: legacy backfill marker",
-    );
-    rwv_lock_commit(&main.root);
-
+    // Bare `rwv sync-to` (no target) from ww1 reads the marker's parent (primary)
+    // and fast-forwards primary to ww1's tip.
     rwv()
-        .args(["sync"])
+        .args(["sync-to", "--strategy=ff"])
         .current_dir(&ww1.root)
         .assert()
         .success();
 
-    let ww1_lib_head = git_out(&["rev-parse", "HEAD"], &ww1.manifest_repo);
+    let primary_lib_head = git_out(&["rev-parse", "HEAD"], &main.manifest_repo);
     assert_eq!(
-        ww1_lib_head, primary_sha,
-        "bare sync on legacy marker must follow backfilled parent (primary)"
+        primary_lib_head, ww1_sha,
+        "after bare sync-to, primary's lib HEAD must be at ww1's tip"
     );
+}
+
+/// Bare `rwv sync-to` from the primary weave (not inside a workweave)
+/// must error with a clear message — there is no recorded parent to target.
+#[test]
+fn bare_sync_to_from_primary_errors_with_no_parent_message() {
+    let tmp = tempfile::tempdir().unwrap();
+
+    let main = make_main_workspace(tmp.path());
+    std::fs::write(main.root.join(".rwv-active"), format!("{PROJECT}\n")).unwrap();
+
+    let assert = rwv()
+        .args(["sync-to"])
+        .current_dir(&main.root)
+        .assert()
+        .failure();
+    let stderr = String::from_utf8_lossy(&assert.get_output().stderr).into_owned();
+    assert!(
+        stderr.contains("primary weave") || stderr.contains("workweave") || stderr.contains("target"),
+        "expected error message about needing a workweave or explicit target; got: {stderr}"
+    );
+}
+
+/// `rwv sync --retire` must error with a did-you-mean hint pointing at
+/// `rwv sync-to --retire`. The --retire flag was removed from sync.
+#[test]
+fn sync_retire_flag_gives_did_you_mean_hint() {
+    let tmp = tempfile::tempdir().unwrap();
+
+    let main = make_main_workspace(tmp.path());
+    std::fs::write(main.root.join(".rwv-active"), format!("{PROJECT}\n")).unwrap();
+
+    let assert = rwv()
+        .args(["sync", "--retire", "primary"])
+        .current_dir(&main.root)
+        .assert()
+        .failure();
+    let stderr = String::from_utf8_lossy(&assert.get_output().stderr).into_owned();
+    assert!(
+        stderr.contains("sync-to") || stderr.contains("--retire"),
+        "expected did-you-mean hint mentioning sync-to --retire; got: {stderr}"
+    );
+}
+
+/// `rwv sync` with no source must fail (source is now required).
+#[test]
+fn bare_sync_no_source_fails() {
+    let tmp = tempfile::tempdir().unwrap();
+
+    let main = make_main_workspace(tmp.path());
+    std::fs::write(main.root.join(".rwv-active"), format!("{PROJECT}\n")).unwrap();
+
+    rwv()
+        .args(["sync"])
+        .current_dir(&main.root)
+        .assert()
+        .failure();
 }
 
 /// Sibling-sync warning: when CWD is one workweave and an explicit
@@ -701,13 +741,13 @@ fn sibling_sync_emits_warning_and_proceeds() {
 }
 
 // ---------------------------------------------------------------------------
-// --retire
+// sync-to --retire
 // ---------------------------------------------------------------------------
 
-/// Happy path: `rwv sync --retire` from a workweave whose project repo is
-/// already at parent's tip (no divergent commits) syncs and deletes.
+/// Happy path: `rwv sync-to --retire` from a workweave whose project repo is
+/// already at parent's tip (no divergent commits) lands work upward and deletes.
 #[test]
-fn sync_retire_clean_path_deletes_workweave() {
+fn sync_to_retire_clean_path_deletes_workweave() {
     let tmp = tempfile::tempdir().unwrap();
     let weaveroot = tmp.path().join(".workweaves");
     std::fs::create_dir_all(&weaveroot).unwrap();
@@ -734,28 +774,28 @@ fn sync_retire_clean_path_deletes_workweave() {
 
     let ww1 = create_workweave(&main, &weaveroot, "ww1");
 
-    // No-op sync: nothing in ww1 has changed since fork. Manifest tips
+    // No divergence: nothing in ww1 has changed since fork. Manifest tips
     // identical to parent's, working tree clean (modulo gitignored
-    // activation outputs) → retire should succeed.
+    // activation outputs) → sync-to --retire should succeed.
     assert!(ww1.root.exists(), "workweave must exist pre-retire");
 
     rwv()
-        .args(["sync", "--retire"])
+        .args(["sync-to", "--retire", &main.root.to_string_lossy()])
         .current_dir(&ww1.root)
         .assert()
         .success();
 
     assert!(
         !ww1.root.exists(),
-        "--retire must delete the workweave on successful sync"
+        "--retire must delete the workweave on successful sync-to"
     );
 }
 
 /// Dirty-after-sync path: if any worktree in the workweave has uncommitted
-/// changes when --retire runs the post-sync check, retire must refuse to
+/// changes when --retire runs the post-sync-to check, retire must refuse to
 /// delete and leave the workweave intact for the operator to fix.
 #[test]
-fn sync_retire_with_dirty_worktree_refuses_to_delete() {
+fn sync_to_retire_with_dirty_worktree_refuses_to_delete() {
     let tmp = tempfile::tempdir().unwrap();
     let weaveroot = tmp.path().join(".workweaves");
     std::fs::create_dir_all(&weaveroot).unwrap();
@@ -764,13 +804,13 @@ fn sync_retire_with_dirty_worktree_refuses_to_delete() {
     std::fs::write(main.root.join(".rwv-active"), format!("{PROJECT}\n")).unwrap();
     let ww1 = create_workweave(&main, &weaveroot, "ww1");
 
-    // Dirty up the manifest-repo worktree before retire runs. The sync
+    // Dirty up the manifest-repo worktree before retire runs. The sync-to
     // itself will succeed (no manifest changes to apply), but the
-    // post-sync dirty check must catch the staged-edit and refuse delete.
+    // post-sync-to dirty check must catch the staged-edit and refuse delete.
     std::fs::write(ww1.manifest_repo.join("README.md"), "dirtied\n").unwrap();
 
     let assert = rwv()
-        .args(["sync", "--retire"])
+        .args(["sync-to", "--retire", &main.root.to_string_lossy()])
         .current_dir(&ww1.root)
         .assert()
         .failure();
