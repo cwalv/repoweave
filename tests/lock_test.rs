@@ -665,16 +665,16 @@ fn lock_records_tag_per_repo_independently() {
     let lock_path = project_dir.join("rwv.lock");
     let lock = repoweave::manifest::LockFile::from_path(&lock_path).unwrap();
 
-    let entry_a = &lock.repo_map()
-        [&repoweave::manifest::RepoPath::new(repo_a).expect("known-safe literal")];
+    let entry_a =
+        &lock.repo_map()[&repoweave::manifest::RepoPath::new(repo_a).expect("known-safe literal")];
     assert_eq!(
         entry_a.version.as_str(),
         "v2.0.0",
         "tagged repo should use tag name"
     );
 
-    let entry_b = &lock.repo_map()
-        [&repoweave::manifest::RepoPath::new(repo_b).expect("known-safe literal")];
+    let entry_b =
+        &lock.repo_map()[&repoweave::manifest::RepoPath::new(repo_b).expect("known-safe literal")];
     assert_eq!(
         entry_b.version.as_str(),
         &sha_b,

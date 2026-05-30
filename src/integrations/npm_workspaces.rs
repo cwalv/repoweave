@@ -36,7 +36,10 @@ impl Integration for NpmWorkspaces {
             .and_then(|c| serde_json::from_str(&c).ok())
             .unwrap_or_default();
 
-        obj.insert("name".into(), serde_json::Value::String(GENERATED_HEADER.into()));
+        obj.insert(
+            "name".into(),
+            serde_json::Value::String(GENERATED_HEADER.into()),
+        );
         obj.insert("private".into(), serde_json::Value::Bool(true));
         obj.insert("workspaces".into(), serde_json::Value::Array(workspaces));
 
@@ -52,7 +55,9 @@ impl Integration for NpmWorkspaces {
         }
 
         let content = std::fs::read_to_string(&path)?;
-        let Ok(serde_json::Value::Object(mut obj)) = serde_json::from_str::<serde_json::Value>(&content) else {
+        let Ok(serde_json::Value::Object(mut obj)) =
+            serde_json::from_str::<serde_json::Value>(&content)
+        else {
             // Not valid JSON or not an object — leave the file alone.
             return Ok(());
         };

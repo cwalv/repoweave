@@ -73,7 +73,7 @@ fn find_stale_repos(manifest: &Manifest, lock: &LockFile, no_reference: bool) ->
         .iter()
         .filter(|(_, entry)| !(no_reference && entry.role == Role::Reference))
         .map(|(rp, _)| rp)
-        .filter(|rp| !lock.contains_repo(*rp))
+        .filter(|rp| !lock.contains_repo(rp))
         .cloned()
         .collect()
 }

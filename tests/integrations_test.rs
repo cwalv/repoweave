@@ -250,33 +250,36 @@ mod npm_workspaces {
         let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
 
         // rwv-owned keys must be set/updated.
-        assert_eq!(parsed["name"], "repoweave", "name should be the rwv sentinel");
+        assert_eq!(
+            parsed["name"], "repoweave",
+            "name should be the rwv sentinel"
+        );
         assert_eq!(parsed["private"], true, "private should remain true");
-        let workspaces = parsed["workspaces"].as_array().expect("workspaces should be an array");
+        let workspaces = parsed["workspaces"]
+            .as_array()
+            .expect("workspaces should be an array");
         assert!(
-            workspaces.iter().any(|w| w.as_str() == Some("github/acme/server")),
+            workspaces
+                .iter()
+                .any(|w| w.as_str() == Some("github/acme/server")),
             "workspaces should contain the detected repo; got: {workspaces:?}"
         );
 
         // User-authored fields must survive.
         assert_eq!(
-            parsed["scripts"]["ci"],
-            "npm run build && npm test",
+            parsed["scripts"]["ci"], "npm run build && npm test",
             "scripts.ci should survive activate"
         );
         assert_eq!(
-            parsed["devDependencies"]["typescript"],
-            "^5.0.0",
+            parsed["devDependencies"]["typescript"], "^5.0.0",
             "devDependencies should survive activate"
         );
         assert_eq!(
-            parsed["engines"]["node"],
-            ">=18",
+            parsed["engines"]["node"], ">=18",
             "engines should survive activate"
         );
         assert_eq!(
-            parsed["version"],
-            "0.1.0",
+            parsed["version"], "0.1.0",
             "version should survive activate"
         );
     }
@@ -305,7 +308,11 @@ mod npm_workspaces {
         let mut pkg: serde_json::Value =
             serde_json::from_str(&std::fs::read_to_string(&pkg_path).unwrap()).unwrap();
         pkg["scripts"] = serde_json::json!({"ci": "npm test"});
-        std::fs::write(&pkg_path, serde_json::to_string_pretty(&pkg).unwrap() + "\n").unwrap();
+        std::fs::write(
+            &pkg_path,
+            serde_json::to_string_pretty(&pkg).unwrap() + "\n",
+        )
+        .unwrap();
 
         // Second activate — should preserve the ci script.
         NpmWorkspaces.activate(&ctx).unwrap();
@@ -313,8 +320,7 @@ mod npm_workspaces {
         let content = std::fs::read_to_string(&pkg_path).unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
         assert_eq!(
-            parsed["scripts"]["ci"],
-            "npm test",
+            parsed["scripts"]["ci"], "npm test",
             "ci script should survive a second activate"
         );
         assert_eq!(parsed["name"], "repoweave");
@@ -354,17 +360,28 @@ mod npm_workspaces {
         let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
 
         // rwv-owned keys must be gone.
-        assert!(parsed.get("name").is_none(), "name should be stripped on deactivate");
-        assert!(parsed.get("private").is_none(), "private should be stripped on deactivate");
-        assert!(parsed.get("workspaces").is_none(), "workspaces should be stripped on deactivate");
+        assert!(
+            parsed.get("name").is_none(),
+            "name should be stripped on deactivate"
+        );
+        assert!(
+            parsed.get("private").is_none(),
+            "private should be stripped on deactivate"
+        );
+        assert!(
+            parsed.get("workspaces").is_none(),
+            "workspaces should be stripped on deactivate"
+        );
 
         // User fields must remain.
         assert_eq!(
-            parsed["scripts"]["ci"],
-            "npm run build && npm test",
+            parsed["scripts"]["ci"], "npm run build && npm test",
             "scripts.ci should survive deactivate"
         );
-        assert_eq!(parsed["version"], "0.1.0", "version should survive deactivate");
+        assert_eq!(
+            parsed["version"], "0.1.0",
+            "version should survive deactivate"
+        );
     }
 
     #[test]
