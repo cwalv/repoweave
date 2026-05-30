@@ -29,6 +29,11 @@ schemars = "0.8"
 regex = "1.12.3"
 globset = "0.4.18"
 dirs = "6.0.0"
+# Added for fo-cnpjy.2 (shared merge helper). Format-preserving TOML parser:
+# preserves comments, key order, and decorations, which is required for the
+# hybrid-merge contract on cargo/uv (Cargo.toml, pyproject.toml). serde + toml
+# round-trips would clobber user-authored profile blocks, lint policy, etc.
+toml_edit = "0.22"
 
 [dev-dependencies]
 tempfile = "3"

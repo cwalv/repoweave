@@ -1,6 +1,7 @@
 pub mod cargo_workspace;
 pub mod gita;
 pub mod go_work;
+pub mod merge;
 pub mod npm_workspaces;
 pub mod pnpm_workspaces;
 pub mod static_files;
