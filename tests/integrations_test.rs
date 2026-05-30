@@ -830,8 +830,13 @@ mod pnpm_workspaces {
         integration.activate(&ctx).unwrap();
 
         let content = std::fs::read_to_string(root.join("pnpm-workspace.yaml")).unwrap();
-        let expected = "packages:\n  - github/chatly/protocol\n  - github/chatly/server\n  - github/chatly/web\n";
-        assert_eq!(content, expected);
+        // Activate now writes the `# managed by repoweave` marker above the
+        // packages block — that is the ownership sentinel for the hybrid contract.
+        assert!(content.contains("# managed by repoweave"));
+        assert!(content.contains("packages:"));
+        assert!(content.contains("  - github/chatly/protocol"));
+        assert!(content.contains("  - github/chatly/server"));
+        assert!(content.contains("  - github/chatly/web"));
     }
 
     #[test]
@@ -860,7 +865,27 @@ mod pnpm_workspaces {
     }
 
     #[test]
-    fn deactivation_removes_pnpm_workspace_yaml() {
+    fn deactivation_deletes_fully_rwv_authored_file() {
+        // When the file was authored entirely by rwv (only a marker + packages
+        // block, nothing user-authored), deactivation should delete it.
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+
+        write_file(
+            root,
+            "pnpm-workspace.yaml",
+            "# managed by repoweave\npackages:\n  - foo\n",
+        );
+        assert!(root.join("pnpm-workspace.yaml").exists());
+
+        let integration = PnpmWorkspaces;
+        integration.deactivate(root).unwrap();
+        assert!(!root.join("pnpm-workspace.yaml").exists());
+    }
+
+    #[test]
+    fn deactivation_leaves_hand_owned_file_alone() {
+        // A file without the marker was not authored by rwv — leave it alone.
         let tmp = TempDir::new().unwrap();
         let root = tmp.path();
 
@@ -869,7 +894,8 @@ mod pnpm_workspaces {
 
         let integration = PnpmWorkspaces;
         integration.deactivate(root).unwrap();
-        assert!(!root.join("pnpm-workspace.yaml").exists());
+        // No marker → user took the pen → file must survive.
+        assert!(root.join("pnpm-workspace.yaml").exists());
     }
 
     #[test]
@@ -911,7 +937,6 @@ mod pnpm_workspaces {
 
     /// §6.pnpm.1 — Activate preserves a user catalog and comment.
     #[test]
-    #[ignore = "RED: turned green by fo-cnpjy.10 (pnpm merge port)"]
     fn s6_pnpm_1_activate_preserves_catalog_and_comments() {
         let tmp = TempDir::new().unwrap();
         let root = tmp.path();
@@ -960,7 +985,6 @@ packages:
     /// §6.pnpm.2 — Deactivate strips `packages:` but keeps `overrides:`.
     /// Regression vs current unconditional remove_file at pnpm_workspaces.rs:33-35.
     #[test]
-    #[ignore = "RED: turned green by fo-cnpjy.10 (pnpm merge port)"]
     fn s6_pnpm_2_deactivate_strips_packages_keeps_overrides() {
         let tmp = TempDir::new().unwrap();
         let root = tmp.path();
@@ -1026,7 +1050,6 @@ packages:
     /// with an inline comment survives byte-for-byte, even when activate runs
     /// twice with a member added in between.
     #[test]
-    #[ignore = "RED: turned green by fo-cnpjy.10 (pnpm merge port)"]
     fn s6_pnpm_4_activate_idempotent_comments_preserved() {
         let tmp = TempDir::new().unwrap();
         let root = tmp.path();
