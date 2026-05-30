@@ -31,7 +31,7 @@ use std::path::Path;
 
 use crate::integration::{is_enabled, Integration, IntegrationContext, Severity};
 use crate::integration_runner::{
-    build_detection_cache, run_activate_hooks, run_activations, run_verifications,
+    build_detection_cache, run_activate_hooks, run_activations, run_checks, run_verifications,
 };
 use crate::integrations::builtin_integrations;
 use crate::manifest::{IntegrationConfig, Manifest, ProjectName};
@@ -198,18 +198,29 @@ fn activate_at(
             report_and_check_activation_issues(&issues)?;
         }
         ActivationMode::Context => {
-            // Verify pass — report drift as Issues. Context verbs **never
-            // author content**, so even Severity::Error drift is reported
-            // as a warning and proceeds: the recovery hatch is
-            // `rwv doctor --fix`. Bailing here would defeat the spec's
-            // unqualified "activate never authors" contract — a noisy
-            // verify shouldn't block a context switch from completing.
-            let issues = run_verifications(&integrations, &manifest, &ctx_base);
-            for issue in &issues {
+            // Two passes:
+            //   - run_checks: environment/config preconditions (cargo not on
+            //     PATH, declared static file missing, etc.). Same call as
+            //     `rwv doctor`. Surfaces as warnings; does not bail.
+            //   - run_verifications: drift between intent (rwv.yaml/.lock)
+            //     and on-disk managed/generated content. Empty by default;
+            //     ports override `verify()` to opt in.
+            // Context verbs **never author content**, so even Severity::Error
+            // findings are surfaced as warnings and the activation proceeds —
+            // the recovery hatch is `rwv doctor --fix`. Bailing here would
+            // defeat the spec's unqualified "activate never authors" contract.
+            let check_issues = run_checks(&integrations, &manifest, &ctx_base);
+            for issue in &check_issues {
                 let prefix = match issue.severity {
                     Severity::Warning => "warning",
-                    // Drift detected at error severity. We do NOT bail —
-                    // the operator's recovery is `rwv doctor --fix`.
+                    Severity::Error => "warning",
+                };
+                eprintln!("[{prefix}] {}: {}", issue.integration, issue.message);
+            }
+            let verify_issues = run_verifications(&integrations, &manifest, &ctx_base);
+            for issue in &verify_issues {
+                let prefix = match issue.severity {
+                    Severity::Warning => "warning (drift)",
                     Severity::Error => "warning (drift)",
                 };
                 eprintln!("[{prefix}] {}: {}", issue.integration, issue.message);

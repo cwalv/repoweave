@@ -1143,12 +1143,13 @@ mod fo_cnpjy_3 {
     }
 
     // -----------------------------------------------------------------------
-    // 2. verify() default forwards to check() — preserves existing
-    //    integrations' warning surface under context-mode activate.
+    // 2. verify() defaults to empty — drift detection is opt-in per port.
+    //    check() (environment/config preconditions) is run separately by
+    //    context verbs and `rwv doctor`; verify() reports content drift only.
     // -----------------------------------------------------------------------
 
     #[test]
-    fn verify_default_forwards_to_check() {
+    fn verify_default_is_empty() {
         struct CheckWarner;
         impl Integration for CheckWarner {
             fn name(&self) -> &str {
@@ -1167,7 +1168,7 @@ mod fo_cnpjy_3 {
                 Ok(vec![Issue {
                     integration: "check-warner".into(),
                     severity: Severity::Warning,
-                    message: "drift-shaped warning".into(),
+                    message: "env precondition".into(),
                 }])
             }
         }
@@ -1188,9 +1189,15 @@ mod fo_cnpjy_3 {
 
         let integration = CheckWarner;
         let verify_out = integration.verify(&ctx).unwrap();
+        assert!(
+            verify_out.is_empty(),
+            "verify() default must be empty; check() findings flow through run_checks, \
+             not run_verifications. An integration opts into drift detection by overriding \
+             verify() explicitly (epic fo-cnpjy C4–C13 per-port ports)."
+        );
+        // check() is unaffected — still emits env preconditions.
         let check_out = integration.check(&ctx).unwrap();
-        assert_eq!(verify_out.len(), check_out.len());
-        assert_eq!(verify_out[0].message, check_out[0].message);
+        assert_eq!(check_out.len(), 1);
     }
 
     // -----------------------------------------------------------------------

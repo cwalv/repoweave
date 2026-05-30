@@ -218,25 +218,28 @@ pub trait Integration {
     /// Emit drift findings as `Issue`s (typically `Severity::Warning`); the
     /// recovery hatch is `rwv doctor --fix`, which re-runs `activate()`.
     ///
-    /// **Default implementation forwards to `self.check(ctx)`.** Most
-    /// existing integrations already implement `check()` as their
-    /// read-only inspection: declared static files missing from the project
-    /// dir, ecosystem CLI absent from PATH, ecosystem-config marker
-    /// missing, etc. Those checks ARE the drift signals we want context
-    /// verbs to surface. Integrations that need a more precise drift
-    /// model (e.g. byte-level comparison against would-be-authored
-    /// content for hybrid files) override this independently.
+    /// **Default returns empty** (no drift). An integration opts in to
+    /// drift detection by overriding this method — typically a byte-level
+    /// or structural comparison between the on-disk managed/generated
+    /// artifact and what `activate()` would produce for the current
+    /// `rwv.yaml` + `rwv.lock`.
     ///
-    /// The split between `check` and `verify` (rather than collapsing
-    /// them) is preserved so that an integration's future drift logic
-    /// can diverge from its environment / configuration check without
-    /// breaking the other use-site (`rwv doctor` already calls `check`
-    /// from a different code path).
+    /// `verify` is intentionally separate from `check`: `check` reports
+    /// environment/config preconditions (CLI absent from PATH, manifest
+    /// schema problems) and is run by `rwv doctor` and the workspace
+    /// session. `verify` reports drift between intent and on-disk content,
+    /// and is run by context verbs and `rwv doctor`. The two streams must
+    /// not be collapsed: an environment problem like "cargo not on PATH"
+    /// is not drift, and surfacing it on every `rwv activate` would be
+    /// noise.
+    ///
+    /// Per-integration ports (epic fo-cnpjy C4–C13) override this when the
+    /// integration starts owning hybrid content.
     ///
     /// See [`trigger-model.md`](../docs/repoweave/integration-ownership/trigger-model.md)
     /// for the full intent-vs-context-verb split.
-    fn verify(&self, ctx: &IntegrationContext) -> anyhow::Result<Vec<Issue>> {
-        self.check(ctx)
+    fn verify(&self, _ctx: &IntegrationContext) -> anyhow::Result<Vec<Issue>> {
+        Ok(Vec::new())
     }
 }
 
