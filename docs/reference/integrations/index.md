@@ -25,11 +25,22 @@ Each integration participates in three hook points:
 - **Install hooks** (run during `rwv activate`, after config generation) — run install commands (`npm install`, `uv sync`, `cargo generate-lockfile`, etc.) to keep ecosystem lock files current with the active membership. Suppressed with `rwv activate --no-install`.
 - **Check hooks** (run during `rwv doctor`) — read-only inspection. Verify the environment is healthy, report missing tools or stale config.
 
-When a project is activated, a workweave is created, or `rwv sync` materializes repo changes, integrations run: the deactivation hook cleans up first, then the activation hook generates fresh config. Each integration auto-detects relevant repos — if none are found, it is a no-op.
+When `rwv activate` runs, integrations perform Axis-1 surfacing: they create the symlinks that make committed project-repo files visible at the weave root. `activate` never re-authors a hybrid file's managed region; it only verifies for drift and warns. Authoring happens on intent verbs (`add`, `remove`, `update`, `lock`). `deactivate` is a separate verb — it strips managed keys and removes the file only when nothing user-authored remains. Each integration auto-detects relevant repos — if none are found, it is a no-op.
 
-## Generated files are committable
+For the normative ownership contract (Axis 1 surfacing, Axis 2 content ownership, the hybrid-merge invariants, and the marker-as-generate-vs-verify-switch), see [file-ownership](../../explanation/joints/file-ownership.md).
 
-Generated ecosystem files live in the project directory (symlinked to the weave or workweave directory). They are **committable, not ephemeral** — they are regenerated on workweave creation, `rwv sync`, or `rwv add`, but they persist between runs and can be committed to version control.
+## Committed files and committability
+
+Ecosystem files live in the project directory (symlinked to the weave or workweave directory). Committability works differently depending on content ownership:
+
+- **Fully rwv-owned** files (gita CSVs, ecosystem lockfiles) are regenerated in full on each
+  authoring pass. They are safe to gitignore or whole-delete.
+- **Hybrid** files (`Cargo.toml`, `pyproject.toml`, `pnpm-workspace.yaml`, `go.work`,
+  `package.json`, `*.code-workspace`) are user-authored source that rwv manages a declared region
+  within. They **must be committed** — user content (profiles, lints, overrides, replace
+  directives) survives only because the file lives in the project repo. Gitignoring a hybrid file
+  would destroy user content on re-activate. rwv merges its managed keys into the existing file;
+  it never whole-writes or whole-deletes it.
 
 Ecosystem lock files (`package-lock.json`, `pnpm-lock.yaml`, `uv.lock`, `go.sum`, `Cargo.lock`) are produced by the ecosystem tools during the install step. These pin exact external-dependency versions and should be committed alongside the workspace configs.
 

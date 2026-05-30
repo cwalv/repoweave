@@ -60,7 +60,7 @@ A weave can hold multiple projects. Only one is active at a time. The active pro
 `rwv activate <project>` does three things:
 
 1. Updates `.rwv-active`.
-2. Regenerates ecosystem workspace files in the project directory: `package.json` workspaces, `go.work`, `Cargo.toml` with `[workspace]`, `pyproject.toml` with `[tool.uv.workspace]`.
+2. Merges managed keys into ecosystem workspace files in the project directory (`package.json` workspaces, `go.work`, `Cargo.toml` with `[workspace]`, `pyproject.toml` with `[tool.uv.workspace]`), preserving user-authored content in each file.
 3. Symlinks those files to the weave root so ecosystem tools see them where they expect.
 
 This is the antidote to manual wiring hell:
@@ -114,7 +114,7 @@ Integrations (`npm-workspaces`, `go-work`, `cargo-workspace`, `uv-workspace`, `p
 
 ## The shape, in one paragraph
 
-A project repo lives at `projects/{name}/` and carries `rwv.yaml` (which repos, with what roles), `rwv.lock` (pinned revisions), and any cross-cutting docs. Manifest repos live at `{registry}/{owner}/{repo}/` as regular clones. One project is *active* in a workspace at a time (`.rwv-active`); activating regenerates ecosystem workspace files from the manifest and symlinks them to the workspace root. The lock is derived state — output of `rwv lock`, never an input to merge. Roles tag each repo's change resistance, doing triple duty as a human cognitive aid, an agent safety boundary, and a build-graph membership flag.
+A project repo lives at `projects/{name}/` and carries `rwv.yaml` (which repos, with what roles), `rwv.lock` (pinned revisions), and any cross-cutting docs. Manifest repos live at `{registry}/{owner}/{repo}/` as regular clones. One project is *active* in a workspace at a time (`.rwv-active`); activating merges managed keys into ecosystem workspace files and symlinks them to the workspace root, preserving any user-authored content. The lock is derived state — output of `rwv lock`, never an input to merge. Roles tag each repo's change resistance, doing triple duty as a human cognitive aid, an agent safety boundary, and a build-graph membership flag.
 
 ## Related
 

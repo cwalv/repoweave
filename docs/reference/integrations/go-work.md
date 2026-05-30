@@ -7,7 +7,7 @@ Generates a `go.work` file listing every project repo (excluding `reference` rep
 | Default enabled | yes |
 | Auto-detects | repos with `go.mod` |
 | Generates | `go.work` |
-| Lock hook | — |
+| Install hook | — |
 
 ## Generated file
 
