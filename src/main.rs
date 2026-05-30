@@ -91,6 +91,9 @@ enum Commands {
         /// Number of parallel per-repo workers. Default: min(nproc, 8). `-j 1` is explicit serial.
         #[arg(short = 'j', long = "jobs")]
         jobs: Option<usize>,
+        /// Emit per-repo outcomes as JSON (envelope under -j 1, NDJSON under -j > 1). See `rwv explain update`.
+        #[arg(long)]
+        json: bool,
     },
     /// Push manifest repos and then the project repo, in that order. Refuses from a workweave. Manifest pushes are attempt-all-and-collect; project repo is gated on every manifest repo succeeding.
     Push {
@@ -515,12 +518,19 @@ fn main() -> anyhow::Result<()> {
             roles,
             repos,
             jobs,
+            json,
         }) => {
             let cwd = std::env::current_dir()?;
             let project_override = project.map(repoweave::manifest::ProjectName::new);
             let filter = repoweave::selector::RepoFilter::parse(&roles, &repos)?;
+            // Update's default is auto-parallel (min(nproc, 8)). The envelope/NDJSON
+            // split mirrors sync: -j 1 (or unspecified with --json) emits the
+            // envelope; -j > 1 streams NDJSON. Note: unlike sync, update defaults
+            // to auto-parallel even without --json, so --json + no -j will default
+            // to multi-worker NDJSON on multi-core machines. Callers that want the
+            // envelope must pass `-j 1` explicitly alongside --json.
             let jobs = repoweave::parallel::resolve_jobs(jobs);
-            update::run_update(&cwd, dirty, commit, project_override, &filter, jobs)?;
+            update::run_update(&cwd, dirty, commit, json, project_override, &filter, jobs)?;
         }
         Some(Commands::Push {
             project,

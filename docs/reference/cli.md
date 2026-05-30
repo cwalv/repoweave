@@ -38,6 +38,9 @@ Anchored by `tests/doc_claims_fetch_test.rs`.
 |---|---|
 | `--role` / `--repo` | Selector filters |
 | `-j N` | Parallel per-repo workers (default: min(nproc, 8)) |
+| `--json` | Structured output: envelope under `-j 1`, NDJSON under `-j > 1` |
+
+`--json` emits one record per repo with `path`, `absolute_path`, `branch`, `kind` (`updated` / `up-to-date` / `failed`), `old_sha`, `new_sha`, and `error`. See `rwv explain update`.
 
 Anchored by `tests/doc_claims_update_test.rs`.
 

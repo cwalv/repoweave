@@ -16,19 +16,153 @@ converge to an already-recorded state.
 ## Invocation
 
 ```
-rwv update [--dirty] [--commit] [--project <name>]
+rwv update [--dirty] [--commit] [--project <name>] [--json]
            [--role <role>]... [--repo <selector>]... [-j <n>]
 ```
 
-Run `rwv --help update` for the full clap surface. `update` does not
-currently support `--json`.
+- `--json` emits machine-readable output (see Output below).
+- `-j N` runs per-repo advances in parallel. Under `--json -j N` with `N > 1`,
+  output switches to NDJSON (one JSON record per repo, streamed as repos finish).
+
+Run `rwv --help update` for the full clap surface.
 
 ## Output
 
-A fetch-progress line per repo (prefixed with `[<repo>]` under `-j > 1`),
-followed by a summary line of the form `rwv update: advanced N repo(s)`.
-The subsequent lock re-snapshot emits `Wrote <path>` on stderr. Unchanged
-entries are not individually reported.
+Default text output: a fetch-progress line per repo (prefixed with
+`[<repo>]` under `-j > 1`), followed by a summary line of the form
+`rwv update: advanced N repo(s)`. The subsequent lock re-snapshot emits
+`Wrote <path>` on stderr. Unchanged entries are not individually reported.
+
+Under `--json -j 1` (or `--json` with a single-repo project), output is
+the envelope:
+
+```
+{
+  "$schema": "<url>",
+  "repos": [ { "path": "...", "kind": "updated", ... }, ... ]
+}
+```
+
+Under `--json -j N` with `N > 1`, output switches to NDJSON: one
+self-describing JSON record per repo, streamed as each repo's advance
+completes. No envelope wrapper is emitted.
+
+Each record carries:
+- `path` — manifest-relative repo path.
+- `absolute_path` — fully resolved on-disk path.
+- `branch` — branch name from the manifest `version:` field.
+- `kind` — `updated` (old_sha ≠ new_sha), `up-to-date` (already at HEAD),
+  or `failed`.
+- `old_sha` — SHA before the advance (omitted if unreadable).
+- `new_sha` — SHA after checkout (omitted when `kind = failed`).
+- `error` — human-readable failure message (only when `kind = failed`).
+
+Schema:
+
+```json
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "UpdateJsonOutput",
+  "description": "Top-level envelope for `rwv update --json` (serial / `-j 1` mode). `{ \"$schema\": \"<url>\", \"repos\": [<RepoUpdateRecord>, ...] }`",
+  "type": "object",
+  "required": [
+    "$schema",
+    "repos"
+  ],
+  "properties": {
+    "$schema": {
+      "type": "string"
+    },
+    "repos": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/RepoUpdateRecord"
+      }
+    }
+  },
+  "definitions": {
+    "RepoUpdateRecord": {
+      "description": "Per-repo record in `rwv update --json` output.\n\n`old_sha` is the tip before the fetch; `new_sha` is the tip after checkout (the new branch HEAD). Both are `null` when the SHA could not be read (e.g. the repo was missing from disk before the advance). For `kind = failed`, `new_sha` is always `null`; `error` carries the human-readable failure message.",
+      "type": "object",
+      "required": [
+        "absolute_path",
+        "branch",
+        "kind",
+        "path"
+      ],
+      "properties": {
+        "absolute_path": {
+          "description": "Fully resolved absolute path.",
+          "type": "string"
+        },
+        "branch": {
+          "description": "Branch name from the manifest `version:` field.",
+          "type": "string"
+        },
+        "error": {
+          "description": "Human-readable error message, only present when `kind = failed`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "kind": {
+          "description": "Outcome discriminant.",
+          "allOf": [
+            {
+              "$ref": "#/definitions/UpdateKind"
+            }
+          ]
+        },
+        "new_sha": {
+          "description": "Tip SHA after the advance (`null` when `kind = failed`).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "old_sha": {
+          "description": "Tip SHA before the advance (`null` if unreadable).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "path": {
+          "description": "Manifest-relative path.",
+          "type": "string"
+        }
+      }
+    },
+    "UpdateKind": {
+      "description": "Per-repo outcome kind for `rwv update --json`.",
+      "oneOf": [
+        {
+          "description": "Repo was advanced to a new SHA (old_sha != new_sha).",
+          "type": "string",
+          "enum": [
+            "updated"
+          ]
+        },
+        {
+          "description": "Repo was already at the branch HEAD (old_sha == new_sha).",
+          "type": "string",
+          "enum": [
+            "up-to-date"
+          ]
+        },
+        {
+          "description": "Advance failed; see `error` for the message.",
+          "type": "string",
+          "enum": [
+            "failed"
+          ]
+        }
+      ]
+    }
+  }
+}
+```
 
 ## Exit codes
 

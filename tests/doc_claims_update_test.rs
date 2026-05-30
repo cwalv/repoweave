@@ -10,6 +10,8 @@
 //!     re-snapshotting the lock
 //!   - update -j N runs the per-repo advance loop in parallel and still
 //!     writes a single coherent lock at the end
+//!   - update --json emits an envelope { "$schema": ..., "repos": [...] }
+//!   - update --json -j N (N > 1) streams NDJSON, one record per repo
 //!
 //! Style note: this fixture is the bare-remote-plus-clone-plus-project
 //! shape from `update_test.rs`; we keep it local rather than forking
@@ -19,6 +21,8 @@
 //! reason this file exists at all.
 
 use assert_cmd::Command;
+use repoweave::update::UPDATE_SCHEMA_URL;
+use serde_json::Value;
 use std::path::{Path, PathBuf};
 
 mod common;
@@ -437,6 +441,136 @@ fn update_dash_j_parallel_advances_all_and_emits_prefix() {
         assert_eq!(
             &lock_sha, new,
             "lock entry for {rp} should reflect the new branch HEAD after update -j"
+        );
+    }
+}
+
+// ===========================================================================
+// 4. update --json emits envelope (--json -j 1)
+//
+// Doc claim: `rwv update --json` (with -j 1) emits a JSON envelope
+// `{ "$schema": "<url>", "repos": [...] }`. Per-repo records include
+// `path`, `absolute_path`, `branch`, `kind`, `old_sha`, `new_sha`.
+// ===========================================================================
+
+#[test]
+fn update_json_emits_envelope_under_j1() {
+    let repos = [("local/org/a", "owned")];
+    let ws = build_workspace("alpha", &repos);
+
+    // Advance the remote so the repo has a new HEAD to pull.
+    let (_, bare) = &ws.manifest_bares[0];
+    let new_sha = advance_bare_main(bare);
+
+    let assert = rwv()
+        .args(["update", "--dirty", "--json", "-j", "1"])
+        .current_dir(&ws.workspace)
+        .assert()
+        .success();
+
+    let stdout = String::from_utf8_lossy(&assert.get_output().stdout).into_owned();
+    let parsed: Value = serde_json::from_str(&stdout)
+        .unwrap_or_else(|e| panic!("stdout must be JSON envelope ({e}):\n{stdout}"));
+
+    let obj = parsed.as_object().expect("top level must be an object");
+    assert_eq!(
+        obj.get("$schema").and_then(Value::as_str),
+        Some(UPDATE_SCHEMA_URL),
+        "envelope must have correct $schema URL"
+    );
+
+    let repos_arr = obj
+        .get("repos")
+        .and_then(Value::as_array)
+        .expect("repos must be an array");
+    assert_eq!(repos_arr.len(), 1, "one repo in manifest");
+
+    let rec = &repos_arr[0];
+    assert_eq!(rec["path"], "local/org/a");
+    assert_eq!(rec["branch"], "main");
+    assert!(
+        rec.get("absolute_path").and_then(Value::as_str).is_some(),
+        "absolute_path must be present"
+    );
+    // kind must be "updated" because the remote advanced past the initial lock.
+    assert_eq!(
+        rec["kind"], "updated",
+        "repo was advanced so kind should be 'updated'"
+    );
+    assert_eq!(
+        rec["new_sha"].as_str(),
+        Some(new_sha.as_str()),
+        "new_sha must equal the new branch HEAD"
+    );
+}
+
+// ===========================================================================
+// 5. update --json -j N emits NDJSON (N > 1)
+//
+// Doc claim: `rwv update --json -j N` with N > 1 streams NDJSON. Each
+// line is a self-describing JSON record with `$schema` embedded. No
+// envelope wrapper is emitted.
+// ===========================================================================
+
+#[test]
+fn update_json_emits_ndjson_under_j_gt_1() {
+    let repos = [
+        ("local/org/a", "owned"),
+        ("local/org/b", "owned"),
+    ];
+    let ws = build_workspace("alpha", &repos);
+
+    // Advance each remote.
+    for (_, bare) in &ws.manifest_bares {
+        advance_bare_main(bare);
+    }
+
+    let assert = rwv()
+        .args(["update", "--dirty", "--json", "-j", "2"])
+        .current_dir(&ws.workspace)
+        .assert()
+        .success();
+
+    let stdout = String::from_utf8_lossy(&assert.get_output().stdout).into_owned();
+
+    // The whole stdout must NOT parse as one JSON document (proves NDJSON).
+    assert!(
+        serde_json::from_str::<Value>(&stdout).is_err(),
+        "NDJSON stdout must not parse as one document:\n{stdout}"
+    );
+
+    let lines: Vec<&str> = stdout.lines().filter(|l| !l.trim().is_empty()).collect();
+    assert!(
+        lines.len() >= repos.len(),
+        "expected >= {} NDJSON lines, got {}:\n{stdout}",
+        repos.len(),
+        lines.len()
+    );
+
+    let mut seen_paths = std::collections::BTreeSet::new();
+    for line in &lines {
+        let v: Value = serde_json::from_str(line)
+            .unwrap_or_else(|e| panic!("NDJSON line not valid JSON ({e}): {line}"));
+        let obj = v.as_object().unwrap();
+        assert_eq!(
+            obj.get("$schema").and_then(Value::as_str),
+            Some(UPDATE_SCHEMA_URL),
+            "every NDJSON record must embed $schema: {line}"
+        );
+        assert!(obj.contains_key("kind"), "missing kind: {line}");
+        assert!(obj.contains_key("path"), "missing path: {line}");
+        assert!(
+            obj.contains_key("absolute_path"),
+            "missing absolute_path: {line}"
+        );
+        if let Some(p) = obj.get("path").and_then(Value::as_str) {
+            seen_paths.insert(p.to_string());
+        }
+    }
+    for (rp, _) in &repos {
+        assert!(
+            seen_paths.contains(*rp),
+            "expected {rp} in NDJSON stream; got {seen_paths:?}"
         );
     }
 }

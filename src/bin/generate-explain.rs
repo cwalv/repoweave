@@ -22,6 +22,7 @@ use repoweave::status::StatusJsonOutput;
 use repoweave::sync::{
     SyncJsonOutput, SyncToJsonOutput, SYNC_JSON_SCHEMA_URL, SYNC_TO_JSON_SCHEMA_URL,
 };
+use repoweave::update::{UpdateJsonOutput, UPDATE_SCHEMA_URL};
 
 /// Output envelope for `rwv doctor --json`. By default only the active project
 /// is checked and orphan detection is skipped; pass `--all` to scan every
@@ -72,6 +73,11 @@ fn schema_fetch() -> String {
     serde_json::to_string_pretty(&schema).expect("fetch schema serializes")
 }
 
+fn schema_update() -> String {
+    let schema = schema_for!(UpdateJsonOutput);
+    serde_json::to_string_pretty(&schema).expect("update schema serializes")
+}
+
 fn verbs() -> Vec<Verb> {
     vec![
         Verb {
@@ -102,7 +108,7 @@ fn verbs() -> Vec<Verb> {
         Verb {
             name: "update",
             summary: "advance the lock to current HEADs",
-            schema: None,
+            schema: Some(schema_update),
         },
         Verb {
             name: "prime",
@@ -288,6 +294,10 @@ fn main() -> anyhow::Result<()> {
     assert!(
         repoweave::fetch::FETCH_SCHEMA_URL.ends_with("/docs/reference/schemas/fetch.json"),
         "FETCH_SCHEMA_URL no longer points at the committed artifact"
+    );
+    assert!(
+        UPDATE_SCHEMA_URL.ends_with("/docs/reference/schemas/update.json"),
+        "UPDATE_SCHEMA_URL no longer points at the committed artifact"
     );
 
     let index = render_index(&verbs);

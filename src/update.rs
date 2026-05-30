@@ -14,8 +14,77 @@ use crate::selector::RepoFilter;
 use crate::vcs::{RefName, Vcs};
 use crate::workspace::{WorkspaceContext, WorkspaceLocation};
 use anyhow::Context;
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
+
+/// Schema URL for `rwv update --json` output. Pins to the committed artifact
+/// under `docs/reference/schemas/update.json`.
+pub const UPDATE_SCHEMA_URL: &str =
+    "https://raw.githubusercontent.com/cwalv/repoweave/main/docs/reference/schemas/update.json";
+
+/// Per-repo outcome kind for `rwv update --json`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "kebab-case")]
+pub enum UpdateKind {
+    /// Repo was advanced to a new SHA (old_sha != new_sha).
+    Updated,
+    /// Repo was already at the branch HEAD (old_sha == new_sha).
+    UpToDate,
+    /// Advance failed; see `error` for the message.
+    Failed,
+}
+
+/// Per-repo record in `rwv update --json` output.
+///
+/// `old_sha` is the tip before the fetch; `new_sha` is the tip after
+/// checkout (the new branch HEAD). Both are `null` when the SHA could not
+/// be read (e.g. the repo was missing from disk before the advance). For
+/// `kind = failed`, `new_sha` is always `null`; `error` carries the
+/// human-readable failure message.
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+pub struct RepoUpdateRecord {
+    /// Manifest-relative path.
+    pub path: String,
+    /// Fully resolved absolute path.
+    pub absolute_path: String,
+    /// Branch name from the manifest `version:` field.
+    pub branch: String,
+    /// Outcome discriminant.
+    pub kind: UpdateKind,
+    /// Tip SHA before the advance (`null` if unreadable).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub old_sha: Option<String>,
+    /// Tip SHA after the advance (`null` when `kind = failed`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub new_sha: Option<String>,
+    /// Human-readable error message, only present when `kind = failed`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+/// Top-level envelope for `rwv update --json` (serial / `-j 1` mode).
+/// `{ "$schema": "<url>", "repos": [<RepoUpdateRecord>, ...] }`
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+pub struct UpdateJsonOutput {
+    #[serde(rename = "$schema")]
+    pub schema_url: String,
+    pub repos: Vec<RepoUpdateRecord>,
+}
+
+/// One NDJSON record emitted by `rwv update --json -j N` with `N > 1`.
+///
+/// Each record is a flat JSON object with `$schema` embedded so consumers
+/// can identify it without out-of-band context.
+#[derive(Debug, Serialize)]
+struct UpdateNdjsonRecord<'a> {
+    #[serde(rename = "$schema")]
+    schema: &'a str,
+    #[serde(flatten)]
+    record: &'a RepoUpdateRecord,
+}
 
 /// Run `rwv update` for the current workspace context.
 ///
@@ -33,6 +102,8 @@ use std::sync::Mutex;
 /// the project repo (same semantics as `rwv lock --commit`).
 /// When `project_override` is `Some`, that project is updated instead of
 /// the active one (one-shot; does not change `.rwv-active`).
+/// When `json` is true, structured output is emitted: an envelope under
+/// `jobs == 1`, NDJSON under `jobs > 1`.
 ///
 /// `jobs` is the resolved worker count (post-[`crate::parallel::resolve_jobs`]).
 /// `jobs == 1` runs serially with no prefix; `jobs > 1` runs the per-repo
@@ -42,6 +113,7 @@ pub fn run_update(
     cwd: &Path,
     dirty: bool,
     commit: bool,
+    json: bool,
     project_override: Option<ProjectName>,
     filter: &RepoFilter,
     jobs: usize,
@@ -65,17 +137,30 @@ pub fn run_update(
         workweave_name.as_ref().zip(workweave_dir.as_deref()),
         dirty,
         commit,
+        json,
         project_override,
         filter,
         jobs,
     )
 }
 
-/// Outcome of advancing a single repo. `Ok(())` means we ran fetch +
-/// resolve + checkout cleanly; `Err(msg)` means one of those steps failed
-/// and `msg` is the human-readable failure to surface in the aggregated
-/// summary.
-type RepoOutcome = Result<(), String>;
+/// Outcome of advancing a single repo.
+///
+/// `Ok(new_sha)` means fetch + resolve + checkout ran cleanly and the repo
+/// is now at `new_sha`. `Err(msg)` means one of those steps failed and
+/// `msg` is the human-readable failure to surface in the aggregated summary.
+type RepoOutcome = Result<String, String>;
+
+/// Extended work item: repo path + manifest entry + old tip SHA captured
+/// before the advance loop runs.
+struct WorkItem {
+    repo_path: RepoPath,
+    entry: RepoEntry,
+    absolute_path: PathBuf,
+    /// HEAD SHA before the advance (`None` if unreadable — e.g. repo
+    /// missing or git error).
+    old_sha: Option<String>,
+}
 
 /// Internal: do the update for a specific project under `active_root`.
 #[allow(clippy::too_many_arguments)]
@@ -86,6 +171,7 @@ fn update_for_project(
     workweave: Option<(&crate::manifest::WorkweaveName, &Path)>,
     dirty: bool,
     commit: bool,
+    json: bool,
     project_override: Option<ProjectName>,
     filter: &RepoFilter,
     jobs: usize,
@@ -105,45 +191,119 @@ fn update_for_project(
     // lock re-snapshot below still walks the *full* manifest, so unfiltered
     // repos remain at their previous lock SHAs — see the comment by the
     // `lock::lock` call.
-    let work_items: Vec<(RepoPath, RepoEntry)> = project
+    //
+    // Capture the old SHA before the advance so JSON output can report
+    // the before/after delta. Missing-repo clones produce `old_sha = None`.
+    let workweave_dir = workweave.map(|(_, wd)| wd);
+    let work_items: Vec<WorkItem> = project
         .manifest
         .repositories
         .iter()
         .filter(|(rp, entry)| filter.matches(rp, entry.role))
-        .map(|(rp, entry)| (rp.clone(), entry.clone()))
+        .map(|(rp, entry)| {
+            let abs = resolve_repo_dir(rp, primary_root, workweave_dir);
+            let old_sha = git
+                .head_revision(&abs)
+                .ok()
+                .map(|r| r.display_str().to_owned());
+            WorkItem {
+                repo_path: rp.clone(),
+                entry: entry.clone(),
+                absolute_path: abs,
+                old_sha,
+            }
+        })
         .collect();
 
     let parallel = jobs > 1;
+    // Under JSON mode we suppress text-mode prefix output so stdout only
+    // carries structured data. Text mode uses the Reporter prefix as usual.
+    let use_reporter = !json;
     let write_lock: Mutex<()> = Mutex::new(());
 
     let outcomes: Vec<RepoOutcome> = run_in_parallel(&work_items, jobs, |_idx, item| {
-        let (repo_path, entry) = item;
-        let reporter = if parallel {
-            Reporter::parallel(repo_path.as_str().to_string(), &write_lock)
+        let reporter = if parallel && use_reporter {
+            Reporter::parallel(item.repo_path.as_str().to_string(), &write_lock)
         } else {
             Reporter::serial()
         };
         advance_one(
             &git,
-            repo_path,
-            entry,
+            &item.repo_path,
+            &item.entry,
             primary_root,
-            workweave.map(|(_, wd)| wd),
+            workweave_dir,
             &reporter,
+            use_reporter,
         )
     });
 
     // Aggregate errors in input order — matches the existing serial shape.
     let mut errors: Vec<String> = Vec::new();
     let mut updated = 0usize;
-    for outcome in outcomes {
-        match outcome {
-            Ok(()) => updated += 1,
-            Err(msg) => errors.push(msg),
+
+    // Build JSON records if requested. We zip work_items with outcomes by
+    // position (run_in_parallel preserves input order in its output).
+    let ndjson = json && jobs > 1;
+    let stdout_lock: Mutex<()> = Mutex::new(());
+    let mut json_records: Vec<RepoUpdateRecord> = Vec::new();
+
+    for (item, outcome) in work_items.iter().zip(outcomes.into_iter()) {
+        let branch = item.entry.version.as_str().to_owned();
+        let abs_str = item.absolute_path.to_string_lossy().to_string();
+
+        let record = match outcome {
+            Ok(new_sha) => {
+                updated += 1;
+                let kind = if item.old_sha.as_deref() == Some(new_sha.as_str()) {
+                    UpdateKind::UpToDate
+                } else {
+                    UpdateKind::Updated
+                };
+                RepoUpdateRecord {
+                    path: item.repo_path.to_string(),
+                    absolute_path: abs_str,
+                    branch,
+                    kind,
+                    old_sha: item.old_sha.clone(),
+                    new_sha: Some(new_sha),
+                    error: None,
+                }
+            }
+            Err(msg) => {
+                errors.push(msg.clone());
+                RepoUpdateRecord {
+                    path: item.repo_path.to_string(),
+                    absolute_path: abs_str,
+                    branch,
+                    kind: UpdateKind::Failed,
+                    old_sha: item.old_sha.clone(),
+                    new_sha: None,
+                    error: Some(msg),
+                }
+            }
+        };
+
+        if json {
+            if ndjson {
+                // Stream one line per record to stdout as we build.
+                let line_record = UpdateNdjsonRecord {
+                    schema: UPDATE_SCHEMA_URL,
+                    record: &record,
+                };
+                if let Ok(line) = serde_json::to_string(&line_record) {
+                    let _guard = stdout_lock.lock().unwrap_or_else(|e| e.into_inner());
+                    let stdout = std::io::stdout();
+                    let mut handle = stdout.lock();
+                    let _ = writeln!(handle, "{line}");
+                    let _ = handle.flush();
+                }
+            }
+            json_records.push(record);
         }
     }
 
-    if !errors.is_empty() {
+    if !errors.is_empty() && !json {
         eprintln!("rwv update: {} repo(s) failed to update:", errors.len());
         for msg in &errors {
             eprintln!("  - {msg}");
@@ -154,7 +314,29 @@ fn update_for_project(
         );
     }
 
-    println!("rwv update: advanced {updated} repo(s)");
+    if !json {
+        println!("rwv update: advanced {updated} repo(s)");
+    }
+
+    // Under JSON mode with failures: emit output first, then bail.
+    // Under text mode with failures: already bailed above.
+    // Under JSON mode without failures: fall through to lock write.
+    if json && !errors.is_empty() {
+        // Emit envelope (NDJSON already streamed above).
+        if !ndjson {
+            let envelope = UpdateJsonOutput {
+                schema_url: UPDATE_SCHEMA_URL.to_string(),
+                repos: json_records,
+            };
+            let out = serde_json::to_string_pretty(&envelope)
+                .context("failed to serialize update output")?;
+            println!("{out}");
+        }
+        anyhow::bail!(
+            "update aborted with {} failure(s); lock not written",
+            errors.len()
+        );
+    }
 
     // Re-snapshot the lock to capture the new tips. Delegates to the same
     // `lock::lock` entry point so the commit/dirty handling, hook fire
@@ -177,14 +359,45 @@ fn update_for_project(
     lock::lock(active_root, dirty, commit, project_override)
         .context("failed to write lock after update")?;
 
+    // Emit JSON envelope after lock write (so the lock is coherent before
+    // consumers read the envelope). NDJSON was already streamed above.
+    if json && !ndjson {
+        let envelope = UpdateJsonOutput {
+            schema_url: UPDATE_SCHEMA_URL.to_string(),
+            repos: json_records,
+        };
+        let out = serde_json::to_string_pretty(&envelope)
+            .context("failed to serialize update output")?;
+        println!("{out}");
+    }
+
     Ok(())
 }
 
+/// Resolve the on-disk path for a repo, preferring the workweave overlay
+/// when the repo exists there, falling back to `primary_root`.
+fn resolve_repo_dir(
+    repo_path: &RepoPath,
+    primary_root: &Path,
+    workweave_dir: Option<&Path>,
+) -> PathBuf {
+    if let Some(wd) = workweave_dir {
+        let candidate = wd.join(repo_path.as_path());
+        if candidate.exists() {
+            return candidate;
+        }
+    }
+    primary_root.join(repo_path.as_path())
+}
+
 /// Per-repo worker: `git fetch --all --tags`, resolve the role-conventional
-/// remote branch, then check out the resolved revision. Returns a flat
-/// `Result<(), String>` so the caller can aggregate.
+/// remote branch, then check out the resolved revision.
 ///
-/// All user-facing output is routed through `reporter`, which prefixes
+/// Returns `Ok(new_sha)` on success (the SHA the repo is now at) or
+/// `Err(msg)` on failure. `use_reporter` suppresses progress lines under
+/// `--json` so stdout carries only structured data.
+///
+/// All user-facing text output is routed through `reporter`, which prefixes
 /// `[<repo>]` and serialises writes under `-j > 1`; under `-j 1` the
 /// reporter is a no-prefix passthrough.
 fn advance_one(
@@ -194,17 +407,9 @@ fn advance_one(
     primary_root: &Path,
     workweave_dir: Option<&Path>,
     reporter: &Reporter<'_>,
+    use_reporter: bool,
 ) -> RepoOutcome {
-    let repo_dir: PathBuf = if let Some(wd) = workweave_dir {
-        let candidate = wd.join(repo_path.as_path());
-        if candidate.exists() {
-            candidate
-        } else {
-            primary_root.join(repo_path.as_path())
-        }
-    } else {
-        primary_root.join(repo_path.as_path())
-    };
+    let repo_dir = resolve_repo_dir(repo_path, primary_root, workweave_dir);
 
     if !repo_dir.exists() {
         return Err(format!(
@@ -217,7 +422,9 @@ fn advance_one(
 
     // git fetch the remote(s). Run from the repo dir so default remote
     // selection applies.
-    reporter.out(&format!("rwv update: fetching {}", repo_path.as_str()));
+    if use_reporter {
+        reporter.out(&format!("rwv update: fetching {}", repo_path.as_str()));
+    }
     let mut cmd = git_command();
     cmd.args(["fetch", "--all", "--tags"])
         .current_dir(&repo_dir);
@@ -268,5 +475,12 @@ fn advance_one(
         ));
     }
 
-    Ok(())
+    // Capture the new SHA after checkout for JSON reporting.
+    let new_sha = git
+        .head_revision(&repo_dir)
+        .ok()
+        .map(|r| r.display_str().to_owned())
+        .unwrap_or_else(|| resolved.to_string());
+
+    Ok(new_sha)
 }
