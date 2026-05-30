@@ -109,8 +109,7 @@ pub fn run_push(
     let lock_entries: std::collections::BTreeMap<RepoPath, RawRevisionId> =
         if let Some(raw_lock) = &project.lock {
             raw_lock
-                .repositories
-                .iter()
+                .iter_entries()
                 .map(|(rp, entry)| (rp.clone(), entry.version.clone()))
                 .collect()
         } else {

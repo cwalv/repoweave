@@ -666,12 +666,27 @@ pub struct LockEntry {
 /// type: only [`LockFile::from_path`] / deserialization produces one.
 /// To compare against a real commit SHA, run
 /// [`LockFile::resolve_versions`] first.
+///
+/// ## Accessor contract
+///
+/// Callers outside this module should use the accessor methods to traverse
+/// the repository set rather than touching `repositories` directly:
+///
+/// - [`LockFile::iter_repo_paths`] — iterate over every [`RepoPath`] key.
+/// - [`LockFile::get_entry`] — look up a single [`LockEntry`] by path.
+/// - [`LockFile::iter_entries`] — iterate over `(path, entry)` pairs.
+/// - [`LockFile::len`] — number of repositories.
+/// - [`LockFile::is_empty`] — true when there are no repositories.
+/// - [`LockFile::contains_repo`] — test whether a path is present.
+///
+/// The `repositories` field is `pub(crate)`; external callers must use the
+/// accessor methods above.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LockFile {
     /// Which workweave this lock was generated from, if any.
     #[serde(default, skip_serializing_if = "Option::is_none", alias = "weave")]
     pub workweave: Option<WorkweaveName>,
-    pub repositories: BTreeMap<RepoPath, LockEntry>,
+    pub(crate) repositories: BTreeMap<RepoPath, LockEntry>,
 }
 
 /// A single lock entry whose `version` has been resolved against a real
@@ -692,14 +707,79 @@ pub struct ResolvedLockEntry {
 /// [`crate::vcs::Vcs::head_revision`] return values that are already
 /// canonical-SHA-form). This makes the parse/resolve boundary visible in
 /// the type system.
+///
+/// ## Accessor contract
+///
+/// Callers outside this module should use the accessor methods to traverse
+/// the repository set rather than touching `repositories` directly:
+///
+/// - [`ResolvedLockFile::iter_repo_paths`] — iterate over every [`RepoPath`] key.
+/// - [`ResolvedLockFile::get_entry`] — look up a single [`ResolvedLockEntry`] by path.
+/// - [`ResolvedLockFile::iter_entries`] — iterate over `(path, entry)` pairs.
+/// - [`ResolvedLockFile::len`] — number of repositories.
+/// - [`ResolvedLockFile::is_empty`] — true when there are no repositories.
+/// - [`ResolvedLockFile::contains_repo`] — test whether a path is present.
+///
+/// The `repositories` field is `pub(crate)`; external callers must use the
+/// accessor methods above.
 #[derive(Debug, Clone, Serialize)]
 pub struct ResolvedLockFile {
     #[serde(default, skip_serializing_if = "Option::is_none", alias = "weave")]
     pub workweave: Option<WorkweaveName>,
-    pub repositories: BTreeMap<RepoPath, ResolvedLockEntry>,
+    pub(crate) repositories: BTreeMap<RepoPath, ResolvedLockEntry>,
 }
 
 impl LockFile {
+    /// Iterate over every [`RepoPath`] in the lock file, in sorted order.
+    ///
+    /// This is the preferred accessor for callers that only need keys;
+    /// use [`iter_entries`][Self::iter_entries] when you also need the
+    /// corresponding [`LockEntry`].
+    pub fn iter_repo_paths(&self) -> impl Iterator<Item = &RepoPath> {
+        self.repositories.keys()
+    }
+
+    /// Look up a single [`LockEntry`] by its [`RepoPath`].
+    ///
+    /// Returns `None` when the path is not present in the lock file.
+    pub fn get_entry(&self, path: &RepoPath) -> Option<&LockEntry> {
+        self.repositories.get(path)
+    }
+
+    /// Iterate over `(path, entry)` pairs in the lock file, in sorted order.
+    ///
+    /// Use this when you need both the key and the value; prefer
+    /// [`iter_repo_paths`][Self::iter_repo_paths] when only the path is
+    /// needed, and [`get_entry`][Self::get_entry] for random access.
+    pub fn iter_entries(&self) -> impl Iterator<Item = (&RepoPath, &LockEntry)> {
+        self.repositories.iter()
+    }
+
+    /// Return the number of repositories in the lock file.
+    pub fn len(&self) -> usize {
+        self.repositories.len()
+    }
+
+    /// Return `true` if the lock file contains no repositories.
+    pub fn is_empty(&self) -> bool {
+        self.repositories.is_empty()
+    }
+
+    /// Return `true` if the lock file contains an entry for `path`.
+    pub fn contains_repo(&self, path: &RepoPath) -> bool {
+        self.repositories.contains_key(path)
+    }
+
+    /// Return a reference to the underlying `BTreeMap` of repositories.
+    ///
+    /// Use this only when a `&BTreeMap<RepoPath, LockEntry>` is structurally
+    /// required (e.g., index access `map[&key]`). Prefer
+    /// [`iter_entries`][Self::iter_entries] or [`get_entry`][Self::get_entry]
+    /// for all other access patterns.
+    pub fn repo_map(&self) -> &BTreeMap<RepoPath, LockEntry> {
+        &self.repositories
+    }
+
     pub fn from_path(path: &Path) -> anyhow::Result<Self> {
         let content = std::fs::read_to_string(path)
             .map_err(|e| anyhow::anyhow!("failed to read {}: {e}", path.display()))?;
@@ -770,6 +850,60 @@ impl LockFile {
             },
             failures,
         )
+    }
+}
+
+impl ResolvedLockFile {
+    /// Iterate over every [`RepoPath`] in the resolved lock file, in sorted
+    /// order.
+    ///
+    /// This is the preferred accessor for callers that only need keys;
+    /// use [`iter_entries`][Self::iter_entries] when you also need the
+    /// corresponding [`ResolvedLockEntry`].
+    pub fn iter_repo_paths(&self) -> impl Iterator<Item = &RepoPath> {
+        self.repositories.keys()
+    }
+
+    /// Look up a single [`ResolvedLockEntry`] by its [`RepoPath`].
+    ///
+    /// Returns `None` when the path is not present in the resolved lock file.
+    pub fn get_entry(&self, path: &RepoPath) -> Option<&ResolvedLockEntry> {
+        self.repositories.get(path)
+    }
+
+    /// Iterate over `(path, entry)` pairs in the resolved lock file, in
+    /// sorted order.
+    ///
+    /// Use this when you need both the key and the value; prefer
+    /// [`iter_repo_paths`][Self::iter_repo_paths] when only the path is
+    /// needed, and [`get_entry`][Self::get_entry] for random access.
+    pub fn iter_entries(&self) -> impl Iterator<Item = (&RepoPath, &ResolvedLockEntry)> {
+        self.repositories.iter()
+    }
+
+    /// Return the number of repositories in the resolved lock file.
+    pub fn len(&self) -> usize {
+        self.repositories.len()
+    }
+
+    /// Return `true` if the resolved lock file contains no repositories.
+    pub fn is_empty(&self) -> bool {
+        self.repositories.is_empty()
+    }
+
+    /// Return `true` if the resolved lock file contains an entry for `path`.
+    pub fn contains_repo(&self, path: &RepoPath) -> bool {
+        self.repositories.contains_key(path)
+    }
+
+    /// Return a reference to the underlying `BTreeMap` of repositories.
+    ///
+    /// Use this only when a `&BTreeMap<RepoPath, ResolvedLockEntry>` is
+    /// structurally required (e.g., index access `map[&key]`). Prefer
+    /// [`iter_entries`][Self::iter_entries] or [`get_entry`][Self::get_entry]
+    /// for all other access patterns.
+    pub fn repo_map(&self) -> &BTreeMap<RepoPath, ResolvedLockEntry> {
+        &self.repositories
     }
 }
 

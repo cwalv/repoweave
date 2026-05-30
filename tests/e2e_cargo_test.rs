@@ -281,8 +281,7 @@ fn cargo_release_version_pin_workflow() {
     let protocol_key =
         repoweave::manifest::RepoPath::new("github/chatly/protocol").expect("known-safe literal");
     let protocol_entry = lock
-        .repositories
-        .get(&protocol_key)
+        .get_entry(&protocol_key)
         .expect("lock should contain protocol entry");
 
     // After the typed-ResolvedRevisionId refactor, `as_str` returns the canonical SHA
@@ -304,8 +303,7 @@ fn cargo_release_version_pin_workflow() {
     let server_key =
         repoweave::manifest::RepoPath::new("github/chatly/server").expect("known-safe literal");
     let server_entry = lock
-        .repositories
-        .get(&server_key)
+        .get_entry(&server_key)
         .expect("lock should contain server entry");
 
     assert_ne!(

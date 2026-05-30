@@ -657,7 +657,7 @@ pub fn find_violations(input: &CheckInput) -> Vec<CheckViolation> {
         // produced the historical B3/B6 bugs is now a compile-time
         // impossibility.
         if let Some(lock) = input.resolved_locks.get(&project.name) {
-            for (repo_path, lock_entry) in &lock.repositories {
+            for (repo_path, lock_entry) in lock.iter_entries() {
                 if let Some(actual_rev) = input.head_revisions.get(repo_path) {
                     if &lock_entry.version != actual_rev {
                         violations.push(CheckViolation::StaleLock {
@@ -1146,7 +1146,7 @@ pub fn run_check_locked(
         // "unknown revision" message. The raw lock is iterated below so
         // that "missing on disk" entries (which are silently dropped by
         // `resolve_versions`) still get a diagnostic.
-        let raw_entries = raw_lock.repositories.clone();
+        let raw_entries = raw_lock.repo_map().clone();
         let (resolved, failures) = raw_lock.resolve_versions(&workspace_dir);
         let unresolved: std::collections::BTreeMap<RepoPath, crate::vcs::RawRevisionId> =
             failures.into_iter().collect();
@@ -1172,7 +1172,7 @@ pub fn run_check_locked(
                 continue;
             }
 
-            let Some(resolved_entry) = resolved.repositories.get(repo_path) else {
+            let Some(resolved_entry) = resolved.get_entry(repo_path) else {
                 // Resolve dropped this entry without surfacing it as a
                 // failure — shouldn't happen for an on-disk repo with a
                 // valid rev, but stay defensive.

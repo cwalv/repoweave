@@ -158,7 +158,7 @@ pub fn run_status(
 
             let lock_sha = lock
                 .as_ref()
-                .and_then(|l| l.repositories.get(repo_path))
+                .and_then(|l| l.get_entry(repo_path))
                 .map(|e| e.version.clone());
 
             let relation = compute_relation(&repo_abs, &tip, &lock_sha);

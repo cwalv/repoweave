@@ -19,12 +19,10 @@ fn build_commit_message(
     old_lock: Option<&ResolvedLockFile>,
 ) -> String {
     let changed: Vec<_> = new_lock
-        .repositories
-        .iter()
+        .iter_entries()
         .filter(|(path, new_entry)| {
             old_lock.is_none_or(|old| {
-                old.repositories
-                    .get(*path)
+                old.get_entry(path)
                     .is_none_or(|old_entry| old_entry.version != new_entry.version)
             })
         })

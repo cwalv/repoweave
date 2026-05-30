@@ -169,10 +169,10 @@ integrations:
 fn lock_with_workweave_provenance() {
     let lock: LockFile = serde_yaml::from_str(LOCK_WITH_WORKWEAVE_YAML).unwrap();
     assert_eq!(lock.workweave, Some(WorkweaveName::new("hotfix-42")));
-    assert_eq!(lock.repositories.len(), 2);
+    assert_eq!(lock.len(), 2);
 
     let server =
-        &lock.repositories[&RepoPath::new("github/acme/server").expect("known-safe literal")];
+        &lock.repo_map()[&RepoPath::new("github/acme/server").expect("known-safe literal")];
     assert_eq!(server.vcs_type, VcsType::Git);
     assert_eq!(server.version, RawRevisionId::new("abc123def456"));
 }
@@ -181,13 +181,13 @@ fn lock_with_workweave_provenance() {
 fn lock_without_workweave_provenance() {
     let lock: LockFile = serde_yaml::from_str(LOCK_WITHOUT_WORKWEAVE_YAML).unwrap();
     assert_eq!(lock.workweave, None);
-    assert_eq!(lock.repositories.len(), 1);
+    assert_eq!(lock.len(), 1);
 }
 
 #[test]
 fn lock_repo_paths_sorted() {
     let lock: LockFile = serde_yaml::from_str(LOCK_WITH_WORKWEAVE_YAML).unwrap();
-    let keys: Vec<&str> = lock.repositories.keys().map(|k| k.as_str()).collect();
+    let keys: Vec<&str> = lock.iter_repo_paths().map(|k| k.as_str()).collect();
     assert_eq!(keys, vec!["github/acme/client", "github/acme/server"]);
 }
 
@@ -219,9 +219,9 @@ fn lock_round_trip() {
     let deserialized: LockFile = serde_yaml::from_str(&serialized).unwrap();
 
     assert_eq!(original.workweave, deserialized.workweave);
-    assert_eq!(original.repositories.len(), deserialized.repositories.len());
-    for (key, orig_entry) in &original.repositories {
-        let de_entry = &deserialized.repositories[key];
+    assert_eq!(original.len(), deserialized.len());
+    for (key, orig_entry) in original.iter_entries() {
+        let de_entry = deserialized.get_entry(key).unwrap();
         assert_eq!(orig_entry.vcs_type, de_entry.vcs_type);
         assert_eq!(orig_entry.url, de_entry.url);
         assert_eq!(orig_entry.version, de_entry.version);
@@ -264,7 +264,7 @@ fn project_from_dir_manifest_and_lock() {
     assert_eq!(project.manifest.len(), 4);
     let lock = project.lock.as_ref().unwrap();
     assert_eq!(lock.workweave, Some(WorkweaveName::new("hotfix-42")));
-    assert_eq!(lock.repositories.len(), 2);
+    assert_eq!(lock.len(), 2);
 }
 
 #[test]

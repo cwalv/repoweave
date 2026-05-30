@@ -695,7 +695,7 @@ fn check_lock_freshness(
         );
     }
 
-    for (repo_path, lock_entry) in &resolved.repositories {
+    for (repo_path, lock_entry) in resolved.iter_entries() {
         let abs = workspace_dir.join(repo_path.as_path());
         if !abs.exists() {
             continue;
@@ -1796,7 +1796,7 @@ fn run_sync_impl_with_op_id(
     // ones whose canonical clone is missing on the source side) so failures
     // surface as B6 prescribes.
     let mut materialize_failures: Vec<crate::manifest::RepoPath> = Vec::new();
-    for repo_path in raw_source_lock.repositories.keys() {
+    for repo_path in raw_source_lock.iter_repo_paths() {
         let abs = workspace_dir.join(repo_path.as_path());
         if abs.exists() {
             continue;
@@ -1829,8 +1829,8 @@ fn run_sync_impl_with_op_id(
     // new lock should be dropped. Conservative — refuse to delete worktrees
     // with uncommitted changes or unique local commits.
     if let Some(ref cwd_lock) = cwd_project.lock {
-        for repo_path in cwd_lock.repositories.keys() {
-            if raw_source_lock.repositories.contains_key(repo_path) {
+        for repo_path in cwd_lock.iter_repo_paths() {
+            if raw_source_lock.contains_repo(repo_path) {
                 continue;
             }
             match prune_dropped_repo(&ctx, repo_path) {
@@ -1886,7 +1886,7 @@ fn run_sync_impl_with_op_id(
     }
     let mut sync_tasks: Vec<SyncTask> = Vec::new();
 
-    for (repo_path, raw_entry) in &raw_source_lock.repositories {
+    for (repo_path, raw_entry) in raw_source_lock.iter_entries() {
         let abs = workspace_dir.join(repo_path.as_path());
         if !abs.exists() {
             if emit_text {
@@ -1918,7 +1918,7 @@ fn run_sync_impl_with_op_id(
             ));
             continue;
         }
-        let lock_entry = match source_lock.repositories.get(repo_path) {
+        let lock_entry = match source_lock.get_entry(repo_path) {
             Some(e) => e,
             None => continue,
         };

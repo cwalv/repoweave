@@ -73,7 +73,7 @@ fn find_stale_repos(manifest: &Manifest, lock: &LockFile, no_reference: bool) ->
         .iter()
         .filter(|(_, entry)| !(no_reference && entry.role == Role::Reference))
         .map(|(rp, _)| rp)
-        .filter(|rp| !lock.repositories.contains_key(*rp))
+        .filter(|rp| !lock.contains_repo(*rp))
         .cloned()
         .collect()
 }
@@ -187,7 +187,7 @@ pub fn run_fetch(
     // Warn about orphan lock entries (in lock, not in manifest). Doesn't fail
     // and doesn't touch the clones.
     if let Some(ref lock) = existing_lock {
-        for repo_path in lock.repositories.keys() {
+        for repo_path in lock.iter_repo_paths() {
             if !manifest.repositories.contains_key(repo_path) {
                 eprintln!(
                     "rwv fetch: warning: orphan in lock: {} (lock entry has no manifest entry)",
@@ -317,7 +317,7 @@ pub fn run_fetch(
             // Generate a fresh lock for new entries only.
             let new_lock = lock::generate_lock(&lock_manifest, workspace_root, None, true)?;
             for repo_path in &added_to_lock {
-                if let Some(entry) = new_lock.repositories.get(repo_path) {
+                if let Some(entry) = new_lock.get_entry(repo_path) {
                     // Convert ResolvedLockEntry to LockEntry for the merge
                     // (canonical SHA serializes the same as raw scalar).
                     let raw_entry = crate::manifest::LockEntry {
@@ -373,7 +373,7 @@ fn fetch_one(
 
     let dest: PathBuf = workspace_root.join(repo_path.as_path());
 
-    let lock_entry = existing_lock.and_then(|l| l.repositories.get(repo_path).cloned());
+    let lock_entry = existing_lock.and_then(|l| l.get_entry(repo_path).cloned());
 
     if dest.exists() {
         // If the existing clone is role=fork and its `origin` still points

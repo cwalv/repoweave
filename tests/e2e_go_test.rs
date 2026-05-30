@@ -391,8 +391,7 @@ repositories:\n  \
         .expect("generate_lock should succeed");
 
     let protocol_entry = lock
-        .repositories
-        .get(
+        .get_entry(
             &repoweave::manifest::RepoPath::new("github/chatly/protocol")
                 .expect("known-safe literal"),
         )
