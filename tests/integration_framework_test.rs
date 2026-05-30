@@ -854,7 +854,11 @@ fn go_work_generated_files() {
         detection_cache: &cache,
         workweave: None,
     };
-    assert_eq!(GoWork.generated_files(&ctx), Vec::<String>::new());
+    // Post-C3 split (fo-cnpjy.3 + fo-cnpjy.11):
+    //   go.sum is fully-owned → stays in generated_files() unconditionally.
+    //   go.work is hybrid → moved to managed_files(), gated on a go.mod existing.
+    assert_eq!(GoWork.generated_files(&ctx), vec!["go.sum"]);
+    assert_eq!(GoWork.managed_files(&ctx), Vec::<String>::new());
 
     // Repos with go.mod present → files returned
     let mut repos_with_manifest = BTreeMap::new();
@@ -877,7 +881,8 @@ fn go_work_generated_files() {
         detection_cache: &cache,
         workweave: None,
     };
-    assert_eq!(GoWork.generated_files(&ctx2), vec!["go.work", "go.sum"]);
+    assert_eq!(GoWork.generated_files(&ctx2), vec!["go.sum"]);
+    assert_eq!(GoWork.managed_files(&ctx2), vec!["go.work"]);
 }
 
 #[test]

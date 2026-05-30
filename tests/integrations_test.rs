@@ -1306,7 +1306,6 @@ mod go_work {
     /// §6.go.1 — Adding a repo preserves a hand-authored `replace` directive.
     /// `go 1.26` must NOT be downgraded to `1.21` (the concrete bug).
     #[test]
-    #[ignore = "RED: turned green by fo-cnpjy.11 (go.work merge port)"]
     fn s6_go_1_add_preserves_replace_and_go_version() {
         let tmp = TempDir::new().unwrap();
         let root = tmp.path();
@@ -1390,7 +1389,6 @@ replace example.com/legacy => ./vendor/legacy
 
     /// §6.go.2 — Removing a repo strips its use entry but keeps toolchain.
     #[test]
-    #[ignore = "RED: turned green by fo-cnpjy.11 (go.work merge port)"]
     fn s6_go_2_remove_keeps_toolchain_and_godebug() {
         let tmp = TempDir::new().unwrap();
         let root = tmp.path();
@@ -1459,7 +1457,6 @@ use (
     /// §6.go.3 — Deactivate strips the use set but keeps replace.
     /// Regression vs current unconditional remove_file at go_work.rs:36-38.
     #[test]
-    #[ignore = "RED: turned green by fo-cnpjy.11 (go.work merge port)"]
     fn s6_go_3_deactivate_strips_use_keeps_replace() {
         let tmp = TempDir::new().unwrap();
         let root = tmp.path();
