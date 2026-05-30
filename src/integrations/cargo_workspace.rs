@@ -53,10 +53,16 @@
 //! `[workspace.package]`. All other tables are user policy and survive
 //! every activate/deactivate cycle unmodified.
 //!
-//! **(c) Cross-repo path deps / `[patch]` opt-in.**
-//! `CargoWorkspaceConfig::patch` is **out of scope for this bead** — fo-cnpjy.8
-//! adds the `[patch]` generation behind the flag. The flag exists in the
-//! config type already (no-op here).
+//! **(c) Cross-repo path deps / `[patch]` opt-in.** Default
+//! (`patch: false`): all-internal — operators commit relative `path = "..."`
+//! deps in member manifests; rwv never touches them. When `patch: true`,
+//! `activate()` scans each member's `Cargo.toml` for cross-repo path deps
+//! (entries whose resolved path lands inside another known member dir) and
+//! writes `[patch.crates-io].<crate> = { path = "<member>" }` entries at the
+//! weave-root `Cargo.toml`, each decorated with the `# managed by rwv`
+//! marker. User-authored `[patch.crates-io]` entries are preserved
+//! (verify-and-warn at the entry level); `deactivate` strips only the
+//! marked entries, then prunes the table if empty.
 //!
 //! **(d) Nested-workspace hard error.** Refinement: a repo listed under
 //! `members.<repo>` is exempt from the `declares_workspace()` check on its
@@ -90,12 +96,32 @@ use crate::integrations::merge::{
 };
 use crate::manifest::{CargoWorkspaceConfig, MemberSpec};
 use anyhow::Context;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 pub struct CargoWorkspace;
 
 impl CargoWorkspace {
+    /// Are there active cargo workspace contributions in this context?
+    ///
+    /// Returns `true` if at least one of:
+    /// - a repo with a root `Cargo.toml` is detected (the usual case), OR
+    /// - a configured `members.<repo>` entry names an active manifest repo
+    ///   (the members-subpath case, e.g. rvtty — no root file but
+    ///   `cfg.members.<repo>.include` contributes sub-packages).
+    ///
+    /// The second arm is what unblocks fo-cnpjy.8 scenario 4: without it
+    /// `activate()` early-returns and the rvtty case never reaches
+    /// `partition()`.
+    fn has_active_cargo_work(ctx: &IntegrationContext, cfg: &CargoWorkspaceConfig) -> bool {
+        if !ctx.detect_repos_with_manifest("Cargo.toml").is_empty() {
+            return true;
+        }
+        // Any configured-members repo that is active in the manifest counts.
+        ctx.active_repos()
+            .any(|(rp, _)| cfg.members.contains_key(rp.as_str()))
+    }
+
     /// Compute the sorted member-path list and the nested-workspace
     /// conflict list for the active Rust repos.
     ///
@@ -111,6 +137,15 @@ impl CargoWorkspace {
     /// - Any other Rust repo contributes its root as a member; if the root
     ///   declares `[workspace]`, it joins the nested-conflict list.
     ///
+    /// **Members-subpath repos without a root Cargo.toml** (fo-cnpjy.8): a
+    /// repo listed under `cfg.members` whose root has no `Cargo.toml` (the
+    /// canonical rvtty olb.5.4 shape — sub-packages `daemon/`/`client/`/...
+    /// with no root manifest) is still emitted: `detect_repos_with_manifest`
+    /// would miss it (its filter is "Cargo.toml at the root"), but the
+    /// `members.<repo>` config is the explicit "this repo contributes sub-
+    /// path packages" signal. With no root file there is no `[workspace]` to
+    /// conflict with, so the nested-workspace check is moot for that path.
+    ///
     /// Returns `(members, nested_conflicts)`. `members` is sorted
     /// lexicographically (the on-disk ordering the toml_edit array honors).
     fn partition(
@@ -118,19 +153,44 @@ impl CargoWorkspace {
         cfg: &CargoWorkspaceConfig,
     ) -> anyhow::Result<(Vec<String>, Vec<String>)> {
         let rust_repos = ctx.detect_repos_with_manifest("Cargo.toml");
+        let rust_repo_set: BTreeSet<&str> = rust_repos.iter().map(String::as_str).collect();
         let opt_out: BTreeSet<&str> = cfg.exclude.iter().map(String::as_str).collect();
+
+        // Build the iteration set: union of (a) repos with a root Cargo.toml
+        // and (b) configured-member repos that are active in the manifest.
+        // The second set is what unblocks the rvtty case — a repo whose
+        // sub-packages are the members has no root file, so detect_repos_*
+        // misses it; the explicit cfg.members entry provides the signal.
+        let active_members_in_cfg: BTreeSet<String> = ctx
+            .active_repos()
+            .map(|(rp, _)| rp.as_str().to_string())
+            .filter(|p| cfg.members.contains_key(p))
+            .collect();
+
+        let mut all_repos: BTreeSet<String> = BTreeSet::new();
+        all_repos.extend(rust_repos.iter().cloned());
+        all_repos.extend(active_members_in_cfg.iter().cloned());
 
         let mut members: Vec<String> = Vec::new();
         let mut nested_conflicts: Vec<String> = Vec::new();
 
-        for repo in &rust_repos {
+        for repo in &all_repos {
             if opt_out.contains(repo.as_str()) {
                 continue;
             }
-            let cargo_toml = ctx.workspace_root.join(repo).join("Cargo.toml");
-            let content = std::fs::read_to_string(&cargo_toml)
-                .with_context(|| format!("failed to read {}", cargo_toml.display()))?;
-            let root_has_workspace = declares_workspace(&content);
+
+            // Only read the root Cargo.toml if it actually exists. A
+            // members-subpath repo (no root Cargo.toml) skips this — the
+            // nested-workspace check is moot when there is no root manifest
+            // to declare `[workspace]`.
+            let root_has_workspace = if rust_repo_set.contains(repo.as_str()) {
+                let cargo_toml = ctx.workspace_root.join(repo).join("Cargo.toml");
+                let content = std::fs::read_to_string(&cargo_toml)
+                    .with_context(|| format!("failed to read {}", cargo_toml.display()))?;
+                declares_workspace(&content)
+            } else {
+                false
+            };
 
             if let Some(spec) = cfg.members.get(repo) {
                 // members.<repo> sub-path mode.
@@ -204,12 +264,16 @@ impl Integration for CargoWorkspace {
     }
 
     fn activate(&self, ctx: &IntegrationContext) -> anyhow::Result<()> {
-        let paths = ctx.detect_repos_with_manifest("Cargo.toml");
-        if paths.is_empty() {
+        let cfg: CargoWorkspaceConfig = ctx.config.settings()?;
+
+        // Early-return when there are no rust repos AND no configured members.
+        // A members-subpath repo (e.g. rvtty: no root Cargo.toml) is invisible
+        // to detect_repos_with_manifest but is the explicit signal that this
+        // repo contributes sub-package members; we must still proceed.
+        if !Self::has_active_cargo_work(ctx, &cfg) {
             return Ok(());
         }
 
-        let cfg: CargoWorkspaceConfig = ctx.config.settings()?;
         let (members, nested_conflicts) = Self::partition(ctx, &cfg)?;
 
         if !nested_conflicts.is_empty() {
@@ -224,6 +288,25 @@ impl Integration for CargoWorkspace {
 
         let _result: MergeResult = merge_activate::<TomlDoc>(&path, &owned)
             .with_context(|| format!("merge-activate {}", path.display()))?;
+
+        // When `cfg.patch == true`, opt the weave into rwv-generated `[patch]`
+        // entries for cross-repo path deps (plan §5a-c). Patch entries are
+        // dynamic (one per cross-repo path dep), not a fixed owned-key set,
+        // so they don't fit `merge_activate`'s static `(KeyPath, OwnedValue)`
+        // contract; we write them post-merge using toml_edit directly.
+        //
+        // Each entry is an inline table `<crate> = { path = "<rel>" }` under
+        // `[patch.crates-io]`, decorated with the `# managed by rwv` marker
+        // on the leaf key so the strip-deactivate pass can discriminate
+        // rwv-authored entries from user-authored ones.
+        if cfg.patch {
+            let patches = Self::compute_patches(ctx, &members)
+                .context("computing cross-repo path-dep patches")?;
+            if !patches.is_empty() {
+                Self::merge_patch_entries(&path, &patches)
+                    .with_context(|| format!("merge-patch {}", path.display()))?;
+            }
+        }
 
         // `MergeResult.deferred` lists keys the user took the pen on (a
         // hand-written `[workspace]` block with no marker). The trigger-model
@@ -244,12 +327,23 @@ impl Integration for CargoWorkspace {
         let owned_keys = Self::deactivate_owned_keys();
         strip_deactivate::<TomlDoc>(&path, &owned_keys)
             .with_context(|| format!("strip-deactivate {}", path.display()))?;
+
+        // Second pass: strip rwv-marker-decorated `[patch.crates-io].*`
+        // entries. This is independent of the workspace marker — patch
+        // entries carry their own per-key marker decor, so they may need
+        // stripping even when `strip_deactivate` left the file unchanged
+        // (e.g. the user holds the pen on `[workspace]`). The generic
+        // strip_deactivate has no static handle on the dynamic
+        // patch.crates-io.<name> key set, so this is handled here.
+        Self::strip_marked_patch_entries(&path)
+            .with_context(|| format!("strip-patch {}", path.display()))?;
+
         Ok(())
     }
 
     fn check(&self, ctx: &IntegrationContext) -> anyhow::Result<Vec<Issue>> {
-        let paths = ctx.detect_repos_with_manifest("Cargo.toml");
-        if paths.is_empty() {
+        let cfg: CargoWorkspaceConfig = ctx.config.settings()?;
+        if !Self::has_active_cargo_work(ctx, &cfg) {
             return Ok(vec![]);
         }
 
@@ -264,7 +358,6 @@ impl Integration for CargoWorkspace {
 
         // Surface nested-workspace conflicts as errors during `rwv doctor`
         // so operators see the same diagnostic without having to run lock.
-        let cfg: CargoWorkspaceConfig = ctx.config.settings()?;
         let (_, nested_conflicts) = Self::partition(ctx, &cfg)?;
         if !nested_conflicts.is_empty() {
             issues.push(Issue {
@@ -278,8 +371,8 @@ impl Integration for CargoWorkspace {
     }
 
     fn activate_hook(&self, ctx: &IntegrationContext) -> anyhow::Result<()> {
-        let paths = ctx.detect_repos_with_manifest("Cargo.toml");
-        if paths.is_empty() {
+        let cfg: CargoWorkspaceConfig = ctx.config.settings()?;
+        if !Self::has_active_cargo_work(ctx, &cfg) {
             return Ok(());
         }
 
@@ -303,7 +396,10 @@ impl Integration for CargoWorkspace {
 
     /// `Cargo.lock` is fully-owned — gitignore-eligible, whole-deletable.
     fn generated_files(&self, ctx: &IntegrationContext) -> Vec<String> {
-        if ctx.detect_repos_with_manifest("Cargo.toml").is_empty() {
+        let Ok(cfg) = ctx.config.settings::<CargoWorkspaceConfig>() else {
+            return vec![];
+        };
+        if !Self::has_active_cargo_work(ctx, &cfg) {
             return vec![];
         }
         vec!["Cargo.lock".to_string()]
@@ -316,7 +412,10 @@ impl Integration for CargoWorkspace {
     /// whole-deletable, the exact data-loss bug the merge port fixes.
     fn managed_files(&self, ctx: &IntegrationContext) -> Vec<String> {
         let mut files = self.generated_files(ctx);
-        if !ctx.detect_repos_with_manifest("Cargo.toml").is_empty() {
+        let Ok(cfg) = ctx.config.settings::<CargoWorkspaceConfig>() else {
+            return files;
+        };
+        if Self::has_active_cargo_work(ctx, &cfg) {
             files.push("Cargo.toml".to_string());
         }
         files
@@ -342,6 +441,293 @@ impl CargoWorkspace {
             keypath(["workspace", "resolver"]),
             keypath(["workspace", "package"]),
         ]
+    }
+
+    /// Compute the `[patch.crates-io]` entries rwv should generate, when
+    /// `cfg.patch == true`.
+    ///
+    /// Approach (plan §5a-c, opt-in `[patch]` for publishable crates):
+    ///
+    /// 1. Build an index of every member: `member_path -> crate_name` by
+    ///    reading each `<member>/Cargo.toml`'s `[package].name`.
+    /// 2. Scan each member's `[dependencies]` and `[dev-dependencies]` for
+    ///    entries that include `path = "<rel>"`.
+    /// 3. Resolve `<rel>` against the member's directory. If the resolved
+    ///    target equals another member's directory, emit a patch entry
+    ///    keyed by that other member's crate name, with `path = "<member>"`
+    ///    (weave-root-relative).
+    ///
+    /// This is "the cheapest approach that works for the rvtty case": we
+    /// only scan the member manifests, not all repo Cargo.tomls, and we
+    /// don't peek at `rwv.lock`'s topology. Cross-repo path deps not
+    /// pointing at a known member are ignored (they're either intra-repo
+    /// internal-only deps, or operator-managed vendor deps — neither needs
+    /// a `[patch]` entry).
+    ///
+    /// Output is sorted by crate name (stable across runs).
+    fn compute_patches(
+        ctx: &IntegrationContext,
+        members: &[String],
+    ) -> anyhow::Result<Vec<(String, String)>> {
+        // Index members by their canonicalized absolute on-disk path so we can
+        // match the resolved target of a `path = "..."` dep against them. The
+        // value side stores both the weave-root-relative member path (for the
+        // emitted `path = "<rel>"`) and the crate name (the patch table key).
+        let mut by_abs: BTreeMap<std::path::PathBuf, (String, String)> = BTreeMap::new();
+        for member in members {
+            let member_dir = ctx.workspace_root.join(member);
+            let cargo_toml = member_dir.join("Cargo.toml");
+            if !cargo_toml.exists() {
+                continue;
+            }
+            let text = std::fs::read_to_string(&cargo_toml)
+                .with_context(|| format!("reading {}", cargo_toml.display()))?;
+            let doc: toml_edit::DocumentMut = text
+                .parse()
+                .with_context(|| format!("parsing {}", cargo_toml.display()))?;
+            let Some(name) = doc
+                .get("package")
+                .and_then(|i| i.as_table())
+                .and_then(|t| t.get("name"))
+                .and_then(|i| i.as_str())
+            else {
+                continue;
+            };
+            // Best-effort canonicalize; fall back to the joined path so tests
+            // that don't `canonicalize()` test dirs still work.
+            let abs = std::fs::canonicalize(&member_dir).unwrap_or(member_dir.clone());
+            by_abs.insert(abs, (member.clone(), name.to_string()));
+        }
+
+        let mut patches: BTreeMap<String, String> = BTreeMap::new();
+        for member in members {
+            let member_dir = ctx.workspace_root.join(member);
+            let cargo_toml = member_dir.join("Cargo.toml");
+            if !cargo_toml.exists() {
+                continue;
+            }
+            let text = std::fs::read_to_string(&cargo_toml)
+                .with_context(|| format!("reading {}", cargo_toml.display()))?;
+            let doc: toml_edit::DocumentMut = text
+                .parse()
+                .with_context(|| format!("parsing {}", cargo_toml.display()))?;
+
+            for deps_key in ["dependencies", "dev-dependencies"] {
+                let Some(deps) = doc.get(deps_key).and_then(|i| i.as_table()) else {
+                    continue;
+                };
+                for (_dep_name, dep_item) in deps.iter() {
+                    // Path deps come in two forms:
+                    //   foo = { path = "../foo" }       (inline table)
+                    //   [dependencies.foo] path = "..." (sub-table)
+                    let path_str = if let Some(inline) = dep_item.as_inline_table() {
+                        inline.get("path").and_then(|v| v.as_str())
+                    } else if let Some(table) = dep_item.as_table() {
+                        table.get("path").and_then(|i| i.as_str())
+                    } else {
+                        None
+                    };
+                    let Some(rel) = path_str else { continue };
+
+                    let target = member_dir.join(rel);
+                    let target_abs = std::fs::canonicalize(&target).unwrap_or(target.clone());
+
+                    let Some((target_member, target_crate)) = by_abs.get(&target_abs) else {
+                        continue;
+                    };
+                    // Don't emit a patch entry for self (intra-member dep —
+                    // not a workspace-cross dep).
+                    if target_member == member {
+                        continue;
+                    }
+                    patches.insert(target_crate.clone(), target_member.clone());
+                }
+            }
+        }
+
+        Ok(patches.into_iter().collect())
+    }
+
+    /// Merge rwv-generated `[patch.crates-io].<crate>` entries into `path`
+    /// (the weave-root `Cargo.toml`). Co-requisite of `strip_marked_patch_entries`.
+    ///
+    /// Each entry is written as an inline table
+    /// `<crate> = { path = "<rel>" }` with the `# managed by rwv` decor on the
+    /// leaf key — that decor is the per-entry marker the strip pass keys off
+    /// to discriminate rwv-authored entries from user-authored ones.
+    ///
+    /// Verify-and-warn semantics (matching the merge model): if a key is
+    /// already present on disk and is NOT carrying the rwv marker, the user
+    /// holds the pen — rwv leaves that entry alone.
+    fn merge_patch_entries(path: &Path, patches: &[(String, String)]) -> anyhow::Result<()> {
+        use crate::integrations::merge::TOML_MARKER_TEXT;
+
+        let text = if path.exists() {
+            std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?
+        } else {
+            String::new()
+        };
+        let mut doc: toml_edit::DocumentMut = text
+            .parse()
+            .with_context(|| format!("parsing {}", path.display()))?;
+
+        // Get-or-create `[patch.crates-io]`.
+        let patch = doc.as_table_mut().entry("patch").or_insert_with(|| {
+            let mut t = toml_edit::Table::new();
+            t.set_implicit(true);
+            toml_edit::Item::Table(t)
+        });
+        let patch_table = match patch {
+            toml_edit::Item::Table(t) => t,
+            _ => anyhow::bail!("`patch` is present but is not a table"),
+        };
+        let crates_io = patch_table
+            .entry("crates-io")
+            .or_insert_with(|| toml_edit::Item::Table(toml_edit::Table::new()));
+        let crates_io_table = match crates_io {
+            toml_edit::Item::Table(t) => t,
+            _ => anyhow::bail!("`patch.crates-io` is present but is not a table"),
+        };
+
+        for (crate_name, target_relpath) in patches {
+            // Verify-and-warn: if the user already authored this entry (no
+            // rwv marker on the leaf), do not overwrite.
+            let user_holds_pen = crates_io_table
+                .key(crate_name.as_str())
+                .map(|k| {
+                    let prefix = k
+                        .leaf_decor()
+                        .prefix()
+                        .and_then(|r| r.as_str())
+                        .unwrap_or("");
+                    !prefix.contains(TOML_MARKER_TEXT)
+                })
+                .unwrap_or(false)
+                && crates_io_table.contains_key(crate_name.as_str());
+            if user_holds_pen {
+                continue;
+            }
+
+            // Compose `{ path = "<rel>" }` inline table.
+            let mut inline = toml_edit::InlineTable::new();
+            inline.insert(
+                "path",
+                toml_edit::Value::String(toml_edit::Formatted::new(target_relpath.clone())),
+            );
+            crates_io_table.insert(
+                crate_name.as_str(),
+                toml_edit::Item::Value(toml_edit::Value::InlineTable(inline)),
+            );
+
+            // Attach the `# managed by rwv` marker on the leaf key,
+            // idempotently and preserving any existing user decor lines.
+            if let Some(mut key_mut) = crates_io_table.key_mut(crate_name.as_str()) {
+                let decor = key_mut.leaf_decor_mut();
+                let existing = decor.prefix().and_then(|r| r.as_str()).unwrap_or("");
+                if !existing.contains(TOML_MARKER_TEXT) {
+                    let new = if existing.is_empty() {
+                        "# managed by rwv\n".to_string()
+                    } else if existing.ends_with('\n') {
+                        format!("{existing}# managed by rwv\n")
+                    } else {
+                        format!("{existing}\n# managed by rwv\n")
+                    };
+                    decor.set_prefix(new);
+                }
+            }
+        }
+
+        std::fs::write(path, doc.to_string())
+            .with_context(|| format!("writing {}", path.display()))?;
+        Ok(())
+    }
+
+    /// Strip every rwv-marker-decorated entry under `[patch.crates-io]`,
+    /// then prune empty `[patch.crates-io]` and `[patch]` tables.
+    ///
+    /// Co-requisite of the activate-time `[patch.crates-io]` generation: the
+    /// generic `strip_deactivate` only handles a static set of owned keys;
+    /// patch entries are dynamic (one per cross-repo path dep), so they're
+    /// enumerated here. The marker decor on each key is the discriminator —
+    /// user-authored `[patch.crates-io].some-crate` entries (decorated by the
+    /// user, not by rwv) survive.
+    fn strip_marked_patch_entries(path: &Path) -> anyhow::Result<()> {
+        use crate::integrations::merge::TOML_MARKER_TEXT;
+
+        if !path.exists() {
+            return Ok(());
+        }
+        let text =
+            std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
+        let mut doc: toml_edit::DocumentMut = text
+            .parse()
+            .with_context(|| format!("parsing {}", path.display()))?;
+
+        let mut changed = false;
+        // Collect entries to remove under [patch.crates-io] whose key decor
+        // carries the rwv marker. (We avoid mutating while iterating.)
+        let to_remove: Vec<String> = doc
+            .get("patch")
+            .and_then(|i| i.as_table())
+            .and_then(|t| t.get("crates-io"))
+            .and_then(|i| i.as_table())
+            .map(|t| {
+                t.iter()
+                    .filter_map(|(name, _)| {
+                        let key = t.key(name)?;
+                        let prefix = key.leaf_decor().prefix().and_then(|r| r.as_str())?;
+                        if prefix.contains(TOML_MARKER_TEXT) {
+                            Some(name.to_string())
+                        } else {
+                            None
+                        }
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        if !to_remove.is_empty() {
+            if let Some(crates_io) = doc
+                .get_mut("patch")
+                .and_then(|i| i.as_table_mut())
+                .and_then(|t| t.get_mut("crates-io"))
+                .and_then(|i| i.as_table_mut())
+            {
+                for name in &to_remove {
+                    crates_io.remove(name);
+                }
+                changed = true;
+            }
+        }
+
+        // Prune `[patch.crates-io]` if it's now empty.
+        let prune_crates_io = doc
+            .get("patch")
+            .and_then(|i| i.as_table())
+            .and_then(|t| t.get("crates-io"))
+            .and_then(|i| i.as_table())
+            .is_some_and(|t| t.is_empty());
+        if prune_crates_io {
+            if let Some(patch) = doc.get_mut("patch").and_then(|i| i.as_table_mut()) {
+                patch.remove("crates-io");
+                changed = true;
+            }
+        }
+        // Prune `[patch]` if it's now empty.
+        let prune_patch = doc
+            .get("patch")
+            .and_then(|i| i.as_table())
+            .is_some_and(|t| t.is_empty());
+        if prune_patch {
+            doc.as_table_mut().remove("patch");
+            changed = true;
+        }
+
+        if changed {
+            std::fs::write(path, doc.to_string())
+                .with_context(|| format!("writing {}", path.display()))?;
+        }
+        Ok(())
     }
 }
 

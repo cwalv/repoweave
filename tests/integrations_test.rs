@@ -640,7 +640,11 @@ mod npm_workspaces {
         );
         // The data-loss bit: nohoist must survive verbatim.
         let nohoist = parsed["workspaces"]["nohoist"].as_array().unwrap();
-        assert_eq!(nohoist.len(), 2, "nohoist entries should survive byte-for-byte");
+        assert_eq!(
+            nohoist.len(),
+            2,
+            "nohoist entries should survive byte-for-byte"
+        );
         assert_eq!(nohoist[0].as_str(), Some("**/react-native"));
         assert_eq!(nohoist[1].as_str(), Some("**/react-native/**"));
         // User scripts survive.
@@ -701,7 +705,9 @@ mod npm_workspaces {
 
         // Order-preservation: user's scripts must NOT be alphabetized
         // (preserve_order). zzz-last appears before aaa-first in the seed.
-        let zzz_pos = after_first.find("zzz-last").expect("zzz-last must be present");
+        let zzz_pos = after_first
+            .find("zzz-last")
+            .expect("zzz-last must be present");
         let aaa_pos = after_first
             .find("aaa-first")
             .expect("aaa-first must be present");
@@ -749,11 +755,13 @@ mod npm_workspaces {
         assert!(parsed.get("workspaces").is_none(), "workspaces stripped");
         assert!(parsed.get("private").is_none(), "private stripped");
         assert_eq!(
-            parsed["scripts"]["validate:next-consumer"],
-            "node scripts/validate-next.mjs",
+            parsed["scripts"]["validate:next-consumer"], "node scripts/validate-next.mjs",
             "user scripts survive"
         );
-        assert_eq!(parsed["packageManager"], "npm@10.5.0", "packageManager survives");
+        assert_eq!(
+            parsed["packageManager"], "npm@10.5.0",
+            "packageManager survives"
+        );
         assert!(
             !root_a.join("package-lock.json").exists(),
             "lockfile must be removed on deactivate (gated on marker)"
@@ -1022,15 +1030,9 @@ packages:
             || {
                 PnpmWorkspaces.deactivate(root).unwrap();
             },
-            &[contract::substr_probe(
-                "server entry",
-                "github/acme/server",
-            )],
+            &[contract::substr_probe("server entry", "github/acme/server")],
             &contract::substr_probe("yaml marker", "managed by repoweave"),
-            &[
-                "overrides:",
-                "lodash@<4.17.21: '>=4.17.21'",
-            ],
+            &["overrides:", "lodash@<4.17.21: '>=4.17.21'"],
         );
     }
 
@@ -1117,7 +1119,10 @@ packages:
             .lines()
             .filter(|l| l.trim() == "# managed by repoweave")
             .count();
-        assert_eq!(marker_count, 1, "marker must appear exactly once; got:\n{after_second}");
+        assert_eq!(
+            marker_count, 1,
+            "marker must appear exactly once; got:\n{after_second}"
+        );
 
         // No duplicated packages: blocks. Count column-0 `packages:` keys.
         let packages_count = after_second
@@ -1144,8 +1149,16 @@ mod go_work {
         let root = tmp.path();
 
         // go work use requires valid go.mod files (not just empty touches).
-        write_file(root, "github/acme/server/go.mod", "module github.com/acme/server\n\ngo 1.21\n");
-        write_file(root, "github/acme/web/go.mod", "module github.com/acme/web\n\ngo 1.21\n");
+        write_file(
+            root,
+            "github/acme/server/go.mod",
+            "module github.com/acme/server\n\ngo 1.21\n",
+        );
+        write_file(
+            root,
+            "github/acme/web/go.mod",
+            "module github.com/acme/web\n\ngo 1.21\n",
+        );
         touch(root, "github/acme/docs/README.md");
 
         let manifest = make_manifest(vec![
@@ -1199,9 +1212,18 @@ mod go_work {
         // New behavior (merge port): the file includes the ownership marker
         // and uses tab-indented `use` blocks (go tool format).
         // Assert structural content rather than exact string (format varies).
-        assert!(content.contains("./github/chatly/protocol"), "protocol path missing: {content}");
-        assert!(content.contains("./github/chatly/server"), "server path missing: {content}");
-        assert!(content.contains("// managed by repoweave"), "marker missing: {content}");
+        assert!(
+            content.contains("./github/chatly/protocol"),
+            "protocol path missing: {content}"
+        );
+        assert!(
+            content.contains("./github/chatly/server"),
+            "server path missing: {content}"
+        );
+        assert!(
+            content.contains("// managed by repoweave"),
+            "marker missing: {content}"
+        );
     }
 
     #[test]
@@ -1210,8 +1232,16 @@ mod go_work {
         let root = tmp.path();
 
         // go work use requires valid go.mod files.
-        write_file(root, "github/acme/server/go.mod", "module github.com/acme/server\n\ngo 1.21\n");
-        write_file(root, "github/acme/reference-lib/go.mod", "module github.com/acme/reference-lib\n\ngo 1.21\n");
+        write_file(
+            root,
+            "github/acme/server/go.mod",
+            "module github.com/acme/server\n\ngo 1.21\n",
+        );
+        write_file(
+            root,
+            "github/acme/reference-lib/go.mod",
+            "module github.com/acme/reference-lib\n\ngo 1.21\n",
+        );
 
         let manifest = make_manifest(vec![
             ("github/acme/server", Role::Owned),
@@ -1758,14 +1788,8 @@ major_labels = []  # Ruff never uses major bumps
                 UvWorkspace.activate(&ctx).unwrap();
             },
             &[
-                contract::substr_probe(
-                    "members[server]",
-                    "github/astral/server",
-                ),
-                contract::substr_probe(
-                    "members[web]",
-                    "github/astral/web",
-                ),
+                contract::substr_probe("members[server]", "github/astral/server"),
+                contract::substr_probe("members[web]", "github/astral/web"),
             ],
             &contract::substr_probe("toml marker on members", "managed by rwv"),
             &[
@@ -2557,7 +2581,6 @@ foo = { path = "vendor/foo" }
     /// Members sub-path config is added by C6 (cargo design-finalization) +
     /// C8 (cargo members-subpath + [patch] opt-in).
     #[test]
-    #[ignore = "RED: turned green by fo-cnpjy.8 (members sub-path)"]
     fn s6_4_members_subpath_and_nested_workspace_exemption() {
         let tmp = TempDir::new().unwrap();
         let root = tmp.path();
@@ -2623,6 +2646,162 @@ foo = { path = "vendor/foo" }
         assert!(
             lines_with_repo_root.is_empty(),
             "repo root (github/cwalv/rvtty) must NOT appear as a member; got:\n{content}"
+        );
+    }
+
+    /// fo-cnpjy.8 / plan §5a-c — opt-in `[patch.crates-io]` generation for
+    /// cross-repo path deps. With `integrations.cargo-workspace.patch: true`
+    /// rwv scans each member's `Cargo.toml` for `path = "..."` deps that
+    /// point into another known member, and emits a
+    /// `[patch.crates-io].<crate>` entry keyed by the target crate's name.
+    #[test]
+    fn patch_opt_in_emits_crates_io_entries_for_cross_repo_path_deps() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+
+        // Two repos. `app` depends on `lib` via a relative `path = ...`.
+        write_file(
+            root,
+            "github/acme/lib/Cargo.toml",
+            "[package]\nname = \"acme-lib\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+        );
+        write_file(
+            root,
+            "github/acme/app/Cargo.toml",
+            r#"[package]
+name = "acme-app"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+acme-lib = { path = "../lib" }
+"#,
+        );
+
+        let manifest = make_manifest(vec![
+            ("github/acme/lib", Role::Owned),
+            ("github/acme/app", Role::Owned),
+        ]);
+        let project = ProjectName::new("test-project");
+        let config = IntegrationConfig::from_yaml("patch: true\n");
+        let cache = HashMap::new();
+        let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+
+        CargoWorkspace.activate(&ctx).unwrap();
+
+        let content = std::fs::read_to_string(root.join("Cargo.toml")).unwrap();
+        assert!(
+            content.contains("[patch.crates-io"),
+            "expected a `[patch.crates-io]` section; got:\n{content}"
+        );
+        assert!(
+            content.contains("acme-lib"),
+            "expected a patch entry keyed by the dep's crate name `acme-lib`; got:\n{content}"
+        );
+        assert!(
+            content.contains("github/acme/lib"),
+            "expected the patch entry to point at the lib member; got:\n{content}"
+        );
+        // The rwv marker should decorate the generated patch entry.
+        assert!(
+            content.contains("managed by rwv"),
+            "expected the rwv marker on managed keys; got:\n{content}"
+        );
+    }
+
+    /// fo-cnpjy.8 — when `patch` is the default (false), no `[patch]` table
+    /// is generated even when cross-repo path deps exist. This is the
+    /// internal-crate path: operators commit the relative `path=` dep and
+    /// rwv stays out of `[patch]` entirely (plan §5a-c, §12.3).
+    #[test]
+    fn patch_default_false_emits_no_patch_table() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+
+        write_file(
+            root,
+            "github/acme/lib/Cargo.toml",
+            "[package]\nname = \"acme-lib\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+        );
+        write_file(
+            root,
+            "github/acme/app/Cargo.toml",
+            r#"[package]
+name = "acme-app"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+acme-lib = { path = "../lib" }
+"#,
+        );
+
+        let manifest = make_manifest(vec![
+            ("github/acme/lib", Role::Owned),
+            ("github/acme/app", Role::Owned),
+        ]);
+        let project = ProjectName::new("test-project");
+        // Default config: patch defaults to false (plan §5a-c).
+        let config = IntegrationConfig::default();
+        let cache = HashMap::new();
+        let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+
+        CargoWorkspace.activate(&ctx).unwrap();
+
+        let content = std::fs::read_to_string(root.join("Cargo.toml")).unwrap();
+        assert!(
+            !content.contains("[patch"),
+            "no `[patch]` table should be generated with patch=false; got:\n{content}"
+        );
+    }
+
+    /// fo-cnpjy.8 — deactivate strips rwv-authored `[patch.crates-io]`
+    /// entries; user-authored entries survive. Realizes the §5a-c spec:
+    /// "written through the same toml_edit merge so user `[patch]` entries
+    /// survive". (Co-requisite of the activate-time generation.)
+    #[test]
+    fn deactivate_strips_rwv_patch_entries_keeps_user_entries() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+
+        // Seed a Cargo.toml that mixes an rwv-managed [patch.crates-io].acme-lib
+        // entry (carrying the marker decor) with a hand-authored
+        // [patch.crates-io].vendor-foo entry. Also exercise the [workspace]
+        // strip-deactivate path coexists with the new patch strip.
+        write_file(
+            root,
+            "Cargo.toml",
+            r#"[workspace]
+# managed by rwv
+members = ["github/acme/app", "github/acme/lib"]
+# managed by rwv
+resolver = "2"
+
+[patch.crates-io]
+# managed by rwv
+acme-lib = { path = "github/acme/lib" }
+vendor-foo = { git = "https://example.com/vendor-foo" }
+"#,
+        );
+
+        CargoWorkspace.deactivate(root).unwrap();
+
+        let content = std::fs::read_to_string(root.join("Cargo.toml")).unwrap();
+        // rwv-authored patch entry is gone.
+        assert!(
+            !content.contains("acme-lib"),
+            "rwv-authored patch entry should be stripped; got:\n{content}"
+        );
+        // User-authored patch entry survives.
+        assert!(
+            content.contains("vendor-foo"),
+            "user-authored patch entry should survive; got:\n{content}"
+        );
+        // The user-authored [patch.crates-io] table itself survives (because
+        // it's non-empty after the rwv strip).
+        assert!(
+            content.contains("[patch.crates-io]"),
+            "user-authored [patch.crates-io] should survive; got:\n{content}"
         );
     }
 }
@@ -3440,7 +3619,9 @@ mod vscode_workspace {
         assert!(
             parsed["extensions"]["recommendations"]
                 .as_array()
-                .map(|a| a.iter().any(|v| v.as_str() == Some("rust-lang.rust-analyzer")))
+                .map(|a| a
+                    .iter()
+                    .any(|v| v.as_str() == Some("rust-lang.rust-analyzer")))
                 .unwrap_or(false),
             "extensions.recommendations must survive activate; got: {parsed}"
         );
@@ -3513,7 +3694,10 @@ mod vscode_workspace {
         let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
         let folders = parsed["folders"].as_array().unwrap();
 
-        assert!(folders.len() >= 2, "folders must include both entries; got: {folders:?}");
+        assert!(
+            folders.len() >= 2,
+            "folders must include both entries; got: {folders:?}"
+        );
         // Primary folder is rwv-owned and refreshed.
         assert!(
             folders.iter().any(|f| f["path"].as_str() == Some(".")),
@@ -3664,8 +3848,7 @@ mod vscode_workspace_scenarios {
 
         VscodeWorkspace.activate(&ctx).unwrap();
 
-        let content =
-            std::fs::read_to_string(root.join("foundations.code-workspace")).unwrap();
+        let content = std::fs::read_to_string(root.join("foundations.code-workspace")).unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
         let exclude = &parsed["settings"]["files.exclude"];
 
@@ -3690,7 +3873,10 @@ mod vscode_workspace_scenarios {
         );
 
         // The marker and git.* keys must still be present.
-        assert_eq!(parsed["rwv.generated"]["managed"], serde_json::Value::Bool(true));
+        assert_eq!(
+            parsed["rwv.generated"]["managed"],
+            serde_json::Value::Bool(true)
+        );
         assert_eq!(
             parsed["settings"]["git.autoRepositoryDetection"],
             "subFolders"
@@ -3745,8 +3931,7 @@ mod vscode_workspace_scenarios {
         // Activate: all four user blocks must survive.
         VscodeWorkspace.activate(&ctx).unwrap();
 
-        let content =
-            std::fs::read_to_string(root.join("myproject.code-workspace")).unwrap();
+        let content = std::fs::read_to_string(root.join("myproject.code-workspace")).unwrap();
         let after_activate: serde_json::Value = serde_json::from_str(&content).unwrap();
 
         assert!(
@@ -3782,8 +3967,7 @@ mod vscode_workspace_scenarios {
             "file must NOT be deleted — user content remains"
         );
 
-        let content =
-            std::fs::read_to_string(root.join("myproject.code-workspace")).unwrap();
+        let content = std::fs::read_to_string(root.join("myproject.code-workspace")).unwrap();
         let after_deactivate: serde_json::Value = serde_json::from_str(&content).unwrap();
 
         // Owned keys stripped.
@@ -3866,8 +4050,7 @@ mod vscode_workspace_scenarios {
 
         VscodeWorkspace.activate(&ctx).unwrap();
 
-        let content =
-            std::fs::read_to_string(root.join("foundations.code-workspace")).unwrap();
+        let content = std::fs::read_to_string(root.join("foundations.code-workspace")).unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
         let folders = parsed["folders"].as_array().unwrap();
 
@@ -3879,10 +4062,7 @@ mod vscode_workspace_scenarios {
         );
 
         // Element 0 must be the rwv-managed primary.
-        assert_eq!(
-            folders[0]["path"], ".",
-            "primary folder must be at index 0"
-        );
+        assert_eq!(folders[0]["path"], ".", "primary folder must be at index 0");
         assert_eq!(
             folders[0]["name"], "foundations (primary)",
             "primary folder name must be updated"
@@ -3899,7 +4079,10 @@ mod vscode_workspace_scenarios {
         );
 
         // Marker still present (object form after fo-cnpjy.5).
-        assert_eq!(parsed["rwv.generated"]["managed"], serde_json::Value::Bool(true));
+        assert_eq!(
+            parsed["rwv.generated"]["managed"],
+            serde_json::Value::Bool(true)
+        );
     }
 
     // -------------------------------------------------------------------------
@@ -3952,8 +4135,7 @@ mod vscode_workspace_scenarios {
             root.join("mine.code-workspace").exists(),
             "hand-written file must survive deactivate"
         );
-        let content =
-            std::fs::read_to_string(root.join("mine.code-workspace")).unwrap();
+        let content = std::fs::read_to_string(root.join("mine.code-workspace")).unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
         assert_eq!(
             parsed["settings"]["editor.tabSize"],

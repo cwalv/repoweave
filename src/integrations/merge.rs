@@ -613,7 +613,7 @@ pub struct TomlDoc {
     doc: toml_edit::DocumentMut,
 }
 
-const TOML_MARKER_TEXT: &str = "managed by rwv";
+pub(crate) const TOML_MARKER_TEXT: &str = "managed by rwv";
 const TOML_MARKER_PREFIX: &str = "# managed by rwv\n";
 
 impl TomlDoc {
