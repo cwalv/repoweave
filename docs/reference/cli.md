@@ -141,9 +141,13 @@ Coordinated cross-repo push. Walks the manifest, applies per-role push policy: `
 |---|---|
 | `--role` / `--repo` | Selector filters |
 | `--force` | Bypass lock-precondition check |
-| `-j N` | Parallel push (up to N concurrent) |
+| `-j N` | Parallel push (up to N concurrent for manifest repos; project repo always last and serial) |
+| `--json` / `-j N` | Structured output / parallel push (NDJSON when N > 1) |
+| `--dry-run` | Print the push plan without executing |
 
-Anchored by `tests/doc_claims_push_test.rs`. See [push a cross-repo feature](../how-to/push-cross-repo-feature.md).
+`--json` emits the envelope `{"$schema": "...", "outcomes": [...]}`. Manifest-repo records use `kind` `pushed`, `skipped`, or `failed`; the project-repo record (always last) uses `kind` `project-repo-pushed` or `project-repo-failed`. See [JSON envelope convention](#--json-envelope-convention).
+
+Anchored by `tests/doc_claims_push_test.rs` and `tests/push_json_test.rs`. See [push a cross-repo feature](../how-to/push-cross-repo-feature.md).
 
 ### `rwv abort`
 
@@ -238,7 +242,7 @@ Per-verb reflection — *replaces hand-maintained `--help` scraping* in agent ha
 | `rwv explain` | List of explainable verbs |
 | `rwv explain <verb>` | Markdown bundle: purpose, invocation, output description, JSON Schema (for `--json`-capable verbs), exit codes, examples, common errors |
 
-Use case: agent harness asks "what flags does `rwv push` take, and what does it print?" — the bundle is authoritative. For `--json`-capable verbs (`status`, `doctor`, `sync`), the JSON Schema is embedded as a fenced code block inside the bundle.
+Use case: agent harness asks "what flags does `rwv push` take, and what does it print?" — the bundle is authoritative. For `--json`-capable verbs (`status`, `doctor`, `sync`, `push`), the JSON Schema is embedded as a fenced code block inside the bundle.
 
 The rendered bundles are checked in at `docs/reference/explain/` for offline browsing. CI fails if they diverge from the generator output.
 
@@ -312,6 +316,7 @@ Every JSON-capable verb emits a self-describing envelope:
 | `rwv fetch --json` | `outcomes` |
 | `rwv sync --json` | `outcomes` |
 | `rwv sync-to --json` | `outcomes` |
+| `rwv push --json` | `outcomes` |
 
 Schemas live at `docs/reference/schemas/<verb>.json` and are also embedded as fenced code blocks inside the corresponding `rwv explain <verb>` bundle.
 
@@ -323,7 +328,7 @@ The branch-on-shape pattern lets consumers handle both modes uniformly: peek at 
 
 Exit semantics under `--json` are the same in both modes: non-zero iff at least one per-repo outcome is `failed`.
 
-Anchored by `tests/doc_claims_sync_test.rs`, `tests/doc_claims_fetch_test.rs`, and the per-verb `sync_json_test.rs` / `fetch_json_test.rs` families.
+Anchored by `tests/doc_claims_sync_test.rs`, `tests/doc_claims_fetch_test.rs`, `tests/doc_claims_update_test.rs`, `tests/doc_claims_push_test.rs`, and the per-verb `*_json_test.rs` families (`sync`, `sync_to`, `fetch`, `update`, `push`).
 
 ## Related
 

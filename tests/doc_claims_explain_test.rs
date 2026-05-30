@@ -25,7 +25,7 @@ use assert_cmd::Command as AssertCommand;
 use std::path::PathBuf;
 
 const ACCEPTANCE_VERBS: &[&str] = &[
-    "status", "doctor", "sync", "sync-to", "fetch", "update", "prime", "explain",
+    "status", "doctor", "sync", "sync-to", "push", "fetch", "update", "prime", "explain",
 ];
 
 fn rwv() -> AssertCommand {
@@ -116,6 +116,11 @@ fn explain_fetch_matches_committed_doc() {
 #[test]
 fn explain_update_matches_committed_doc() {
     assert_byte_identical("update");
+}
+
+#[test]
+fn explain_push_matches_committed_doc() {
+    assert_byte_identical("push");
 }
 
 #[test]

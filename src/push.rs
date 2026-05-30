@@ -12,8 +12,105 @@ use crate::selector::RepoFilter;
 use crate::vcs::{RawRevisionId, Vcs};
 use crate::workspace::{WorkspaceContext, WorkspaceLocation};
 use anyhow::Context;
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
+
+/// Schema URL for `rwv push --json` output. Pins to the committed artifact
+/// under `docs/reference/schemas/push.json`. Emitted as the top-level
+/// `$schema` field of the [`PushJsonOutput`] envelope and in every NDJSON
+/// record under `--json -j N` with `N > 1`.
+pub const PUSH_SCHEMA_URL: &str =
+    "https://raw.githubusercontent.com/cwalv/repoweave/main/docs/reference/schemas/push.json";
+
+// ---------------------------------------------------------------------------
+// JSON wire-output types for `rwv push --json`
+// ---------------------------------------------------------------------------
+
+/// One per-repo outcome record in `rwv push --json` output.
+///
+/// Manifest-repo records use `kind` values `pushed`, `skipped`, and `failed`.
+/// The project-repo record uses `kind` values `project-repo-pushed` and
+/// `project-repo-failed`, making it distinguishable from manifest-repo records
+/// in the same flat `outcomes` array.
+///
+/// Choosing option (a) — a `kind` field — over option (b) (two separate
+/// arrays) because: a single flat array supports uniform streaming in NDJSON
+/// mode without requiring consumers to merge two streams; the `kind` tag
+/// already carries all the type information consumers need; and the kebab-case
+/// kind-tag convention matches sync/status/doctor precedent.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "kind", rename_all = "kebab-case")]
+pub enum PushOutcomeOutput {
+    /// Manifest repo was pushed successfully.
+    Pushed {
+        path: String,
+        absolute_path: String,
+    },
+    /// Manifest repo was skipped (Role::Fork — push via PR).
+    Skipped {
+        path: String,
+        absolute_path: String,
+    },
+    /// Manifest repo push failed.
+    Failed {
+        path: String,
+        absolute_path: String,
+        /// Free-form error message from the git push attempt.
+        message: String,
+    },
+    /// Project repo was pushed successfully (always the last record).
+    ProjectRepoPushed {
+        path: String,
+        absolute_path: String,
+        /// The project name (e.g. `"my-app"`). Distinguishes the project repo's
+        /// path convention (`projects/<name>/`) from manifest-repo paths.
+        project: String,
+    },
+    /// Project repo push failed.
+    ProjectRepoFailed {
+        path: String,
+        absolute_path: String,
+        project: String,
+        /// Free-form error message from the git push attempt.
+        message: String,
+    },
+}
+
+impl PushOutcomeOutput {
+    /// True when this record represents a failure (either manifest or project-repo).
+    pub fn is_failure(&self) -> bool {
+        matches!(self, Self::Failed { .. } | Self::ProjectRepoFailed { .. })
+    }
+}
+
+/// Top-level envelope for `rwv push --json` (serial mode, `jobs == 1`).
+///
+/// Shape: `{ "$schema": "<url>", "outcomes": [<PushOutcomeOutput>, ...] }`.
+/// Manifest-repo records appear first, in manifest order; the project-repo
+/// record is appended last (reflecting push ordering). Consumers can
+/// distinguish the project-repo record by checking `kind` for
+/// `"project-repo-pushed"` or `"project-repo-failed"`.
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+pub struct PushJsonOutput {
+    #[serde(rename = "$schema")]
+    pub schema_url: String,
+    pub outcomes: Vec<PushOutcomeOutput>,
+}
+
+/// One NDJSON record for `rwv push --json -j N` with `N > 1`.
+///
+/// Each line is self-describing: the outcome's fields are flattened alongside
+/// `$schema` so a consumer can identify any single line without context.
+#[derive(Debug, Serialize)]
+pub struct PushOutcomeNdjsonRecord<'a> {
+    #[serde(rename = "$schema")]
+    pub schema: &'a str,
+    #[serde(flatten)]
+    pub outcome: &'a PushOutcomeOutput,
+}
 
 /// Run `rwv push` for the current workspace context.
 ///
@@ -27,6 +124,12 @@ use std::sync::Mutex;
 /// `force` propagates to every git push in the operation. `dry_run` prints
 /// the plan without executing any pushes.
 ///
+/// `json` enables structured output. Under `json && jobs == 1`, the result
+/// is a pretty-printed [`PushJsonOutput`] envelope. Under `json && jobs > 1`,
+/// each record is streamed as a self-describing NDJSON line as it completes;
+/// the project-repo record is appended last. Text-mode chatter (the normal
+/// "rwv push: pushing X" lines) is suppressed under `--json`.
+///
 /// `jobs` is the resolved worker count (post-[`crate::parallel::resolve_jobs`])
 /// for the manifest-repo push loop. `jobs == 1` runs serially with no prefix;
 /// `jobs > 1` fans the manifest-repo pushes out over a bounded worker pool,
@@ -39,6 +142,7 @@ pub fn run_push(
     force: bool,
     filter: &RepoFilter,
     jobs: usize,
+    json: bool,
 ) -> anyhow::Result<()> {
     let ctx = WorkspaceContext::resolve(cwd, project_override.clone())?;
 
@@ -272,11 +376,42 @@ pub fn run_push(
     //    Vcs::push_with_role trait method stays neutral on Fork. Fans out
     //    over `jobs` workers when `jobs > 1`; per-line `[<repo>]` prefix
     //    under parallel mode, no prefix under `-j 1`.
+    //
+    //    Under `--json`, text-mode output (the per-repo "rwv push: pushing
+    //    X" lines) is suppressed; the Reporter is always Serial/quiet so
+    //    stdout stays clean for the JSON envelope or NDJSON records.
     let parallel = jobs > 1;
+    let ndjson = json && parallel;
     let write_lock: Mutex<()> = Mutex::new(());
 
-    let outcomes: Vec<PushOutcome> = run_in_parallel(&plan, jobs, |_idx, item| {
-        let reporter = if parallel {
+    // Collect (path, abs_path, outcome) triples for the JSON path.
+    let plan_with_paths: Vec<(RepoPath, PathBuf, PushPlanItem)> = plan
+        .into_iter()
+        .map(|item| {
+            let abs = primary_root.join(item.repo_path.as_path());
+            let rp = item.repo_path.clone();
+            (rp, abs, item)
+        })
+        .collect();
+
+    // Re-form the bare plan slice for run_in_parallel.
+    let plan_items: Vec<PushPlanItem> = plan_with_paths
+        .iter()
+        .map(|(_, _, item)| PushPlanItem {
+            repo_path: item.repo_path.clone(),
+            branch: item.branch.clone(),
+            role: item.role,
+        })
+        .collect();
+
+    let raw_outcomes: Vec<PushOutcome> = run_in_parallel(&plan_items, jobs, |_idx, item| {
+        let reporter = if json {
+            // Under --json, suppress the text-mode chatter; records come out
+            // via our own JSON/NDJSON emit after the loop. We use a silent
+            // reporter so push_one's "rwv push: pushing X" lines don't
+            // pollute the structured stdout stream.
+            Reporter::silent()
+        } else if parallel {
             Reporter::parallel(item.repo_path.as_str().to_string(), &write_lock)
         } else {
             Reporter::serial()
@@ -284,36 +419,84 @@ pub fn run_push(
         push_one(&git, item, &primary_root, &reporter, force)
     });
 
+    // Build wire-output records (manifest repos only, in order).
+    let mut json_outcomes: Vec<PushOutcomeOutput> = Vec::new();
     let mut push_errors: Vec<String> = Vec::new();
     let mut pushed = 0usize;
     let mut skipped = 0usize;
-    for outcome in outcomes {
-        match outcome {
-            PushOutcome::Pushed => pushed += 1,
-            PushOutcome::Skipped => skipped += 1,
-            PushOutcome::Failed(msg) => push_errors.push(msg),
+
+    for ((repo_path, abs_path, _item), raw) in plan_with_paths.iter().zip(raw_outcomes) {
+        let path_str = repo_path.to_string();
+        let abs_str = abs_path.to_string_lossy().into_owned();
+
+        let wire = match &raw {
+            PushOutcome::Pushed => {
+                pushed += 1;
+                PushOutcomeOutput::Pushed {
+                    path: path_str,
+                    absolute_path: abs_str,
+                }
+            }
+            PushOutcome::Skipped => {
+                skipped += 1;
+                PushOutcomeOutput::Skipped {
+                    path: path_str,
+                    absolute_path: abs_str,
+                }
+            }
+            PushOutcome::Failed(msg) => {
+                push_errors.push(msg.clone());
+                PushOutcomeOutput::Failed {
+                    path: path_str,
+                    absolute_path: abs_str,
+                    message: msg.clone(),
+                }
+            }
+        };
+
+        if ndjson {
+            // Stream each manifest-repo outcome immediately.
+            emit_ndjson_record(&write_lock, &wire);
         }
+        json_outcomes.push(wire);
     }
 
     if !push_errors.is_empty() {
-        eprintln!(
-            "rwv push: {}/{} manifest repo(s) failed; project repo not pushed:",
-            push_errors.len(),
-            plan.len() - skipped,
-        );
-        for msg in &push_errors {
-            eprintln!("  - {msg}");
+        if !json {
+            eprintln!(
+                "rwv push: {}/{} manifest repo(s) failed; project repo not pushed:",
+                push_errors.len(),
+                plan_items.len() - skipped,
+            );
+            for msg in &push_errors {
+                eprintln!("  - {msg}");
+            }
         }
+
+        // Under --json, emit whatever outcomes we have before bailing so the
+        // caller gets machine-readable failure records.
+        if json && !ndjson {
+            let envelope = PushJsonOutput {
+                schema_url: PUSH_SCHEMA_URL.to_string(),
+                outcomes: json_outcomes,
+            };
+            if let Ok(out) = serde_json::to_string_pretty(&envelope) {
+                println!("{out}");
+            }
+        }
+
         anyhow::bail!(
             "manifest-repo push failures aborted before project-repo push; \
              manifest-side partial state may exist — inspect and retry"
         );
     }
 
-    println!(
-        "rwv push: pushed {} manifest repo(s); {} skipped (Role::Fork)",
-        pushed, skipped
-    );
+    if !json {
+        println!(
+            "rwv push: pushed {} manifest repo(s); {} skipped (Role::Fork)",
+            pushed, skipped
+        );
+    }
 
     // 7. Project-repo push (gated). The project repo's committed lock pins
     //    the manifest SHAs we just pushed — pushing it last preserves the
@@ -322,11 +505,48 @@ pub fn run_push(
     //    place; the project repo is always Role::Owned at the trait
     //    layer (it's the canonical-tip carrier; not declared in any
     //    manifest).
-    println!(
-        "rwv push: pushing project repo projects/{} ({} -> origin)",
-        project_name, project_current,
-    );
-    if let Err(e) = git.push_with_role(&project_dir, Role::Owned, force) {
+    let project_path_str = format!("projects/{}", project_name.as_str());
+    let project_abs_str = project_dir.to_string_lossy().into_owned();
+
+    if !json {
+        println!(
+            "rwv push: pushing project repo projects/{} ({} -> origin)",
+            project_name, project_current,
+        );
+    }
+    let project_push_result = git.push_with_role(&project_dir, Role::Owned, force);
+
+    let project_wire = match &project_push_result {
+        Ok(()) => PushOutcomeOutput::ProjectRepoPushed {
+            path: project_path_str,
+            absolute_path: project_abs_str,
+            project: project_name.as_str().to_string(),
+        },
+        Err(e) => PushOutcomeOutput::ProjectRepoFailed {
+            path: project_path_str,
+            absolute_path: project_abs_str,
+            project: project_name.as_str().to_string(),
+            message: e.to_string(),
+        },
+    };
+
+    if ndjson {
+        emit_ndjson_record(&write_lock, &project_wire);
+    }
+    json_outcomes.push(project_wire);
+
+    if project_push_result.is_err() {
+        // Under --json (envelope mode), emit partial outcomes before bailing.
+        if json && !ndjson {
+            let envelope = PushJsonOutput {
+                schema_url: PUSH_SCHEMA_URL.to_string(),
+                outcomes: json_outcomes,
+            };
+            if let Ok(out) = serde_json::to_string_pretty(&envelope) {
+                println!("{out}");
+            }
+        }
+        let e = project_push_result.unwrap_err();
         anyhow::bail!(
             "project-repo push failed after all manifest repos pushed cleanly: {e}. \
              Manifest-side state is published; the lock carrier is not. \
@@ -334,8 +554,40 @@ pub fn run_push(
         );
     }
 
-    println!("rwv push: done");
+    // Emit JSON output for the success path.
+    if json {
+        if !ndjson {
+            // Envelope mode: emit once at the end.
+            let envelope = PushJsonOutput {
+                schema_url: PUSH_SCHEMA_URL.to_string(),
+                outcomes: json_outcomes,
+            };
+            let out = serde_json::to_string_pretty(&envelope)
+                .context("failed to serialize push outcomes to JSON")?;
+            println!("{out}");
+        }
+        // NDJSON mode: already streamed each record above.
+    } else {
+        println!("rwv push: done");
+    }
+
     Ok(())
+}
+
+/// Emit one NDJSON record to stdout, serialised and mutex-guarded so
+/// parallel workers cannot interleave bytes.
+fn emit_ndjson_record(write_lock: &Mutex<()>, outcome: &PushOutcomeOutput) {
+    let record = PushOutcomeNdjsonRecord {
+        schema: PUSH_SCHEMA_URL,
+        outcome,
+    };
+    if let Ok(line) = serde_json::to_string(&record) {
+        let _guard = write_lock.lock().unwrap_or_else(|e| e.into_inner());
+        let stdout = std::io::stdout();
+        let mut handle = stdout.lock();
+        let _ = writeln!(handle, "{line}");
+        let _ = handle.flush();
+    }
 }
 
 /// One manifest repo's resolved plan entry — what branch it's on and what

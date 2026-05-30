@@ -14,6 +14,7 @@ rwv explain <verb>
 - **doctor** — convention-violation checks (orphans, drift, stale locks) (`--json` available)
 - **sync** — reconcile each repo with its locked SHA (`--json` available)
 - **sync-to** — advance target workspace to CWD's tip (3-step orchestration: rebase, relock, FF-advance) (`--json` available)
+- **push** — publish manifest repos then the project repo to shared remotes (`--json` available)
 - **fetch** — clone or fetch every repo in the active project (`--json` available)
 - **update** — advance the lock to current HEADs (`--json` available)
 - **prime** — agent-oriented orientation context for the workspace

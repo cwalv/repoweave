@@ -115,6 +115,10 @@ enum Commands {
         /// Number of parallel per-repo workers for manifest-repo pushes. Default: min(nproc, 8). `-j 1` is explicit serial. Project-repo push always runs serially as the last step.
         #[arg(short = 'j', long = "jobs")]
         jobs: Option<usize>,
+        /// Emit per-repo outcomes as JSON (array-of-records with stable per-variant `kind`). See `rwv explain push`.
+        /// Under `-j > 1`, output switches to NDJSON (one record per line, streamed as each repo completes).
+        #[arg(long)]
+        json: bool,
     },
     /// Add a repo to the active project
     Add {
@@ -539,12 +543,21 @@ fn main() -> anyhow::Result<()> {
             roles,
             repos,
             jobs,
+            json,
         }) => {
             let cwd = std::env::current_dir()?;
             let project_override = project.map(repoweave::manifest::ProjectName::new);
             let filter = repoweave::selector::RepoFilter::parse(&roles, &repos)?;
-            let jobs = repoweave::parallel::resolve_jobs(jobs);
-            push::run_push(&cwd, project_override, dry_run, force, &filter, jobs)?;
+            // push's default is serial (jobs=1). This differs from fetch/update
+            // (which auto-resolve to min(nproc, 8)) because push's `--json`
+            // contract pins envelope output under `-j 1` and NDJSON under
+            // `-j > 1`; defaulting to auto would silently switch envelope ->
+            // NDJSON on multi-core hosts.
+            let jobs = match jobs {
+                Some(n) => repoweave::parallel::resolve_jobs(Some(n)),
+                None => 1,
+            };
+            push::run_push(&cwd, project_override, dry_run, force, &filter, jobs, json)?;
         }
         Some(Commands::Doctor {
             locked,

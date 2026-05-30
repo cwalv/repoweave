@@ -18,6 +18,7 @@ use serde::Serialize;
 
 use repoweave::check::ViolationOutput;
 use repoweave::fetch::FetchJsonOutput;
+use repoweave::push::{PushJsonOutput, PUSH_SCHEMA_URL};
 use repoweave::status::StatusJsonOutput;
 use repoweave::sync::{
     SyncJsonOutput, SyncToJsonOutput, SYNC_JSON_SCHEMA_URL, SYNC_TO_JSON_SCHEMA_URL,
@@ -78,6 +79,11 @@ fn schema_update() -> String {
     serde_json::to_string_pretty(&schema).expect("update schema serializes")
 }
 
+fn schema_push() -> String {
+    let schema = schema_for!(PushJsonOutput);
+    serde_json::to_string_pretty(&schema).expect("push schema serializes")
+}
+
 fn verbs() -> Vec<Verb> {
     vec![
         Verb {
@@ -99,6 +105,11 @@ fn verbs() -> Vec<Verb> {
             name: "sync-to",
             summary: "advance target workspace to CWD's tip (3-step orchestration: rebase, relock, FF-advance)",
             schema: Some(schema_sync_to),
+        },
+        Verb {
+            name: "push",
+            summary: "publish manifest repos then the project repo to shared remotes",
+            schema: Some(schema_push),
         },
         Verb {
             name: "fetch",
@@ -298,6 +309,10 @@ fn main() -> anyhow::Result<()> {
     assert!(
         UPDATE_SCHEMA_URL.ends_with("/docs/reference/schemas/update.json"),
         "UPDATE_SCHEMA_URL no longer points at the committed artifact"
+    );
+    assert!(
+        PUSH_SCHEMA_URL.ends_with("/docs/reference/schemas/push.json"),
+        "PUSH_SCHEMA_URL no longer points at the committed artifact"
     );
 
     let index = render_index(&verbs);

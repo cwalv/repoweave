@@ -14,6 +14,10 @@
 //!   - push -j N: lines per repo carry the `[<repo>]` prefix (Reporter::Parallel)
 //!   - push: PushOutcome::{Pushed, Skipped, Failed(...)} surface in the
 //!     user-facing output
+//!   - push --json: emits envelope with $schema and outcomes array
+//!   - push --json: project-repo record is the last outcome and uses kind
+//!     `project-repo-pushed` (distinguishable from manifest-repo records)
+//!   - push --json -j N (N > 1): emits NDJSON (one record per line)
 //!
 //! Style note: these tests reproduce the bare-remote-with-seed setup pattern
 //! used by `push_test.rs` / `push_parallel_test.rs` rather than `common`'s
@@ -700,4 +704,124 @@ fn push_outcome_variants_show_in_output() {
         "Failed outcome must name the failing repo in the aggregated error; \
          got stdout:\n{stdout}\nstderr:\n{stderr}"
     );
+}
+
+// ===========================================================================
+// 8. --json: envelope with $schema + outcomes; project-repo distinguishable
+//
+// Doc claim: `rwv push --json` emits a JSON envelope with:
+//   - top-level `$schema` URL
+//   - `outcomes` array with per-repo records
+//   - project-repo record is the last entry with kind `project-repo-pushed`
+//     (distinguishable from manifest-repo records by the `kind` field)
+// ===========================================================================
+
+#[test]
+fn push_json_emits_schema_and_outcomes() {
+    let repos = [("local/org/a", "owned")];
+    let ws = build_workspace("alpha", &repos);
+    let _expected = advance_all_and_relock(&ws, &repos);
+
+    let output = rwv()
+        .args(["push", "--json"])
+        .current_dir(&ws.workspace)
+        .output()
+        .expect("rwv push --json");
+    assert!(
+        output.status.success(),
+        "push --json should succeed; stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let parsed: serde_json::Value = serde_json::from_str(&stdout)
+        .unwrap_or_else(|e| panic!("stdout not parseable as JSON ({e}):\n{stdout}"));
+
+    assert!(
+        parsed.get("$schema").is_some(),
+        "envelope must have $schema: {stdout}"
+    );
+    assert!(
+        parsed.get("outcomes").and_then(|v| v.as_array()).is_some(),
+        "envelope must have outcomes array: {stdout}"
+    );
+}
+
+#[test]
+fn push_json_project_repo_record_is_last_and_distinguishable() {
+    let repos = [("local/org/a", "owned"), ("local/org/b", "owned")];
+    let ws = build_workspace("alpha", &repos);
+    let _expected = advance_all_and_relock(&ws, &repos);
+
+    let output = rwv()
+        .args(["push", "--json"])
+        .current_dir(&ws.workspace)
+        .output()
+        .expect("rwv push --json");
+    assert!(output.status.success(), "push --json should succeed");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let parsed: serde_json::Value = serde_json::from_str(&stdout).expect("parseable");
+    let outcomes = parsed["outcomes"].as_array().expect("outcomes array");
+
+    // Last record must be the project-repo record.
+    let last = outcomes.last().expect("non-empty outcomes");
+    let last_kind = last["kind"].as_str().expect("kind field");
+    assert!(
+        last_kind.starts_with("project-repo-"),
+        "last outcome must be a project-repo variant; got kind={last_kind}"
+    );
+
+    // All preceding records must be manifest-repo records (no project-repo- prefix).
+    for o in &outcomes[..outcomes.len() - 1] {
+        let kind = o["kind"].as_str().expect("kind field");
+        assert!(
+            !kind.starts_with("project-repo-"),
+            "manifest-repo records must NOT use project-repo- kind; got kind={kind}"
+        );
+    }
+}
+
+// ===========================================================================
+// 9. --json -j N: NDJSON streaming under parallel mode
+//
+// Doc claim: under `--json -j N` with `N > 1`, output switches to NDJSON.
+// Each line is a self-describing JSON record. No envelope wrapper.
+// ===========================================================================
+
+#[test]
+fn push_json_ndjson_under_parallel_mode() {
+    let repos = [("local/org/a", "owned"), ("local/org/b", "owned")];
+    let ws = build_workspace("alpha", &repos);
+    let _expected = advance_all_and_relock(&ws, &repos);
+
+    let output = rwv()
+        .args(["push", "--json", "-j", "2"])
+        .current_dir(&ws.workspace)
+        .output()
+        .expect("rwv push --json -j 2");
+    assert!(
+        output.status.success(),
+        "push --json -j 2 should succeed; stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    // NDJSON: must not parse as one big JSON document.
+    assert!(
+        serde_json::from_str::<serde_json::Value>(&stdout).is_err(),
+        "NDJSON stdout must not parse as one envelope: {stdout}"
+    );
+
+    // Each non-empty line must be a valid JSON object.
+    for line in stdout.lines() {
+        if line.trim().is_empty() {
+            continue;
+        }
+        let v: serde_json::Value = serde_json::from_str(line)
+            .unwrap_or_else(|e| panic!("NDJSON line not JSON ({e}): {line}\n{stdout}"));
+        assert!(v.is_object(), "NDJSON line must be object: {line}");
+        assert!(v.get("kind").is_some(), "NDJSON record missing kind: {line}");
+    }
 }

@@ -1,0 +1,162 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "PushJsonOutput",
+  "description": "Top-level envelope for `rwv push --json` (serial mode, `jobs == 1`).\n\nShape: `{ \"$schema\": \"<url>\", \"outcomes\": [<PushOutcomeOutput>, ...] }`. Manifest-repo records appear first, in manifest order; the project-repo record is appended last (reflecting push ordering). Consumers can distinguish the project-repo record by checking `kind` for `\"project-repo-pushed\"` or `\"project-repo-failed\"`.",
+  "type": "object",
+  "required": [
+    "$schema",
+    "outcomes"
+  ],
+  "properties": {
+    "$schema": {
+      "type": "string"
+    },
+    "outcomes": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/PushOutcomeOutput"
+      }
+    }
+  },
+  "definitions": {
+    "PushOutcomeOutput": {
+      "description": "One per-repo outcome record in `rwv push --json` output.\n\nManifest-repo records use `kind` values `pushed`, `skipped`, and `failed`. The project-repo record uses `kind` values `project-repo-pushed` and `project-repo-failed`, making it distinguishable from manifest-repo records in the same flat `outcomes` array.\n\nChoosing option (a) — a `kind` field — over option (b) (two separate arrays) because: a single flat array supports uniform streaming in NDJSON mode without requiring consumers to merge two streams; the `kind` tag already carries all the type information consumers need; and the kebab-case kind-tag convention matches sync/status/doctor precedent.",
+      "oneOf": [
+        {
+          "description": "Manifest repo was pushed successfully.",
+          "type": "object",
+          "required": [
+            "absolute_path",
+            "kind",
+            "path"
+          ],
+          "properties": {
+            "absolute_path": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "enum": [
+                "pushed"
+              ]
+            },
+            "path": {
+              "type": "string"
+            }
+          }
+        },
+        {
+          "description": "Manifest repo was skipped (Role::Fork — push via PR).",
+          "type": "object",
+          "required": [
+            "absolute_path",
+            "kind",
+            "path"
+          ],
+          "properties": {
+            "absolute_path": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "enum": [
+                "skipped"
+              ]
+            },
+            "path": {
+              "type": "string"
+            }
+          }
+        },
+        {
+          "description": "Manifest repo push failed.",
+          "type": "object",
+          "required": [
+            "absolute_path",
+            "kind",
+            "message",
+            "path"
+          ],
+          "properties": {
+            "absolute_path": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "enum": [
+                "failed"
+              ]
+            },
+            "message": {
+              "description": "Free-form error message from the git push attempt.",
+              "type": "string"
+            },
+            "path": {
+              "type": "string"
+            }
+          }
+        },
+        {
+          "description": "Project repo was pushed successfully (always the last record).",
+          "type": "object",
+          "required": [
+            "absolute_path",
+            "kind",
+            "path",
+            "project"
+          ],
+          "properties": {
+            "absolute_path": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "enum": [
+                "project-repo-pushed"
+              ]
+            },
+            "path": {
+              "type": "string"
+            },
+            "project": {
+              "description": "The project name (e.g. `\"my-app\"`). Distinguishes the project repo's path convention (`projects/<name>/`) from manifest-repo paths.",
+              "type": "string"
+            }
+          }
+        },
+        {
+          "description": "Project repo push failed.",
+          "type": "object",
+          "required": [
+            "absolute_path",
+            "kind",
+            "message",
+            "path",
+            "project"
+          ],
+          "properties": {
+            "absolute_path": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "enum": [
+                "project-repo-failed"
+              ]
+            },
+            "message": {
+              "description": "Free-form error message from the git push attempt.",
+              "type": "string"
+            },
+            "path": {
+              "type": "string"
+            },
+            "project": {
+              "type": "string"
+            }
+          }
+        }
+      ]
+    }
+  }
+}

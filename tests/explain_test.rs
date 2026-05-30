@@ -15,7 +15,7 @@ use std::path::PathBuf;
 use std::process::Command;
 
 const ACCEPTANCE_VERBS: &[&str] = &[
-    "status", "doctor", "sync", "fetch", "update", "prime", "explain",
+    "status", "doctor", "sync", "push", "fetch", "update", "prime", "explain",
 ];
 
 fn rwv() -> AssertCommand {
@@ -65,6 +65,16 @@ fn explain_sync_includes_purpose_and_schema() {
         predicate::str::contains("# rwv sync")
             .and(predicate::str::contains("## Purpose"))
             .and(predicate::str::contains("SyncJsonOutput"))
+            .and(predicate::str::contains("```json")),
+    );
+}
+
+#[test]
+fn explain_push_includes_purpose_and_schema() {
+    rwv().args(["explain", "push"]).assert().success().stdout(
+        predicate::str::contains("# rwv push")
+            .and(predicate::str::contains("## Purpose"))
+            .and(predicate::str::contains("PushJsonOutput"))
             .and(predicate::str::contains("```json")),
     );
 }

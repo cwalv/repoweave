@@ -85,6 +85,7 @@ pub struct Reporter<'a> {
 
 enum ReporterInner<'a> {
     Serial,
+    Silent,
     Parallel {
         prefix: String,
         write_lock: &'a Mutex<()>,
@@ -96,6 +97,14 @@ impl<'a> Reporter<'a> {
     pub fn serial() -> Self {
         Self {
             inner: ReporterInner::Serial,
+        }
+    }
+
+    /// Silent reporter. Discards all output — used under `--json` where
+    /// structured records replace text-mode chatter on stdout.
+    pub fn silent() -> Self {
+        Self {
+            inner: ReporterInner::Silent,
         }
     }
 
@@ -115,12 +124,13 @@ impl<'a> Reporter<'a> {
     }
 
     /// Emit a line to rwv's stdout. Equivalent to `println!` under
-    /// serial; prefixed and lock-protected under parallel.
+    /// serial; prefixed and lock-protected under parallel; no-op under silent.
     pub fn out(&self, line: &str) {
         match &self.inner {
             ReporterInner::Serial => {
                 println!("{line}");
             }
+            ReporterInner::Silent => {}
             ReporterInner::Parallel { prefix, write_lock } => {
                 let _guard = write_lock.lock().unwrap_or_else(|e| e.into_inner());
                 let stdout = std::io::stdout();
@@ -131,12 +141,13 @@ impl<'a> Reporter<'a> {
     }
 
     /// Emit a line to rwv's stderr. Equivalent to `eprintln!` under
-    /// serial; prefixed and lock-protected under parallel.
+    /// serial; prefixed and lock-protected under parallel; no-op under silent.
     pub fn err(&self, line: &str) {
         match &self.inner {
             ReporterInner::Serial => {
                 eprintln!("{line}");
             }
+            ReporterInner::Silent => {}
             ReporterInner::Parallel { prefix, write_lock } => {
                 let _guard = write_lock.lock().unwrap_or_else(|e| e.into_inner());
                 let stderr = std::io::stderr();
@@ -249,6 +260,8 @@ pub fn run_subprocess_with_reporter(
 ) -> std::io::Result<SubprocessOutcome> {
     if !reporter.is_parallel() {
         // Capture-only: identical to Command::output() behaviour.
+        // Silent mode and serial mode both capture rather than stream;
+        // the distinction is in whether the caller surfaces the output.
         let output = cmd.output()?;
         let stderr_capture = String::from_utf8_lossy(&output.stderr).into_owned();
         return Ok(SubprocessOutcome {
