@@ -33,32 +33,65 @@ use std::str::FromStr;
 #[serde(transparent)]
 pub struct RepoPath(String);
 
+/// Typed error returned by [`RepoPath::new`].
+///
+/// Each variant corresponds to a specific validation rule; callers can
+/// `match` on the variant to distinguish failure modes without parsing
+/// the error message string.
+///
+/// `From<RepoPathError> for anyhow::Error` is provided automatically by
+/// `anyhow` because `RepoPathError` implements `std::error::Error + Send +
+/// Sync + 'static`, so existing `?`-based call-chains in anyhow-returning
+/// callers continue to work without any changes.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RepoPathError {
+    /// The path contains a backslash (`\`).
+    ///
+    /// `RepoPath` values must use forward-slash (`/`) separators. On Windows,
+    /// normalise with [`str::replace`] before calling `RepoPath::new`.
+    Backslash(String),
+}
+
+impl fmt::Display for RepoPathError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Backslash(s) => write!(
+                f,
+                "backslash not allowed in RepoPath '{s}'; \
+                 use forward slash (e.g. `github/acme/server` not `github\\acme\\server`)"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for RepoPathError {}
+
 /// Validate that a `RepoPath` string contains no backslashes.
 ///
-/// Returns `Err` with a human-readable message when the string contains `\`.
+/// Returns `Err(RepoPathError)` when validation fails.
 /// Shared by [`RepoPath::new`] and the [`serde::Deserialize`] impl so both
 /// paths produce the same error text.
-fn validate_repo_path(s: &str) -> Result<(), String> {
+fn validate_repo_path(s: &str) -> Result<(), RepoPathError> {
     if s.contains('\\') {
-        Err(
-            "backslash not allowed in RepoPath; use forward slash (e.g. \
-             `github/acme/server` not `github\\acme\\server`)"
-                .to_owned(),
-        )
+        Err(RepoPathError::Backslash(s.to_owned()))
     } else {
         Ok(())
     }
 }
 
 impl RepoPath {
-    /// Construct a `RepoPath`, returning an error if `s` contains a backslash.
+    /// Construct a `RepoPath`, returning a [`RepoPathError`] if `s` fails validation.
     ///
-    /// All `RepoPath` values must use forward-slash separators. Use
+    /// Currently the only rejection is a backslash in the path; all
+    /// `RepoPath` values must use forward-slash separators.  Use
     /// [`RepoPath::as_path`] to convert to a native OS path at
     /// filesystem-boundary calls.
-    pub fn new(s: impl Into<String>) -> anyhow::Result<Self> {
+    ///
+    /// `?` propagation into `anyhow::Result`-returning callers works
+    /// automatically via `From<RepoPathError> for anyhow::Error`.
+    pub fn new(s: impl Into<String>) -> Result<Self, RepoPathError> {
         let s = s.into();
-        validate_repo_path(&s).map_err(|msg| anyhow::anyhow!("{msg}"))?;
+        validate_repo_path(&s)?;
         Ok(Self(s))
     }
 
@@ -1707,6 +1740,57 @@ repositories:
         assert!(
             serde_msg.contains("backslash not allowed"),
             "serde error must mention 'backslash not allowed', got: {serde_msg}"
+        );
+    }
+
+    // ========================================================================
+    // RepoPathError — typed error variants
+    // ========================================================================
+
+    /// `RepoPath::new` returns the typed `RepoPathError::Backslash` variant
+    /// (not an opaque `anyhow::Error`) so callers can pattern-match.
+    #[test]
+    fn repo_path_error_backslash_variant_fires() {
+        let err = RepoPath::new("github\\acme\\server").unwrap_err();
+        assert!(
+            matches!(err, RepoPathError::Backslash(_)),
+            "expected RepoPathError::Backslash, got: {err:?}"
+        );
+    }
+
+    /// The `Backslash` variant carries the offending input string.
+    #[test]
+    fn repo_path_error_backslash_carries_input() {
+        let input = "github\\acme\\server";
+        let err = RepoPath::new(input).unwrap_err();
+        if let RepoPathError::Backslash(s) = &err {
+            assert_eq!(
+                s, input,
+                "Backslash variant should carry the original input string"
+            );
+        } else {
+            panic!("expected RepoPathError::Backslash, got: {err:?}");
+        }
+    }
+
+    /// `RepoPathError` implements `std::error::Error`, meaning `anyhow` can
+    /// convert it automatically via `?` in `anyhow::Result`-returning callers.
+    #[test]
+    fn repo_path_error_implements_std_error() {
+        fn assert_std_error<E: std::error::Error>(_: &E) {}
+        let err = RepoPath::new("foo\\bar").unwrap_err();
+        assert_std_error(&err);
+    }
+
+    /// The Display of `RepoPathError::Backslash` includes the offending path
+    /// so users know exactly which value triggered the error.
+    #[test]
+    fn repo_path_error_display_includes_offending_path() {
+        let input = "win\\style\\path";
+        let msg = format!("{}", RepoPath::new(input).unwrap_err());
+        assert!(
+            msg.contains(input),
+            "Display should include the offending path '{input}', got: {msg}"
         );
     }
 
