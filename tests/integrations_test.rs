@@ -1421,6 +1421,7 @@ mod gita {
             all_repos_on_disk: &[],
             all_project_paths: &[],
             detection_cache: &cache,
+            workweave: None,
         };
 
         Gita.activate(&ctx).unwrap();
