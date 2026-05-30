@@ -1399,7 +1399,6 @@ pub fn run_check(
             if !manifest_path.exists() {
                 continue;
             }
-            // Use relative path for Project::from_dir so project name derivation works
             let rel_dir = project_dir
                 .strip_prefix(&workspace_dir)
                 .unwrap_or(&project_dir);
@@ -1426,9 +1425,6 @@ pub fn run_check(
 
             match Project::from_dir(&project_dir) {
                 Ok(mut project) => {
-                    // Fix the project name to use relative path
-                    project.name = crate::manifest::ProjectName::new(name_from_rel);
-
                     // Resolve lock entries against on-disk repos so the
                     // canonical-SHA equality used by `find_violations` works
                     // uniformly for tag-form, branch-form, and SHA-form locks.
@@ -1923,8 +1919,6 @@ fn collect_doctor_violations(
 
             match Project::from_dir(&project_dir) {
                 Ok(mut project) => {
-                    project.name = crate::manifest::ProjectName::new(name_from_rel);
-
                     if let Some(raw_lock) = project.lock.clone() {
                         let (resolved, _failures) = raw_lock.resolve_versions(&workspace_dir);
                         resolved_locks.insert(project.name.clone(), resolved);
