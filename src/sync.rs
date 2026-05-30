@@ -1336,79 +1336,124 @@ fn prune_dropped_repo(ctx: &WorkspaceContext, repo_path: &RepoPath) -> anyhow::R
 }
 
 // ---------------------------------------------------------------------------
-// Output sink: routes per-repo text chatter + structured records.
+// OutputHandler trait: open extensibility seam for per-repo output.
 // ---------------------------------------------------------------------------
 
-/// Output mode for sync orchestration.
+/// Trait implemented by every output mode.
 ///
-/// - `Text`: per-repo `println!` / `eprintln!` lines for human consumption;
-///   no JSON emission. Used by `rwv sync` (text mode).
-/// - `JsonEnvelope`: suppress text chatter; collect records into the sink's
-///   `records` Vec. The caller (`run_sync_json`) emits the
-///   `{ "$schema": ..., "outcomes": [...] }` envelope after orchestration
-///   returns. Used by `rwv sync --json` under `-j 1` (or unspecified).
-/// - `JsonNdjson`: suppress text chatter; collect records AND stream each
-///   one as a JSON line on stdout the moment it's recorded. Used by
-///   `rwv sync --json -j N` with `N > 1`. Streamed lines are guarded by
-///   `stdout_lock` so two workers can't tear a single line.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum OutputMode {
-    Text,
-    JsonEnvelope,
-    JsonNdjson,
+/// The three built-in implementations are [`TextHandler`],
+/// [`JsonEnvelopeHandler`], and [`JsonNdjsonHandler`]. Callers pass
+/// `&dyn OutputHandler` into the orchestration body so new modes can be
+/// added without touching existing orchestration code.
+///
+/// ## Contract
+///
+/// - `record` is called once per completed per-repo outcome (including
+///   failures surfaced before the main sync loop). Implementations may
+///   print, buffer, or stream as appropriate.
+/// - `emit_text` controls whether the orchestration body emits human-readable
+///   progress lines to stdout/stderr. Returning `false` suppresses all
+///   non-record chatter (used by JSON modes).
+///
+/// ## Thread safety
+///
+/// `Send + Sync` is required because `record` may be called from parallel
+/// worker threads inside `run_in_parallel`. Implementations use interior
+/// mutability (e.g. `Mutex`) for any mutable state.
+pub trait OutputHandler: Send + Sync {
+    /// Record one per-repo outcome.
+    ///
+    /// `path` is the repo's manifest-relative path string; `abs_path` is
+    /// the absolute on-disk path. `outcome` is the raw sync result —
+    /// implementations convert to `SyncOutcomeOutput` internally when needed.
+    fn record(&self, path: &str, abs_path: &str, outcome: &RepoSyncOutcome);
+
+    /// Return `true` if the orchestration body should emit human-readable
+    /// text progress to stdout/stderr. JSON-mode handlers return `false`.
+    fn emit_text(&self) -> bool;
 }
 
-/// Shared output sink threaded through `run_sync_impl` (and its
-/// per-repo workers under `-j > 1`).
+/// Text-mode handler: prints one line per repo to stdout/stderr and discards
+/// structured records. Used by `rwv sync` and `rwv sync-to` (no `--json`).
 ///
-/// `records` is `Mutex<Vec<_>>` so concurrent workers can push outcomes
-/// atomically. `stdout_lock` serialises raw stdout writes (NDJSON lines)
-/// so two workers don't tear each other's output. Under text mode the
-/// stdout_lock is unused — text mode is always serial today.
+/// `stdout_lock` serialises concurrent writes when `-j > 1` is combined with
+/// text mode (defensive; text mode is serial in normal use).
+pub struct TextHandler<'a> {
+    stdout_lock: &'a Mutex<()>,
+}
+
+impl OutputHandler for TextHandler<'_> {
+    fn emit_text(&self) -> bool {
+        true
+    }
+
+    fn record(&self, path: &str, _abs_path: &str, outcome: &RepoSyncOutcome) {
+        let _guard = self.stdout_lock.lock().unwrap_or_else(|e| e.into_inner());
+        if outcome.is_failure() {
+            eprintln!("  {path}: {outcome}");
+        } else {
+            println!("  {path}: {outcome}");
+        }
+    }
+}
+
+/// Envelope-mode handler: buffers all records so the caller can emit a single
+/// `{ "$schema": ..., "outcomes": [...] }` JSON object after the sync
+/// completes. Used by `rwv sync --json` with `-j 1` (or unspecified).
 ///
-/// `schema_url` is the `$schema` URL embedded in NDJSON records and the
-/// envelope. Both `run_sync_json` (using `SYNC_JSON_SCHEMA_URL`) and
-/// `run_sync_to_json` (using `SYNC_TO_JSON_SCHEMA_URL`) reuse this sink,
-/// each passing its own URL.
-struct OutputSink<'a> {
-    mode: OutputMode,
+/// Text chatter is suppressed (`emit_text` returns `false`).
+pub struct JsonEnvelopeHandler<'a> {
+    records: &'a Mutex<Vec<SyncOutcomeOutput>>,
+}
+
+impl OutputHandler for JsonEnvelopeHandler<'_> {
+    fn emit_text(&self) -> bool {
+        false
+    }
+
+    fn record(&self, path: &str, abs_path: &str, outcome: &RepoSyncOutcome) {
+        let out = SyncOutcomeOutput::from_outcome(path.to_owned(), abs_path.to_owned(), outcome);
+        let mut guard = self.records.lock().unwrap_or_else(|e| e.into_inner());
+        guard.push(out);
+    }
+}
+
+/// NDJSON streaming handler: writes one self-describing JSON line per record
+/// to stdout as it arrives, and also buffers into `records` so post-loop
+/// callers can check `any_failure`. Used by `rwv sync --json -j N` with
+/// `N > 1`.
+///
+/// `stdout_lock` serialises concurrent writes so parallel workers cannot
+/// interleave bytes. Text chatter is suppressed (`emit_text` returns `false`).
+pub struct JsonNdjsonHandler<'a> {
     stdout_lock: &'a Mutex<()>,
     records: &'a Mutex<Vec<SyncOutcomeOutput>>,
     schema_url: &'a str,
 }
 
-impl OutputSink<'_> {
+impl OutputHandler for JsonNdjsonHandler<'_> {
     fn emit_text(&self) -> bool {
-        self.mode == OutputMode::Text
+        false
     }
 
-    /// Record a per-repo outcome.
-    ///
-    /// Always pushes onto `records` (consumers — `run_sync_json` for the
-    /// envelope, `run_sync` for an unused but accurately-sized `any_failure`
-    /// check). Under `JsonNdjson` additionally writes one self-describing
-    /// JSON line to stdout, taking `stdout_lock` so concurrent workers
-    /// can't interleave bytes.
-    fn record(&self, outcome: SyncOutcomeOutput) {
-        if matches!(self.mode, OutputMode::JsonNdjson) {
-            let record = SyncOutcomeNdjsonRecord {
-                schema: self.schema_url,
-                outcome: &outcome,
-            };
-            // Best-effort: a serialization failure here would mean the
-            // outcome type itself is malformed; we'd still want to retain
-            // the record in `records` (the post-loop bail message uses it),
-            // so swallow and continue.
-            if let Ok(line) = serde_json::to_string(&record) {
-                let _guard = self.stdout_lock.lock().unwrap_or_else(|e| e.into_inner());
-                let stdout = std::io::stdout();
-                let mut handle = stdout.lock();
-                let _ = writeln!(handle, "{line}");
-                let _ = handle.flush();
-            }
+    fn record(&self, path: &str, abs_path: &str, outcome: &RepoSyncOutcome) {
+        let out = SyncOutcomeOutput::from_outcome(path.to_owned(), abs_path.to_owned(), outcome);
+        let record = SyncOutcomeNdjsonRecord {
+            schema: self.schema_url,
+            outcome: &out,
+        };
+        // Best-effort: a serialization failure here would mean the outcome
+        // type itself is malformed; we still want to buffer the record so
+        // the post-loop any_failure check works correctly.
+        if let Ok(line) = serde_json::to_string(&record) {
+            let _guard = self.stdout_lock.lock().unwrap_or_else(|e| e.into_inner());
+            let stdout = std::io::stdout();
+            let mut handle = stdout.lock();
+            let _ = writeln!(handle, "{line}");
+            let _ = handle.flush();
         }
         let mut guard = self.records.lock().unwrap_or_else(|e| e.into_inner());
-        guard.push(outcome);
+        guard.push(out);
     }
 }
 
@@ -1446,13 +1491,9 @@ pub fn run_sync(
     jobs: usize,
     do_continue: bool,
 ) -> anyhow::Result<()> {
-    let records: Mutex<Vec<SyncOutcomeOutput>> = Mutex::new(Vec::new());
     let stdout_lock: Mutex<()> = Mutex::new(());
-    let sink = OutputSink {
-        mode: OutputMode::Text,
+    let handler = TextHandler {
         stdout_lock: &stdout_lock,
-        records: &records,
-        schema_url: SYNC_JSON_SCHEMA_URL,
     };
     run_sync_impl(
         cwd,
@@ -1462,7 +1503,7 @@ pub fn run_sync(
         retire,
         project_override,
         jobs,
-        &sink,
+        &handler,
         do_continue,
     )
 }
@@ -1470,11 +1511,11 @@ pub fn run_sync(
 /// Shared sync orchestration body used by both text-mode (`run_sync`) and
 /// JSON-mode (`run_sync_json`).
 ///
-/// `sink.mode` selects between text per-repo chatter, JSON envelope
-/// collection, and JSON NDJSON streaming. `sink.records` is the shared
-/// accumulator (always populated; text mode discards it on return). Under
-/// `JsonNdjson` mode the sink additionally streams each record to stdout
-/// at the moment it's recorded.
+/// `handler` drives all per-repo output: [`TextHandler`] prints human-readable
+/// lines; [`JsonEnvelopeHandler`] buffers records for post-run envelope
+/// emission; [`JsonNdjsonHandler`] streams one JSON line per record as it
+/// arrives. New modes can be added by implementing [`OutputHandler`] without
+/// touching this function.
 ///
 /// `jobs` is the resolved worker count (post-`parallel::resolve_jobs`).
 /// `jobs == 1` runs Phase 2 (per-repo manifest sync) serially on the
@@ -1495,7 +1536,7 @@ fn run_sync_impl(
     retire: bool,
     project_override: Option<ProjectName>,
     jobs: usize,
-    sink: &OutputSink<'_>,
+    handler: &dyn OutputHandler,
     do_continue: bool,
 ) -> anyhow::Result<()> {
     run_sync_impl_with_op_id(
@@ -1506,7 +1547,7 @@ fn run_sync_impl(
         retire,
         project_override,
         jobs,
-        sink,
+        handler,
         do_continue,
         None,
     )
@@ -1526,11 +1567,11 @@ fn run_sync_impl_with_op_id(
     _retire: bool,
     project_override: Option<ProjectName>,
     jobs: usize,
-    sink: &OutputSink<'_>,
+    handler: &dyn OutputHandler,
     do_continue: bool,
     pre_existing_op_id: Option<&OpId>,
 ) -> anyhow::Result<()> {
-    let emit_text = sink.emit_text();
+    let emit_text = handler.emit_text();
     // Resolve CWD workspace.
     let ctx = WorkspaceContext::resolve(cwd, project_override.clone())?;
     let workspace_dir = ctx.active_path().to_path_buf();
@@ -1911,11 +1952,7 @@ fn run_sync_impl_with_op_id(
                 error: head_unreadable_error,
                 cause: None,
             });
-            sink.record(SyncOutcomeOutput::from_outcome(
-                repo_path.to_string(),
-                abs.to_string_lossy().into_owned(),
-                &outcome,
-            ));
+            handler.record(repo_path.as_str(), &abs.to_string_lossy(), &outcome);
             continue;
         }
         let lock_entry = match source_lock.get_entry(repo_path) {
@@ -1934,9 +1971,9 @@ fn run_sync_impl_with_op_id(
     // them serially on the caller thread without spawning — bit-identical
     // to the pre-parallel loop. Under `jobs > 1` each worker calls
     // `sync_one_repo` + the post-sync refresh helpers on its own task; on
-    // completion it routes the outcome through `sink.record`, which under
-    // NDJSON mode writes one JSON line to stdout (mutex-guarded so
-    // concurrent workers don't tear bytes).
+    // completion it routes the outcome through `handler.record`, which each
+    // OutputHandler impl handles appropriately (text printing, buffering, or
+    // NDJSON streaming with its own mutex-guarded stdout write).
     //
     // Worker output order is completion order under `-j > 1` (matches
     // fetch/update parallel UX); under `-j 1` it remains input order
@@ -1952,24 +1989,11 @@ fn run_sync_impl_with_op_id(
             refresh_index_if_safe(&task.abs);
             refresh_working_tree_if_safe(&task.abs);
         }
-        if emit_text {
-            // Text-mode chatter. Acquire the shared stdout lock so the
-            // line doesn't interleave with a concurrent worker's line
-            // when jobs > 1 (defensive — text mode isn't a documented
-            // -j > 1 path, but the lock is cheap and prevents torn
-            // lines if a future caller wires that up).
-            let _guard = sink.stdout_lock.lock().unwrap_or_else(|e| e.into_inner());
-            if is_failure {
-                eprintln!("  {}: {outcome}", task.repo_path);
-            } else {
-                println!("  {}: {outcome}", task.repo_path);
-            }
-        }
-        sink.record(SyncOutcomeOutput::from_outcome(
-            task.repo_path.to_string(),
-            task.abs.to_string_lossy().into_owned(),
+        handler.record(
+            task.repo_path.as_str(),
+            &task.abs.to_string_lossy(),
             &outcome,
-        ));
+        );
         is_failure
     });
     if task_outcomes.iter().any(|f| *f) {
@@ -2538,33 +2562,45 @@ pub fn run_sync_json(
 ) -> anyhow::Result<()> {
     let records: Mutex<Vec<SyncOutcomeOutput>> = Mutex::new(Vec::new());
     let stdout_lock: Mutex<()> = Mutex::new(());
-    let mode = if jobs > 1 {
-        OutputMode::JsonNdjson
+    let ndjson = jobs > 1;
+    let project_level_result = if ndjson {
+        let handler = JsonNdjsonHandler {
+            stdout_lock: &stdout_lock,
+            records: &records,
+            schema_url: SYNC_JSON_SCHEMA_URL,
+        };
+        run_sync_impl(
+            cwd,
+            source,
+            strategy,
+            force,
+            retire,
+            project_override,
+            jobs,
+            &handler,
+            do_continue,
+        )
     } else {
-        OutputMode::JsonEnvelope
+        let handler = JsonEnvelopeHandler {
+            records: &records,
+        };
+        run_sync_impl(
+            cwd,
+            source,
+            strategy,
+            force,
+            retire,
+            project_override,
+            jobs,
+            &handler,
+            do_continue,
+        )
     };
-    let sink = OutputSink {
-        mode,
-        stdout_lock: &stdout_lock,
-        records: &records,
-        schema_url: SYNC_JSON_SCHEMA_URL,
-    };
-    let project_level_result = run_sync_impl(
-        cwd,
-        source,
-        strategy,
-        force,
-        retire,
-        project_override,
-        jobs,
-        &sink,
-        do_continue,
-    );
 
     let records = records.into_inner().unwrap_or_else(|e| e.into_inner());
 
     run_sync_json_impl(
-        mode,
+        ndjson,
         records,
         SYNC_JSON_SCHEMA_URL,
         project_level_result,
@@ -2583,7 +2619,7 @@ pub fn run_sync_json(
 /// step 1 may be skipped for ff-clean with no per-repo manifest outcomes).
 /// When false (sync's behavior), empty records propagates the error.
 fn run_sync_json_impl(
-    mode: OutputMode,
+    ndjson: bool,
     records: Vec<SyncOutcomeOutput>,
     schema_url: &str,
     project_level_result: anyhow::Result<()>,
@@ -2601,7 +2637,7 @@ fn run_sync_json_impl(
     // (NDJSON streamed each record as it arrived, so there's nothing
     // extra to write). Per the bead spec, NDJSON does NOT emit an
     // envelope wrapper around the stream.
-    if matches!(mode, OutputMode::JsonEnvelope) {
+    if !ndjson {
         let payload = SyncJsonOutput {
             schema: schema_url.to_owned(),
             outcomes: records,
@@ -2675,13 +2711,9 @@ pub fn run_sync_to(
     jobs: usize,
     do_continue: bool,
 ) -> anyhow::Result<()> {
-    let records: Mutex<Vec<SyncOutcomeOutput>> = Mutex::new(Vec::new());
     let stdout_lock: Mutex<()> = Mutex::new(());
-    let sink = OutputSink {
-        mode: OutputMode::Text,
+    let handler = TextHandler {
         stdout_lock: &stdout_lock,
-        records: &records,
-        schema_url: SYNC_TO_JSON_SCHEMA_URL,
     };
     run_sync_to_impl(
         cwd,
@@ -2691,7 +2723,7 @@ pub fn run_sync_to(
         retire,
         project_override,
         jobs,
-        &sink,
+        &handler,
         do_continue,
     )
 }
@@ -2710,33 +2742,45 @@ pub fn run_sync_to_json(
 ) -> anyhow::Result<()> {
     let records: Mutex<Vec<SyncOutcomeOutput>> = Mutex::new(Vec::new());
     let stdout_lock: Mutex<()> = Mutex::new(());
-    let mode = if jobs > 1 {
-        OutputMode::JsonNdjson
+    let ndjson = jobs > 1;
+    let project_level_result = if ndjson {
+        let handler = JsonNdjsonHandler {
+            stdout_lock: &stdout_lock,
+            records: &records,
+            schema_url: SYNC_TO_JSON_SCHEMA_URL,
+        };
+        run_sync_to_impl(
+            cwd,
+            target,
+            strategy,
+            force,
+            retire,
+            project_override,
+            jobs,
+            &handler,
+            do_continue,
+        )
     } else {
-        OutputMode::JsonEnvelope
+        let handler = JsonEnvelopeHandler {
+            records: &records,
+        };
+        run_sync_to_impl(
+            cwd,
+            target,
+            strategy,
+            force,
+            retire,
+            project_override,
+            jobs,
+            &handler,
+            do_continue,
+        )
     };
-    let sink = OutputSink {
-        mode,
-        stdout_lock: &stdout_lock,
-        records: &records,
-        schema_url: SYNC_TO_JSON_SCHEMA_URL,
-    };
-    let project_level_result = run_sync_to_impl(
-        cwd,
-        target,
-        strategy,
-        force,
-        retire,
-        project_override,
-        jobs,
-        &sink,
-        do_continue,
-    );
 
     let records = records.into_inner().unwrap_or_else(|e| e.into_inner());
 
     run_sync_json_impl(
-        mode,
+        ndjson,
         records,
         SYNC_TO_JSON_SCHEMA_URL,
         project_level_result,
@@ -2754,10 +2798,10 @@ fn run_sync_to_impl(
     retire: bool,
     project_override: Option<ProjectName>,
     jobs: usize,
-    sink: &OutputSink<'_>,
+    handler: &dyn OutputHandler,
     do_continue: bool,
 ) -> anyhow::Result<()> {
-    let emit_text = sink.emit_text();
+    let emit_text = handler.emit_text();
 
     // Resolve CWD workspace.
     let cwd_ctx = WorkspaceContext::resolve(cwd, project_override.clone())?;
@@ -2957,7 +3001,7 @@ fn run_sync_to_impl(
             false, // retire: not applicable for step 1
             project_override.clone(),
             jobs,
-            sink,
+            handler,
             step1_continue,
             Some(&op_id),
         );
@@ -3584,6 +3628,76 @@ mod tests {
         assert!(
             msg.contains("manifest") || msg.contains("rwv.yaml"),
             "must mention the manifest; msg: {msg}"
+        );
+    }
+
+    // ---------------------------------------------------------------------------
+    // Extensibility acceptance test (fo-6wpbh)
+    //
+    // Verifies that a fourth output mode can be added by implementing
+    // OutputHandler without modifying TextHandler, JsonEnvelopeHandler, or
+    // JsonNdjsonHandler.  A CountingHandler is constructed entirely in this test;
+    // no existing handler or orchestration code is touched.
+    // ---------------------------------------------------------------------------
+
+    /// A minimal fourth-mode handler that just counts how many outcomes were
+    /// recorded.  Demonstrates that OutputHandler is open for extension.
+    struct CountingHandler {
+        count: std::sync::Mutex<usize>,
+    }
+
+    impl CountingHandler {
+        fn new() -> Self {
+            Self {
+                count: std::sync::Mutex::new(0),
+            }
+        }
+
+        fn recorded(&self) -> usize {
+            *self.count.lock().unwrap()
+        }
+    }
+
+    impl OutputHandler for CountingHandler {
+        fn emit_text(&self) -> bool {
+            false
+        }
+
+        fn record(&self, _path: &str, _abs_path: &str, _outcome: &RepoSyncOutcome) {
+            *self.count.lock().unwrap() += 1;
+        }
+    }
+
+    #[test]
+    fn output_handler_is_open_for_extension_without_modifying_existing_handlers() {
+        // Build three distinct outcomes.
+        let outcomes = vec![
+            RepoSyncOutcome::Converged,
+            RepoSyncOutcome::NoOp,
+            RepoSyncOutcome::Failed(SyncFailure::HeadUnreadable {
+                error: "test".to_owned(),
+                cause: None,
+            }),
+        ];
+
+        let handler = CountingHandler::new();
+
+        // Drive record() from outside the sync orchestration to prove the trait
+        // contract is sufficient on its own.
+        for outcome in &outcomes {
+            handler.record("some/repo", "/abs/some/repo", outcome);
+        }
+
+        assert_eq!(
+            handler.recorded(),
+            3,
+            "CountingHandler should record exactly one entry per record() call"
+        );
+
+        // Also verify that emit_text() returns the value the handler advertises.
+        assert!(
+            !handler.emit_text(),
+            "CountingHandler should not emit text (it has no text output)"
         );
     }
 }
