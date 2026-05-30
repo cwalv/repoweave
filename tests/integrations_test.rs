@@ -1141,8 +1141,9 @@ mod go_work {
         let tmp = TempDir::new().unwrap();
         let root = tmp.path();
 
-        touch(root, "github/acme/server/go.mod");
-        touch(root, "github/acme/web/go.mod");
+        // go work use requires valid go.mod files (not just empty touches).
+        write_file(root, "github/acme/server/go.mod", "module github.com/acme/server\n\ngo 1.21\n");
+        write_file(root, "github/acme/web/go.mod", "module github.com/acme/web\n\ngo 1.21\n");
         touch(root, "github/acme/docs/README.md");
 
         let manifest = make_manifest(vec![
@@ -1193,9 +1194,12 @@ mod go_work {
         integration.activate(&ctx).unwrap();
 
         let content = std::fs::read_to_string(root.join("go.work")).unwrap();
-        let expected =
-            "go 1.22\n\nuse (\n    ./github/chatly/protocol\n    ./github/chatly/server\n)\n";
-        assert_eq!(content, expected);
+        // New behavior (merge port): the file includes the ownership marker
+        // and uses tab-indented `use` blocks (go tool format).
+        // Assert structural content rather than exact string (format varies).
+        assert!(content.contains("./github/chatly/protocol"), "protocol path missing: {content}");
+        assert!(content.contains("./github/chatly/server"), "server path missing: {content}");
+        assert!(content.contains("// managed by repoweave"), "marker missing: {content}");
     }
 
     #[test]
@@ -1203,8 +1207,9 @@ mod go_work {
         let tmp = TempDir::new().unwrap();
         let root = tmp.path();
 
-        touch(root, "github/acme/server/go.mod");
-        touch(root, "github/acme/reference-lib/go.mod");
+        // go work use requires valid go.mod files.
+        write_file(root, "github/acme/server/go.mod", "module github.com/acme/server\n\ngo 1.21\n");
+        write_file(root, "github/acme/reference-lib/go.mod", "module github.com/acme/reference-lib\n\ngo 1.21\n");
 
         let manifest = make_manifest(vec![
             ("github/acme/server", Role::Owned),
@@ -1224,7 +1229,30 @@ mod go_work {
     }
 
     #[test]
-    fn deactivation_removes_go_work() {
+    fn deactivation_removes_go_work_when_marker_present_and_only_rwv_content() {
+        // New behavior (merge port): deactivate strips the managed `use` block
+        // and deletes the file only when nothing user-authored remains.
+        // A file with no marker is left untouched (user holds the pen).
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+
+        // File with marker + use block (no replace/toolchain/godebug = "empty").
+        write_file(
+            root,
+            "go.work",
+            "go 1.21\n\n// managed by repoweave\nuse (\n\t./github/acme/server\n)\n",
+        );
+        assert!(root.join("go.work").exists());
+
+        let integration = GoWork;
+        integration.deactivate(root).unwrap();
+        // File deleted: only go/use content remained.
+        assert!(!root.join("go.work").exists());
+    }
+
+    #[test]
+    fn deactivation_noop_when_no_marker() {
+        // User-authored go.work without the rwv marker is left untouched.
         let tmp = TempDir::new().unwrap();
         let root = tmp.path();
 
@@ -1233,7 +1261,8 @@ mod go_work {
 
         let integration = GoWork;
         integration.deactivate(root).unwrap();
-        assert!(!root.join("go.work").exists());
+        // File untouched: no marker present.
+        assert!(root.join("go.work").exists());
     }
 
     #[test]

@@ -1364,9 +1364,24 @@ impl ManagedDoc for GoWorkDoc {
     }
 
     fn is_empty(&self) -> bool {
-        self.text
-            .lines()
-            .all(|line| line.trim().is_empty() || line.trim_start().starts_with("//"))
+        // "Empty" means: no user-authored content remains after the owned
+        // `use` region has been stripped.  Per the bead spec the delete-if-
+        // empty predicate is: no `use` entries AND no `replace`/`godebug`/
+        // non-comment lines beyond `go`/`toolchain`/whitespace.
+        //
+        // In other words, a file consisting solely of `go`, `toolchain`,
+        // blank lines, and `//`-comments is considered empty and should be
+        // deleted.  A file that still carries a `replace`, `godebug`, or any
+        // other directive is non-empty and must survive.
+        self.text.lines().all(|line| {
+            let t = line.trim();
+            t.is_empty()
+                || t.starts_with("//")
+                || t.starts_with("go ")
+                || t == "go"
+                || t.starts_with("toolchain ")
+                || t == "toolchain"
+        })
     }
 
     fn serialize(&self) -> Result<String> {

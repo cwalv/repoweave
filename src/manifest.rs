@@ -639,6 +639,36 @@ fn is_false(b: &bool) -> bool {
 }
 
 // ---------------------------------------------------------------------------
+// GoWorkConfig — go-work integration settings
+// ---------------------------------------------------------------------------
+
+/// Per-integration configuration for the go-work integration.
+///
+/// Deserialized from the `integrations.go-work:` block in `rwv.yaml`
+/// via `IntegrationConfig::settings::<GoWorkConfig>()`.
+///
+/// All fields are optional with sensible defaults so the integration works
+/// with an absent config block (the common case).
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct GoWorkConfig {
+    /// Explicit go version to write into the `go` directive of `go.work`.
+    ///
+    /// When `Some`, the fallback hand-edit path writes `go <version>` into
+    /// the file (replacing any existing `go` line); the primary `go work edit`
+    /// path passes `-go=<version>` to the tool.
+    ///
+    /// When `None` (default), the go line in an existing `go.work` is
+    /// **never touched** by the fallback path — the operator's hand-authored
+    /// version is preserved.  This fixes the bug where the old code would
+    /// unconditionally downgrade a user's `go 1.26` to the computed maximum
+    /// across member go.mod files.
+    ///
+    /// YAML key: `go-version` (hyphen, matching rwv.yaml naming conventions).
+    #[serde(default, rename = "go-version", skip_serializing_if = "Option::is_none")]
+    pub go_version: Option<String>,
+}
+
+// ---------------------------------------------------------------------------
 // WorkweaveConfig — artifact handling for workweaves
 // ---------------------------------------------------------------------------
 
