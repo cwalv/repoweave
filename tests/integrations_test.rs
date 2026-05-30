@@ -235,10 +235,13 @@ mod npm_workspaces {
         let tmp = TempDir::new().unwrap();
         let root = tmp.path();
 
+        // Marker is x-repoweave (new sentinel); name/private/workspaces are
+        // the owned keys. When nothing else remains after stripping, the file
+        // must be deleted.
         write_file(
             root,
             "package.json",
-            r#"{"name":"repoweave","private":true,"workspaces":[]}"#,
+            r#"{"x-repoweave":{"managed":true},"name":"repoweave","private":true,"workspaces":[]}"#,
         );
         assert!(root.join("package.json").exists());
 
@@ -276,11 +279,13 @@ mod npm_workspaces {
         // Repo with a package.json so the integration detects it.
         touch(root, "github/acme/server/package.json");
 
-        // Pre-existing workspace-root package.json with user-authored fields.
+        // Pre-existing workspace-root package.json that was already activated
+        // (carries the x-repoweave marker) plus user-authored fields.
         write_file(
             root,
             "package.json",
             r#"{
+  "x-repoweave": {"managed": true},
   "name": "repoweave",
   "private": true,
   "workspaces": [],
@@ -314,6 +319,11 @@ mod npm_workspaces {
             "name should be the rwv sentinel"
         );
         assert_eq!(parsed["private"], true, "private should remain true");
+        // x-repoweave marker must be present.
+        assert!(
+            parsed.get("x-repoweave").is_some(),
+            "x-repoweave marker should be present after activate"
+        );
         let workspaces = parsed["workspaces"]
             .as_array()
             .expect("workspaces should be an array");
@@ -393,10 +403,13 @@ mod npm_workspaces {
         let tmp = TempDir::new().unwrap();
         let root = tmp.path();
 
+        // Marker is x-repoweave. The file has user-authored fields (scripts,
+        // version) that must survive deactivation.
         write_file(
             root,
             "package.json",
             r#"{
+  "x-repoweave": {"managed": true},
   "name": "repoweave",
   "private": true,
   "workspaces": ["github/acme/server"],
@@ -419,6 +432,10 @@ mod npm_workspaces {
         let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
 
         // rwv-owned keys must be gone.
+        assert!(
+            parsed.get("x-repoweave").is_none(),
+            "x-repoweave marker should be stripped on deactivate"
+        );
         assert!(
             parsed.get("name").is_none(),
             "name should be stripped on deactivate"
@@ -488,7 +505,6 @@ mod npm_workspaces {
     /// §6.npm.1 — Activate over a real app's package.json (array workspaces).
     /// User scripts / engines / devDependencies / packageManager survive.
     #[test]
-    #[ignore = "RED: turned green by fo-cnpjy.4 (npm residual-bug fix)"]
     fn s6_npm_1_activate_array_workspaces_preserves_user_fields() {
         let tmp = TempDir::new().unwrap();
         let root = tmp.path();
@@ -564,7 +580,6 @@ mod npm_workspaces {
     /// §6.npm.2 — Activate over workspaces OBJECT form with nohoist
     /// (the data-loss regression test). Current :44 flattens the object.
     #[test]
-    #[ignore = "RED: turned green by fo-cnpjy.4 (object-form fix)"]
     fn s6_npm_2_activate_preserves_object_form_workspaces_nohoist() {
         let tmp = TempDir::new().unwrap();
         let root = tmp.path();
@@ -635,7 +650,6 @@ mod npm_workspaces {
     /// §6.npm.3 — Re-activate idempotent on user content (preserve_order).
     /// Add a third member; only mutation is the added workspaces entry.
     #[test]
-    #[ignore = "RED: turned green by fo-cnpjy.4 (preserve_order)"]
     fn s6_npm_3_reactivate_idempotent_preserve_order() {
         let tmp = TempDir::new().unwrap();
         let root = tmp.path();
@@ -702,7 +716,6 @@ mod npm_workspaces {
     /// Sub-case (a): marked file + user fields + rwv-generated lockfile.
     /// Sub-case (b): hand-written file, no marker — file untouched.
     #[test]
-    #[ignore = "RED: turned green by fo-cnpjy.4 (lockfile + marker migration)"]
     fn s6_npm_4_deactivate_handles_marker_and_lockfile() {
         // Sub-case (a): rwv-owned file (marker + name + private + workspaces)
         // + user fields + rwv-generated package-lock.json.
