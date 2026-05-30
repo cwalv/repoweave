@@ -192,6 +192,30 @@ fn main() -> anyhow::Result<()> {
     let explain_dir = root.join("docs/reference/explain");
     let schemas_dir = root.join("docs/reference/schemas");
 
+    // --- prime overview (separate template family, same render pattern) --------
+    // Renders docs/reference/prime/templates/overview.md.tmpl →
+    //         docs/reference/prime/overview.md
+    // No {{SCHEMA}} substitution needed — the prime overview is static markdown.
+    {
+        let prime_tmpl_path = root.join("docs/reference/prime/templates/overview.md.tmpl");
+        let prime_out_dir = root.join("docs/reference/prime");
+        let prime_out_path = prime_out_dir.join("overview.md");
+
+        let tmpl = fs::read_to_string(&prime_tmpl_path).map_err(|e| {
+            anyhow::anyhow!(
+                "missing prime overview template at {}: {e}",
+                prime_tmpl_path.display()
+            )
+        })?;
+        // No placeholder substitution — pure passthrough.
+        let mut rendered = tmpl;
+        if !rendered.ends_with('\n') {
+            rendered.push('\n');
+        }
+        fs::create_dir_all(&prime_out_dir)?;
+        write_if_changed(&prime_out_path, &rendered)?;
+    }
+
     fs::create_dir_all(&explain_dir)?;
     fs::create_dir_all(&schemas_dir)?;
 
