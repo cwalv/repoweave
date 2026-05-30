@@ -383,7 +383,10 @@ members:
 "#;
     let cfg = parse_cargo_config(yaml);
     let spec = cfg.members.get("github/cwalv/rvtty").unwrap();
-    assert_eq!(spec.include, vec!["daemon", "client", "common", "workspace"]);
+    assert_eq!(
+        spec.include,
+        vec!["daemon", "client", "common", "workspace"]
+    );
     assert_eq!(spec.exclude, vec!["workspace"]);
 }
 

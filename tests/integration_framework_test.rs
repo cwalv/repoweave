@@ -697,9 +697,13 @@ fn cargo_workspace_generated_files() {
         detection_cache: &cache,
         workweave: None,
     };
+    // Post-port (fo-cnpjy.7): Cargo.toml moved to managed_files() because
+    // it is hybrid (rwv owns the [workspace] region, user owns
+    // [profile.*]/[workspace.lints.*]/etc.). Cargo.lock stays fully-owned.
+    assert_eq!(CargoWorkspace.generated_files(&ctx2), vec!["Cargo.lock"]);
     assert_eq!(
-        CargoWorkspace.generated_files(&ctx2),
-        vec!["Cargo.toml", "Cargo.lock"]
+        CargoWorkspace.managed_files(&ctx2),
+        vec!["Cargo.lock", "Cargo.toml"]
     );
 }
 

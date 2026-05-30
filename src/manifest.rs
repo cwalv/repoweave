@@ -626,7 +626,11 @@ pub struct CargoWorkspaceConfig {
     ///
     /// Corresponds to plan §5a resolution (b) and `cargo-workspace-vs-repo.md`
     /// §325–370.
-    #[serde(default, rename = "workspace-package", skip_serializing_if = "is_false")]
+    #[serde(
+        default,
+        rename = "workspace-package",
+        skip_serializing_if = "is_false"
+    )]
     pub workspace_package: bool,
 }
 
