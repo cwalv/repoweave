@@ -686,7 +686,6 @@ fn add_primary_cli_alias_no_longer_accepted_with_doctor_hint() {
     );
 }
 
-
 /// Locate the directory rwv cloned a given bare source into by scanning the
 /// workspace for git repos whose `origin` matches.
 fn find_cloned_repo(workspace: &Path, bare: &Path) -> std::path::PathBuf {
