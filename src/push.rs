@@ -535,7 +535,7 @@ pub fn run_push(
     }
     json_outcomes.push(project_wire);
 
-    if project_push_result.is_err() {
+    if let Err(e) = project_push_result {
         // Under --json (envelope mode), emit partial outcomes before bailing.
         if json && !ndjson {
             let envelope = PushJsonOutput {
@@ -546,7 +546,6 @@ pub fn run_push(
                 println!("{out}");
             }
         }
-        let e = project_push_result.unwrap_err();
         anyhow::bail!(
             "project-repo push failed after all manifest repos pushed cleanly: {e}. \
              Manifest-side state is published; the lock carrier is not. \

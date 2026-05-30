@@ -167,7 +167,7 @@ fn push_json_envelope_round_trips() {
     let decoded: PushJsonOutput = serde_json::from_str(&json).expect("deserializes");
     assert_eq!(decoded.schema_url, PUSH_SCHEMA_URL);
     assert_eq!(decoded.outcomes.len(), 3);
-    assert!(decoded.outcomes[2].is_failure() == false);
+    assert!(!decoded.outcomes[2].is_failure());
 }
 
 #[test]
@@ -236,7 +236,7 @@ struct PushWorkspace {
     _tmp: tempfile::TempDir,
     workspace: PathBuf,
     project_name: String,
-    project_bare: PathBuf,
+    _project_bare: PathBuf,
     manifest_bares: Vec<(String, PathBuf)>,
 }
 
@@ -315,7 +315,7 @@ fn build_workspace(project_name: &str, repos: &[(&str, &str)]) -> PushWorkspace 
         _tmp: tmp,
         workspace,
         project_name: project_name.to_string(),
-        project_bare,
+        _project_bare: project_bare,
         manifest_bares,
     }
 }

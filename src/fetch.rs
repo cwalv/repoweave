@@ -557,6 +557,7 @@ pub fn run_fetch(
 /// When `json` is `true`, progress lines are emitted to stderr (via
 /// `reporter.err`) rather than stdout, so that stdout carries only
 /// machine-readable JSON output.
+#[allow(clippy::too_many_arguments)]
 fn fetch_one(
     git: &GitVcs,
     repo_path: &RepoPath,

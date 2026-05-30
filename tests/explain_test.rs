@@ -83,23 +83,19 @@ fn explain_push_includes_purpose_and_schema() {
 fn explain_markdown_only_verbs_have_no_schema_block() {
     // prime has no `--json` and therefore no schema section.
     // Note: fetch was made --json-capable in fo-p89x0.1 and update in fo-p89x0.2;
-    // both now embed schema blocks and are excluded from this list.
-    for verb in &["prime"] {
-        let assert = rwv().args(["explain", verb]).assert().success();
-        let stdout = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
-        assert!(
-            stdout.contains(&format!("# rwv {verb}")),
-            "explain {verb} missing heading; got:\n{stdout}"
-        );
-        // Markdown-only verbs should not embed a schema block. (The
-        // bundle may still mention `--json` in prose — we only forbid a
-        // fenced JSON Schema block since these verbs have no `--json`
-        // output.)
-        assert!(
-            !stdout.contains("\"$schema\""),
-            "explain {verb} unexpectedly includes a JSON Schema block; got:\n{stdout}"
-        );
-    }
+    // both now embed schema blocks and are excluded.
+    let verb = "prime";
+    let assert = rwv().args(["explain", verb]).assert().success();
+    let stdout = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
+    assert!(
+        stdout.contains(&format!("# rwv {verb}")),
+        "explain {verb} missing heading; got:\n{stdout}"
+    );
+    // Markdown-only verbs should not embed a schema block.
+    assert!(
+        !stdout.contains("\"$schema\""),
+        "explain {verb} unexpectedly includes a JSON Schema block; got:\n{stdout}"
+    );
 }
 
 #[test]

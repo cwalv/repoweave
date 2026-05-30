@@ -1763,14 +1763,11 @@ repositories:
     fn repo_path_error_backslash_carries_input() {
         let input = "github\\acme\\server";
         let err = RepoPath::new(input).unwrap_err();
-        if let RepoPathError::Backslash(s) = &err {
-            assert_eq!(
-                s, input,
-                "Backslash variant should carry the original input string"
-            );
-        } else {
-            panic!("expected RepoPathError::Backslash, got: {err:?}");
-        }
+        let RepoPathError::Backslash(s) = &err;
+        assert_eq!(
+            s, input,
+            "Backslash variant should carry the original input string"
+        );
     }
 
     /// `RepoPathError` implements `std::error::Error`, meaning `anyhow` can

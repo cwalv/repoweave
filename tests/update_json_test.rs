@@ -224,7 +224,7 @@ fn update_json_envelope_round_trips() {
     assert_eq!(repos[0]["kind"], "updated");
     assert_eq!(repos[0]["old_sha"], "abc123");
     assert_eq!(repos[0]["new_sha"], "def456");
-    assert!(repos[0].get("error").map_or(true, Value::is_null));
+    assert!(repos[0].get("error").is_none_or(Value::is_null));
 
     // Second record: up-to-date.
     assert_eq!(repos[1]["kind"], "up-to-date");
