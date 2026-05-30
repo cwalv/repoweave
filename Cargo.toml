@@ -34,6 +34,10 @@ dirs = "6.0.0"
 # hybrid-merge contract on cargo/uv (Cargo.toml, pyproject.toml). serde + toml
 # round-trips would clobber user-authored profile blocks, lint policy, etc.
 toml_edit = "0.22"
+# Added for fo-cnpjy.12 (gita hardening). `csv` provides RFC-4180-compliant
+# quoting so repo paths containing commas, quotes, or newlines are emitted as
+# valid CSV rather than corrupting the output.
+csv = "1"
 
 [dev-dependencies]
 tempfile = "3"

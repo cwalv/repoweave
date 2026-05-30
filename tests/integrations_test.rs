@@ -1362,6 +1362,116 @@ mod gita {
             assert!(issues.is_empty());
         }
     }
+
+    /// A repo path containing a comma must be emitted as a properly-quoted CSV
+    /// field and must round-trip through csv::Reader without corruption.
+    /// Pre-fix, the concat-based writer produced a malformed row.
+    #[test]
+    fn csv_escaping_roundtrips_path_with_comma() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+
+        // Use a repo path whose basename contains a comma. The manifest helper
+        // only sets the `url` from the last path segment, so we synthesise the
+        // manifest YAML directly to include an unusual path key.
+        let yaml = "repositories:\n  \"github/owner/with,comma\":\n    type: git\n    url: https://github.com/owner/withcomma.git\n    version: main\n    role: owned\n";
+        let manifest = repoweave::manifest::Manifest::from_yaml_str(yaml).unwrap();
+        let project = repoweave::manifest::ProjectName::new("test-project");
+        let config = repoweave::manifest::IntegrationConfig::default();
+        let cache = std::collections::HashMap::new();
+        let ctx = IntegrationContext {
+            output_dir: root,
+            workspace_root: root,
+            project: &project,
+            repos: manifest
+                .iter_entries()
+                .map(|(rp, e)| (rp.clone(), e.clone()))
+                .collect(),
+            config: &config,
+            all_repos_on_disk: &[],
+            all_project_paths: &[],
+            detection_cache: &cache,
+        };
+
+        Gita.activate(&ctx).unwrap();
+
+        // Round-trip: parse with csv::Reader and verify the path field is intact.
+        let repos_csv_path = root.join("gita/repos.csv");
+        let mut rdr = csv::Reader::from_path(&repos_csv_path).unwrap();
+        let records: Vec<_> = rdr.records().collect::<Result<_, _>>().unwrap();
+        assert_eq!(records.len(), 1, "expected exactly one data row");
+        let path_field = &records[0][0];
+        // The path column should end with the repo path including the comma.
+        assert!(
+            path_field.ends_with("github/owner/with,comma"),
+            "path field should contain the comma-repo path, got: {path_field:?}"
+        );
+        // And the name field (basename) should be correct too.
+        let name_field = &records[0][1];
+        assert_eq!(
+            name_field, "with,comma",
+            "name field should be the basename, got: {name_field:?}"
+        );
+    }
+
+    /// Deactivate must remove the two rwv-owned CSVs but leave a user-parked
+    /// file (e.g. notes.txt) and the gita/ directory intact.
+    #[test]
+    fn deactivate_preserves_user_parked_file() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+
+        std::fs::create_dir_all(root.join("gita")).unwrap();
+        write_file(root, "gita/repos.csv", "path,name,flags\n");
+        write_file(root, "gita/groups.csv", "group,repos\n");
+        write_file(root, "gita/notes.txt", "keep me\n");
+
+        Gita.deactivate(root).unwrap();
+
+        assert!(
+            !root.join("gita/repos.csv").exists(),
+            "repos.csv should be removed"
+        );
+        assert!(
+            !root.join("gita/groups.csv").exists(),
+            "groups.csv should be removed"
+        );
+        assert!(
+            root.join("gita/notes.txt").exists(),
+            "user-parked notes.txt should survive deactivate"
+        );
+        assert!(
+            root.join("gita").exists(),
+            "gita/ directory should survive when non-empty"
+        );
+    }
+
+    /// Deactivate must remove the gita/ directory entirely when it becomes
+    /// empty after removing the two rwv-owned CSVs.
+    #[test]
+    fn deactivate_removes_empty_gita_dir() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+
+        std::fs::create_dir_all(root.join("gita")).unwrap();
+        write_file(root, "gita/repos.csv", "path,name,flags\n");
+        write_file(root, "gita/groups.csv", "group,repos\n");
+
+        Gita.deactivate(root).unwrap();
+
+        assert!(
+            !root.join("gita/repos.csv").exists(),
+            "repos.csv should be removed"
+        );
+        assert!(
+            !root.join("gita/groups.csv").exists(),
+            "groups.csv should be removed"
+        );
+        assert!(
+            !root.join("gita").exists(),
+            "gita/ directory should be removed when empty"
+        );
+    }
 }
 
 // ===========================================================================

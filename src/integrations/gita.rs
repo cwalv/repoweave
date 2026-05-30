@@ -1,5 +1,6 @@
 use crate::integration::{Integration, IntegrationContext, Issue, Severity};
 use std::collections::BTreeMap;
+use std::io::ErrorKind;
 use std::path::Path;
 
 pub struct Gita;
@@ -38,11 +39,15 @@ impl Integration for Gita {
             .collect();
         repo_entries.sort_by(|a, b| a.1.cmp(&b.1));
 
-        let mut repos_csv = String::from("path,name,flags\n");
-        for (abs_path, name) in &repo_entries {
-            repos_csv.push_str(&format!("{},{},\n", abs_path, name));
+        {
+            let repos_file = std::fs::File::create(gita_dir.join("repos.csv"))?;
+            let mut wtr = csv::Writer::from_writer(repos_file);
+            wtr.write_record(["path", "name", "flags"])?;
+            for (abs_path, name) in &repo_entries {
+                wtr.write_record([abs_path.as_str(), name.as_str(), ""])?;
+            }
+            wtr.flush()?;
         }
-        std::fs::write(gita_dir.join("repos.csv"), repos_csv)?;
 
         // groups.csv — group by role, sorted by group name
         let mut groups: BTreeMap<String, Vec<String>> = BTreeMap::new();
@@ -57,21 +62,51 @@ impl Integration for Gita {
             groups.entry(role_str.to_string()).or_default().push(name);
         }
 
-        let mut groups_csv = String::from("group,repos\n");
-        for (group, mut repos) in groups {
-            repos.sort();
-            groups_csv.push_str(&format!("{},{}\n", group, repos.join(" ")));
+        {
+            let groups_file = std::fs::File::create(gita_dir.join("groups.csv"))?;
+            let mut wtr = csv::Writer::from_writer(groups_file);
+            wtr.write_record(["group", "repos"])?;
+            for (group, mut repos) in groups {
+                repos.sort();
+                wtr.write_record([group.as_str(), repos.join(" ").as_str()])?;
+            }
+            wtr.flush()?;
         }
-        std::fs::write(gita_dir.join("groups.csv"), groups_csv)?;
 
         Ok(())
     }
 
     fn deactivate(&self, root: &Path) -> anyhow::Result<()> {
         let gita_dir = root.join("gita");
-        if gita_dir.exists() {
-            std::fs::remove_dir_all(gita_dir)?;
+        if !gita_dir.exists() {
+            return Ok(());
         }
+
+        // Remove the two rwv-owned CSVs; ignore NotFound in case one was
+        // already absent.
+        for filename in &["repos.csv", "groups.csv"] {
+            match std::fs::remove_file(gita_dir.join(filename)) {
+                Ok(()) => {}
+                Err(e) if e.kind() == ErrorKind::NotFound => {}
+                Err(e) => return Err(e.into()),
+            }
+        }
+
+        // Remove the directory only when it is now empty; if the user has
+        // parked anything else under gita/ (e.g. notes.txt), leave it alone.
+        // std::fs::remove_dir returns an error for non-empty directories;
+        // we silently swallow that case.
+        match std::fs::remove_dir(&gita_dir) {
+            Ok(()) => {}
+            Err(e) if e.kind() == ErrorKind::NotFound => {}
+            Err(e) if e.kind() == ErrorKind::DirectoryNotEmpty => {}
+            // On some platforms a non-empty remove_dir returns Other/ENOTEMPTY.
+            // We do a best-effort check: if the directory still exists, it is
+            // non-empty and that is intentional.
+            Err(_) if gita_dir.exists() => {}
+            Err(e) => return Err(e.into()),
+        }
+
         Ok(())
     }
 
