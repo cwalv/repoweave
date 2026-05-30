@@ -7,6 +7,7 @@ use crate::git::git_command;
 use crate::integration::Issue;
 use crate::manifest::{Project, ProjectName, RepoPath, Role, WorkweaveName};
 use crate::vcs::ResolvedRevisionId;
+use anyhow::Context;
 use schemars::JsonSchema;
 use serde::Serialize;
 use std::collections::{BTreeMap, BTreeSet};
@@ -486,17 +487,12 @@ fn scan_project_dir_for_legacy(
 /// rewritten and the returned count is `0`. Returns the number of
 /// rewritten lines so the caller can print a meaningful "[fixed]" line.
 pub fn fix_legacy_role_primary(manifest_path: &Path) -> anyhow::Result<usize> {
-    let content = std::fs::read_to_string(manifest_path).map_err(|e| {
-        anyhow::anyhow!("failed to read {} for --fix: {e}", manifest_path.display())
-    })?;
+    let content = std::fs::read_to_string(manifest_path)
+        .with_context(|| format!("failed to read {} for --fix", manifest_path.display()))?;
     let (new_content, count) = crate::manifest::migrate_legacy_role_primary(&content);
     if count > 0 {
-        std::fs::write(manifest_path, new_content).map_err(|e| {
-            anyhow::anyhow!(
-                "failed to write {} during --fix: {e}",
-                manifest_path.display()
-            )
-        })?;
+        std::fs::write(manifest_path, new_content)
+            .with_context(|| format!("failed to write {} during --fix", manifest_path.display()))?;
     }
     Ok(count)
 }
@@ -565,18 +561,12 @@ pub fn scan_for_legacy_workweave_markers(ws_root: &Path) -> Vec<LegacyWorkweaveM
 /// Returns `true` if the file was rewritten, `false` if it was already
 /// up to date.
 pub fn fix_legacy_workweave_marker(finding: &LegacyWorkweaveMarkerFile) -> anyhow::Result<bool> {
-    let content = std::fs::read_to_string(&finding.marker_path).map_err(|e| {
-        anyhow::anyhow!(
-            "failed to read {} for --fix: {e}",
-            finding.marker_path.display()
-        )
-    })?;
-    let raw: serde_yaml::Value = serde_yaml::from_str(&content).map_err(|e| {
-        anyhow::anyhow!(
-            "failed to re-parse {} for --fix: {e}",
-            finding.marker_path.display()
-        )
-    })?;
+    let content = std::fs::read_to_string(&finding.marker_path)
+        .with_context(|| format!("failed to read {} for --fix", finding.marker_path.display()))?;
+    let raw: serde_yaml::Value = serde_yaml::from_str(&content)
+        .with_context(|| {
+            format!("failed to re-parse {} for --fix", finding.marker_path.display())
+        })?;
     // Re-check: don't rewrite if already has a non-null parent.
     if !raw.get("parent").map(|v| v.is_null()).unwrap_or(true) {
         return Ok(false);
@@ -590,12 +580,10 @@ pub fn fix_legacy_workweave_marker(finding: &LegacyWorkweaveMarkerFile) -> anyho
     } else {
         format!("{content}\n{line}")
     };
-    std::fs::write(&finding.marker_path, new_content).map_err(|e| {
-        anyhow::anyhow!(
-            "failed to write {} during --fix: {e}",
-            finding.marker_path.display()
-        )
-    })?;
+    std::fs::write(&finding.marker_path, new_content)
+        .with_context(|| {
+            format!("failed to write {} during --fix", finding.marker_path.display())
+        })?;
     Ok(true)
 }
 
@@ -950,7 +938,7 @@ pub fn reset_index_to_head(repo: &Path) -> anyhow::Result<()> {
         .arg("reset")
         .current_dir(repo)
         .output()
-        .map_err(|e| anyhow::anyhow!("failed to run git reset: {e}"))?;
+        .context("failed to run git reset")?;
     if !out.status.success() {
         let stderr = String::from_utf8_lossy(&out.stderr);
         anyhow::bail!("git reset failed in {}: {}", repo.display(), stderr.trim());
@@ -1075,7 +1063,7 @@ pub fn restore_working_tree_to_head(repo: &Path) -> anyhow::Result<()> {
         .args(["diff-index", "--name-only", "HEAD"])
         .current_dir(repo)
         .output()
-        .map_err(|e| anyhow::anyhow!("failed to run git diff-index: {e}"))?;
+        .context("failed to run git diff-index")?;
     let files: Vec<String> = String::from_utf8_lossy(&modified_out.stdout)
         .lines()
         .filter(|l| !l.is_empty())
@@ -1091,7 +1079,7 @@ pub fn restore_working_tree_to_head(repo: &Path) -> anyhow::Result<()> {
         .args(&args)
         .current_dir(repo)
         .output()
-        .map_err(|e| anyhow::anyhow!("failed to run git checkout: {e}"))?;
+        .context("failed to run git checkout")?;
     if !out.status.success() {
         let stderr = String::from_utf8_lossy(&out.stderr);
         anyhow::bail!(
@@ -2116,7 +2104,7 @@ pub fn run_check_json(
     let has_violations = !violations.is_empty();
     let payload = build_doctor_json(violations, &workspace_dir, &workweave_dirs);
     let out = serde_json::to_string_pretty(&payload)
-        .map_err(|e| anyhow::anyhow!("failed to serialize doctor output: {e}"))?;
+        .context("failed to serialize doctor output")?;
     println!("{out}");
     Ok(has_violations)
 }

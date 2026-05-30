@@ -9,6 +9,7 @@ use crate::integration_runner::IntegrationContextBase;
 use crate::manifest::{Manifest, ProjectName, RepoPath, WorkweaveName};
 use crate::registry::{builtin_registries, Registry};
 use crate::vcs::Vcs;
+use anyhow::Context;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
@@ -135,7 +136,7 @@ pub fn read_active_project(root: &Path) -> Option<ProjectName> {
 pub fn set_active_project(root: &Path, project: &ProjectName) -> anyhow::Result<()> {
     let path = root.join(ACTIVE_PROJECT_FILE);
     std::fs::write(&path, format!("{}\n", project.as_str()))
-        .map_err(|e| anyhow::anyhow!("failed to write {}: {e}", path.display()))
+        .with_context(|| format!("failed to write {}", path.display()))
 }
 
 /// Scan registry directories under `root` for VCS repos on disk.
@@ -321,7 +322,7 @@ impl WorkspaceContext {
     pub fn resolve(cwd: &Path, project_override: Option<ProjectName>) -> anyhow::Result<Self> {
         let cwd = cwd
             .canonicalize()
-            .map_err(|e| anyhow::anyhow!("failed to canonicalize {}: {e}", cwd.display()))?;
+            .with_context(|| format!("failed to canonicalize {}", cwd.display()))?;
 
         // Walk ancestors looking for a workspace root OR a workweave pattern.
         //
@@ -699,13 +700,12 @@ impl WorkweaveMarker {
             return Ok(None);
         }
         let content = std::fs::read_to_string(&path)
-            .map_err(|e| anyhow::anyhow!("failed to read {}: {e}", path.display()))?;
+            .with_context(|| format!("failed to read {}", path.display()))?;
         // Pre-check: if the YAML parses but `parent` is absent, reject early
         // with an actionable error rather than letting serde emit a cryptic
         // "missing field" message.
-        let raw: serde_yaml::Value = serde_yaml::from_str(&content).map_err(|e| {
-            anyhow::anyhow!("failed to parse .rwv-workweave at {}: {e}", path.display())
-        })?;
+        let raw: serde_yaml::Value = serde_yaml::from_str(&content)
+            .with_context(|| format!("failed to parse .rwv-workweave at {}", path.display()))?;
         if raw.get("parent").map(|v| v.is_null()).unwrap_or(true) {
             anyhow::bail!(
                 "{} is a legacy workweave marker missing the required `parent:` field. \
@@ -713,18 +713,17 @@ impl WorkweaveMarker {
                 path.display()
             );
         }
-        let marker: Self = serde_yaml::from_value(raw).map_err(|e| {
-            anyhow::anyhow!("failed to parse .rwv-workweave at {}: {e}", path.display())
-        })?;
+        let marker: Self = serde_yaml::from_value(raw)
+            .with_context(|| format!("failed to parse .rwv-workweave at {}", path.display()))?;
         Ok(Some(marker))
     }
 
     pub fn write(&self, dir: &Path) -> anyhow::Result<()> {
         let path = dir.join(".rwv-workweave");
         let content = serde_yaml::to_string(self)
-            .map_err(|e| anyhow::anyhow!("failed to serialize .rwv-workweave: {e}"))?;
+            .context("failed to serialize .rwv-workweave")?;
         std::fs::write(&path, content)
-            .map_err(|e| anyhow::anyhow!("failed to write {}: {e}", path.display()))?;
+            .with_context(|| format!("failed to write {}", path.display()))?;
         Ok(())
     }
 }

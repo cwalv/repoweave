@@ -92,7 +92,7 @@ fn update_for_project(
 ) -> anyhow::Result<()> {
     let project_dir = active_root.join("projects").join(project_name.as_str());
     let project = Project::from_dir(&project_dir)
-        .map_err(|e| anyhow::anyhow!("failed to load project '{}': {e}", project_name))?;
+        .with_context(|| format!("failed to load project '{}'", project_name))?;
 
     let git = GitVcs;
 

@@ -458,8 +458,7 @@ fn main() -> anyhow::Result<()> {
             } else {
                 fetch::FetchMode::Default
             };
-            let filter = repoweave::selector::RepoFilter::parse(&roles, &repos)
-                .map_err(|e| anyhow::anyhow!("{e}"))?;
+            let filter = repoweave::selector::RepoFilter::parse(&roles, &repos)?;
             let jobs = repoweave::parallel::resolve_jobs(jobs);
             fetch::run_fetch(&source, &cwd, mode, no_reference, &filter, jobs)?;
         }
@@ -506,8 +505,7 @@ fn main() -> anyhow::Result<()> {
         }) => {
             let cwd = std::env::current_dir()?;
             let project_override = project.map(repoweave::manifest::ProjectName::new);
-            let filter = repoweave::selector::RepoFilter::parse(&roles, &repos)
-                .map_err(|e| anyhow::anyhow!("{e}"))?;
+            let filter = repoweave::selector::RepoFilter::parse(&roles, &repos)?;
             let jobs = repoweave::parallel::resolve_jobs(jobs);
             update::run_update(&cwd, dirty, commit, project_override, &filter, jobs)?;
         }
@@ -521,8 +519,7 @@ fn main() -> anyhow::Result<()> {
         }) => {
             let cwd = std::env::current_dir()?;
             let project_override = project.map(repoweave::manifest::ProjectName::new);
-            let filter = repoweave::selector::RepoFilter::parse(&roles, &repos)
-                .map_err(|e| anyhow::anyhow!("{e}"))?;
+            let filter = repoweave::selector::RepoFilter::parse(&roles, &repos)?;
             let jobs = repoweave::parallel::resolve_jobs(jobs);
             push::run_push(&cwd, project_override, dry_run, force, &filter, jobs)?;
         }

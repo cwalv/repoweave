@@ -1,4 +1,5 @@
 use crate::integration::{Integration, IntegrationContext, Issue, Severity};
+use anyhow::Context;
 use std::path::Path;
 
 const GENERATED_HEADER: &str = "repoweave";
@@ -119,7 +120,7 @@ impl Integration for NpmWorkspaces {
             .args(["install"])
             .current_dir(ctx.workspace_root)
             .status()
-            .map_err(|e| anyhow::anyhow!("failed to run npm: {e}"))?;
+            .context("failed to run npm")?;
 
         if !status.success() {
             anyhow::bail!("npm install failed (exit {})", status);

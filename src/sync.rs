@@ -11,6 +11,7 @@ use crate::parallel::run_in_parallel;
 use crate::vcs::{ConflictOp, ResolvedRevisionId, Vcs, VcsError, VcsErrorOutput};
 use crate::workspace::{WorkspaceContext, WorkspaceLocation};
 use crate::workweave::workweave_path_for;
+use anyhow::Context;
 use schemars::JsonSchema;
 use serde::Serialize;
 use std::fmt;
@@ -568,7 +569,7 @@ fn git(args: &[&str], dir: &Path) -> anyhow::Result<String> {
         .args(args)
         .current_dir(dir)
         .output()
-        .map_err(|e| anyhow::anyhow!("failed to run git: {e}"))?;
+        .context("failed to run git")?;
     if !out.status.success() {
         let stderr = String::from_utf8_lossy(&out.stderr);
         anyhow::bail!(
@@ -1194,7 +1195,7 @@ fn materialize_missing_repo(
     let dest = ctx.active_path().join(repo_path.as_path());
     if let Some(parent) = dest.parent() {
         std::fs::create_dir_all(parent)
-            .map_err(|e| anyhow::anyhow!("failed to create {}: {e}", parent.display()))?;
+            .with_context(|| format!("failed to create {}", parent.display()))?;
     }
 
     match &ctx.location {
@@ -1214,8 +1215,8 @@ fn materialize_missing_repo(
             let start_ref = entry.version.as_str();
             let head_rev = GitVcs
                 .resolve_revision(&canonical, start_ref)
-                .map_err(|e| {
-                    anyhow::anyhow!("failed to resolve {start_ref} in canonical clone: {e}")
+                .with_context(|| {
+                    format!("failed to resolve {start_ref} in canonical clone")
                 })?;
             let branch = crate::vcs::RefName::new(format!(
                 "{}--{}/{}",
@@ -1225,14 +1226,12 @@ fn materialize_missing_repo(
             ));
             GitVcs
                 .create_worktree(&canonical, &dest, &branch, &head_rev)
-                .map_err(|e| anyhow::anyhow!("worktree add for {repo_path} failed: {e}"))?;
+                .with_context(|| format!("worktree add for {repo_path} failed"))?;
         }
         WorkspaceLocation::Weave { .. } => {
             GitVcs
                 .clone_repo(&entry.url.to_string(), &dest)
-                .map_err(|e| {
-                    anyhow::anyhow!("clone of {repo_path} from {} failed: {e}", entry.url)
-                })?;
+                .with_context(|| format!("clone of {repo_path} from {} failed", entry.url))?;
         }
     }
     Ok(())
@@ -1280,12 +1279,12 @@ fn prune_dropped_repo(ctx: &WorkspaceContext, repo_path: &RepoPath) -> anyhow::R
                 }
                 GitVcs
                     .remove_worktree(&canonical, &dest)
-                    .map_err(|e| anyhow::anyhow!("worktree remove for {repo_path} failed: {e}"))?;
+                    .with_context(|| format!("worktree remove for {repo_path} failed"))?;
                 let _ = GitVcs.worktree_prune(&canonical);
             } else {
                 // No canonical to compare to; remove the directory as a best effort.
                 std::fs::remove_dir_all(&dest)
-                    .map_err(|e| anyhow::anyhow!("failed to remove {}: {e}", dest.display()))?;
+                    .with_context(|| format!("failed to remove {}", dest.display()))?;
             }
         }
         WorkspaceLocation::Weave { .. } => {
@@ -1339,7 +1338,7 @@ fn prune_dropped_repo(ctx: &WorkspaceContext, repo_path: &RepoPath) -> anyhow::R
                 );
             }
             std::fs::remove_dir_all(&dest)
-                .map_err(|e| anyhow::anyhow!("failed to remove {}: {e}", dest.display()))?;
+                .with_context(|| format!("failed to remove {}", dest.display()))?;
         }
     }
     Ok(())
@@ -1599,7 +1598,7 @@ fn run_sync_impl_with_op_id(
         let strat = recorded
             .strategy
             .parse::<SyncStrategy>()
-            .map_err(|e| anyhow::anyhow!("op-state has invalid strategy: {e}"))?;
+            .context("op-state has invalid strategy")?;
         let src = SyncSource::Path(recorded.source.clone());
         (src, strat, Some(recorded))
     } else {
@@ -1695,7 +1694,7 @@ fn run_sync_impl_with_op_id(
 
     // Load manifests.
     let cwd_project = Project::from_dir(&cwd_project_dir)
-        .map_err(|e| anyhow::anyhow!("failed to load CWD project: {e}"))?;
+        .context("failed to load CWD project")?;
 
     // Precondition: CWD project repo must not be mid-op.
     if let Some(state) = crate::git::GitVcs::mid_op_state(&cwd_project_dir) {
@@ -1708,7 +1707,7 @@ fn run_sync_impl_with_op_id(
     // Precondition: lock freshness (unless --force).
     if !force {
         let source_project = Project::from_dir(&source_project_dir)
-            .map_err(|e| anyhow::anyhow!("failed to load source project: {e}"))?;
+            .context("failed to load source project")?;
         if let Some(ref lock) = source_project.lock {
             check_lock_freshness(
                 &source_workspace_dir,
@@ -1727,10 +1726,10 @@ fn run_sync_impl_with_op_id(
     // any side effects keeps the refusal path clean.
     let source_project_tip = GitVcs
         .head_revision(&source_project_dir)
-        .map_err(|e| anyhow::anyhow!("failed to read source project HEAD: {e}"))?;
+        .context("failed to read source project HEAD")?;
     let cwd_project_tip = GitVcs
         .head_revision(&cwd_project_dir)
-        .map_err(|e| anyhow::anyhow!("failed to read CWD project HEAD: {e}"))?;
+        .context("failed to read CWD project HEAD")?;
 
     // Precondition: rebase and merge strategies require `rwv.lock merge=ours`
     // in the project repo's committed `.gitattributes`. Without it, git's
@@ -1811,7 +1810,7 @@ fn run_sync_impl_with_op_id(
             workspace_dir.clone(),
         );
         op_state::write(&workspace_dir, &state)
-            .map_err(|e| anyhow::anyhow!("failed to write op-state: {e}"))?;
+            .context("failed to write op-state")?;
     }
 
     // Create savepoints for all CWD repos (including project repo).
@@ -1829,13 +1828,13 @@ fn run_sync_impl_with_op_id(
     // out of the merge inputs entirely.
     let source_lock_path = source_project_dir.join("rwv.lock");
     let raw_source_lock = LockFile::from_path(&source_lock_path)
-        .map_err(|e| anyhow::anyhow!("failed to read source lock: {e}"))?;
+        .context("failed to read source lock")?;
 
     // Load source manifest so we have URLs for any repos newly added at source
     // that need to be materialized on the CWD side.
     let source_manifest_path = source_project_dir.join("rwv.yaml");
     let source_manifest = Manifest::from_path(&source_manifest_path)
-        .map_err(|e| anyhow::anyhow!("failed to read source manifest: {e}"))?;
+        .context("failed to read source manifest")?;
 
     // Phase 3 materialize: for each repo listed in source's lock but missing
     // from the CWD workspace, clone/worktree-add before Phase 2 tries to sync
@@ -2020,13 +2019,12 @@ fn run_sync_impl_with_op_id(
     // Phase 1': project repo strategy with rwv.lock excluded.
     let phase1_outcome = if force {
         // Hard-reset semantics: discard CWD's project commits.
-        match git(
+        git(
             &["reset", "--hard", source_project_tip.as_str()],
             &cwd_project_dir,
-        ) {
-            Ok(_) => Ok(()),
-            Err(e) => Err(anyhow::anyhow!("project repo reset --force failed: {e}")),
-        }
+        )
+        .context("project repo reset --force failed")
+        .map(|_| ())
     } else {
         apply_project_strategy(
             &cwd_project_dir,
@@ -2154,7 +2152,7 @@ fn retire_workweave_after_sync_to(
     // Reload manifest post-Phase 3 so we see any repos newly added by sync.
     let manifest_path = cwd_project_dir.join("rwv.yaml");
     let manifest = Manifest::from_path(&manifest_path)
-        .map_err(|e| anyhow::anyhow!("--retire: failed to reload manifest: {e}"))?;
+        .context("--retire: failed to reload manifest")?;
 
     // Compare each manifest repo's HEAD in CWD vs. target. After a successful
     // sync-to, step 3 has fast-forwarded the target's repos to CWD's tips, so
@@ -2174,10 +2172,10 @@ fn retire_workweave_after_sync_to(
         }
         let cwd_head = GitVcs
             .head_revision(&cwd_repo)
-            .map_err(|e| anyhow::anyhow!("--retire: read CWD head for {}: {e}", repo_path))?;
+            .with_context(|| format!("--retire: read CWD head for {}", repo_path))?;
         let target_head = GitVcs
             .head_revision(&target_repo)
-            .map_err(|e| anyhow::anyhow!("--retire: read target head for {}: {e}", repo_path))?;
+            .with_context(|| format!("--retire: read target head for {}", repo_path))?;
         if cwd_head != target_head {
             diverged.push(format!(
                 "{}: CWD={} target={}",
@@ -2215,7 +2213,7 @@ fn retire_workweave_after_sync_to(
     // belt-and-braces. Use the primary path (delete_workweave needs to
     // locate the workweave under the primary's parent dir).
     crate::workweave::delete_workweave(ctx.primary_path(), project, workweave_name, false)
-        .map_err(|e| anyhow::anyhow!("--retire: workweave delete failed: {e}"))?;
+        .context("--retire: workweave delete failed")?;
 
     eprintln!("retired workweave {}", workweave_name.as_str());
     Ok(())
@@ -2346,7 +2344,7 @@ fn regenerate_lock_phase3(
         workweave_pair,
         true, // dirty: skip uncommitted-changes check; sync may have produced WT churn
     )
-    .map_err(|e| anyhow::anyhow!("failed to generate lock: {e}"))?;
+    .context("failed to generate lock")?;
 
     let lock_path = cwd_project_dir.join("rwv.lock");
     crate::lock::write_lock(&new_lock, &lock_path)?;
@@ -2403,7 +2401,7 @@ pub fn run_abort(cwd: &Path) -> anyhow::Result<()> {
     // rebase, so we must not try to parse it. The abort path only needs the
     // manifest (to enumerate repo paths); it never reads lock contents.
     let cwd_project = Project::from_dir_skip_lock(&cwd_project_dir)
-        .map_err(|e| anyhow::anyhow!("failed to load CWD project: {e}"))?;
+        .context("failed to load CWD project")?;
 
     let mut any_failure = false;
 
@@ -2516,7 +2514,7 @@ fn abort_one_repo(repo: &Path, op_id: &OpId) -> anyhow::Result<()> {
     match read_savepoint(repo, op_id) {
         Some(sha) => {
             git(&["reset", "--hard", sha.as_str()], repo)
-                .map_err(|e| anyhow::anyhow!("reset --hard failed: {e}"))?;
+                .context("reset --hard failed")?;
             delete_savepoint(repo, op_id);
             Ok(())
         }
@@ -2653,7 +2651,7 @@ fn run_sync_json_impl(
             outcomes: records,
         };
         let out = serde_json::to_string_pretty(&payload)
-            .map_err(|e| anyhow::anyhow!("failed to serialize sync output: {e}"))?;
+            .context("failed to serialize sync output")?;
         println!("{out}");
     }
 
@@ -2846,7 +2844,7 @@ fn run_sync_to_impl(
         let strat = recorded
             .strategy
             .parse::<SyncStrategy>()
-            .map_err(|e| anyhow::anyhow!("op-state has invalid strategy: {e}"))?;
+            .context("op-state has invalid strategy")?;
         let ret = recorded.retire;
         if emit_text {
             eprintln!("continuing sync-to (op {oid}, mid `{phase_display}`)",);
@@ -2886,9 +2884,9 @@ fn run_sync_to_impl(
             retire,
         );
         op_state::write(&cwd_workspace_dir, &state)
-            .map_err(|e| anyhow::anyhow!("failed to write op-state to CWD: {e}"))?;
+            .context("failed to write op-state to CWD")?;
         op_state::write(&tgt_workspace_dir, &state)
-            .map_err(|e| anyhow::anyhow!("failed to write op-state to target: {e}"))?;
+            .context("failed to write op-state to target")?;
         ResolvedParams {
             op_id: oid,
             resume_phase: None,
@@ -2929,10 +2927,10 @@ fn run_sync_to_impl(
     if strategy == SyncStrategy::Ff {
         let cwd_tip = GitVcs
             .head_revision(&cwd_project_dir)
-            .map_err(|e| anyhow::anyhow!("failed to read CWD project HEAD: {e}"))?;
+            .context("failed to read CWD project HEAD")?;
         let target_tip = GitVcs
             .head_revision(&target_project_dir)
-            .map_err(|e| anyhow::anyhow!("failed to read target project HEAD: {e}"))?;
+            .context("failed to read target project HEAD")?;
 
         if cwd_tip == target_tip {
             // No-op: already at same tip.
@@ -3029,12 +3027,12 @@ fn run_sync_to_impl(
 
         // Advance phase to Step1Complete in both workspaces.
         op_state::advance_phase(&cwd_workspace_dir, crate::op_state::OpPhase::Step1Complete)
-            .map_err(|e| anyhow::anyhow!("failed to advance phase after step 1: {e}"))?;
+            .context("failed to advance phase after step 1")?;
         op_state::advance_phase(
             &target_workspace_dir,
             crate::op_state::OpPhase::Step1Complete,
         )
-        .map_err(|e| anyhow::anyhow!("failed to advance phase in target after step 1: {e}"))?;
+        .context("failed to advance phase in target after step 1")?;
     } else if !matches!(resume_phase, Some(crate::op_state::OpPhase::Step3Ff)) {
         // When resuming from step1-complete, advance phase to mark we're moving to step 3.
         // (Already at step1-complete; advancing to step3-ff happens below before step 3.)
@@ -3048,9 +3046,9 @@ fn run_sync_to_impl(
     // Advance phase to Step3Ff in both workspaces.
     if !matches!(resume_phase, Some(crate::op_state::OpPhase::Step3Ff)) {
         op_state::advance_phase(&cwd_workspace_dir, crate::op_state::OpPhase::Step3Ff)
-            .map_err(|e| anyhow::anyhow!("failed to advance phase to step3-ff: {e}"))?;
+            .context("failed to advance phase to step3-ff")?;
         op_state::advance_phase(&target_workspace_dir, crate::op_state::OpPhase::Step3Ff)
-            .map_err(|e| anyhow::anyhow!("failed to advance phase to step3-ff in target: {e}"))?;
+            .context("failed to advance phase to step3-ff in target")?;
     }
 
     // === Step 3: FF-advance target to CWD's new tip ===
@@ -3066,7 +3064,7 @@ fn run_sync_to_impl(
 
     // Reload CWD project (post-relock).
     let cwd_project_final = crate::manifest::Project::from_dir(&cwd_project_dir)
-        .map_err(|e| anyhow::anyhow!("failed to reload CWD project for step 3: {e}"))?;
+        .context("failed to reload CWD project for step 3")?;
 
     // FF-advance each manifest repo in target.
     let mut any_ff_failure = false;
@@ -3120,7 +3118,7 @@ fn run_sync_to_impl(
     // FF-advance target's project repo.
     let cwd_project_tip = GitVcs
         .head_revision(&cwd_project_dir)
-        .map_err(|e| anyhow::anyhow!("failed to read CWD project HEAD for step 3: {e}"))?;
+        .context("failed to read CWD project HEAD for step 3")?;
 
     match ff_advance_repo(&target_project_dir, &cwd_project_dir, &cwd_project_tip) {
         Ok(()) => {
@@ -3203,7 +3201,7 @@ fn ff_advance_repo(
     // If not, this is a concurrent-modification scenario — bail.
     let target_tip = GitVcs
         .head_revision(target_repo)
-        .map_err(|e| anyhow::anyhow!("failed to read target HEAD: {e}"))?;
+        .context("failed to read target HEAD")?;
 
     if target_tip == *cwd_tip {
         return Ok(()); // already at the right tip
@@ -3240,7 +3238,7 @@ fn ff_advance_repo(
     // Fast-forward: reset --hard to cwd_tip. For worktrees sharing an object
     // store this is safe; for independent clones we already fetched above.
     git(&["reset", "--hard", cwd_tip.as_str()], target_repo)
-        .map_err(|e| anyhow::anyhow!("git reset --hard failed in target: {e}"))?;
+        .context("git reset --hard failed in target")?;
 
     Ok(())
 }
@@ -3256,7 +3254,7 @@ fn fetch_objects_from(dst_repo: &Path, src_repo: &Path) -> anyhow::Result<()> {
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .status()
-        .map_err(|e| anyhow::anyhow!("failed to fetch from {}: {e}", src_repo.display()))?;
+        .with_context(|| format!("failed to fetch from {}", src_repo.display()))?;
     // fetch may fail for worktrees (FETCH_HEAD is unavailable) — that's fine,
     // the object is already reachable in the shared store. Ignore errors here;
     // ff_advance_repo will catch any real problem at reset --hard.

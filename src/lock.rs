@@ -5,6 +5,7 @@ use crate::manifest::{
 };
 use crate::vcs::vcs_for;
 use crate::workspace::{WorkspaceContext, WorkspaceLocation};
+use anyhow::Context;
 use std::collections::BTreeMap;
 use std::path::Path;
 
@@ -124,9 +125,9 @@ pub fn generate_lock(
 /// per `version`.
 pub fn write_lock<L: serde::Serialize>(lock: &L, path: &Path) -> anyhow::Result<()> {
     let yaml = serde_yaml::to_string(lock)
-        .map_err(|e| anyhow::anyhow!("failed to serialize lock file: {e}"))?;
+        .context("failed to serialize lock file")?;
     std::fs::write(path, &yaml)
-        .map_err(|e| anyhow::anyhow!("failed to write {}: {e}", path.display()))?;
+        .with_context(|| format!("failed to write {}", path.display()))?;
     Ok(())
 }
 
@@ -150,7 +151,7 @@ pub(crate) fn commit_lock_file_with_message(
         .args(["add", "rwv.lock"])
         .current_dir(project_dir)
         .output()
-        .map_err(|e| anyhow::anyhow!("failed to run git add: {e}"))?;
+        .context("failed to run git add")?;
 
     if !add_out.status.success() {
         let stderr = String::from_utf8_lossy(&add_out.stderr);
@@ -162,7 +163,7 @@ pub(crate) fn commit_lock_file_with_message(
         .args(["diff", "--cached", "--quiet"])
         .current_dir(project_dir)
         .output()
-        .map_err(|e| anyhow::anyhow!("failed to check staged changes: {e}"))?
+        .context("failed to check staged changes")?
         .status
         .success();
 
@@ -174,7 +175,7 @@ pub(crate) fn commit_lock_file_with_message(
         .args(["commit", "-m", message])
         .current_dir(project_dir)
         .output()
-        .map_err(|e| anyhow::anyhow!("failed to run git commit: {e}"))?;
+        .context("failed to run git commit")?;
 
     if !commit_out.status.success() {
         let stderr = String::from_utf8_lossy(&commit_out.stderr);
@@ -200,7 +201,7 @@ fn commit_lock_file(
         .args(["status", "--porcelain"])
         .current_dir(project_dir)
         .output()
-        .map_err(|e| anyhow::anyhow!("failed to run git status: {e}"))?;
+        .context("failed to run git status")?;
     if !status_out.status.success() {
         let stderr = String::from_utf8_lossy(&status_out.stderr);
         anyhow::bail!("git status failed: {}", stderr.trim());
@@ -264,7 +265,7 @@ pub fn lock(
         .join("projects")
         .join(project_name.as_str());
     let project = Project::from_dir(&project_dir)
-        .map_err(|e| anyhow::anyhow!("failed to load project '{}': {e}", project_name))?;
+        .with_context(|| format!("failed to load project '{}'", project_name))?;
 
     let workweave_pair = workweave_name.as_ref().zip(workweave_dir.as_deref());
     let lock = generate_lock(&project.manifest, ctx.primary_path(), workweave_pair, dirty)?;

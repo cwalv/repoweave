@@ -4,6 +4,7 @@ use crate::git::GitVcs;
 use crate::manifest::Project;
 use crate::vcs::{ResolvedRevisionId, Vcs};
 use crate::workspace::{WorkspaceContext, WorkspaceLocation};
+use anyhow::Context;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
@@ -186,7 +187,7 @@ pub fn run_status(
             repos: entries,
         };
         let out = serde_json::to_string_pretty(&envelope)
-            .map_err(|e| anyhow::anyhow!("failed to serialize status to JSON: {e}"))?;
+            .context("failed to serialize status to JSON")?;
         println!("{out}");
     } else {
         print_table(&entries);

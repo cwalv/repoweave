@@ -32,6 +32,7 @@
 //! (so leaving a stale entry behind after removing a repo is not an error).
 
 use crate::integration::{Integration, IntegrationContext, Issue, Severity};
+use anyhow::Context;
 use serde::Deserialize;
 use std::collections::BTreeSet;
 use std::path::Path;
@@ -78,7 +79,7 @@ impl CargoWorkspace {
         for repo in rust_repos {
             let cargo_toml = ctx.workspace_root.join(&repo).join("Cargo.toml");
             let content = std::fs::read_to_string(&cargo_toml)
-                .map_err(|e| anyhow::anyhow!("failed to read {}: {e}", cargo_toml.display()))?;
+                .with_context(|| format!("failed to read {}", cargo_toml.display()))?;
             let has_workspace = declares_workspace(&content);
 
             if opt_out.contains(repo.as_str()) {
@@ -196,7 +197,7 @@ impl Integration for CargoWorkspace {
             .arg("generate-lockfile")
             .current_dir(ctx.workspace_root)
             .status()
-            .map_err(|e| anyhow::anyhow!("failed to run cargo: {e}"))?;
+            .context("failed to run cargo")?;
 
         if !status.success() {
             anyhow::bail!("cargo generate-lockfile failed (exit {})", status);

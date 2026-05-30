@@ -1,4 +1,5 @@
 use crate::integration::{Integration, IntegrationContext, Issue, Severity};
+use anyhow::Context;
 use std::path::Path;
 
 pub struct PnpmWorkspaces;
@@ -67,7 +68,7 @@ impl Integration for PnpmWorkspaces {
             .args(["install"])
             .current_dir(ctx.workspace_root)
             .status()
-            .map_err(|e| anyhow::anyhow!("failed to run pnpm: {e}"))?;
+            .context("failed to run pnpm")?;
 
         if !status.success() {
             anyhow::bail!("pnpm install failed (exit {})", status);

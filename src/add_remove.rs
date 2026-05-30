@@ -271,7 +271,7 @@ fn run_add_from_local_path(
     }
 
     let raw_url = String::from_utf8(output.stdout)
-        .map_err(|e| anyhow::anyhow!("git remote get-url origin produced non-UTF-8 output: {e}"))?
+        .context("git remote get-url origin produced non-UTF-8 output")?
         .trim()
         .to_string();
 
@@ -616,9 +616,9 @@ fn derive_local_path_from_url(url: &str) -> Option<PathBuf> {
 /// Serialize and write a manifest to disk, preserving YAML format.
 fn write_manifest(path: &Path, manifest: &Manifest) -> anyhow::Result<()> {
     let yaml = serde_yaml::to_string(manifest)
-        .map_err(|e| anyhow::anyhow!("failed to serialize manifest: {e}"))?;
+        .context("failed to serialize manifest")?;
     std::fs::write(path, &yaml)
-        .map_err(|e| anyhow::anyhow!("failed to write {}: {e}", path.display()))?;
+        .with_context(|| format!("failed to write {}", path.display()))?;
     Ok(())
 }
 

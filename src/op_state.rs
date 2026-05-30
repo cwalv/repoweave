@@ -44,6 +44,7 @@
 //! workspace at a time.
 
 use crate::sync::{OpId, SyncStrategy};
+use anyhow::Context;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
@@ -211,9 +212,9 @@ impl OpState {
 pub fn write(workspace_dir: &Path, state: &OpState) -> anyhow::Result<()> {
     let path = OpState::path_in(workspace_dir);
     let yaml = serde_yaml::to_string(state)
-        .map_err(|e| anyhow::anyhow!("failed to serialize op-state: {e}"))?;
+        .context("failed to serialize op-state")?;
     std::fs::write(&path, yaml)
-        .map_err(|e| anyhow::anyhow!("failed to write op-state to {}: {e}", path.display()))
+        .with_context(|| format!("failed to write op-state to {}", path.display()))
 }
 
 /// Read the `.rwv-op` file from `workspace_dir`, returning `None` if absent.
@@ -227,9 +228,9 @@ pub fn read(workspace_dir: &Path) -> anyhow::Result<Option<OpState>> {
         return Ok(None);
     }
     let yaml = std::fs::read_to_string(&path)
-        .map_err(|e| anyhow::anyhow!("failed to read op-state from {}: {e}", path.display()))?;
+        .with_context(|| format!("failed to read op-state from {}", path.display()))?;
     let state: OpState = serde_yaml::from_str(&yaml)
-        .map_err(|e| anyhow::anyhow!("failed to parse op-state at {}: {e}", path.display()))?;
+        .with_context(|| format!("failed to parse op-state at {}", path.display()))?;
     Ok(Some(state))
 }
 

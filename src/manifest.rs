@@ -5,6 +5,7 @@
 
 use crate::registry::RegistryName;
 use crate::vcs::{RawRevisionId, RefName, ResolvedRevisionId};
+use anyhow::Context;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::fmt;
@@ -560,9 +561,9 @@ impl Manifest {
     /// Load from a YAML file.
     pub fn from_path(path: &Path) -> anyhow::Result<Self> {
         let content = std::fs::read_to_string(path)
-            .map_err(|e| anyhow::anyhow!("failed to read {}: {e}", path.display()))?;
+            .with_context(|| format!("failed to read {}", path.display()))?;
         Self::from_yaml_str(&content)
-            .map_err(|e| anyhow::anyhow!("failed to parse rwv.yaml at {}: {e}", path.display()))
+            .with_context(|| format!("failed to parse rwv.yaml at {}", path.display()))
     }
 
     /// Parse a manifest from a YAML string, surfacing the
@@ -782,9 +783,9 @@ impl LockFile {
 
     pub fn from_path(path: &Path) -> anyhow::Result<Self> {
         let content = std::fs::read_to_string(path)
-            .map_err(|e| anyhow::anyhow!("failed to read {}: {e}", path.display()))?;
+            .with_context(|| format!("failed to read {}", path.display()))?;
         let lock: Self = serde_yaml::from_str(&content)
-            .map_err(|e| anyhow::anyhow!("failed to parse rwv.lock at {}: {e}", path.display()))?;
+            .with_context(|| format!("failed to parse rwv.lock at {}", path.display()))?;
         Ok(lock)
     }
 
@@ -961,18 +962,14 @@ impl Project {
     /// Load a project from its directory.
     pub fn from_dir(dir: &Path) -> anyhow::Result<Self> {
         let manifest_path = dir.join("rwv.yaml");
-        let manifest = Manifest::from_path(&manifest_path).map_err(|e| {
-            anyhow::anyhow!(
-                "failed to load manifest at {}: {}",
-                manifest_path.display(),
-                e
-            )
-        })?;
+        let manifest = Manifest::from_path(&manifest_path)
+            .with_context(|| format!("failed to load manifest at {}", manifest_path.display()))?;
         let lock_path = dir.join("rwv.lock");
         let lock = if lock_path.exists() {
-            Some(LockFile::from_path(&lock_path).map_err(|e| {
-                anyhow::anyhow!("failed to load lock at {}: {}", lock_path.display(), e)
-            })?)
+            Some(
+                LockFile::from_path(&lock_path)
+                    .with_context(|| format!("failed to load lock at {}", lock_path.display()))?,
+            )
         } else {
             None
         };
@@ -1004,13 +1001,8 @@ impl Project {
     /// `rwv.lock` exists or what it contains.
     pub fn from_dir_skip_lock(dir: &Path) -> anyhow::Result<Self> {
         let manifest_path = dir.join("rwv.yaml");
-        let manifest = Manifest::from_path(&manifest_path).map_err(|e| {
-            anyhow::anyhow!(
-                "failed to load manifest at {}: {}",
-                manifest_path.display(),
-                e
-            )
-        })?;
+        let manifest = Manifest::from_path(&manifest_path)
+            .with_context(|| format!("failed to load manifest at {}", manifest_path.display()))?;
 
         // Derive project name from directory structure.
         // `projects/web-app/` → "web-app"
@@ -1258,8 +1250,8 @@ repositories:
         assert!(result.is_err());
         let msg = format!("{}", result.unwrap_err());
         assert!(
-            msg.contains("No such file") || msg.contains("not found") || msg.contains("os error"),
-            "expected IO error, got: {msg}"
+            msg.contains("failed to read") || msg.contains("nonexistent.yaml"),
+            "expected read error, got: {msg}"
         );
     }
 

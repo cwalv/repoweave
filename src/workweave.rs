@@ -12,7 +12,7 @@ use crate::vcs::{vcs_for, RefName, Vcs};
 use crate::workspace::{
     parse_weave_dir_name, read_active_project, set_active_project, weave_dir_name, WorkweaveMarker,
 };
-use anyhow::{anyhow, bail};
+use anyhow::{anyhow, bail, Context};
 use std::path::{Path, PathBuf};
 
 /// Determine where workweave directories live.
@@ -1108,7 +1108,7 @@ fn derive_workweave_name(branch_name: Option<&str>, _session_id: Option<&str>) -
 /// - `WorktreeRemove` — deletes the workweave (fire-and-forget; always exits 0).
 pub fn handle_claude_hook() -> anyhow::Result<()> {
     let input: ClaudeHookInput = serde_json::from_reader(std::io::stdin())
-        .map_err(|e| anyhow!("failed to parse hook JSON from stdin: {e}"))?;
+        .context("failed to parse hook JSON from stdin")?;
 
     match input.hook_event_name.as_deref() {
         Some("WorktreeCreate") => {
