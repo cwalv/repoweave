@@ -46,7 +46,7 @@ pub const PUSH_SCHEMA_URL: &str =
 pub enum PushOutcomeOutput {
     /// Manifest repo was pushed successfully.
     Pushed { path: String, absolute_path: String },
-    /// Manifest repo was skipped (Role::Fork — push via PR).
+    /// Manifest repo was skipped (e.g. by a selector filter).
     Skipped { path: String, absolute_path: String },
     /// Manifest repo push failed.
     Failed {
@@ -347,16 +347,12 @@ pub fn run_push(
     if dry_run {
         println!("rwv push (dry-run):");
         for item in &plan {
-            if item.role == Role::Fork {
-                println!("  {}: would skip (Role::Fork)", item.repo_path.as_str());
-            } else {
-                println!(
-                    "  {}: would push {} -> {}",
-                    item.repo_path.as_str(),
-                    item.branch,
-                    remote_label(item.role),
-                );
-            }
+            println!(
+                "  {}: would push {} -> {}",
+                item.repo_path.as_str(),
+                item.branch,
+                remote_label(item.role),
+            );
         }
         println!(
             "  projects/{}: would push {} -> origin (last)",
@@ -366,10 +362,8 @@ pub fn run_push(
     }
 
     // 6. Manifest-repo push loop. Attempt all and collect — same shape as
-    //    update.rs. Role::Fork is skipped here with an info line; the
-    //    Vcs::push_with_role trait method stays neutral on Fork. Fans out
-    //    over `jobs` workers when `jobs > 1`; per-line `[<repo>]` prefix
-    //    under parallel mode, no prefix under `-j 1`.
+    //    update.rs. Fans out over `jobs` workers when `jobs > 1`; per-line
+    //    `[<repo>]` prefix under parallel mode, no prefix under `-j 1`.
     //
     //    Under `--json`, text-mode output (the per-repo "rwv push: pushing
     //    X" lines) is suppressed; the Reporter is always Serial/quiet so
@@ -486,10 +480,14 @@ pub fn run_push(
     }
 
     if !json {
-        println!(
-            "rwv push: pushed {} manifest repo(s); {} skipped (Role::Fork)",
-            pushed, skipped
-        );
+        if skipped > 0 {
+            println!(
+                "rwv push: pushed {} manifest repo(s); {} skipped",
+                pushed, skipped
+            );
+        } else {
+            println!("rwv push: pushed {} manifest repo(s)", pushed);
+        }
     }
 
     // 7. Project-repo push (gated). The project repo's committed lock pins
@@ -592,20 +590,22 @@ struct PushPlanItem {
     role: Role,
 }
 
-/// Outcome of pushing a single manifest repo. Variants mirror the three
-/// branches of the previous serial loop (pushed / skipped-as-fork /
-/// failed-with-message) so error aggregation post-join stays the same shape.
+/// Outcome of pushing a single manifest repo.
+///
+/// `Skipped` is not produced by this bead's code paths; it is retained
+/// for B2 which will reintroduce plan-time skipping via selector logic.
 enum PushOutcome {
     Pushed,
+    #[allow(dead_code)]
     Skipped,
     Failed(String),
 }
 
 /// Per-repo worker: push one manifest entry on its current branch via the
-/// role-conventional remote, or skip it if `Role::Fork`. All user-facing
-/// output is routed through `reporter`, which prefixes `[<repo>]` and
-/// serialises writes under `-j > 1`; under `-j 1` the reporter is a
-/// no-prefix passthrough that matches the pre-`-j` serial output exactly.
+/// role-conventional remote (`origin` for all roles). All user-facing output
+/// is routed through `reporter`, which prefixes `[<repo>]` and serialises
+/// writes under `-j > 1`; under `-j 1` the reporter is a no-prefix
+/// passthrough that matches the pre-`-j` serial output exactly.
 ///
 /// `Vcs::push_with_role` captures stdout/stderr; we don't stream git's
 /// output line-by-line. The user-visible signal under parallel mode is the
@@ -619,13 +619,6 @@ fn push_one(
     reporter: &Reporter<'_>,
     force: bool,
 ) -> PushOutcome {
-    if item.role == Role::Fork {
-        reporter.out(&format!(
-            "rwv push: skipping {} (Role::Fork — push via PR)",
-            item.repo_path.as_str()
-        ));
-        return PushOutcome::Skipped;
-    }
     let repo_dir = primary_root.join(item.repo_path.as_path());
     reporter.out(&format!(
         "rwv push: pushing {} ({} -> {})",
@@ -639,13 +632,10 @@ fn push_one(
     }
 }
 
-/// Display the remote name for a role — matches the policy in
-/// `git::remote_name_for_role` so dry-run output and actual pushes agree.
+/// Display the remote name for a role — all roles push to `origin`.
 fn remote_label(role: Role) -> &'static str {
-    match role {
-        Role::Fork => "upstream",
-        Role::Owned | Role::Dependency | Role::Reference => "origin",
-    }
+    let _ = role;
+    "origin"
 }
 
 /// Abbreviate a SHA to 7 chars (matches lock-commit-message convention).
@@ -695,13 +685,10 @@ mod tests {
         assert_eq!(remote_label(Role::Reference), "origin");
     }
 
-    /// Forks push to `upstream`, never `origin` — the role-conventional
-    /// remote-name policy documented in how-to/push-cross-repo-feature.md.
-    /// Drift here would silently push fork branches to the wrong remote
-    /// in dry-run plan output even if the runtime path agreed.
+    /// Fork is now treated identically to Owned — both push to `origin`.
     #[test]
-    fn remote_label_fork_is_upstream() {
-        assert_eq!(remote_label(Role::Fork), "upstream");
+    fn remote_label_fork_is_origin() {
+        assert_eq!(remote_label(Role::Fork), "origin");
     }
 
     /// remote_label returns `&'static str` — no allocation per call.
@@ -809,7 +796,7 @@ mod tests {
             },
         ];
         let labels: Vec<&str> = plan.iter().map(|i| remote_label(i.role)).collect();
-        assert_eq!(labels, vec!["origin", "upstream", "origin"]);
+        assert_eq!(labels, vec!["origin", "origin", "origin"]);
         let paths: Vec<&str> = plan.iter().map(|i| i.repo_path.as_str()).collect();
         assert_eq!(paths, vec!["a", "b", "c"]);
     }

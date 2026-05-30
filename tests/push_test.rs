@@ -102,17 +102,12 @@ fn build_workspace(project_name: &str, repos: &[(&str, &str)]) -> PushWorkspace 
 
         let canonical = workspace.join(repo_path);
         std::fs::create_dir_all(canonical.parent().unwrap()).unwrap();
-        let remote_name = if *role == "fork" {
-            "upstream"
-        } else {
-            "origin"
-        };
         git_run(
             workspace.parent().unwrap(),
             &[
                 "clone",
                 "--origin",
-                remote_name,
+                "origin",
                 bare.to_str().unwrap(),
                 canonical.to_str().unwrap(),
             ],
@@ -308,74 +303,6 @@ fn push_dry_run_prints_plan_and_pushes_nothing() {
     );
 }
 
-#[test]
-fn push_skips_fork_repos_with_info_line() {
-    let ws = build_workspace(
-        "alpha",
-        &[("local/org/lib", "fork"), ("local/org/app", "owned")],
-    );
-
-    // Advance both repos and the lock so the precondition passes.
-    let mut lock = String::from("repositories:\n");
-    let mut expected_shas: Vec<(String, String)> = Vec::new();
-    let fork_baseline;
-    {
-        let (rp, bare) = &ws.manifest_bares[0]; // fork repo
-        let local = ws.workspace.join(rp);
-        std::fs::write(local.join("x.txt"), "x").unwrap();
-        git_run(&local, &["add", "."]);
-        git_run(&local, &["commit", "-m", "fork advance"]);
-        let sha = git_run(&local, &["rev-parse", "HEAD"]);
-        let bare_url = bare.to_str().unwrap();
-        lock.push_str(&format!(
-            "  {rp}:\n    type: git\n    url: {bare_url}\n    version: {sha}\n"
-        ));
-        expected_shas.push((rp.clone(), sha));
-        fork_baseline = bare_main_sha(bare); // pre-push baseline for fork bare
-    }
-    {
-        let (rp, bare) = &ws.manifest_bares[1]; // primary repo
-        let local = ws.workspace.join(rp);
-        std::fs::write(local.join("y.txt"), "y").unwrap();
-        git_run(&local, &["add", "."]);
-        git_run(&local, &["commit", "-m", "primary advance"]);
-        let sha = git_run(&local, &["rev-parse", "HEAD"]);
-        let bare_url = bare.to_str().unwrap();
-        lock.push_str(&format!(
-            "  {rp}:\n    type: git\n    url: {bare_url}\n    version: {sha}\n"
-        ));
-        expected_shas.push((rp.clone(), sha));
-    }
-    let project_dir = ws.workspace.join("projects").join(&ws.project_name);
-    std::fs::write(project_dir.join("rwv.lock"), &lock).unwrap();
-    git_run(&project_dir, &["add", "."]);
-    git_run(&project_dir, &["commit", "-m", "relock"]);
-
-    let output = rwv()
-        .args(["push"])
-        .current_dir(&ws.workspace)
-        .output()
-        .expect("rwv push");
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(output.status.success(), "push should succeed: {stdout}");
-    assert!(
-        stdout.contains("Role::Fork") || stdout.contains("fork"),
-        "expected an info line about skipped fork repo; got: {stdout}"
-    );
-
-    // The fork bare must NOT have moved.
-    assert_eq!(
-        bare_main_sha(&ws.manifest_bares[0].1),
-        fork_baseline,
-        "fork bare must not be touched"
-    );
-    // The primary repo bare DID move.
-    assert_eq!(
-        bare_main_sha(&ws.manifest_bares[1].1),
-        Some(expected_shas[1].1.clone()),
-        "primary repo bare should match local HEAD"
-    );
-}
 
 // ============================================================================
 // Negative: workweave invocation refused

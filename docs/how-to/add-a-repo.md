@@ -23,7 +23,7 @@ npm install   # or: uv sync, cargo build, etc.
 | Role | Meaning |
 |---|---|
 | `owned` | Your code. Change freely. |
-| `fork` | Forked upstream. Ideally accept changes upstream. Cloned with remote name `upstream`, not `origin`. |
+| `fork` | Forked upstream. URL = your writable fork. Ideally accept changes upstream; push policy same as `owned`. |
 | `dependency` | Code you build against. Changes need upstream acceptance. |
 | `reference` | Cloned for reading/study. No local changes; excluded from build graphs. |
 

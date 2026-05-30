@@ -3,9 +3,9 @@
 //! The source must be a URL (full URL or `owner/repo` shorthand resolved via
 //! the registry). Local paths are not accepted; use `rwv activate` instead.
 
-use crate::git::{git_command, GitVcs};
+use crate::git::GitVcs;
 use crate::lock;
-use crate::manifest::{clone_urls_equivalent, LockFile, Manifest, RepoEntry, RepoPath, Role};
+use crate::manifest::{LockFile, Manifest, RepoEntry, RepoPath, Role};
 use crate::parallel::{run_in_parallel, Reporter};
 use crate::registry;
 use crate::selector::RepoFilter;
@@ -590,17 +590,6 @@ fn fetch_one(
     let lock_entry = existing_lock.and_then(|l| l.get_entry(repo_path).cloned());
 
     if dest.exists() {
-        // If the existing clone is role=fork and its `origin` still points
-        // at the source-of-record, warn the user — `git push` would target
-        // the upstream and get 403'd. We leave remotes alone.
-        if entry.role == Role::Fork {
-            maybe_warn_fork_origin_reporter(
-                &dest,
-                repo_path.as_str(),
-                &entry.url.to_string(),
-                reporter,
-            );
-        }
         if let Some(lock_entry) = lock_entry {
             emit(&format!(
                 "rwv fetch: checking out {} at {}",
@@ -719,43 +708,6 @@ fn fetch_one(
     // else: bootstrap, will be picked up wholesale below.
 
     FetchOutcome::Ok { add_to_lock }
-}
-
-/// If `dest` is a git repo with `origin` pointing at `manifest_url`, print a
-/// short stderr notice telling the user to rename the remote to `upstream`.
-/// Non-fatal: silent on any git error or when remotes differ.
-pub(crate) fn maybe_warn_fork_origin(dest: &Path, repo_label: &str, manifest_url: &str) {
-    let reporter = Reporter::serial();
-    maybe_warn_fork_origin_reporter(dest, repo_label, manifest_url, &reporter);
-}
-
-/// Reporter-aware variant of [`maybe_warn_fork_origin`]. Routes the
-/// warning through the per-repo reporter so it gets prefixed under
-/// `-j > 1` and serialised across workers.
-fn maybe_warn_fork_origin_reporter(
-    dest: &Path,
-    repo_label: &str,
-    manifest_url: &str,
-    reporter: &Reporter<'_>,
-) {
-    let out = match git_command()
-        .args(["remote", "get-url", "origin"])
-        .current_dir(dest)
-        .output()
-    {
-        Ok(o) if o.status.success() => o,
-        _ => return,
-    };
-    let origin_url = match String::from_utf8(out.stdout) {
-        Ok(s) => s.trim().to_owned(),
-        Err(_) => return,
-    };
-    if clone_urls_equivalent(&origin_url, manifest_url) {
-        reporter.err(&format!(
-            "note: {repo_label} is role=fork but origin points at the source-of-record; \
-rename with `git remote rename origin upstream` to avoid pushing there by accident"
-        ));
-    }
 }
 
 #[cfg(test)]

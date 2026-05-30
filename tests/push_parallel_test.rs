@@ -94,17 +94,12 @@ fn build_workspace(project_name: &str, repos: &[(&str, &str)]) -> PushWorkspace 
 
         let canonical = workspace.join(repo_path);
         std::fs::create_dir_all(canonical.parent().unwrap()).unwrap();
-        let remote_name = if *role == "fork" {
-            "upstream"
-        } else {
-            "origin"
-        };
         git_run(
             workspace.parent().unwrap(),
             &[
                 "clone",
                 "--origin",
-                remote_name,
+                "origin",
                 bare.to_str().unwrap(),
                 canonical.to_str().unwrap(),
             ],

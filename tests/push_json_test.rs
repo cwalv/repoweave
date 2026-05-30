@@ -261,17 +261,12 @@ fn build_workspace(project_name: &str, repos: &[(&str, &str)]) -> PushWorkspace 
 
         let canonical = workspace.join(repo_path);
         std::fs::create_dir_all(canonical.parent().unwrap()).unwrap();
-        let remote_name = if *role == "fork" {
-            "upstream"
-        } else {
-            "origin"
-        };
         git_run(
             workspace.parent().unwrap(),
             &[
                 "clone",
                 "--origin",
-                remote_name,
+                "origin",
                 bare.to_str().unwrap(),
                 canonical.to_str().unwrap(),
             ],
@@ -474,13 +469,13 @@ fn push_json_project_repo_distinguishable_from_manifest_repos() {
         "expected exactly 1 project-repo record: {stdout}"
     );
 
-    // Fork should be skipped.
-    let any_skipped = manifest_records
+    // Fork is now treated like Owned — should be pushed, not skipped.
+    let any_pushed = manifest_records
         .iter()
-        .any(|o| o.get("kind").and_then(Value::as_str) == Some("skipped"));
+        .any(|o| o.get("kind").and_then(Value::as_str) == Some("pushed"));
     assert!(
-        any_skipped,
-        "fork repo must produce 'skipped' outcome: {stdout}"
+        any_pushed,
+        "fork repo must produce 'pushed' outcome (same as Owned): {stdout}"
     );
 
     // Project-repo record must have `project` field.

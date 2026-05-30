@@ -12,8 +12,7 @@ rwv push
 
 `rwv push` walks the manifest, applying per-role push policy:
 
-- `role: owned` — push the current branch; require the working tip to match `rwv.lock`.
-- `role: fork` — skip; you push your fork repos manually to your fork's remote.
+- `role: owned` / `role: fork` — push the current branch; require the working tip to match `rwv.lock`. (`fork` URL must be your writable fork; see [roles](../reference/roles.md#fork).)
 - `role: dependency` / `role: reference` — skip; you don't push upstream code.
 
 The project repo is pushed last, so its lock-bearing commit lands after the manifest repos that lock pins are now reachable.
@@ -71,7 +70,7 @@ Parallel mode runs up to N pushes concurrently. The project repo is still pushed
 
 `rwv push` earns its keep over a hand-rolled `xargs git push` for:
 
-- **Role-aware policy.** Auto-skip `fork` repos (which usually have origin set to upstream-of-record and would 403 on push).
+- **Role-aware policy.** Auto-skip `dependency` and `reference` repos; push `owned` and `fork` repos (which point at your writable forks).
 - **Lock-precondition check.** Prevents the manifest-pushed-but-lock-stale footgun.
 - **Manifest-aware ordering.** Project repo pushed last after manifest repos.
 

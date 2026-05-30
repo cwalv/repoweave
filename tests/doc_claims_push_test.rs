@@ -3,7 +3,6 @@
 //! Doc claims pinned here (one #[test] per claim; if a single test exercises
 //! multiple claims it lists them all):
 //!
-//!   - push: Role::Fork repos are skipped at the loop level
 //!   - push: manifest repos pushed before the project repo (publish order)
 //!   - push: lock precondition refuses if any repo HEAD != recorded lock SHA
 //!     (refuse happens before any network call)
@@ -107,17 +106,12 @@ fn build_workspace(project_name: &str, repos: &[(&str, &str)]) -> PushWorkspace 
 
         let canonical = workspace.join(repo_path);
         std::fs::create_dir_all(canonical.parent().unwrap()).unwrap();
-        let remote_name = if *role == "fork" {
-            "upstream"
-        } else {
-            "origin"
-        };
         git_run(
             workspace.parent().unwrap(),
             &[
                 "clone",
                 "--origin",
-                remote_name,
+                "origin",
                 bare.to_str().unwrap(),
                 canonical.to_str().unwrap(),
             ],
@@ -217,49 +211,11 @@ fn advance_all_and_relock(ws: &PushWorkspace, repos: &[(&str, &str)]) -> Vec<(St
 }
 
 // ===========================================================================
-// 1. Role::Fork repos are skipped at the loop level
+// 1. Fork repos push like Owned repos (no longer skipped at loop level)
 //
-// Doc claim: even when a selector matches a fork-role repo, `rwv push` does
-// not push it — instead it emits an info line referencing the skip. The
-// fork bare must not advance.
+// B2 will add plan-time selector tests; this placeholder keeps section
+// numbering stable for future reference.
 // ===========================================================================
-
-#[test]
-fn push_skips_role_fork_at_loop_level() {
-    let repos = [
-        ("local/org/fork-repo", "fork"),
-        ("local/org/main-repo", "owned"),
-    ];
-    let ws = build_workspace("alpha", &repos);
-    let fork_baseline = bare_main_sha(&ws.manifest_bares[0].1);
-    let _expected_shas = advance_all_and_relock(&ws, &repos);
-
-    let output = rwv()
-        .args(["push"])
-        .current_dir(&ws.workspace)
-        .output()
-        .expect("rwv push");
-    assert!(
-        output.status.success(),
-        "push should succeed even with a fork repo present; stderr: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    // Doc claim: fork repos are surfaced with a "Role::Fork" / "skipping"
-    // info line, mapping to PushOutcome::Skipped.
-    assert!(
-        stdout.contains("skipping") && stdout.contains("fork-repo"),
-        "push should announce that the fork repo was skipped; got: {stdout}"
-    );
-
-    // Fork bare must not have moved.
-    assert_eq!(
-        bare_main_sha(&ws.manifest_bares[0].1),
-        fork_baseline,
-        "fork bare must not be advanced even when manifest selects it"
-    );
-}
 
 // ===========================================================================
 // 2. Project repo pushed last
@@ -402,8 +358,8 @@ fn push_dry_run_prints_plan_and_does_not_push() {
     );
     assert!(
         stdout.contains("local/org/forklib")
-            && (stdout.contains("Role::Fork") || stdout.contains("skip")),
-        "dry-run should describe the fork skip; got: {stdout}"
+            && (stdout.contains("would push") || stdout.contains("origin")),
+        "dry-run should describe the would-push for the fork repo (same as Owned); got: {stdout}"
     );
     assert!(
         stdout.contains("projects/alpha"),
@@ -651,10 +607,11 @@ fn push_dash_j_one_emits_no_repo_prefix() {
 // ===========================================================================
 // 7. PushOutcome variants surface in output
 //
-// Doc claim: the three PushOutcome variants reach the user-visible output.
+// Doc claim: the two PushOutcome variants in normal operation reach the
+// user-visible output.
 //   - Pushed   -> "rwv push: pushing <path>" pre-message
-//   - Skipped  -> "rwv push: skipping <path> (Role::Fork ...)"
 //   - Failed   -> aggregated error summary "rwv push: N repo(s) failed:"
+// Fork is now treated identically to Owned (pushes to origin).
 // ===========================================================================
 
 #[test]
@@ -683,15 +640,15 @@ fn push_outcome_variants_show_in_output() {
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
 
-    // Pushed variant: the healthy primary surfaces its pre-message.
+    // Pushed variant: the healthy owned repo surfaces its pre-message.
     assert!(
         stdout.contains("rwv push: pushing local/org/ok"),
         "Pushed outcome must surface a 'pushing <path>' line; got:\n{stdout}"
     );
-    // Skipped variant: fork repo surfaces a skipping line.
+    // Fork is also pushed (same as Owned).
     assert!(
-        stdout.contains("skipping local/org/forked"),
-        "Skipped outcome must surface a 'skipping <path>' line; got:\n{stdout}"
+        stdout.contains("rwv push: pushing local/org/forked"),
+        "Fork repo must also surface a 'pushing <path>' line; got:\n{stdout}"
     );
     // Failed variant: per-repo summary + non-zero exit.
     assert!(

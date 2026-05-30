@@ -50,8 +50,8 @@ Under `--json` with `-j 1` (default), output is the pretty-printed envelope:
 }
 ```
 
-Outcome `kind` tags for manifest repos: `pushed`, `skipped` (Role::Fork),
-`failed`. The project-repo record is always the last entry in `outcomes` and
+Outcome `kind` tags for manifest repos: `pushed`, `skipped` (e.g. filtered
+by selector), `failed`. The project-repo record is always the last entry in `outcomes` and
 uses kind `project-repo-pushed` or `project-repo-failed` — its kind tag is the
 only way to distinguish it from manifest-repo records in the flat array. Failed
 records carry a `message` field with the free-form error from the git push.
@@ -114,7 +114,7 @@ Schema:
           }
         },
         {
-          "description": "Manifest repo was skipped (Role::Fork — push via PR).",
+          "description": "Manifest repo was skipped (e.g. by a selector filter).",
           "type": "object",
           "required": [
             "absolute_path",
@@ -232,7 +232,7 @@ Schema:
 
 ## Exit codes
 
-- `0` — all manifest repos pushed (or skipped as forks); project repo pushed.
+- `0` — all manifest repos pushed (or skipped by selector); project repo pushed.
 - non-zero — at least one manifest push failed (project repo not pushed), or
   the project-repo push failed after manifest pushes succeeded.
 

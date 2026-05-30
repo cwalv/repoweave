@@ -195,11 +195,6 @@ pub fn run_add(
             "Directory already exists at '{}', skipping clone",
             dest.display()
         );
-        // Existing-clone path: don't auto-rename remotes; just warn when a
-        // role=fork repo's `origin` already points at the source-of-record.
-        if role == Role::Fork {
-            crate::fetch::maybe_warn_fork_origin(&dest, repo_path.as_str(), url);
-        }
     } else {
         // Create parent directories.
         if let Some(parent) = dest.parent() {

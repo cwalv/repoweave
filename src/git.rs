@@ -130,19 +130,6 @@ impl GitVcs {
     }
 }
 
-/// Git remote name convention for a given [`Role`].
-///
-/// `Role::Fork` clones to `upstream` so a stray `git push` does not target
-/// the source-of-record (typically returning HTTP 403). All other roles
-/// clone to the conventional `origin`. This policy belongs in the VCS
-/// layer rather than the manifest layer.
-fn remote_name_for_role(role: Role) -> &'static str {
-    match role {
-        Role::Fork => "upstream",
-        Role::Owned | Role::Dependency | Role::Reference => "origin",
-    }
-}
-
 /// Git-specific "how do I resume this operation?" text for [`ConflictOp`].
 ///
 /// Returned text is a short indented block (no trailing newline) that
@@ -240,7 +227,8 @@ impl Vcs for GitVcs {
     }
 
     fn clone_with_role(&self, url: &str, dest: &Path, role: Role) -> Result<(), VcsError> {
-        self.clone_repo_with_remote_name(url, dest, remote_name_for_role(role))
+        let _ = role; // role label kept for signal value; all clones use `origin`
+        self.clone_repo_with_remote_name(url, dest, "origin")
     }
 
     fn resolve_branch_on_remote(
@@ -249,7 +237,8 @@ impl Vcs for GitVcs {
         role: Role,
         branch: &RefName,
     ) -> Result<ResolvedRevisionId, VcsError> {
-        let qualified = format!("{}/{}", remote_name_for_role(role), branch.as_str());
+        let _ = role; // all remotes use `origin`
+        let qualified = format!("origin/{}", branch.as_str());
         self.resolve_revision(repo, &qualified)
     }
 
@@ -268,12 +257,12 @@ impl Vcs for GitVcs {
                 });
             }
         };
-        let remote = remote_name_for_role(role);
+        let _ = role; // all remotes use `origin`
         let mut args: Vec<&str> = vec!["push"];
         if force {
             args.push("--force");
         }
-        args.push(remote);
+        args.push("origin");
         args.push(branch.as_str());
         Self::run(&args, repo)?;
         Ok(())
@@ -458,19 +447,15 @@ impl Vcs for GitVcs {
     fn default_branch(&self, repo: &Path) -> Result<RefName, VcsError> {
         const FALLBACK: &str = "main";
 
-        // Try the conventional `origin` first, then `upstream` (the remote
-        // name rwv uses for role=fork clones). Strip the matching prefix to
-        // recover the bare branch name.
-        for remote in ["origin", "upstream"] {
-            let sym = format!("refs/remotes/{remote}/HEAD");
-            if let Ok(sym_ref) = Self::run(&["symbolic-ref", &sym], repo) {
-                let prefix = format!("refs/remotes/{remote}/");
-                let branch = sym_ref
-                    .strip_prefix(&prefix)
-                    .unwrap_or(FALLBACK)
-                    .to_string();
-                return Ok(RefName::new(branch));
-            }
+        // All rwv clones use `origin`. Strip the prefix to recover the bare
+        // branch name; fall back to "main" if the symref isn't set yet.
+        let sym = "refs/remotes/origin/HEAD";
+        if let Ok(sym_ref) = Self::run(&["symbolic-ref", sym], repo) {
+            let branch = sym_ref
+                .strip_prefix("refs/remotes/origin/")
+                .unwrap_or(FALLBACK)
+                .to_string();
+            return Ok(RefName::new(branch));
         }
         Ok(RefName::new(FALLBACK))
     }

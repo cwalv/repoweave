@@ -19,20 +19,18 @@ In a typical project, repos under your organization (e.g., `github/chatly/*` for
 
 ### `fork`
 
-A fork of an upstream repo. Changes ideally flow back upstream (PRs to the source-of-record), but local patches are acceptable.
+Role label for a fork relationship. Changes ideally flow back upstream via PR, but local patches are acceptable.
 
-**Remote convention.** When `rwv fetch` or `rwv add` clones a repo with `role: fork`, it names the remote `upstream` instead of the default `origin`. The source URL is the upstream-of-record, not your push target, so leaving `origin` unset prevents a stray `git push` from hitting the upstream and getting 403'd.
+**URL is your writable fork.** The manifest `url:` field must point at your personal or team fork — the repo you have push access to. `rwv` clones that URL to `origin` and treats `fork` identically to `owned` for clone, push, and fetch.
 
-You're responsible for adding your own fork as `origin`:
+If you also want to track the upstream-of-record, add it yourself:
 
 ```bash
-cd github/socketio/engine.io
-git remote add origin git@github.com:chatly/engine.io.git
+cd github/chatly/engine.io
+git remote add upstream https://github.com/socketio/engine.io.git
 ```
 
-Existing clones are never modified. `rwv` prints a one-line notice when a `role: fork` repo's `origin` already points at the source-of-record so you can decide whether to rename the remote.
-
-**Push policy.** `rwv push` skips `fork` repos by default — they need an explicit per-repo push to your fork's remote.
+**Push policy.** `rwv push` pushes `fork` repos the same as `owned` repos (to `origin`).
 
 ### `dependency`
 
@@ -82,7 +80,7 @@ The active project's `rwv.yaml` determines the current role.
 
 ```bash
 rwv add https://github.com/example/lib.git --role dependency
-rwv add https://github.com/upstream/thing.git --role fork
+rwv add https://github.com/me/my-fork.git --role fork
 rwv add https://github.com/other/code.git --role reference
 ```
 
@@ -97,7 +95,7 @@ A common pattern: `github/{your-org}/*` is likely `owned`; `github/{other-org}/*
 | Role | `rwv push` behavior |
 |---|---|
 | `owned` | Push (with lock-precondition check) |
-| `fork` | Skip — push manually to your fork's remote |
+| `fork` | Push (same as Owned) |
 | `dependency` | Skip — you don't push upstream code |
 | `reference` | Skip — read-only |
 

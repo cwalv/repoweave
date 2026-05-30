@@ -135,7 +135,7 @@ The `<source>` argument in `rwv sync` is always required — there is no auto-ta
 
 ### `rwv push [...]`
 
-Coordinated cross-repo push. Walks the manifest, applies per-role push policy: `owned` repos pushed (with lock-precondition check), `fork` repos skipped, `dependency`/`reference` repos skipped. Project repo is pushed last.
+Coordinated cross-repo push. Walks the manifest, applies per-role push policy: `owned` and `fork` repos pushed (with lock-precondition check), `dependency`/`reference` repos skipped. Project repo is pushed last.
 
 | Flag | Effect |
 |---|---|

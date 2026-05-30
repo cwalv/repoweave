@@ -607,10 +607,10 @@ fn repo_with_remote(remote_name: &str) -> (TempDir, std::path::PathBuf) {
 }
 
 #[test]
-fn resolve_branch_on_remote_fork_uses_upstream() {
-    // Role::Fork resolves `upstream/{branch}`.
-    let (_ws, local) = repo_with_remote("upstream");
-    let expected_sha = git(&local, &["rev-parse", "upstream/main"]);
+fn resolve_branch_on_remote_fork_uses_origin() {
+    // Role::Fork now resolves `origin/{branch}` — same as every other role.
+    let (_ws, local) = repo_with_remote("origin");
+    let expected_sha = git(&local, &["rev-parse", "origin/main"]);
 
     let vcs = GitVcs;
     let resolved = vcs
@@ -618,8 +618,7 @@ fn resolve_branch_on_remote_fork_uses_upstream() {
         .unwrap();
 
     assert_eq!(resolved.as_str(), &expected_sha);
-    // Display form preserves the qualified ref we asked for.
-    assert_eq!(resolved.display_str(), "upstream/main");
+    assert_eq!(resolved.display_str(), "origin/main");
 }
 
 #[test]
@@ -658,17 +657,18 @@ fn resolve_branch_on_remote_reference_uses_origin() {
 
 #[test]
 fn resolve_branch_on_remote_missing_remote_errors() {
-    // Repo has no `upstream` remote — Role::Fork resolution must fail
-    // clearly rather than silently falling back to a local branch tip.
-    let (_ws, local) = repo_with_remote("origin");
+    // Repo has a remote named `other` but not `origin` — resolution must fail
+    // clearly rather than silently falling back to a local branch tip. All
+    // roles now use `origin`.
+    let (_ws, local) = repo_with_remote("other");
 
     let vcs = GitVcs;
     let result = vcs.resolve_branch_on_remote(&local, Role::Fork, &RefName::new("main"));
 
-    let err = result.expect_err("missing upstream remote must error");
+    let err = result.expect_err("missing origin remote must error");
     assert!(
-        matches!(err, VcsError::RevisionNotFound { ref rev, .. } if rev == "upstream/main"),
-        "expected RevisionNotFound for upstream/main, got {err:?}"
+        matches!(err, VcsError::RevisionNotFound { ref rev, .. } if rev == "origin/main"),
+        "expected RevisionNotFound for origin/main, got {err:?}"
     );
 }
 
@@ -750,11 +750,9 @@ fn push_with_role_primary_pushes_to_origin() {
 }
 
 #[test]
-fn push_with_role_fork_pushes_to_upstream() {
-    // Trait-level neutrality: Role::Fork uses the `upstream` remote. The
-    // "skip forks at the rwv-push loop" policy lives in src/push.rs, not
-    // in the trait method.
-    let (_ws, local, bare) = repo_with_bare_remote("upstream");
+fn push_with_role_fork_pushes_to_origin() {
+    // Role::Fork now uses the `origin` remote — identical to Owned.
+    let (_ws, local, bare) = repo_with_bare_remote("origin");
 
     fs::write(local.join("new.txt"), "added").unwrap();
     git(&local, &["add", "."]);

@@ -46,7 +46,7 @@
           }
         },
         {
-          "description": "Manifest repo was skipped (Role::Fork — push via PR).",
+          "description": "Manifest repo was skipped (e.g. by a selector filter).",
           "type": "object",
           "required": [
             "absolute_path",
