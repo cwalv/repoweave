@@ -25,26 +25,55 @@ impl Integration for NpmWorkspaces {
             .map(|p| serde_json::Value::String(p.clone()))
             .collect();
 
-        let obj = serde_json::json!({
-            "name": GENERATED_HEADER,
-            "private": true,
-            "workspaces": workspaces,
-        });
+        // Read any existing package.json and merge into it, preserving user-owned
+        // fields (scripts, devDependencies, engines, version, etc.).  Only the
+        // three rwv-owned keys are overwritten; everything else survives untouched.
+        let path = ctx.output_dir.join("package.json");
+        let mut obj: serde_json::Map<String, serde_json::Value> = path
+            .exists()
+            .then(|| std::fs::read_to_string(&path).ok())
+            .flatten()
+            .and_then(|c| serde_json::from_str(&c).ok())
+            .unwrap_or_default();
+
+        obj.insert("name".into(), serde_json::Value::String(GENERATED_HEADER.into()));
+        obj.insert("private".into(), serde_json::Value::Bool(true));
+        obj.insert("workspaces".into(), serde_json::Value::Array(workspaces));
 
         let content = serde_json::to_string_pretty(&obj)? + "\n";
-        std::fs::write(ctx.output_dir.join("package.json"), content)?;
+        std::fs::write(&path, content)?;
         Ok(())
     }
 
     fn deactivate(&self, root: &Path) -> anyhow::Result<()> {
         let path = root.join("package.json");
-        if path.exists() {
-            let content = std::fs::read_to_string(&path)?;
-            if let Ok(val) = serde_json::from_str::<serde_json::Value>(&content) {
-                if val.get("name").and_then(|v| v.as_str()) == Some(GENERATED_HEADER) {
-                    std::fs::remove_file(path)?;
-                }
-            }
+        if !path.exists() {
+            return Ok(());
+        }
+
+        let content = std::fs::read_to_string(&path)?;
+        let Ok(serde_json::Value::Object(mut obj)) = serde_json::from_str::<serde_json::Value>(&content) else {
+            // Not valid JSON or not an object — leave the file alone.
+            return Ok(());
+        };
+
+        // Only touch files that rwv owns (identified by the sentinel name).
+        if obj.get("name").and_then(|v| v.as_str()) != Some(GENERATED_HEADER) {
+            return Ok(());
+        }
+
+        // Strip the three rwv-owned keys.
+        obj.remove("name");
+        obj.remove("private");
+        obj.remove("workspaces");
+
+        if obj.is_empty() {
+            // Nothing left — remove the file entirely.
+            std::fs::remove_file(path)?;
+        } else {
+            // User-authored fields remain — write the stripped object back.
+            let content = serde_json::to_string_pretty(&serde_json::Value::Object(obj))? + "\n";
+            std::fs::write(path, content)?;
         }
         Ok(())
     }

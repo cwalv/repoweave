@@ -206,6 +206,167 @@ mod npm_workspaces {
         assert!(root.join("package.json").exists());
     }
 
+    /// Activating over a package.json that already contains user-authored fields
+    /// (scripts, devDependencies, engines, version, etc.) must preserve those
+    /// fields while overwriting the three rwv-owned keys.
+    #[test]
+    fn activate_preserves_user_fields_in_existing_package_json() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+
+        // Repo with a package.json so the integration detects it.
+        touch(root, "github/acme/server/package.json");
+
+        // Pre-existing workspace-root package.json with user-authored fields.
+        write_file(
+            root,
+            "package.json",
+            r#"{
+  "name": "repoweave",
+  "private": true,
+  "workspaces": [],
+  "scripts": {
+    "ci": "npm run build && npm test"
+  },
+  "devDependencies": {
+    "typescript": "^5.0.0"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "version": "0.1.0"
+}"#,
+        );
+
+        let manifest = make_manifest(vec![("github/acme/server", Role::Owned)]);
+        let project = ProjectName::new("test-project");
+        let config = IntegrationConfig::default();
+        let cache = HashMap::new();
+        let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+
+        NpmWorkspaces.activate(&ctx).unwrap();
+
+        let content = std::fs::read_to_string(root.join("package.json")).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
+
+        // rwv-owned keys must be set/updated.
+        assert_eq!(parsed["name"], "repoweave", "name should be the rwv sentinel");
+        assert_eq!(parsed["private"], true, "private should remain true");
+        let workspaces = parsed["workspaces"].as_array().expect("workspaces should be an array");
+        assert!(
+            workspaces.iter().any(|w| w.as_str() == Some("github/acme/server")),
+            "workspaces should contain the detected repo; got: {workspaces:?}"
+        );
+
+        // User-authored fields must survive.
+        assert_eq!(
+            parsed["scripts"]["ci"],
+            "npm run build && npm test",
+            "scripts.ci should survive activate"
+        );
+        assert_eq!(
+            parsed["devDependencies"]["typescript"],
+            "^5.0.0",
+            "devDependencies should survive activate"
+        );
+        assert_eq!(
+            parsed["engines"]["node"],
+            ">=18",
+            "engines should survive activate"
+        );
+        assert_eq!(
+            parsed["version"],
+            "0.1.0",
+            "version should survive activate"
+        );
+    }
+
+    /// Activating multiple times in a row must not clobber user fields.
+    /// This is the real-world scenario: repeated `rwv activate` runs (e.g.,
+    /// after adding a repo) must be idempotent with respect to user scripts.
+    #[test]
+    fn activate_is_idempotent_with_user_scripts() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+
+        touch(root, "github/acme/server/package.json");
+
+        // First activate from scratch — no pre-existing file.
+        let manifest = make_manifest(vec![("github/acme/server", Role::Owned)]);
+        let project = ProjectName::new("test-project");
+        let config = IntegrationConfig::default();
+        let cache = HashMap::new();
+        let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+
+        NpmWorkspaces.activate(&ctx).unwrap();
+
+        // Simulate user adding a ci script after first activate.
+        let pkg_path = root.join("package.json");
+        let mut pkg: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&pkg_path).unwrap()).unwrap();
+        pkg["scripts"] = serde_json::json!({"ci": "npm test"});
+        std::fs::write(&pkg_path, serde_json::to_string_pretty(&pkg).unwrap() + "\n").unwrap();
+
+        // Second activate — should preserve the ci script.
+        NpmWorkspaces.activate(&ctx).unwrap();
+
+        let content = std::fs::read_to_string(&pkg_path).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
+        assert_eq!(
+            parsed["scripts"]["ci"],
+            "npm test",
+            "ci script should survive a second activate"
+        );
+        assert_eq!(parsed["name"], "repoweave");
+    }
+
+    /// Deactivating a package.json that carries user scripts (scripts, engines,
+    /// devDependencies) alongside the rwv-owned keys must strip only the
+    /// three rwv-owned keys and leave the rest on disk.
+    #[test]
+    fn deactivation_strips_rwv_keys_but_preserves_user_fields() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+
+        write_file(
+            root,
+            "package.json",
+            r#"{
+  "name": "repoweave",
+  "private": true,
+  "workspaces": ["github/acme/server"],
+  "scripts": {
+    "ci": "npm run build && npm test"
+  },
+  "version": "0.1.0"
+}"#,
+        );
+
+        NpmWorkspaces.deactivate(root).unwrap();
+
+        // File must still exist because there are user-authored fields.
+        assert!(
+            root.join("package.json").exists(),
+            "package.json should not be deleted when user fields remain"
+        );
+
+        let content = std::fs::read_to_string(root.join("package.json")).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
+
+        // rwv-owned keys must be gone.
+        assert!(parsed.get("name").is_none(), "name should be stripped on deactivate");
+        assert!(parsed.get("private").is_none(), "private should be stripped on deactivate");
+        assert!(parsed.get("workspaces").is_none(), "workspaces should be stripped on deactivate");
+
+        // User fields must remain.
+        assert_eq!(
+            parsed["scripts"]["ci"],
+            "npm run build && npm test",
+            "scripts.ci should survive deactivate"
+        );
+        assert_eq!(parsed["version"], "0.1.0", "version should survive deactivate");
+    }
+
     #[test]
     fn check_warns_when_npm_not_on_path() {
         let tmp = TempDir::new().unwrap();
