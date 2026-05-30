@@ -1,4 +1,6 @@
-use repoweave::manifest::{LockFile, Manifest, Project, RepoPath, Role, VcsType, WorkweaveName};
+use repoweave::manifest::{
+    CargoWorkspaceConfig, LockFile, Manifest, Project, RepoPath, Role, VcsType, WorkweaveName,
+};
 use repoweave::vcs::{RawRevisionId, RefName};
 
 // ---------------------------------------------------------------------------
@@ -300,4 +302,165 @@ fn project_name_strips_projects_prefix() {
     // so strip_prefix falls back to the full path. That's the expected behavior
     // for absolute paths.
     assert!(!project.name.as_str().is_empty());
+}
+
+// ---------------------------------------------------------------------------
+// CargoWorkspaceConfig deserialization (fo-cnpjy.6)
+// ---------------------------------------------------------------------------
+
+/// Parse a `CargoWorkspaceConfig` directly from an `IntegrationConfig` YAML
+/// snippet, the same path used by the integration at runtime.
+fn parse_cargo_config(yaml: &str) -> CargoWorkspaceConfig {
+    use repoweave::manifest::IntegrationConfig;
+    let config = IntegrationConfig::from_yaml(yaml);
+    config
+        .settings::<CargoWorkspaceConfig>()
+        .expect("CargoWorkspaceConfig parse failed")
+}
+
+/// All new fields default correctly when the integration block is empty.
+/// This is the backward-compatibility guarantee: existing rwv.yaml files
+/// that only set `enabled:` or `exclude:` must not break.
+#[test]
+fn cargo_workspace_config_defaults_when_omitted() {
+    let cfg = parse_cargo_config("{}");
+    assert!(
+        cfg.members.is_empty(),
+        "members must default to empty BTreeMap"
+    );
+    assert!(!cfg.patch, "patch must default to false");
+    assert!(
+        !cfg.workspace_package,
+        "workspace-package must default to false"
+    );
+    assert!(cfg.exclude.is_empty(), "exclude must default to empty vec");
+}
+
+/// A `members:` block with a repo key and `include` list deserializes into
+/// the correct `BTreeMap<String, MemberSpec>` shape.
+/// This is the rvtty scenario from plan §5a / `cargo-workspace-vs-repo.md`
+/// §179–212.
+#[test]
+fn cargo_workspace_config_members_spec_roundtrips() {
+    let yaml = r#"
+members:
+  github/cwalv/rvtty:
+    include: [daemon, client, common]
+"#;
+    let cfg = parse_cargo_config(yaml);
+
+    assert_eq!(cfg.members.len(), 1, "expected exactly one repo in members");
+
+    let spec = cfg
+        .members
+        .get("github/cwalv/rvtty")
+        .expect("github/cwalv/rvtty must be present");
+
+    assert_eq!(
+        spec.include,
+        vec!["daemon", "client", "common"],
+        "include list must match verbatim"
+    );
+    assert!(
+        spec.exclude.is_empty(),
+        "exclude must default to empty when omitted"
+    );
+
+    // Defaults still hold for the other fields.
+    assert!(!cfg.patch);
+    assert!(!cfg.workspace_package);
+    assert!(cfg.exclude.is_empty());
+}
+
+/// `include` and `exclude` both parse correctly together.
+#[test]
+fn cargo_workspace_config_members_include_and_exclude() {
+    let yaml = r#"
+members:
+  github/cwalv/rvtty:
+    include: [daemon, client, common, workspace]
+    exclude: [workspace]
+"#;
+    let cfg = parse_cargo_config(yaml);
+    let spec = cfg.members.get("github/cwalv/rvtty").unwrap();
+    assert_eq!(spec.include, vec!["daemon", "client", "common", "workspace"]);
+    assert_eq!(spec.exclude, vec!["workspace"]);
+}
+
+/// `patch: true` and `workspace-package: true` (kebab-case serde rename) both
+/// deserialize to the correct boolean fields.
+#[test]
+fn cargo_workspace_config_bool_flags_parse() {
+    let yaml = "patch: true\nworkspace-package: true\n";
+    let cfg = parse_cargo_config(yaml);
+    assert!(cfg.patch, "patch should be true");
+    assert!(cfg.workspace_package, "workspace_package should be true");
+}
+
+/// `patch: "yes"` is not a valid YAML boolean — serde must return a parse
+/// error rather than silently coercing or silently ignoring the value.
+/// This guards against typos in rwv.yaml where a user writes `patch: yes`
+/// thinking it is boolean (in strict YAML 1.2 "yes" is a string, not bool).
+#[test]
+fn cargo_workspace_config_patch_string_is_type_error() {
+    use repoweave::manifest::IntegrationConfig;
+    let config = IntegrationConfig::from_yaml("patch: \"yes\"");
+    let result = config.settings::<CargoWorkspaceConfig>();
+    assert!(
+        result.is_err(),
+        "patch: \"yes\" must be a type error, got Ok({:?})",
+        result.ok()
+    );
+}
+
+/// An empty `MemberSpec` (both `include` and `exclude` omitted) deserializes
+/// without error and carries empty vectors.  This lets operators write:
+///   members:
+///     github/cwalv/some-repo: {}
+/// to explicitly declare "no members from this repo" without a parse failure.
+#[test]
+fn member_spec_empty_is_valid() {
+    let yaml = "members:\n  github/cwalv/some-repo: {}\n";
+    let cfg = parse_cargo_config(yaml);
+    let spec = cfg.members.get("github/cwalv/some-repo").unwrap();
+    assert!(spec.include.is_empty());
+    assert!(spec.exclude.is_empty());
+}
+
+/// `CargoWorkspaceConfig` with all fields set serializes back to YAML and
+/// round-trips correctly through `IntegrationConfig::settings`.
+#[test]
+fn cargo_workspace_config_full_serde_round_trip() {
+    use repoweave::manifest::IntegrationConfig;
+
+    let yaml = r#"
+exclude:
+  - github/cwalv/mcp_agent_mail_rust
+members:
+  github/cwalv/rvtty:
+    include: [daemon, client, common]
+    exclude: [fuzz]
+patch: true
+workspace-package: true
+"#;
+    let config = IntegrationConfig::from_yaml(yaml);
+    let cfg: CargoWorkspaceConfig = config.settings().unwrap();
+
+    assert_eq!(cfg.exclude, vec!["github/cwalv/mcp_agent_mail_rust"]);
+    assert_eq!(cfg.members.len(), 1);
+    let spec = cfg.members.get("github/cwalv/rvtty").unwrap();
+    assert_eq!(spec.include, vec!["daemon", "client", "common"]);
+    assert_eq!(spec.exclude, vec!["fuzz"]);
+    assert!(cfg.patch);
+    assert!(cfg.workspace_package);
+
+    // Serialize back to serde_yaml::Value and re-parse — verify it round-trips.
+    let serialized = serde_yaml::to_string(&cfg).unwrap();
+    let restored: CargoWorkspaceConfig = serde_yaml::from_str(&serialized).unwrap();
+    assert_eq!(restored.exclude, cfg.exclude);
+    assert_eq!(restored.patch, cfg.patch);
+    assert_eq!(restored.workspace_package, cfg.workspace_package);
+    let restored_spec = restored.members.get("github/cwalv/rvtty").unwrap();
+    assert_eq!(restored_spec.include, spec.include);
+    assert_eq!(restored_spec.exclude, spec.exclude);
 }

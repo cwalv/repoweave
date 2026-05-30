@@ -493,6 +493,148 @@ impl IntegrationConfig {
 }
 
 // ---------------------------------------------------------------------------
+// CargoWorkspaceConfig + MemberSpec — cargo-workspace integration settings
+// ---------------------------------------------------------------------------
+
+/// Sub-path specification for a single repo's contribution to the
+/// weave-level Cargo workspace.
+///
+/// Resolves plan §5a design resolution (a): repos listed in
+/// `CargoWorkspaceConfig::members` skip the root-as-member auto-behavior and
+/// instead emit one member path per entry in `include` minus `exclude`.
+///
+/// ## `include` default
+///
+/// An empty `include` means **no members from this repo** — the repo's root is
+/// skipped and no sub-paths are added. This is the conservative default.
+/// Operators must list every contributing sub-package explicitly. This matches
+/// the rvtty scenario (plan §6 scenario 4) where the desired member list is
+/// `[daemon, client, common]` — an absent include should never silently emit
+/// an unintended root member.
+///
+/// ## `exclude`
+///
+/// Sub-paths listed here are removed from the effective include set. Useful
+/// for omitting a sibling workspace directory (e.g. `workspace/`) from an
+/// otherwise fully-listed include. Entries that do not appear in `include` are
+/// silently ignored.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct MemberSpec {
+    /// Sub-paths under the repo root to add as workspace members.
+    /// e.g. `["daemon", "client", "common"]`
+    /// Empty → no members contributed by this repo.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub include: Vec<String>,
+
+    /// Sub-paths to remove from the effective include set.
+    /// e.g. `["workspace"]` to skip a sibling-workspace directory.
+    /// Entries not in `include` are silently ignored.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub exclude: Vec<String>,
+}
+
+/// Per-integration configuration for the cargo-workspace integration.
+///
+/// Deserialized from the `integrations.cargo-workspace:` block in `rwv.yaml`
+/// via `IntegrationConfig::settings::<CargoWorkspaceConfig>()`.
+///
+/// ## Design decisions locked in this type (plan §7.2)
+///
+/// **(a) Members sub-path config** — a repo listed in `members` contributes
+/// the sub-paths from its `MemberSpec::include` list (minus `exclude`) instead
+/// of its root.  Repos not in `members` keep the current root-as-member auto
+/// behavior.  Implemented in C7 (cargo merge port) + C8 (members sub-path).
+/// See `cargo-workspace-vs-repo.md` §179–212 for the shape contract.
+///
+/// **(b) Merge-preserve scope** — rwv owns only `[workspace].members`,
+/// `[workspace].resolver`, and (behind `workspace_package: true`)
+/// `[workspace.package]`.  All other tables — `[profile.*]`,
+/// `[workspace.dependencies]`, `[workspace.lints.*]`, `[workspace.metadata.*]`,
+/// `[patch.*]` — are user policy and are never written or stripped by rwv.
+///
+/// **(c) Cross-repo path deps / publishability** — `patch: false` (default)
+/// means all internal crates use committed relative `path=` deps.  Setting
+/// `patch: true` opts the *whole weave* into rwv-generated `[patch]` entries
+/// for cross-repo dependencies.  There is **no per-crate auto-detection**:
+/// rwv never reads or infers `[package].publish` from member manifests (plan
+/// §12.3).  A single operator-controlled boolean, defaulting to the
+/// internal-crate case.
+///
+/// **(d) Nested-workspace hard error** — repos with a `[workspace]` at their
+/// root remain a hard activation error unless opted out via `exclude` or
+/// listed under `members` (where the root is exempt from the workspace-check
+/// because the sub-packages, not the root, are the declared members).
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct CargoWorkspaceConfig {
+    /// Repo paths to exclude from the workspace entirely.
+    ///
+    /// Used as an escape hatch for repos with their own `[workspace]`
+    /// declaration that cannot legally be nested.  Opted-out repos are
+    /// surfaced as `# excluded: <path> (opted out)` comments in the
+    /// generated file.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub exclude: Vec<String>,
+
+    /// Per-repo member spec.
+    ///
+    /// When a repo path appears here, its root is **not** auto-treated as a
+    /// workspace member.  Instead, members are emitted from
+    /// `MemberSpec::include` minus `MemberSpec::exclude`.  Repos absent from
+    /// this map keep the current root-as-member auto-behavior.
+    ///
+    /// Key format: repo path string as it appears in `rwv.yaml`
+    /// (e.g. `"github/cwalv/rvtty"`).
+    ///
+    /// Example:
+    /// ```yaml
+    /// integrations:
+    ///   cargo-workspace:
+    ///     members:
+    ///       github/cwalv/rvtty:
+    ///         include: [daemon, client, common]
+    ///         exclude: [fuzz]
+    /// ```
+    ///
+    /// Corresponds to plan §5a resolution (a) and `cargo-workspace-vs-repo.md`
+    /// §179–212.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub members: BTreeMap<String, MemberSpec>,
+
+    /// When `true`, rwv generates a `[patch]` table at the weave-root
+    /// `Cargo.toml` for cross-repo dependencies via the toml_edit merge.
+    /// When `false` (default), all internal crates use committed relative
+    /// `path=` dependencies.
+    ///
+    /// This is an **operator-selected** flag — rwv never auto-detects
+    /// publishability from member `[package].publish` fields (plan §12.3).
+    /// Flipping this to `true` opts the *entire weave* into generated
+    /// `[patch]` entries; there is no per-crate granularity.
+    ///
+    /// Corresponds to plan §7.2 resolution (c).
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub patch: bool,
+
+    /// When `true`, rwv writes `[workspace.package]` from the project-level
+    /// metadata declared in `rwv.yaml` (`project.license`, `project.authors`,
+    /// etc.).  When `false` (default), `[workspace.package]` is left entirely
+    /// to the user.
+    ///
+    /// Useful for single-product weaves where multiple publishable crates
+    /// share project identity.  Not useful for multi-product weaves
+    /// (cargo's `[workspace.package]` is workspace-wide with no per-member
+    /// override) or for weaves of internal-only `publish = false` crates.
+    ///
+    /// Corresponds to plan §5a resolution (b) and `cargo-workspace-vs-repo.md`
+    /// §325–370.
+    #[serde(default, rename = "workspace-package", skip_serializing_if = "is_false")]
+    pub workspace_package: bool,
+}
+
+fn is_false(b: &bool) -> bool {
+    !b
+}
+
+// ---------------------------------------------------------------------------
 // WorkweaveConfig — artifact handling for workweaves
 // ---------------------------------------------------------------------------
 
