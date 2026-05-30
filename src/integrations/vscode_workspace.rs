@@ -1,10 +1,33 @@
 use crate::integration::{Integration, IntegrationContext, Issue, Severity};
+use crate::integrations::merge::{keypath, strip_deactivate, JsonDoc, KeyPath, RwvGeneratedMarker};
+use anyhow::Context;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::Path;
 
 /// Marker key written into generated `.code-workspace` files so that
 /// `deactivate` can distinguish rwv-managed files from user-created ones.
 const GENERATED_MARKER_KEY: &str = "rwv.generated";
+
+/// Sub-key within the `rwv.generated` object that records which
+/// `settings.files.exclude` keys were set by rwv on the last activation.
+///
+/// On the next activation this list is read back, those keys are removed, and
+/// the new rwv-derived set is inserted — implementing "set-subtract old owned
+/// set, union new" without any heuristic pattern matching.
+const MARKER_EXCLUDES_KEY: &str = "files.exclude";
+
+/// The owned key paths that vscode-workspace manages.
+///
+/// Used by `strip_deactivate` (which has no IntegrationContext) to identify
+/// which keys to remove. Static per §4.5 of the file-ownership contract.
+fn vscode_owned_keys() -> Vec<KeyPath> {
+    vec![
+        keypath(["folders"]),
+        keypath(["settings", "git.autoRepositoryDetection"]),
+        keypath(["settings", "git.repositoryScanMaxDepth"]),
+        keypath(["settings", "files.exclude"]),
+    ]
+}
 
 /// Per-integration settings for the vscode-workspace integration.
 ///
@@ -83,6 +106,108 @@ pub fn collapse_excludes(excluded: &HashSet<String>, all_repos: &[String]) -> Ve
     result
 }
 
+/// Read back the list of `files.exclude` keys that rwv set on the last
+/// activation, recorded in `obj["rwv.generated"]["files.exclude"]`.
+///
+/// Returns an empty set if the file is fresh, uses the legacy bool marker
+/// form, or has no stored list.
+fn read_prev_rwv_excludes(obj: &serde_json::Map<String, serde_json::Value>) -> HashSet<String> {
+    match obj.get(GENERATED_MARKER_KEY) {
+        Some(serde_json::Value::Object(m)) => {
+            if let Some(serde_json::Value::Array(arr)) = m.get(MARKER_EXCLUDES_KEY) {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(str::to_string))
+                    .collect()
+            } else {
+                HashSet::new()
+            }
+        }
+        _ => HashSet::new(),
+    }
+}
+
+/// Merge the `settings.files.exclude` map for a vscode .code-workspace file.
+///
+/// Rule (plan §5f): rwv owns only the *derived* exclude keys (dotfiles sentinel,
+/// collapsed repo paths, other-project paths). User-added keys survive
+/// unchanged across re-activations.
+///
+/// To avoid false-positive pattern matching, the previously-owned exclude
+/// keys are read back from the marker object (`rwv.generated.files.exclude`)
+/// and subtracted before the new set is inserted.
+///
+/// Returns the merged map as a `serde_json::Map` ready for insertion as
+/// `settings.files.exclude`.
+fn merge_files_exclude(
+    existing_obj: &serde_json::Map<String, serde_json::Value>,
+    new_rwv_keys: &BTreeMap<String, bool>,
+    prev_rwv_keys: &HashSet<String>,
+) -> serde_json::Map<String, serde_json::Value> {
+    // Collect user-added keys from the existing map: all keys that were NOT
+    // in the previously-owned set.  A key in `prev_rwv_keys` is one rwv set
+    // last time; removing it now lets stale entries disappear.
+    let mut merged: BTreeMap<String, serde_json::Value> = BTreeMap::new();
+
+    if let Some(serde_json::Value::Object(settings)) = existing_obj.get("settings") {
+        if let Some(serde_json::Value::Object(fe)) = settings.get("files.exclude") {
+            for (k, v) in fe {
+                if !prev_rwv_keys.contains(k.as_str()) {
+                    // User-added key (or an rwv key from a very old version
+                    // that wasn't recorded): carry it forward.
+                    merged.insert(k.clone(), v.clone());
+                }
+                // Keys in prev_rwv_keys are intentionally dropped here; they
+                // will be re-added from new_rwv_keys if still applicable.
+            }
+        }
+    }
+
+    // Insert/update rwv-derived keys.
+    for (k, v) in new_rwv_keys {
+        merged.insert(k.clone(), serde_json::Value::Bool(*v));
+    }
+
+    merged.into_iter().collect()
+}
+
+/// Merge the `folders` array for a vscode .code-workspace file.
+///
+/// `folders` is a JSON array of objects, not a map — the generic `OwnedValue`
+/// helper handles maps, not object-arrays. This function implements the
+/// vscode-specific merge rule:
+///
+/// - The rwv-owned primary folder is `{"path": ".", "name": "<project> (primary)"}`.
+///   It is placed at element 0.  Any existing folder with `"path": "."` is
+///   replaced (rwv owns the `.` slot).
+/// - All other folder objects (where `"path" != "."`) are user-added and are
+///   preserved in their original relative order after element 0.
+///
+/// Returns a `serde_json::Value::Array`.
+fn merge_folders(
+    existing_obj: &serde_json::Map<String, serde_json::Value>,
+    project_name: &str,
+) -> serde_json::Value {
+    let primary_name = format!("{} (primary)", project_name);
+    let primary = serde_json::json!({ "path": ".", "name": primary_name });
+
+    // Collect user-added folders: entries from the existing array whose "path"
+    // is not "." (the rwv-owned primary slot).
+    let mut user_folders: Vec<serde_json::Value> = Vec::new();
+    if let Some(serde_json::Value::Array(existing)) = existing_obj.get("folders") {
+        for folder in existing {
+            let path = folder.get("path").and_then(|v| v.as_str()).unwrap_or("");
+            if path != "." {
+                user_folders.push(folder.clone());
+            }
+        }
+    }
+
+    // Merged array: primary at [0], then user-added folders in their original order.
+    let mut folders = vec![primary];
+    folders.extend(user_folders);
+    serde_json::Value::Array(folders)
+}
+
 pub struct VscodeWorkspace;
 
 impl Integration for VscodeWorkspace {
@@ -100,31 +225,43 @@ impl Integration for VscodeWorkspace {
         let filename = format!("{}.code-workspace", ctx.project.as_str());
         let filepath = ctx.output_dir.join(&filename);
 
-        // Start with existing file content if present (for merge behavior)
+        // Parse the existing file, bailing loudly on malformed content (fix #4).
+        // An empty or missing file starts as an empty map.
         let mut obj: serde_json::Map<String, serde_json::Value> = if filepath.exists() {
-            let content = std::fs::read_to_string(&filepath)?;
-            serde_json::from_str(&content).unwrap_or_default()
+            let content = std::fs::read_to_string(&filepath)
+                .with_context(|| format!("reading {}", filepath.display()))?;
+            let text = content.trim();
+            if text.is_empty() {
+                serde_json::Map::new()
+            } else {
+                let v: serde_json::Value = serde_json::from_str(&content).with_context(|| {
+                    format!(
+                        "malformed JSON in {}: fix or delete the file and re-run `rwv activate`",
+                        filepath.display()
+                    )
+                })?;
+                match v {
+                    serde_json::Value::Object(m) => m,
+                    _ => anyhow::bail!(
+                        "{} must be a JSON object",
+                        filepath.display()
+                    ),
+                }
+            }
         } else {
             serde_json::Map::new()
         };
 
-        // Mark as generated by rwv so deactivate can identify managed files.
-        obj.insert(
-            GENERATED_MARKER_KEY.to_string(),
-            serde_json::Value::Bool(true),
-        );
+        // Read back the previously-recorded rwv-owned exclude keys so we can
+        // remove stale entries on this run (set-subtract-old-owned-set).
+        let prev_rwv_excludes = read_prev_rwv_excludes(&obj);
 
-        // Always overwrite folders
-        let folder_name = format!("{} (primary)", ctx.project.as_str());
-        obj.insert(
-            "folders".to_string(),
-            serde_json::json!([{ "path": ".", "name": folder_name }]),
-        );
+        // Merge the `folders` array (fix #2): primary at [0], user folders
+        // preserved in their original order.
+        let folders_value = merge_folders(&obj, ctx.project.as_str());
+        obj.insert("folders".to_string(), folders_value);
 
-        // Build files.exclude:
-        //   - Repos on disk that are not in this project (collapsed)
-        //   - Other project directories
-        //   - Optionally dotfiles
+        // Compute rwv-derived files.exclude keys.
         let active_repo_set: HashSet<String> = ctx
             .repos
             .iter()
@@ -145,51 +282,56 @@ impl Integration for VscodeWorkspace {
 
         let collapsed = collapse_excludes(&excluded_repos, &all_repos_on_disk);
 
-        // Collect into a BTreeMap for deterministic ordering.
-        let mut files_exclude: BTreeMap<String, serde_json::Value> = BTreeMap::new();
+        let mut rwv_exclude_keys: BTreeMap<String, bool> = BTreeMap::new();
 
         if cfg.hide_dotfiles {
-            files_exclude.insert(".*".to_string(), serde_json::Value::Bool(true));
+            rwv_exclude_keys.insert(".*".to_string(), true);
         }
 
         for path in collapsed {
-            files_exclude.insert(path, serde_json::Value::Bool(true));
+            rwv_exclude_keys.insert(path, true);
         }
 
-        // Hide other project directories.
         let active_project = ctx.project.as_str();
         for project_path in ctx.all_project_paths {
             if project_path != active_project {
-                files_exclude.insert(
-                    format!("projects/{}", project_path),
-                    serde_json::Value::Bool(true),
-                );
+                rwv_exclude_keys.insert(format!("projects/{}", project_path), true);
             }
         }
 
-        // Merge settings: overwrite managed keys, preserve user keys.
-        let mut managed_settings: serde_json::Map<String, serde_json::Value> =
-            serde_json::from_value(serde_json::json!({
-                "git.autoRepositoryDetection": "subFolders",
-                "git.repositoryScanMaxDepth": 3
-            }))
-            .unwrap();
+        // Compute the merged files.exclude map before mutating `obj` (Rust
+        // borrow rules: shared borrow for read, then exclusive for write).
+        let merged_exclude = merge_files_exclude(&obj, &rwv_exclude_keys, &prev_rwv_excludes);
 
-        // Always overwrite files.exclude entirely (it's fully derived from
-        // repo state). Users should put their excludes in VS Code user settings,
-        // not workspace settings.
-        managed_settings.insert(
-            "files.exclude".to_string(),
-            serde_json::to_value(&files_exclude).unwrap(),
+        // Update the `rwv.generated` marker to record the new owned exclude
+        // key list.  This enables accurate stale-key removal on the next run.
+        let rwv_excludes_list: Vec<serde_json::Value> = rwv_exclude_keys
+            .keys()
+            .map(|k| serde_json::Value::String(k.clone()))
+            .collect();
+        obj.insert(
+            GENERATED_MARKER_KEY.to_string(),
+            serde_json::json!({ "managed": true, MARKER_EXCLUDES_KEY: rwv_excludes_list }),
         );
 
+        // Merge settings: always overwrite git.* managed keys; per-key merge
+        // files.exclude (fix #1).
         let settings = obj
             .entry("settings".to_string())
             .or_insert_with(|| serde_json::Value::Object(serde_json::Map::new()));
         if let Some(settings_map) = settings.as_object_mut() {
-            for (k, v) in managed_settings {
-                settings_map.insert(k, v);
-            }
+            settings_map.insert(
+                "git.autoRepositoryDetection".to_string(),
+                serde_json::Value::String("subFolders".to_string()),
+            );
+            settings_map.insert(
+                "git.repositoryScanMaxDepth".to_string(),
+                serde_json::Value::Number(3.into()),
+            );
+            settings_map.insert(
+                "files.exclude".to_string(),
+                serde_json::Value::Object(merged_exclude),
+            );
         }
 
         let content = serde_json::to_string_pretty(&serde_json::Value::Object(obj))? + "\n";
@@ -198,21 +340,18 @@ impl Integration for VscodeWorkspace {
     }
 
     fn deactivate(&self, root: &Path) -> anyhow::Result<()> {
-        // Remove only .code-workspace files that were generated by rwv
-        // (identified by the presence of the generated marker key).
+        // Strip-not-delete (fix #3): for each .code-workspace file that carries
+        // the rwv.generated marker, remove only the owned keys and the marker.
+        // Delete the file only when nothing user-authored remains; otherwise
+        // rewrite the stripped document as a hand-owned workspace.
         if let Ok(entries) = std::fs::read_dir(root) {
             for entry in entries.flatten() {
                 let path = entry.path();
                 if path.extension().and_then(|e| e.to_str()) != Some("code-workspace") {
                     continue;
                 }
-                if let Ok(content) = std::fs::read_to_string(&path) {
-                    if let Ok(val) = serde_json::from_str::<serde_json::Value>(&content) {
-                        if val.get(GENERATED_MARKER_KEY).and_then(|v| v.as_bool()) == Some(true) {
-                            std::fs::remove_file(path)?;
-                        }
-                    }
-                }
+                let owned_keys = vscode_owned_keys();
+                strip_deactivate::<JsonDoc<RwvGeneratedMarker>>(&path, &owned_keys)?;
             }
         }
         Ok(())
@@ -315,5 +454,84 @@ mod tests {
         let excluded = set(&["github/acme/server"]);
         let result = collapse_excludes(&excluded, &[]);
         assert!(result.is_empty());
+    }
+
+    // -----------------------------------------------------------------------
+    // read_prev_rwv_excludes and merge_files_exclude
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn read_prev_rwv_excludes_legacy_bool_returns_empty() {
+        // Old marker shape: `"rwv.generated": true` — no stored list.
+        let mut obj = serde_json::Map::new();
+        obj.insert(
+            GENERATED_MARKER_KEY.to_string(),
+            serde_json::Value::Bool(true),
+        );
+        let prev = read_prev_rwv_excludes(&obj);
+        assert!(prev.is_empty(), "legacy bool marker has no stored excludes");
+    }
+
+    #[test]
+    fn read_prev_rwv_excludes_object_form() {
+        // New marker shape: `"rwv.generated": {"managed": true, "files.exclude": [...]}`
+        let mut obj = serde_json::Map::new();
+        obj.insert(
+            GENERATED_MARKER_KEY.to_string(),
+            serde_json::json!({ "managed": true, "files.exclude": [".*", "github/acme"] }),
+        );
+        let prev = read_prev_rwv_excludes(&obj);
+        assert!(prev.contains(".*"));
+        assert!(prev.contains("github/acme"));
+        assert_eq!(prev.len(), 2);
+    }
+
+    #[test]
+    fn merge_files_exclude_preserves_user_keys_removes_stale() {
+        // Existing file has: rwv-owned ".*" + "github/acme" (stale) and
+        // user-added "**/target" + "dist".  New run sets ".*" + "github/chatly/api".
+        let mut settings_map = serde_json::Map::new();
+        settings_map.insert(
+            "files.exclude".to_string(),
+            serde_json::json!({
+                ".*": true,
+                "github/acme": true,
+                "**/target": true,
+                "dist": true
+            }),
+        );
+        let mut obj = serde_json::Map::new();
+        obj.insert(
+            "settings".to_string(),
+            serde_json::Value::Object(settings_map),
+        );
+        // Mark what rwv owned last time.
+        obj.insert(
+            GENERATED_MARKER_KEY.to_string(),
+            serde_json::json!({ "managed": true, "files.exclude": [".*", "github/acme"] }),
+        );
+
+        let prev = read_prev_rwv_excludes(&obj);
+        let mut new_keys = BTreeMap::new();
+        new_keys.insert(".*".to_string(), true);
+        new_keys.insert("github/chatly/api".to_string(), true);
+
+        let merged = merge_files_exclude(&obj, &new_keys, &prev);
+        let merged_v = serde_json::Value::Object(merged);
+
+        // Stale rwv key removed.
+        assert!(
+            merged_v.get("github/acme").is_none(),
+            "stale rwv key must be removed"
+        );
+        // New rwv key added.
+        assert_eq!(merged_v[".*"], serde_json::Value::Bool(true));
+        assert_eq!(
+            merged_v["github/chatly/api"],
+            serde_json::Value::Bool(true)
+        );
+        // User keys preserved.
+        assert_eq!(merged_v["**/target"], serde_json::Value::Bool(true));
+        assert_eq!(merged_v["dist"], serde_json::Value::Bool(true));
     }
 }

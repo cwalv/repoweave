@@ -2946,7 +2946,9 @@ mod vscode_workspace {
         assert_eq!(parsed["settings"]["git.repositoryScanMaxDepth"], 3);
 
         // Should include the generated marker so deactivate can identify it.
-        assert_eq!(parsed["rwv.generated"], true);
+        // The marker is now an object { "managed": true, "files.exclude": [...] }
+        // (was plain `true` before fo-cnpjy.5 — has_marker tolerates both forms).
+        assert_eq!(parsed["rwv.generated"]["managed"], true);
     }
 
     #[test]
@@ -3526,6 +3528,384 @@ mod vscode_workspace {
         assert!(
             mine.contains("editor.tabSize"),
             "hand-written file content must be untouched; got: {mine}"
+        );
+    }
+}
+
+// ===========================================================================
+// vscode-workspace: §6 residual-bug scenarios (fo-cnpjy.5)
+// ===========================================================================
+//
+// Scenarios 1–4 from plan §6 "vscode-workspace". Each scenario pins one of
+// the four residual bugs fixed by fo-cnpjy.5. They were RED against the
+// pre-fix code; they are GREEN after the fixes land.
+
+mod vscode_workspace_scenarios {
+    use super::*;
+
+    // -------------------------------------------------------------------------
+    // Scenario 1 — User adds a personal `files.exclude` entry; sync must not
+    // eat it.
+    //
+    // Plan §6 vscode scenario 1: "User adds personal `files.exclude` entry;
+    // sync preserves it. RED today against :178-181."
+    // -------------------------------------------------------------------------
+    #[test]
+    fn scenario1_user_files_exclude_survives_reactivation() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+
+        // Seed: an rwv-generated workspace file (marker present, primary folder,
+        // git.* settings, rwv-derived exclude keys) PLUS two user-added exclude
+        // entries that rwv should never touch.
+        write_file(
+            root,
+            "foundations.code-workspace",
+            r#"{
+  "rwv.generated": true,
+  "folders": [{"path": ".", "name": "foundations (primary)"}],
+  "settings": {
+    "git.autoRepositoryDetection": "subFolders",
+    "git.repositoryScanMaxDepth": 3,
+    "files.exclude": {
+      ".*": true,
+      "github/acme": true,
+      "**/target": true,
+      "dist": true
+    }
+  }
+}"#,
+        );
+
+        // Activate again with a new repo on disk (github/chatly/api joins).
+        // github/acme is still excluded (not in manifest).
+        let manifest = make_manifest(vec![
+            ("github/cwalv/repoweave", Role::Owned),
+            ("github/chatly/api", Role::Owned),
+        ]);
+        let project = ProjectName::new("foundations");
+        let config = IntegrationConfig::default();
+        let cache = HashMap::new();
+
+        let all_repos_on_disk: Vec<RepoPath> = vec![
+            RepoPath::new("github/cwalv/repoweave").expect("known-safe literal"),
+            RepoPath::new("github/chatly/api").expect("known-safe literal"),
+            RepoPath::new("github/acme/server").expect("known-safe literal"),
+            RepoPath::new("github/acme/web").expect("known-safe literal"),
+        ];
+
+        let ctx = IntegrationContext {
+            output_dir: root,
+            workspace_root: root,
+            project: &project,
+            repos: manifest
+                .iter_entries()
+                .map(|(rp, e)| (rp.clone(), e.clone()))
+                .collect(),
+            config: &config,
+            all_repos_on_disk: &all_repos_on_disk,
+            all_project_paths: &[],
+            detection_cache: &cache,
+            workweave: None,
+        };
+
+        VscodeWorkspace.activate(&ctx).unwrap();
+
+        let content =
+            std::fs::read_to_string(root.join("foundations.code-workspace")).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
+        let exclude = &parsed["settings"]["files.exclude"];
+
+        // User-added keys MUST survive (this was the bug: they were wiped).
+        assert_eq!(
+            exclude["**/target"],
+            serde_json::Value::Bool(true),
+            "user-added **/target must survive reactivation"
+        );
+        assert_eq!(
+            exclude["dist"],
+            serde_json::Value::Bool(true),
+            "user-added dist must survive reactivation"
+        );
+
+        // rwv-derived keys should be correct for the new state.
+        // github/acme is still excluded (both repos excluded → collapses to owner).
+        assert_eq!(
+            exclude["github/acme"],
+            serde_json::Value::Bool(true),
+            "rwv-derived exclude for github/acme must be present"
+        );
+
+        // The marker and git.* keys must still be present.
+        assert_eq!(parsed["rwv.generated"]["managed"], serde_json::Value::Bool(true));
+        assert_eq!(
+            parsed["settings"]["git.autoRepositoryDetection"],
+            "subFolders"
+        );
+    }
+
+    // -------------------------------------------------------------------------
+    // Scenario 2 — User adds `extensions`/`launch`/`tasks`/`compounds`; they
+    // survive activate AND deactivate.
+    //
+    // Plan §6 vscode scenario 2: "User adds extensions/launch/tasks/compounds;
+    // survive activate AND deactivate. RED today against :209."
+    // -------------------------------------------------------------------------
+    #[test]
+    fn scenario2_user_blocks_survive_activate_and_deactivate() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+
+        // Seed: rwv-generated workspace + the four user-added top-level blocks.
+        write_file(
+            root,
+            "myproject.code-workspace",
+            r#"{
+  "rwv.generated": true,
+  "folders": [{"path": ".", "name": "myproject (primary)"}],
+  "settings": {
+    "git.autoRepositoryDetection": "subFolders",
+    "git.repositoryScanMaxDepth": 3,
+    "files.exclude": {".*": true}
+  },
+  "extensions": {
+    "recommendations": ["rust-analyzer", "vadimcn.vscode-lldb"]
+  },
+  "launch": {
+    "version": "0.2.0",
+    "configurations": [{"type": "lldb", "request": "launch", "name": "Debug"}]
+  },
+  "tasks": {
+    "version": "2.0.0",
+    "tasks": [{"label": "build", "type": "shell", "command": "cargo build"}]
+  },
+  "compounds": [{"name": "Full debug", "configurations": ["Debug"]}]
+}"#,
+        );
+
+        let manifest = make_manifest(vec![("github/acme/server", Role::Owned)]);
+        let project = ProjectName::new("myproject");
+        let config = IntegrationConfig::default();
+        let cache = HashMap::new();
+        let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+
+        // Activate: all four user blocks must survive.
+        VscodeWorkspace.activate(&ctx).unwrap();
+
+        let content =
+            std::fs::read_to_string(root.join("myproject.code-workspace")).unwrap();
+        let after_activate: serde_json::Value = serde_json::from_str(&content).unwrap();
+
+        assert!(
+            after_activate["extensions"]["recommendations"]
+                .as_array()
+                .unwrap()
+                .contains(&serde_json::json!("rust-analyzer")),
+            "extensions must survive activate"
+        );
+        assert!(
+            after_activate["launch"]["version"].as_str() == Some("0.2.0"),
+            "launch must survive activate"
+        );
+        assert!(
+            after_activate["tasks"]["version"].as_str() == Some("2.0.0"),
+            "tasks must survive activate"
+        );
+        assert!(
+            after_activate["compounds"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|c| c["name"] == "Full debug"),
+            "compounds must survive activate"
+        );
+
+        // Deactivate: file must NOT be deleted; owned keys stripped but user
+        // blocks survive.
+        VscodeWorkspace.deactivate(root).unwrap();
+
+        assert!(
+            root.join("myproject.code-workspace").exists(),
+            "file must NOT be deleted — user content remains"
+        );
+
+        let content =
+            std::fs::read_to_string(root.join("myproject.code-workspace")).unwrap();
+        let after_deactivate: serde_json::Value = serde_json::from_str(&content).unwrap();
+
+        // Owned keys stripped.
+        assert!(
+            after_deactivate.get("rwv.generated").is_none(),
+            "marker must be stripped on deactivate"
+        );
+        assert!(
+            after_deactivate.get("folders").is_none(),
+            "folders must be stripped on deactivate"
+        );
+        assert!(
+            after_deactivate["settings"]
+                .as_object()
+                .map(|m| m.get("files.exclude").is_none())
+                .unwrap_or(true),
+            "files.exclude must be stripped on deactivate"
+        );
+
+        // User blocks preserved.
+        assert!(
+            after_deactivate["extensions"]["recommendations"]
+                .as_array()
+                .unwrap()
+                .contains(&serde_json::json!("rust-analyzer")),
+            "extensions must survive deactivate"
+        );
+        assert!(
+            after_deactivate["launch"]["version"].as_str() == Some("0.2.0"),
+            "launch must survive deactivate"
+        );
+        assert!(
+            after_deactivate["tasks"]["version"].as_str() == Some("2.0.0"),
+            "tasks must survive deactivate"
+        );
+        assert!(
+            after_deactivate["compounds"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|c| c["name"] == "Full debug"),
+            "compounds must survive deactivate"
+        );
+    }
+
+    // -------------------------------------------------------------------------
+    // Scenario 3 — User converts to multi-root; rwv keeps the extra folder.
+    //
+    // Plan §6 vscode scenario 3: "User converts to multi-root; rwv keeps the
+    // extra folder. RED today against :119-122."
+    // -------------------------------------------------------------------------
+    #[test]
+    fn scenario3_user_extra_folder_survives_reactivation() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+
+        // Seed: primary folder + a user-added extra folder (shared-notes).
+        write_file(
+            root,
+            "foundations.code-workspace",
+            r#"{
+  "rwv.generated": true,
+  "folders": [
+    {"path": ".", "name": "foundations (primary)"},
+    {"name": "notes", "path": "../shared-notes"}
+  ],
+  "settings": {
+    "git.autoRepositoryDetection": "subFolders",
+    "git.repositoryScanMaxDepth": 3,
+    "files.exclude": {".*": true}
+  }
+}"#,
+        );
+
+        let manifest = make_manifest(vec![("github/acme/server", Role::Owned)]);
+        let project = ProjectName::new("foundations");
+        let config = IntegrationConfig::default();
+        let cache = HashMap::new();
+        let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+
+        VscodeWorkspace.activate(&ctx).unwrap();
+
+        let content =
+            std::fs::read_to_string(root.join("foundations.code-workspace")).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
+        let folders = parsed["folders"].as_array().unwrap();
+
+        // BOTH folders must be present.
+        assert_eq!(
+            folders.len(),
+            2,
+            "both folders must be present after reactivation; got: {folders:?}"
+        );
+
+        // Element 0 must be the rwv-managed primary.
+        assert_eq!(
+            folders[0]["path"], ".",
+            "primary folder must be at index 0"
+        );
+        assert_eq!(
+            folders[0]["name"], "foundations (primary)",
+            "primary folder name must be updated"
+        );
+
+        // Element 1 must be the user-added extra folder, preserved unchanged.
+        assert_eq!(
+            folders[1]["path"], "../shared-notes",
+            "user-added folder path must survive"
+        );
+        assert_eq!(
+            folders[1]["name"], "notes",
+            "user-added folder name must survive"
+        );
+
+        // Marker still present (object form after fo-cnpjy.5).
+        assert_eq!(parsed["rwv.generated"]["managed"], serde_json::Value::Bool(true));
+    }
+
+    // -------------------------------------------------------------------------
+    // Scenario 4 — Deactivate of a purely-rwv file deletes it; hand-written
+    // file (no marker) is untouched.
+    //
+    // Plan §6 vscode scenario 4: "Deactivate of a pure-rwv file deletes it;
+    // hand-written file (no marker) untouched."
+    // -------------------------------------------------------------------------
+    #[test]
+    fn scenario4_deactivate_deletes_pure_rwv_file_leaves_handwritten() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+
+        // (a) A purely-rwv .code-workspace: marker + owned keys only.
+        write_file(
+            root,
+            "proj.code-workspace",
+            r#"{
+  "rwv.generated": true,
+  "folders": [{"path": ".", "name": "proj (primary)"}],
+  "settings": {
+    "git.autoRepositoryDetection": "subFolders",
+    "git.repositoryScanMaxDepth": 3,
+    "files.exclude": {".*": true}
+  }
+}"#,
+        );
+
+        // (b) A hand-written .code-workspace with no rwv marker.
+        write_file(
+            root,
+            "mine.code-workspace",
+            r#"{
+  "folders": [{"path": "."}],
+  "settings": {"editor.tabSize": 2}
+}"#,
+        );
+
+        VscodeWorkspace.deactivate(root).unwrap();
+
+        // (a) Purely-rwv file: all content was owned → delete it.
+        assert!(
+            !root.join("proj.code-workspace").exists(),
+            "purely-rwv file must be deleted on deactivate"
+        );
+
+        // (b) Hand-written file: no marker → must not be touched.
+        assert!(
+            root.join("mine.code-workspace").exists(),
+            "hand-written file must survive deactivate"
+        );
+        let content =
+            std::fs::read_to_string(root.join("mine.code-workspace")).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
+        assert_eq!(
+            parsed["settings"]["editor.tabSize"],
+            serde_json::Value::Number(2.into()),
+            "hand-written file content must be byte-identical"
         );
     }
 }
