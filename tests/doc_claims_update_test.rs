@@ -514,10 +514,7 @@ fn update_json_emits_envelope_under_j1() {
 
 #[test]
 fn update_json_emits_ndjson_under_j_gt_1() {
-    let repos = [
-        ("local/org/a", "owned"),
-        ("local/org/b", "owned"),
-    ];
+    let repos = [("local/org/a", "owned"), ("local/org/b", "owned")];
     let ws = build_workspace("alpha", &repos);
 
     // Advance each remote.

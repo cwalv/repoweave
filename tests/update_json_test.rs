@@ -78,7 +78,11 @@ fn advance_bare_main(bare: &Path) -> String {
     } else {
         git_run(&work, &["pull", "origin", "main"]);
     }
-    std::fs::write(work.join("advance.txt"), format!("advance-{stem}-{}", uuid_fragment())).unwrap();
+    std::fs::write(
+        work.join("advance.txt"),
+        format!("advance-{stem}-{}", uuid_fragment()),
+    )
+    .unwrap();
     git_run(&work, &["add", "."]);
     git_run(&work, &["commit", "-m", &format!("advance {stem}")]);
     git_run(&work, &["push", "origin", "main"]);
@@ -117,7 +121,11 @@ fn build_workspace(project_name: &str, repos: &[(&str, &str)]) -> UpdateWorkspac
         init_bare_repo_with_commit(&bare);
         let canonical = workspace.join(repo_path);
         std::fs::create_dir_all(canonical.parent().unwrap()).unwrap();
-        let remote_name = if *role == "fork" { "upstream" } else { "origin" };
+        let remote_name = if *role == "fork" {
+            "upstream"
+        } else {
+            "origin"
+        };
         git_run(
             workspace.parent().unwrap(),
             &[

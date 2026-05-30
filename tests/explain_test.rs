@@ -112,16 +112,12 @@ fn explain_fetch_includes_purpose_and_schema() {
 #[test]
 fn explain_update_includes_schema_block() {
     // update was made --json-capable in fo-p89x0.2; its bundle now embeds a JSON Schema block.
-    rwv()
-        .args(["explain", "update"])
-        .assert()
-        .success()
-        .stdout(
-            predicate::str::contains("# rwv update")
-                .and(predicate::str::contains("## Output"))
-                .and(predicate::str::contains("UpdateJsonOutput"))
-                .and(predicate::str::contains("```json")),
-        );
+    rwv().args(["explain", "update"]).assert().success().stdout(
+        predicate::str::contains("# rwv update")
+            .and(predicate::str::contains("## Output"))
+            .and(predicate::str::contains("UpdateJsonOutput"))
+            .and(predicate::str::contains("```json")),
+    );
 }
 
 #[test]

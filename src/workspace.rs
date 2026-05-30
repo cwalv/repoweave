@@ -720,8 +720,7 @@ impl WorkweaveMarker {
 
     pub fn write(&self, dir: &Path) -> anyhow::Result<()> {
         let path = dir.join(".rwv-workweave");
-        let content = serde_yaml::to_string(self)
-            .context("failed to serialize .rwv-workweave")?;
+        let content = serde_yaml::to_string(self).context("failed to serialize .rwv-workweave")?;
         std::fs::write(&path, content)
             .with_context(|| format!("failed to write {}", path.display()))?;
         Ok(())

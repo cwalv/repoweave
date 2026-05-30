@@ -366,8 +366,8 @@ fn update_for_project(
             schema_url: UPDATE_SCHEMA_URL.to_string(),
             repos: json_records,
         };
-        let out = serde_json::to_string_pretty(&envelope)
-            .context("failed to serialize update output")?;
+        let out =
+            serde_json::to_string_pretty(&envelope).context("failed to serialize update output")?;
         println!("{out}");
     }
 

@@ -60,9 +60,9 @@ fn fetch_json_envelope_round_trips() {
     assert_eq!(outcomes[0]["status"], "ok");
     // ok outcomes must not carry a `message` key (skip_serializing_if = None).
     assert!(
-        outcomes[0].get("message").is_none()
-            || outcomes[0]["message"].is_null(),
-        "ok outcome must omit message or set null: {}", outcomes[0]
+        outcomes[0].get("message").is_none() || outcomes[0]["message"].is_null(),
+        "ok outcome must omit message or set null: {}",
+        outcomes[0]
     );
     assert_eq!(outcomes[1]["status"], "skipped");
     assert!(
@@ -276,7 +276,10 @@ fn fetch_json_envelope_emits_schema_and_outcomes_array() {
             entry.contains_key("absolute_path"),
             "outcome missing `absolute_path`: {o}"
         );
-        assert!(entry.contains_key("status"), "outcome missing `status`: {o}");
+        assert!(
+            entry.contains_key("status"),
+            "outcome missing `status`: {o}"
+        );
         assert_eq!(
             entry.get("status").and_then(Value::as_str),
             Some("ok"),

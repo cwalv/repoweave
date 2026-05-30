@@ -563,10 +563,12 @@ pub fn scan_for_legacy_workweave_markers(ws_root: &Path) -> Vec<LegacyWorkweaveM
 pub fn fix_legacy_workweave_marker(finding: &LegacyWorkweaveMarkerFile) -> anyhow::Result<bool> {
     let content = std::fs::read_to_string(&finding.marker_path)
         .with_context(|| format!("failed to read {} for --fix", finding.marker_path.display()))?;
-    let raw: serde_yaml::Value = serde_yaml::from_str(&content)
-        .with_context(|| {
-            format!("failed to re-parse {} for --fix", finding.marker_path.display())
-        })?;
+    let raw: serde_yaml::Value = serde_yaml::from_str(&content).with_context(|| {
+        format!(
+            "failed to re-parse {} for --fix",
+            finding.marker_path.display()
+        )
+    })?;
     // Re-check: don't rewrite if already has a non-null parent.
     if !raw.get("parent").map(|v| v.is_null()).unwrap_or(true) {
         return Ok(false);
@@ -580,10 +582,12 @@ pub fn fix_legacy_workweave_marker(finding: &LegacyWorkweaveMarkerFile) -> anyho
     } else {
         format!("{content}\n{line}")
     };
-    std::fs::write(&finding.marker_path, new_content)
-        .with_context(|| {
-            format!("failed to write {} during --fix", finding.marker_path.display())
-        })?;
+    std::fs::write(&finding.marker_path, new_content).with_context(|| {
+        format!(
+            "failed to write {} during --fix",
+            finding.marker_path.display()
+        )
+    })?;
     Ok(true)
 }
 
@@ -2103,8 +2107,8 @@ pub fn run_check_json(
         collect_doctor_violations(cwd, project_override, scope_all)?;
     let has_violations = !violations.is_empty();
     let payload = build_doctor_json(violations, &workspace_dir, &workweave_dirs);
-    let out = serde_json::to_string_pretty(&payload)
-        .context("failed to serialize doctor output")?;
+    let out =
+        serde_json::to_string_pretty(&payload).context("failed to serialize doctor output")?;
     println!("{out}");
     Ok(has_violations)
 }

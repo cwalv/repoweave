@@ -822,6 +822,9 @@ fn push_json_ndjson_under_parallel_mode() {
         let v: serde_json::Value = serde_json::from_str(line)
             .unwrap_or_else(|e| panic!("NDJSON line not JSON ({e}): {line}\n{stdout}"));
         assert!(v.is_object(), "NDJSON line must be object: {line}");
-        assert!(v.get("kind").is_some(), "NDJSON record missing kind: {line}");
+        assert!(
+            v.get("kind").is_some(),
+            "NDJSON record missing kind: {line}"
+        );
     }
 }

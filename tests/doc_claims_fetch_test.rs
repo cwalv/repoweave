@@ -635,11 +635,7 @@ fn fetch_json_ndjson_under_parallel_jobs() {
         let tw = tempfile::tempdir().unwrap();
         let w = tw.path().join("w");
         git(
-            &[
-                "clone",
-                &bare.to_string_lossy(),
-                &w.to_string_lossy(),
-            ],
+            &["clone", &bare.to_string_lossy(), &w.to_string_lossy()],
             tw.path(),
         );
         git(&["config", "user.email", "test@test.com"], &w);
@@ -691,7 +687,10 @@ fn fetch_json_ndjson_under_parallel_jobs() {
             schema_val.ends_with("/docs/reference/schemas/fetch.json"),
             "NDJSON $schema must end with /docs/reference/schemas/fetch.json; got: {schema_val}"
         );
-        assert!(obj.contains_key("path"), "NDJSON record missing path: {line}");
+        assert!(
+            obj.contains_key("path"),
+            "NDJSON record missing path: {line}"
+        );
         assert!(
             obj.contains_key("status"),
             "NDJSON record missing status: {line}"

@@ -45,15 +45,9 @@ pub const PUSH_SCHEMA_URL: &str =
 #[serde(tag = "kind", rename_all = "kebab-case")]
 pub enum PushOutcomeOutput {
     /// Manifest repo was pushed successfully.
-    Pushed {
-        path: String,
-        absolute_path: String,
-    },
+    Pushed { path: String, absolute_path: String },
     /// Manifest repo was skipped (Role::Fork — push via PR).
-    Skipped {
-        path: String,
-        absolute_path: String,
-    },
+    Skipped { path: String, absolute_path: String },
     /// Manifest repo push failed.
     Failed {
         path: String,

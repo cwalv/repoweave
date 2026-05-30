@@ -615,10 +615,8 @@ fn derive_local_path_from_url(url: &str) -> Option<PathBuf> {
 
 /// Serialize and write a manifest to disk, preserving YAML format.
 fn write_manifest(path: &Path, manifest: &Manifest) -> anyhow::Result<()> {
-    let yaml = serde_yaml::to_string(manifest)
-        .context("failed to serialize manifest")?;
-    std::fs::write(path, &yaml)
-        .with_context(|| format!("failed to write {}", path.display()))?;
+    let yaml = serde_yaml::to_string(manifest).context("failed to serialize manifest")?;
+    std::fs::write(path, &yaml).with_context(|| format!("failed to write {}", path.display()))?;
     Ok(())
 }
 

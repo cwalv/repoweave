@@ -976,10 +976,7 @@ impl Project {
 
         // Absolute path: find the "projects" component and take everything after it.
         let components: Vec<_> = dir.components().collect();
-        if let Some(idx) = components
-            .iter()
-            .rposition(|c| c.as_os_str() == "projects")
-        {
+        if let Some(idx) = components.iter().rposition(|c| c.as_os_str() == "projects") {
             let rest: PathBuf = components[idx + 1..].iter().collect();
             if !rest.as_os_str().is_empty() {
                 return rest.to_string_lossy().into_owned();

@@ -211,8 +211,7 @@ impl OpState {
 /// on all involved workspaces before calling this.
 pub fn write(workspace_dir: &Path, state: &OpState) -> anyhow::Result<()> {
     let path = OpState::path_in(workspace_dir);
-    let yaml = serde_yaml::to_string(state)
-        .context("failed to serialize op-state")?;
+    let yaml = serde_yaml::to_string(state).context("failed to serialize op-state")?;
     std::fs::write(&path, yaml)
         .with_context(|| format!("failed to write op-state to {}", path.display()))
 }

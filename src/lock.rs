@@ -124,10 +124,8 @@ pub fn generate_lock(
 /// generation). Both serialize as the same YAML shape — a single scalar
 /// per `version`.
 pub fn write_lock<L: serde::Serialize>(lock: &L, path: &Path) -> anyhow::Result<()> {
-    let yaml = serde_yaml::to_string(lock)
-        .context("failed to serialize lock file")?;
-    std::fs::write(path, &yaml)
-        .with_context(|| format!("failed to write {}", path.display()))?;
+    let yaml = serde_yaml::to_string(lock).context("failed to serialize lock file")?;
+    std::fs::write(path, &yaml).with_context(|| format!("failed to write {}", path.display()))?;
     Ok(())
 }
 

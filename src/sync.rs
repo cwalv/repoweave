@@ -1217,9 +1217,7 @@ fn materialize_missing_repo(
             let start_ref = entry.version.as_str();
             let head_rev = GitVcs
                 .resolve_revision(&canonical, start_ref)
-                .with_context(|| {
-                    format!("failed to resolve {start_ref} in canonical clone")
-                })?;
+                .with_context(|| format!("failed to resolve {start_ref} in canonical clone"))?;
             let branch = crate::vcs::RefName::new(format!(
                 "{}--{}/{}",
                 project_name.as_str(),
@@ -1695,8 +1693,7 @@ fn run_sync_impl_with_op_id(
         .join(&source_project_name);
 
     // Load manifests.
-    let cwd_project = Project::from_dir(&cwd_project_dir)
-        .context("failed to load CWD project")?;
+    let cwd_project = Project::from_dir(&cwd_project_dir).context("failed to load CWD project")?;
 
     // Precondition: CWD project repo must not be mid-op.
     if let Some(state) = crate::git::GitVcs::mid_op_state(&cwd_project_dir) {
@@ -1708,8 +1705,8 @@ fn run_sync_impl_with_op_id(
 
     // Precondition: lock freshness (unless --force).
     if !force {
-        let source_project = Project::from_dir(&source_project_dir)
-            .context("failed to load source project")?;
+        let source_project =
+            Project::from_dir(&source_project_dir).context("failed to load source project")?;
         if let Some(ref lock) = source_project.lock {
             check_lock_freshness(
                 &source_workspace_dir,
@@ -1811,8 +1808,7 @@ fn run_sync_impl_with_op_id(
             source_workspace_dir.clone(),
             workspace_dir.clone(),
         );
-        op_state::write(&workspace_dir, &state)
-            .context("failed to write op-state")?;
+        op_state::write(&workspace_dir, &state).context("failed to write op-state")?;
     }
 
     // Create savepoints for all CWD repos (including project repo).
@@ -1829,14 +1825,14 @@ fn run_sync_impl_with_op_id(
     // project after a Phase-1 reset, as the old contract did) keeps the lock
     // out of the merge inputs entirely.
     let source_lock_path = source_project_dir.join("rwv.lock");
-    let raw_source_lock = LockFile::from_path(&source_lock_path)
-        .context("failed to read source lock")?;
+    let raw_source_lock =
+        LockFile::from_path(&source_lock_path).context("failed to read source lock")?;
 
     // Load source manifest so we have URLs for any repos newly added at source
     // that need to be materialized on the CWD side.
     let source_manifest_path = source_project_dir.join("rwv.yaml");
-    let source_manifest = Manifest::from_path(&source_manifest_path)
-        .context("failed to read source manifest")?;
+    let source_manifest =
+        Manifest::from_path(&source_manifest_path).context("failed to read source manifest")?;
 
     // Phase 3 materialize: for each repo listed in source's lock but missing
     // from the CWD workspace, clone/worktree-add before Phase 2 tries to sync
@@ -2153,8 +2149,8 @@ fn retire_workweave_after_sync_to(
 ) -> anyhow::Result<()> {
     // Reload manifest post-Phase 3 so we see any repos newly added by sync.
     let manifest_path = cwd_project_dir.join("rwv.yaml");
-    let manifest = Manifest::from_path(&manifest_path)
-        .context("--retire: failed to reload manifest")?;
+    let manifest =
+        Manifest::from_path(&manifest_path).context("--retire: failed to reload manifest")?;
 
     // Compare each manifest repo's HEAD in CWD vs. target. After a successful
     // sync-to, step 3 has fast-forwarded the target's repos to CWD's tips, so
@@ -2402,8 +2398,8 @@ pub fn run_abort(cwd: &Path) -> anyhow::Result<()> {
     // out". rwv.lock may contain git conflict markers from the half-completed
     // rebase, so we must not try to parse it. The abort path only needs the
     // manifest (to enumerate repo paths); it never reads lock contents.
-    let cwd_project = Project::from_dir_skip_lock(&cwd_project_dir)
-        .context("failed to load CWD project")?;
+    let cwd_project =
+        Project::from_dir_skip_lock(&cwd_project_dir).context("failed to load CWD project")?;
 
     let mut any_failure = false;
 
@@ -2515,8 +2511,7 @@ fn abort_one_repo(repo: &Path, op_id: &OpId) -> anyhow::Result<()> {
     // Reset to savepoint.
     match read_savepoint(repo, op_id) {
         Some(sha) => {
-            git(&["reset", "--hard", sha.as_str()], repo)
-                .context("reset --hard failed")?;
+            git(&["reset", "--hard", sha.as_str()], repo).context("reset --hard failed")?;
             delete_savepoint(repo, op_id);
             Ok(())
         }
@@ -2591,9 +2586,7 @@ pub fn run_sync_json(
             do_continue,
         )
     } else {
-        let handler = JsonEnvelopeHandler {
-            records: &records,
-        };
+        let handler = JsonEnvelopeHandler { records: &records };
         run_sync_impl(
             cwd,
             source,
@@ -2652,8 +2645,8 @@ fn run_sync_json_impl(
             schema: schema_url.to_owned(),
             outcomes: records,
         };
-        let out = serde_json::to_string_pretty(&payload)
-            .context("failed to serialize sync output")?;
+        let out =
+            serde_json::to_string_pretty(&payload).context("failed to serialize sync output")?;
         println!("{out}");
     }
 
@@ -2771,9 +2764,7 @@ pub fn run_sync_to_json(
             do_continue,
         )
     } else {
-        let handler = JsonEnvelopeHandler {
-            records: &records,
-        };
+        let handler = JsonEnvelopeHandler { records: &records };
         run_sync_to_impl(
             cwd,
             target,
@@ -2885,8 +2876,7 @@ fn run_sync_to_impl(
             tgt_workspace_dir.clone(),
             retire,
         );
-        op_state::write(&cwd_workspace_dir, &state)
-            .context("failed to write op-state to CWD")?;
+        op_state::write(&cwd_workspace_dir, &state).context("failed to write op-state to CWD")?;
         op_state::write(&tgt_workspace_dir, &state)
             .context("failed to write op-state to target")?;
         ResolvedParams {

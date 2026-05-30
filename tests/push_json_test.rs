@@ -109,7 +109,10 @@ fn project_repo_kind_is_distinguishable_from_manifest_kind() {
 
     for mk in &manifest_kinds {
         for pk in &project_kinds {
-            assert_ne!(mk, pk, "manifest kind {mk} must differ from project kind {pk}");
+            assert_ne!(
+                mk, pk,
+                "manifest kind {mk} must differ from project kind {pk}"
+            );
         }
     }
 
@@ -258,7 +261,11 @@ fn build_workspace(project_name: &str, repos: &[(&str, &str)]) -> PushWorkspace 
 
         let canonical = workspace.join(repo_path);
         std::fs::create_dir_all(canonical.parent().unwrap()).unwrap();
-        let remote_name = if *role == "fork" { "upstream" } else { "origin" };
+        let remote_name = if *role == "fork" {
+            "upstream"
+        } else {
+            "origin"
+        };
         git_run(
             workspace.parent().unwrap(),
             &[
@@ -381,18 +388,31 @@ fn push_json_emits_envelope_with_schema_and_outcomes() {
         .expect("outcomes must be an array");
 
     // Should have 2 manifest repo outcomes + 1 project-repo outcome.
-    assert_eq!(outcomes.len(), 3, "expected 2 manifest + 1 project-repo: {stdout}");
+    assert_eq!(
+        outcomes.len(),
+        3,
+        "expected 2 manifest + 1 project-repo: {stdout}"
+    );
 
     for o in &outcomes[..2] {
         let kind = o.get("kind").and_then(Value::as_str).expect("kind field");
-        assert_eq!(kind, "pushed", "manifest repo outcome kind must be 'pushed': {o}");
+        assert_eq!(
+            kind, "pushed",
+            "manifest repo outcome kind must be 'pushed': {o}"
+        );
         assert!(o.get("path").is_some(), "outcome missing path: {o}");
-        assert!(o.get("absolute_path").is_some(), "outcome missing absolute_path: {o}");
+        assert!(
+            o.get("absolute_path").is_some(),
+            "outcome missing absolute_path: {o}"
+        );
     }
 
     // The last outcome is the project-repo record.
     let last = outcomes.last().unwrap();
-    let last_kind = last.get("kind").and_then(Value::as_str).expect("kind field");
+    let last_kind = last
+        .get("kind")
+        .and_then(Value::as_str)
+        .expect("kind field");
     assert_eq!(
         last_kind, "project-repo-pushed",
         "last outcome must be project-repo-pushed: {stdout}"
@@ -455,10 +475,13 @@ fn push_json_project_repo_distinguishable_from_manifest_repos() {
     );
 
     // Fork should be skipped.
-    let any_skipped = manifest_records.iter().any(|o| {
-        o.get("kind").and_then(Value::as_str) == Some("skipped")
-    });
-    assert!(any_skipped, "fork repo must produce 'skipped' outcome: {stdout}");
+    let any_skipped = manifest_records
+        .iter()
+        .any(|o| o.get("kind").and_then(Value::as_str) == Some("skipped"));
+    assert!(
+        any_skipped,
+        "fork repo must produce 'skipped' outcome: {stdout}"
+    );
 
     // Project-repo record must have `project` field.
     let proj_record = project_records[0];
@@ -483,11 +506,7 @@ fn push_json_project_repo_distinguishable_from_manifest_repos() {
 // End-to-end: NDJSON streaming under -j > 1
 // ---------------------------------------------------------------------------
 
-const PUSH_REPO_PATHS: &[&str] = &[
-    "local/org/alpha",
-    "local/org/beta",
-    "local/org/gamma",
-];
+const PUSH_REPO_PATHS: &[&str] = &["local/org/alpha", "local/org/beta", "local/org/gamma"];
 
 /// `rwv push --json -j 2` streams NDJSON: one record per line, each
 /// self-describing with `$schema`, and the project-repo record last.
@@ -526,9 +545,11 @@ fn push_json_ndjson_emits_one_record_per_line_under_jobs_gt_one() {
     let mut seen_manifest_paths = std::collections::BTreeSet::new();
 
     for line in &lines {
-        let v: Value = serde_json::from_str(line)
-            .unwrap_or_else(|e| panic!("line not JSON ({e}): {line}"));
-        let obj = v.as_object().unwrap_or_else(|| panic!("line not object: {line}"));
+        let v: Value =
+            serde_json::from_str(line).unwrap_or_else(|e| panic!("line not JSON ({e}): {line}"));
+        let obj = v
+            .as_object()
+            .unwrap_or_else(|| panic!("line not object: {line}"));
 
         // Every NDJSON record must embed $schema.
         assert_eq!(
@@ -538,7 +559,10 @@ fn push_json_ndjson_emits_one_record_per_line_under_jobs_gt_one() {
         );
         assert!(obj.contains_key("kind"), "missing kind: {line}");
         assert!(obj.contains_key("path"), "missing path: {line}");
-        assert!(obj.contains_key("absolute_path"), "missing absolute_path: {line}");
+        assert!(
+            obj.contains_key("absolute_path"),
+            "missing absolute_path: {line}"
+        );
 
         let kind = obj["kind"].as_str().unwrap();
         if kind.starts_with("project-repo-") {
@@ -554,7 +578,10 @@ fn push_json_ndjson_emits_one_record_per_line_under_jobs_gt_one() {
         }
     }
 
-    assert!(seen_project_repo, "NDJSON stream must include a project-repo record: {stdout}");
+    assert!(
+        seen_project_repo,
+        "NDJSON stream must include a project-repo record: {stdout}"
+    );
 
     // All manifest repos appear.
     for repo_path in PUSH_REPO_PATHS {
