@@ -3281,7 +3281,6 @@ mod vscode_workspace {
     /// §6.vscode.1 — User adds a personal `files.exclude` entry; sync must
     /// not eat it. RED vs current :178-181 (whole-map insert).
     #[test]
-    #[ignore = "RED: turned green by fo-cnpjy.5 (vscode per-key files.exclude)"]
     fn s6_vscode_1_user_files_exclude_entries_survive_activate() {
         let tmp = TempDir::new().unwrap();
         let root = tmp.path();
@@ -3354,7 +3353,6 @@ mod vscode_workspace {
     /// §6.vscode.2 — User-added extensions/launch/tasks/compounds survive
     /// activate AND deactivate. RED vs current :209 (whole-file delete).
     #[test]
-    #[ignore = "RED: turned green by fo-cnpjy.5 (vscode strip-not-delete)"]
     fn s6_vscode_2_user_top_level_blocks_survive_activate_and_deactivate() {
         let tmp = TempDir::new().unwrap();
         let root = tmp.path();
@@ -3445,7 +3443,6 @@ mod vscode_workspace {
     /// §6.vscode.3 — User converts to multi-root; rwv keeps the extra folder.
     /// RED vs current :119-122 (whole-array overwrite).
     #[test]
-    #[ignore = "RED: turned green by fo-cnpjy.5 (vscode multi-root folders)"]
     fn s6_vscode_3_user_added_folder_survives_multi_root() {
         let tmp = TempDir::new().unwrap();
         let root = tmp.path();
