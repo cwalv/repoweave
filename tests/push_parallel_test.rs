@@ -209,16 +209,17 @@ fn advance_all_and_relock(
 
 // ----- Tests -----------------------------------------------------------------
 
-/// Happy path under `-j > 1`: every manifest bare advances and the project
-/// bare advances at the end. Five manifest repos with `-j 4` exercises
-/// concurrency without being slow.
+/// Happy path under `-j > 1`: writable manifest bares (Owned + Fork) advance
+/// and the project bare advances at the end. Dependency repos are skipped by
+/// the default plan. Five manifest repos with `-j 4` exercises concurrency
+/// without being slow.
 #[test]
 fn push_dash_j_pushes_all_manifest_then_project() {
     let repos = [
         ("local/org/a", "owned"),
         ("local/org/b", "owned"),
-        ("local/org/c", "dependency"),
-        ("local/org/d", "dependency"),
+        ("local/org/c", "fork"),
+        ("local/org/d", "owned"),
         ("local/org/e", "owned"),
     ];
     let ws = build_workspace("alpha", &repos);

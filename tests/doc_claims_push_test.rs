@@ -785,3 +785,235 @@ fn push_json_ndjson_under_parallel_mode() {
         );
     }
 }
+
+// ===========================================================================
+// 10. Default plan = Owned + Fork; Dependency + Reference skipped unless
+//     selectors override.
+//
+// Doc claims:
+//   - bare `rwv push` pushes Owned + Fork; Dependency + Reference skipped
+//   - `rwv push --role dependency` overrides the default and pushes deps
+//   - `rwv push --repo <dep-path>` overrides and pushes just that dep
+// ===========================================================================
+
+/// Regression test: bare `rwv push` (no selectors) invokes `git push` for
+/// Owned + Fork repos and the project repo, but NOT for Dependency or Reference.
+/// This is the plan-time default — non-writable roles are excluded before the
+/// push loop, not skipped inside it.
+#[test]
+fn push_default_plan_skips_dependency_and_reference() {
+    let repos = [
+        ("local/org/owned", "owned"),
+        ("local/org/forked", "fork"),
+        ("local/org/dep", "dependency"),
+        ("local/org/ref", "reference"),
+    ];
+    let ws = build_workspace("alpha", &repos);
+
+    // Capture baselines for the non-writable repos before advancing anything.
+    let (_, dep_bare) = ws
+        .manifest_bares
+        .iter()
+        .find(|(p, _)| p == "local/org/dep")
+        .unwrap();
+    let (_, ref_bare) = ws
+        .manifest_bares
+        .iter()
+        .find(|(p, _)| p == "local/org/ref")
+        .unwrap();
+    let dep_baseline = bare_main_sha(dep_bare);
+    let ref_baseline = bare_main_sha(ref_bare);
+
+    let expected = advance_all_and_relock(&ws, &repos);
+
+    let output = rwv()
+        .args(["push"])
+        .current_dir(&ws.workspace)
+        .output()
+        .expect("rwv push");
+
+    assert!(
+        output.status.success(),
+        "bare rwv push should succeed; stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    // Owned + Fork repos must advance.
+    let (_, owned_bare) = ws
+        .manifest_bares
+        .iter()
+        .find(|(p, _)| p == "local/org/owned")
+        .unwrap();
+    let (_, fork_bare) = ws
+        .manifest_bares
+        .iter()
+        .find(|(p, _)| p == "local/org/forked")
+        .unwrap();
+    let (_, owned_sha) = expected
+        .iter()
+        .find(|(p, _)| p == "local/org/owned")
+        .unwrap();
+    let (_, fork_sha) = expected
+        .iter()
+        .find(|(p, _)| p == "local/org/forked")
+        .unwrap();
+
+    assert_eq!(
+        bare_main_sha(owned_bare),
+        Some(owned_sha.clone()),
+        "owned repo must be pushed by bare rwv push"
+    );
+    assert_eq!(
+        bare_main_sha(fork_bare),
+        Some(fork_sha.clone()),
+        "fork repo must be pushed by bare rwv push"
+    );
+
+    // Dependency + Reference repos must NOT advance.
+    assert_eq!(
+        bare_main_sha(dep_bare),
+        dep_baseline,
+        "dependency bare must NOT advance under bare rwv push (default skips non-writable roles)"
+    );
+    assert_eq!(
+        bare_main_sha(ref_bare),
+        ref_baseline,
+        "reference bare must NOT advance under bare rwv push (default skips non-writable roles)"
+    );
+
+    // Stdout should mention the skipped repos.
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("local/org/dep") && stdout.contains("skipped"),
+        "dependency skip notice must appear in output; got:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("local/org/ref") && stdout.contains("skipped"),
+        "reference skip notice must appear in output; got:\n{stdout}"
+    );
+}
+
+/// `--role dependency` overrides the default and pushes all dependency repos.
+/// This asserts the "selectors override" contract.
+#[test]
+fn push_role_dependency_overrides_default_and_pushes_deps() {
+    let repos = [
+        ("local/org/owned", "owned"),
+        ("local/org/dep1", "dependency"),
+        ("local/org/dep2", "dependency"),
+    ];
+    let ws = build_workspace("alpha", &repos);
+
+    // Capture owned baseline — it must NOT advance (not in selector).
+    let (_, owned_bare) = ws
+        .manifest_bares
+        .iter()
+        .find(|(p, _)| p == "local/org/owned")
+        .unwrap();
+    let owned_baseline = bare_main_sha(owned_bare);
+
+    let expected = advance_all_and_relock(&ws, &repos);
+
+    rwv()
+        .args(["push", "--role", "dependency"])
+        .current_dir(&ws.workspace)
+        .assert()
+        .success();
+
+    // Dependency repos advance.
+    let (_, dep1_bare) = ws
+        .manifest_bares
+        .iter()
+        .find(|(p, _)| p == "local/org/dep1")
+        .unwrap();
+    let (_, dep2_bare) = ws
+        .manifest_bares
+        .iter()
+        .find(|(p, _)| p == "local/org/dep2")
+        .unwrap();
+    let (_, dep1_sha) = expected
+        .iter()
+        .find(|(p, _)| p == "local/org/dep1")
+        .unwrap();
+    let (_, dep2_sha) = expected
+        .iter()
+        .find(|(p, _)| p == "local/org/dep2")
+        .unwrap();
+
+    assert_eq!(
+        bare_main_sha(dep1_bare),
+        Some(dep1_sha.clone()),
+        "dep1 should advance under --role dependency"
+    );
+    assert_eq!(
+        bare_main_sha(dep2_bare),
+        Some(dep2_sha.clone()),
+        "dep2 should advance under --role dependency"
+    );
+
+    // Owned repo must NOT advance (not matched by --role dependency).
+    assert_eq!(
+        bare_main_sha(owned_bare),
+        owned_baseline,
+        "owned repo must NOT advance when --role dependency overrides default"
+    );
+}
+
+/// `--repo <dep-path>` overrides the default and pushes just the named
+/// dependency. This asserts the exact-path selector override contract.
+#[test]
+fn push_repo_selector_overrides_default_and_pushes_named_dep() {
+    let repos = [
+        ("local/org/owned", "owned"),
+        ("local/org/dep", "dependency"),
+        ("local/org/other-dep", "dependency"),
+    ];
+    let ws = build_workspace("alpha", &repos);
+
+    // Baselines: owned and other-dep must NOT advance.
+    let (_, owned_bare) = ws
+        .manifest_bares
+        .iter()
+        .find(|(p, _)| p == "local/org/owned")
+        .unwrap();
+    let (_, other_dep_bare) = ws
+        .manifest_bares
+        .iter()
+        .find(|(p, _)| p == "local/org/other-dep")
+        .unwrap();
+    let owned_baseline = bare_main_sha(owned_bare);
+    let other_dep_baseline = bare_main_sha(other_dep_bare);
+
+    let expected = advance_all_and_relock(&ws, &repos);
+
+    rwv()
+        .args(["push", "--repo", "local/org/dep"])
+        .current_dir(&ws.workspace)
+        .assert()
+        .success();
+
+    // The named dep advances.
+    let (_, dep_bare) = ws
+        .manifest_bares
+        .iter()
+        .find(|(p, _)| p == "local/org/dep")
+        .unwrap();
+    let (_, dep_sha) = expected.iter().find(|(p, _)| p == "local/org/dep").unwrap();
+    assert_eq!(
+        bare_main_sha(dep_bare),
+        Some(dep_sha.clone()),
+        "named dep should advance under --repo local/org/dep"
+    );
+
+    // Non-matched repos must NOT advance.
+    assert_eq!(
+        bare_main_sha(owned_bare),
+        owned_baseline,
+        "owned repo must NOT advance under --repo local/org/dep"
+    );
+    assert_eq!(
+        bare_main_sha(other_dep_bare),
+        other_dep_baseline,
+        "other-dep must NOT advance under --repo local/org/dep (exact selector)"
+    );
+}

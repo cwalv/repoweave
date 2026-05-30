@@ -110,10 +110,15 @@ pub struct PushOutcomeNdjsonRecord<'a> {
 ///
 /// Refuses if invoked from a workweave (workweave branches shouldn't leak
 /// to shared remotes). Refuses if the project repo is off its canonical
-/// branch. Walks the manifest pushing each non-fork repo on the
-/// currently-checked-out branch via the role-conventional remote;
-/// aggregates failures and only pushes the project repo if every manifest
-/// push succeeded.
+/// branch. Walks the manifest pushing writable repos (Owned + Fork by
+/// default) on the currently-checked-out branch; aggregates failures and
+/// only pushes the project repo if every manifest push succeeded.
+///
+/// When `filter` is empty (no `--role` / `--repo` selectors), the push loop
+/// defaults to `[Owned, Fork]`. Dependency and Reference repos are skipped
+/// with a one-line notice each. When `filter` is non-empty, the caller's
+/// selectors are used verbatim — selectors override the default and can
+/// include non-writable roles.
 ///
 /// `force` propagates to every git push in the operation. `dry_run` prints
 /// the plan without executing any pushes.
@@ -290,10 +295,37 @@ pub fn run_push(
     //    detached HEAD in a repo we aren't going to push. Contrast with the
     //    lock-precondition above, which runs over the full manifest because
     //    the *lock* describes the full manifest.
+
+    // Plan-time default: when no --role / --repo selectors are supplied, limit
+    // the push loop to writable roles (Owned + Fork). Dependency and Reference
+    // repos return 403 against upstreams the operator doesn't own. When
+    // selectors ARE passed, use them verbatim — selectors override the default.
+    let (effective_filter, using_default): (RepoFilter, bool) = if filter.is_empty() {
+        // No selectors supplied — default to Owned + Fork.
+        (
+            RepoFilter::parse(&["owned".to_string(), "fork".to_string()], &[])
+                .expect("known-safe literal roles"),
+            true,
+        )
+    } else {
+        (filter.clone(), false)
+    };
+
     let filtered_repos: Vec<&(RepoPath, RepoEntry)> = manifest_repos
         .iter()
-        .filter(|(rp, entry)| filter.matches(rp, entry.role))
+        .filter(|(rp, entry)| effective_filter.matches(rp, entry.role))
         .collect();
+
+    // When using the default filter, collect the repos that were excluded so
+    // we can emit Skipped records and a user-visible skip notice.
+    let default_skipped_repos: Vec<&(RepoPath, RepoEntry)> = if using_default {
+        manifest_repos
+            .iter()
+            .filter(|(rp, entry)| !effective_filter.matches(rp, entry.role))
+            .collect()
+    } else {
+        Vec::new()
+    };
     let mut branch_errors: Vec<String> = Vec::new();
     let mut plan: Vec<PushPlanItem> = Vec::with_capacity(filtered_repos.len());
     for (repo_path, entry) in &filtered_repos {
@@ -354,6 +386,12 @@ pub fn run_push(
                 remote_label(item.role),
             );
         }
+        for (repo_path, _) in &default_skipped_repos {
+            println!(
+                "  {}: skipped (non-writable role; pass --repo or --role to include)",
+                repo_path.as_str(),
+            );
+        }
         println!(
             "  projects/{}: would push {} -> origin (last)",
             project_name, project_current,
@@ -408,10 +446,38 @@ pub fn run_push(
     });
 
     // Build wire-output records (manifest repos only, in order).
+    //
+    // Prepend plan-time skipped records first (default-filter excluded repos),
+    // then the pushed/failed outcomes from the parallel loop. This ordering
+    // keeps the JSON wire shape uniform: all manifest records before the
+    // project-repo record.
     let mut json_outcomes: Vec<PushOutcomeOutput> = Vec::new();
     let mut push_errors: Vec<String> = Vec::new();
     let mut pushed = 0usize;
     let mut skipped = 0usize;
+
+    // Emit text + JSON records for plan-time skipped repos (default filter
+    // excluded non-writable roles). Under --json, these become Skipped
+    // records in the outcomes array / NDJSON stream.
+    for (repo_path, _entry) in &default_skipped_repos {
+        let path_str = repo_path.as_str().to_string();
+        let abs_str = primary_root
+            .join(repo_path.as_path())
+            .to_string_lossy()
+            .into_owned();
+        if !json {
+            println!("rwv push: skipped {} (non-writable role)", path_str,);
+        }
+        skipped += 1;
+        let wire = PushOutcomeOutput::Skipped {
+            path: path_str,
+            absolute_path: abs_str,
+        };
+        if ndjson {
+            emit_ndjson_record(&write_lock, &wire);
+        }
+        json_outcomes.push(wire);
+    }
 
     for ((repo_path, abs_path, _item), raw) in plan_with_paths.iter().zip(raw_outcomes) {
         let path_str = repo_path.to_string();
@@ -421,13 +487,6 @@ pub fn run_push(
             PushOutcome::Pushed => {
                 pushed += 1;
                 PushOutcomeOutput::Pushed {
-                    path: path_str,
-                    absolute_path: abs_str,
-                }
-            }
-            PushOutcome::Skipped => {
-                skipped += 1;
-                PushOutcomeOutput::Skipped {
                     path: path_str,
                     absolute_path: abs_str,
                 }
@@ -454,7 +513,7 @@ pub fn run_push(
             eprintln!(
                 "rwv push: {}/{} manifest repo(s) failed; project repo not pushed:",
                 push_errors.len(),
-                plan_items.len() - skipped,
+                plan_items.len(),
             );
             for msg in &push_errors {
                 eprintln!("  - {msg}");
@@ -482,7 +541,7 @@ pub fn run_push(
     if !json {
         if skipped > 0 {
             println!(
-                "rwv push: pushed {} manifest repo(s); {} skipped",
+                "rwv push: pushed {} manifest repo(s); {} skipped (non-writable role; pass --repo or --role to include)",
                 pushed, skipped
             );
         } else {
@@ -592,12 +651,14 @@ struct PushPlanItem {
 
 /// Outcome of pushing a single manifest repo.
 ///
-/// `Skipped` is not produced by this bead's code paths; it is retained
-/// for B2 which will reintroduce plan-time skipping via selector logic.
+/// `Pushed` and `Failed` are produced by `push_one` for each plan item.
+/// Plan-time skipped repos (filtered out by the default `[Owned, Fork]`
+/// scope, or by explicit selectors) never enter the push loop and never
+/// produce a `PushOutcome`; they are handled separately as
+/// `PushOutcomeOutput::Skipped` records in the JSON output and as text
+/// skip notices in text mode.
 enum PushOutcome {
     Pushed,
-    #[allow(dead_code)]
-    Skipped,
     Failed(String),
 }
 

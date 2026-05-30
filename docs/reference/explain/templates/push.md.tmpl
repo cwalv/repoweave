@@ -12,6 +12,18 @@ shared remotes). Refuses if any manifest repo's HEAD disagrees with its lock
 entry (lock-precondition check). Use `rwv lock` to snapshot local state before
 pushing, or `git checkout` to align with the lock.
 
+**Default scope:** bare `rwv push` (no `--role` / `--repo` selectors) pushes
+only `owned` and `fork` repos — the roles the operator controls. `dependency`
+and `reference` repos are skipped with a one-line notice each. To include
+non-writable roles, use `--role` or `--repo` selectors (which override the
+default):
+
+```
+rwv push --role dependency          # push all dependencies
+rwv push --repo github/acme/dep     # push one specific dep
+rwv push --role owned --role fork   # explicit; same as the bare default
+```
+
 Agents call `rwv push --json` to get machine-readable per-repo outcomes so
 they can react to partial failures without parsing human-readable text.
 
@@ -29,8 +41,11 @@ rwv push [--json] [-j <N>] [--dry-run] [--force] [--role <role>] [--repo <select
   `-j`.
 - `--dry-run` prints the push plan without executing any pushes.
 - `--force` force-pushes every repo in the operation.
-- `--role` / `--repo` narrow the manifest-repo push loop (union semantics).
-  The lock-precondition check always runs against the full manifest regardless
+- `--role` / `--repo` narrow the manifest-repo push loop (union semantics)
+  and override the default `[owned, fork]` scope. When either flag is
+  present, the caller's selectors are used verbatim — pass `--role owned
+  --role fork` to reproduce the bare default explicitly. The
+  lock-precondition check always runs against the full manifest regardless
   of these filters.
 - `--project <name>` operates on the named project without changing
   `.rwv-active`.
@@ -69,7 +84,8 @@ Schema:
 
 ## Exit codes
 
-- `0` — all manifest repos pushed (or skipped by selector); project repo pushed.
+- `0` — all in-scope manifest repos pushed (non-writable roles skipped by
+  default or by selector); project repo pushed.
 - non-zero — at least one manifest push failed (project repo not pushed), or
   the project-repo push failed after manifest pushes succeeded.
 

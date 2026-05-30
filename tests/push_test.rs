@@ -186,37 +186,44 @@ fn bare_main_sha(bare: &Path) -> Option<String> {
 // Happy path
 // ============================================================================
 
+/// Happy path: bare `rwv push` pushes Owned + Fork; Dependency repos are
+/// skipped (plan-time default). The project repo is pushed last.
 #[test]
 fn push_happy_path_pushes_manifest_then_project() {
     let ws = build_workspace(
         "alpha",
-        &[("local/org/a", "owned"), ("local/org/b", "dependency")],
+        &[
+            ("local/org/a", "owned"),
+            ("local/org/b", "fork"),
+            ("local/org/c", "dependency"),
+        ],
     );
 
     // Advance each manifest repo with a new commit so there's something to
     // push. Re-write the lock to match new HEADs.
+    let repos = [
+        ("local/org/a", "owned"),
+        ("local/org/b", "fork"),
+        ("local/org/c", "dependency"),
+    ];
     let mut manifest_yaml = String::from("repositories:\n");
     let mut lock_yaml = String::from("repositories:\n");
     let mut expected_shas: Vec<(String, String)> = Vec::new();
-    for (rp, bare) in &ws.manifest_bares {
+    for (rp, role) in &repos {
+        let (_, bare) = ws.manifest_bares.iter().find(|(p, _)| p == rp).unwrap();
         let local = ws.workspace.join(rp);
         std::fs::write(local.join("changed.txt"), "new").unwrap();
         git_run(&local, &["add", "."]);
         git_run(&local, &["commit", "-m", "advance"]);
         let sha = git_run(&local, &["rev-parse", "HEAD"]);
         let bare_url = bare.to_str().unwrap();
-        let role = if rp == "local/org/a" {
-            "owned"
-        } else {
-            "dependency"
-        };
         manifest_yaml.push_str(&format!(
             "  {rp}:\n    type: git\n    url: {bare_url}\n    version: main\n    role: {role}\n"
         ));
         lock_yaml.push_str(&format!(
             "  {rp}:\n    type: git\n    url: {bare_url}\n    version: {sha}\n"
         ));
-        expected_shas.push((rp.clone(), sha));
+        expected_shas.push(((*rp).to_string(), sha));
     }
     let project_dir = ws.workspace.join("projects").join(&ws.project_name);
     std::fs::write(project_dir.join("rwv.yaml"), &manifest_yaml).unwrap();
@@ -225,18 +232,55 @@ fn push_happy_path_pushes_manifest_then_project() {
     git_run(&project_dir, &["commit", "-m", "advance lock"]);
     let project_head = git_run(&project_dir, &["rev-parse", "HEAD"]);
 
+    // Record the dependency's baseline SHA before push (it must NOT advance).
+    let (_, dep_bare) = ws
+        .manifest_bares
+        .iter()
+        .find(|(p, _)| p == "local/org/c")
+        .unwrap();
+    let dep_baseline = bare_main_sha(dep_bare);
+
     rwv()
         .args(["push"])
         .current_dir(&ws.workspace)
         .assert()
         .success();
 
-    // Every manifest bare must now hold the local HEAD; project bare too.
-    for (rp, expected_sha) in &expected_shas {
-        let (_, bare) = ws.manifest_bares.iter().find(|(p, _)| p == rp).unwrap();
-        let bare_sha = bare_main_sha(bare).expect("bare main must exist after push");
-        assert_eq!(&bare_sha, expected_sha, "{rp} bare should match local HEAD");
-    }
+    // Owned + Fork repos must advance; Dependency must NOT (default plan skips it).
+    let (_, owned_bare) = ws
+        .manifest_bares
+        .iter()
+        .find(|(p, _)| p == "local/org/a")
+        .unwrap();
+    let (_, fork_bare) = ws
+        .manifest_bares
+        .iter()
+        .find(|(p, _)| p == "local/org/b")
+        .unwrap();
+    let (_, owned_sha) = expected_shas
+        .iter()
+        .find(|(p, _)| p == "local/org/a")
+        .unwrap();
+    let (_, fork_sha) = expected_shas
+        .iter()
+        .find(|(p, _)| p == "local/org/b")
+        .unwrap();
+
+    assert_eq!(
+        bare_main_sha(owned_bare),
+        Some(owned_sha.clone()),
+        "owned repo should be pushed"
+    );
+    assert_eq!(
+        bare_main_sha(fork_bare),
+        Some(fork_sha.clone()),
+        "fork repo should be pushed"
+    );
+    assert_eq!(
+        bare_main_sha(dep_bare),
+        dep_baseline,
+        "dependency bare must NOT advance under bare rwv push (default plan skips non-writable roles)"
+    );
     assert_eq!(
         bare_main_sha(&ws.project_bare),
         Some(project_head),
