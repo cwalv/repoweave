@@ -584,7 +584,7 @@ impl Manifest {
                          run `rwv doctor --fix` to migrate to `role: owned`"
                     ))
                 } else {
-                    Err(anyhow::anyhow!("{err}"))
+                    Err(err.into())
                 }
             }
         }
