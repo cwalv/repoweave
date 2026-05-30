@@ -5,7 +5,7 @@
 //! and check (read-only inspection).
 
 use crate::manifest::{IntegrationConfig, ProjectName, RepoEntry, RepoPath};
-use std::collections::{BTreeMap, HashMap};
+use std::collections::HashMap;
 use std::path::Path;
 
 // ---------------------------------------------------------------------------
@@ -31,8 +31,11 @@ pub struct IntegrationContext<'a> {
     /// The active project name.
     pub project: &'a ProjectName,
 
-    /// Repo entries from the project's `rwv.yaml`, keyed by local path.
-    pub repos: &'a BTreeMap<RepoPath, RepoEntry>,
+    /// Repo entries from the project's `rwv.yaml`, as an ordered list of
+    /// `(path, entry)` pairs. Sorted by `RepoPath` (matches the BTreeMap
+    /// iteration order in the manifest). Integrations only iterate this
+    /// field; no random-access lookups are needed.
+    pub repos: Vec<(RepoPath, RepoEntry)>,
 
     /// Per-integration config from the `integrations:` key in `rwv.yaml`.
     pub config: &'a IntegrationConfig,
@@ -55,7 +58,10 @@ impl<'a> IntegrationContext<'a> {
     /// Repos that should appear in ecosystem workspace configs.
     /// Excludes `reference` repos — they're read-only, not part of the build graph.
     pub fn active_repos(&self) -> impl Iterator<Item = (&RepoPath, &RepoEntry)> {
-        self.repos.iter().filter(|(_, e)| e.role.is_active())
+        self.repos
+            .iter()
+            .filter(|(_, e)| e.role.is_active())
+            .map(|(rp, e)| (rp, e))
     }
 
     /// Active repos whose directory contains a given manifest file.
@@ -70,7 +76,7 @@ impl<'a> IntegrationContext<'a> {
         if let Some(cached) = self.detection_cache.get(filename) {
             return cached.clone();
         }
-        detect_repos_with_manifest_impl(self.workspace_root, self.repos, filename)
+        detect_repos_with_manifest_impl(self.workspace_root, &self.repos, filename)
     }
 }
 
@@ -80,7 +86,7 @@ impl<'a> IntegrationContext<'a> {
 /// and the cache pre-computation in the integration runner.
 pub fn detect_repos_with_manifest_impl(
     workspace_root: &Path,
-    repos: &BTreeMap<RepoPath, RepoEntry>,
+    repos: &[(RepoPath, RepoEntry)],
     filename: &str,
 ) -> Vec<String> {
     let mut paths: Vec<String> = repos

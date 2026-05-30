@@ -125,8 +125,11 @@ impl Integration for VscodeWorkspace {
         //   - Repos on disk that are not in this project (collapsed)
         //   - Other project directories
         //   - Optionally dotfiles
-        let active_repo_set: HashSet<String> =
-            ctx.repos.keys().map(|rp| rp.as_str().to_string()).collect();
+        let active_repo_set: HashSet<String> = ctx
+            .repos
+            .iter()
+            .map(|(rp, _)| rp.as_str().to_string())
+            .collect();
 
         let all_repos_on_disk: Vec<String> = ctx
             .all_repos_on_disk

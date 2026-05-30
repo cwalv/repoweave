@@ -526,7 +526,6 @@ pub struct WorkweaveConfig {
 /// - [`Manifest::iter_entries`] — iterate over `(path, entry)` pairs.
 /// - [`Manifest::len`] — number of repositories.
 /// - [`Manifest::is_empty`] — true when there are no repositories.
-/// - [`Manifest::repo_map`] — borrow the raw `BTreeMap` (struct-field uses only).
 ///
 /// The `repositories` field is `pub(crate)`; external callers must use the
 /// accessor methods above.
@@ -579,16 +578,6 @@ impl Manifest {
     /// field access. Prefer this over touching `repositories` directly.
     pub fn is_empty(&self) -> bool {
         self.repositories.is_empty()
-    }
-
-    /// Return a reference to the underlying `BTreeMap` of repositories.
-    ///
-    /// Use this only when a `&BTreeMap<RepoPath, RepoEntry>` is structurally
-    /// required (e.g., populating a struct field typed as `&BTreeMap`).
-    /// Prefer [`iter_entries`][Self::iter_entries] or
-    /// [`get_entry`][Self::get_entry] for all other access patterns.
-    pub fn repo_map(&self) -> &BTreeMap<RepoPath, RepoEntry> {
-        &self.repositories
     }
 
     /// Load from a YAML file.

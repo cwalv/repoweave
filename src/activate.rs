@@ -123,7 +123,10 @@ fn activate_at(
             output_dir: &project_dir,
             workspace_root: root,
             project: &project_name,
-            repos: &manifest.repositories,
+            repos: manifest
+                .iter_entries()
+                .map(|(rp, e)| (rp.clone(), e.clone()))
+                .collect(),
             config,
             all_repos_on_disk: session.repos_on_disk(),
             all_project_paths: session.project_paths(),

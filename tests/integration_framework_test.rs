@@ -148,7 +148,10 @@ fn active_repos_excludes_reference() {
         output_dir: tmp.path(),
         workspace_root: tmp.path(),
         project: &project,
-        repos: &repos,
+        repos: repos
+            .iter()
+            .map(|(rp, e)| (rp.clone(), e.clone()))
+            .collect(),
         config: &config,
         all_repos_on_disk: &[],
         all_project_paths: &[],
@@ -188,7 +191,10 @@ fn active_repos_includes_primary_fork_dependency() {
         output_dir: tmp.path(),
         workspace_root: tmp.path(),
         project: &project,
-        repos: &repos,
+        repos: repos
+            .iter()
+            .map(|(rp, e)| (rp.clone(), e.clone()))
+            .collect(),
         config: &config,
         all_repos_on_disk: &[],
         all_project_paths: &[],
@@ -224,7 +230,10 @@ fn mock_activate_receives_correct_context() {
         output_dir: Path::new("/workspace"),
         workspace_root: Path::new("/workspace"),
         project: &project,
-        repos: &repos,
+        repos: repos
+            .iter()
+            .map(|(rp, e)| (rp.clone(), e.clone()))
+            .collect(),
         config: &config,
         all_repos_on_disk: &[],
         all_project_paths: &[],
@@ -280,7 +289,10 @@ fn mock_check_returns_issues() {
         output_dir: Path::new("/workspace"),
         workspace_root: Path::new("/workspace"),
         project: &project,
-        repos: &repos,
+        repos: repos
+            .iter()
+            .map(|(rp, e)| (rp.clone(), e.clone()))
+            .collect(),
         config: &config,
         all_repos_on_disk: &[],
         all_project_paths: &[],
@@ -376,7 +388,10 @@ fn detect_repos_with_manifest_uses_workspace_root_not_output_dir() {
         output_dir,
         workspace_root,
         project: &project,
-        repos: &repos,
+        repos: repos
+            .iter()
+            .map(|(rp, e)| (rp.clone(), e.clone()))
+            .collect(),
         config: &config,
         all_repos_on_disk: &[],
         all_project_paths: &[],
@@ -413,7 +428,10 @@ fn detect_repos_with_manifest_ignores_output_dir_manifests() {
         output_dir,
         workspace_root,
         project: &project,
-        repos: &repos,
+        repos: repos
+            .iter()
+            .map(|(rp, e)| (rp.clone(), e.clone()))
+            .collect(),
         config: &config,
         all_repos_on_disk: &[],
         all_project_paths: &[],
@@ -445,7 +463,10 @@ fn context_output_dir_and_workspace_root_can_be_same() {
         output_dir: root,
         workspace_root: root,
         project: &project,
-        repos: &repos,
+        repos: repos
+            .iter()
+            .map(|(rp, e)| (rp.clone(), e.clone()))
+            .collect(),
         config: &config,
         all_repos_on_disk: &[],
         all_project_paths: &[],
@@ -464,7 +485,10 @@ fn context_output_dir_and_workspace_root_can_be_same() {
 fn default_activate_hook_is_noop() {
     let mock = MockIntegration::new("test-integration", true);
 
-    let repos = BTreeMap::new();
+    let repos: Vec<(
+        repoweave::manifest::RepoPath,
+        repoweave::manifest::RepoEntry,
+    )> = vec![];
     let project = ProjectName::new("test-project");
     let config = IntegrationConfig::default();
     let cache = HashMap::new();
@@ -472,7 +496,10 @@ fn default_activate_hook_is_noop() {
         output_dir: Path::new("/workspace"),
         workspace_root: Path::new("/workspace"),
         project: &project,
-        repos: &repos,
+        repos: repos
+            .iter()
+            .map(|(rp, e)| (rp.clone(), e.clone()))
+            .collect(),
         config: &config,
         all_repos_on_disk: &[],
         all_project_paths: &[],
@@ -541,7 +568,10 @@ impl Integration for MockIntegrationWithActivateHook {
 fn overridden_activate_hook_is_called() {
     let integration = MockIntegrationWithActivateHook::new("cargo");
 
-    let repos = BTreeMap::new();
+    let repos: Vec<(
+        repoweave::manifest::RepoPath,
+        repoweave::manifest::RepoEntry,
+    )> = vec![];
     let project = ProjectName::new("my-project");
     let config = IntegrationConfig::default();
     let cache = HashMap::new();
@@ -549,7 +579,10 @@ fn overridden_activate_hook_is_called() {
         output_dir: Path::new("/workspace"),
         workspace_root: Path::new("/workspace"),
         project: &project,
-        repos: &repos,
+        repos: repos
+            .iter()
+            .map(|(rp, e)| (rp.clone(), e.clone()))
+            .collect(),
         config: &config,
         all_repos_on_disk: &[],
         all_project_paths: &[],
@@ -572,7 +605,10 @@ fn overridden_activate_hook_is_called() {
 fn default_generated_files_returns_empty() {
     let mock = MockIntegration::new("test-integration", true);
 
-    let repos = BTreeMap::new();
+    let repos: Vec<(
+        repoweave::manifest::RepoPath,
+        repoweave::manifest::RepoEntry,
+    )> = vec![];
     let project = ProjectName::new("test-project");
     let config = IntegrationConfig::default();
     let cache = HashMap::new();
@@ -580,7 +616,10 @@ fn default_generated_files_returns_empty() {
         output_dir: Path::new("/workspace"),
         workspace_root: Path::new("/workspace"),
         project: &project,
-        repos: &repos,
+        repos: repos
+            .iter()
+            .map(|(rp, e)| (rp.clone(), e.clone()))
+            .collect(),
         config: &config,
         all_repos_on_disk: &[],
         all_project_paths: &[],
@@ -603,7 +642,10 @@ fn cargo_workspace_generated_files() {
     use repoweave::integrations::CargoWorkspace;
 
     // No matching repos → empty
-    let repos = BTreeMap::new();
+    let repos: Vec<(
+        repoweave::manifest::RepoPath,
+        repoweave::manifest::RepoEntry,
+    )> = vec![];
     let project = ProjectName::new("test-project");
     let config = IntegrationConfig::default();
     let tmp = TempDir::new().unwrap();
@@ -612,7 +654,10 @@ fn cargo_workspace_generated_files() {
         output_dir: tmp.path(),
         workspace_root: tmp.path(),
         project: &project,
-        repos: &repos,
+        repos: repos
+            .iter()
+            .map(|(rp, e)| (rp.clone(), e.clone()))
+            .collect(),
         config: &config,
         all_repos_on_disk: &[],
         all_project_paths: &[],
@@ -631,7 +676,10 @@ fn cargo_workspace_generated_files() {
         output_dir: tmp.path(),
         workspace_root: tmp.path(),
         project: &project,
-        repos: &repos_with_manifest,
+        repos: repos_with_manifest
+            .iter()
+            .map(|(rp, e)| (rp.clone(), e.clone()))
+            .collect(),
         config: &config,
         all_repos_on_disk: &[],
         all_project_paths: &[],
@@ -648,7 +696,10 @@ fn npm_workspaces_generated_files() {
     use repoweave::integrations::NpmWorkspaces;
 
     // No matching repos → empty
-    let repos = BTreeMap::new();
+    let repos: Vec<(
+        repoweave::manifest::RepoPath,
+        repoweave::manifest::RepoEntry,
+    )> = vec![];
     let project = ProjectName::new("test-project");
     let config = IntegrationConfig::default();
     let tmp = TempDir::new().unwrap();
@@ -657,7 +708,10 @@ fn npm_workspaces_generated_files() {
         output_dir: tmp.path(),
         workspace_root: tmp.path(),
         project: &project,
-        repos: &repos,
+        repos: repos
+            .iter()
+            .map(|(rp, e)| (rp.clone(), e.clone()))
+            .collect(),
         config: &config,
         all_repos_on_disk: &[],
         all_project_paths: &[],
@@ -676,7 +730,10 @@ fn npm_workspaces_generated_files() {
         output_dir: tmp.path(),
         workspace_root: tmp.path(),
         project: &project,
-        repos: &repos_with_manifest,
+        repos: repos_with_manifest
+            .iter()
+            .map(|(rp, e)| (rp.clone(), e.clone()))
+            .collect(),
         config: &config,
         all_repos_on_disk: &[],
         all_project_paths: &[],
@@ -693,7 +750,10 @@ fn pnpm_workspaces_generated_files() {
     use repoweave::integrations::PnpmWorkspaces;
 
     // No matching repos → empty
-    let repos = BTreeMap::new();
+    let repos: Vec<(
+        repoweave::manifest::RepoPath,
+        repoweave::manifest::RepoEntry,
+    )> = vec![];
     let project = ProjectName::new("test-project");
     let config = IntegrationConfig::default();
     let tmp = TempDir::new().unwrap();
@@ -702,7 +762,10 @@ fn pnpm_workspaces_generated_files() {
         output_dir: tmp.path(),
         workspace_root: tmp.path(),
         project: &project,
-        repos: &repos,
+        repos: repos
+            .iter()
+            .map(|(rp, e)| (rp.clone(), e.clone()))
+            .collect(),
         config: &config,
         all_repos_on_disk: &[],
         all_project_paths: &[],
@@ -721,7 +784,10 @@ fn pnpm_workspaces_generated_files() {
         output_dir: tmp.path(),
         workspace_root: tmp.path(),
         project: &project,
-        repos: &repos_with_manifest,
+        repos: repos_with_manifest
+            .iter()
+            .map(|(rp, e)| (rp.clone(), e.clone()))
+            .collect(),
         config: &config,
         all_repos_on_disk: &[],
         all_project_paths: &[],
@@ -738,7 +804,10 @@ fn go_work_generated_files() {
     use repoweave::integrations::GoWork;
 
     // No matching repos → empty
-    let repos = BTreeMap::new();
+    let repos: Vec<(
+        repoweave::manifest::RepoPath,
+        repoweave::manifest::RepoEntry,
+    )> = vec![];
     let project = ProjectName::new("test-project");
     let config = IntegrationConfig::default();
     let tmp = TempDir::new().unwrap();
@@ -747,7 +816,10 @@ fn go_work_generated_files() {
         output_dir: tmp.path(),
         workspace_root: tmp.path(),
         project: &project,
-        repos: &repos,
+        repos: repos
+            .iter()
+            .map(|(rp, e)| (rp.clone(), e.clone()))
+            .collect(),
         config: &config,
         all_repos_on_disk: &[],
         all_project_paths: &[],
@@ -766,7 +838,10 @@ fn go_work_generated_files() {
         output_dir: tmp.path(),
         workspace_root: tmp.path(),
         project: &project,
-        repos: &repos_with_manifest,
+        repos: repos_with_manifest
+            .iter()
+            .map(|(rp, e)| (rp.clone(), e.clone()))
+            .collect(),
         config: &config,
         all_repos_on_disk: &[],
         all_project_paths: &[],
@@ -780,7 +855,10 @@ fn uv_workspace_generated_files() {
     use repoweave::integrations::UvWorkspace;
 
     // No matching repos → empty
-    let repos = BTreeMap::new();
+    let repos: Vec<(
+        repoweave::manifest::RepoPath,
+        repoweave::manifest::RepoEntry,
+    )> = vec![];
     let project = ProjectName::new("test-project");
     let config = IntegrationConfig::default();
     let tmp = TempDir::new().unwrap();
@@ -789,7 +867,10 @@ fn uv_workspace_generated_files() {
         output_dir: tmp.path(),
         workspace_root: tmp.path(),
         project: &project,
-        repos: &repos,
+        repos: repos
+            .iter()
+            .map(|(rp, e)| (rp.clone(), e.clone()))
+            .collect(),
         config: &config,
         all_repos_on_disk: &[],
         all_project_paths: &[],
@@ -808,7 +889,10 @@ fn uv_workspace_generated_files() {
         output_dir: tmp.path(),
         workspace_root: tmp.path(),
         project: &project,
-        repos: &repos_with_manifest,
+        repos: repos_with_manifest
+            .iter()
+            .map(|(rp, e)| (rp.clone(), e.clone()))
+            .collect(),
         config: &config,
         all_repos_on_disk: &[],
         all_project_paths: &[],
@@ -824,7 +908,10 @@ fn uv_workspace_generated_files() {
 fn gita_generated_files() {
     use repoweave::integrations::Gita;
 
-    let repos = BTreeMap::new();
+    let repos: Vec<(
+        repoweave::manifest::RepoPath,
+        repoweave::manifest::RepoEntry,
+    )> = vec![];
     let project = ProjectName::new("test-project");
     let config = IntegrationConfig::default();
     let cache = HashMap::new();
@@ -832,7 +919,10 @@ fn gita_generated_files() {
         output_dir: Path::new("/workspace"),
         workspace_root: Path::new("/workspace"),
         project: &project,
-        repos: &repos,
+        repos: repos
+            .iter()
+            .map(|(rp, e)| (rp.clone(), e.clone()))
+            .collect(),
         config: &config,
         all_repos_on_disk: &[],
         all_project_paths: &[],
@@ -847,7 +937,10 @@ fn gita_generated_files() {
 fn vscode_workspace_generated_files_includes_project_name() {
     use repoweave::integrations::VscodeWorkspace;
 
-    let repos = BTreeMap::new();
+    let repos: Vec<(
+        repoweave::manifest::RepoPath,
+        repoweave::manifest::RepoEntry,
+    )> = vec![];
     let project = ProjectName::new("web-app");
     let config = IntegrationConfig::default();
     let cache = HashMap::new();
@@ -855,7 +948,10 @@ fn vscode_workspace_generated_files_includes_project_name() {
         output_dir: Path::new("/workspace"),
         workspace_root: Path::new("/workspace"),
         project: &project,
-        repos: &repos,
+        repos: repos
+            .iter()
+            .map(|(rp, e)| (rp.clone(), e.clone()))
+            .collect(),
         config: &config,
         all_repos_on_disk: &[],
         all_project_paths: &[],
@@ -870,7 +966,10 @@ fn vscode_workspace_generated_files_includes_project_name() {
 fn vscode_workspace_generated_files_varies_with_project() {
     use repoweave::integrations::VscodeWorkspace;
 
-    let repos = BTreeMap::new();
+    let repos: Vec<(
+        repoweave::manifest::RepoPath,
+        repoweave::manifest::RepoEntry,
+    )> = vec![];
     let config = IntegrationConfig::default();
 
     // Different project name produces different filename
@@ -880,7 +979,10 @@ fn vscode_workspace_generated_files_varies_with_project() {
         output_dir: Path::new("/workspace"),
         workspace_root: Path::new("/workspace"),
         project: &project,
-        repos: &repos,
+        repos: repos
+            .iter()
+            .map(|(rp, e)| (rp.clone(), e.clone()))
+            .collect(),
         config: &config,
         all_repos_on_disk: &[],
         all_project_paths: &[],

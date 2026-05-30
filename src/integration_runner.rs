@@ -11,7 +11,7 @@ use std::collections::HashMap;
 use std::path::Path;
 
 use crate::integration::{is_enabled, Integration, IntegrationContext, Issue, Severity};
-use crate::manifest::{IntegrationConfig, Manifest, ProjectName, RepoPath};
+use crate::manifest::{IntegrationConfig, Manifest, ProjectName, RepoEntry, RepoPath};
 
 /// Shared base data for constructing `IntegrationContext` per integration.
 pub struct IntegrationContextBase<'a> {
@@ -84,7 +84,10 @@ impl<'a> IntegrationContextBase<'a> {
             output_dir: self.output_dir,
             workspace_root: self.workspace_root,
             project: self.project,
-            repos: &manifest.repositories,
+            repos: manifest
+                .iter_entries()
+                .map(|(rp, e)| (rp.clone(), e.clone()))
+                .collect::<Vec<(RepoPath, RepoEntry)>>(),
             config,
             all_repos_on_disk: self.all_repos_on_disk,
             all_project_paths: self.all_project_paths,

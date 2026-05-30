@@ -44,7 +44,10 @@ fn make_ctx<'a>(
         output_dir: root,
         workspace_root: root,
         project,
-        repos: manifest.repo_map(),
+        repos: manifest
+            .iter_entries()
+            .map(|(rp, e)| (rp.clone(), e.clone()))
+            .collect(),
         config,
         all_repos_on_disk: &[],
         all_project_paths: &[],
@@ -1303,7 +1306,10 @@ mod gita {
             output_dir,
             workspace_root,
             project: &project,
-            repos: manifest.repo_map(),
+            repos: manifest
+                .iter_entries()
+                .map(|(rp, e)| (rp.clone(), e.clone()))
+                .collect(),
             config: &config,
             all_repos_on_disk: &[],
             all_project_paths: &[],
@@ -1567,7 +1573,10 @@ mod vscode_workspace {
             output_dir: root,
             workspace_root: root,
             project: &project,
-            repos: manifest.repo_map(),
+            repos: manifest
+                .iter_entries()
+                .map(|(rp, e)| (rp.clone(), e.clone()))
+                .collect(),
             config: &config,
             all_repos_on_disk: &all_repos_on_disk,
             all_project_paths: &[],
@@ -1606,7 +1615,10 @@ mod vscode_workspace {
             output_dir: root,
             workspace_root: root,
             project: &project,
-            repos: manifest.repo_map(),
+            repos: manifest
+                .iter_entries()
+                .map(|(rp, e)| (rp.clone(), e.clone()))
+                .collect(),
             config: &config,
             all_repos_on_disk: &all_repos_on_disk,
             all_project_paths: &all_project_paths,
@@ -1692,7 +1704,10 @@ mod vscode_workspace {
             output_dir: root,
             workspace_root: root,
             project: &project,
-            repos: manifest.repo_map(),
+            repos: manifest
+                .iter_entries()
+                .map(|(rp, e)| (rp.clone(), e.clone()))
+                .collect(),
             config: &config,
             all_repos_on_disk: &all_repos_on_disk,
             all_project_paths: &[],
