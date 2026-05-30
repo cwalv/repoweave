@@ -308,7 +308,9 @@ pub enum VcsErrorOutput {
         ctx: String,
         /// Display form of the underlying `io::Error`. The native source is
         /// dropped at the wire boundary since `io::Error` does not serialize.
-        error: String,
+        /// Named `message` (not `error`) to make clear this is free-form display
+        /// text, not a typed discriminant that consumers can branch on.
+        message: String,
     },
     CommandFailed {
         args: Vec<String>,
@@ -337,7 +339,7 @@ impl From<&VcsError> for VcsErrorOutput {
             },
             VcsError::Io { ctx, source } => Self::Io {
                 ctx: ctx.clone(),
-                error: source.to_string(),
+                message: source.to_string(),
             },
             VcsError::CommandFailed { args, repo, stderr } => Self::CommandFailed {
                 args: args.clone(),

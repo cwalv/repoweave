@@ -119,8 +119,9 @@ pub enum CheckViolation {
         project: ProjectName,
         /// Absolute path to the offending `rwv.yaml`.
         manifest_path: PathBuf,
-        /// The parse error returned by `Project::from_dir`.
-        error: String,
+        /// Free-form display string of the parse error (from `anyhow::Error::to_string`).
+        /// No structured parse-error type is available at this boundary.
+        message: String,
     },
 }
 
@@ -243,7 +244,9 @@ pub enum ViolationOutput {
     UnparseableProject {
         project: String,
         manifest_path: String,
-        error: String,
+        /// Free-form display string of the YAML parse error. Named `message`
+        /// (not `error`) to signal this is display text, not a typed discriminant.
+        message: String,
     },
 }
 
@@ -377,11 +380,11 @@ impl ViolationOutput {
             CheckViolation::UnparseableProject {
                 project,
                 manifest_path,
-                error,
+                message,
             } => Self::UnparseableProject {
                 project: project.to_string(),
                 manifest_path: manifest_path.to_string_lossy().into_owned(),
-                error,
+                message,
             },
         }
     }
@@ -780,11 +783,11 @@ pub fn violations_to_issues(violations: Vec<CheckViolation>) -> Vec<Issue> {
                 CheckViolation::UnparseableProject {
                     project,
                     manifest_path,
-                    error,
+                    message,
                 } => (
                     crate::integration::Severity::Error,
                     format!(
-                        "{project}: manifest at {} cannot be parsed: {error}",
+                        "{project}: manifest at {} cannot be parsed: {message}",
                         manifest_path.display()
                     ),
                 ),
@@ -1534,11 +1537,11 @@ pub fn run_check(
 
     // Surface unparseable manifests as first-class violations so the
     // workspace is never reported as "clean" when a manifest is broken.
-    for (project, manifest_path, error) in &unparseable_projects {
+    for (project, manifest_path, message) in &unparseable_projects {
         violations.push(CheckViolation::UnparseableProject {
             project: project.clone(),
             manifest_path: manifest_path.clone(),
-            error: error.clone(),
+            message: message.clone(),
         });
     }
 
@@ -1971,11 +1974,11 @@ fn collect_doctor_violations(
     }
 
     // Unparseable manifests: surface as violations in the JSON channel too.
-    for (project, manifest_path, error) in unparseable_projects_json {
+    for (project, manifest_path, message) in unparseable_projects_json {
         violations.push(CheckViolation::UnparseableProject {
             project,
             manifest_path,
-            error,
+            message,
         });
     }
 

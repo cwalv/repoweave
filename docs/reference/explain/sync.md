@@ -130,13 +130,13 @@ Schema:
       ]
     },
     "SyncFailureOutput": {
-      "description": "Wire-output mirror of [`SyncFailure`] for `--json` emission.\n\nCarries the same payload as the in-memory enum but with a `cause` represented as the serialisable [`VcsErrorOutput`]. The hand-rolled tag strings match [`SyncFailure::kind`] (verified via snapshot tests).",
+      "description": "Wire-output mirror of [`SyncFailure`] for `--json` emission.\n\nCarries the same payload as the in-memory enum but with a `cause` represented as the serialisable [`VcsErrorOutput`]. The hand-rolled tag strings match [`SyncFailure::kind`] (verified via snapshot tests).\n\n`message` is the human-readable display string of the failure (free-form text, not a typed discriminant). `cause` is the structured typed cause when the failure originated from a [`crate::vcs::VcsError`] call — consumers that want to branch on failure mode should inspect `cause.kind` rather than parsing `message`.",
       "oneOf": [
         {
           "type": "object",
           "required": [
-            "error",
-            "kind"
+            "kind",
+            "message"
           ],
           "properties": {
             "cause": {
@@ -148,23 +148,24 @@ Schema:
                   "type": "null"
                 }
               ]
-            },
-            "error": {
-              "type": "string"
             },
             "kind": {
               "type": "string",
               "enum": [
                 "head-unreadable"
               ]
+            },
+            "message": {
+              "description": "Free-form display message for this failure. Not a typed discriminant.",
+              "type": "string"
             }
           }
         },
         {
           "type": "object",
           "required": [
-            "error",
-            "kind"
+            "kind",
+            "message"
           ],
           "properties": {
             "cause": {
@@ -176,23 +177,24 @@ Schema:
                   "type": "null"
                 }
               ]
-            },
-            "error": {
-              "type": "string"
             },
             "kind": {
               "type": "string",
               "enum": [
                 "ff-impossible"
               ]
+            },
+            "message": {
+              "description": "Free-form display message for this failure. Not a typed discriminant.",
+              "type": "string"
             }
           }
         },
         {
           "type": "object",
           "required": [
-            "error",
-            "kind"
+            "kind",
+            "message"
           ],
           "properties": {
             "cause": {
@@ -204,23 +206,24 @@ Schema:
                   "type": "null"
                 }
               ]
-            },
-            "error": {
-              "type": "string"
             },
             "kind": {
               "type": "string",
               "enum": [
                 "rebase-failed"
               ]
+            },
+            "message": {
+              "description": "Free-form display message for this failure. Not a typed discriminant.",
+              "type": "string"
             }
           }
         },
         {
           "type": "object",
           "required": [
-            "error",
-            "kind"
+            "kind",
+            "message"
           ],
           "properties": {
             "cause": {
@@ -233,14 +236,15 @@ Schema:
                 }
               ]
             },
-            "error": {
-              "type": "string"
-            },
             "kind": {
               "type": "string",
               "enum": [
                 "merge-failed"
               ]
+            },
+            "message": {
+              "description": "Free-form display message for this failure. Not a typed discriminant.",
+              "type": "string"
             }
           }
         }
@@ -476,15 +480,11 @@ Schema:
           "type": "object",
           "required": [
             "ctx",
-            "error",
-            "kind"
+            "kind",
+            "message"
           ],
           "properties": {
             "ctx": {
-              "type": "string"
-            },
-            "error": {
-              "description": "Display form of the underlying `io::Error`. The native source is dropped at the wire boundary since `io::Error` does not serialize.",
               "type": "string"
             },
             "kind": {
@@ -492,6 +492,10 @@ Schema:
               "enum": [
                 "io"
               ]
+            },
+            "message": {
+              "description": "Display form of the underlying `io::Error`. The native source is dropped at the wire boundary since `io::Error` does not serialize. Named `message` (not `error`) to make clear this is free-form display text, not a typed discriminant that consumers can branch on.",
+              "type": "string"
             }
           }
         },

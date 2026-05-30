@@ -1151,7 +1151,7 @@ mod doctor_json {
                 CheckViolation::UnparseableProject {
                     project: pn(),
                     manifest_path: std::path::PathBuf::from("/ws/projects/p/rwv.yaml"),
-                    error: "bad yaml".to_owned(),
+                    message: "bad yaml".to_owned(),
                 },
                 "unparseable-project",
             ),
@@ -1269,7 +1269,7 @@ mod doctor_json {
         UnparseableProject {
             project: String,
             manifest_path: String,
-            error: String,
+            message: String,
         },
     }
 
@@ -1316,7 +1316,7 @@ mod doctor_json {
             CheckViolation::UnparseableProject {
                 project: ProjectName::new("p"),
                 manifest_path: std::path::PathBuf::from("/ws/projects/p/rwv.yaml"),
-                error: "bad yaml".to_owned(),
+                message: "bad yaml".to_owned(),
             },
         ];
         let expected_len = violations.len();
@@ -1342,6 +1342,32 @@ mod doctor_json {
             parsed[8],
             WireViolation::UnparseableProject { .. }
         ));
+    }
+
+    /// fo-auikb: ViolationOutput::UnparseableProject emits `message` (not `error`).
+    /// The field was renamed to signal it is free-form display text from an
+    /// anyhow::Error, not a typed discriminant consumers can branch on.
+    #[test]
+    fn unparseable_project_wire_uses_message_not_error() {
+        let ws = workspace_dir();
+        let no_ww = empty_workweave_dirs();
+        let violation = CheckViolation::UnparseableProject {
+            project: ProjectName::new("broken-app"),
+            manifest_path: std::path::PathBuf::from("/ws/projects/broken-app/rwv.yaml"),
+            message: "did not find expected key".to_owned(),
+        };
+        let json =
+            serde_json::to_value(ViolationOutput::from_violation(violation, &ws, &no_ww)).unwrap();
+        assert_eq!(json["kind"], "unparseable-project");
+        assert!(
+            json.get("message").is_some(),
+            "wire output must have `message` field: {json}"
+        );
+        assert!(
+            json.get("error").is_none(),
+            "wire output must NOT have legacy `error` field: {json}"
+        );
+        assert_eq!(json["message"], "did not find expected key");
     }
 }
 
@@ -1573,8 +1599,8 @@ fn check_unparseable_project_in_json_output() {
         "manifest_path field should be present"
     );
     assert!(
-        entry.get("error").and_then(|s| s.as_str()).is_some(),
-        "error field should contain the parse error"
+        entry.get("message").and_then(|s| s.as_str()).is_some(),
+        "message field should contain the parse error"
     );
 }
 

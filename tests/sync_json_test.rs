@@ -364,7 +364,7 @@ fn outcome_failed_head_unreadable_serializes() {
     );
     assert_eq!(v["kind"], "failed");
     assert_eq!(v["failure"]["kind"], "head-unreadable");
-    assert_eq!(v["failure"]["error"], "boom");
+    assert_eq!(v["failure"]["message"], "boom");
 }
 
 #[test]
@@ -837,4 +837,92 @@ fn sync_json_envelope_round_trips() {
     assert_eq!(outcomes.len(), 2);
     assert_eq!(outcomes[0]["kind"], "converged");
     assert_eq!(outcomes[1]["kind"], "already-ahead");
+}
+
+// ---------------------------------------------------------------------------
+// fo-auikb: structured payload / renamed-field tests
+// ---------------------------------------------------------------------------
+
+/// The `error` field on SyncFailureOutput is now `message`. Verify the
+/// wire key is `message`, not `error`, so the renamed field is pinned.
+#[test]
+fn sync_failure_output_uses_message_not_error() {
+    let v = serialize_outcome(
+        "github/cwalv/foo",
+        "/abs/foo",
+        &RepoSyncOutcome::Failed(SyncFailure::HeadUnreadable {
+            error: "couldn't read HEAD".into(),
+            cause: None,
+        }),
+    );
+    let failure = v["failure"].as_object().unwrap();
+    assert!(
+        failure.contains_key("message"),
+        "failure should have `message` field, got: {v}"
+    );
+    assert!(
+        !failure.contains_key("error"),
+        "failure must NOT have legacy `error` field, got: {v}"
+    );
+    assert_eq!(failure["message"], "couldn't read HEAD");
+}
+
+/// When a SyncFailure carries a VcsError cause, the wire output carries
+/// the structured `cause` object — not just a string. Verify `cause.kind`
+/// is a structured discriminant field, not a free-form string blob.
+#[test]
+fn sync_failure_cause_is_structured_not_stringly() {
+    let cause = VcsError::RebaseConflict {
+        repo: PathBuf::from("/abs/foo"),
+        op: ConflictOp::Rebase,
+    };
+    let v = serialize_outcome(
+        "github/cwalv/foo",
+        "/abs/foo",
+        &RepoSyncOutcome::Failed(SyncFailure::RebaseFailed {
+            error: cause.to_string(),
+            cause: Some(cause),
+        }),
+    );
+    let failure = &v["failure"];
+    assert_eq!(failure["kind"], "rebase-failed");
+    // cause must be a structured object with a `kind` discriminant
+    let cause_obj = failure["cause"]
+        .as_object()
+        .expect("cause should be a structured object");
+    assert!(
+        cause_obj.contains_key("kind"),
+        "cause object must have `kind` discriminant: {failure}"
+    );
+    assert_eq!(cause_obj["kind"], "rebase-conflict");
+    // cause must NOT be a raw string
+    assert!(
+        !failure["cause"].is_string(),
+        "cause must be structured, not a raw string: {failure}"
+    );
+}
+
+/// VcsErrorOutput::Io carries `message` (renamed from `error`) to signal
+/// it is a free-form display string from io::Error, not a typed discriminant.
+#[test]
+fn vcs_error_io_output_uses_message_not_error() {
+    let err = VcsError::Io {
+        ctx: "spawn git".into(),
+        source: std::io::Error::other("permission denied"),
+    };
+    let wire = VcsErrorOutput::from(&err);
+    let v = serde_json::to_value(&wire).unwrap();
+    assert_eq!(v["kind"], "io");
+    assert!(
+        v.get("message").is_some(),
+        "VcsErrorOutput::Io must have `message` field: {v}"
+    );
+    assert!(
+        v.get("error").is_none(),
+        "VcsErrorOutput::Io must NOT have legacy `error` field: {v}"
+    );
+    assert!(
+        v["message"].as_str().unwrap().contains("permission denied"),
+        "message should contain io::Error display: {v}"
+    );
 }

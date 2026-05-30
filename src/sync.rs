@@ -297,27 +297,37 @@ impl RepoSyncOutcome {
 /// Carries the same payload as the in-memory enum but with a `cause`
 /// represented as the serialisable [`VcsErrorOutput`]. The hand-rolled tag
 /// strings match [`SyncFailure::kind`] (verified via snapshot tests).
+///
+/// `message` is the human-readable display string of the failure (free-form
+/// text, not a typed discriminant). `cause` is the structured typed cause when
+/// the failure originated from a [`crate::vcs::VcsError`] call — consumers
+/// that want to branch on failure mode should inspect `cause.kind` rather than
+/// parsing `message`.
 #[derive(Debug, Serialize, JsonSchema)]
 #[serde(tag = "kind", rename_all = "kebab-case")]
 pub enum SyncFailureOutput {
     HeadUnreadable {
-        error: String,
+        /// Free-form display message for this failure. Not a typed discriminant.
+        message: String,
         #[serde(skip_serializing_if = "Option::is_none")]
         cause: Option<VcsErrorOutput>,
     },
     #[serde(rename = "ff-impossible")]
     FastForwardImpossible {
-        error: String,
+        /// Free-form display message for this failure. Not a typed discriminant.
+        message: String,
         #[serde(skip_serializing_if = "Option::is_none")]
         cause: Option<VcsErrorOutput>,
     },
     RebaseFailed {
-        error: String,
+        /// Free-form display message for this failure. Not a typed discriminant.
+        message: String,
         #[serde(skip_serializing_if = "Option::is_none")]
         cause: Option<VcsErrorOutput>,
     },
     MergeFailed {
-        error: String,
+        /// Free-form display message for this failure. Not a typed discriminant.
+        message: String,
         #[serde(skip_serializing_if = "Option::is_none")]
         cause: Option<VcsErrorOutput>,
     },
@@ -325,15 +335,15 @@ pub enum SyncFailureOutput {
 
 impl From<&SyncFailure> for SyncFailureOutput {
     fn from(f: &SyncFailure) -> Self {
-        let error = f.error().to_owned();
+        let message = f.error().to_owned();
         let cause = f.cause().map(VcsErrorOutput::from);
         match f {
-            SyncFailure::HeadUnreadable { .. } => Self::HeadUnreadable { error, cause },
+            SyncFailure::HeadUnreadable { .. } => Self::HeadUnreadable { message, cause },
             SyncFailure::FastForwardImpossible { .. } => {
-                Self::FastForwardImpossible { error, cause }
+                Self::FastForwardImpossible { message, cause }
             }
-            SyncFailure::RebaseFailed { .. } => Self::RebaseFailed { error, cause },
-            SyncFailure::MergeFailed { .. } => Self::MergeFailed { error, cause },
+            SyncFailure::RebaseFailed { .. } => Self::RebaseFailed { message, cause },
+            SyncFailure::MergeFailed { .. } => Self::MergeFailed { message, cause },
         }
     }
 }

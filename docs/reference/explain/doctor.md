@@ -417,15 +417,12 @@ Schema:
         {
           "type": "object",
           "required": [
-            "error",
             "kind",
             "manifest_path",
+            "message",
             "project"
           ],
           "properties": {
-            "error": {
-              "type": "string"
-            },
             "kind": {
               "type": "string",
               "enum": [
@@ -433,6 +430,10 @@ Schema:
               ]
             },
             "manifest_path": {
+              "type": "string"
+            },
+            "message": {
+              "description": "Free-form display string of the YAML parse error. Named `message` (not `error`) to signal this is display text, not a typed discriminant.",
               "type": "string"
             },
             "project": {
