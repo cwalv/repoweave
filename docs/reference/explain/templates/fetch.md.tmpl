@@ -23,7 +23,7 @@ fail to clone are skipped without failing the overall run.
 
 ```
 rwv fetch <source> [--frozen] [--force] [--no-reference]
-          [--role <role>...] [--repo <selector>...] [-j <N>]
+          [--role <role>...] [--repo <selector>...] [-j <N>] [--json]
 ```
 
 - `<source>` — required. Full clone URL or `owner/repo` / `registry/owner/repo`
@@ -38,26 +38,56 @@ rwv fetch <source> [--frozen] [--force] [--no-reference]
   the manifest. Repeat for union. Bare strings match exactly; `re:<pat>` is
   regex; `glob:<pat>` is glob. A filtered fetch does not write the lock.
 - `-j <N>` — run up to `N` clone/checkout operations in parallel.
+- `--json` — emit machine-readable output (see Output below).
 
-Run `rwv --help fetch` for the full clap surface. `fetch` does not currently
-support `--json`; see the `rwv explain` index for which verbs are JSON-
-capable today.
+Run `rwv --help fetch` for the full clap surface.
 
 ## Output
 
-One line per repo on the standard text channel. Lines report whether each
-repo was cloned fresh, checked out at a lock-pinned revision, or skipped.
-Errors (including per-repo failures) are printed to stderr. A final summary
-line reports how many repos are ready.
+Default text output is one line per repo on the standard text channel. Lines
+report whether each repo was cloned fresh, checked out at a lock-pinned
+revision, or skipped. Errors (including per-repo failures) are printed to
+stderr. A final summary line reports how many repos are ready.
+
+Under `--json`, output switches to machine-readable format:
+
+- **`-j 1` or no `-j`** (serial / envelope mode): emits a single JSON envelope
+  after all repos finish:
+
+  ```
+  {
+    "$schema": "<url>",
+    "outcomes": [ { "path": "...", ... }, ... ]
+  }
+  ```
+
+- **`-j N` with `N > 1`** (NDJSON streaming mode): emits one self-describing
+  JSON line per repo as workers finish, with no envelope wrapper. Each line
+  carries its own `$schema` URL.
+
+Each per-repo record in the `outcomes` array (or in each NDJSON line) has the
+shape: `path` (manifest-relative), `absolute_path` (on-disk), `status`
+(`ok` / `skipped` / `failed`), and `message` (human-readable detail; absent
+for `ok`, present for `skipped` and `failed`).
+
+The `$schema` URL points to the committed schema artifact. See the Schema
+section below.
+
+Schema:
+
+{{SCHEMA}}
 
 ## Exit codes
 
 - `0` — the project repo and every non-reference manifest repo cloned or
   checked out successfully (reference repos that failed are warnings, not
-  errors).
+  errors). Under `--json`, exit `0` means every outcome has `"status": "ok"`
+  or `"skipped"`.
 - non-zero — the project repo failed to clone, at least one non-reference
   repo failed, `--frozen` detected a missing or stale lock, or the current
-  directory is not a workspace and `--force` was not passed.
+  directory is not a workspace and `--force` was not passed. Under `--json`,
+  the envelope (or NDJSON stream) is emitted before exit even on failure, so
+  consumers always get parseable output.
 
 ## Examples
 
@@ -89,6 +119,24 @@ Parallel clone/checkout across 8 workers:
 
 ```
 rwv fetch owner/myproject -j 8
+```
+
+Fetch and emit JSON envelope (serial; guarantees envelope output):
+
+```
+rwv fetch owner/myproject -j 1 --json
+```
+
+Fetch with 4 workers and stream NDJSON as repos finish:
+
+```
+rwv fetch owner/myproject -j 4 --json
+```
+
+Get absolute paths for every successfully fetched repo:
+
+```
+rwv fetch owner/myproject -j 1 --json | jq -r '.outcomes[] | select(.status == "ok") | .absolute_path'
 ```
 
 ## Common errors

@@ -71,8 +71,10 @@ fn explain_sync_includes_purpose_and_schema() {
 
 #[test]
 fn explain_markdown_only_verbs_have_no_schema_block() {
-    // fetch/update/prime have no `--json` and therefore no schema section.
-    for verb in &["fetch", "update", "prime"] {
+    // update/prime have no `--json` and therefore no schema section.
+    // Note: fetch was markdown-only prior to fo-p89x0.1; it now has --json
+    // and embeds a schema block, so it is no longer in this list.
+    for verb in &["update", "prime"] {
         let assert = rwv().args(["explain", verb]).assert().success();
         let stdout = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
         assert!(
@@ -88,6 +90,17 @@ fn explain_markdown_only_verbs_have_no_schema_block() {
             "explain {verb} unexpectedly includes a JSON Schema block; got:\n{stdout}"
         );
     }
+}
+
+#[test]
+fn explain_fetch_includes_purpose_and_schema() {
+    // fetch was made --json-capable in fo-p89x0.1; its bundle now embeds a schema block.
+    rwv().args(["explain", "fetch"]).assert().success().stdout(
+        predicate::str::contains("# rwv fetch")
+            .and(predicate::str::contains("## Purpose"))
+            .and(predicate::str::contains("FetchJsonOutput"))
+            .and(predicate::str::contains("```json")),
+    );
 }
 
 #[test]

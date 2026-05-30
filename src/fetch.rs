@@ -11,8 +11,69 @@ use crate::registry;
 use crate::selector::RepoFilter;
 use crate::vcs::Vcs;
 use anyhow::{bail, Context};
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
+
+/// Schema URL embedded in `rwv fetch --json` output. Pins to the committed
+/// artifact under `docs/reference/schemas/fetch.json`.
+pub const FETCH_SCHEMA_URL: &str =
+    "https://raw.githubusercontent.com/cwalv/repoweave/main/docs/reference/schemas/fetch.json";
+
+/// Per-repo outcome record for `rwv fetch --json`.
+///
+/// `status` is one of `"ok"`, `"skipped"`, or `"failed"`. `message` carries
+/// a human-readable description of the outcome (always present for `"failed"`;
+/// present for `"skipped"` to say why; `null` for `"ok"`).
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+pub struct FetchOutcomeOutput {
+    pub path: String,
+    pub absolute_path: String,
+    pub status: FetchOutcomeStatus,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+}
+
+impl FetchOutcomeOutput {
+    pub fn is_failure(&self) -> bool {
+        self.status == FetchOutcomeStatus::Failed
+    }
+}
+
+/// Status discriminant for [`FetchOutcomeOutput`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum FetchOutcomeStatus {
+    Ok,
+    Skipped,
+    Failed,
+}
+
+/// Top-level envelope for `rwv fetch --json` (serial / `-j 1` mode).
+///
+/// Shape: `{ "$schema": "<url>", "outcomes": [<FetchOutcomeOutput>, ...] }`.
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+pub struct FetchJsonOutput {
+    #[serde(rename = "$schema")]
+    pub schema: String,
+    pub outcomes: Vec<FetchOutcomeOutput>,
+}
+
+/// One NDJSON record emitted by `rwv fetch --json -j N` with `N > 1`.
+///
+/// Each per-repo outcome becomes its own self-describing line. Every record
+/// carries its own `$schema` URL so consumers can identify a line without
+/// out-of-band context. Serialised with `#[serde(flatten)]` so the wire shape
+/// is a single flat object: `{"$schema": "...", "path": "...", ...}`.
+#[derive(Debug, Serialize)]
+pub struct FetchOutcomeNdjsonRecord<'a> {
+    #[serde(rename = "$schema")]
+    pub schema: &'a str,
+    #[serde(flatten)]
+    pub outcome: &'a FetchOutcomeOutput,
+}
 
 /// Controls how `rwv fetch` resolves repo versions.
 ///
@@ -110,6 +171,12 @@ enum FetchOutcome {
 /// the repo path. Project-level steps (cloning the project repo,
 /// validating the lock, writing the lock at the end, auto-activate) all
 /// happen serially.
+///
+/// When `json` is `true`:
+/// - `jobs == 1` (or no `-j`): emits a single `{ "$schema": ..., "outcomes":
+///   [...] }` envelope to stdout after all repos complete.
+/// - `jobs > 1`: streams one self-describing NDJSON line per repo to stdout
+///   as each worker finishes, then emits no envelope wrapper.
 pub fn run_fetch(
     source: &str,
     workspace_root: &Path,
@@ -117,6 +184,7 @@ pub fn run_fetch(
     no_reference: bool,
     filter: &RepoFilter,
     jobs: usize,
+    json: bool,
 ) -> anyhow::Result<()> {
     let git = GitVcs;
 
@@ -138,7 +206,13 @@ pub fn run_fetch(
         eprintln!("Hint: try a scoped path: {scoped}");
         bail!("project '{}' already exists at projects/{}/", name, name);
     } else {
-        println!("rwv fetch: cloning project '{}'", name);
+        // In JSON mode, project-level progress goes to stderr so stdout stays
+        // JSON-only. In text mode it goes to stdout as before.
+        if json {
+            eprintln!("rwv fetch: cloning project '{}'", name);
+        } else {
+            println!("rwv fetch: cloning project '{}'", name);
+        }
         git.clone_repo(&url_str, &project_dir)
             .with_context(|| format!("failed to clone project source '{}'", url))?;
     }
@@ -214,14 +288,24 @@ pub fn run_fetch(
     let parallel = jobs > 1;
     let write_lock: Mutex<()> = Mutex::new(());
 
+    // When --json is requested under -j > 1, switch to NDJSON streaming: one
+    // self-describing JSON line per repo as workers finish, no envelope wrapper.
+    let ndjson = json && parallel;
+
     let outcomes: Vec<FetchOutcome> = run_in_parallel(&work_items, jobs, |_idx, item| {
         let (repo_path, entry) = item;
-        let reporter = if parallel {
+        let reporter = if parallel && !json {
+            // Text parallel mode: use prefixed reporter.
             Reporter::parallel(repo_path.as_str().to_string(), &write_lock)
+        } else if parallel {
+            // JSON parallel mode: suppress text output entirely; JSON is
+            // emitted below. Use a no-op serial reporter so fetch_one's
+            // reporter.out() calls do nothing visible.
+            Reporter::serial()
         } else {
             Reporter::serial()
         };
-        fetch_one(
+        let outcome = fetch_one(
             &git,
             repo_path,
             entry,
@@ -229,7 +313,49 @@ pub fn run_fetch(
             existing_lock.as_ref(),
             no_reference,
             &reporter,
-        )
+            json,
+        );
+
+        // NDJSON mode: emit one line per repo as soon as it finishes.
+        if ndjson {
+            let abs_path = workspace_root
+                .join(repo_path.as_path())
+                .to_string_lossy()
+                .into_owned();
+            let record = match &outcome {
+                FetchOutcome::Ok { .. } => FetchOutcomeOutput {
+                    path: repo_path.to_string(),
+                    absolute_path: abs_path,
+                    status: FetchOutcomeStatus::Ok,
+                    message: None,
+                },
+                FetchOutcome::Skipped => FetchOutcomeOutput {
+                    path: repo_path.to_string(),
+                    absolute_path: abs_path,
+                    status: FetchOutcomeStatus::Skipped,
+                    message: Some(format!("skipped {}", repo_path.as_str())),
+                },
+                FetchOutcome::Failed { msg } => FetchOutcomeOutput {
+                    path: repo_path.to_string(),
+                    absolute_path: abs_path,
+                    status: FetchOutcomeStatus::Failed,
+                    message: Some(msg.clone()),
+                },
+            };
+            let ndjson_line = FetchOutcomeNdjsonRecord {
+                schema: FETCH_SCHEMA_URL,
+                outcome: &record,
+            };
+            if let Ok(line) = serde_json::to_string(&ndjson_line) {
+                let _guard = write_lock.lock().unwrap_or_else(|e| e.into_inner());
+                let stdout = std::io::stdout();
+                let mut handle = stdout.lock();
+                let _ = writeln!(handle, "{line}");
+                let _ = handle.flush();
+            }
+        }
+
+        outcome
     });
 
     // Aggregate outcomes serially in input order — preserves the existing
@@ -238,25 +364,78 @@ pub fn run_fetch(
     let mut succeeded = 0usize;
     let mut errors: Vec<String> = Vec::new();
     let mut added_to_lock: Vec<RepoPath> = Vec::new();
-    for outcome in outcomes {
+
+    // For envelope mode (json && !ndjson), collect records in work_items order.
+    let mut envelope_records: Vec<FetchOutcomeOutput> = Vec::new();
+
+    for (outcome, (repo_path, _entry)) in outcomes.iter().zip(work_items.iter()) {
+        let abs_path = workspace_root
+            .join(repo_path.as_path())
+            .to_string_lossy()
+            .into_owned();
         match outcome {
             FetchOutcome::Ok { add_to_lock } => {
                 succeeded += 1;
                 if let Some(rp) = add_to_lock {
-                    added_to_lock.push(rp);
+                    added_to_lock.push(rp.clone());
+                }
+                if json && !ndjson {
+                    envelope_records.push(FetchOutcomeOutput {
+                        path: repo_path.to_string(),
+                        absolute_path: abs_path,
+                        status: FetchOutcomeStatus::Ok,
+                        message: None,
+                    });
                 }
             }
-            FetchOutcome::Skipped => {}
+            FetchOutcome::Skipped => {
+                if json && !ndjson {
+                    envelope_records.push(FetchOutcomeOutput {
+                        path: repo_path.to_string(),
+                        absolute_path: abs_path,
+                        status: FetchOutcomeStatus::Skipped,
+                        message: Some(format!("skipped {}", repo_path.as_str())),
+                    });
+                }
+            }
             FetchOutcome::Failed { msg } => {
-                eprintln!("rwv fetch: error: {msg}");
-                errors.push(msg);
+                if !json {
+                    eprintln!("rwv fetch: error: {msg}");
+                }
+                errors.push(msg.clone());
+                if json && !ndjson {
+                    envelope_records.push(FetchOutcomeOutput {
+                        path: repo_path.to_string(),
+                        absolute_path: abs_path,
+                        status: FetchOutcomeStatus::Failed,
+                        message: Some(msg.clone()),
+                    });
+                }
             }
         }
     }
 
-    // Summary
+    // Summary (text mode only; JSON mode consumers check `status` fields).
     let total = succeeded + errors.len();
     if !errors.is_empty() {
+        if json {
+            // In JSON mode, emit the envelope/NDJSON before exiting so
+            // consumers always get parseable output even on partial failure.
+            if !ndjson {
+                let payload = FetchJsonOutput {
+                    schema: FETCH_SCHEMA_URL.to_owned(),
+                    outcomes: envelope_records,
+                };
+                if let Ok(out) = serde_json::to_string_pretty(&payload) {
+                    println!("{out}");
+                }
+            }
+            // NDJSON records were already streamed; nothing extra to emit.
+            bail!(
+                "fetch completed with {} clone failure(s) out of {total} repo(s)",
+                errors.len()
+            )
+        }
         eprintln!(
             "rwv fetch: {succeeded}/{total} repo(s) succeeded, {} failed:",
             errors.len()
@@ -270,7 +449,21 @@ pub fn run_fetch(
         )
     }
 
-    println!("rwv fetch: done ({succeeded} repo(s) ready)");
+    if json {
+        if !ndjson {
+            // Envelope mode: emit after all repos complete.
+            let payload = FetchJsonOutput {
+                schema: FETCH_SCHEMA_URL.to_owned(),
+                outcomes: envelope_records,
+            };
+            let out = serde_json::to_string_pretty(&payload)
+                .context("failed to serialize fetch output")?;
+            println!("{out}");
+        }
+        // NDJSON mode: all records streamed by workers; nothing more to emit.
+    } else {
+        println!("rwv fetch: done ({succeeded} repo(s) ready)");
+    }
 
     // Default mode: bootstrap or additively extend the lock; then maybe auto-activate.
     //
@@ -335,12 +528,18 @@ pub fn run_fetch(
         // Auto-activate only when no project is already active (first fetch).
         let active_file = workspace_root.join(".rwv-active");
         if active_file.exists() {
-            println!(
+            // Route to stderr in JSON mode so stdout stays JSON-only.
+            let msg = format!(
                 "rwv fetch: skipping auto-activate (project '{}' already active)",
                 std::fs::read_to_string(&active_file)
                     .unwrap_or_default()
                     .trim()
             );
+            if json {
+                eprintln!("{msg}");
+            } else {
+                println!("{msg}");
+            }
         } else {
             crate::activate::activate(&name, workspace_root)?;
         }
@@ -354,6 +553,10 @@ pub fn run_fetch(
 ///
 /// Returns [`FetchOutcome`]. The caller threads `add_to_lock` into the
 /// post-join lock-write step and aggregates failures.
+///
+/// When `json` is `true`, progress lines are emitted to stderr (via
+/// `reporter.err`) rather than stdout, so that stdout carries only
+/// machine-readable JSON output.
 fn fetch_one(
     git: &GitVcs,
     repo_path: &RepoPath,
@@ -362,9 +565,19 @@ fn fetch_one(
     existing_lock: Option<&LockFile>,
     no_reference: bool,
     reporter: &Reporter<'_>,
+    json: bool,
 ) -> FetchOutcome {
+    // Helper: route progress to stdout (text mode) or stderr (JSON mode).
+    let emit = |msg: &str| {
+        if json {
+            reporter.err(msg);
+        } else {
+            reporter.out(msg);
+        }
+    };
+
     if no_reference && entry.role == Role::Reference {
-        reporter.out(&format!(
+        emit(&format!(
             "rwv fetch: skipping {} (role: reference)",
             repo_path.as_str()
         ));
@@ -388,7 +601,7 @@ fn fetch_one(
             );
         }
         if let Some(lock_entry) = lock_entry {
-            reporter.out(&format!(
+            emit(&format!(
                 "rwv fetch: checking out {} at {}",
                 repo_path.as_str(),
                 lock_entry.version,
@@ -419,7 +632,7 @@ fn fetch_one(
             // Lock exists but doesn't cover this repo — additive add at
             // branch HEAD. The clone already exists; nothing to do
             // beyond marking it for the lock write below.
-            reporter.out(&format!(
+            emit(&format!(
                 "rwv fetch: adding {} to lock at branch HEAD (additive)",
                 repo_path.as_str()
             ));
@@ -430,7 +643,7 @@ fn fetch_one(
             // Bootstrap (no lock yet) — clone is pre-existing, just
             // record it. The lock-write step below will snapshot
             // everything from disk.
-            reporter.out(&format!(
+            emit(&format!(
                 "rwv fetch: skip {} (already exists)",
                 repo_path.as_str()
             ));
@@ -451,7 +664,7 @@ fn fetch_one(
         }
     }
 
-    reporter.out(&format!(
+    emit(&format!(
         "rwv fetch: cloning {} from {} (role: {})",
         repo_path.as_str(),
         entry.url,
@@ -471,7 +684,7 @@ fn fetch_one(
     let mut add_to_lock: Option<RepoPath> = None;
     // After clone, check out the lock-pinned revision when one exists.
     if let Some(lock_entry) = lock_entry {
-        reporter.out(&format!(
+        emit(&format!(
             "rwv fetch: checking out {} at {}",
             repo_path.as_str(),
             lock_entry.version,

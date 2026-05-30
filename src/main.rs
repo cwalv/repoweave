@@ -64,6 +64,12 @@ enum Commands {
         /// Number of parallel per-repo workers. Default: min(nproc, 8). `-j 1` is explicit serial.
         #[arg(short = 'j', long = "jobs")]
         jobs: Option<usize>,
+        /// Emit per-repo outcomes as JSON. Under `-j 1` (or no `-j`), emits a
+        /// `{ "$schema": ..., "outcomes": [...] }` envelope. Under `-j N` with
+        /// `N > 1`, streams NDJSON (one self-describing record per repo as workers
+        /// finish). See `rwv explain fetch`.
+        #[arg(long)]
+        json: bool,
     },
     /// Advance each repo to its branch HEAD and re-snapshot the lock (network bump; analogous to `cargo update` / `npm update`). Use `rwv fetch` for the read-only counterpart that aligns clones to the existing lock.
     Update {
@@ -450,6 +456,7 @@ fn main() -> anyhow::Result<()> {
             roles,
             repos,
             jobs,
+            json,
         }) => {
             let cwd = std::env::current_dir()?;
             repoweave::workspace::require_workspace_or_empty(&cwd, force)?;
@@ -459,8 +466,14 @@ fn main() -> anyhow::Result<()> {
                 fetch::FetchMode::Default
             };
             let filter = repoweave::selector::RepoFilter::parse(&roles, &repos)?;
+            // fetch's default is auto-resolve (min(nproc, 8)), unlike sync which
+            // defaults to serial to preserve envelope vs NDJSON contract. fetch's
+            // JSON contract follows the same shape: envelope when -j 1 or no -j
+            // with default resolution, NDJSON when -j > 1. Because the default
+            // can resolve to > 1 on multi-core hosts, agents should pass `-j 1`
+            // explicitly when they require the envelope shape.
             let jobs = repoweave::parallel::resolve_jobs(jobs);
-            fetch::run_fetch(&source, &cwd, mode, no_reference, &filter, jobs)?;
+            fetch::run_fetch(&source, &cwd, mode, no_reference, &filter, jobs, json)?;
         }
         Some(Commands::Add {
             url,

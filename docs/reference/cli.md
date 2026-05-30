@@ -19,8 +19,14 @@ Read `rwv.lock` and align clones to it. Bootstrap when lock is absent.
 | `--frozen` | Error if lock is stale; never advance. Suitable for CI |
 | `--role` / `--repo` | Selector filters (see [Selector grammar](#selector-grammar)) |
 | `-j N` | Parallel per-repo workers (default: min(nproc, 8)) |
+| `--json` | Structured output / NDJSON when `-j N` with `N > 1` |
 
 The lock is **read-only**. To advance tips and re-snapshot, use `rwv update`.
+
+`--json` emits `{ "$schema": "...", "outcomes": [...] }` envelope in serial mode
+(`-j 1` or no `-j`). Under `-j N` with `N > 1`, switches to NDJSON (one
+self-describing record per repo as workers finish). See [JSON envelope
+convention](#--json-envelope-convention).
 
 Anchored by `tests/doc_claims_fetch_test.rs`.
 
@@ -300,6 +306,7 @@ Every JSON-capable verb emits a self-describing envelope:
 |---|---|
 | `rwv status --json` | `repos` |
 | `rwv doctor --json` | `violations` |
+| `rwv fetch --json` | `outcomes` |
 | `rwv sync --json` | `outcomes` |
 | `rwv sync-to --json` | `outcomes` |
 
@@ -313,7 +320,7 @@ The branch-on-shape pattern lets consumers handle both modes uniformly: peek at 
 
 Exit semantics under `--json` are the same in both modes: non-zero iff at least one per-repo outcome is `failed`.
 
-Anchored by `tests/doc_claims_sync_test.rs` and the per-verb `sync_json_test.rs` family.
+Anchored by `tests/doc_claims_sync_test.rs`, `tests/doc_claims_fetch_test.rs`, and the per-verb `sync_json_test.rs` / `fetch_json_test.rs` families.
 
 ## Related
 

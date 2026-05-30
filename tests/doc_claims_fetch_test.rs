@@ -514,3 +514,187 @@ fn fetch_second_project_does_not_auto_activate() {
         "second fetch must not overwrite .rwv-active; project-a should remain active"
     );
 }
+
+// ============================================================================
+// Test 6 — fo-p89x0.1: --json envelope assertion
+//
+// Doc claim: `rwv fetch --json -j 1` emits `{ "$schema": "<url>", "outcomes": [...] }`
+// envelope. Each element of `outcomes` has `path`, `absolute_path`, and `status`.
+// ============================================================================
+
+#[test]
+fn fetch_json_envelope_shape() {
+    let tmp = tempfile::tempdir().unwrap();
+    let workspace = tmp.path().join("ws");
+    std::fs::create_dir_all(&workspace).unwrap();
+
+    // Create a repo for the manifest.
+    let repo_bare = tmp.path().join("the-repo.git");
+    let repo_bare_url = format!("file://{}", repo_bare.display());
+    let status = common::git()
+        .args(["init", "--bare", "--initial-branch=main"])
+        .arg(&repo_bare)
+        .stdout(process::Stdio::null())
+        .stderr(process::Stdio::null())
+        .status()
+        .expect("git");
+    assert!(status.success());
+
+    // Clone + commit + push to make repo_bare fetchable.
+    let tmp_work = tempfile::tempdir().unwrap();
+    let work = tmp_work.path().join("work");
+    git(
+        &[
+            "clone",
+            &repo_bare.to_string_lossy(),
+            &work.to_string_lossy(),
+        ],
+        tmp_work.path(),
+    );
+    git(&["config", "user.email", "test@test.com"], &work);
+    git(&["config", "user.name", "Test"], &work);
+    std::fs::write(work.join("README"), "init").unwrap();
+    git(&["add", "."], &work);
+    git(&["commit", "-m", "initial"], &work);
+    git(&["push", "origin", "main"], &work);
+
+    // Create project bare with manifest pointing at the repo.
+    let project_bare = tmp.path().join("proj.git");
+    init_bare_repo(&project_bare);
+    push_manifest_to_bare(&project_bare, &[("local/org/the-repo", &repo_bare_url)]);
+    let project_url = format!("file://{}", project_bare.display());
+
+    // Run `rwv fetch --json -j 1` (explicit serial = envelope).
+    let assert = rwv()
+        .args(["fetch", &project_url, "--json", "-j", "1"])
+        .current_dir(&workspace)
+        .assert()
+        .success();
+    let stdout = String::from_utf8_lossy(&assert.get_output().stdout).into_owned();
+
+    let parsed: serde_json::Value = serde_json::from_str(&stdout)
+        .unwrap_or_else(|e| panic!("stdout not JSON ({e}):\n{stdout}"));
+    let obj = parsed.as_object().expect("top level must be object");
+
+    // $schema must be present and point to the committed artifact.
+    let schema_val = obj
+        .get("$schema")
+        .and_then(serde_json::Value::as_str)
+        .expect("$schema missing");
+    assert!(
+        schema_val.ends_with("/docs/reference/schemas/fetch.json"),
+        "$schema must end with /docs/reference/schemas/fetch.json; got: {schema_val}"
+    );
+
+    // outcomes must be an array.
+    let outcomes = obj
+        .get("outcomes")
+        .and_then(serde_json::Value::as_array)
+        .expect("outcomes must be array");
+    assert_eq!(outcomes.len(), 1, "one repo in manifest");
+
+    let first = outcomes[0].as_object().expect("outcome must be object");
+    assert!(first.contains_key("path"), "missing path");
+    assert!(first.contains_key("absolute_path"), "missing absolute_path");
+    assert_eq!(
+        first.get("status").and_then(serde_json::Value::as_str),
+        Some("ok"),
+        "repo should be ok"
+    );
+}
+
+// ============================================================================
+// Test 7 — fo-p89x0.1: --json -j N NDJSON assertion
+//
+// Doc claim: `rwv fetch -j 2 --json` streams NDJSON — one JSON object per
+// line, each carrying its own `$schema` field, no envelope wrapper.
+// ============================================================================
+
+#[test]
+fn fetch_json_ndjson_under_parallel_jobs() {
+    let tmp = tempfile::tempdir().unwrap();
+    let workspace = tmp.path().join("ws");
+    std::fs::create_dir_all(&workspace).unwrap();
+
+    // Create two repos so we actually hit the parallel path.
+    let bare_a = tmp.path().join("aa.git");
+    let bare_b = tmp.path().join("bb.git");
+    let url_a = format!("file://{}", bare_a.display());
+    let url_b = format!("file://{}", bare_b.display());
+
+    for bare in &[&bare_a, &bare_b] {
+        let s = common::git()
+            .args(["init", "--bare", "--initial-branch=main"])
+            .arg(*bare)
+            .stdout(process::Stdio::null())
+            .stderr(process::Stdio::null())
+            .status()
+            .unwrap();
+        assert!(s.success());
+
+        let tw = tempfile::tempdir().unwrap();
+        let w = tw.path().join("w");
+        git(
+            &[
+                "clone",
+                &bare.to_string_lossy(),
+                &w.to_string_lossy(),
+            ],
+            tw.path(),
+        );
+        git(&["config", "user.email", "test@test.com"], &w);
+        git(&["config", "user.name", "Test"], &w);
+        std::fs::write(w.join("README"), "init").unwrap();
+        git(&["add", "."], &w);
+        git(&["commit", "-m", "initial"], &w);
+        git(&["push", "origin", "main"], &w);
+    }
+
+    let project_bare = tmp.path().join("proj.git");
+    init_bare_repo(&project_bare);
+    push_manifest_to_bare(
+        &project_bare,
+        &[("local/org/aa", &url_a), ("local/org/bb", &url_b)],
+    );
+    let project_url = format!("file://{}", project_bare.display());
+
+    // Run `rwv fetch -j 2 --json` → NDJSON mode.
+    let assert = rwv()
+        .args(["fetch", &project_url, "--json", "-j", "2"])
+        .current_dir(&workspace)
+        .assert()
+        .success();
+    let stdout = String::from_utf8_lossy(&assert.get_output().stdout).into_owned();
+
+    // Must NOT parse as one JSON document (proves it's NDJSON).
+    assert!(
+        serde_json::from_str::<serde_json::Value>(&stdout).is_err(),
+        "NDJSON stdout must not parse as one document;\nstdout:\n{stdout}"
+    );
+
+    let lines: Vec<&str> = stdout.lines().filter(|l| !l.trim().is_empty()).collect();
+    assert!(
+        lines.len() >= 2,
+        "expected >= 2 NDJSON lines; got {} lines:\n{stdout}",
+        lines.len()
+    );
+
+    for line in &lines {
+        let v: serde_json::Value = serde_json::from_str(line)
+            .unwrap_or_else(|e| panic!("line not JSON ({e}): {line}\nstdout:\n{stdout}"));
+        let obj = v.as_object().unwrap();
+        let schema_val = obj
+            .get("$schema")
+            .and_then(serde_json::Value::as_str)
+            .expect("each NDJSON record must have $schema");
+        assert!(
+            schema_val.ends_with("/docs/reference/schemas/fetch.json"),
+            "NDJSON $schema must end with /docs/reference/schemas/fetch.json; got: {schema_val}"
+        );
+        assert!(obj.contains_key("path"), "NDJSON record missing path: {line}");
+        assert!(
+            obj.contains_key("status"),
+            "NDJSON record missing status: {line}"
+        );
+    }
+}

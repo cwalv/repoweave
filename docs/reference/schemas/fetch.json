@@ -1,0 +1,58 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "FetchJsonOutput",
+  "description": "Top-level envelope for `rwv fetch --json` (serial / `-j 1` mode).\n\nShape: `{ \"$schema\": \"<url>\", \"outcomes\": [<FetchOutcomeOutput>, ...] }`.",
+  "type": "object",
+  "required": [
+    "$schema",
+    "outcomes"
+  ],
+  "properties": {
+    "$schema": {
+      "type": "string"
+    },
+    "outcomes": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/FetchOutcomeOutput"
+      }
+    }
+  },
+  "definitions": {
+    "FetchOutcomeOutput": {
+      "description": "Per-repo outcome record for `rwv fetch --json`.\n\n`status` is one of `\"ok\"`, `\"skipped\"`, or `\"failed\"`. `message` carries a human-readable description of the outcome (always present for `\"failed\"`; present for `\"skipped\"` to say why; `null` for `\"ok\"`).",
+      "type": "object",
+      "required": [
+        "absolute_path",
+        "path",
+        "status"
+      ],
+      "properties": {
+        "absolute_path": {
+          "type": "string"
+        },
+        "message": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "path": {
+          "type": "string"
+        },
+        "status": {
+          "$ref": "#/definitions/FetchOutcomeStatus"
+        }
+      }
+    },
+    "FetchOutcomeStatus": {
+      "description": "Status discriminant for [`FetchOutcomeOutput`].",
+      "type": "string",
+      "enum": [
+        "ok",
+        "skipped",
+        "failed"
+      ]
+    }
+  }
+}

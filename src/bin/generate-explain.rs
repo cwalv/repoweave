@@ -17,6 +17,7 @@ use schemars::schema_for;
 use serde::Serialize;
 
 use repoweave::check::ViolationOutput;
+use repoweave::fetch::FetchJsonOutput;
 use repoweave::status::StatusJsonOutput;
 use repoweave::sync::{
     SyncJsonOutput, SyncToJsonOutput, SYNC_JSON_SCHEMA_URL, SYNC_TO_JSON_SCHEMA_URL,
@@ -66,6 +67,11 @@ fn schema_sync_to() -> String {
     serde_json::to_string_pretty(&schema).expect("sync-to schema serializes")
 }
 
+fn schema_fetch() -> String {
+    let schema = schema_for!(FetchJsonOutput);
+    serde_json::to_string_pretty(&schema).expect("fetch schema serializes")
+}
+
 fn verbs() -> Vec<Verb> {
     vec![
         Verb {
@@ -91,7 +97,7 @@ fn verbs() -> Vec<Verb> {
         Verb {
             name: "fetch",
             summary: "clone or fetch every repo in the active project",
-            schema: None,
+            schema: Some(schema_fetch),
         },
         Verb {
             name: "update",
@@ -278,6 +284,10 @@ fn main() -> anyhow::Result<()> {
     assert!(
         repoweave::status::STATUS_SCHEMA_URL.ends_with("/docs/reference/schemas/status.json"),
         "STATUS_SCHEMA_URL no longer points at the committed artifact"
+    );
+    assert!(
+        repoweave::fetch::FETCH_SCHEMA_URL.ends_with("/docs/reference/schemas/fetch.json"),
+        "FETCH_SCHEMA_URL no longer points at the committed artifact"
     );
 
     let index = render_index(&verbs);
