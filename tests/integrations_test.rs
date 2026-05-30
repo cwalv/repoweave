@@ -6,7 +6,34 @@
 //! 3. Reference repos excluded from generated files
 //! 4. Deactivation cleanup
 //! 5. Check warnings (e.g., missing tools)
+//!
+//! # RED-first scenarios — fo-cnpjy.14 (TDD anchor)
+//!
+//! The §6 scenarios from
+//! `projects/foundations/docs/repoweave/integration-ownership/plan.md` are
+//! realized here as RED-first tests, per [[feedback_no_workaround_assertions]].
+//! Tests that assert behavior the current code does NOT yet implement are
+//! marked `#[ignore = "RED: turned green by fo-cnpjy.N"]`. The port author
+//! (npm: C4, vscode: C5, cargo: C7, uv: C9, pnpm: C10, go: C11, static-files:
+//! C13) removes the `#[ignore]` attribute when their port lands and the test
+//! turns green naturally.
+//!
+//! **Why `#[ignore]` rather than letting tests fail?** The bead offered both;
+//! we picked `#[ignore]` because (a) the port beads land incrementally over
+//! Phase 3 and a permanently-red suite would block other beads in the epic
+//! from confirming their own greens, and (b) `cargo test -- --ignored`
+//! enumerates every RED test in one run, which is the visibility the bead
+//! wants for port authors. The `#[ignore]` annotation always names the bead
+//! that will flip it.
+//!
+//! Assertions describe the REAL desired behavior; they are not contorted to
+//! stay green against the current broken code (per no-workaround-assertions).
+//!
+//! The shared common-contract helper lives at `tests/common/contract.rs`.
 
+mod common;
+
+use common::contract;
 use repoweave::integration::{Integration, IntegrationContext, Severity};
 use repoweave::integrations::*;
 use repoweave::manifest::{
@@ -442,6 +469,307 @@ mod npm_workspaces {
             assert!(issues.is_empty());
         }
     }
+
+    // -----------------------------------------------------------------------
+    // §6 npm-workspaces — RED scenarios (fo-cnpjy.14 → green by C4)
+    // -----------------------------------------------------------------------
+    //
+    // Plan §6 npm scenarios 1–4. Scenarios 1 and 3 partly overlap with the
+    // existing precedent tests above; we restate them in the §6 shape so the
+    // port author has a single set of acceptance assertions per scenario.
+    //
+    // Scenario 2 (object-form workspaces + nohoist) is the data-loss
+    // regression: RED today vs current :44.
+    //
+    // The marker migration (`name`-squat → `x-repoweave`) is part of C4. Until
+    // C4, the marker probe is `x-repoweave`; current code uses `name`. These
+    // are RED against the marker.
+
+    /// §6.npm.1 — Activate over a real app's package.json (array workspaces).
+    /// User scripts / engines / devDependencies / packageManager survive.
+    #[test]
+    #[ignore = "RED: turned green by fo-cnpjy.4 (npm residual-bug fix)"]
+    fn s6_npm_1_activate_array_workspaces_preserves_user_fields() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+
+        touch(root, "github/acme/server/package.json");
+        touch(root, "github/acme/web/package.json");
+
+        write_file(
+            root,
+            "package.json",
+            r#"{
+  "name": "asupersync",
+  "private": true,
+  "scripts": {
+    "build:wasm": "wasm-pack build",
+    "build:packages": "tsc -b packages",
+    "validate:next-consumer": "node scripts/validate-next.mjs"
+  },
+  "devDependencies": {
+    "typescript": "^5.5.0"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "packageManager": "npm@10.5.0"
+}"#,
+        );
+
+        let manifest = make_manifest(vec![
+            ("github/acme/server", Role::Owned),
+            ("github/acme/web", Role::Owned),
+        ]);
+        let project = ProjectName::new("test-project");
+        let config = IntegrationConfig::default();
+        let cache = HashMap::new();
+        let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+
+        let path = root.join("package.json");
+        contract::assert_activate_preserves_foreign(
+            &path,
+            || {
+                NpmWorkspaces.activate(&ctx).unwrap();
+            },
+            &[
+                contract::json_probe("private=true", |v| v["private"].as_bool() == Some(true)),
+                contract::json_probe("workspaces is sorted array w/ server+web", |v| {
+                    let arr = v["workspaces"].as_array();
+                    match arr {
+                        Some(a) => {
+                            a.iter().any(|w| w.as_str() == Some("github/acme/server"))
+                                && a.iter().any(|w| w.as_str() == Some("github/acme/web"))
+                        }
+                        None => false,
+                    }
+                }),
+            ],
+            // C4 migrates the marker to `x-repoweave`.
+            &contract::json_probe("x-repoweave marker", |v| {
+                v.get("x-repoweave").is_some()
+                    || v["x-repoweave"]["managed"].as_bool() == Some(true)
+            }),
+            &[
+                "build:wasm",
+                "validate:next-consumer",
+                "\"typescript\": \"^5.5.0\"",
+                "\"node\": \">=18\"",
+                "packageManager",
+                "npm@10.5.0",
+            ],
+        );
+    }
+
+    /// §6.npm.2 — Activate over workspaces OBJECT form with nohoist
+    /// (the data-loss regression test). Current :44 flattens the object.
+    #[test]
+    #[ignore = "RED: turned green by fo-cnpjy.4 (object-form fix)"]
+    fn s6_npm_2_activate_preserves_object_form_workspaces_nohoist() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+
+        touch(root, "github/acme/mobile/package.json");
+        touch(root, "github/acme/server/package.json");
+
+        write_file(
+            root,
+            "package.json",
+            r#"{
+  "name": "happy",
+  "private": true,
+  "workspaces": {
+    "packages": ["apps/*"],
+    "nohoist": ["**/react-native", "**/react-native/**"]
+  },
+  "scripts": {
+    "env:dev": "env-cmd -e dev",
+    "env:prod": "env-cmd -e prod"
+  }
+}"#,
+        );
+
+        let manifest = make_manifest(vec![
+            ("github/acme/mobile", Role::Owned),
+            ("github/acme/server", Role::Owned),
+        ]);
+        let project = ProjectName::new("test-project");
+        let config = IntegrationConfig::default();
+        let cache = HashMap::new();
+        let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+
+        NpmWorkspaces.activate(&ctx).unwrap();
+
+        let content = std::fs::read_to_string(root.join("package.json")).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
+
+        // workspaces MUST remain an object (not flatten to an array).
+        assert!(
+            parsed["workspaces"].is_object(),
+            "workspaces must remain an object form; got: {}",
+            parsed["workspaces"]
+        );
+        let packages = parsed["workspaces"]["packages"].as_array().unwrap();
+        assert!(
+            packages
+                .iter()
+                .any(|p| p.as_str() == Some("github/acme/mobile")),
+            "workspaces.packages should contain detected member; got: {packages:?}"
+        );
+        assert!(
+            packages
+                .iter()
+                .any(|p| p.as_str() == Some("github/acme/server")),
+            "workspaces.packages should contain detected member; got: {packages:?}"
+        );
+        // The data-loss bit: nohoist must survive verbatim.
+        let nohoist = parsed["workspaces"]["nohoist"].as_array().unwrap();
+        assert_eq!(nohoist.len(), 2, "nohoist entries should survive byte-for-byte");
+        assert_eq!(nohoist[0].as_str(), Some("**/react-native"));
+        assert_eq!(nohoist[1].as_str(), Some("**/react-native/**"));
+        // User scripts survive.
+        assert_eq!(parsed["scripts"]["env:dev"], "env-cmd -e dev");
+        assert_eq!(parsed["scripts"]["env:prod"], "env-cmd -e prod");
+    }
+
+    /// §6.npm.3 — Re-activate idempotent on user content (preserve_order).
+    /// Add a third member; only mutation is the added workspaces entry.
+    #[test]
+    #[ignore = "RED: turned green by fo-cnpjy.4 (preserve_order)"]
+    fn s6_npm_3_reactivate_idempotent_preserve_order() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+
+        // Scenario-1 result starting point: pre-activated file with marker
+        // + array workspaces + user scripts/engines/packageManager.
+        write_file(
+            root,
+            "package.json",
+            r#"{
+  "x-repoweave": { "managed": true },
+  "private": true,
+  "workspaces": ["github/acme/server", "github/acme/web"],
+  "scripts": {
+    "zzz-last": "echo z",
+    "aaa-first": "echo a",
+    "build:wasm": "wasm-pack build"
+  },
+  "engines": { "node": ">=18" },
+  "packageManager": "npm@10.5.0"
+}"#,
+        );
+        touch(root, "github/acme/server/package.json");
+        touch(root, "github/acme/web/package.json");
+        touch(root, "github/acme/api/package.json");
+
+        let manifest = make_manifest(vec![
+            ("github/acme/server", Role::Owned),
+            ("github/acme/web", Role::Owned),
+            ("github/acme/api", Role::Owned),
+        ]);
+        let project = ProjectName::new("test-project");
+        let config = IntegrationConfig::default();
+        let cache = HashMap::new();
+        let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+
+        NpmWorkspaces.activate(&ctx).unwrap();
+        let after_first = std::fs::read_to_string(root.join("package.json")).unwrap();
+
+        // Re-activate must be idempotent (same ctx, same result).
+        NpmWorkspaces.activate(&ctx).unwrap();
+        let after_second = std::fs::read_to_string(root.join("package.json")).unwrap();
+        assert_eq!(
+            after_first, after_second,
+            "second activate must be byte-identical to the first; \
+             diff:\nfirst:\n{after_first}\nsecond:\n{after_second}"
+        );
+
+        // Order-preservation: user's scripts must NOT be alphabetized
+        // (preserve_order). zzz-last appears before aaa-first in the seed.
+        let zzz_pos = after_first.find("zzz-last").expect("zzz-last must be present");
+        let aaa_pos = after_first
+            .find("aaa-first")
+            .expect("aaa-first must be present");
+        assert!(
+            zzz_pos < aaa_pos,
+            "scripts must preserve user insertion order (zzz before aaa); got:\n{after_first}"
+        );
+    }
+
+    /// §6.npm.4 — Deactivate strips rwv keys, preserves user content, deletes
+    /// lockfile, removes file only if empty.
+    ///
+    /// Sub-case (a): marked file + user fields + rwv-generated lockfile.
+    /// Sub-case (b): hand-written file, no marker — file untouched.
+    #[test]
+    #[ignore = "RED: turned green by fo-cnpjy.4 (lockfile + marker migration)"]
+    fn s6_npm_4_deactivate_handles_marker_and_lockfile() {
+        // Sub-case (a): rwv-owned file (marker + name + private + workspaces)
+        // + user fields + rwv-generated package-lock.json.
+        let tmp_a = TempDir::new().unwrap();
+        let root_a = tmp_a.path();
+        write_file(
+            root_a,
+            "package.json",
+            r#"{
+  "x-repoweave": { "managed": true },
+  "name": "repoweave",
+  "private": true,
+  "workspaces": ["github/acme/server"],
+  "scripts": { "validate:next-consumer": "node scripts/validate-next.mjs" },
+  "engines": { "node": ">=18" },
+  "packageManager": "npm@10.5.0"
+}"#,
+        );
+        write_file(root_a, "package-lock.json", r#"{"lockfileVersion": 3}"#);
+
+        NpmWorkspaces.deactivate(root_a).unwrap();
+
+        assert!(
+            root_a.join("package.json").exists(),
+            "package.json must still exist (user fields remain)"
+        );
+        let content = std::fs::read_to_string(root_a.join("package.json")).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
+        assert!(parsed.get("x-repoweave").is_none(), "marker stripped");
+        assert!(parsed.get("workspaces").is_none(), "workspaces stripped");
+        assert!(parsed.get("private").is_none(), "private stripped");
+        assert_eq!(
+            parsed["scripts"]["validate:next-consumer"],
+            "node scripts/validate-next.mjs",
+            "user scripts survive"
+        );
+        assert_eq!(parsed["packageManager"], "npm@10.5.0", "packageManager survives");
+        assert!(
+            !root_a.join("package-lock.json").exists(),
+            "lockfile must be removed on deactivate (gated on marker)"
+        );
+
+        // Sub-case (b): hand-written file with NO marker → leave alone, and
+        // leave its lockfile alone (lockfile removal is gated on marker).
+        let tmp_b = TempDir::new().unwrap();
+        let root_b = tmp_b.path();
+        let user_pkg = r#"{
+  "name": "my-app",
+  "private": true,
+  "workspaces": ["packages/*"]
+}"#;
+        write_file(root_b, "package.json", user_pkg);
+        write_file(root_b, "package-lock.json", r#"{"lockfileVersion": 2}"#);
+
+        NpmWorkspaces.deactivate(root_b).unwrap();
+
+        assert!(
+            root_b.join("package.json").exists(),
+            "hand-written package.json must be preserved"
+        );
+        let after = std::fs::read_to_string(root_b.join("package.json")).unwrap();
+        assert_eq!(after, user_pkg, "hand-written file must be untouched");
+        assert!(
+            root_b.join("package-lock.json").exists(),
+            "hand-written package-lock.json must survive (no marker → no removal)"
+        );
+    }
 }
 
 // ===========================================================================
@@ -566,6 +894,202 @@ mod pnpm_workspaces {
         } else {
             assert!(issues.is_empty());
         }
+    }
+
+    // -----------------------------------------------------------------------
+    // §6 pnpm-workspaces — RED scenarios (fo-cnpjy.14 → green by C10)
+    // -----------------------------------------------------------------------
+    //
+    // Synthetic scenarios (per plan §12.4): no on-disk pnpm-workspace.yaml
+    // exists in any weave; the four scenarios use spec idioms (`catalog:`,
+    // `overrides:`, `peerDependencyRules:`, `# comments`). default_enabled is
+    // false today; tests force it on via `enabled: true` in the config.
+    //
+    // The pnpm integration uses `default_enabled=false`, but we still call
+    // activate/deactivate directly (the integration's own gating logic ignores
+    // default_enabled when invoked through trait methods).
+
+    /// §6.pnpm.1 — Activate preserves a user catalog and comment.
+    #[test]
+    #[ignore = "RED: turned green by fo-cnpjy.10 (pnpm merge port)"]
+    fn s6_pnpm_1_activate_preserves_catalog_and_comments() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        touch(root, "github/acme/server/package.json");
+
+        // Pre-existing user YAML with catalog and a rationale comment.
+        write_file(
+            root,
+            "pnpm-workspace.yaml",
+            r#"# shared dependency versions
+catalog:
+  react: ^18.2.0
+  react-dom: ^18.2.0
+
+packages:
+  - tools/*
+"#,
+        );
+
+        let manifest = make_manifest(vec![("github/acme/server", Role::Owned)]);
+        let project = ProjectName::new("test-project");
+        let config = IntegrationConfig::from_yaml("enabled: true");
+        let cache = HashMap::new();
+        let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+
+        let path = root.join("pnpm-workspace.yaml");
+        contract::assert_activate_preserves_foreign(
+            &path,
+            || {
+                PnpmWorkspaces.activate(&ctx).unwrap();
+            },
+            &[contract::substr_probe(
+                "server in packages",
+                "github/acme/server",
+            )],
+            &contract::substr_probe("yaml marker", "managed by repoweave"),
+            &[
+                "# shared dependency versions",
+                "catalog:",
+                "react: ^18.2.0",
+                "react-dom: ^18.2.0",
+            ],
+        );
+    }
+
+    /// §6.pnpm.2 — Deactivate strips `packages:` but keeps `overrides:`.
+    /// Regression vs current unconditional remove_file at pnpm_workspaces.rs:33-35.
+    #[test]
+    #[ignore = "RED: turned green by fo-cnpjy.10 (pnpm merge port)"]
+    fn s6_pnpm_2_deactivate_strips_packages_keeps_overrides() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+
+        write_file(
+            root,
+            "pnpm-workspace.yaml",
+            r#"overrides:
+  lodash@<4.17.21: '>=4.17.21'
+
+# managed by repoweave
+packages:
+  - github/acme/server
+"#,
+        );
+
+        let path = root.join("pnpm-workspace.yaml");
+        contract::assert_deactivate_strips_keeps(
+            &path,
+            || {
+                PnpmWorkspaces.deactivate(root).unwrap();
+            },
+            &[contract::substr_probe(
+                "server entry",
+                "github/acme/server",
+            )],
+            &contract::substr_probe("yaml marker", "managed by repoweave"),
+            &[
+                "overrides:",
+                "lodash@<4.17.21: '>=4.17.21'",
+            ],
+        );
+    }
+
+    /// §6.pnpm.3 — Deactivate deletes a fully-rwv-authored file (no foreign
+    /// content). delete-if-empty kicks in.
+    ///
+    /// Currently GREEN incidentally — current pnpm deactivate is an
+    /// unconditional `remove_file`, which happens to satisfy this scenario.
+    /// Keep ungated as a regression guard against the C10 port.
+    #[test]
+    fn s6_pnpm_3_deactivate_deletes_purely_rwv_file() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+
+        write_file(
+            root,
+            "pnpm-workspace.yaml",
+            r#"# managed by repoweave
+packages:
+  - github/acme/server
+  - github/acme/web
+"#,
+        );
+
+        let path = root.join("pnpm-workspace.yaml");
+        contract::assert_deactivate_deletes_when_only_owned(&path, || {
+            PnpmWorkspaces.deactivate(root).unwrap();
+        });
+    }
+
+    /// §6.pnpm.4 — Activate is comment-safe & idempotent. peerDependencyRules
+    /// with an inline comment survives byte-for-byte, even when activate runs
+    /// twice with a member added in between.
+    #[test]
+    #[ignore = "RED: turned green by fo-cnpjy.10 (pnpm merge port)"]
+    fn s6_pnpm_4_activate_idempotent_comments_preserved() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        touch(root, "github/acme/server/package.json");
+
+        write_file(
+            root,
+            "pnpm-workspace.yaml",
+            r#"peerDependencyRules:
+  allowedVersions:
+    react: '18'  # pin during migration
+"#,
+        );
+
+        let manifest_one = make_manifest(vec![("github/acme/server", Role::Owned)]);
+        let project = ProjectName::new("test-project");
+        let config = IntegrationConfig::from_yaml("enabled: true");
+        let cache = HashMap::new();
+
+        // First activate: just server.
+        let ctx_one = make_ctx(root, &project, &manifest_one, &config, &cache);
+        PnpmWorkspaces.activate(&ctx_one).unwrap();
+        let after_first = std::fs::read_to_string(root.join("pnpm-workspace.yaml")).unwrap();
+
+        // Second activate: server + web.
+        touch(root, "github/acme/web/package.json");
+        let manifest_two = make_manifest(vec![
+            ("github/acme/server", Role::Owned),
+            ("github/acme/web", Role::Owned),
+        ]);
+        let ctx_two = make_ctx(root, &project, &manifest_two, &config, &cache);
+        PnpmWorkspaces.activate(&ctx_two).unwrap();
+        let after_second = std::fs::read_to_string(root.join("pnpm-workspace.yaml")).unwrap();
+
+        // Inline comment + peerDependencyRules survive both runs.
+        assert!(
+            after_first.contains("# pin during migration"),
+            "inline comment must survive first activate; got:\n{after_first}"
+        );
+        assert!(
+            after_second.contains("# pin during migration"),
+            "inline comment must survive second activate; got:\n{after_second}"
+        );
+        assert!(after_second.contains("peerDependencyRules:"));
+        assert!(after_second.contains("github/acme/server"));
+        assert!(after_second.contains("github/acme/web"));
+
+        // No marker duplication: exactly one `# managed by repoweave` line.
+        let marker_count = after_second
+            .lines()
+            .filter(|l| l.trim() == "# managed by repoweave")
+            .count();
+        assert_eq!(marker_count, 1, "marker must appear exactly once; got:\n{after_second}");
+
+        // No duplicated packages: blocks. Count column-0 `packages:` keys.
+        let packages_count = after_second
+            .lines()
+            .filter(|l| l.starts_with("packages:"))
+            .count();
+        assert_eq!(
+            packages_count, 1,
+            "exactly one packages: block; got:\n{after_second}"
+        );
     }
 }
 
@@ -698,6 +1222,251 @@ mod go_work {
         } else {
             assert!(issues.is_empty());
         }
+    }
+
+    // -----------------------------------------------------------------------
+    // §6 go-work — RED scenarios (fo-cnpjy.14 → green by C11)
+    // -----------------------------------------------------------------------
+    //
+    // Per plan §12.4: real /home/cwa/weaveroot/foundations/go.work uses
+    // `go 1.26` + `use(...)` over repoweave + some-go-tool. Member names are
+    // illustrative — use `repoweave + some-go-tool` even though actual is
+    // ntm/beads/etc.
+    //
+    // The hand-parse fallback is mandatory; per plan §8 the merge-logic tests
+    // must exercise the fallback deterministically. The current impl always
+    // overwrites and does not use `go work edit`, so for now we exercise the
+    // hand-parse fallback path implicitly (no `go work edit` exists).
+
+    /// §6.go.1 — Adding a repo preserves a hand-authored `replace` directive.
+    /// `go 1.26` must NOT be downgraded to `1.21` (the concrete bug).
+    #[test]
+    #[ignore = "RED: turned green by fo-cnpjy.11 (go.work merge port)"]
+    fn s6_go_1_add_preserves_replace_and_go_version() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+
+        // Real existing repos must have go.mod with the version the file uses.
+        write_file(
+            root,
+            "github/cwalv/repoweave/go.mod",
+            "module github.com/cwalv/repoweave\n\ngo 1.21\n",
+        );
+        write_file(
+            root,
+            "github/cwalv/some-go-tool/go.mod",
+            "module github.com/cwalv/some-go-tool\n\ngo 1.21\n",
+        );
+        write_file(
+            root,
+            "github/cwalv/another-module/go.mod",
+            "module github.com/cwalv/another-module\n\ngo 1.21\n",
+        );
+
+        // Pre-existing go.work with go 1.26, two members, a replace + comment.
+        write_file(
+            root,
+            "go.work",
+            r#"go 1.26
+
+// managed by repoweave
+use (
+    ./github/cwalv/repoweave
+    ./github/cwalv/some-go-tool
+)
+
+// pin local fork for the legacy migration
+replace example.com/legacy => ./vendor/legacy
+"#,
+        );
+
+        let manifest = make_manifest(vec![
+            ("github/cwalv/repoweave", Role::Owned),
+            ("github/cwalv/some-go-tool", Role::Owned),
+            ("github/cwalv/another-module", Role::Owned),
+        ]);
+        let project = ProjectName::new("test-project");
+        let config = IntegrationConfig::default();
+        let cache = HashMap::new();
+        let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+
+        GoWork.activate(&ctx).unwrap();
+
+        let content = std::fs::read_to_string(root.join("go.work")).unwrap();
+        assert!(
+            content.contains("github/cwalv/repoweave"),
+            "use must include repoweave; got:\n{content}"
+        );
+        assert!(
+            content.contains("github/cwalv/some-go-tool"),
+            "use must include some-go-tool; got:\n{content}"
+        );
+        assert!(
+            content.contains("github/cwalv/another-module"),
+            "use must include the newly-added another-module; got:\n{content}"
+        );
+        assert!(
+            content.contains("go 1.26"),
+            "go 1.26 must survive (NOT downgraded to 1.21); got:\n{content}"
+        );
+        assert!(
+            !content.contains("go 1.21"),
+            "the 1.21 downgrade is the concrete bug; must not appear; got:\n{content}"
+        );
+        assert!(
+            content.contains("replace example.com/legacy => ./vendor/legacy"),
+            "replace directive must survive; got:\n{content}"
+        );
+        assert!(
+            content.contains("// pin local fork for the legacy migration"),
+            "user comment must survive; got:\n{content}"
+        );
+    }
+
+    /// §6.go.2 — Removing a repo strips its use entry but keeps toolchain.
+    #[test]
+    #[ignore = "RED: turned green by fo-cnpjy.11 (go.work merge port)"]
+    fn s6_go_2_remove_keeps_toolchain_and_godebug() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        write_file(
+            root,
+            "github/cwalv/repoweave/go.mod",
+            "module github.com/cwalv/repoweave\n\ngo 1.21\n",
+        );
+        write_file(
+            root,
+            "github/cwalv/some-go-tool/go.mod",
+            "module github.com/cwalv/some-go-tool\n\ngo 1.21\n",
+        );
+
+        write_file(
+            root,
+            "go.work",
+            r#"go 1.26
+
+toolchain go1.26.0
+
+godebug default=go1.26
+
+// managed by repoweave
+use (
+    ./github/cwalv/repoweave
+    ./github/cwalv/some-go-tool
+    ./github/cwalv/another-module
+)
+"#,
+        );
+
+        // another-module no longer in manifest.
+        let manifest = make_manifest(vec![
+            ("github/cwalv/repoweave", Role::Owned),
+            ("github/cwalv/some-go-tool", Role::Owned),
+        ]);
+        let project = ProjectName::new("test-project");
+        let config = IntegrationConfig::default();
+        let cache = HashMap::new();
+        let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+
+        GoWork.activate(&ctx).unwrap();
+
+        let content = std::fs::read_to_string(root.join("go.work")).unwrap();
+        assert!(content.contains("./github/cwalv/repoweave"));
+        assert!(content.contains("./github/cwalv/some-go-tool"));
+        assert!(
+            !content.contains("./github/cwalv/another-module"),
+            "removed member must be gone from use; got:\n{content}"
+        );
+        assert!(
+            content.contains("toolchain go1.26.0"),
+            "toolchain must survive; got:\n{content}"
+        );
+        assert!(
+            content.contains("godebug default=go1.26"),
+            "godebug must survive; got:\n{content}"
+        );
+        assert!(
+            content.contains("go 1.26"),
+            "go version must survive; got:\n{content}"
+        );
+    }
+
+    /// §6.go.3 — Deactivate strips the use set but keeps replace.
+    /// Regression vs current unconditional remove_file at go_work.rs:36-38.
+    #[test]
+    #[ignore = "RED: turned green by fo-cnpjy.11 (go.work merge port)"]
+    fn s6_go_3_deactivate_strips_use_keeps_replace() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        write_file(
+            root,
+            "go.work",
+            r#"go 1.26
+
+// managed by repoweave
+use (
+    ./github/cwalv/repoweave
+)
+
+replace example.com/foo => ../foo
+"#,
+        );
+
+        GoWork.deactivate(root).unwrap();
+
+        assert!(
+            root.join("go.work").exists(),
+            "go.work must NOT be deleted when foreign content (replace) remains"
+        );
+        let content = std::fs::read_to_string(root.join("go.work")).unwrap();
+        assert!(
+            !content.contains("./github/cwalv/repoweave"),
+            "use entries must be stripped; got:\n{content}"
+        );
+        assert!(
+            !content.contains("// managed by repoweave"),
+            "marker must be stripped; got:\n{content}"
+        );
+        assert!(
+            content.contains("go 1.26"),
+            "go version must survive; got:\n{content}"
+        );
+        assert!(
+            content.contains("replace example.com/foo => ../foo"),
+            "replace must survive; got:\n{content}"
+        );
+    }
+
+    /// §6.go.4 — Deactivate deletes when only rwv content remained.
+    ///
+    /// Currently GREEN incidentally — current go.work deactivate is an
+    /// unconditional `remove_file`, which happens to satisfy this scenario.
+    /// Keep ungated as a regression guard against the C11 port: when C11
+    /// switches to strip-not-delete-with-delete-if-empty, this scenario must
+    /// still hold (file deleted because the post-strip doc is empty).
+    #[test]
+    fn s6_go_4_deactivate_deletes_when_only_rwv_content() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        write_file(
+            root,
+            "go.work",
+            r#"go 1.26
+
+// managed by repoweave
+use (
+    ./github/cwalv/repoweave
+    ./github/cwalv/some-go-tool
+)
+"#,
+        );
+
+        GoWork.deactivate(root).unwrap();
+
+        assert!(
+            !root.join("go.work").exists(),
+            "go.work must be deleted: only rwv-authored content (go line + use) remains"
+        );
     }
 }
 
@@ -845,6 +1614,300 @@ mod uv_workspace {
         } else {
             assert!(issues.is_empty());
         }
+    }
+
+    // -----------------------------------------------------------------------
+    // §6 uv-workspace — RED scenarios (fo-cnpjy.14 → green by C9)
+    // -----------------------------------------------------------------------
+    //
+    // Seeds use astral-sh/ruff pyproject.toml idioms (maturin + ruff + black +
+    // rooster). Marker = per-key `# managed by rwv` decor on
+    // `[tool.uv.workspace].members`. C9 reuses TomlDoc from C7.
+
+    /// §6.uv.1 — Activate preserves a real maturin+ruff root (merge, not clobber).
+    #[test]
+    #[ignore = "RED: turned green by fo-cnpjy.9 (uv merge port)"]
+    fn s6_uv_1_activate_preserves_ruff_style_root() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        touch(root, "github/astral/server/pyproject.toml");
+        touch(root, "github/astral/web/pyproject.toml");
+
+        // Ruff-style hand-maintained root with maturin build-backend,
+        // [project] with array-of-inline-tables authors, [tool.ruff.lint],
+        // [tool.black] with triple-quoted force-exclude, [tool.rooster] with
+        // an inline comment.
+        write_file(
+            root,
+            "pyproject.toml",
+            r#"[build-system]
+requires = ["maturin>=1.7,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "acme"
+version = "0.1.0"
+authors = [
+    { name = "Alice", email = "alice@example.com" },
+]
+classifiers = [
+    "Programming Language :: Python :: 3",
+]
+
+[project.urls]
+Homepage = "https://example.com"
+
+[tool.ruff]
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F"]
+
+[tool.black]
+force-exclude = '''
+/(
+    | \.eggs
+    | build
+)/
+'''
+
+[tool.rooster]
+major_labels = []  # Ruff never uses major bumps
+"#,
+        );
+
+        let manifest = make_manifest(vec![
+            ("github/astral/server", Role::Owned),
+            ("github/astral/web", Role::Owned),
+        ]);
+        let project = ProjectName::new("test-project");
+        let config = IntegrationConfig::default();
+        let cache = HashMap::new();
+        let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+
+        let path = root.join("pyproject.toml");
+        contract::assert_activate_preserves_foreign(
+            &path,
+            || {
+                UvWorkspace.activate(&ctx).unwrap();
+            },
+            &[
+                contract::substr_probe(
+                    "members[server]",
+                    "github/astral/server",
+                ),
+                contract::substr_probe(
+                    "members[web]",
+                    "github/astral/web",
+                ),
+            ],
+            &contract::substr_probe("toml marker on members", "managed by rwv"),
+            &[
+                "build-backend = \"maturin\"",
+                "name = \"acme\"",
+                "{ name = \"Alice\", email = \"alice@example.com\" }",
+                "[project.urls]",
+                "[tool.ruff.lint]",
+                "select = [\"E\", \"F\"]",
+                "[tool.black]",
+                "force-exclude = '''",
+                "build",
+                "Ruff never uses major bumps",
+                "[tool.rooster]",
+            ],
+        );
+
+        // The legacy `# Generated by rwv` line MUST NOT be the first line of
+        // the file — it would either replace `[build-system]` (the bug) or
+        // inject a header into a user file (also rejected per plan §5b).
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(
+            !text.starts_with("# Generated by rwv"),
+            "legacy header must not be at line 1 of a user-authored file; \
+             got first line: {:?}",
+            text.lines().next()
+        );
+    }
+
+    /// §6.uv.2 — Add a repo: idempotent, only mutates members; user
+    /// `[tool.uv.sources]` entries that aren't `{workspace=true}` survive.
+    #[test]
+    #[ignore = "RED: turned green by fo-cnpjy.9 (uv merge port)"]
+    fn s6_uv_2_add_member_preserves_user_sources() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        touch(root, "github/astral/server/pyproject.toml");
+
+        // Pre-existing seed: already-activated state with rwv marker decor +
+        // user-added [tool.uv.sources] non-workspace entry.
+        write_file(
+            root,
+            "pyproject.toml",
+            r#"[project]
+name = "acme"
+version = "0.1.0"
+
+[tool.ruff]
+line-length = 100
+
+[tool.uv.workspace]
+# managed by rwv
+members = ["github/astral/server"]
+
+[tool.uv.sources]
+some-private-lib = { git = "https://example.com/some-private-lib.git" }
+"#,
+        );
+
+        // Web added to manifest.
+        touch(root, "github/astral/web/pyproject.toml");
+        let manifest = make_manifest(vec![
+            ("github/astral/server", Role::Owned),
+            ("github/astral/web", Role::Owned),
+        ]);
+        let project = ProjectName::new("test-project");
+        let config = IntegrationConfig::default();
+        let cache = HashMap::new();
+        let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+
+        UvWorkspace.activate(&ctx).unwrap();
+        let after_first = std::fs::read_to_string(root.join("pyproject.toml")).unwrap();
+
+        // Second activate: must be idempotent.
+        UvWorkspace.activate(&ctx).unwrap();
+        let after_second = std::fs::read_to_string(root.join("pyproject.toml")).unwrap();
+        assert_eq!(
+            after_first, after_second,
+            "second activate must be byte-identical"
+        );
+
+        // members contains both, no dup.
+        assert!(after_second.contains("github/astral/server"));
+        assert!(after_second.contains("github/astral/web"));
+        // Exactly one marker decor — no duplication.
+        let marker_count = after_second.matches("managed by rwv").count();
+        assert_eq!(marker_count, 1, "marker must appear exactly once");
+        // User git source survives.
+        assert!(
+            after_second.contains("some-private-lib"),
+            "user [tool.uv.sources] entry must survive; got:\n{after_second}"
+        );
+        assert!(
+            after_second.contains("https://example.com/some-private-lib.git"),
+            "user git URL must survive; got:\n{after_second}"
+        );
+        // User policy survives.
+        assert!(after_second.contains("[project]"));
+        assert!(after_second.contains("[tool.ruff]"));
+    }
+
+    /// §6.uv.3 — Deactivate strips only rwv keys, keeps the manifest.
+    /// User non-workspace sources survive.
+    #[test]
+    #[ignore = "RED: turned green by fo-cnpjy.9 (uv strip-not-delete)"]
+    fn s6_uv_3_deactivate_strips_keeps_user_manifest() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+
+        write_file(
+            root,
+            "pyproject.toml",
+            r#"[build-system]
+requires = ["maturin>=1.7,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "acme"
+version = "0.1.0"
+
+[tool.ruff]
+line-length = 100
+
+[tool.uv.workspace]
+# managed by rwv
+members = ["github/astral/server", "github/astral/web"]
+
+[tool.uv.sources]
+# managed by rwv
+server = { workspace = true }
+some-private-lib = { git = "https://example.com/some-private-lib.git" }
+"#,
+        );
+
+        UvWorkspace.deactivate(root).unwrap();
+
+        assert!(
+            root.join("pyproject.toml").exists(),
+            "pyproject.toml must NOT be deleted (foreign content remains)"
+        );
+        let content = std::fs::read_to_string(root.join("pyproject.toml")).unwrap();
+        // rwv-owned regions gone.
+        assert!(
+            !content.contains("[tool.uv.workspace]"),
+            "[tool.uv.workspace] must be stripped; got:\n{content}"
+        );
+        assert!(
+            !content.contains("workspace = true"),
+            "{{workspace=true}} source must be stripped; got:\n{content}"
+        );
+        assert!(
+            !content.contains("managed by rwv"),
+            "marker decor must be removed; got:\n{content}"
+        );
+        // User content survives.
+        assert!(content.contains("build-backend = \"maturin\""));
+        assert!(content.contains("[project]"));
+        assert!(content.contains("[tool.ruff]"));
+        // User git source survives.
+        assert!(
+            content.contains("some-private-lib"),
+            "user [tool.uv.sources] entry must survive; got:\n{content}"
+        );
+        assert!(
+            content.contains("https://example.com/some-private-lib.git"),
+            "user git URL must survive"
+        );
+    }
+
+    /// §6.uv.4 — Greenfield root: rwv creates pyproject.toml from scratch with
+    /// `package=false`; deactivate fully removes it.
+    #[test]
+    #[ignore = "RED: turned green by fo-cnpjy.9 (uv greenfield)"]
+    fn s6_uv_4_greenfield_create_then_deactivate_removes() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        touch(root, "github/astral/protocol/pyproject.toml");
+
+        // No root pyproject.toml.
+        assert!(!root.join("pyproject.toml").exists());
+
+        let manifest = make_manifest(vec![("github/astral/protocol", Role::Owned)]);
+        let project = ProjectName::new("test-project");
+        let config = IntegrationConfig::default();
+        let cache = HashMap::new();
+        let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+
+        UvWorkspace.activate(&ctx).unwrap();
+
+        let content = std::fs::read_to_string(root.join("pyproject.toml")).unwrap();
+        assert!(content.contains("github/astral/protocol"));
+        // greenfield must set package = false so uv sync accepts the root.
+        assert!(
+            content.contains("package = false") || content.contains("package=false"),
+            "greenfield root must declare [tool.uv].package = false; got:\n{content}"
+        );
+
+        // Marker must be present so deactivate can identify it.
+        assert!(
+            content.contains("managed by rwv"),
+            "marker required for deactivate to act; got:\n{content}"
+        );
+
+        UvWorkspace.deactivate(root).unwrap();
+        assert!(
+            !root.join("pyproject.toml").exists(),
+            "greenfield-created file must be deleted on deactivate"
+        );
     }
 }
 
@@ -1187,6 +2250,302 @@ mod cargo_workspace {
             issues.iter().any(|i| i.severity == Severity::Error
                 && i.message.contains("github/cwalv/forked")),
             "check should report a nested-workspace error, got: {issues:?}"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // §6 cargo-workspace — RED scenarios (fo-cnpjy.14 → green by C6+C7+C8)
+    // -----------------------------------------------------------------------
+    //
+    // These mirror plan §6 cargo scenarios 1–4. Seeds use real idioms from
+    // /home/cwa/weaveroot/rvtty/Cargo.toml (NOTE block, profile.* panic=abort,
+    // workspace.lints.clippy) and astral-sh/ruff (workspace.dependencies,
+    // workspace.package, profile.release.package.<crate>, workspace.lints.rust).
+    // Members sub-path config (scenario 4) lands behind a config key C6/C8 ship.
+    //
+    // RED until C7 (cargo merge port) lands.
+
+    /// §6.cargo.1 — Activate preserves rvtty's `[profile.*]` + `[workspace.lints]`.
+    /// Seed file: verbatim from rvtty/Cargo.toml plus an empty members array
+    /// and resolver. After activate, the NOTE comment block, panic="abort",
+    /// and clippy deny policy must all survive byte-stable.
+    #[test]
+    #[ignore = "RED: turned green by fo-cnpjy.7 (cargo merge port)"]
+    fn s6_1_activate_preserves_rvtty_profiles_and_lints() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+
+        // Real Rust repos that the integration will detect as members.
+        touch(root, "github/acme/rvtty-a/Cargo.toml");
+        touch(root, "github/acme/rvtty-b/Cargo.toml");
+
+        // Seed the root Cargo.toml with rvtty's idioms (NOTE block, profile
+        // panic=abort, workspace.lints.clippy).
+        write_file(
+            root,
+            "Cargo.toml",
+            r#"# Generated by rwv — do not edit
+#
+# NOTE (olb.5.4): rvtty-style hand-maintained block. profile/lint policy
+# must round-trip activate untouched. This comment block is part of the
+# regression — strip it and the rationale is lost forever.
+
+[workspace]
+members = []
+resolver = "2"
+
+# Panic strategy: abort in all profiles.
+[profile.dev]
+panic = "abort"
+
+[profile.release]
+panic = "abort"
+
+# Workspace-wide clippy lint policy.
+[workspace.lints.clippy]
+print_stdout = "deny"
+print_stderr = "deny"
+dbg_macro    = "deny"
+"#,
+        );
+
+        let manifest = make_manifest(vec![
+            ("github/acme/rvtty-a", Role::Owned),
+            ("github/acme/rvtty-b", Role::Owned),
+        ]);
+        let project = ProjectName::new("test-project");
+        let config = IntegrationConfig::default();
+        let cache = HashMap::new();
+        let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+
+        let path = root.join("Cargo.toml");
+        contract::assert_activate_preserves_foreign(
+            &path,
+            || {
+                CargoWorkspace.activate(&ctx).unwrap();
+            },
+            &[
+                contract::substr_probe("members[rvtty-a]", "github/acme/rvtty-a"),
+                contract::substr_probe("members[rvtty-b]", "github/acme/rvtty-b"),
+                contract::substr_probe("resolver", "resolver = \"2\""),
+            ],
+            // Marker: per-key `# managed by rwv` decor on `members` (per plan
+            // §5a; TomlDoc impl). C7 must set this on author.
+            &contract::substr_probe("toml marker on members", "managed by rwv"),
+            &[
+                "NOTE (olb.5.4)",
+                "panic = \"abort\"",
+                "print_stdout = \"deny\"",
+                "print_stderr = \"deny\"",
+                "dbg_macro",
+                "# Panic strategy",
+                "[workspace.lints.clippy]",
+            ],
+        );
+    }
+
+    /// §6.cargo.2 — Re-activate is idempotent w.r.t. `[workspace.dependencies]`
+    /// / `[workspace.package]` / `[profile.*]` (the ruff surface).
+    #[test]
+    #[ignore = "RED: turned green by fo-cnpjy.7 (cargo merge port)"]
+    fn s6_2_reactivate_idempotent_over_ruff_surface() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+
+        touch(root, "github/astral/ruff/Cargo.toml");
+        touch(root, "github/astral/ty/Cargo.toml");
+
+        // Ruff-idiom hand-maintained root with workspace.package, deps, lints,
+        // and a profile.release.package.<crate> entry.
+        write_file(
+            root,
+            "Cargo.toml",
+            r#"[workspace]
+members = ["github/astral/ruff"]
+resolver = "2"
+
+[workspace.package]
+edition = "2021"
+rust-version = "1.78"
+homepage = "https://docs.astral.sh/ruff"
+license = "MIT"
+
+[workspace.dependencies]
+anyhow = "1.0.80"
+serde = { version = "1.0", features = ["derive"] }
+
+[workspace.lints.rust]
+unsafe_code = "warn"
+
+[profile.release]
+lto = "fat"
+codegen-units = 1
+
+[profile.release.package.ruff_python_parser]
+codegen-units = 1
+"#,
+        );
+
+        let manifest = make_manifest(vec![
+            ("github/astral/ruff", Role::Owned),
+            ("github/astral/ty", Role::Owned),
+        ]);
+        let project = ProjectName::new("test-project");
+        let config = IntegrationConfig::default();
+        let cache = HashMap::new();
+        let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+
+        let path = root.join("Cargo.toml");
+        contract::assert_activate_idempotent(
+            &path,
+            || {
+                CargoWorkspace.activate(&ctx).unwrap();
+            },
+            |_p| { /* no user mutation between activates */ },
+            &[
+                contract::substr_probe("members[ruff]", "github/astral/ruff"),
+                contract::substr_probe("members[ty]", "github/astral/ty"),
+            ],
+            &contract::substr_probe("toml marker on members", "managed by rwv"),
+            &[
+                "[workspace.package]",
+                "rust-version = \"1.78\"",
+                "[workspace.dependencies]",
+                "anyhow = \"1.0.80\"",
+                "[workspace.lints.rust]",
+                "unsafe_code = \"warn\"",
+                "[profile.release]",
+                "lto = \"fat\"",
+                "[profile.release.package.ruff_python_parser]",
+            ],
+        );
+    }
+
+    /// §6.cargo.3 — Deactivate strips only rwv keys, keeps user policy.
+    /// Regression-proof against current delete-whole at cargo_workspace.rs:182-184.
+    #[test]
+    #[ignore = "RED: turned green by fo-cnpjy.7 (cargo merge port)"]
+    fn s6_3_deactivate_strips_keeps_user_policy() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+
+        // Seed with marker + owned keys + heavy user policy.
+        write_file(
+            root,
+            "Cargo.toml",
+            r#"[workspace]
+# managed by rwv
+members = ["github/acme/server"]
+# managed by rwv
+resolver = "2"
+
+[profile.dev]
+panic = "abort"
+
+[workspace.lints.clippy]
+dbg_macro = "deny"
+
+[patch.crates-io]
+foo = { path = "vendor/foo" }
+"#,
+        );
+
+        let path = root.join("Cargo.toml");
+        contract::assert_deactivate_strips_keeps(
+            &path,
+            || {
+                CargoWorkspace.deactivate(root).unwrap();
+            },
+            &[
+                contract::substr_probe("members entry", "github/acme/server"),
+                contract::substr_probe("resolver", "resolver = \"2\""),
+            ],
+            &contract::substr_probe("toml marker", "managed by rwv"),
+            &[
+                "[profile.dev]",
+                "panic = \"abort\"",
+                "[workspace.lints.clippy]",
+                "dbg_macro = \"deny\"",
+                "[patch.crates-io]",
+                "foo = { path = \"vendor/foo\" }",
+            ],
+        );
+    }
+
+    /// §6.cargo.4 — Members sub-path config + nested-workspace exemption
+    /// (rvtty end-state). Repo with no root Cargo.toml; config emits
+    /// `<repo>/<sub>` per include. Sibling workspace is NOT an ancestor and
+    /// must NOT trip the nested-workspace error.
+    ///
+    /// Members sub-path config is added by C6 (cargo design-finalization) +
+    /// C8 (cargo members-subpath + [patch] opt-in).
+    #[test]
+    #[ignore = "RED: turned green by fo-cnpjy.8 (members sub-path)"]
+    fn s6_4_members_subpath_and_nested_workspace_exemption() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+
+        // No root Cargo.toml under github/cwalv/rvtty.
+        write_file(
+            root,
+            "github/cwalv/rvtty/daemon/Cargo.toml",
+            "[package]\nname = \"daemon\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+        );
+        write_file(
+            root,
+            "github/cwalv/rvtty/client/Cargo.toml",
+            "[package]\nname = \"client\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+        );
+        write_file(
+            root,
+            "github/cwalv/rvtty/common/Cargo.toml",
+            "[package]\nname = \"common\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+        );
+        // Sibling workspace (not an ancestor).
+        write_file(
+            root,
+            "rvtty/workspace/Cargo.toml",
+            "[workspace]\nmembers = [\"../daemon\", \"../client\"]\nresolver = \"2\"\n",
+        );
+
+        let manifest = make_manifest(vec![("github/cwalv/rvtty", Role::Owned)]);
+        let project = ProjectName::new("test-project");
+        // The members-subpath config shape (C6/C8): per-repo sub-path include
+        // list. Exact YAML key path locked in by C6; this is the plan §5a shape.
+        let config = IntegrationConfig::from_yaml(
+            "members:\n  github/cwalv/rvtty:\n    include: [daemon, client, common]\n",
+        );
+        let cache = HashMap::new();
+        let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+
+        // Must NOT fail with nested-workspace error: the sibling workspace at
+        // rvtty/workspace/Cargo.toml is not an ancestor of any included sub-path.
+        CargoWorkspace.activate(&ctx).expect(
+            "activate must succeed: members.<repo> exempts the root, and the \
+             sibling workspace is not an ancestor of the included sub-paths",
+        );
+
+        let content = std::fs::read_to_string(root.join("Cargo.toml")).unwrap();
+        assert!(
+            content.contains("github/cwalv/rvtty/daemon"),
+            "members should include daemon sub-path; got:\n{content}"
+        );
+        assert!(
+            content.contains("github/cwalv/rvtty/client"),
+            "members should include client sub-path; got:\n{content}"
+        );
+        assert!(
+            content.contains("github/cwalv/rvtty/common"),
+            "members should include common sub-path; got:\n{content}"
+        );
+        // The repo root itself must NOT be a member (no root Cargo.toml).
+        let lines_with_repo_root: Vec<&str> = content
+            .lines()
+            .filter(|l| l.contains("\"github/cwalv/rvtty\""))
+            .collect();
+        assert!(
+            lines_with_repo_root.is_empty(),
+            "repo root (github/cwalv/rvtty) must NOT appear as a member; got:\n{content}"
         );
     }
 }
@@ -1872,6 +3231,279 @@ mod vscode_workspace {
         // Active repo and its owner must not be excluded.
         assert!(exclude.get("github/acme").is_none());
         assert!(exclude.get("github/acme/server").is_none());
+    }
+
+    // -----------------------------------------------------------------------
+    // §6 vscode-workspace — RED scenarios (fo-cnpjy.14 → green by C5)
+    // -----------------------------------------------------------------------
+    //
+    // RED against current `:178-181` (per-key files.exclude merge), `:119-122`
+    // (multi-root folders preservation), and `:209` (strip-not-delete deactivate).
+
+    /// §6.vscode.1 — User adds a personal `files.exclude` entry; sync must
+    /// not eat it. RED vs current :178-181 (whole-map insert).
+    #[test]
+    #[ignore = "RED: turned green by fo-cnpjy.5 (vscode per-key files.exclude)"]
+    fn s6_vscode_1_user_files_exclude_entries_survive_activate() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+
+        // Pre-existing rwv-generated workspace with rwv-owned files.exclude
+        // entries (.* + projects/foundations-test) + user-added entries
+        // (**/target and dist).
+        write_file(
+            root,
+            "test-project.code-workspace",
+            r#"{
+  "rwv.generated": true,
+  "folders": [{ "path": ".", "name": "test-project (primary)" }],
+  "settings": {
+    "git.autoRepositoryDetection": "subFolders",
+    "git.repositoryScanMaxDepth": 3,
+    "files.exclude": {
+      ".*": true,
+      "projects/foundations-test": true,
+      "**/target": true,
+      "dist": true
+    }
+  }
+}"#,
+        );
+
+        // New repo on disk — a fresh activation cycle.
+        let manifest = make_manifest(vec![("github/acme/server", Role::Owned)]);
+        let project = ProjectName::new("test-project");
+        let config = IntegrationConfig::default();
+        let all_repos_on_disk: Vec<RepoPath> =
+            vec![RepoPath::new("github/acme/server").expect("known-safe literal")];
+        let cache = HashMap::new();
+        let ctx = IntegrationContext {
+            output_dir: root,
+            workspace_root: root,
+            project: &project,
+            repos: manifest
+                .iter_entries()
+                .map(|(rp, e)| (rp.clone(), e.clone()))
+                .collect(),
+            config: &config,
+            all_repos_on_disk: &all_repos_on_disk,
+            all_project_paths: &[],
+            detection_cache: &cache,
+            workweave: None,
+        };
+
+        VscodeWorkspace.activate(&ctx).unwrap();
+        let content = std::fs::read_to_string(root.join("test-project.code-workspace")).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
+
+        let exclude = &parsed["settings"]["files.exclude"];
+        // User-added keys MUST survive.
+        assert_eq!(
+            exclude["**/target"],
+            serde_json::Value::Bool(true),
+            "user-added **/target must survive activate; got: {exclude}"
+        );
+        assert_eq!(
+            exclude["dist"],
+            serde_json::Value::Bool(true),
+            "user-added dist must survive activate; got: {exclude}"
+        );
+        // rwv-owned keys still set correctly.
+        assert_eq!(exclude[".*"], serde_json::Value::Bool(true));
+        assert_eq!(parsed["rwv.generated"], true);
+    }
+
+    /// §6.vscode.2 — User-added extensions/launch/tasks/compounds survive
+    /// activate AND deactivate. RED vs current :209 (whole-file delete).
+    #[test]
+    #[ignore = "RED: turned green by fo-cnpjy.5 (vscode strip-not-delete)"]
+    fn s6_vscode_2_user_top_level_blocks_survive_activate_and_deactivate() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+
+        write_file(
+            root,
+            "test-project.code-workspace",
+            r#"{
+  "rwv.generated": true,
+  "folders": [{ "path": ".", "name": "test-project (primary)" }],
+  "settings": {
+    "git.autoRepositoryDetection": "subFolders",
+    "git.repositoryScanMaxDepth": 3
+  },
+  "extensions": {
+    "recommendations": ["rust-lang.rust-analyzer", "tamasfe.even-better-toml"]
+  },
+  "launch": {
+    "configurations": [
+      { "type": "lldb", "request": "launch", "name": "debug rvtty" }
+    ]
+  },
+  "tasks": {
+    "version": "2.0.0",
+    "tasks": [{ "label": "build", "type": "shell", "command": "cargo build" }]
+  },
+  "compounds": [
+    { "name": "all-services", "configurations": ["debug rvtty"] }
+  ]
+}"#,
+        );
+
+        let manifest = make_manifest(vec![("github/acme/server", Role::Owned)]);
+        let project = ProjectName::new("test-project");
+        let config = IntegrationConfig::default();
+        let cache = HashMap::new();
+        let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+
+        // After activate: all four blocks must be intact.
+        VscodeWorkspace.activate(&ctx).unwrap();
+        let content = std::fs::read_to_string(root.join("test-project.code-workspace")).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
+        assert!(
+            parsed["extensions"]["recommendations"]
+                .as_array()
+                .map(|a| a.iter().any(|v| v.as_str() == Some("rust-lang.rust-analyzer")))
+                .unwrap_or(false),
+            "extensions.recommendations must survive activate; got: {parsed}"
+        );
+        assert!(
+            parsed["launch"]["configurations"][0]["name"].as_str() == Some("debug rvtty"),
+            "launch.configurations must survive activate; got: {parsed}"
+        );
+        assert_eq!(parsed["tasks"]["version"], "2.0.0", "tasks must survive");
+        assert_eq!(
+            parsed["compounds"][0]["name"], "all-services",
+            "compounds must survive"
+        );
+
+        // After deactivate: file MUST persist (not be deleted); owned keys
+        // stripped (folders, settings.git.*, settings.files.exclude, marker);
+        // the four user blocks remain.
+        VscodeWorkspace.deactivate(root).unwrap();
+        assert!(
+            root.join("test-project.code-workspace").exists(),
+            "deactivate must NOT delete a file with user-authored blocks"
+        );
+        let content = std::fs::read_to_string(root.join("test-project.code-workspace")).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
+        assert!(
+            parsed.get("rwv.generated").is_none(),
+            "marker must be stripped; got: {parsed}"
+        );
+        assert!(
+            parsed.get("folders").is_none(),
+            "folders is owned; must be stripped; got: {parsed}"
+        );
+        // User content MUST remain.
+        assert!(
+            parsed["extensions"]["recommendations"].is_array(),
+            "extensions must survive deactivate"
+        );
+        assert!(parsed["launch"]["configurations"].is_array());
+        assert!(parsed["tasks"]["tasks"].is_array());
+        assert!(parsed["compounds"].is_array());
+    }
+
+    /// §6.vscode.3 — User converts to multi-root; rwv keeps the extra folder.
+    /// RED vs current :119-122 (whole-array overwrite).
+    #[test]
+    #[ignore = "RED: turned green by fo-cnpjy.5 (vscode multi-root folders)"]
+    fn s6_vscode_3_user_added_folder_survives_multi_root() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+
+        write_file(
+            root,
+            "test-project.code-workspace",
+            r#"{
+  "rwv.generated": true,
+  "folders": [
+    { "path": ".", "name": "test-project (primary)" },
+    { "path": "../shared-notes", "name": "notes" }
+  ]
+}"#,
+        );
+
+        let manifest = make_manifest(vec![("github/acme/server", Role::Owned)]);
+        let project = ProjectName::new("test-project");
+        let config = IntegrationConfig::default();
+        let cache = HashMap::new();
+        let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+
+        VscodeWorkspace.activate(&ctx).unwrap();
+        let content = std::fs::read_to_string(root.join("test-project.code-workspace")).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
+        let folders = parsed["folders"].as_array().unwrap();
+
+        assert!(folders.len() >= 2, "folders must include both entries; got: {folders:?}");
+        // Primary folder is rwv-owned and refreshed.
+        assert!(
+            folders.iter().any(|f| f["path"].as_str() == Some(".")),
+            "primary `.` folder must be present; got: {folders:?}"
+        );
+        // User-added notes folder MUST survive (dedupe on path).
+        assert!(
+            folders.iter().any(|f| {
+                f["path"].as_str() == Some("../shared-notes") && f["name"].as_str() == Some("notes")
+            }),
+            "user-added folder must survive; got: {folders:?}"
+        );
+        assert_eq!(parsed["rwv.generated"], true);
+    }
+
+    /// §6.vscode.4 — Deactivate of a purely-rwv file deletes it; hand-written
+    /// file (no marker) is untouched.
+    ///
+    /// Currently GREEN — the current vscode deactivate already gates on the
+    /// rwv.generated marker and deletes the whole file (which happens to
+    /// satisfy this scenario despite being the bug elsewhere). Keep ungated
+    /// as a regression guard against C5 (when C5 switches to strip-not-delete,
+    /// this scenario must still pass because the post-strip doc is empty).
+    #[test]
+    fn s6_vscode_4_deactivate_deletes_purely_rwv_preserves_hand_written() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+
+        // (a) Purely-rwv-owned file: marker + only owned content.
+        write_file(
+            root,
+            "proj.code-workspace",
+            r#"{
+  "rwv.generated": true,
+  "folders": [{ "path": ".", "name": "proj (primary)" }],
+  "settings": {
+    "git.autoRepositoryDetection": "subFolders",
+    "git.repositoryScanMaxDepth": 3,
+    "files.exclude": { ".*": true }
+  }
+}"#,
+        );
+
+        // (b) Hand-written file: NO marker, real user content.
+        write_file(
+            root,
+            "mine.code-workspace",
+            r#"{
+  "folders": [{ "path": "." }],
+  "settings": { "editor.tabSize": 2 }
+}"#,
+        );
+
+        VscodeWorkspace.deactivate(root).unwrap();
+
+        assert!(
+            !root.join("proj.code-workspace").exists(),
+            "purely-rwv file must be deleted (residual empty)"
+        );
+        assert!(
+            root.join("mine.code-workspace").exists(),
+            "hand-written .code-workspace (no marker) must be preserved"
+        );
+        let mine = std::fs::read_to_string(root.join("mine.code-workspace")).unwrap();
+        assert!(
+            mine.contains("editor.tabSize"),
+            "hand-written file content must be untouched; got: {mine}"
+        );
     }
 }
 
@@ -2594,6 +4226,76 @@ mod static_files {
         assert!(
             issues.iter().all(|i| i.severity != Severity::Error),
             "no Severity::Error expected when ctx.workweave is None, got: {issues:?}"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // §6 static-files — RED scenarios (fo-cnpjy.14)
+    // -----------------------------------------------------------------------
+    //
+    // §6.static-files.1 (rwv-c5h reproduction) is already covered above by
+    // `activate_fails_when_name_collides_with_workweave_link` /
+    // `check_emits_error_for_workweave_link_collision` (the C13 hard-error
+    // path). This realizes the remaining plan scenarios:
+    //
+    // §6.static-files.2 — deactivate strips only static-files-owned symlinks;
+    // foreign symlinks and user files survive. The integration's
+    // `deactivate(root)` is a no-op (symlink removal is the framework's job),
+    // so this is the framework-level owner-scoped predicate (C3). RED until
+    // the framework predicate is owner-scoped.
+    //
+    // §6.static-files.3 — missing declared file skipped with warning (already
+    // covered by `check_warns_on_missing_files` and
+    // `activate_succeeds_even_when_files_missing` above; we leave them in
+    // place rather than duplicate).
+    //
+    // Cross-platform: this scenario uses unix symlinks. Gated `#[cfg(unix)]`.
+
+    /// §6.static-files.2 — deactivate (framework symlink reaping) must remove
+    /// only static-files-owned symlinks; workweave.link symlinks and plain
+    /// user files survive.
+    ///
+    /// The framework predicate that owns this (activate.rs:282 owner-blind
+    /// removal) is being fixed by C3 (`generated_files()` split into
+    /// `managed_files()`) + C13 (owner-scoped removal). Because the predicate
+    /// lives in the framework, not in `Integration::deactivate(root)`, this
+    /// test asserts the END-STATE behavior via the framework path — for now
+    /// we encode the spec as a SKIP'd test with a clear pointer to the
+    /// caller. When C3/C13 land they fold the assertion into an e2e test
+    /// (plan §8 "e2e (real CLI)").
+    #[cfg(unix)]
+    #[test]
+    #[ignore = "RED: owner-scoped symlink removal is framework-level; \
+                turned green by fo-cnpjy.3 + fo-cnpjy.13 via e2e flow. \
+                The Integration::deactivate trait method cannot express this \
+                — it tests the framework's symlink-reaping predicate, which \
+                is the C3/C13 fix."]
+    fn s6_static_files_2_deactivate_owner_scoped_symlink_removal() {
+        // Encoded here as a placeholder so the §6 inventory is complete and
+        // C3/C13 reviewers know where to look. The actual assertion lands
+        // when the framework symlink-reaping is callable from this layer
+        // (post fo-cnpjy.3) — see plan §8 e2e plan. The intent:
+        //
+        // GIVEN root with:
+        //   .prettierrc      → symlink to projects/<project>/.prettierrc  (static-files-owned)
+        //   turbo.json       → symlink to <primary>/turbo.json            (workweave.link)
+        //   notes.md         → plain user file (no symlink)
+        // WHEN the activation framework reaps symlinks via the owner-scoped
+        //      predicate (membership ∈ static-files.files ∧ read_link →
+        //      projects/<project>/<file>)
+        // THEN
+        //   .prettierrc is removed
+        //   turbo.json symlink survives (target shape differs)
+        //   notes.md is byte-identical
+        //
+        // The integration's `Integration::deactivate(root)` is a no-op, so
+        // exercising this end-to-end requires the framework path that
+        // fo-cnpjy.3 + fo-cnpjy.13 deliver. The bead acknowledges this
+        // scenario is "extended if needed" — extension lands when the
+        // framework-call seam exists.
+        panic!(
+            "placeholder — fold into e2e under fo-cnpjy.3 + fo-cnpjy.13; \
+             see plan §8 e2e plan"
         );
     }
 }

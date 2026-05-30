@@ -1,5 +1,7 @@
 #![allow(dead_code)]
 
+pub mod contract;
+
 use std::process::Command;
 
 /// `GIT_*` environment variables that git itself sets for hooks and that
