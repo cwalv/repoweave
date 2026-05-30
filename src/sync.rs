@@ -564,20 +564,22 @@ impl fmt::Display for OpId {
 // Helpers
 // ---------------------------------------------------------------------------
 
-fn git(args: &[&str], dir: &Path) -> anyhow::Result<String> {
+fn git(args: &[&str], dir: &Path) -> Result<String, VcsError> {
     let out = git_command()
         .args(args)
         .current_dir(dir)
         .output()
-        .context("failed to run git")?;
+        .map_err(|e| VcsError::Io {
+            ctx: format!("failed to run git {:?} in {}", args, dir.display()),
+            source: e,
+        })?;
     if !out.status.success() {
-        let stderr = String::from_utf8_lossy(&out.stderr);
-        anyhow::bail!(
-            "git {:?} in {} failed: {}",
-            args,
-            dir.display(),
-            stderr.trim()
-        );
+        let stderr = String::from_utf8_lossy(&out.stderr).trim().to_owned();
+        return Err(VcsError::CommandFailed {
+            args: args.iter().map(|s| s.to_string()).collect(),
+            repo: dir.to_path_buf(),
+            stderr,
+        });
     }
     Ok(String::from_utf8(out.stdout)
         .unwrap_or_default()
