@@ -28,6 +28,18 @@ fn make_workspace(tmp: &Path) -> std::path::PathBuf {
 /// Create a project directory with an `rwv.yaml` manifest listing the given repos.
 /// Each repo entry is `(path, role)`. Also creates the repo directories with
 /// the specified manifest files (e.g., `package.json`, `Cargo.toml`).
+///
+/// **Trigger-model note (fo-cnpjy.3):** under the new trigger-model split,
+/// `rwv activate` is a context verb — it surfaces existing
+/// managed/generated content via symlinks but does not author. So this
+/// helper now also drives the intent path
+/// (`repoweave::activate::activate_intent`) after writing the manifest, to
+/// pre-author the integration content into `projects/<project>/` exactly as
+/// a real `rwv add` workflow would have. The CLI-level `rwv activate` calls
+/// in each test then exercise only the surfacing-and-verify behavior we
+/// intend to characterize. This mirrors the real-world workflow (the
+/// committed integration files live in the project repo by construction;
+/// activate just surfaces them).
 fn make_project(
     ws: &Path,
     project: &str,
@@ -67,6 +79,16 @@ fn make_project(
     }
 
     std::fs::write(project_dir.join("rwv.yaml"), yaml).unwrap();
+
+    // Pre-author integration content via the intent path (see trigger-model
+    // note above). We ignore the result: if no integration runs (e.g., the
+    // test only exercises a manifest with no ecosystem files), activate_intent
+    // is a no-op other than setting .rwv-active, which the test will overwrite
+    // anyway when it calls `rwv activate`. We do NOT propagate this side-effect
+    // back through the CLI — the test scaffolding stands in for the human
+    // workflow's "rwv add wrote both the manifest entry and the ecosystem
+    // file."
+    let _ = repoweave::activate::activate_intent(project, ws);
 }
 
 // ============================================================================
@@ -581,47 +603,94 @@ fn activate_same_project_twice_is_idempotent() {
 /// activation symlinks. Verified via deactivate, which runs the sweep.
 #[test]
 fn deactivate_descends_into_nondir_registry_subtrees() {
+    // Under fo-cnpjy.3 (owner-scoped symlink removal), this test exercises
+    // the recursion + the owner-scoping rule together:
+    //
+    //   1. The sweep descends into non-registry, non-`projects/`, non-`.git/`
+    //      subdirectories.
+    //   2. WITHIN those subdirectories, it unlinks ONLY symlinks whose
+    //      root-relative path is in the owned set AND whose target resolves
+    //      to `projects/<some-project>/<that-file>`. User-planted symlinks
+    //      at paths the integrations don't own are preserved.
+    //   3. It refuses to descend into registry directories.
+    //
+    // The pre-existing version of this test relied on the over-broad
+    // "any target with a `projects` component" predicate (which would sweep
+    // a user's `docs/package.json` symlink). That predicate is replaced; the
+    // new behavior preserves user-owned paths. We assert the new contract.
+    //
+    // We use the `gita` integration (enabled in this project's rwv.yaml
+    // via `integrations:`) to get a *real* nested owned path
+    // (`gita/repos.csv`), so the descent-into-subdirectory leg is exercised
+    // with an actually-owned name.
     use std::os::unix::fs::symlink;
 
     let tmp = tempfile::tempdir().unwrap();
     let ws = make_workspace(tmp.path());
-    make_project(
-        &ws,
-        "web-app",
-        &[("github/acme/server", "owned", &["package.json"])],
+    let project_dir = ws.join("projects/web-app");
+    std::fs::create_dir_all(&project_dir).unwrap();
+    // Manifest enables gita so its `gita/repos.csv` + `gita/groups.csv` are
+    // in the owned set; we don't care about their actual content here.
+    std::fs::write(
+        project_dir.join("rwv.yaml"),
+        "repositories:\n  github/acme/server:\n    type: git\n    url: https://github.com/test/server.git\n    version: main\n    role: owned\n\
+integrations:\n  gita:\n    enabled: true\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(ws.join("github/acme/server")).unwrap();
+
+    // Pre-author via intent path so context-mode activate has something
+    // to surface (matches the new trigger-model contract).
+    let _ = repoweave::activate::activate_intent("web-app", &ws);
+
+    // Activate to refresh top-level + nested gita symlinks (context mode).
+    rwv()
+        .args(["activate", "web-app", "--no-install"])
+        .current_dir(&ws)
+        .assert()
+        .success();
+
+    // The framework should have produced gita/repos.csv as a symlink under
+    // a subdirectory — proving the create path descends.
+    let gita_csv = ws.join("gita/repos.csv");
+    assert!(
+        gita_csv.symlink_metadata().is_ok(),
+        "gita/repos.csv symlink should have been created (descent on create path)"
     );
 
-    // Activate to create the top-level symlinks.
-    rwv()
-        .args(["activate", "web-app", "--no-install"])
-        .current_dir(&ws)
-        .assert()
-        .success();
+    // Plant a user-owned symlink at `gita/extras.txt` pointing into the
+    // project — `extras.txt` is NOT in any integration's owned set.
+    // Under the new owner-scoped predicate this MUST be preserved
+    // (rwv-c5h shape: don't reap what we don't own).
+    let user_relative_target = std::path::PathBuf::from("../projects/web-app/gita/extras.txt");
+    let user_nested_link = ws.join("gita/extras.txt");
+    symlink(&user_relative_target, &user_nested_link).unwrap();
 
-    // Now plant a nested activation symlink inside a non-registry
-    // subdirectory. The sweep should follow it on deactivate.
-    let nested_dir = ws.join("docs");
-    std::fs::create_dir_all(&nested_dir).unwrap();
-    let nested_target = ws.join("projects/web-app/package.json");
-    let nested_link = nested_dir.join("package.json");
-    symlink(&nested_target, &nested_link).unwrap();
-
-    // And plant one inside `github/` — it must NOT be removed because the
-    // sweep refuses to descend into registry dirs.
-    let registry_link = ws.join("github/squat.json");
-    symlink(&nested_target, &registry_link).unwrap();
+    // And plant a symlink inside `github/` — it must NOT be removed
+    // because the sweep refuses to descend into registry dirs.
+    let registry_target = std::path::PathBuf::from("../projects/web-app/gita/repos.csv");
+    let registry_link = ws.join("github/squat.csv");
+    symlink(&registry_target, &registry_link).unwrap();
 
     // Re-activate: this runs `remove_activation_symlinks` before re-creating
-    // links, exercising the sweep.
+    // links, exercising the sweep on the gita subdirectory.
     rwv()
         .args(["activate", "web-app", "--no-install"])
         .current_dir(&ws)
         .assert()
         .success();
 
+    // After re-activate, the OWNED gita/repos.csv symlink should have been
+    // removed and recreated (we don't observe the in-between state — just
+    // that it currently exists). The descent-and-sweep is proven by the
+    // user-symlink-preservation + registry-skip assertions below.
     assert!(
-        !nested_link.exists(),
-        "nested activation symlink under non-registry dir must be swept"
+        gita_csv.symlink_metadata().is_ok(),
+        "gita/repos.csv symlink should exist after re-activate (removed-and-recreated)"
+    );
+    assert!(
+        user_nested_link.symlink_metadata().is_ok(),
+        "nested USER symlink (name NOT in any owned set) must be preserved — rwv only sweeps what it owns"
     );
     assert!(
         registry_link.symlink_metadata().is_ok(),

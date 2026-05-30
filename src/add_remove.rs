@@ -1,6 +1,6 @@
 //! `rwv add` and `rwv remove` — manage repos in a project manifest.
 
-use crate::activate::{activate, activate_workweave};
+use crate::activate::{activate_intent, activate_workweave_intent};
 use crate::git::git_command;
 use crate::git::GitVcs;
 use crate::manifest::{Manifest, ProjectName, RepoEntry, RepoPath, RepoUrl, Role, VcsType};
@@ -106,20 +106,21 @@ fn create_worktree_in_workweave(
 
 /// Run the appropriate activation pass for the current workspace location.
 ///
-/// In a workweave, [`activate_workweave`] updates the workweave-local
-/// `.rwv-active` and symlinks (no install hooks). In primary, [`activate`]
-/// runs the full activation pass against primary. Either way, the active
-/// project's `.rwv-active` and ecosystem files stay scoped to CWD's
-/// workspace — `rwv add` from a workweave no longer touches primary's
-/// `.rwv-active` as a side-effect.
+/// `rwv add`/`rwv remove` are **intent verbs** (see
+/// [`trigger-model.md`](../../../../projects/foundations/docs/repoweave/integration-ownership/trigger-model.md)):
+/// they mutate `rwv.yaml`, then regenerate the integrations' managed/generated
+/// files so the new content can be committed alongside the manifest change.
+/// In a workweave we still regenerate (the workweave is a view onto the
+/// project repo — symlinks write through to it) but skip install hooks; in
+/// primary we run the full intent-mode activation.
 fn activate_for_workspace(
     ctx: &WorkspaceContext,
     project_name: &str,
     cwd: &Path,
 ) -> anyhow::Result<()> {
     match &ctx.location {
-        WorkspaceLocation::Workweave { dir, .. } => activate_workweave(project_name, dir),
-        WorkspaceLocation::Weave { .. } => activate(project_name, cwd),
+        WorkspaceLocation::Workweave { dir, .. } => activate_workweave_intent(project_name, dir),
+        WorkspaceLocation::Weave { .. } => activate_intent(project_name, cwd),
     }
 }
 

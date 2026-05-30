@@ -1599,6 +1599,47 @@ pub fn run_check(
         let ctx_base = session.context_base(&workspace_dir, &project.name, &detection_cache);
         let integration_issues = run_checks(&integrations, &project.manifest, &ctx_base);
         all_issues.extend(integration_issues);
+
+        // Trigger-model drift check (see `trigger-model.md`): the integrations'
+        // `verify()` pass reports drift between on-disk managed/generated content
+        // and what `activate()` would produce. Under `--fix`, doctor invokes the
+        // intent-mode write path to regenerate. Without `--fix`, the drift findings
+        // surface as warnings — `doctor` is the detector and the fixer.
+        //
+        // Today no built-in integration overrides `verify()` (default returns
+        // empty), so this pass is a no-op for the shipped set; the framework is
+        // ready for the per-integration ports (epic fo-cnpjy C4–C13). When a
+        // ported integration starts emitting drift, `--fix` will pick it up
+        // automatically via the [`crate::activate::activate_intent`] call below.
+        let verify_issues = crate::integration_runner::run_verifications(
+            &integrations,
+            &project.manifest,
+            &ctx_base,
+        );
+        if fix && !verify_issues.is_empty() {
+            // Regenerate by running intent-mode activation against this project,
+            // from the workspace dir. This is the canonical write path; any
+            // integration whose verify() flagged drift will re-author its
+            // content here. The activation also re-runs activate-hooks (install
+            // commands); doctor --fix is meant to fully repair, so that's the
+            // right behavior.
+            match crate::activate::activate_intent(project.name.as_str(), &workspace_dir) {
+                Ok(()) => println!(
+                    "[fixed] core: regenerated integration content for project `{}` (drift detected)",
+                    project.name
+                ),
+                Err(e) => all_issues.push(Issue {
+                    integration: "core".into(),
+                    severity: Severity::Error,
+                    message: format!(
+                        "doctor --fix: failed to regenerate integration content for `{}`: {e}",
+                        project.name
+                    ),
+                }),
+            }
+        } else {
+            all_issues.extend(verify_issues);
+        }
     }
 
     // Index-drift + working-tree-drift detection.

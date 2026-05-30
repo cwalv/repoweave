@@ -959,6 +959,17 @@ fn make_workspace_with_cargo_repo(tmp: &Path, project: &str) -> std::path::PathB
         repo = repo_path.display()
     );
     std::fs::write(project_dir.join("rwv.yaml"), manifest).unwrap();
+
+    // Trigger-model split (fo-cnpjy.3): pre-author the integration content
+    // in the primary workspace so workweave-create (a context verb)
+    // surfaces it via symlinks. Real-world equivalent: an intent verb
+    // (rwv add) ran earlier and committed both rwv.yaml and Cargo.toml.
+    repoweave::activate::activate_intent_with_options(
+        project,
+        &ws,
+        repoweave::activate::ActivateOptions { no_install: true },
+    )
+    .expect("intent-mode activation should pre-author Cargo.toml in project dir");
     ws
 }
 

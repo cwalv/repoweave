@@ -134,7 +134,7 @@ repositories:\n  \
     // ------------------------------------------------------------------
     // 6. Call activate("web-app", root) via the repoweave library
     // ------------------------------------------------------------------
-    repoweave::activate::activate("web-app", root).expect("activate should succeed");
+    repoweave::activate::activate_intent("web-app", root).expect("activate should succeed");
 
     // ------------------------------------------------------------------
     // 7. Verify go.work exists at the weave root and lists both modules
@@ -308,7 +308,7 @@ repositories:\n  \
     // 5. Write .rwv-active and activate to generate go.work
     // ------------------------------------------------------------------
     std::fs::write(root.join(".rwv-active"), "web-app\n").unwrap();
-    repoweave::activate::activate("web-app", root).expect("activate should succeed");
+    repoweave::activate::activate_intent("web-app", root).expect("activate should succeed");
 
     let go_work_path = root.join("go.work");
     assert!(

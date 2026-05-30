@@ -96,6 +96,18 @@ fn init_bare_cargo_lib(path: &Path, crate_name: &str) {
 /// Project source: bare repo whose default-branch tip carries an
 /// `rwv.yaml` pointing at the given `(repo_path, url)` manifest
 /// entries. Returns the project-source URL `file:///...`.
+///
+/// **Trigger-model note (fo-cnpjy.3):** under the new spec, `rwv fetch` is
+/// a context verb — it surfaces existing managed/generated content but does
+/// not author. So the project source must already contain the
+/// integration-authored files (e.g. `Cargo.toml` workspace root) that the
+/// downstream `rwv activate` will surface via symlinks. We pre-author them
+/// here by spinning up a side workspace that clones the manifest repos
+/// (so `cargo-workspace`'s detection cache fires), drives intent-mode
+/// activation against a copy, then commits the generated outputs (Cargo.toml,
+/// rwv.lock) into the project source. This mirrors the real-world flow:
+/// the project author ran `rwv add` locally, committed both the manifest and
+/// the integration outputs, and pushed.
 fn make_project_source(tmp: &Path, name: &str, repos: &[(&str, &str)]) -> String {
     let project_bare = tmp.join(format!("{name}.git"));
     init_bare_repo(&project_bare);
@@ -117,10 +129,78 @@ fn make_project_source(tmp: &Path, name: &str, repos: &[(&str, &str)]) -> String
         ));
     }
     std::fs::write(work.join("rwv.yaml"), &yaml).unwrap();
-    run_git(&["add", "rwv.yaml"], &work);
-    run_git(&["commit", "-m", "manifest"], &work);
+
+    // Stage a side workspace that mirrors what the project's first-time
+    // author would have on their machine: clone the manifest repos, run
+    // intent-mode activation, then bring the generated files back into the
+    // project source repo (work).
+    {
+        let staging = tmp.join(format!("{name}_staging"));
+        let staging_proj_dir = staging.join("projects").join(name);
+        std::fs::create_dir_all(&staging_proj_dir).unwrap();
+        std::fs::write(staging_proj_dir.join("rwv.yaml"), &yaml).unwrap();
+        // Clone each manifest repo into the staging workspace so the
+        // ecosystem integrations' detection cache picks them up.
+        for (path, url) in repos {
+            let dest = staging.join(path);
+            if let Some(parent) = dest.parent() {
+                std::fs::create_dir_all(parent).unwrap();
+            }
+            run_git(
+                &["clone", url, &dest.to_string_lossy()],
+                staging.as_path().parent().unwrap_or(tmp),
+            );
+        }
+        // Drive intent-mode activation against the staging workspace. We
+        // skip install hooks (no `cargo generate-lockfile` etc.) because
+        // staging is throwaway and the activate hook needs network/tooling
+        // we're not assuming.
+        repoweave::activate::activate_intent_with_options(
+            name,
+            &staging,
+            repoweave::activate::ActivateOptions { no_install: true },
+        )
+        .expect("staging intent-mode activation should author integration outputs");
+        // Copy generated outputs from staging back into the project source
+        // repo. The set we care about today is whatever's in
+        // `projects/<name>/`, minus rwv.yaml (already committed).
+        let staging_outputs = staging.join("projects").join(name);
+        for entry in std::fs::read_dir(&staging_outputs).unwrap().flatten() {
+            let fname = entry.file_name();
+            if fname == "rwv.yaml" {
+                continue;
+            }
+            let src = entry.path();
+            let dst = work.join(&fname);
+            if src.is_dir() {
+                copy_dir_recursive(&src, &dst);
+            } else {
+                std::fs::copy(&src, &dst).unwrap();
+            }
+        }
+    }
+
+    run_git(&["add", "-A"], &work);
+    run_git(
+        &["commit", "-m", "manifest + intent-authored content"],
+        &work,
+    );
     run_git(&["push", "origin", "main"], &work);
     format!("file://{}", project_bare.display())
+}
+
+/// Recursively copy `src` to `dst` (test-only helper).
+fn copy_dir_recursive(src: &Path, dst: &Path) {
+    std::fs::create_dir_all(dst).unwrap();
+    for entry in std::fs::read_dir(src).unwrap().flatten() {
+        let path = entry.path();
+        let dst_path = dst.join(entry.file_name());
+        if path.is_dir() {
+            copy_dir_recursive(&path, &dst_path);
+        } else {
+            std::fs::copy(&path, &dst_path).unwrap();
+        }
+    }
 }
 
 /// Advance a bare repo's `main` by one commit. Returns the new tip SHA.

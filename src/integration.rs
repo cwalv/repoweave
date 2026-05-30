@@ -165,13 +165,78 @@ pub trait Integration {
     }
 
     /// Return the filenames (relative to `output_dir`) that this integration
-    /// generates during activation.
+    /// **fully owns** — rwv writes 100% of the content, no user-authored
+    /// surface, whole-write and whole-delete safe, gitignore-eligible.
     ///
-    /// Used by the framework to track generated files for cleanup, diffing,
-    /// and `.gitignore` management. Integrations that generate files should
-    /// override this. The default returns an empty list.
+    /// Examples: lockfiles (`Cargo.lock`, `package-lock.json`), gita CSVs,
+    /// a fully-owned `.code-workspace`.
+    ///
+    /// The only consumer in-tree is the activation symlink set
+    /// ([`crate::activate`]) — every file here is symlinked from the weave
+    /// root into the project directory.
+    ///
+    /// The default returns an empty list.
     fn generated_files(&self, _ctx: &IntegrationContext) -> Vec<String> {
         Vec::new()
+    }
+
+    /// Return the filenames (relative to `output_dir`) that this integration
+    /// **manages a region of** — hybrid files, where rwv owns a declared
+    /// key/region set inside a user-authored file. Symlinked, **never
+    /// gitignored**, strip-only on deactivate (delete-if-rwv-header — never
+    /// blow away user content).
+    ///
+    /// Examples: a hybrid `Cargo.toml` (rwv owns `[workspace].members`),
+    /// `pyproject.toml` (rwv owns `[tool.uv.workspace].members`),
+    /// `pnpm-workspace.yaml`, `go.work`, `package.json` (with the rwv marker),
+    /// `vscode-workspace.json` when it has user content.
+    ///
+    /// **Default impl returns `generated_files(ctx)`** — this is the safe
+    /// default for existing integrations: every file currently declared in
+    /// `generated_files()` continues to participate in symlink surfacing
+    /// unchanged. As each integration is ported (epic fo-cnpjy C4–C13), it
+    /// moves the hybrid entries from `generated_files()` to `managed_files()`
+    /// explicitly. Integrations that have no hybrid files (e.g. gita) may
+    /// leave the default in place — the union of the two methods is what
+    /// drives surfacing, so duplication is harmless.
+    ///
+    /// **Invariant the two methods together imply:** the union of
+    /// `generated_files(ctx)` and `managed_files(ctx)` is the complete set
+    /// of root-relative paths that the framework will symlink for this
+    /// integration. Files that appear in BOTH are coalesced by the union;
+    /// no integration should declare the same path with conflicting
+    /// ownership semantics within itself.
+    fn managed_files(&self, ctx: &IntegrationContext) -> Vec<String> {
+        self.generated_files(ctx)
+    }
+
+    /// Verify that the on-disk managed/generated artifacts agree with what
+    /// `activate()` would produce for the current `rwv.yaml` + `rwv.lock`.
+    ///
+    /// Called by context verbs (`rwv activate`, `rwv fetch`, workweave-create)
+    /// and by `rwv doctor`. **Must not author content** — only inspect.
+    /// Emit drift findings as `Issue`s (typically `Severity::Warning`); the
+    /// recovery hatch is `rwv doctor --fix`, which re-runs `activate()`.
+    ///
+    /// **Default implementation forwards to `self.check(ctx)`.** Most
+    /// existing integrations already implement `check()` as their
+    /// read-only inspection: declared static files missing from the project
+    /// dir, ecosystem CLI absent from PATH, ecosystem-config marker
+    /// missing, etc. Those checks ARE the drift signals we want context
+    /// verbs to surface. Integrations that need a more precise drift
+    /// model (e.g. byte-level comparison against would-be-authored
+    /// content for hybrid files) override this independently.
+    ///
+    /// The split between `check` and `verify` (rather than collapsing
+    /// them) is preserved so that an integration's future drift logic
+    /// can diverge from its environment / configuration check without
+    /// breaking the other use-site (`rwv doctor` already calls `check`
+    /// from a different code path).
+    ///
+    /// See [`trigger-model.md`](../docs/repoweave/integration-ownership/trigger-model.md)
+    /// for the full intent-vs-context-verb split.
+    fn verify(&self, ctx: &IntegrationContext) -> anyhow::Result<Vec<Issue>> {
+        self.check(ctx)
     }
 }
 

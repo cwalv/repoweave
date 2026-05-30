@@ -168,6 +168,28 @@ pub fn run_checks(
     })
 }
 
+/// Run verify hooks for each enabled integration, collecting issues.
+///
+/// Called from context verbs (`rwv activate`, `rwv fetch`, workweave-create):
+/// the verb surfaces (always creates/repairs symlinks) and verifies — never
+/// authors. Drift between on-disk content and what `activate()` would
+/// produce is reported as `Issue`s (typically `Severity::Warning`). The
+/// recovery hatch is `rwv doctor --fix`, which calls `run_activations`.
+///
+/// See `trigger-model.md` for the intent-vs-context verb split.
+pub fn run_verifications(
+    integrations: &[&dyn Integration],
+    manifest: &Manifest,
+    ctx_base: &IntegrationContextBase,
+) -> Vec<Issue> {
+    for_each_enabled(integrations, manifest, |integration, config| {
+        let ctx = ctx_base.build_context(config, manifest);
+        integration
+            .verify(&ctx)
+            .map_err(|e| anyhow::anyhow!("verify failed: {e}"))
+    })
+}
+
 /// Run activate hooks for each enabled integration, collecting issues.
 ///
 /// Called from `rwv activate` after `run_activations` writes the

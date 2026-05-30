@@ -292,6 +292,19 @@ fn activate_symlinks_cargo_toml_and_lock() {
     let manifest = "repositories:\n  github/org/mylib:\n    type: git\n    url: https://github.com/org/mylib.git\n    version: main\n    role: owned\n";
     std::fs::write(project_dir.join("rwv.yaml"), manifest).unwrap();
 
+    // Under fo-cnpjy.3's trigger-model split, `rwv activate` is a context
+    // verb — it surfaces existing content but does not author. Drive the
+    // intent path first so the project_dir/Cargo.toml exists for the
+    // context-mode activate to surface. (Mirrors what `rwv add` does in
+    // a real workflow.) Use the no-install variant to skip
+    // `cargo generate-lockfile` (the CLI step is gated by --no-install).
+    repoweave::activate::activate_intent_with_options(
+        "cargo-proj",
+        &ws_root,
+        repoweave::activate::ActivateOptions { no_install: true },
+    )
+    .expect("intent-mode activation should author Cargo.toml in project dir");
+
     rwv()
         .args(["activate", "cargo-proj", "--no-install"])
         .current_dir(&ws_root)
@@ -502,6 +515,17 @@ fn activate_npm_no_install_run_during_activate() {
 
     let manifest = "repositories:\n  github/org/webapp:\n    type: git\n    url: https://github.com/org/webapp.git\n    version: main\n    role: owned\n";
     std::fs::write(project_dir.join("rwv.yaml"), manifest).unwrap();
+
+    // Trigger-model split (fo-cnpjy.3): pre-author via intent path so the
+    // context-mode `rwv activate` below has content to surface. Use the
+    // no-install variant so this test (which asserts node_modules is NOT
+    // created) doesn't see the install hooks run during pre-authoring.
+    repoweave::activate::activate_intent_with_options(
+        "npm-proj",
+        &ws_root,
+        repoweave::activate::ActivateOptions { no_install: true },
+    )
+    .expect("intent-mode activation should author package.json in project dir");
 
     let output = rwv()
         .args(["activate", "npm-proj", "--no-install"])
