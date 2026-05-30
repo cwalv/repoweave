@@ -1605,3 +1605,242 @@ fn check_unparseable_project_not_fixed_by_fix_flag() {
         "--fix must not modify an unparseable manifest"
     );
 }
+
+// ===========================================================================
+// fo-zg0dt: default scoping (active project only) and --all flag
+// ===========================================================================
+
+/// Helper: write a `.rwv-active` file pointing at the given project.
+fn set_active_project(workspace_root: &std::path::Path, project_name: &str) {
+    std::fs::write(
+        workspace_root.join(".rwv-active"),
+        format!("{project_name}\n"),
+    )
+    .unwrap();
+}
+
+/// Default `rwv doctor` does NOT report orphaned clones when an active project
+/// is set. An orphan can belong to another project; surfacing it in single-
+/// project scope produces false positives.
+#[test]
+fn default_scope_no_orphan_when_active_project_set() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = make_workspace(tmp.path(), "ws");
+
+    // Project "active-proj" owns one repo.
+    let owned_repo = "github/acme/owned";
+    init_git_repo(&root.join(owned_repo));
+    let project_dir = root.join("projects").join("active-proj");
+    write_manifest(
+        &project_dir,
+        &[(owned_repo, "https://github.com/acme/owned.git")],
+    );
+    std::fs::write(project_dir.join(".gitattributes"), "rwv.lock merge=ours\n").unwrap();
+
+    // An extra repo on disk belongs to no loaded project (would be "orphaned"
+    // in weave-wide scan but must not be flagged in single-project scope).
+    let extra_repo = "github/acme/other-project-repo";
+    init_git_repo(&root.join(extra_repo));
+
+    // Activate "active-proj".
+    set_active_project(&root, "active-proj");
+
+    let out = rwv_cmd()
+        .arg("doctor")
+        .current_dir(&root)
+        .assert()
+        .get_output()
+        .stdout
+        .clone();
+    let stdout = String::from_utf8_lossy(&out);
+    assert!(
+        !stdout.contains("orphaned clone"),
+        "default scope must not report orphan when active project is set; got:\n{stdout}"
+    );
+    assert!(
+        !stdout.contains(extra_repo),
+        "default scope must not mention the extra repo; got:\n{stdout}"
+    );
+}
+
+/// `rwv doctor --all` DOES report orphaned clones regardless of active project.
+#[test]
+fn all_flag_reports_orphan_even_with_active_project() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = make_workspace(tmp.path(), "ws");
+
+    let owned_repo = "github/acme/owned";
+    init_git_repo(&root.join(owned_repo));
+    let project_dir = root.join("projects").join("active-proj");
+    write_manifest(
+        &project_dir,
+        &[(owned_repo, "https://github.com/acme/owned.git")],
+    );
+    std::fs::write(project_dir.join(".gitattributes"), "rwv.lock merge=ours\n").unwrap();
+
+    let orphan_repo = "github/acme/stray";
+    init_git_repo(&root.join(orphan_repo));
+
+    set_active_project(&root, "active-proj");
+
+    let out = rwv_cmd()
+        .args(["doctor", "--all"])
+        .current_dir(&root)
+        .assert()
+        .failure() // orphan is an error
+        .get_output()
+        .stdout
+        .clone();
+    let stdout = String::from_utf8_lossy(&out);
+    assert!(
+        stdout.contains("orphaned clone") || stdout.contains(orphan_repo),
+        "--all must report the orphan; got:\n{stdout}"
+    );
+}
+
+/// Default `rwv doctor` does NOT report stale locks from a non-active project
+/// when an active project is set.
+#[test]
+fn default_scope_no_cross_project_stale_lock() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = make_workspace(tmp.path(), "ws");
+
+    // Project "alpha" owns repo-a; lock is fresh.
+    let repo_a = "github/acme/repo-a";
+    let sha_a = init_git_repo(&root.join(repo_a));
+    let alpha_dir = root.join("projects").join("alpha");
+    write_manifest(
+        &alpha_dir,
+        &[(repo_a, "https://github.com/acme/repo-a.git")],
+    );
+    write_lock(
+        &alpha_dir,
+        &[(repo_a, "https://github.com/acme/repo-a.git", &sha_a)],
+    );
+    std::fs::write(alpha_dir.join(".gitattributes"), "rwv.lock merge=ours\n").unwrap();
+
+    // Project "beta" owns repo-b; lock is STALE.
+    let repo_b = "github/acme/repo-b";
+    init_git_repo(&root.join(repo_b));
+    let beta_dir = root.join("projects").join("beta");
+    write_manifest(&beta_dir, &[(repo_b, "https://github.com/acme/repo-b.git")]);
+    write_lock(
+        &beta_dir,
+        &[(
+            repo_b,
+            "https://github.com/acme/repo-b.git",
+            "0000000000000000000000000000000000000000",
+        )],
+    );
+    std::fs::write(beta_dir.join(".gitattributes"), "rwv.lock merge=ours\n").unwrap();
+
+    // Activate "alpha".
+    set_active_project(&root, "alpha");
+
+    // Default doctor should see no violations (alpha is clean).
+    let out = rwv_cmd()
+        .arg("doctor")
+        .current_dir(&root)
+        .assert()
+        .success() // alpha is clean; beta's stale lock must be invisible
+        .get_output()
+        .stdout
+        .clone();
+    let stdout = String::from_utf8_lossy(&out);
+    assert!(
+        !stdout.contains("stale lock"),
+        "default scope must not report stale lock from non-active project; got:\n{stdout}"
+    );
+    assert!(
+        !stdout.contains("beta"),
+        "default scope must not mention non-active project; got:\n{stdout}"
+    );
+}
+
+/// `rwv doctor --all` DOES report stale locks (or unresolvable-lock errors)
+/// from all projects, not just the active one.
+#[test]
+fn all_flag_reports_cross_project_stale_lock() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = make_workspace(tmp.path(), "ws");
+
+    let repo_a = "github/acme/repo-a";
+    let sha_a = init_git_repo(&root.join(repo_a));
+    let alpha_dir = root.join("projects").join("alpha");
+    write_manifest(
+        &alpha_dir,
+        &[(repo_a, "https://github.com/acme/repo-a.git")],
+    );
+    write_lock(
+        &alpha_dir,
+        &[(repo_a, "https://github.com/acme/repo-a.git", &sha_a)],
+    );
+    std::fs::write(alpha_dir.join(".gitattributes"), "rwv.lock merge=ours\n").unwrap();
+
+    // beta's repo-b: lock pins the first commit, HEAD advances past it.
+    let repo_b = "github/acme/repo-b";
+    let old_sha_b = init_git_repo(&root.join(repo_b));
+    make_commit(&root.join(repo_b)); // HEAD moves forward; lock stays at old_sha_b
+    let beta_dir = root.join("projects").join("beta");
+    write_manifest(&beta_dir, &[(repo_b, "https://github.com/acme/repo-b.git")]);
+    write_lock(
+        &beta_dir,
+        &[(repo_b, "https://github.com/acme/repo-b.git", &old_sha_b)],
+    );
+    std::fs::write(beta_dir.join(".gitattributes"), "rwv.lock merge=ours\n").unwrap();
+
+    set_active_project(&root, "alpha");
+
+    // --all should surface beta's stale-lock issue.
+    let out = rwv_cmd()
+        .args(["doctor", "--all"])
+        .current_dir(&root)
+        .assert()
+        .failure() // stale lock is an error
+        .get_output()
+        .stdout
+        .clone();
+    let stdout = String::from_utf8_lossy(&out);
+    assert!(
+        stdout.contains("stale lock") || stdout.contains("beta"),
+        "--all must surface beta's stale lock from non-active project; got:\n{stdout}"
+    );
+}
+
+/// `rwv doctor --json` with an active project set does NOT include orphaned-
+/// clone entries in the violations array.
+#[test]
+fn default_scope_json_no_orphan_when_active_project_set() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = make_workspace(tmp.path(), "ws");
+
+    let owned_repo = "github/acme/owned";
+    init_git_repo(&root.join(owned_repo));
+    let project_dir = root.join("projects").join("active-proj");
+    write_manifest(
+        &project_dir,
+        &[(owned_repo, "https://github.com/acme/owned.git")],
+    );
+    std::fs::write(project_dir.join(".gitattributes"), "rwv.lock merge=ours\n").unwrap();
+
+    // Orphan-looking repo that belongs to no active project.
+    init_git_repo(&root.join("github/acme/other-project-repo"));
+
+    set_active_project(&root, "active-proj");
+
+    let assertion = rwv_cmd()
+        .args(["doctor", "--json"])
+        .current_dir(&root)
+        .assert()
+        .success(); // active project is clean; no violations
+    let stdout = String::from_utf8(assertion.get_output().stdout.clone()).unwrap();
+    let parsed: serde_json::Value = serde_json::from_str(&stdout).expect("valid JSON");
+    let violations = parsed.get("violations").and_then(|v| v.as_array()).unwrap();
+    let has_orphan = violations
+        .iter()
+        .any(|v| v.get("kind").and_then(|k| k.as_str()) == Some("orphaned-clone"));
+    assert!(
+        !has_orphan,
+        "default --json scope must not include orphaned-clone; violations: {violations:?}"
+    );
+}

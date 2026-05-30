@@ -618,6 +618,12 @@ pub struct CheckInput {
     /// appear here. The split out of `Project.lock` (which stays raw)
     /// keeps the parse/resolve boundary explicit at the type level.
     pub resolved_locks: std::collections::HashMap<ProjectName, crate::manifest::ResolvedLockFile>,
+    /// When `false`, the orphan-clone check is skipped. Orphan detection is
+    /// inherently weave-wide (a repo is only "orphaned" if it belongs to *no*
+    /// project), so running it in single-project mode would produce false
+    /// positives for repos that belong to other projects. Set to `true` only
+    /// when all projects have been loaded into `projects` (i.e. `--all` mode).
+    pub check_orphans: bool,
 }
 
 /// Collect all convention violations from the check inputs.
@@ -628,12 +634,17 @@ pub struct CheckInput {
 pub fn find_violations(input: &CheckInput) -> Vec<CheckViolation> {
     let mut violations = Vec::new();
 
-    // Orphaned clones: on disk but not in any project
-    for repo_path in &input.repos_on_disk {
-        if !input.known_repos.contains(repo_path) {
-            violations.push(CheckViolation::OrphanedClone {
-                path: repo_path.clone(),
-            });
+    // Orphaned clones: on disk but not in any project.
+    // Only run when check_orphans is true (i.e. all projects are loaded).
+    // In single-project mode, a repo absent from the active project may still
+    // belong to another project — flagging it as orphaned would be a false positive.
+    if input.check_orphans {
+        for repo_path in &input.repos_on_disk {
+            if !input.known_repos.contains(repo_path) {
+                violations.push(CheckViolation::OrphanedClone {
+                    path: repo_path.clone(),
+                });
+            }
         }
     }
 
@@ -1201,6 +1212,13 @@ pub fn run_check_locked(
 /// When `fix` is `true`, safely-auto-fixable index-drift cases are remediated
 /// in place with `git reset` (index ← HEAD, working tree untouched).
 ///
+/// When `scope_all` is `false` (the default), only the active project is
+/// checked: stale locks, dangling references, and integration hooks are
+/// scoped to that project, and orphan detection is skipped (a repo absent
+/// from the active project may belong to another project). Pass `scope_all =
+/// true` (via `--all`) to reproduce the previous weave-wide behaviour,
+/// including orphan detection across every project.
+///
 /// Returns `Ok(true)` if there are errors (exit 1), `Ok(false)` if clean.
 /// When `project_override` is `Some`, the context resolves to that
 /// project for the purposes of activation/check scoping (does not
@@ -1209,6 +1227,7 @@ pub fn run_check(
     cwd: &std::path::Path,
     fix: bool,
     project_override: Option<crate::manifest::ProjectName>,
+    scope_all: bool,
 ) -> anyhow::Result<bool> {
     use crate::git::GitVcs;
     use crate::integration::Severity;
@@ -1253,7 +1272,24 @@ pub fn run_check(
     // to parse now that the back-compat alias is gone. With `--fix`, the
     // rewrite happens here so subsequent loaders see the migrated
     // manifests.
-    let legacy_role_primary = scan_workspace_for_legacy_role_primary(&workspace_dir);
+    // In default (project-scoped) mode with an active project, only report
+    // findings for that project. Without an active project, report all
+    // (matches the fall-through in project loading).
+    let active_project_name: Option<crate::manifest::ProjectName> = ctx.active_project().cloned();
+    let legacy_role_primary_all = scan_workspace_for_legacy_role_primary(&workspace_dir);
+    let legacy_role_primary: Vec<_> = if scope_all || active_project_name.is_none() {
+        legacy_role_primary_all
+    } else {
+        legacy_role_primary_all
+            .into_iter()
+            .filter(|f| {
+                active_project_name
+                    .as_ref()
+                    .map(|a| f.project.as_str() == a.as_str())
+                    .unwrap_or(true)
+            })
+            .collect()
+    };
     let mut legacy_role_primary_warnings: Vec<(crate::manifest::ProjectName, PathBuf)> = Vec::new();
     let mut legacy_role_primary_errors: Vec<(crate::manifest::ProjectName, String)> = Vec::new();
     for finding in &legacy_role_primary {
@@ -1324,7 +1360,16 @@ pub fn run_check(
         }
     }
 
-    // Load all project manifests from projects/*/rwv.yaml
+    // Determine which project(s) to load. In default (project-scoped) mode
+    // only the active project is loaded so that stale-lock, dangling-reference,
+    // and integration findings stay within the project the operator cares about.
+    // Under `--all`, every project is loaded and weave-wide checks (orphan
+    // detection, cross-project stale locks) run as before.
+    let active_project_name: Option<crate::manifest::ProjectName> = ctx.active_project().cloned();
+
+    // Load project manifest(s) from projects/*/rwv.yaml.
+    // In default mode: only the active project (identified by active_project_name).
+    // In --all mode: every project under projects/.
     let projects_dir = workspace_dir.join("projects");
     let mut projects = Vec::new();
     let mut known_repos = BTreeSet::new();
@@ -1358,14 +1403,30 @@ pub fn run_check(
             let rel_dir = project_dir
                 .strip_prefix(&workspace_dir)
                 .unwrap_or(&project_dir);
+            let name_from_rel = rel_dir
+                .strip_prefix("projects")
+                .unwrap_or(rel_dir)
+                .to_string_lossy()
+                .into_owned();
+
+            // In default mode with an active project, skip other projects so
+            // that stale-lock, dangling-reference, and integration findings
+            // stay within the project the operator cares about.
+            // If no active project is set, fall back to loading every project
+            // (preserves behaviour in simple workspaces that don't call `rwv
+            // activate`).
+            if !scope_all {
+                if let Some(ref active) = active_project_name {
+                    if name_from_rel != active.as_str() {
+                        continue;
+                    }
+                }
+                // No active project → don't skip; fall through to load all.
+            }
+
             match Project::from_dir(&project_dir) {
                 Ok(mut project) => {
                     // Fix the project name to use relative path
-                    let name_from_rel = rel_dir
-                        .strip_prefix("projects")
-                        .unwrap_or(rel_dir)
-                        .to_string_lossy()
-                        .into_owned();
                     project.name = crate::manifest::ProjectName::new(name_from_rel);
 
                     // Resolve lock entries against on-disk repos so the
@@ -1399,17 +1460,12 @@ pub fn run_check(
                     // (which looks identical to a healthy project). --fix
                     // does not auto-repair broken YAML; the operator must
                     // fix by hand and re-run.
-                    let project_name = rel_dir
-                        .strip_prefix("projects")
-                        .unwrap_or(rel_dir)
-                        .to_string_lossy()
-                        .into_owned();
                     // Defer: collect violations after the input is built.
                     // We push directly into `all_issues` at display time.
                     // Store for now in a side-channel parallel to the other
                     // failure vecs already used in this function.
                     unparseable_projects.push((
-                        crate::manifest::ProjectName::new(project_name),
+                        crate::manifest::ProjectName::new(name_from_rel),
                         manifest_path,
                         e.to_string(),
                     ));
@@ -1418,6 +1474,12 @@ pub fn run_check(
         }
     }
 
+    // Orphan detection requires all projects to be loaded (otherwise repos
+    // that belong to non-loaded projects look orphaned). Run it when:
+    //   - `--all` was passed (all projects loaded), OR
+    //   - no active project is set (fall-through path also loaded all projects).
+    let loaded_all_projects = scope_all || active_project_name.is_none();
+
     // Build CheckInput and find violations
     let input = CheckInput {
         known_repos,
@@ -1425,6 +1487,7 @@ pub fn run_check(
         projects,
         head_revisions,
         resolved_locks,
+        check_orphans: loaded_all_projects,
     };
 
     let mut violations = find_violations(&input);
@@ -1771,11 +1834,16 @@ pub fn build_doctor_json(
 /// them from `--json` (the acceptance criterion is "each `CheckViolation`
 /// variant serializes").
 ///
+/// When `scope_all` is `false`, only the active project is loaded and the
+/// orphan check is skipped (matching the default scoping of `run_check`).
+/// Pass `scope_all = true` (`--all`) for the weave-wide scan.
+///
 /// Returns `(violations, workweave_dirs)` so the caller can resolve
 /// workweave-scoped `absolute_path` fields.
 fn collect_doctor_violations(
     cwd: &Path,
     project_override: Option<crate::manifest::ProjectName>,
+    scope_all: bool,
 ) -> anyhow::Result<(
     Vec<CheckViolation>,
     std::path::PathBuf,
@@ -1802,7 +1870,11 @@ fn collect_doctor_violations(
         }
     }
 
+    // Active project name for project-scoped filtering.
+    let active_project_name: Option<crate::manifest::ProjectName> = ctx.active_project().cloned();
+
     // Load projects + resolve lock files.
+    // In default mode: only the active project. In --all mode: every project.
     let projects_dir = workspace_dir.join("projects");
     let mut projects = Vec::new();
     let mut known_repos = BTreeSet::new();
@@ -1832,13 +1904,25 @@ fn collect_doctor_violations(
             let rel_dir = project_dir
                 .strip_prefix(&workspace_dir)
                 .unwrap_or(&project_dir);
+            let name_from_rel = rel_dir
+                .strip_prefix("projects")
+                .unwrap_or(rel_dir)
+                .to_string_lossy()
+                .into_owned();
+
+            // In default mode with an active project, skip other projects.
+            // If no active project is set, fall back to loading every project.
+            if !scope_all {
+                if let Some(ref active) = active_project_name {
+                    if name_from_rel != active.as_str() {
+                        continue;
+                    }
+                }
+                // No active project → fall through to load all.
+            }
+
             match Project::from_dir(&project_dir) {
                 Ok(mut project) => {
-                    let name_from_rel = rel_dir
-                        .strip_prefix("projects")
-                        .unwrap_or(rel_dir)
-                        .to_string_lossy()
-                        .into_owned();
                     project.name = crate::manifest::ProjectName::new(name_from_rel);
 
                     if let Some(raw_lock) = project.lock.clone() {
@@ -1851,13 +1935,8 @@ fn collect_doctor_violations(
                     projects.push(project);
                 }
                 Err(e) => {
-                    let project_name = rel_dir
-                        .strip_prefix("projects")
-                        .unwrap_or(rel_dir)
-                        .to_string_lossy()
-                        .into_owned();
                     unparseable_projects_json.push((
-                        crate::manifest::ProjectName::new(project_name),
+                        crate::manifest::ProjectName::new(name_from_rel),
                         manifest_path,
                         e.to_string(),
                     ));
@@ -1866,12 +1945,15 @@ fn collect_doctor_violations(
         }
     }
 
+    let loaded_all_projects_json = scope_all || active_project_name.is_none();
+
     let input = CheckInput {
         known_repos,
         repos_on_disk: session.repos_on_disk().to_vec(),
         projects,
         head_revisions,
         resolved_locks,
+        check_orphans: loaded_all_projects_json,
     };
 
     let mut violations = find_violations(&input);
@@ -1907,7 +1989,24 @@ fn collect_doctor_violations(
     // since the parser rejects the spelling and a `Project` wouldn't load.
     // The JSON channel never auto-fixes; `--fix` is reserved for the
     // human-facing `run_check`.
-    for finding in scan_workspace_for_legacy_role_primary(&workspace_dir) {
+    // In default mode with an active project, restrict to that project only.
+    // Without an active project, report all (same fall-through as project loading).
+    let legacy_role_all = scan_workspace_for_legacy_role_primary(&workspace_dir);
+    let legacy_role_findings: Vec<_> = if loaded_all_projects_json {
+        legacy_role_all
+    } else {
+        // scope_all=false and active project is set
+        legacy_role_all
+            .into_iter()
+            .filter(|f| {
+                active_project_name
+                    .as_ref()
+                    .map(|a| f.project.as_str() == a.as_str())
+                    .unwrap_or(true) // no active → include all
+            })
+            .collect()
+    };
+    for finding in legacy_role_findings {
         violations.push(CheckViolation::LegacyRolePrimary {
             project: finding.project,
             manifest_path: finding.manifest_path,
@@ -1915,6 +2014,7 @@ fn collect_doctor_violations(
     }
 
     // Legacy workweave-marker findings — scan the workweave-parent directory.
+    // These are workspace-level infrastructure checks; always run.
     for finding in scan_for_legacy_workweave_markers(ctx.primary_path()) {
         violations.push(CheckViolation::LegacyWorkweaveMarker {
             marker_path: finding.marker_path,
@@ -2005,12 +2105,17 @@ fn collect_doctor_violations(
 /// findings (which are `Issue`s, not `CheckViolation`s) and ad-hoc
 /// failures (HEAD-unreadable, lock-resolve failures) are intentionally
 /// out of scope for the JSON channel (see the bead body for rationale).
+///
+/// When `scope_all` is `false` (the default), only the active project is
+/// checked and orphan detection is skipped. Pass `scope_all = true` (`--all`)
+/// to reproduce the weave-wide scan.
 pub fn run_check_json(
     cwd: &std::path::Path,
     project_override: Option<crate::manifest::ProjectName>,
+    scope_all: bool,
 ) -> anyhow::Result<bool> {
     let (violations, workspace_dir, workweave_dirs) =
-        collect_doctor_violations(cwd, project_override)?;
+        collect_doctor_violations(cwd, project_override, scope_all)?;
     let has_violations = !violations.is_empty();
     let payload = build_doctor_json(violations, &workspace_dir, &workweave_dirs);
     let out = serde_json::to_string_pretty(&payload)

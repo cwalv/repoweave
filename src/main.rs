@@ -158,6 +158,10 @@ enum Commands {
         /// Emit violations as JSON (array-of-records with stable per-variant `kind`). See `rwv explain doctor`.
         #[arg(long, conflicts_with_all = ["locked", "fix"])]
         json: bool,
+        /// Scan all projects and run weave-wide checks (orphan detection, cross-project stale locks, etc.).
+        /// By default only the active project is checked.
+        #[arg(long)]
+        all: bool,
         /// Operate on this project instead of the active project (does not change `.rwv-active`)
         #[arg(long)]
         project: Option<String>,
@@ -526,6 +530,7 @@ fn main() -> anyhow::Result<()> {
             locked,
             fix,
             json,
+            all,
             project,
         }) => {
             let cwd = std::env::current_dir()?;
@@ -536,12 +541,12 @@ fn main() -> anyhow::Result<()> {
                     std::process::exit(1);
                 }
             } else if json {
-                let has_errors = check::run_check_json(&cwd, project_override)?;
+                let has_errors = check::run_check_json(&cwd, project_override, all)?;
                 if has_errors {
                     std::process::exit(1);
                 }
             } else {
-                let has_errors = check::run_check(&cwd, fix, project_override)?;
+                let has_errors = check::run_check(&cwd, fix, project_override, all)?;
                 if has_errors {
                     std::process::exit(1);
                 }

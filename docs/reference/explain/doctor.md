@@ -2,11 +2,10 @@
 
 ## Purpose
 
-Run workspace-wide convention checks: orphaned clones, dangling references,
-stale locks, workweave drift, index drift, working-tree drift, missing
-replay-exclusion attributes, and integration-specific issues. `doctor`
-exists so agents and humans can verify the workspace is structurally sound
-before running mutating commands.
+Run convention checks on the workspace. By default, checks are scoped to
+the active project: its manifest, lock, workspace files, and integration
+health (cargo-workspace, vscode-workspace, etc.). Use `--all` to run the
+full weave-wide scan that includes orphan detection across every project.
 
 The check is intentionally pure: filesystem scanning happens up front, then
 a closed enum (`CheckViolation`) is reduced to violations. Each variant has
@@ -16,15 +15,21 @@ follow-up actions.
 ## Invocation
 
 ```
-rwv doctor [--locked] [--json] [--fix]
+rwv doctor [--all] [--locked] [--json] [--fix]
 ```
 
+- `--all` runs checks across every project under `projects/` and enables
+  weave-wide orphan detection (repos on disk that belong to no project).
+  Without `--all`, only the active project is checked and orphan detection
+  is skipped (a repo absent from the active project may belong to another
+  project — flagging it as orphaned would produce false positives).
 - `--locked` exits zero iff every repo's tip matches its `rwv.lock`
   entry. Prints per-repo `ok` / `tip ≠ lock` lines to stdout. Useful
   as a scriptable precondition before `rwv sync`. Mutually exclusive
   with `--fix` and `--json`.
 - `--json` emits machine-readable output (see Output below). Mutually
-  exclusive with `--locked` and `--fix`.
+  exclusive with `--locked` and `--fix`. Honors the same scoping as the
+  default text output: project-scoped by default, weave-wide with `--all`.
 - `--fix` attempts auto-remediation for variants that are safe to fix:
   index drift where the displaced tree is a known ancestor, working-tree
   drift where on-disk content matches a known blob, missing
@@ -63,7 +68,7 @@ Schema:
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "DoctorEnvelope",
-  "description": "Generator-local mirror of the `rwv doctor --json` envelope. The runtime envelope in `src/check.rs` is built via `serde_json::json!` (no real struct exists). Mirroring it here avoids touching Agent A's file just to pull a schemars derive.",
+  "description": "Output envelope for `rwv doctor --json`. By default only the active project is checked and orphan detection is skipped; pass `--all` to scan every project and enable weave-wide orphan detection. The `violations` array contains one entry per finding; an empty array means the checked scope is clean.",
   "type": "object",
   "required": [
     "$schema",
@@ -468,16 +473,22 @@ Schema:
 
 ## Examples
 
-Get a JSON report of all violations:
+Get a JSON report of violations for the active project:
 
 ```
 rwv doctor --json
 ```
 
-Find every stale lock and the paths involved:
+Get a weave-wide JSON report (all projects, orphan detection enabled):
 
 ```
-rwv doctor --json | jq '.violations[] | select(.kind == "stale-lock")'
+rwv doctor --all --json
+```
+
+Find every stale lock and the paths involved (weave-wide):
+
+```
+rwv doctor --all --json | jq '.violations[] | select(.kind == "stale-lock")'
 ```
 
 Auto-fix safe drift (index trees that match a known ancestor) and
@@ -499,4 +510,5 @@ rwv doctor --fix
 - *index-drift* with `sub_kind: live-staged` — the user has staged content
   that doesn't match a known tree. `--fix` will refuse; resolve manually.
 - *orphaned-clone* — a directory under a registry path that isn't listed in
-  any `rwv.yaml`. Either add it to a manifest or remove it.
+  any `rwv.yaml`. Only surfaced under `--all`. Either add it to a manifest
+  or remove it.

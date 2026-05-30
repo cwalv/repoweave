@@ -129,7 +129,9 @@ fn doctor_large_workspace_completes_under_budget() {
     std::env::set_var("RWV_WORKWEAVE_DIR", tmp.path().join(".workweaves"));
 
     let start = Instant::now();
-    let res = check::run_check(&root, false, None);
+    // Use scope_all=true so the perf test exercises the full weave-wide scan
+    // (the same load it was originally benchmarking).
+    let res = check::run_check(&root, false, None, true);
     let elapsed = start.elapsed();
 
     std::env::remove_var("RWV_WORKWEAVE_DIR");

@@ -22,10 +22,11 @@ use repoweave::sync::{
     SyncJsonOutput, SyncToJsonOutput, SYNC_JSON_SCHEMA_URL, SYNC_TO_JSON_SCHEMA_URL,
 };
 
-/// Generator-local mirror of the `rwv doctor --json` envelope. The runtime
-/// envelope in `src/check.rs` is built via `serde_json::json!` (no real
-/// struct exists). Mirroring it here avoids touching Agent A's file just to
-/// pull a schemars derive.
+/// Output envelope for `rwv doctor --json`. By default only the active project
+/// is checked and orphan detection is skipped; pass `--all` to scan every
+/// project and enable weave-wide orphan detection. The `violations` array
+/// contains one entry per finding; an empty array means the checked scope is
+/// clean.
 #[derive(Serialize, schemars::JsonSchema)]
 #[allow(dead_code)]
 struct DoctorEnvelope {
