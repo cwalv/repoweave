@@ -1596,7 +1596,12 @@ pub fn run_check(
             &workspace_dir,
             project.manifest.iter_entries(),
         );
-        let ctx_base = session.context_base(&workspace_dir, &project.name, &detection_cache);
+        let ctx_base = session.context_base(
+            &workspace_dir,
+            &project.name,
+            &detection_cache,
+            project.manifest.workweave.as_ref(),
+        );
         let integration_issues = run_checks(&integrations, &project.manifest, &ctx_base);
         all_issues.extend(integration_issues);
 

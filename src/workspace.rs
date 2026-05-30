@@ -243,12 +243,20 @@ impl WorkspaceSession {
     }
 
     /// Build an [`IntegrationContextBase`] from this session's shared data
-    /// combined with the per-invocation `output_dir` and `project`.
+    /// combined with the per-invocation `output_dir`, `project`, and the
+    /// project's optional `workweave:` config.
+    ///
+    /// The `workweave` argument is the project's `workweave:` section from
+    /// `rwv.yaml` (typically `manifest.workweave.as_ref()`). It is threaded
+    /// through to integrations so they can detect cross-section collisions
+    /// such as a name claimed by both `static-files.files` and
+    /// `workweave.link` (see rwv-c5h / plan §5h).
     pub fn context_base<'a>(
         &'a self,
         output_dir: &'a Path,
         project: &'a ProjectName,
         detection_cache: &'a std::collections::HashMap<String, Vec<String>>,
+        workweave: Option<&'a crate::manifest::WorkweaveConfig>,
     ) -> IntegrationContextBase<'a> {
         IntegrationContextBase {
             output_dir,
@@ -257,6 +265,7 @@ impl WorkspaceSession {
             all_repos_on_disk: &self.repos_on_disk,
             all_project_paths: &self.project_paths,
             detection_cache,
+            workweave,
         }
     }
 

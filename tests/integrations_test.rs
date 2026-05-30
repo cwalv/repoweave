@@ -9,7 +9,9 @@
 
 use repoweave::integration::{Integration, IntegrationContext, Severity};
 use repoweave::integrations::*;
-use repoweave::manifest::{IntegrationConfig, Manifest, ProjectName, RepoPath, Role};
+use repoweave::manifest::{
+    IntegrationConfig, Manifest, ProjectName, RepoPath, Role, WorkweaveConfig,
+};
 use std::collections::HashMap;
 use std::path::Path;
 use tempfile::TempDir;
@@ -52,6 +54,33 @@ fn make_ctx<'a>(
         all_repos_on_disk: &[],
         all_project_paths: &[],
         detection_cache: cache,
+        workweave: None,
+    }
+}
+
+/// Build an IntegrationContext with an attached workweave config. Used by
+/// static-files collision tests (rwv-c5h regression — fo-cnpjy.13).
+fn make_ctx_with_workweave<'a>(
+    root: &'a Path,
+    project: &'a ProjectName,
+    manifest: &'a Manifest,
+    config: &'a IntegrationConfig,
+    cache: &'a HashMap<String, Vec<String>>,
+    workweave: &'a WorkweaveConfig,
+) -> IntegrationContext<'a> {
+    IntegrationContext {
+        output_dir: root,
+        workspace_root: root,
+        project,
+        repos: manifest
+            .iter_entries()
+            .map(|(rp, e)| (rp.clone(), e.clone()))
+            .collect(),
+        config,
+        all_repos_on_disk: &[],
+        all_project_paths: &[],
+        detection_cache: cache,
+        workweave: Some(workweave),
     }
 }
 
@@ -1314,6 +1343,7 @@ mod gita {
             all_repos_on_disk: &[],
             all_project_paths: &[],
             detection_cache: &cache,
+            workweave: None,
         };
 
         let integration = Gita;
@@ -1691,6 +1721,7 @@ mod vscode_workspace {
             all_repos_on_disk: &all_repos_on_disk,
             all_project_paths: &[],
             detection_cache: &cache,
+            workweave: None,
         };
 
         VscodeWorkspace.activate(&ctx).unwrap();
@@ -1733,6 +1764,7 @@ mod vscode_workspace {
             all_repos_on_disk: &all_repos_on_disk,
             all_project_paths: &all_project_paths,
             detection_cache: &HashMap::new(),
+            workweave: None,
         };
 
         VscodeWorkspace.activate(&ctx).unwrap();
@@ -1822,6 +1854,7 @@ mod vscode_workspace {
             all_repos_on_disk: &all_repos_on_disk,
             all_project_paths: &[],
             detection_cache: &cache,
+            workweave: None,
         };
 
         VscodeWorkspace.activate(&ctx).unwrap();
@@ -2371,6 +2404,195 @@ mod static_files {
         assert!(
             result.is_ok(),
             "static-files activate hook should be a no-op"
+        );
+    }
+
+    // ----- rwv-c5h: collision with workweave.link (fo-cnpjy.13) -----------
+
+    /// rwv-c5h regression: when the same name is declared in both
+    /// `static-files.files` and `workweave.link`, `activate()` MUST bail with a
+    /// hard error rather than silently letting the framework's predicate
+    /// tiebreak. The error message must name both integrations so the operator
+    /// can act on it without re-reading the docs.
+    #[test]
+    fn activate_fails_when_name_collides_with_workweave_link() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+
+        // The static file exists — collision detection runs before existence
+        // checks, so we'd rather not give activate() a way to fail for an
+        // unrelated reason.
+        write_file(root, ".beads", "");
+
+        let manifest = make_manifest(vec![("github/acme/server", Role::Owned)]);
+        let project = ProjectName::new("test-project");
+        let config = IntegrationConfig::from_yaml("enabled: true\nfiles: [.beads]");
+        let cache = HashMap::new();
+        let workweave = WorkweaveConfig {
+            link: vec![".beads".to_string()],
+            copy: vec![],
+        };
+        let ctx = make_ctx_with_workweave(root, &project, &manifest, &config, &cache, &workweave);
+
+        let integration = StaticFiles;
+        let err = integration.activate(&ctx).unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains(".beads") && msg.contains("static-files") && msg.contains("workweave"),
+            "activate error should name the colliding entry and both integrations; got: {msg}"
+        );
+    }
+
+    /// rwv-c5h regression: `check()` MUST surface the collision as
+    /// `Severity::Error` so `rwv doctor` fails loudly pre-activate (the
+    /// signal that motivates the framework predicate).
+    #[test]
+    fn check_emits_error_for_workweave_link_collision() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        write_file(root, ".beads", "");
+
+        let manifest = make_manifest(vec![("github/acme/server", Role::Owned)]);
+        let project = ProjectName::new("test-project");
+        let config = IntegrationConfig::from_yaml("enabled: true\nfiles: [.beads]");
+        let cache = HashMap::new();
+        let workweave = WorkweaveConfig {
+            link: vec![".beads".to_string()],
+            copy: vec![],
+        };
+        let ctx = make_ctx_with_workweave(root, &project, &manifest, &config, &cache, &workweave);
+
+        let integration = StaticFiles;
+        let issues = integration.check(&ctx).unwrap();
+        let collisions: Vec<_> = issues
+            .iter()
+            .filter(|i| i.severity == Severity::Error)
+            .collect();
+        assert_eq!(
+            collisions.len(),
+            1,
+            "expected exactly one error-level collision issue, got: {issues:?}"
+        );
+        let issue = collisions[0];
+        assert_eq!(issue.integration, "static-files");
+        assert!(
+            issue.message.contains(".beads")
+                && issue.message.contains("workweave.link")
+                && issue.message.contains("static-files.files"),
+            "issue should name both integrations and the colliding entry; got: {}",
+            issue.message
+        );
+    }
+
+    /// `check()` emits one Severity::Error per colliding name (not one
+    /// aggregated message).
+    #[test]
+    fn check_emits_one_error_per_collision() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        write_file(root, ".beads", "");
+        write_file(root, ".secrets", "");
+
+        let manifest = make_manifest(vec![("github/acme/server", Role::Owned)]);
+        let project = ProjectName::new("test-project");
+        let config =
+            IntegrationConfig::from_yaml("enabled: true\nfiles: [.beads, .secrets, turbo.json]");
+        let cache = HashMap::new();
+        // Two collisions (.beads, .secrets) and one non-collision (turbo.json).
+        let workweave = WorkweaveConfig {
+            link: vec![".beads".to_string(), ".secrets".to_string()],
+            copy: vec![],
+        };
+        let ctx = make_ctx_with_workweave(root, &project, &manifest, &config, &cache, &workweave);
+
+        let integration = StaticFiles;
+        let issues = integration.check(&ctx).unwrap();
+        let collisions: Vec<_> = issues
+            .iter()
+            .filter(|i| i.severity == Severity::Error)
+            .collect();
+        assert_eq!(
+            collisions.len(),
+            2,
+            "expected one Severity::Error per collision, got: {issues:?}"
+        );
+        // Both colliding names should appear across the issue messages.
+        let combined: String = collisions.iter().map(|i| i.message.clone()).collect();
+        assert!(combined.contains(".beads"));
+        assert!(combined.contains(".secrets"));
+    }
+
+    /// No workweave.link at all -> no collision Issues.
+    #[test]
+    fn check_no_collision_when_workweave_link_empty() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        write_file(root, ".beads", "");
+
+        let manifest = make_manifest(vec![("github/acme/server", Role::Owned)]);
+        let project = ProjectName::new("test-project");
+        let config = IntegrationConfig::from_yaml("enabled: true\nfiles: [.beads]");
+        let cache = HashMap::new();
+        let workweave = WorkweaveConfig {
+            link: vec![],
+            copy: vec![],
+        };
+        let ctx = make_ctx_with_workweave(root, &project, &manifest, &config, &cache, &workweave);
+
+        let integration = StaticFiles;
+        let issues = integration.check(&ctx).unwrap();
+        assert!(
+            issues.iter().all(|i| i.severity != Severity::Error),
+            "no Severity::Error expected when workweave.link is empty, got: {issues:?}"
+        );
+    }
+
+    /// Disjoint names -> no collision Issues.
+    #[test]
+    fn check_no_collision_when_names_disjoint() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        write_file(root, ".beads", "");
+        write_file(root, "turbo.json", "{}");
+
+        let manifest = make_manifest(vec![("github/acme/server", Role::Owned)]);
+        let project = ProjectName::new("test-project");
+        let config = IntegrationConfig::from_yaml("enabled: true\nfiles: [turbo.json]");
+        let cache = HashMap::new();
+        let workweave = WorkweaveConfig {
+            link: vec![".beads".to_string()],
+            copy: vec![],
+        };
+        let ctx = make_ctx_with_workweave(root, &project, &manifest, &config, &cache, &workweave);
+
+        let integration = StaticFiles;
+        let issues = integration.check(&ctx).unwrap();
+        assert!(
+            issues.iter().all(|i| i.severity != Severity::Error),
+            "no Severity::Error expected when names disjoint, got: {issues:?}"
+        );
+    }
+
+    /// `ctx.workweave == None` -> no collision Issues (projects without a
+    /// `workweave:` section in rwv.yaml).
+    #[test]
+    fn check_no_collision_when_workweave_absent() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        write_file(root, ".beads", "");
+
+        let manifest = make_manifest(vec![("github/acme/server", Role::Owned)]);
+        let project = ProjectName::new("test-project");
+        let config = IntegrationConfig::from_yaml("enabled: true\nfiles: [.beads]");
+        let cache = HashMap::new();
+        // make_ctx -> workweave: None
+        let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+
+        let integration = StaticFiles;
+        let issues = integration.check(&ctx).unwrap();
+        assert!(
+            issues.iter().all(|i| i.severity != Severity::Error),
+            "no Severity::Error expected when ctx.workweave is None, got: {issues:?}"
         );
     }
 }

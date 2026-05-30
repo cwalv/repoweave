@@ -156,6 +156,7 @@ fn active_repos_excludes_reference() {
         all_repos_on_disk: &[],
         all_project_paths: &[],
         detection_cache: &cache,
+        workweave: None,
     };
 
     let active: Vec<_> = ctx.active_repos().collect();
@@ -199,6 +200,7 @@ fn active_repos_includes_primary_fork_dependency() {
         all_repos_on_disk: &[],
         all_project_paths: &[],
         detection_cache: &cache,
+        workweave: None,
     };
 
     let active: Vec<_> = ctx.active_repos().collect();
@@ -238,6 +240,7 @@ fn mock_activate_receives_correct_context() {
         all_repos_on_disk: &[],
         all_project_paths: &[],
         detection_cache: &cache,
+        workweave: None,
     };
 
     let mock = MockIntegration::new("cargo", true);
@@ -297,6 +300,7 @@ fn mock_check_returns_issues() {
         all_repos_on_disk: &[],
         all_project_paths: &[],
         detection_cache: &cache,
+        workweave: None,
     };
 
     let mock = MockIntegration::new("cargo", true).with_check_issues(issues);
@@ -396,6 +400,7 @@ fn detect_repos_with_manifest_uses_workspace_root_not_output_dir() {
         all_repos_on_disk: &[],
         all_project_paths: &[],
         detection_cache: &cache,
+        workweave: None,
     };
 
     let detected = ctx.detect_repos_with_manifest("Cargo.toml");
@@ -436,6 +441,7 @@ fn detect_repos_with_manifest_ignores_output_dir_manifests() {
         all_repos_on_disk: &[],
         all_project_paths: &[],
         detection_cache: &cache,
+        workweave: None,
     };
 
     let detected = ctx.detect_repos_with_manifest("Cargo.toml");
@@ -471,6 +477,7 @@ fn context_output_dir_and_workspace_root_can_be_same() {
         all_repos_on_disk: &[],
         all_project_paths: &[],
         detection_cache: &cache,
+        workweave: None,
     };
 
     let detected = ctx.detect_repos_with_manifest("package.json");
@@ -504,6 +511,7 @@ fn default_activate_hook_is_noop() {
         all_repos_on_disk: &[],
         all_project_paths: &[],
         detection_cache: &cache,
+        workweave: None,
     };
 
     // Default activate_hook() should succeed and do nothing
@@ -587,6 +595,7 @@ fn overridden_activate_hook_is_called() {
         all_repos_on_disk: &[],
         all_project_paths: &[],
         detection_cache: &cache,
+        workweave: None,
     };
 
     integration.activate_hook(&ctx).unwrap();
@@ -624,6 +633,7 @@ fn default_generated_files_returns_empty() {
         all_repos_on_disk: &[],
         all_project_paths: &[],
         detection_cache: &cache,
+        workweave: None,
     };
 
     let files = mock.generated_files(&ctx);
@@ -662,6 +672,7 @@ fn cargo_workspace_generated_files() {
         all_repos_on_disk: &[],
         all_project_paths: &[],
         detection_cache: &cache,
+        workweave: None,
     };
     assert_eq!(CargoWorkspace.generated_files(&ctx), Vec::<String>::new());
 
@@ -684,6 +695,7 @@ fn cargo_workspace_generated_files() {
         all_repos_on_disk: &[],
         all_project_paths: &[],
         detection_cache: &cache,
+        workweave: None,
     };
     assert_eq!(
         CargoWorkspace.generated_files(&ctx2),
@@ -716,6 +728,7 @@ fn npm_workspaces_generated_files() {
         all_repos_on_disk: &[],
         all_project_paths: &[],
         detection_cache: &cache,
+        workweave: None,
     };
     assert_eq!(NpmWorkspaces.generated_files(&ctx), Vec::<String>::new());
 
@@ -738,6 +751,7 @@ fn npm_workspaces_generated_files() {
         all_repos_on_disk: &[],
         all_project_paths: &[],
         detection_cache: &cache,
+        workweave: None,
     };
     assert_eq!(
         NpmWorkspaces.generated_files(&ctx2),
@@ -770,6 +784,7 @@ fn pnpm_workspaces_generated_files() {
         all_repos_on_disk: &[],
         all_project_paths: &[],
         detection_cache: &cache,
+        workweave: None,
     };
     assert_eq!(PnpmWorkspaces.generated_files(&ctx), Vec::<String>::new());
 
@@ -792,6 +807,7 @@ fn pnpm_workspaces_generated_files() {
         all_repos_on_disk: &[],
         all_project_paths: &[],
         detection_cache: &cache,
+        workweave: None,
     };
     assert_eq!(
         PnpmWorkspaces.generated_files(&ctx2),
@@ -824,6 +840,7 @@ fn go_work_generated_files() {
         all_repos_on_disk: &[],
         all_project_paths: &[],
         detection_cache: &cache,
+        workweave: None,
     };
     assert_eq!(GoWork.generated_files(&ctx), Vec::<String>::new());
 
@@ -846,6 +863,7 @@ fn go_work_generated_files() {
         all_repos_on_disk: &[],
         all_project_paths: &[],
         detection_cache: &cache,
+        workweave: None,
     };
     assert_eq!(GoWork.generated_files(&ctx2), vec!["go.work", "go.sum"]);
 }
@@ -875,6 +893,7 @@ fn uv_workspace_generated_files() {
         all_repos_on_disk: &[],
         all_project_paths: &[],
         detection_cache: &cache,
+        workweave: None,
     };
     assert_eq!(UvWorkspace.generated_files(&ctx), Vec::<String>::new());
 
@@ -897,6 +916,7 @@ fn uv_workspace_generated_files() {
         all_repos_on_disk: &[],
         all_project_paths: &[],
         detection_cache: &cache,
+        workweave: None,
     };
     assert_eq!(
         UvWorkspace.generated_files(&ctx2),
@@ -927,6 +947,7 @@ fn gita_generated_files() {
         all_repos_on_disk: &[],
         all_project_paths: &[],
         detection_cache: &cache,
+        workweave: None,
     };
 
     let files = Gita.generated_files(&ctx);
@@ -956,6 +977,7 @@ fn vscode_workspace_generated_files_includes_project_name() {
         all_repos_on_disk: &[],
         all_project_paths: &[],
         detection_cache: &cache,
+        workweave: None,
     };
 
     let files = VscodeWorkspace.generated_files(&ctx);
@@ -987,6 +1009,7 @@ fn vscode_workspace_generated_files_varies_with_project() {
         all_repos_on_disk: &[],
         all_project_paths: &[],
         detection_cache: &cache,
+        workweave: None,
     };
 
     let files = VscodeWorkspace.generated_files(&ctx);
@@ -1130,6 +1153,7 @@ mod fo_cnpjy_3 {
             all_repos_on_disk: &[],
             all_project_paths: &[],
             detection_cache: &cache,
+            workweave: None,
         };
 
         let integration = OnlyGenerated;
@@ -1185,6 +1209,7 @@ mod fo_cnpjy_3 {
             all_repos_on_disk: &[],
             all_project_paths: &[],
             detection_cache: &cache,
+            workweave: None,
         };
 
         let integration = CheckWarner;
@@ -1330,6 +1355,7 @@ mod fo_cnpjy_3 {
             all_repos_on_disk: &[],
             all_project_paths: &[],
             detection_cache: &cache,
+            workweave: None,
         };
 
         // Legacy: generated_files = managed_files (override returns
@@ -1431,6 +1457,7 @@ mod fo_cnpjy_3 {
             all_repos_on_disk: &[],
             all_project_paths: &[],
             detection_cache: &cache,
+            workweave: None,
         };
 
         // Intent mode → activate() runs, verify() does not.

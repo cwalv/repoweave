@@ -472,6 +472,66 @@ integrations:
 }
 
 // ===========================================================================
+// rwv-c5h regression (fo-cnpjy.13)
+//
+// When the same name appears in BOTH `integrations.static-files.files` AND
+// `workweave.link`, the operator gets two layers of protection:
+//   1. `static-files.check()` emits Severity::Error so `rwv doctor` and
+//      Context-mode activate surface the conflict pre-symlink.
+//   2. `static-files.activate()` itself bails with the same message in
+//      Intent-mode entry paths (where the framework runs check-then-bail).
+//
+// Pre-fix (rwv-c5h): the workweave.link entry was silently nuked by
+// remove_activation_symlinks during workweave creation and replaced with a
+// relative symlink to the project's own (partial) checkout.
+//
+// Post-fix: activation fails loud with a message naming both integrations.
+// ===========================================================================
+
+#[test]
+fn static_files_collides_with_workweave_link_errors_loud() {
+    let tmp = tempfile::tempdir().unwrap();
+    let ws = make_workspace_no_repo(tmp.path(), "my-project");
+
+    let project_dir = ws.join("projects/my-project");
+
+    // .beads is the shipped repro from rwv-c5h: a static file the user
+    // wanted shared via workweave.link, mistakenly also listed in
+    // static-files.files. Materialize the file so the missing-file warning
+    // doesn't muddle the assertion.
+    std::fs::write(project_dir.join(".beads"), "primary").unwrap();
+
+    let manifest = r#"repositories: {}
+integrations:
+  static-files:
+    enabled: true
+    files: [.beads]
+workweave:
+  link: [.beads]
+"#;
+    std::fs::write(project_dir.join("rwv.yaml"), manifest).unwrap();
+
+    // Intent-mode entry — `rwv activate --intent` would gate through
+    // run_activations which calls integration.activate() and bails on
+    // Severity::Error. We exercise the surface via `rwv doctor`, which runs
+    // checks against every project's manifest and reports per-integration
+    // issues. The collision must surface as a Severity::Error there.
+    let output = rwv().args(["doctor"]).current_dir(&ws).output().unwrap();
+
+    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    let combined = format!("{stdout}\n{stderr}");
+
+    assert!(
+        combined.contains(".beads")
+            && combined.contains("static-files")
+            && combined.contains("workweave"),
+        "rwv doctor should surface the static-files/workweave.link collision; \
+         got stdout: {stdout}\nstderr: {stderr}"
+    );
+}
+
+// ===========================================================================
 // 7. activate_runs_install_commands (project-reporoot-l56a)
 //
 // Doc claim: `rwv activate` runs ecosystem install commands (npm install,

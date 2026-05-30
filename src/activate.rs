@@ -190,7 +190,12 @@ fn activate_at(
     //    surface and report drift, but never write content. See
     //    `trigger-model.md`.
     let detection_cache = build_detection_cache(root, manifest.iter_entries());
-    let ctx_base = session.context_base(&project_dir, &project_name, &detection_cache);
+    let ctx_base = session.context_base(
+        &project_dir,
+        &project_name,
+        &detection_cache,
+        manifest.workweave.as_ref(),
+    );
 
     match mode {
         ActivationMode::Intent => {
@@ -258,6 +263,7 @@ fn activate_at(
             all_repos_on_disk: session.repos_on_disk(),
             all_project_paths: session.project_paths(),
             detection_cache: &detection_cache,
+            workweave: manifest.workweave.as_ref(),
         };
 
         for f in integration.generated_files(&int_ctx) {
@@ -651,6 +657,7 @@ fn compute_active_owned_set(root: &Path) -> anyhow::Result<BTreeSet<String>> {
             all_repos_on_disk: session.repos_on_disk(),
             all_project_paths: session.project_paths(),
             detection_cache: &detection_cache,
+            workweave: manifest.workweave.as_ref(),
         };
         for f in integration.generated_files(&int_ctx) {
             owned.insert(f);

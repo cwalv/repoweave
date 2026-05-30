@@ -28,6 +28,11 @@ pub struct IntegrationContextBase<'a> {
     /// Pre-computed detection cache. Maps manifest filenames to the sorted list
     /// of active repo paths that contain that manifest.
     pub detection_cache: &'a HashMap<String, Vec<String>>,
+    /// The project's `workweave:` config, if any. Threaded through so
+    /// integrations can detect cross-section collisions (e.g.
+    /// static-files.files vs workweave.link — see rwv-c5h / plan §5h).
+    /// `None` when the project's `rwv.yaml` has no `workweave:` section.
+    pub workweave: Option<&'a crate::manifest::WorkweaveConfig>,
 }
 
 /// The set of manifest filenames pre-computed into the detection cache.
@@ -92,6 +97,7 @@ impl<'a> IntegrationContextBase<'a> {
             all_repos_on_disk: self.all_repos_on_disk,
             all_project_paths: self.all_project_paths,
             detection_cache: self.detection_cache,
+            workweave: self.workweave,
         }
     }
 }
@@ -388,6 +394,7 @@ mod tests {
             all_repos_on_disk: &[],
             all_project_paths: &[],
             detection_cache: cache,
+            workweave: None,
         }
     }
 

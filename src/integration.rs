@@ -4,7 +4,7 @@
 //! from the repo list. Each integration participates in activation (write path)
 //! and check (read-only inspection).
 
-use crate::manifest::{IntegrationConfig, ProjectName, RepoEntry, RepoPath};
+use crate::manifest::{IntegrationConfig, ProjectName, RepoEntry, RepoPath, WorkweaveConfig};
 use std::collections::HashMap;
 use std::path::Path;
 
@@ -52,6 +52,15 @@ pub struct IntegrationContext<'a> {
     /// repo paths that contain that manifest. Populated once per
     /// activation/check cycle before any integrations run.
     pub detection_cache: &'a HashMap<String, Vec<String>>,
+
+    /// The project's `workweave:` config from `rwv.yaml`, if any.
+    ///
+    /// Made visible so integrations can detect cross-section collisions
+    /// (e.g. a name claimed by both `static-files.files` and
+    /// `workweave.link` — see rwv-c5h / plan §5h). Defaults to `None` for
+    /// projects with no `workweave:` section. Integrations that don't care
+    /// about workweave config should leave this untouched.
+    pub workweave: Option<&'a WorkweaveConfig>,
 }
 
 impl<'a> IntegrationContext<'a> {
