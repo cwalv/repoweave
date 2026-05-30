@@ -1415,7 +1415,7 @@ pub fn run_check(
             }
 
             match Project::from_dir(&project_dir) {
-                Ok(mut project) => {
+                Ok(project) => {
                     // Resolve lock entries against on-disk repos so the
                     // canonical-SHA equality used by `find_violations` works
                     // uniformly for tag-form, branch-form, and SHA-form locks.
@@ -1909,7 +1909,7 @@ fn collect_doctor_violations(
             }
 
             match Project::from_dir(&project_dir) {
-                Ok(mut project) => {
+                Ok(project) => {
                     if let Some(raw_lock) = project.lock.clone() {
                         let (resolved, _failures) = raw_lock.resolve_versions(&workspace_dir);
                         resolved_locks.insert(project.name.clone(), resolved);
