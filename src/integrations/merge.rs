@@ -94,6 +94,16 @@ pub enum OwnedValue {
     /// is created if absent. This is how npm owns `workspaces.packages`
     /// without clobbering `workspaces.nohoist`.
     Object(BTreeMap<String, OwnedValue>),
+    /// A TOML inline table `{ key = val, ... }`. Unlike `Object` (which
+    /// produces a `[table]` section header in TOML), this produces a
+    /// `key = { ... }` inline-table value. Used by uv's
+    /// `[tool.uv.sources]` entries which **must** be inline tables
+    /// (`server = { workspace = true }`) — a `[tool.uv.sources.server]`
+    /// section header is not accepted by uv.
+    ///
+    /// For JSON/YAML/go.work this is equivalent to `Object` — the distinction
+    /// is TOML-specific.
+    InlineObject(BTreeMap<String, OwnedValue>),
 }
 
 impl OwnedValue {
@@ -406,7 +416,8 @@ impl<M: JsonMarker> JsonDoc<M> {
                     .map(|s| serde_json::Value::String(s.clone()))
                     .collect(),
             ),
-            OwnedValue::Object(map) => {
+            OwnedValue::Object(map) | OwnedValue::InlineObject(map) => {
+                // InlineObject is TOML-specific; in JSON it is identical to Object.
                 let mut out = serde_json::Map::new();
                 for (k, v) in map {
                     out.insert(k.clone(), Self::owned_to_json(v));
@@ -661,6 +672,21 @@ impl TomlDoc {
                     t.insert(k, Self::owned_to_toml_item(v));
                 }
                 toml_edit::Item::Table(t)
+            }
+            OwnedValue::InlineObject(map) => {
+                // Produces `key = { field = val }` — an inline table, NOT a
+                // `[table]` section header. Required for uv's
+                // `[tool.uv.sources]` entries.
+                let mut t = toml_edit::InlineTable::new();
+                for (k, v) in map {
+                    let val = match v {
+                        OwnedValue::Bool(b) => toml_edit::Value::from(*b),
+                        OwnedValue::String(s) => toml_edit::Value::from(s.as_str()),
+                        _ => continue, // nested inline objects not needed
+                    };
+                    t.insert(k, val);
+                }
+                toml_edit::Item::Value(toml_edit::Value::InlineTable(t))
             }
         }
     }
