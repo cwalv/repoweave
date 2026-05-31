@@ -679,6 +679,7 @@ mod tests {
             integration: integration.into(),
             severity,
             message: message.into(),
+            safe_to_fix: true,
         }
     }
 

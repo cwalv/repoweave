@@ -117,6 +117,7 @@ impl Integration for Gita {
                 integration: self.name().to_string(),
                 severity: Severity::Warning,
                 message: "gita is not on PATH".to_string(),
+                safe_to_fix: true,
             });
         }
         Ok(issues)

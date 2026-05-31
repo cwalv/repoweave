@@ -2829,6 +2829,331 @@ vendor-foo = { git = "https://example.com/vendor-foo" }
 }
 
 // ===========================================================================
+// §7 cargo-workspace doctor-acceptance battery (fo-cnpjy.18)
+// ===========================================================================
+//
+// Verify() + doctor --fix acceptance tests for cargo-workspace.
+// Named `s7_cargo_doctor_*` per the bead spec so they are discoverable as
+// a battery: `cargo test --test integrations_test s7_cargo_doctor_`.
+//
+// These tests drive the integration directly (verify() / activate()) rather
+// than the full CLI doctor path — that is the C17-aligned style.
+
+mod s7_cargo_doctor {
+    use super::*;
+    use repoweave::integrations::CargoWorkspace;
+
+    // -----------------------------------------------------------------------
+    // §7.1 MISSING: verify() reports MISSING when Cargo.toml is absent
+    // -----------------------------------------------------------------------
+
+    /// Given: cargo-workspace config with members.include = [a, b, c],
+    ///        Cargo.toml ABSENT.
+    /// Then:  verify() reports a single MISSING+safe_to_fix finding.
+    #[test]
+    fn s7_cargo_doctor_missing_reports_finding() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+
+        // Repo "github/cwalv/rvtty" with sub-packages; no root Cargo.toml.
+        let config = IntegrationConfig::from_yaml(
+            "members:\n  github/cwalv/rvtty:\n    include: [daemon, client, common]\n",
+        );
+        let manifest = make_manifest(vec![("github/cwalv/rvtty", Role::Owned)]);
+        let project = ProjectName::new("test-project");
+        let cache = HashMap::new();
+        let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+
+        let issues = CargoWorkspace.verify(&ctx).unwrap();
+        assert_eq!(issues.len(), 1, "expected exactly one MISSING issue, got: {issues:?}");
+        let issue = &issues[0];
+        assert!(issue.safe_to_fix, "MISSING issue must be safe_to_fix");
+        assert!(
+            issue.message.contains("missing"),
+            "MISSING issue message should contain 'missing': {}", issue.message
+        );
+        assert!(
+            issue.message.contains("rwv doctor --fix"),
+            "MISSING issue message should mention 'rwv doctor --fix': {}", issue.message
+        );
+    }
+
+    /// Given: MISSING Cargo.toml.
+    /// When:  activate() runs (simulating doctor --fix).
+    /// Then:
+    ///   - Cargo.toml created with `# managed by rwv` markers
+    ///   - members lists rvtty/daemon, rvtty/client, rvtty/common (alphabetical)
+    ///   - resolver = "2"
+    ///   - Subsequent verify() returns no issues (CLEAN).
+    #[test]
+    fn s7_cargo_doctor_missing_fixed_by_activate() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+
+        let config = IntegrationConfig::from_yaml(
+            "members:\n  github/cwalv/rvtty:\n    include: [daemon, client, common]\n",
+        );
+        let manifest = make_manifest(vec![("github/cwalv/rvtty", Role::Owned)]);
+        let project = ProjectName::new("test-project");
+        let cache = HashMap::new();
+        let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+
+        // Pre-condition: MISSING.
+        let pre_issues = CargoWorkspace.verify(&ctx).unwrap();
+        assert_eq!(pre_issues.len(), 1, "expected MISSING pre-condition");
+        assert!(pre_issues[0].safe_to_fix);
+
+        // Simulate doctor --fix: call activate().
+        CargoWorkspace.activate(&ctx).unwrap();
+
+        // Cargo.toml must exist now.
+        let cargo_toml_path = root.join("Cargo.toml");
+        assert!(cargo_toml_path.exists(), "Cargo.toml must be created after activate");
+
+        let content = std::fs::read_to_string(&cargo_toml_path).unwrap();
+
+        // Markers must be present.
+        assert!(
+            content.contains("# managed by rwv"),
+            "Cargo.toml must have '# managed by rwv' markers after activate: {content}"
+        );
+
+        // Members must be sorted alphabetically: client < common < daemon.
+        assert!(
+            content.contains("\"github/cwalv/rvtty/client\""),
+            "members must include rvtty/client: {content}"
+        );
+        assert!(
+            content.contains("\"github/cwalv/rvtty/common\""),
+            "members must include rvtty/common: {content}"
+        );
+        assert!(
+            content.contains("\"github/cwalv/rvtty/daemon\""),
+            "members must include rvtty/daemon: {content}"
+        );
+
+        // Check alphabetical order in the raw text.
+        let client_pos = content.find("rvtty/client").unwrap();
+        let common_pos = content.find("rvtty/common").unwrap();
+        let daemon_pos = content.find("rvtty/daemon").unwrap();
+        assert!(
+            client_pos < common_pos && common_pos < daemon_pos,
+            "members must be alphabetically sorted: client < common < daemon"
+        );
+
+        // resolver = "2".
+        assert!(
+            content.contains("resolver = \"2\""),
+            "Cargo.toml must set resolver = \"2\": {content}"
+        );
+
+        // Post-condition: CLEAN (no verify issues).
+        let post_issues = CargoWorkspace.verify(&ctx).unwrap();
+        assert!(
+            post_issues.is_empty(),
+            "verify() must return no issues after activate (CLEAN), got: {post_issues:?}"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // §7.2 DRIFT: verify() reports DRIFT when markers are present but
+    //      on-disk content doesn't match config
+    // -----------------------------------------------------------------------
+
+    /// Given: Cargo.toml exists with rwv markers but outdated members list.
+    /// Then:  verify() reports a single DRIFT+safe_to_fix finding.
+    #[test]
+    fn s7_cargo_doctor_drift_reports_finding() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+
+        // Write a Cargo.toml with per-key rwv markers but only one member (outdated).
+        // Marker format: `# managed by rwv` as a prefix decoration on each owned key,
+        // matching what TomlDoc's merge_activate produces.
+        write_file(
+            root,
+            "Cargo.toml",
+            "[workspace]\n# managed by rwv\nmembers = [\"github/cwalv/rvtty/daemon\"]\n# managed by rwv\nresolver = \"2\"\n",
+        );
+
+        let config = IntegrationConfig::from_yaml(
+            // Config now has two members (drift: common was added to config but not file).
+            "members:\n  github/cwalv/rvtty:\n    include: [daemon, common]\n",
+        );
+        let manifest = make_manifest(vec![("github/cwalv/rvtty", Role::Owned)]);
+        let project = ProjectName::new("test-project");
+        let cache = HashMap::new();
+        let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+
+        let issues = CargoWorkspace.verify(&ctx).unwrap();
+        assert_eq!(issues.len(), 1, "expected exactly one DRIFT issue, got: {issues:?}");
+        let issue = &issues[0];
+        assert!(issue.safe_to_fix, "DRIFT issue must be safe_to_fix");
+        assert!(
+            issue.message.contains("drift"),
+            "DRIFT issue message should contain 'drift': {}", issue.message
+        );
+    }
+
+    /// Given: DRIFT Cargo.toml.
+    /// When:  activate() runs.
+    /// Then:  verify() returns no issues (CLEAN).
+    #[test]
+    fn s7_cargo_doctor_drift_fixed_by_activate() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+
+        // Seed: only daemon in members (drift), with per-key markers.
+        write_file(
+            root,
+            "Cargo.toml",
+            "[workspace]\n# managed by rwv\nmembers = [\"github/cwalv/rvtty/daemon\"]\n# managed by rwv\nresolver = \"2\"\n",
+        );
+
+        let config = IntegrationConfig::from_yaml(
+            "members:\n  github/cwalv/rvtty:\n    include: [daemon, common]\n",
+        );
+        let manifest = make_manifest(vec![("github/cwalv/rvtty", Role::Owned)]);
+        let project = ProjectName::new("test-project");
+        let cache = HashMap::new();
+        let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+
+        // Pre-condition: DRIFT.
+        let pre_issues = CargoWorkspace.verify(&ctx).unwrap();
+        assert_eq!(pre_issues.len(), 1, "expected DRIFT pre-condition");
+
+        // Simulate fix.
+        CargoWorkspace.activate(&ctx).unwrap();
+
+        // Post-condition: CLEAN.
+        let post_issues = CargoWorkspace.verify(&ctx).unwrap();
+        assert!(
+            post_issues.is_empty(),
+            "verify() must return no issues after activate (CLEAN), got: {post_issues:?}"
+        );
+
+        // Confirm common is now in the file.
+        let content = std::fs::read_to_string(root.join("Cargo.toml")).unwrap();
+        assert!(
+            content.contains("\"github/cwalv/rvtty/common\""),
+            "common must be in members after fix: {content}"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // §7.3 USER-HELD: verify() reports USER-HELD, doctor --fix is a no-op
+    // -----------------------------------------------------------------------
+
+    /// Given: Cargo.toml exists with [workspace] members/resolver, NO markers.
+    /// Then:  verify() reports a single USER-HELD+!safe_to_fix finding.
+    #[test]
+    fn s7_cargo_doctor_user_held_reports_finding() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+
+        // No "# managed by rwv" marker — user holds the pen.
+        write_file(
+            root,
+            "Cargo.toml",
+            "[workspace]\nmembers = [\"github/cwalv/rvtty/daemon\"]\nresolver = \"2\"\n",
+        );
+
+        let config = IntegrationConfig::from_yaml(
+            "members:\n  github/cwalv/rvtty:\n    include: [daemon]\n",
+        );
+        let manifest = make_manifest(vec![("github/cwalv/rvtty", Role::Owned)]);
+        let project = ProjectName::new("test-project");
+        let cache = HashMap::new();
+        let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+
+        let issues = CargoWorkspace.verify(&ctx).unwrap();
+        assert_eq!(issues.len(), 1, "expected exactly one USER-HELD issue, got: {issues:?}");
+        let issue = &issues[0];
+        assert!(
+            !issue.safe_to_fix,
+            "USER-HELD issue must NOT be safe_to_fix (safe_to_fix=false)"
+        );
+        assert!(
+            issue.message.contains("NOT auto-take-over") || issue.message.contains("not auto"),
+            "USER-HELD issue must describe no-takeover: {}", issue.message
+        );
+    }
+
+    /// Given: USER-HELD Cargo.toml (no markers).
+    /// When:  activate() runs (simulating what doctor --fix would call if safe_to_fix
+    ///        were true — but it won't, so this tests the merge's own guard).
+    /// Then:  The file is UNCHANGED (merge_activate's verify-and-warn semantics
+    ///        protect the user-held keys).
+    #[test]
+    fn s7_cargo_doctor_user_held_file_unchanged_after_activate() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+
+        let original_content =
+            "[workspace]\nmembers = [\"github/cwalv/rvtty/daemon\"]\nresolver = \"2\"\n";
+        write_file(root, "Cargo.toml", original_content);
+
+        let config = IntegrationConfig::from_yaml(
+            "members:\n  github/cwalv/rvtty:\n    include: [daemon, common]\n",
+        );
+        let manifest = make_manifest(vec![("github/cwalv/rvtty", Role::Owned)]);
+        let project = ProjectName::new("test-project");
+        let cache = HashMap::new();
+        let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+
+        // Verify reports USER-HELD with safe_to_fix=false.
+        let issues = CargoWorkspace.verify(&ctx).unwrap();
+        assert_eq!(issues.len(), 1);
+        assert!(!issues[0].safe_to_fix, "must be USER-HELD (not safe_to_fix)");
+
+        // Even if activate() is called (guard: doctor --fix does NOT call it
+        // for user-held issues; this test verifies the merge's own protection),
+        // the [workspace] content is left intact (merge defers to user).
+        CargoWorkspace.activate(&ctx).unwrap();
+
+        let after_content = std::fs::read_to_string(root.join("Cargo.toml")).unwrap();
+        assert!(
+            !after_content.contains("# managed by rwv"),
+            "user-held file must NOT have rwv markers added by activate: {after_content}"
+        );
+        // The user's original members list is preserved (common was NOT added).
+        assert!(
+            !after_content.contains("rvtty/common"),
+            "user-held members must not be modified by activate: {after_content}"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // §7.4 CLEAN: verify() returns no issues when file is up to date
+    // -----------------------------------------------------------------------
+
+    /// Given: Cargo.toml was written by activate() (markers present, content
+    ///        matches config).
+    /// Then:  verify() returns no issues (CLEAN).
+    #[test]
+    fn s7_cargo_doctor_clean_after_fresh_activate() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+
+        let config = IntegrationConfig::from_yaml(
+            "members:\n  github/cwalv/rvtty:\n    include: [daemon, client]\n",
+        );
+        let manifest = make_manifest(vec![("github/cwalv/rvtty", Role::Owned)]);
+        let project = ProjectName::new("test-project");
+        let cache = HashMap::new();
+        let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+
+        CargoWorkspace.activate(&ctx).unwrap();
+
+        let issues = CargoWorkspace.verify(&ctx).unwrap();
+        assert!(
+            issues.is_empty(),
+            "verify() must return no issues for a freshly-activated Cargo.toml, got: {issues:?}"
+        );
+    }
+}
+
+// ===========================================================================
 // gita
 // ===========================================================================
 

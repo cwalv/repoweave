@@ -367,6 +367,7 @@ impl Integration for VscodeWorkspace {
                 integration: self.name().to_string(),
                 severity: Severity::Warning,
                 message: format!("{} does not exist", filename),
+                safe_to_fix: true,
             });
         }
         Ok(issues)

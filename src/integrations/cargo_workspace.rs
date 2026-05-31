@@ -92,7 +92,8 @@
 
 use crate::integration::{Integration, IntegrationContext, Issue, Severity};
 use crate::integrations::merge::{
-    keypath, merge_activate, strip_deactivate, KeyPath, MergeResult, OwnedValue, TomlDoc,
+    keypath, merge_activate, strip_deactivate, KeyPath, ManagedDoc, MergeResult, OwnedValue,
+    TomlDoc,
 };
 use crate::manifest::{CargoWorkspaceConfig, MemberSpec};
 use anyhow::Context;
@@ -353,6 +354,7 @@ impl Integration for CargoWorkspace {
                 integration: self.name().to_string(),
                 severity: Severity::Warning,
                 message: "cargo is not on PATH".to_string(),
+                safe_to_fix: true,
             });
         }
 
@@ -364,6 +366,7 @@ impl Integration for CargoWorkspace {
                 integration: self.name().to_string(),
                 severity: Severity::Error,
                 message: nested_workspace_error(&nested_conflicts),
+                safe_to_fix: true,
             });
         }
 
@@ -403,6 +406,124 @@ impl Integration for CargoWorkspace {
             return vec![];
         }
         vec!["Cargo.lock".to_string()]
+    }
+
+    /// Verify that the on-disk `Cargo.toml` reflects the current intent
+    /// (`rwv.yaml` membership configuration). Called by `rwv doctor` and
+    /// context verbs; **read-only** — never authors content.
+    ///
+    /// Three findings (see bead fo-cnpjy.18 design doc for rationale):
+    ///
+    /// - **MISSING** (`safe_to_fix = true`): file absent; `--fix` regenerates.
+    /// - **DRIFT** (`safe_to_fix = true`): markers present but on-disk values
+    ///   of owned keys differ from config; `--fix` regenerates.
+    /// - **USER-HELD** (`safe_to_fix = false`): file present with
+    ///   `[workspace]` members/resolver but **no** `# managed by rwv` marker
+    ///   on the owned keys — the user holds the pen. Doctor surfaces the
+    ///   finding but never auto-overwrites.
+    ///
+    /// CLEAN (no issues) when markers present AND values match config.
+    fn verify(&self, ctx: &IntegrationContext) -> anyhow::Result<Vec<Issue>> {
+        let cfg: CargoWorkspaceConfig = ctx.config.settings()?;
+
+        if !Self::has_active_cargo_work(ctx, &cfg) {
+            return Ok(vec![]);
+        }
+
+        let path = ctx.output_dir.join("Cargo.toml");
+
+        // ── MISSING ────────────────────────────────────────────────────────
+        if !path.exists() {
+            return Ok(vec![Issue {
+                integration: self.name().to_string(),
+                severity: Severity::Warning,
+                message: format!(
+                    "cargo-workspace managed file missing: {}; run rwv doctor --fix to regenerate",
+                    path.display()
+                ),
+                safe_to_fix: true,
+            }]);
+        }
+
+        // Parse the on-disk file. A parse failure is surfaced as an error
+        // (can't assess drift on a malformed file, and auto-repair of a
+        // malformed file is potentially data-lossy).
+        let text = std::fs::read_to_string(&path)
+            .with_context(|| format!("reading {} for verify", path.display()))?;
+        let toml_doc = TomlDoc::parse(&text)
+            .with_context(|| format!("parsing {} for verify", path.display()))?;
+        // Also parse as toml_edit::DocumentMut for reading values.
+        let edit_doc: toml_edit::DocumentMut = text
+            .parse()
+            .with_context(|| format!("parsing {} for verify (toml_edit)", path.display()))?;
+
+        // Build the owned key set (same as activate uses).
+        let owned_keys: Vec<KeyPath> = vec![
+            keypath(["workspace", "members"]),
+            keypath(["workspace", "resolver"]),
+        ];
+
+        let marker_present = toml_doc.has_marker(&owned_keys);
+
+        // ── USER-HELD ──────────────────────────────────────────────────────
+        // File has [workspace] with members/resolver but no rwv marker.
+        if !marker_present
+            && (toml_doc.key_present(&keypath(["workspace", "members"]))
+                || toml_doc.key_present(&keypath(["workspace", "resolver"])))
+        {
+            return Ok(vec![Issue {
+                integration: self.name().to_string(),
+                severity: Severity::Warning,
+                message: format!(
+                    "cargo-workspace managed file present but unmarked: {}; \
+                     rwv will NOT auto-take-over (would discard user content). \
+                     Cut over manually by removing [workspace] from the file \
+                     or by exercising the intent-mode merge",
+                    path.display()
+                ),
+                safe_to_fix: false,
+            }]);
+        }
+
+        // ── DRIFT ──────────────────────────────────────────────────────────
+        // Markers are present (or the file has no [workspace] at all and
+        // `merge_activate` would create one). Compare on-disk owned values
+        // against what the current config would produce.
+        //
+        // Skip the nested-conflict check here — `check()` already surfaces
+        // that as an Error; we don't duplicate it in verify().
+        let (members, nested_conflicts) = Self::partition(ctx, &cfg)?;
+        if !nested_conflicts.is_empty() {
+            // Nested-workspace conflict: activation would fail anyway;
+            // don't add a misleading DRIFT finding on top of the check error.
+            return Ok(vec![]);
+        }
+
+        // Read on-disk members and resolver from the toml_edit document.
+        let on_disk_members = toml_array_strings(&edit_doc, &["workspace", "members"]);
+        let on_disk_resolver = toml_string(&edit_doc, &["workspace", "resolver"]);
+
+        let expected_resolver = "2".to_string();
+
+        let members_drift = on_disk_members.as_deref() != Some(members.as_slice());
+        let resolver_drift = on_disk_resolver.as_deref() != Some(expected_resolver.as_str());
+
+        if members_drift || resolver_drift {
+            return Ok(vec![Issue {
+                integration: self.name().to_string(),
+                severity: Severity::Warning,
+                message: format!(
+                    "cargo-workspace managed file has drift: {}; \
+                     on-disk [workspace] content differs from rwv.yaml config. \
+                     Run rwv doctor --fix to regenerate",
+                    path.display()
+                ),
+                safe_to_fix: true,
+            }]);
+        }
+
+        // ── CLEAN ──────────────────────────────────────────────────────────
+        Ok(vec![])
     }
 
     /// `Cargo.toml` is **hybrid** (rwv owns the `[workspace]` region; the
@@ -813,6 +934,52 @@ fn nested_workspace_error(conflicts: &[String]) -> String {
          with an `include:` list to contribute the sub-paths instead\n",
     );
     msg
+}
+
+// ===========================================================================
+// TOML read helpers for verify()
+// ===========================================================================
+
+/// Read a string value from a `toml_edit::DocumentMut` by key path.
+/// Returns `None` if the path doesn't exist or the leaf is not a string.
+fn toml_string(doc: &toml_edit::DocumentMut, path: &[&str]) -> Option<String> {
+    if path.is_empty() {
+        return None;
+    }
+    let mut table: &toml_edit::Table = doc.as_table();
+    for seg in &path[..path.len() - 1] {
+        match table.get(seg) {
+            Some(toml_edit::Item::Table(t)) => table = t,
+            _ => return None,
+        }
+    }
+    table
+        .get(path.last().unwrap())
+        .and_then(|i| i.as_str())
+        .map(|s| s.to_string())
+}
+
+/// Read a string array value from a `toml_edit::DocumentMut` by key path.
+/// Returns `None` if the path doesn't exist or the leaf is not an array of strings.
+fn toml_array_strings(doc: &toml_edit::DocumentMut, path: &[&str]) -> Option<Vec<String>> {
+    if path.is_empty() {
+        return None;
+    }
+    let mut table: &toml_edit::Table = doc.as_table();
+    for seg in &path[..path.len() - 1] {
+        match table.get(seg) {
+            Some(toml_edit::Item::Table(t)) => table = t,
+            _ => return None,
+        }
+    }
+    let item = table.get(path.last().unwrap())?;
+    let arr = item.as_array()?;
+    // Collect all string elements; if any element is not a string, return None.
+    let mut out = Vec::with_capacity(arr.len());
+    for v in arr.iter() {
+        out.push(v.as_str()?.to_string());
+    }
+    Some(out)
 }
 
 // ===========================================================================

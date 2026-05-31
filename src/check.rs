@@ -820,6 +820,7 @@ pub fn violations_to_issues(violations: Vec<CheckViolation>) -> Vec<Issue> {
                 integration: "core".into(),
                 severity,
                 message,
+                safe_to_fix: true,
             }
         })
         .collect()
@@ -1544,6 +1545,7 @@ pub fn run_check(
             integration: "core".into(),
             severity: Severity::Error,
             message: msg,
+            safe_to_fix: true,
         });
     }
 
@@ -1552,6 +1554,7 @@ pub fn run_check(
             integration: "core".into(),
             severity: Severity::Error,
             message: format!("{project_name}: legacy `role: primary` fix failed: {err}"),
+            safe_to_fix: true,
         });
     }
     for err in &legacy_ww_marker_errors {
@@ -1559,6 +1562,7 @@ pub fn run_check(
             integration: "core".into(),
             severity: Severity::Error,
             message: format!("legacy workweave marker fix failed: {err}"),
+            safe_to_fix: true,
         });
     }
 
@@ -1572,6 +1576,7 @@ pub fn run_check(
             message: format!(
                 "{project_name}: lock references unknown revision for {repo_path}; run `rwv lock` or fetch"
             ),
+            safe_to_fix: true,
         });
     }
 
@@ -1583,6 +1588,7 @@ pub fn run_check(
             integration: "core".into(),
             severity: Severity::Error,
             message: format!("{repo_path}: HEAD unreadable ({err_msg})"),
+            safe_to_fix: true,
         });
     }
 
@@ -1608,26 +1614,30 @@ pub fn run_check(
         // Trigger-model drift check (see `trigger-model.md`): the integrations'
         // `verify()` pass reports drift between on-disk managed/generated content
         // and what `activate()` would produce. Under `--fix`, doctor invokes the
-        // intent-mode write path to regenerate. Without `--fix`, the drift findings
-        // surface as warnings — `doctor` is the detector and the fixer.
+        // intent-mode write path to regenerate safe-to-fix drift. Without `--fix`,
+        // all drift findings surface as warnings — `doctor` is the detector and
+        // the fixer.
         //
-        // Today no built-in integration overrides `verify()` (default returns
-        // empty), so this pass is a no-op for the shipped set; the framework is
-        // ready for the per-integration ports (epic fo-cnpjy C4–C13). When a
-        // ported integration starts emitting drift, `--fix` will pick it up
-        // automatically via the [`crate::activate::activate_intent`] call below.
+        // USER-HELD findings (`safe_to_fix = false`) are always surfaced as-is,
+        // even under `--fix` — these are cases where the user holds the pen on a
+        // managed file region and auto-repair would silently destroy user content.
+        // Doctor never auto-takes-over a user-held file.
         let verify_issues = crate::integration_runner::run_verifications(
             &integrations,
             &project.manifest,
             &ctx_base,
         );
-        if fix && !verify_issues.is_empty() {
+        // Split into auto-fixable (safe_to_fix=true) and user-held (safe_to_fix=false).
+        let (fixable_issues, user_held_issues): (Vec<_>, Vec<_>) =
+            verify_issues.into_iter().partition(|i| i.safe_to_fix);
+        // USER-HELD findings always surface — we never auto-rewrite them.
+        all_issues.extend(user_held_issues);
+        if fix && !fixable_issues.is_empty() {
             // Regenerate by running intent-mode activation against this project,
             // from the workspace dir. This is the canonical write path; any
-            // integration whose verify() flagged drift will re-author its
-            // content here. The activation also re-runs activate-hooks (install
-            // commands); doctor --fix is meant to fully repair, so that's the
-            // right behavior.
+            // integration whose verify() flagged safe-to-fix drift will re-author
+            // its content here. The activation also re-runs activate-hooks (install
+            // commands); doctor --fix is meant to fully repair, so that's correct.
             match crate::activate::activate_intent(project.name.as_str(), &workspace_dir) {
                 Ok(()) => println!(
                     "[fixed] core: regenerated integration content for project `{}` (drift detected)",
@@ -1640,10 +1650,11 @@ pub fn run_check(
                         "doctor --fix: failed to regenerate integration content for `{}`: {e}",
                         project.name
                     ),
+                    safe_to_fix: true,
                 }),
             }
         } else {
-            all_issues.extend(verify_issues);
+            all_issues.extend(fixable_issues);
         }
     }
 
@@ -1718,6 +1729,7 @@ pub fn run_check(
                                 integration: "core".into(),
                                 severity: Severity::Error,
                                 message: format!("{location}: index fix failed: {e}"),
+                                safe_to_fix: true,
                             }),
                         }
                     } else {
@@ -1725,6 +1737,7 @@ pub fn run_check(
                             integration: "core".into(),
                             severity: Severity::Warning,
                             message: format!("{location}: index stale (safe to --fix)"),
+                            safe_to_fix: true,
                         });
                     }
                 }
@@ -1735,6 +1748,7 @@ pub fn run_check(
                         message: format!(
                             "{location}: index has live staged changes (manual review)"
                         ),
+                        safe_to_fix: true,
                     });
                 }
             }
@@ -1752,6 +1766,7 @@ pub fn run_check(
                                 integration: "core".into(),
                                 severity: Severity::Error,
                                 message: format!("{location}: working-tree fix failed: {e}"),
+                                safe_to_fix: true,
                             }),
                         }
                     } else {
@@ -1759,6 +1774,7 @@ pub fn run_check(
                             integration: "core".into(),
                             severity: Severity::Warning,
                             message: format!("{location}: working tree stale (safe to --fix)"),
+                            safe_to_fix: true,
                         });
                     }
                 }
@@ -1767,6 +1783,7 @@ pub fn run_check(
                         integration: "core".into(),
                         severity: Severity::Warning,
                         message: format!("{location}: working tree has live edits (manual review)"),
+                        safe_to_fix: true,
                     });
                 }
             }
@@ -1799,6 +1816,7 @@ pub fn run_check(
                                 "{}: failed to write replay-exclusion: {e}",
                                 project.name
                             ),
+                            safe_to_fix: true,
                         }),
                     }
                 } else {
@@ -1810,6 +1828,7 @@ pub fn run_check(
                              (run `rwv doctor --fix` to add)",
                             project.name
                         ),
+                        safe_to_fix: true,
                     });
                 }
             }
@@ -1820,6 +1839,7 @@ pub fn run_check(
                     "{}: failed to read .gitattributes for replay-exclusion check: {e}",
                     project.name
                 ),
+                safe_to_fix: true,
             }),
         }
     }

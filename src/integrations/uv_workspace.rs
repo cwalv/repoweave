@@ -461,6 +461,7 @@ impl Integration for UvWorkspace {
                 integration: self.name().to_string(),
                 severity: Severity::Warning,
                 message: "uv is not on PATH".to_string(),
+                safe_to_fix: true,
             });
         }
         Ok(issues)

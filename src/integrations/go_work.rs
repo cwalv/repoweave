@@ -137,6 +137,7 @@ impl Integration for GoWork {
                 integration: self.name().to_string(),
                 severity: Severity::Warning,
                 message: "go is not on PATH; using hand-edit fallback for go.work".to_string(),
+                safe_to_fix: true,
             });
         }
         Ok(issues)

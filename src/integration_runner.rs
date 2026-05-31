@@ -130,6 +130,7 @@ fn for_each_enabled(
                     integration: integration.name().to_string(),
                     severity: Severity::Error,
                     message: e.to_string(),
+                    safe_to_fix: true,
                 });
             }
         }
@@ -518,11 +519,13 @@ mod tests {
             integration: "cargo".into(),
             severity: Severity::Warning,
             message: "missing dep".into(),
+            safe_to_fix: true,
         }]);
         let npm = MockIntegration::new("npm", true).with_check_issues(vec![Issue {
             integration: "npm".into(),
             severity: Severity::Error,
             message: "lockfile mismatch".into(),
+            safe_to_fix: true,
         }]);
         let integrations: Vec<&dyn Integration> = vec![&cargo, &npm];
 
@@ -559,6 +562,7 @@ mod tests {
             integration: "npm".into(),
             severity: Severity::Warning,
             message: "minor issue".into(),
+            safe_to_fix: true,
         }]);
         let integrations: Vec<&dyn Integration> = vec![&failing, &succeeding];
 

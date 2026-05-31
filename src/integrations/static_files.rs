@@ -149,6 +149,7 @@ impl Integration for StaticFiles {
                 integration: self.name().to_string(),
                 severity: Severity::Error,
                 message: collision_message(&name),
+                safe_to_fix: true,
             });
         }
 
@@ -159,6 +160,7 @@ impl Integration for StaticFiles {
                     integration: self.name().to_string(),
                     severity: Severity::Warning,
                     message: format!("declared file '{}' not found in project directory", file),
+                    safe_to_fix: true,
                 });
             }
         }

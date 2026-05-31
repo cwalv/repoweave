@@ -67,6 +67,7 @@ impl Integration for PnpmWorkspaces {
                 integration: self.name().to_string(),
                 severity: Severity::Warning,
                 message: "pnpm is not on PATH".to_string(),
+                safe_to_fix: true,
             });
         }
         Ok(issues)

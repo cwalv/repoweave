@@ -271,11 +271,13 @@ fn mock_check_returns_issues() {
             integration: "cargo".into(),
             severity: Severity::Warning,
             message: "missing dependency".into(),
+            safe_to_fix: true,
         },
         Issue {
             integration: "cargo".into(),
             severity: Severity::Error,
             message: "build failure".into(),
+            safe_to_fix: true,
         },
     ];
 
@@ -328,6 +330,7 @@ fn issue_creation_with_warning_severity() {
         integration: "npm".into(),
         severity: Severity::Warning,
         message: "outdated lockfile".into(),
+        safe_to_fix: true,
     };
     assert_eq!(issue.integration, "npm");
     assert_eq!(issue.severity, Severity::Warning);
@@ -340,6 +343,7 @@ fn issue_creation_with_error_severity() {
         integration: "cargo".into(),
         severity: Severity::Error,
         message: "unresolvable version conflict".into(),
+        safe_to_fix: true,
     };
     assert_eq!(issue.integration, "cargo");
     assert_eq!(issue.severity, Severity::Error);
@@ -1217,6 +1221,7 @@ mod fo_cnpjy_3 {
                     integration: "check-warner".into(),
                     severity: Severity::Warning,
                     message: "env precondition".into(),
+                    safe_to_fix: true,
                 }])
             }
         }
