@@ -248,7 +248,7 @@ fn update_for_project(
     let stdout_lock: Mutex<()> = Mutex::new(());
     let mut json_records: Vec<RepoUpdateRecord> = Vec::new();
 
-    for (item, outcome) in work_items.iter().zip(outcomes.into_iter()) {
+    for (item, outcome) in work_items.iter().zip(outcomes) {
         let branch = item.entry.version.as_str().to_owned();
         let abs_str = item.absolute_path.to_string_lossy().to_string();
 
