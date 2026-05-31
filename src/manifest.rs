@@ -664,7 +664,11 @@ pub struct GoWorkConfig {
     /// across member go.mod files.
     ///
     /// YAML key: `go-version` (hyphen, matching rwv.yaml naming conventions).
-    #[serde(default, rename = "go-version", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        rename = "go-version",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub go_version: Option<String>,
 }
 

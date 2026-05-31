@@ -125,10 +125,7 @@ impl UvWorkspace {
 
         // greenfield-only: [tool.uv].package = false
         if is_greenfield {
-            owned.push((
-                keypath(["tool", "uv", "package"]),
-                OwnedValue::Bool(false),
-            ));
+            owned.push((keypath(["tool", "uv", "package"]), OwnedValue::Bool(false)));
         }
 
         owned
@@ -166,8 +163,7 @@ impl UvWorkspace {
             if !doc.as_table().contains_key("tool") {
                 let mut t = toml_edit::Table::new();
                 t.set_implicit(true);
-                doc.as_table_mut()
-                    .insert("tool", toml_edit::Item::Table(t));
+                doc.as_table_mut().insert("tool", toml_edit::Item::Table(t));
             }
             let tool = doc
                 .as_table_mut()
@@ -543,8 +539,7 @@ mod tests {
 
     #[test]
     fn is_workspace_true_rejects_git_source() {
-        let toml =
-            "[tool.uv.sources]\nbar = { git = \"https://example.com/bar.git\" }\n";
+        let toml = "[tool.uv.sources]\nbar = { git = \"https://example.com/bar.git\" }\n";
         let doc: toml_edit::DocumentMut = toml.parse().unwrap();
         let sources = doc["tool"]["uv"]["sources"].as_table().unwrap();
         let item = &sources["bar"];
@@ -569,7 +564,10 @@ some-private-lib = { git = "https://example.com/foo.git" }
         UvWorkspace::strip_workspace_sources(&path).unwrap();
 
         let content = std::fs::read_to_string(&path).unwrap();
-        assert!(!content.contains("workspace = true"), "ws=true must be gone");
+        assert!(
+            !content.contains("workspace = true"),
+            "ws=true must be gone"
+        );
         assert!(
             content.contains("some-private-lib"),
             "git source must survive"
@@ -600,8 +598,7 @@ some-private-lib = { git = "https://example.com/foo.git" }
     #[test]
     fn strip_workspace_sources_noop_when_no_workspace_true() {
         let tmp = TempDir::new().unwrap();
-        let content =
-            "[project]\nname = \"acme\"\n\n[tool.uv.sources]\nfoo = { git = \"x\" }\n";
+        let content = "[project]\nname = \"acme\"\n\n[tool.uv.sources]\nfoo = { git = \"x\" }\n";
         let path = write_file(&tmp, "pyproject.toml", content);
 
         UvWorkspace::strip_workspace_sources(&path).unwrap();
@@ -635,9 +632,7 @@ some-private-lib = { git = "https://example.com/foo.git" }
         // Sources are handled in the set_workspace_sources pass, not via
         // primary_owned_pairs — so the marker never appears on source entries.
         let pairs = UvWorkspace::primary_owned_pairs(&["github/acme/server".to_string()], false);
-        let has_source = pairs
-            .iter()
-            .any(|(k, _)| k.len() >= 4 && k[2] == "sources");
+        let has_source = pairs.iter().any(|(k, _)| k.len() >= 4 && k[2] == "sources");
         assert!(
             !has_source,
             "primary_owned_pairs must NOT include source keys (those go through set_workspace_sources)"

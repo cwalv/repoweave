@@ -1,5 +1,5 @@
 use crate::integration::{Integration, IntegrationContext, Issue, Severity};
-use crate::integrations::merge::{merge_activate, strip_deactivate, OwnedValue, YamlDoc, KeyPath};
+use crate::integrations::merge::{merge_activate, strip_deactivate, KeyPath, OwnedValue, YamlDoc};
 use anyhow::Context;
 use std::path::Path;
 

@@ -242,10 +242,7 @@ impl Integration for VscodeWorkspace {
                 })?;
                 match v {
                     serde_json::Value::Object(m) => m,
-                    _ => anyhow::bail!(
-                        "{} must be a JSON object",
-                        filepath.display()
-                    ),
+                    _ => anyhow::bail!("{} must be a JSON object", filepath.display()),
                 }
             }
         } else {
@@ -527,10 +524,7 @@ mod tests {
         );
         // New rwv key added.
         assert_eq!(merged_v[".*"], serde_json::Value::Bool(true));
-        assert_eq!(
-            merged_v["github/chatly/api"],
-            serde_json::Value::Bool(true)
-        );
+        assert_eq!(merged_v["github/chatly/api"], serde_json::Value::Bool(true));
         // User keys preserved.
         assert_eq!(merged_v["**/target"], serde_json::Value::Bool(true));
         assert_eq!(merged_v["dist"], serde_json::Value::Bool(true));

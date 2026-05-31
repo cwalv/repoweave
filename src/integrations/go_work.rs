@@ -41,7 +41,9 @@
 //! taken regardless of whether `go` happens to be on PATH in the test runner.
 
 use crate::integration::{Integration, IntegrationContext, Issue, Severity};
-use crate::integrations::merge::{keypath, merge_activate, strip_deactivate, GoWorkDoc, OwnedValue};
+use crate::integrations::merge::{
+    keypath, merge_activate, strip_deactivate, GoWorkDoc, OwnedValue,
+};
 use crate::manifest::GoWorkConfig;
 use std::path::Path;
 
@@ -235,8 +237,10 @@ fn activate_via_go_tool(
     }
 
     // Drop entries no longer in new_paths.
-    let new_set: std::collections::BTreeSet<String> =
-        new_paths.iter().map(|p| format!("./{}", p.as_ref())).collect();
+    let new_set: std::collections::BTreeSet<String> = new_paths
+        .iter()
+        .map(|p| format!("./{}", p.as_ref()))
+        .collect();
     for old in current_uses {
         if !new_set.contains(&old) {
             let status = Command::new("go")
@@ -354,10 +358,8 @@ fn activate_via_hand_edit(
         .map(|p| format!("./{}", p.as_ref()))
         .collect();
 
-    let mut owned: Vec<(Vec<String>, OwnedValue)> = vec![(
-        keypath(["use"]),
-        OwnedValue::sorted_array(use_items),
-    )];
+    let mut owned: Vec<(Vec<String>, OwnedValue)> =
+        vec![(keypath(["use"]), OwnedValue::sorted_array(use_items))];
 
     if let Some(ver) = go_version_config {
         owned.push((keypath(["go"]), OwnedValue::String(ver.to_string())));
@@ -500,19 +502,40 @@ mod tests {
         let text = std::fs::read_to_string(root.join("go.work")).unwrap();
 
         // use block has both repos.
-        assert!(text.contains("./github/test/repoweave"), "use entry missing: {text}");
-        assert!(text.contains("./github/test/some-go-tool"), "use entry missing: {text}");
+        assert!(
+            text.contains("./github/test/repoweave"),
+            "use entry missing: {text}"
+        );
+        assert!(
+            text.contains("./github/test/some-go-tool"),
+            "use entry missing: {text}"
+        );
 
         // go 1.26 UNCHANGED (config None → no go-line write in fallback).
-        assert!(text.contains("go 1.26"), "go 1.26 must be preserved: {text}");
-        assert!(!text.contains("go 1.21"), "must not downgrade to 1.21: {text}");
+        assert!(
+            text.contains("go 1.26"),
+            "go 1.26 must be preserved: {text}"
+        );
+        assert!(
+            !text.contains("go 1.21"),
+            "must not downgrade to 1.21: {text}"
+        );
 
         // replace block and comment survive.
-        assert!(text.contains("replace example.com/legacy"), "replace must survive: {text}");
-        assert!(text.contains("// pin local fork"), "comment must survive: {text}");
+        assert!(
+            text.contains("replace example.com/legacy"),
+            "replace must survive: {text}"
+        );
+        assert!(
+            text.contains("// pin local fork"),
+            "comment must survive: {text}"
+        );
 
         // Ownership marker is present.
-        assert!(text.contains("// managed by repoweave"), "marker must be present: {text}");
+        assert!(
+            text.contains("// managed by repoweave"),
+            "marker must be present: {text}"
+        );
     }
 
     // -----------------------------------------------------------------------
@@ -560,15 +583,30 @@ mod tests {
         let text = std::fs::read_to_string(root.join("go.work")).unwrap();
 
         // Removed entry is gone.
-        assert!(!text.contains("another-module"), "removed entry must be gone: {text}");
+        assert!(
+            !text.contains("another-module"),
+            "removed entry must be gone: {text}"
+        );
 
         // Remaining entries present.
-        assert!(text.contains("./github/test/repoweave"), "repoweave must remain: {text}");
-        assert!(text.contains("./github/test/some-go-tool"), "some-go-tool must remain: {text}");
+        assert!(
+            text.contains("./github/test/repoweave"),
+            "repoweave must remain: {text}"
+        );
+        assert!(
+            text.contains("./github/test/some-go-tool"),
+            "some-go-tool must remain: {text}"
+        );
 
         // toolchain, godebug, go 1.26 survive.
-        assert!(text.contains("toolchain go1.26.0"), "toolchain must survive: {text}");
-        assert!(text.contains("godebug default=go1.26"), "godebug must survive: {text}");
+        assert!(
+            text.contains("toolchain go1.26.0"),
+            "toolchain must survive: {text}"
+        );
+        assert!(
+            text.contains("godebug default=go1.26"),
+            "godebug must survive: {text}"
+        );
         assert!(text.contains("go 1.26"), "go 1.26 must survive: {text}");
     }
 
@@ -598,20 +636,35 @@ mod tests {
         integration.deactivate(root).unwrap();
 
         // File still exists — replace + go line are user content.
-        assert!(root.join("go.work").exists(), "file must survive (user content present)");
+        assert!(
+            root.join("go.work").exists(),
+            "file must survive (user content present)"
+        );
 
         let text = std::fs::read_to_string(root.join("go.work")).unwrap();
 
         // use block gone.
-        assert!(!text.contains("./github/test/repoweave"), "use entry must be stripped: {text}");
-        assert!(!text.contains("use ("), "use block must be stripped: {text}");
+        assert!(
+            !text.contains("./github/test/repoweave"),
+            "use entry must be stripped: {text}"
+        );
+        assert!(
+            !text.contains("use ("),
+            "use block must be stripped: {text}"
+        );
 
         // Marker gone.
-        assert!(!text.contains("// managed by repoweave"), "marker must be stripped: {text}");
+        assert!(
+            !text.contains("// managed by repoweave"),
+            "marker must be stripped: {text}"
+        );
 
         // go 1.26 and replace survive.
         assert!(text.contains("go 1.26"), "go 1.26 must survive: {text}");
-        assert!(text.contains("replace example.com/foo"), "replace must survive: {text}");
+        assert!(
+            text.contains("replace example.com/foo"),
+            "replace must survive: {text}"
+        );
     }
 
     // -----------------------------------------------------------------------
@@ -641,7 +694,10 @@ mod tests {
         let integration = GoWork;
         integration.deactivate(root).unwrap();
 
-        assert!(!root.join("go.work").exists(), "file must be deleted (delete-if-empty)");
+        assert!(
+            !root.join("go.work").exists(),
+            "file must be deleted (delete-if-empty)"
+        );
     }
 
     // -----------------------------------------------------------------------
@@ -663,9 +719,15 @@ mod tests {
         integration.deactivate(root).unwrap();
 
         // File untouched.
-        assert!(root.join("go.work").exists(), "hand-owned file must survive");
+        assert!(
+            root.join("go.work").exists(),
+            "hand-owned file must survive"
+        );
         let text = std::fs::read_to_string(root.join("go.work")).unwrap();
-        assert!(text.contains("./mine"), "user use entry must survive: {text}");
+        assert!(
+            text.contains("./mine"),
+            "user use entry must survive: {text}"
+        );
     }
 
     // -----------------------------------------------------------------------
@@ -693,7 +755,10 @@ mod tests {
         integration.activate(&ctx).unwrap();
 
         let text = std::fs::read_to_string(root.join("go.work")).unwrap();
-        assert!(text.contains("go 1.23"), "config go-version must be written: {text}");
+        assert!(
+            text.contains("go 1.23"),
+            "config go-version must be written: {text}"
+        );
     }
 
     // -----------------------------------------------------------------------
@@ -717,8 +782,17 @@ mod tests {
         let gen = integration.generated_files(&ctx);
         let man = integration.managed_files(&ctx);
 
-        assert!(!gen.contains(&"go.work".to_string()), "go.work must not be in generated_files");
-        assert!(gen.contains(&"go.sum".to_string()), "go.sum must be in generated_files");
-        assert!(man.contains(&"go.work".to_string()), "go.work must be in managed_files");
+        assert!(
+            !gen.contains(&"go.work".to_string()),
+            "go.work must not be in generated_files"
+        );
+        assert!(
+            gen.contains(&"go.sum".to_string()),
+            "go.sum must be in generated_files"
+        );
+        assert!(
+            man.contains(&"go.work".to_string()),
+            "go.work must be in managed_files"
+        );
     }
 }

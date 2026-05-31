@@ -942,10 +942,7 @@ fn uv_workspace_generated_files() {
     // Post fo-cnpjy.9: pyproject.toml is hybrid — it lives in managed_files(),
     // NOT generated_files(). generated_files() is for fully-owned artifacts
     // that are gitignore-eligible and whole-deletable; pyproject.toml is neither.
-    assert_eq!(
-        UvWorkspace.generated_files(&ctx2),
-        vec!["uv.lock"]
-    );
+    assert_eq!(UvWorkspace.generated_files(&ctx2), vec!["uv.lock"]);
     assert_eq!(
         UvWorkspace.managed_files(&ctx2),
         vec!["uv.lock", "pyproject.toml"]
