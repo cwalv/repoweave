@@ -190,12 +190,10 @@ fn activate_via_go_tool(
     let work_tmp = workspace_root.join("go.work");
 
     // Seed work_tmp from the existing output_dir copy (preserves user content).
-    if !work_tmp.exists() {
-        if go_work_path.exists() {
-            std::fs::copy(go_work_path, &work_tmp)?;
-        }
-        // If neither exists, `go work init` will create work_tmp.
+    if !work_tmp.exists() && go_work_path.exists() {
+        std::fs::copy(go_work_path, &work_tmp)?;
     }
+    // If neither exists, `go work init` (below) will create work_tmp.
 
     // Initialize go.work at workspace_root if needed.
     if !work_tmp.exists() {
@@ -407,7 +405,6 @@ fn max_go_version(paths: &[impl AsRef<str>], workspace_root: &Path) -> Option<St
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::integrations::merge::ManagedDoc as _;
     use crate::manifest::{Manifest, ProjectName, Role};
     use std::collections::HashMap;
     use tempfile::TempDir;
@@ -466,7 +463,6 @@ mod tests {
         std::fs::write(path, content).unwrap();
     }
 
-    use crate::integration::Integration as _;
     use crate::manifest::IntegrationConfig;
 
     // -----------------------------------------------------------------------

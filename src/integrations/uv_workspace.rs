@@ -333,7 +333,7 @@ fn prune_if_empty(doc: &mut toml_edit::DocumentMut, path: &[&str]) {
         let mut t: &toml_edit::Table = doc.as_table();
         let mut ok = true;
         for seg in &path[..path.len() - 1] {
-            match t.get(*seg) {
+            match t.get(seg) {
                 Some(toml_edit::Item::Table(sub)) => t = sub,
                 _ => {
                     ok = false;
@@ -358,7 +358,7 @@ fn prune_if_empty(doc: &mut toml_edit::DocumentMut, path: &[&str]) {
     // Mutable removal: walk to parent and remove the leaf.
     let mut t: &mut toml_edit::Table = doc.as_table_mut();
     for seg in &path[..path.len() - 1] {
-        match t.get_mut(*seg) {
+        match t.get_mut(seg) {
             Some(toml_edit::Item::Table(sub)) => t = sub,
             _ => return,
         }
