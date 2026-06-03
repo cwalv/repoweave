@@ -311,20 +311,27 @@ impl Integration for VscodeWorkspace {
             serde_json::json!({ "managed": true, MARKER_EXCLUDES_KEY: rwv_excludes_list }),
         );
 
-        // Merge settings: always overwrite git.* managed keys; per-key merge
+        // Merge settings: DefaultOnly for git.* keys (write only when absent
+        // so user-changed values survive re-activate); per-key merge for
         // files.exclude (fix #1).
         let settings = obj
             .entry("settings".to_string())
             .or_insert_with(|| serde_json::Value::Object(serde_json::Map::new()));
         if let Some(settings_map) = settings.as_object_mut() {
-            settings_map.insert(
-                "git.autoRepositoryDetection".to_string(),
-                serde_json::Value::String("subFolders".to_string()),
-            );
-            settings_map.insert(
-                "git.repositoryScanMaxDepth".to_string(),
-                serde_json::Value::Number(3.into()),
-            );
+            // DefaultOnly: seed sensible git defaults at greenfield but never
+            // overwrite a value the user has explicitly set.
+            if !settings_map.contains_key("git.autoRepositoryDetection") {
+                settings_map.insert(
+                    "git.autoRepositoryDetection".to_string(),
+                    serde_json::Value::String("subFolders".to_string()),
+                );
+            }
+            if !settings_map.contains_key("git.repositoryScanMaxDepth") {
+                settings_map.insert(
+                    "git.repositoryScanMaxDepth".to_string(),
+                    serde_json::Value::Number(3.into()),
+                );
+            }
             settings_map.insert(
                 "files.exclude".to_string(),
                 serde_json::Value::Object(merged_exclude),

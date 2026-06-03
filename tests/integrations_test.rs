@@ -4091,6 +4091,83 @@ mod vscode_workspace {
         );
     }
 
+    // -----------------------------------------------------------------------
+    // DefaultOnly semantics for git.* settings (fo-ro3hj.7)
+    //
+    // git.autoRepositoryDetection and git.repositoryScanMaxDepth are
+    // DefaultOnly: rwv seeds them at greenfield but never overwrites a value
+    // the user has explicitly set.
+    // -----------------------------------------------------------------------
+
+    /// git.* defaults are written on a fresh (empty) workspace.
+    #[test]
+    fn git_settings_seeded_on_fresh_workspace() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+
+        let manifest = make_manifest(vec![("github/acme/server", Role::Owned)]);
+        let project = ProjectName::new("test-project");
+        let config = IntegrationConfig::default();
+        let cache = HashMap::new();
+        let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+
+        VscodeWorkspace.activate(&ctx).unwrap();
+
+        let content = std::fs::read_to_string(root.join("test-project.code-workspace")).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
+
+        assert_eq!(
+            parsed["settings"]["git.autoRepositoryDetection"], "subFolders",
+            "default must be seeded on fresh workspace"
+        );
+        assert_eq!(
+            parsed["settings"]["git.repositoryScanMaxDepth"], 3,
+            "default depth must be seeded on fresh workspace"
+        );
+    }
+
+    /// User-customized git.* values survive re-activation (DefaultOnly: no overwrite).
+    #[test]
+    fn git_settings_user_values_preserved_on_reactivate() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+
+        // Pre-existing workspace with user-customized git settings and rwv marker.
+        write_file(
+            root,
+            "test-project.code-workspace",
+            r#"{
+  "rwv.generated": { "managed": true, "files.exclude": [] },
+  "folders": [{ "path": ".", "name": "test-project (primary)" }],
+  "settings": {
+    "git.autoRepositoryDetection": "always",
+    "git.repositoryScanMaxDepth": 10,
+    "files.exclude": { ".*": true }
+  }
+}"#,
+        );
+
+        let manifest = make_manifest(vec![("github/acme/server", Role::Owned)]);
+        let project = ProjectName::new("test-project");
+        let config = IntegrationConfig::default();
+        let cache = HashMap::new();
+        let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+
+        VscodeWorkspace.activate(&ctx).unwrap();
+
+        let content = std::fs::read_to_string(root.join("test-project.code-workspace")).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
+
+        assert_eq!(
+            parsed["settings"]["git.autoRepositoryDetection"], "always",
+            "user-set git.autoRepositoryDetection must not be overwritten on re-activate"
+        );
+        assert_eq!(
+            parsed["settings"]["git.repositoryScanMaxDepth"], 10,
+            "user-set git.repositoryScanMaxDepth must not be overwritten on re-activate"
+        );
+    }
+
     /// §6.vscode.4 — Deactivate of a purely-rwv file deletes it; hand-written
     /// file (no marker) is untouched.
     ///
