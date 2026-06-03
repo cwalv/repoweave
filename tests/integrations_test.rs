@@ -193,7 +193,8 @@ mod npm_workspaces {
 
         let pkg_json = std::fs::read_to_string(root.join("package.json")).unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&pkg_json).unwrap();
-        assert_eq!(parsed["name"], "repoweave");
+        // name is DefaultOnly — on a fresh file, it is set from the project name.
+        assert_eq!(parsed["name"], "test-project");
         assert_eq!(parsed["private"], true);
         let workspaces = parsed["workspaces"].as_array().unwrap();
         assert_eq!(workspaces.len(), 3);
@@ -231,13 +232,13 @@ mod npm_workspaces {
     }
 
     #[test]
-    fn deactivation_removes_package_json() {
+    fn deactivation_strips_author_keys_preserves_default_only_keys() {
         let tmp = TempDir::new().unwrap();
         let root = tmp.path();
 
-        // Marker is x-repoweave (new sentinel); name/private/workspaces are
-        // the owned keys. When nothing else remains after stripping, the file
-        // must be deleted.
+        // name and private are Ownership::DefaultOnly — they are never stripped
+        // on deactivate. Only workspaces (Author) is removed. The file retains
+        // name and private so it is NOT deleted.
         write_file(
             root,
             "package.json",
@@ -247,7 +248,54 @@ mod npm_workspaces {
 
         let integration = NpmWorkspaces;
         integration.deactivate(root).unwrap();
-        assert!(!root.join("package.json").exists());
+
+        // File must survive (name + private remain).
+        assert!(
+            root.join("package.json").exists(),
+            "package.json must not be deleted — name and private (DefaultOnly) remain"
+        );
+        let content = std::fs::read_to_string(root.join("package.json")).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
+        // Author keys stripped.
+        assert!(
+            parsed.get("workspaces").is_none(),
+            "workspaces should be stripped"
+        );
+        assert!(
+            parsed.get("x-repoweave").is_none(),
+            "marker should be stripped"
+        );
+        // DefaultOnly keys preserved.
+        assert_eq!(
+            parsed["name"], "repoweave",
+            "name should survive (DefaultOnly)"
+        );
+        assert_eq!(
+            parsed["private"], true,
+            "private should survive (DefaultOnly)"
+        );
+    }
+
+    #[test]
+    fn deactivation_removes_package_json_when_only_author_keys_present() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+
+        // A file with only the marker + workspaces (no name/private, no user fields).
+        // After stripping the Author key, nothing remains → file deleted.
+        write_file(
+            root,
+            "package.json",
+            r#"{"x-repoweave":{"managed":true},"workspaces":["github/acme/server"]}"#,
+        );
+        assert!(root.join("package.json").exists());
+
+        let integration = NpmWorkspaces;
+        integration.deactivate(root).unwrap();
+        assert!(
+            !root.join("package.json").exists(),
+            "package.json should be deleted when only Author keys (workspaces) remain"
+        );
     }
 
     #[test]
@@ -313,12 +361,15 @@ mod npm_workspaces {
         let content = std::fs::read_to_string(root.join("package.json")).unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
 
-        // rwv-owned keys must be set/updated.
+        // name and private are DefaultOnly — existing value is preserved, not overwritten.
         assert_eq!(
             parsed["name"], "repoweave",
-            "name should be the rwv sentinel"
+            "name (DefaultOnly) should be preserved from the existing file"
         );
-        assert_eq!(parsed["private"], true, "private should remain true");
+        assert_eq!(
+            parsed["private"], true,
+            "private (DefaultOnly) should be preserved"
+        );
         // x-repoweave marker must be present.
         assert!(
             parsed.get("x-repoweave").is_some(),
@@ -392,19 +443,22 @@ mod npm_workspaces {
             parsed["scripts"]["ci"], "npm test",
             "ci script should survive a second activate"
         );
-        assert_eq!(parsed["name"], "repoweave");
+        // name is DefaultOnly — on a fresh file it was set to the project name;
+        // subsequent activates preserve the existing value unchanged.
+        assert_eq!(parsed["name"], "test-project");
     }
 
-    /// Deactivating a package.json that carries user scripts (scripts, engines,
-    /// devDependencies) alongside the rwv-owned keys must strip only the
-    /// three rwv-owned keys and leave the rest on disk.
+    /// Deactivating a package.json that carries user scripts alongside rwv-owned
+    /// keys strips only the Author keys (workspaces) and the marker.
+    /// name and private are DefaultOnly — they survive deactivation.
     #[test]
     fn deactivation_strips_rwv_keys_but_preserves_user_fields() {
         let tmp = TempDir::new().unwrap();
         let root = tmp.path();
 
         // Marker is x-repoweave. The file has user-authored fields (scripts,
-        // version) that must survive deactivation.
+        // version) that must survive deactivation. name and private are
+        // DefaultOnly and also survive.
         write_file(
             root,
             "package.json",
@@ -422,31 +476,33 @@ mod npm_workspaces {
 
         NpmWorkspaces.deactivate(root).unwrap();
 
-        // File must still exist because there are user-authored fields.
+        // File must still exist (name, private, scripts, version all remain).
         assert!(
             root.join("package.json").exists(),
-            "package.json should not be deleted when user fields remain"
+            "package.json should not be deleted when non-Author fields remain"
         );
 
         let content = std::fs::read_to_string(root.join("package.json")).unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
 
-        // rwv-owned keys must be gone.
+        // Author key and marker must be gone.
         assert!(
             parsed.get("x-repoweave").is_none(),
             "x-repoweave marker should be stripped on deactivate"
         );
         assert!(
-            parsed.get("name").is_none(),
-            "name should be stripped on deactivate"
-        );
-        assert!(
-            parsed.get("private").is_none(),
-            "private should be stripped on deactivate"
-        );
-        assert!(
             parsed.get("workspaces").is_none(),
-            "workspaces should be stripped on deactivate"
+            "workspaces (Author) should be stripped on deactivate"
+        );
+
+        // DefaultOnly keys survive — user may have intentionally set them.
+        assert_eq!(
+            parsed["name"], "repoweave",
+            "name (DefaultOnly) should survive deactivate"
+        );
+        assert_eq!(
+            parsed["private"], true,
+            "private (DefaultOnly) should survive deactivate"
         );
 
         // User fields must remain.
@@ -485,6 +541,145 @@ mod npm_workspaces {
         } else {
             assert!(issues.is_empty());
         }
+    }
+
+    // -----------------------------------------------------------------------
+    // fo-ro3hj.2 regression tests — DefaultOnly name/private
+    // -----------------------------------------------------------------------
+
+    /// fo-z8vyl regression: a tmuxcc-style package.json with a real name and
+    /// custom scripts must survive `merge_activate` with name and scripts intact.
+    ///
+    /// Before this bead, name was Ownership::Author, so activate always
+    /// overwrote `name` with the hardcoded literal "repoweave" — trashing e.g.
+    /// `name: "tmuxcc"` in a tmuxcc workweave.
+    #[test]
+    fn fo_z8vyl_regression_name_and_scripts_survive_activate() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+
+        touch(root, "github/cwalv/tmuxcc-daemon/package.json");
+        touch(root, "github/cwalv/tmuxcc-client/package.json");
+
+        // tmuxcc-style: pre-existing marked file with a real project name and
+        // custom scripts. This simulates what a tmuxcc workweave looks like.
+        let original = r#"{
+  "x-repoweave": {"managed": true},
+  "name": "tmuxcc",
+  "private": true,
+  "workspaces": ["github/cwalv/tmuxcc-daemon"],
+  "scripts": {
+    "build": "tsc -b",
+    "test": "node --test"
+  }
+}"#;
+        write_file(root, "package.json", original);
+
+        let manifest = make_manifest(vec![
+            ("github/cwalv/tmuxcc-daemon", Role::Owned),
+            ("github/cwalv/tmuxcc-client", Role::Owned),
+        ]);
+        // Project name is different from the name in the file — must NOT overwrite.
+        let project = ProjectName::new("tmuxcc");
+        let config = IntegrationConfig::default();
+        let cache = HashMap::new();
+        let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+
+        NpmWorkspaces.activate(&ctx).unwrap();
+
+        let content = std::fs::read_to_string(root.join("package.json")).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
+
+        // The core regression: name must NOT be overwritten.
+        assert_eq!(
+            parsed["name"], "tmuxcc",
+            "name must survive activate — was 'tmuxcc', must not become 'repoweave'"
+        );
+
+        // Custom scripts must survive untouched (untracked field).
+        assert_eq!(
+            parsed["scripts"]["build"], "tsc -b",
+            "scripts.build must survive activate"
+        );
+        assert_eq!(
+            parsed["scripts"]["test"], "node --test",
+            "scripts.test must survive activate"
+        );
+
+        // workspaces (Author) is updated normally.
+        let ws = parsed["workspaces"].as_array().unwrap();
+        assert!(ws
+            .iter()
+            .any(|w| w.as_str() == Some("github/cwalv/tmuxcc-daemon")));
+        assert!(ws
+            .iter()
+            .any(|w| w.as_str() == Some("github/cwalv/tmuxcc-client")));
+    }
+
+    /// Greenfield test: fresh file gets name set from ctx.project (not "repoweave").
+    #[test]
+    fn greenfield_name_set_from_context_project_name() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+
+        touch(root, "github/acme/api/package.json");
+
+        let manifest = make_manifest(vec![("github/acme/api", Role::Owned)]);
+        let project = ProjectName::new("my-cool-project");
+        let config = IntegrationConfig::default();
+        let cache = HashMap::new();
+        let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+
+        NpmWorkspaces.activate(&ctx).unwrap();
+
+        let content = std::fs::read_to_string(root.join("package.json")).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
+
+        assert_eq!(
+            parsed["name"], "my-cool-project",
+            "greenfield name must come from ctx.project, not the hardcoded literal"
+        );
+        assert_eq!(
+            parsed["private"], true,
+            "greenfield private must be set to true"
+        );
+    }
+
+    /// DefaultOnly survival test: user-set `private: false` must survive activate.
+    #[test]
+    fn default_only_private_false_survives_activate() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+
+        touch(root, "github/acme/api/package.json");
+
+        // Pre-existing file with marker and user-set `private: false`.
+        write_file(
+            root,
+            "package.json",
+            r#"{
+  "x-repoweave": {"managed": true},
+  "name": "acme-workspace",
+  "private": false,
+  "workspaces": ["github/acme/api"]
+}"#,
+        );
+
+        let manifest = make_manifest(vec![("github/acme/api", Role::Owned)]);
+        let project = ProjectName::new("acme");
+        let config = IntegrationConfig::default();
+        let cache = HashMap::new();
+        let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+
+        NpmWorkspaces.activate(&ctx).unwrap();
+
+        let content = std::fs::read_to_string(root.join("package.json")).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
+
+        assert_eq!(
+            parsed["private"], false,
+            "private: false set by user must survive activate (DefaultOnly must NOT overwrite)"
+        );
     }
 
     // -----------------------------------------------------------------------
@@ -719,8 +914,10 @@ mod npm_workspaces {
         );
     }
 
-    /// §6.npm.4 — Deactivate strips rwv keys, preserves user content, deletes
-    /// lockfile, removes file only if empty.
+    /// §6.npm.4 — Deactivate strips Author keys (workspaces) and marker,
+    /// preserves DefaultOnly keys (name, private) and user content, deletes
+    /// the lockfile (gated on marker), leaves file only if non-Author content
+    /// remains.
     ///
     /// Sub-case (a): marked file + user fields + rwv-generated lockfile.
     /// Sub-case (b): hand-written file, no marker — file untouched.
@@ -749,13 +946,18 @@ mod npm_workspaces {
 
         assert!(
             root_a.join("package.json").exists(),
-            "package.json must still exist (user fields remain)"
+            "package.json must still exist (user fields and DefaultOnly keys remain)"
         );
         let content = std::fs::read_to_string(root_a.join("package.json")).unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
         assert!(parsed.get("x-repoweave").is_none(), "marker stripped");
-        assert!(parsed.get("workspaces").is_none(), "workspaces stripped");
-        assert!(parsed.get("private").is_none(), "private stripped");
+        assert!(
+            parsed.get("workspaces").is_none(),
+            "workspaces (Author) stripped"
+        );
+        // name and private are DefaultOnly — they are NOT stripped.
+        assert_eq!(parsed["name"], "repoweave", "name (DefaultOnly) survives");
+        assert_eq!(parsed["private"], true, "private (DefaultOnly) survives");
         assert_eq!(
             parsed["scripts"]["validate:next-consumer"], "node scripts/validate-next.mjs",
             "user scripts survive"

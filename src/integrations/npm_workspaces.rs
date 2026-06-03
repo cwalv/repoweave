@@ -10,15 +10,16 @@ pub struct NpmWorkspaces;
 
 /// Keys stripped on deactivate.
 ///
-/// Both `workspaces` (array-form) and `workspaces.packages` (object-form) are
-/// listed so deactivate handles either shape. `JsonDoc::remove_at` prunes the
-/// now-empty `workspaces` parent when only `packages` was set and `nohoist`
-/// etc. were removed during the same pass; if other user sibling keys survive,
-/// the non-empty `workspaces` parent stays (correct — it is user content).
+/// Only `Ownership::Author` keys are listed here. `name` and `private` are
+/// `Ownership::DefaultOnly` — they are never stripped on deactivate (the user
+/// may have intentionally adjusted them). Both `workspaces` (array-form) and
+/// `workspaces.packages` (object-form) are listed so deactivate handles either
+/// shape. `JsonDoc::remove_at` prunes the now-empty `workspaces` parent when
+/// only `packages` was set and `nohoist` etc. were removed during the same
+/// pass; if other user sibling keys survive, the non-empty `workspaces` parent
+/// stays (correct — it is user content).
 fn deactivate_owned_keys() -> Vec<Vec<String>> {
     vec![
-        keypath(["name"]),
-        keypath(["private"]),
         keypath(["workspaces", "packages"]), // object-form: sub-key; prunes parent if now empty
         keypath(["workspaces"]),             // array-form: the whole key
     ]
@@ -33,18 +34,25 @@ fn deactivate_owned_keys() -> Vec<Vec<String>> {
 /// Array-form or absent:
 ///   - Own `workspaces` directly as a flat sorted array.
 ///
-/// In both cases `name` and `private` are set as a convenience for npm
-/// tooling. They are no longer the ownership proof — that role belongs
-/// exclusively to the `x-repoweave` marker written by JsonDoc<XRepoweaveMarker>.
+/// `name` and `private` are `Ownership::DefaultOnly`: rwv sets them on a fresh
+/// file but never overwrites an existing value. This means:
+/// - Greenfield: `name` is set to the project name from context, `private` is
+///   set to `true`.
+/// - Existing file (user or prior rwv): values are preserved as-is.
+/// - Deactivate: `name` and `private` are NOT stripped (user-adjustable).
+///
+/// `workspaces` / `workspaces.packages` remains `Ownership::Author` — rwv
+/// always owns the workspace membership list.
 fn build_owned(
     existing_pkg: Option<&serde_json::Value>,
     workspaces: Vec<String>,
+    project_name: &str,
 ) -> Vec<(Vec<String>, Ownership, OwnedValue)> {
     let ws_is_object = existing_pkg
         .and_then(|v| v.get("workspaces"))
         .is_some_and(|ws| ws.is_object());
 
-    let name_value = OwnedValue::String("repoweave".to_string());
+    let name_value = OwnedValue::String(project_name.to_string());
     let private_value = OwnedValue::Bool(true);
     let ws_value = OwnedValue::sorted_array(workspaces);
 
@@ -53,8 +61,8 @@ fn build_owned(
         let mut packages_map = std::collections::BTreeMap::new();
         packages_map.insert("packages".to_string(), ws_value);
         vec![
-            (keypath(["name"]), Ownership::Author, name_value),
-            (keypath(["private"]), Ownership::Author, private_value),
+            (keypath(["name"]), Ownership::DefaultOnly, name_value),
+            (keypath(["private"]), Ownership::DefaultOnly, private_value),
             (
                 keypath(["workspaces"]),
                 Ownership::Author,
@@ -64,8 +72,8 @@ fn build_owned(
     } else {
         // Array-form or absent: set workspaces as a flat sorted array.
         vec![
-            (keypath(["name"]), Ownership::Author, name_value),
-            (keypath(["private"]), Ownership::Author, private_value),
+            (keypath(["name"]), Ownership::DefaultOnly, name_value),
+            (keypath(["private"]), Ownership::DefaultOnly, private_value),
             (keypath(["workspaces"]), Ownership::Author, ws_value),
         ]
     }
@@ -110,7 +118,7 @@ impl Integration for NpmWorkspaces {
             .flatten()
             .and_then(|c| serde_json::from_str(&c).ok());
 
-        let owned = build_owned(existing.as_ref(), paths);
+        let owned = build_owned(existing.as_ref(), paths, ctx.project.as_str());
 
         // merge_activate handles: read-or-empty, marker-gated key ownership,
         // set_marker, write back, and preserves all foreign keys untouched.
