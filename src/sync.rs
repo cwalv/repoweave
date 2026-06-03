@@ -1141,38 +1141,6 @@ fn find_project_name(ctx: &WorkspaceContext) -> anyhow::Result<ProjectName> {
     }
 }
 
-/// Precondition: CWD and source workspaces must have the same active project.
-///
-/// Phase 1' rebases CWD's project commits onto source's project tip. When the
-/// two sides have different active projects, those are commits from different
-/// git repos — `git merge-base` then fails with an opaque
-/// `fatal: Not a valid commit name <sha>`. Refuse early with a clear message
-/// that names both projects and both workspace paths.
-fn check_active_projects_match(
-    cwd_project: &ProjectName,
-    source_project: &ProjectName,
-    cwd_workspace_dir: &Path,
-    source_workspace_dir: &Path,
-) -> anyhow::Result<()> {
-    if cwd_project == source_project {
-        return Ok(());
-    }
-    anyhow::bail!(
-        "active project mismatch: CWD workspace ({}) has active project `{}`, but source \
-         workspace ({}) has active project `{}`.\n\
-         `rwv sync` rebases CWD's project commits onto the source project's tip, so both \
-         sides must share the same active project.\n\
-         Fix: run `rwv activate {}` on one side to match the other, or run sync against a \
-         workspace whose active project is `{}`.",
-        cwd_workspace_dir.display(),
-        cwd_project,
-        source_workspace_dir.display(),
-        source_project,
-        cwd_project,
-        cwd_project,
-    );
-}
-
 // ---------------------------------------------------------------------------
 // Phase 3 helpers: materialize new repos / prune dropped repos
 // ---------------------------------------------------------------------------
@@ -1633,9 +1601,17 @@ fn run_sync_impl_with_op_id(
     };
 
     let source_path = resolved_source.resolve(&ctx)?;
-    // The source side honours the same `--project` override so cross-project
-    // syncs from a non-active project work.
-    let source_ctx = WorkspaceContext::resolve(&source_path, project_override.clone())?;
+
+    // When CWD is a workweave its project is immutable and authoritative.
+    // Pass it as the project override when resolving the source so that the
+    // source uses the same project regardless of what primary's `.rwv-active`
+    // happens to be.  For a primary-weave CWD we fall back to the caller's
+    // `--project` override as before.
+    let source_project_override = match &ctx.location {
+        WorkspaceLocation::Workweave { project, .. } => Some(project.clone()),
+        WorkspaceLocation::Weave { .. } => project_override.clone(),
+    };
+    let source_ctx = WorkspaceContext::resolve(&source_path, source_project_override)?;
     let source_workspace_dir = source_ctx.active_path().to_path_buf();
 
     // Sibling-sync warning: if CWD is a workweave and source is another
@@ -1671,21 +1647,11 @@ fn run_sync_impl_with_op_id(
         }
     }
 
-    // Find active projects.
+    // Find active projects.  Both sides now resolve to the same project
+    // because source_ctx was built with the workweave's (or caller's) project
+    // override above, so no separate match check is needed.
     let cwd_project_name = find_project_name(&ctx)?;
     let source_project_name = find_project_name(&source_ctx)?;
-
-    // Precondition: active projects must match. Phase 1' rebases CWD's project
-    // commits onto source's project tip; if the two sides have different active
-    // projects, those are different repos and `git merge-base` fails deep in
-    // Phase 1' with an opaque error. Refuse early, before any savepoint or
-    // marker is written.
-    check_active_projects_match(
-        &cwd_project_name,
-        &source_project_name,
-        &workspace_dir,
-        &source_workspace_dir,
-    )?;
 
     let cwd_project_dir = workspace_dir.join("projects").join(&cwd_project_name);
     let source_project_dir = source_workspace_dir
@@ -2896,18 +2862,12 @@ fn run_sync_to_impl(
     let strategy = params.strategy;
     let retire = params.retire;
 
-    // Find project names.
+    // Find project names.  CWD's project is authoritative (workweave project
+    // is immutable); pass it as the override when resolving the target so the
+    // target uses the same project regardless of primary's `.rwv-active`.
     let cwd_project_name = find_project_name(&cwd_ctx)?;
-    let target_ctx = WorkspaceContext::resolve(&target_path, project_override.clone())?;
+    let target_ctx = WorkspaceContext::resolve(&target_path, Some(cwd_project_name.clone()))?;
     let target_project_name = find_project_name(&target_ctx)?;
-
-    // Projects must match.
-    check_active_projects_match(
-        &cwd_project_name,
-        &target_project_name,
-        &cwd_workspace_dir,
-        &target_workspace_dir,
-    )?;
 
     let cwd_project_dir = cwd_workspace_dir.join("projects").join(&cwd_project_name);
     let target_project_dir = target_workspace_dir
@@ -3363,29 +3323,6 @@ mod tests {
             SyncFailure::for_strategy(SyncStrategy::Merge, "e".into(), None),
             SyncFailure::MergeFailed { .. }
         ));
-    }
-
-    #[test]
-    fn check_active_projects_match_ok_when_equal() {
-        let p = ProjectName::new("foundations");
-        let res = check_active_projects_match(&p, &p, Path::new("/cwd/ws"), Path::new("/src/ws"));
-        assert!(res.is_ok());
-    }
-
-    #[test]
-    fn check_active_projects_match_errors_when_different() {
-        let cwd = ProjectName::new("foundations-test");
-        let src = ProjectName::new("foundations");
-        let err =
-            check_active_projects_match(&cwd, &src, Path::new("/cwd/ws"), Path::new("/src/ws"))
-                .unwrap_err()
-                .to_string();
-        assert!(err.contains("active project mismatch"), "msg: {err}");
-        assert!(err.contains("foundations-test"), "msg: {err}");
-        assert!(err.contains("foundations"), "msg: {err}");
-        assert!(err.contains("/cwd/ws"), "msg: {err}");
-        assert!(err.contains("rwv activate"), "msg: {err}");
-        assert!(err.contains("/src/ws"), "msg: {err}");
     }
 
     // -----------------------------------------------------------------------

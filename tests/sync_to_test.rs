@@ -739,3 +739,162 @@ fn sync_to_ff_refuses_when_cwd_not_ahead() {
         "expected ff-refuses message mentioning rebase; got:\n{stderr}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Test 9: sync-to with mismatched primary `.rwv-active` (fo-gsl8l)
+//
+// A workweave whose project is `web-app` should succeed with `rwv sync-to`
+// even when primary's `.rwv-active` is pointing at a different project
+// (`other-project`).  Before the fix this would fail with "active project
+// mismatch"; after the fix the workweave's project is used as the authoritative
+// override on the target side.
+//
+// Variant: also verify that `rwv sync` (workweave ← primary) works under the
+// same mismatch — the symmetric fix in `run_sync_impl_with_op_id`.
+// ---------------------------------------------------------------------------
+
+/// Build a marker-based workweave (`.rwv-workweave` present) on top of the
+/// standard shared-workspace fixture.  Returns the workweave root path plus
+/// the per-worktree project and server dirs.
+fn make_marker_ww(parent: &Path) -> (Workspace, PathBuf, PathBuf, PathBuf, String) {
+    // Build the shared-workspace (primary + plain ww) and then convert the
+    // plain workweave into a proper marker-based one.
+    let (primary, _plain_ww, initial_sha) = make_shared_workspaces(parent);
+
+    // Place the real workweave under .workweaves/primary--feat.
+    let ww_root = parent.join(".workweaves").join("primary--feat");
+    std::fs::create_dir_all(ww_root.join("github/example")).unwrap();
+    std::fs::create_dir_all(ww_root.join("projects")).unwrap();
+
+    let ww_server = ww_root.join(SERVER_PATH);
+    git(
+        &[
+            "worktree",
+            "add",
+            &ww_server.to_string_lossy(),
+            "-b",
+            "primary--feat/server",
+        ],
+        &primary.server_dir,
+    );
+
+    let ww_project = ww_root.join("projects/web-app");
+    git(
+        &[
+            "worktree",
+            "add",
+            &ww_project.to_string_lossy(),
+            "-b",
+            "primary--feat/project",
+        ],
+        &primary.project_dir,
+    );
+
+    // Write the `.rwv-workweave` marker so WorkspaceContext::resolve returns
+    // WorkspaceLocation::Workweave with project = "web-app".
+    let primary_canon = primary.root.canonicalize().unwrap().display().to_string();
+    let marker = format!(
+        "primary: {p}\nproject: web-app\nparent: {p}\n",
+        p = primary_canon
+    );
+    std::fs::write(ww_root.join(".rwv-workweave"), &marker).unwrap();
+
+    (primary, ww_root, ww_project, ww_server, initial_sha)
+}
+
+#[test]
+fn sync_to_succeeds_when_primary_rwv_active_differs_from_workweave_project() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (primary, ww_root, ww_project, ww_server, _initial_sha) = make_marker_ww(tmp.path());
+
+    // Workweave makes a unique commit (server + project lock bump).
+    let c2 = make_commit(&ww_server, "ww.txt", "ww work\n", "ww: advance server");
+    write_lock(&ww_project, &[(SERVER_PATH, SERVER_URL, &c2)]);
+    git(&["add", "rwv.lock"], &ww_project);
+    git(&["commit", "-m", "lock: ww advance"], &ww_project);
+    let ww_tip = git_out(&["rev-parse", "HEAD"], &ww_project);
+
+    // Flip primary's .rwv-active to a completely different project name.
+    // Before the fix this would cause "active project mismatch"; after the fix
+    // the workweave's immutable project ("web-app") overrides the target side.
+    std::fs::write(primary.root.join(".rwv-active"), "other-project\n").unwrap();
+
+    // sync-to must succeed despite the mismatch.
+    rwv()
+        .args(["sync-to", &primary.root.to_string_lossy(), "--strategy=ff"])
+        .current_dir(&ww_root)
+        .assert()
+        .success();
+
+    // Primary's web-app project HEAD should now be at ww's tip.
+    let primary_after = git_out(&["rev-parse", "HEAD"], &primary.project_dir);
+    assert_eq!(
+        primary_after, ww_tip,
+        "primary's web-app project should be at ww's tip after sync-to"
+    );
+
+    // Primary's server repo should be at c2.
+    let primary_server_after = git_out(&["rev-parse", "HEAD"], &primary.server_dir);
+    assert_eq!(
+        primary_server_after, c2,
+        "primary's server repo should be ff-advanced to ww's server tip"
+    );
+}
+
+#[test]
+fn sync_succeeds_when_primary_rwv_active_differs_from_workweave_project() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (primary, ww_root, ww_project, _ww_server, initial_sha) = make_marker_ww(tmp.path());
+
+    // Primary makes a unique commit that workweave doesn't have.
+    let primary_c2 = make_commit(
+        &primary.server_dir,
+        "primary.txt",
+        "primary work\n",
+        "primary: advance",
+    );
+    write_lock(
+        &primary.project_dir,
+        &[(SERVER_PATH, SERVER_URL, &primary_c2)],
+    );
+    git(&["add", "rwv.lock"], &primary.project_dir);
+    git(
+        &["commit", "-m", "lock: primary advance"],
+        &primary.project_dir,
+    );
+    let primary_tip = git_out(&["rev-parse", "HEAD"], &primary.project_dir);
+
+    // Flip primary's .rwv-active to a different project.
+    std::fs::write(primary.root.join(".rwv-active"), "other-project\n").unwrap();
+
+    // rwv sync from the workweave should pick up primary's project commit,
+    // not bail with "active project mismatch".
+    rwv()
+        .args(["sync", &primary.root.to_string_lossy(), "--strategy=ff"])
+        .current_dir(&ww_root)
+        .assert()
+        .success();
+
+    // The workweave's web-app project must have primary_tip somewhere in its
+    // history — Phase 3 may add an auto-relock commit on top, so we check
+    // ancestry rather than exact equality.
+    let ww_after = git_out(&["rev-parse", "HEAD"], &ww_project);
+    // `git merge-base --is-ancestor A B` exits 0 iff A is an ancestor of B.
+    let primary_is_ancestor = std::process::Command::new("git")
+        .args(["merge-base", "--is-ancestor", &primary_tip, &ww_after])
+        .current_dir(&ww_project)
+        .env("GIT_AUTHOR_NAME", "Test")
+        .env("GIT_AUTHOR_EMAIL", "test@test.com")
+        .env("GIT_COMMITTER_NAME", "Test")
+        .env("GIT_COMMITTER_EMAIL", "test@test.com")
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
+    assert!(
+        primary_is_ancestor || ww_after == primary_tip,
+        "primary_tip ({primary_tip}) should be an ancestor of ww project tip ({ww_after}) \
+         after sync; primary's commit was not incorporated"
+    );
+
+    let _ = initial_sha;
+}
