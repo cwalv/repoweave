@@ -8,9 +8,10 @@
 //! `replace`/`toolchain`/`godebug` and all comments via x/mod/modfile.
 //!
 //! **FALLBACK** (no `go` on PATH, or forced in tests): use
-//! [`GoWorkDoc::merge_activate`] / [`strip_deactivate`].  Edits only the
-//! `use (…)` region and, when `config.go_version` is `Some`, the leading
-//! `go <version>` line.  All other directives survive byte-for-byte.
+//! [`GoWorkDoc::merge_activate`] / [`strip_deactivate`].  Edits the `use (…)`
+//! region (Author) and the leading `go <version>` line (DefaultOnly — sets the
+//! default from config or `max_go_version` but never overwrites an existing
+//! go-line).  All other directives survive byte-for-byte.
 //!
 //! The fallback is mandatory because:
 //! 1. `go` is not on PATH in CI / typical test environments.
@@ -18,13 +19,12 @@
 //!
 //! # max_go_version
 //!
-//! Kept for the `go work edit -go=<v>` primary path and as the `go_version`
-//! source when config does not supply one and we are on the fallback.
-//! **However** it is now gated: the go-line is only written into an existing
-//! file when `config.go_version.is_some()` (or on the primary path, where
-//! `go work edit` enforces the version through the tool).  The old code
-//! unconditionally wrote `go 1.21` into any pre-existing file — that is the
-//! concrete downgrade bug this bead fixes.
+//! Used for both the `go work edit -go=<v>` primary path and as the DefaultOnly
+//! go-version default on the fallback path when config does not supply one.
+//! The `["go"]` entry is `Ownership::DefaultOnly`, so if a go-line is already
+//! present in the file it is preserved unconditionally — `max_go_version` only
+//! takes effect on a fresh (greenfield) or go-line-absent file.  This replaces
+//! the old `config.go_version.is_some()` guard that blocked the downgrade.
 //!
 //! # Deactivate
 //!
@@ -114,7 +114,7 @@ impl Integration for GoWork {
                 ctx.workspace_root,
             )?;
         } else {
-            activate_via_hand_edit(&go_work_path, &paths, cfg.go_version.as_deref())?;
+            activate_via_hand_edit(&go_work_path, &paths, go_version_override.as_deref())?;
         }
 
         Ok(())
@@ -347,12 +347,14 @@ fn ensure_marker_present(path: &Path) -> anyhow::Result<()> {
 fn activate_via_hand_edit(
     go_work_path: &Path,
     new_paths: &[impl AsRef<str>],
-    go_version_config: Option<&str>,
+    go_version_default: Option<&str>,
 ) -> anyhow::Result<()> {
     // Build owned keys.
-    // ["use"] is always owned.
-    // ["go"] is owned ONLY when config explicitly sets go_version —
-    // never write a computed/hardcoded version over a user's existing line.
+    // ["use"] is always Author-owned.
+    // ["go"] is DefaultOnly — rwv provides a default (from config or
+    // max_go_version) but never overwrites an existing go-line. This
+    // preserves "go 1.26" in an existing file even when config.go_version
+    // is None (fixing the C11 downgrade bug without a is_some() guard).
     let use_items: Vec<String> = new_paths
         .iter()
         .map(|p| format!("./{}", p.as_ref()))
@@ -364,10 +366,10 @@ fn activate_via_hand_edit(
         OwnedValue::sorted_array(use_items),
     )];
 
-    if let Some(ver) = go_version_config {
+    if let Some(ver) = go_version_default {
         owned.push((
             keypath(["go"]),
-            Ownership::Author,
+            Ownership::DefaultOnly,
             OwnedValue::String(ver.to_string()),
         ));
     }
@@ -765,6 +767,147 @@ mod tests {
         assert!(
             text.contains("go 1.23"),
             "config go-version must be written: {text}"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Regression — no-downgrade (C11 scenario):
+    //   existing go.work has `go 1.26`, config.go_version is None,
+    //   but max_go_version computes 1.24 from member go.mod files.
+    //   After activate, `go 1.26` must be preserved (DefaultOnly never
+    //   overwrites an existing value).
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn regression_no_downgrade_defaultonly_preserves_existing_go_line() {
+        force_fallback();
+
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+
+        // Existing go.work with go 1.26.
+        let seed = concat!(
+            "go 1.26\n\n",
+            "// managed by repoweave\n",
+            "use (\n",
+            "\t./github/test/repoweave\n",
+            ")\n"
+        );
+        write_file(root, "go.work", seed);
+
+        // Member go.mod with go 1.24 — lower than the existing 1.26.
+        write_file(
+            root,
+            "github/test/repoweave/go.mod",
+            "module example.com/repoweave\n\ngo 1.24\n",
+        );
+
+        let manifest = make_manifest_local(vec![("github/test/repoweave", Role::Owned)]);
+        let project = ProjectName::new("test-project");
+        let config = IntegrationConfig::default(); // go_version = None
+        let cache = HashMap::new();
+        let ctx = make_ctx_local(root, &project, &manifest, &config, &cache);
+
+        let integration = GoWork;
+        integration.activate(&ctx).unwrap();
+
+        let text = std::fs::read_to_string(root.join("go.work")).unwrap();
+
+        // go 1.26 must be preserved — DefaultOnly never overwrites.
+        assert!(
+            text.contains("go 1.26"),
+            "go 1.26 must be preserved (DefaultOnly): {text}"
+        );
+        assert!(
+            !text.contains("go 1.24"),
+            "must not downgrade to 1.24 (from max_go_version): {text}"
+        );
+        assert!(
+            !text.contains("go 1.21"),
+            "must not downgrade to 1.21: {text}"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Greenfield: no existing go.work, max_go_version detects 1.22 from
+    //   member go.mod. The go-line should be written at greenfield.
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn greenfield_go_line_written_from_max_go_version() {
+        force_fallback();
+
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+
+        // No existing go.work. Member go.mod reports go 1.22.
+        write_file(
+            root,
+            "github/test/repoweave/go.mod",
+            "module example.com/repoweave\n\ngo 1.22\n",
+        );
+
+        let manifest = make_manifest_local(vec![("github/test/repoweave", Role::Owned)]);
+        let project = ProjectName::new("test-project");
+        let config = IntegrationConfig::default(); // go_version = None
+        let cache = HashMap::new();
+        let ctx = make_ctx_local(root, &project, &manifest, &config, &cache);
+
+        let integration = GoWork;
+        integration.activate(&ctx).unwrap();
+
+        let text = std::fs::read_to_string(root.join("go.work")).unwrap();
+
+        // go 1.22 written from max_go_version (DefaultOnly on a missing key).
+        assert!(
+            text.contains("go 1.22"),
+            "go 1.22 must be written at greenfield from max_go_version: {text}"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Existing file with marker but no go-line: DefaultOnly should write the
+    //   default version into the missing slot.
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn existing_without_go_line_defaultonly_writes_default() {
+        force_fallback();
+
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+
+        // go.work with marker + use block but NO go-line.
+        let seed = concat!(
+            "// managed by repoweave\n",
+            "use (\n",
+            "\t./github/test/repoweave\n",
+            ")\n"
+        );
+        write_file(root, "go.work", seed);
+
+        // Member go.mod reports go 1.23.
+        write_file(
+            root,
+            "github/test/repoweave/go.mod",
+            "module example.com/repoweave\n\ngo 1.23\n",
+        );
+
+        let manifest = make_manifest_local(vec![("github/test/repoweave", Role::Owned)]);
+        let project = ProjectName::new("test-project");
+        let config = IntegrationConfig::default(); // go_version = None
+        let cache = HashMap::new();
+        let ctx = make_ctx_local(root, &project, &manifest, &config, &cache);
+
+        let integration = GoWork;
+        integration.activate(&ctx).unwrap();
+
+        let text = std::fs::read_to_string(root.join("go.work")).unwrap();
+
+        // go 1.23 must be written — DefaultOnly fills an absent key.
+        assert!(
+            text.contains("go 1.23"),
+            "go 1.23 must be written into missing go-line slot (DefaultOnly): {text}"
         );
     }
 
