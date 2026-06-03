@@ -21,6 +21,9 @@ jobs:
         with:
           components: clippy, rustfmt
 
+      - name: Install uv (required by uv-workspace e2e tests)
+        uses: astral-sh/setup-uv@v5
+
       - name: Configure git identity (required by sync merge/rebase tests)
         run: |
           git config --global user.email "ci@example.com"
