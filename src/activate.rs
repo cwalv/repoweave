@@ -36,7 +36,7 @@ use crate::integration_runner::{
 use crate::integrations::builtin_integrations;
 use crate::manifest::{IntegrationConfig, Manifest, ProjectName};
 use crate::registry::builtin_registries;
-use crate::workspace::{set_active_project, WorkspaceContext, WorkspaceSession};
+use crate::workspace::{set_active_project, WorkspaceContext, WorkspaceLocation, WorkspaceSession};
 
 /// Which class of verb is driving activation.
 ///
@@ -142,6 +142,21 @@ pub fn activate_with_options(
     opts: ActivateOptions,
 ) -> anyhow::Result<()> {
     let ctx = WorkspaceContext::resolve(cwd, None)?;
+
+    // Guard: activate has no meaning inside a workweave. The project is fixed
+    // at creation time (`rwv workweave <project> create <name>`), so there is
+    // no project switch to make. Silently operating on primary from inside a
+    // workweave (the status-quo before this fix) was surprising and unsafe —
+    // it mutated primary's .rwv-active and weave-root symlinks as a side
+    // effect of a command run from an unrelated workweave.
+    if let WorkspaceLocation::Workweave { .. } = &ctx.location {
+        anyhow::bail!(
+            "rwv activate has no effect in a workweave (project is fixed at creation). \
+             cd to primary ({}) and rerun.",
+            ctx.primary_path().display()
+        );
+    }
+
     activate_at(
         ctx.primary_path(),
         project,

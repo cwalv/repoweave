@@ -9,6 +9,8 @@
 
 use assert_cmd::Command;
 use predicates::prelude::*;
+use repoweave::manifest::ProjectName;
+use repoweave::workspace::WorkweaveMarker;
 use std::path::Path;
 
 /// Build a `Command` for the `rwv` binary.
@@ -695,6 +697,111 @@ integrations:\n  gita:\n    enabled: true\n",
     assert!(
         registry_link.symlink_metadata().is_ok(),
         "symlink inside a registry-named dir must NOT be swept (skip set)"
+    );
+}
+
+// ============================================================================
+// Workweave guard -- activate is rejected inside a workweave
+// ============================================================================
+
+/// `rwv activate` from a workweave must exit non-zero and include both the
+/// "no effect in a workweave" explanation and the primary path in the error
+/// message, so the user can copy-paste a `cd` command to primary and rerun.
+/// The primary's `.rwv-active` must not change.
+///
+/// Acceptance criteria from fo-9fnae:
+///   - exits non-zero
+///   - error message contains "workweave" and the actual primary path
+///   - works for any project name (including the one already active in primary)
+#[test]
+fn activate_from_workweave_is_rejected() {
+    let tmp = tempfile::tempdir().unwrap();
+    let ws = make_workspace(tmp.path());
+    make_project(
+        &ws,
+        "my-proj",
+        &[("github/acme/repo", "owned", &["package.json"])],
+    );
+
+    // Set a known .rwv-active in primary so we can verify it is not changed.
+    std::fs::write(ws.join(".rwv-active"), "my-proj\n").unwrap();
+
+    // Create a workweave directory with a .rwv-workweave marker pointing to
+    // primary. The workweave lives at ws/../ws--ww1 (sibling of primary).
+    let workweave_dir = tmp.path().join("ws--ww1");
+    std::fs::create_dir_all(&workweave_dir).unwrap();
+    let primary_canon = ws.canonicalize().unwrap();
+    let marker = WorkweaveMarker {
+        primary: primary_canon.clone(),
+        project: ProjectName::new("my-proj"),
+        parent: primary_canon.clone(),
+    };
+    marker.write(&workweave_dir).unwrap();
+
+    // Running activate from the workweave root must fail.
+    rwv()
+        .args(["activate", "my-proj", "--no-install"])
+        .current_dir(&workweave_dir)
+        .assert()
+        .failure()
+        .stderr(
+            predicate::str::contains("workweave").and(predicate::str::contains(
+                primary_canon.to_string_lossy().as_ref(),
+            )),
+        );
+
+    // Primary's .rwv-active must be unchanged.
+    let active = std::fs::read_to_string(ws.join(".rwv-active")).unwrap();
+    assert_eq!(active.trim(), "my-proj", ".rwv-active must not be modified");
+}
+
+/// The guard fires even when activating a *different* project from the workweave.
+#[test]
+fn activate_different_project_from_workweave_is_rejected() {
+    let tmp = tempfile::tempdir().unwrap();
+    let ws = make_workspace(tmp.path());
+    make_project(
+        &ws,
+        "proj-a",
+        &[("github/acme/alpha", "owned", &["package.json"])],
+    );
+    make_project(
+        &ws,
+        "proj-b",
+        &[("github/acme/beta", "owned", &["package.json"])],
+    );
+
+    // Activate proj-a in primary so .rwv-active is set.
+    rwv()
+        .args(["activate", "proj-a", "--no-install"])
+        .current_dir(&ws)
+        .assert()
+        .success();
+
+    let workweave_dir = tmp.path().join("ws--ww2");
+    std::fs::create_dir_all(&workweave_dir).unwrap();
+    let primary_canon = ws.canonicalize().unwrap();
+    let marker = WorkweaveMarker {
+        primary: primary_canon.clone(),
+        project: ProjectName::new("proj-a"),
+        parent: primary_canon.clone(),
+    };
+    marker.write(&workweave_dir).unwrap();
+
+    // Attempt to activate proj-b from the workweave — must fail.
+    rwv()
+        .args(["activate", "proj-b", "--no-install"])
+        .current_dir(&workweave_dir)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("workweave"));
+
+    // Primary should still have proj-a active.
+    let active = std::fs::read_to_string(ws.join(".rwv-active")).unwrap();
+    assert_eq!(
+        active.trim(),
+        "proj-a",
+        "primary .rwv-active must not be changed to proj-b"
     );
 }
 
