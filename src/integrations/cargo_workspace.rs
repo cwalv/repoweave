@@ -233,7 +233,7 @@ impl CargoWorkspace {
         ));
         owned.push((
             keypath(["workspace", "resolver"]),
-            Ownership::Author,
+            Ownership::DefaultOnly,
             OwnedValue::String("2".to_string()),
         ));
 
@@ -331,11 +331,22 @@ impl Integration for CargoWorkspace {
         // (`integration_runner::run_deactivations`). It is the same path
         // `output_dir` resolved to during activate.
         let path = root.join("Cargo.toml");
-        let owned_keys = Self::deactivate_owned_keys();
-        strip_deactivate::<TomlDoc>(&path, &owned_keys)
+
+        // First pass: strip Author-owned keys (members, workspace.package).
+        // DefaultOnly keys (resolver) are excluded from this list — their
+        // values survive deactivation (operator may have customized them).
+        let author_keys = Self::deactivate_owned_keys();
+        strip_deactivate::<TomlDoc>(&path, &author_keys)
             .with_context(|| format!("strip-deactivate {}", path.display()))?;
 
-        // Second pass: strip rwv-marker-decorated `[patch.crates-io].*`
+        // Second pass: remove the `# managed by rwv` marker decor from
+        // DefaultOnly keys without removing their values. resolver is
+        // DefaultOnly — its value stays but the decoration must be cleaned up
+        // so the file doesn't carry stale rwv annotations post-deactivation.
+        Self::undecorate_default_only_keys(&path)
+            .with_context(|| format!("undecorate-default-only {}", path.display()))?;
+
+        // Third pass: strip rwv-marker-decorated `[patch.crates-io].*`
         // entries. This is independent of the workspace marker — patch
         // entries carry their own per-key marker decor, so they may need
         // stripping even when `strip_deactivate` left the file unchanged
@@ -496,13 +507,11 @@ impl Integration for CargoWorkspace {
         // `merge_activate` would create one). Compare on-disk owned values
         // against what the current config would produce.
         //
-        // Only `Ownership::Author` keys are checked for drift. Keys with
-        // `Ownership::DefaultOnly` ownership are intentionally user-adjustable
-        // after rwv writes the initial default value; any difference between
-        // the on-disk value and rwv's default is CLEAN, not DRIFT. Currently
-        // all cargo-workspace owned keys are `Ownership::Author`, so this
-        // policy has no observable effect here yet — it is documented for
-        // future keys that might use `Ownership::DefaultOnly`.
+        // Only `Ownership::Author` keys are checked for drift:
+        //   - `members` is `Ownership::Author` → drift is a DRIFT finding.
+        //   - `resolver` is `Ownership::DefaultOnly` → operators may override
+        //     it (e.g. `resolver = "1"` for compat); any on-disk value is
+        //     CLEAN. Skip the resolver drift check entirely.
         //
         // Skip the nested-conflict check here — `check()` already surfaces
         // that as an Error; we don't duplicate it in verify().
@@ -513,18 +522,14 @@ impl Integration for CargoWorkspace {
             return Ok(vec![]);
         }
 
-        // Read on-disk members and resolver from the toml_edit document.
+        // Read on-disk members from the toml_edit document.
+        // resolver is DefaultOnly — not checked for drift (always CLEAN).
         let on_disk_members = toml_array_strings(&edit_doc, &["workspace", "members"]);
-        let on_disk_resolver = toml_string(&edit_doc, &["workspace", "resolver"]);
 
-        let expected_resolver = "2".to_string();
-
-        // Both `members` and `resolver` are Ownership::Author keys — drift is
-        // a DRIFT finding (safe_to_fix = true).
+        // Only `members` (Ownership::Author) is checked for drift.
         let members_drift = on_disk_members.as_deref() != Some(members.as_slice());
-        let resolver_drift = on_disk_resolver.as_deref() != Some(expected_resolver.as_str());
 
-        if members_drift || resolver_drift {
+        if members_drift {
             return Ok(vec![Issue {
                 integration: self.name().to_string(),
                 severity: Severity::Warning,
@@ -564,8 +569,12 @@ impl CargoWorkspace {
     /// `Integration::deactivate` has no `IntegrationContext` — see
     /// `integration.rs:154`. Plan §3 / §11 res #15:
     ///
-    /// - `members` and `resolver` are stripped unconditionally — they are
-    ///   the always-owned keys.
+    /// - `members` is stripped unconditionally — it is an `Ownership::Author`
+    ///   key.
+    /// - `resolver` is `Ownership::DefaultOnly`: operators may have adjusted
+    ///   it after rwv wrote the initial default, so it is **not** stripped on
+    ///   deactivate. The operator's value (e.g. `"1"`) is intentional and
+    ///   must survive the deactivation cycle.
     /// - `workspace.package` is also stripped unconditionally. The marker
     ///   gate in `strip_deactivate` is per-key: if the key was never
     ///   authored (the opt-in was off), no decor exists, and the strip is a
@@ -575,9 +584,39 @@ impl CargoWorkspace {
     fn deactivate_owned_keys() -> Vec<KeyPath> {
         vec![
             keypath(["workspace", "members"]),
-            keypath(["workspace", "resolver"]),
+            // resolver is Ownership::DefaultOnly — not stripped on deactivate.
             keypath(["workspace", "package"]),
         ]
+    }
+
+    /// Remove the `# managed by rwv` decoration from DefaultOnly keys that
+    /// survive deactivation. The key VALUE is preserved (the operator may
+    /// have customized it); only the rwv comment prefix is removed.
+    ///
+    /// Currently the only DefaultOnly key is `[workspace].resolver`.
+    fn undecorate_default_only_keys(path: &Path) -> anyhow::Result<()> {
+        if !path.exists() {
+            return Ok(());
+        }
+        let text = std::fs::read_to_string(path)
+            .with_context(|| format!("reading {} for undecorate", path.display()))?;
+        let mut doc = TomlDoc::parse(&text)
+            .with_context(|| format!("parsing {} for undecorate", path.display()))?;
+
+        let default_only_keys: Vec<KeyPath> = vec![keypath(["workspace", "resolver"])];
+
+        // Only bother writing if at least one key carries the marker.
+        if !doc.has_marker(&default_only_keys) {
+            return Ok(());
+        }
+
+        doc.remove_marker(&default_only_keys);
+
+        let serialized = doc.serialize()?;
+        std::fs::write(path, serialized)
+            .with_context(|| format!("writing {} after undecorate", path.display()))?;
+
+        Ok(())
     }
 
     /// Compute the `[patch.crates-io]` entries rwv should generate, when
@@ -955,25 +994,6 @@ fn nested_workspace_error(conflicts: &[String]) -> String {
 // ===========================================================================
 // TOML read helpers for verify()
 // ===========================================================================
-
-/// Read a string value from a `toml_edit::DocumentMut` by key path.
-/// Returns `None` if the path doesn't exist or the leaf is not a string.
-fn toml_string(doc: &toml_edit::DocumentMut, path: &[&str]) -> Option<String> {
-    if path.is_empty() {
-        return None;
-    }
-    let mut table: &toml_edit::Table = doc.as_table();
-    for seg in &path[..path.len() - 1] {
-        match table.get(seg) {
-            Some(toml_edit::Item::Table(t)) => table = t,
-            _ => return None,
-        }
-    }
-    table
-        .get(path.last().unwrap())
-        .and_then(|i| i.as_str())
-        .map(|s| s.to_string())
-}
 
 /// Read a string array value from a `toml_edit::DocumentMut` by key path.
 /// Returns `None` if the path doesn't exist or the leaf is not an array of strings.

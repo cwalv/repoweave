@@ -2450,6 +2450,13 @@ mod cargo_workspace {
         // Post-port (fo-cnpjy.7): ownership is proven by the per-key
         // `# managed by rwv` decor, not a first-line header. Seed a Cargo.toml
         // shaped the way rwv would author it.
+        //
+        // fo-ro3hj.4: `resolver` is now Ownership::DefaultOnly — it is NOT
+        // stripped on deactivate. A file with only `members` (Author) and
+        // `resolver` (DefaultOnly) will, after deactivate, still contain
+        // `resolver = "2"`, so the file is NOT deleted (it has remaining
+        // content). Test updated to assert the file exists and only members
+        // was stripped.
         write_file(
             root,
             "Cargo.toml",
@@ -2459,9 +2466,22 @@ mod cargo_workspace {
 
         let integration = CargoWorkspace;
         integration.deactivate(root).unwrap();
+
+        // File should still exist: resolver (DefaultOnly) was not stripped.
         assert!(
-            !root.join("Cargo.toml").exists(),
-            "Cargo.toml should be deleted when only rwv-owned content remained"
+            root.join("Cargo.toml").exists(),
+            "Cargo.toml must not be deleted when resolver (DefaultOnly) content remains"
+        );
+        let content = std::fs::read_to_string(root.join("Cargo.toml")).unwrap();
+        // members (Author) was stripped.
+        assert!(
+            !content.contains("members"),
+            "members (Author key) should be stripped on deactivate: {content}"
+        );
+        // resolver (DefaultOnly) was NOT stripped.
+        assert!(
+            content.contains("resolver"),
+            "resolver (DefaultOnly) must survive deactivate: {content}"
         );
     }
 
@@ -2875,8 +2895,12 @@ codegen-units = 1
         );
     }
 
-    /// §6.cargo.3 — Deactivate strips only rwv keys, keeps user policy.
-    /// Regression-proof against current delete-whole at cargo_workspace.rs:182-184.
+    /// §6.cargo.3 — Deactivate strips only Author keys, keeps user policy and
+    /// DefaultOnly keys.
+    ///
+    /// fo-ro3hj.4: `resolver` is now Ownership::DefaultOnly — it is NOT stripped
+    /// on deactivate. Only `members` (Author) is stripped. `resolver` survives
+    /// along with the rest of the user's content.
     #[test]
     fn s6_3_deactivate_strips_keeps_user_policy() {
         let tmp = TempDir::new().unwrap();
@@ -2904,17 +2928,22 @@ foo = { path = "vendor/foo" }
         );
 
         let path = root.join("Cargo.toml");
+        // Only `members` (Ownership::Author) is an owned probe that must be
+        // absent after deactivate. `resolver` (Ownership::DefaultOnly) survives
+        // and is listed in foreign_substrings below.
         contract::assert_deactivate_strips_keeps(
             &path,
             || {
                 CargoWorkspace.deactivate(root).unwrap();
             },
-            &[
-                contract::substr_probe("members entry", "github/acme/server"),
-                contract::substr_probe("resolver", "resolver = \"2\""),
-            ],
+            &[contract::substr_probe(
+                "members entry",
+                "github/acme/server",
+            )],
             &contract::substr_probe("toml marker", "managed by rwv"),
             &[
+                // resolver (DefaultOnly) must survive deactivate.
+                "resolver = \"2\"",
                 "[profile.dev]",
                 "panic = \"abort\"",
                 "[workspace.lints.clippy]",
@@ -3501,6 +3530,192 @@ mod s7_cargo_doctor {
         assert!(
             issues.is_empty(),
             "verify() must return no issues for a freshly-activated Cargo.toml, got: {issues:?}"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // §7.5 resolver DefaultOnly — fo-ro3hj.4
+    // -----------------------------------------------------------------------
+
+    /// Greenfield: empty Cargo.toml gets `resolver = "2"` set by activate().
+    ///
+    /// Given: fresh empty Cargo.toml (or no file at all).
+    /// When:  activate() runs.
+    /// Then:  resolver = "2" appears in the file.
+    #[test]
+    fn resolver_default_only_greenfield_sets_resolver_2() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+
+        touch(root, "github/cwalv/myrepo/Cargo.toml");
+
+        let manifest = make_manifest(vec![("github/cwalv/myrepo", Role::Owned)]);
+        let project = ProjectName::new("test-project");
+        let config = IntegrationConfig::default();
+        let cache = HashMap::new();
+        let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+
+        CargoWorkspace.activate(&ctx).unwrap();
+
+        let content = std::fs::read_to_string(root.join("Cargo.toml")).unwrap();
+        assert!(
+            content.contains("resolver = \"2\""),
+            "greenfield activate must write resolver = \"2\": {content}"
+        );
+    }
+
+    /// Existing without resolver: file with marker + no resolver key →
+    /// DefaultOnly sets "2".
+    ///
+    /// Given: Cargo.toml with managed marker on members but no resolver key.
+    /// When:  activate() runs.
+    /// Then:  resolver = "2" is added to the file.
+    #[test]
+    fn resolver_default_only_no_resolver_key_sets_resolver_2() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+
+        // File has marker+members but no resolver.
+        write_file(
+            root,
+            "Cargo.toml",
+            "[workspace]\n# managed by rwv\nmembers = [\"github/cwalv/rvtty/daemon\"]\n",
+        );
+        touch(root, "github/cwalv/rvtty/daemon/Cargo.toml");
+
+        let config = IntegrationConfig::from_yaml(
+            "members:\n  github/cwalv/rvtty:\n    include: [daemon]\n",
+        );
+        let manifest = make_manifest(vec![("github/cwalv/rvtty", Role::Owned)]);
+        let project = ProjectName::new("test-project");
+        let cache = HashMap::new();
+        let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+
+        CargoWorkspace.activate(&ctx).unwrap();
+
+        let content = std::fs::read_to_string(root.join("Cargo.toml")).unwrap();
+        assert!(
+            content.contains("resolver = \"2\""),
+            "activate must write resolver = \"2\" when key is absent: {content}"
+        );
+    }
+
+    /// Operator override: existing Cargo.toml with marker + `resolver = "1"` →
+    /// after activate, resolver still "1" (DefaultOnly does not overwrite).
+    ///
+    /// Given: Cargo.toml with managed markers AND resolver = "1" (compat setting).
+    /// When:  activate() runs.
+    /// Then:  resolver is still "1" in the file (not overwritten to "2").
+    #[test]
+    fn resolver_default_only_operator_override_preserved() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+
+        // Cargo.toml seeded with resolver = "1" and the managed marker.
+        write_file(
+            root,
+            "Cargo.toml",
+            "[workspace]\n# managed by rwv\nmembers = [\"github/cwalv/rvtty/daemon\"]\n\
+             # managed by rwv\nresolver = \"1\"\n",
+        );
+        touch(root, "github/cwalv/rvtty/daemon/Cargo.toml");
+
+        let config = IntegrationConfig::from_yaml(
+            "members:\n  github/cwalv/rvtty:\n    include: [daemon]\n",
+        );
+        let manifest = make_manifest(vec![("github/cwalv/rvtty", Role::Owned)]);
+        let project = ProjectName::new("test-project");
+        let cache = HashMap::new();
+        let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+
+        CargoWorkspace.activate(&ctx).unwrap();
+
+        let content = std::fs::read_to_string(root.join("Cargo.toml")).unwrap();
+        assert!(
+            content.contains("resolver = \"1\""),
+            "activate must NOT overwrite operator's resolver = \"1\": {content}"
+        );
+        assert!(
+            !content.contains("resolver = \"2\""),
+            "resolver must not be changed to \"2\" when operator set \"1\": {content}"
+        );
+    }
+
+    /// Resolver drift is CLEAN: file with marker + resolver = "1" → verify()
+    /// returns no issues (DefaultOnly drift is always CLEAN).
+    ///
+    /// Given: Cargo.toml with managed markers and members matching config,
+    ///        but resolver = "1" (differs from rwv's default "2").
+    /// Then:  verify() returns no issues (CLEAN — resolver drift is not a
+    ///        DRIFT finding for DefaultOnly keys).
+    #[test]
+    fn resolver_default_only_drift_is_clean() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+
+        touch(root, "github/cwalv/rvtty/daemon/Cargo.toml");
+
+        // members matches config; resolver deviates from default "2".
+        write_file(
+            root,
+            "Cargo.toml",
+            "[workspace]\n# managed by rwv\nmembers = [\"github/cwalv/rvtty/daemon\"]\n\
+             # managed by rwv\nresolver = \"1\"\n",
+        );
+
+        let config = IntegrationConfig::from_yaml(
+            "members:\n  github/cwalv/rvtty:\n    include: [daemon]\n",
+        );
+        let manifest = make_manifest(vec![("github/cwalv/rvtty", Role::Owned)]);
+        let project = ProjectName::new("test-project");
+        let cache = HashMap::new();
+        let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+
+        let issues = CargoWorkspace.verify(&ctx).unwrap();
+        assert!(
+            issues.is_empty(),
+            "resolver drift (DefaultOnly) must be CLEAN — no issues expected, got: {issues:?}"
+        );
+    }
+
+    /// Members still drift: file with marker + correct resolver but wrong members
+    /// → DRIFT finding (members is still Author).
+    ///
+    /// Given: Cargo.toml with managed markers, resolver = "2", but members
+    ///        does not match config (drift on members, not resolver).
+    /// Then:  verify() reports exactly one DRIFT issue.
+    #[test]
+    fn resolver_default_only_members_drift_still_reported() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+
+        // members is stale (only daemon), config expects daemon + client.
+        write_file(
+            root,
+            "Cargo.toml",
+            "[workspace]\n# managed by rwv\nmembers = [\"github/cwalv/rvtty/daemon\"]\n\
+             # managed by rwv\nresolver = \"2\"\n",
+        );
+
+        let config = IntegrationConfig::from_yaml(
+            "members:\n  github/cwalv/rvtty:\n    include: [daemon, client]\n",
+        );
+        let manifest = make_manifest(vec![("github/cwalv/rvtty", Role::Owned)]);
+        let project = ProjectName::new("test-project");
+        let cache = HashMap::new();
+        let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+
+        let issues = CargoWorkspace.verify(&ctx).unwrap();
+        assert_eq!(
+            issues.len(),
+            1,
+            "members drift must still produce a DRIFT issue, got: {issues:?}"
+        );
+        assert!(issues[0].safe_to_fix, "DRIFT issue must be safe_to_fix");
+        assert!(
+            issues[0].message.contains("drift"),
+            "DRIFT issue message should contain 'drift': {}",
+            issues[0].message
         );
     }
 }
