@@ -1981,9 +1981,11 @@ some-private-lib = { git = "https://example.com/some-private-lib.git" }
     }
 
     /// §6.uv.4 — Greenfield root: rwv creates pyproject.toml from scratch with
-    /// `package=false`; deactivate fully removes it.
+    /// `package=false`; deactivate removes the managed region but preserves
+    /// `package = false` (it is a `DefaultOnly` key — user-adjustable, never
+    /// stripped). The file survives deactivation with only the DefaultOnly key.
     #[test]
-    fn s6_uv_4_greenfield_create_then_deactivate_removes() {
+    fn s6_uv_4_greenfield_create_then_deactivate_preserves_package_false() {
         let tmp = TempDir::new().unwrap();
         let root = tmp.path();
         touch(root, "github/astral/protocol/pyproject.toml");
@@ -2014,9 +2016,132 @@ some-private-lib = { git = "https://example.com/some-private-lib.git" }
         );
 
         UvWorkspace.deactivate(root).unwrap();
+
+        // package = false is DefaultOnly — it is NOT stripped on deactivate.
+        // The file survives with only the DefaultOnly key; it is not deleted.
         assert!(
-            !root.join("pyproject.toml").exists(),
-            "greenfield-created file must be deleted on deactivate"
+            root.join("pyproject.toml").exists(),
+            "file must survive deactivate — package=false (DefaultOnly) was not stripped"
+        );
+        let after = std::fs::read_to_string(root.join("pyproject.toml")).unwrap();
+        assert!(
+            after.contains("package = false") || after.contains("package=false"),
+            "package=false must survive deactivate (DefaultOnly key); got:\n{after}"
+        );
+        // The managed region (members, marker) must be gone.
+        assert!(
+            !after.contains("managed by rwv"),
+            "marker must be removed on deactivate; got:\n{after}"
+        );
+        assert!(
+            !after.contains("members"),
+            "members key must be stripped on deactivate; got:\n{after}"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // DefaultOnly regression tests for [tool.uv].package (fo-ro3hj.3)
+    // -----------------------------------------------------------------------
+
+    /// Regression — user opt-in: file with marker present + user has set
+    /// `[tool.uv].package = true` → after activate, stays `true`.
+    /// `DefaultOnly` must never overwrite an existing value.
+    #[test]
+    fn default_only_does_not_overwrite_user_set_package_true() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        touch(root, "github/astral/protocol/pyproject.toml");
+
+        // Pre-existing pyproject.toml with marker on members + user-set package = true.
+        write_file(
+            root,
+            "pyproject.toml",
+            concat!(
+                "[tool.uv.workspace]\n",
+                "# managed by rwv\n",
+                "members = [\"github/astral/protocol\"]\n",
+                "\n",
+                "[tool.uv]\n",
+                "package = true\n",
+            ),
+        );
+
+        let manifest = make_manifest(vec![("github/astral/protocol", Role::Owned)]);
+        let project = ProjectName::new("test-project");
+        let config = IntegrationConfig::default();
+        let cache = HashMap::new();
+        let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+
+        UvWorkspace.activate(&ctx).unwrap();
+
+        let after = std::fs::read_to_string(root.join("pyproject.toml")).unwrap();
+        assert!(
+            after.contains("package = true"),
+            "user-set package=true must survive activate (DefaultOnly never overwrites); got:\n{after}"
+        );
+        assert!(
+            !after.contains("package = false"),
+            "DefaultOnly must not inject package=false when key is present; got:\n{after}"
+        );
+    }
+
+    /// Regression — greenfield: fresh file (no root pyproject.toml) gets
+    /// `[tool.uv].package = false` set by DefaultOnly.
+    #[test]
+    fn default_only_sets_package_false_on_greenfield() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        touch(root, "github/astral/protocol/pyproject.toml");
+
+        // No root pyproject.toml — greenfield.
+        assert!(!root.join("pyproject.toml").exists());
+
+        let manifest = make_manifest(vec![("github/astral/protocol", Role::Owned)]);
+        let project = ProjectName::new("test-project");
+        let config = IntegrationConfig::default();
+        let cache = HashMap::new();
+        let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+
+        UvWorkspace.activate(&ctx).unwrap();
+
+        let after = std::fs::read_to_string(root.join("pyproject.toml")).unwrap();
+        assert!(
+            after.contains("package = false") || after.contains("package=false"),
+            "greenfield file must get package=false from DefaultOnly; got:\n{after}"
+        );
+    }
+
+    /// Regression — pre-existing without override: file with marker + no
+    /// `[tool.uv].package` key → DefaultOnly sets `false`.
+    #[test]
+    fn default_only_sets_package_false_when_key_absent() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        touch(root, "github/astral/protocol/pyproject.toml");
+
+        // File exists, has marker on members, but no package key.
+        write_file(
+            root,
+            "pyproject.toml",
+            concat!(
+                "[tool.uv.workspace]\n",
+                "# managed by rwv\n",
+                "members = [\"github/astral/protocol\"]\n",
+            ),
+        );
+
+        let manifest = make_manifest(vec![("github/astral/protocol", Role::Owned)]);
+        let project = ProjectName::new("test-project");
+        let config = IntegrationConfig::default();
+        let cache = HashMap::new();
+        let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+
+        UvWorkspace.activate(&ctx).unwrap();
+
+        let after = std::fs::read_to_string(root.join("pyproject.toml")).unwrap();
+        assert!(
+            after.contains("package = false") || after.contains("package=false"),
+            "pre-existing file without package key must get package=false from DefaultOnly; got:\n{after}"
         );
     }
 }
