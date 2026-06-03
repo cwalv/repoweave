@@ -73,7 +73,7 @@
 
 use crate::integration::{Integration, IntegrationContext, Issue, Severity};
 use crate::integrations::merge::{
-    keypath, merge_activate, strip_deactivate, KeyPath, MergeResult, OwnedValue, TomlDoc,
+    keypath, merge_activate, strip_deactivate, KeyPath, MergeResult, OwnedValue, Ownership, TomlDoc,
 };
 use anyhow::Context;
 use std::path::Path;
@@ -114,18 +114,26 @@ impl UvWorkspace {
     /// they are written in a second pass by `set_workspace_sources` so that
     /// only `members` carries the marker decoration (not each source entry).
     /// See `activate()` and the module doc.
-    fn primary_owned_pairs(members: &[String], is_greenfield: bool) -> Vec<(KeyPath, OwnedValue)> {
-        let mut owned: Vec<(KeyPath, OwnedValue)> = Vec::new();
+    fn primary_owned_pairs(
+        members: &[String],
+        is_greenfield: bool,
+    ) -> Vec<(KeyPath, Ownership, OwnedValue)> {
+        let mut owned: Vec<(KeyPath, Ownership, OwnedValue)> = Vec::new();
 
         // members: the primary key that carries the `# managed by rwv` marker.
         owned.push((
             keypath(["tool", "uv", "workspace", "members"]),
+            Ownership::Author,
             OwnedValue::Array(members.to_vec()),
         ));
 
         // greenfield-only: [tool.uv].package = false
         if is_greenfield {
-            owned.push((keypath(["tool", "uv", "package"]), OwnedValue::Bool(false)));
+            owned.push((
+                keypath(["tool", "uv", "package"]),
+                Ownership::Author,
+                OwnedValue::Bool(false),
+            ));
         }
 
         owned
@@ -609,7 +617,7 @@ some-private-lib = { git = "https://example.com/foo.git" }
     #[test]
     fn primary_owned_pairs_greenfield_includes_package_false() {
         let pairs = UvWorkspace::primary_owned_pairs(&["github/a/server".to_string()], true);
-        let has_package = pairs.iter().any(|(k, v)| {
+        let has_package = pairs.iter().any(|(k, _, v)| {
             k == &keypath(["tool", "uv", "package"]) && *v == OwnedValue::Bool(false)
         });
         assert!(has_package, "greenfield must include package=false");
@@ -620,7 +628,7 @@ some-private-lib = { git = "https://example.com/foo.git" }
         let pairs = UvWorkspace::primary_owned_pairs(&["github/a/server".to_string()], false);
         let has_package = pairs
             .iter()
-            .any(|(k, _)| k == &keypath(["tool", "uv", "package"]));
+            .any(|(k, _, _)| k == &keypath(["tool", "uv", "package"]));
         assert!(
             !has_package,
             "non-greenfield must NOT include package=false"
@@ -632,7 +640,9 @@ some-private-lib = { git = "https://example.com/foo.git" }
         // Sources are handled in the set_workspace_sources pass, not via
         // primary_owned_pairs — so the marker never appears on source entries.
         let pairs = UvWorkspace::primary_owned_pairs(&["github/acme/server".to_string()], false);
-        let has_source = pairs.iter().any(|(k, _)| k.len() >= 4 && k[2] == "sources");
+        let has_source = pairs
+            .iter()
+            .any(|(k, _, _)| k.len() >= 4 && k[2] == "sources");
         assert!(
             !has_source,
             "primary_owned_pairs must NOT include source keys (those go through set_workspace_sources)"

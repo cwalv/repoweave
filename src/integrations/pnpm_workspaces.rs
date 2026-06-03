@@ -1,5 +1,7 @@
 use crate::integration::{Integration, IntegrationContext, Issue, Severity};
-use crate::integrations::merge::{merge_activate, strip_deactivate, KeyPath, OwnedValue, YamlDoc};
+use crate::integrations::merge::{
+    merge_activate, strip_deactivate, KeyPath, OwnedValue, Ownership, YamlDoc,
+};
 use anyhow::Context;
 use std::path::Path;
 
@@ -35,7 +37,11 @@ impl Integration for PnpmWorkspaces {
         let mut members: Vec<String> = paths.into_iter().map(|p| p.to_string()).collect();
         members.sort();
 
-        let owned = vec![(packages_key(), OwnedValue::sorted_array(members))];
+        let owned = vec![(
+            packages_key(),
+            Ownership::Author,
+            OwnedValue::sorted_array(members),
+        )];
 
         merge_activate::<YamlDoc>(&path, &owned)
             .with_context(|| format!("pnpm-workspaces: activate {}", path.display()))?;

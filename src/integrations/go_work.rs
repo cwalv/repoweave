@@ -42,7 +42,7 @@
 
 use crate::integration::{Integration, IntegrationContext, Issue, Severity};
 use crate::integrations::merge::{
-    keypath, merge_activate, strip_deactivate, GoWorkDoc, OwnedValue,
+    keypath, merge_activate, strip_deactivate, GoWorkDoc, OwnedValue, Ownership,
 };
 use crate::manifest::GoWorkConfig;
 use std::path::Path;
@@ -358,11 +358,18 @@ fn activate_via_hand_edit(
         .map(|p| format!("./{}", p.as_ref()))
         .collect();
 
-    let mut owned: Vec<(Vec<String>, OwnedValue)> =
-        vec![(keypath(["use"]), OwnedValue::sorted_array(use_items))];
+    let mut owned: Vec<(Vec<String>, Ownership, OwnedValue)> = vec![(
+        keypath(["use"]),
+        Ownership::Author,
+        OwnedValue::sorted_array(use_items),
+    )];
 
     if let Some(ver) = go_version_config {
-        owned.push((keypath(["go"]), OwnedValue::String(ver.to_string())));
+        owned.push((
+            keypath(["go"]),
+            Ownership::Author,
+            OwnedValue::String(ver.to_string()),
+        ));
     }
 
     merge_activate::<GoWorkDoc>(go_work_path, &owned)?;

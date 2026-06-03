@@ -1,6 +1,7 @@
 use crate::integration::{Integration, IntegrationContext, Issue, Severity};
 use crate::integrations::merge::{
-    keypath, merge_activate, strip_deactivate, JsonDoc, ManagedDoc, OwnedValue, XRepoweaveMarker,
+    keypath, merge_activate, strip_deactivate, JsonDoc, ManagedDoc, OwnedValue, Ownership,
+    XRepoweaveMarker,
 };
 use anyhow::Context;
 use std::path::Path;
@@ -38,7 +39,7 @@ fn deactivate_owned_keys() -> Vec<Vec<String>> {
 fn build_owned(
     existing_pkg: Option<&serde_json::Value>,
     workspaces: Vec<String>,
-) -> Vec<(Vec<String>, OwnedValue)> {
+) -> Vec<(Vec<String>, Ownership, OwnedValue)> {
     let ws_is_object = existing_pkg
         .and_then(|v| v.get("workspaces"))
         .is_some_and(|ws| ws.is_object());
@@ -52,16 +53,20 @@ fn build_owned(
         let mut packages_map = std::collections::BTreeMap::new();
         packages_map.insert("packages".to_string(), ws_value);
         vec![
-            (keypath(["name"]), name_value),
-            (keypath(["private"]), private_value),
-            (keypath(["workspaces"]), OwnedValue::Object(packages_map)),
+            (keypath(["name"]), Ownership::Author, name_value),
+            (keypath(["private"]), Ownership::Author, private_value),
+            (
+                keypath(["workspaces"]),
+                Ownership::Author,
+                OwnedValue::Object(packages_map),
+            ),
         ]
     } else {
         // Array-form or absent: set workspaces as a flat sorted array.
         vec![
-            (keypath(["name"]), name_value),
-            (keypath(["private"]), private_value),
-            (keypath(["workspaces"]), ws_value),
+            (keypath(["name"]), Ownership::Author, name_value),
+            (keypath(["private"]), Ownership::Author, private_value),
+            (keypath(["workspaces"]), Ownership::Author, ws_value),
         ]
     }
 }

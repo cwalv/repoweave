@@ -74,6 +74,30 @@ where
     segments.into_iter().map(Into::into).collect()
 }
 
+/// The ownership category for a managed key.
+///
+/// Controls how `merge_activate` and `strip_deactivate` treat the key:
+///
+/// - **`Author`**: rwv fully owns this key. `merge_activate` always writes
+///   the value (overwriting whatever is on disk when the marker is present).
+///   `strip_deactivate` removes this key. This is the "classic" ownership
+///   category — the only one that existed before fo-ro3hj.
+///
+/// - **`DefaultOnly`**: rwv provides a default value but never overwrites once
+///   the key is present. `merge_activate` sets the key only when it is absent
+///   from the document (including on a fresh / empty file). If the key is
+///   already present — whether or not it carries the rwv marker — the existing
+///   value is preserved. `strip_deactivate` does **not** remove this key (it
+///   is user-adjustable; stripping it would silently discard a choice the user
+///   may have made). `verify()` treats `DefaultOnly` drift as CLEAN.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Ownership {
+    /// rwv always writes and always strips this key.
+    Author,
+    /// rwv writes this key only when absent; never overwrites or strips it.
+    DefaultOnly,
+}
+
 /// The cross-format owned-value type.
 ///
 /// Only the shapes used by the six hybrid integrations are represented; this
@@ -214,19 +238,25 @@ pub trait ManagedDoc: Sized {
 /// Semantics (the contract — joint doc §4):
 /// - If the file is missing, start from an empty document.
 /// - Parse; bail loudly if malformed (never silently zero a user file).
-/// - For each `(key, value)` in `owned`:
-///   - if the marker is **absent** and the key is **present** on disk: defer
-///     the key (user holds the pen; verify-and-warn);
-///   - otherwise: set the key (rwv holds the pen; author).
-/// - If any key was authored, apply the marker on those authored keys.
+/// - For each `(key, ownership, value)` in `owned`:
+///   - **`Ownership::Author`**: if the marker is **absent** and the key is
+///     **present** on disk, defer (user holds the pen; verify-and-warn);
+///     otherwise set the key (overwrite).
+///   - **`Ownership::DefaultOnly`**: set the key only when it is **absent**
+///     from the document. If the key is already present (regardless of the
+///     marker), preserve the existing value — the user may have changed it
+///     and that change is intentional. DefaultOnly keys are never deferred
+///     and never reported in `MergeResult::authored`.
+/// - If any `Author` key was authored, apply the marker on those keys.
 /// - Write back. (Direct write — atomic-write-then-rename is a framework
 ///   concern; this helper does not assume one is wired.)
 ///
-/// Returns a [`MergeResult`] describing which keys were authored vs deferred,
-/// so the caller can emit `Severity::Warning` issues for deferred ones.
+/// Returns a [`MergeResult`] describing which `Author` keys were authored vs
+/// deferred, so the caller can emit `Severity::Warning` issues for deferred
+/// ones. `DefaultOnly` keys do not appear in either list.
 pub fn merge_activate<D: ManagedDoc>(
     path: &Path,
-    owned: &[(KeyPath, OwnedValue)],
+    owned: &[(KeyPath, Ownership, OwnedValue)],
 ) -> Result<MergeResult> {
     let mut doc = if path.exists() {
         let text =
@@ -236,18 +266,35 @@ pub fn merge_activate<D: ManagedDoc>(
         D::empty()
     };
 
-    let owned_key_paths: Vec<KeyPath> = owned.iter().map(|(k, _)| k.clone()).collect();
-    let marker_present = doc.has_marker(&owned_key_paths);
+    // Only Author keys participate in the marker-present check and the
+    // authored/deferred accounting.
+    let author_key_paths: Vec<KeyPath> = owned
+        .iter()
+        .filter(|(_, o, _)| *o == Ownership::Author)
+        .map(|(k, _, _)| k.clone())
+        .collect();
+    let marker_present = doc.has_marker(&author_key_paths);
 
     let mut result = MergeResult::default();
-    for (key, value) in owned {
-        if !marker_present && doc.key_present(key) {
-            // User holds the pen — degrade to verify-and-warn.
-            result.deferred.push(key.clone());
-            continue;
+    for (key, ownership, value) in owned {
+        match ownership {
+            Ownership::Author => {
+                if !marker_present && doc.key_present(key) {
+                    // User holds the pen — degrade to verify-and-warn.
+                    result.deferred.push(key.clone());
+                    continue;
+                }
+                doc.set_owned(key, value);
+                result.authored.push(key.clone());
+            }
+            Ownership::DefaultOnly => {
+                // Write only when the key is absent. Never overwrite.
+                if !doc.key_present(key) {
+                    doc.set_owned(key, value);
+                }
+                // DefaultOnly keys are not reported in authored or deferred.
+            }
         }
-        doc.set_owned(key, value);
-        result.authored.push(key.clone());
     }
 
     if !result.authored.is_empty() {
@@ -1548,9 +1595,10 @@ mod tests {
             );
 
             let owned = vec![
-                (kp(&["private"]), OwnedValue::Bool(true)),
+                (kp(&["private"]), Ownership::Author, OwnedValue::Bool(true)),
                 (
                     kp(&["workspaces"]),
+                    Ownership::Author,
                     OwnedValue::sorted_array(["github/acme/server", "github/acme/web"]),
                 ),
             ];
@@ -1588,9 +1636,10 @@ mod tests {
             );
 
             let owned = vec![
-                (kp(&["private"]), OwnedValue::Bool(true)),
+                (kp(&["private"]), Ownership::Author, OwnedValue::Bool(true)),
                 (
                     kp(&["workspaces"]),
+                    Ownership::Author,
                     OwnedValue::sorted_array(["github/acme/server"]),
                 ),
             ];
@@ -1661,9 +1710,10 @@ mod tests {
 }"#,
             );
             let owned = vec![
-                (kp(&["private"]), OwnedValue::Bool(true)),
+                (kp(&["private"]), Ownership::Author, OwnedValue::Bool(true)),
                 (
                     kp(&["workspaces"]),
+                    Ownership::Author,
                     OwnedValue::sorted_array(["github/acme/server"]),
                 ),
             ];
@@ -1720,6 +1770,7 @@ mod tests {
             );
             let owned = vec![(
                 kp(&["workspaces"]),
+                Ownership::Author,
                 OwnedValue::Object(BTreeMap::from([(
                     "packages".to_string(),
                     OwnedValue::sorted_array(["github/acme/web"]),
@@ -1765,12 +1816,144 @@ mod tests {
         fn malformed_json_bails() {
             let dir = TempDir::new().unwrap();
             let path = write_file(&dir, "package.json", "{ not json");
-            let owned = vec![(kp(&["private"]), OwnedValue::Bool(true))];
+            let owned = vec![(kp(&["private"]), Ownership::Author, OwnedValue::Bool(true))];
             let err = merge_activate::<JsonDoc>(&path, &owned).unwrap_err();
             let msg = format!("{err:#}");
             assert!(
                 msg.to_lowercase().contains("json") || msg.contains("package.json"),
                 "error must name JSON or the file: {msg}"
+            );
+        }
+
+        // --- Ownership::DefaultOnly -----------------------------------------
+
+        #[test]
+        fn default_only_sets_when_absent() {
+            // When the key is absent, DefaultOnly should write the default value.
+            let dir = TempDir::new().unwrap();
+            let path = write_file(
+                &dir,
+                "package.json",
+                r#"{
+  "x-repoweave": { "managed": true },
+  "workspaces": ["github/acme/server"]
+}"#,
+            );
+            let owned = vec![
+                (
+                    kp(&["workspaces"]),
+                    Ownership::Author,
+                    OwnedValue::sorted_array(["github/acme/server"]),
+                ),
+                (
+                    kp(&["description"]),
+                    Ownership::DefaultOnly,
+                    OwnedValue::String("default description".to_string()),
+                ),
+            ];
+            merge_activate::<JsonDoc>(&path, &owned).unwrap();
+            let v: serde_json::Value =
+                serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+            // DefaultOnly key was absent → written with the default.
+            assert_eq!(
+                v["description"],
+                serde_json::json!("default description"),
+                "DefaultOnly key must be set when absent"
+            );
+        }
+
+        #[test]
+        fn default_only_does_not_overwrite_existing() {
+            // When the key is present, DefaultOnly must leave the existing value alone.
+            let dir = TempDir::new().unwrap();
+            let path = write_file(
+                &dir,
+                "package.json",
+                r#"{
+  "x-repoweave": { "managed": true },
+  "workspaces": ["github/acme/server"],
+  "description": "user's own description"
+}"#,
+            );
+            let owned = vec![
+                (
+                    kp(&["workspaces"]),
+                    Ownership::Author,
+                    OwnedValue::sorted_array(["github/acme/server"]),
+                ),
+                (
+                    kp(&["description"]),
+                    Ownership::DefaultOnly,
+                    OwnedValue::String("default description".to_string()),
+                ),
+            ];
+            merge_activate::<JsonDoc>(&path, &owned).unwrap();
+            let v: serde_json::Value =
+                serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+            // DefaultOnly key was present → existing value preserved.
+            assert_eq!(
+                v["description"],
+                serde_json::json!("user's own description"),
+                "DefaultOnly key must NOT overwrite an existing value"
+            );
+        }
+
+        #[test]
+        fn default_only_not_in_authored_or_deferred() {
+            // DefaultOnly keys must not appear in MergeResult.authored or .deferred.
+            let dir = TempDir::new().unwrap();
+            let path = write_file(&dir, "package.json", r#"{}"#);
+            let owned = vec![
+                (
+                    kp(&["workspaces"]),
+                    Ownership::Author,
+                    OwnedValue::sorted_array(["github/acme/server"]),
+                ),
+                (
+                    kp(&["description"]),
+                    Ownership::DefaultOnly,
+                    OwnedValue::String("default".to_string()),
+                ),
+            ];
+            let result = merge_activate::<JsonDoc>(&path, &owned).unwrap();
+            assert_eq!(
+                result.authored.len(),
+                1,
+                "only the Author key must appear in authored"
+            );
+            assert_eq!(result.authored[0], kp(&["workspaces"]));
+            assert!(
+                result.deferred.is_empty(),
+                "DefaultOnly must not appear in deferred"
+            );
+        }
+
+        #[test]
+        fn default_only_not_stripped_on_deactivate() {
+            // strip_deactivate only strips keys passed to it (which should be
+            // Author keys). DefaultOnly keys are not passed to strip_deactivate
+            // by the caller — they survive deactivation.
+            let dir = TempDir::new().unwrap();
+            let path = write_file(
+                &dir,
+                "package.json",
+                r#"{
+  "x-repoweave": { "managed": true },
+  "workspaces": ["github/acme/server"],
+  "description": "user's description"
+}"#,
+            );
+            // Caller passes only Author keys to strip_deactivate.
+            let owned_keys = vec![kp(&["workspaces"])];
+            strip_deactivate::<JsonDoc>(&path, &owned_keys).unwrap();
+            assert!(path.exists(), "file should survive — description present");
+            let v: serde_json::Value =
+                serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+            assert!(v.get("workspaces").is_none(), "Author key removed");
+            assert_eq!(
+                v["description"],
+                serde_json::json!("user's description"),
+                "DefaultOnly key must survive deactivate"
             );
         }
     }
@@ -1809,6 +1992,7 @@ select = ["E", "F"]
 
             let owned = vec![(
                 kp(&["tool", "uv", "workspace", "members"]),
+                Ownership::Author,
                 OwnedValue::sorted_array(["github/acme/server", "github/acme/web"]),
             )];
             let result = merge_activate::<TomlDoc>(&path, &owned).unwrap();
@@ -1838,6 +2022,7 @@ select = ["E", "F"]
             let path = write_file(&dir, "pyproject.toml", UV_SEED);
             let owned = vec![(
                 kp(&["tool", "uv", "workspace", "members"]),
+                Ownership::Author,
                 OwnedValue::sorted_array(["github/acme/server"]),
             )];
             merge_activate::<TomlDoc>(&path, &owned).unwrap();
@@ -1887,6 +2072,7 @@ select = ["E", "F"]
             let path = write_file(&dir, "pyproject.toml", &seed);
             let owned = vec![(
                 kp(&["tool", "uv", "workspace", "members"]),
+                Ownership::Author,
                 OwnedValue::sorted_array(["github/acme/server"]),
             )];
             let result = merge_activate::<TomlDoc>(&path, &owned).unwrap();
@@ -1921,7 +2107,7 @@ select = ["E", "F"]
         fn malformed_toml_bails() {
             let dir = TempDir::new().unwrap();
             let path = write_file(&dir, "pyproject.toml", "[ not toml");
-            let owned = vec![(kp(&["x", "y"]), OwnedValue::Bool(true))];
+            let owned = vec![(kp(&["x", "y"]), Ownership::Author, OwnedValue::Bool(true))];
             let err = merge_activate::<TomlDoc>(&path, &owned).unwrap_err();
             let msg = format!("{err:#}");
             assert!(
@@ -1960,6 +2146,7 @@ overrides:
 
             let owned = vec![(
                 kp(&["packages"]),
+                Ownership::Author,
                 OwnedValue::sorted_array(["github/acme/server"]),
             )];
             let result = merge_activate::<YamlDoc>(&path, &owned).unwrap();
@@ -1986,6 +2173,7 @@ overrides:
             let path = write_file(&dir, "pnpm-workspace.yaml", PNPM_SEED);
             let owned = vec![(
                 kp(&["packages"]),
+                Ownership::Author,
                 OwnedValue::sorted_array(["github/acme/server"]),
             )];
             merge_activate::<YamlDoc>(&path, &owned).unwrap();
@@ -2032,6 +2220,7 @@ overrides:
             let path = write_file(&dir, "pnpm-workspace.yaml", seed);
             let owned = vec![(
                 kp(&["packages"]),
+                Ownership::Author,
                 OwnedValue::sorted_array(["github/acme/server"]),
             )];
             let result = merge_activate::<YamlDoc>(&path, &owned).unwrap();
@@ -2087,6 +2276,7 @@ replace example.com/legacy => ./vendor/legacy
 
             let owned = vec![(
                 kp(&["use"]),
+                Ownership::Author,
                 OwnedValue::sorted_array(["./repoweave", "./some-go-tool"]),
             )];
             let result = merge_activate::<GoWorkDoc>(&path, &owned).unwrap();
@@ -2109,7 +2299,11 @@ replace example.com/legacy => ./vendor/legacy
                 "go.work",
                 "go 1.26\n\nreplace example.com/legacy => ./vendor/legacy\n",
             );
-            let owned = vec![(kp(&["use"]), OwnedValue::sorted_array(["./repoweave"]))];
+            let owned = vec![(
+                kp(&["use"]),
+                Ownership::Author,
+                OwnedValue::sorted_array(["./repoweave"]),
+            )];
             merge_activate::<GoWorkDoc>(&path, &owned).unwrap();
             let first = std::fs::read_to_string(&path).unwrap();
             merge_activate::<GoWorkDoc>(&path, &owned).unwrap();
@@ -2153,7 +2347,11 @@ replace example.com/legacy => ./vendor/legacy
             // `use (...)` present but no marker — user took the pen.
             let dir = TempDir::new().unwrap();
             let path = write_file(&dir, "go.work", "go 1.26\n\nuse (\n\t./mine\n)\n");
-            let owned = vec![(kp(&["use"]), OwnedValue::sorted_array(["./repoweave"]))];
+            let owned = vec![(
+                kp(&["use"]),
+                Ownership::Author,
+                OwnedValue::sorted_array(["./repoweave"]),
+            )];
             let result = merge_activate::<GoWorkDoc>(&path, &owned).unwrap();
             assert_eq!(result.deferred.len(), 1);
             assert!(result.authored.is_empty());

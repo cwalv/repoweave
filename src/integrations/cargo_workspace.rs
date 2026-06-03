@@ -93,7 +93,7 @@
 use crate::integration::{Integration, IntegrationContext, Issue, Severity};
 use crate::integrations::merge::{
     keypath, merge_activate, strip_deactivate, KeyPath, ManagedDoc, MergeResult, OwnedValue,
-    TomlDoc,
+    Ownership, TomlDoc,
 };
 use crate::manifest::{CargoWorkspaceConfig, MemberSpec};
 use anyhow::Context;
@@ -218,17 +218,22 @@ impl CargoWorkspace {
         Ok((members, nested_conflicts))
     }
 
-    /// Build the (key, value) pairs the merge helper will set during
-    /// `activate()`. Pure — no I/O.
-    fn owned_pairs(members: &[String], cfg: &CargoWorkspaceConfig) -> Vec<(KeyPath, OwnedValue)> {
-        let mut owned: Vec<(KeyPath, OwnedValue)> = Vec::with_capacity(3);
+    /// Build the (key, ownership, value) triples the merge helper will set
+    /// during `activate()`. Pure — no I/O.
+    fn owned_pairs(
+        members: &[String],
+        cfg: &CargoWorkspaceConfig,
+    ) -> Vec<(KeyPath, Ownership, OwnedValue)> {
+        let mut owned: Vec<(KeyPath, Ownership, OwnedValue)> = Vec::with_capacity(3);
 
         owned.push((
             keypath(["workspace", "members"]),
+            Ownership::Author,
             OwnedValue::Array(members.to_vec()),
         ));
         owned.push((
             keypath(["workspace", "resolver"]),
+            Ownership::Author,
             OwnedValue::String("2".to_string()),
         ));
 
@@ -247,6 +252,7 @@ impl CargoWorkspace {
             // user-added ones.
             owned.push((
                 keypath(["workspace", "package"]),
+                Ownership::Author,
                 OwnedValue::Object(std::collections::BTreeMap::new()),
             ));
         }
@@ -490,6 +496,14 @@ impl Integration for CargoWorkspace {
         // `merge_activate` would create one). Compare on-disk owned values
         // against what the current config would produce.
         //
+        // Only `Ownership::Author` keys are checked for drift. Keys with
+        // `Ownership::DefaultOnly` ownership are intentionally user-adjustable
+        // after rwv writes the initial default value; any difference between
+        // the on-disk value and rwv's default is CLEAN, not DRIFT. Currently
+        // all cargo-workspace owned keys are `Ownership::Author`, so this
+        // policy has no observable effect here yet — it is documented for
+        // future keys that might use `Ownership::DefaultOnly`.
+        //
         // Skip the nested-conflict check here — `check()` already surfaces
         // that as an Error; we don't duplicate it in verify().
         let (members, nested_conflicts) = Self::partition(ctx, &cfg)?;
@@ -505,6 +519,8 @@ impl Integration for CargoWorkspace {
 
         let expected_resolver = "2".to_string();
 
+        // Both `members` and `resolver` are Ownership::Author keys — drift is
+        // a DRIFT finding (safe_to_fix = true).
         let members_drift = on_disk_members.as_deref() != Some(members.as_slice());
         let resolver_drift = on_disk_resolver.as_deref() != Some(expected_resolver.as_str());
 
