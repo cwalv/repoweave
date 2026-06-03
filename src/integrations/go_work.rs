@@ -257,9 +257,21 @@ fn activate_via_go_tool(
     // Inject the ownership marker above the use block in work_tmp.
     ensure_marker_present(&work_tmp)?;
 
-    // Copy work_tmp → go_work_path (output_dir/go.work, the committed location)
-    // only if they are different paths.
-    if work_tmp != go_work_path {
+    // Copy work_tmp → go_work_path only if they refer to different files on
+    // disk. A path-string inequality is not sufficient: in the production
+    // weave layout work_tmp (workspace_root/go.work) is a symlink to
+    // go_work_path (projects/<project>/go.work), so the path strings differ
+    // but both resolve to the same inode. fs::copy on a symlink-to-self
+    // truncates the file (fo-l22tpw). Canonicalize both sides and skip the
+    // copy when they resolve to the same path.
+    let same_file = match (
+        std::fs::canonicalize(&work_tmp),
+        std::fs::canonicalize(go_work_path),
+    ) {
+        (Ok(a), Ok(b)) => a == b,
+        _ => false,
+    };
+    if !same_file {
         if let Some(parent) = go_work_path.parent() {
             std::fs::create_dir_all(parent)?;
         }
@@ -268,9 +280,9 @@ fn activate_via_go_tool(
         // the framework once activate() returns).
         let _ = std::fs::remove_file(&work_tmp);
     }
-    // When work_tmp == go_work_path (output_dir == workspace_root, the common
-    // case in unit tests), the file is already in the right place — no copy
-    // or remove needed.
+    // When they resolve to the same file (production layout with a symlink,
+    // or unit tests where output_dir == workspace_root), the file is already
+    // in the right place — no copy or remove needed.
 
     Ok(())
 }

@@ -857,13 +857,6 @@ mod go_work {
     // CLI-level analog of §6.go.1: pre-seeded go.work at go 1.26. The new
     // repo's go.mod also declares 1.26 so max_go_version = 1.26. After add,
     // go.work must still declare go 1.26 and include the new repo.
-    //
-    // Note: we pre-seed proj_dir/go.work WITHOUT a ws/go.work symlink so
-    // activate_via_go_tool can do a clean copy-then-edit cycle. If a symlink
-    // exists when the second `rwv add` runs, the copy-to-self truncation bug
-    // (copying ws/go.work (symlink) → proj/go.work (symlink target)) empties
-    // the file. That bug is in the go integration's primary path and is NOT
-    // the behavior this test is asserting.
 
     #[test]
     fn customization_survives_go_version_not_downgraded() {
@@ -912,12 +905,6 @@ mod go_work {
     // CLI-level analog of §6.go.1: pre-seeded go.work with marker, a user
     // `replace` directive, and go 1.26. After `rwv add` adds a new repo,
     // the replace must survive and go version must not drop.
-    //
-    // Note: do NOT pre-create the ws/go.work symlink here. The go integration's
-    // activate_via_go_tool creates a temporary copy at workspace_root/go.work,
-    // modifies it, then copies it to output_dir/go.work. If we pre-create the
-    // symlink, the copy-to-self bug truncates the file. Let the framework
-    // create the symlink after activation.
 
     #[test]
     fn cutover_preserves_replace_and_go_version() {
@@ -990,6 +977,68 @@ mod go_work {
         assert!(
             after.contains("// pin legacy fork"),
             "go.work cutover: user comment must survive; got:\n{after}"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // fo-l22tpw regression — pre-existing ws/go.work symlink does not truncate
+    // -----------------------------------------------------------------------
+    //
+    // In the production weave layout `ws/go.work` is a symlink to
+    // `projects/<project>/go.work`. activate_via_go_tool used to do
+    // `fs::copy(work_tmp, go_work_path)` with `work_tmp != go_work_path` as
+    // its only guard — a path-string inequality that's true even when both
+    // sides resolve to the same inode through a symlink, truncating the file
+    // before its own contents were read.
+    //
+    // This test creates the symlink BEFORE running `rwv add` and asserts the
+    // pre-existing content survives. The earlier go.work tests dodged the bug
+    // by not pre-creating the symlink; this one re-triggers the scenario to
+    // prove the canonicalize-and-skip fix in activate_via_go_tool holds.
+
+    #[test]
+    fn fo_l22tpw_pre_existing_symlink_does_not_truncate() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (ws, proj_dir) = make_workspace_with_project(tmp.path(), "ws", "go-symlink-project");
+
+        add_go_trigger(
+            &ws,
+            "github/org/module-a",
+            "github.com/org/module-a",
+            "1.26",
+        );
+        init_git_repo(&ws.join("github/org/module-a"));
+
+        let int_file = proj_dir.join("go.work");
+        let seeded = "go 1.26\n\n// managed by repoweave\nuse (\n)\n";
+        std::fs::write(&int_file, seeded).unwrap();
+
+        let ws_link = ws.join("go.work");
+        std::os::unix::fs::symlink(&int_file, &ws_link).unwrap();
+        assert!(
+            ws_link.is_symlink(),
+            "test setup: ws/go.work must be a symlink"
+        );
+
+        rwv()
+            .args(["add", "github/org/module-a", "--new"])
+            .current_dir(&ws)
+            .assert()
+            .success();
+
+        let after = std::fs::read_to_string(&int_file).unwrap();
+
+        assert!(
+            !after.is_empty(),
+            "fo-l22tpw: go.work must not be truncated by symlink self-copy; got empty file"
+        );
+        assert!(
+            after.contains("go 1.26"),
+            "fo-l22tpw: go 1.26 must survive; got:\n{after}"
+        );
+        assert!(
+            after.contains("github/org/module-a"),
+            "fo-l22tpw: module-a must be added to use block; got:\n{after}"
         );
     }
 }
