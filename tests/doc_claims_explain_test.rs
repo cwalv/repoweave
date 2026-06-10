@@ -25,7 +25,21 @@ use assert_cmd::Command as AssertCommand;
 use std::path::PathBuf;
 
 const ACCEPTANCE_VERBS: &[&str] = &[
-    "status", "doctor", "sync", "sync-to", "push", "fetch", "update", "prime", "explain",
+    "status",
+    "doctor",
+    "sync",
+    "sync-to",
+    "push",
+    "fetch",
+    "update",
+    "prime",
+    "explain",
+    "workweave",
+    "abort",
+    "add",
+    "remove",
+    "lock",
+    "activate",
 ];
 
 fn rwv() -> AssertCommand {
@@ -131,6 +145,36 @@ fn explain_prime_matches_committed_doc() {
 #[test]
 fn explain_explain_matches_committed_doc() {
     assert_byte_identical("explain");
+}
+
+#[test]
+fn explain_workweave_matches_committed_doc() {
+    assert_byte_identical("workweave");
+}
+
+#[test]
+fn explain_abort_matches_committed_doc() {
+    assert_byte_identical("abort");
+}
+
+#[test]
+fn explain_add_matches_committed_doc() {
+    assert_byte_identical("add");
+}
+
+#[test]
+fn explain_remove_matches_committed_doc() {
+    assert_byte_identical("remove");
+}
+
+#[test]
+fn explain_lock_matches_committed_doc() {
+    assert_byte_identical("lock");
+}
+
+#[test]
+fn explain_activate_matches_committed_doc() {
+    assert_byte_identical("activate");
 }
 
 /// Single-shot acceptance test: every verb in the acceptance set

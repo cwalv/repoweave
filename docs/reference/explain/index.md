@@ -19,5 +19,11 @@ rwv explain <verb>
 - **update** — advance the lock to current HEADs (`--json` available)
 - **prime** — agent-oriented orientation context for the workspace
 - **explain** — per-verb JIT reflection (this verb)
+- **workweave** — create, delete, or list workweaves for a project
+- **abort** — restore CWD workspace to its pre-sync state using savepoint refs
+- **add** — clone a repo and register it in the active project manifest
+- **remove** — remove a repo from the active project manifest
+- **lock** — snapshot current repo HEADs into rwv.lock (pure local; no network)
+- **activate** — set the active project, create symlinks, run integration install hooks
 
 Committed schemas live under `docs/reference/schemas/`. CI fails on drift between Rust types and committed artifacts; do not hand-edit the assembled files — edit `docs/reference/explain/templates/<verb>.md.tmpl` and re-run `cargo run --bin generate-explain`.

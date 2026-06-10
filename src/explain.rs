@@ -21,6 +21,12 @@ const UPDATE_EXPLAIN: &str = include_str!("../docs/reference/explain/update.md")
 const PUSH_EXPLAIN: &str = include_str!("../docs/reference/explain/push.md");
 const PRIME_EXPLAIN: &str = include_str!("../docs/reference/explain/prime.md");
 const EXPLAIN_EXPLAIN: &str = include_str!("../docs/reference/explain/explain.md");
+const WORKWEAVE_EXPLAIN: &str = include_str!("../docs/reference/explain/workweave.md");
+const ABORT_EXPLAIN: &str = include_str!("../docs/reference/explain/abort.md");
+const ADD_EXPLAIN: &str = include_str!("../docs/reference/explain/add.md");
+const REMOVE_EXPLAIN: &str = include_str!("../docs/reference/explain/remove.md");
+const LOCK_EXPLAIN: &str = include_str!("../docs/reference/explain/lock.md");
+const ACTIVATE_EXPLAIN: &str = include_str!("../docs/reference/explain/activate.md");
 
 /// Print the explain bundle for the requested verb, or the index when none given.
 ///
@@ -40,6 +46,12 @@ pub fn explain(cmd: Option<&str>) -> anyhow::Result<()> {
         Some("push") => print!("{PUSH_EXPLAIN}"),
         Some("prime") => print!("{PRIME_EXPLAIN}"),
         Some("explain") => print!("{EXPLAIN_EXPLAIN}"),
+        Some("workweave") => print!("{WORKWEAVE_EXPLAIN}"),
+        Some("abort") => print!("{ABORT_EXPLAIN}"),
+        Some("add") => print!("{ADD_EXPLAIN}"),
+        Some("remove") => print!("{REMOVE_EXPLAIN}"),
+        Some("lock") => print!("{LOCK_EXPLAIN}"),
+        Some("activate") => print!("{ACTIVATE_EXPLAIN}"),
         Some(unknown) => {
             anyhow::bail!("no explain entry for '{unknown}'; try `rwv explain` for the index");
         }

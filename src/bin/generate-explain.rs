@@ -131,6 +131,36 @@ fn verbs() -> Vec<Verb> {
             summary: "per-verb JIT reflection (this verb)",
             schema: None,
         },
+        Verb {
+            name: "workweave",
+            summary: "create, delete, or list workweaves for a project",
+            schema: None,
+        },
+        Verb {
+            name: "abort",
+            summary: "restore CWD workspace to its pre-sync state using savepoint refs",
+            schema: None,
+        },
+        Verb {
+            name: "add",
+            summary: "clone a repo and register it in the active project manifest",
+            schema: None,
+        },
+        Verb {
+            name: "remove",
+            summary: "remove a repo from the active project manifest",
+            schema: None,
+        },
+        Verb {
+            name: "lock",
+            summary: "snapshot current repo HEADs into rwv.lock (pure local; no network)",
+            schema: None,
+        },
+        Verb {
+            name: "activate",
+            summary: "set the active project, create symlinks, run integration install hooks",
+            schema: None,
+        },
     ]
 }
 
