@@ -263,11 +263,13 @@ tip and running `rwv lock` to re-pin.
 
 ### First-write-wins for pre-abort refs
 
-The pre-abort ref write uses `create_if_absent` semantics
-(`git update-ref --create-reflog` with a zero-SHA precondition for new
-refs). If the ref already exists from a prior abort attempt, the
-existing tip is preserved — the earlier capture is the more valuable
-one. This makes pre-abort-ref writes idempotent across abort retries.
+If a pre-abort ref already exists for this op (from a prior abort
+attempt), it is returned unchanged rather than overwritten — the
+earlier capture is the more valuable one, and by the time abort is
+re-run it may be the only remaining reference to that tip. This makes
+pre-abort-ref writes idempotent across abort retries. (Mechanically:
+the ref is resolved first and the write is skipped when it exists —
+see `Vcs::create_pre_abort_ref`.)
 
 ### Side-specific ref namespaces
 
