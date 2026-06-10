@@ -118,8 +118,10 @@ fn doctor_large_workspace_completes_under_budget() {
     // Budget: with the fix in place, a 40×5 workload completes in well
     // under 2s on developer hardware. The budget is set well above
     // that — the test exists primarily as a regression gate against
-    // future O(n²) blow-ups in the scan loop, not as a tight benchmark.
-    let budget = std::time::Duration::from_secs(8);
+    // future O(n²) blow-ups in the scan loop (the original regression
+    // was >30s at 81×13), not as a tight benchmark. 8s flaked on shared
+    // macOS CI runners (fo-f78ts4), hence the generous ceiling.
+    let budget = std::time::Duration::from_secs(30);
 
     let tmp = tempfile::tempdir().unwrap();
     let root = build_large_workspace(tmp.path(), n_repos, n_ww);
