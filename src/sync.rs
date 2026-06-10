@@ -8,7 +8,9 @@ use crate::lock::{commit_lock_file_with_message, generate_lock};
 use crate::manifest::{LockFile, Manifest, Project, ProjectName, RepoPath, Role, WorkweaveName};
 use crate::op_state::{self, LeaseRecord, OwnerRecord};
 use crate::parallel::run_in_parallel;
-use crate::vcs::{ConflictOp, RefName, ResolvedRevisionId, Vcs, VcsError, VcsErrorOutput};
+use crate::vcs::{
+    ConflictOp, RefName, ResolvedRevisionId, Vcs, VcsError, VcsErrorOutput, VerifiedRestoreOutcome,
+};
 use crate::workspace::{WorkspaceContext, WorkspaceLocation};
 use crate::workweave::workweave_path_for;
 use anyhow::Context;
@@ -2825,11 +2827,26 @@ fn regenerate_lock_phase3(
 // rwv abort
 // ---------------------------------------------------------------------------
 
-/// Execute `rwv abort` — restore CWD workspace to its pre-sync state.
+/// Execute `rwv abort` — verified-restore CWD workspace to its pre-sync state.
 ///
-/// Reads the op-state file (`.rwv-op`) to find the op-id and the involved
-/// workspaces. For `sync-to` ops, both CWD and the recorded target workspace
-/// are rolled back.
+/// Reads the op-state file (`.rwv-op`) to find the op-id, the involved
+/// workspaces, and the per-repo `converged_tips` recorded at relock. For
+/// `sync-to` ops, both CWD and the recorded target workspace are rolled
+/// back.
+///
+/// Two hardening rails (design § 5, fo-jsbr3i.4):
+///
+/// 1. **Pre-abort reference**: BEFORE restoring any repo, a durable
+///    [`Vcs::create_pre_abort_ref`] reference is written at the repo's
+///    current tip. The reference is never deleted by abort's cleanup —
+///    abort is itself information-preserving and undoable via the ref.
+/// 2. **HEAD-verified restore**: the `reset --hard` to the savepoint
+///    happens ONLY if the repo's current tip is attributable to the op
+///    (== savepoint, == recorded converged tip, or a VCS-native mid-op
+///    state). Anything else is reported with a named `foreign-tip`
+///    violation and recovery hints, and the repo's tip is left untouched.
+///    The op-state is RETAINED on a foreign-tip refusal so the operator
+///    can re-run `rwv abort` after manually reconciling.
 pub fn run_abort(cwd: &Path) -> anyhow::Result<()> {
     let ctx = WorkspaceContext::resolve(cwd, None)?;
     let workspace_dir = ctx.active_path().to_path_buf();
@@ -2837,7 +2854,7 @@ pub fn run_abort(cwd: &Path) -> anyhow::Result<()> {
     // resolve_to_owner follows a lease pointer if the workspace holds a lease,
     // so `rwv abort` invoked from either the owner or a leased workspace finds
     // the same full record. `workspace_dir` is still used for the repo scan below.
-    let (op_id, extra_workspace_dirs): (OpId, Vec<PathBuf>) =
+    let (op_id, owner_record, extra_workspace_dirs): (OpId, OwnerRecord, Vec<PathBuf>) =
         match op_state::resolve_to_owner(&workspace_dir)? {
             Some(resolved) => {
                 // For sync-to: also roll back the target (the leased) workspace.
@@ -2860,10 +2877,19 @@ pub fn run_abort(cwd: &Path) -> anyhow::Result<()> {
                 } else {
                     vec![]
                 };
-                (OpId::from_string(resolved.record.id), extras)
+                (
+                    OpId::from_string(resolved.record.id.clone()),
+                    resolved.record,
+                    extras,
+                )
             }
             None => anyhow::bail!("no operation in progress"),
         };
+    // `converged_tips` is the per-repo attributable-tip table. Keys: repo
+    // path string (e.g. `github/foo/bar`) for manifest repos, `"(project)"`
+    // for the project repo. Empty before relock completes — in that case the
+    // attributable set reduces to {savepoint, mid-op}.
+    let converged_tips = &owner_record.converged_tips;
 
     let cwd_project_name = find_project_name(&ctx)?;
     let cwd_project_dir = workspace_dir.join("projects").join(&cwd_project_name);
@@ -2875,6 +2901,7 @@ pub fn run_abort(cwd: &Path) -> anyhow::Result<()> {
         Project::from_dir_skip_lock(&cwd_project_dir).context("failed to load CWD project")?;
 
     let mut any_failure = false;
+    let mut any_foreign = false;
 
     // Restore CWD manifest repos first.
     for repo_path in cwd_project.manifest.iter_repo_paths() {
@@ -2882,21 +2909,33 @@ pub fn run_abort(cwd: &Path) -> anyhow::Result<()> {
         if !abs.exists() {
             continue;
         }
-        if let Err(e) = abort_one_repo(&abs, &op_id) {
-            eprintln!("  {repo_path}: {e}");
-            any_failure = true;
-        } else {
-            println!("  {repo_path}: restored");
+        let converged = converged_tips.get(repo_path.as_str()).map(String::as_str);
+        match abort_one_repo(&abs, &op_id, converged) {
+            Ok(outcome) => report_abort_outcome(repo_path.as_str(), &outcome, &mut any_foreign),
+            Err(e) => {
+                eprintln!("  {repo_path}: {e}");
+                any_failure = true;
+            }
         }
     }
 
     // Restore CWD project repo.
-    if let Err(e) = abort_one_repo(&cwd_project_dir, &op_id) {
-        eprintln!("  (project): {e}");
-        any_failure = true;
+    let project_converged = converged_tips.get("(project)").map(String::as_str);
+    match abort_one_repo(&cwd_project_dir, &op_id, project_converged) {
+        Ok(outcome) => report_abort_outcome("(project)", &outcome, &mut any_foreign),
+        Err(e) => {
+            eprintln!("  (project): {e}");
+            any_failure = true;
+        }
     }
 
     // For sync-to: also roll back repos in the extra (target) workspaces.
+    // The target side does not have its own `converged_tips` entries — the
+    // recorded tips key off the source-side workspace's repo paths. For
+    // target-side repos, fall back to looking up by the same repo_path
+    // (typically identical across source/target via shared object stores);
+    // a target tip that diverged from the source convergence will surface
+    // as a foreign-tip refusal, which is the desired behavior.
     for extra_dir in &extra_workspace_dirs {
         // Resolve the target workspace's project context. Best-effort: if the
         // project name cannot be determined, skip with a warning.
@@ -2932,19 +2971,35 @@ pub fn run_abort(cwd: &Path) -> anyhow::Result<()> {
                     if !abs.exists() {
                         continue;
                     }
-                    if let Err(e) = abort_one_repo(&abs, &op_id) {
-                        eprintln!("  [target] {repo_path}: {e}");
-                        any_failure = true;
-                    } else {
-                        println!("  [target] {repo_path}: restored");
+                    let converged = converged_tips.get(repo_path.as_str()).map(String::as_str);
+                    match abort_one_repo(&abs, &op_id, converged) {
+                        Ok(outcome) => report_abort_outcome(
+                            &format!("[target] {repo_path}"),
+                            &outcome,
+                            &mut any_foreign,
+                        ),
+                        Err(e) => {
+                            eprintln!("  [target] {repo_path}: {e}");
+                            any_failure = true;
+                        }
                     }
                 }
-                if let Err(e) = abort_one_repo(&extra_project_dir, &op_id) {
-                    eprintln!("  [target] (project): {e}");
-                    any_failure = true;
+                let extra_project_converged = converged_tips.get("(project)").map(String::as_str);
+                match abort_one_repo(&extra_project_dir, &op_id, extra_project_converged) {
+                    Ok(outcome) => {
+                        report_abort_outcome("[target] (project)", &outcome, &mut any_foreign)
+                    }
+                    Err(e) => {
+                        eprintln!("  [target] (project): {e}");
+                        any_failure = true;
+                    }
                 }
-                // Remove op-state from the extra workspace (owner record or lease).
-                op_state::clear_all_at(&extra_ws_dir);
+                // Clear op-state from the extra workspace only when this side
+                // completed without a foreign-tip refusal — otherwise the
+                // operator may want to re-run abort after reconciling.
+                if !any_foreign && !any_failure {
+                    op_state::clear_all_at(&extra_ws_dir);
+                }
             }
             Err(e) => {
                 eprintln!(
@@ -2955,9 +3010,23 @@ pub fn run_abort(cwd: &Path) -> anyhow::Result<()> {
         }
     }
 
-    // Remove op-state from CWD workspace (owner record or lease).
-    op_state::clear_all_at(&workspace_dir);
+    // Clear op-state from CWD workspace only on a fully clean abort. If any
+    // repo refused (foreign tip) or errored, retain op-state so the operator
+    // can re-run `rwv abort` after manually reconciling the divergence.
+    if !any_foreign && !any_failure {
+        op_state::clear_all_at(&workspace_dir);
+    } else if any_foreign {
+        eprintln!(
+            "abort refused on at least one repo (foreign-tip violation); \
+             op-state retained at {} so you can re-run `rwv abort` after \
+             reconciling.",
+            workspace_dir.display()
+        );
+    }
 
+    if any_foreign {
+        anyhow::bail!("abort refused: foreign tip on at least one repo");
+    }
     if any_failure {
         anyhow::bail!("abort completed with failures");
     }
@@ -2965,19 +3034,90 @@ pub fn run_abort(cwd: &Path) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn abort_one_repo(repo: &Path, op_id: &OpId) -> anyhow::Result<()> {
-    // Cancel any VCS-native in-flight op (rebase/merge/cherry-pick). No-op
-    // when the repo is clean.
-    GitVcs.cancel_in_flight_op(repo);
-
-    // Restore to savepoint. `Vcs::restore_savepoint` is the operation's
-    // contract — when present, it hard-resets HEAD to the captured SHA
-    // and drops the savepoint ref atomically. Returns Ok(false) when no
-    // savepoint exists for this repo (nothing to restore).
+/// Restore a single repo as part of `rwv abort`.
+///
+/// Two rails (design § 5):
+///
+/// 1. **Pre-abort ref**: a durable reference at the repo's current tip is
+///    written *before* any restore is attempted — abort is itself
+///    information-preserving and undoable via that ref.
+/// 2. **HEAD-verified restore**: the destructive `reset --hard` to the
+///    savepoint is gated on the current tip being attributable to the op
+///    (== savepoint, == recorded converged tip, or mid-op). Anything else
+///    is reported as foreign, not reset.
+fn abort_one_repo(
+    repo: &Path,
+    op_id: &OpId,
+    recorded_converged_tip: Option<&str>,
+) -> anyhow::Result<VerifiedRestoreOutcome> {
+    // Rail 1: write the pre-abort ref BEFORE any verified restore. Even if
+    // the verified restore decides to refuse, the tip is durably captured
+    // so the operator can roll the branch back later if desired.
+    //
+    // Best-effort: if writing the pre-abort ref fails, surface as an error
+    // and continue with the verified restore — but only if we can determine
+    // the failure is benign. Today we propagate the error: failing to
+    // preserve information is itself a violation of the doctrine.
     GitVcs
-        .restore_savepoint(repo, op_id.as_str())
-        .context("restore savepoint failed")?;
-    Ok(())
+        .create_pre_abort_ref(repo, op_id.as_str())
+        .context("create pre-abort ref failed")?;
+
+    // Rail 2: HEAD-verified restore. `verified_restore_savepoint` performs
+    // the classification + restore-if-attributable atomically; foreign tips
+    // are returned as `ForeignTip` for the caller to report.
+    GitVcs
+        .verified_restore_savepoint(repo, op_id.as_str(), recorded_converged_tip)
+        .context("verified restore failed")
+}
+
+/// Print the per-repo abort outcome line and update the `any_foreign` flag
+/// when the repo's tip was refused. Centralised here so the run_abort body
+/// stays readable and the violation wording is uniform across CWD and
+/// target repos.
+fn report_abort_outcome(label: &str, outcome: &VerifiedRestoreOutcome, any_foreign: &mut bool) {
+    match outcome {
+        VerifiedRestoreOutcome::NoSavepoint => {
+            // Nothing to roll back here — typically a repo that pre-dates
+            // the op's per-repo savepoint creation. Don't spam output.
+            println!("  {label}: no savepoint (skipped)");
+        }
+        VerifiedRestoreOutcome::Untouched => {
+            println!("  {label}: untouched (tip == savepoint)");
+        }
+        VerifiedRestoreOutcome::RestoredFromConverged => {
+            println!("  {label}: restored (from recorded converged tip)");
+        }
+        VerifiedRestoreOutcome::RestoredFromMidOp => {
+            println!("  {label}: restored (from mid-op state)");
+        }
+        VerifiedRestoreOutcome::ForeignTip {
+            observed_tip,
+            savepoint,
+            recorded_converged_tip,
+            pre_abort_ref,
+        } => {
+            *any_foreign = true;
+            let converged_text = match recorded_converged_tip {
+                Some(c) => format!("recorded converged tip: {c}"),
+                None => "no converged tip recorded (op crashed before relock)".to_string(),
+            };
+            eprintln!(
+                "  {label}: foreign-tip violation — refusing to reset.\n\
+                 \tobserved tip: {observed_tip}\n\
+                 \texpected one of: savepoint {savepoint}, {converged_text}, or a VCS-native mid-op state\n\
+                 \tthe tip has been preserved at {ref_label} (in case you want to keep it).\n\
+                 \trecovery options:\n\
+                 \t  - if a foreign agent advanced this branch after a crash, manually move the branch back \
+                       (e.g. `git update-ref refs/heads/<branch> {savepoint}`) and re-run `rwv abort`.\n\
+                 \t  - if the op had just converged this repo before crashing and the tip is the intended \
+                       lock target, accept it and run `rwv lock` to re-pin (note: this side-steps verified \
+                       restore — you are taking responsibility for the divergence).\n\
+                 \t  - if you want to keep the foreign tip and discard the op, move the branch off the \
+                       pre-abort ref and delete the savepoint manually.",
+                ref_label = pre_abort_ref.label,
+            );
+        }
+    }
 }
 
 /// Run `rwv sync --json`.
