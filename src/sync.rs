@@ -650,13 +650,22 @@ fn target_savepoint_id(op_id: &OpId) -> String {
 }
 
 /// The recovery instruction differs by side: source's lock is committed
-/// upstream from the operator's perspective ("Run `rwv lock` in the source
-/// workspace and commit before syncing"), destination's is right here
-/// ("Run `rwv lock` to refresh before syncing").
-fn lock_recovery(side: Side) -> &'static str {
+/// upstream from the operator's perspective ("Run `rwv lock --project <p>` in
+/// the source workspace and commit before syncing"), destination's is right here
+/// ("Run `rwv lock --project <p>` to refresh before syncing").
+///
+/// `project_name` is the project the refusing sync was operating on; spelling
+/// it in the hint avoids the footgun where the operator runs bare `rwv lock`
+/// and locks the *active* project (which may differ from the project that was
+/// refused).
+fn lock_recovery(side: Side, project_name: &str) -> String {
     match side {
-        Side::Source => "Run `rwv lock` in the source workspace and commit before syncing",
-        Side::Destination => "Run `rwv lock` to refresh before syncing",
+        Side::Source => format!(
+            "Run `rwv lock --project {project_name}` in the source workspace and commit before syncing"
+        ),
+        Side::Destination => format!(
+            "Run `rwv lock --project {project_name}` to refresh before syncing"
+        ),
     }
 }
 
@@ -665,6 +674,7 @@ fn check_lock_freshness(
     lock: &LockFile,
     side: Side,
     workspace_name: &str,
+    project_name: &str,
 ) -> anyhow::Result<()> {
     // Resolve lock entries against on-disk repos so the comparison below is
     // purely a canonical-SHA equality check. Tag-form entries (e.g. v0.3.4)
@@ -673,7 +683,7 @@ fn check_lock_freshness(
     if let Some((repo_path, raw_version)) = failures.first() {
         let raw = raw_version.as_str().to_string();
         let side_str = side.as_str();
-        let recovery = lock_recovery(side);
+        let recovery = lock_recovery(side, project_name);
         anyhow::bail!(
             "lock-freshness precondition failed: {side_str} workspace '{workspace_name}' lock \
              references unknown revision {raw} for {repo_path}.\n\
@@ -692,7 +702,7 @@ fn check_lock_freshness(
         if let Ok(actual) = GitVcs.head_revision(&abs) {
             if actual != lock_entry.version {
                 let side_str = side.as_str();
-                let recovery = lock_recovery(side);
+                let recovery = lock_recovery(side, project_name);
                 anyhow::bail!(
                     "lock-freshness precondition failed: {side_str} workspace '{workspace_name}' \
                      has a stale lock — {repo_path} tip={actual} doesn't match \
@@ -1616,7 +1626,7 @@ fn guard_and_mark<'a>(
 
     // source_workspace_dir is the operator's arg for both verbs (sync's <src>
     // and sync-to's <tgt> — replay pulls from there in either case).
-    let (source_project_dir, source_workspace_name) = {
+    let (source_project_dir, source_workspace_name, source_project_name) = {
         let override_arg = match verb {
             MachineVerb::Sync => other_project_override.clone(),
             // For sync-to, the target workspace must resolve to CWD's project.
@@ -1625,7 +1635,7 @@ fn guard_and_mark<'a>(
         let source_ctx = WorkspaceContext::resolve(&source_workspace_dir, override_arg)?;
         let pname = find_project_name(&source_ctx)?;
         let dir = source_ctx.active_path().join("projects").join(&pname);
-        (dir, workspace_name(&source_ctx))
+        (dir, workspace_name(&source_ctx), pname)
     };
 
     // dest_project_dir is where the terminal write lands.
@@ -1691,6 +1701,7 @@ fn guard_and_mark<'a>(
             &snapshot.raw_source_lock,
             Side::Source,
             &source_workspace_name,
+            source_project_name.as_str(),
         )?;
         if let Some(ref lock) = cwd_project.lock {
             check_lock_freshness(
@@ -1698,6 +1709,7 @@ fn guard_and_mark<'a>(
                 lock,
                 Side::Destination,
                 &cwd_workspace_name_str,
+                cwd_project_name.as_str(),
             )?;
         }
     }

@@ -825,7 +825,9 @@ fn sync_other_direction_first_unblocks_a_refused_backward_sync() {
 
 /// Lock-freshness error names the source workspace, the recovery path, and
 /// the --allow-stale-lock override. Does NOT mention the old `--force` flag
-/// (removed per bead fo-jsbr3i.6).
+/// (removed per bead fo-jsbr3i.6). Per fo-mxw3ew: recovery hint includes
+/// `--project <p>` so the operator locks the right project even when the
+/// active project differs from the one being synced.
 #[test]
 fn lock_freshness_source_error_names_workspace_and_recovery_path() {
     let tmp = tempfile::tempdir().unwrap();
@@ -858,6 +860,12 @@ fn lock_freshness_source_error_names_workspace_and_recovery_path() {
         stderr.contains("rwv lock"),
         "expected named recovery (`rwv lock`); got: {stderr}"
     );
+    // fo-mxw3ew: refusal must spell `--project <p>` so bare `rwv lock`
+    // doesn't accidentally lock the wrong (active) project.
+    assert!(
+        stderr.contains("--project web-app"),
+        "lock-freshness error must name --project <p> in recovery hint; got: {stderr}"
+    );
     // Refusal must name the --allow-stale-lock override that opens this door.
     assert!(
         stderr.contains("--allow-stale-lock"),
@@ -871,7 +879,9 @@ fn lock_freshness_source_error_names_workspace_and_recovery_path() {
 
 /// Lock-freshness destination error names the destination workspace, the
 /// recovery path, and the --allow-stale-lock override. Does NOT mention
-/// the old `--force` flag (removed per bead fo-jsbr3i.6).
+/// the old `--force` flag (removed per bead fo-jsbr3i.6). Per fo-mxw3ew:
+/// recovery hint includes `--project <p>` so the operator locks the right
+/// project even when the active project differs from the one being synced.
 #[test]
 fn lock_freshness_destination_error_names_workspace_and_recovery_path() {
     let tmp = tempfile::tempdir().unwrap();
@@ -903,6 +913,12 @@ fn lock_freshness_destination_error_names_workspace_and_recovery_path() {
     assert!(
         stderr.contains("rwv lock"),
         "expected named recovery (`rwv lock`); got: {stderr}"
+    );
+    // fo-mxw3ew: refusal must spell `--project <p>` so bare `rwv lock`
+    // doesn't accidentally lock the wrong (active) project.
+    assert!(
+        stderr.contains("--project web-app"),
+        "lock-freshness error must name --project <p> in recovery hint; got: {stderr}"
     );
     // Refusal must name the --allow-stale-lock override that opens this door.
     assert!(
