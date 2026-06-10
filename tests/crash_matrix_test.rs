@@ -1005,6 +1005,59 @@ fn cell_e_replay_sync_to_lease_abort() {
     );
 }
 
+/// Regression (fo-xau023): op records hold operator-supplied paths verbatim,
+/// which may reach a workspace through a symlink (macOS's `/var` →
+/// `/private/var` tempdirs, symlinked weaveroots), while the invocation CWD
+/// resolves canonically. Abort's workspace-identity comparisons must be
+/// canonical — textual comparison restores the lease-side repos under the
+/// wrong savepoint namespace and refuses with a spurious foreign-tip
+/// violation. Same cell as `cell_e_replay_sync_to_lease_abort`, with every
+/// recorded path routed through a symlink.
+#[test]
+fn cell_e_replay_sync_to_lease_abort_with_symlinked_record_paths() {
+    let tmp = tempfile::tempdir().unwrap();
+    let real = tmp.path().join("real");
+    std::fs::create_dir_all(&real).unwrap();
+    let link = tmp.path().join("link");
+    std::os::unix::fs::symlink(&real, &link).unwrap();
+
+    let (primary, ww, _ww_server_tip, _ww_project_tip) = make_ww_ahead_sync_to(&real);
+    let ww_alias = link.join("ww");
+    let primary_alias = link.join("primary");
+
+    let ww_server_pre = git_out(&["rev-parse", "HEAD"], &ww.server_dir);
+    let primary_server_pre = git_out(&["rev-parse", "HEAD"], &primary.server_dir);
+
+    let op_id = "crash-matrix-e-replay-syncto-lease-abort-symlink";
+    plant_owner_record(
+        &ww.root,
+        &OwnerRecordYaml {
+            id: op_id.to_owned(),
+            verb_str: PlantedVerb::SyncTo.yaml(),
+            source: ww_alias.display().to_string(),
+            target: primary_alias.display().to_string(),
+            phase: "replay",
+            ..Default::default()
+        },
+    );
+    plant_lease(&primary.root, &ww_alias, op_id);
+    plant_savepoint(&ww.project_dir, op_id);
+    plant_savepoint(&ww.server_dir, op_id);
+    let target_id = target_op_id(op_id);
+    plant_savepoint(&primary.project_dir, &target_id);
+    plant_savepoint(&primary.server_dir, &target_id);
+
+    // Invoke abort FROM THE LEASE via its canonical path.
+    run_abort_ok(&primary.root, "E(replay)/sync-to/lease/abort/symlink");
+    assert_sync_to_aborted_clean(
+        &primary,
+        &ww,
+        &ww_server_pre,
+        &primary_server_pre,
+        "E(replay)/sync-to/lease/abort/symlink",
+    );
+}
+
 // --- M(replay), sync-to (owner-side) — one repo converged, one not ----------
 
 /// Cell `M(replay) / sync-to / owner-side`: record=replay, the server repo

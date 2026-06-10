@@ -2962,6 +2962,20 @@ fn regenerate_lock_phase3(
 // rwv abort
 // ---------------------------------------------------------------------------
 
+/// Workspace identity comparison for abort: canonicalize both sides
+/// (fall back to the raw path when canonicalization fails, e.g. the
+/// workspace was deleted). Op records hold operator-supplied paths
+/// verbatim (`SyncSource::Path` does not canonicalize), so a recorded
+/// path may reach the same workspace through a symlink — e.g. macOS's
+/// `/var` → `/private/var` tempdirs, or a symlinked weaveroot — while
+/// `WorkspaceContext::resolve` always canonicalizes. Textual comparison
+/// would misclassify the workspace and pick the wrong savepoint namespace.
+fn same_workspace(a: &Path, b: &Path) -> bool {
+    let ca = a.canonicalize().unwrap_or_else(|_| a.to_path_buf());
+    let cb = b.canonicalize().unwrap_or_else(|_| b.to_path_buf());
+    ca == cb
+}
+
 /// Execute `rwv abort` — verified-restore CWD workspace to its pre-sync state.
 ///
 /// Reads the op-state file (`.rwv-op`) to find the op-id, the involved
@@ -3001,7 +3015,7 @@ pub fn run_abort(cwd: &Path) -> anyhow::Result<()> {
                     // from the owner, and the owner's target regardless.
                     let mut extras = Vec::new();
                     // Always include the target workspace if we're at the owner.
-                    if resolved.owner_workspace == workspace_dir {
+                    if same_workspace(&resolved.owner_workspace, &workspace_dir) {
                         extras.push(resolved.record.target.clone());
                     } else {
                         // Invoked from the lease workspace: include the owner workspace
@@ -3034,7 +3048,9 @@ pub fn run_abort(cwd: &Path) -> anyhow::Result<()> {
     // invocation side — abort may be invoked from either workspace, which
     // inverts the cwd/extras loop-to-workspace mapping.
     let restore_id_for = |ws: &Path| -> OpId {
-        if owner_record.verb == crate::op_state::OpVerb::SyncTo && ws == owner_record.target {
+        if owner_record.verb == crate::op_state::OpVerb::SyncTo
+            && same_workspace(ws, &owner_record.target)
+        {
             OpId::from_string(target_savepoint_id(&op_id))
         } else {
             op_id.clone()
