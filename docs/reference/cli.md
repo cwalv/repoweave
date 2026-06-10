@@ -207,7 +207,7 @@ Workweaves live at `<parent>/.workweaves/<project>--<name>/`.
 
 ### `rwv workweave <project> delete <name> [--force]`
 
-Delete a workweave. Default refuses if any worktree is dirty; `--force` bypasses.
+Delete a workweave. Default refuses if any worktree is dirty, or holds commits contained in neither the workweave's recorded parent nor the primary weave (work in a nested workweave counts as merged once its parent has it); `--force` bypasses both checks.
 
 ### `rwv workweave <project> list`
 

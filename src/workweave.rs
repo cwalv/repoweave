@@ -389,11 +389,12 @@ pub fn create_workweave(
                 // Uncommitted changes plus committed-but-unmerged work —
                 // both are destroyed by the replace.
                 let mut paths = collect_dirty_paths(&workweave_dir, project, &manifest);
+                let baselines = merge_baselines(&workweave_dir, primary_root);
                 paths.extend(collect_diverged_paths(
                     &workweave_dir,
-                    primary_root,
                     project,
                     &manifest,
+                    &baselines,
                 ));
                 paths
             } else {
@@ -848,49 +849,83 @@ pub fn collect_dirty_paths(
     dirty
 }
 
+/// Merge baselines for a workweave: workspace roots whose lineage counts as
+/// "this work has landed". The recorded parent (the workspace the workweave
+/// was forked from, and the default sync-to target) comes first when the
+/// marker is readable and the path still exists; the primary weave root is
+/// always included. In nested choreography a child workweave's work lands
+/// in its parent workweave and may reach primary only when the whole epic
+/// ships — checking primary alone would refuse every child retire.
+fn merge_baselines(workweave_dir: &Path, ws_root: &Path) -> Vec<PathBuf> {
+    let mut baselines: Vec<PathBuf> = Vec::new();
+    if let Ok(Some(marker)) = WorkweaveMarker::read(workweave_dir) {
+        if marker.parent.exists() && marker.parent != ws_root {
+            baselines.push(marker.parent);
+        }
+    }
+    baselines.push(ws_root.to_path_buf());
+    baselines
+}
+
 /// Walk the workweave's repos and report those whose worktree HEAD holds
-/// commits not reachable from the canonical repo's HEAD under `ws_root`.
+/// commits not reachable from the same repo's HEAD in ANY of the `baselines`
+/// (see [`merge_baselines`]).
 ///
 /// Deleting such a workweave destroys committed work: the ephemeral-branch
-/// cleanup force-deletes the only ref pointing at those commits. A repo
-/// whose HEADs cannot be read is reported as diverged (conservative: "we
-/// couldn't confirm safe").
+/// cleanup force-deletes the only ref pointing at those commits. A worktree
+/// whose HEAD cannot be read is reported as diverged (conservative: "we
+/// couldn't confirm safe"); a repo present in no baseline at all is skipped,
+/// matching the dirty check's missing-repo behavior.
 fn collect_diverged_paths(
     workweave_dir: &Path,
-    ws_root: &Path,
     project: &ProjectName,
     manifest: &Manifest,
+    baselines: &[PathBuf],
 ) -> Vec<String> {
     let mut diverged = Vec::new();
 
-    let mut check = |wt: &Path, canonical: &Path, label: String| {
-        if !wt.exists() || !GitVcs.is_repo(canonical) {
+    let mut check = |wt: &Path, rel: &Path, label: String| {
+        if !wt.exists() {
             return;
         }
-        match (GitVcs.head_revision(wt), GitVcs.head_revision(canonical)) {
-            (Ok(w), Ok(c)) => {
-                if w != c && !GitVcs::is_ancestor(wt, w.as_str(), c.as_str()) {
-                    diverged.push(label);
+        let wt_head = match GitVcs.head_revision(wt) {
+            Ok(h) => h,
+            Err(e) => {
+                diverged.push(format!("{label}: HEAD check failed: {e}"));
+                return;
+            }
+        };
+        let mut candidates = 0;
+        for base in baselines {
+            let canonical = base.join(rel);
+            if !GitVcs.is_repo(&canonical) {
+                continue;
+            }
+            candidates += 1;
+            if let Ok(c) = GitVcs.head_revision(&canonical) {
+                if wt_head == c || GitVcs::is_ancestor(wt, wt_head.as_str(), c.as_str()) {
+                    return; // vouched: this baseline contains the work
                 }
             }
-            _ => diverged.push(format!("{label}: HEAD check failed")),
+        }
+        if candidates > 0 {
+            diverged.push(label);
         }
     };
 
-    let project_wt = workweave_dir.join("projects").join(project.as_str());
+    let project_rel = Path::new("projects").join(project.as_str());
+    let project_wt = workweave_dir.join(&project_rel);
     if GitVcs.is_repo(&project_wt) {
-        let project_canonical = ws_root.join("projects").join(project.as_str());
         check(
             &project_wt,
-            &project_canonical,
+            &project_rel,
             format!("projects/{}", project.as_str()),
         );
     }
 
     for (repo_path, _entry) in manifest.iter_entries() {
         let wt = workweave_dir.join(repo_path.as_path());
-        let canonical = ws_root.join(repo_path.as_path());
-        check(&wt, &canonical, repo_path.as_str().to_string());
+        check(&wt, repo_path.as_path(), repo_path.as_str().to_string());
     }
 
     diverged
@@ -958,13 +993,21 @@ pub fn delete_workweave(
         }
         // Committed-but-unmerged work is just as lost as uncommitted work:
         // the ephemeral-branch cleanup below force-deletes the only ref to
-        // those commits.
-        let diverged = collect_diverged_paths(&workweave_dir, ws_root, project, &manifest);
+        // those commits. Work counts as merged when its recorded parent OR
+        // the primary weave contains it (nested workweaves land in their
+        // parent first).
+        let baselines = merge_baselines(&workweave_dir, ws_root);
+        let diverged = collect_diverged_paths(&workweave_dir, project, &manifest, &baselines);
         if !diverged.is_empty() {
             bail!(
-                "workweave {} has commits not merged into the primary repos; \
+                "workweave {} has commits not merged into {}; \
                  refusing to delete without --force:\n  {}",
                 name.as_str(),
+                baselines
+                    .iter()
+                    .map(|p| p.display().to_string())
+                    .collect::<Vec<_>>()
+                    .join(" or "),
                 diverged.join("\n  ")
             );
         }

@@ -992,3 +992,175 @@ fn sync_succeeds_when_primary_rwv_active_differs_from_workweave_project() {
 
     let _ = initial_sha;
 }
+
+// ---------------------------------------------------------------------------
+// Nested workweaves: a workweave created from a workweave lands its work in
+// the PARENT workweave, not primary. The delete/retire merged-check must
+// accept parent-contained work — checking primary alone would refuse every
+// child retire until the whole epic ships.
+// ---------------------------------------------------------------------------
+
+/// Primary (manifest+lock committed) plus a parent workweave forked from it
+/// and a child workweave forked from the parent, both via the real CLI so
+/// `.rwv-workweave` markers record the fork lineage.
+fn make_nested_workweaves(parent_tmp: &Path) -> (Workspace, PathBuf, PathBuf, PathBuf, String) {
+    let primary_root = parent_tmp.join("primary");
+    std::fs::create_dir_all(primary_root.join("github/example")).unwrap();
+    std::fs::create_dir_all(primary_root.join("projects")).unwrap();
+
+    let primary_server = primary_root.join(SERVER_PATH);
+    let sha = init_repo(&primary_server);
+
+    let primary_project = primary_root.join("projects/web-app");
+    init_repo(&primary_project);
+    std::fs::write(
+        primary_project.join(".gitattributes"),
+        "rwv.lock merge=ours\n",
+    )
+    .unwrap();
+    write_manifest(&primary_project, &[(SERVER_PATH, SERVER_URL)]);
+    write_lock(&primary_project, &[(SERVER_PATH, SERVER_URL, &sha)]);
+    git(
+        &["add", ".gitattributes", "rwv.yaml", "rwv.lock"],
+        &primary_project,
+    );
+    git(&["commit", "-m", "lock: initial"], &primary_project);
+    std::fs::write(primary_root.join(".rwv-active"), "web-app\n").unwrap();
+
+    let weaveroot = parent_tmp.join(".workweaves");
+    std::fs::create_dir_all(&weaveroot).unwrap();
+
+    rwv()
+        .args(["workweave", "web-app", "create", "parent"])
+        .env("RWV_WORKWEAVE_DIR", &weaveroot)
+        .current_dir(&primary_root)
+        .assert()
+        .success();
+    let parent_ww = weaveroot.join("web-app--parent");
+
+    rwv()
+        .args([
+            "workweave",
+            "web-app",
+            "create",
+            "child",
+            "--from",
+            &parent_ww.to_string_lossy(),
+        ])
+        .env("RWV_WORKWEAVE_DIR", &weaveroot)
+        .current_dir(&primary_root)
+        .assert()
+        .success();
+    let child_ww = weaveroot.join("web-app--child");
+
+    (
+        Workspace {
+            root: primary_root,
+            project_dir: primary_project,
+            server_dir: primary_server,
+        },
+        weaveroot,
+        parent_ww,
+        child_ww,
+        sha,
+    )
+}
+
+#[test]
+fn nested_workweave_naked_sync_to_retire_lands_in_parent() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (primary, weaveroot, parent_ww, child_ww, initial_sha) = make_nested_workweaves(tmp.path());
+
+    // Work lands in the child, lock bumped and committed (the documented
+    // pre-sync step; sync-to refuses on a stale lock).
+    let c2 = make_commit(
+        &child_ww.join(SERVER_PATH),
+        "feature.txt",
+        "child work\n",
+        "child: feature",
+    );
+    let child_project = child_ww.join("projects/web-app");
+    write_lock(&child_project, &[(SERVER_PATH, SERVER_URL, &c2)]);
+    git(&["add", "rwv.lock"], &child_project);
+    git(&["commit", "-m", "lock: child advance"], &child_project);
+
+    // Naked sync-to --retire: the target defaults to the recorded parent
+    // (the parent workweave), and retire must accept the work as merged
+    // once the parent has it.
+    rwv()
+        .args(["sync-to", "--retire"])
+        .env("RWV_WORKWEAVE_DIR", &weaveroot)
+        .current_dir(&child_ww)
+        .assert()
+        .success();
+
+    assert_eq!(
+        git_out(&["rev-parse", "HEAD"], &parent_ww.join(SERVER_PATH)),
+        c2,
+        "parent workweave should hold the child's work after retire"
+    );
+    assert!(
+        !child_ww.exists(),
+        "child workweave should be deleted by --retire"
+    );
+    assert_eq!(
+        git_out(&["rev-parse", "HEAD"], &primary.server_dir),
+        initial_sha,
+        "primary stays untouched until the parent itself syncs home"
+    );
+}
+
+#[test]
+fn nested_workweave_delete_refuses_only_on_truly_unmerged_work() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (primary, weaveroot, _parent_ww, child_ww, _initial_sha) =
+        make_nested_workweaves(tmp.path());
+
+    let c2 = make_commit(
+        &child_ww.join(SERVER_PATH),
+        "feature.txt",
+        "child work\n",
+        "child: feature",
+    );
+    let child_project = child_ww.join("projects/web-app");
+    write_lock(&child_project, &[(SERVER_PATH, SERVER_URL, &c2)]);
+    git(&["add", "rwv.lock"], &child_project);
+    git(&["commit", "-m", "lock: child advance"], &child_project);
+
+    // Unsynced child work: plain delete must refuse and name what it
+    // compared against.
+    let err_output = rwv()
+        .args(["workweave", "web-app", "delete", "child"])
+        .env("RWV_WORKWEAVE_DIR", &weaveroot)
+        .current_dir(&primary.root)
+        .assert()
+        .failure()
+        .get_output()
+        .clone();
+    let stderr = String::from_utf8_lossy(&err_output.stderr);
+    assert!(
+        stderr.contains("not merged") && stderr.contains(SERVER_PATH),
+        "delete must refuse on truly unmerged child work; got:\n{stderr}"
+    );
+    assert_eq!(
+        git_out(&["rev-parse", "HEAD"], &child_ww.join(SERVER_PATH)),
+        c2,
+        "child must be untouched after the refusal"
+    );
+
+    // Land the work in the parent (naked sync-to, no retire); plain delete
+    // then succeeds without --force.
+    rwv()
+        .args(["sync-to"])
+        .env("RWV_WORKWEAVE_DIR", &weaveroot)
+        .current_dir(&child_ww)
+        .assert()
+        .success();
+    rwv()
+        .args(["workweave", "web-app", "delete", "child"])
+        .env("RWV_WORKWEAVE_DIR", &weaveroot)
+        .current_dir(&primary.root)
+        .assert()
+        .success();
+    assert!(!child_ww.exists());
+}

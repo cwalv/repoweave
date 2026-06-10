@@ -242,8 +242,10 @@ workweave on success. The orchestration is three steps, not one:
    step 1; the parent's lock is regenerated to match.
 
 Then, if all three steps succeed: verify no worktree in the workweave
-has uncommitted changes, then delete the workweave (worktrees + ephemeral
-branches + directory).
+has uncommitted changes and that every worktree's commits are contained
+in the workweave's recorded parent or the primary weave (for a nested
+workweave the parent is the one that just absorbed the work), then
+delete the workweave (worktrees + ephemeral branches + directory).
 
 If any step hits a conflict, the workweave is preserved and multi-step
 op-state is written so the operation can be resumed. The operator
