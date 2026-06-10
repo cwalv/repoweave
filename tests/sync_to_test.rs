@@ -481,12 +481,14 @@ fn sync_to_conflict_leaves_op_state_in_both_workspaces() {
     git(&["commit", "-m", "lock: ww conflict"], &ww.project_dir);
 
     // Run sync-to; expect failure due to conflict in step 1.
+    // --allow-stale-lock replaces the removed --force for bypassing
+    // the lock-freshness precondition (adapted per bead fo-jsbr3i.6).
     let assert = rwv()
         .args([
             "sync-to",
             &primary.root.to_string_lossy(),
             "--strategy=rebase",
-            "--force", // bypass lock-freshness
+            "--allow-stale-lock", // bypass lock-freshness
         ])
         .current_dir(&ww.root)
         .assert();

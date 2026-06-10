@@ -454,11 +454,17 @@ fn sync_json_failed_outcome_has_stable_kebab_kind() {
     git(&["add", "rwv.lock"], &ww.project_dir);
     git(&["commit", "-m", "lock: ww"], &ww.project_dir);
 
-    // --force bypasses Phase 1 ancestor check so the ff failure surfaces
-    // in Phase 2 (where the per-repo outcome is produced) rather than
-    // failing fast pre-outcome-generation.
+    // --discard-local-commits bypasses Phase 1 ancestor check so the ff
+    // failure surfaces in Phase 2 (where the per-repo outcome is produced)
+    // rather than failing fast pre-outcome-generation.
+    // (Adapted from --force per bead fo-jsbr3i.6.)
     let assert = rwv()
-        .args(["sync", &primary.root.to_string_lossy(), "--json", "--force"])
+        .args([
+            "sync",
+            &primary.root.to_string_lossy(),
+            "--json",
+            "--discard-local-commits",
+        ])
         .current_dir(&ww.root)
         .assert()
         .failure();
@@ -503,28 +509,38 @@ fn sync_json_failed_outcome_has_stable_kebab_kind() {
     );
 }
 
-/// `sync --force` consents to discarding committed divergence (recoverable
-/// via the pre-op savepoint), not uncommitted work — a dirty CWD project
-/// repo must refuse before any side effects, and the content must survive.
+/// `sync --discard-local-commits` consents to discarding committed divergence
+/// (recoverable via the pre-op savepoint), not uncommitted work — a dirty
+/// CWD project repo must refuse before any side effects, and the content must
+/// survive. (Adapted from sync_force_refuses_when_cwd_project_dirty per bead
+/// fo-jsbr3i.6 — same end-state assertions, new flag spelling.)
 #[test]
-fn sync_force_refuses_when_cwd_project_dirty() {
+fn sync_discard_local_commits_refuses_when_cwd_project_dirty() {
     let tmp = tempfile::tempdir().unwrap();
     let (primary, ww, _sha) = make_shared(tmp.path());
 
-    // Uncommitted edit in ww's project repo — the file --force's hard-reset
-    // would have destroyed.
+    // Uncommitted edit in ww's project repo — the file --discard-local-commits'
+    // hard-reset would have destroyed.
     std::fs::write(ww.project_dir.join("README.md"), "uncommitted edit\n").unwrap();
     let tip_before = git_out(&["rev-parse", "HEAD"], &ww.project_dir);
 
     let assert = rwv()
-        .args(["sync", &primary.root.to_string_lossy(), "--force"])
+        .args([
+            "sync",
+            &primary.root.to_string_lossy(),
+            "--discard-local-commits",
+        ])
         .current_dir(&ww.root)
         .assert()
         .failure();
     let stderr = String::from_utf8_lossy(&assert.get_output().stderr).into_owned();
     assert!(
-        stderr.contains("uncommitted changes"),
-        "sync --force must name the dirty-project precondition; got:\n{stderr}"
+        stderr.contains("uncommitted"),
+        "sync --discard-local-commits must name the dirty-project precondition; got:\n{stderr}"
+    );
+    assert!(
+        !stderr.contains("--force"),
+        "refusal must not mention removed --force flag; got:\n{stderr}"
     );
 
     assert_eq!(
@@ -539,12 +555,16 @@ fn sync_force_refuses_when_cwd_project_dirty() {
     );
 
     // No op-state left behind, and the precondition is satisfiable as
-    // documented: once the edit is committed, --force proceeds (the commit
-    // is discarded but preserved in the pre-op savepoint).
+    // documented: once the edit is committed, --discard-local-commits
+    // proceeds (the commit is discarded but preserved in the pre-op savepoint).
     git(&["add", "README.md"], &ww.project_dir);
     git(&["commit", "-m", "ww: readme"], &ww.project_dir);
     rwv()
-        .args(["sync", &primary.root.to_string_lossy(), "--force"])
+        .args([
+            "sync",
+            &primary.root.to_string_lossy(),
+            "--discard-local-commits",
+        ])
         .current_dir(&ww.root)
         .assert()
         .success();

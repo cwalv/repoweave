@@ -24,7 +24,7 @@ for the direction-explicit pair contract.
 ## Invocation
 
 ```
-rwv sync <source> [--json] [--strategy <ff|rebase|merge>] [-j <N>] [--force] [--project <name>]
+rwv sync <source> [--json] [--strategy <ff|rebase|merge>] [-j <N>] [--allow-stale-lock] [--discard-local-commits] [--project <name>]
 ```
 
 - `<source>` is the source workspace: `primary`, a bare workweave name, or
@@ -33,11 +33,13 @@ rwv sync <source> [--json] [--strategy <ff|rebase|merge>] [-j <N>] [--force] [--
 - `--strategy` picks the reconciliation strategy (`ff` default, `rebase`,
   or `merge`). `rebase`/`merge` replay CWD's project commits onto the
   source tip with `rwv.lock` excluded.
-- `--force` bypasses both the lock-freshness precondition and the
-  ff-strategy ancestor check. For the project repo it performs a hard-reset
-  to the source tip, discarding any destination-only commits; the pre-op
-  savepoint is kept as a tombstone at `refs/rwv/pre-op/<id>` so `git reset
-  --hard` can recover them manually.
+- `--allow-stale-lock` skips the lock-freshness precondition on both source
+  and destination. Use when the lock is intentionally ahead of HEAD. Usual
+  fix without this flag: run `rwv lock` in the relevant workspace first.
+- `--discard-local-commits` hard-resets the CWD project repo to the source
+  tip, discarding any destination-only commits. The pre-op savepoint is kept
+  as a tombstone at `refs/rwv/pre-op/<id>` so `git reset --hard` can recover
+  them manually. Refused if the project repo has uncommitted changes.
 - `-j <N>` runs up to `N` per-repo manifest syncs (Phase 2) in parallel.
   Default is `1` (serial), unlike `rwv fetch` / `rwv update` whose default
   auto-resolves to a small worker pool. Sync's default is `1` so that

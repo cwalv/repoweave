@@ -730,9 +730,10 @@ pub trait Vcs {
     /// commits and overwriting the working tree.
     ///
     /// Destructive — discarded commits are not recoverable through this VCS
-    /// call alone. Used only by `rwv sync --force` after a Phase 1 ancestor
-    /// check would have refused, with a savepoint already in place under
-    /// [`refs/rwv/pre-op/<op-id>`] for `rwv abort` to roll back to.
+    /// call alone. Used only by `rwv sync --discard-local-commits` after a
+    /// Phase 1 ancestor check would have refused, with a savepoint already
+    /// in place under [`refs/rwv/pre-op/<op-id>`] for `rwv abort` to roll
+    /// back to.
     ///
     /// For [`GitVcs`](crate::git::GitVcs): runs `git reset --hard <to>`.
     ///

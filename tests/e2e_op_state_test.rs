@@ -344,14 +344,15 @@ fn mid_step1_resume_with_continue_after_conflict_resolution() {
     git(&["commit", "-m", "lock: ww C_ww"], &ww.project_dir);
 
     // Attempt rebase sync from ww → primary. Phase 2 (server repo) will conflict.
-    // --force bypasses the Phase 1 ancestor precondition (project repos diverged).
+    // --discard-local-commits bypasses the Phase 1 ancestor precondition
+    // (project repos diverged). Adapted from --force per bead fo-jsbr3i.6.
     let out = rwv()
         .args([
             "sync",
             &primary.root.to_string_lossy(),
             "--strategy",
             "rebase",
-            "--force",
+            "--discard-local-commits",
         ])
         .current_dir(&ww.root)
         .assert()
@@ -512,14 +513,35 @@ fn continue_with_strategy_flag_is_rejected() {
     );
 }
 
+/// --force is removed from sync/sync-to; passing it must produce an actionable
+/// error (from the early-dispatch did-you-mean hint in main.rs) per bead fo-jsbr3i.6.
 #[test]
-fn continue_with_force_flag_is_rejected() {
+fn sync_force_flag_is_removed_and_produces_friendly_error() {
     let tmp = tempfile::tempdir().unwrap();
     let (_primary, ww, _c1) = make_shared_workspaces(tmp.path());
 
-    // --force alongside --continue must be rejected.
+    // --force must be rejected with a migration hint.
     let assertion = rwv()
-        .args(["sync", "--force", "--continue"])
+        .args(["sync", "--force"])
+        .current_dir(&ww.root)
+        .assert()
+        .failure();
+    let stderr = String::from_utf8_lossy(&assertion.get_output().stderr).to_string();
+
+    assert!(
+        stderr.contains("--allow-stale-lock") || stderr.contains("--discard-local-commits"),
+        "expected migration hint mentioning the named overrides; got: {stderr}"
+    );
+}
+
+/// --allow-stale-lock alongside --continue must be rejected (conflicts_with).
+#[test]
+fn continue_with_allow_stale_lock_flag_is_rejected() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (_primary, ww, _c1) = make_shared_workspaces(tmp.path());
+
+    let assertion = rwv()
+        .args(["sync", "--allow-stale-lock", "--continue"])
         .current_dir(&ww.root)
         .assert()
         .failure();
@@ -527,7 +549,26 @@ fn continue_with_force_flag_is_rejected() {
 
     assert!(
         stderr.contains("cannot be used with") || stderr.contains("--continue"),
-        "expected clap exclusivity error for --force + --continue; got: {stderr}"
+        "expected clap exclusivity error for --allow-stale-lock + --continue; got: {stderr}"
+    );
+}
+
+/// --discard-local-commits alongside --continue must be rejected (conflicts_with).
+#[test]
+fn continue_with_discard_local_commits_flag_is_rejected() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (_primary, ww, _c1) = make_shared_workspaces(tmp.path());
+
+    let assertion = rwv()
+        .args(["sync", "--discard-local-commits", "--continue"])
+        .current_dir(&ww.root)
+        .assert()
+        .failure();
+    let stderr = String::from_utf8_lossy(&assertion.get_output().stderr).to_string();
+
+    assert!(
+        stderr.contains("cannot be used with") || stderr.contains("--continue"),
+        "expected clap exclusivity error for --discard-local-commits + --continue; got: {stderr}"
     );
 }
 

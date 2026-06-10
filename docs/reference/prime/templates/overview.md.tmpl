@@ -8,7 +8,7 @@
 
 **Workweave** — an ephemeral, isolated derivative of a weave (the multi-repo equivalent of `git worktree`). Each repo gets a worktree on its own ephemeral branch; ecosystem files and tool state (`node_modules/`, `.venv/`, `target/`) are per-workweave. Use for feature work, PR review, or per-agent isolation without disturbing the primary weave. Created with `rwv workweave PROJECT create NAME`; deleted with `rwv workweave PROJECT delete NAME`.
 
-**Lock & sync** — every project owns an `rwv.lock` that pins each repo to an exact revision (tag name when HEAD is tagged, SHA otherwise). The lock is *load-bearing*, not a passive snapshot: `rwv sync <source>` aligns the CWD workspace with `<source>`'s committed lock. It is direction-neutral — from primary, `rwv sync <workweave>` brings a workweave's work home; from `.workweaves/<project>--<workweave>/`, `rwv sync primary` catches the workweave up. Both sides must satisfy `rwv doctor --locked` first (bypass with `--force`); `rwv abort` rolls back via savepoint refs under `refs/rwv/pre-op/`. `sha256sum rwv.lock` is the project fingerprint — the multi-repo equivalent of `git rev-parse HEAD` on a monorepo.
+**Lock & sync** — every project owns an `rwv.lock` that pins each repo to an exact revision (tag name when HEAD is tagged, SHA otherwise). The lock is *load-bearing*, not a passive snapshot: `rwv sync <source>` aligns the CWD workspace with `<source>`'s committed lock. It is direction-neutral — from primary, `rwv sync <workweave>` brings a workweave's work home; from `.workweaves/<project>--<workweave>/`, `rwv sync primary` catches the workweave up. Both sides must satisfy `rwv doctor --locked` first (bypass lock-freshness with `--allow-stale-lock`; discard local commits with `--discard-local-commits`); `rwv abort` rolls back via savepoint refs under `refs/rwv/pre-op/`. `sha256sum rwv.lock` is the project fingerprint — the multi-repo equivalent of `git rev-parse HEAD` on a monorepo.
 
 ## Common pitfalls
 
@@ -59,7 +59,7 @@ These four commands are easy to confuse — they cooperate around the lock-autho
 
 | Command | When to use |
 |---------|-------------|
-| `rwv sync <source> [--strategy ff\|rebase\|merge] [--force]` | Align CWD workspace with `<source>`'s committed `rwv.lock`. Default `ff`; use `rebase` or `merge` when both sides advanced |
+| `rwv sync <source> [--strategy ff\|rebase\|merge] [--allow-stale-lock] [--discard-local-commits]` | Align CWD workspace with `<source>`'s committed `rwv.lock`. Default `ff`; use `rebase` or `merge` when both sides advanced |
 | `rwv abort` | Restore CWD workspace to its pre-sync state via savepoint refs; runs VCS-native abort for in-progress rebase/merge |
 | `rwv status [--json]` | Show per-repo branch, tip, lock SHA, and relation (`ok`/`ahead`/`behind`/`diverged`/`no-lock`) without changing anything |
 | `rwv doctor --locked` | Zero exit iff every repo's tip matches its lock entry — the precondition `rwv sync` enforces. Scriptable |

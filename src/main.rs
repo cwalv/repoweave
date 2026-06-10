@@ -199,9 +199,18 @@ enum Commands {
         /// Sync strategy: ff (default), rebase, or merge
         #[arg(long, default_value = "ff", value_enum, conflicts_with = "do_continue")]
         strategy: SyncStrategy,
-        /// Bypass the lock-freshness precondition
+        /// Consent: skip the lock-freshness precondition on both source and destination.
+        /// Use when the lock is intentionally ahead of HEAD (e.g. you know the workspace
+        /// was updated without a fresh `rwv lock` run). Usual fix without this flag:
+        /// run `rwv lock` in the relevant workspace first.
         #[arg(long, conflicts_with = "do_continue")]
-        force: bool,
+        allow_stale_lock: bool,
+        /// Consent: discard CWD's project commits that are not reachable from source,
+        /// hard-resetting the project repo to source's tip. Pre-sync state is preserved
+        /// in refs/rwv/pre-op/<id> and recoverable via `rwv abort`. Refused when the
+        /// project repo has uncommitted changes (unrecoverable loss).
+        #[arg(long, conflicts_with = "do_continue")]
+        discard_local_commits: bool,
         /// Emit per-repo outcomes as JSON (array-of-records with stable per-variant `kind`). See `rwv explain sync`.
         #[arg(long, conflicts_with = "do_continue")]
         json: bool,
@@ -213,7 +222,7 @@ enum Commands {
         #[arg(long)]
         project: Option<String>,
         /// Resume a sync that was interrupted mid-op (e.g. after resolving a conflict).
-        /// All parameters (source, strategy, force, etc.) are read from the in-progress
+        /// All parameters (source, strategy, overrides, etc.) are read from the in-progress
         /// op-state file. No other flags may be passed alongside `--continue` (except
         /// `--project`). To change parameters mid-op, run `rwv abort` and re-invoke.
         #[arg(long = "continue")]
@@ -242,9 +251,18 @@ enum Commands {
             conflicts_with = "do_continue"
         )]
         strategy: SyncStrategy,
-        /// Bypass the lock-freshness precondition
+        /// Consent: skip the lock-freshness precondition on both source and destination.
+        /// Use when the lock is intentionally ahead of HEAD (e.g. you know the workspace
+        /// was updated without a fresh `rwv lock` run). Usual fix without this flag:
+        /// run `rwv lock` in the relevant workspace first.
         #[arg(long, conflicts_with = "do_continue")]
-        force: bool,
+        allow_stale_lock: bool,
+        /// Consent: discard CWD's project commits that are not reachable from target,
+        /// hard-resetting the project repo to target's tip. Pre-sync state is preserved
+        /// in refs/rwv/pre-op/<id> and recoverable via `rwv abort`. Refused when the
+        /// project repo has uncommitted changes (unrecoverable loss).
+        #[arg(long, conflicts_with = "do_continue")]
+        discard_local_commits: bool,
         /// Land work then delete the workweave on success (requires clean worktree and
         /// manifest repos converged with target after sync-to completes).
         #[arg(long, conflicts_with = "do_continue")]
@@ -260,7 +278,7 @@ enum Commands {
         #[arg(long)]
         project: Option<String>,
         /// Resume a sync-to that was interrupted mid-op (e.g. after resolving a conflict).
-        /// All parameters (target, strategy, retire, force, etc.) are read from the
+        /// All parameters (target, strategy, retire, overrides, etc.) are read from the
         /// in-progress op-state file. No other flags may be passed alongside `--continue`
         /// (except `--project`). To change parameters mid-op, run `rwv abort` and re-invoke.
         #[arg(long = "continue")]
@@ -381,6 +399,21 @@ fn main() -> anyhow::Result<()> {
         {
             eprintln!(
                 "error: `--retire` has moved to `rwv sync-to`; use `rwv sync-to --retire` instead"
+            );
+            std::process::exit(2);
+        }
+        // Detect: rwv sync --force / rwv sync-to --force (--force has been
+        // split into named overrides; emit a friendly migration message).
+        let is_sync = raw_args.get(1).map(|s| s.as_str()) == Some("sync")
+            || raw_args.get(1).map(|s| s.as_str()) == Some("sync-to");
+        if is_sync && raw_args.iter().any(|a| a == "--force") {
+            eprintln!(
+                "error: `--force` has been removed from `rwv sync` and `rwv sync-to`.\n\
+                 \n\
+                 Replace it with the specific override(s) you need:\n\
+                   --allow-stale-lock        skip the lock-freshness precondition\n\
+                   --discard-local-commits   discard CWD project commits not in source \
+                 (recoverable via `rwv abort`)"
             );
             std::process::exit(2);
         }
@@ -595,7 +628,8 @@ fn main() -> anyhow::Result<()> {
         Some(Commands::Sync {
             source,
             strategy,
-            force,
+            allow_stale_lock,
+            discard_local_commits,
             json,
             jobs,
             project,
@@ -621,7 +655,8 @@ fn main() -> anyhow::Result<()> {
                     &cwd,
                     source_ref,
                     strategy,
-                    force,
+                    allow_stale_lock,
+                    discard_local_commits,
                     false,
                     project_override,
                     jobs,
@@ -632,7 +667,8 @@ fn main() -> anyhow::Result<()> {
                     &cwd,
                     source_ref,
                     strategy,
-                    force,
+                    allow_stale_lock,
+                    discard_local_commits,
                     false,
                     project_override,
                     jobs,
@@ -643,7 +679,8 @@ fn main() -> anyhow::Result<()> {
         Some(Commands::SyncTo {
             target,
             strategy,
-            force,
+            allow_stale_lock,
+            discard_local_commits,
             retire,
             json,
             jobs,
@@ -698,7 +735,8 @@ fn main() -> anyhow::Result<()> {
                     &cwd,
                     resolved_target.as_ref(),
                     strategy,
-                    force,
+                    allow_stale_lock,
+                    discard_local_commits,
                     retire,
                     project_override,
                     jobs,
@@ -709,7 +747,8 @@ fn main() -> anyhow::Result<()> {
                     &cwd,
                     resolved_target.as_ref(),
                     strategy,
-                    force,
+                    allow_stale_lock,
+                    discard_local_commits,
                     retire,
                     project_override,
                     jobs,

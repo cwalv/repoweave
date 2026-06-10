@@ -675,7 +675,12 @@ fn check_lock_freshness(
         let side_str = side.as_str();
         let recovery = lock_recovery(side);
         anyhow::bail!(
-            "{side_str} workspace '{workspace_name}' lock references unknown revision {raw} for {repo_path}. {recovery}.",
+            "lock-freshness precondition failed: {side_str} workspace '{workspace_name}' lock \
+             references unknown revision {raw} for {repo_path}.\n\
+             \n\
+             Usual fix: {recovery}.\n\
+             To skip this check: pass `--allow-stale-lock` (use when you know the lock is \
+             intentionally ahead of HEAD).",
         );
     }
 
@@ -689,7 +694,13 @@ fn check_lock_freshness(
                 let side_str = side.as_str();
                 let recovery = lock_recovery(side);
                 anyhow::bail!(
-                    "{side_str} workspace '{workspace_name}' has a stale lock — {repo_path} tip={actual} doesn't match lock={}. {recovery}.",
+                    "lock-freshness precondition failed: {side_str} workspace '{workspace_name}' \
+                     has a stale lock — {repo_path} tip={actual} doesn't match \
+                     lock={}.\n\
+                     \n\
+                     Usual fix: {recovery}.\n\
+                     To skip this check: pass `--allow-stale-lock` (use when you know the lock \
+                     is intentionally ahead of HEAD).",
                     lock_entry.version
                 );
             }
@@ -749,10 +760,12 @@ fn check_phase1_ancestor(
 
     anyhow::bail!(
         "destination workspace '{cwd_workspace_name}' project repo at {cwd_tip} has {extra_count} \
-         commits not in source workspace '{source_workspace_name}'. Rerun with `--strategy rebase` \
-         or `--strategy merge` to land them, sync the other direction first to bring those commits \
-         to source, or use `--force` if you intend to discard them (preserved in refs/rwv/pre-op/<id> \
-         for `rwv abort`).",
+         commits not in source workspace '{source_workspace_name}'.\n\
+         \n\
+         To land them: rerun with `--strategy rebase` or `--strategy merge`.\n\
+         To bring source in sync first: sync the other direction.\n\
+         To discard them (recoverable via `rwv abort`): rerun with `--discard-local-commits` \
+         (pre-sync state preserved in refs/rwv/pre-op/<id>).",
     );
 }
 
@@ -1288,7 +1301,10 @@ struct OpContext<'a> {
     /// retained for hint messages that show the original target spelling.
     cli_path: PathBuf,
     strategy: SyncStrategy,
-    force: bool,
+    /// Consent: discard CWD's project commits that are not in source
+    /// (hard-reset Phase 1'; today's `--force` divergence semantics).
+    /// Recorded as `discard-local-commits` in `OwnerRecord.overrides`.
+    discard_local_commits: bool,
     retire: bool,
     jobs: usize,
     handler: &'a dyn OutputHandler,
@@ -1366,7 +1382,8 @@ pub fn run_sync(
     cwd: &Path,
     source: Option<&SyncSource>,
     strategy: SyncStrategy,
-    force: bool,
+    allow_stale_lock: bool,
+    discard_local_commits: bool,
     retire: bool,
     project_override: Option<ProjectName>,
     jobs: usize,
@@ -1381,7 +1398,8 @@ pub fn run_sync(
         cwd,
         source,
         strategy,
-        force,
+        allow_stale_lock,
+        discard_local_commits,
         retire,
         project_override,
         jobs,
@@ -1408,7 +1426,8 @@ fn run_machine(
     cwd: &Path,
     source: Option<&SyncSource>,
     strategy: SyncStrategy,
-    force: bool,
+    allow_stale_lock: bool,
+    discard_local_commits: bool,
     retire: bool,
     project_override: Option<ProjectName>,
     jobs: usize,
@@ -1423,7 +1442,8 @@ fn run_machine(
             cwd,
             source,
             strategy,
-            force,
+            allow_stale_lock,
+            discard_local_commits,
             retire,
             project_override.clone(),
             jobs,
@@ -1528,7 +1548,8 @@ fn guard_and_mark<'a>(
     cwd: &Path,
     source: Option<&SyncSource>,
     strategy: SyncStrategy,
-    force: bool,
+    allow_stale_lock: bool,
+    discard_local_commits: bool,
     retire: bool,
     project_override: Option<ProjectName>,
     jobs: usize,
@@ -1664,7 +1685,7 @@ fn guard_and_mark<'a>(
     let cwd_project = Project::from_dir(&cwd_project_dir)
         .context("failed to load CWD project for guard preconditions")?;
     let cwd_workspace_name_str = workspace_name(&cwd_ctx);
-    if !force {
+    if !allow_stale_lock {
         check_lock_freshness(
             &source_workspace_dir,
             &snapshot.raw_source_lock,
@@ -1686,16 +1707,17 @@ fn guard_and_mark<'a>(
     let cwd_project_tip = GitVcs
         .head_revision(&cwd_project_dir)
         .context("failed to read CWD project HEAD")?;
-    let phase1_ancestor_bypassed = if force {
+    let phase1_ancestor_bypassed = if discard_local_commits {
         if GitVcs
             .has_uncommitted_changes(&cwd_project_dir)
             .unwrap_or(true)
         {
             anyhow::bail!(
-                "sync --force precondition failed: project repo at {} has uncommitted changes.\n\
-                 --force discards committed divergence (recoverable via refs/rwv/pre-op), but \
-                 the hard-reset would destroy uncommitted changes unrecoverably. Commit or \
-                 stash them, then re-run.",
+                "--discard-local-commits precondition failed: project repo at {} has uncommitted \
+                 changes.\n\
+                 --discard-local-commits discards committed divergence (recoverable via \
+                 refs/rwv/pre-op), but the hard-reset would destroy uncommitted changes \
+                 unrecoverably. Commit or stash them, then re-run.",
                 cwd_project_dir.display(),
             );
         }
@@ -1747,11 +1769,17 @@ fn guard_and_mark<'a>(
             retire,
         ),
     };
+    if allow_stale_lock {
+        // Record that the lock-freshness precondition was bypassed so audit
+        // trails and --continue resumptions carry the same consent.
+        record.overrides.push("allow-stale-lock".to_owned());
+    }
     if phase1_ancestor_bypassed {
-        // §7-style named consent: --force will discard reachable project
-        // commits in Phase 1'. Recorded in the audit-trail `overrides` field
-        // so cleanup preserves the project savepoint as a tombstone.
-        record.overrides.push("force-discard-divergence".to_owned());
+        // §7-style named consent: --discard-local-commits will discard
+        // reachable project commits in Phase 1'. Recorded in the audit-trail
+        // `overrides` field so cleanup preserves the project savepoint as a
+        // tombstone and --continue resumes with the same consent.
+        record.overrides.push("discard-local-commits".to_owned());
     }
     op_state::write_owner(&owner_workspace_dir, &record).context("failed to write owner record")?;
 
@@ -1830,7 +1858,7 @@ fn guard_and_mark<'a>(
         resolved_source: resolved_source_for_hints,
         cli_path,
         strategy,
-        force,
+        discard_local_commits: phase1_ancestor_bypassed,
         retire,
         jobs,
         handler,
@@ -1961,13 +1989,15 @@ fn load_continuing_context<'a>(
     let snapshot = pin_source_snapshot(&source_project_dir)?;
 
     // --continue resumes with the same consents recorded at fresh-start
-    // time: read `overrides` and re-derive `force` from `force-discard-
-    // divergence`. (When sibling .6 lands, this is where named overrides
-    // are reified into the OpContext.)
-    let force_resumed = record
+    // time: read `overrides` and re-derive each named override from the
+    // persisted record so the resumed session behaves identically to the
+    // original without requiring the operator to re-supply flags.
+    // Note: `allow-stale-lock` was checked only in guard (not needed in
+    // resumption phases); only `discard-local-commits` gates Phase 1'.
+    let discard_local_commits_resumed = record
         .overrides
         .iter()
-        .any(|o| o == "force-discard-divergence");
+        .any(|o| o == "discard-local-commits");
 
     Ok(OpContext {
         cwd_ctx,
@@ -1981,7 +2011,7 @@ fn load_continuing_context<'a>(
         resolved_source: resolved_source_for_hints,
         cli_path,
         strategy,
-        force: force_resumed,
+        discard_local_commits: discard_local_commits_resumed,
         retire: record.retire,
         jobs,
         handler,
@@ -2291,11 +2321,15 @@ fn run_replay(ctx: &OpContext<'_>) -> anyhow::Result<()> {
 
     // === Phase 1' (project repo) — strategy on the project repo ===
 
-    let phase1_outcome = if ctx.force {
+    let phase1_outcome = if ctx.discard_local_commits {
+        // --discard-local-commits: hard-reset CWD's project repo to source's
+        // tip, discarding any project commits not reachable from source.
+        // Guard already refused on uncommitted changes; savepoint was written
+        // before this phase so discarded commits stay recoverable via abort.
         GitVcs
             .hard_reset(&ctx.cwd_project_dir, &snapshot.source_project_tip)
             .map_err(anyhow::Error::from)
-            .context("project repo reset --force failed")
+            .context("project repo hard-reset (--discard-local-commits) failed")
     } else {
         apply_project_strategy(
             &ctx.cwd_project_dir,
@@ -2631,21 +2665,21 @@ fn run_retire(ctx: &OpContext<'_>) -> anyhow::Result<()> {
 fn cleanup(ctx: &OpContext<'_>) -> anyhow::Result<()> {
     let emit_text = ctx.handler.emit_text();
 
-    // Drop savepoints. Exception: when --force bypassed the Phase 1'
-    // ancestor check (recorded as the `force-discard-divergence` override),
-    // preserve the project savepoint as a tombstone — the only remaining
-    // reference to the discarded commits.
+    // Drop savepoints. Exception: when --discard-local-commits bypassed the
+    // Phase 1' ancestor check (recorded as the `discard-local-commits`
+    // override), preserve the project savepoint as a tombstone — the only
+    // remaining reference to the discarded commits.
     let owner = op_state::read_owner(&ctx.owner_workspace_dir)?;
-    let force_tombstone = owner
+    let discard_tombstone = owner
         .as_ref()
-        .map(|r| r.overrides.iter().any(|o| o == "force-discard-divergence"))
+        .map(|r| r.overrides.iter().any(|o| o == "discard-local-commits"))
         .unwrap_or(false);
 
-    if !force_tombstone {
+    if !discard_tombstone {
         delete_savepoint(&ctx.cwd_project_dir, &ctx.op_id);
     } else if emit_text {
         eprintln!(
-            "note: --force discarded project commits; pre-sync state preserved at \
+            "note: --discard-local-commits discarded project commits; pre-sync state preserved at \
              refs/rwv/pre-op/{op_id} (recover with `git reset --hard refs/rwv/pre-op/{op_id}` \
              in {})",
             ctx.cwd_project_dir.display(),
@@ -3269,7 +3303,8 @@ pub fn run_sync_json(
     cwd: &Path,
     source: Option<&SyncSource>,
     strategy: SyncStrategy,
-    force: bool,
+    allow_stale_lock: bool,
+    discard_local_commits: bool,
     retire: bool,
     project_override: Option<ProjectName>,
     jobs: usize,
@@ -3289,7 +3324,8 @@ pub fn run_sync_json(
             cwd,
             source,
             strategy,
-            force,
+            allow_stale_lock,
+            discard_local_commits,
             retire,
             project_override,
             jobs,
@@ -3303,7 +3339,8 @@ pub fn run_sync_json(
             cwd,
             source,
             strategy,
-            force,
+            allow_stale_lock,
+            discard_local_commits,
             retire,
             project_override,
             jobs,
@@ -3406,7 +3443,8 @@ pub fn run_sync_to(
     cwd: &Path,
     target: Option<&SyncSource>,
     strategy: SyncStrategy,
-    force: bool,
+    allow_stale_lock: bool,
+    discard_local_commits: bool,
     retire: bool,
     project_override: Option<ProjectName>,
     jobs: usize,
@@ -3421,7 +3459,8 @@ pub fn run_sync_to(
         cwd,
         target,
         strategy,
-        force,
+        allow_stale_lock,
+        discard_local_commits,
         retire,
         project_override,
         jobs,
@@ -3436,7 +3475,8 @@ pub fn run_sync_to_json(
     cwd: &Path,
     target: Option<&SyncSource>,
     strategy: SyncStrategy,
-    force: bool,
+    allow_stale_lock: bool,
+    discard_local_commits: bool,
     retire: bool,
     project_override: Option<ProjectName>,
     jobs: usize,
@@ -3456,7 +3496,8 @@ pub fn run_sync_to_json(
             cwd,
             target,
             strategy,
-            force,
+            allow_stale_lock,
+            discard_local_commits,
             retire,
             project_override,
             jobs,
@@ -3470,7 +3511,8 @@ pub fn run_sync_to_json(
             cwd,
             target,
             strategy,
-            force,
+            allow_stale_lock,
+            discard_local_commits,
             retire,
             project_override,
             jobs,

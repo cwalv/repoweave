@@ -55,7 +55,7 @@ or use `rwv abort` to roll back both workspaces.
 ## Invocation
 
 ```
-rwv sync-to [<target>] [--json] [--strategy <ff|rebase|merge>] [-j <N>] [--force] [--retire] [--project <name>] [--continue]
+rwv sync-to [<target>] [--json] [--strategy <ff|rebase|merge>] [-j <N>] [--allow-stale-lock] [--discard-local-commits] [--retire] [--project <name>] [--continue]
 ```
 
 - `<target>` is the target workspace: `primary`, a bare workweave name, or
@@ -65,7 +65,9 @@ rwv sync-to [<target>] [--json] [--strategy <ff|rebase|merge>] [-j <N>] [--force
 - `--json` emits machine-readable output (see Output below).
 - `--strategy` picks the step-1 strategy (`rebase` default, `ff`, or `merge`).
   Step 3 is always FF regardless of this flag.
-- `--force` bypasses the lock-freshness precondition.
+- `--allow-stale-lock` skips the lock-freshness precondition on both sides.
+- `--discard-local-commits` hard-resets CWD's project repo to target's tip,
+  discarding local commits (pre-op savepoint preserved as tombstone).
 - `--retire` deletes the current workweave on success (after all three steps
   complete). Requires a workweave context; emits a warning and is a no-op in
   a primary weave. Use to close out a workweave in one step.

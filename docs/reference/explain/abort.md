@@ -45,12 +45,12 @@ This can happen if:
 - The operation already completed successfully and the op-state was cleaned up.
 - The op-state was removed manually.
 
-### After `--force` sync
+### After `--discard-local-commits` sync
 
-When `rwv sync --force` discards a project repo's committed divergence, the
-savepoint for the project repo is kept as a **tombstone** even after the
-successful sync completes. The op-state file is still removed (the op
-succeeded), so `rwv abort` will refuse — but the tombstone ref at
+When `rwv sync --discard-local-commits` discards a project repo's committed
+divergence, the savepoint for the project repo is kept as a **tombstone**
+even after the successful sync completes. The op-state file is still removed
+(the op succeeded), so `rwv abort` will refuse — but the tombstone ref at
 `refs/rwv/pre-op/<op-id>` remains and can be recovered manually:
 
 ```
