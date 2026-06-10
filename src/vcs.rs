@@ -820,6 +820,11 @@ pub trait Vcs {
     /// itself undoable, and the pre-abort ref is the cheapest recovery
     /// path. (`rwv doctor` may garbage-collect these refs once their op
     /// is provably no longer referenced; abort itself does not.)
+    ///
+    /// **First write wins:** if a pre-abort reference already exists for
+    /// this `op_id`, it is returned unchanged rather than overwritten — a
+    /// re-run of abort for the same op must not clobber the original
+    /// capture, which may by then be the only reference to that tip.
     fn create_pre_abort_ref(&self, repo: &Path, op_id: &str) -> Result<PreAbortRef, VcsError>;
 
     /// Resolve the pre-abort reference captured under `op_id` in `repo`,

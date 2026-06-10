@@ -488,6 +488,57 @@ fn abort_foreign_tip_refuses_and_preserves_state() {
     );
 }
 
+/// First-write-wins: re-running abort for the same op must not overwrite the
+/// original pre-abort capture. Scenario: abort refuses (foreign tip), the
+/// operator moves the branch back to the savepoint, abort is re-run and
+/// succeeds — the pre-abort ref must still point at the ORIGINAL foreign tip
+/// (by then the only reference to it), not the reconciled tip.
+#[test]
+fn pre_abort_ref_first_write_wins_across_abort_reruns() {
+    let tmp = tempfile::tempdir().unwrap();
+    let ws = make_fixture(tmp.path(), "primary");
+
+    let op_id = "20991231T000006Z";
+
+    let server_savepoint = git_out(&["rev-parse", "HEAD"], &ws.server_dir);
+    let foreign_tip = make_commit(
+        &ws.server_dir,
+        "foreign.txt",
+        "foreign commit\n",
+        "foreign: someone else built on this",
+    );
+    plant_savepoint(&ws.server_dir, op_id, &server_savepoint);
+
+    let project_savepoint = git_out(&["rev-parse", "HEAD"], &ws.project_dir);
+    plant_savepoint(&ws.project_dir, op_id, &project_savepoint);
+
+    plant_owner_record(&ws.root, op_id, "relock", &[]);
+
+    // First abort: refuses on the foreign tip; pre-abort ref captures it.
+    rwv()
+        .arg("abort")
+        .current_dir(&ws.root)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("foreign-tip"));
+    assert_eq!(
+        pre_abort_ref_sha(&ws.server_dir, op_id).as_deref(),
+        Some(foreign_tip.as_str()),
+        "first abort run must capture the foreign tip"
+    );
+
+    // Operator reconciles: move the branch back to the savepoint.
+    git(&["reset", "--hard", &server_savepoint], &ws.server_dir);
+
+    // Second abort: succeeds; pre-abort ref must STILL hold the foreign tip.
+    rwv().arg("abort").current_dir(&ws.root).assert().success();
+    assert_eq!(
+        pre_abort_ref_sha(&ws.server_dir, op_id).as_deref(),
+        Some(foreign_tip.as_str()),
+        "re-run must not overwrite the original pre-abort capture (first write wins)"
+    );
+}
+
 // ---------------------------------------------------------------------------
 // Cross-cutting: pre-abort refs are written on every clean abort.
 // ---------------------------------------------------------------------------

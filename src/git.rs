@@ -816,6 +816,13 @@ impl Vcs for GitVcs {
     }
 
     fn create_pre_abort_ref(&self, repo: &Path, op_id: &str) -> Result<PreAbortRef, VcsError> {
+        // First write wins: a re-run of abort for the same op (e.g. after a
+        // foreign-tip refusal was reconciled) must not overwrite the original
+        // capture — by then the operator may have moved the branch, leaving
+        // this ref as the only remaining reference to the pre-abort tip.
+        if let Some(existing) = self.resolve_pre_abort_ref(repo, op_id) {
+            return Ok(existing);
+        }
         let head = self.head_revision(repo)?;
         let label = pre_abort_ref(op_id);
         Self::run(&["update-ref", &label, head.as_str()], repo)?;
