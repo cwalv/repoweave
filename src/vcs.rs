@@ -961,9 +961,9 @@ pub trait Vcs {
     /// `Path::new("rwv.lock")` or `Path::new("rwv.yaml")`).
     ///
     /// Returns [`VcsError::RevisionNotFound`] when `revision` is not
-    /// reachable in `repo`. Returns [`VcsError::CommandFailed`] when the
-    /// file does not exist at that revision (the VCS error's stderr will
-    /// name the absent path).
+    /// reachable in `repo`, and also when the file does not exist at that
+    /// revision (the error's `rev` field carries the full
+    /// `<revision>:<path>` spec, naming the absent path).
     ///
     /// For [`GitVcs`](crate::git::GitVcs): runs
     /// `git show <revision>:<file_path>` in `repo`.
