@@ -86,6 +86,109 @@ Schema:
     }
   },
   "definitions": {
+    "CloneTopologyKind": {
+      "description": "Discriminator for [`CheckViolation::CloneTopology`] findings.\n\nThe four sub-kinds enumerate the ways the bottom tier of the stability stack ([clone-topology.md](../../docs/explanation/joints/clone-topology.md)) can break: a manifest repo's slot at `<weave>/<repo_path>` must be a \"canonical store\" (a full clone), and every workweave checkout `<workweave>/<repo_path>` must be a linked workspace whose VCS common store resolves to that canonical store. Each variant names a distinct way the on-disk shape diverges from that spec.",
+      "oneOf": [
+        {
+          "description": "A full clone (its own canonical store) is hosted under `.workweaves/` instead of at the manifest's canonical slot. The inverted-primary case (fo-a0spgj `tmuxcc-broker`): the canonical store has migrated into one workweave and other workweaves' checkouts link into *it*, not into `<weave>/<repo_path>`.",
+          "type": "object",
+          "required": [
+            "standalone-in-workweave"
+          ],
+          "properties": {
+            "standalone-in-workweave": {
+              "type": "object",
+              "required": [
+                "store_path"
+              ],
+              "properties": {
+                "store_path": {
+                  "description": "Absolute path of the standalone canonical store under `.workweaves/`.",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "description": "The workspace at `<weave>/<repo_path>` is a full clone (its canonical store sits under itself), but one or more of this weave's workweave checkouts of the same repo resolve to a *different* canonical store. The weave-path clone publishes a separate object DAG nobody syncs to; push/pull becomes asymmetric and silent.",
+          "type": "object",
+          "required": [
+            "disconnected-weave-clone"
+          ],
+          "properties": {
+            "disconnected-weave-clone": {
+              "type": "object",
+              "required": [
+                "other_store_path",
+                "weave_store_path"
+              ],
+              "properties": {
+                "other_store_path": {
+                  "description": "Absolute path of a representative store one of the workweave checkouts actually uses (the one this weave clone is disconnected from).",
+                  "type": "string"
+                },
+                "weave_store_path": {
+                  "description": "Absolute path of the canonical store at the weave slot (the \"disconnected\" one).",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "description": "A linked worktree under `.workweaves/<workweave>/<repo_path>` whose canonical store is not the weave canonical at `<weave>/<repo_path>`. The shared-DAG invariant between the canonical and the workweave is broken: commits made here land in a different object store than the canonical, and merged-checks across the two answer \"no\" silently.",
+          "type": "object",
+          "required": [
+            "wrong-parent-worktree"
+          ],
+          "properties": {
+            "wrong-parent-worktree": {
+              "type": "object",
+              "required": [
+                "actual_store_path",
+                "expected_store_path"
+              ],
+              "properties": {
+                "actual_store_path": {
+                  "description": "Absolute path of the canonical store this workweave checkout is actually linked into.",
+                  "type": "string"
+                },
+                "expected_store_path": {
+                  "description": "Absolute path of the canonical store this workweave checkout should be linked into (`<weave>/<repo_path>/.git`).",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "description": "The weave path `<weave>/<repo_path>` itself is a linked worktree of some other clone — full inversion: there is no canonical store at the manifest slot, and the workspace there shares its DAG with whichever clone hosts the actual store.",
+          "type": "object",
+          "required": [
+            "weave-clone-is-worktree"
+          ],
+          "properties": {
+            "weave-clone-is-worktree": {
+              "type": "object",
+              "required": [
+                "actual_store_path"
+              ],
+              "properties": {
+                "actual_store_path": {
+                  "description": "Absolute path of the canonical store this slot is linked into.",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
     "DriftKind": {
       "oneOf": [
         {
@@ -561,6 +664,39 @@ Schema:
               "allOf": [
                 {
                   "$ref": "#/definitions/ProvenanceKind"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "absolute_path",
+            "kind",
+            "path",
+            "sub_kind"
+          ],
+          "properties": {
+            "absolute_path": {
+              "description": "Absolute path of the offending workspace (canonical slot or workweave checkout, per sub-kind semantics).",
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "enum": [
+                "clone-topology"
+              ]
+            },
+            "path": {
+              "description": "Manifest-relative repo path (e.g. `github/cwalv/tmuxcc-broker`).",
+              "type": "string"
+            },
+            "sub_kind": {
+              "description": "Discriminator for the specific topology anomaly.",
+              "allOf": [
+                {
+                  "$ref": "#/definitions/CloneTopologyKind"
                 }
               ]
             }

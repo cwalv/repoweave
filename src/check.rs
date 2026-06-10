@@ -155,6 +155,28 @@ pub enum CheckViolation {
         /// Discriminator for the specific provenance anomaly.
         sub_kind: ProvenanceKind,
     },
+
+    /// A clone-topology violation: one of the manifest repos is on disk in a
+    /// shape that breaks tier-0 invariants from
+    /// [`docs/explanation/joints/clone-topology.md`].
+    ///
+    /// All four sub-kinds are silent for every higher-tier `rwv doctor`
+    /// check (those operate on revisions and content; this one operates on
+    /// the physical object-store topology). Always report-only: repair is
+    /// an object-store migration (re-parenting), out of `--fix` scope per
+    /// the alpha guideline.
+    CloneTopology {
+        /// Absolute path of the workspace that exhibits the violation. For
+        /// `WeaveCloneIsWorktree` and `DisconnectedWeaveClone`, this is the
+        /// canonical slot `<weave>/<repo_path>`. For `StandaloneInWorkweave`
+        /// and `WrongParentWorktree`, this is the offending workweave
+        /// checkout `<workweave>/<repo_path>`.
+        workspace_path: PathBuf,
+        /// Manifest-relative repo path involved in the violation.
+        repo: RepoPath,
+        /// Discriminator for the specific topology violation.
+        sub_kind: CloneTopologyKind,
+    },
 }
 
 #[derive(Debug, Serialize, JsonSchema)]
@@ -254,6 +276,66 @@ pub enum ProvenanceKind {
     LockShaUnreachable {
         /// The SHA pinned in `rwv.lock` that cannot be found locally.
         sha: String,
+    },
+}
+
+/// Discriminator for [`CheckViolation::CloneTopology`] findings.
+///
+/// The four sub-kinds enumerate the ways the bottom tier of the stability
+/// stack
+/// ([clone-topology.md](../../docs/explanation/joints/clone-topology.md))
+/// can break: a manifest repo's slot at `<weave>/<repo_path>` must be a
+/// "canonical store" (a full clone), and every workweave checkout
+/// `<workweave>/<repo_path>` must be a linked workspace whose VCS common
+/// store resolves to that canonical store. Each variant names a distinct
+/// way the on-disk shape diverges from that spec.
+#[derive(Debug, Serialize, JsonSchema, Clone)]
+#[serde(rename_all = "kebab-case")]
+pub enum CloneTopologyKind {
+    /// A full clone (its own canonical store) is hosted under `.workweaves/`
+    /// instead of at the manifest's canonical slot. The inverted-primary
+    /// case (fo-a0spgj `tmuxcc-broker`): the canonical store has migrated
+    /// into one workweave and other workweaves' checkouts link into *it*,
+    /// not into `<weave>/<repo_path>`.
+    StandaloneInWorkweave {
+        /// Absolute path of the standalone canonical store under
+        /// `.workweaves/`.
+        store_path: PathBuf,
+    },
+    /// The workspace at `<weave>/<repo_path>` is a full clone (its
+    /// canonical store sits under itself), but one or more of this weave's
+    /// workweave checkouts of the same repo resolve to a *different*
+    /// canonical store. The weave-path clone publishes a separate object
+    /// DAG nobody syncs to; push/pull becomes asymmetric and silent.
+    DisconnectedWeaveClone {
+        /// Absolute path of the canonical store at the weave slot (the
+        /// "disconnected" one).
+        weave_store_path: PathBuf,
+        /// Absolute path of a representative store one of the workweave
+        /// checkouts actually uses (the one this weave clone is
+        /// disconnected from).
+        other_store_path: PathBuf,
+    },
+    /// A linked worktree under `.workweaves/<workweave>/<repo_path>` whose
+    /// canonical store is not the weave canonical at `<weave>/<repo_path>`.
+    /// The shared-DAG invariant between the canonical and the workweave is
+    /// broken: commits made here land in a different object store than the
+    /// canonical, and merged-checks across the two answer "no" silently.
+    WrongParentWorktree {
+        /// Absolute path of the canonical store this workweave checkout
+        /// should be linked into (`<weave>/<repo_path>/.git`).
+        expected_store_path: PathBuf,
+        /// Absolute path of the canonical store this workweave checkout
+        /// is actually linked into.
+        actual_store_path: PathBuf,
+    },
+    /// The weave path `<weave>/<repo_path>` itself is a linked worktree of
+    /// some other clone — full inversion: there is no canonical store at
+    /// the manifest slot, and the workspace there shares its DAG with
+    /// whichever clone hosts the actual store.
+    WeaveCloneIsWorktree {
+        /// Absolute path of the canonical store this slot is linked into.
+        actual_store_path: PathBuf,
     },
 }
 
@@ -365,6 +447,16 @@ pub enum ViolationOutput {
         /// Discriminator for the specific provenance anomaly.
         #[serde(rename = "sub_kind")]
         sub_kind: ProvenanceKind,
+    },
+    CloneTopology {
+        /// Manifest-relative repo path (e.g. `github/cwalv/tmuxcc-broker`).
+        path: String,
+        /// Absolute path of the offending workspace (canonical slot or
+        /// workweave checkout, per sub-kind semantics).
+        absolute_path: String,
+        /// Discriminator for the specific topology anomaly.
+        #[serde(rename = "sub_kind")]
+        sub_kind: CloneTopologyKind,
     },
 }
 
@@ -519,6 +611,15 @@ impl ViolationOutput {
                 absolute_path: abs(workspace_dir, &repo),
                 path: repo.to_string(),
                 project: project.to_string(),
+                sub_kind,
+            },
+            CheckViolation::CloneTopology {
+                workspace_path,
+                repo,
+                sub_kind,
+            } => Self::CloneTopology {
+                absolute_path: workspace_path.to_string_lossy().into_owned(),
+                path: repo.to_string(),
                 sub_kind,
             },
         }
@@ -1051,6 +1152,208 @@ pub fn scan_provenance(workspace_dir: &Path, projects: &[Project]) -> Vec<CheckV
     violations
 }
 
+// ---------------------------------------------------------------------------
+// Clone-topology scanning
+// ---------------------------------------------------------------------------
+
+/// Scan every `(workspace, repo)` pair under this weave's view and report
+/// clone-topology violations of the I1/I2 invariants from
+/// [`docs/explanation/joints/clone-topology.md`].
+///
+/// For each manifest repo `R`, the scanner gathers:
+///   - the canonical slot at `<ws_root>/R` (call its canonical-store CAN);
+///   - every workweave checkout `<workweave>/R` (call its store WW_i).
+///
+/// It then classifies each pair by comparing canonical-store paths
+/// resolved through [`crate::vcs::Vcs::resolve_canonical_store`] (intent:
+/// "which object DAG does this workspace belong to?"). The four sub-kinds
+/// from the spec map to:
+///
+/// 1. **`weave-clone-is-worktree`** — CAN exists, but its canonical store is
+///    not `<ws_root>/R/.git` (the slot is itself a linked worktree of some
+///    other clone). Full inversion: the canonical has migrated out of the
+///    manifest slot.
+/// 2. **`standalone-in-workweave`** — WW_i is a full clone (its canonical
+///    store sits under itself in `.workweaves/`). Other workweaves' checkouts
+///    are typically linked into it; the fo-a0spgj `tmuxcc-broker` shape.
+/// 3. **`disconnected-weave-clone`** — CAN sits at `<ws_root>/R` correctly
+///    (its store is under itself), but at least one workweave's WW_i resolves
+///    to a different store: the weave clone publishes an object DAG nobody
+///    syncs to, push/pull is silently asymmetric.
+/// 4. **`wrong-parent-worktree`** — WW_i is a linked worktree whose canonical
+///    store is not CAN's store (and is not WW_i's own store either — that
+///    case is `standalone-in-workweave`). Cross-DAG merged-checks are silent.
+///
+/// All four are report-only: repair is an object-store migration. The
+/// scanner is read-only.
+///
+/// A workspace that the VCS doesn't recognize as a repo at all is skipped
+/// (not a topology violation — it might just be a manifest entry that
+/// hasn't been materialized yet).
+///
+/// Symlink/trailing-slash differences are absorbed by canonicalizing both
+/// sides before equality.
+pub fn scan_clone_topology(ws_root: &Path, repo_paths: &BTreeSet<RepoPath>) -> Vec<CheckViolation> {
+    use crate::git::GitVcs;
+    use crate::vcs::Vcs;
+
+    let mut violations = Vec::new();
+    if repo_paths.is_empty() {
+        return violations;
+    }
+    let git = GitVcs;
+
+    // Collect every workweave under this weave once; we iterate per-repo
+    // inside the loop.
+    let workweaves = crate::workweave::list_workweave_dirs(ws_root);
+
+    for repo in repo_paths {
+        let canonical_slot = ws_root.join(repo.as_path());
+        let canonical_store_raw = git.resolve_canonical_store(&canonical_slot);
+
+        // Expected canonical store path: `<canonical_slot>/.git`. Compare via
+        // canonicalize to absorb any trailing-slash / symlink differences.
+        let expected_store_canon = canonical_slot
+            .join(".git")
+            .canonicalize()
+            .unwrap_or_else(|_| canonical_slot.join(".git"));
+
+        let canonical_store_canon: Option<PathBuf> = canonical_store_raw
+            .as_ref()
+            .map(|p| p.canonicalize().unwrap_or_else(|_| p.clone()));
+
+        // Sub-kind: weave-clone-is-worktree.
+        //
+        // The canonical slot is a workspace but its canonical store doesn't
+        // live underneath. `None` here means the slot is just absent or
+        // un-materialized — not a topology violation; skip.
+        if let Some(ref canonical_store_canon_pb) = canonical_store_canon {
+            if canonical_store_canon_pb != &expected_store_canon {
+                violations.push(CheckViolation::CloneTopology {
+                    workspace_path: canonical_slot.clone(),
+                    repo: repo.clone(),
+                    sub_kind: CloneTopologyKind::WeaveCloneIsWorktree {
+                        actual_store_path: canonical_store_raw
+                            .clone()
+                            .unwrap_or_else(|| canonical_store_canon_pb.clone()),
+                    },
+                });
+                // Don't also classify it as disconnected — the canonical is
+                // not even an independent store; the diagnosis is "the slot
+                // is a worktree of something else".
+            }
+        }
+
+        // Walk every workweave checkout of this repo and classify it.
+        //
+        // While walking, collect a representative store path for the
+        // workweaves so we can compare against the canonical store and
+        // surface `disconnected-weave-clone` when the canonical sits on its
+        // own DAG that nobody syncs to.
+        let mut representative_ww_store: Option<PathBuf> = None;
+        for (_ww_name, ww_dir) in &workweaves {
+            let ww_checkout = ww_dir.join(repo.as_path());
+            let ww_store_raw = match git.resolve_canonical_store(&ww_checkout) {
+                Some(p) => p,
+                None => continue, // not a workspace there; skip silently
+            };
+            let ww_store_canon = ww_store_raw
+                .canonicalize()
+                .unwrap_or_else(|_| ww_store_raw.clone());
+            let ww_self_store_canon = ww_checkout
+                .join(".git")
+                .canonicalize()
+                .unwrap_or_else(|_| ww_checkout.join(".git"));
+
+            // Capture a representative for the disconnected-weave-clone
+            // diagnosis below. Prefer a store that disagrees with the
+            // canonical (it's the witness for the disconnection) over one
+            // that agrees.
+            let agrees_with_canonical = canonical_store_canon
+                .as_ref()
+                .map(|c| *c == ww_store_canon)
+                .unwrap_or(false);
+            if representative_ww_store.is_none() || !agrees_with_canonical {
+                representative_ww_store = Some(ww_store_raw.clone());
+            }
+
+            // Sub-kind: standalone-in-workweave.
+            //
+            // The workweave checkout is itself a full clone (its canonical
+            // store sits at `<workweave>/<repo>/.git`). This is the
+            // fo-a0spgj inversion: the canonical has migrated into one
+            // workweave.
+            if ww_store_canon == ww_self_store_canon {
+                violations.push(CheckViolation::CloneTopology {
+                    workspace_path: ww_checkout.clone(),
+                    repo: repo.clone(),
+                    sub_kind: CloneTopologyKind::StandaloneInWorkweave {
+                        store_path: ww_store_raw.clone(),
+                    },
+                });
+                // Don't also flag as wrong-parent — the diagnosis is the
+                // sharper one (this *is* a standalone store, not a worktree
+                // linked to the wrong parent).
+                continue;
+            }
+
+            // Sub-kind: wrong-parent-worktree.
+            //
+            // The workweave checkout is a linked worktree of some store,
+            // but that store is not the weave canonical. Cross-DAG silent
+            // failures incoming.
+            //
+            // We compare against the *expected* canonical-store path
+            // (`<ws_root>/<repo>/.git`), not the canonical's actual
+            // resolved store: when the canonical itself is broken
+            // (weave-clone-is-worktree), the right thing to say about the
+            // workweave is still "it should have been linked to the
+            // canonical slot, but it's linked elsewhere". Two violations
+            // surface, both pointing at the topology problem.
+            if ww_store_canon != expected_store_canon {
+                violations.push(CheckViolation::CloneTopology {
+                    workspace_path: ww_checkout.clone(),
+                    repo: repo.clone(),
+                    sub_kind: CloneTopologyKind::WrongParentWorktree {
+                        expected_store_path: canonical_slot.join(".git"),
+                        actual_store_path: ww_store_raw.clone(),
+                    },
+                });
+            }
+        }
+
+        // Sub-kind: disconnected-weave-clone.
+        //
+        // Reported only when the canonical is an apparently-healthy full
+        // clone (its store sits at `<ws_root>/<repo>/.git`), but a
+        // workweave checkout resolves to a different store. The canonical
+        // is publishing an isolated DAG nobody syncs to. Skip when there
+        // are no workweave checkouts at all (a lone canonical is a healthy
+        // base case).
+        if let Some(ref canonical_store_canon_pb) = canonical_store_canon {
+            if canonical_store_canon_pb == &expected_store_canon {
+                if let Some(rep) = representative_ww_store {
+                    let rep_canon = rep.canonicalize().unwrap_or_else(|_| rep.clone());
+                    if rep_canon != expected_store_canon {
+                        violations.push(CheckViolation::CloneTopology {
+                            workspace_path: canonical_slot.clone(),
+                            repo: repo.clone(),
+                            sub_kind: CloneTopologyKind::DisconnectedWeaveClone {
+                                weave_store_path: canonical_store_raw
+                                    .clone()
+                                    .unwrap_or_else(|| expected_store_canon.clone()),
+                                other_store_path: rep,
+                            },
+                        });
+                    }
+                }
+            }
+        }
+    }
+
+    violations
+}
+
 /// `$schema` URL embedded in `rwv doctor --json` output. Points at the
 /// committed schema artifact in the main branch (Agent D regenerates this
 /// file via `cargo run --bin generate-schemas` and CI fails on drift).
@@ -1339,6 +1642,54 @@ pub fn violations_to_issues(violations: Vec<CheckViolation>) -> Vec<Issue> {
                         ),
                     ),
                 },
+                CheckViolation::CloneTopology {
+                    workspace_path,
+                    repo,
+                    sub_kind,
+                } => {
+                    // All clone-topology violations are tier-0 (object-store
+                    // identity wrong). Repair is an object-store migration —
+                    // out of scope of --fix per the alpha guideline. Severity
+                    // is Error because every higher-tier check silently
+                    // operates on incoherent input under these violations.
+                    let msg = match &sub_kind {
+                        CloneTopologyKind::StandaloneInWorkweave { store_path } => format!(
+                            "clone-topology: standalone clone of `{repo}` lives in a workweave \
+                             ({}); the canonical store should be at `<weave>/{repo}` not under \
+                             `.workweaves/`",
+                            store_path.display(),
+                        ),
+                        CloneTopologyKind::DisconnectedWeaveClone {
+                            weave_store_path,
+                            other_store_path,
+                        } => format!(
+                            "clone-topology: weave-path clone of `{repo}` at {} is disconnected \
+                             — workweave checkouts of this repo use a different canonical store \
+                             ({}); the weave clone publishes an unread object DAG",
+                            weave_store_path.display(),
+                            other_store_path.display(),
+                        ),
+                        CloneTopologyKind::WrongParentWorktree {
+                            expected_store_path,
+                            actual_store_path,
+                        } => format!(
+                            "clone-topology: workweave checkout of `{repo}` at {} is linked into \
+                             {} instead of the weave canonical {}; cross-DAG merged-checks \
+                             silently answer `no`",
+                            workspace_path.display(),
+                            actual_store_path.display(),
+                            expected_store_path.display(),
+                        ),
+                        CloneTopologyKind::WeaveCloneIsWorktree { actual_store_path } => format!(
+                            "clone-topology: weave-path slot for `{repo}` at {} is itself a \
+                             linked worktree of {}; the canonical store has migrated out of \
+                             the manifest slot",
+                            workspace_path.display(),
+                            actual_store_path.display(),
+                        ),
+                    };
+                    (crate::integration::Severity::Error, msg)
+                }
             };
             Issue {
                 integration: "core".into(),
@@ -2066,6 +2417,14 @@ pub fn run_check(
         violations.push(v);
     }
 
+    // Clone-topology: tier-0 invariants from
+    // `docs/explanation/joints/clone-topology.md`. Compares each manifest
+    // repo's canonical store at `<weave>/<repo>` against every workweave
+    // checkout's store. Report-only (repair is an object-store migration).
+    for v in scan_clone_topology(ctx.primary_path(), &input.known_repos) {
+        violations.push(v);
+    }
+
     // Surface unparseable manifests as first-class violations so the
     // workspace is never reported as "clean" when a manifest is broken.
     for (project, manifest_path, message) in &unparseable_projects {
@@ -2623,6 +2982,12 @@ fn collect_doctor_violations(
     // Provenance checks: origin-url-mismatch and lock-sha-unreachable.
     // Always report-only (no --fix path).
     for v in scan_provenance(&workspace_dir, &input.projects) {
+        violations.push(v);
+    }
+
+    // Clone-topology findings. Tier-0 invariants from clone-topology.md;
+    // workspace-level, always run.
+    for v in scan_clone_topology(ctx.primary_path(), &input.known_repos) {
         violations.push(v);
     }
 

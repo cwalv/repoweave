@@ -1074,6 +1074,31 @@ impl Vcs for GitVcs {
             })?;
         Ok(status.success())
     }
+
+    fn resolve_canonical_store(&self, workspace: &Path) -> Option<PathBuf> {
+        // `--path-format=absolute --git-common-dir` returns the absolute path
+        // of the shared object/refs store, regardless of whether `workspace`
+        // is a full clone (returns `<workspace>/.git`) or a linked worktree
+        // (returns the store path of whichever clone backs it).
+        //
+        // Equality on the returned path is the load-bearing primitive: two
+        // workspaces share an object DAG iff this call returns the same path
+        // for both. `rwv doctor`'s clone-topology check uses that equality to
+        // enforce I1/I2 from the clone-topology joint.
+        if !workspace.exists() {
+            return None;
+        }
+        let raw = Self::run(
+            &["rev-parse", "--path-format=absolute", "--git-common-dir"],
+            workspace,
+        )
+        .ok()?;
+        let trimmed = raw.trim();
+        if trimmed.is_empty() {
+            return None;
+        }
+        Some(PathBuf::from(trimmed))
+    }
 }
 
 /// Build the savepoint ref path for `op_id` under the rwv pre-op namespace.

@@ -874,4 +874,38 @@ pub trait Vcs {
     /// force-push removed the commit from reachable history, or after a
     /// fresh clone that has never fetched a now-detached SHA.
     fn commit_object_exists(&self, repo: &Path, sha: &str) -> Result<bool, VcsError>;
+    /// Resolve the absolute path of the canonical object/refs store backing
+    /// the workspace at `workspace`.
+    ///
+    /// The returned path is the location of the object DAG and refs that
+    /// commits made in `workspace` will end up in. Two workspaces share an
+    /// object DAG iff this method returns the same path for both. This is
+    /// the primitive `rwv doctor`'s clone-topology check uses to enforce
+    /// the I1 (single canonical store) and I2 (workweave checkouts are
+    /// linked into the canonical store) invariants from the
+    /// [clone-topology](../../docs/explanation/joints/clone-topology.md)
+    /// joint.
+    ///
+    /// Returns `None` when `workspace` is not a VCS workspace at all
+    /// (e.g. the path does not exist, or the directory is not a repo).
+    ///
+    /// Semantics on key inputs:
+    /// - **Full clone at `workspace`.** Returns `workspace/.git` (or
+    ///   wherever the VCS keeps its store under the workspace root).
+    /// - **Linked worktree at `workspace`.** Returns the path of the
+    ///   shared store the worktree was created against — not anything
+    ///   under `workspace`.
+    /// - **Path does not exist or has no VCS metadata.** Returns `None`.
+    ///   The caller distinguishes "not a workspace" from "a workspace
+    ///   linked elsewhere" by inspecting the returned path itself.
+    ///
+    /// The returned path is absolute (a symlink-resolved form is not
+    /// required, but two stores that are byte-identical strings must
+    /// compare equal). Callers comparing two stores should canonicalize
+    /// both sides before equality to absorb trailing-slash / symlink
+    /// differences.
+    ///
+    /// For [`GitVcs`](crate::git::GitVcs): runs `git rev-parse
+    /// --path-format=absolute --git-common-dir` in `workspace`.
+    fn resolve_canonical_store(&self, workspace: &Path) -> Option<PathBuf>;
 }
