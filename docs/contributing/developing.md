@@ -61,6 +61,37 @@ curl -fsSL https://cwalv.github.io/repoweave/install.sh | sh
 # or: uv tool install repoweave
 ```
 
+## Building the docs locally
+
+The docs are built with [mdbook](https://rust-lang.github.io/mdBook/) and the
+[mdbook-mermaid](https://github.com/badboy/mdbook-mermaid) preprocessor. The
+required tool versions are:
+
+| Tool | Version |
+|------|---------|
+| `mdbook` | 0.5.3 |
+| `mdbook-mermaid` | 0.17.0 |
+
+**mdbook-mermaid 0.17.0 requires mdbook 0.5.x.** Earlier mdbook-mermaid
+versions (≤ 0.14.x) only support mdbook 0.4.x; mixing them causes the
+preprocessor to exit with "Unable to parse the input".
+
+Install the pinned pair:
+
+```bash
+cargo install mdbook --version 0.5.3
+cargo install mdbook-mermaid --version 0.17.0
+```
+
+Then build the book from the repo root:
+
+```bash
+mdbook-mermaid install .   # regenerates mermaid.min.js + mermaid-init.js
+mdbook build               # output lands in book/
+```
+
+CI (`.github/workflows/pages.yml`) pins these same versions.
+
 ## When to cut a release
 
 Local development is local-only — contributors and agents iterate against source. External consumers (`uv tool install repoweave`, `install.sh`) get whatever is on GitHub Releases. When a change needs to reach them, tag the commit and let CI build and publish platform wheels — see [Releasing rwv](./releasing-rwv.md). ([Release a package](../how-to/release-a-package.md) covers user-project package releasing, not the rwv binary.)

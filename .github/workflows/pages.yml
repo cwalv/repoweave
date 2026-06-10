@@ -23,12 +23,15 @@ jobs:
       - name: Install mdbook
         uses: peaceiris/actions-mdbook@v2
         with:
-          mdbook-version: latest
+          # Pin: mdbook 0.5.3 + mdbook-mermaid 0.17.0 are the verified compatible pair.
+          # mdbook-mermaid 0.17.0 requires mdbook 0.5.x (mdbook-preprocessor protocol);
+          # older mdbook-mermaid (<= 0.14.x) only supports mdbook 0.4.x.
+          mdbook-version: "0.5.3"
 
       - name: Install mdbook-mermaid
         uses: taiki-e/install-action@v2
         with:
-          tool: mdbook-mermaid
+          tool: mdbook-mermaid@0.17.0
 
       - name: Generate mermaid assets
         run: mdbook-mermaid install .
