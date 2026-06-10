@@ -373,6 +373,34 @@
               "type": "string"
             }
           }
+        },
+        {
+          "type": "object",
+          "required": [
+            "kind",
+            "sub_kind",
+            "workweave_dir"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "workweave-tree-integrity"
+              ]
+            },
+            "sub_kind": {
+              "description": "Discriminator for the specific anomaly detected.",
+              "allOf": [
+                {
+                  "$ref": "#/definitions/WorkweaveTreeIntegrityKind"
+                }
+              ]
+            },
+            "workweave_dir": {
+              "description": "Absolute path to the workweave directory (or its marker file for file-level findings).",
+              "type": "string"
+            }
+          }
         }
       ]
     },
@@ -392,6 +420,84 @@
           "enum": [
             "live-edits"
           ]
+        }
+      ]
+    },
+    "WorkweaveTreeIntegrityKind": {
+      "description": "Discriminator for [`CheckViolation::WorkweaveTreeIntegrity`] findings.",
+      "oneOf": [
+        {
+          "description": "The marker's `parent:` path no longer exists on disk. The workweave's parent was retired or deleted while this child remained. Bare `rwv sync-to` and `--retire` will mis-fire until the operator re-points `parent` to a valid workspace. Report-only.",
+          "type": "object",
+          "required": [
+            "dangling-parent"
+          ],
+          "properties": {
+            "dangling-parent": {
+              "type": "object",
+              "required": [
+                "parent_path"
+              ],
+              "properties": {
+                "parent_path": {
+                  "description": "The missing parent path recorded in the marker.",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "description": "A parent-chain anomaly: cycle, parent==self, or the parent marker's project differs from this workweave's project. Cannot arise from `rwv workweave create`; can arise from hand-edited markers or directory copies. Report-only.",
+          "type": "object",
+          "required": [
+            "parent-chain-anomaly"
+          ],
+          "properties": {
+            "parent-chain-anomaly": {
+              "type": "object",
+              "required": [
+                "detail"
+              ],
+              "properties": {
+                "detail": {
+                  "description": "Short human-readable description of the anomaly.",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "description": "A directory under `.workweaves/` that has no `.rwv-workweave` marker file at all. It may be an orphaned directory from a failed create, a manually placed directory, or a remnant of a deleted workweave. Report-only.",
+          "type": "string",
+          "enum": [
+            "unregistered-dir"
+          ]
+        },
+        {
+          "description": "The marker's `primary:` path does not resolve to the workspace this scan was started from (e.g. an rsync'd workweave whose marker still points at the origin machine's absolute path). Report-only.",
+          "type": "object",
+          "required": [
+            "foreign-primary"
+          ],
+          "properties": {
+            "foreign-primary": {
+              "type": "object",
+              "required": [
+                "marker_primary"
+              ],
+              "properties": {
+                "marker_primary": {
+                  "description": "The primary path recorded in the marker (unresolved).",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "additionalProperties": false
         }
       ]
     }

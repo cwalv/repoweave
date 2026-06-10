@@ -124,6 +124,19 @@ pub enum CheckViolation {
         /// No structured parse-error type is available at this boundary.
         message: String,
     },
+
+    /// A `.rwv-workweave` marker tree anomaly: dangling parent, chain anomaly,
+    /// unregistered directory, or foreign-primary marker.
+    ///
+    /// Always report-only: no auto-fix is safe without operator input (e.g.
+    /// re-pointing a dangling parent changes what bare `rwv sync-to` does).
+    WorkweaveTreeIntegrity {
+        /// Absolute path to the workweave directory (or the marker file for
+        /// file-level violations).
+        workweave_dir: PathBuf,
+        /// Discriminator for the specific anomaly detected.
+        sub_kind: WorkweaveTreeIntegrityKind,
+    },
 }
 
 #[derive(Debug, Serialize, JsonSchema)]
@@ -157,6 +170,40 @@ pub enum WorkingTreeDriftKind {
     /// At least one modified file has on-disk content not found in any recent
     /// ancestor's tree. The user has active edits; `--fix` must not touch this.
     LiveEdits,
+}
+
+/// Discriminator for [`CheckViolation::WorkweaveTreeIntegrity`] findings.
+#[derive(Debug, Serialize, JsonSchema, Clone)]
+#[serde(rename_all = "kebab-case")]
+pub enum WorkweaveTreeIntegrityKind {
+    /// The marker's `parent:` path no longer exists on disk. The workweave's
+    /// parent was retired or deleted while this child remained. Bare
+    /// `rwv sync-to` and `--retire` will mis-fire until the operator
+    /// re-points `parent` to a valid workspace. Report-only.
+    DanglingParent {
+        /// The missing parent path recorded in the marker.
+        parent_path: PathBuf,
+    },
+    /// A parent-chain anomaly: cycle, parent==self, or the parent marker's
+    /// project differs from this workweave's project. Cannot arise from
+    /// `rwv workweave create`; can arise from hand-edited markers or
+    /// directory copies. Report-only.
+    ParentChainAnomaly {
+        /// Short human-readable description of the anomaly.
+        detail: String,
+    },
+    /// A directory under `.workweaves/` that has no `.rwv-workweave` marker
+    /// file at all. It may be an orphaned directory from a failed create, a
+    /// manually placed directory, or a remnant of a deleted workweave.
+    /// Report-only.
+    UnregisteredDir,
+    /// The marker's `primary:` path does not resolve to the workspace this
+    /// scan was started from (e.g. an rsync'd workweave whose marker still
+    /// points at the origin machine's absolute path). Report-only.
+    ForeignPrimary {
+        /// The primary path recorded in the marker (unresolved).
+        marker_primary: PathBuf,
+    },
 }
 
 // ---------------------------------------------------------------------------
@@ -248,6 +295,14 @@ pub enum ViolationOutput {
         /// Free-form display string of the YAML parse error. Named `message`
         /// (not `error`) to signal this is display text, not a typed discriminant.
         message: String,
+    },
+    WorkweaveTreeIntegrity {
+        /// Absolute path to the workweave directory (or its marker file for
+        /// file-level findings).
+        workweave_dir: String,
+        /// Discriminator for the specific anomaly detected.
+        #[serde(rename = "sub_kind")]
+        sub_kind: WorkweaveTreeIntegrityKind,
     },
 }
 
@@ -386,6 +441,13 @@ impl ViolationOutput {
                 project: project.to_string(),
                 manifest_path: manifest_path.to_string_lossy().into_owned(),
                 message,
+            },
+            CheckViolation::WorkweaveTreeIntegrity {
+                workweave_dir,
+                sub_kind,
+            } => Self::WorkweaveTreeIntegrity {
+                workweave_dir: workweave_dir.to_string_lossy().into_owned(),
+                sub_kind,
             },
         }
     }
@@ -589,6 +651,233 @@ pub fn fix_legacy_workweave_marker(finding: &LegacyWorkweaveMarkerFile) -> anyho
         )
     })?;
     Ok(true)
+}
+
+// ---------------------------------------------------------------------------
+// Workweave-tree integrity scanning
+// ---------------------------------------------------------------------------
+
+/// Scan the workweave parent directory for `.rwv-workweave` marker tree
+/// anomalies.
+///
+/// Checks performed (all report-only; no auto-fix):
+///
+/// 1. **`dangling-parent`** — marker's `parent:` path does not exist on disk.
+/// 2. **`parent-chain-anomaly`** — cycle (A→B→A…), parent==self, or the
+///    parent marker's `project` differs from the child's `project`.
+/// 3. **`unregistered-dir`** — a directory under `.workweaves/` that has no
+///    `.rwv-workweave` marker file.
+/// 4. **`foreign-primary`** — marker's `primary:` does not canonicalize to
+///    `ws_root`.
+///
+/// Workweave directories are located via
+/// [`crate::workweave::workweave_parent_pub`]. Only top-level entries under
+/// the parent directory are scanned (children of nested workweaves are under
+/// a different parent and will be picked up when doctor runs from those
+/// workweaves, or via a recursive descent — but the bead asks for a single
+/// flat scan at the primary's `.workweaves/` level).
+pub fn scan_workweave_tree_integrity(ws_root: &Path) -> Vec<CheckViolation> {
+    let parent_dir = crate::workweave::workweave_parent_pub(ws_root);
+    let ws_canonical = ws_root
+        .canonicalize()
+        .unwrap_or_else(|_| ws_root.to_path_buf());
+
+    let mut violations = Vec::new();
+
+    let entries = match std::fs::read_dir(&parent_dir) {
+        Ok(e) => e,
+        Err(_) => return violations, // parent dir missing → nothing to check
+    };
+
+    let mut dirs: Vec<PathBuf> = entries
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| p.is_dir())
+        .collect();
+    dirs.sort();
+
+    // Phase 1: per-directory checks (unregistered-dir, foreign-primary,
+    // dangling-parent).  Collect marker data for phase-2 chain analysis.
+    struct MarkerEntry {
+        dir: PathBuf,
+        project: crate::manifest::ProjectName,
+        parent: PathBuf,
+    }
+    let mut marker_entries: Vec<MarkerEntry> = Vec::new();
+
+    for dir in &dirs {
+        let marker_path = dir.join(".rwv-workweave");
+
+        if !marker_path.exists() {
+            // No marker file at all → unregistered directory.
+            violations.push(CheckViolation::WorkweaveTreeIntegrity {
+                workweave_dir: dir.clone(),
+                sub_kind: WorkweaveTreeIntegrityKind::UnregisteredDir,
+            });
+            continue;
+        }
+
+        // Try to parse the marker. Legacy markers (missing `parent:`) are
+        // handled by the separate legacy-workweave-marker check; we skip
+        // them here (they'll get a `LegacyWorkweaveMarker` violation
+        // instead, which directs the operator to `--fix`).
+        let marker = match crate::workspace::WorkweaveMarker::read(dir) {
+            Ok(Some(m)) => m,
+            Ok(None) => {
+                // Marker file exists but `read()` returned None — shouldn't
+                // happen (None means the file was absent), but be defensive.
+                violations.push(CheckViolation::WorkweaveTreeIntegrity {
+                    workweave_dir: dir.clone(),
+                    sub_kind: WorkweaveTreeIntegrityKind::UnregisteredDir,
+                });
+                continue;
+            }
+            Err(_) => {
+                // Legacy marker (missing `parent:`) — already reported by
+                // scan_for_legacy_workweave_markers; don't double-report.
+                continue;
+            }
+        };
+
+        // Foreign-primary check: marker's `primary` must resolve to ws_root.
+        let marker_primary_canonical = marker
+            .primary
+            .canonicalize()
+            .unwrap_or_else(|_| marker.primary.clone());
+        if marker_primary_canonical != ws_canonical {
+            violations.push(CheckViolation::WorkweaveTreeIntegrity {
+                workweave_dir: dir.clone(),
+                sub_kind: WorkweaveTreeIntegrityKind::ForeignPrimary {
+                    marker_primary: marker.primary.clone(),
+                },
+            });
+            // A foreign-primary marker's `parent` field refers to another
+            // machine's paths; chain analysis against our on-disk tree would
+            // produce noise. Skip further checks for this directory.
+            continue;
+        }
+
+        // Dangling-parent check: the parent path must exist on disk.
+        if !marker.parent.exists() {
+            violations.push(CheckViolation::WorkweaveTreeIntegrity {
+                workweave_dir: dir.clone(),
+                sub_kind: WorkweaveTreeIntegrityKind::DanglingParent {
+                    parent_path: marker.parent.clone(),
+                },
+            });
+            // Even with a dangling parent we can still collect the entry
+            // for the cycle/cross-project check using what we have.
+        }
+
+        marker_entries.push(MarkerEntry {
+            dir: dir.clone(),
+            project: marker.project.clone(),
+            parent: marker.parent.clone(),
+        });
+    }
+
+    // Phase 2: parent-chain anomaly detection.
+    //
+    // Walk from each workweave's `parent` field upward.  We look for:
+    //   (a) parent == self (the directory points to itself)
+    //   (b) cycle (visited set contains a node we reach again)
+    //   (c) cross-project: the parent directory has a marker whose `project`
+    //       differs from the starting workweave's `project`.
+    //
+    // Only workweaves in this parent directory are checked; parents that
+    // resolve to ws_root (the primary) are the normal healthy base case and
+    // are not followed.
+    //
+    // Build a lookup: canonical_dir → (project, parent).
+    let dir_lookup: std::collections::HashMap<PathBuf, (crate::manifest::ProjectName, PathBuf)> =
+        marker_entries
+            .iter()
+            .filter_map(|e| {
+                let canon = e.dir.canonicalize().ok()?;
+                Some((canon, (e.project.clone(), e.parent.clone())))
+            })
+            .collect();
+
+    for entry in &marker_entries {
+        let dir_canon = match entry.dir.canonicalize() {
+            Ok(c) => c,
+            Err(_) => continue,
+        };
+
+        // (a) parent == self
+        let parent_canon = entry
+            .parent
+            .canonicalize()
+            .unwrap_or_else(|_| entry.parent.clone());
+        if parent_canon == dir_canon {
+            violations.push(CheckViolation::WorkweaveTreeIntegrity {
+                workweave_dir: entry.dir.clone(),
+                sub_kind: WorkweaveTreeIntegrityKind::ParentChainAnomaly {
+                    detail: "marker `parent` points to the workweave itself (self-loop)".into(),
+                },
+            });
+            continue;
+        }
+
+        // Walk the parent chain looking for cycles and cross-project anomalies.
+        let mut visited: std::collections::HashSet<PathBuf> = std::collections::HashSet::new();
+        visited.insert(dir_canon.clone());
+
+        let mut current_parent = parent_canon.clone();
+        loop {
+            // Reached the primary weave root → healthy base case.
+            if current_parent == ws_canonical {
+                break;
+            }
+
+            if visited.contains(&current_parent) {
+                // Cycle detected.
+                violations.push(CheckViolation::WorkweaveTreeIntegrity {
+                    workweave_dir: entry.dir.clone(),
+                    sub_kind: WorkweaveTreeIntegrityKind::ParentChainAnomaly {
+                        detail: format!(
+                            "marker `parent` chain contains a cycle through `{}`",
+                            current_parent.display()
+                        ),
+                    },
+                });
+                break;
+            }
+            visited.insert(current_parent.clone());
+
+            // Check for cross-project parent.
+            if let Some((parent_project, next_parent)) = dir_lookup.get(&current_parent) {
+                if parent_project.as_str() != entry.project.as_str() {
+                    violations.push(CheckViolation::WorkweaveTreeIntegrity {
+                        workweave_dir: entry.dir.clone(),
+                        sub_kind: WorkweaveTreeIntegrityKind::ParentChainAnomaly {
+                            detail: format!(
+                                "marker `parent` (`{}`) belongs to project `{}` but this \
+                                 workweave is project `{}`",
+                                current_parent.display(),
+                                parent_project.as_str(),
+                                entry.project.as_str()
+                            ),
+                        },
+                    });
+                    break;
+                }
+                // Keep climbing.
+                current_parent = next_parent
+                    .canonicalize()
+                    .unwrap_or_else(|_| next_parent.clone());
+            } else {
+                // Parent is not in our lookup (not one of the dirs we
+                // scanned). It may be a nested workweave's own child
+                // workweave (out of scope of this flat scan), or a path
+                // that no longer exists (already caught by dangling-parent
+                // above). Stop here.
+                break;
+            }
+        }
+    }
+
+    violations
 }
 
 /// `$schema` URL embedded in `rwv doctor --json` output. Points at the
@@ -815,6 +1104,35 @@ pub fn violations_to_issues(violations: Vec<CheckViolation>) -> Vec<Issue> {
                         missing_dir.display()
                     ),
                 ),
+                CheckViolation::WorkweaveTreeIntegrity {
+                    workweave_dir,
+                    sub_kind,
+                } => {
+                    let msg = match &sub_kind {
+                        WorkweaveTreeIntegrityKind::DanglingParent { parent_path } => format!(
+                            "{}: marker `parent` points to `{}` which does not exist; \
+                             re-point parent to a valid workspace before using this workweave",
+                            workweave_dir.display(),
+                            parent_path.display()
+                        ),
+                        WorkweaveTreeIntegrityKind::ParentChainAnomaly { detail } => format!(
+                            "{}: workweave parent-chain anomaly: {}",
+                            workweave_dir.display(),
+                            detail
+                        ),
+                        WorkweaveTreeIntegrityKind::UnregisteredDir => format!(
+                            "{}: directory under workweaves parent has no `.rwv-workweave` marker",
+                            workweave_dir.display()
+                        ),
+                        WorkweaveTreeIntegrityKind::ForeignPrimary { marker_primary } => format!(
+                            "{}: marker `primary` (`{}`) does not match this workspace; \
+                             this workweave may have been copied from another machine",
+                            workweave_dir.display(),
+                            marker_primary.display()
+                        ),
+                    };
+                    (crate::integration::Severity::Warning, msg)
+                }
             };
             Issue {
                 integration: "core".into(),
@@ -1528,6 +1846,14 @@ pub fn run_check(
         });
     }
 
+    // Workweave-tree integrity: dangling parent, chain anomalies, unregistered
+    // dirs, foreign-primary markers. Always report-only (no --fix path).
+    // Run from the primary weave so the scan covers all workweaves belonging
+    // to this workspace.
+    for v in scan_workweave_tree_integrity(ctx.primary_path()) {
+        violations.push(v);
+    }
+
     // Surface unparseable manifests as first-class violations so the
     // workspace is never reported as "clean" when a manifest is broken.
     for (project, manifest_path, message) in &unparseable_projects {
@@ -2075,6 +2401,11 @@ fn collect_doctor_violations(
             marker_path: finding.marker_path,
             primary: finding.primary,
         });
+    }
+
+    // Workweave-tree integrity findings. Workspace-level, always run.
+    for v in scan_workweave_tree_integrity(ctx.primary_path()) {
+        violations.push(v);
     }
 
     // Index-drift + working-tree-drift detection. Same scan list as
