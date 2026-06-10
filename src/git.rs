@@ -1155,31 +1155,6 @@ impl Vcs for GitVcs {
             .collect();
         Ok(op_ids)
     }
-
-    fn canonical_store_for_workspace(&self, workspace: &Path) -> Result<PathBuf, VcsError> {
-        // `git rev-parse --git-common-dir` returns the shared .git directory
-        // for `workspace` (handles both canonical clones — where common-dir
-        // equals .git — and linked worktrees, where common-dir points back to
-        // the clone's .git). The result may be a relative path resolved
-        // against the workspace; absolutise before stripping the trailing
-        // .git component so the returned PathBuf is unambiguous regardless
-        // of cwd.
-        let raw = Self::run(&["rev-parse", "--git-common-dir"], workspace)?;
-        let common_dir = PathBuf::from(&raw);
-        let absolute = if common_dir.is_absolute() {
-            common_dir
-        } else {
-            workspace.join(common_dir)
-        };
-        // Strip the trailing ".git" component so the returned path is the
-        // canonical clone DIRECTORY (the value callers compare against
-        // weave-relative repo paths and pass to `worktree remove`), not the
-        // git-control directory itself. Canonicalise to collapse symlinks
-        // and `..` so equality comparisons against canonicalised checkout
-        // paths are reliable.
-        let canonical_dir = absolute.parent().map(Path::to_path_buf).unwrap_or(absolute);
-        Ok(canonical_dir.canonicalize().unwrap_or(canonical_dir))
-    }
 }
 
 /// Build the savepoint ref path for `op_id` under the rwv pre-op namespace.

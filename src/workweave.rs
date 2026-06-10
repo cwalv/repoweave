@@ -904,10 +904,15 @@ fn collect_diverged_paths(
         // worktree. Under tier-0 violations the canonical store for the
         // workweave checkout differs from the baseline's canonical store,
         // and we conservatively decline to vouch — see below.
-        let wt_canonical = match GitVcs.canonical_store_for_workspace(wt) {
-            Ok(p) => p,
-            Err(e) => {
-                diverged.push(format!("{label}: canonical-store lookup failed: {e}"));
+        let wt_canonical = match GitVcs
+            .resolve_canonical_store(wt)
+            .and_then(|s| s.parent().map(|p| p.to_path_buf()))
+        {
+            Some(p) => p.canonicalize().unwrap_or(p),
+            None => {
+                diverged.push(format!(
+                    "{label}: canonical-store lookup failed: not a repo"
+                ));
                 return;
             }
         };
@@ -924,9 +929,12 @@ fn collect_diverged_paths(
             // When the baseline's canonical store differs from the
             // workweave checkout's, treat as not-vouched-by-this-baseline
             // and let the operator run `rwv doctor`.
-            let base_canonical = match GitVcs.canonical_store_for_workspace(&canonical) {
-                Ok(p) => p,
-                Err(_) => continue,
+            let base_canonical = match GitVcs
+                .resolve_canonical_store(&canonical)
+                .and_then(|s| s.parent().map(|p| p.to_path_buf()))
+            {
+                Some(p) => p.canonicalize().unwrap_or(p),
+                None => continue,
             };
             if base_canonical != wt_canonical {
                 continue;
@@ -1020,9 +1028,12 @@ fn resolved_worktree_parent(checkout: &Path, fallback: &Path) -> PathBuf {
     if !checkout.exists() {
         return fallback.to_path_buf();
     }
-    match GitVcs.canonical_store_for_workspace(checkout) {
-        Ok(p) => p,
-        Err(_) => fallback.to_path_buf(),
+    match GitVcs
+        .resolve_canonical_store(checkout)
+        .and_then(|s| s.parent().map(|p| p.to_path_buf()))
+    {
+        Some(p) => p.canonicalize().unwrap_or(p),
+        None => fallback.to_path_buf(),
     }
 }
 
@@ -1058,9 +1069,12 @@ fn refuse_if_checkouts_host_foreign_worktrees(
         if !checkout.exists() {
             return;
         }
-        let canonical = match GitVcs.canonical_store_for_workspace(checkout) {
-            Ok(p) => p,
-            Err(_) => return, // not a repo; nothing to host
+        let canonical = match GitVcs
+            .resolve_canonical_store(checkout)
+            .and_then(|s| s.parent().map(|p| p.to_path_buf()))
+        {
+            Some(p) => p.canonicalize().unwrap_or(p),
+            None => return, // not a repo; nothing to host
         };
         let checkout_canonical = checkout.canonicalize().unwrap_or(checkout.to_path_buf());
         if canonical != checkout_canonical {

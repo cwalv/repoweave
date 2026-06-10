@@ -111,8 +111,9 @@ fn write_marker(ww_dir: &Path, primary: &Path, project: &str) {
     std::fs::write(ww_dir.join(".rwv-workweave"), marker).unwrap();
 }
 
-/// Sanity test: under correct topology, `canonical_store_for_workspace`
-/// resolves a workweave checkout to the canonical clone it links into.
+/// Sanity test: under correct topology, `resolve_canonical_store`
+/// resolves a workweave checkout's store path back to the canonical clone
+/// it links into (via `.parent()`).
 #[test]
 fn canonical_store_resolves_to_linked_clone_under_correct_topology() {
     let tmp = tempfile::tempdir().unwrap();
@@ -120,9 +121,16 @@ fn canonical_store_resolves_to_linked_clone_under_correct_topology() {
     let ww_root = tmp.path().join(".workweaves").join("web-app--probe");
     add_workweave_checkout(&repo, &ww_root, "github/org/repo", "web-app--probe/main");
 
-    let resolved = repoweave::git::GitVcs
-        .canonical_store_for_workspace(&ww_root.join("github/org/repo"))
-        .expect("canonical_store_for_workspace");
+    let checkout = ww_root.join("github/org/repo");
+    let store_path = repoweave::git::GitVcs
+        .resolve_canonical_store(&checkout)
+        .expect("resolve_canonical_store returned None");
+    // `.parent()` strips the trailing `.git` component to get the clone directory.
+    let resolved = store_path
+        .parent()
+        .expect("store path should have a parent")
+        .canonicalize()
+        .unwrap();
     let expected = repo.canonicalize().unwrap();
     assert_eq!(
         resolved,

@@ -874,6 +874,7 @@ pub trait Vcs {
     /// force-push removed the commit from reachable history, or after a
     /// fresh clone that has never fetched a now-detached SHA.
     fn commit_object_exists(&self, repo: &Path, sha: &str) -> Result<bool, VcsError>;
+
     /// Resolve the absolute path of the canonical object/refs store backing
     /// the workspace at `workspace`.
     ///
@@ -899,11 +900,16 @@ pub trait Vcs {
     ///   The caller distinguishes "not a workspace" from "a workspace
     ///   linked elsewhere" by inspecting the returned path itself.
     ///
-    /// The returned path is absolute (a symlink-resolved form is not
-    /// required, but two stores that are byte-identical strings must
-    /// compare equal). Callers comparing two stores should canonicalize
-    /// both sides before equality to absorb trailing-slash / symlink
-    /// differences.
+    /// **The returned path is NOT canonicalized** (symlinks and `..`
+    /// components are not resolved). The path is absolute, but two stores
+    /// whose byte-identical strings differ only in symlinks or trailing
+    /// slashes will compare unequal. Call `.canonicalize()` on both sides
+    /// before equality when that matters — see `workweave.rs` call sites
+    /// that compare against `checkout.canonicalize()`.
+    ///
+    /// Callers that need the canonical clone *directory* (for operations
+    /// like `git worktree remove` that run in the repo root, not the
+    /// `.git/` subdir) should call `.parent()` on the returned path.
     ///
     /// For [`GitVcs`](crate::git::GitVcs): runs `git rev-parse
     /// --path-format=absolute --git-common-dir` in `workspace`.
@@ -943,42 +949,4 @@ pub trait Vcs {
     /// [`resolve_savepoint`]: Vcs::resolve_savepoint
     /// [`drop_savepoint`]: Vcs::drop_savepoint
     fn list_savepoint_op_ids(&self, repo: &Path) -> Result<Vec<String>, VcsError>;
-
-    /// Resolve the directory that holds the canonical object/refs store
-    /// `workspace` is linked into.
-    ///
-    /// In the [clone-topology](../docs/explanation/joints/clone-topology.md)
-    /// invariants, every workspace — primary clone or workweave checkout —
-    /// has a single canonical store that owns its object DAG and refs.
-    /// Operations that mutate the worktree registration (worktree remove,
-    /// worktree prune) MUST run in that canonical store, not in some other
-    /// directory that happens to live at `<weave>/<repo_path>`.
-    ///
-    /// The returned path is the directory whose VCS-control subdirectory
-    /// (`.git/` for git) holds the shared store, NOT the control directory
-    /// itself. When `workspace` is itself a canonical clone, the returned
-    /// path equals `workspace` (after canonicalisation). When `workspace`
-    /// is a linked workspace (git worktree), the returned path is the
-    /// canonical clone the worktree links into.
-    ///
-    /// For [`GitVcs`](crate::git::GitVcs): runs `git rev-parse
-    /// --git-common-dir` in `workspace`, resolves the result to an absolute
-    /// path, then returns its parent (stripping the trailing `.git`
-    /// component).
-    ///
-    /// Callers use this for two intents:
-    ///
-    /// - **Locate the right repo for destructive ops.** `git worktree
-    ///   remove` and `git worktree prune` only know about worktrees
-    ///   registered in the canonical store they're invoked from. Running
-    ///   them in the wrong directory either silently no-ops (the directory
-    ///   is gone but the canonical store keeps a stale entry) or fails
-    ///   loudly. See `rwv workweave delete` / `sync-to --retire` for the
-    ///   load-bearing use.
-    /// - **Detect topology violations at point-of-use.** When two distinct
-    ///   workspaces resolve to two distinct canonical stores for the same
-    ///   manifest slot, the higher-tier checks (merged-check, drift) are
-    ///   running in different object DAGs. `rwv doctor` enforces this
-    ///   globally; destructive verbs check it at the moment it matters.
-    fn canonical_store_for_workspace(&self, workspace: &Path) -> Result<PathBuf, VcsError>;
 }
