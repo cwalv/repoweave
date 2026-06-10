@@ -4,7 +4,7 @@
 //!
 //!   1. `dangling-parent`   — marker `parent:` path no longer exists
 //!   2. `parent-chain-anomaly` — cycle, parent==self, parent belongs to a
-//!                               different project
+//!      different project
 //!   3. `unregistered-dir` — directory under `.workweaves/` with no marker
 //!   4. `foreign-primary`  — marker `primary:` does not match the workspace
 //!
