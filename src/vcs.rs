@@ -943,4 +943,42 @@ pub trait Vcs {
     /// [`resolve_savepoint`]: Vcs::resolve_savepoint
     /// [`drop_savepoint`]: Vcs::drop_savepoint
     fn list_savepoint_op_ids(&self, repo: &Path) -> Result<Vec<String>, VcsError>;
+
+    /// Resolve the directory that holds the canonical object/refs store
+    /// `workspace` is linked into.
+    ///
+    /// In the [clone-topology](../docs/explanation/joints/clone-topology.md)
+    /// invariants, every workspace — primary clone or workweave checkout —
+    /// has a single canonical store that owns its object DAG and refs.
+    /// Operations that mutate the worktree registration (worktree remove,
+    /// worktree prune) MUST run in that canonical store, not in some other
+    /// directory that happens to live at `<weave>/<repo_path>`.
+    ///
+    /// The returned path is the directory whose VCS-control subdirectory
+    /// (`.git/` for git) holds the shared store, NOT the control directory
+    /// itself. When `workspace` is itself a canonical clone, the returned
+    /// path equals `workspace` (after canonicalisation). When `workspace`
+    /// is a linked workspace (git worktree), the returned path is the
+    /// canonical clone the worktree links into.
+    ///
+    /// For [`GitVcs`](crate::git::GitVcs): runs `git rev-parse
+    /// --git-common-dir` in `workspace`, resolves the result to an absolute
+    /// path, then returns its parent (stripping the trailing `.git`
+    /// component).
+    ///
+    /// Callers use this for two intents:
+    ///
+    /// - **Locate the right repo for destructive ops.** `git worktree
+    ///   remove` and `git worktree prune` only know about worktrees
+    ///   registered in the canonical store they're invoked from. Running
+    ///   them in the wrong directory either silently no-ops (the directory
+    ///   is gone but the canonical store keeps a stale entry) or fails
+    ///   loudly. See `rwv workweave delete` / `sync-to --retire` for the
+    ///   load-bearing use.
+    /// - **Detect topology violations at point-of-use.** When two distinct
+    ///   workspaces resolve to two distinct canonical stores for the same
+    ///   manifest slot, the higher-tier checks (merged-check, drift) are
+    ///   running in different object DAGs. `rwv doctor` enforces this
+    ///   globally; destructive verbs check it at the moment it matters.
+    fn canonical_store_for_workspace(&self, workspace: &Path) -> Result<PathBuf, VcsError>;
 }

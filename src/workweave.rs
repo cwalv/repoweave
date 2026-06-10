@@ -895,6 +895,22 @@ fn collect_diverged_paths(
                 return;
             }
         };
+        // Resolve the workweave checkout's actual canonical store. The
+        // `is_ancestor` query below MUST run in a DAG that contains BOTH
+        // wt_head AND the baseline tip; the workweave checkout shares its
+        // canonical store with the linked-workspace baselines (under
+        // tier-0 invariants), so asking in the resolved canonical store
+        // gives a sound answer even when the workweave dir is itself a
+        // worktree. Under tier-0 violations the canonical store for the
+        // workweave checkout differs from the baseline's canonical store,
+        // and we conservatively decline to vouch — see below.
+        let wt_canonical = match GitVcs.canonical_store_for_workspace(wt) {
+            Ok(p) => p,
+            Err(e) => {
+                diverged.push(format!("{label}: canonical-store lookup failed: {e}"));
+                return;
+            }
+        };
         let mut candidates = 0;
         for base in baselines {
             let canonical = base.join(rel);
@@ -902,8 +918,24 @@ fn collect_diverged_paths(
                 continue;
             }
             candidates += 1;
+            // Refuse to vouch across distinct canonical stores: an
+            // is_ancestor query whose operands live in different object
+            // DAGs is silently unsound (see joints/clone-topology.md).
+            // When the baseline's canonical store differs from the
+            // workweave checkout's, treat as not-vouched-by-this-baseline
+            // and let the operator run `rwv doctor`.
+            let base_canonical = match GitVcs.canonical_store_for_workspace(&canonical) {
+                Ok(p) => p,
+                Err(_) => continue,
+            };
+            if base_canonical != wt_canonical {
+                continue;
+            }
             if let Ok(c) = GitVcs.head_revision(&canonical) {
-                if wt_head == c || GitVcs::is_ancestor(wt, wt_head.as_str(), c.as_str()) {
+                // Run is_ancestor in the resolved canonical store so the
+                // query is rooted in the DAG that contains both refs.
+                if wt_head == c || GitVcs::is_ancestor(&wt_canonical, wt_head.as_str(), c.as_str())
+                {
                     return; // vouched: this baseline contains the work
                 }
             }
@@ -961,6 +993,146 @@ fn collect_dirty_repos_by_walk(dir: &Path) -> Vec<String> {
     dirty
 }
 
+/// Resolve the canonical store path that owns a workweave checkout, for the
+/// `worktree remove` / `worktree prune` calls below.
+///
+/// Under the clone-topology invariants (see
+/// `docs/explanation/joints/clone-topology.md`) every workweave checkout is a
+/// linked workspace whose `.git/` resolves into a canonical store somewhere
+/// in the weave. `git worktree remove` and `git worktree prune` only know
+/// about the worktree they're invoked from when called in that canonical
+/// store — running them in some other "looks like a clone of the same repo"
+/// directory either silently no-ops (the registration stays stale) or fails
+/// loudly with "is not a working tree".
+///
+/// Resolution order:
+/// - If the checkout doesn't exist on disk, fall back to `fallback`. Nothing
+///   to remove anyway; this just keeps the prune/branch-cleanup loop simple.
+/// - Otherwise ask the VCS for the checkout's actual canonical store. If
+///   that query fails (the checkout is a plain dir, not a repo), fall back
+///   to `fallback`.
+///
+/// The fallback path is the `<ws_root>/<repo_path>` slot the legacy code
+/// used unconditionally — preserving behavior for the (now-explicit)
+/// "checkout is gone" branch while making the canonical resolution
+/// authoritative for the live case.
+fn resolved_worktree_parent(checkout: &Path, fallback: &Path) -> PathBuf {
+    if !checkout.exists() {
+        return fallback.to_path_buf();
+    }
+    match GitVcs.canonical_store_for_workspace(checkout) {
+        Ok(p) => p,
+        Err(_) => fallback.to_path_buf(),
+    }
+}
+
+/// Refuse `rwv workweave delete` when a checkout under `workweave_dir`
+/// holds the canonical store that OTHER worktrees link into — the
+/// catastrophic case the clone-topology joint flags as inverted topology
+/// (e.g. fo-a0spgj hazard 2).
+///
+/// **Named precondition**: each per-repo workweave checkout MUST be a linked
+/// workspace, not a canonical store with foreign dependents. Deleting a
+/// canonical store while other worktrees still link into it would orphan
+/// every dependent worktree on disk.
+///
+/// Returns `Err` with a named-precondition message pointing the operator at
+/// `rwv doctor` (where the topology check lives, per the joint). This refusal
+/// is NOT bypassable by `--force` — `--force` consents to losing this
+/// workweave's work, not to corrupting other workweaves whose object DAG we
+/// happen to be hosting. The operator must repair topology first (operator
+/// work, out of scope for this verb).
+///
+/// Returns `Ok(())` when no per-repo checkout is a canonical store with
+/// foreign dependents, OR when the only worktree the canonical store knows
+/// about is the workweave's own checkout (the topology is fine — git just
+/// records the checkout as its own worktree).
+fn refuse_if_checkouts_host_foreign_worktrees(
+    workweave_dir: &Path,
+    project: &ProjectName,
+    manifest: &Manifest,
+) -> anyhow::Result<()> {
+    let mut hazards: Vec<String> = Vec::new();
+
+    let mut check = |checkout: &Path, label: String| {
+        if !checkout.exists() {
+            return;
+        }
+        let canonical = match GitVcs.canonical_store_for_workspace(checkout) {
+            Ok(p) => p,
+            Err(_) => return, // not a repo; nothing to host
+        };
+        let checkout_canonical = checkout.canonicalize().unwrap_or(checkout.to_path_buf());
+        if canonical != checkout_canonical {
+            // Linked workspace — the canonical store lives elsewhere; this
+            // checkout cannot have foreign dependents.
+            return;
+        }
+        // checkout IS the canonical store. Enumerate every worktree this
+        // store knows about and flag any whose path is NOT under our
+        // workweave_dir (foreign — would be orphaned by delete).
+        let worktrees = match GitVcs.list_worktrees(checkout) {
+            Ok(ws) => ws,
+            Err(_) => return,
+        };
+        let ww_canonical = workweave_dir
+            .canonicalize()
+            .unwrap_or(workweave_dir.to_path_buf());
+        let mut foreign: Vec<PathBuf> = Vec::new();
+        for wt in worktrees {
+            let wt_canon = wt.canonicalize().unwrap_or(wt.clone());
+            if wt_canon == checkout_canonical {
+                continue; // the canonical store's own "main" entry
+            }
+            if !wt_canon.starts_with(&ww_canonical) {
+                foreign.push(wt);
+            }
+        }
+        if !foreign.is_empty() {
+            let mut lines = vec![format!(
+                "{label}: checkout is itself a canonical store with {} dependent worktree(s):",
+                foreign.len()
+            )];
+            for wt in &foreign {
+                lines.push(format!("    - {}", wt.display()));
+            }
+            hazards.push(lines.join("\n"));
+        }
+    };
+
+    // Project worktree.
+    let project_rel = Path::new("projects").join(project.as_str());
+    let project_wt = workweave_dir.join(&project_rel);
+    check(&project_wt, format!("projects/{}", project.as_str()));
+
+    // Manifest repos.
+    for (repo_path, _entry) in manifest.iter_entries() {
+        let wt = workweave_dir.join(repo_path.as_path());
+        check(&wt, repo_path.as_str().to_string());
+    }
+
+    if hazards.is_empty() {
+        return Ok(());
+    }
+
+    bail!(
+        "rwv workweave delete: refusing — inverted clone topology detected (precondition: \
+         no-canonical-store-with-foreign-dependents).\n\
+         The following checkout(s) inside workweave {} are themselves canonical \
+         stores that other worktrees link into; deleting this workweave would orphan \
+         those dependents:\n  {}\n\n\
+         Run `rwv doctor` for a full topology audit and remediation guidance. \
+         This refusal is NOT bypassable with --force: --force consents to losing \
+         this workweave's work, not to corrupting unrelated worktrees whose object \
+         store we happen to be hosting.",
+        workweave_dir
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_else(|| workweave_dir.display().to_string()),
+        hazards.join("\n  "),
+    )
+}
+
 /// Delete a workweave: remove worktrees (including project repo) and delete
 /// the workweave directory.
 ///
@@ -968,6 +1140,14 @@ fn collect_dirty_repos_by_walk(dir: &Path) -> Vec<String> {
 /// worktree or any manifest-repo worktree) unless `force` is true. The error
 /// lists the dirty paths so the operator knows what would have been lost.
 /// `force` matches the `git branch -D` pattern.
+///
+/// Independently of `force`, refuses when any per-repo checkout in the
+/// workweave is itself a canonical store with foreign worktrees linked into
+/// it (named precondition: `no-canonical-store-with-foreign-dependents`).
+/// This is the tier-0 invariant the clone-topology joint defines; delete
+/// cannot safely proceed because the destructive worktree-remove + dir
+/// removal would orphan the dependents. The operator must repair topology
+/// via `rwv doctor` first.
 pub fn delete_workweave(
     ws_root: &Path,
     project: &ProjectName,
@@ -978,6 +1158,16 @@ pub fn delete_workweave(
     // Use `workweave_path_for` so old-form `<primary>--<name>` workweaves
     // (resolved via marker) are deleted correctly.
     let workweave_dir = workweave_path_for(ws_root, project, name);
+
+    // Tier-0 topology precondition: refuse when a per-repo checkout inside
+    // the workweave is itself a canonical store with foreign dependents.
+    // Runs before the dirty / unmerged checks (and is not bypassable by
+    // --force) because the hazard is to OTHER workspaces, not the
+    // workweave's own work. See joints/clone-topology.md and
+    // docs/contributing/destructive-operations.md (precondition-or-stop).
+    if workweave_dir.exists() {
+        refuse_if_checkouts_host_foreign_worktrees(&workweave_dir, project, &manifest)?;
+    }
 
     // Safety check: refuse to delete dirty or diverged workweaves without
     // --force. Skip the check if the workweave directory doesn't exist
@@ -1018,10 +1208,36 @@ pub fn delete_workweave(
 
     for (repo_path, entry) in manifest.iter_entries() {
         let vcs = vcs_for(entry.vcs_type);
-        let repo_abs = ws_root.join(repo_path.as_path());
         let worktree_path = workweave_dir.join(repo_path.as_path());
+        // Resolve the worktree's ACTUAL canonical store on disk rather than
+        // assuming `ws_root.join(repo_path)` is the parent. Under
+        // tier-0-correct topology these match; under inverted topology
+        // (fo-a0spgj) the canonical store lives in another workweave and
+        // `ws_root.join(repo_path)` is a disconnected clone that doesn't
+        // know about this checkout — running `worktree remove` there leaves
+        // a stale registration. See joints/clone-topology.md.
+        let fallback_repo_abs = ws_root.join(repo_path.as_path());
+        let repo_abs = resolved_worktree_parent(&worktree_path, &fallback_repo_abs);
 
         if worktree_path.exists() {
+            // Detect "checkout is its own canonical store" — `git worktree
+            // remove` would fail with "is a main working tree". The
+            // `refuse_if_checkouts_host_foreign_worktrees` precondition
+            // above has already rejected the unsafe (with-dependents)
+            // case; reaching this branch means the canonical-checkout is
+            // lone, and removing the workweave dir is sufficient. Skip
+            // the registration cleanup (there is no parent to clean) and
+            // also the prune / branch-delete loop (nothing else can know
+            // about this store's refs once the dir is gone).
+            let checkout_canonical = worktree_path
+                .canonicalize()
+                .unwrap_or_else(|_| worktree_path.clone());
+            let is_lone_canonical = repo_abs == checkout_canonical;
+            if is_lone_canonical {
+                // Nothing to unregister; the dir-removal at the end of
+                // delete_workweave will clean up the on-disk store.
+                continue;
+            }
             if let Err(e) = vcs.remove_worktree(&repo_abs, &worktree_path) {
                 let msg = format!("{}: {e}", repo_path.as_str());
                 eprintln!("rwv workweave delete: error: {msg}");
@@ -1031,6 +1247,8 @@ pub fn delete_workweave(
         }
 
         // Prune stale worktree metadata and delete ephemeral branches.
+        // Same resolved-parent rationale applies — pruning the wrong repo
+        // leaves the actual canonical store's stale entries in place.
         let _ = vcs.worktree_prune(&repo_abs);
         let branch_prefix = ephemeral_branch_prefix(project, name);
         match vcs.list_branches_with_prefix(&repo_abs, &branch_prefix) {
@@ -1058,11 +1276,14 @@ pub fn delete_workweave(
     // indicated by .git being a FILE (not a directory). If .git is a directory
     // (or absent), the workweave copy was a plain directory copy — just let
     // remove_dir_all below handle it.
-    let project_dir = ws_root.join("projects").join(project.as_str());
+    let project_dir_fallback = ws_root.join("projects").join(project.as_str());
     let project_worktree = workweave_dir.join("projects").join(project.as_str());
     if project_worktree.exists() {
         let dot_git = project_worktree.join(".git");
         if dot_git.exists() && dot_git.is_file() {
+            // Resolve the project worktree's actual canonical store, same
+            // as for manifest repos above.
+            let project_dir = resolved_worktree_parent(&project_worktree, &project_dir_fallback);
             if let Err(e) = GitVcs.remove_worktree(&project_dir, &project_worktree) {
                 let msg = format!("projects/{}: {e}", project.as_str());
                 eprintln!("rwv workweave delete: error: {msg}");

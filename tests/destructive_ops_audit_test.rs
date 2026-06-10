@@ -100,7 +100,12 @@ const ALLOWLIST: &[Allowed] = &[
         count: 1,
         justification: "remove_worktree: every caller (delete_workweave, \
             prune_dropped_repo, create-rollback pruning) checks for \
-            uncommitted changes and unique commits first.",
+            uncommitted changes and unique commits first. delete_workweave \
+            also resolves each worktree's actual canonical-store parent \
+            (Vcs::canonical_store_for_workspace) and refuses on \
+            no-canonical-store-with-foreign-dependents — the tier-0 \
+            topology precondition (joints/clone-topology.md), not \
+            bypassable by --force.",
     },
     Allowed {
         file: "git.rs",
