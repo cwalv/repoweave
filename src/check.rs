@@ -177,6 +177,26 @@ pub enum CheckViolation {
         /// Discriminator for the specific topology violation.
         sub_kind: CloneTopologyKind,
     },
+    /// Branch-discipline violations enforcing the I3 invariant from the
+    /// `clone-topology` joint: every workweave repo checkout sits on a
+    /// `<project>--<workweave>/<segment>` ephemeral branch, every canonical
+    /// clone sits on a non-ephemeral branch, and stale ephemeral branches
+    /// left over from deleted workweaves are surfaced (and, for the safe
+    /// class only, removable via `--fix`).
+    ///
+    /// The check catches manual operations the clone-topology scan cannot
+    /// see — e.g. `git switch main` inside a workweave, or a `branch -D`
+    /// that left behind an `<project>--<dead>/main` branch in the canonical.
+    ///
+    /// See `docs/explanation/joints/clone-topology.md` (I3) and
+    /// `docs/explanation/joints/shared-refs-drift.md` (safe/live doctrine).
+    BranchDiscipline {
+        /// Absolute path to the repo checkout (workweave repo for (a),
+        /// canonical clone for (b) and (c)) where the violation was found.
+        repo_path: PathBuf,
+        /// Discriminator for the specific branch-discipline anomaly.
+        sub_kind: BranchDisciplineKind,
+    },
 }
 
 #[derive(Debug, Serialize, JsonSchema)]
@@ -338,6 +358,96 @@ pub enum CloneTopologyKind {
         actual_store_path: PathBuf,
     },
 }
+/// Discriminator for [`CheckViolation::BranchDiscipline`] findings.
+///
+/// Three groupings, mirroring the three checks in the bead:
+///
+/// * (a) workweave-branch — a workweave checkout is on the wrong branch:
+///   [`SharedBranch`](Self::SharedBranch),
+///   [`ForeignEphemeral`](Self::ForeignEphemeral),
+///   [`Detached`](Self::Detached). Report-only.
+/// * (b) ephemeral-at-primary — the canonical clone is on an ephemeral
+///   `<project>--<name>/...` branch:
+///   [`EphemeralAtPrimary`](Self::EphemeralAtPrimary). Report-only.
+/// * (c) stale-ephemeral-branches — a `<project>--<name>/...` branch
+///   exists in a canonical clone but workweave `<name>` no longer exists
+///   on disk: [`StaleEphemeralBranchSafe`](Self::StaleEphemeralBranchSafe)
+///   (auto-fixable by `--fix`) or
+///   [`StaleEphemeralBranchLive`](Self::StaleEphemeralBranchLive)
+///   (carries unique commits; never auto-deleted). The safe/live split
+///   applies the doctrine in `docs/explanation/joints/shared-refs-drift.md`
+///   to refs: a tip that is an ancestor of the primary's tracking-branch
+///   tip carries no unique work and is safely removable; a tip with
+///   commits not reachable from the primary is live work and must be left
+///   alone.
+#[derive(Debug, Serialize, JsonSchema, Clone)]
+#[serde(rename_all = "kebab-case")]
+pub enum BranchDisciplineKind {
+    /// (a) The workweave checkout is on a non-ephemeral branch (e.g. `main`).
+    ///
+    /// Caused by `git switch main` inside a workweave or by a bare clone
+    /// that was never moved to an ephemeral branch. The fixture for this
+    /// sub-kind exercises the bare-main-in-workweave case from the bead's
+    /// acceptance criteria: the violation must flag from creation, before
+    /// any commit lands. Report-only.
+    SharedBranch {
+        /// The branch currently checked out (e.g. `main`).
+        actual_branch: String,
+        /// The expected ephemeral prefix (`<project>--<workweave>`).
+        expected_prefix: String,
+    },
+    /// (a) The workweave checkout is on an ephemeral branch named for a
+    /// *different* workweave (the prefix `<project>--<other>/` differs
+    /// from the expected `<project>--<workweave>/`). Report-only.
+    ForeignEphemeral {
+        /// The branch currently checked out.
+        actual_branch: String,
+        /// The expected ephemeral prefix (`<project>--<workweave>`).
+        expected_prefix: String,
+    },
+    /// (a) The workweave checkout is in detached-HEAD state — HEAD points
+    /// directly at a commit instead of a named branch. Detached HEAD
+    /// breaks the merged-check and ref-namespace invariants in
+    /// `clone-topology.md`. Report-only.
+    Detached,
+    /// (b) The canonical clone is checked out on an ephemeral
+    /// `<project>--<name>/...` branch — the inverse of (a). Either the
+    /// canonical was moved onto a workweave branch, or a workweave
+    /// directory was deleted and the canonical was left holding its
+    /// ephemeral branch. Report-only.
+    EphemeralAtPrimary {
+        /// The branch currently checked out on the canonical.
+        actual_branch: String,
+    },
+    /// (c) A `<project>--<name>/...` branch in the canonical clone whose
+    /// workweave `<name>` no longer exists on disk, and whose tip is an
+    /// ancestor of the primary tracking branch's tip (no unique commits).
+    /// Safe-class per the shared-refs-drift doctrine — `--fix` may delete
+    /// the branch with no information loss.
+    StaleEphemeralBranchSafe {
+        /// The full branch name (e.g. `foundations--feat-a/main`).
+        branch: String,
+        /// The workweave name parsed out of the branch (the `<name>`
+        /// component); the directory `.workweaves/<project>--<name>` is
+        /// absent on disk.
+        workweave_name: String,
+    },
+    /// (c) A `<project>--<name>/...` branch in the canonical clone whose
+    /// workweave `<name>` no longer exists on disk, but whose tip carries
+    /// commits not reachable from the primary tracking branch's tip
+    /// (unique work). Live-class per the shared-refs-drift doctrine —
+    /// report-only; `--fix` never touches this. The operator decides
+    /// whether to land the commits, archive the branch, or delete it.
+    StaleEphemeralBranchLive {
+        /// The full branch name.
+        branch: String,
+        /// The workweave name parsed out of the branch.
+        workweave_name: String,
+        /// The branch tip SHA, surfaced so the operator can recover the
+        /// commits before deleting (e.g. `git log <tip_sha>`).
+        tip_sha: String,
+    },
+}
 
 // ---------------------------------------------------------------------------
 // ViolationOutput — wire-format mirror of CheckViolation for `--json`
@@ -457,6 +567,14 @@ pub enum ViolationOutput {
         /// Discriminator for the specific topology anomaly.
         #[serde(rename = "sub_kind")]
         sub_kind: CloneTopologyKind,
+    },
+    BranchDiscipline {
+        /// Absolute path to the repo checkout where the violation was
+        /// found (workweave checkout for (a), canonical clone for (b)/(c)).
+        repo_path: String,
+        /// Discriminator for the specific branch-discipline anomaly.
+        #[serde(rename = "sub_kind")]
+        sub_kind: BranchDisciplineKind,
     },
 }
 
@@ -620,6 +738,13 @@ impl ViolationOutput {
             } => Self::CloneTopology {
                 absolute_path: workspace_path.to_string_lossy().into_owned(),
                 path: repo.to_string(),
+                sub_kind,
+            },
+            CheckViolation::BranchDiscipline {
+                repo_path,
+                sub_kind,
+            } => Self::BranchDiscipline {
+                repo_path: repo_path.to_string_lossy().into_owned(),
                 sub_kind,
             },
         }
@@ -1354,6 +1479,350 @@ pub fn scan_clone_topology(ws_root: &Path, repo_paths: &BTreeSet<RepoPath>) -> V
     violations
 }
 
+// ---------------------------------------------------------------------------
+// Branch-discipline scanning (fo-hycb06.2)
+// ---------------------------------------------------------------------------
+//
+// Three checks, one symbolic-ref read per checkout plus one branch listing
+// per canonical. Together they enforce the I3 invariant from
+// `docs/explanation/joints/clone-topology.md` — every workweave repo
+// checkout sits on a `<project>--<workweave>/<segment>` ephemeral branch
+// owned by exactly that workweave; canonicals sit on a non-ephemeral
+// branch; and stale ephemeral branches left in canonicals by crashed
+// deletes are surfaced under the safe/live doctrine from
+// `docs/explanation/joints/shared-refs-drift.md`.
+//
+// VCS seam: the scanner consumes the `Vcs` trait — `current_ref`,
+// `list_local_branches`, `head_revision`, `resolve_revision`, and
+// `is_ancestor` — without any git-specific code. See
+// `docs/explanation/joints/vcs-as-seam.md`.
+
+/// Strip the canonical `refs/heads/` prefix returned by
+/// [`Vcs::list_local_branches`](crate::vcs::Vcs::list_local_branches) so
+/// the bare branch name can be compared against `<project>--<name>/...`
+/// patterns.
+fn bare_branch_name(branch: &crate::vcs::RefName) -> String {
+    branch
+        .as_str()
+        .strip_prefix("refs/heads/")
+        .unwrap_or(branch.as_str())
+        .to_string()
+}
+
+/// Split a candidate ephemeral branch name into (project, workweave_name,
+/// segment), returning `None` when the name doesn't match the
+/// `<project>--<workweave>/<segment>` shape.
+fn parse_ephemeral_branch_name(branch: &str) -> Option<(&str, &str, &str)> {
+    let (lhs, segment) = branch.split_once('/')?;
+    if segment.is_empty() {
+        return None;
+    }
+    let (project, workweave) = lhs.split_once("--")?;
+    if project.is_empty() || workweave.is_empty() {
+        return None;
+    }
+    Some((project, workweave, segment))
+}
+
+/// Build the set of workweave directory basenames that currently exist
+/// under `<ws_root>/.workweaves/`. Used by (c) to decide whether a
+/// `<project>--<name>/...` branch in a canonical is stale.
+fn existing_workweave_dir_names(ws_root: &Path) -> std::collections::HashSet<String> {
+    let parent = crate::workweave::workweave_parent_pub(ws_root);
+    let mut out = std::collections::HashSet::new();
+    if let Ok(entries) = std::fs::read_dir(&parent) {
+        for entry in entries.flatten() {
+            if entry.path().is_dir() {
+                out.insert(entry.file_name().to_string_lossy().into_owned());
+            }
+        }
+    }
+    out
+}
+
+/// Read each repo checkout's HEAD ref via the `Vcs` trait. Returns
+/// `Ok(Some(branch))` when on a named branch, `Ok(None)` when detached.
+fn read_current_branch(
+    vcs: &dyn crate::vcs::Vcs,
+    repo: &Path,
+) -> Result<Option<crate::vcs::RefName>, crate::vcs::VcsError> {
+    vcs.current_ref(repo)
+}
+
+/// Scan a workweave's repo checkouts for (a) workweave-branch violations.
+///
+/// For each git repo under `workweave_dir`, the HEAD's symbolic-ref must
+/// match the prefix `<project>--<workweave>/`. Three sub-kinds catch the
+/// failure modes:
+///
+///   * [`BranchDisciplineKind::Detached`] — HEAD points at a SHA, not a
+///     branch (e.g. an explicit `git checkout <sha>`).
+///   * [`BranchDisciplineKind::SharedBranch`] — HEAD is on a non-ephemeral
+///     branch (e.g. `main`); covers the bare-main-in-workweave case from
+///     the bead's acceptance criteria.
+///   * [`BranchDisciplineKind::ForeignEphemeral`] — HEAD is on an
+///     ephemeral branch belonging to a *different* workweave (e.g. the
+///     directory was rsync'd from another workweave whose branches it
+///     kept).
+///
+/// The expected prefix is `<project>--<workweave>` (without the trailing
+/// `/`); a branch matching `<prefix>/<segment>` for any non-empty
+/// `<segment>` is treated as the owned ephemeral namespace.
+fn scan_workweave_repo_branches(
+    vcs: &dyn crate::vcs::Vcs,
+    workweave_dir: &Path,
+    project_name: &str,
+    workweave_name: &str,
+    out: &mut Vec<CheckViolation>,
+) {
+    let expected_prefix = format!("{project_name}--{workweave_name}");
+    let registries = crate::registry::builtin_registries();
+    let repos = crate::workspace::scan_repos_on_disk(workweave_dir, &registries, vcs);
+    for repo in repos {
+        let abs = workweave_dir.join(repo.as_path());
+        match read_current_branch(vcs, &abs) {
+            Ok(Some(branch)) => {
+                let bare = branch.as_str();
+                let expected_full_prefix = format!("{expected_prefix}/");
+                if bare.starts_with(&expected_full_prefix)
+                    && bare.len() > expected_full_prefix.len()
+                {
+                    continue; // healthy
+                }
+                // Tease out shared vs foreign: a branch with the
+                // `<other>--<other>/...` shape names *some* workweave but
+                // not the right one; anything else (including plain
+                // `main` / `master` / a feature branch with no `--`) is
+                // a shared-branch finding.
+                let sub_kind = if parse_ephemeral_branch_name(bare).is_some() {
+                    BranchDisciplineKind::ForeignEphemeral {
+                        actual_branch: bare.to_string(),
+                        expected_prefix: expected_prefix.clone(),
+                    }
+                } else {
+                    BranchDisciplineKind::SharedBranch {
+                        actual_branch: bare.to_string(),
+                        expected_prefix: expected_prefix.clone(),
+                    }
+                };
+                out.push(CheckViolation::BranchDiscipline {
+                    repo_path: abs,
+                    sub_kind,
+                });
+            }
+            Ok(None) => {
+                // Detached HEAD.
+                out.push(CheckViolation::BranchDiscipline {
+                    repo_path: abs,
+                    sub_kind: BranchDisciplineKind::Detached,
+                });
+            }
+            Err(_) => {
+                // Treat read failures as best-effort silence (matches
+                // existing doctor patterns for transient git errors).
+            }
+        }
+    }
+}
+
+/// Scan every canonical repo under `ws_root` for (b) ephemeral-at-primary
+/// and (c) stale-ephemeral-branches.
+///
+/// (b): the canonical must not be checked out on any `<project>--<name>/...`
+/// branch — the inverse of (a). A canonical on such a branch indicates the
+/// operator switched the canonical to a workweave's branch, or a workweave
+/// directory was deleted while the canonical was still holding its
+/// ephemeral branch.
+///
+/// (c): every ephemeral-named branch in the canonical whose workweave
+/// `<name>` no longer exists on disk is reported. The safe/live split
+/// (see [`BranchDisciplineKind`]) consults
+/// [`Vcs::is_ancestor`](crate::vcs::Vcs::is_ancestor) — a branch tip that
+/// is an ancestor of the primary tracking branch's tip carries no unique
+/// work and is safe class; anything else is live class.
+fn scan_canonical_branches(
+    vcs: &dyn crate::vcs::Vcs,
+    ws_root: &Path,
+    out: &mut Vec<CheckViolation>,
+) {
+    let existing_workweaves = existing_workweave_dir_names(ws_root);
+    let registries = crate::registry::builtin_registries();
+    let repos = crate::workspace::scan_repos_on_disk(ws_root, &registries, vcs);
+
+    for repo in repos {
+        let abs = ws_root.join(repo.as_path());
+
+        // (b) ephemeral-at-primary.
+        if let Ok(Some(branch)) = read_current_branch(vcs, &abs) {
+            if parse_ephemeral_branch_name(branch.as_str()).is_some() {
+                out.push(CheckViolation::BranchDiscipline {
+                    repo_path: abs.clone(),
+                    sub_kind: BranchDisciplineKind::EphemeralAtPrimary {
+                        actual_branch: branch.as_str().to_string(),
+                    },
+                });
+            }
+        }
+
+        // (c) stale-ephemeral-branches. One branch listing per canonical.
+        let branches = match vcs.list_local_branches(&abs) {
+            Ok(b) => b,
+            Err(_) => continue,
+        };
+
+        // Cache the primary tip per repo so per-branch safe/live checks
+        // share one `head_revision` call.
+        let primary_tip = vcs.head_revision(&abs).ok();
+
+        for branch_ref in &branches {
+            let bare = bare_branch_name(branch_ref);
+            let (_project, workweave_name, _segment) = match parse_ephemeral_branch_name(&bare) {
+                Some(parts) => parts,
+                None => continue,
+            };
+            // The workweave directory basename is `<project>--<workweave>`
+            // (mirrors `workspace::weave_dir_name`). If that directory
+            // still exists, the branch is owned and healthy.
+            let dir_basename = bare
+                .split('/')
+                .next()
+                .expect("split('/') on non-empty string yields at least one element");
+            if existing_workweaves.contains(dir_basename) {
+                continue;
+            }
+
+            // Stale — classify safe vs live.
+            let tip = match vcs.resolve_revision(&abs, &bare) {
+                Ok(rev) => rev,
+                Err(_) => continue, // can't classify; skip rather than mis-report
+            };
+
+            let safe = match &primary_tip {
+                Some(primary) => vcs.is_ancestor(&abs, &tip, primary).unwrap_or(false),
+                // No primary tip readable (empty repo / corruption) — be
+                // conservative and call it live so `--fix` won't touch it.
+                None => false,
+            };
+
+            let sub_kind = if safe {
+                BranchDisciplineKind::StaleEphemeralBranchSafe {
+                    branch: bare.clone(),
+                    workweave_name: workweave_name.to_string(),
+                }
+            } else {
+                BranchDisciplineKind::StaleEphemeralBranchLive {
+                    branch: bare.clone(),
+                    workweave_name: workweave_name.to_string(),
+                    tip_sha: tip.as_str().to_string(),
+                }
+            };
+            out.push(CheckViolation::BranchDiscipline {
+                repo_path: abs.clone(),
+                sub_kind,
+            });
+        }
+    }
+}
+
+/// Scan branch-discipline (workweave-branch + ephemeral-at-primary +
+/// stale-ephemeral-branches) across the workspace rooted at `ws_root`
+/// (which must be the primary).
+///
+/// One symbolic-ref read per workweave checkout plus one branch listing
+/// per canonical. The check is VCS-neutral: it consumes only the [`Vcs`]
+/// trait surface and never spells git plumbing.
+///
+/// See:
+///   * `docs/explanation/joints/clone-topology.md` (I3 — branch ownership).
+///   * `docs/explanation/joints/shared-refs-drift.md` (safe/live doctrine,
+///     applied here to refs instead of blobs).
+///
+/// [`Vcs`]: crate::vcs::Vcs
+pub fn scan_branch_discipline(ws_root: &Path, vcs: &dyn crate::vcs::Vcs) -> Vec<CheckViolation> {
+    let mut violations = Vec::new();
+
+    // (a) workweave-branch: per workweave under .workweaves/, per repo
+    // checkout, validate the HEAD symbolic-ref prefix.
+    for (workweave_name, workweave_dir) in crate::workweave::list_workweave_dirs(ws_root) {
+        // Resolve the project name from the workweave marker — the marker
+        // is authoritative (`workspace::WorkweaveMarker::read`) and is
+        // already required to exist by the tree-integrity scanner.
+        let marker = match crate::workspace::WorkweaveMarker::read(&workweave_dir) {
+            Ok(Some(m)) => m,
+            // Missing or unparseable marker → tree-integrity scan owns the
+            // reporting; do not pile on a noisy branch-discipline finding
+            // for the same directory.
+            _ => continue,
+        };
+        scan_workweave_repo_branches(
+            vcs,
+            &workweave_dir,
+            marker.project.as_str(),
+            &workweave_name,
+            &mut violations,
+        );
+    }
+
+    // (b) + (c) — scan canonical clones under the primary.
+    scan_canonical_branches(vcs, ws_root, &mut violations);
+
+    violations
+}
+
+/// Apply the `rwv doctor --fix` deletion for safe-class stale ephemeral
+/// branches in canonicals.
+///
+/// Idempotent and information-preserving: only branches that
+/// [`scan_branch_discipline`] classified as
+/// [`BranchDisciplineKind::StaleEphemeralBranchSafe`] are deleted. The
+/// classification is verified again before each delete — the safe class
+/// requires `is_ancestor(tip, primary_tip) = true`, so deletion loses no
+/// commits that aren't already reachable from the primary. Live-class
+/// branches are never touched: the operator must recover or delete by
+/// hand.
+///
+/// Returns `(deleted, errors)` so the caller can render `[fixed]` lines
+/// for successful deletions and surface failures as issues.
+pub fn fix_stale_ephemeral_branches(
+    ws_root: &Path,
+    vcs: &dyn crate::vcs::Vcs,
+) -> (Vec<(PathBuf, String)>, Vec<String>) {
+    use crate::vcs::RefName;
+    let mut deleted = Vec::new();
+    let mut errors = Vec::new();
+
+    // Re-scan so each delete sees the latest disk state and re-verifies
+    // the safe-class precondition. `--fix` is meant to be idempotent: a
+    // second invocation finds no safe-class violations to act on.
+    for violation in scan_branch_discipline(ws_root, vcs) {
+        let (repo_path, branch_name) = match violation {
+            CheckViolation::BranchDiscipline {
+                repo_path,
+                sub_kind:
+                    BranchDisciplineKind::StaleEphemeralBranchSafe {
+                        branch,
+                        workweave_name: _,
+                    },
+            } => (repo_path, branch),
+            // Every other variant (including live-class stale branches and
+            // the report-only (a)/(b) findings) is left untouched.
+            _ => continue,
+        };
+        let branch_ref = RefName::new(branch_name.clone());
+        match vcs.delete_branch(&repo_path, &branch_ref) {
+            Ok(()) => deleted.push((repo_path, branch_name)),
+            Err(e) => errors.push(format!(
+                "failed to delete safe-class stale ephemeral branch `{}` in {}: {}",
+                branch_name,
+                repo_path.display(),
+                e
+            )),
+        }
+    }
+
+    (deleted, errors)
+}
+
 /// `$schema` URL embedded in `rwv doctor --json` output. Points at the
 /// committed schema artifact in the main branch (Agent D regenerates this
 /// file via `cargo run --bin generate-schemas` and CI fails on drift).
@@ -1450,6 +1919,9 @@ pub fn violations_to_issues(violations: Vec<CheckViolation>) -> Vec<Issue> {
     violations
         .into_iter()
         .map(|v| {
+            // safe_to_fix defaults to true; live-class branch-discipline
+            // findings override to false so `doctor --fix` leaves them alone.
+            let mut safe_to_fix = true;
             let (severity, message) = match v {
                 CheckViolation::OrphanedClone { path } => (
                     crate::integration::Severity::Error,
@@ -1690,12 +2162,87 @@ pub fn violations_to_issues(violations: Vec<CheckViolation>) -> Vec<Issue> {
                     };
                     (crate::integration::Severity::Error, msg)
                 }
+                CheckViolation::BranchDiscipline {
+                    repo_path,
+                    sub_kind,
+                } => {
+                    let msg = match &sub_kind {
+                        BranchDisciplineKind::SharedBranch {
+                            actual_branch,
+                            expected_prefix,
+                        } => format!(
+                            "{}: workweave checkout is on shared-branch `{}` (expected an \
+                             ephemeral branch under `{}/`); manual `git switch` inside a \
+                             workweave breaks the I3 branch-ownership invariant — see \
+                             docs/explanation/joints/clone-topology.md",
+                            repo_path.display(),
+                            actual_branch,
+                            expected_prefix
+                        ),
+                        BranchDisciplineKind::ForeignEphemeral {
+                            actual_branch,
+                            expected_prefix,
+                        } => format!(
+                            "{}: workweave checkout is on `{}`, which names a different \
+                             workweave (expected an ephemeral branch under `{}/`)",
+                            repo_path.display(),
+                            actual_branch,
+                            expected_prefix
+                        ),
+                        BranchDisciplineKind::Detached => format!(
+                            "{}: workweave checkout is in detached-HEAD state (expected an \
+                             ephemeral branch); a workweave with no current branch breaks \
+                             the merged-check and ref-namespace invariants",
+                            repo_path.display()
+                        ),
+                        BranchDisciplineKind::EphemeralAtPrimary { actual_branch } => format!(
+                            "{}: canonical clone is checked out on ephemeral branch `{}`; \
+                             canonicals must sit on a non-ephemeral branch (e.g. the \
+                             manifest's tracking branch)",
+                            repo_path.display(),
+                            actual_branch
+                        ),
+                        BranchDisciplineKind::StaleEphemeralBranchSafe {
+                            branch,
+                            workweave_name,
+                        } => format!(
+                            "{}: stale ephemeral branch `{}` for deleted workweave `{}` \
+                             (safe class — tip is reachable from the primary branch; \
+                             `rwv doctor --fix` will delete it)",
+                            repo_path.display(),
+                            branch,
+                            workweave_name
+                        ),
+                        BranchDisciplineKind::StaleEphemeralBranchLive {
+                            branch,
+                            workweave_name,
+                            tip_sha,
+                        } => {
+                            // Live-class: tip carries commits not reachable
+                            // from the primary; `doctor --fix` must not touch
+                            // it. Mark the issue accordingly so the integration
+                            // runner's user-held-issues partition leaves it
+                            // alone.
+                            safe_to_fix = false;
+                            format!(
+                                "{}: stale ephemeral branch `{}` for deleted workweave `{}` \
+                                 carries unique commits at tip `{}` (live class — `--fix` \
+                                 will not touch this; recover or delete by hand)",
+                                repo_path.display(),
+                                branch,
+                                workweave_name,
+                                tip_sha
+                            )
+                        }
+                    };
+                    (crate::integration::Severity::Warning, msg)
+                }
             };
             Issue {
                 integration: "core".into(),
                 severity,
                 message,
-                safe_to_fix: true,
+                safe_to_fix,
             }
         })
         .collect()
@@ -2369,6 +2916,8 @@ pub fn run_check(
     // Fix errors are collected here so they can be appended to all_issues
     // after the violations batch is converted below.
     let mut dangling_fix_errors: Vec<String> = Vec::new();
+    // Branch-discipline --fix errors collected the same way.
+    let mut all_issues_branch_discipline_errors: Vec<String> = Vec::new();
     if let Some(CheckViolation::DanglingActiveProject {
         project: dap_project,
         missing_dir: dap_dir,
@@ -2425,6 +2974,39 @@ pub fn run_check(
         violations.push(v);
     }
 
+    // Branch-discipline (fo-hycb06.2): (a) workweave-branch, (b)
+    // ephemeral-at-primary, (c) stale-ephemeral-branches. (a) and (b) are
+    // report-only; (c) splits into safe-class (deletable under --fix) and
+    // live-class (never auto-deleted). The --fix path is applied below
+    // before violations are emitted so a successful delete is reported as
+    // `[fixed]` instead of surfacing the corresponding warning.
+    let mut branch_discipline_violations = scan_branch_discipline(ctx.primary_path(), &git);
+    if fix {
+        let (deleted, fix_errs) = fix_stale_ephemeral_branches(ctx.primary_path(), &git);
+        for (repo_path, branch) in &deleted {
+            println!(
+                "[fixed] core: deleted safe-class stale ephemeral branch `{}` in {}",
+                branch,
+                repo_path.display()
+            );
+        }
+        let deleted_keys: std::collections::HashSet<(PathBuf, String)> =
+            deleted.into_iter().collect();
+        // Drop safe-class findings the fix path successfully deleted so
+        // the operator doesn't see both `[fixed]` and a paired warning.
+        branch_discipline_violations.retain(|v| match v {
+            CheckViolation::BranchDiscipline {
+                repo_path,
+                sub_kind: BranchDisciplineKind::StaleEphemeralBranchSafe { branch, .. },
+            } => !deleted_keys.contains(&(repo_path.clone(), branch.clone())),
+            _ => true,
+        });
+        for msg in fix_errs {
+            all_issues_branch_discipline_errors.push(msg);
+        }
+    }
+    violations.extend(branch_discipline_violations);
+
     // Surface unparseable manifests as first-class violations so the
     // workspace is never reported as "clean" when a manifest is broken.
     for (project, manifest_path, message) in &unparseable_projects {
@@ -2436,6 +3018,14 @@ pub fn run_check(
     }
 
     let mut all_issues = violations_to_issues(violations);
+    for msg in all_issues_branch_discipline_errors {
+        all_issues.push(Issue {
+            integration: "core".into(),
+            severity: Severity::Error,
+            message: msg,
+            safe_to_fix: true,
+        });
+    }
 
     for msg in dangling_fix_errors {
         all_issues.push(Issue {
@@ -2988,6 +3578,11 @@ fn collect_doctor_violations(
     // Clone-topology findings. Tier-0 invariants from clone-topology.md;
     // workspace-level, always run.
     for v in scan_clone_topology(ctx.primary_path(), &input.known_repos) {
+        violations.push(v);
+    }
+    // Branch-discipline findings (fo-hycb06.2). Workspace-level, always run.
+    // JSON channel never auto-fixes; `--fix` is reserved for `run_check`.
+    for v in scan_branch_discipline(ctx.primary_path(), &git) {
         violations.push(v);
     }
 

@@ -86,6 +86,153 @@ Schema:
     }
   },
   "definitions": {
+    "BranchDisciplineKind": {
+      "description": "Discriminator for [`CheckViolation::BranchDiscipline`] findings.\n\nThree groupings, mirroring the three checks in the bead:\n\n* (a) workweave-branch — a workweave checkout is on the wrong branch: [`SharedBranch`](Self::SharedBranch), [`ForeignEphemeral`](Self::ForeignEphemeral), [`Detached`](Self::Detached). Report-only. * (b) ephemeral-at-primary — the canonical clone is on an ephemeral `<project>--<name>/...` branch: [`EphemeralAtPrimary`](Self::EphemeralAtPrimary). Report-only. * (c) stale-ephemeral-branches — a `<project>--<name>/...` branch exists in a canonical clone but workweave `<name>` no longer exists on disk: [`StaleEphemeralBranchSafe`](Self::StaleEphemeralBranchSafe) (auto-fixable by `--fix`) or [`StaleEphemeralBranchLive`](Self::StaleEphemeralBranchLive) (carries unique commits; never auto-deleted). The safe/live split applies the doctrine in `docs/explanation/joints/shared-refs-drift.md` to refs: a tip that is an ancestor of the primary's tracking-branch tip carries no unique work and is safely removable; a tip with commits not reachable from the primary is live work and must be left alone.",
+      "oneOf": [
+        {
+          "description": "(a) The workweave checkout is on a non-ephemeral branch (e.g. `main`).\n\nCaused by `git switch main` inside a workweave or by a bare clone that was never moved to an ephemeral branch. The fixture for this sub-kind exercises the bare-main-in-workweave case from the bead's acceptance criteria: the violation must flag from creation, before any commit lands. Report-only.",
+          "type": "object",
+          "required": [
+            "shared-branch"
+          ],
+          "properties": {
+            "shared-branch": {
+              "type": "object",
+              "required": [
+                "actual_branch",
+                "expected_prefix"
+              ],
+              "properties": {
+                "actual_branch": {
+                  "description": "The branch currently checked out (e.g. `main`).",
+                  "type": "string"
+                },
+                "expected_prefix": {
+                  "description": "The expected ephemeral prefix (`<project>--<workweave>`).",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "description": "(a) The workweave checkout is on an ephemeral branch named for a *different* workweave (the prefix `<project>--<other>/` differs from the expected `<project>--<workweave>/`). Report-only.",
+          "type": "object",
+          "required": [
+            "foreign-ephemeral"
+          ],
+          "properties": {
+            "foreign-ephemeral": {
+              "type": "object",
+              "required": [
+                "actual_branch",
+                "expected_prefix"
+              ],
+              "properties": {
+                "actual_branch": {
+                  "description": "The branch currently checked out.",
+                  "type": "string"
+                },
+                "expected_prefix": {
+                  "description": "The expected ephemeral prefix (`<project>--<workweave>`).",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "description": "(a) The workweave checkout is in detached-HEAD state — HEAD points directly at a commit instead of a named branch. Detached HEAD breaks the merged-check and ref-namespace invariants in `clone-topology.md`. Report-only.",
+          "type": "string",
+          "enum": [
+            "detached"
+          ]
+        },
+        {
+          "description": "(b) The canonical clone is checked out on an ephemeral `<project>--<name>/...` branch — the inverse of (a). Either the canonical was moved onto a workweave branch, or a workweave directory was deleted and the canonical was left holding its ephemeral branch. Report-only.",
+          "type": "object",
+          "required": [
+            "ephemeral-at-primary"
+          ],
+          "properties": {
+            "ephemeral-at-primary": {
+              "type": "object",
+              "required": [
+                "actual_branch"
+              ],
+              "properties": {
+                "actual_branch": {
+                  "description": "The branch currently checked out on the canonical.",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "description": "(c) A `<project>--<name>/...` branch in the canonical clone whose workweave `<name>` no longer exists on disk, and whose tip is an ancestor of the primary tracking branch's tip (no unique commits). Safe-class per the shared-refs-drift doctrine — `--fix` may delete the branch with no information loss.",
+          "type": "object",
+          "required": [
+            "stale-ephemeral-branch-safe"
+          ],
+          "properties": {
+            "stale-ephemeral-branch-safe": {
+              "type": "object",
+              "required": [
+                "branch",
+                "workweave_name"
+              ],
+              "properties": {
+                "branch": {
+                  "description": "The full branch name (e.g. `foundations--feat-a/main`).",
+                  "type": "string"
+                },
+                "workweave_name": {
+                  "description": "The workweave name parsed out of the branch (the `<name>` component); the directory `.workweaves/<project>--<name>` is absent on disk.",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "description": "(c) A `<project>--<name>/...` branch in the canonical clone whose workweave `<name>` no longer exists on disk, but whose tip carries commits not reachable from the primary tracking branch's tip (unique work). Live-class per the shared-refs-drift doctrine — report-only; `--fix` never touches this. The operator decides whether to land the commits, archive the branch, or delete it.",
+          "type": "object",
+          "required": [
+            "stale-ephemeral-branch-live"
+          ],
+          "properties": {
+            "stale-ephemeral-branch-live": {
+              "type": "object",
+              "required": [
+                "branch",
+                "tip_sha",
+                "workweave_name"
+              ],
+              "properties": {
+                "branch": {
+                  "description": "The full branch name.",
+                  "type": "string"
+                },
+                "tip_sha": {
+                  "description": "The branch tip SHA, surfaced so the operator can recover the commits before deleting (e.g. `git log <tip_sha>`).",
+                  "type": "string"
+                },
+                "workweave_name": {
+                  "description": "The workweave name parsed out of the branch.",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
     "CloneTopologyKind": {
       "description": "Discriminator for [`CheckViolation::CloneTopology`] findings.\n\nThe four sub-kinds enumerate the ways the bottom tier of the stability stack ([clone-topology.md](../../docs/explanation/joints/clone-topology.md)) can break: a manifest repo's slot at `<weave>/<repo_path>` must be a \"canonical store\" (a full clone), and every workweave checkout `<workweave>/<repo_path>` must be a linked workspace whose VCS common store resolves to that canonical store. Each variant names a distinct way the on-disk shape diverges from that spec.",
       "oneOf": [
@@ -697,6 +844,34 @@ Schema:
               "allOf": [
                 {
                   "$ref": "#/definitions/CloneTopologyKind"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "kind",
+            "repo_path",
+            "sub_kind"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "branch-discipline"
+              ]
+            },
+            "repo_path": {
+              "description": "Absolute path to the repo checkout where the violation was found (workweave checkout for (a), canonical clone for (b)/(c)).",
+              "type": "string"
+            },
+            "sub_kind": {
+              "description": "Discriminator for the specific branch-discipline anomaly.",
+              "allOf": [
+                {
+                  "$ref": "#/definitions/BranchDisciplineKind"
                 }
               ]
             }
