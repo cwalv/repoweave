@@ -260,9 +260,15 @@ fn sync_json_failed_outcome_yields_nonzero_exit() {
     git(&["add", "rwv.lock"], &ww.project_dir);
     git(&["commit", "-m", "lock: C_ww"], &ww.project_dir);
 
-    // ff --force: bypasses Phase 1 ancestor check; Phase 2 ff still fails.
+    // ff --discard-local-commits: bypasses the Phase 1 ancestor check;
+    // Phase 2 ff still fails.
     let assert = rwv()
-        .args(["sync", &primary.root.to_string_lossy(), "--json", "--force"])
+        .args([
+            "sync",
+            &primary.root.to_string_lossy(),
+            "--json",
+            "--discard-local-commits",
+        ])
         .current_dir(&ww.root)
         .assert()
         .failure();
