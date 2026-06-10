@@ -1004,3 +1004,269 @@ fn add_from_workweave_does_not_modify_primary_rwv_active() {
     let workweave_active = std::fs::read_to_string(workweave_dir.join(".rwv-active")).unwrap();
     assert_eq!(workweave_active.trim(), "test-project");
 }
+
+// ============================================================================
+// fo-hycb06.7 — clone placement: git-common-dir + ephemeral branch
+//
+// These tests are the acceptance criteria for the fo-a0spgj regression
+// scenario: canonical clone lives under the primary weave (not under
+// .workweaves/), the workweave's copy is a linked worktree whose
+// git-common-dir resolves back to the canonical clone, and the worktree
+// is on the expected ephemeral branch `{project}--{weave}/{branch}`.
+//
+// Covered arms:
+//   URL arm:        `rwv add <file://…>` from a workweave
+//   local-path arm: `rwv add <github/owner/repo>` (path-as-arg to an
+//                   existing clone) from a workweave
+// ============================================================================
+
+/// Read `git rev-parse --git-common-dir` in `repo`, returning the
+/// canonical (resolved) path it points at.  For a linked worktree the
+/// git-common-dir is inside the canonical clone's `.git/worktrees/…`
+/// directory; canonicalizing and then stripping that suffix gives us the
+/// canonical clone root.  For a plain clone `--git-common-dir` is just
+/// `.git` relative to the repo directory, which resolves to the same place.
+///
+/// Returns the canonical path of the *git object store root* — i.e. the
+/// `.git` directory of the canonical clone.
+fn git_common_dir(repo: &std::path::Path) -> std::path::PathBuf {
+    let out = common::git()
+        .args(["rev-parse", "--git-common-dir"])
+        .current_dir(repo)
+        .output()
+        .expect("git rev-parse --git-common-dir should run");
+    assert!(
+        out.status.success(),
+        "git rev-parse --git-common-dir failed in {}: {}",
+        repo.display(),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let raw = String::from_utf8(out.stdout)
+        .expect("valid UTF-8")
+        .trim()
+        .to_string();
+    // --git-common-dir can be relative to the repo directory; canonicalize
+    // resolves that, plus any symlinks.
+    let joined = if std::path::Path::new(&raw).is_absolute() {
+        std::path::PathBuf::from(&raw)
+    } else {
+        repo.join(&raw)
+    };
+    joined.canonicalize().unwrap_or_else(|_| joined.clone())
+}
+
+/// Read the current branch name of `repo` via `git symbolic-ref --short HEAD`.
+/// Returns `None` when HEAD is detached.
+fn current_branch(repo: &std::path::Path) -> Option<String> {
+    let out = common::git()
+        .args(["symbolic-ref", "--short", "HEAD"])
+        .current_dir(repo)
+        .output()
+        .expect("git symbolic-ref should run");
+    if !out.status.success() {
+        return None; // detached HEAD
+    }
+    Some(
+        String::from_utf8(out.stdout)
+            .expect("valid UTF-8")
+            .trim()
+            .to_string(),
+    )
+}
+
+#[test]
+fn add_url_arm_from_workweave_git_common_dir_points_to_primary_clone() {
+    // Acceptance criterion (fo-hycb06.7):
+    // After `rwv add <url>` from a workweave:
+    //   1. The canonical clone lives under primary (not .workweaves/).
+    //   2. The workweave's copy has git-common-dir pointing into the
+    //      canonical clone's .git directory — confirming it is a linked
+    //      worktree, not an independent clone.
+    //   3. The worktree is on the ephemeral branch
+    //      `test-project--feat/main`.
+    let tmp = tempfile::tempdir().unwrap();
+
+    let bare = tmp.path().join("url-gcdir.git");
+    init_bare_repo_with_commit(&bare);
+    let remote_url = format!("file://{}", bare.display());
+
+    let (primary, workweave_dir) = setup_workweave_for_add_tests(&tmp);
+
+    rwv()
+        .args(["add", &remote_url])
+        .current_dir(&workweave_dir)
+        .assert()
+        .success();
+
+    // Locate the canonical clone under primary.
+    let canonical = find_cloned_repo(&primary, &bare);
+    assert!(
+        canonical.starts_with(&primary),
+        "canonical clone must be under primary ({}), got {}",
+        primary.display(),
+        canonical.display()
+    );
+
+    // The relative path of the clone within primary.
+    let rel = canonical.strip_prefix(&primary).expect("under primary");
+
+    // The same relative path should exist inside the workweave.
+    let workweave_repo = workweave_dir.join(rel);
+    assert!(
+        workweave_repo.exists(),
+        "worktree must exist in workweave at {}",
+        workweave_repo.display()
+    );
+
+    // 1. .git must be a file (linked worktree), not a directory (clone).
+    let dot_git = workweave_repo.join(".git");
+    assert!(
+        dot_git.is_file(),
+        ".git in workweave must be a file (linked worktree), got: {}",
+        dot_git.display()
+    );
+
+    // 2. git-common-dir must be inside the canonical clone's .git, not
+    //    inside the workweave directory.
+    let common_dir = git_common_dir(&workweave_repo);
+    let canonical_git = canonical.join(".git").canonicalize().unwrap();
+    assert!(
+        common_dir.starts_with(&canonical_git),
+        "git-common-dir ({}) must be inside the canonical clone's .git ({})",
+        common_dir.display(),
+        canonical_git.display()
+    );
+
+    // 3. Ephemeral branch must follow the {project}--{weave}/{branch} pattern.
+    // Workweave name is "feat", project is "test-project", branch from bare is "main".
+    let branch =
+        current_branch(&workweave_repo).expect("worktree should have a branch (not detached HEAD)");
+    assert_eq!(
+        branch, "test-project--feat/main",
+        "worktree in workweave must be on ephemeral branch test-project--feat/main, got: {branch}"
+    );
+
+    // 4. No repo was cloned under the workweave directory.
+    // The workweave's github/ entry must be a worktree file, not a .git dir.
+    let workweave_github = workweave_dir.join("github");
+    if workweave_github.exists() {
+        // Any repo found under workweave/github/ must be a linked worktree,
+        // not an independent clone — validate by checking .git is a file.
+        fn assert_no_independent_clones(dir: &std::path::Path) {
+            if let Ok(entries) = std::fs::read_dir(dir) {
+                for entry in entries.flatten() {
+                    let p = entry.path();
+                    if p.is_dir() {
+                        let dg = p.join(".git");
+                        if dg.exists() {
+                            assert!(
+                                dg.is_file(),
+                                "expected linked worktree (.git as file) under workweave, \
+                                 found independent clone (.git as dir) at {}",
+                                p.display()
+                            );
+                        }
+                        assert_no_independent_clones(&p);
+                    }
+                }
+            }
+        }
+        assert_no_independent_clones(&workweave_github);
+    }
+}
+
+#[test]
+fn add_local_path_arm_from_workweave_git_common_dir_points_to_primary_clone() {
+    // Acceptance criterion (fo-hycb06.7), local-path arm:
+    // `rwv add <github/owner/repo>` (path to an existing clone under primary)
+    // from a workweave must produce the same placement guarantee as the URL
+    // arm — canonical clone stays in primary, workweave gets a linked
+    // worktree with git-common-dir pointing to the canonical clone.
+    let tmp = tempfile::tempdir().unwrap();
+
+    let bare = tmp.path().join("localpath-gcdir.git");
+    init_bare_repo_with_commit(&bare);
+
+    let (primary, workweave_dir) = setup_workweave_for_add_tests(&tmp);
+
+    // Pre-clone the repo into primary at the canonical path so the
+    // local-path arm triggers (the condition is "!url.contains("://") &&
+    // ctx.primary_path().join(url) exists as a directory").
+    // Use two-segment path so it lands under primary/bar/repo/.
+    let canonical_rel = "bar/localpath-gcdir";
+    let canonical = primary.join(canonical_rel);
+    std::fs::create_dir_all(canonical.parent().unwrap()).unwrap();
+    let status = common::git()
+        .args([
+            "clone",
+            &bare.to_string_lossy(),
+            &canonical.to_string_lossy(),
+        ])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .expect("git clone failed");
+    assert!(status.success(), "pre-clone of bare repo failed");
+
+    // Run `rwv add <canonical_rel>` from the workweave (local-path arm).
+    rwv()
+        .args(["add", canonical_rel])
+        .current_dir(&workweave_dir)
+        .assert()
+        .success();
+
+    // The canonical clone must still be at primary/bar/localpath-gcdir/.
+    assert!(
+        canonical.exists(),
+        "canonical clone must exist at primary/{canonical_rel}"
+    );
+
+    // The same relative path must exist in the workweave.
+    let workweave_repo = workweave_dir.join(canonical_rel);
+    assert!(
+        workweave_repo.exists(),
+        "worktree must exist in workweave at {}",
+        workweave_repo.display()
+    );
+
+    // .git must be a file (linked worktree).
+    let dot_git = workweave_repo.join(".git");
+    assert!(
+        dot_git.is_file(),
+        ".git in workweave (local-path arm) must be a file (linked worktree), \
+         found a directory (independent clone) at {}",
+        dot_git.display()
+    );
+
+    // git-common-dir must be inside the canonical clone's .git directory.
+    let common_dir = git_common_dir(&workweave_repo);
+    let canonical_git = canonical.join(".git").canonicalize().unwrap();
+    assert!(
+        common_dir.starts_with(&canonical_git),
+        "git-common-dir ({}) must be inside the canonical clone's .git ({}) [local-path arm]",
+        common_dir.display(),
+        canonical_git.display()
+    );
+
+    // Ephemeral branch: {project}--{weave}/{branch}.
+    let branch = current_branch(&workweave_repo).expect("worktree should have a branch");
+    assert_eq!(
+        branch, "test-project--feat/main",
+        "worktree (local-path arm) must be on ephemeral branch test-project--feat/main, got: {branch}"
+    );
+
+    // No independent clone materialized under .workweaves/ (the workweave
+    // directory). Check that bar/ under workweave only contains a worktree.
+    let workweave_bar = workweave_dir.join("bar");
+    if workweave_bar.exists() {
+        let ww_repo_dg = workweave_bar.join("localpath-gcdir/.git");
+        if ww_repo_dg.exists() {
+            assert!(
+                ww_repo_dg.is_file(),
+                "no independent clone should exist under workweave bar/; \
+                 .git should be a file (worktree), got dir: {}",
+                ww_repo_dg.display()
+            );
+        }
+    }
+}
