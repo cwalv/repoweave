@@ -59,37 +59,12 @@ const FORBIDDEN: &[&str] = &[
 const ALLOWLIST: &[Allowed] = &[
     Allowed {
         file: "sync.rs",
-        pattern: "\"--hard\"",
-        count: 2,
-        justification: "(1) sync --force Phase 1' discard: gated on a \
-            clean-project precondition; discarded commits stay recoverable \
-            via the refs/rwv/pre-op savepoint. (2) abort_one_repo: restoring \
-            the savepoint is the operation's contract; any dirt at abort \
-            time is churn from the failed op being rolled back.",
-    },
-    Allowed {
-        file: "sync.rs",
         pattern: "remove_dir_all",
         count: 2,
         justification: "prune_dropped_repo, both arms behind an \
             uncommitted-changes refusal plus a unique-commits refusal \
             (worktree-divergence check in workweaves, local-only-branch \
             scan in primary), all failing safe on git errors.",
-    },
-    Allowed {
-        file: "sync.rs",
-        pattern: "\"checkout\"",
-        count: 1,
-        justification: "refresh_working_tree_if_safe: restores files from \
-            HEAD only after verifying every on-disk blob is reachable from \
-            recent history — live edits are never clobbered.",
-    },
-    Allowed {
-        file: "sync.rs",
-        pattern: "\"update-ref\"",
-        count: 2,
-        justification: "savepoint create/delete, namespaced under \
-            refs/rwv/pre-op/<op-id>; never touches user refs.",
     },
     Allowed {
         file: "workweave.rs",
@@ -138,10 +113,34 @@ const ALLOWLIST: &[Allowed] = &[
     Allowed {
         file: "git.rs",
         pattern: "\"checkout\"",
-        count: 1,
-        justification: "checkout(): no -f flag, so git itself refuses to \
+        count: 2,
+        justification: "(1) checkout(): no -f flag, so git itself refuses to \
             overwrite dirty trees; callers check out lock-pinned revisions \
-            or fresh clones.",
+            or fresh clones. (2) refresh_working_tree_to_head_if_safe: \
+            restores files from HEAD only after verifying every on-disk \
+            blob is reachable from recent history — live edits are never \
+            clobbered (relocated from sync.rs).",
+    },
+    Allowed {
+        file: "git.rs",
+        pattern: "\"--hard\"",
+        count: 2,
+        justification: "(1) hard_reset(): the operation's intent is to \
+            discard divergent commits; the sole sync caller (--force Phase \
+            1') gates on a clean-project precondition and creates a \
+            refs/rwv/pre-op savepoint first so discarded commits stay \
+            recoverable via `rwv abort`. (2) restore_savepoint(): restoring \
+            the pre-op state is the operation's contract; any dirt at \
+            abort time is churn from the failed op being rolled back \
+            (relocated from sync.rs).",
+    },
+    Allowed {
+        file: "git.rs",
+        pattern: "\"update-ref\"",
+        count: 2,
+        justification: "savepoint create/drop, namespaced under \
+            refs/rwv/pre-op/<op-id>; never touches user refs (relocated \
+            from sync.rs).",
     },
     Allowed {
         file: "check.rs",

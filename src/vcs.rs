@@ -53,12 +53,12 @@ impl ResolvedRevisionId {
     /// crate-internal — there is no public way to mint a resolved value
     /// from a free string.
     ///
-    /// Sole legitimate caller: [`crate::sync::read_savepoint`], which
-    /// reads a value produced by `git rev-parse refs/rwv/pre-op/<id>` —
-    /// rev-parse on a fully-qualified ref-or-SHA always emits the
-    /// canonical 40-hex SHA. Re-resolving via `Vcs::resolve_revision`
-    /// would cost an extra git invocation per `rwv abort` without
-    /// strengthening the invariant.
+    /// Sole legitimate caller: [`Vcs::resolve_savepoint`]'s `GitVcs`
+    /// implementation, which reads a value produced by `git rev-parse
+    /// refs/rwv/pre-op/<id>` — rev-parse on a fully-qualified ref-or-SHA
+    /// always emits the canonical 40-hex SHA. Re-resolving via
+    /// `Vcs::resolve_revision` would cost an extra git invocation per
+    /// `rwv abort` without strengthening the invariant.
     pub(crate) fn from_canonical_unchecked(s: impl Into<String>) -> Self {
         Self {
             canonical: s.into(),
@@ -613,4 +613,237 @@ pub trait Vcs {
     ///
     /// [`set_replay_exclusion`]: Vcs::set_replay_exclusion
     fn has_replay_exclusion(&self, repo: &Path, path: &Path) -> Result<bool, VcsError>;
+
+    /// `true` when [`set_replay_exclusion`] has been configured for `path` in
+    /// `repo`'s **committed** tree (not just the working tree).
+    ///
+    /// Different from [`has_replay_exclusion`]: that one reads the on-disk
+    /// `.gitattributes`; this one reads the committed-at-HEAD copy. The
+    /// committed form is the one that survives a rebase (the replay starts
+    /// from the committed tree, not the working tree), so sync's precondition
+    /// check ("can rebase/merge rely on `merge=ours` to keep `rwv.lock`
+    /// out of the merge inputs?") must consult the committed form.
+    ///
+    /// Returns `false` when the file isn't committed yet.
+    ///
+    /// [`set_replay_exclusion`]: Vcs::set_replay_exclusion
+    /// [`has_replay_exclusion`]: Vcs::has_replay_exclusion
+    fn has_committed_replay_exclusion(&self, repo: &Path, path: &Path) -> Result<bool, VcsError>;
+
+    /// Fast-forward `repo`'s current branch to `to`, refusing rather than
+    /// clobbering if a fast-forward isn't possible.
+    ///
+    /// Safe-by-construction: when `to` is not a descendant of the current
+    /// HEAD, the operation fails with [`VcsError::CommandFailed`] (the VCS
+    /// is asked to do an FF-only advance and refuses). The working tree and
+    /// branch ref are touched only on success. No conflict markers are ever
+    /// left in the working tree.
+    ///
+    /// For [`GitVcs`](crate::git::GitVcs): runs `git merge --ff-only <to>`.
+    /// Holds the safe-by-construction property established by the
+    /// fo-5cqa74 fix (no `reset --hard` replacement that could discard
+    /// reachable history).
+    fn advance_if_fast_forward(&self, repo: &Path, to: &ResolvedRevisionId)
+        -> Result<(), VcsError>;
+
+    /// Merge `rev` into `repo`'s current branch with an auto-generated
+    /// commit message; rely on the [`set_replay_exclusion`] configuration
+    /// to keep excluded paths out of the merge inputs.
+    ///
+    /// For [`GitVcs`](crate::git::GitVcs): runs `git merge --no-edit <rev>`
+    /// with the `ours` merge driver registered inline (so any
+    /// `<path> merge=ours` line in the committed `.gitattributes` resolves
+    /// to "keep ours"). On conflict, leaves the repo in the VCS-native
+    /// in-flight state (for git: `MERGE_HEAD` present + conflict markers
+    /// in the working tree) and returns
+    /// [`VcsError::RebaseConflict { repo, op: ConflictOp::Merge }`] so the
+    /// caller can pair with [`Vcs::conflict_resolution_hint`].
+    ///
+    /// [`set_replay_exclusion`]: Vcs::set_replay_exclusion
+    fn merge_from(&self, repo: &Path, rev: &ResolvedRevisionId) -> Result<(), VcsError>;
+
+    /// Hard-reset `repo`'s current branch to `to`, discarding any divergent
+    /// commits and overwriting the working tree.
+    ///
+    /// Destructive — discarded commits are not recoverable through this VCS
+    /// call alone. Used only by `rwv sync --force` after a Phase 1 ancestor
+    /// check would have refused, with a savepoint already in place under
+    /// [`refs/rwv/pre-op/<op-id>`] for `rwv abort` to roll back to.
+    ///
+    /// For [`GitVcs`](crate::git::GitVcs): runs `git reset --hard <to>`.
+    ///
+    /// [`refs/rwv/pre-op/<op-id>`]: Vcs::create_savepoint
+    fn hard_reset(&self, repo: &Path, to: &ResolvedRevisionId) -> Result<(), VcsError>;
+
+    /// Return `true` when `ancestor` is a strict ancestor of `descendant`
+    /// in `repo`. Returns `false` when they are equal.
+    ///
+    /// For [`GitVcs`](crate::git::GitVcs): runs
+    /// `git merge-base --is-ancestor <ancestor> <descendant>`.
+    fn is_ancestor(
+        &self,
+        repo: &Path,
+        ancestor: &ResolvedRevisionId,
+        descendant: &ResolvedRevisionId,
+    ) -> Result<bool, VcsError>;
+
+    /// Count commits reachable from `to` but not from `from` in `repo`
+    /// (i.e. the size of the `from..to` range).
+    ///
+    /// Returns 0 when `to` is an ancestor of (or equal to) `from`.
+    ///
+    /// For [`GitVcs`](crate::git::GitVcs): runs
+    /// `git rev-list --count <from>..<to>`. The bounded count is what
+    /// callers like `rwv sync`'s `AlreadyAhead` reporting actually need —
+    /// no commit list is materialised.
+    fn count_commits_in_range(
+        &self,
+        repo: &Path,
+        from: &ResolvedRevisionId,
+        to: &ResolvedRevisionId,
+    ) -> Result<usize, VcsError>;
+
+    /// Create a savepoint capturing the current `HEAD` of `repo` under an
+    /// op-id-namespaced ref.
+    ///
+    /// For [`GitVcs`](crate::git::GitVcs): writes
+    /// `refs/rwv/pre-op/<op_id>` pointing at `HEAD`. The ref namespace is an
+    /// impl detail — callers pass the opaque `op_id` and never spell the
+    /// ref directly.
+    ///
+    /// Returns the captured `HEAD` revision so the caller can record it
+    /// in op-state.
+    fn create_savepoint(&self, repo: &Path, op_id: &str) -> Result<ResolvedRevisionId, VcsError>;
+
+    /// Look up the savepoint captured under `op_id` in `repo`, returning
+    /// the SHA it points at, or `None` when no such savepoint exists.
+    ///
+    /// For [`GitVcs`](crate::git::GitVcs): reads `refs/rwv/pre-op/<op_id>`.
+    fn resolve_savepoint(&self, repo: &Path, op_id: &str) -> Option<ResolvedRevisionId>;
+
+    /// Restore `repo` to the savepoint captured under `op_id`, then drop
+    /// the savepoint.
+    ///
+    /// Returns `Ok(true)` when a savepoint existed and was restored;
+    /// `Ok(false)` when no savepoint was present (nothing to do).
+    ///
+    /// For [`GitVcs`](crate::git::GitVcs): when the savepoint exists, runs
+    /// `git reset --hard refs/rwv/pre-op/<op_id>` followed by
+    /// `git update-ref -d refs/rwv/pre-op/<op_id>`. The destructive
+    /// `reset --hard` is the operation's contract — restoring the
+    /// pre-op state is what `rwv abort` consents to.
+    fn restore_savepoint(&self, repo: &Path, op_id: &str) -> Result<bool, VcsError>;
+
+    /// Drop the savepoint captured under `op_id` in `repo`. No-op when
+    /// no such savepoint exists; ignores ref-update failures (the
+    /// savepoint is purely a recovery aid — its absence is benign).
+    fn drop_savepoint(&self, repo: &Path, op_id: &str);
+
+    /// Return the in-flight VCS operation `repo` is currently mid-way
+    /// through, if any.
+    ///
+    /// For [`GitVcs`](crate::git::GitVcs): detects mid-rebase
+    /// (`rebase-merge/` or `rebase-apply/` present), mid-merge
+    /// (`MERGE_HEAD` present), or mid-cherry-pick (`CHERRY_PICK_HEAD`
+    /// present). Returns `None` when the repo is in a clean (non-in-flight)
+    /// state.
+    fn mid_op(&self, repo: &Path) -> Option<ConflictOp>;
+
+    /// Cancel any in-flight VCS operation in `repo` (rebase, merge,
+    /// cherry-pick). No-op when the repo is in a clean state.
+    ///
+    /// For [`GitVcs`](crate::git::GitVcs): runs
+    /// `git rebase --abort` / `git merge --abort` / `git cherry-pick --abort`
+    /// depending on what [`mid_op`] reports. Errors from the underlying
+    /// abort command are swallowed — the call is a best-effort cleanup
+    /// before the surrounding flow (e.g. `rwv abort`) does its own
+    /// recovery.
+    ///
+    /// [`mid_op`]: Vcs::mid_op
+    fn cancel_in_flight_op(&self, repo: &Path);
+
+    /// Return `true` when `branch` in `repo` has a counterpart on the
+    /// role-conventional remote (e.g. `refs/remotes/origin/<branch>` for
+    /// `Role::Primary` in [`GitVcs`](crate::git::GitVcs)).
+    ///
+    /// Used by `prune_dropped_repo` to refuse pruning a clone that has
+    /// local-only branches: a branch with no remote counterpart is
+    /// conservatively assumed to carry unique work.
+    fn branch_has_remote_counterpart(
+        &self,
+        repo: &Path,
+        branch: &RefName,
+        role: Role,
+    ) -> Result<bool, VcsError>;
+
+    /// Count commits reachable from `branch` but not from its
+    /// role-conventional remote counterpart in `repo`.
+    ///
+    /// Returns 0 when the branch is fully merged into its counterpart, and
+    /// `>0` when it carries unique local commits. Caller is responsible
+    /// for verifying the counterpart exists first via
+    /// [`branch_has_remote_counterpart`]; this method may error when it
+    /// does not.
+    ///
+    /// For [`GitVcs`](crate::git::GitVcs): runs
+    /// `git rev-list --count refs/remotes/<remote>/<branch>..<branch>`.
+    ///
+    /// [`branch_has_remote_counterpart`]: Vcs::branch_has_remote_counterpart
+    fn count_commits_ahead_of_remote(
+        &self,
+        repo: &Path,
+        branch: &RefName,
+        role: Role,
+    ) -> Result<usize, VcsError>;
+
+    /// List every local branch in `repo`.
+    ///
+    /// For [`GitVcs`](crate::git::GitVcs): enumerates
+    /// `refs/heads/` via `git for-each-ref`. Differs from
+    /// [`list_branches_with_prefix`] in that it returns every branch
+    /// regardless of name.
+    ///
+    /// [`list_branches_with_prefix`]: Vcs::list_branches_with_prefix
+    fn list_local_branches(&self, repo: &Path) -> Result<Vec<RefName>, VcsError>;
+
+    /// Fetch objects from `src_repo` into `dst_repo` so SHAs reachable in
+    /// `src_repo` are reachable in `dst_repo`.
+    ///
+    /// For [`GitVcs`](crate::git::GitVcs): runs `git fetch <src_path> HEAD`
+    /// in `dst_repo`. For sibling worktrees that share an object store this
+    /// is a no-op; for independent clones it copies objects across. Errors
+    /// are swallowed — the caller (e.g. `sync-to` step 3) is expected to
+    /// verify reachability by a subsequent operation that will fail loudly
+    /// if the fetch was needed but didn't run.
+    fn fetch_objects_from(&self, dst_repo: &Path, src_repo: &Path);
+
+    /// Refresh `repo`'s index to match `HEAD` when the divergence is the
+    /// auto-fixable class — every drifted tree must already be a committed
+    /// tree reachable from `HEAD`. No-op when the index already matches
+    /// `HEAD` or when any divergent tree is unverifiable.
+    ///
+    /// Safety invariant: never replaces index content that is not already
+    /// a committed tree reachable from `HEAD`. Live staged content is left
+    /// untouched.
+    ///
+    /// For [`GitVcs`](crate::git::GitVcs): runs `git reset` (mixed) after
+    /// verifying via `git write-tree` + `git log` that the index tree is
+    /// among the last 200 commits' trees. Infallible — failures along the
+    /// way silently leave the index alone.
+    fn refresh_index_to_head_if_safe(&self, repo: &Path);
+
+    /// Restore `repo`'s working tree to match `HEAD` when the divergence
+    /// is the auto-fixable class — every drifted file's on-disk blob must
+    /// already be reachable from `HEAD`. No-op when the working tree
+    /// already matches `HEAD` or when any divergent file is unverifiable.
+    ///
+    /// Safety invariant: never replaces on-disk content that is not already
+    /// a committed blob reachable from `HEAD`. Live edits are left
+    /// untouched.
+    ///
+    /// For [`GitVcs`](crate::git::GitVcs): runs `git checkout HEAD --
+    /// <files>` after verifying each modified file's blob is reachable
+    /// via `git rev-list --objects` of the last 200 commits. Infallible —
+    /// failures along the way silently leave the working tree alone.
+    fn refresh_working_tree_to_head_if_safe(&self, repo: &Path);
 }

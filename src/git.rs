@@ -629,6 +629,413 @@ impl Vcs for GitVcs {
 
         Ok(contents.lines().any(|line| line.trim() == needle))
     }
+
+    fn has_committed_replay_exclusion(&self, repo: &Path, path: &Path) -> Result<bool, VcsError> {
+        let path_str = path.to_str().ok_or_else(|| VcsError::Io {
+            ctx: format!(
+                "replay-exclusion path {} is not valid UTF-8",
+                path.display()
+            ),
+            source: std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "non-utf8 replay-exclusion path",
+            ),
+        })?;
+        let needle = format!("{path_str} merge=ours");
+
+        // `git show HEAD:.gitattributes` — if `.gitattributes` is not
+        // committed at HEAD, git exits non-zero and we treat the line as
+        // absent (the precondition concern is "is the line in the committed
+        // tree?", so a missing file is a definitive No).
+        let output = git_command()
+            .args(["show", "HEAD:.gitattributes"])
+            .current_dir(repo)
+            .output()
+            .map_err(|e| VcsError::Io {
+                ctx: format!(
+                    "failed to spawn git show HEAD:.gitattributes in {}",
+                    repo.display()
+                ),
+                source: e,
+            })?;
+
+        if !output.status.success() {
+            return Ok(false);
+        }
+        let content = String::from_utf8_lossy(&output.stdout);
+        Ok(content.lines().any(|line| line.trim() == needle))
+    }
+
+    fn advance_if_fast_forward(
+        &self,
+        repo: &Path,
+        to: &ResolvedRevisionId,
+    ) -> Result<(), VcsError> {
+        Self::run(&["merge", "--ff-only", to.as_str()], repo)?;
+        Ok(())
+    }
+
+    fn merge_from(&self, repo: &Path, rev: &ResolvedRevisionId) -> Result<(), VcsError> {
+        // Wire up the `ours` merge driver inline so any `<path> merge=ours`
+        // line written by [`set_replay_exclusion`] resolves to "keep ours"
+        // during this merge. Doing it per-invocation (rather than at
+        // `rwv init` time) means the driver is available on every clone
+        // without per-clone setup. Mirrors the inline driver registration
+        // used by [`rebase`].
+        let output = git_command()
+            .args([
+                "-c",
+                "merge.ours.name=keep ours during replay (rwv replay-exclusion)",
+                "-c",
+                "merge.ours.driver=true",
+                "merge",
+                "--no-edit",
+                rev.as_str(),
+            ])
+            .current_dir(repo)
+            .output()
+            .map_err(|e| VcsError::Io {
+                ctx: format!(
+                    "failed to spawn git merge --no-edit {} in {}",
+                    rev.as_str(),
+                    repo.display()
+                ),
+                source: e,
+            })?;
+
+        if output.status.success() {
+            return Ok(());
+        }
+
+        // Non-zero exit. If the repo is in mid-merge, this is a conflict;
+        // otherwise it's some other merge error.
+        if matches!(Self::mid_op_state(repo).as_deref(), Some("mid-merge")) {
+            return Err(VcsError::RebaseConflict {
+                repo: repo.to_path_buf(),
+                op: ConflictOp::Merge,
+            });
+        }
+
+        let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+        Err(VcsError::CommandFailed {
+            args: vec![
+                "merge".to_owned(),
+                "--no-edit".to_owned(),
+                rev.as_str().to_owned(),
+            ],
+            repo: repo.to_path_buf(),
+            stderr,
+        })
+    }
+
+    fn hard_reset(&self, repo: &Path, to: &ResolvedRevisionId) -> Result<(), VcsError> {
+        Self::run(&["reset", "--hard", to.as_str()], repo)?;
+        Ok(())
+    }
+
+    fn is_ancestor(
+        &self,
+        repo: &Path,
+        ancestor: &ResolvedRevisionId,
+        descendant: &ResolvedRevisionId,
+    ) -> Result<bool, VcsError> {
+        let status = git_command()
+            .args([
+                "merge-base",
+                "--is-ancestor",
+                ancestor.as_str(),
+                descendant.as_str(),
+            ])
+            .current_dir(repo)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .map_err(|e| VcsError::Io {
+                ctx: format!("failed to spawn git merge-base in {}", repo.display()),
+                source: e,
+            })?;
+        // Exit 0 = is ancestor; exit 1 = is not. Other exits indicate a
+        // problem (e.g. unknown revision); collapse them into "not an
+        // ancestor" to match the existing sync.rs semantics — callers
+        // treat the false case as a refusal and fall back accordingly.
+        Ok(status.success())
+    }
+
+    fn count_commits_in_range(
+        &self,
+        repo: &Path,
+        from: &ResolvedRevisionId,
+        to: &ResolvedRevisionId,
+    ) -> Result<usize, VcsError> {
+        let range = format!("{}..{}", from.as_str(), to.as_str());
+        let out = Self::run(&["rev-list", "--count", &range], repo)?;
+        Ok(out.trim().parse::<usize>().unwrap_or(0))
+    }
+
+    fn create_savepoint(&self, repo: &Path, op_id: &str) -> Result<ResolvedRevisionId, VcsError> {
+        let head = self.head_revision(repo)?;
+        let ref_name = savepoint_ref(op_id);
+        Self::run(&["update-ref", &ref_name, head.as_str()], repo)?;
+        Ok(head)
+    }
+
+    fn resolve_savepoint(&self, repo: &Path, op_id: &str) -> Option<ResolvedRevisionId> {
+        // `git rev-parse <ref>` emits the canonical 40-hex SHA for a
+        // fully-qualified ref, so the result is already in canonical form
+        // and re-resolving via `resolve_revision` would add a git
+        // invocation without strengthening the invariant. This is the
+        // sole legitimate caller of
+        // `ResolvedRevisionId::from_canonical_unchecked`; see that
+        // constructor's doc-comment.
+        let ref_name = savepoint_ref(op_id);
+        Self::run(&["rev-parse", &ref_name], repo)
+            .ok()
+            .map(ResolvedRevisionId::from_canonical_unchecked)
+    }
+
+    fn restore_savepoint(&self, repo: &Path, op_id: &str) -> Result<bool, VcsError> {
+        match self.resolve_savepoint(repo, op_id) {
+            Some(sha) => {
+                Self::run(&["reset", "--hard", sha.as_str()], repo)?;
+                self.drop_savepoint(repo, op_id);
+                Ok(true)
+            }
+            None => Ok(false),
+        }
+    }
+
+    fn drop_savepoint(&self, repo: &Path, op_id: &str) {
+        let ref_name = savepoint_ref(op_id);
+        let _ = Self::run(&["update-ref", "-d", &ref_name], repo);
+    }
+
+    fn mid_op(&self, repo: &Path) -> Option<ConflictOp> {
+        match Self::mid_op_state(repo).as_deref() {
+            Some("mid-rebase") => Some(ConflictOp::Rebase),
+            Some("mid-merge") => Some(ConflictOp::Merge),
+            Some("mid-cherry-pick") => Some(ConflictOp::CherryPick),
+            _ => None,
+        }
+    }
+
+    fn cancel_in_flight_op(&self, repo: &Path) {
+        let abort_args: &[&str] = match self.mid_op(repo) {
+            Some(ConflictOp::Rebase) => &["rebase", "--abort"],
+            Some(ConflictOp::Merge) => &["merge", "--abort"],
+            Some(ConflictOp::CherryPick) => &["cherry-pick", "--abort"],
+            None => return,
+        };
+        let _ = Self::run(abort_args, repo);
+    }
+
+    fn branch_has_remote_counterpart(
+        &self,
+        repo: &Path,
+        branch: &RefName,
+        role: Role,
+    ) -> Result<bool, VcsError> {
+        let _ = role; // all remotes use `origin`
+        let qualified = format!("refs/remotes/origin/{}", branch.as_str());
+        let status = git_command()
+            .args(["rev-parse", "--verify", "--quiet", &qualified])
+            .current_dir(repo)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .map_err(|e| VcsError::Io {
+                ctx: format!(
+                    "failed to spawn git rev-parse --verify --quiet {} in {}",
+                    qualified,
+                    repo.display()
+                ),
+                source: e,
+            })?;
+        Ok(status.success())
+    }
+
+    fn count_commits_ahead_of_remote(
+        &self,
+        repo: &Path,
+        branch: &RefName,
+        role: Role,
+    ) -> Result<usize, VcsError> {
+        let _ = role; // all remotes use `origin`
+        let range = format!(
+            "refs/remotes/origin/{}..{}",
+            branch.as_str(),
+            branch.as_str()
+        );
+        let out = Self::run(&["rev-list", "--count", &range], repo)?;
+        Ok(out.trim().parse::<usize>().unwrap_or(0))
+    }
+
+    fn list_local_branches(&self, repo: &Path) -> Result<Vec<RefName>, VcsError> {
+        let output = Self::run(
+            &["for-each-ref", "--format=%(refname)", "refs/heads/"],
+            repo,
+        )?;
+        let branches = output
+            .lines()
+            .map(str::trim)
+            .filter(|l| !l.is_empty())
+            .map(|l| RefName::new(l.to_owned()))
+            .collect();
+        Ok(branches)
+    }
+
+    fn fetch_objects_from(&self, dst_repo: &Path, src_repo: &Path) {
+        let src_path = src_repo.to_string_lossy().into_owned();
+        // Errors are swallowed by design — for sibling worktrees that
+        // share an object store the fetch may fail (FETCH_HEAD unavailable)
+        // and yet the objects are already reachable. A real problem
+        // surfaces at the subsequent operation (e.g. the ff merge in
+        // sync-to step 3) which inspects the same objects.
+        let _ = git_command()
+            .args(["fetch", &src_path, "HEAD"])
+            .current_dir(dst_repo)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status();
+    }
+
+    fn refresh_index_to_head_if_safe(&self, repo: &Path) {
+        // Quick exit: index already matches HEAD.
+        let clean = git_command()
+            .args(["diff-index", "--cached", "--exit-code", "HEAD"])
+            .current_dir(repo)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(true); // assume clean on error; never touch if unsure
+        if clean {
+            return;
+        }
+
+        // Get the current index tree SHA.
+        let index_tree = match git_command().arg("write-tree").current_dir(repo).output() {
+            Ok(out) if out.status.success() => String::from_utf8(out.stdout)
+                .unwrap_or_default()
+                .trim()
+                .to_owned(),
+            _ => return, // can't verify — leave index alone
+        };
+
+        // Safety check: is the index tree the tree of some recent ancestor commit?
+        // Bounded to last 200 commits to keep doctor fast on large histories.
+        let ancestor_trees = match git_command()
+            .args(["log", "--format=%T", "-200", "HEAD"])
+            .current_dir(repo)
+            .output()
+        {
+            Ok(out) if out.status.success() => String::from_utf8(out.stdout).unwrap_or_default(),
+            _ => return,
+        };
+
+        if !ancestor_trees.lines().any(|t| t.trim() == index_tree) {
+            return; // live staged content — do not clobber
+        }
+
+        // Safe: realign index to HEAD.
+        let _ = git_command().arg("reset").current_dir(repo).output();
+    }
+
+    fn refresh_working_tree_to_head_if_safe(&self, repo: &Path) {
+        // Quick exit: working tree already matches HEAD.
+        let clean = git_command()
+            .args(["diff-index", "--exit-code", "HEAD"])
+            .current_dir(repo)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(true);
+        if clean {
+            return;
+        }
+
+        // Use --name-status: D = deleted from WT (always safe); M = modified (check blob).
+        let status_out = match git_command()
+            .args(["diff-index", "--name-status", "HEAD"])
+            .current_dir(repo)
+            .output()
+        {
+            Ok(out) if out.status.success() => out,
+            _ => return,
+        };
+        let mut all_files: Vec<String> = Vec::new(); // all entries to restore
+        let mut modified_files: Vec<String> = Vec::new(); // M entries needing blob check
+        let mut has_entries = false;
+        for line in String::from_utf8_lossy(&status_out.stdout).lines() {
+            if line.is_empty() {
+                continue;
+            }
+            has_entries = true;
+            let mut parts = line.splitn(2, '\t');
+            let status = parts.next().unwrap_or("").trim();
+            let path = parts.next().unwrap_or("").trim();
+            match status {
+                "D" => {
+                    all_files.push(path.to_owned());
+                }
+                "M" | "T" => {
+                    all_files.push(path.to_owned());
+                    modified_files.push(path.to_owned());
+                }
+                _ => return, // unknown status — leave working tree alone
+            }
+        }
+        if !has_entries || all_files.is_empty() {
+            return;
+        }
+
+        // For M files, verify the on-disk blob is reachable before touching anything.
+        if !modified_files.is_empty() {
+            let objects_out = match git_command()
+                .args(["rev-list", "--objects", "-n", "200", "HEAD"])
+                .current_dir(repo)
+                .output()
+            {
+                Ok(out) if out.status.success() => out,
+                _ => return,
+            };
+            let reachable: std::collections::HashSet<String> =
+                String::from_utf8(objects_out.stdout)
+                    .unwrap_or_default()
+                    .lines()
+                    .filter_map(|l| l.split_whitespace().next().map(|s| s.to_owned()))
+                    .collect();
+            for file in &modified_files {
+                let hash_out = match git_command()
+                    .args(["hash-object", file])
+                    .current_dir(repo)
+                    .output()
+                {
+                    Ok(out) if out.status.success() => out,
+                    _ => return,
+                };
+                let blob_sha = String::from_utf8_lossy(&hash_out.stdout).trim().to_owned();
+                if !reachable.contains(&blob_sha) {
+                    return; // live edits — do not clobber
+                }
+            }
+        }
+
+        // Safe: restore all files from HEAD.
+        let mut args = vec!["checkout".to_owned(), "HEAD".to_owned(), "--".to_owned()];
+        args.extend(all_files);
+        let _ = git_command().args(&args).current_dir(repo).output();
+    }
+}
+
+/// Build the savepoint ref path for `op_id` under the rwv pre-op namespace.
+///
+/// The namespacing (`refs/rwv/pre-op/<id>`) is a git impl detail —
+/// callers of the [`Vcs`] trait pass an opaque `op_id` string and never
+/// spell the ref directly. Centralising the format here means create /
+/// resolve / drop / restore all agree on the layout.
+fn savepoint_ref(op_id: &str) -> String {
+    format!("refs/rwv/pre-op/{op_id}")
 }
 
 impl GitVcs {

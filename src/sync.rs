@@ -3,12 +3,12 @@
 //! `rwv sync` aligns the CWD workspace with another workspace's committed
 //! `rwv.lock`. `rwv abort` rolls back to pre-sync state using savepoint refs.
 
-use crate::git::{git_command, GitVcs};
+use crate::git::GitVcs;
 use crate::lock::{commit_lock_file_with_message, generate_lock};
-use crate::manifest::{LockFile, Manifest, Project, ProjectName, RepoPath, WorkweaveName};
+use crate::manifest::{LockFile, Manifest, Project, ProjectName, RepoPath, Role, WorkweaveName};
 use crate::op_state::{self, OpState};
 use crate::parallel::run_in_parallel;
-use crate::vcs::{ConflictOp, ResolvedRevisionId, Vcs, VcsError, VcsErrorOutput};
+use crate::vcs::{ConflictOp, RefName, ResolvedRevisionId, Vcs, VcsError, VcsErrorOutput};
 use crate::workspace::{WorkspaceContext, WorkspaceLocation};
 use crate::workweave::workweave_path_for;
 use anyhow::Context;
@@ -49,8 +49,6 @@ fn workspace_name(ctx: &WorkspaceContext) -> String {
             .to_owned(),
     }
 }
-
-const PRE_OP_REF: &str = "refs/rwv/pre-op";
 
 // ---------------------------------------------------------------------------
 // SyncStrategy — typed sync strategy
@@ -487,21 +485,12 @@ fn sync_one_repo(
     }
 
     // Detect AlreadyAhead: lock is a strict ancestor of HEAD (HEAD is past the lock).
-    let is_ancestor = git_command()
-        .args(["merge-base", "--is-ancestor", target.as_str(), "HEAD"])
-        .current_dir(repo)
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false);
+    let is_ancestor = GitVcs.is_ancestor(repo, target, &head).unwrap_or(false);
 
     if is_ancestor {
-        let commits_ahead = git(
-            &["rev-list", "--count", &format!("{}..HEAD", target.as_str())],
-            repo,
-        )
-        .ok()
-        .and_then(|s| s.trim().parse::<usize>().ok())
-        .unwrap_or(0);
+        let commits_ahead = GitVcs
+            .count_commits_in_range(repo, target, &head)
+            .unwrap_or(0);
         return RepoSyncOutcome::AlreadyAhead { commits_ahead };
     }
 
@@ -564,27 +553,17 @@ impl fmt::Display for OpId {
 // Helpers
 // ---------------------------------------------------------------------------
 
-fn git(args: &[&str], dir: &Path) -> Result<String, VcsError> {
-    let out = git_command()
-        .args(args)
-        .current_dir(dir)
-        .output()
-        .map_err(|e| VcsError::Io {
-            ctx: format!("failed to run git {:?} in {}", args, dir.display()),
-            source: e,
-        })?;
-    if !out.status.success() {
-        let stderr = String::from_utf8_lossy(&out.stderr).trim().to_owned();
-        return Err(VcsError::CommandFailed {
-            args: args.iter().map(|s| s.to_string()).collect(),
-            repo: dir.to_path_buf(),
-            stderr,
-        });
+/// Hyphen-spelled label for a mid-op [`ConflictOp`] — `"rebase"`, `"merge"`,
+/// or `"cherry-pick"`. Used to compose `"mid-{label}"` messages without
+/// hardcoding a VCS vocabulary table inside sync. The VCS vocabulary (which
+/// op names exist) lives behind [`ConflictOp`]; this helper only shapes the
+/// display text.
+fn mid_op_label(op: ConflictOp) -> &'static str {
+    match op {
+        ConflictOp::Rebase => "rebase",
+        ConflictOp::Merge => "merge",
+        ConflictOp::CherryPick => "cherry-pick",
     }
-    Ok(String::from_utf8(out.stdout)
-        .unwrap_or_default()
-        .trim()
-        .to_owned())
 }
 
 /// Failure from [`apply_strategy`] carrying both the human-formatted error
@@ -616,11 +595,9 @@ fn apply_strategy(
     target: &ResolvedRevisionId,
     strategy: SyncStrategy,
 ) -> Result<(), StrategyError> {
-    let target_ref = target.as_str();
     match strategy {
         SyncStrategy::Ff => {
-            let out = git(&["merge", "--ff-only", target_ref], repo);
-            if let Err(e) = out {
+            if let Err(e) = GitVcs.advance_if_fast_forward(repo, target) {
                 return Err(StrategyError::from_message(format!(
                     "cannot fast-forward; rerun with --strategy rebase or --strategy merge. {}",
                     e
@@ -639,7 +616,8 @@ fn apply_strategy(
         }
         SyncStrategy::Merge => {
             // Merge with auto-generated commit message.
-            git(&["merge", "--no-edit", target_ref], repo)
+            GitVcs
+                .merge_from(repo, target)
                 .map_err(|e| StrategyError::from_message(format!("merge failed: {e}")))?;
         }
     }
@@ -647,35 +625,11 @@ fn apply_strategy(
 }
 
 fn create_savepoint(repo: &Path, op_id: &OpId) -> anyhow::Result<ResolvedRevisionId> {
-    let head = GitVcs.head_revision(repo)?;
-    git(
-        &[
-            "update-ref",
-            &format!("{PRE_OP_REF}/{op_id}"),
-            head.as_str(),
-        ],
-        repo,
-    )?;
-    Ok(head)
+    Ok(GitVcs.create_savepoint(repo, op_id.as_str())?)
 }
 
 fn delete_savepoint(repo: &Path, op_id: &OpId) {
-    let _ = git(
-        &["update-ref", "-d", &format!("{PRE_OP_REF}/{op_id}")],
-        repo,
-    );
-}
-
-fn read_savepoint(repo: &Path, op_id: &OpId) -> Option<ResolvedRevisionId> {
-    // `git rev-parse <ref>` emits the canonical 40-hex SHA for a
-    // fully-qualified ref, so this is the one legitimate caller of
-    // `ResolvedRevisionId::from_canonical_unchecked` — the value is
-    // already in canonical form and re-running `resolve_revision` would
-    // add a git invocation without strengthening the invariant. See the
-    // constructor's doc-comment.
-    git(&["rev-parse", &format!("{PRE_OP_REF}/{op_id}")], repo)
-        .ok()
-        .map(ResolvedRevisionId::from_canonical_unchecked)
+    GitVcs.drop_savepoint(repo, op_id.as_str());
 }
 
 /// The recovery instruction differs by side: source's lock is committed
@@ -738,21 +692,11 @@ fn cwd_is_ancestor_or_equal(
     if cwd_tip == source_tip {
         return true;
     }
-    // Run merge-base from cwd_project_dir; both tips must be reachable in its
-    // object DB for merge-base to work. (Source's tip is reachable because
-    // Phase 1's reset --hard relies on the same reachability.)
-    git_command()
-        .args([
-            "merge-base",
-            "--is-ancestor",
-            cwd_tip.as_str(),
-            source_tip.as_str(),
-        ])
-        .current_dir(cwd_project_dir)
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status()
-        .map(|s| s.success())
+    // Both tips must be reachable in cwd_project_dir's object DB for
+    // is_ancestor to work. (Source's tip is reachable because Phase 1's
+    // reset --hard relies on the same reachability.)
+    GitVcs
+        .is_ancestor(cwd_project_dir, cwd_tip, source_tip)
         .unwrap_or(false)
 }
 
@@ -781,15 +725,10 @@ fn check_phase1_ancestor(
 
     // CWD is not an ancestor of source. Count the commits CWD has that source
     // doesn't (the ones a fast-forward would refuse to land).
-    let extra_count = git(
-        &[
-            "rev-list",
-            "--count",
-            &format!("{}..{}", source_tip.as_str(), cwd_tip.as_str()),
-        ],
-        cwd_project_dir,
-    )
-    .unwrap_or_else(|_| "?".to_owned());
+    let extra_count = GitVcs
+        .count_commits_in_range(cwd_project_dir, source_tip, cwd_tip)
+        .map(|n| n.to_string())
+        .unwrap_or_else(|_| "?".to_owned());
 
     anyhow::bail!(
         "destination workspace '{cwd_workspace_name}' project repo at {cwd_tip} has {extra_count} \
@@ -917,151 +856,11 @@ fn per_conflict_bail_message(
     )
 }
 
-/// Refresh the git index to match HEAD, but only for the safely-auto-fixable class.
-///
-/// Runs bare `git reset` (mixed): aligns the index to HEAD without touching
-/// the working tree or HEAD ref. No-op when the index already matches HEAD.
-///
-/// Safety invariant: never replaces index content that is not already an
-/// exactly-committed tree reachable from HEAD. If the index holds live staged
-/// content (tree not found in recent ancestors), this function does nothing.
-fn refresh_index_if_safe(repo: &Path) {
-    // Quick exit: index already matches HEAD.
-    let clean = git_command()
-        .args(["diff-index", "--cached", "--exit-code", "HEAD"])
-        .current_dir(repo)
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(true); // assume clean on error; never touch if unsure
-    if clean {
-        return;
-    }
-
-    // Get the current index tree SHA.
-    let index_tree = match git_command().arg("write-tree").current_dir(repo).output() {
-        Ok(out) if out.status.success() => String::from_utf8(out.stdout)
-            .unwrap_or_default()
-            .trim()
-            .to_owned(),
-        _ => return, // can't verify — leave index alone
-    };
-
-    // Safety check: is the index tree the tree of some recent ancestor commit?
-    // Bounded to last 200 commits to keep doctor fast on large histories.
-    let ancestor_trees = match git_command()
-        .args(["log", "--format=%T", "-200", "HEAD"])
-        .current_dir(repo)
-        .output()
-    {
-        Ok(out) if out.status.success() => String::from_utf8(out.stdout).unwrap_or_default(),
-        _ => return,
-    };
-
-    if !ancestor_trees.lines().any(|t| t.trim() == index_tree) {
-        return; // live staged content — do not clobber
-    }
-
-    // Safe: realign index to HEAD.
-    let _ = git_command().arg("reset").current_dir(repo).output();
-}
-
-/// Restore working-tree files to match HEAD, but only for the safely-auto-fixable class.
-///
-/// Mirrors `refresh_index_if_safe`: detects modified files using
-/// `git diff-index HEAD` (without --cached), verifies each file's on-disk blob
-/// SHA is reachable from the last 200 commits, then runs
-/// `git checkout HEAD -- <files>` to restore them. No-op when clean or when
-/// any file has live edits (content not found in reachable history).
-///
-/// Safety invariant: never replaces on-disk content that is not already a
-/// committed blob reachable from HEAD. No work is ever silently lost.
-fn refresh_working_tree_if_safe(repo: &Path) {
-    // Quick exit: working tree already matches HEAD.
-    let clean = git_command()
-        .args(["diff-index", "--exit-code", "HEAD"])
-        .current_dir(repo)
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(true);
-    if clean {
-        return;
-    }
-
-    // Use --name-status: D = deleted from WT (always safe); M = modified (check blob).
-    let status_out = match git_command()
-        .args(["diff-index", "--name-status", "HEAD"])
-        .current_dir(repo)
-        .output()
-    {
-        Ok(out) if out.status.success() => out,
-        _ => return,
-    };
-    let mut all_files: Vec<String> = Vec::new(); // all entries to restore
-    let mut modified_files: Vec<String> = Vec::new(); // M entries needing blob check
-    let mut has_entries = false;
-    for line in String::from_utf8_lossy(&status_out.stdout).lines() {
-        if line.is_empty() {
-            continue;
-        }
-        has_entries = true;
-        let mut parts = line.splitn(2, '\t');
-        let status = parts.next().unwrap_or("").trim();
-        let path = parts.next().unwrap_or("").trim();
-        match status {
-            "D" => {
-                all_files.push(path.to_owned());
-            }
-            "M" | "T" => {
-                all_files.push(path.to_owned());
-                modified_files.push(path.to_owned());
-            }
-            _ => return, // unknown status — leave working tree alone
-        }
-    }
-    if !has_entries || all_files.is_empty() {
-        return;
-    }
-
-    // For M files, verify the on-disk blob is reachable before touching anything.
-    if !modified_files.is_empty() {
-        let objects_out = match git_command()
-            .args(["rev-list", "--objects", "-n", "200", "HEAD"])
-            .current_dir(repo)
-            .output()
-        {
-            Ok(out) if out.status.success() => out,
-            _ => return,
-        };
-        let reachable: std::collections::HashSet<String> = String::from_utf8(objects_out.stdout)
-            .unwrap_or_default()
-            .lines()
-            .filter_map(|l| l.split_whitespace().next().map(|s| s.to_owned()))
-            .collect();
-        for file in &modified_files {
-            let hash_out = match git_command()
-                .args(["hash-object", file])
-                .current_dir(repo)
-                .output()
-            {
-                Ok(out) if out.status.success() => out,
-                _ => return,
-            };
-            let blob_sha = String::from_utf8_lossy(&hash_out.stdout).trim().to_owned();
-            if !reachable.contains(&blob_sha) {
-                return; // live edits — do not clobber
-            }
-        }
-    }
-
-    // Safe: restore all files from HEAD.
-    let mut args = vec!["checkout".to_owned(), "HEAD".to_owned(), "--".to_owned()];
-    args.extend(all_files);
-    let _ = git_command().args(&args).current_dir(repo).output();
-}
+// Post-sync index/working-tree refresh is delegated to
+// [`Vcs::refresh_index_to_head_if_safe`] and
+// [`Vcs::refresh_working_tree_to_head_if_safe`]; the safety logic
+// (reachability check before any clobber) lives in the VCS impl rather
+// than being inlined here. See those trait method doc-comments.
 
 /// Precondition: the CWD project repo's committed `.gitattributes` must contain
 /// `rwv.lock merge=ours` before any sync strategy that performs a 3-way merge
@@ -1087,21 +886,9 @@ fn refresh_working_tree_if_safe(repo: &Path) {
 /// the file — that is `rwv doctor --fix`'s job; sync's invariant is "only
 /// change what the source says to change".
 fn verify_replay_exclusion_invariant(cwd_project_dir: &Path) -> anyhow::Result<()> {
-    let attrs_committed = git_command()
-        .args(["show", "HEAD:.gitattributes"])
-        .current_dir(cwd_project_dir)
-        .output();
-
-    let has_line = match attrs_committed {
-        Ok(ref out) if out.status.success() => {
-            let content = String::from_utf8_lossy(&out.stdout);
-            content.lines().any(|l| l.trim() == "rwv.lock merge=ours")
-        }
-        // `.gitattributes` is not committed (exit non-zero from `git show`) —
-        // the line is definitely absent.
-        Ok(_) => false,
-        Err(_) => false,
-    };
+    let has_line = GitVcs
+        .has_committed_replay_exclusion(cwd_project_dir, Path::new("rwv.lock"))
+        .unwrap_or(false);
 
     if has_line {
         return Ok(());
@@ -1231,12 +1018,7 @@ fn prune_dropped_repo(ctx: &WorkspaceContext, repo_path: &RepoPath) -> anyhow::R
                 if let (Some(w), Some(c)) = (wt_head, canon_head) {
                     if w != c {
                         // Allow when w is ancestor of c (no unique commits in workweave).
-                        let is_ancestor = git_command()
-                            .args(["merge-base", "--is-ancestor", w.as_str(), c.as_str()])
-                            .current_dir(&dest)
-                            .status()
-                            .map(|s| s.success())
-                            .unwrap_or(false);
+                        let is_ancestor = GitVcs.is_ancestor(&dest, &w, &c).unwrap_or(false);
                         if !is_ancestor {
                             anyhow::bail!(
                                 "{repo_path}: dropped from lock but worktree has commits not in canonical clone; \
@@ -1258,46 +1040,37 @@ fn prune_dropped_repo(ctx: &WorkspaceContext, repo_path: &RepoPath) -> anyhow::R
         WorkspaceLocation::Weave { .. } => {
             // Primary: refuse if local-only branches with unique commits exist.
             // Conservative — any branch with commits not on origin is grounds.
-            let unique = git_command()
-                .args(["for-each-ref", "--format=%(refname)", "refs/heads/"])
-                .current_dir(&dest)
-                .output();
-            let any_local_only = match unique {
-                Ok(out) if out.status.success() => {
-                    let names: Vec<String> = String::from_utf8_lossy(&out.stdout)
-                        .lines()
-                        .map(|s| s.to_owned())
-                        .collect();
+            // We don't know the manifest role of this dropped repo at prune
+            // time (the lock entry is gone); Role::Owned selects the
+            // canonical-clone remote convention (`origin` in [`GitVcs`])
+            // which matches what every non-fork lock entry was cloned with.
+            let any_local_only = match GitVcs.list_local_branches(&dest) {
+                Ok(names) => {
                     let mut any = false;
-                    for name in &names {
-                        // Check whether the branch has any commits not in origin/<branch>.
-                        let short = name.trim_start_matches("refs/heads/");
-                        let upstream = format!("refs/remotes/origin/{short}");
-                        let has_upstream = git_command()
-                            .args(["rev-parse", "--verify", "--quiet", &upstream])
-                            .current_dir(&dest)
-                            .status()
-                            .map(|s| s.success())
+                    for branch in &names {
+                        // Strip the refs/heads/ prefix that for-each-ref
+                        // emits; trait methods take bare branch names.
+                        let short = RefName::new(
+                            branch.as_str().trim_start_matches("refs/heads/").to_owned(),
+                        );
+                        let has_counterpart = GitVcs
+                            .branch_has_remote_counterpart(&dest, &short, Role::Owned)
                             .unwrap_or(false);
-                        if !has_upstream {
+                        if !has_counterpart {
                             any = true;
                             break;
                         }
-                        let count = git_command()
-                            .args(["rev-list", "--count", &format!("{upstream}..{name}")])
-                            .current_dir(&dest)
-                            .output();
-                        if let Ok(out) = count {
-                            let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
-                            if s.parse::<usize>().unwrap_or(0) > 0 {
-                                any = true;
-                                break;
-                            }
+                        let count = GitVcs
+                            .count_commits_ahead_of_remote(&dest, &short, Role::Owned)
+                            .unwrap_or(0);
+                        if count > 0 {
+                            any = true;
+                            break;
                         }
                     }
                     any
                 }
-                _ => true, // conservative: refuse on uncertainty
+                Err(_) => true, // conservative: refuse on uncertainty
             };
             if any_local_only {
                 anyhow::bail!(
@@ -1662,8 +1435,11 @@ fn run_sync_impl_with_op_id(
     let cwd_project = Project::from_dir(&cwd_project_dir).context("failed to load CWD project")?;
 
     // Precondition: CWD project repo must not be mid-op.
-    if let Some(state) = crate::git::GitVcs::mid_op_state(&cwd_project_dir) {
-        anyhow::bail!("CWD project repo is {state}; resolve before running sync");
+    if let Some(op) = GitVcs.mid_op(&cwd_project_dir) {
+        anyhow::bail!(
+            "CWD project repo is mid-{op}; resolve before running sync",
+            op = mid_op_label(op),
+        );
     }
 
     let cwd_workspace_name = workspace_name(&ctx);
@@ -1975,8 +1751,8 @@ fn run_sync_impl_with_op_id(
             // every non-failure outcome — including NoOp (HEAD already at lock
             // but index/WT may have drifted from a shared-ref advance) and
             // AlreadyAhead (working tree should still reflect HEAD).
-            refresh_index_if_safe(&task.abs);
-            refresh_working_tree_if_safe(&task.abs);
+            GitVcs.refresh_index_to_head_if_safe(&task.abs);
+            GitVcs.refresh_working_tree_to_head_if_safe(&task.abs);
         }
         handler.record(
             task.repo_path.as_str(),
@@ -1998,13 +1774,13 @@ fn run_sync_impl_with_op_id(
 
     // Phase 1': project repo strategy with rwv.lock excluded.
     let phase1_outcome = if force {
-        // Hard-reset semantics: discard CWD's project commits.
-        git(
-            &["reset", "--hard", source_project_tip.as_str()],
-            &cwd_project_dir,
-        )
-        .context("project repo reset --force failed")
-        .map(|_| ())
+        // Hard-reset semantics: discard CWD's project commits. The
+        // savepoint created above (refs/rwv/pre-op/<op-id>) keeps the
+        // discarded commits recoverable via `rwv abort`.
+        GitVcs
+            .hard_reset(&cwd_project_dir, &source_project_tip)
+            .map_err(anyhow::Error::from)
+            .context("project repo reset --force failed")
     } else {
         apply_project_strategy(
             &cwd_project_dir,
@@ -2235,17 +2011,14 @@ fn apply_project_strategy(
     match strategy {
         SyncStrategy::Ff => {
             // CWD must be ancestor of source (caller verified). Fast-forward.
-            git(
-                &["merge", "--ff-only", source_tip.as_str()],
-                cwd_project_dir,
-            )?;
+            GitVcs.advance_if_fast_forward(cwd_project_dir, source_tip)?;
         }
         SyncStrategy::Rebase => {
-            // `git rebase <source_tip>` is equivalent to `--onto <source_tip>
-            // <source_tip>` (git computes merge-base internally). The
-            // `merge=ours` driver on `rwv.lock` keeps source's lock through
-            // every replayed commit; lock-only commits become empty patches
-            // and git drops them by default.
+            // `Vcs::rebase` wires the `merge=ours` driver inline; lock-only
+            // commits become empty patches and git drops them by default
+            // (`--empty=drop`), so source's version of `rwv.lock` survives
+            // the replay untouched. Phase 3 then regenerates the lock from
+            // manifest tips.
             match GitVcs.rebase(cwd_project_dir, source_tip, source_tip) {
                 Ok(()) => {}
                 Err(VcsError::RebaseConflict { repo, op }) => {
@@ -2264,41 +2037,25 @@ fn apply_project_strategy(
             }
         }
         SyncStrategy::Merge => {
-            // Native merge; the `merge=ours` driver (registered inline via
-            // `-c`, see `git.rs::rebase`) auto-resolves any rwv.lock
-            // collision in source's favour. Phase 3 then regenerates the
-            // lock from manifest tips.
-            match git(
-                &[
-                    "-c",
-                    "merge.ours.name=keep ours during replay (rwv replay-exclusion)",
-                    "-c",
-                    "merge.ours.driver=true",
-                    "merge",
-                    "--no-edit",
-                    source_tip.as_str(),
-                ],
-                cwd_project_dir,
-            ) {
-                Ok(_) => {}
-                Err(e) => {
-                    if matches!(
-                        crate::git::GitVcs::mid_op_state(cwd_project_dir).as_deref(),
-                        Some("mid-merge")
-                    ) {
-                        anyhow::bail!(
-                            "{}",
-                            per_conflict_bail_message(
-                                cwd_project_dir,
-                                ConflictOp::Merge,
-                                "merge (project repo)",
-                                "see in-flight merge state for conflicting paths",
-                                resolved_source,
-                            )
-                        );
-                    }
-                    anyhow::bail!("project repo merge failed: {e}");
+            // `Vcs::merge_from` wires the `merge=ours` driver inline so any
+            // `rwv.lock` collision auto-resolves in source's favour. On
+            // conflict it returns RebaseConflict { op: Merge } with the repo
+            // left in mid-merge state.
+            match GitVcs.merge_from(cwd_project_dir, source_tip) {
+                Ok(()) => {}
+                Err(VcsError::RebaseConflict { repo, op }) => {
+                    anyhow::bail!(
+                        "{}",
+                        per_conflict_bail_message(
+                            &repo,
+                            op,
+                            "merge (project repo)",
+                            "see in-flight merge state for conflicting paths",
+                            resolved_source,
+                        )
+                    );
                 }
+                Err(e) => anyhow::bail!("project repo merge failed: {e}"),
             }
         }
     }
@@ -2464,31 +2221,18 @@ pub fn run_abort(cwd: &Path) -> anyhow::Result<()> {
 }
 
 fn abort_one_repo(repo: &Path, op_id: &OpId) -> anyhow::Result<()> {
-    // Run VCS-native abort if mid-op.
-    if let Some(state) = crate::git::GitVcs::mid_op_state(repo) {
-        let abort_args: &[&str] = match state.as_str() {
-            "mid-rebase" => &["rebase", "--abort"],
-            "mid-merge" => &["merge", "--abort"],
-            "mid-cherry-pick" => &["cherry-pick", "--abort"],
-            _ => &[],
-        };
-        if !abort_args.is_empty() {
-            let _ = git(abort_args, repo);
-        }
-    }
+    // Cancel any VCS-native in-flight op (rebase/merge/cherry-pick). No-op
+    // when the repo is clean.
+    GitVcs.cancel_in_flight_op(repo);
 
-    // Reset to savepoint.
-    match read_savepoint(repo, op_id) {
-        Some(sha) => {
-            git(&["reset", "--hard", sha.as_str()], repo).context("reset --hard failed")?;
-            delete_savepoint(repo, op_id);
-            Ok(())
-        }
-        None => {
-            // No savepoint for this repo — nothing to restore.
-            Ok(())
-        }
-    }
+    // Restore to savepoint. `Vcs::restore_savepoint` is the operation's
+    // contract — when present, it hard-resets HEAD to the captured SHA
+    // and drops the savepoint ref atomically. Returns Ok(false) when no
+    // savepoint exists for this repo (nothing to restore).
+    GitVcs
+        .restore_savepoint(repo, op_id.as_str())
+        .context("restore savepoint failed")?;
+    Ok(())
 }
 
 /// Run `rwv sync --json`.
@@ -2897,16 +2641,8 @@ fn run_sync_to_impl(
         }
 
         // CWD must be strictly ahead of target for ff to work.
-        let cwd_ahead = git_command()
-            .args([
-                "merge-base",
-                "--is-ancestor",
-                target_tip.as_str(),
-                cwd_tip.as_str(),
-            ])
-            .current_dir(&cwd_project_dir)
-            .status()
-            .map(|s| s.success())
+        let cwd_ahead = GitVcs
+            .is_ancestor(&cwd_project_dir, &target_tip, &cwd_tip)
             .unwrap_or(false);
 
         if !cwd_ahead {
@@ -3219,21 +2955,14 @@ fn ff_advance_repo(
     }
 
     // Check that target is an ancestor of cwd_tip (ff precondition).
-    // We need to fetch first to ensure the object is reachable for merge-base.
-    fetch_objects_from(target_repo, cwd_repo)?;
+    // Bring objects across first via the Vcs trait so merge-base has the
+    // SHAs reachable in target_repo. For sibling worktrees that share an
+    // object store this is a no-op; for independent clones it copies
+    // objects across.
+    GitVcs.fetch_objects_from(target_repo, cwd_repo);
 
-    let is_ancestor = git_command()
-        .args([
-            "merge-base",
-            "--is-ancestor",
-            target_tip.as_str(),
-            cwd_tip.as_str(),
-        ])
-        .current_dir(target_repo)
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status()
-        .map(|s| s.success())
+    let is_ancestor = GitVcs
+        .is_ancestor(target_repo, &target_tip, cwd_tip)
         .unwrap_or(false);
 
     if !is_ancestor {
@@ -3246,31 +2975,13 @@ fn ff_advance_repo(
         );
     }
 
-    // Fast-forward: merge --ff-only to cwd_tip. Advances the branch and the
-    // working tree, and refuses (rather than clobbers) if the update would
-    // touch uncommitted changes — git-native backstop behind the two
-    // explicit dirty gates above.
-    git(&["merge", "--ff-only", cwd_tip.as_str()], target_repo)
-        .context("git merge --ff-only failed in target")?;
+    // Fast-forward: advance_if_fast_forward refuses (rather than clobbers)
+    // if the update would touch uncommitted changes — VCS-native backstop
+    // behind the two explicit dirty gates above.
+    GitVcs
+        .advance_if_fast_forward(target_repo, cwd_tip)
+        .context("fast-forward advance failed in target")?;
 
-    Ok(())
-}
-
-/// Fetch objects from `src_repo` into `dst_repo` so SHAs reachable in `src`
-/// are reachable in `dst`. Uses `git fetch <src_path> HEAD` which works for
-/// both worktrees (no-op, shared object store) and independent clones.
-fn fetch_objects_from(dst_repo: &Path, src_repo: &Path) -> anyhow::Result<()> {
-    let src_path = src_repo.to_string_lossy().into_owned();
-    git_command()
-        .args(["fetch", &src_path, "HEAD"])
-        .current_dir(dst_repo)
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status()
-        .with_context(|| format!("failed to fetch from {}", src_repo.display()))?;
-    // fetch may fail for worktrees (FETCH_HEAD is unavailable) — that's fine,
-    // the object is already reachable in the shared store. Ignore errors here;
-    // ff_advance_repo will catch any real problem at the ff merge.
     Ok(())
 }
 
