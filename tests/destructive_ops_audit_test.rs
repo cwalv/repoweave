@@ -102,7 +102,7 @@ const ALLOWLIST: &[Allowed] = &[
             prune_dropped_repo, create-rollback pruning) checks for \
             uncommitted changes and unique commits first. delete_workweave \
             also resolves each worktree's actual canonical-store parent \
-            (Vcs::canonical_store_for_workspace) and refuses on \
+            (Vcs::resolve_canonical_store) and refuses on \
             no-canonical-store-with-foreign-dependents — the tier-0 \
             topology precondition (joints/clone-topology.md), not \
             bypassable by --force.",
