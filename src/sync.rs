@@ -1250,11 +1250,8 @@ struct OpContext<'a> {
     /// Workspace that holds the full owner record. Resolved from a lease
     /// pointer when --continue is invoked from a non-owner workspace.
     owner_workspace_dir: PathBuf,
-    /// Source-of-content workspace (CWD pulls from here). For plain `sync`
-    /// this is the explicit source; for `sync-to` this is CWD (since sync-to
-    /// step 1 is `sync` with target as source).
-    source_workspace_dir: PathBuf,
-    source_project_dir: PathBuf,
+    /// Display name of the source workspace, used in human messages
+    /// (e.g. the auto-relock commit message and replay's lock-freshness hint).
     source_workspace_name: String,
     /// Destination workspace (the one phases write into). For plain `sync`
     /// this is CWD; for `sync-to` this is the target workspace.
@@ -1280,15 +1277,12 @@ struct OpContext<'a> {
     handler: &'a dyn OutputHandler,
     verb: op_state::OpVerb,
     op_id: OpId,
-    /// Cached snapshot of source tip + manifest + lock, pinned at the start
-    /// of the FIRST replay entry (T0). Filled in by the replay phase on
-    /// initial entry; re-derived from disk on resume (the source workspace
-    /// is read-only from our perspective and may have moved on, but Phase 2's
-    /// per-repo no-op detection handles already-converged repos cleanly).
-    ///
-    /// Kept in a `Cell`/`RefCell` so phase functions remain `&self` callers;
-    /// `OpContext` is built per-invocation so no thread-safety concerns.
-    snapshot: std::cell::RefCell<Option<SourceSnapshot>>,
+    /// Atomic source snapshot pinned at guard time (T0): one ref read of
+    /// the source project tip, then manifest + lock read AT that revision.
+    /// On `--continue`, T0 is re-established at the start of the resumed
+    /// session — per-repo no-op detection handles repos that already
+    /// converged in the previous (now-aborted) replay run.
+    snapshot: SourceSnapshot,
 }
 
 /// Atomic source snapshot pinned at T0 (start of replay).
@@ -1562,11 +1556,14 @@ fn guard_and_mark<'a>(
     };
     let cli_path = resolved_arg.resolve(&cwd_ctx)?;
 
-    // For plain `sync`: source = arg, dest = CWD.
-    // For `sync-to`:   source = CWD, dest = arg (target).
+    // For plain `sync <src>`: replay rebases CWD onto src, then relocks; no advance-target.
+    //     source = src (replay pulls from here), dest = CWD (relock writes here).
+    // For `sync-to <tgt>`: replay rebases CWD onto tgt, then relocks, then ff-advances tgt.
+    //     source = tgt (replay pulls from here), dest = tgt (advance-target writes here).
+    //     CWD itself is where replay+relock run; tracked via `cwd_project_dir`.
     let (source_workspace_dir, dest_workspace_dir) = match verb {
         MachineVerb::Sync => (cli_path.clone(), cwd_workspace_dir.clone()),
-        MachineVerb::SyncTo => (cwd_workspace_dir.clone(), cli_path.clone()),
+        MachineVerb::SyncTo => (cli_path.clone(), cli_path.clone()),
     };
 
     // Project override: when CWD is a workweave its project is immutable and
@@ -1581,42 +1578,31 @@ fn guard_and_mark<'a>(
     let cwd_project_name = find_project_name(&cwd_ctx)?;
     let cwd_project_dir = cwd_workspace_dir.join("projects").join(&cwd_project_name);
 
-    let (source_project_dir, source_workspace_name) = match verb {
-        MachineVerb::Sync => {
-            let source_ctx =
-                WorkspaceContext::resolve(&source_workspace_dir, other_project_override.clone())?;
-            let pname = find_project_name(&source_ctx)?;
-            let dir = source_ctx.active_path().join("projects").join(&pname);
-            (dir, workspace_name(&source_ctx))
-        }
-        MachineVerb::SyncTo => {
-            // For sync-to, source == CWD.
-            (cwd_project_dir.clone(), workspace_name(&cwd_ctx))
-        }
+    // source_workspace_dir is the operator's arg for both verbs (sync's <src>
+    // and sync-to's <tgt> — replay pulls from there in either case).
+    let (source_project_dir, source_workspace_name) = {
+        let override_arg = match verb {
+            MachineVerb::Sync => other_project_override.clone(),
+            // For sync-to, the target workspace must resolve to CWD's project.
+            MachineVerb::SyncTo => Some(cwd_project_name.clone()),
+        };
+        let source_ctx = WorkspaceContext::resolve(&source_workspace_dir, override_arg)?;
+        let pname = find_project_name(&source_ctx)?;
+        let dir = source_ctx.active_path().join("projects").join(&pname);
+        (dir, workspace_name(&source_ctx))
     };
 
+    // dest_project_dir is where the terminal write lands.
+    //   plain sync: CWD (relock writes a new lock commit there).
+    //   sync-to: target (advance-target ff-forwards target's repos to CWD's tips).
     let dest_project_dir = match verb {
         MachineVerb::Sync => cwd_project_dir.clone(),
-        MachineVerb::SyncTo => {
-            let dest_ctx =
-                WorkspaceContext::resolve(&dest_workspace_dir, Some(cwd_project_name.clone()))?;
-            let pname = find_project_name(&dest_ctx)?;
-            dest_ctx.active_path().join("projects").join(&pname)
-        }
+        MachineVerb::SyncTo => source_project_dir.clone(),
     };
 
-    // For plain sync: `resolved_source` for hint messages mirrors the
-    // operator-supplied arg (where they were syncing FROM).
-    // For sync-to: hint messages refer to where they're syncing FROM in step 1
-    // (which is the target workspace). The arg from the operator's POV is the
-    // target; for hint text purposes we render that path.
-    let resolved_source_for_hints = match verb {
-        MachineVerb::Sync => resolved_arg.clone(),
-        // sync-to: step 1's sync calls have `target` as the source workspace;
-        // bail messages reference `rwv sync <thing>` so we render the target
-        // path verbatim.
-        MachineVerb::SyncTo => SyncSource::Path(cli_path.clone()),
-    };
+    // `resolved_source` is the source-of-content for replay's bail messages
+    // ("rwv sync <thing>"). For both verbs, that's the operator's arg.
+    let resolved_source_for_hints = resolved_arg.clone();
 
     // Sibling-sync warning: only meaningful for plain sync.
     if matches!(verb, MachineVerb::Sync) {
@@ -1657,6 +1643,67 @@ fn guard_and_mark<'a>(
         )?;
     }
 
+    // Pin the source snapshot now so the remaining replay preconditions are
+    // all reads against a coherent T0. This is the §6 "snapshot reads"
+    // mechanism: one atomic ref read pins source; manifest + lock are read
+    // at that revision; everything downstream is content-addressed.
+    let snapshot = pin_source_snapshot(&source_project_dir)?;
+
+    // Replay preconditions (pure reads; refusals leave no trace).
+    let cwd_project = Project::from_dir(&cwd_project_dir)
+        .context("failed to load CWD project for guard preconditions")?;
+    let cwd_workspace_name_str = workspace_name(&cwd_ctx);
+    if !force {
+        check_lock_freshness(
+            &source_workspace_dir,
+            &snapshot.raw_source_lock,
+            Side::Source,
+            &source_workspace_name,
+        )?;
+        if let Some(ref lock) = cwd_project.lock {
+            check_lock_freshness(&cwd_workspace_dir, lock, Side::Destination, &cwd_workspace_name_str)?;
+        }
+    }
+    if matches!(strategy, SyncStrategy::Rebase | SyncStrategy::Merge) {
+        verify_replay_exclusion_invariant(&cwd_project_dir)?;
+    }
+    let cwd_project_tip = GitVcs
+        .head_revision(&cwd_project_dir)
+        .context("failed to read CWD project HEAD")?;
+    let phase1_ancestor_bypassed = if force {
+        if GitVcs
+            .has_uncommitted_changes(&cwd_project_dir)
+            .unwrap_or(true)
+        {
+            anyhow::bail!(
+                "sync --force precondition failed: project repo at {} has uncommitted changes.\n\
+                 --force discards committed divergence (recoverable via refs/rwv/pre-op), but \
+                 the hard-reset would destroy uncommitted changes unrecoverably. Commit or \
+                 stash them, then re-run.",
+                cwd_project_dir.display(),
+            );
+        }
+        !cwd_is_ancestor_or_equal(
+            &cwd_project_dir,
+            &cwd_project_tip,
+            &snapshot.source_project_tip,
+        )
+    } else if strategy == SyncStrategy::Ff && matches!(verb, MachineVerb::Sync) {
+        // Plain sync + ff: CWD must be ancestor-or-equal of source.
+        // sync-to's ff precondition was checked separately above
+        // (CWD must be strictly AHEAD of target).
+        check_phase1_ancestor(
+            &cwd_project_dir,
+            &cwd_project_tip,
+            &snapshot.source_project_tip,
+            &cwd_workspace_name_str,
+            &source_workspace_name,
+        )?;
+        false
+    } else {
+        false
+    };
+
     // Concurrency guard: refuse if any touched workspace carries op-state.
     let touched: Vec<&Path> = match verb {
         MachineVerb::Sync => vec![cwd_workspace_dir.as_path()],
@@ -1669,7 +1716,7 @@ fn guard_and_mark<'a>(
     let op_id = OpId::new_now();
     let owner_workspace_dir = cwd_workspace_dir.clone();
 
-    let record = match verb {
+    let mut record = match verb {
         MachineVerb::Sync => OwnerRecord::new_sync(
             &op_id,
             strategy,
@@ -1684,6 +1731,14 @@ fn guard_and_mark<'a>(
             retire,
         ),
     };
+    if phase1_ancestor_bypassed {
+        // §7-style named consent: --force will discard reachable project
+        // commits in Phase 1'. Recorded in the audit-trail `overrides` field
+        // so cleanup preserves the project savepoint as a tombstone.
+        record
+            .overrides
+            .push("force-discard-divergence".to_owned());
+    }
     op_state::write_owner(&owner_workspace_dir, &record)
         .context("failed to write owner record")?;
 
@@ -1706,8 +1761,6 @@ fn guard_and_mark<'a>(
     // on the target side; abort hardening (.4) covers target-side rollback
     // separately).
     create_savepoint(&cwd_project_dir, &op_id)?;
-    let cwd_project = Project::from_dir(&cwd_project_dir)
-        .context("failed to load CWD project for savepoint phase")?;
     for repo_path in cwd_project.manifest.iter_repo_paths() {
         let abs = cwd_workspace_dir.join(repo_path.as_path());
         if abs.exists() {
@@ -1719,8 +1772,6 @@ fn guard_and_mark<'a>(
         cwd_ctx,
         cwd_workspace_dir,
         owner_workspace_dir,
-        source_workspace_dir,
-        source_project_dir,
         source_workspace_name,
         dest_workspace_dir,
         dest_project_dir,
@@ -1735,7 +1786,7 @@ fn guard_and_mark<'a>(
         handler,
         verb: verb.op_verb(),
         op_id,
-        snapshot: std::cell::RefCell::new(None),
+        snapshot,
     })
 }
 
@@ -1789,58 +1840,69 @@ fn load_continuing_context<'a>(
         .parse::<SyncStrategy>()
         .context("op-state has invalid strategy")?;
 
-    // Resolve source/dest workspaces by verb. The owner workspace is recorded
-    // in `record.target`/`record.source` as absolute paths; rebuild contexts
-    // from those.
+    // Resolve source/dest workspaces by verb. OwnerRecord's `source`/`target`
+    // are operator-semantic ("where work came from / where it's going").
+    // The engine semantics:
+    //   plain sync:     engine.source = record.source, engine.dest = record.target (== CWD)
+    //   sync-to:        engine.source = record.target (replay pulls from target),
+    //                   engine.dest   = record.target (advance-target writes target).
+    //                   record.source (CWD) is tracked separately via cwd_project_dir.
     let cwd_project_name = find_project_name(&cwd_ctx)?;
     let cwd_project_dir = owner_workspace_dir.join("projects").join(&cwd_project_name);
 
     let (source_workspace_dir, dest_workspace_dir, cli_path) = match recorded_verb {
-        MachineVerb::Sync => (record.source.clone(), record.target.clone(), record.source.clone()),
-        MachineVerb::SyncTo => (
+        MachineVerb::Sync => (
             record.source.clone(),
+            record.target.clone(),
+            record.source.clone(),
+        ),
+        MachineVerb::SyncTo => (
+            record.target.clone(),
             record.target.clone(),
             record.target.clone(),
         ),
     };
 
-    let other_project_override = match &cwd_ctx.location {
-        WorkspaceLocation::Workweave { project, .. } => Some(project.clone()),
-        WorkspaceLocation::Weave { .. } => project_override.clone(),
+    let other_project_override = match (recorded_verb, &cwd_ctx.location) {
+        // sync-to: target must resolve to CWD's project.
+        (MachineVerb::SyncTo, _) => Some(cwd_project_name.clone()),
+        (_, WorkspaceLocation::Workweave { project, .. }) => Some(project.clone()),
+        (_, WorkspaceLocation::Weave { .. }) => project_override.clone(),
     };
 
-    let (source_project_dir, source_workspace_name) = match recorded_verb {
-        MachineVerb::Sync => {
-            let source_ctx =
-                WorkspaceContext::resolve(&source_workspace_dir, other_project_override.clone())?;
-            let pname = find_project_name(&source_ctx)?;
-            let dir = source_ctx.active_path().join("projects").join(&pname);
-            (dir, workspace_name(&source_ctx))
-        }
-        MachineVerb::SyncTo => (cwd_project_dir.clone(), workspace_name(&cwd_ctx)),
+    let (source_project_dir, source_workspace_name) = {
+        let source_ctx = WorkspaceContext::resolve(&source_workspace_dir, other_project_override)?;
+        let pname = find_project_name(&source_ctx)?;
+        let dir = source_ctx.active_path().join("projects").join(&pname);
+        (dir, workspace_name(&source_ctx))
     };
 
     let dest_project_dir = match recorded_verb {
         MachineVerb::Sync => cwd_project_dir.clone(),
-        MachineVerb::SyncTo => {
-            let dest_ctx =
-                WorkspaceContext::resolve(&dest_workspace_dir, Some(cwd_project_name.clone()))?;
-            let pname = find_project_name(&dest_ctx)?;
-            dest_ctx.active_path().join("projects").join(&pname)
-        }
+        MachineVerb::SyncTo => source_project_dir.clone(),
     };
 
-    let resolved_source_for_hints = match recorded_verb {
-        MachineVerb::Sync => SyncSource::Path(source_workspace_dir.clone()),
-        MachineVerb::SyncTo => SyncSource::Path(dest_workspace_dir.clone()),
-    };
+    let resolved_source_for_hints = SyncSource::Path(cli_path.clone());
+
+    // Re-pin the source snapshot for this --continue session. The source's
+    // T0 is "the start of the (resumed) replay" — re-pinning here gives
+    // replay's re-entry rule a coherent set of inputs. Per-repo no-op
+    // detection handles already-converged repos cleanly.
+    let snapshot = pin_source_snapshot(&source_project_dir)?;
+
+    // --continue resumes with the same consents recorded at fresh-start
+    // time: read `overrides` and re-derive `force` from `force-discard-
+    // divergence`. (When sibling .6 lands, this is where named overrides
+    // are reified into the OpContext.)
+    let force_resumed = record
+        .overrides
+        .iter()
+        .any(|o| o == "force-discard-divergence");
 
     Ok(OpContext {
         cwd_ctx,
         cwd_workspace_dir,
         owner_workspace_dir,
-        source_workspace_dir,
-        source_project_dir,
         source_workspace_name,
         dest_workspace_dir,
         dest_project_dir,
@@ -1849,13 +1911,13 @@ fn load_continuing_context<'a>(
         resolved_source: resolved_source_for_hints,
         cli_path,
         strategy,
-        force: false, // --continue never adds --force; consents are recorded in `overrides`
+        force: force_resumed,
         retire: record.retire,
         jobs,
         handler,
         verb: record.verb,
         op_id,
-        snapshot: std::cell::RefCell::new(None),
+        snapshot,
     })
 }
 
@@ -1996,9 +2058,9 @@ fn check_dirty_target_preflight(
 fn run_replay(ctx: &OpContext<'_>) -> anyhow::Result<()> {
     let emit_text = ctx.handler.emit_text();
 
-    // sync-to with `--strategy=ff`: replay is a no-op (target IS source
-    // here, and CWD is strictly ahead per the precondition). The advance-
-    // target phase does all the work.
+    // sync-to with `--strategy=ff`: replay is a no-op (CWD is strictly ahead
+    // of target per guard's ff precondition). The advance-target phase does
+    // all the work.
     if matches!(ctx.verb, op_state::OpVerb::SyncTo) && ctx.strategy == SyncStrategy::Ff {
         return Ok(());
     }
@@ -2012,91 +2074,20 @@ fn run_replay(ctx: &OpContext<'_>) -> anyhow::Result<()> {
         }
     }
 
-    // Pin source snapshot at T0 on first replay entry. On re-entry, the
-    // previous snapshot is in the record-less RefCell (per-invocation context
-    // is fresh on resume, so we re-pin — source may have moved on, but per-
-    // repo no-op detection handles already-converged repos).
-    pin_source_snapshot_if_needed(ctx)?;
-
-    let snapshot_borrow = ctx.snapshot.borrow();
-    let snapshot = snapshot_borrow
-        .as_ref()
-        .expect("snapshot pinned just above");
+    // Snapshot was pinned in guard (or re-pinned on --continue). Re-entry
+    // rule (§4): per-repo state is derived from the VCS itself — already-
+    // converged repos no-op via `sync_one_repo`'s head-equals-target check.
+    let snapshot = &ctx.snapshot;
 
     // Load CWD project (manifest + lock) from disk.
     let cwd_project = Project::from_dir(&ctx.cwd_project_dir)
         .context("failed to load CWD project")?;
 
-    let cwd_workspace_name = workspace_name(&ctx.cwd_ctx);
-    let source_workspace_name = ctx.source_workspace_name.as_str();
-
-    // Precondition: lock freshness (unless --force).
-    //
-    // Source: advisory check against live HEAD vs the pinned lock content.
-    // Destination: uses the CWD lock as loaded from disk above.
-    if !ctx.force {
-        check_lock_freshness(
-            &ctx.source_workspace_dir,
-            &snapshot.raw_source_lock,
-            Side::Source,
-            source_workspace_name,
-        )?;
-        if let Some(ref lock) = cwd_project.lock {
-            check_lock_freshness(
-                &ctx.cwd_workspace_dir,
-                lock,
-                Side::Destination,
-                &cwd_workspace_name,
-            )?;
-        }
-    }
-
-    // CWD project tip — read before any side effects so precondition checks
-    // and Phase 1' use the pre-op starting state.
+    // CWD project tip — read before any side effects so Phase 1' has the
+    // pre-op starting state for its `cwd_tip == source_tip` short-circuit.
     let cwd_project_tip = GitVcs
         .head_revision(&ctx.cwd_project_dir)
         .context("failed to read CWD project HEAD")?;
-
-    // Precondition: rebase and merge strategies require `rwv.lock merge=ours`
-    // in the project repo's committed `.gitattributes`. FF doesn't merge.
-    if matches!(ctx.strategy, SyncStrategy::Rebase | SyncStrategy::Merge) {
-        verify_replay_exclusion_invariant(&ctx.cwd_project_dir)?;
-    }
-
-    // Precondition: ff strategy refuses divergence; rebase/merge handle it
-    // by replaying CWD's commits onto source's tip with `rwv.lock` excluded.
-    // `--force` bypasses regardless of strategy and discards CWD's project
-    // commits via hard-reset; the savepoint preserves them for `rwv abort`.
-    let phase1_ancestor_bypassed = if ctx.force {
-        if GitVcs
-            .has_uncommitted_changes(&ctx.cwd_project_dir)
-            .unwrap_or(true)
-        {
-            anyhow::bail!(
-                "sync --force precondition failed: project repo at {} has uncommitted changes.\n\
-                 --force discards committed divergence (recoverable via refs/rwv/pre-op), but \
-                 the hard-reset would destroy uncommitted changes unrecoverably. Commit or \
-                 stash them, then re-run.",
-                ctx.cwd_project_dir.display(),
-            );
-        }
-        !cwd_is_ancestor_or_equal(
-            &ctx.cwd_project_dir,
-            &cwd_project_tip,
-            &snapshot.source_project_tip,
-        )
-    } else if ctx.strategy == SyncStrategy::Ff {
-        check_phase1_ancestor(
-            &ctx.cwd_project_dir,
-            &cwd_project_tip,
-            &snapshot.source_project_tip,
-            &cwd_workspace_name,
-            source_workspace_name,
-        )?;
-        false
-    } else {
-        false
-    };
 
     // === Phase 2 (manifest repos) — materialize missing, prune dropped, sync ===
 
@@ -2258,37 +2249,22 @@ fn run_replay(ctx: &OpContext<'_>) -> anyhow::Result<()> {
         );
     }
 
-    // Stash the ancestor-bypass flag so the cleanup phase can preserve the
-    // project savepoint as a tombstone (the only reference to discarded
-    // commits). We do this by writing a side-channel marker file at the
-    // owner workspace — kept simple, since this is a `--force` edge case.
-    if phase1_ancestor_bypassed {
-        // The cleanup phase reads this via filesystem.exists() — see cleanup().
-        let _ = std::fs::write(
-            ctx.owner_workspace_dir
-                .join(".rwv-op-force-tombstone"),
-            ctx.op_id.as_str(),
-        );
-    }
-
     Ok(())
 }
 
-/// Pin the source snapshot (project tip + manifest + lock at that revision)
-/// if not already pinned this invocation. Idempotent: if already pinned,
-/// returns Ok immediately.
-fn pin_source_snapshot_if_needed(ctx: &OpContext<'_>) -> anyhow::Result<()> {
-    if ctx.snapshot.borrow().is_some() {
-        return Ok(());
-    }
+/// Pin the atomic source snapshot at T0: read the source project tip once,
+/// then read source manifest + lock AT that revision. Combined with the
+/// no-op-in-progress check on the source (in `check_no_op_in_progress`),
+/// source reads are effectively serialisable with no locks (§6).
+fn pin_source_snapshot(source_project_dir: &Path) -> anyhow::Result<SourceSnapshot> {
     let source_project_tip = GitVcs
-        .head_revision(&ctx.source_project_dir)
+        .head_revision(source_project_dir)
         .context("failed to read source project HEAD")?;
 
     let raw_source_lock = {
         let content = GitVcs
             .read_file_at_revision(
-                &ctx.source_project_dir,
+                source_project_dir,
                 &source_project_tip,
                 Path::new("rwv.lock"),
             )
@@ -2296,14 +2272,14 @@ fn pin_source_snapshot_if_needed(ctx: &OpContext<'_>) -> anyhow::Result<()> {
                 format!(
                     "failed to read source lock at revision {} in {}",
                     source_project_tip,
-                    ctx.source_project_dir.display()
+                    source_project_dir.display()
                 )
             })?;
         LockFile::from_yaml_str(&content).with_context(|| {
             format!(
                 "failed to parse source lock at revision {} in {}",
                 source_project_tip,
-                ctx.source_project_dir.display()
+                source_project_dir.display()
             )
         })?
     };
@@ -2311,7 +2287,7 @@ fn pin_source_snapshot_if_needed(ctx: &OpContext<'_>) -> anyhow::Result<()> {
     let source_manifest = {
         let content = GitVcs
             .read_file_at_revision(
-                &ctx.source_project_dir,
+                source_project_dir,
                 &source_project_tip,
                 Path::new("rwv.yaml"),
             )
@@ -2319,24 +2295,23 @@ fn pin_source_snapshot_if_needed(ctx: &OpContext<'_>) -> anyhow::Result<()> {
                 format!(
                     "failed to read source manifest at revision {} in {}",
                     source_project_tip,
-                    ctx.source_project_dir.display()
+                    source_project_dir.display()
                 )
             })?;
         Manifest::from_yaml_str(&content).with_context(|| {
             format!(
                 "failed to parse source manifest at revision {} in {}",
                 source_project_tip,
-                ctx.source_project_dir.display()
+                source_project_dir.display()
             )
         })?
     };
 
-    *ctx.snapshot.borrow_mut() = Some(SourceSnapshot {
+    Ok(SourceSnapshot {
         source_project_tip,
         source_manifest,
         raw_source_lock,
-    });
-    Ok(())
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -2572,15 +2547,21 @@ fn run_retire(ctx: &OpContext<'_>) -> anyhow::Result<()> {
 fn cleanup(ctx: &OpContext<'_>) -> anyhow::Result<()> {
     let emit_text = ctx.handler.emit_text();
 
-    // Drop savepoints. Exception: when the --force tombstone marker was
-    // written during replay (Phase 1' ancestor check was bypassed), preserve
-    // the project savepoint as the only reference to the discarded commits.
-    let tombstone_path = ctx
-        .owner_workspace_dir
-        .join(".rwv-op-force-tombstone");
-    let tombstone = tombstone_path.exists();
+    // Drop savepoints. Exception: when --force bypassed the Phase 1'
+    // ancestor check (recorded as the `force-discard-divergence` override),
+    // preserve the project savepoint as a tombstone — the only remaining
+    // reference to the discarded commits.
+    let owner = op_state::read_owner(&ctx.owner_workspace_dir)?;
+    let force_tombstone = owner
+        .as_ref()
+        .map(|r| {
+            r.overrides
+                .iter()
+                .any(|o| o == "force-discard-divergence")
+        })
+        .unwrap_or(false);
 
-    if !tombstone {
+    if !force_tombstone {
         delete_savepoint(&ctx.cwd_project_dir, &ctx.op_id);
     } else if emit_text {
         eprintln!(
@@ -2591,7 +2572,6 @@ fn cleanup(ctx: &OpContext<'_>) -> anyhow::Result<()> {
             op_id = ctx.op_id,
         );
     }
-    let _ = std::fs::remove_file(&tombstone_path);
 
     // Manifest savepoints: reload the project so we see post-replay shape.
     if let Ok(project) = Project::from_dir(&ctx.cwd_project_dir) {
