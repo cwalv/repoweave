@@ -101,7 +101,10 @@ fn make_locked_workspace(parent: &Path, name: &str) -> (Workspace, String) {
     std::fs::write(project_dir.join(".gitattributes"), "rwv.lock merge=ours\n").unwrap();
     write_manifest(&project_dir);
     write_lock(&project_dir, &sha);
-    git(&["add", ".gitattributes", "rwv.yaml", "rwv.lock"], &project_dir);
+    git(
+        &["add", ".gitattributes", "rwv.yaml", "rwv.lock"],
+        &project_dir,
+    );
     git(&["commit", "-m", "lock: initial"], &project_dir);
     std::fs::write(root.join(".rwv-active"), "web-app\n").unwrap();
 
@@ -124,7 +127,11 @@ fn make_shared_workspaces(parent: &Path) -> (Workspace, Workspace, String) {
     let ww_server = ww_root.join(SERVER_PATH);
     git(
         &[
-            "worktree", "add", &ww_server.to_string_lossy(), "-b", "ww/main",
+            "worktree",
+            "add",
+            &ww_server.to_string_lossy(),
+            "-b",
+            "ww/main",
         ],
         &primary.server_dir,
     );
@@ -215,7 +222,10 @@ fn replay_reentry_on_already_converged_repos_is_a_noop_success() {
         .assert()
         .success();
 
-    assert!(!ww.root.join(".rwv-op").exists(), "owner record must be cleared");
+    assert!(
+        !ww.root.join(".rwv-op").exists(),
+        "owner record must be cleared"
+    );
     assert_eq!(
         git_out(&["rev-parse", "HEAD"], &ww.server_dir),
         server_tip_before,
@@ -253,7 +263,10 @@ fn relock_reentry_on_current_lock_is_a_noop_success() {
         .assert()
         .success();
 
-    assert!(!ww.root.join(".rwv-op").exists(), "owner record must be cleared");
+    assert!(
+        !ww.root.join(".rwv-op").exists(),
+        "owner record must be cleared"
+    );
     assert_eq!(
         git_out(&["rev-parse", "HEAD"], &ww.server_dir),
         server_tip_before,
@@ -318,7 +331,10 @@ fn advance_target_reentry_on_equal_tips_is_a_noop_success() {
         .assert()
         .success();
 
-    assert!(!ww.root.join(".rwv-op").exists(), "owner record must be cleared");
+    assert!(
+        !ww.root.join(".rwv-op").exists(),
+        "owner record must be cleared"
+    );
     assert!(
         !primary.root.join(".rwv-op-lease").exists(),
         "lease must be cleared"

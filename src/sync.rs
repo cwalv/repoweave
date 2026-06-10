@@ -1399,13 +1399,7 @@ fn run_machine(
     do_continue: bool,
 ) -> anyhow::Result<()> {
     let ctx = if do_continue {
-        load_continuing_context(
-            verb,
-            cwd,
-            project_override.clone(),
-            jobs,
-            handler,
-        )?
+        load_continuing_context(verb, cwd, project_override.clone(), jobs, handler)?
     } else {
         guard_and_mark(
             verb,
@@ -1622,11 +1616,7 @@ fn guard_and_mark<'a>(
     // sync-to: --strategy=ff has special semantics (CWD must be strictly
     // ahead of target). Bail before any side effects on a refusal.
     if matches!(verb, MachineVerb::SyncTo) && strategy == SyncStrategy::Ff {
-        check_sync_to_ff_precondition(
-            &cwd_project_dir,
-            &dest_project_dir,
-            emit_text,
-        )?;
+        check_sync_to_ff_precondition(&cwd_project_dir, &dest_project_dir, emit_text)?;
     }
 
     // sync-to dirty-target preflight: refuse up-front if the target
@@ -1661,7 +1651,12 @@ fn guard_and_mark<'a>(
             &source_workspace_name,
         )?;
         if let Some(ref lock) = cwd_project.lock {
-            check_lock_freshness(&cwd_workspace_dir, lock, Side::Destination, &cwd_workspace_name_str)?;
+            check_lock_freshness(
+                &cwd_workspace_dir,
+                lock,
+                Side::Destination,
+                &cwd_workspace_name_str,
+            )?;
         }
     }
     if matches!(strategy, SyncStrategy::Rebase | SyncStrategy::Merge) {
@@ -1735,12 +1730,9 @@ fn guard_and_mark<'a>(
         // §7-style named consent: --force will discard reachable project
         // commits in Phase 1'. Recorded in the audit-trail `overrides` field
         // so cleanup preserves the project savepoint as a tombstone.
-        record
-            .overrides
-            .push("force-discard-divergence".to_owned());
+        record.overrides.push("force-discard-divergence".to_owned());
     }
-    op_state::write_owner(&owner_workspace_dir, &record)
-        .context("failed to write owner record")?;
+    op_state::write_owner(&owner_workspace_dir, &record).context("failed to write owner record")?;
 
     // Lease at every other mutated workspace. For plain sync there is no
     // other mutated workspace; for sync-to the target gets a lease.
@@ -2080,8 +2072,8 @@ fn run_replay(ctx: &OpContext<'_>) -> anyhow::Result<()> {
     let snapshot = &ctx.snapshot;
 
     // Load CWD project (manifest + lock) from disk.
-    let cwd_project = Project::from_dir(&ctx.cwd_project_dir)
-        .context("failed to load CWD project")?;
+    let cwd_project =
+        Project::from_dir(&ctx.cwd_project_dir).context("failed to load CWD project")?;
 
     // CWD project tip — read before any side effects so Phase 1' has the
     // pre-op starting state for its `cwd_tip == source_tip` short-circuit.
@@ -2142,8 +2134,10 @@ fn run_replay(ctx: &OpContext<'_>) -> anyhow::Result<()> {
         .raw_source_lock
         .clone()
         .resolve_versions(&ctx.cwd_workspace_dir);
-    let unresolvable: std::collections::BTreeSet<crate::manifest::RepoPath> =
-        source_lock_failures.iter().map(|(p, _)| p.clone()).collect();
+    let unresolvable: std::collections::BTreeSet<crate::manifest::RepoPath> = source_lock_failures
+        .iter()
+        .map(|(p, _)| p.clone())
+        .collect();
 
     struct SyncTask {
         repo_path: crate::manifest::RepoPath,
@@ -2471,7 +2465,11 @@ fn run_advance_target(ctx: &OpContext<'_>) -> anyhow::Result<()> {
         .head_revision(&ctx.cwd_project_dir)
         .context("failed to read CWD project HEAD for advance-target")?;
 
-    match ff_advance_repo(&ctx.dest_project_dir, &ctx.cwd_project_dir, &cwd_project_tip) {
+    match ff_advance_repo(
+        &ctx.dest_project_dir,
+        &ctx.cwd_project_dir,
+        &cwd_project_tip,
+    ) {
         Ok(()) => {
             if emit_text {
                 println!(
@@ -2554,11 +2552,7 @@ fn cleanup(ctx: &OpContext<'_>) -> anyhow::Result<()> {
     let owner = op_state::read_owner(&ctx.owner_workspace_dir)?;
     let force_tombstone = owner
         .as_ref()
-        .map(|r| {
-            r.overrides
-                .iter()
-                .any(|o| o == "force-discard-divergence")
-        })
+        .map(|r| r.overrides.iter().any(|o| o == "force-discard-divergence"))
         .unwrap_or(false);
 
     if !force_tombstone {
@@ -2590,7 +2584,6 @@ fn cleanup(ctx: &OpContext<'_>) -> anyhow::Result<()> {
     }
     Ok(())
 }
-
 
 /// `rwv sync-to --retire` post-sync-to cleanup.
 ///
@@ -3220,7 +3213,6 @@ pub fn run_sync_to_json(
         true,
     )
 }
-
 
 /// Fast-forward `target_repo` to `cwd_tip`.
 ///
