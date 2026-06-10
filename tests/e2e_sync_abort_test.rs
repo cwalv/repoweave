@@ -490,9 +490,9 @@ fn sync_allow_stale_lock_bypasses_lock_freshness_precondition() {
     // with the lock-freshness message.
     let output = out.get_output();
     let stderr = String::from_utf8_lossy(&output.stderr);
-    let is_lock_freshness_error =
-        (stderr.contains("stale lock") || stderr.contains("lock-freshness precondition failed"))
-            && !stderr.contains("--allow-stale-lock");
+    let is_lock_freshness_error = (stderr.contains("stale lock")
+        || stderr.contains("lock-freshness precondition failed"))
+        && !stderr.contains("--allow-stale-lock");
     assert!(
         !is_lock_freshness_error,
         "--allow-stale-lock should bypass the lock-freshness precondition; got: {stderr}"
