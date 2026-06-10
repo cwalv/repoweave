@@ -1208,28 +1208,148 @@ impl OutputHandler for JsonNdjsonHandler<'_> {
 }
 
 // ---------------------------------------------------------------------------
-// rwv sync
+// The phase machine
+// ---------------------------------------------------------------------------
+//
+// One data-driven machine drives both `rwv sync` and `rwv sync-to`. Phases:
+//
+//   guard → mark → savepoint → replay → relock → advance-target → retire → cleanup
+//                                                 (sync-to only)   (--retire only)
+//
+// guard + mark + savepoint happen once, before the loop, in `guard_and_mark`.
+// The persisted record's phase starts at `Replay`. The driver loop is:
+//
+//   loop {
+//       op_state::advance_phase(owner, state.phase);   // one persistence point
+//       state.phase = run_phase(ctx, state.phase)?;
+//       if state.terminal { break }
+//   }
+//   cleanup(ctx);                                       // drop savepoints + clear record
+//
+// **Invariant:** the persisted phase is the phase in progress, and every
+// phase is idempotent and re-runnable from the record alone.
+//
+// - replay re-entry derives per-repo state from the VCS itself (savepoint →
+//   redo; mid-conflict → VCS-native continue; already-converged → no-op).
+//   No `resume_phase` / `step1_continue` flags anywhere.
+// - relock re-entry: regenerating a current lock is a no-op.
+// - advance-target re-entry: ff to an already-reached tip is a no-op.
+// - retire re-entry: re-running the merged-check is read-only.
+//
+// `--continue` (both verbs) = load record (resolving lease pointer if invoked
+// from a non-owner workspace), enter the driver loop at the recorded phase.
+
+/// Immutable per-op context built once, before the driver loop. Holds
+/// everything the phase functions need that isn't on disk in the owner record.
+struct OpContext<'a> {
+    /// CWD workspace context (the workspace invocation was made from).
+    cwd_ctx: WorkspaceContext,
+    /// CWD workspace root (== owner workspace for fresh invocations from the
+    /// owner side; == lease workspace when --continue is invoked from target).
+    cwd_workspace_dir: PathBuf,
+    /// Workspace that holds the full owner record. Resolved from a lease
+    /// pointer when --continue is invoked from a non-owner workspace.
+    owner_workspace_dir: PathBuf,
+    /// Source-of-content workspace (CWD pulls from here). For plain `sync`
+    /// this is the explicit source; for `sync-to` this is CWD (since sync-to
+    /// step 1 is `sync` with target as source).
+    source_workspace_dir: PathBuf,
+    source_project_dir: PathBuf,
+    source_workspace_name: String,
+    /// Destination workspace (the one phases write into). For plain `sync`
+    /// this is CWD; for `sync-to` this is the target workspace.
+    dest_workspace_dir: PathBuf,
+    dest_project_dir: PathBuf,
+    /// CWD's project repo dir. Equal to `dest_project_dir` for plain `sync`
+    /// (where dest is CWD); for `sync-to` it's where replay+relock run, and
+    /// `dest_project_dir` is where advance-target lands.
+    cwd_project_dir: PathBuf,
+    /// CWD project name (used for materialize_missing_repo's ephemeral
+    /// branch namespace in workweaves).
+    cwd_project_name: ProjectName,
+    /// `SyncSource` form of `source_workspace_dir`, retained for the
+    /// human-readable hints in bail messages (`rwv sync <thing>`).
+    resolved_source: SyncSource,
+    /// Path arg the operator passed on the CLI (or recorded in op-state),
+    /// retained for hint messages that show the original target spelling.
+    cli_path: PathBuf,
+    strategy: SyncStrategy,
+    force: bool,
+    retire: bool,
+    jobs: usize,
+    handler: &'a dyn OutputHandler,
+    verb: op_state::OpVerb,
+    op_id: OpId,
+    /// Cached snapshot of source tip + manifest + lock, pinned at the start
+    /// of the FIRST replay entry (T0). Filled in by the replay phase on
+    /// initial entry; re-derived from disk on resume (the source workspace
+    /// is read-only from our perspective and may have moved on, but Phase 2's
+    /// per-repo no-op detection handles already-converged repos cleanly).
+    ///
+    /// Kept in a `Cell`/`RefCell` so phase functions remain `&self` callers;
+    /// `OpContext` is built per-invocation so no thread-safety concerns.
+    snapshot: std::cell::RefCell<Option<SourceSnapshot>>,
+}
+
+/// Atomic source snapshot pinned at T0 (start of replay).
+///
+/// The source's project tip is read once and everything derived from it —
+/// manifest, lock — is read AT that revision via `Vcs::read_file_at_revision`.
+/// A concurrent mutation of the source after T0 changes refs but cannot touch
+/// anything we've read (§6 of the design doc).
+struct SourceSnapshot {
+    /// Source project tip at T0.
+    source_project_tip: ResolvedRevisionId,
+    /// Source manifest, read at `source_project_tip`.
+    source_manifest: Manifest,
+    /// Source lock (raw, unresolved), read at `source_project_tip`.
+    raw_source_lock: LockFile,
+}
+
+impl OpContext<'_> {
+    /// Convenience: the active phase recorded on the owner record.
+    fn current_phase(&self) -> anyhow::Result<op_state::OpPhase> {
+        let record = op_state::read_owner(&self.owner_workspace_dir)?.ok_or_else(|| {
+            anyhow::anyhow!(
+                "internal: owner record disappeared at {} mid-op",
+                self.owner_workspace_dir.display()
+            )
+        })?;
+        Ok(record.phase)
+    }
+}
+
+/// Plain enum of which top-level driver entry built this op.
+#[derive(Debug, Clone, Copy)]
+enum MachineVerb {
+    /// `rwv sync <source>`: degenerate machine with no advance-target/retire.
+    Sync,
+    /// `rwv sync-to <target>`: full machine; advance-target always runs;
+    /// retire runs only when `--retire` is set.
+    SyncTo,
+}
+
+impl MachineVerb {
+    fn op_verb(self) -> op_state::OpVerb {
+        match self {
+            Self::Sync => op_state::OpVerb::Sync,
+            Self::SyncTo => op_state::OpVerb::SyncTo,
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Top-level entry points (public API surface unchanged)
 // ---------------------------------------------------------------------------
 
 /// Execute `rwv sync <source>`.
 ///
-/// Phase ordering under the lock-as-derived contract:
-/// 1. **Phase 2 (manifest repos)** — advance each manifest repo to source's
-///    committed lock target via `--strategy`.
-/// 2. **Phase 1' (project repo)** — replay CWD's unique project commits onto
-///    source's tip via `--strategy`, with `rwv.lock` excluded from each
-///    commit's effective diff. Lock-only commits become empty patches and
-///    are skipped. `--force` retains hard-reset semantics.
-/// 3. **Phase 3 (re-lock)** — regenerate `rwv.lock` from the now-merged
-///    manifest tips and commit if changed.
-///
-/// `source` is required; bare `rwv sync` (no source) is no longer supported.
+/// `source` is required; bare `rwv sync` (no source) is not supported.
 /// Use `rwv sync-to` to land work upward.
 ///
 /// `do_continue = true` activates `--continue` mode: instead of refusing when
-/// an op-state file is present, the call validates that the recorded parameters
-/// match and resumes from the recorded phase. Without `--continue`, a present
-/// op-state file is always an error.
+/// an op-state file is present, the call resumes from the recorded phase.
+/// All parameters are read from the recorded state in that path.
 #[allow(clippy::too_many_arguments)]
 pub fn run_sync(
     cwd: &Path,
@@ -1245,7 +1365,8 @@ pub fn run_sync(
     let handler = TextHandler {
         stdout_lock: &stdout_lock,
     };
-    run_sync_impl(
+    run_machine(
+        MachineVerb::Sync,
         cwd,
         source,
         strategy,
@@ -1258,27 +1379,21 @@ pub fn run_sync(
     )
 }
 
-/// Shared sync orchestration body used by both text-mode (`run_sync`) and
-/// JSON-mode (`run_sync_json`).
+// ---------------------------------------------------------------------------
+// Driver entry: shared by sync and sync-to (text + json modes)
+// ---------------------------------------------------------------------------
+
+/// Build the [`OpContext`] and run the phase-machine driver. Both `rwv sync`
+/// and `rwv sync-to` route through here; the `verb` parameter selects which
+/// phases run (advance-target / retire are sync-to-only and --retire-only).
 ///
-/// `handler` drives all per-repo output: [`TextHandler`] prints human-readable
-/// lines; [`JsonEnvelopeHandler`] buffers records for post-run envelope
-/// emission; [`JsonNdjsonHandler`] streams one JSON line per record as it
-/// arrives. New modes can be added by implementing [`OutputHandler`] without
-/// touching this function.
-///
-/// `jobs` is the resolved worker count (post-`parallel::resolve_jobs`).
-/// `jobs == 1` runs Phase 2 (per-repo manifest sync) serially on the
-/// caller thread; `jobs > 1` runs it on a bounded worker pool.
-/// Phases 1' (project repo) and 3 (re-lock + commit) are inherently
-/// serial and run on the caller thread regardless of `jobs`.
-///
-/// Project-level errors (lock freshness, materialize, manifest-repo failures
-/// post-loop, Phase 1' / Phase 3) still bail with `anyhow::Result::Err` —
-/// the JSON caller decides whether to emit collected records before
-/// propagating.
+/// `source` is the explicit source/target the operator passed on the CLI, or
+/// `None` under `--continue` (read from op-state). `do_continue = true` means
+/// "resolve op-state from CWD (following a lease pointer if invoked from a
+/// non-owner workspace), enter the driver loop at the recorded phase".
 #[allow(clippy::too_many_arguments)]
-fn run_sync_impl(
+fn run_machine(
+    verb: MachineVerb,
     cwd: &Path,
     source: Option<&SyncSource>,
     strategy: SyncStrategy,
@@ -1289,114 +1404,483 @@ fn run_sync_impl(
     handler: &dyn OutputHandler,
     do_continue: bool,
 ) -> anyhow::Result<()> {
-    run_sync_impl_with_op_id(
-        cwd,
-        source,
-        strategy,
-        force,
-        retire,
-        project_override,
-        jobs,
-        handler,
-        do_continue,
-        None,
-    )
+    let ctx = if do_continue {
+        load_continuing_context(
+            verb,
+            cwd,
+            project_override.clone(),
+            jobs,
+            handler,
+        )?
+    } else {
+        guard_and_mark(
+            verb,
+            cwd,
+            source,
+            strategy,
+            force,
+            retire,
+            project_override.clone(),
+            jobs,
+            handler,
+        )?
+    };
+
+    drive(&ctx)
 }
 
-/// Internal: same as `run_sync_impl` but accepts an optional pre-existing `OpId`.
+/// The phase-machine driver. Persists `state.phase` before each phase, then
+/// runs `run_phase` which returns the next phase (or `None` for terminal).
 ///
-/// When `pre_existing_op_id` is `Some`, the op-state check/write is bypassed
-/// entirely — the caller (e.g. sync-to step 1) has already set up op-state.
-/// The provided `OpId` is used for savepoints.
+/// One persistence point per iteration. Every phase is idempotent and
+/// re-runnable from the record alone — crash inside a phase leaves the
+/// record at that phase, and resume re-enters there.
+fn drive(ctx: &OpContext<'_>) -> anyhow::Result<()> {
+    loop {
+        let phase = ctx.current_phase()?;
+        // One write, one file: persist the phase we're about to enter so a
+        // crash inside `run_phase` leaves the record at `phase`. The owner
+        // record already holds `phase` (either from guard_and_mark's initial
+        // write, or from the previous iteration's transition); this call is
+        // a no-op write the first time around and an advance after that.
+        op_state::advance_phase(&ctx.owner_workspace_dir, phase.clone())
+            .context("failed to persist phase advance")?;
+
+        let next = run_phase(ctx, phase)?;
+        match next {
+            Some(p) => {
+                // The next iteration's advance_phase write is the canonical
+                // persistence point for `p`. We don't write it here.
+                op_state::advance_phase(&ctx.owner_workspace_dir, p)
+                    .context("failed to advance phase between iterations")?;
+            }
+            None => {
+                cleanup(ctx)?;
+                return Ok(());
+            }
+        }
+    }
+}
+
+/// Dispatch one phase. Each phase function is idempotent and returns the
+/// next phase (or `None` to signal "no more phases — proceed to cleanup").
+fn run_phase(
+    ctx: &OpContext<'_>,
+    phase: op_state::OpPhase,
+) -> anyhow::Result<Option<op_state::OpPhase>> {
+    use op_state::OpPhase;
+    match phase {
+        OpPhase::Replay => {
+            run_replay(ctx)?;
+            Ok(Some(OpPhase::Relock))
+        }
+        OpPhase::Relock => {
+            run_relock(ctx)?;
+            Ok(next_after_relock(ctx))
+        }
+        OpPhase::AdvanceTarget => {
+            run_advance_target(ctx)?;
+            Ok(next_after_advance_target(ctx))
+        }
+        OpPhase::Retire => {
+            run_retire(ctx)?;
+            Ok(None)
+        }
+    }
+}
+
+/// After relock, plain `sync` is done; `sync-to` continues with advance-target.
+fn next_after_relock(ctx: &OpContext<'_>) -> Option<op_state::OpPhase> {
+    match ctx.verb {
+        op_state::OpVerb::Sync => None,
+        op_state::OpVerb::SyncTo => Some(op_state::OpPhase::AdvanceTarget),
+    }
+}
+
+/// After advance-target, retire runs only when `--retire` was passed.
+fn next_after_advance_target(ctx: &OpContext<'_>) -> Option<op_state::OpPhase> {
+    if ctx.retire {
+        Some(op_state::OpPhase::Retire)
+    } else {
+        None
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Pre-loop: guard + mark + savepoint (fresh start)
+// ---------------------------------------------------------------------------
+
+/// Guard (preconditions), mark (write owner record + leases), savepoint
+/// (per-repo pre-op refs). Returns the immutable [`OpContext`] driving the
+/// loop. Refusals here leave no trace.
 #[allow(clippy::too_many_arguments)]
-fn run_sync_impl_with_op_id(
+fn guard_and_mark<'a>(
+    verb: MachineVerb,
     cwd: &Path,
     source: Option<&SyncSource>,
     strategy: SyncStrategy,
     force: bool,
-    _retire: bool,
+    retire: bool,
     project_override: Option<ProjectName>,
     jobs: usize,
-    handler: &dyn OutputHandler,
-    do_continue: bool,
-    pre_existing_op_id: Option<&OpId>,
-) -> anyhow::Result<()> {
+    handler: &'a dyn OutputHandler,
+) -> anyhow::Result<OpContext<'a>> {
     let emit_text = handler.emit_text();
-    // Resolve CWD workspace.
-    let ctx = WorkspaceContext::resolve(cwd, project_override.clone())?;
-    let workspace_dir = ctx.active_path().to_path_buf();
+    let cwd_ctx = WorkspaceContext::resolve(cwd, project_override.clone())?;
+    let cwd_workspace_dir = cwd_ctx.active_path().to_path_buf();
 
-    // When --continue (and no pre_existing_op_id), read op-state early so we
-    // can derive the source path and strategy from the recorded values rather
-    // than from CLI arguments (which are not passed when --continue is set).
-    // We also need to derive `strategy` from op-state in this path.
-    let (resolved_source, strategy, pre_read_op_state): (
-        SyncSource,
-        SyncStrategy,
-        Option<crate::op_state::OwnerRecord>,
-    ) = if do_continue && pre_existing_op_id.is_none() {
-        // resume() returns (OwnerRecord, owner_workspace_path); for a plain
-        // `rwv sync`, workspace_dir IS the owner workspace, so the owner path
-        // is not separately needed here.
-        let (recorded, _owner_ws) = op_state::resume(&workspace_dir)?;
-        let strat = recorded
-            .strategy
-            .parse::<SyncStrategy>()
-            .context("op-state has invalid strategy")?;
-        let src = SyncSource::Path(recorded.source.clone());
-        (src, strat, Some(recorded))
-    } else {
-        // Resolve sync source: explicit if given, else parent from marker.
-        // Bare `rwv sync` only makes sense inside a workweave; the helpful error
-        // here is the entire reason we bothered to make `source` optional.
-        let resolved = match source {
-            Some(s) => s.clone(),
-            None => match &ctx.location {
-                WorkspaceLocation::Workweave { dir, .. } => {
-                    let marker =
-                        crate::workspace::WorkweaveMarker::read(dir)?.ok_or_else(|| {
-                            anyhow::anyhow!(
-                                "bare `rwv sync` requires a `.rwv-workweave` marker in the \
-                                 workweave; found none at {} (re-create the workweave or pass \
-                                 an explicit source)",
-                                dir.display()
-                            )
-                        })?;
-                    SyncSource::Path(marker.parent)
-                }
-                WorkspaceLocation::Weave { .. } => {
-                    anyhow::bail!(
-                        "bare `rwv sync` syncs to the workweave's recorded parent, but CWD \
-                         ({}) is in the primary weave, not a workweave; pass an explicit source",
-                        cwd.display()
-                    );
-                }
-            },
-        };
-        (resolved, strategy, None)
+    // Resolve the SyncSource the operator passed. For sync, this is the
+    // source workspace; for sync-to, this is the target workspace.
+    let resolved_arg = match source {
+        Some(s) => s.clone(),
+        None => match (verb, &cwd_ctx.location) {
+            // Bare `rwv sync` inside a workweave: read parent from the marker.
+            (MachineVerb::Sync, WorkspaceLocation::Workweave { dir, .. }) => {
+                let marker = crate::workspace::WorkweaveMarker::read(dir)?.ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "bare `rwv sync` requires a `.rwv-workweave` marker in the \
+                         workweave; found none at {} (re-create the workweave or pass \
+                         an explicit source)",
+                        dir.display()
+                    )
+                })?;
+                SyncSource::Path(marker.parent)
+            }
+            (MachineVerb::Sync, WorkspaceLocation::Weave { .. }) => {
+                anyhow::bail!(
+                    "bare `rwv sync` syncs to the workweave's recorded parent, but CWD \
+                     ({}) is in the primary weave, not a workweave; pass an explicit source",
+                    cwd.display()
+                );
+            }
+            (MachineVerb::SyncTo, _) => {
+                anyhow::bail!(
+                    "sync-to requires an explicit target (resolved by the caller); none provided"
+                );
+            }
+        },
+    };
+    let cli_path = resolved_arg.resolve(&cwd_ctx)?;
+
+    // For plain `sync`: source = arg, dest = CWD.
+    // For `sync-to`:   source = CWD, dest = arg (target).
+    let (source_workspace_dir, dest_workspace_dir) = match verb {
+        MachineVerb::Sync => (cli_path.clone(), cwd_workspace_dir.clone()),
+        MachineVerb::SyncTo => (cwd_workspace_dir.clone(), cli_path.clone()),
     };
 
-    let source_path = resolved_source.resolve(&ctx)?;
-
-    // When CWD is a workweave its project is immutable and authoritative.
-    // Pass it as the project override when resolving the source so that the
-    // source uses the same project regardless of what primary's `.rwv-active`
-    // happens to be.  For a primary-weave CWD we fall back to the caller's
-    // `--project` override as before.
-    let source_project_override = match &ctx.location {
+    // Project override: when CWD is a workweave its project is immutable and
+    // authoritative; pass it through so the *other* workspace resolves the
+    // same project regardless of its `.rwv-active`. Otherwise propagate the
+    // caller's explicit `--project`.
+    let other_project_override = match &cwd_ctx.location {
         WorkspaceLocation::Workweave { project, .. } => Some(project.clone()),
         WorkspaceLocation::Weave { .. } => project_override.clone(),
     };
-    let source_ctx = WorkspaceContext::resolve(&source_path, source_project_override)?;
-    let source_workspace_dir = source_ctx.active_path().to_path_buf();
 
-    // Sibling-sync warning: if CWD is a workweave and source is another
-    // workweave that is NOT CWD's parent, the operation crosses tree
-    // branches. Warn (don't refuse — the operator may have a reason) so
-    // accidental sibling syncs are visible.
-    if let WorkspaceLocation::Workweave { dir: cwd_ww, .. } = &ctx.location {
+    let cwd_project_name = find_project_name(&cwd_ctx)?;
+    let cwd_project_dir = cwd_workspace_dir.join("projects").join(&cwd_project_name);
+
+    let (source_project_dir, source_workspace_name) = match verb {
+        MachineVerb::Sync => {
+            let source_ctx =
+                WorkspaceContext::resolve(&source_workspace_dir, other_project_override.clone())?;
+            let pname = find_project_name(&source_ctx)?;
+            let dir = source_ctx.active_path().join("projects").join(&pname);
+            (dir, workspace_name(&source_ctx))
+        }
+        MachineVerb::SyncTo => {
+            // For sync-to, source == CWD.
+            (cwd_project_dir.clone(), workspace_name(&cwd_ctx))
+        }
+    };
+
+    let dest_project_dir = match verb {
+        MachineVerb::Sync => cwd_project_dir.clone(),
+        MachineVerb::SyncTo => {
+            let dest_ctx =
+                WorkspaceContext::resolve(&dest_workspace_dir, Some(cwd_project_name.clone()))?;
+            let pname = find_project_name(&dest_ctx)?;
+            dest_ctx.active_path().join("projects").join(&pname)
+        }
+    };
+
+    // For plain sync: `resolved_source` for hint messages mirrors the
+    // operator-supplied arg (where they were syncing FROM).
+    // For sync-to: hint messages refer to where they're syncing FROM in step 1
+    // (which is the target workspace). The arg from the operator's POV is the
+    // target; for hint text purposes we render that path.
+    let resolved_source_for_hints = match verb {
+        MachineVerb::Sync => resolved_arg.clone(),
+        // sync-to: step 1's sync calls have `target` as the source workspace;
+        // bail messages reference `rwv sync <thing>` so we render the target
+        // path verbatim.
+        MachineVerb::SyncTo => SyncSource::Path(cli_path.clone()),
+    };
+
+    // Sibling-sync warning: only meaningful for plain sync.
+    if matches!(verb, MachineVerb::Sync) {
+        warn_on_sibling_sync(&cwd_ctx, &source_workspace_dir, emit_text);
+    }
+
+    // === Preconditions (no mutation yet) ===
+
+    // CWD project repo must not be mid-op.
+    if let Some(op) = GitVcs.mid_op(&cwd_project_dir) {
+        anyhow::bail!(
+            "CWD project repo is mid-{op}; resolve before running sync",
+            op = mid_op_label(op),
+        );
+    }
+
+    // sync-to: --strategy=ff has special semantics (CWD must be strictly
+    // ahead of target). Bail before any side effects on a refusal.
+    if matches!(verb, MachineVerb::SyncTo) && strategy == SyncStrategy::Ff {
+        check_sync_to_ff_precondition(
+            &cwd_project_dir,
+            &dest_project_dir,
+            emit_text,
+        )?;
+    }
+
+    // sync-to dirty-target preflight: refuse up-front if the target
+    // workweave has uncommitted changes the advance-target phase would
+    // overwrite.
+    if matches!(verb, MachineVerb::SyncTo) {
+        let cwd_project_preflight = Project::from_dir(&cwd_project_dir)
+            .context("failed to load CWD project for dirty-target preflight")?;
+        check_dirty_target_preflight(
+            &cwd_project_preflight,
+            &dest_workspace_dir,
+            &dest_project_dir,
+            &cli_path,
+        )?;
+    }
+
+    // Concurrency guard: refuse if any touched workspace carries op-state.
+    let touched: Vec<&Path> = match verb {
+        MachineVerb::Sync => vec![cwd_workspace_dir.as_path()],
+        MachineVerb::SyncTo => vec![cwd_workspace_dir.as_path(), dest_workspace_dir.as_path()],
+    };
+    op_state::check_no_op_in_progress(&touched)?;
+
+    // === Mark: write owner record + leases ===
+
+    let op_id = OpId::new_now();
+    let owner_workspace_dir = cwd_workspace_dir.clone();
+
+    let record = match verb {
+        MachineVerb::Sync => OwnerRecord::new_sync(
+            &op_id,
+            strategy,
+            source_workspace_dir.clone(),
+            cwd_workspace_dir.clone(),
+        ),
+        MachineVerb::SyncTo => OwnerRecord::new_sync_to(
+            &op_id,
+            strategy,
+            cwd_workspace_dir.clone(),
+            dest_workspace_dir.clone(),
+            retire,
+        ),
+    };
+    op_state::write_owner(&owner_workspace_dir, &record)
+        .context("failed to write owner record")?;
+
+    // Lease at every other mutated workspace. For plain sync there is no
+    // other mutated workspace; for sync-to the target gets a lease.
+    if matches!(verb, MachineVerb::SyncTo) {
+        let lease = LeaseRecord {
+            id: op_id.as_str().to_owned(),
+            owner: owner_workspace_dir.clone(),
+        };
+        op_state::write_lease(&dest_workspace_dir, &lease)
+            .context("failed to write lease to target workspace")?;
+    }
+
+    // === Savepoint: per-repo pre-op anchor refs ===
+    //
+    // CWD-side repos and the project repo are anchored so replay re-entry
+    // and abort can both restore. For sync-to the target's repos are not
+    // savepointed (advance-target is ff-only — no destructive op to undo
+    // on the target side; abort hardening (.4) covers target-side rollback
+    // separately).
+    create_savepoint(&cwd_project_dir, &op_id)?;
+    let cwd_project = Project::from_dir(&cwd_project_dir)
+        .context("failed to load CWD project for savepoint phase")?;
+    for repo_path in cwd_project.manifest.iter_repo_paths() {
+        let abs = cwd_workspace_dir.join(repo_path.as_path());
+        if abs.exists() {
+            let _ = create_savepoint(&abs, &op_id);
+        }
+    }
+
+    Ok(OpContext {
+        cwd_ctx,
+        cwd_workspace_dir,
+        owner_workspace_dir,
+        source_workspace_dir,
+        source_project_dir,
+        source_workspace_name,
+        dest_workspace_dir,
+        dest_project_dir,
+        cwd_project_dir,
+        cwd_project_name,
+        resolved_source: resolved_source_for_hints,
+        cli_path,
+        strategy,
+        force,
+        retire,
+        jobs,
+        handler,
+        verb: verb.op_verb(),
+        op_id,
+        snapshot: std::cell::RefCell::new(None),
+    })
+}
+
+/// Load context for `--continue`: read the owner record (following a lease
+/// pointer if invoked from a non-owner workspace), derive all op parameters
+/// from it, and rebuild the [`OpContext`].
+fn load_continuing_context<'a>(
+    verb: MachineVerb,
+    cwd: &Path,
+    project_override: Option<ProjectName>,
+    jobs: usize,
+    handler: &'a dyn OutputHandler,
+) -> anyhow::Result<OpContext<'a>> {
+    let emit_text = handler.emit_text();
+    let cwd_ctx = WorkspaceContext::resolve(cwd, project_override.clone())?;
+    let cwd_workspace_dir = cwd_ctx.active_path().to_path_buf();
+
+    let (record, owner_workspace_dir) = op_state::resume(&cwd_workspace_dir)?;
+    let op_id = OpId::from_string(record.id.clone());
+
+    if emit_text {
+        eprintln!(
+            "continuing {verb_str} (op {op_id}, mid `{phase}`)",
+            verb_str = record.verb,
+            phase = record.phase,
+        );
+    }
+
+    // The recorded verb is authoritative; cross-check against the entry-point
+    // verb. (Same kind of belt-and-braces as the destructive-ops tripwire:
+    // catches "operator ran `rwv sync --continue` on a `rwv sync-to` op", which
+    // is harmless because we'd ignore their verb anyway, but worth flagging.)
+    let recorded_verb = match record.verb {
+        op_state::OpVerb::Sync => MachineVerb::Sync,
+        op_state::OpVerb::SyncTo => MachineVerb::SyncTo,
+    };
+    if !verbs_match(verb, recorded_verb) {
+        anyhow::bail!(
+            "in-progress op is `{recorded}` but `rwv {invoked}` --continue was invoked. \
+             Run `rwv {recorded} --continue` instead, or `rwv abort` to discard.",
+            recorded = record.verb,
+            invoked = match verb {
+                MachineVerb::Sync => "sync",
+                MachineVerb::SyncTo => "sync-to",
+            },
+        );
+    }
+
+    let strategy = record
+        .strategy
+        .parse::<SyncStrategy>()
+        .context("op-state has invalid strategy")?;
+
+    // Resolve source/dest workspaces by verb. The owner workspace is recorded
+    // in `record.target`/`record.source` as absolute paths; rebuild contexts
+    // from those.
+    let cwd_project_name = find_project_name(&cwd_ctx)?;
+    let cwd_project_dir = owner_workspace_dir.join("projects").join(&cwd_project_name);
+
+    let (source_workspace_dir, dest_workspace_dir, cli_path) = match recorded_verb {
+        MachineVerb::Sync => (record.source.clone(), record.target.clone(), record.source.clone()),
+        MachineVerb::SyncTo => (
+            record.source.clone(),
+            record.target.clone(),
+            record.target.clone(),
+        ),
+    };
+
+    let other_project_override = match &cwd_ctx.location {
+        WorkspaceLocation::Workweave { project, .. } => Some(project.clone()),
+        WorkspaceLocation::Weave { .. } => project_override.clone(),
+    };
+
+    let (source_project_dir, source_workspace_name) = match recorded_verb {
+        MachineVerb::Sync => {
+            let source_ctx =
+                WorkspaceContext::resolve(&source_workspace_dir, other_project_override.clone())?;
+            let pname = find_project_name(&source_ctx)?;
+            let dir = source_ctx.active_path().join("projects").join(&pname);
+            (dir, workspace_name(&source_ctx))
+        }
+        MachineVerb::SyncTo => (cwd_project_dir.clone(), workspace_name(&cwd_ctx)),
+    };
+
+    let dest_project_dir = match recorded_verb {
+        MachineVerb::Sync => cwd_project_dir.clone(),
+        MachineVerb::SyncTo => {
+            let dest_ctx =
+                WorkspaceContext::resolve(&dest_workspace_dir, Some(cwd_project_name.clone()))?;
+            let pname = find_project_name(&dest_ctx)?;
+            dest_ctx.active_path().join("projects").join(&pname)
+        }
+    };
+
+    let resolved_source_for_hints = match recorded_verb {
+        MachineVerb::Sync => SyncSource::Path(source_workspace_dir.clone()),
+        MachineVerb::SyncTo => SyncSource::Path(dest_workspace_dir.clone()),
+    };
+
+    Ok(OpContext {
+        cwd_ctx,
+        cwd_workspace_dir,
+        owner_workspace_dir,
+        source_workspace_dir,
+        source_project_dir,
+        source_workspace_name,
+        dest_workspace_dir,
+        dest_project_dir,
+        cwd_project_dir,
+        cwd_project_name,
+        resolved_source: resolved_source_for_hints,
+        cli_path,
+        strategy,
+        force: false, // --continue never adds --force; consents are recorded in `overrides`
+        retire: record.retire,
+        jobs,
+        handler,
+        verb: record.verb,
+        op_id,
+        snapshot: std::cell::RefCell::new(None),
+    })
+}
+
+fn verbs_match(invoked: MachineVerb, recorded: MachineVerb) -> bool {
+    matches!(
+        (invoked, recorded),
+        (MachineVerb::Sync, MachineVerb::Sync) | (MachineVerb::SyncTo, MachineVerb::SyncTo)
+    )
+}
+
+// ---------------------------------------------------------------------------
+// Pre-loop helpers (preconditions extracted from old run_sync_impl)
+// ---------------------------------------------------------------------------
+
+/// Sibling-sync warning: only meaningful for plain `sync`. CWD is a workweave
+/// and source is another workweave that is NOT CWD's parent → crosses tree
+/// branches; warn (don't refuse — the operator may have a reason).
+fn warn_on_sibling_sync(cwd_ctx: &WorkspaceContext, source_workspace_dir: &Path, emit_text: bool) {
+    if let WorkspaceLocation::Workweave { dir: cwd_ww, .. } = &cwd_ctx.location {
+        // Resolve the source workspace's location to compare. Best-effort.
+        let source_ctx = match WorkspaceContext::resolve(source_workspace_dir, None) {
+            Ok(c) => c,
+            Err(_) => return,
+        };
         if let WorkspaceLocation::Workweave { dir: source_ww, .. } = &source_ctx.location {
-            // Compare canonical paths for honest equality across symlinks.
             let cwd_canonical = cwd_ww
                 .canonicalize()
                 .unwrap_or_else(|_| cwd_ww.to_path_buf());
@@ -1404,8 +1888,6 @@ fn run_sync_impl_with_op_id(
                 .canonicalize()
                 .unwrap_or_else(|_| source_ww.to_path_buf());
             if cwd_canonical != source_canonical {
-                // Is source actually our parent? If so, no warning — that's
-                // the documented bare-sync target.
                 let cwd_parent = crate::workspace::WorkweaveMarker::read(cwd_ww)
                     .ok()
                     .flatten()
@@ -1422,137 +1904,172 @@ fn run_sync_impl_with_op_id(
             }
         }
     }
+}
 
-    // Find active projects.  Both sides now resolve to the same project
-    // because source_ctx was built with the workweave's (or caller's) project
-    // override above, so no separate match check is needed.
-    let cwd_project_name = find_project_name(&ctx)?;
-    let source_project_name = find_project_name(&source_ctx)?;
-
-    let cwd_project_dir = workspace_dir.join("projects").join(&cwd_project_name);
-    let source_project_dir = source_workspace_dir
-        .join("projects")
-        .join(&source_project_name);
-
-    // Load manifests.
-    let cwd_project = Project::from_dir(&cwd_project_dir).context("failed to load CWD project")?;
-
-    // Precondition: CWD project repo must not be mid-op.
-    if let Some(op) = GitVcs.mid_op(&cwd_project_dir) {
+/// sync-to `--strategy=ff` precondition: CWD must be strictly ahead of
+/// target. If equal: no-op (signalled by `Ok(())` from a caller that then
+/// short-circuits — handled inside `run_replay` via the noop-detection path).
+/// If diverged: refuse before any side effects.
+fn check_sync_to_ff_precondition(
+    cwd_project_dir: &Path,
+    target_project_dir: &Path,
+    _emit_text: bool,
+) -> anyhow::Result<()> {
+    let cwd_tip = GitVcs
+        .head_revision(cwd_project_dir)
+        .context("failed to read CWD project HEAD")?;
+    let target_tip = GitVcs
+        .head_revision(target_project_dir)
+        .context("failed to read target project HEAD")?;
+    if cwd_tip == target_tip {
+        // Equal tips: not an error, replay's per-repo no-op detection will
+        // simply do nothing in step 1. Continue into the machine so the
+        // record/lease cleanup happens through the canonical cleanup phase.
+        return Ok(());
+    }
+    let cwd_ahead = GitVcs
+        .is_ancestor(cwd_project_dir, &target_tip, &cwd_tip)
+        .unwrap_or(false);
+    if !cwd_ahead {
         anyhow::bail!(
-            "CWD project repo is mid-{op}; resolve before running sync",
-            op = mid_op_label(op),
+            "sync-to --strategy=ff requires CWD to be strictly ahead of target, \
+             but CWD's project tip ({}) is not an ancestor-or-equal of target's tip ({}).\n\
+             Rerun with `--strategy=rebase` to rebase CWD's commits onto target's tip first.",
+            cwd_tip,
+            target_tip,
         );
     }
+    Ok(())
+}
 
-    let cwd_workspace_name = workspace_name(&ctx);
-    let source_workspace_name = workspace_name(&source_ctx);
+/// sync-to dirty-target preflight: refuse if the target workweave has
+/// uncommitted changes that advance-target would overwrite.
+fn check_dirty_target_preflight(
+    cwd_project: &Project,
+    target_workspace_dir: &Path,
+    target_project_dir: &Path,
+    target_path: &Path,
+) -> anyhow::Result<()> {
+    let mut dirty: Vec<String> = Vec::new();
+    for repo_path in cwd_project.manifest.iter_repo_paths() {
+        let target_repo = target_workspace_dir.join(repo_path.as_path());
+        if target_repo.exists() && GitVcs.has_uncommitted_changes(&target_repo).unwrap_or(true) {
+            dirty.push(repo_path.to_string());
+        }
+    }
+    if GitVcs
+        .has_uncommitted_changes(target_project_dir)
+        .unwrap_or(true)
+    {
+        dirty.push("(project)".to_string());
+    }
+    if !dirty.is_empty() {
+        anyhow::bail!(
+            "sync-to precondition failed: target workweave has uncommitted changes in:\n  {}\n\
+             \n\
+             advance-target fast-forwards the target's worktrees over this work. Commit or \
+             stash in the target ({}), then re-run.",
+            dirty.join("\n  "),
+            target_path.display(),
+        );
+    }
+    Ok(())
+}
 
-    // Pin the source tip atomically (T0). Everything derived from the source
-    // — its manifest and lock — is read at this revision. This eliminates the
-    // torn-read window: a concurrent mutation of the source after this point
-    // changes refs but cannot change anything we've read (§6 of the design).
-    //
-    // This also fixes the latent contract violation of reading the source lock
-    // from the working tree rather than the committed lock of record.
-    let source_project_tip = GitVcs
-        .head_revision(&source_project_dir)
-        .context("failed to read source project HEAD")?;
+// ---------------------------------------------------------------------------
+// Phase: replay
+// ---------------------------------------------------------------------------
+//
+// Pins the source snapshot at T0 (first entry only), then runs Phase 2
+// (manifest repos) + Phase 1' (project repo). Per-repo parallelism and
+// partial-failure reporting live inside this phase — the `--json` / NDJSON
+// contracts are byte-compatible with the pre-restructure shape.
+//
+// **Re-entry rule (§4):** per-repo state is derived from the VCS itself:
+// - repo at its savepoint → redo the strategy (no-op for already-clean cases);
+// - repo mid-conflict → leave the VCS-native continue/abort to the operator;
+// - repo already at the converged target → no-op (HEAD == lock target).
+//
+// No resume flags. The strategy functions already handle the "already there"
+// case via the `head == target` short-circuit at the top of `sync_one_repo`.
 
-    // Read the source manifest and lock AT the pinned revision.
-    // No working-tree reads of source manifest/lock after this point.
-    let raw_source_lock = {
-        let content = GitVcs
-            .read_file_at_revision(
-                &source_project_dir,
-                &source_project_tip,
-                Path::new("rwv.lock"),
-            )
-            .with_context(|| {
-                format!(
-                    "failed to read source lock at revision {} in {}",
-                    source_project_tip,
-                    source_project_dir.display()
-                )
-            })?;
-        LockFile::from_yaml_str(&content).with_context(|| {
-            format!(
-                "failed to parse source lock at revision {} in {}",
-                source_project_tip,
-                source_project_dir.display()
-            )
-        })?
-    };
+fn run_replay(ctx: &OpContext<'_>) -> anyhow::Result<()> {
+    let emit_text = ctx.handler.emit_text();
 
-    let source_manifest = {
-        let content = GitVcs
-            .read_file_at_revision(
-                &source_project_dir,
-                &source_project_tip,
-                Path::new("rwv.yaml"),
-            )
-            .with_context(|| {
-                format!(
-                    "failed to read source manifest at revision {} in {}",
-                    source_project_tip,
-                    source_project_dir.display()
-                )
-            })?;
-        Manifest::from_yaml_str(&content).with_context(|| {
-            format!(
-                "failed to parse source manifest at revision {} in {}",
-                source_project_tip,
-                source_project_dir.display()
-            )
-        })?
-    };
+    // sync-to with `--strategy=ff`: replay is a no-op (target IS source
+    // here, and CWD is strictly ahead per the precondition). The advance-
+    // target phase does all the work.
+    if matches!(ctx.verb, op_state::OpVerb::SyncTo) && ctx.strategy == SyncStrategy::Ff {
+        return Ok(());
+    }
 
-    // Precondition: lock freshness (unless --force).
-    //
-    // Source: advisory check — compare each source repo's live HEAD against
-    // the pinned lock (inherent to what freshness means: a point-in-time
-    // snapshot of the source workspace). Uses the revision-pinned lock content
-    // rather than a working-tree read.
-    // Destination: uses the CWD lock as loaded from disk above.
-    if !force {
-        check_lock_freshness(
-            &source_workspace_dir,
-            &raw_source_lock,
-            Side::Source,
-            &source_workspace_name,
-        )?;
-        if let Some(ref lock) = cwd_project.lock {
-            check_lock_freshness(&workspace_dir, lock, Side::Destination, &cwd_workspace_name)?;
+    if emit_text {
+        if let op_state::OpVerb::SyncTo = ctx.verb {
+            eprintln!(
+                "sync-to: rebasing CWD against target ({})...",
+                ctx.cli_path.display(),
+            );
         }
     }
 
-    // CWD project tip — read before any side effects so precondition
-    // checks and Phase 1' use the pre-op starting state.
+    // Pin source snapshot at T0 on first replay entry. On re-entry, the
+    // previous snapshot is in the record-less RefCell (per-invocation context
+    // is fresh on resume, so we re-pin — source may have moved on, but per-
+    // repo no-op detection handles already-converged repos).
+    pin_source_snapshot_if_needed(ctx)?;
+
+    let snapshot_borrow = ctx.snapshot.borrow();
+    let snapshot = snapshot_borrow
+        .as_ref()
+        .expect("snapshot pinned just above");
+
+    // Load CWD project (manifest + lock) from disk.
+    let cwd_project = Project::from_dir(&ctx.cwd_project_dir)
+        .context("failed to load CWD project")?;
+
+    let cwd_workspace_name = workspace_name(&ctx.cwd_ctx);
+    let source_workspace_name = ctx.source_workspace_name.as_str();
+
+    // Precondition: lock freshness (unless --force).
+    //
+    // Source: advisory check against live HEAD vs the pinned lock content.
+    // Destination: uses the CWD lock as loaded from disk above.
+    if !ctx.force {
+        check_lock_freshness(
+            &ctx.source_workspace_dir,
+            &snapshot.raw_source_lock,
+            Side::Source,
+            source_workspace_name,
+        )?;
+        if let Some(ref lock) = cwd_project.lock {
+            check_lock_freshness(
+                &ctx.cwd_workspace_dir,
+                lock,
+                Side::Destination,
+                &cwd_workspace_name,
+            )?;
+        }
+    }
+
+    // CWD project tip — read before any side effects so precondition checks
+    // and Phase 1' use the pre-op starting state.
     let cwd_project_tip = GitVcs
-        .head_revision(&cwd_project_dir)
+        .head_revision(&ctx.cwd_project_dir)
         .context("failed to read CWD project HEAD")?;
 
     // Precondition: rebase and merge strategies require `rwv.lock merge=ours`
-    // in the project repo's committed `.gitattributes`. Without it, git's
-    // 3-way merge runs on rwv.lock and conflicts whenever both sides have
-    // lock edits. Check before any git ops so the operator is never left
-    // mid-rebase or mid-merge. FF never merges, so it doesn't need the
-    // precondition.
-    if matches!(strategy, SyncStrategy::Rebase | SyncStrategy::Merge) {
-        verify_replay_exclusion_invariant(&cwd_project_dir)?;
+    // in the project repo's committed `.gitattributes`. FF doesn't merge.
+    if matches!(ctx.strategy, SyncStrategy::Rebase | SyncStrategy::Merge) {
+        verify_replay_exclusion_invariant(&ctx.cwd_project_dir)?;
     }
 
     // Precondition: ff strategy refuses divergence; rebase/merge handle it
     // by replaying CWD's commits onto source's tip with `rwv.lock` excluded.
     // `--force` bypasses regardless of strategy and discards CWD's project
     // commits via hard-reset; the savepoint preserves them for `rwv abort`.
-    let phase1_ancestor_bypassed = if force {
-        // --force consents to discarding CWD's project COMMITS, which stay
-        // recoverable via the refs/rwv/pre-op savepoint. Uncommitted changes
-        // have no savepoint — the hard-reset in Phase 1' would destroy them
-        // unrecoverably. Refuse before any side effects.
+    let phase1_ancestor_bypassed = if ctx.force {
         if GitVcs
-            .has_uncommitted_changes(&cwd_project_dir)
+            .has_uncommitted_changes(&ctx.cwd_project_dir)
             .unwrap_or(true)
         {
             anyhow::bail!(
@@ -1560,111 +2077,40 @@ fn run_sync_impl_with_op_id(
                  --force discards committed divergence (recoverable via refs/rwv/pre-op), but \
                  the hard-reset would destroy uncommitted changes unrecoverably. Commit or \
                  stash them, then re-run.",
-                cwd_project_dir.display(),
+                ctx.cwd_project_dir.display(),
             );
         }
-        // Even with --force, detect whether the ancestor check WOULD have
-        // refused — so we can preserve the project savepoint post-op as a
-        // tombstone of the discarded commits.
-        !cwd_is_ancestor_or_equal(&cwd_project_dir, &cwd_project_tip, &source_project_tip)
-    } else if strategy == SyncStrategy::Ff {
-        check_phase1_ancestor(
-            &cwd_project_dir,
+        !cwd_is_ancestor_or_equal(
+            &ctx.cwd_project_dir,
             &cwd_project_tip,
-            &source_project_tip,
+            &snapshot.source_project_tip,
+        )
+    } else if ctx.strategy == SyncStrategy::Ff {
+        check_phase1_ancestor(
+            &ctx.cwd_project_dir,
+            &cwd_project_tip,
+            &snapshot.source_project_tip,
             &cwd_workspace_name,
-            &source_workspace_name,
+            source_workspace_name,
         )?;
         false
     } else {
-        // rebase/merge: precondition bypassed; the strategy itself handles
-        // divergence. Savepoint cleanup follows the normal path (no tombstone).
         false
     };
 
-    // --continue / pre-op guard: check whether a sync is already in progress.
-    //
-    // For `rwv sync` the only involved workspace is CWD. For `rwv sync-to`
-    // both CWD and the target workspace are checked.
-    //
-    // - `--continue` absent, no op-state → fresh start (normal path below).
-    // - `--continue` absent, op-state present → refuse with "in-progress" error.
-    // - `--continue` present, op-state absent → error "no op in progress to continue".
-    // - `--continue` present, op-state present → resume; all parameters are read from
-    //   the recorded state (source, strategy). No mismatch check — `--continue` is
-    //   exclusive: the operator cannot pass conflicting flags (enforced at parse time).
-    //
-    // When `pre_existing_op_id` is `Some`, the caller (sync-to step 1) has already
-    // set up op-state and savepoints — bypass the check/write entirely.
-    let op_id: OpId;
-    if let Some(existing_id) = pre_existing_op_id {
-        // Caller-managed op-state: use the provided id, skip all op-state machinery.
-        op_id = existing_id.clone();
-    } else if do_continue {
-        // Resume: all parameters were already read from op-state above (in the
-        // `pre_read_op_state` path). Unwrap is safe: `pre_read_op_state` is
-        // `Some` whenever `do_continue && pre_existing_op_id.is_none()`.
-        let recorded = pre_read_op_state
-            .expect("pre_read_op_state must be Some when do_continue && no pre_existing_op_id");
-        op_id = OpId::from_string(recorded.id.clone());
-        if emit_text {
-            eprintln!(
-                "continuing sync (op {op_id}, mid `{phase}`)",
-                phase = recorded.phase
-            );
-        }
-    } else {
-        // Check that no op is already in progress (concurrency guard).
-        op_state::check_no_op_in_progress(&[workspace_dir.as_path()])?;
+    // === Phase 2 (manifest repos) — materialize missing, prune dropped, sync ===
 
-        op_id = OpId::new_now();
-
-        // Write the v2 owner record to the CWD workspace. Phase is Replay —
-        // the first phase the driver will enter. For plain `sync` there is no
-        // second mutated workspace, so no lease is written.
-        let record = OwnerRecord::new_sync(
-            &op_id,
-            strategy,
-            source_workspace_dir.clone(),
-            workspace_dir.clone(),
-        );
-        op_state::write_owner(&workspace_dir, &record).context("failed to write owner record")?;
-    }
-
-    // Create savepoints for all CWD repos (including project repo).
-    create_savepoint(&cwd_project_dir, &op_id)?;
-    for repo_path in cwd_project.manifest.iter_repo_paths() {
-        let abs = workspace_dir.join(repo_path.as_path());
-        if abs.exists() {
-            let _ = create_savepoint(&abs, &op_id);
-        }
-    }
-
-    // Phase 2 first: advance manifest repos using the snapshot-pinned source
-    // lock as targets. Both raw_source_lock and source_manifest were read at
-    // source_project_tip (T0) above — no working-tree reads of source state
-    // below this point.
-
-    // Phase 3 materialize: for each repo listed in source's lock but missing
-    // from the CWD workspace, clone/worktree-add before Phase 2 tries to sync
-    // it. In a workweave this means `git worktree add` against the canonical
-    // clone at primary; in the primary weave it means `git clone`.
-    //
-    // Iterates the RAW source lock — materialize uses the manifest URL, not
-    // the lock version, and we must include every locked path (including
-    // ones whose canonical clone is missing on the source side) so failures
-    // surface as B6 prescribes.
     let mut materialize_failures: Vec<crate::manifest::RepoPath> = Vec::new();
-    for repo_path in raw_source_lock.iter_repo_paths() {
-        let abs = workspace_dir.join(repo_path.as_path());
+    for repo_path in snapshot.raw_source_lock.iter_repo_paths() {
+        let abs = ctx.cwd_workspace_dir.join(repo_path.as_path());
         if abs.exists() {
             continue;
         }
-        let entry = match source_manifest.get_entry(repo_path) {
+        let entry = match snapshot.source_manifest.get_entry(repo_path) {
             Some(e) => e,
-            None => continue, // lock entry without manifest entry — skip
+            None => continue,
         };
-        match materialize_missing_repo(&ctx, repo_path, entry, &cwd_project_name) {
+        match materialize_missing_repo(&ctx.cwd_ctx, repo_path, entry, &ctx.cwd_project_name) {
             Ok(()) => {
                 if emit_text {
                     println!("  {repo_path}: materialized");
@@ -1674,25 +2120,17 @@ fn run_sync_impl_with_op_id(
                 if emit_text {
                     eprintln!("  {repo_path}: materialize failed: {e}");
                 }
-                // B6: previously this stderr line was the only signal; the
-                // per-repo `skipped (not on disk)` loop below didn't flip
-                // `any_failure`, so sync exited 0 with a lock that had
-                // advanced past a never-materialised repo. Record the
-                // failure so the post-loop bail fires.
                 materialize_failures.push(repo_path.clone());
             }
         }
     }
 
-    // Phase 3 prune: any repo present on disk in CWD but absent from source's
-    // new lock should be dropped. Conservative — refuse to delete worktrees
-    // with uncommitted changes or unique local commits.
     if let Some(ref cwd_lock) = cwd_project.lock {
         for repo_path in cwd_lock.iter_repo_paths() {
-            if raw_source_lock.contains_repo(repo_path) {
+            if snapshot.raw_source_lock.contains_repo(repo_path) {
                 continue;
             }
-            match prune_dropped_repo(&ctx, repo_path) {
+            match prune_dropped_repo(&ctx.cwd_ctx, repo_path) {
                 Ok(()) => {
                     if emit_text {
                         println!("  {repo_path}: pruned (dropped from lock)");
@@ -1707,37 +2145,15 @@ fn run_sync_impl_with_op_id(
         }
     }
 
-    // B6: a failure in the materialize loop above is itself a sync failure.
-    // Without this, every materialize-failed repo silently becomes a
-    // `skipped (not on disk)` print and sync exits 0 with a lock advanced
-    // past a missing repo.
     let mut any_failure = !materialize_failures.is_empty();
 
-    // Resolve the source lock against the CWD workspace (where repos now
-    // exist post-materialize) so sync_one_repo gets canonical-SHA targets.
-    // Resolution failures here mean the local clone of a repo hasn't yet
-    // pulled the SHA the lock pins — surface them via the per-repo loop
-    // below as a failure to keep with B3.
-    let (source_lock, source_lock_failures) =
-        raw_source_lock.clone().resolve_versions(&workspace_dir);
-    let unresolvable: std::collections::BTreeSet<crate::manifest::RepoPath> = source_lock_failures
-        .iter()
-        .map(|(p, _)| p.clone())
-        .collect();
+    let (source_lock, source_lock_failures) = snapshot
+        .raw_source_lock
+        .clone()
+        .resolve_versions(&ctx.cwd_workspace_dir);
+    let unresolvable: std::collections::BTreeSet<crate::manifest::RepoPath> =
+        source_lock_failures.iter().map(|(p, _)| p.clone()).collect();
 
-    // Phase 2 (per-repo manifest sync) splits into three classes:
-    //
-    // - **skipped** (`!abs.exists()`): no on-disk clone, no work, no record.
-    // - **unresolvable** (lock pins a revision the local clone doesn't have):
-    //   surfaced as a `head-unreadable` failure record; no sync work.
-    // - **sync** (everything else): call `sync_one_repo` + post-sync refresh.
-    //
-    // The first two classes are pure record-keeping and run serially before
-    // the parallel pool; the third class is what `-j N` fans out across
-    // workers. Per-repo savepoint refs (created above) are per-ref-name so
-    // workers don't race; `sync_one_repo` and the refresh helpers touch
-    // only the repo's own working tree/index/refs and don't write to any
-    // workspace-wide state, which is what makes parallel safe.
     struct SyncTask {
         repo_path: crate::manifest::RepoPath,
         abs: PathBuf,
@@ -1745,8 +2161,8 @@ fn run_sync_impl_with_op_id(
     }
     let mut sync_tasks: Vec<SyncTask> = Vec::new();
 
-    for (repo_path, raw_entry) in raw_source_lock.iter_entries() {
-        let abs = workspace_dir.join(repo_path.as_path());
+    for (repo_path, raw_entry) in snapshot.raw_source_lock.iter_entries() {
+        let abs = ctx.cwd_workspace_dir.join(repo_path.as_path());
         if !abs.exists() {
             if emit_text {
                 println!("  {repo_path}: skipped (not on disk)");
@@ -1761,7 +2177,6 @@ fn run_sync_impl_with_op_id(
                 );
             }
             any_failure = true;
-            // Surface as a JSON record so consumers see this in --json mode.
             let head_unreadable_error = format!(
                 "lock pins unknown revision {} in local clone",
                 raw_entry.version
@@ -1770,14 +2185,14 @@ fn run_sync_impl_with_op_id(
                 error: head_unreadable_error,
                 cause: None,
             });
-            handler.record(repo_path.as_str(), &abs.to_string_lossy(), &outcome);
+            ctx.handler
+                .record(repo_path.as_str(), &abs.to_string_lossy(), &outcome);
             continue;
         }
         let lock_entry = match source_lock.get_entry(repo_path) {
             Some(e) => e,
             None => continue,
         };
-
         sync_tasks.push(SyncTask {
             repo_path: repo_path.clone(),
             abs,
@@ -1785,29 +2200,15 @@ fn run_sync_impl_with_op_id(
         });
     }
 
-    // Fan out the sync tasks. Under `jobs == 1` `run_in_parallel` runs
-    // them serially on the caller thread without spawning — bit-identical
-    // to the pre-parallel loop. Under `jobs > 1` each worker calls
-    // `sync_one_repo` + the post-sync refresh helpers on its own task; on
-    // completion it routes the outcome through `handler.record`, which each
-    // OutputHandler impl handles appropriately (text printing, buffering, or
-    // NDJSON streaming with its own mutex-guarded stdout write).
-    //
-    // Worker output order is completion order under `-j > 1` (matches
-    // fetch/update parallel UX); under `-j 1` it remains input order
-    // (the BTreeMap iteration above).
-    let task_outcomes: Vec<bool> = run_in_parallel(&sync_tasks, jobs, |_idx, task| {
+    let strategy = ctx.strategy;
+    let task_outcomes: Vec<bool> = run_in_parallel(&sync_tasks, ctx.jobs, |_idx, task| {
         let outcome = sync_one_repo(&task.abs, &task.target, strategy);
         let is_failure = outcome.is_failure();
         if !is_failure {
-            // Post-sync: refresh index and working tree if stale. Fires on
-            // every non-failure outcome — including NoOp (HEAD already at lock
-            // but index/WT may have drifted from a shared-ref advance) and
-            // AlreadyAhead (working tree should still reflect HEAD).
             GitVcs.refresh_index_to_head_if_safe(&task.abs);
             GitVcs.refresh_working_tree_to_head_if_safe(&task.abs);
         }
-        handler.record(
+        ctx.handler.record(
             task.repo_path.as_str(),
             &task.abs.to_string_lossy(),
             &outcome,
@@ -1821,26 +2222,24 @@ fn run_sync_impl_with_op_id(
     if any_failure {
         anyhow::bail!(
             "{}",
-            manifest_repo_failure_message(strategy, &resolved_source)
+            manifest_repo_failure_message(strategy, &ctx.resolved_source)
         );
     }
 
-    // Phase 1': project repo strategy with rwv.lock excluded.
-    let phase1_outcome = if force {
-        // Hard-reset semantics: discard CWD's project commits. The
-        // savepoint created above (refs/rwv/pre-op/<op-id>) keeps the
-        // discarded commits recoverable via `rwv abort`.
+    // === Phase 1' (project repo) — strategy on the project repo ===
+
+    let phase1_outcome = if ctx.force {
         GitVcs
-            .hard_reset(&cwd_project_dir, &source_project_tip)
+            .hard_reset(&ctx.cwd_project_dir, &snapshot.source_project_tip)
             .map_err(anyhow::Error::from)
             .context("project repo reset --force failed")
     } else {
         apply_project_strategy(
-            &cwd_project_dir,
-            &source_project_tip,
+            &ctx.cwd_project_dir,
+            &snapshot.source_project_tip,
             &cwd_project_tip,
             strategy,
-            &resolved_source,
+            &ctx.resolved_source,
         )
     };
 
@@ -1852,21 +2251,118 @@ fn run_sync_impl_with_op_id(
             "{}",
             phase1_or_phase3_failure_message(
                 Phase::One,
-                &cwd_project_dir,
+                &ctx.cwd_project_dir,
                 strategy,
-                &resolved_source,
+                &ctx.resolved_source,
             )
         );
     }
 
-    // Reload CWD project so Phase 3 sees the post-Phase-1' manifest (which
-    // may now include newly-added repos brought over from source). If reload
-    // fails, bail hard: proceeding with the pre-Phase-1' snapshot would let
-    // Phase 3 silently regenerate a lock that is missing newly-added repos,
-    // and in --json mode the old warning was suppressed entirely. The
-    // operator should run `rwv abort` to restore the pre-op savepoint, then
-    // investigate the manifest corruption.
-    let cwd_project_phase3 = Project::from_dir(&cwd_project_dir).map_err(|e| {
+    // Stash the ancestor-bypass flag so the cleanup phase can preserve the
+    // project savepoint as a tombstone (the only reference to discarded
+    // commits). We do this by writing a side-channel marker file at the
+    // owner workspace — kept simple, since this is a `--force` edge case.
+    if phase1_ancestor_bypassed {
+        // The cleanup phase reads this via filesystem.exists() — see cleanup().
+        let _ = std::fs::write(
+            ctx.owner_workspace_dir
+                .join(".rwv-op-force-tombstone"),
+            ctx.op_id.as_str(),
+        );
+    }
+
+    Ok(())
+}
+
+/// Pin the source snapshot (project tip + manifest + lock at that revision)
+/// if not already pinned this invocation. Idempotent: if already pinned,
+/// returns Ok immediately.
+fn pin_source_snapshot_if_needed(ctx: &OpContext<'_>) -> anyhow::Result<()> {
+    if ctx.snapshot.borrow().is_some() {
+        return Ok(());
+    }
+    let source_project_tip = GitVcs
+        .head_revision(&ctx.source_project_dir)
+        .context("failed to read source project HEAD")?;
+
+    let raw_source_lock = {
+        let content = GitVcs
+            .read_file_at_revision(
+                &ctx.source_project_dir,
+                &source_project_tip,
+                Path::new("rwv.lock"),
+            )
+            .with_context(|| {
+                format!(
+                    "failed to read source lock at revision {} in {}",
+                    source_project_tip,
+                    ctx.source_project_dir.display()
+                )
+            })?;
+        LockFile::from_yaml_str(&content).with_context(|| {
+            format!(
+                "failed to parse source lock at revision {} in {}",
+                source_project_tip,
+                ctx.source_project_dir.display()
+            )
+        })?
+    };
+
+    let source_manifest = {
+        let content = GitVcs
+            .read_file_at_revision(
+                &ctx.source_project_dir,
+                &source_project_tip,
+                Path::new("rwv.yaml"),
+            )
+            .with_context(|| {
+                format!(
+                    "failed to read source manifest at revision {} in {}",
+                    source_project_tip,
+                    ctx.source_project_dir.display()
+                )
+            })?;
+        Manifest::from_yaml_str(&content).with_context(|| {
+            format!(
+                "failed to parse source manifest at revision {} in {}",
+                source_project_tip,
+                ctx.source_project_dir.display()
+            )
+        })?
+    };
+
+    *ctx.snapshot.borrow_mut() = Some(SourceSnapshot {
+        source_project_tip,
+        source_manifest,
+        raw_source_lock,
+    });
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Phase: relock
+// ---------------------------------------------------------------------------
+//
+// Regenerates `rwv.lock` from the post-replay manifest tips and commits if
+// changed. On completion, records the converged per-repo tips in the owner
+// record (consumed by abort hardening, sibling .4).
+//
+// **Re-entry rule:** regenerating a lock that is already current is a no-op
+// (write_lock + commit_lock_file_with_message both short-circuit when the
+// content hasn't changed). The per-repo HEAD reads that populate
+// `converged_tips` are pure reads.
+
+fn run_relock(ctx: &OpContext<'_>) -> anyhow::Result<()> {
+    // sync-to with `--strategy=ff`: relock is a no-op (replay was a no-op).
+    if matches!(ctx.verb, op_state::OpVerb::SyncTo) && ctx.strategy == SyncStrategy::Ff {
+        return Ok(());
+    }
+
+    let emit_text = ctx.handler.emit_text();
+
+    // Reload the project after replay (manifest may now include newly-added
+    // repos brought over from source).
+    let cwd_project = Project::from_dir(&ctx.cwd_project_dir).map_err(|e| {
         anyhow::anyhow!(
             "failed to reload project manifest after Phase 1' ({e}).\n\
              \n\
@@ -1875,16 +2371,15 @@ fn run_sync_impl_with_op_id(
              omit newly-added repos from the regenerated lock.\n\
              \n\
              To recover: `rwv abort`",
-            cwd_project_dir = cwd_project_dir.display(),
+            cwd_project_dir = ctx.cwd_project_dir.display(),
         )
     })?;
 
-    // Phase 3: regenerate rwv.lock from current manifest tips and commit if changed.
     if let Err(e) = regenerate_lock_phase3(
-        &ctx,
-        &cwd_project_dir,
-        &cwd_project_phase3,
-        &source_workspace_name,
+        &ctx.cwd_ctx,
+        &ctx.cwd_project_dir,
+        &cwd_project,
+        &ctx.source_workspace_name,
     ) {
         if emit_text {
             eprintln!("Phase 3 (re-lock) failed: {e}");
@@ -1893,46 +2388,229 @@ fn run_sync_impl_with_op_id(
             "{}",
             phase1_or_phase3_failure_message(
                 Phase::Three,
-                &cwd_project_dir,
-                strategy,
-                &resolved_source,
+                &ctx.cwd_project_dir,
+                ctx.strategy,
+                &ctx.resolved_source,
             )
         );
     }
 
-    // Successful completion: clean up savepoints and marker.
-    //
-    // Exception: when `--force` bypassed the Phase 1 ancestor check, the
-    // hard-reset discarded reachable commits from the project repo. Preserve
-    // the project repo's savepoint as a tombstone so the operator can recover
-    // via `git reset --hard refs/rwv/pre-op/<id>` (manual; the marker is
-    // gone, so `rwv abort` no longer sees an in-flight op). Manifest repo
-    // savepoints are still cleaned — they are not part of the discarded set.
-    if !phase1_ancestor_bypassed {
-        delete_savepoint(&cwd_project_dir, &op_id);
+    // Record converged tips on the owner record. These are read by
+    // advance-target and consumed by abort hardening (sibling .4).
+    record_converged_tips(ctx, &cwd_project)?;
+
+    Ok(())
+}
+
+/// Read post-replay HEADs of each manifest repo + project repo and write
+/// them into the owner record's `converged_tips` map. Used by advance-target
+/// and (sibling .4) abort's HEAD-verified restore.
+fn record_converged_tips(ctx: &OpContext<'_>, cwd_project: &Project) -> anyhow::Result<()> {
+    let mut owner = op_state::read_owner(&ctx.owner_workspace_dir)?
+        .ok_or_else(|| anyhow::anyhow!("internal: owner record missing during relock"))?;
+    owner.converged_tips.clear();
+    for repo_path in cwd_project.manifest.iter_repo_paths() {
+        let abs = ctx.cwd_workspace_dir.join(repo_path.as_path());
+        if !abs.exists() {
+            continue;
+        }
+        if let Ok(rev) = GitVcs.head_revision(&abs) {
+            owner
+                .converged_tips
+                .insert(repo_path.as_str().to_owned(), rev.as_str().to_owned());
+        }
+    }
+    if let Ok(rev) = GitVcs.head_revision(&ctx.cwd_project_dir) {
+        owner
+            .converged_tips
+            .insert("(project)".to_owned(), rev.as_str().to_owned());
+    }
+    op_state::write_owner(&ctx.owner_workspace_dir, &owner)
+        .context("failed to write converged_tips back to owner record")?;
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Phase: advance-target (sync-to only)
+// ---------------------------------------------------------------------------
+//
+// FF-advance every target manifest repo + the target project repo to the
+// converged tips recorded by relock.
+//
+// **Re-entry rule:** ff to an already-reached tip is a no-op (the equal-tip
+// check at the top of `ff_advance_repo` short-circuits).
+
+fn run_advance_target(ctx: &OpContext<'_>) -> anyhow::Result<()> {
+    let emit_text = ctx.handler.emit_text();
+
+    if emit_text {
+        eprintln!("sync-to: fast-forwarding target to CWD's tips...");
+    }
+
+    let cwd_project_final = Project::from_dir(&ctx.cwd_project_dir)
+        .context("failed to reload CWD project for advance-target")?;
+
+    let mut any_ff_failure = false;
+    for repo_path in cwd_project_final.manifest.iter_repo_paths() {
+        let cwd_repo = ctx.cwd_workspace_dir.join(repo_path.as_path());
+        let target_repo = ctx.dest_workspace_dir.join(repo_path.as_path());
+        if !cwd_repo.exists() {
+            continue;
+        }
+        if !target_repo.exists() {
+            if emit_text {
+                eprintln!("  {}: skipped (not on disk in target)", repo_path);
+            }
+            continue;
+        }
+        let cwd_tip = match GitVcs.head_revision(&cwd_repo) {
+            Ok(tip) => tip,
+            Err(e) => {
+                if emit_text {
+                    eprintln!("  {}: failed to read CWD tip: {e}", repo_path);
+                }
+                any_ff_failure = true;
+                continue;
+            }
+        };
+        match ff_advance_repo(&target_repo, &cwd_repo, &cwd_tip) {
+            Ok(()) => {
+                if emit_text {
+                    println!(
+                        "  {}: ff-advanced to {}",
+                        repo_path,
+                        &cwd_tip.as_str()[..8.min(cwd_tip.as_str().len())]
+                    );
+                }
+            }
+            Err(e) => {
+                if emit_text {
+                    eprintln!("  {}: ff-advance failed: {e}", repo_path);
+                }
+                any_ff_failure = true;
+            }
+        }
+    }
+
+    let cwd_project_tip = GitVcs
+        .head_revision(&ctx.cwd_project_dir)
+        .context("failed to read CWD project HEAD for advance-target")?;
+
+    match ff_advance_repo(&ctx.dest_project_dir, &ctx.cwd_project_dir, &cwd_project_tip) {
+        Ok(()) => {
+            if emit_text {
+                println!(
+                    "  (project): ff-advanced to {}",
+                    &cwd_project_tip.as_str()[..8.min(cwd_project_tip.as_str().len())]
+                );
+            }
+        }
+        Err(e) => {
+            if emit_text {
+                eprintln!("  (project): ff-advance failed: {e}");
+            }
+            any_ff_failure = true;
+        }
+    }
+
+    if any_ff_failure {
+        anyhow::bail!(
+            "sync-to advance-target failed for one or more repos (see above).\n\
+             This should not happen after a clean replay; possible concurrent modification.\n\
+             Op-state remains in both workspaces.\n\
+             Rerun `rwv sync-to --continue` after resolving, or `rwv abort` to roll back.",
+        );
+    }
+
+    if ctx.handler.emit_text() {
+        eprintln!("sync-to complete: target fast-forwarded to CWD's tip");
+    }
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Phase: retire (--retire only)
+// ---------------------------------------------------------------------------
+//
+// Today's retire semantics (merged-check on manifest repos, dirty-check, then
+// `delete_workweave`). The full retire-as-phase semantics (merged-check
+// failure → phase=retire, abort rolls back target, sibling .3) build on this
+// stub. For now, retire still bails normally on failure; on success the
+// workweave is gone and the cleanup phase finishes the op record.
+
+fn run_retire(ctx: &OpContext<'_>) -> anyhow::Result<()> {
+    let emit_text = ctx.handler.emit_text();
+
+    match &ctx.cwd_ctx.location {
+        WorkspaceLocation::Workweave { dir, name, project } => retire_workweave_after_sync_to(
+            &ctx.cwd_ctx,
+            dir,
+            name,
+            project,
+            &ctx.cwd_project_dir,
+            &ctx.dest_workspace_dir,
+        ),
+        WorkspaceLocation::Weave { .. } => {
+            if emit_text {
+                eprintln!("warning: --retire is only meaningful inside a workweave; ignoring");
+            }
+            Ok(())
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Terminal: cleanup
+// ---------------------------------------------------------------------------
+//
+// Drop savepoints and clear the owner record + lease. Cleanup is not a
+// persisted phase: a crash before cleanup completes leaves the on-disk
+// phase at the last work phase (e.g. retire), which is re-runnable;
+// `--continue` then re-runs that phase (it's idempotent) and reaches
+// cleanup again.
+
+fn cleanup(ctx: &OpContext<'_>) -> anyhow::Result<()> {
+    let emit_text = ctx.handler.emit_text();
+
+    // Drop savepoints. Exception: when the --force tombstone marker was
+    // written during replay (Phase 1' ancestor check was bypassed), preserve
+    // the project savepoint as the only reference to the discarded commits.
+    let tombstone_path = ctx
+        .owner_workspace_dir
+        .join(".rwv-op-force-tombstone");
+    let tombstone = tombstone_path.exists();
+
+    if !tombstone {
+        delete_savepoint(&ctx.cwd_project_dir, &ctx.op_id);
     } else if emit_text {
         eprintln!(
             "note: --force discarded project commits; pre-sync state preserved at \
              refs/rwv/pre-op/{op_id} (recover with `git reset --hard refs/rwv/pre-op/{op_id}` \
              in {})",
-            cwd_project_dir.display()
+            ctx.cwd_project_dir.display(),
+            op_id = ctx.op_id,
         );
     }
-    for repo_path in cwd_project_phase3.manifest.iter_repo_paths() {
-        let abs = workspace_dir.join(repo_path.as_path());
-        if abs.exists() {
-            delete_savepoint(&abs, &op_id);
+    let _ = std::fs::remove_file(&tombstone_path);
+
+    // Manifest savepoints: reload the project so we see post-replay shape.
+    if let Ok(project) = Project::from_dir(&ctx.cwd_project_dir) {
+        for repo_path in project.manifest.iter_repo_paths() {
+            let abs = ctx.cwd_workspace_dir.join(repo_path.as_path());
+            if abs.exists() {
+                delete_savepoint(&abs, &ctx.op_id);
+            }
         }
     }
-    // Remove the owner record from CWD workspace on successful completion.
-    // Skip when pre_existing_op_id is set — the outer caller (sync-to) manages
-    // op-state lifecycle across both workspaces.
-    if pre_existing_op_id.is_none() {
-        op_state::clear_owner(&workspace_dir);
-    }
 
+    // Clear owner record and lease (if any).
+    op_state::clear_owner(&ctx.owner_workspace_dir);
+    if matches!(ctx.verb, op_state::OpVerb::SyncTo) {
+        op_state::clear_lease(&ctx.dest_workspace_dir);
+    }
     Ok(())
 }
+
 
 /// `rwv sync-to --retire` post-sync-to cleanup.
 ///
@@ -2357,7 +3035,8 @@ pub fn run_sync_json(
             records: &records,
             schema_url: SYNC_JSON_SCHEMA_URL,
         };
-        run_sync_impl(
+        run_machine(
+            MachineVerb::Sync,
             cwd,
             source,
             strategy,
@@ -2370,7 +3049,8 @@ pub fn run_sync_json(
         )
     } else {
         let handler = JsonEnvelopeHandler { records: &records };
-        run_sync_impl(
+        run_machine(
+            MachineVerb::Sync,
             cwd,
             source,
             strategy,
@@ -2452,40 +3132,26 @@ fn run_sync_json_impl(
 // rwv sync-to
 // ---------------------------------------------------------------------------
 //
-// Three-step orchestration:
+// `sync-to` is the same data-driven phase machine as `sync` (above) with
+// advance-target always running and retire running when `--retire` is set:
 //
-//   Step 1 — rebase/merge CWD against target.
-//             Calls run_sync_impl(cwd=CWD, source=target, strategy=<X>).
-//             This is identical to what `rwv sync <target>` does, except the
-//             source path is target and CWD is the destination.
+//   guard → mark → savepoint → replay → relock → advance-target → [retire] → cleanup
 //
-//   Step 2 — auto-relock if step 1 moved manifest tips.
-//             Regenerate rwv.lock in CWD's project repo. If the lock
-//             changed, commit it with message "lock: post-rebase refresh".
-//             This is folded into the sync-to orchestration (not a bolt-on).
+// The replay phase IS what `rwv sync <target>` does (CWD absorbs target's
+// history with CWD's commits on top). advance-target ff-forwards the
+// target's repos to CWD's converged tips. With `--retire`, the workweave
+// is then deleted (merged-check + dirty-check, see [`retire_workweave_after_sync_to`]).
 //
-//   Step 3 — FF-advance target to CWD's new tip.
-//             Fast-forward each manifest repo and the project repo in target
-//             to match CWD's converged tips. Always FF; if FF fails, bail
-//             with an actionable error.
-//
-// Op-state is written to BOTH workspaces (CWD + target) before step 1.
-// Phase advances: step1-rebase → step1-complete → step3-ff → both cleared.
-// On any failure, op-state is left in place for --continue or rwv abort.
+// Op-state is one full owner record at CWD plus a thin lease at the target
+// workspace. Driver re-entry follows the lease pointer when `--continue`
+// is invoked from the target side.
 
 /// Execute `rwv sync-to <target>`.
 ///
 /// `target` is the workspace to advance, or `None` when `--continue` is set
-/// (target is then read from the in-progress op-state file). Step 1 calls the
-/// existing sync engine to rebase/merge CWD against target (CWD absorbs
-/// target's history with CWD's commits on top). Step 2 auto-relocks if tips
-/// moved. Step 3 fast-forwards target's repos to CWD's converged tips.
-///
-/// If `retire` is true and all steps succeed, the workweave is deleted after
-/// step 3 (requires clean worktree and manifest repos converged with target).
-///
-/// `do_continue` resumes a mid-op sync-to by reading the recorded phase and
-/// all parameters from op-state, skipping already-completed steps.
+/// (target is then read from the in-progress op-state file). All steps are
+/// expressed as phases in the data-driven machine; `--continue` resumes at
+/// the recorded phase from either workspace.
 #[allow(clippy::too_many_arguments)]
 pub fn run_sync_to(
     cwd: &Path,
@@ -2501,7 +3167,8 @@ pub fn run_sync_to(
     let handler = TextHandler {
         stdout_lock: &stdout_lock,
     };
-    run_sync_to_impl(
+    run_machine(
+        MachineVerb::SyncTo,
         cwd,
         target,
         strategy,
@@ -2535,7 +3202,8 @@ pub fn run_sync_to_json(
             records: &records,
             schema_url: SYNC_TO_JSON_SCHEMA_URL,
         };
-        run_sync_to_impl(
+        run_machine(
+            MachineVerb::SyncTo,
             cwd,
             target,
             strategy,
@@ -2548,7 +3216,8 @@ pub fn run_sync_to_json(
         )
     } else {
         let handler = JsonEnvelopeHandler { records: &records };
-        run_sync_to_impl(
+        run_machine(
+            MachineVerb::SyncTo,
             cwd,
             target,
             strategy,
@@ -2572,459 +3241,6 @@ pub fn run_sync_to_json(
     )
 }
 
-/// Shared sync-to orchestration body.
-#[allow(clippy::too_many_arguments)]
-fn run_sync_to_impl(
-    cwd: &Path,
-    target_source: Option<&SyncSource>,
-    strategy: SyncStrategy,
-    force: bool,
-    retire: bool,
-    project_override: Option<ProjectName>,
-    jobs: usize,
-    handler: &dyn OutputHandler,
-    do_continue: bool,
-) -> anyhow::Result<()> {
-    let emit_text = handler.emit_text();
-
-    // Resolve CWD workspace.
-    let cwd_ctx = WorkspaceContext::resolve(cwd, project_override.clone())?;
-    let cwd_workspace_dir = cwd_ctx.active_path().to_path_buf();
-
-    // --continue / pre-op guard.
-    //
-    // When `--continue` is set (`do_continue`), read ALL parameters from the
-    // in-progress op-state file. The CLI has already rejected any co-flags via
-    // clap `conflicts_with`, so `target_source`, `strategy`, and `retire` from
-    // the function signature must not be used in this path.
-    //
-    // When not `--continue`, `target_source` is always `Some` (the caller
-    // resolved it) and `strategy`/`retire`/`force` come from function params.
-    struct ResolvedParams {
-        op_id: OpId,
-        resume_phase: Option<crate::op_state::OpPhase>,
-        /// Absolute path to the owner workspace (CWD at invocation, or
-        /// the owner resolved from a lease when --continue is from target).
-        owner_workspace_dir: PathBuf,
-        target_path: PathBuf,
-        target_workspace_dir: PathBuf,
-        strategy: SyncStrategy,
-        retire: bool,
-    }
-
-    let params: ResolvedParams = if do_continue {
-        // Resume: read all parameters from the recorded op-state.
-        // resume() follows a lease pointer if invoked from a leased workspace,
-        // so this works identically from either the owner or the target.
-        let (recorded, owner_ws) = op_state::resume(&cwd_workspace_dir)?;
-        let oid = OpId::from_string(recorded.id.clone());
-        let phase_display = recorded.phase.to_string();
-        let phase = Some(recorded.phase);
-        // Derive target, strategy, retire from recorded state.
-        let tgt_path = recorded.target.clone();
-        let strat = recorded
-            .strategy
-            .parse::<SyncStrategy>()
-            .context("op-state has invalid strategy")?;
-        let ret = recorded.retire;
-        if emit_text {
-            eprintln!("continuing sync-to (op {oid}, mid `{phase_display}`)",);
-        }
-        let tgt_ctx = WorkspaceContext::resolve(&tgt_path, project_override.clone())?;
-        let tgt_workspace_dir = tgt_ctx.active_path().to_path_buf();
-        ResolvedParams {
-            op_id: oid,
-            resume_phase: phase,
-            owner_workspace_dir: owner_ws,
-            target_path: tgt_path,
-            target_workspace_dir: tgt_workspace_dir,
-            strategy: strat,
-            retire: ret,
-        }
-    } else {
-        // Fresh start: target_source is Some (the caller resolved it).
-        let ts =
-            target_source.expect("target_source must be Some for non-continue sync-to invocations");
-        let tgt_path = ts.resolve(&cwd_ctx)?;
-        let tgt_ctx = WorkspaceContext::resolve(&tgt_path, project_override.clone())?;
-        let tgt_workspace_dir = tgt_ctx.active_path().to_path_buf();
-
-        // Concurrency guard: check both CWD and target.
-        op_state::check_no_op_in_progress(&[
-            cwd_workspace_dir.as_path(),
-            tgt_workspace_dir.as_path(),
-        ])?;
-
-        let oid = OpId::new_now();
-
-        // v2: write the owner record to CWD (the initiating workspace) and a
-        // thin immutable lease to the target workspace. Phase is Replay —
-        // the first phase the driver will enter.
-        //
-        // [v1→v2 migration note: previously both workspaces received a full
-        // copy of the record. Now only the owner (CWD) holds mutable phase
-        // state; the target holds an immutable {id, owner} pointer only.]
-        let record = OwnerRecord::new_sync_to(
-            &oid,
-            strategy,
-            cwd_workspace_dir.clone(),
-            tgt_workspace_dir.clone(),
-            retire,
-        );
-        op_state::write_owner(&cwd_workspace_dir, &record)
-            .context("failed to write owner record to CWD")?;
-        let lease = LeaseRecord {
-            id: oid.as_str().to_owned(),
-            owner: cwd_workspace_dir.clone(),
-        };
-        op_state::write_lease(&tgt_workspace_dir, &lease)
-            .context("failed to write lease to target")?;
-        ResolvedParams {
-            op_id: oid,
-            resume_phase: None,
-            owner_workspace_dir: cwd_workspace_dir.clone(),
-            target_path: tgt_path,
-            target_workspace_dir: tgt_workspace_dir,
-            strategy,
-            retire,
-        }
-    };
-
-    let op_id = params.op_id;
-    let resume_phase = params.resume_phase;
-    let owner_workspace_dir = params.owner_workspace_dir;
-    let target_workspace_dir = params.target_workspace_dir;
-    let target_path = params.target_path;
-    let strategy = params.strategy;
-    let retire = params.retire;
-
-    // Find project names.  CWD's project is authoritative (workweave project
-    // is immutable); pass it as the override when resolving the target so the
-    // target uses the same project regardless of primary's `.rwv-active`.
-    let cwd_project_name = find_project_name(&cwd_ctx)?;
-    let target_ctx = WorkspaceContext::resolve(&target_path, Some(cwd_project_name.clone()))?;
-    let target_project_name = find_project_name(&target_ctx)?;
-
-    let cwd_project_dir = cwd_workspace_dir.join("projects").join(&cwd_project_name);
-    let target_project_dir = target_workspace_dir
-        .join("projects")
-        .join(&target_project_name);
-
-    // For --strategy=ff: step 1 is a no-op only if CWD is strictly ahead of target.
-    // If CWD is not strictly ahead, bail with an actionable error.
-    if strategy == SyncStrategy::Ff {
-        let cwd_tip = GitVcs
-            .head_revision(&cwd_project_dir)
-            .context("failed to read CWD project HEAD")?;
-        let target_tip = GitVcs
-            .head_revision(&target_project_dir)
-            .context("failed to read target project HEAD")?;
-
-        if cwd_tip == target_tip {
-            // No-op: already at same tip.
-            if emit_text {
-                eprintln!("sync-to: CWD and target are already at the same tip; nothing to do");
-            }
-            // v2: owner record + lease cleared separately.
-            op_state::clear_owner(&owner_workspace_dir);
-            op_state::clear_lease(&target_workspace_dir);
-            return Ok(());
-        }
-
-        // CWD must be strictly ahead of target for ff to work.
-        let cwd_ahead = GitVcs
-            .is_ancestor(&cwd_project_dir, &target_tip, &cwd_tip)
-            .unwrap_or(false);
-
-        if !cwd_ahead {
-            // v2: clear owner record + lease on precondition refusal.
-            op_state::clear_owner(&owner_workspace_dir);
-            op_state::clear_lease(&target_workspace_dir);
-            anyhow::bail!(
-                "sync-to --strategy=ff requires CWD to be strictly ahead of target, \
-                 but CWD's project tip ({}) is not an ancestor-or-equal of target's tip ({}).\n\
-                 Rerun with `--strategy=rebase` to rebase CWD's commits onto target's tip first.",
-                cwd_tip,
-                target_tip
-            );
-        }
-        // CWD is strictly ahead: skip step 1 (no-op), go directly to step 3.
-    }
-
-    // Dirty-target preflight: step 3 fast-forwards every repo in the target
-    // workweave, overwriting uncommitted changes in the target's worktrees.
-    // Refuse up front — before step 1 mutates anything — and name the
-    // precondition. ff_advance_repo re-checks per repo at advance time to
-    // catch modification that lands between this preflight and step 3.
-    {
-        let cwd_project_preflight = crate::manifest::Project::from_dir(&cwd_project_dir)
-            .context("failed to load CWD project for dirty-target preflight")?;
-        let mut dirty: Vec<String> = Vec::new();
-        for repo_path in cwd_project_preflight.manifest.iter_repo_paths() {
-            let target_repo = target_workspace_dir.join(repo_path.as_path());
-            if target_repo.exists() && GitVcs.has_uncommitted_changes(&target_repo).unwrap_or(true)
-            {
-                dirty.push(repo_path.to_string());
-            }
-        }
-        if GitVcs
-            .has_uncommitted_changes(&target_project_dir)
-            .unwrap_or(true)
-        {
-            dirty.push("(project)".to_string());
-        }
-        if !dirty.is_empty() {
-            // Fresh start (guard phase): clear the owner record + lease we
-            // just wrote so the refusal leaves no trace. Mid-op resume: keep
-            // all markers so --continue and `rwv abort` remain available.
-            if resume_phase.is_none() {
-                op_state::clear_owner(&owner_workspace_dir);
-                op_state::clear_lease(&target_workspace_dir);
-            }
-            anyhow::bail!(
-                "sync-to precondition failed: target workweave has uncommitted changes in:\n  {}\n\
-                 \n\
-                 Step 3 fast-forwards the target's worktrees over this work. Commit or \
-                 stash in the target ({}), then re-run.",
-                dirty.join("\n  "),
-                target_path.display(),
-            );
-        }
-    }
-
-    // Determine which phase to start from.
-    // v2 phases: Replay → Relock → AdvanceTarget → (Retire if --retire).
-    // skip_step1 = skip the sync/replay phase (step 1).
-    let skip_step1 = strategy == SyncStrategy::Ff
-        || matches!(
-            resume_phase,
-            Some(crate::op_state::OpPhase::Relock)
-                | Some(crate::op_state::OpPhase::AdvanceTarget)
-                | Some(crate::op_state::OpPhase::Retire)
-        );
-
-    let skip_step3 = false; // step 3 is always needed unless already done (not tracked as a skippable phase here)
-
-    // === Step 1: rebase/merge CWD against target ===
-    //
-    // Equivalent to `rwv sync <target>` from CWD: use the existing sync
-    // engine with CWD as destination and target as source.
-    if !skip_step1 {
-        if emit_text {
-            eprintln!(
-                "sync-to step 1: rebasing CWD against target ({})...",
-                target_path.display()
-            );
-        }
-
-        // For --continue with resume_phase = Replay, pass do_continue=true
-        // to run_sync_impl so it resumes the in-progress rebase/merge.
-        let step1_continue = matches!(resume_phase, Some(crate::op_state::OpPhase::Replay));
-
-        // Call the existing sync engine with target as source.
-        // CWD is the destination (implicit from cwd arg).
-        // Note: run_sync_impl expects source as a SyncSource. We use Path(target_path).
-        let step1_source = SyncSource::Path(target_path.clone());
-
-        // Call the existing sync engine with pre_existing_op_id so it bypasses
-        // the op-state check/write (sync-to already set it up). We pass the same
-        // op_id so savepoints created inside run_sync_impl_with_op_id are keyed
-        // consistently with the op we already opened.
-        let step1_result = run_sync_impl_with_op_id(
-            cwd,
-            Some(&step1_source),
-            strategy,
-            force,
-            false, // retire: not applicable for step 1
-            project_override.clone(),
-            jobs,
-            handler,
-            step1_continue,
-            Some(&op_id),
-        );
-
-        if let Err(e) = step1_result {
-            // Leave op-state in both workspaces so --continue or rwv abort can recover.
-            anyhow::bail!(
-                "sync-to step 1 failed: {e}\n\
-                 \n\
-                 Op-state has been left in both workspaces.\n\
-                 Resolve conflicts, then: `rwv sync-to --continue`\n\
-                 To roll everything back: `rwv abort`",
-            );
-        }
-
-        // v2: advance phase in the owner record ONLY. The lease is immutable
-        // and carries no phase. Phase Relock = replay done, relock next.
-        //
-        // [v1→v2: previously both workspaces received advance_phase here.
-        // Now only the owner record is written.]
-        op_state::advance_phase(&owner_workspace_dir, crate::op_state::OpPhase::Relock)
-            .context("failed to advance phase to Relock after step 1")?;
-    } else if !matches!(
-        resume_phase,
-        Some(crate::op_state::OpPhase::AdvanceTarget) | Some(crate::op_state::OpPhase::Retire)
-    ) {
-        // When resuming from Relock, the phase advancement to AdvanceTarget
-        // happens below before step 3 (advance-target phase).
-    }
-
-    // Step 2 (auto-relock) is handled by Phase 3 inside run_sync_impl_with_op_id
-    // called above. The existing sync engine regenerates and commits rwv.lock in
-    // CWD's project repo as part of its own Phase 3 completion. No separate
-    // re-lock step is needed here.
-
-    // Advance phase to AdvanceTarget in the owner record ONLY.
-    // v2: lease is immutable; only the owner record is updated.
-    //
-    // [v1→v2: previously both workspaces received advance_phase here.]
-    if !matches!(
-        resume_phase,
-        Some(crate::op_state::OpPhase::AdvanceTarget) | Some(crate::op_state::OpPhase::Retire)
-    ) {
-        op_state::advance_phase(
-            &owner_workspace_dir,
-            crate::op_state::OpPhase::AdvanceTarget,
-        )
-        .context("failed to advance phase to AdvanceTarget")?;
-    }
-
-    // === Step 3: FF-advance target to CWD's new tip ===
-    //
-    // For each manifest repo and the project repo in target, fast-forward
-    // to CWD's converged tip. This is always FF; if FF fails (e.g. concurrent
-    // modification), bail with an actionable error.
-    let _ = skip_step3; // always run step 3
-
-    if emit_text {
-        eprintln!("sync-to step 3: fast-forwarding target to CWD's tips...");
-    }
-
-    // Reload CWD project (post-relock).
-    let cwd_project_final = crate::manifest::Project::from_dir(&cwd_project_dir)
-        .context("failed to reload CWD project for step 3")?;
-
-    // FF-advance each manifest repo in target.
-    let mut any_ff_failure = false;
-    for repo_path in cwd_project_final.manifest.iter_repo_paths() {
-        let cwd_repo = cwd_workspace_dir.join(repo_path.as_path());
-        let target_repo = target_workspace_dir.join(repo_path.as_path());
-
-        if !cwd_repo.exists() {
-            // Repo not materialized in CWD — skip.
-            continue;
-        }
-        if !target_repo.exists() {
-            // Repo not materialized in target — skip with warning.
-            if emit_text {
-                eprintln!("  {}: skipped (not on disk in target)", repo_path);
-            }
-            continue;
-        }
-
-        let cwd_tip = match GitVcs.head_revision(&cwd_repo) {
-            Ok(tip) => tip,
-            Err(e) => {
-                if emit_text {
-                    eprintln!("  {}: failed to read CWD tip: {e}", repo_path);
-                }
-                any_ff_failure = true;
-                continue;
-            }
-        };
-
-        // FF-advance target repo to cwd_tip.
-        match ff_advance_repo(&target_repo, &cwd_repo, &cwd_tip) {
-            Ok(()) => {
-                if emit_text {
-                    println!(
-                        "  {}: ff-advanced to {}",
-                        repo_path,
-                        &cwd_tip.as_str()[..8.min(cwd_tip.as_str().len())]
-                    );
-                }
-            }
-            Err(e) => {
-                if emit_text {
-                    eprintln!("  {}: ff-advance failed: {e}", repo_path);
-                }
-                any_ff_failure = true;
-            }
-        }
-    }
-
-    // FF-advance target's project repo.
-    let cwd_project_tip = GitVcs
-        .head_revision(&cwd_project_dir)
-        .context("failed to read CWD project HEAD for step 3")?;
-
-    match ff_advance_repo(&target_project_dir, &cwd_project_dir, &cwd_project_tip) {
-        Ok(()) => {
-            if emit_text {
-                println!(
-                    "  (project): ff-advanced to {}",
-                    &cwd_project_tip.as_str()[..8.min(cwd_project_tip.as_str().len())]
-                );
-            }
-        }
-        Err(e) => {
-            if emit_text {
-                eprintln!("  (project): ff-advance failed: {e}");
-            }
-            any_ff_failure = true;
-        }
-    }
-
-    if any_ff_failure {
-        anyhow::bail!(
-            "sync-to step 3 (FF-advance target) failed for one or more repos (see above).\n\
-             This should not happen after a clean step 1; possible concurrent modification.\n\
-             Op-state remains in both workspaces.\n\
-             Rerun `rwv sync-to --continue` after resolving, or `rwv abort` to roll back.",
-        );
-    }
-
-    // Success: clear owner record + lease.
-    // v2: clear the owner record at the owner workspace and the lease at the
-    // target workspace.
-    //
-    // [v1→v2: previously both workspaces held a full record and were cleared
-    // with clear_all. Now: owner record at owner_workspace_dir, lease at
-    // target_workspace_dir.]
-    op_state::clear_owner(&owner_workspace_dir);
-    op_state::clear_lease(&target_workspace_dir);
-
-    if emit_text {
-        eprintln!("sync-to complete: target fast-forwarded to CWD's tip");
-    }
-
-    // --retire: all three steps succeeded — verify manifest repos converged
-    // with the target and the working tree is clean, then delete the workweave.
-    // Only meaningful inside a workweave; in a primary weave, warn and skip.
-    // If any step above failed, we already bailed before reaching this point,
-    // so the workweave is always preserved on failure.
-    if retire {
-        match &cwd_ctx.location {
-            WorkspaceLocation::Workweave { dir, name, project } => {
-                retire_workweave_after_sync_to(
-                    &cwd_ctx,
-                    dir,
-                    name,
-                    project,
-                    &cwd_project_dir,
-                    &target_workspace_dir,
-                )?;
-            }
-            WorkspaceLocation::Weave { .. } => {
-                if emit_text {
-                    eprintln!("warning: --retire is only meaningful inside a workweave; ignoring");
-                }
-            }
-        }
-    }
-
-    Ok(())
-}
 
 /// Fast-forward `target_repo` to `cwd_tip`.
 ///
