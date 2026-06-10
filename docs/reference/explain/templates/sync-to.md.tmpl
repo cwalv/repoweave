@@ -48,9 +48,14 @@ After `rwv sync-to <target> --strategy=rebase`:
 
 ### Multi-workspace op-state
 
-Op-state is written to both CWD and target before step 1. If any step fails,
-op-state is left in place so the operator can resolve and rerun with `--continue`,
-or use `rwv abort` to roll back both workspaces.
+Op-state is written to both CWD and target before step 1. The owner record at
+CWD holds all op parameters plus the current phase (replay → relock →
+advance-target → retire); the target workspace holds a thin lease pointing back
+at CWD. Named overrides supplied at invocation (`--allow-stale-lock`,
+`--discard-local-commits`) are recorded in the `overrides` field so `--continue`
+resumes with the same consents. If any step fails, op-state is left in place so
+the operator can resolve and rerun with `--continue`, or use `rwv abort` to roll
+back both workspaces.
 
 ## Invocation
 
@@ -66,8 +71,13 @@ rwv sync-to [<target>] [--json] [--strategy <ff|rebase|merge>] [-j <N>] [--allow
 - `--strategy` picks the step-1 strategy (`rebase` default, `ff`, or `merge`).
   Step 3 is always FF regardless of this flag.
 - `--allow-stale-lock` skips the lock-freshness precondition on both sides.
+  Recorded as `allow-stale-lock` in the op-state `overrides` field for audit
+  fidelity on `--continue`.
 - `--discard-local-commits` hard-resets CWD's project repo to target's tip,
-  discarding local commits (pre-op savepoint preserved as tombstone).
+  discarding local committed divergence (pre-op savepoint preserved as
+  tombstone; refused if uncommitted changes are present). Recorded as
+  `discard-local-commits` in `overrides`; `--continue` resumes with the same
+  consent.
 - `--retire` deletes the current workweave on success (after all three steps
   complete). Requires a workweave context; emits a warning and is a no-op in
   a primary weave. Use to close out a workweave in one step.

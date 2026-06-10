@@ -36,10 +36,16 @@ rwv sync <source> [--json] [--strategy <ff|rebase|merge>] [-j <N>] [--allow-stal
 - `--allow-stale-lock` skips the lock-freshness precondition on both source
   and destination. Use when the lock is intentionally ahead of HEAD. Usual
   fix without this flag: run `rwv lock` in the relevant workspace first.
+  Recorded as `allow-stale-lock` in the op-state `overrides` field for audit
+  fidelity on `--continue`.
 - `--discard-local-commits` hard-resets the CWD project repo to the source
-  tip, discarding any destination-only commits. The pre-op savepoint is kept
-  as a tombstone at `refs/rwv/pre-op/<id>` so `git reset --hard` can recover
-  them manually. Refused if the project repo has uncommitted changes.
+  tip, discarding any destination-only committed divergence. The pre-op
+  savepoint is kept as a tombstone at `refs/rwv/pre-op/<id>` so
+  `git reset --hard` can recover them manually. Refused if the project repo
+  has uncommitted changes (those would be destroyed unrecoverably by the
+  reset). Recorded as `discard-local-commits` in the op-state `overrides`
+  field; `--continue` resumes with the same consent without requiring the
+  flag to be re-supplied.
 - `-j <N>` runs up to `N` per-repo manifest syncs (Phase 2) in parallel.
   Default is `1` (serial), unlike `rwv fetch` / `rwv update` whose default
   auto-resolves to a small worker pool. Sync's default is `1` so that
