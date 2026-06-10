@@ -225,7 +225,7 @@ pub enum CheckViolation {
         workspace_dir: PathBuf,
         /// Raw `started_at` string from the op-state file (RFC3339 UTC),
         /// preserved verbatim so the operator sees the same value
-        /// `op_state::read` would.
+        /// `op_state::read_owner` would.
         started_at: String,
     },
 
@@ -1960,10 +1960,10 @@ pub fn scan_state_hygiene(
     let mut live_op_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
     for target in op_state_targets {
         // Absent or unparseable file → nothing to do here. An unparseable
-        // file is surfaced by `op_state::read`'s caller in sync paths;
+        // file is surfaced by `op_state::read_owner`'s caller in sync paths;
         // the doctor's job for the `.rwv-op` line is just to report
         // presence, not to debug the YAML.
-        if let Ok(Some(state)) = crate::op_state::read(&target.workspace_dir) {
+        if let Ok(Some(state)) = crate::op_state::read_owner(&target.workspace_dir) {
             violations.push(CheckViolation::StaleOpState {
                 workspace_dir: target.workspace_dir.clone(),
                 started_at: state.started_at.clone(),

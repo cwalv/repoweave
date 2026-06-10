@@ -407,36 +407,6 @@ pub fn clear_all_at(workspace_dir: &Path) {
 }
 
 // ---------------------------------------------------------------------------
-// Backward-compat shim for callers that use the old `read` / `clear` API
-// ---------------------------------------------------------------------------
-
-/// Read the owner record from `workspace_dir`. Alias for `read_owner`.
-///
-/// Used by `check.rs` (doctor hygiene scan) and other callers that only
-/// need to inspect whether an owner record exists.
-pub fn read(workspace_dir: &Path) -> anyhow::Result<Option<OwnerRecord>> {
-    read_owner(workspace_dir)
-}
-
-/// Remove the owner record from `workspace_dir`. Alias for `clear_owner`.
-///
-/// Legacy call sites that only clear the owner workspace call this.
-/// For clearing a lease workspace, call `clear_lease` or `clear_all_at`.
-pub fn clear(workspace_dir: &Path) {
-    clear_owner(workspace_dir);
-}
-
-/// Remove owner records from each listed workspace. No-op for absent files.
-///
-/// Legacy call sites that managed only owner workspaces call this. Does not
-/// clear leases; call `clear_all_at` for workspaces that may hold leases.
-pub fn clear_all(workspace_dirs: &[&Path]) {
-    for &dir in workspace_dirs {
-        clear_owner(dir);
-    }
-}
-
-// ---------------------------------------------------------------------------
 // Concurrency guard
 // ---------------------------------------------------------------------------
 
