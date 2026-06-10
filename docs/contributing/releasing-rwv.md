@@ -64,10 +64,10 @@ describes.
 ```bash
 # 1. Bump the Cargo version
 $EDITOR Cargo.toml                    # version = "X.Y.Z"
-cargo check                            # update Cargo.lock
+cargo check                            # refresh the (untracked) Cargo.lock
 
-# 2. Commit and tag
-git add Cargo.toml Cargo.lock
+# 2. Commit and tag (Cargo.lock is gitignored in this repo — Cargo.toml only)
+git add Cargo.toml
 git commit -m "chore(version): bump to X.Y.Z"
 git tag vX.Y.Z
 
