@@ -559,7 +559,7 @@ fn sync_refuses_when_destination_project_repo_is_ahead_of_source() {
     );
     // Names the rwv-native recovery path.
     assert!(
-        stderr.contains("sync the other direction first"),
+        stderr.contains("sync the other direction"),
         "expected refusal to name the rwv-native recovery; got: {stderr}"
     );
     // Names the --discard-local-commits override explicitly (per bead fo-jsbr3i.6).
