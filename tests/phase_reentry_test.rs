@@ -548,6 +548,392 @@ fn sync_to_continue_from_lease_workspace_drives_owner_to_clean_state() {
 }
 
 // ---------------------------------------------------------------------------
+// Retire test helpers
+//
+// For retire tests the CWD workspace must resolve as `WorkspaceLocation::Workweave`
+// (retire is only meaningful inside a workweave). We build on make_shared_workspaces
+// but add a `.rwv-workweave` marker so WorkspaceContext::resolve identifies the
+// workweave directory as a workweave rather than a plain weave.
+// ---------------------------------------------------------------------------
+
+/// Write a `.rwv-workweave` marker file into a workweave directory.
+///
+/// The marker records the primary root, project name, and parent workspace
+/// (here the primary, since this is a direct child of primary).
+fn write_workweave_marker(workweave_dir: &Path, primary_root: &Path) {
+    let content = format!(
+        "primary: \"{primary}\"\nproject: web-app\nparent: \"{parent}\"\n",
+        primary = primary_root.display(),
+        parent = primary_root.display(),
+    );
+    std::fs::write(workweave_dir.join(".rwv-workweave"), content).unwrap();
+}
+
+/// Create a workweave + primary pair where the workweave has a proper
+/// `.rwv-workweave` marker, making it resolve as `WorkspaceLocation::Workweave`.
+///
+/// The workweave is placed under `<parent>/.workweaves/web-app--ww` so
+/// `workweave_path_for` can locate it by `(project="web-app", name="ww")`.
+/// Returns `(primary, workweave, initial_sha)`.
+fn make_retire_workspaces(parent: &Path) -> (Workspace, Workspace, String) {
+    let (primary, initial_sha) = make_locked_workspace(parent, "primary");
+
+    // Workweave lives in `.workweaves/web-app--ww` relative to the parent dir.
+    let ww_parent = parent.join(".workweaves");
+    let ww_root = ww_parent.join("web-app--ww");
+    std::fs::create_dir_all(ww_root.join("github/example")).unwrap();
+    std::fs::create_dir_all(ww_root.join("projects")).unwrap();
+
+    let ww_server = ww_root.join(SERVER_PATH);
+    git(
+        &[
+            "worktree",
+            "add",
+            &ww_server.to_string_lossy(),
+            "-b",
+            "web-app--ww/main",
+        ],
+        &primary.server_dir,
+    );
+
+    let ww_project = ww_root.join("projects/web-app");
+    git(
+        &[
+            "worktree",
+            "add",
+            &ww_project.to_string_lossy(),
+            "-b",
+            "web-app--ww/project",
+        ],
+        &primary.project_dir,
+    );
+    std::fs::write(ww_root.join(".rwv-active"), "web-app\n").unwrap();
+    write_workweave_marker(&ww_root, &primary.root);
+
+    let ww = Workspace {
+        root: ww_root,
+        project_dir: ww_project,
+        server_dir: ww_server,
+    };
+    (primary, ww, initial_sha)
+}
+
+// ---------------------------------------------------------------------------
+// Retire phase: phase=retire record survives a merged-check failure,
+// --continue retries, abort restores both sides.
+//
+// Acceptance criteria for bead fo-jsbr3i.3:
+//   1. Merged-check failure leaves phase=retire record AND target lease.
+//   2. --continue completes retire after the operator reconciles.
+//   3. Abort from phase=retire restores source (CWD workweave) and target.
+// ---------------------------------------------------------------------------
+
+/// Write a sync-to owner record at phase=retire with retire=true.
+///
+/// `converged_tips` mirrors what relock records on a real op: a phase=retire
+/// record has always been through relock, so abort's HEAD-verified restore
+/// (fo-jsbr3i.4) classifies post-advance-target tips via these entries.
+fn write_sync_to_retire_record(
+    owner: &Path,
+    source: &Path,
+    target: &Path,
+    id: &str,
+    converged_tips: &[(&str, &str)],
+) {
+    let tips_yaml = if converged_tips.is_empty() {
+        "converged_tips: {}\n".to_owned()
+    } else {
+        let mut s = String::from("converged_tips:\n");
+        for (repo, sha) in converged_tips {
+            s.push_str(&format!("  \"{repo}\": \"{sha}\"\n"));
+        }
+        s
+    };
+    let body = format!(
+        "id: \"{id}\"\n\
+         verb: sync-to\n\
+         strategy: rebase\n\
+         source: \"{src}\"\n\
+         target: \"{tgt}\"\n\
+         retire: true\n\
+         phase: retire\n\
+         {tips_yaml}\
+         overrides: []\n\
+         started_at: \"2026-06-10T00:00:00Z\"\n",
+        src = source.display(),
+        tgt = target.display(),
+    );
+    std::fs::write(owner.join(".rwv-op"), body).unwrap();
+}
+
+/// Test: merged-check failure keeps phase=retire record and target lease.
+///
+/// Setup: ww and primary share tips (advance-target ran clean). Inject a
+/// commit into ww's server repo AFTER planting the retire record so the
+/// merged-check (ww-tip != primary-tip) fails. Verify:
+///   - rwv sync-to --continue fails.
+///   - owner record still present at ww, still at phase=retire.
+///   - target lease still present at primary.
+#[test]
+fn retire_merged_check_failure_leaves_phase_retire_and_lease() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (primary, ww, _sha) = make_retire_workspaces(tmp.path());
+
+    let op_id = "retire-merged-check-fail";
+
+    // Plant the retire owner record at ww, lease at primary. (No abort in
+    // this test, so converged_tips are irrelevant.)
+    write_sync_to_retire_record(&ww.root, &ww.root, &primary.root, op_id, &[]);
+    write_lease_with_id(&primary.root, &ww.root, op_id);
+
+    // CWD savepoints use op_id; target savepoints use "<op_id>-target".
+    let target_op_id = format!("{op_id}-target");
+    create_savepoint(&ww.project_dir, op_id);
+    create_savepoint(&ww.server_dir, op_id);
+    // Savepoints for primary (target-side) — now created by guard_and_mark.
+    create_savepoint(&primary.project_dir, &target_op_id);
+    create_savepoint(&primary.server_dir, &target_op_id);
+
+    // Inject divergence: commit into ww's server repo AFTER the advance-target
+    // "completed". The merged-check compares ww and primary tips, so this
+    // divergence makes the check fail.
+    std::fs::write(ww.server_dir.join("post-advance.txt"), "ww divergence\n").unwrap();
+    git(&["add", "post-advance.txt"], &ww.server_dir);
+    git(
+        &["commit", "-m", "ww: post-advance divergence"],
+        &ww.server_dir,
+    );
+
+    // --continue must fail (merged-check fails).
+    let out = rwv()
+        .args(["sync-to", "--continue"])
+        .current_dir(&ww.root)
+        .output()
+        .expect("rwv command failed to run");
+    assert!(
+        !out.status.success(),
+        "sync-to --continue must fail when merged-check fails; stderr:\n{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    // Owner record must survive at ww, still at phase=retire.
+    assert!(
+        ww.root.join(".rwv-op").exists(),
+        "owner record must survive a merged-check failure"
+    );
+    let record_yaml = std::fs::read_to_string(ww.root.join(".rwv-op")).expect("read owner record");
+    assert!(
+        record_yaml.contains("phase: retire"),
+        "owner record must remain at phase=retire after merged-check failure; got:\n{record_yaml}"
+    );
+
+    // Target lease must survive at primary.
+    assert!(
+        primary.root.join(".rwv-op-lease").exists(),
+        "target lease must survive a merged-check failure"
+    );
+
+    // Error message must mention --continue and abort.
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("--continue") || stderr.contains("sync-to --continue"),
+        "error must mention --continue for resumability; stderr:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("rwv abort"),
+        "error must mention rwv abort for rollback; stderr:\n{stderr}"
+    );
+}
+
+/// Test: --continue completes retire after the operator reconciles.
+///
+/// Setup: same as the failure test, but after injecting the divergence we
+/// also fast-forward primary's server to match (simulating reconciliation).
+/// Then --continue should succeed: merged-check passes, workweave is deleted,
+/// lease is cleared.
+#[test]
+fn retire_continue_completes_after_reconciliation() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (primary, ww, _sha) = make_retire_workspaces(tmp.path());
+
+    let op_id = "retire-continue-reconciled";
+
+    // Plant the retire owner record at ww, lease at primary. (No abort in
+    // this test, so converged_tips are irrelevant.)
+    write_sync_to_retire_record(&ww.root, &ww.root, &primary.root, op_id, &[]);
+    write_lease_with_id(&primary.root, &ww.root, op_id);
+
+    // CWD-side savepoints use op_id; target-side savepoints use "<op_id>-target"
+    // (see target_savepoint_id in sync.rs — worktree pairs share a ref namespace,
+    // so separate ids prevent the first restore from deleting the second's ref).
+    let target_op_id = format!("{op_id}-target");
+    create_savepoint(&ww.project_dir, op_id);
+    create_savepoint(&ww.server_dir, op_id);
+    create_savepoint(&primary.project_dir, &target_op_id);
+    create_savepoint(&primary.server_dir, &target_op_id);
+
+    // Inject a divergence (same as failure test).
+    std::fs::write(ww.server_dir.join("post-advance.txt"), "ww divergence\n").unwrap();
+    git(&["add", "post-advance.txt"], &ww.server_dir);
+    git(
+        &["commit", "-m", "ww: post-advance divergence"],
+        &ww.server_dir,
+    );
+    let ww_server_tip = git_out(&["rev-parse", "HEAD"], &ww.server_dir);
+
+    // Verify the failure state first (the merged-check actually fires).
+    let out = rwv()
+        .args(["sync-to", "--continue"])
+        .current_dir(&ww.root)
+        .output()
+        .expect("rwv command failed to run");
+    assert!(
+        !out.status.success(),
+        "initial --continue must fail; stderr:\n{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    // Reconcile: fast-forward primary's server to match ww.
+    // (Simulates the operator running `git fetch` / `git merge` in the target.)
+    git(
+        &["fetch", &ww.server_dir.to_string_lossy(), "HEAD"],
+        &primary.server_dir,
+    );
+    let fetch_head = git_out(&["rev-parse", "FETCH_HEAD"], &primary.server_dir);
+    git(&["reset", "--hard", &fetch_head], &primary.server_dir);
+    let primary_server_tip_after = git_out(&["rev-parse", "HEAD"], &primary.server_dir);
+    assert_eq!(
+        primary_server_tip_after, ww_server_tip,
+        "test setup: reconciliation must bring primary's server to ww's tip"
+    );
+
+    // Now --continue should succeed.
+    rwv()
+        .args(["sync-to", "--continue"])
+        .current_dir(&ww.root)
+        .assert()
+        .success();
+
+    // Owner workspace (workweave) must be deleted.
+    assert!(
+        !ww.root.exists(),
+        "workweave directory must be deleted after successful retire"
+    );
+
+    // Target lease must be cleared.
+    assert!(
+        !primary.root.join(".rwv-op-lease").exists(),
+        "target lease must be cleared after successful retire"
+    );
+}
+
+/// Test: abort from phase=retire restores both source and target.
+///
+/// Setup: ww is ahead of primary (divergence before any sync-to). We plant
+/// a phase=retire record with pre-op savepoints on both sides. Then call
+/// `rwv abort` and verify both workspaces are restored to their pre-op state.
+///
+/// The pre-op state is: ww's server at sha_before_advance (original shared
+/// tip); primary's server also at that tip (savepoint captures pre-op).
+/// The "post-advance" state injected here simulates what advance-target
+/// would have written to primary (ff'd to ww's tip).
+#[test]
+fn retire_abort_restores_source_and_target() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (primary, ww, initial_sha) = make_retire_workspaces(tmp.path());
+
+    let op_id = "retire-abort-test";
+
+    // Record the pre-op tips (what savepoints will capture).
+    let ww_server_pre = git_out(&["rev-parse", "HEAD"], &ww.server_dir);
+    let primary_server_pre = git_out(&["rev-parse", "HEAD"], &primary.server_dir);
+    assert_eq!(
+        ww_server_pre, primary_server_pre,
+        "test setup: both sides start at the same tip"
+    );
+    assert_eq!(
+        ww_server_pre, initial_sha,
+        "test setup: ww server must be at the initial sha"
+    );
+
+    // Create pre-op savepoints BEFORE simulating the advance.
+    // CWD savepoints use op_id; target savepoints use "<op_id>-target" to
+    // avoid shared-ref collision in the worktree topology (see sync.rs
+    // target_savepoint_id / guard_and_mark).
+    let target_op_id = format!("{op_id}-target");
+    create_savepoint(&ww.project_dir, op_id);
+    create_savepoint(&ww.server_dir, op_id);
+    create_savepoint(&primary.project_dir, &target_op_id);
+    create_savepoint(&primary.server_dir, &target_op_id);
+
+    // Simulate advance-target: add a commit to ww's server and ff primary to it.
+    std::fs::write(ww.server_dir.join("advanced.txt"), "advance\n").unwrap();
+    git(&["add", "advanced.txt"], &ww.server_dir);
+    git(
+        &["commit", "-m", "ww: advance-target commit"],
+        &ww.server_dir,
+    );
+    let ww_server_advanced = git_out(&["rev-parse", "HEAD"], &ww.server_dir);
+
+    // Fast-forward primary's server to the advanced tip (what advance-target does).
+    git(
+        &["fetch", &ww.server_dir.to_string_lossy(), "HEAD"],
+        &primary.server_dir,
+    );
+    let fetch_head = git_out(&["rev-parse", "FETCH_HEAD"], &primary.server_dir);
+    git(&["reset", "--hard", &fetch_head], &primary.server_dir);
+    let primary_server_advanced = git_out(&["rev-parse", "HEAD"], &primary.server_dir);
+    assert_eq!(
+        primary_server_advanced, ww_server_advanced,
+        "test setup: primary server must be ff'd to ww's advanced tip"
+    );
+
+    // Plant phase=retire record + lease. The op is mid-retire. A real
+    // phase=retire record has been through relock, which recorded the
+    // converged tips — abort's HEAD-verified restore (fo-jsbr3i.4) needs
+    // them to classify the post-advance-target tips as attributable.
+    write_sync_to_retire_record(
+        &ww.root,
+        &ww.root,
+        &primary.root,
+        op_id,
+        &[("github/example/server", ww_server_advanced.as_str())],
+    );
+    write_lease_with_id(&primary.root, &ww.root, op_id);
+
+    // Run abort from the owner workspace.
+    rwv()
+        .args(["abort"])
+        .current_dir(&ww.root)
+        .assert()
+        .success();
+
+    // Both op-state files must be cleared.
+    assert!(
+        !ww.root.join(".rwv-op").exists(),
+        "owner record must be cleared by abort"
+    );
+    assert!(
+        !primary.root.join(".rwv-op-lease").exists(),
+        "target lease must be cleared by abort"
+    );
+
+    // Source (ww) server must be restored to its pre-op tip.
+    let ww_server_post = git_out(&["rev-parse", "HEAD"], &ww.server_dir);
+    assert_eq!(
+        ww_server_post, ww_server_pre,
+        "abort must restore ww's server to the pre-op savepoint tip"
+    );
+
+    // Target (primary) server must be restored to its pre-op tip.
+    let primary_server_post = git_out(&["rev-parse", "HEAD"], &primary.server_dir);
+    assert_eq!(
+        primary_server_post, primary_server_pre,
+        "abort must restore primary's server to the pre-op savepoint tip"
+    );
+}
+
+// ---------------------------------------------------------------------------
 // Driver invariant: re-entering the same phase twice in a row is benign.
 //
 // Run sync once to a clean state, then plant an owner record at each phase

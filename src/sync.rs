@@ -634,6 +634,21 @@ fn delete_savepoint(repo: &Path, op_id: &OpId) {
     GitVcs.drop_savepoint(repo, op_id.as_str());
 }
 
+/// Derive the savepoint op-id string used for target-workspace repos.
+///
+/// Target repos in a sync-to op may share a git object store with CWD repos
+/// when both are worktrees of the same canonical clone. In that case, using
+/// the same `op_id` for both sides would give them the same ref name
+/// (`refs/rwv/pre-op/<op_id>`) — the first restore during `rwv abort` would
+/// drop the ref, leaving the second restore unable to find it.
+///
+/// We use `<op_id>-target` to give target repos their own savepoint ref
+/// namespace, guaranteeing abort can restore both sides independently even in
+/// a shared-object-store topology.
+fn target_savepoint_id(op_id: &OpId) -> String {
+    format!("{}-target", op_id.as_str())
+}
+
 /// The recovery instruction differs by side: source's lock is committed
 /// upstream from the operator's perspective ("Run `rwv lock` in the source
 /// workspace and commit before syncing"), destination's is right here
@@ -1754,15 +1769,52 @@ fn guard_and_mark<'a>(
     // === Savepoint: per-repo pre-op anchor refs ===
     //
     // CWD-side repos and the project repo are anchored so replay re-entry
-    // and abort can both restore. For sync-to the target's repos are not
-    // savepointed (advance-target is ff-only — no destructive op to undo
-    // on the target side; abort hardening (.4) covers target-side rollback
-    // separately).
+    // and abort can both restore.
+    //
+    // For sync-to we ALSO savepoint the target's repos. Advance-target
+    // ff-advances every target repo to CWD's converged tips, which is a
+    // destructive move from the target's perspective (the pre-op tip is
+    // overwritten). Abort from phase=retire (or any phase after advance-target)
+    // must restore the target's repos to their pre-op state, and the only
+    // way to do that symmetrically is via the same savepoint mechanism used
+    // on the CWD side. Sibling .4 (abort hardening) verifies these refs
+    // against HEAD; we create them here so the anchor exists.
     create_savepoint(&cwd_project_dir, &op_id)?;
     for repo_path in cwd_project.manifest.iter_repo_paths() {
         let abs = cwd_workspace_dir.join(repo_path.as_path());
         if abs.exists() {
             let _ = create_savepoint(&abs, &op_id);
+        }
+    }
+
+    // Sync-to: also savepoint the target's repos so abort can restore them.
+    //
+    // Target repos may share a git object store with CWD repos (worktree
+    // topology). Using the same op_id would create the same ref on both sides;
+    // the CWD restore would drop it, leaving the target restore unable to find
+    // it. `target_savepoint_id` appends "-target" to the op_id to give target
+    // repos their own ref namespace.
+    if matches!(verb, MachineVerb::SyncTo) {
+        let tsp_id = OpId::from_string(target_savepoint_id(&op_id));
+        // Load the target's project to enumerate its repos. Best-effort:
+        // if we cannot load it (e.g. project not yet materialised) skip
+        // — abort will just leave those repos unchanged.
+        let target_project_name = {
+            let override_arg = Some(cwd_project_name.clone());
+            let tc = WorkspaceContext::resolve(&dest_workspace_dir, override_arg);
+            tc.ok().and_then(|c| find_project_name(&c).ok())
+        };
+        if let Some(tpname) = target_project_name {
+            let target_project_dir = dest_workspace_dir.join("projects").join(&tpname);
+            let _ = create_savepoint(&target_project_dir, &tsp_id);
+            if let Ok(tp) = crate::manifest::Project::from_dir_skip_lock(&target_project_dir) {
+                for repo_path in tp.manifest.iter_repo_paths() {
+                    let abs = dest_workspace_dir.join(repo_path.as_path());
+                    if abs.exists() {
+                        let _ = create_savepoint(&abs, &tsp_id);
+                    }
+                }
+            }
         }
     }
 
@@ -2531,11 +2583,19 @@ fn run_advance_target(ctx: &OpContext<'_>) -> anyhow::Result<()> {
 // Phase: retire (--retire only)
 // ---------------------------------------------------------------------------
 //
-// Today's retire semantics (merged-check on manifest repos, dirty-check, then
-// `delete_workweave`). The full retire-as-phase semantics (merged-check
-// failure → phase=retire, abort rolls back target, sibling .3) build on this
-// stub. For now, retire still bails normally on failure; on success the
-// workweave is gone and the cleanup phase finishes the op record.
+// Retire runs the merged-check (manifest repo tips equal on both sides) and
+// dirty-check, then calls `delete_workweave`. A failure from any of these
+// propagates as an error from `run_retire`, which keeps the op record at
+// phase=retire (cleanup never runs on error, per the driver invariant).
+//
+// Re-entry rule: both the merged-check and dirty-check are read-only; the
+// workweave removal itself is idempotent (a missing workweave dir is a no-op
+// in delete_workweave). So re-entering retire after a prior failure is safe.
+//
+// Abort from phase=retire: run_abort scans the target workspace for repos with
+// op-id savepoints and restores them to their pre-op state. Target savepoints
+// are created in guard_and_mark for verb=SyncTo (this bead's scope); sibling
+// .4 adds HEAD-verification on top of the savepoint restore.
 
 fn run_retire(ctx: &OpContext<'_>) -> anyhow::Result<()> {
     let emit_text = ctx.handler.emit_text();
@@ -2599,6 +2659,30 @@ fn cleanup(ctx: &OpContext<'_>) -> anyhow::Result<()> {
             let abs = ctx.cwd_workspace_dir.join(repo_path.as_path());
             if abs.exists() {
                 delete_savepoint(&abs, &ctx.op_id);
+            }
+        }
+    }
+
+    // Sync-to: drop target savepoints. These use the "<op_id>-target"
+    // namespace (see target_savepoint_id). Best-effort: if the target's
+    // project dir or repos are gone (e.g. after a retire that deleted the
+    // workweave and the target structure changed), silently skip.
+    if matches!(ctx.verb, op_state::OpVerb::SyncTo) {
+        let tsp_id = OpId::from_string(target_savepoint_id(&ctx.op_id));
+        // Try to load target project from dest_workspace_dir.
+        let target_project_name = WorkspaceContext::resolve(&ctx.dest_workspace_dir, None)
+            .ok()
+            .and_then(|c| find_project_name(&c).ok());
+        if let Some(tpname) = target_project_name {
+            let target_project_dir = ctx.dest_workspace_dir.join("projects").join(&tpname);
+            delete_savepoint(&target_project_dir, &tsp_id);
+            if let Ok(tp) = Project::from_dir_skip_lock(&target_project_dir) {
+                for repo_path in tp.manifest.iter_repo_paths() {
+                    let abs = ctx.dest_workspace_dir.join(repo_path.as_path());
+                    if abs.exists() {
+                        delete_savepoint(&abs, &tsp_id);
+                    }
+                }
             }
         }
     }
@@ -2676,10 +2760,12 @@ fn retire_workweave_after_sync_to(
         anyhow::bail!(
             "--retire: workweave's manifest repos differ from target after sync-to; \
              refusing to delete:\n  {}\n\
-             Resolve the divergence and re-run, \
-             or `rwv workweave delete --force {}` to discard.",
+             \n\
+             To reconcile: sync the divergent repo(s), then run:\n\
+               rwv sync-to --continue   # re-runs the retire check\n\
+             \n\
+             To roll back the entire op: `rwv abort`.",
             diverged.join("\n  "),
-            workweave_name.as_str(),
         );
     }
 
@@ -2688,9 +2774,12 @@ fn retire_workweave_after_sync_to(
     if !dirty.is_empty() {
         anyhow::bail!(
             "--retire: workweave has uncommitted changes after sync-to; refusing to delete:\n  {}\n\
-             Commit/discard and re-run, or `rwv workweave delete --force {}` to discard.",
+             \n\
+             Commit or discard the changes, then run:\n\
+               rwv sync-to --continue   # re-runs the retire check\n\
+             \n\
+             To roll back the entire op: `rwv abort`.",
             dirty.join("\n  "),
-            workweave_name.as_str(),
         );
     }
 
@@ -2891,6 +2980,22 @@ pub fn run_abort(cwd: &Path) -> anyhow::Result<()> {
     // attributable set reduces to {savepoint, mid-op}.
     let converged_tips = &owner_record.converged_tips;
 
+    // Side-specific restore ids: repos in the op's TARGET workspace were
+    // savepointed under `<op_id>-target` (see `target_savepoint_id`) so that
+    // worktree pairs sharing one refdb don't collide on savepoint or
+    // pre-abort ref names; the owner/source side uses the base op id.
+    // Keyed by WORKSPACE IDENTITY (is this the recorded target?), not by
+    // invocation side — abort may be invoked from either workspace, which
+    // inverts the cwd/extras loop-to-workspace mapping.
+    let restore_id_for = |ws: &Path| -> OpId {
+        if owner_record.verb == crate::op_state::OpVerb::SyncTo && ws == owner_record.target {
+            OpId::from_string(target_savepoint_id(&op_id))
+        } else {
+            op_id.clone()
+        }
+    };
+    let cwd_restore_id = restore_id_for(&workspace_dir);
+
     let cwd_project_name = find_project_name(&ctx)?;
     let cwd_project_dir = workspace_dir.join("projects").join(&cwd_project_name);
     // Use the lockless loader: abort's contract is "the state is bad, get me
@@ -2910,7 +3015,7 @@ pub fn run_abort(cwd: &Path) -> anyhow::Result<()> {
             continue;
         }
         let converged = converged_tips.get(repo_path.as_str()).map(String::as_str);
-        match abort_one_repo(&abs, &op_id, converged) {
+        match abort_one_repo(&abs, &cwd_restore_id, converged) {
             Ok(outcome) => report_abort_outcome(repo_path.as_str(), &outcome, &mut any_foreign),
             Err(e) => {
                 eprintln!("  {repo_path}: {e}");
@@ -2921,7 +3026,7 @@ pub fn run_abort(cwd: &Path) -> anyhow::Result<()> {
 
     // Restore CWD project repo.
     let project_converged = converged_tips.get("(project)").map(String::as_str);
-    match abort_one_repo(&cwd_project_dir, &op_id, project_converged) {
+    match abort_one_repo(&cwd_project_dir, &cwd_restore_id, project_converged) {
         Ok(outcome) => report_abort_outcome("(project)", &outcome, &mut any_foreign),
         Err(e) => {
             eprintln!("  (project): {e}");
@@ -2937,6 +3042,9 @@ pub fn run_abort(cwd: &Path) -> anyhow::Result<()> {
     // a target tip that diverged from the source convergence will surface
     // as a foreign-tip refusal, which is the desired behavior.
     for extra_dir in &extra_workspace_dirs {
+        // Side-specific id: `-target` namespace when this extra IS the
+        // recorded target workspace, base op id when it is the owner.
+        let extra_restore_id = restore_id_for(extra_dir);
         // Resolve the target workspace's project context. Best-effort: if the
         // project name cannot be determined, skip with a warning.
         match WorkspaceContext::resolve(extra_dir, None) {
@@ -2972,7 +3080,7 @@ pub fn run_abort(cwd: &Path) -> anyhow::Result<()> {
                         continue;
                     }
                     let converged = converged_tips.get(repo_path.as_str()).map(String::as_str);
-                    match abort_one_repo(&abs, &op_id, converged) {
+                    match abort_one_repo(&abs, &extra_restore_id, converged) {
                         Ok(outcome) => report_abort_outcome(
                             &format!("[target] {repo_path}"),
                             &outcome,
@@ -2985,7 +3093,11 @@ pub fn run_abort(cwd: &Path) -> anyhow::Result<()> {
                     }
                 }
                 let extra_project_converged = converged_tips.get("(project)").map(String::as_str);
-                match abort_one_repo(&extra_project_dir, &op_id, extra_project_converged) {
+                match abort_one_repo(
+                    &extra_project_dir,
+                    &extra_restore_id,
+                    extra_project_converged,
+                ) {
                     Ok(outcome) => {
                         report_abort_outcome("[target] (project)", &outcome, &mut any_foreign)
                     }
