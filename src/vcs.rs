@@ -847,4 +847,31 @@ pub trait Vcs {
     /// via `git rev-list --objects` of the last 200 commits. Infallible —
     /// failures along the way silently leave the working tree alone.
     fn refresh_working_tree_to_head_if_safe(&self, repo: &Path);
+
+    /// Return the fetch URL of a named remote in `repo`, or `None` when
+    /// that remote does not exist.
+    ///
+    /// For [`GitVcs`](crate::git::GitVcs): runs
+    /// `git remote get-url <remote>`. Returns `None` when the remote is
+    /// absent (git exits non-zero with "No such remote"). Returns
+    /// `Some(url)` with the URL string as git reports it. Other errors
+    /// (I/O failures, non-UTF-8 output) propagate as [`VcsError`].
+    ///
+    /// Used by `rwv doctor`'s provenance checks to compare the clone's
+    /// `origin` URL against the manifest URL.
+    fn remote_url(&self, repo: &Path, remote: &str) -> Result<Option<String>, VcsError>;
+
+    /// Return `true` when `sha` names a commit object that exists in
+    /// `repo`'s object store.
+    ///
+    /// For [`GitVcs`](crate::git::GitVcs): runs
+    /// `git cat-file -e <sha>^{commit}`. Exit 0 means the object exists
+    /// and is a commit; any other exit (including the case where `sha`
+    /// resolves to a non-commit object type) returns `false`.
+    ///
+    /// Used by `rwv doctor`'s provenance checks to detect lock SHAs that
+    /// are absent from the local clone — e.g. after an upstream
+    /// force-push removed the commit from reachable history, or after a
+    /// fresh clone that has never fetched a now-detached SHA.
+    fn commit_object_exists(&self, repo: &Path, sha: &str) -> Result<bool, VcsError>;
 }

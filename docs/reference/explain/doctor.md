@@ -123,6 +123,65 @@ Schema:
         }
       ]
     },
+    "ProvenanceKind": {
+      "description": "Discriminator for [`CheckViolation::Provenance`] findings.",
+      "oneOf": [
+        {
+          "description": "The clone's `origin` remote URL differs from the URL recorded in the manifest. Until reconciled, pushes may publish to the wrong remote. Warning severity; report-only.\n\nNote: reference-role repos may intentionally point at a different remote (e.g. a local mirror). `is_reference_role` is `true` when the manifest records `role: reference` so the human-facing message can call out this nuance.",
+          "type": "object",
+          "required": [
+            "origin-url-mismatch"
+          ],
+          "properties": {
+            "origin-url-mismatch": {
+              "type": "object",
+              "required": [
+                "actual_url",
+                "is_reference_role",
+                "manifest_url"
+              ],
+              "properties": {
+                "actual_url": {
+                  "description": "The actual fetch URL of the `origin` remote on disk.",
+                  "type": "string"
+                },
+                "is_reference_role": {
+                  "description": "`true` when the manifest entry carries `role: reference`. Reference-role repos may intentionally use a different remote (e.g. a local mirror), so the violation message notes this to help the operator decide whether to act.",
+                  "type": "boolean"
+                },
+                "manifest_url": {
+                  "description": "The URL recorded in the manifest (`rwv.yaml`).",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "description": "The SHA pinned in `rwv.lock` is absent from the clone's object store. The canonical store is missing the pinned revision; refresh it from its remote (run a fetch — not a sync — to recover). Error severity; report-only.",
+          "type": "object",
+          "required": [
+            "lock-sha-unreachable"
+          ],
+          "properties": {
+            "lock-sha-unreachable": {
+              "type": "object",
+              "required": [
+                "sha"
+              ],
+              "properties": {
+                "sha": {
+                  "description": "The SHA pinned in `rwv.lock` that cannot be found locally.",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
     "ViolationOutput": {
       "description": "One violation as it appears in `rwv doctor --json` output.",
       "oneOf": [
@@ -466,6 +525,44 @@ Schema:
             "workweave_dir": {
               "description": "Absolute path to the workweave directory (or its marker file for file-level findings).",
               "type": "string"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "absolute_path",
+            "kind",
+            "path",
+            "project",
+            "sub_kind"
+          ],
+          "properties": {
+            "absolute_path": {
+              "description": "Absolute path to the affected repo on disk.",
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "enum": [
+                "provenance"
+              ]
+            },
+            "path": {
+              "description": "Manifest-relative path to the affected repo.",
+              "type": "string"
+            },
+            "project": {
+              "description": "Project the affected repo belongs to.",
+              "type": "string"
+            },
+            "sub_kind": {
+              "description": "Discriminator for the specific provenance anomaly.",
+              "allOf": [
+                {
+                  "$ref": "#/definitions/ProvenanceKind"
+                }
+              ]
             }
           }
         }

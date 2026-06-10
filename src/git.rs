@@ -1026,6 +1026,54 @@ impl Vcs for GitVcs {
         args.extend(all_files);
         let _ = git_command().args(&args).current_dir(repo).output();
     }
+
+    fn remote_url(&self, repo: &Path, remote: &str) -> Result<Option<String>, VcsError> {
+        let output = git_command()
+            .args(["remote", "get-url", remote])
+            .current_dir(repo)
+            .output()
+            .map_err(|e| VcsError::Io {
+                ctx: format!("failed to spawn git remote get-url {remote}"),
+                source: e,
+            })?;
+
+        if !output.status.success() {
+            // "No such remote" → remote absent, not an error.
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            if stderr.contains("No such remote") || stderr.contains("no such remote") {
+                return Ok(None);
+            }
+            return Err(VcsError::CommandFailed {
+                args: vec!["remote".into(), "get-url".into(), remote.into()],
+                repo: repo.to_path_buf(),
+                stderr: stderr.into_owned(),
+            });
+        }
+
+        let url = String::from_utf8(output.stdout)
+            .map(|s| s.trim().to_string())
+            .map_err(|_| VcsError::CommandFailed {
+                args: vec!["remote".into(), "get-url".into(), remote.into()],
+                repo: repo.to_path_buf(),
+                stderr: "git output not valid UTF-8".into(),
+            })?;
+        Ok(Some(url))
+    }
+
+    fn commit_object_exists(&self, repo: &Path, sha: &str) -> Result<bool, VcsError> {
+        let deref = format!("{sha}^{{commit}}");
+        let status = git_command()
+            .args(["cat-file", "-e", &deref])
+            .current_dir(repo)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .map_err(|e| VcsError::Io {
+                ctx: format!("failed to spawn git cat-file -e {sha}^{{commit}}"),
+                source: e,
+            })?;
+        Ok(status.success())
+    }
 }
 
 /// Build the savepoint ref path for `op_id` under the rwv pre-op namespace.
