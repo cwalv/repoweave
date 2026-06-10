@@ -373,6 +373,25 @@ Schema:
         }
       ]
     },
+    "OrphanedSavepointKind": {
+      "description": "Classification of an orphaned savepoint, controlling `--fix` policy.",
+      "oneOf": [
+        {
+          "description": "The savepoint tip is reachable from the current branch tip, so the ref is redundant — the underlying commits are still anchored by the live branch and dropping the savepoint loses no objects. `--fix` may drop redundant savepoints.",
+          "type": "string",
+          "enum": [
+            "redundant"
+          ]
+        },
+        {
+          "description": "The savepoint tip is **not** reachable from the current branch tip. The ref is the last pointer to commits that would otherwise become unreachable. `--fix` must not drop these — the reflog is on the FORBIDDEN tripwire list, same rationale: don't cut the last recovery path.",
+          "type": "string",
+          "enum": [
+            "live"
+          ]
+        }
+      ]
+    },
     "ProvenanceKind": {
       "description": "Discriminator for [`CheckViolation::Provenance`] findings.",
       "oneOf": [
@@ -873,6 +892,107 @@ Schema:
                 {
                   "$ref": "#/definitions/BranchDisciplineKind"
                 }
+              ]
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "absolute_path",
+            "kind",
+            "missing_path",
+            "path"
+          ],
+          "properties": {
+            "absolute_path": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "enum": [
+                "stale-worktree-registration"
+              ]
+            },
+            "missing_path": {
+              "description": "Absolute path of the missing worktree directory.",
+              "type": "string"
+            },
+            "path": {
+              "type": "string"
+            },
+            "workweave": {
+              "description": "`None` for the primary weave.",
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "kind",
+            "started_at",
+            "workspace_dir"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "stale-op-state"
+              ]
+            },
+            "started_at": {
+              "description": "Raw `started_at` string from the op-state file (RFC3339 UTC).",
+              "type": "string"
+            },
+            "workspace_dir": {
+              "description": "Absolute path to the workspace dir that holds the `.rwv-op` file.",
+              "type": "string"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "absolute_path",
+            "kind",
+            "op_id",
+            "path",
+            "sub_kind"
+          ],
+          "properties": {
+            "absolute_path": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "enum": [
+                "orphaned-savepoint"
+              ]
+            },
+            "op_id": {
+              "description": "Opaque op-id from the savepoint ref's trailing path component.",
+              "type": "string"
+            },
+            "path": {
+              "type": "string"
+            },
+            "sub_kind": {
+              "description": "Safe-vs-live classification.",
+              "allOf": [
+                {
+                  "$ref": "#/definitions/OrphanedSavepointKind"
+                }
+              ]
+            },
+            "workweave": {
+              "description": "`None` for the primary weave.",
+              "type": [
+                "string",
+                "null"
               ]
             }
           }

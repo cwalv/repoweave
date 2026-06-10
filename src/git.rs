@@ -1099,6 +1099,62 @@ impl Vcs for GitVcs {
         }
         Some(PathBuf::from(trimmed))
     }
+
+    fn list_stale_worktree_registrations(&self, repo: &Path) -> Result<Vec<PathBuf>, VcsError> {
+        // `git worktree list --porcelain` emits one record per registration,
+        // separated by blank lines. The lines we care about within a record:
+        //   `worktree <path>`  — the registered worktree path
+        //   `prunable <reason>` — present when the path no longer exists
+        //                         (or the gitdir file points to a missing
+        //                         location); marks the record for pruning.
+        // We collect the `worktree` path of every record that carries a
+        // `prunable` line.
+        let output = Self::run(&["worktree", "list", "--porcelain"], repo)?;
+        let mut stale: Vec<PathBuf> = Vec::new();
+        let mut current_path: Option<PathBuf> = None;
+        let mut current_prunable = false;
+        for line in output.lines() {
+            if line.is_empty() {
+                if current_prunable {
+                    if let Some(p) = current_path.take() {
+                        stale.push(p);
+                    }
+                }
+                current_path = None;
+                current_prunable = false;
+                continue;
+            }
+            if let Some(rest) = line.strip_prefix("worktree ") {
+                current_path = Some(PathBuf::from(rest));
+            } else if line == "prunable" || line.starts_with("prunable ") {
+                current_prunable = true;
+            }
+        }
+        // Flush the final record (porcelain output may not end with a blank line).
+        if current_prunable {
+            if let Some(p) = current_path.take() {
+                stale.push(p);
+            }
+        }
+        Ok(stale)
+    }
+
+    fn list_savepoint_op_ids(&self, repo: &Path) -> Result<Vec<String>, VcsError> {
+        // `git for-each-ref` over `refs/rwv/pre-op/` returns every savepoint
+        // ref this repo holds. Strip the namespace prefix to recover the
+        // opaque op-id the caller originally supplied to `create_savepoint`.
+        let output = Self::run(
+            &["for-each-ref", "--format=%(refname)", "refs/rwv/pre-op/"],
+            repo,
+        )?;
+        let op_ids = output
+            .lines()
+            .map(str::trim)
+            .filter(|l| !l.is_empty())
+            .filter_map(|l| l.strip_prefix("refs/rwv/pre-op/").map(str::to_owned))
+            .collect();
+        Ok(op_ids)
+    }
 }
 
 /// Build the savepoint ref path for `op_id` under the rwv pre-op namespace.

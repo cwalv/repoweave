@@ -197,6 +197,71 @@ pub enum CheckViolation {
         /// Discriminator for the specific branch-discipline anomaly.
         sub_kind: BranchDisciplineKind,
     },
+    /// A worktree registration recorded in a repo whose on-disk directory
+    /// no longer exists. The administrative entry is stale; auto-fixable
+    /// by running `worktree prune` — information-preserving by
+    /// construction (the only state being dropped is a pointer to a
+    /// directory that already is not there).
+    StaleWorktreeRegistration {
+        /// Workweave name when the *registering* repo (the one that holds
+        /// the stale `.git/worktrees/` entry) lives inside a workweave;
+        /// `None` when the registering repo is in the primary weave.
+        workweave: Option<WorkweaveName>,
+        /// The registering repo's manifest-relative path.
+        repo: RepoPath,
+        /// Absolute path of the missing worktree directory, as recorded
+        /// in the VCS's worktree list.
+        missing_path: PathBuf,
+    },
+
+    /// A `.rwv-op` file is present at a workspace root. Reports the file's
+    /// age and the path so the operator can inspect, resume
+    /// (`rwv sync --continue`), or roll back (`rwv abort`). **Never
+    /// auto-fixed**: another terminal may be mid-conflict-resolution; rwv
+    /// has no daemon to know which workspace the op-state legitimately
+    /// belongs to.
+    StaleOpState {
+        /// Absolute path to the workspace dir that holds the `.rwv-op` file.
+        workspace_dir: PathBuf,
+        /// Raw `started_at` string from the op-state file (RFC3339 UTC),
+        /// preserved verbatim so the operator sees the same value
+        /// `op_state::read` would.
+        started_at: String,
+    },
+
+    /// A `refs/rwv/pre-op/<op-id>` savepoint whose op-id is not present
+    /// in any `.rwv-op` file in this workspace tree. Sub-kind picks the
+    /// classification — savepoint tip reachable from current HEAD
+    /// (redundant, safely droppable) vs unreachable (the savepoint is
+    /// the last pointer to discarded work; keep).
+    OrphanedSavepoint {
+        /// Workweave name when the holding repo is inside a workweave.
+        workweave: Option<WorkweaveName>,
+        /// The holding repo's manifest-relative path.
+        repo: RepoPath,
+        /// Opaque op-id captured from the savepoint ref's trailing path
+        /// component (`refs/rwv/pre-op/<op_id>`).
+        op_id: String,
+        /// Safe-vs-live classification.
+        sub_kind: OrphanedSavepointKind,
+    },
+}
+
+/// Classification of an orphaned savepoint, controlling `--fix` policy.
+#[derive(Debug, Serialize, JsonSchema, Clone)]
+#[serde(rename_all = "kebab-case")]
+pub enum OrphanedSavepointKind {
+    /// The savepoint tip is reachable from the current branch tip, so
+    /// the ref is redundant — the underlying commits are still anchored
+    /// by the live branch and dropping the savepoint loses no objects.
+    /// `--fix` may drop redundant savepoints.
+    Redundant,
+    /// The savepoint tip is **not** reachable from the current branch
+    /// tip. The ref is the last pointer to commits that would otherwise
+    /// become unreachable. `--fix` must not drop these — the reflog is
+    /// on the FORBIDDEN tripwire list, same rationale: don't cut the
+    /// last recovery path.
+    Live,
 }
 
 #[derive(Debug, Serialize, JsonSchema)]
@@ -576,6 +641,31 @@ pub enum ViolationOutput {
         #[serde(rename = "sub_kind")]
         sub_kind: BranchDisciplineKind,
     },
+    StaleWorktreeRegistration {
+        path: String,
+        absolute_path: String,
+        /// `None` for the primary weave.
+        workweave: Option<String>,
+        /// Absolute path of the missing worktree directory.
+        missing_path: String,
+    },
+    StaleOpState {
+        /// Absolute path to the workspace dir that holds the `.rwv-op` file.
+        workspace_dir: String,
+        /// Raw `started_at` string from the op-state file (RFC3339 UTC).
+        started_at: String,
+    },
+    OrphanedSavepoint {
+        path: String,
+        absolute_path: String,
+        /// `None` for the primary weave.
+        workweave: Option<String>,
+        /// Opaque op-id from the savepoint ref's trailing path component.
+        op_id: String,
+        /// Safe-vs-live classification.
+        #[serde(rename = "sub_kind")]
+        sub_kind: OrphanedSavepointKind,
+    },
 }
 
 impl ViolationOutput {
@@ -745,6 +835,35 @@ impl ViolationOutput {
                 sub_kind,
             } => Self::BranchDiscipline {
                 repo_path: repo_path.to_string_lossy().into_owned(),
+                sub_kind,
+            },
+            CheckViolation::StaleWorktreeRegistration {
+                workweave,
+                repo,
+                missing_path,
+            } => Self::StaleWorktreeRegistration {
+                absolute_path: abs_in(&workweave, workspace_dir, workweave_dirs, &repo),
+                path: repo.to_string(),
+                workweave: workweave.map(|w| w.to_string()),
+                missing_path: missing_path.to_string_lossy().into_owned(),
+            },
+            CheckViolation::StaleOpState {
+                workspace_dir: ws_dir,
+                started_at,
+            } => Self::StaleOpState {
+                workspace_dir: ws_dir.to_string_lossy().into_owned(),
+                started_at,
+            },
+            CheckViolation::OrphanedSavepoint {
+                workweave,
+                repo,
+                op_id,
+                sub_kind,
+            } => Self::OrphanedSavepoint {
+                absolute_path: abs_in(&workweave, workspace_dir, workweave_dirs, &repo),
+                path: repo.to_string(),
+                workweave: workweave.map(|w| w.to_string()),
+                op_id,
                 sub_kind,
             },
         }
@@ -1769,6 +1888,155 @@ pub fn scan_branch_discipline(ws_root: &Path, vcs: &dyn crate::vcs::Vcs) -> Vec<
     violations
 }
 
+// State-hygiene scanning (stale worktree registrations, stale .rwv-op,
+// orphaned savepoints).
+// ---------------------------------------------------------------------------
+
+/// One repo to scan for state-hygiene violations.
+///
+/// The scanner is driven by an explicit list rather than re-deriving the set
+/// from the manifest: callers (`run_check`, `collect_doctor_violations`)
+/// already build a deduped scan list for drift detection, and reusing the
+/// same `(workweave, abs, repo_path)` shape here keeps the input contract
+/// uniform across check kinds.
+pub struct StateHygieneScanTarget {
+    /// Workweave name when the repo lives inside a workweave; `None` for
+    /// repos in the primary weave.
+    pub workweave: Option<WorkweaveName>,
+    /// Absolute path to the repo on disk.
+    pub abs: PathBuf,
+    /// Manifest-relative repo path (used to build the violation's `path`).
+    pub repo: RepoPath,
+}
+
+/// One workspace directory that may carry a `.rwv-op` op-state file.
+pub struct StateHygieneOpStateTarget {
+    /// Absolute path to the workspace dir (active path of a workspace —
+    /// primary weave root or a workweave directory).
+    pub workspace_dir: PathBuf,
+}
+
+/// Scan the supplied repos and workspace dirs for the three state-hygiene
+/// check kinds — stale worktree registrations, stale `.rwv-op` files,
+/// and orphaned savepoints. All three are workspace-scope hygiene
+/// findings; none of them depend on the manifest or per-project lock,
+/// so they share a single scanner entry point.
+///
+/// **Classification policy** (bead fo-hycb06.4):
+///
+/// - **stale-worktree-registration**: produced by
+///   [`Vcs::list_stale_worktree_registrations`]. `--fix` (in `run_check`)
+///   runs [`Vcs::worktree_prune`]; this scanner only reports.
+/// - **stale-op-state**: an in-tree `.rwv-op` file (any one). Reported
+///   with its `started_at` field intact. **Never auto-fixed** — another
+///   terminal may be mid-conflict-resolution and rwv has no daemon to
+///   know.
+/// - **orphaned-savepoint**: a `refs/rwv/pre-op/<op-id>` ref whose
+///   `op_id` is not present in any live `.rwv-op` file inside
+///   `op_state_targets`. Classified as
+///   [`OrphanedSavepointKind::Redundant`] when the savepoint tip is an
+///   ancestor of the repo's current ref (the underlying commits remain
+///   anchored by the live branch, so dropping the savepoint loses no
+///   objects), and [`OrphanedSavepointKind::Live`] otherwise. Only
+///   `Redundant` savepoints are `--fix`-eligible — dropping a `Live`
+///   savepoint would discard the last pointer to commits not held by
+///   any other ref, same rationale that put reflog on the FORBIDDEN
+///   tripwire list.
+///
+/// Returns the violations in the canonical order produced by iterating
+/// `repos` and then `op_state_targets`; the caller is responsible for
+/// any further sorting.
+pub fn scan_state_hygiene(
+    vcs: &dyn crate::vcs::Vcs,
+    repos: &[StateHygieneScanTarget],
+    op_state_targets: &[StateHygieneOpStateTarget],
+) -> Vec<CheckViolation> {
+    let mut violations = Vec::new();
+
+    // Phase 1: collect the live op-ids from every `.rwv-op` file under the
+    // workspace tree. We need this set before classifying savepoints below;
+    // any savepoint whose op-id is in this set is in-use (the matching sync
+    // is in flight) and must not be reported as orphaned.
+    let mut live_op_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for target in op_state_targets {
+        // Absent or unparseable file → nothing to do here. An unparseable
+        // file is surfaced by `op_state::read`'s caller in sync paths;
+        // the doctor's job for the `.rwv-op` line is just to report
+        // presence, not to debug the YAML.
+        if let Ok(Some(state)) = crate::op_state::read(&target.workspace_dir) {
+            violations.push(CheckViolation::StaleOpState {
+                workspace_dir: target.workspace_dir.clone(),
+                started_at: state.started_at.clone(),
+            });
+            live_op_ids.insert(state.id);
+        }
+    }
+
+    // Phase 2: per-repo checks (stale worktree registrations + orphaned
+    // savepoints).
+    for repo in repos {
+        // Skip repos that are not vcs-managed (the manifest may list a
+        // path that hasn't been cloned yet).
+        if !vcs.is_repo(&repo.abs) {
+            continue;
+        }
+
+        // Stale worktree registrations.
+        if let Ok(stale_paths) = vcs.list_stale_worktree_registrations(&repo.abs) {
+            for missing_path in stale_paths {
+                violations.push(CheckViolation::StaleWorktreeRegistration {
+                    workweave: repo.workweave.clone(),
+                    repo: repo.repo.clone(),
+                    missing_path,
+                });
+            }
+        }
+
+        // Orphaned savepoints. Resolve current HEAD up front so we can
+        // classify each ref; if HEAD itself is unreadable, we report
+        // every savepoint as Live (conservative — we cannot prove
+        // reachability, so we keep the ref).
+        let head = vcs.head_revision(&repo.abs).ok();
+        let op_ids = match vcs.list_savepoint_op_ids(&repo.abs) {
+            Ok(ids) => ids,
+            Err(_) => continue, // can't enumerate → leave repo alone
+        };
+        for op_id in op_ids {
+            // Skip savepoints whose op-id matches an in-flight `.rwv-op`.
+            // The owning sync may still need to roll back.
+            if live_op_ids.contains(&op_id) {
+                continue;
+            }
+            let sub_kind = match (&head, vcs.resolve_savepoint(&repo.abs, &op_id)) {
+                (Some(head_rev), Some(sp_rev)) => {
+                    // `is_ancestor(sp, head)` is non-strict: equal revisions
+                    // return true, which is what we want — a savepoint
+                    // pointing at the same commit as HEAD is trivially
+                    // redundant.
+                    match vcs.is_ancestor(&repo.abs, &sp_rev, head_rev) {
+                        Ok(true) => OrphanedSavepointKind::Redundant,
+                        // Not reachable from HEAD, or git couldn't decide:
+                        // assume Live to stay on the safe side. The
+                        // "couldn't decide" branch is conservative — we
+                        // don't have proof of reachability.
+                        Ok(false) | Err(_) => OrphanedSavepointKind::Live,
+                    }
+                }
+                // No HEAD or no savepoint SHA → conservative: keep the ref.
+                _ => OrphanedSavepointKind::Live,
+            };
+            violations.push(CheckViolation::OrphanedSavepoint {
+                workweave: repo.workweave.clone(),
+                repo: repo.repo.clone(),
+                op_id,
+                sub_kind,
+            });
+        }
+    }
+
+    violations
+}
+
 /// Apply the `rwv doctor --fix` deletion for safe-class stale ephemeral
 /// branches in canonicals.
 ///
@@ -1821,6 +2089,51 @@ pub fn fix_stale_ephemeral_branches(
     }
 
     (deleted, errors)
+}
+
+/// Apply the `--fix` for a single state-hygiene violation.
+///
+/// The accepted `--fix` paths are deliberately narrow:
+///
+/// - [`CheckViolation::StaleWorktreeRegistration`] →
+///   [`Vcs::worktree_prune`] in the registering repo. Information-
+///   preserving by construction (the only state being dropped is a
+///   pointer to a directory that already does not exist).
+/// - [`CheckViolation::OrphanedSavepoint`] with
+///   [`OrphanedSavepointKind::Redundant`] → [`Vcs::drop_savepoint`].
+///   The ref tip is reachable from the current branch, so dropping the
+///   ref does not unanchor any commits.
+///
+/// All other variants (`StaleOpState`, `OrphanedSavepoint { Live, .. }`)
+/// return `Ok(false)`: not auto-fixable, the caller should report only.
+/// Returns `Ok(true)` when a fix was actually applied; `Ok(false)` when
+/// the violation isn't in the `--fix` set; `Err` only when the
+/// underlying VCS operation itself errored.
+pub fn fix_state_hygiene(
+    vcs: &dyn crate::vcs::Vcs,
+    violation: &CheckViolation,
+    repo_abs: &Path,
+) -> anyhow::Result<bool> {
+    match violation {
+        CheckViolation::StaleWorktreeRegistration { .. } => {
+            vcs.worktree_prune(repo_abs)
+                .with_context(|| format!("worktree prune failed in {}", repo_abs.display()))?;
+            Ok(true)
+        }
+        CheckViolation::OrphanedSavepoint {
+            op_id,
+            sub_kind: OrphanedSavepointKind::Redundant,
+            ..
+        } => {
+            // drop_savepoint swallows ref-update errors by design — the
+            // savepoint is purely a recovery aid.
+            vcs.drop_savepoint(repo_abs, op_id);
+            Ok(true)
+        }
+        // Live orphaned savepoints, stale op-state, and every other variant
+        // are not in the `--fix` set.
+        _ => Ok(false),
+    }
 }
 
 /// `$schema` URL embedded in `rwv doctor --json` output. Points at the
@@ -2236,6 +2549,59 @@ pub fn violations_to_issues(violations: Vec<CheckViolation>) -> Vec<Issue> {
                         }
                     };
                     (crate::integration::Severity::Warning, msg)
+                }
+                CheckViolation::StaleWorktreeRegistration {
+                    workweave,
+                    repo,
+                    missing_path,
+                } => {
+                    let location = match workweave {
+                        Some(ww) => format!("{ww}/{repo}"),
+                        None => format!("{repo}"),
+                    };
+                    (
+                        crate::integration::Severity::Warning,
+                        format!(
+                            "{location}: stale-worktree-registration: missing path \
+                             {} (run `rwv doctor --fix` to prune)",
+                            missing_path.display()
+                        ),
+                    )
+                }
+                CheckViolation::StaleOpState {
+                    workspace_dir,
+                    started_at,
+                } => (
+                    crate::integration::Severity::Warning,
+                    format!(
+                        "{}/.rwv-op: stale-op-state present (started_at={started_at}); \
+                         resume with `rwv sync --continue` or roll back with `rwv abort`. \
+                         Never auto-fixed — another terminal may be mid-conflict-resolution.",
+                        workspace_dir.display()
+                    ),
+                ),
+                CheckViolation::OrphanedSavepoint {
+                    workweave,
+                    repo,
+                    op_id,
+                    sub_kind,
+                } => {
+                    let location = match workweave {
+                        Some(ww) => format!("{ww}/{repo}"),
+                        None => format!("{repo}"),
+                    };
+                    let detail = match sub_kind {
+                        OrphanedSavepointKind::Redundant => {
+                            "orphaned-savepoint (redundant, safe to --fix)"
+                        }
+                        OrphanedSavepointKind::Live => {
+                            "orphaned-savepoint (last pointer to unreachable commits; keep)"
+                        }
+                    };
+                    (
+                        crate::integration::Severity::Warning,
+                        format!("{location}: {detail} op_id={op_id}"),
+                    )
                 }
             };
             Issue {
@@ -3277,6 +3643,176 @@ pub fn run_check(
         }
     }
 
+    // State hygiene: stale worktree registrations, stale `.rwv-op`,
+    // orphaned savepoints. See `scan_state_hygiene` for the rationale.
+    // Mirrors the index_scan enumeration (every manifest repo, every
+    // workweave) and additionally pulls in the project repo
+    // (`projects/<name>/`), which also carries savepoints (sync.rs:1573).
+    let mut hygiene_targets: Vec<StateHygieneScanTarget> = Vec::new();
+    let mut hygiene_seen: std::collections::HashSet<(Option<String>, std::path::PathBuf)> =
+        std::collections::HashSet::new();
+    for project in &input.projects {
+        for repo_path in project.manifest.iter_repo_paths() {
+            let abs = workspace_dir.join(repo_path.as_path());
+            if abs.exists() && hygiene_seen.insert((None, abs.clone())) {
+                hygiene_targets.push(StateHygieneScanTarget {
+                    workweave: None,
+                    abs,
+                    repo: repo_path.clone(),
+                });
+            }
+        }
+    }
+    if matches!(ctx.location, WorkspaceLocation::Weave { .. }) {
+        for (ww_name, ww_dir) in crate::workweave::list_workweave_dirs(ctx.primary_path()) {
+            for project in &input.projects {
+                for repo_path in project.manifest.iter_repo_paths() {
+                    let abs = ww_dir.join(repo_path.as_path());
+                    if abs.exists() && hygiene_seen.insert((Some(ww_name.clone()), abs.clone())) {
+                        hygiene_targets.push(StateHygieneScanTarget {
+                            workweave: Some(WorkweaveName::new(ww_name.clone())),
+                            abs,
+                            repo: repo_path.clone(),
+                        });
+                    }
+                }
+            }
+        }
+    }
+    // Project repos: `projects/<name>/` is itself a git repo carrying
+    // savepoints (sync.rs creates one there for the CWD project at sync
+    // time). The manifest enumeration above doesn't include it because
+    // the project repo is not a `repositories:` entry.
+    for project in &input.projects {
+        let pname = project.name.as_str();
+        let project_rel = format!("projects/{pname}");
+        let project_repo_path = match RepoPath::new(project_rel.clone()) {
+            Ok(rp) => rp,
+            Err(_) => continue,
+        };
+        let project_abs = workspace_dir.join(&project_rel);
+        if project_abs.is_dir() && hygiene_seen.insert((None, project_abs.clone())) {
+            hygiene_targets.push(StateHygieneScanTarget {
+                workweave: None,
+                abs: project_abs,
+                repo: project_repo_path.clone(),
+            });
+        }
+        if matches!(ctx.location, WorkspaceLocation::Weave { .. }) {
+            for (ww_name, ww_dir) in crate::workweave::list_workweave_dirs(ctx.primary_path()) {
+                let ww_project_abs = ww_dir.join(&project_rel);
+                if ww_project_abs.is_dir()
+                    && hygiene_seen.insert((Some(ww_name.clone()), ww_project_abs.clone()))
+                {
+                    hygiene_targets.push(StateHygieneScanTarget {
+                        workweave: Some(WorkweaveName::new(ww_name.clone())),
+                        abs: ww_project_abs,
+                        repo: project_repo_path.clone(),
+                    });
+                }
+            }
+        }
+    }
+    drop(hygiene_seen);
+
+    // Op-state scan: check the CWD workspace and every workweave for `.rwv-op`.
+    let mut hygiene_op_state_targets: Vec<StateHygieneOpStateTarget> = Vec::new();
+    hygiene_op_state_targets.push(StateHygieneOpStateTarget {
+        workspace_dir: workspace_dir.clone(),
+    });
+    if matches!(ctx.location, WorkspaceLocation::Weave { .. }) {
+        for (_ww_name, ww_dir) in crate::workweave::list_workweave_dirs(ctx.primary_path()) {
+            // Dedupe against the active workspace dir (operator may run
+            // from inside a workweave, in which case it's already added).
+            if !hygiene_op_state_targets
+                .iter()
+                .any(|t| t.workspace_dir == ww_dir)
+            {
+                hygiene_op_state_targets.push(StateHygieneOpStateTarget {
+                    workspace_dir: ww_dir,
+                });
+            }
+        }
+    }
+
+    let hygiene_violations = scan_state_hygiene(&git, &hygiene_targets, &hygiene_op_state_targets);
+    // Mirror the project-scoped target dedupe used elsewhere: build a quick
+    // map from `(workweave, repo)` to absolute path so the `--fix` path can
+    // call into the right repo. The keys come straight from the targets we
+    // just scanned.
+    let target_lookup: std::collections::HashMap<(Option<String>, String), std::path::PathBuf> =
+        hygiene_targets
+            .iter()
+            .map(|t| {
+                (
+                    (
+                        t.workweave.as_ref().map(|w| w.to_string()),
+                        t.repo.to_string(),
+                    ),
+                    t.abs.clone(),
+                )
+            })
+            .collect();
+
+    for violation in hygiene_violations {
+        // Try the --fix path first when enabled; only `StaleWorktreeRegistration`
+        // and `OrphanedSavepoint { Redundant }` are auto-fixable (see
+        // `fix_state_hygiene` for the policy).
+        let fix_attempted = if fix {
+            match &violation {
+                CheckViolation::StaleWorktreeRegistration {
+                    workweave, repo, ..
+                }
+                | CheckViolation::OrphanedSavepoint {
+                    workweave,
+                    repo,
+                    sub_kind: OrphanedSavepointKind::Redundant,
+                    ..
+                } => {
+                    let key = (workweave.as_ref().map(|w| w.to_string()), repo.to_string());
+                    match target_lookup.get(&key) {
+                        Some(repo_abs) => match fix_state_hygiene(&git, &violation, repo_abs) {
+                            Ok(true) => {
+                                let (kind_label, extra) = match &violation {
+                                    CheckViolation::StaleWorktreeRegistration { .. } => {
+                                        ("stale-worktree-registration", "pruned".to_string())
+                                    }
+                                    CheckViolation::OrphanedSavepoint { op_id, .. } => {
+                                        ("orphaned-savepoint", format!("dropped op_id={op_id}"))
+                                    }
+                                    _ => ("state-hygiene", String::new()),
+                                };
+                                let location = match (workweave, repo) {
+                                    (Some(ww), r) => format!("{ww}/{r}"),
+                                    (None, r) => r.to_string(),
+                                };
+                                println!("[fixed] core: {kind_label} for {location}: {extra}");
+                                true
+                            }
+                            Ok(false) => false,
+                            Err(e) => {
+                                all_issues.push(Issue {
+                                    integration: "core".into(),
+                                    severity: Severity::Error,
+                                    message: format!("state-hygiene --fix failed: {e}"),
+                                    safe_to_fix: true,
+                                });
+                                true
+                            }
+                        },
+                        None => false,
+                    }
+                }
+                _ => false,
+            }
+        } else {
+            false
+        };
+        if !fix_attempted {
+            all_issues.extend(violations_to_issues(vec![violation]));
+        }
+    }
+
     // Replay-exclusion check: each project repo should carry
     // `rwv.lock merge=ours` in `.gitattributes`. Older projects don't
     // have it; `--fix` writes the line in place (idempotent — re-running
@@ -3640,6 +4176,72 @@ fn collect_doctor_violations(
             });
         }
     }
+
+    // State hygiene: stale worktree registrations, stale `.rwv-op`,
+    // orphaned savepoints. Builds the same enumeration the human-facing
+    // `run_check` uses, plus the project repos.
+    let mut hygiene_targets: Vec<StateHygieneScanTarget> = index_scan
+        .iter()
+        .map(|(ww, abs, repo)| StateHygieneScanTarget {
+            workweave: ww.clone(),
+            abs: abs.clone(),
+            repo: repo.clone(),
+        })
+        .collect();
+    let mut hygiene_seen_proj: std::collections::HashSet<(
+        Option<WorkweaveName>,
+        std::path::PathBuf,
+    )> = index_scan
+        .iter()
+        .map(|(ww, abs, _)| (ww.clone(), abs.clone()))
+        .collect();
+    for project in &input.projects {
+        let pname = project.name.as_str();
+        let project_rel = format!("projects/{pname}");
+        let project_repo_path = match RepoPath::new(project_rel.clone()) {
+            Ok(rp) => rp,
+            Err(_) => continue,
+        };
+        let project_abs = workspace_dir.join(&project_rel);
+        if project_abs.is_dir() && hygiene_seen_proj.insert((None, project_abs.clone())) {
+            hygiene_targets.push(StateHygieneScanTarget {
+                workweave: None,
+                abs: project_abs,
+                repo: project_repo_path.clone(),
+            });
+        }
+        for (ww_name, ww_dir) in workweave_dirs.iter() {
+            let ww_project_abs = ww_dir.join(&project_rel);
+            if ww_project_abs.is_dir()
+                && hygiene_seen_proj.insert((Some(ww_name.clone()), ww_project_abs.clone()))
+            {
+                hygiene_targets.push(StateHygieneScanTarget {
+                    workweave: Some(ww_name.clone()),
+                    abs: ww_project_abs,
+                    repo: project_repo_path.clone(),
+                });
+            }
+        }
+    }
+    drop(hygiene_seen_proj);
+
+    let mut hygiene_op_state_targets: Vec<StateHygieneOpStateTarget> =
+        vec![StateHygieneOpStateTarget {
+            workspace_dir: workspace_dir.clone(),
+        }];
+    for (_ww_name, ww_dir) in workweave_dirs.iter() {
+        if !hygiene_op_state_targets
+            .iter()
+            .any(|t| &t.workspace_dir == ww_dir)
+        {
+            hygiene_op_state_targets.push(StateHygieneOpStateTarget {
+                workspace_dir: ww_dir.clone(),
+            });
+        }
+    }
+
+    let hygiene_violations = scan_state_hygiene(&git, &hygiene_targets, &hygiene_op_state_targets);
+    violations.extend(hygiene_violations);
 
     // Replay-exclusion check: each project repo should carry
     // `rwv.lock merge=ours` in `.gitattributes`.

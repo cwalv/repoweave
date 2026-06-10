@@ -908,4 +908,39 @@ pub trait Vcs {
     /// For [`GitVcs`](crate::git::GitVcs): runs `git rev-parse
     /// --path-format=absolute --git-common-dir` in `workspace`.
     fn resolve_canonical_store(&self, workspace: &Path) -> Option<PathBuf>;
+    /// List paths registered as worktrees of `repo` whose on-disk
+    /// directories no longer exist. The administrative entries are still
+    /// in the VCS state and will be dropped by [`worktree_prune`].
+    ///
+    /// For [`GitVcs`](crate::git::GitVcs): parses
+    /// `git worktree list --porcelain` and returns the `worktree` path
+    /// from every record marked `prunable`. Returns paths verbatim from
+    /// the porcelain output; the caller is responsible for any further
+    /// resolution.
+    ///
+    /// Used by `rwv doctor` to surface stale worktree registrations as a
+    /// state-hygiene finding; `--fix` calls [`worktree_prune`] to drop
+    /// the registrations (information-preserving by construction — the
+    /// only state being removed is a pointer to a directory that already
+    /// no longer exists).
+    ///
+    /// [`worktree_prune`]: Vcs::worktree_prune
+    fn list_stale_worktree_registrations(&self, repo: &Path) -> Result<Vec<PathBuf>, VcsError>;
+
+    /// List the opaque `op_id` strings of every savepoint currently
+    /// recorded in `repo`.
+    ///
+    /// For [`GitVcs`](crate::git::GitVcs): enumerates
+    /// `refs/rwv/pre-op/*` via `git for-each-ref` and returns the
+    /// trailing path component (the `op_id`) of each ref. The ref
+    /// namespace (`refs/rwv/pre-op/<id>`) is an impl detail — callers
+    /// receive opaque op-id strings and feed them back through
+    /// [`resolve_savepoint`] / [`drop_savepoint`].
+    ///
+    /// Used by `rwv doctor`'s orphaned-savepoint check to find
+    /// savepoints that no longer correspond to a live `.rwv-op` file.
+    ///
+    /// [`resolve_savepoint`]: Vcs::resolve_savepoint
+    /// [`drop_savepoint`]: Vcs::drop_savepoint
+    fn list_savepoint_op_ids(&self, repo: &Path) -> Result<Vec<String>, VcsError>;
 }
