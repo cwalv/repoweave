@@ -1921,7 +1921,7 @@ fn verbs_match(invoked: MachineVerb, recorded: MachineVerb) -> bool {
 }
 
 // ---------------------------------------------------------------------------
-// Pre-loop helpers (preconditions extracted from old run_sync_impl)
+// Pre-loop helpers (precondition checks used by guard_and_mark)
 // ---------------------------------------------------------------------------
 
 /// Sibling-sync warning: only meaningful for plain `sync`. CWD is a workweave

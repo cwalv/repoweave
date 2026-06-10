@@ -844,7 +844,7 @@ fn sync_to_refuses_when_target_has_uncommitted_changes() {
 // override on the target side.
 //
 // Variant: also verify that `rwv sync` (workweave ← primary) works under the
-// same mismatch — the symmetric fix in `run_sync_impl_with_op_id`.
+// same mismatch — the symmetric fix in the unified phase-machine driver.
 // ---------------------------------------------------------------------------
 
 /// Build a marker-based workweave (`.rwv-workweave` present) on top of the
