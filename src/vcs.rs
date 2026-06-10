@@ -949,4 +949,28 @@ pub trait Vcs {
     /// [`resolve_savepoint`]: Vcs::resolve_savepoint
     /// [`drop_savepoint`]: Vcs::drop_savepoint
     fn list_savepoint_op_ids(&self, repo: &Path) -> Result<Vec<String>, VcsError>;
+
+    /// Read the content of `file_path` at `revision` in `repo`.
+    ///
+    /// Returns the raw byte content of the file as committed at that
+    /// revision. Useful for reading files (e.g. manifests, lock files)
+    /// at a pinned commit without touching the working tree — the
+    /// snapshot-reads primitive (§6 of the sync design).
+    ///
+    /// `file_path` is a path relative to the repo root (e.g.
+    /// `Path::new("rwv.lock")` or `Path::new("rwv.yaml")`).
+    ///
+    /// Returns [`VcsError::RevisionNotFound`] when `revision` is not
+    /// reachable in `repo`. Returns [`VcsError::CommandFailed`] when the
+    /// file does not exist at that revision (the VCS error's stderr will
+    /// name the absent path).
+    ///
+    /// For [`GitVcs`](crate::git::GitVcs): runs
+    /// `git show <revision>:<file_path>` in `repo`.
+    fn read_file_at_revision(
+        &self,
+        repo: &Path,
+        revision: &ResolvedRevisionId,
+        file_path: &Path,
+    ) -> Result<String, VcsError>;
 }

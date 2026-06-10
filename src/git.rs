@@ -1155,6 +1155,38 @@ impl Vcs for GitVcs {
             .collect();
         Ok(op_ids)
     }
+
+    fn read_file_at_revision(
+        &self,
+        repo: &Path,
+        revision: &ResolvedRevisionId,
+        file_path: &Path,
+    ) -> Result<String, VcsError> {
+        let path_str = file_path.to_str().ok_or_else(|| VcsError::Io {
+            ctx: format!("file path {} is not valid UTF-8", file_path.display()),
+            source: std::io::Error::new(std::io::ErrorKind::InvalidInput, "non-utf8 file path"),
+        })?;
+        // `git show <rev>:<path>` prints the blob at the given revision.
+        // Non-zero exit when the revision is missing or the file doesn't
+        // exist at that revision; both surface as CommandFailed and the
+        // caller can inspect stderr.
+        let rev_path = format!("{}:{}", revision.as_str(), path_str);
+        match Self::run(&["show", &rev_path], repo) {
+            Ok(content) => Ok(content),
+            Err(VcsError::CommandFailed { stderr, .. })
+                if is_revision_not_found(&stderr)
+                    || stderr.contains("does not exist")
+                    || stderr.contains("exists on disk")
+                    || stderr.contains("Not a valid object") =>
+            {
+                Err(VcsError::RevisionNotFound {
+                    repo: repo.to_path_buf(),
+                    rev: rev_path,
+                })
+            }
+            Err(e) => Err(e),
+        }
+    }
 }
 
 /// Build the savepoint ref path for `op_id` under the rwv pre-op namespace.

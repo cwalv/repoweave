@@ -986,8 +986,17 @@ impl LockFile {
     pub fn from_path(path: &Path) -> anyhow::Result<Self> {
         let content = std::fs::read_to_string(path)
             .with_context(|| format!("failed to read {}", path.display()))?;
-        let lock: Self = serde_yaml::from_str(&content)
-            .with_context(|| format!("failed to parse rwv.lock at {}", path.display()))?;
+        Self::from_yaml_str(&content)
+            .with_context(|| format!("failed to parse rwv.lock at {}", path.display()))
+    }
+
+    /// Parse a lock file from a YAML string.
+    ///
+    /// Used by snapshot reads (§6 of the sync design) where content is
+    /// obtained via [`crate::vcs::Vcs::read_file_at_revision`] rather
+    /// than from the working tree.
+    pub fn from_yaml_str(content: &str) -> anyhow::Result<Self> {
+        let lock: Self = serde_yaml::from_str(content)?;
         Ok(lock)
     }
 

@@ -1448,29 +1448,86 @@ fn run_sync_impl_with_op_id(
     let cwd_workspace_name = workspace_name(&ctx);
     let source_workspace_name = workspace_name(&source_ctx);
 
+    // Pin the source tip atomically (T0). Everything derived from the source
+    // — its manifest and lock — is read at this revision. This eliminates the
+    // torn-read window: a concurrent mutation of the source after this point
+    // changes refs but cannot change anything we've read (§6 of the design).
+    //
+    // This also fixes the latent contract violation of reading the source lock
+    // from the working tree rather than the committed lock of record.
+    let source_project_tip = GitVcs
+        .head_revision(&source_project_dir)
+        .context("failed to read source project HEAD")?;
+
+    // Read the source manifest and lock AT the pinned revision.
+    // No working-tree reads of source manifest/lock after this point.
+    let raw_source_lock = {
+        let content = GitVcs
+            .read_file_at_revision(
+                &source_project_dir,
+                &source_project_tip,
+                Path::new("rwv.lock"),
+            )
+            .with_context(|| {
+                format!(
+                    "failed to read source lock at revision {} in {}",
+                    source_project_tip,
+                    source_project_dir.display()
+                )
+            })?;
+        LockFile::from_yaml_str(&content).with_context(|| {
+            format!(
+                "failed to parse source lock at revision {} in {}",
+                source_project_tip,
+                source_project_dir.display()
+            )
+        })?
+    };
+
+    let source_manifest = {
+        let content = GitVcs
+            .read_file_at_revision(
+                &source_project_dir,
+                &source_project_tip,
+                Path::new("rwv.yaml"),
+            )
+            .with_context(|| {
+                format!(
+                    "failed to read source manifest at revision {} in {}",
+                    source_project_tip,
+                    source_project_dir.display()
+                )
+            })?;
+        Manifest::from_yaml_str(&content).with_context(|| {
+            format!(
+                "failed to parse source manifest at revision {} in {}",
+                source_project_tip,
+                source_project_dir.display()
+            )
+        })?
+    };
+
     // Precondition: lock freshness (unless --force).
+    //
+    // Source: advisory check — compare each source repo's live HEAD against
+    // the pinned lock (inherent to what freshness means: a point-in-time
+    // snapshot of the source workspace). Uses the revision-pinned lock content
+    // rather than a working-tree read.
+    // Destination: uses the CWD lock as loaded from disk above.
     if !force {
-        let source_project =
-            Project::from_dir(&source_project_dir).context("failed to load source project")?;
-        if let Some(ref lock) = source_project.lock {
-            check_lock_freshness(
-                &source_workspace_dir,
-                lock,
-                Side::Source,
-                &source_workspace_name,
-            )?;
-        }
+        check_lock_freshness(
+            &source_workspace_dir,
+            &raw_source_lock,
+            Side::Source,
+            &source_workspace_name,
+        )?;
         if let Some(ref lock) = cwd_project.lock {
             check_lock_freshness(&workspace_dir, lock, Side::Destination, &cwd_workspace_name)?;
         }
     }
 
-    // Resolve project tips up front; the ancestor precondition (ff-only) and
-    // Phase 1' need both. `head_revision` is read-only — running it before
-    // any side effects keeps the refusal path clean.
-    let source_project_tip = GitVcs
-        .head_revision(&source_project_dir)
-        .context("failed to read source project HEAD")?;
+    // CWD project tip — read before any side effects so precondition
+    // checks and Phase 1' use the pre-op starting state.
     let cwd_project_tip = GitVcs
         .head_revision(&cwd_project_dir)
         .context("failed to read CWD project HEAD")?;
@@ -1583,19 +1640,10 @@ fn run_sync_impl_with_op_id(
         }
     }
 
-    // Phase 2 first: advance manifest repos using source's committed lock as
-    // targets. Reading source's lock directly (rather than from the CWD
-    // project after a Phase-1 reset, as the old contract did) keeps the lock
-    // out of the merge inputs entirely.
-    let source_lock_path = source_project_dir.join("rwv.lock");
-    let raw_source_lock =
-        LockFile::from_path(&source_lock_path).context("failed to read source lock")?;
-
-    // Load source manifest so we have URLs for any repos newly added at source
-    // that need to be materialized on the CWD side.
-    let source_manifest_path = source_project_dir.join("rwv.yaml");
-    let source_manifest =
-        Manifest::from_path(&source_manifest_path).context("failed to read source manifest")?;
+    // Phase 2 first: advance manifest repos using the snapshot-pinned source
+    // lock as targets. Both raw_source_lock and source_manifest were read at
+    // source_project_tip (T0) above — no working-tree reads of source state
+    // below this point.
 
     // Phase 3 materialize: for each repo listed in source's lock but missing
     // from the CWD workspace, clone/worktree-add before Phase 2 tries to sync
