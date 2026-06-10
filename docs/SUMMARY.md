@@ -27,6 +27,7 @@
 # Explanation — Joints
 
 - [Pyramid of stability](./explanation/joints/pyramid-of-stability.md)
+- [Clone topology](./explanation/joints/clone-topology.md)
 - [Workweave hierarchy](./explanation/joints/workweave-hierarchy.md)
 - [Lock-as-derived](./explanation/joints/lock-as-derived.md)
 - [Sync semantics](./explanation/joints/sync-semantics.md)
@@ -59,5 +60,6 @@
 
 - [Developing](./contributing/developing.md)
 - [Code style](./contributing/code-style.md)
+- [Destructive operations](./contributing/destructive-operations.md)
 - [Releasing rwv](./contributing/releasing-rwv.md)
 - [Writing integrations](./contributing/writing-integrations.md)

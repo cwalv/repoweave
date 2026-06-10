@@ -68,13 +68,9 @@ grandparent.
 
 ## Parent tracking is tool behavior
 
-Until recently, workweave hierarchy was operator discipline: the tool
-tracked the primary↔workweave edge only, and child-of-workweave
-relationships were the operator's problem to remember.
-
-That has changed. The `.rwv-workweave` marker file at every workweave
-root now carries a `parent` field that records the workspace the
-workweave was created from. The shape:
+The `.rwv-workweave` marker file at every workweave root carries a
+`parent` field that records the workspace the workweave was created
+from. The shape:
 
 ```yaml
 primary: /home/user/work
@@ -88,7 +84,8 @@ inside another workweave. Legacy markers written before the field
 existed parse cleanly — the read path backfills `parent` to `primary`
 so callers always see a value.
 
-This shifts two things from discipline to tool behavior:
+Tool-tracked parentage is what makes two operations safe to run without
+an explicit target:
 
 1. **Bare `rwv sync-to` has a target.** Running `rwv sync-to` with no
    argument pushes to the recorded parent. From a child workweave that
@@ -197,5 +194,9 @@ ephemeral naming scheme is not just bookkeeping — it is what makes
   between two workspaces on the tree; the full direction-pair contract.
 - [pyramid-of-stability](./pyramid-of-stability.md) — the project-repo
   side of the canonical-tip story; orthogonal to workweave hierarchy.
+- [clone-topology](./clone-topology.md) — the ephemeral-branch
+  convention is invariant I3 in the tier-0 topology spec; the
+  hierarchy's worktree-sharing model is the physical artifact those
+  invariants govern.
 - [verb-vs-composition](./verb-vs-composition.md) — why "sync through
   sibling" / "cross-pick across workweaves" aren't rwv verbs.

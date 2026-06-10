@@ -730,10 +730,11 @@ fn find_cloned_repo(workspace: &Path, bare: &Path) -> std::path::PathBuf {
 // `rwv add` must target CWD's workspace's rwv.yaml
 //
 // The bug: `rwv add` always wrote to primary's manifest, even when
-// invoked from inside a workweave. Per-workspace ownership (concepts.md
-// "Per-workspace lock ownership") extends from rwv.lock to rwv.yaml —
-// both are tracked files in the project repo and follow the same
-// `active_path()` resolution rule `rwv lock` already uses.
+// invoked from inside a workweave. Per-workspace ownership extends from
+// rwv.lock to rwv.yaml — both are tracked files in the project repo and
+// follow the same `active_path()` resolution rule `rwv lock` already
+// uses. Conceptual reference:
+// `docs/explanation/joints/lock-as-derived.md`.
 // ============================================================================
 
 /// Build a workspace plus a workweave directory ready for `rwv add` testing.
@@ -852,7 +853,9 @@ fn add_from_primary_cwd_writes_to_primary_rwv_yaml() {
 fn add_from_workweave_cwd_writes_to_workweave_rwv_yaml_not_primary() {
     // `rwv add` from a workweave's CWD must mutate the workweave's own
     // rwv.yaml, leaving primary's unchanged. This mirrors `rwv lock`'s
-    // existing per-workspace resolution (concepts.md Decision #4).
+    // existing per-workspace resolution; manifest and lock are siblings
+    // in the project repo and follow the same `active_path()` rule.
+    // See `docs/explanation/joints/lock-as-derived.md`.
     let tmp = tempfile::tempdir().unwrap();
 
     let bare = tmp.path().join("workweave-add.git");
@@ -895,9 +898,9 @@ fn add_from_workweave_cwd_writes_to_workweave_rwv_yaml_not_primary() {
 #[test]
 fn add_from_workweave_clones_to_primary_canonical_path() {
     // The clone destination stays at primary's `github/<owner>/<repo>/`
-    // even when add runs from a workweave (clones are global
-    // infrastructure shared across workweaves via git worktree).
-    // See concepts.md.
+    // even when add runs from a workweave: the canonical store is the
+    // primary-side artifact; workweaves link into it via git worktree.
+    // See `docs/explanation/joints/clone-topology.md` (invariant I1).
     let tmp = tempfile::tempdir().unwrap();
 
     let bare = tmp.path().join("clone-target.git");

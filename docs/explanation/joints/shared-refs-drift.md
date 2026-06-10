@@ -176,3 +176,6 @@ exercised side by side.
 - [workweave-hierarchy](./workweave-hierarchy.md) — siblings in the
   tree are exactly the configuration that produces drift in the
   ordinary course of work.
+- [clone-topology](./clone-topology.md) — the safe/live classifier
+  asks "is this blob in the object DAG?" The tier-0 invariants are what
+  make "the" object DAG unambiguous.

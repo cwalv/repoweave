@@ -141,6 +141,9 @@ See [verb-vs-composition](./verb-vs-composition.md) for the principle.
 
 ## Related joints
 
+- [clone-topology](./clone-topology.md) — the tier below this one. The
+  revisions a `rwv.lock` names are only meaningful when each constituent
+  repo is the right physical artifact; the topology spec defines that.
 - [lock-as-derived](./lock-as-derived.md) — `rwv.lock` is always output,
   never input; how it gets generated.
 - [sync-semantics](./sync-semantics.md) — how a tip moves between

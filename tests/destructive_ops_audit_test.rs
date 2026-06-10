@@ -1,22 +1,23 @@
 //! Destructive-operation tripwire.
 //!
-//! Policy: every operation that can destroy user work — git history
-//! rewrites, working-tree clobbers, branch force-deletes, file/directory
-//! deletion — must sit behind a named precondition that refuses, or an
-//! explicit and *informed* `--force` (the operator was shown, or had the
-//! chance to be shown, what would be lost). Discard-by-design operations
-//! (abort to a savepoint, `sync --force`) must keep what they discard
-//! recoverable where possible and say so.
+//! Policy lives in `docs/contributing/destructive-operations.md` —
+//! satisfy-the-precondition-or-stop, informed `--force`, discards stay
+//! recoverable. Read that before editing the allowlist below; this
+//! header carries the enforcement-mechanics summary only.
 //!
-//! This test inventories every destructive call site in `src/`. Adding,
-//! moving, or removing one fails the build here until the change is
-//! audited and the allowlist below is updated with a justification.
-//! That is intentional friction: the cheapest moment to catch an
-//! unguarded `reset --hard` is the commit that introduces it.
+//! Enforcement: this test inventories every destructive call site in
+//! `src/` by scanning for the patterns in `TRACKED` (and refusing the
+//! patterns in `FORBIDDEN` outright). Adding, moving, or removing a
+//! tracked site fails the build here until the `ALLOWLIST` below is
+//! updated with the new count and a justification that names which
+//! precondition guards the site, what `--force` consent looks like,
+//! and how discards stay recoverable. That is intentional friction:
+//! the cheapest moment to catch an unguarded `reset --hard` is the
+//! commit that introduces it.
 //!
 //! Counts are per file and exclude comment lines, so prose mentioning a
-//! pattern does not trip the wire. Audit each new site against the policy
-//! above before bumping its count.
+//! pattern does not trip the wire. Audit each new site against the
+//! policy linked above before bumping its count.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};

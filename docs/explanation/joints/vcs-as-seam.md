@@ -347,3 +347,7 @@ The push codepath (example (d)) is covered by:
   examples (b) and (c).
 - [lock-as-derived](./lock-as-derived.md) — the property that
   motivates `set_replay_exclusion` (example (c)) in the first place.
+- [clone-topology](./clone-topology.md) — the tier-0 spec is
+  VCS-neutral by design (canonical store, linked workspace, branch
+  ownership); the git mapping there is the worked example, in the same
+  shape as the examples in this joint.

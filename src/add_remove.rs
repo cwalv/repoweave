@@ -16,14 +16,18 @@ use std::path::{Path, PathBuf};
 /// [`WorkspaceContext::active_path`] — the workweave directory when CWD
 /// is inside one, the primary weave when CWD is in the weave itself.
 /// This mirrors the resolution `rwv lock` uses for `rwv.lock` (see
-/// `src/lock.rs`) and the concepts.md "Per-workspace lock ownership"
-/// decision: lock and manifest are siblings in the project repo, so they
-/// follow the same per-workspace ownership rule.
+/// `src/lock.rs`): lock and manifest are siblings in the project repo,
+/// so they follow the same per-workspace ownership rule. The
+/// `lock-as-derived` joint at
+/// `docs/explanation/joints/lock-as-derived.md` is the conceptual
+/// reference.
 ///
 /// The clone destination, in contrast, stays at [`WorkspaceContext::primary_path`]
 /// — clones are global infrastructure shared across workweaves via
-/// `git worktree`. Callers compose `find_project_dir` (workspace-owned
-/// state) with `primary_path()` (global clones) explicitly.
+/// `git worktree` (canonical store at primary, linked workspaces in
+/// workweaves; see `docs/explanation/joints/clone-topology.md`).
+/// Callers compose `find_project_dir` (workspace-owned state) with
+/// `primary_path()` (global clones) explicitly.
 fn find_project_dir(ctx: &WorkspaceContext) -> anyhow::Result<std::path::PathBuf> {
     let name = ctx.require_active_project_on_disk()?;
     Ok(ctx.active_path().join("projects").join(name.as_str()))
@@ -186,10 +190,11 @@ pub fn run_add(
         return Ok(());
     }
 
-    // Clone the repo if it doesn't exist on disk. The clone always lives at
-    // primary's canonical path — clones are global infrastructure shared
-    // across workspaces via `git worktree` (see concepts.md
-    // "Per-workspace lock ownership").
+    // Clone the repo if it doesn't exist on disk. The clone always lives
+    // at primary's canonical path — the canonical store, in tier-0
+    // topology terms; workweaves link into it via `git worktree` rather
+    // than holding their own clones (see
+    // `docs/explanation/joints/clone-topology.md`).
     let dest = ctx.primary_path().join(repo_path.as_path());
     if dest.exists() {
         eprintln!(
