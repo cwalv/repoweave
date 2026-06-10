@@ -158,8 +158,10 @@ fn rwv_cmd() -> Command {
     cmd
 }
 
-/// Write a `.rwv-op` op-state file by hand (sync.rs writes the same shape,
+/// Write a `.rwv-op` v2 owner record by hand (sync.rs writes the same shape,
 /// but we don't want to drive a real sync to produce one).
+///
+/// [v1→v2 bead fo-jsbr3i.1: phase "running" → "replay"; added converged_tips/overrides.]
 fn write_op_state(workspace_dir: &Path, op_id: &str) {
     let yaml = format!(
         "id: {op_id}\n\
@@ -168,7 +170,9 @@ fn write_op_state(workspace_dir: &Path, op_id: &str) {
          source: /tmp/src\n\
          target: /tmp/tgt\n\
          retire: false\n\
-         phase: running\n\
+         phase: replay\n\
+         converged_tips: {{}}\n\
+         overrides: []\n\
          started_at: 2026-01-01T00:00:00Z\n",
     );
     std::fs::write(workspace_dir.join(".rwv-op"), yaml).unwrap();

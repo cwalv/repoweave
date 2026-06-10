@@ -6,7 +6,7 @@
 use crate::git::GitVcs;
 use crate::lock::{commit_lock_file_with_message, generate_lock};
 use crate::manifest::{LockFile, Manifest, Project, ProjectName, RepoPath, Role, WorkweaveName};
-use crate::op_state::{self, OpState};
+use crate::op_state::{self, LeaseRecord, OwnerRecord};
 use crate::parallel::run_in_parallel;
 use crate::vcs::{ConflictOp, RefName, ResolvedRevisionId, Vcs, VcsError, VcsErrorOutput};
 use crate::workspace::{WorkspaceContext, WorkspaceLocation};
@@ -1333,9 +1333,12 @@ fn run_sync_impl_with_op_id(
     let (resolved_source, strategy, pre_read_op_state): (
         SyncSource,
         SyncStrategy,
-        Option<crate::op_state::OpState>,
+        Option<crate::op_state::OwnerRecord>,
     ) = if do_continue && pre_existing_op_id.is_none() {
-        let recorded = op_state::resume(&workspace_dir)?;
+        // resume() returns (OwnerRecord, owner_workspace_path); for a plain
+        // `rwv sync`, workspace_dir IS the owner workspace, so the owner path
+        // is not separately needed here.
+        let (recorded, _owner_ws) = op_state::resume(&workspace_dir)?;
         let strat = recorded
             .strategy
             .parse::<SyncStrategy>()
@@ -1559,14 +1562,16 @@ fn run_sync_impl_with_op_id(
 
         op_id = OpId::new_now();
 
-        // Write the richer op-state file to the CWD workspace.
-        let state = OpState::new_sync(
+        // Write the v2 owner record to the CWD workspace. Phase is Replay —
+        // the first phase the driver will enter. For plain `sync` there is no
+        // second mutated workspace, so no lease is written.
+        let record = OwnerRecord::new_sync(
             &op_id,
             strategy,
             source_workspace_dir.clone(),
             workspace_dir.clone(),
         );
-        op_state::write(&workspace_dir, &state).context("failed to write op-state")?;
+        op_state::write_owner(&workspace_dir, &record).context("failed to write owner record")?;
     }
 
     // Create savepoints for all CWD repos (including project repo).
@@ -1871,11 +1876,11 @@ fn run_sync_impl_with_op_id(
             delete_savepoint(&abs, &op_id);
         }
     }
-    // Remove the op-state file from CWD workspace on successful completion.
+    // Remove the owner record from CWD workspace on successful completion.
     // Skip when pre_existing_op_id is set — the outer caller (sync-to) manages
     // op-state lifecycle across both workspaces.
     if pre_existing_op_id.is_none() {
-        op_state::clear(&workspace_dir);
+        op_state::clear_owner(&workspace_dir);
     }
 
     Ok(())
@@ -2106,19 +2111,36 @@ pub fn run_abort(cwd: &Path) -> anyhow::Result<()> {
     let ctx = WorkspaceContext::resolve(cwd, None)?;
     let workspace_dir = ctx.active_path().to_path_buf();
 
-    let (op_id, extra_workspace_dirs): (OpId, Vec<PathBuf>) = match op_state::read(&workspace_dir)?
-    {
-        Some(state) => {
-            // For sync-to: we also need to roll back the target workspace.
-            let extras = if state.verb == crate::op_state::OpVerb::SyncTo {
-                vec![state.target.clone()]
-            } else {
-                vec![]
-            };
-            (OpId::from_string(state.id), extras)
-        }
-        None => anyhow::bail!("no operation in progress"),
-    };
+    // resolve_to_owner follows a lease pointer if the workspace holds a lease,
+    // so `rwv abort` invoked from either the owner or a leased workspace finds
+    // the same full record. `workspace_dir` is still used for the repo scan below.
+    let (op_id, extra_workspace_dirs): (OpId, Vec<PathBuf>) =
+        match op_state::resolve_to_owner(&workspace_dir)? {
+            Some(resolved) => {
+                // For sync-to: also roll back the target (the leased) workspace.
+                let extras = if resolved.record.verb == crate::op_state::OpVerb::SyncTo {
+                    // Determine which workspace is the "other" workspace to roll back.
+                    // The owner workspace is resolved.owner_workspace; the other workspace
+                    // for sync-to is target (when CWD is owner/source) or source (when
+                    // CWD is target/lease). We roll back workspace_dir if it differs
+                    // from the owner, and the owner's target regardless.
+                    let mut extras = Vec::new();
+                    // Always include the target workspace if we're at the owner.
+                    if resolved.owner_workspace == workspace_dir {
+                        extras.push(resolved.record.target.clone());
+                    } else {
+                        // Invoked from the lease workspace: include the owner workspace
+                        // so its repos are also restored.
+                        extras.push(resolved.owner_workspace.clone());
+                    }
+                    extras
+                } else {
+                    vec![]
+                };
+                (OpId::from_string(resolved.record.id), extras)
+            }
+            None => anyhow::bail!("no operation in progress"),
+        };
 
     let cwd_project_name = find_project_name(&ctx)?;
     let cwd_project_dir = workspace_dir.join("projects").join(&cwd_project_name);
@@ -2198,8 +2220,8 @@ pub fn run_abort(cwd: &Path) -> anyhow::Result<()> {
                     eprintln!("  [target] (project): {e}");
                     any_failure = true;
                 }
-                // Remove op-state from the extra (target) workspace too.
-                op_state::clear(&extra_ws_dir);
+                // Remove op-state from the extra workspace (owner record or lease).
+                op_state::clear_all_at(&extra_ws_dir);
             }
             Err(e) => {
                 eprintln!(
@@ -2210,8 +2232,8 @@ pub fn run_abort(cwd: &Path) -> anyhow::Result<()> {
         }
     }
 
-    // Remove op-state from CWD workspace.
-    op_state::clear(&workspace_dir);
+    // Remove op-state from CWD workspace (owner record or lease).
+    op_state::clear_all_at(&workspace_dir);
 
     if any_failure {
         anyhow::bail!("abort completed with failures");
@@ -2533,6 +2555,9 @@ fn run_sync_to_impl(
     struct ResolvedParams {
         op_id: OpId,
         resume_phase: Option<crate::op_state::OpPhase>,
+        /// Absolute path to the owner workspace (CWD at invocation, or
+        /// the owner resolved from a lease when --continue is from target).
+        owner_workspace_dir: PathBuf,
         target_path: PathBuf,
         target_workspace_dir: PathBuf,
         strategy: SyncStrategy,
@@ -2541,7 +2566,9 @@ fn run_sync_to_impl(
 
     let params: ResolvedParams = if do_continue {
         // Resume: read all parameters from the recorded op-state.
-        let recorded = op_state::resume(&cwd_workspace_dir)?;
+        // resume() follows a lease pointer if invoked from a leased workspace,
+        // so this works identically from either the owner or the target.
+        let (recorded, owner_ws) = op_state::resume(&cwd_workspace_dir)?;
         let oid = OpId::from_string(recorded.id.clone());
         let phase_display = recorded.phase.to_string();
         let phase = Some(recorded.phase);
@@ -2560,6 +2587,7 @@ fn run_sync_to_impl(
         ResolvedParams {
             op_id: oid,
             resume_phase: phase,
+            owner_workspace_dir: owner_ws,
             target_path: tgt_path,
             target_workspace_dir: tgt_workspace_dir,
             strategy: strat,
@@ -2581,20 +2609,32 @@ fn run_sync_to_impl(
 
         let oid = OpId::new_now();
 
-        // Write op-state to both workspaces.
-        let state = OpState::new_sync_to(
+        // v2: write the owner record to CWD (the initiating workspace) and a
+        // thin immutable lease to the target workspace. Phase is Replay —
+        // the first phase the driver will enter.
+        //
+        // [v1→v2 migration note: previously both workspaces received a full
+        // copy of the record. Now only the owner (CWD) holds mutable phase
+        // state; the target holds an immutable {id, owner} pointer only.]
+        let record = OwnerRecord::new_sync_to(
             &oid,
             strategy,
             cwd_workspace_dir.clone(),
             tgt_workspace_dir.clone(),
             retire,
         );
-        op_state::write(&cwd_workspace_dir, &state).context("failed to write op-state to CWD")?;
-        op_state::write(&tgt_workspace_dir, &state)
-            .context("failed to write op-state to target")?;
+        op_state::write_owner(&cwd_workspace_dir, &record)
+            .context("failed to write owner record to CWD")?;
+        let lease = LeaseRecord {
+            id: oid.as_str().to_owned(),
+            owner: cwd_workspace_dir.clone(),
+        };
+        op_state::write_lease(&tgt_workspace_dir, &lease)
+            .context("failed to write lease to target")?;
         ResolvedParams {
             op_id: oid,
             resume_phase: None,
+            owner_workspace_dir: cwd_workspace_dir.clone(),
             target_path: tgt_path,
             target_workspace_dir: tgt_workspace_dir,
             strategy,
@@ -2604,6 +2644,7 @@ fn run_sync_to_impl(
 
     let op_id = params.op_id;
     let resume_phase = params.resume_phase;
+    let owner_workspace_dir = params.owner_workspace_dir;
     let target_workspace_dir = params.target_workspace_dir;
     let target_path = params.target_path;
     let strategy = params.strategy;
@@ -2636,7 +2677,9 @@ fn run_sync_to_impl(
             if emit_text {
                 eprintln!("sync-to: CWD and target are already at the same tip; nothing to do");
             }
-            op_state::clear_all(&[cwd_workspace_dir.as_path(), target_workspace_dir.as_path()]);
+            // v2: owner record + lease cleared separately.
+            op_state::clear_owner(&owner_workspace_dir);
+            op_state::clear_lease(&target_workspace_dir);
             return Ok(());
         }
 
@@ -2646,7 +2689,9 @@ fn run_sync_to_impl(
             .unwrap_or(false);
 
         if !cwd_ahead {
-            op_state::clear_all(&[cwd_workspace_dir.as_path(), target_workspace_dir.as_path()]);
+            // v2: clear owner record + lease on precondition refusal.
+            op_state::clear_owner(&owner_workspace_dir);
+            op_state::clear_lease(&target_workspace_dir);
             anyhow::bail!(
                 "sync-to --strategy=ff requires CWD to be strictly ahead of target, \
                  but CWD's project tip ({}) is not an ancestor-or-equal of target's tip ({}).\n\
@@ -2681,11 +2726,12 @@ fn run_sync_to_impl(
             dirty.push("(project)".to_string());
         }
         if !dirty.is_empty() {
-            // Fresh start: clear the op-state we just wrote so the refusal
-            // leaves no trace. Mid-op resume: keep op-state so --continue
-            // and `rwv abort` remain available.
+            // Fresh start (guard phase): clear the owner record + lease we
+            // just wrote so the refusal leaves no trace. Mid-op resume: keep
+            // all markers so --continue and `rwv abort` remain available.
             if resume_phase.is_none() {
-                op_state::clear_all(&[cwd_workspace_dir.as_path(), target_workspace_dir.as_path()]);
+                op_state::clear_owner(&owner_workspace_dir);
+                op_state::clear_lease(&target_workspace_dir);
             }
             anyhow::bail!(
                 "sync-to precondition failed: target workweave has uncommitted changes in:\n  {}\n\
@@ -2699,10 +2745,14 @@ fn run_sync_to_impl(
     }
 
     // Determine which phase to start from.
+    // v2 phases: Replay → Relock → AdvanceTarget → (Retire if --retire).
+    // skip_step1 = skip the sync/replay phase (step 1).
     let skip_step1 = strategy == SyncStrategy::Ff
         || matches!(
             resume_phase,
-            Some(crate::op_state::OpPhase::Step1Complete) | Some(crate::op_state::OpPhase::Step3Ff)
+            Some(crate::op_state::OpPhase::Relock)
+                | Some(crate::op_state::OpPhase::AdvanceTarget)
+                | Some(crate::op_state::OpPhase::Retire)
         );
 
     let skip_step3 = false; // step 3 is always needed unless already done (not tracked as a skippable phase here)
@@ -2719,9 +2769,9 @@ fn run_sync_to_impl(
             );
         }
 
-        // For --continue with resume_phase = Step1Rebase, pass do_continue=true
+        // For --continue with resume_phase = Replay, pass do_continue=true
         // to run_sync_impl so it resumes the in-progress rebase/merge.
-        let step1_continue = matches!(resume_phase, Some(crate::op_state::OpPhase::Step1Rebase));
+        let step1_continue = matches!(resume_phase, Some(crate::op_state::OpPhase::Replay));
 
         // Call the existing sync engine with target as source.
         // CWD is the destination (implicit from cwd arg).
@@ -2756,17 +2806,19 @@ fn run_sync_to_impl(
             );
         }
 
-        // Advance phase to Step1Complete in both workspaces.
-        op_state::advance_phase(&cwd_workspace_dir, crate::op_state::OpPhase::Step1Complete)
-            .context("failed to advance phase after step 1")?;
-        op_state::advance_phase(
-            &target_workspace_dir,
-            crate::op_state::OpPhase::Step1Complete,
-        )
-        .context("failed to advance phase in target after step 1")?;
-    } else if !matches!(resume_phase, Some(crate::op_state::OpPhase::Step3Ff)) {
-        // When resuming from step1-complete, advance phase to mark we're moving to step 3.
-        // (Already at step1-complete; advancing to step3-ff happens below before step 3.)
+        // v2: advance phase in the owner record ONLY. The lease is immutable
+        // and carries no phase. Phase Relock = replay done, relock next.
+        //
+        // [v1→v2: previously both workspaces received advance_phase here.
+        // Now only the owner record is written.]
+        op_state::advance_phase(&owner_workspace_dir, crate::op_state::OpPhase::Relock)
+            .context("failed to advance phase to Relock after step 1")?;
+    } else if !matches!(
+        resume_phase,
+        Some(crate::op_state::OpPhase::AdvanceTarget) | Some(crate::op_state::OpPhase::Retire)
+    ) {
+        // When resuming from Relock, the phase advancement to AdvanceTarget
+        // happens below before step 3 (advance-target phase).
     }
 
     // Step 2 (auto-relock) is handled by Phase 3 inside run_sync_impl_with_op_id
@@ -2774,12 +2826,19 @@ fn run_sync_to_impl(
     // CWD's project repo as part of its own Phase 3 completion. No separate
     // re-lock step is needed here.
 
-    // Advance phase to Step3Ff in both workspaces.
-    if !matches!(resume_phase, Some(crate::op_state::OpPhase::Step3Ff)) {
-        op_state::advance_phase(&cwd_workspace_dir, crate::op_state::OpPhase::Step3Ff)
-            .context("failed to advance phase to step3-ff")?;
-        op_state::advance_phase(&target_workspace_dir, crate::op_state::OpPhase::Step3Ff)
-            .context("failed to advance phase to step3-ff in target")?;
+    // Advance phase to AdvanceTarget in the owner record ONLY.
+    // v2: lease is immutable; only the owner record is updated.
+    //
+    // [v1→v2: previously both workspaces received advance_phase here.]
+    if !matches!(
+        resume_phase,
+        Some(crate::op_state::OpPhase::AdvanceTarget) | Some(crate::op_state::OpPhase::Retire)
+    ) {
+        op_state::advance_phase(
+            &owner_workspace_dir,
+            crate::op_state::OpPhase::AdvanceTarget,
+        )
+        .context("failed to advance phase to AdvanceTarget")?;
     }
 
     // === Step 3: FF-advance target to CWD's new tip ===
@@ -2877,8 +2936,15 @@ fn run_sync_to_impl(
         );
     }
 
-    // Success: clear op-state from both workspaces.
-    op_state::clear_all(&[cwd_workspace_dir.as_path(), target_workspace_dir.as_path()]);
+    // Success: clear owner record + lease.
+    // v2: clear the owner record at the owner workspace and the lease at the
+    // target workspace.
+    //
+    // [v1→v2: previously both workspaces held a full record and were cleared
+    // with clear_all. Now: owner record at owner_workspace_dir, lease at
+    // target_workspace_dir.]
+    op_state::clear_owner(&owner_workspace_dir);
+    op_state::clear_lease(&target_workspace_dir);
 
     if emit_text {
         eprintln!("sync-to complete: target fast-forwarded to CWD's tip");

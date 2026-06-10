@@ -1135,9 +1135,10 @@ fn abort_succeeds_when_rwv_lock_contains_conflict_markers() {
         project_dir,
     );
 
-    // Write the op-state file so `rwv abort` thinks an op is in progress.
+    // Write a v2 owner record so `rwv abort` thinks an op is in progress.
+    // [v1→v2 bead fo-jsbr3i.1: phase "running" → "replay"; added converged_tips/overrides.]
     let op_state_yaml = format!(
-        "id: \"{op_id}\"\nverb: sync\nstrategy: rebase\nsource: \"{root}\"\ntarget: \"{root}\"\nretire: false\nphase: running\nstarted_at: \"2026-05-27T10:00:00Z\"\n",
+        "id: \"{op_id}\"\nverb: sync\nstrategy: rebase\nsource: \"{root}\"\ntarget: \"{root}\"\nretire: false\nphase: replay\nconverged_tips: {{}}\noverrides: []\nstarted_at: \"2026-05-27T10:00:00Z\"\n",
         root = ws.root.display(),
     );
     std::fs::write(ws.root.join(".rwv-op"), &op_state_yaml).unwrap();

@@ -230,10 +230,11 @@ fn concurrent_op_detection_blocks_new_sync_in_cwd_workspace() {
     // We start the sync-and-kill it by writing an op-state file manually first
     // to simulate a sync that was interrupted mid-way.
     //
-    // Write a .rwv-op file into ww's workspace (simulating an in-progress op).
+    // Write a v2 owner record into ww's workspace (simulating an in-progress op).
+    // [v1→v2 bead fo-jsbr3i.1: phase "running" → "replay"; added converged_tips/overrides.]
     let op_id = "test-concurrent-op-1234";
     let op_state_yaml = format!(
-        "id: \"{op_id}\"\nverb: sync\nstrategy: ff\nsource: \"{src}\"\ntarget: \"{tgt}\"\nretire: false\nphase: running\nstarted_at: \"2026-05-27T10:00:00Z\"\n",
+        "id: \"{op_id}\"\nverb: sync\nstrategy: ff\nsource: \"{src}\"\ntarget: \"{tgt}\"\nretire: false\nphase: replay\nconverged_tips: {{}}\noverrides: []\nstarted_at: \"2026-05-27T10:00:00Z\"\n",
         src = primary.root.display(),
         tgt = ww.root.display(),
     );
@@ -285,9 +286,10 @@ fn concurrent_op_detection_error_names_phase_and_start_time() {
     let tmp = tempfile::tempdir().unwrap();
     let (primary, ww, _c1) = make_shared_workspaces(tmp.path());
 
-    // Write a .rwv-op file at a specific phase.
+    // Write a v2 owner record at a specific phase.
+    // [v1→v2 bead fo-jsbr3i.1: phase "step1-rebase" → "relock" (mid-op relock phase).]
     let op_state_yaml = format!(
-        "id: \"test-phase-detect\"\nverb: sync\nstrategy: rebase\nsource: \"{src}\"\ntarget: \"{tgt}\"\nretire: false\nphase: step1-rebase\nstarted_at: \"2026-05-27T10:00:00Z\"\n",
+        "id: \"test-phase-detect\"\nverb: sync\nstrategy: rebase\nsource: \"{src}\"\ntarget: \"{tgt}\"\nretire: false\nphase: relock\nconverged_tips: {{}}\noverrides: []\nstarted_at: \"2026-05-27T10:00:00Z\"\n",
         src = primary.root.display(),
         tgt = ww.root.display(),
     );
@@ -300,8 +302,9 @@ fn concurrent_op_detection_error_names_phase_and_start_time() {
         .failure();
     let stderr = String::from_utf8_lossy(&assertion.get_output().stderr).to_string();
 
+    // [v1→v2 bead fo-jsbr3i.1: phase "step1-rebase" → "relock" in v2 schema.]
     assert!(
-        stderr.contains("step1-rebase"),
+        stderr.contains("relock"),
         "error should mention the in-progress phase; got: {stderr}"
     );
 }
@@ -425,9 +428,10 @@ fn mid_step3_continue_does_not_produce_in_progress_refusal() {
     let tmp = tempfile::tempdir().unwrap();
     let (primary, ww, _c1) = make_shared_workspaces(tmp.path());
 
-    // Write an op-state at step3-ff phase into ww's workspace.
+    // Write a v2 owner record at advance-target phase into ww's workspace.
+    // [v1→v2 bead fo-jsbr3i.1: phase "step3-ff" → "advance-target" in v2 schema.]
     let op_state_yaml = format!(
-        "id: \"test-step3-ff-1234\"\nverb: sync\nstrategy: ff\nsource: \"{src}\"\ntarget: \"{tgt}\"\nretire: false\nphase: step3-ff\nstarted_at: \"2026-05-27T10:00:00Z\"\n",
+        "id: \"test-step3-ff-1234\"\nverb: sync\nstrategy: ff\nsource: \"{src}\"\ntarget: \"{tgt}\"\nretire: false\nphase: advance-target\nconverged_tips: {{}}\noverrides: []\nstarted_at: \"2026-05-27T10:00:00Z\"\n",
         src = primary.root.display(),
         tgt = ww.root.display(),
     );
@@ -484,9 +488,10 @@ fn continue_with_strategy_flag_is_rejected() {
     let tmp = tempfile::tempdir().unwrap();
     let (primary, ww, _c1) = make_shared_workspaces(tmp.path());
 
-    // Plant an op-state file so --continue would proceed if it were alone.
+    // Plant a v2 owner record so --continue would proceed if it were alone.
+    // [v1→v2 bead fo-jsbr3i.1: phase "running" → "replay"; added converged_tips/overrides.]
     let op_state_yaml = format!(
-        "id: \"test-exclusive-1234\"\nverb: sync\nstrategy: rebase\nsource: \"{src}\"\ntarget: \"{tgt}\"\nretire: false\nphase: running\nstarted_at: \"2026-05-27T10:00:00Z\"\n",
+        "id: \"test-exclusive-1234\"\nverb: sync\nstrategy: rebase\nsource: \"{src}\"\ntarget: \"{tgt}\"\nretire: false\nphase: replay\nconverged_tips: {{}}\noverrides: []\nstarted_at: \"2026-05-27T10:00:00Z\"\n",
         src = primary.root.display(),
         tgt = ww.root.display(),
     );
@@ -663,34 +668,37 @@ fn abort_from_cwd_cleans_cross_workspace_op_state() {
         &primary.server_dir, // ww's server dir is a worktree of primary's
     );
 
-    // Plant op-state in ww (CWD for abort): verb=sync-to, target=primary.
-    // This tells run_abort to also clean up primary's workspace.
+    // v2: ww is the owner (CWD/source of sync-to) → owner record at ww.root/.rwv-op.
+    // primary is the target workspace → thin lease at primary.root/.rwv-op-lease.
+    //
+    // [v1→v2 bead fo-jsbr3i.1: replaced dual full-record writes with owner record
+    // + thin lease. Phase "step1-rebase" → "replay". Primary gets lease, not owner record.]
     let ww_op_state_yaml = format!(
-        "id: \"{op_id}\"\nverb: sync-to\nstrategy: ff\nsource: \"{src}\"\ntarget: \"{tgt}\"\nretire: false\nphase: step1-rebase\nstarted_at: \"2026-05-27T10:00:00Z\"\n",
+        "id: \"{op_id}\"\nverb: sync-to\nstrategy: ff\nsource: \"{src}\"\ntarget: \"{tgt}\"\nretire: false\nphase: replay\nconverged_tips: {{}}\noverrides: []\nstarted_at: \"2026-05-27T10:00:00Z\"\n",
         src = ww.root.display(),
         tgt = primary.root.display(),
     );
     std::fs::write(ww.root.join(".rwv-op"), &ww_op_state_yaml).unwrap();
 
-    // Plant op-state in primary (target workspace) with the same op-id.
-    let primary_op_state_yaml = format!(
-        "id: \"{op_id}\"\nverb: sync-to\nstrategy: ff\nsource: \"{src}\"\ntarget: \"{tgt}\"\nretire: false\nphase: step1-rebase\nstarted_at: \"2026-05-27T10:00:00Z\"\n",
-        src = ww.root.display(),
-        tgt = primary.root.display(),
+    // Thin lease in primary (target workspace): just {id, owner}.
+    let primary_lease_yaml = format!(
+        "id: \"{op_id}\"\nowner: \"{owner}\"\n",
+        owner = ww.root.display(),
     );
-    std::fs::write(primary.root.join(".rwv-op"), &primary_op_state_yaml).unwrap();
+    std::fs::write(primary.root.join(".rwv-op-lease"), &primary_lease_yaml).unwrap();
 
     // Run `rwv abort` from ww.
     rwv().arg("abort").current_dir(&ww.root).assert().success();
 
-    // Both op-state files should be removed.
+    // Owner record at ww should be removed.
     assert!(
         !ww.root.join(".rwv-op").exists(),
-        "ww's op-state file should be removed after abort"
+        "ww's owner record should be removed after abort"
     );
+    // Lease at primary should be removed.
     assert!(
-        !primary.root.join(".rwv-op").exists(),
-        "primary's op-state file should be removed after abort (cross-workspace)"
+        !primary.root.join(".rwv-op-lease").exists(),
+        "primary's lease file should be removed after abort (cross-workspace)"
     );
 }
 
@@ -720,8 +728,10 @@ fn abort_restores_repos_and_removes_op_state() {
         &primary.server_dir,
     );
 
+    // v2 owner record: phase "running" → "replay"; added converged_tips/overrides.
+    // [v1→v2 bead fo-jsbr3i.1]
     let op_state_yaml = format!(
-        "id: \"{op_id}\"\nverb: sync\nstrategy: ff\nsource: \"{src}\"\ntarget: \"{tgt}\"\nretire: false\nphase: running\nstarted_at: \"2026-05-27T10:00:00Z\"\n",
+        "id: \"{op_id}\"\nverb: sync\nstrategy: ff\nsource: \"{src}\"\ntarget: \"{tgt}\"\nretire: false\nphase: replay\nconverged_tips: {{}}\noverrides: []\nstarted_at: \"2026-05-27T10:00:00Z\"\n",
         src = primary.root.display(),
         tgt = ww.root.display(),
     );

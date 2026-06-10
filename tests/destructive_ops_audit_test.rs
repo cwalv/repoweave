@@ -173,8 +173,10 @@ const ALLOWLIST: &[Allowed] = &[
     Allowed {
         file: "op_state.rs",
         pattern: "remove_file",
-        count: 1,
-        justification: "clearing the .rwv-op state file (rwv-internal).",
+        count: 2,
+        justification: "(1) clear_owner: removing the .rwv-op owner record (rwv-internal). \
+            (2) clear_lease: removing the .rwv-op-lease thin lease (rwv-internal). \
+            Both are op-state bookkeeping files, not user data.",
     },
     Allowed {
         file: "integrations/merge.rs",
