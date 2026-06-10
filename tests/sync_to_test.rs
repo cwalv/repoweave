@@ -741,6 +741,100 @@ fn sync_to_ff_refuses_when_cwd_not_ahead() {
 }
 
 // ---------------------------------------------------------------------------
+// Test: dirty target refusal (fo-5cqa74)
+//
+// Step 3 ff-advances the target via `reset --hard`, which destroys any
+// uncommitted changes in the target's worktrees. sync-to must refuse up
+// front when the target is dirty, the uncommitted content must survive
+// byte-for-byte, and the refusal must leave no op-state behind (a re-run
+// after the target is cleaned succeeds).
+// ---------------------------------------------------------------------------
+
+#[test]
+fn sync_to_refuses_when_target_has_uncommitted_changes() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (primary, ww, _initial_sha) = make_shared_workspaces(tmp.path());
+
+    // Workweave advances the server repo and updates its lock, so there is
+    // real work to sync.
+    let c2 = make_commit(&ww.server_dir, "ww.txt", "workweave\n", "ww: advance");
+    write_lock(&ww.project_dir, &[(SERVER_PATH, SERVER_URL, &c2)]);
+    git(&["add", "rwv.lock"], &ww.project_dir);
+    git(&["commit", "-m", "lock: ww advance"], &ww.project_dir);
+
+    // Target (primary) holds uncommitted tracked-file edits in both a
+    // manifest repo and the project repo — the exact shape of the incident.
+    std::fs::write(
+        primary.server_dir.join("README.md"),
+        "uncommitted server edit\n",
+    )
+    .unwrap();
+    std::fs::write(
+        primary.project_dir.join("README.md"),
+        "uncommitted project edit\n",
+    )
+    .unwrap();
+    let project_tip_before = git_out(&["rev-parse", "HEAD"], &primary.project_dir);
+    let server_tip_before = git_out(&["rev-parse", "HEAD"], &primary.server_dir);
+
+    let err_output = rwv()
+        .args(["sync-to", &primary.root.to_string_lossy(), "--strategy=ff"])
+        .current_dir(&ww.root)
+        .assert()
+        .failure()
+        .get_output()
+        .clone();
+    let stderr = String::from_utf8_lossy(&err_output.stderr);
+    assert!(
+        stderr.contains("uncommitted changes"),
+        "refusal must name the dirty-target precondition; got:\n{stderr}"
+    );
+    assert!(
+        stderr.contains(SERVER_PATH) && stderr.contains("(project)"),
+        "refusal must list the dirty repos; got:\n{stderr}"
+    );
+
+    // The uncommitted content survives byte-for-byte.
+    assert_eq!(
+        std::fs::read_to_string(primary.server_dir.join("README.md")).unwrap(),
+        "uncommitted server edit\n",
+        "target server repo's uncommitted edit must survive a refused sync-to"
+    );
+    assert_eq!(
+        std::fs::read_to_string(primary.project_dir.join("README.md")).unwrap(),
+        "uncommitted project edit\n",
+        "target project repo's uncommitted edit must survive a refused sync-to"
+    );
+
+    // Target tips untouched — nothing was reset.
+    assert_eq!(
+        git_out(&["rev-parse", "HEAD"], &primary.project_dir),
+        project_tip_before
+    );
+    assert_eq!(
+        git_out(&["rev-parse", "HEAD"], &primary.server_dir),
+        server_tip_before
+    );
+
+    // Clean the target and re-run: the refusal must not have left op-state
+    // (or any other residue) that blocks a fresh sync-to.
+    git(&["checkout", "--", "README.md"], &primary.server_dir);
+    git(&["checkout", "--", "README.md"], &primary.project_dir);
+
+    rwv()
+        .args(["sync-to", &primary.root.to_string_lossy(), "--strategy=ff"])
+        .current_dir(&ww.root)
+        .assert()
+        .success();
+
+    assert_eq!(
+        git_out(&["rev-parse", "HEAD"], &primary.server_dir),
+        c2,
+        "after cleaning the target, sync-to should ff-advance it normally"
+    );
+}
+
+// ---------------------------------------------------------------------------
 // Test 9: sync-to with mismatched primary `.rwv-active` (fo-gsl8l)
 //
 // A workweave whose project is `web-app` should succeed with `rwv sync-to`

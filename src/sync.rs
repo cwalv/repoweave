@@ -2919,6 +2919,51 @@ fn run_sync_to_impl(
         // CWD is strictly ahead: skip step 1 (no-op), go directly to step 3.
     }
 
+    // Dirty-target preflight: step 3 fast-forwards every repo in the target
+    // workweave via `reset --hard`, which silently destroys uncommitted
+    // changes in the target's worktrees (fo-5cqa74). Refuse up front — before
+    // step 1 mutates anything — and name the precondition. ff_advance_repo
+    // re-checks per repo at reset time to catch modification that lands
+    // between this preflight and step 3.
+    {
+        let cwd_project_preflight = crate::manifest::Project::from_dir(&cwd_project_dir)
+            .context("failed to load CWD project for dirty-target preflight")?;
+        let mut dirty: Vec<String> = Vec::new();
+        for repo_path in cwd_project_preflight.manifest.iter_repo_paths() {
+            let target_repo = target_workspace_dir.join(repo_path.as_path());
+            if target_repo.exists()
+                && GitVcs.has_uncommitted_changes(&target_repo).unwrap_or(true)
+            {
+                dirty.push(repo_path.to_string());
+            }
+        }
+        if GitVcs
+            .has_uncommitted_changes(&target_project_dir)
+            .unwrap_or(true)
+        {
+            dirty.push("(project)".to_string());
+        }
+        if !dirty.is_empty() {
+            // Fresh start: clear the op-state we just wrote so the refusal
+            // leaves no trace. Mid-op resume: keep op-state so --continue
+            // and `rwv abort` remain available.
+            if resume_phase.is_none() {
+                op_state::clear_all(&[
+                    cwd_workspace_dir.as_path(),
+                    target_workspace_dir.as_path(),
+                ]);
+            }
+            anyhow::bail!(
+                "sync-to precondition failed: target workweave has uncommitted changes in:\n  {}\n\
+                 \n\
+                 Step 3 fast-forwards the target with `reset --hard`, which would destroy \
+                 this work. Commit or stash in the target ({}), then re-run.",
+                dirty.join("\n  "),
+                target_path.display(),
+            );
+        }
+    }
+
     // Determine which phase to start from.
     let skip_step1 = strategy == SyncStrategy::Ff
         || matches!(
@@ -3157,6 +3202,18 @@ fn ff_advance_repo(
 
     if target_tip == *cwd_tip {
         return Ok(()); // already at the right tip
+    }
+
+    // The reset --hard below silently destroys uncommitted changes in the
+    // target worktree (fo-5cqa74). The sync-to preflight already refused on a
+    // dirty target; this catches concurrent modification since then. Checked
+    // after the equal-tip return: a dirty worktree we won't move is safe.
+    if GitVcs.has_uncommitted_changes(target_repo).unwrap_or(true) {
+        anyhow::bail!(
+            "target repo at {} has uncommitted changes; refusing to fast-forward \
+             (reset --hard would destroy them). Commit or stash in the target, then re-run.",
+            target_repo.display(),
+        );
     }
 
     // Check that target is an ancestor of cwd_tip (ff precondition).
