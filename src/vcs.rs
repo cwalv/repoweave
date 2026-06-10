@@ -392,6 +392,70 @@ impl std::error::Error for VcsError {
     }
 }
 
+/// A pre-abort reference: the durable record of a repo's tip captured by
+/// [`Vcs::create_pre_abort_ref`] just before `rwv abort` restores it.
+///
+/// `label` is an operator-spellable, VCS-native name for the reference
+/// (e.g. for git: `refs/rwv/pre-abort/<op-id>`). The label is the recovery
+/// hint surfaced in abort output so an operator can locate the pre-abort
+/// tip and undo the abort. `revision` is the captured tip itself.
+///
+/// Information-preserving doctrine: pre-abort refs are written before any
+/// restore and never deleted by abort's cleanup — abort is itself
+/// undoable, and the pre-abort ref is the cheapest path back.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PreAbortRef {
+    /// VCS-native, operator-spellable name of the reference (impl detail
+    /// of the underlying VCS, surfaced for recovery hints only).
+    pub label: String,
+    /// The captured pre-abort tip.
+    pub revision: ResolvedRevisionId,
+}
+
+/// Outcome of a [`Vcs::verified_restore_savepoint`] call.
+///
+/// Encodes the classification of the repo's current tip *before* any
+/// restore happened, plus what (if anything) was restored. Foreign tips
+/// are reported with a named violation and the pre-abort reference so the
+/// caller can decline the destructive action and surface recovery hints.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum VerifiedRestoreOutcome {
+    /// No savepoint exists for `op_id` in this repo. Nothing to do.
+    NoSavepoint,
+    /// The current tip equals the savepoint — the op never moved this
+    /// repo. Restore is a no-op; HEAD was not touched.
+    Untouched,
+    /// The current tip equals the recorded converged tip for this repo
+    /// (from the owner record). The op moved the repo to convergence
+    /// before crashing; the repo was reset back to the savepoint.
+    RestoredFromConverged,
+    /// The repo was in a VCS-native mid-op state (rebase/merge/cherry-
+    /// pick). The mid-op was cancelled and the repo was reset back to
+    /// the savepoint.
+    RestoredFromMidOp,
+    /// The repo's tip is not attributable to the op — it is neither the
+    /// savepoint, nor the recorded converged tip, nor a mid-op state.
+    /// Restore was REFUSED. The caller is expected to report the
+    /// violation and continue with other repos; do not silently reset.
+    ForeignTip {
+        /// The repo's current tip at the moment of classification (as a
+        /// canonical SHA string).
+        observed_tip: String,
+        /// The savepoint the op recorded at start (as a canonical SHA
+        /// string).
+        savepoint: String,
+        /// The converged tip recorded for this repo by the owner record,
+        /// if any. `None` when the op crashed before relock recorded any
+        /// converged tips, or when no entry exists for this repo.
+        recorded_converged_tip: Option<String>,
+        /// The pre-abort reference that already captured `observed_tip`
+        /// (written by [`Vcs::create_pre_abort_ref`] before this call).
+        /// Surfaced in the refusal so operators can locate the tip if it
+        /// is later determined safe to keep.
+        pre_abort_ref: PreAbortRef,
+    },
+}
+
 /// Operations repoweave needs from a version control system.
 ///
 /// Implementations exist for git (and eventually jj, sl, hg). Each method
@@ -739,6 +803,72 @@ pub trait Vcs {
     /// no such savepoint exists; ignores ref-update failures (the
     /// savepoint is purely a recovery aid — its absence is benign).
     fn drop_savepoint(&self, repo: &Path, op_id: &str);
+
+    /// Capture `repo`'s current tip in a durable pre-abort reference
+    /// keyed by `op_id`, returning the captured tip and the operator-
+    /// spellable label of the reference.
+    ///
+    /// For [`GitVcs`](crate::git::GitVcs): writes
+    /// `refs/rwv/pre-abort/<op_id>` pointing at `HEAD`. The ref namespace
+    /// is a VCS impl detail — callers receive the [`PreAbortRef`] back
+    /// with `label` containing the spellable name for refusal messages.
+    ///
+    /// **Information-preserving contract:** `rwv abort` calls this for
+    /// EVERY repo it is about to restore, BEFORE any restore is attempted.
+    /// The reference is NEVER deleted by abort's cleanup — abort is
+    /// itself undoable, and the pre-abort ref is the cheapest recovery
+    /// path. (`rwv doctor` may garbage-collect these refs once their op
+    /// is provably no longer referenced; abort itself does not.)
+    fn create_pre_abort_ref(&self, repo: &Path, op_id: &str) -> Result<PreAbortRef, VcsError>;
+
+    /// Resolve the pre-abort reference captured under `op_id` in `repo`,
+    /// returning `None` when no such reference exists.
+    ///
+    /// For [`GitVcs`](crate::git::GitVcs): reads
+    /// `refs/rwv/pre-abort/<op_id>`.
+    ///
+    /// Used by tests and recovery tooling to verify that abort wrote the
+    /// pre-abort ref and to locate the captured tip.
+    fn resolve_pre_abort_ref(&self, repo: &Path, op_id: &str) -> Option<PreAbortRef>;
+
+    /// HEAD-verified restore: classify the repo's current tip and restore
+    /// to the savepoint ONLY when the tip is attributable to the op.
+    ///
+    /// Classification:
+    /// - `tip == savepoint` → [`VerifiedRestoreOutcome::Untouched`],
+    ///   restore is a no-op (HEAD is not touched).
+    /// - `tip ==` `recorded_converged_tip` → the op moved this repo to
+    ///   convergence; restore proceeds and returns
+    ///   [`VerifiedRestoreOutcome::RestoredFromConverged`].
+    /// - repo is in a VCS-native mid-op state (rebase/merge/cherry-pick)
+    ///   → mid-op is cancelled and restore proceeds, returning
+    ///   [`VerifiedRestoreOutcome::RestoredFromMidOp`].
+    /// - no savepoint exists for `op_id` → [`VerifiedRestoreOutcome::NoSavepoint`].
+    /// - **anything else** → [`VerifiedRestoreOutcome::ForeignTip`] is
+    ///   returned without touching HEAD. The caller is responsible for
+    ///   surfacing the named violation and continuing with other repos.
+    ///   The destructive primitive is fenced behind this enumerable set
+    ///   of attributable states.
+    ///
+    /// `recorded_converged_tip` is the SHA the owner record's
+    /// `converged_tips` map holds for this repo (relock-completed), or
+    /// `None` when the op crashed before relock recorded any converged
+    /// tips. The caller derives the key (e.g. the repo's path relative
+    /// to the workspace root, or `"(project)"` for the project repo).
+    ///
+    /// For [`GitVcs`](crate::git::GitVcs): when restoring, runs
+    /// `git reset --hard refs/rwv/pre-op/<op_id>` and drops the savepoint
+    /// — the same primitive as [`restore_savepoint`], gated by the
+    /// classification above. The destructive `reset --hard` is now
+    /// reachable only for tips the op itself created.
+    ///
+    /// [`restore_savepoint`]: Vcs::restore_savepoint
+    fn verified_restore_savepoint(
+        &self,
+        repo: &Path,
+        op_id: &str,
+        recorded_converged_tip: Option<&str>,
+    ) -> Result<VerifiedRestoreOutcome, VcsError>;
 
     /// Return the in-flight VCS operation `repo` is currently mid-way
     /// through, if any.

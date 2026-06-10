@@ -129,7 +129,7 @@ const ALLOWLIST: &[Allowed] = &[
     Allowed {
         file: "git.rs",
         pattern: "\"--hard\"",
-        count: 2,
+        count: 4,
         justification: "(1) hard_reset(): the operation's intent is to \
             discard divergent commits; the sole sync caller (--force Phase \
             1') gates on a clean-project precondition and creates a \
@@ -137,15 +137,25 @@ const ALLOWLIST: &[Allowed] = &[
             recoverable via `rwv abort`. (2) restore_savepoint(): restoring \
             the pre-op state is the operation's contract; any dirt at \
             abort time is churn from the failed op being rolled back \
-            (relocated from sync.rs).",
+            (relocated from sync.rs). (3) verified_restore_savepoint() \
+            mid-op branch: gated on Vcs::mid_op detecting a VCS-native \
+            rebase/merge/cherry-pick state — wreckage attributable to the \
+            op (design § 5; fo-jsbr3i.4). (4) verified_restore_savepoint() \
+            converged branch: gated on the current tip matching the owner \
+            record's `converged_tips` entry for this repo — convergence \
+            attributable to the op. Foreign tips are reported, not reset.",
     },
     Allowed {
         file: "git.rs",
         pattern: "\"update-ref\"",
-        count: 2,
-        justification: "savepoint create/drop, namespaced under \
-            refs/rwv/pre-op/<op-id>; never touches user refs (relocated \
-            from sync.rs).",
+        count: 3,
+        justification: "(1) savepoint create, (2) savepoint drop, both \
+            namespaced under refs/rwv/pre-op/<op-id> (relocated from \
+            sync.rs). (3) create_pre_abort_ref(): writes \
+            refs/rwv/pre-abort/<op-id> at HEAD before any abort-time \
+            restore; information-preserving rail (design § 5; \
+            fo-jsbr3i.4) — abort is itself undoable via this ref and the \
+            ref is never deleted by abort cleanup. None touch user refs.",
     },
     Allowed {
         file: "check.rs",

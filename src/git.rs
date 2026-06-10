@@ -1,7 +1,9 @@
 //! Git implementation of the [`Vcs`] trait.
 
 use crate::manifest::Role;
-use crate::vcs::{ConflictOp, RefName, ResolvedRevisionId, Vcs, VcsError};
+use crate::vcs::{
+    ConflictOp, PreAbortRef, RefName, ResolvedRevisionId, Vcs, VcsError, VerifiedRestoreOutcome,
+};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -162,12 +164,16 @@ fn is_already_exists(stderr: &str) -> bool {
 
 /// True for transient/internal tags that must not be chosen as a lock's
 /// symbolic name. Mirrors the ref-spaces rwv uses for its own bookkeeping —
-/// `savepoint/*` (operator/tool savepoints) and `rwv/pre-op/*` (sync abort
-/// recovery refs under `refs/rwv/pre-op/*` when surfaced as tag names).
+/// `savepoint/*` (operator/tool savepoints), `rwv/pre-op/*` (sync abort
+/// recovery refs under `refs/rwv/pre-op/*` when surfaced as tag names),
+/// and `rwv/pre-abort/*` (pre-abort recovery refs under
+/// `refs/rwv/pre-abort/*`).
 fn is_transient_tag(tag: &str) -> bool {
     tag.starts_with("savepoint/")
         || tag.starts_with("rwv/pre-op/")
         || tag.starts_with("refs/rwv/pre-op/")
+        || tag.starts_with("rwv/pre-abort/")
+        || tag.starts_with("refs/rwv/pre-abort/")
         || tag.starts_with("rwv-savepoint/")
 }
 
@@ -809,6 +815,91 @@ impl Vcs for GitVcs {
         let _ = Self::run(&["update-ref", "-d", &ref_name], repo);
     }
 
+    fn create_pre_abort_ref(&self, repo: &Path, op_id: &str) -> Result<PreAbortRef, VcsError> {
+        let head = self.head_revision(repo)?;
+        let label = pre_abort_ref(op_id);
+        Self::run(&["update-ref", &label, head.as_str()], repo)?;
+        Ok(PreAbortRef {
+            label,
+            revision: head,
+        })
+    }
+
+    fn resolve_pre_abort_ref(&self, repo: &Path, op_id: &str) -> Option<PreAbortRef> {
+        // Same canonical-rev-parse contract as `resolve_savepoint`: rev-parse
+        // on a fully-qualified ref emits the canonical 40-hex SHA, so the
+        // result is already in canonical form.
+        let label = pre_abort_ref(op_id);
+        let canonical = Self::run(&["rev-parse", &label], repo).ok()?;
+        Some(PreAbortRef {
+            revision: ResolvedRevisionId::from_canonical_unchecked(canonical),
+            label,
+        })
+    }
+
+    fn verified_restore_savepoint(
+        &self,
+        repo: &Path,
+        op_id: &str,
+        recorded_converged_tip: Option<&str>,
+    ) -> Result<VerifiedRestoreOutcome, VcsError> {
+        // Resolve the savepoint first: no savepoint → nothing to do.
+        let savepoint = match self.resolve_savepoint(repo, op_id) {
+            Some(sp) => sp,
+            None => return Ok(VerifiedRestoreOutcome::NoSavepoint),
+        };
+
+        // VCS-native mid-op state is wreckage attributable to the op
+        // (replay's strategy ops move tips through these states). Cancel
+        // the mid-op first, then restore.
+        if self.mid_op(repo).is_some() {
+            self.cancel_in_flight_op(repo);
+            Self::run(&["reset", "--hard", savepoint.as_str()], repo)?;
+            self.drop_savepoint(repo, op_id);
+            return Ok(VerifiedRestoreOutcome::RestoredFromMidOp);
+        }
+
+        // Classify the current tip against the enumerable attributable set.
+        let head = self.head_revision(repo)?;
+        let head_sha = head.as_str();
+
+        if head_sha == savepoint.as_str() {
+            // Untouched — restore is a no-op. Still drop the savepoint so
+            // abort's cleanup leaves no stale refs (matches restore_savepoint's
+            // post-condition; the pre-abort ref preserves the tip regardless).
+            self.drop_savepoint(repo, op_id);
+            return Ok(VerifiedRestoreOutcome::Untouched);
+        }
+
+        if let Some(converged) = recorded_converged_tip {
+            if head_sha == converged {
+                Self::run(&["reset", "--hard", savepoint.as_str()], repo)?;
+                self.drop_savepoint(repo, op_id);
+                return Ok(VerifiedRestoreOutcome::RestoredFromConverged);
+            }
+        }
+
+        // Foreign tip: refuse to reset. The pre-abort ref was already
+        // written by the caller (run_abort writes it for every repo before
+        // calling this), so the tip is preserved either way; we surface
+        // the label so the refusal message can name it.
+        let pre_abort = self.resolve_pre_abort_ref(repo, op_id).unwrap_or_else(|| {
+            // Should not happen: run_abort writes the pre-abort ref before
+            // every verified_restore_savepoint call. Synthesise a label so
+            // the refusal still names a recovery anchor.
+            PreAbortRef {
+                label: pre_abort_ref(op_id),
+                revision: head.clone(),
+            }
+        });
+        Ok(VerifiedRestoreOutcome::ForeignTip {
+            observed_tip: head_sha.to_owned(),
+            savepoint: savepoint.as_str().to_owned(),
+            recorded_converged_tip: recorded_converged_tip.map(str::to_owned),
+            pre_abort_ref: pre_abort,
+        })
+    }
+
     fn mid_op(&self, repo: &Path) -> Option<ConflictOp> {
         match Self::mid_op_state(repo).as_deref() {
             Some("mid-rebase") => Some(ConflictOp::Rebase),
@@ -1197,6 +1288,16 @@ impl Vcs for GitVcs {
 /// resolve / drop / restore all agree on the layout.
 fn savepoint_ref(op_id: &str) -> String {
     format!("refs/rwv/pre-op/{op_id}")
+}
+
+/// Build the pre-abort ref path for `op_id` under the rwv pre-abort namespace.
+///
+/// The namespacing (`refs/rwv/pre-abort/<id>`) is a git impl detail —
+/// callers of the [`Vcs`] trait receive a [`PreAbortRef`] whose `label`
+/// carries this string for recovery hints, but never spell the ref
+/// directly. Centralising the format here keeps create / resolve in sync.
+fn pre_abort_ref(op_id: &str) -> String {
+    format!("refs/rwv/pre-abort/{op_id}")
 }
 
 impl GitVcs {
