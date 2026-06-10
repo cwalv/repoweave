@@ -13,7 +13,7 @@
 //!   -empty else write stripped).
 //!
 //! See the joint doc for the normative contract. This module is the
-//! implementation; ports (epic fo-cnpjy C4–C11) consume it.
+//! implementation; the per-integration ports consume it.
 //!
 //! # Per-format marker placement
 //!
@@ -81,7 +81,7 @@ where
 /// - **`Author`**: rwv fully owns this key. `merge_activate` always writes
 ///   the value (overwriting whatever is on disk when the marker is present).
 ///   `strip_deactivate` removes this key. This is the "classic" ownership
-///   category — the only one that existed before fo-ro3hj.
+///   category — the only one that existed before the richer categories below.
 ///
 /// - **`DefaultOnly`**: rwv provides a default value but never overwrites once
 ///   the key is present. `merge_activate` sets the key only when it is absent

@@ -215,7 +215,7 @@ pub trait Integration {
     /// **Default impl returns `generated_files(ctx)`** — this is the safe
     /// default for existing integrations: every file currently declared in
     /// `generated_files()` continues to participate in symlink surfacing
-    /// unchanged. As each integration is ported (epic fo-cnpjy C4–C13), it
+    /// unchanged. As each integration is ported, it
     /// moves the hybrid entries from `generated_files()` to `managed_files()`
     /// explicitly. Integrations that have no hybrid files (e.g. gita) may
     /// leave the default in place — the union of the two methods is what
@@ -254,7 +254,7 @@ pub trait Integration {
     /// is not drift, and surfacing it on every `rwv activate` would be
     /// noise.
     ///
-    /// Per-integration ports (epic fo-cnpjy C4–C13) override this when the
+    /// Per-integration ports override this when the
     /// integration starts owning hybrid content.
     ///
     /// See [`trigger-model.md`](../docs/repoweave/integration-ownership/trigger-model.md)

@@ -1,6 +1,6 @@
 //! Performance regression test for `rwv doctor` at workspace scale.
 //!
-//! Bead fo-v8hq4.4: the doctor's per-worktree drift scan is O(workweaves ×
+//! The doctor's per-worktree drift scan is O(workweaves ×
 //! repos) and was observed not to complete in 30s against a workspace with
 //! ~81 workweaves × ~13 active manifest repos. This test reproduces that
 //! shape at a smaller-but-still-significant scale and asserts the run
@@ -105,7 +105,7 @@ fn build_large_workspace(parent: &Path, n_repos: usize, n_ww: usize) -> PathBuf 
     root
 }
 
-/// Synthetic-large-workspace perf assertion. Bead fo-v8hq4.4 acceptance:
+/// Synthetic-large-workspace perf assertion. Acceptance:
 /// `rwv doctor` completes in O(seconds), not O(>30s), against a 80+
 /// workweave workspace. The numbers used here are tuned to a CI-friendly
 /// scale that still reproduces the original O(workweaves × repos) shape;

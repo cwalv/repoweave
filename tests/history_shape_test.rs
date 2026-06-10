@@ -3,11 +3,11 @@
 //! These tests verify that `assert_log_ordering` catches an *intentionally-wrong*
 //! history shape — i.e. an "Option A" end state where commits are in the reverse
 //! of the expected order. This is the "at least one negative test" required by
-//! acceptance criterion fo-v8hq4.5.
+//! the acceptance criteria.
 //!
 //! ## Why this is load-bearing
 //!
-//! The silent-fallback epic (fo-vsldv) was triggered by a subagent producing
+//! The silent-fallback epic was triggered by a subagent producing
 //! an Option A implementation that satisfied all *tip-movement* assertions but
 //! reversed the history shape: primary's commits ended up on top of the
 //! workweave's contribution instead of the reverse.

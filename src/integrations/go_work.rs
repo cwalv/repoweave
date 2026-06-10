@@ -262,7 +262,7 @@ fn activate_via_go_tool(
     // weave layout work_tmp (workspace_root/go.work) is a symlink to
     // go_work_path (projects/<project>/go.work), so the path strings differ
     // but both resolve to the same inode. fs::copy on a symlink-to-self
-    // truncates the file (fo-l22tpw). Canonicalize both sides and skip the
+    // truncates the file. Canonicalize both sides and skip the
     // copy when they resolve to the same path.
     let same_file = match (
         std::fs::canonicalize(&work_tmp),

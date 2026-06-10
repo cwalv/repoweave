@@ -152,7 +152,7 @@ fn workweave_recreate_preserves_non_git_state() {
     // ---- Second invocation: re-create the same workweave. ----
     //
     // The assertion is that this succeeds AND leaves non-git state
-    // intact. If this fails, it confirms fo-bsd's premise: rwv
+    // intact. If this fails, it confirms the original premise: rwv
     // workweave create is not idempotent on re-invocation and needs a
     // fix to support the pool-worker resume contract.
     rwv()
@@ -360,9 +360,11 @@ fn workweave_same_name_different_projects_coexist() {
     );
 }
 
-/// `--force` must destroy and recreate the workweave even when the
-/// existing state has local modifications. This is the explicit rebuild
-/// path (corruption recovery, reusing a slot for a new purpose).
+/// `--force` recreates the workweave, but only when nothing unsaved or
+/// unmerged would be lost: a dirty workweave is refused (the operator
+/// never saw what it holds), and once clean, --force destroys non-git
+/// state and rebuilds. This is the explicit rebuild path (corruption
+/// recovery, reusing a slot for a new purpose).
 #[test]
 fn workweave_recreate_with_force_destroys_and_recreates() {
     let tmp = tempfile::tempdir().unwrap();
@@ -380,14 +382,41 @@ fn workweave_recreate_with_force_destroys_and_recreates() {
     let ww_dir = weaveroot.join("web-app--reset");
     let weave_repo = ww_dir.join("github/org/repo");
 
-    // Dirty it — a refused-recreate would have fired here without --force.
+    // Dirty it, plus non-git state that --force may legitimately wipe.
     std::fs::write(weave_repo.join("scratch.txt"), "local work\n").unwrap();
     let sentinel = ww_dir.join(".runtime/sentinel.txt");
     std::fs::create_dir_all(sentinel.parent().unwrap()).unwrap();
     std::fs::write(&sentinel, "will be wiped\n").unwrap();
     let head_before = head_sha(&weave_repo);
 
-    // Re-invoke with --force: should destroy and recreate.
+    // While the workweave is dirty, --force must refuse and name the work
+    // at risk — blind replacement is not consented destruction.
+    let err_output = rwv()
+        .args(["workweave", "web-app", "create", "reset", "--force"])
+        .env("RWV_WORKWEAVE_DIR", &weaveroot)
+        .current_dir(&ws)
+        .assert()
+        .failure()
+        .get_output()
+        .clone();
+    let stderr = String::from_utf8_lossy(&err_output.stderr);
+    assert!(
+        stderr.contains("refusing to replace"),
+        "create --force over a dirty workweave must refuse; got:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("github/org/repo") && stderr.contains("delete"),
+        "refusal must list the dirty repo and point at the explicit delete verb; got:\n{stderr}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(weave_repo.join("scratch.txt")).unwrap(),
+        "local work\n",
+        "uncommitted content must survive a refused create --force"
+    );
+
+    // Clean the workweave; --force recreate now proceeds and wipes the
+    // non-git state.
+    std::fs::remove_file(weave_repo.join("scratch.txt")).unwrap();
     rwv()
         .args(["workweave", "web-app", "create", "reset", "--force"])
         .env("RWV_WORKWEAVE_DIR", &weaveroot)
@@ -395,11 +424,6 @@ fn workweave_recreate_with_force_destroys_and_recreates() {
         .assert()
         .success();
 
-    // Dirty file and sentinel are gone — --force is destructive.
-    assert!(
-        !weave_repo.join("scratch.txt").exists(),
-        "scratch.txt should be wiped by --force recreate"
-    );
     assert!(
         !sentinel.exists(),
         "sentinel file should be wiped by --force recreate"
@@ -432,4 +456,115 @@ fn head_sha(dir: &Path) -> String {
         .expect("sha should be valid UTF-8")
         .trim()
         .to_string()
+}
+
+/// With the `.rwv-workweave` marker missing (or foreign), `create --force`
+/// cannot trust any manifest to enumerate the workweave — it must still
+/// find dirty repos by scanning, refuse while work is at risk, and only
+/// replace once clean.
+#[test]
+fn workweave_recreate_force_refuses_dirty_when_marker_missing() {
+    let tmp = tempfile::tempdir().unwrap();
+    let ws = make_workspace(tmp.path(), "web-app");
+    let weaveroot = tmp.path().join(".workweaves");
+    std::fs::create_dir_all(&weaveroot).unwrap();
+
+    rwv()
+        .args(["workweave", "web-app", "create", "reset"])
+        .env("RWV_WORKWEAVE_DIR", &weaveroot)
+        .current_dir(&ws)
+        .assert()
+        .success();
+
+    let ww_dir = weaveroot.join("web-app--reset");
+    let weave_repo = ww_dir.join("github/org/repo");
+
+    // Strip the marker (simulating corruption) and dirty the repo worktree.
+    std::fs::remove_file(ww_dir.join(".rwv-workweave")).unwrap();
+    std::fs::write(weave_repo.join("scratch.txt"), "local work\n").unwrap();
+
+    let err_output = rwv()
+        .args(["workweave", "web-app", "create", "reset", "--force"])
+        .env("RWV_WORKWEAVE_DIR", &weaveroot)
+        .current_dir(&ws)
+        .assert()
+        .failure()
+        .get_output()
+        .clone();
+    let stderr = String::from_utf8_lossy(&err_output.stderr);
+    assert!(
+        stderr.contains("refusing to replace") && stderr.contains("github/org/repo"),
+        "marker-less create --force must refuse via the repo scan; got:\n{stderr}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(weave_repo.join("scratch.txt")).unwrap(),
+        "local work\n",
+        "uncommitted content must survive the refusal"
+    );
+
+    // Clean → the raw-replace path proceeds.
+    std::fs::remove_file(weave_repo.join("scratch.txt")).unwrap();
+    rwv()
+        .args(["workweave", "web-app", "create", "reset", "--force"])
+        .env("RWV_WORKWEAVE_DIR", &weaveroot)
+        .current_dir(&ws)
+        .assert()
+        .success();
+    assert!(ww_dir.join(".rwv-workweave").exists());
+}
+
+/// `workweave delete` without `--force` must refuse when the workweave's
+/// worktrees hold commits not merged into the primary repos — the
+/// ephemeral-branch cleanup would force-delete the only ref to them.
+#[test]
+fn workweave_delete_refuses_on_unmerged_commits() {
+    let tmp = tempfile::tempdir().unwrap();
+    let ws = make_workspace(tmp.path(), "web-app");
+    let weaveroot = tmp.path().join(".workweaves");
+    std::fs::create_dir_all(&weaveroot).unwrap();
+
+    rwv()
+        .args(["workweave", "web-app", "create", "committed"])
+        .env("RWV_WORKWEAVE_DIR", &weaveroot)
+        .current_dir(&ws)
+        .assert()
+        .success();
+
+    let ww_dir = weaveroot.join("web-app--committed");
+    let weave_repo = ww_dir.join("github/org/repo");
+
+    // Commit work on the ephemeral branch: the worktree is clean, but the
+    // commit is reachable only from the ephemeral branch.
+    std::fs::write(weave_repo.join("feature.txt"), "committed work\n").unwrap();
+    git(&["add", "feature.txt"], &weave_repo);
+    git(&["commit", "-m", "ww: feature"], &weave_repo);
+    let feature_sha = head_sha(&weave_repo);
+
+    let err_output = rwv()
+        .args(["workweave", "web-app", "delete", "committed"])
+        .env("RWV_WORKWEAVE_DIR", &weaveroot)
+        .current_dir(&ws)
+        .assert()
+        .failure()
+        .get_output()
+        .clone();
+    let stderr = String::from_utf8_lossy(&err_output.stderr);
+    assert!(
+        stderr.contains("not merged") && stderr.contains("github/org/repo"),
+        "delete must refuse on unmerged commits and list the repo; got:\n{stderr}"
+    );
+    assert_eq!(
+        head_sha(&weave_repo),
+        feature_sha,
+        "workweave must be untouched after the refusal"
+    );
+
+    // --force is the explicit consent path.
+    rwv()
+        .args(["workweave", "web-app", "delete", "committed", "--force"])
+        .env("RWV_WORKWEAVE_DIR", &weaveroot)
+        .current_dir(&ws)
+        .assert()
+        .success();
+    assert!(!ww_dir.exists(), "--force delete removes the workweave");
 }

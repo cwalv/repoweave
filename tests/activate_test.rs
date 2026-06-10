@@ -31,7 +31,7 @@ fn make_workspace(tmp: &Path) -> std::path::PathBuf {
 /// Each repo entry is `(path, role)`. Also creates the repo directories with
 /// the specified manifest files (e.g., `package.json`, `Cargo.toml`).
 ///
-/// **Trigger-model note (fo-cnpjy.3):** under the new trigger-model split,
+/// **Trigger-model note:** under the new trigger-model split,
 /// `rwv activate` is a context verb — it surfaces existing
 /// managed/generated content via symlinks but does not author. So this
 /// helper now also drives the intent path
@@ -605,7 +605,7 @@ fn activate_same_project_twice_is_idempotent() {
 /// activation symlinks. Verified via deactivate, which runs the sweep.
 #[test]
 fn deactivate_descends_into_nondir_registry_subtrees() {
-    // Under fo-cnpjy.3 (owner-scoped symlink removal), this test exercises
+    // Under owner-scoped symlink removal, this test exercises
     // the recursion + the owner-scoping rule together:
     //
     //   1. The sweep descends into non-registry, non-`projects/`, non-`.git/`
@@ -709,7 +709,7 @@ integrations:\n  gita:\n    enabled: true\n",
 /// message, so the user can copy-paste a `cd` command to primary and rerun.
 /// The primary's `.rwv-active` must not change.
 ///
-/// Acceptance criteria from fo-9fnae:
+/// Acceptance criteria:
 ///   - exits non-zero
 ///   - error message contains "workweave" and the actual primary path
 ///   - works for any project name (including the one already active in primary)

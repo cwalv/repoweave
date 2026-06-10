@@ -1,6 +1,6 @@
 //! E2E integration tests for the multi-workspace op-state machinery and `--continue` flag.
 //!
-//! Acceptance criteria for bead fo-pte54.7:
+//! Acceptance criteria:
 //! 1. Concurrent-op detection: an in-progress op-state blocks new ops on either workspace.
 //! 2. Mid-step-1 resume: conflict → resolve → `--continue` → completion.
 //! 3. Mid-step-3 resume: op-state left at step3-ff phase → `--continue` → FF-advance completes.
@@ -760,37 +760,6 @@ fn sync_continue_flag_is_recognized() {
 }
 
 // ---------------------------------------------------------------------------
-// Backward compatibility: legacy .rwv-sync-op is still recognized by abort
-// ---------------------------------------------------------------------------
-
-#[test]
-fn abort_recognizes_legacy_rwv_sync_op_marker() {
-    let tmp = tempfile::tempdir().unwrap();
-    let (ws, _server_sha) = make_locked_workspace(tmp.path(), "primary");
-    let project_dir = &ws.project_dir;
-
-    // Capture pre-op SHA.
-    let sha = git_out(&["rev-parse", "HEAD"], project_dir);
-
-    // Write legacy .rwv-sync-op marker (old format: just the op-id).
-    let op_id = "legacy-op-id-12345";
-    git(
-        &["update-ref", &format!("refs/rwv/pre-op/{op_id}"), &sha],
-        project_dir,
-    );
-    std::fs::write(ws.root.join(".rwv-sync-op"), op_id).unwrap();
-
-    // `rwv abort` must recognise the legacy marker and not error with "no op in progress".
-    rwv().arg("abort").current_dir(&ws.root).assert().success();
-
-    // Legacy marker should be cleaned up.
-    assert!(
-        !ws.root.join(".rwv-sync-op").exists(),
-        "legacy .rwv-sync-op should be removed by abort"
-    );
-}
-
-// ---------------------------------------------------------------------------
 // Unit-level: op_state module round-trip (smoke test via rwv binary)
 // ---------------------------------------------------------------------------
 
@@ -822,11 +791,5 @@ fn op_state_file_written_during_sync_and_removed_on_success() {
     assert!(
         !ww.root.join(".rwv-op").exists(),
         "op-state file must be removed after successful sync"
-    );
-
-    // Also verify no legacy marker was created.
-    assert!(
-        !ww.root.join(".rwv-sync-op").exists(),
-        "old-style .rwv-sync-op should not be created by new code"
     );
 }

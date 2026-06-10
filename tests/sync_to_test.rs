@@ -741,7 +741,7 @@ fn sync_to_ff_refuses_when_cwd_not_ahead() {
 }
 
 // ---------------------------------------------------------------------------
-// Test: dirty target refusal (fo-5cqa74)
+// Test: dirty target refusal
 //
 // Step 3 ff-advances the target via `reset --hard`, which destroys any
 // uncommitted changes in the target's worktrees. sync-to must refuse up
@@ -835,7 +835,7 @@ fn sync_to_refuses_when_target_has_uncommitted_changes() {
 }
 
 // ---------------------------------------------------------------------------
-// Test 9: sync-to with mismatched primary `.rwv-active` (fo-gsl8l)
+// Test 9: sync-to with mismatched primary `.rwv-active`
 //
 // A workweave whose project is `web-app` should succeed with `rwv sync-to`
 // even when primary's `.rwv-active` is pointing at a different project

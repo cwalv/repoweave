@@ -2107,7 +2107,7 @@ repositories:
     #[test]
     fn project_name_from_absolute_path_is_short_name() {
         // Absolute path: name_from_dir must return just the short name, not the
-        // full absolute path. This is the regression that fo-7gf75.3 fixes.
+        // full absolute path. This is the regression guarded against here.
         let base = tempfile::tempdir().unwrap();
         let project_dir = base.path().join("projects").join("my-app");
         std::fs::create_dir_all(&project_dir).unwrap();

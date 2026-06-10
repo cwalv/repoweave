@@ -19,7 +19,7 @@
 //! 4. **Doctor**: Author drift reported; DefaultOnly drift NOT reported.
 //!    `rwv doctor --fix` repairs the Author key, leaves DefaultOnly alone.
 //!    (Cargo only — it is the port whose doctor path is most exercised by
-//!    fo-cnpjy.18. For the other ports, doctor-fix is a no-op because verify()
+//!    its doctor-acceptance battery. For the other ports, doctor-fix is a no-op because verify()
 //!    is not yet wired to detect integration drift. See bd comment for rationale.)
 //!
 //! vscode is excluded: the inline `git.*` DefaultOnly settings live inside the
@@ -792,7 +792,7 @@ mod cargo {
 // it is computed from the workspace members. However, once authored and the
 // user edits it to a higher value (e.g., 1.26), the merge logic must NOT
 // downgrade it. We test the customization-survives scenario specifically for
-// the go version downgrade regression (fo-cnpjy.C11, §6.go.1 CLI analog).
+// the go version downgrade regression (§6.go.1 CLI analog).
 
 mod go_work {
     use super::*;
@@ -981,7 +981,7 @@ mod go_work {
     }
 
     // -----------------------------------------------------------------------
-    // fo-l22tpw regression — pre-existing ws/go.work symlink does not truncate
+    // Regression — pre-existing ws/go.work symlink does not truncate
     // -----------------------------------------------------------------------
     //
     // In the production weave layout `ws/go.work` is a symlink to

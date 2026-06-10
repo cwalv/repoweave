@@ -322,7 +322,9 @@ enum WorkweaveAction {
         ///
         /// Without this flag, re-invoking `create` against an existing
         /// workweave preserves non-git state in place (the idempotent
-        /// path). Use `--force` for explicit rebuild scenarios.
+        /// path). Use `--force` for explicit rebuild scenarios. Refuses
+        /// if the existing workweave has uncommitted changes — destroy
+        /// those explicitly with `workweave delete --force`.
         #[arg(long)]
         force: bool,
         /// Workspace to fork the new workweave from. Accepts `primary`, an

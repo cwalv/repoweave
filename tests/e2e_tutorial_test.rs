@@ -97,7 +97,7 @@ fn init_bare_cargo_lib(path: &Path, crate_name: &str) {
 /// `rwv.yaml` pointing at the given `(repo_path, url)` manifest
 /// entries. Returns the project-source URL `file:///...`.
 ///
-/// **Trigger-model note (fo-cnpjy.3):** under the new spec, `rwv fetch` is
+/// **Trigger-model note:** under the new spec, `rwv fetch` is
 /// a context verb — it surfaces existing managed/generated content but does
 /// not author. So the project source must already contain the
 /// integration-authored files (e.g. `Cargo.toml` workspace root) that the

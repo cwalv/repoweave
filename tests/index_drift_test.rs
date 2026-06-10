@@ -1,7 +1,7 @@
 //! Integration tests for index-drift detection (`rwv doctor`) and
 //! auto-fix (`rwv doctor --fix`).
 //!
-//! These tests exercise the six acceptance scenarios described in fo-rwv-index-drift:
+//! These tests exercise the six acceptance scenarios:
 //!   1. Stale-index detection (safe class)
 //!   2. Stale-index auto-fix
 //!   3. Live staged changes not fixed
@@ -440,8 +440,8 @@ fn sync_post_refresh_clears_stale_index() {
     // Mirror the lock advance into the workweave's own project worktree so
     // that the workweave's lock matches the workweave's tip after we advance
     // the server ref below. Without this, sync's CWD-lock-freshness
-    // precondition (which reads the workweave's own committed lock, per
-    // fo-rwv-lock-cross-workspace-confusion) would fail before reaching the
+    // precondition (which reads the workweave's own committed lock)
+    // would fail before reaching the
     // post-refresh path this test is exercising.
     write_lock(&project_ww, &[(SERVER_PATH, SERVER_URL, &c2)]);
     git(&["add", "rwv.lock"], &project_ww);
@@ -529,7 +529,7 @@ fn doctor_fix_refuses_non_reachable_index_tree() {
 
 /// Source lock is pinned by a tag name (e.g., `v1.0.0`) whose commit matches
 /// HEAD. `rwv sync` must NOT falsely report "source lock is stale".
-/// This is the regression guard for the fo-rwv-sync-tag-drift companion fix.
+/// This is the regression guard for the sync tag-drift companion fix.
 #[test]
 fn sync_precondition_accepts_tag_form_lock_entry() {
     let tmp = tempfile::tempdir().unwrap();

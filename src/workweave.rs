@@ -379,12 +379,45 @@ pub fn create_workweave(
                 Some(m) => &m.project == project,
                 None => false,
             };
+            // Even under --force, refuse to replace a workweave holding
+            // uncommitted work. create's --force consents to replacing
+            // the directory, but the operator never saw what was
+            // inside it — unlike `workweave remove`, which lists the dirty
+            // paths before --force is retried. Explicit destruction of
+            // dirty workweaves stays with `workweave remove --force`.
+            let at_risk = if can_use_structured_delete {
+                // Uncommitted changes plus committed-but-unmerged work —
+                // both are destroyed by the replace.
+                let mut paths = collect_dirty_paths(&workweave_dir, project, &manifest);
+                paths.extend(collect_diverged_paths(
+                    &workweave_dir,
+                    primary_root,
+                    project,
+                    &manifest,
+                ));
+                paths
+            } else {
+                // Marker missing/foreign: no manifest can be trusted to
+                // enumerate the contents, so scan for repos directly.
+                collect_dirty_repos_by_walk(&workweave_dir)
+            };
+            if !at_risk.is_empty() {
+                bail!(
+                    "workweave {} already exists and holds unsaved or unmerged work; \
+                     refusing to replace it:\n  {}\n\
+                     Commit/merge that work, or delete it explicitly with \
+                     `rwv workweave {} delete {} --force`.",
+                    name.as_str(),
+                    at_risk.join("\n  "),
+                    project.as_str(),
+                    name.as_str(),
+                );
+            }
             if can_use_structured_delete {
-                // `force: true` on the internal delete: the caller already
-                // passed --force, signalling intent to overwrite uncommitted
-                // state. Re-checking here would just produce a confusing
-                // error when the operator's flag already authorised the
-                // destructive path.
+                // `force: true` on the internal delete: the dirty check
+                // above just confirmed there is nothing uncommitted to
+                // lose, and the operator's --force already authorised
+                // replacing the (clean) workweave.
                 delete_workweave(primary_root, project, name, true)?;
             } else {
                 // No valid marker for this project, so delete_workweave
@@ -815,6 +848,84 @@ pub fn collect_dirty_paths(
     dirty
 }
 
+/// Walk the workweave's repos and report those whose worktree HEAD holds
+/// commits not reachable from the canonical repo's HEAD under `ws_root`.
+///
+/// Deleting such a workweave destroys committed work: the ephemeral-branch
+/// cleanup force-deletes the only ref pointing at those commits. A repo
+/// whose HEADs cannot be read is reported as diverged (conservative: "we
+/// couldn't confirm safe").
+fn collect_diverged_paths(
+    workweave_dir: &Path,
+    ws_root: &Path,
+    project: &ProjectName,
+    manifest: &Manifest,
+) -> Vec<String> {
+    let mut diverged = Vec::new();
+
+    let mut check = |wt: &Path, canonical: &Path, label: String| {
+        if !wt.exists() || !GitVcs.is_repo(canonical) {
+            return;
+        }
+        match (GitVcs.head_revision(wt), GitVcs.head_revision(canonical)) {
+            (Ok(w), Ok(c)) => {
+                if w != c && !GitVcs::is_ancestor(wt, w.as_str(), c.as_str()) {
+                    diverged.push(label);
+                }
+            }
+            _ => diverged.push(format!("{label}: HEAD check failed")),
+        }
+    };
+
+    let project_wt = workweave_dir.join("projects").join(project.as_str());
+    if GitVcs.is_repo(&project_wt) {
+        let project_canonical = ws_root.join("projects").join(project.as_str());
+        check(
+            &project_wt,
+            &project_canonical,
+            format!("projects/{}", project.as_str()),
+        );
+    }
+
+    for (repo_path, _entry) in manifest.iter_entries() {
+        let wt = workweave_dir.join(repo_path.as_path());
+        let canonical = ws_root.join(repo_path.as_path());
+        check(&wt, &canonical, repo_path.as_str().to_string());
+    }
+
+    diverged
+}
+
+/// Manifest-independent dirty scan: walk `dir` for git repos (worktrees or
+/// clones) and report those with uncommitted changes, relative to `dir`.
+///
+/// Used when a workweave's marker is missing or belongs to another project,
+/// so no manifest can be trusted to enumerate its contents. Descent stops at
+/// each repo root (no nested-repo scanning), and a repo whose dirty check
+/// fails is reported as dirty (conservative: "we couldn't confirm clean").
+fn collect_dirty_repos_by_walk(dir: &Path) -> Vec<String> {
+    fn walk(base: &Path, cur: &Path, dirty: &mut Vec<String>) {
+        if cur.join(".git").exists() {
+            if GitVcs.has_uncommitted_changes(cur).unwrap_or(true) {
+                let rel = cur.strip_prefix(base).unwrap_or(cur);
+                dirty.push(rel.display().to_string());
+            }
+            return;
+        }
+        if let Ok(entries) = std::fs::read_dir(cur) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    walk(base, &path, dirty);
+                }
+            }
+        }
+    }
+    let mut dirty = Vec::new();
+    walk(dir, dir, &mut dirty);
+    dirty
+}
+
 /// Delete a workweave: remove worktrees (including project repo) and delete
 /// the workweave directory.
 ///
@@ -833,9 +944,9 @@ pub fn delete_workweave(
     // (resolved via marker) are deleted correctly.
     let workweave_dir = workweave_path_for(ws_root, project, name);
 
-    // Safety check: refuse to delete dirty workweaves without --force.
-    // Skip the check if the workweave directory doesn't exist (nothing to
-    // lose) or if force was passed.
+    // Safety check: refuse to delete dirty or diverged workweaves without
+    // --force. Skip the check if the workweave directory doesn't exist
+    // (nothing to lose) or if force was passed.
     if !force && workweave_dir.exists() {
         let dirty = collect_dirty_paths(&workweave_dir, project, &manifest);
         if !dirty.is_empty() {
@@ -843,6 +954,18 @@ pub fn delete_workweave(
                 "workweave {} has uncommitted changes; refusing to delete without --force:\n  {}",
                 name.as_str(),
                 dirty.join("\n  ")
+            );
+        }
+        // Committed-but-unmerged work is just as lost as uncommitted work:
+        // the ephemeral-branch cleanup below force-deletes the only ref to
+        // those commits.
+        let diverged = collect_diverged_paths(&workweave_dir, ws_root, project, &manifest);
+        if !diverged.is_empty() {
+            bail!(
+                "workweave {} has commits not merged into the primary repos; \
+                 refusing to delete without --force:\n  {}",
+                name.as_str(),
+                diverged.join("\n  ")
             );
         }
     }

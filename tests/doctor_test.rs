@@ -1344,7 +1344,7 @@ mod doctor_json {
         ));
     }
 
-    /// fo-auikb: ViolationOutput::UnparseableProject emits `message` (not `error`).
+    /// ViolationOutput::UnparseableProject emits `message` (not `error`).
     /// The field was renamed to signal it is free-form display text from an
     /// anyhow::Error, not a typed discriminant consumers can branch on.
     #[test]
@@ -1372,7 +1372,7 @@ mod doctor_json {
 }
 
 // ===========================================================================
-// Legacy workweave marker (fo-v8hq4.7) — missing `parent:` field
+// Legacy workweave marker — missing `parent:` field
 // ===========================================================================
 
 /// A `.rwv-workweave` marker missing `parent:` causes any rwv invocation from
@@ -1513,7 +1513,7 @@ fn check_silent_when_project_has_replay_exclusion() {
 }
 
 // ===========================================================================
-// fo-vsldv.5: unparseable-project violation
+// Unparseable-project violation
 // ===========================================================================
 
 /// A project with a syntactically broken `rwv.yaml` must surface an
@@ -1633,7 +1633,7 @@ fn check_unparseable_project_not_fixed_by_fix_flag() {
 }
 
 // ===========================================================================
-// fo-zg0dt: default scoping (active project only) and --all flag
+// Default scoping (active project only) and --all flag
 // ===========================================================================
 
 /// Helper: write a `.rwv-active` file pointing at the given project.

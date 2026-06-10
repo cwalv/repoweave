@@ -502,3 +502,50 @@ fn sync_json_failed_outcome_has_stable_kebab_kind() {
         "failure.kind must be kebab-case; got: {kind}"
     );
 }
+
+/// `sync --force` consents to discarding committed divergence (recoverable
+/// via the pre-op savepoint), not uncommitted work — a dirty CWD project
+/// repo must refuse before any side effects, and the content must survive.
+#[test]
+fn sync_force_refuses_when_cwd_project_dirty() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (primary, ww, _sha) = make_shared(tmp.path());
+
+    // Uncommitted edit in ww's project repo — the file --force's hard-reset
+    // would have destroyed.
+    std::fs::write(ww.project_dir.join("README.md"), "uncommitted edit\n").unwrap();
+    let tip_before = git_out(&["rev-parse", "HEAD"], &ww.project_dir);
+
+    let assert = rwv()
+        .args(["sync", &primary.root.to_string_lossy(), "--force"])
+        .current_dir(&ww.root)
+        .assert()
+        .failure();
+    let stderr = String::from_utf8_lossy(&assert.get_output().stderr).into_owned();
+    assert!(
+        stderr.contains("uncommitted changes"),
+        "sync --force must name the dirty-project precondition; got:\n{stderr}"
+    );
+
+    assert_eq!(
+        std::fs::read_to_string(ww.project_dir.join("README.md")).unwrap(),
+        "uncommitted edit\n",
+        "uncommitted content must survive the refusal byte-for-byte"
+    );
+    assert_eq!(
+        git_out(&["rev-parse", "HEAD"], &ww.project_dir),
+        tip_before,
+        "project tip must be untouched"
+    );
+
+    // No op-state left behind, and the precondition is satisfiable as
+    // documented: once the edit is committed, --force proceeds (the commit
+    // is discarded but preserved in the pre-op savepoint).
+    git(&["add", "README.md"], &ww.project_dir);
+    git(&["commit", "-m", "ww: readme"], &ww.project_dir);
+    rwv()
+        .args(["sync", &primary.root.to_string_lossy(), "--force"])
+        .current_dir(&ww.root)
+        .assert()
+        .success();
+}

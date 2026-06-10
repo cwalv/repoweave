@@ -196,7 +196,7 @@ fn prime_no_suppress_outside_workspace() {
 
 // ============================================================================
 // 6b. --no-suppress is repoweave-only — no gc/city leakage
-//      (amendment from fo-rwv-prime-revamp: broader grep than just 'Rig')
+//      (amendment: broader grep than just 'Rig')
 // ============================================================================
 
 #[test]

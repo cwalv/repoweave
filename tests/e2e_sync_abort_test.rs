@@ -1,6 +1,6 @@
 //! E2E integration tests for `rwv sync`, `rwv abort`, `rwv doctor --locked`, and `rwv status`.
 //!
-//! These are the acceptance criteria for fo-wws-sync (rwv sync) and fo-wws-abort (rwv abort).
+//! These are the acceptance criteria for `rwv sync` and `rwv abort`.
 //! They are expected to FAIL until those implementations land.
 //!
 //! Scenarios follow the rewritten tutorial in docs/tutorial.md.
@@ -1108,7 +1108,7 @@ fn abort_restores_repos_to_pre_op_state() {
 /// viable escape should be `rwv abort`.
 ///
 /// Strategy: use `make_locked_workspace` to get a valid project repo, then
-/// manually plant the `.rwv-sync-op` marker, a savepoint ref, a mid-rebase
+/// manually plant the `.rwv-op` op-state file, a savepoint ref, a mid-rebase
 /// state, and conflict markers in `rwv.lock` — then drive `rwv abort` and
 /// assert exit 0 + clean git state (`.git/rebase-merge/` gone, working tree
 /// clean).
@@ -1135,8 +1135,12 @@ fn abort_succeeds_when_rwv_lock_contains_conflict_markers() {
         project_dir,
     );
 
-    // Write the sync-op marker file so `rwv abort` thinks an op is in progress.
-    std::fs::write(ws.root.join(".rwv-sync-op"), op_id).unwrap();
+    // Write the op-state file so `rwv abort` thinks an op is in progress.
+    let op_state_yaml = format!(
+        "id: \"{op_id}\"\nverb: sync\nstrategy: rebase\nsource: \"{root}\"\ntarget: \"{root}\"\nretire: false\nphase: running\nstarted_at: \"2026-05-27T10:00:00Z\"\n",
+        root = ws.root.display(),
+    );
+    std::fs::write(ws.root.join(".rwv-op"), &op_state_yaml).unwrap();
 
     // Manufacture a mid-rebase state: create a diverging commit on a temp
     // branch, then start a rebase that will conflict.
@@ -1390,7 +1394,7 @@ fn sync_roundtrip_converges_without_project_repo_growth() {
 // weaves to `WorkspaceContext::resolve` (no `.rwv-workweave` marker, no
 // `{primary}--{name}` naming). The marker-based fixtures below mirror what
 // `rwv workweave create` produces in production and exercise the
-// fo-rwv-lock-cross-workspace-confusion code paths: lock writes and
+// lock-cross-workspace-confusion code paths: lock writes and
 // freshness checks must use the workweave's own `projects/<name>/rwv.lock`,
 // not primary's, when CWD is inside the workweave.
 
@@ -1760,7 +1764,7 @@ fn gita_is_opt_in() {
 }
 
 // ---------------------------------------------------------------------------
-// fo-vsldv.3 — post-Phase-1' manifest reload failure is a hard bail, not
+// Post-Phase-1' manifest reload failure is a hard bail, not
 // a warn-and-proceed.
 //
 // Before the fix: if Project::from_dir fails after Phase 1', sync emitted a

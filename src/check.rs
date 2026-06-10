@@ -839,7 +839,7 @@ pub fn violations_to_issues(violations: Vec<CheckViolation>) -> Vec<Issue> {
 /// just to determine "clean vs dirty" before doing any further work — so the
 /// minimum cost per worktree was two `git` invocations, and at workspace
 /// scale (80+ workweaves × ~13 repos = ~1000 worktrees) the doubled
-/// process-startup overhead dominated wall-clock time (bead fo-v8hq4.4).
+/// process-startup overhead dominated wall-clock time.
 ///
 /// This helper runs `git status --porcelain` once. If the output is empty
 /// (workspace and index both clean against HEAD), both classifiers return
@@ -1663,8 +1663,8 @@ pub fn run_check(
     // Scan list: every materialized worktree referenced by a manifest. From
     // the primary weave we additionally enumerate each workweave's repos.
     // The build loop dedupes by absolute path so multiple projects that share
-    // a repo only pay one round of git subprocess cost per physical worktree
-    // (bead fo-v8hq4.4). The two drift kinds are then classified in a single
+    // a repo only pay one round of git subprocess cost per physical worktree.
+    // The two drift kinds are then classified in a single
     // pass using [`classify_drift`], which collapses the common
     // "worktree is clean" case to one `git status` invocation instead of two
     // back-to-back `git diff-index` invocations.
@@ -2082,7 +2082,7 @@ fn collect_doctor_violations(
     // known workweave. Dedupe by `(workweave, abs)` so multiple projects
     // referencing the same physical worktree don't multiply git subprocess
     // cost. Drift is classified via [`classify_drift`] (single `git status`
-    // fast-path for clean worktrees — see bead fo-v8hq4.4).
+    // fast-path for clean worktrees).
     let mut workweave_dirs: std::collections::HashMap<WorkweaveName, std::path::PathBuf> =
         std::collections::HashMap::new();
     let mut index_scan: Vec<(Option<WorkweaveName>, std::path::PathBuf, RepoPath)> = Vec::new();

@@ -20,13 +20,6 @@
 //! The file is named `.rwv-op` and lives at the workspace root (the active
 //! path, i.e. the same directory that holds `.rwv-active`).
 //!
-//! The old `.rwv-sync-op` file (which only stored a raw op-id string) is
-//! superseded. Existing `.rwv-sync-op` files are left untouched — they are
-//! short-lived state and callers that wrote them before this upgrade will
-//! read back `None` from [`read`] and should treat that as no op in progress.
-//! The abort path still reads `.rwv-sync-op` as a fallback (see
-//! [`read_legacy`]).
-//!
 //! # Multi-workspace writes
 //!
 //! For `sync` (single-step): the file is written only to CWD. Phase is always
@@ -50,11 +43,6 @@ use std::path::{Path, PathBuf};
 
 /// Name of the op-state file written at each involved workspace root.
 pub const OP_STATE_FILE: &str = ".rwv-op";
-
-/// Name of the legacy single-workspace marker written by older `rwv sync` builds.
-/// Still recognised by `run_abort` as a fallback for backward compatibility with
-/// workspaces that have a `.rwv-sync-op` file from a pre-upgrade run.
-pub const LEGACY_OP_MARKER: &str = ".rwv-sync-op";
 
 // ---------------------------------------------------------------------------
 // OpVerb — which top-level verb started this op
@@ -233,17 +221,6 @@ pub fn read(workspace_dir: &Path) -> anyhow::Result<Option<OpState>> {
     Ok(Some(state))
 }
 
-/// Read the legacy `.rwv-sync-op` marker from `workspace_dir`, returning
-/// `None` if absent. Used by `rwv abort` to support workspaces that still
-/// have the old marker from a pre-upgrade run.
-pub fn read_legacy(workspace_dir: &Path) -> Option<String> {
-    let path = workspace_dir.join(LEGACY_OP_MARKER);
-    std::fs::read_to_string(path)
-        .ok()
-        .map(|s| s.trim().to_owned())
-        .filter(|s| !s.is_empty())
-}
-
 /// Advance the `phase` field in the op-state file at `workspace_dir`.
 ///
 /// Reads the existing file, updates the phase, writes back. Returns an error
@@ -289,14 +266,6 @@ pub fn check_no_op_in_progress(workspace_dirs: &[&Path]) -> anyhow::Result<()> {
                 dir = dir.display(),
             );
         }
-        // Also check legacy marker for pre-upgrade workspaces.
-        if let Some(id) = read_legacy(dir) {
-            anyhow::bail!(
-                "sync in progress (legacy marker, op-id={id}) at {dir}.\n\
-                 Resolve and rerun with `--continue`, or `rwv abort` to discard.",
-                dir = dir.display(),
-            );
-        }
     }
     Ok(())
 }
@@ -310,21 +279,12 @@ pub fn check_no_op_in_progress(workspace_dirs: &[&Path]) -> anyhow::Result<()> {
 /// Returns the recorded [`OpState`] if an op-state file exists in
 /// `workspace_dir`.
 ///
-/// Returns an error if:
-/// - No op-state file is present ("no sync/sync-to op in progress to continue").
-/// - A legacy `.rwv-sync-op` marker is present (instructs operator to abort first).
+/// Returns an error if no op-state file is present ("no sync/sync-to op in
+/// progress to continue").
 pub fn resume(workspace_dir: &Path) -> anyhow::Result<OpState> {
     match read(workspace_dir)? {
         Some(s) => Ok(s),
         None => {
-            // Check for legacy marker.
-            if read_legacy(workspace_dir).is_some() {
-                anyhow::bail!(
-                    "a legacy sync marker (`.rwv-sync-op`) is present at {}. \
-                     Run `rwv abort` to discard the old state, then rerun without `--continue`.",
-                    workspace_dir.display()
-                );
-            }
             anyhow::bail!(
                 "no sync/sync-to op in progress to continue at {}. \
                  If you meant to start a new op, omit `--continue`.",
@@ -332,106 +292,6 @@ pub fn resume(workspace_dir: &Path) -> anyhow::Result<OpState> {
             );
         }
     }
-}
-
-// ---------------------------------------------------------------------------
-// --continue compatibility check (kept for unit tests; not called by sync.rs)
-// ---------------------------------------------------------------------------
-
-/// Parameters extracted from a `rwv sync` invocation for comparison with an
-/// existing op-state file.
-///
-/// Retained for unit-test coverage; the sync engine no longer calls
-/// [`check_continue`] — it uses [`resume`] instead.
-#[derive(Debug, Clone)]
-pub struct SyncParams {
-    pub verb: OpVerb,
-    pub strategy: String,
-    /// Absolute path of the source workspace.
-    pub source: PathBuf,
-    /// Absolute path of the target workspace (CWD).
-    pub target: PathBuf,
-    pub retire: bool,
-}
-
-/// Validate a `--continue` attempt against a set of expected parameters.
-///
-/// Kept for unit-test coverage. The sync engine uses [`resume`] instead and
-/// reads all parameters from the op-state file directly.
-pub fn check_continue(workspace_dir: &Path, params: &SyncParams) -> anyhow::Result<OpState> {
-    let state = match read(workspace_dir)? {
-        Some(s) => s,
-        None => {
-            // Also check the legacy marker.
-            if read_legacy(workspace_dir).is_some() {
-                anyhow::bail!(
-                    "a legacy sync marker (`.rwv-sync-op`) is present at {}. \
-                     Run `rwv abort` to discard the old state, then rerun without `--continue`.",
-                    workspace_dir.display()
-                );
-            }
-            anyhow::bail!(
-                "no sync/sync-to in progress to continue at {}",
-                workspace_dir.display()
-            );
-        }
-    };
-
-    // Collect all parameter mismatches.
-    let mut mismatches: Vec<String> = Vec::new();
-    if state.verb != params.verb {
-        mismatches.push(format!("verb: recorded={} got={}", state.verb, params.verb));
-    }
-    if state.strategy != params.strategy {
-        mismatches.push(format!(
-            "strategy: recorded={} got={}",
-            state.strategy, params.strategy
-        ));
-    }
-    if state.source != params.source {
-        mismatches.push(format!(
-            "source: recorded={} got={}",
-            state.source.display(),
-            params.source.display()
-        ));
-    }
-    if state.target != params.target {
-        mismatches.push(format!(
-            "target: recorded={} got={}",
-            state.target.display(),
-            params.target.display()
-        ));
-    }
-    if state.retire != params.retire {
-        mismatches.push(format!(
-            "retire: recorded={} got={}",
-            state.retire, params.retire
-        ));
-    }
-
-    if !mismatches.is_empty() {
-        let recorded_summary = format!(
-            "--strategy={} --retire={} source={} target={}",
-            state.strategy,
-            state.retire,
-            state.source.display(),
-            state.target.display()
-        );
-        let got_summary = format!(
-            "--strategy={} --retire={} source={} target={}",
-            params.strategy,
-            params.retire,
-            params.source.display(),
-            params.target.display()
-        );
-        anyhow::bail!(
-            "in-progress op parameters do not match:\n  recorded: {recorded_summary}\n  got: {got_summary}\n  differences: {}\n\
-             Use `rwv abort` to discard, or re-run with the original parameters.",
-            mismatches.join(", ")
-        );
-    }
-
-    Ok(state)
 }
 
 // ---------------------------------------------------------------------------
@@ -658,81 +518,5 @@ mod tests {
         advance_phase(dir, OpPhase::Step1Complete).unwrap();
         let updated = read(dir).unwrap().unwrap();
         assert_eq!(updated.phase, OpPhase::Step1Complete);
-    }
-
-    #[test]
-    fn check_continue_ok_when_params_match() {
-        let tmp = tempfile::tempdir().unwrap();
-        let dir = tmp.path();
-        let op_id = OpId::new_now();
-        let src = PathBuf::from("/abs/src");
-        let tgt = PathBuf::from("/abs/tgt");
-        let state = OpState::new_sync(
-            &op_id,
-            crate::sync::SyncStrategy::Rebase,
-            src.clone(),
-            tgt.clone(),
-        );
-        write(dir, &state).unwrap();
-
-        let params = SyncParams {
-            verb: OpVerb::Sync,
-            strategy: "rebase".to_owned(),
-            source: src,
-            target: tgt,
-            retire: false,
-        };
-        let result = check_continue(dir, &params);
-        assert!(result.is_ok(), "expected Ok; got {result:?}");
-    }
-
-    #[test]
-    fn check_continue_errors_on_strategy_mismatch() {
-        let tmp = tempfile::tempdir().unwrap();
-        let dir = tmp.path();
-        let op_id = OpId::new_now();
-        let src = PathBuf::from("/abs/src");
-        let tgt = PathBuf::from("/abs/tgt");
-        let state = OpState::new_sync(
-            &op_id,
-            crate::sync::SyncStrategy::Rebase,
-            src.clone(),
-            tgt.clone(),
-        );
-        write(dir, &state).unwrap();
-
-        let params = SyncParams {
-            verb: OpVerb::Sync,
-            strategy: "merge".to_owned(), // mismatch
-            source: src,
-            target: tgt,
-            retire: false,
-        };
-        let err = check_continue(dir, &params).unwrap_err().to_string();
-        assert!(
-            err.contains("strategy"),
-            "expected strategy mismatch detail; got {err}"
-        );
-        assert!(
-            err.contains("rwv abort"),
-            "expected abort suggestion; got {err}"
-        );
-    }
-
-    #[test]
-    fn check_continue_errors_when_no_op() {
-        let tmp = tempfile::tempdir().unwrap();
-        let params = SyncParams {
-            verb: OpVerb::Sync,
-            strategy: "ff".to_owned(),
-            source: PathBuf::from("/src"),
-            target: PathBuf::from("/tgt"),
-            retire: false,
-        };
-        let err = check_continue(tmp.path(), &params).unwrap_err().to_string();
-        assert!(
-            err.contains("no sync"),
-            "expected 'no sync' message; got {err}"
-        );
     }
 }

@@ -270,7 +270,7 @@ mod tests {
     #[test]
     fn render_overview_has_no_gc_or_city_references() {
         let overview = render_overview();
-        // Mirrors the amendment grep from fo-rwv-prime-revamp:
+        // Mirrors the amendment grep from the prime revamp:
         //   rwv prime --no-suppress | grep -iE 'rig|gas city|city ?\(gc\)|gc agents|gc session|gc.city'
         let lower = overview.to_ascii_lowercase();
         assert!(!lower.contains("rig"));

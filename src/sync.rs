@@ -1711,6 +1711,22 @@ fn run_sync_impl_with_op_id(
     // `--force` bypasses regardless of strategy and discards CWD's project
     // commits via hard-reset; the savepoint preserves them for `rwv abort`.
     let phase1_ancestor_bypassed = if force {
+        // --force consents to discarding CWD's project COMMITS, which stay
+        // recoverable via the refs/rwv/pre-op savepoint. Uncommitted changes
+        // have no savepoint — the hard-reset in Phase 1' would destroy them
+        // unrecoverably. Refuse before any side effects.
+        if GitVcs
+            .has_uncommitted_changes(&cwd_project_dir)
+            .unwrap_or(true)
+        {
+            anyhow::bail!(
+                "sync --force precondition failed: project repo at {} has uncommitted changes.\n\
+                 --force discards committed divergence (recoverable via refs/rwv/pre-op), but \
+                 the hard-reset would destroy uncommitted changes unrecoverably. Commit or \
+                 stash them, then re-run.",
+                cwd_project_dir.display(),
+            );
+        }
         // Even with --force, detect whether the ancestor check WOULD have
         // refused — so we can preserve the project savepoint post-op as a
         // tombstone of the discarded commits.
@@ -1733,7 +1749,7 @@ fn run_sync_impl_with_op_id(
     // --continue / pre-op guard: check whether a sync is already in progress.
     //
     // For `rwv sync` the only involved workspace is CWD. For `rwv sync-to`
-    // (bead fo-pte54.1) both CWD and the target workspace are checked.
+    // both CWD and the target workspace are checked.
     //
     // - `--continue` absent, no op-state → fresh start (normal path below).
     // - `--continue` absent, op-state present → refuse with "in-progress" error.
@@ -2329,15 +2345,10 @@ fn regenerate_lock_phase3(
 /// Reads the op-state file (`.rwv-op`) to find the op-id and the involved
 /// workspaces. For `sync-to` ops, both CWD and the recorded target workspace
 /// are rolled back.
-///
-/// Falls back to the legacy `.rwv-sync-op` marker for workspaces written
-/// before the op-state upgrade (bead fo-pte54.7). The legacy path only
-/// restores CWD repos (no cross-workspace rollback).
 pub fn run_abort(cwd: &Path) -> anyhow::Result<()> {
     let ctx = WorkspaceContext::resolve(cwd, None)?;
     let workspace_dir = ctx.active_path().to_path_buf();
 
-    // Try to read the new op-state file first.
     let (op_id, extra_workspace_dirs): (OpId, Vec<PathBuf>) = match op_state::read(&workspace_dir)?
     {
         Some(state) => {
@@ -2349,13 +2360,7 @@ pub fn run_abort(cwd: &Path) -> anyhow::Result<()> {
             };
             (OpId::from_string(state.id), extras)
         }
-        None => {
-            // Fall back to the legacy `.rwv-sync-op` marker.
-            match op_state::read_legacy(&workspace_dir) {
-                Some(id) => (OpId::from_string(id), vec![]),
-                None => anyhow::bail!("no operation in progress"),
-            }
-        }
+        None => anyhow::bail!("no operation in progress"),
     };
 
     let cwd_project_name = find_project_name(&ctx)?;
@@ -2448,10 +2453,8 @@ pub fn run_abort(cwd: &Path) -> anyhow::Result<()> {
         }
     }
 
-    // Remove op-state from CWD workspace (covers both new format and legacy).
+    // Remove op-state from CWD workspace.
     op_state::clear(&workspace_dir);
-    // Also remove the legacy marker if present (for workspaces with both).
-    let _ = std::fs::remove_file(workspace_dir.join(op_state::LEGACY_OP_MARKER));
 
     if any_failure {
         anyhow::bail!("abort completed with failures");
@@ -2920,19 +2923,17 @@ fn run_sync_to_impl(
     }
 
     // Dirty-target preflight: step 3 fast-forwards every repo in the target
-    // workweave via `reset --hard`, which silently destroys uncommitted
-    // changes in the target's worktrees (fo-5cqa74). Refuse up front — before
-    // step 1 mutates anything — and name the precondition. ff_advance_repo
-    // re-checks per repo at reset time to catch modification that lands
-    // between this preflight and step 3.
+    // workweave, overwriting uncommitted changes in the target's worktrees.
+    // Refuse up front — before step 1 mutates anything — and name the
+    // precondition. ff_advance_repo re-checks per repo at advance time to
+    // catch modification that lands between this preflight and step 3.
     {
         let cwd_project_preflight = crate::manifest::Project::from_dir(&cwd_project_dir)
             .context("failed to load CWD project for dirty-target preflight")?;
         let mut dirty: Vec<String> = Vec::new();
         for repo_path in cwd_project_preflight.manifest.iter_repo_paths() {
             let target_repo = target_workspace_dir.join(repo_path.as_path());
-            if target_repo.exists()
-                && GitVcs.has_uncommitted_changes(&target_repo).unwrap_or(true)
+            if target_repo.exists() && GitVcs.has_uncommitted_changes(&target_repo).unwrap_or(true)
             {
                 dirty.push(repo_path.to_string());
             }
@@ -2948,16 +2949,13 @@ fn run_sync_to_impl(
             // leaves no trace. Mid-op resume: keep op-state so --continue
             // and `rwv abort` remain available.
             if resume_phase.is_none() {
-                op_state::clear_all(&[
-                    cwd_workspace_dir.as_path(),
-                    target_workspace_dir.as_path(),
-                ]);
+                op_state::clear_all(&[cwd_workspace_dir.as_path(), target_workspace_dir.as_path()]);
             }
             anyhow::bail!(
                 "sync-to precondition failed: target workweave has uncommitted changes in:\n  {}\n\
                  \n\
-                 Step 3 fast-forwards the target with `reset --hard`, which would destroy \
-                 this work. Commit or stash in the target ({}), then re-run.",
+                 Step 3 fast-forwards the target's worktrees over this work. Commit or \
+                 stash in the target ({}), then re-run.",
                 dirty.join("\n  "),
                 target_path.display(),
             );
@@ -3184,10 +3182,13 @@ fn run_sync_to_impl(
 /// pair (workweave + primary), they share the same object store, so any
 /// SHA reachable in the CWD worktree is also reachable in the target
 /// worktree. We use `git fetch <cwd_repo_path> HEAD` to ensure the object
-/// is present in the target's object store before the reset, then
-/// `git reset --hard <sha>` to advance the branch.
+/// is present in the target's object store, then `git merge --ff-only
+/// <sha>` to advance the branch. merge --ff-only (rather than `reset
+/// --hard`) because the purpose here is advancing, not discarding: it
+/// refuses, instead of silently clobbering, if the update would touch
+/// uncommitted changes in the target.
 ///
-/// The "fetch then reset" approach works for both worktrees (same object
+/// The fetch-then-advance approach works for both worktrees (same object
 /// store, fetch is a no-op) and independent clones (fetch copies objects).
 fn ff_advance_repo(
     target_repo: &Path,
@@ -3204,14 +3205,15 @@ fn ff_advance_repo(
         return Ok(()); // already at the right tip
     }
 
-    // The reset --hard below silently destroys uncommitted changes in the
-    // target worktree (fo-5cqa74). The sync-to preflight already refused on a
-    // dirty target; this catches concurrent modification since then. Checked
-    // after the equal-tip return: a dirty worktree we won't move is safe.
+    // Fast-forwarding a dirty target worktree risks its uncommitted changes.
+    // The sync-to preflight already refused on a dirty target; this catches
+    // concurrent modification since then, with a named precondition instead
+    // of merge's generic refusal. Checked after the equal-tip return: a
+    // dirty worktree we won't move is safe.
     if GitVcs.has_uncommitted_changes(target_repo).unwrap_or(true) {
         anyhow::bail!(
             "target repo at {} has uncommitted changes; refusing to fast-forward \
-             (reset --hard would destroy them). Commit or stash in the target, then re-run.",
+             over them. Commit or stash in the target, then re-run.",
             target_repo.display(),
         );
     }
@@ -3244,10 +3246,12 @@ fn ff_advance_repo(
         );
     }
 
-    // Fast-forward: reset --hard to cwd_tip. For worktrees sharing an object
-    // store this is safe; for independent clones we already fetched above.
-    git(&["reset", "--hard", cwd_tip.as_str()], target_repo)
-        .context("git reset --hard failed in target")?;
+    // Fast-forward: merge --ff-only to cwd_tip. Advances the branch and the
+    // working tree, and refuses (rather than clobbers) if the update would
+    // touch uncommitted changes — git-native backstop behind the two
+    // explicit dirty gates above.
+    git(&["merge", "--ff-only", cwd_tip.as_str()], target_repo)
+        .context("git merge --ff-only failed in target")?;
 
     Ok(())
 }
@@ -3266,7 +3270,7 @@ fn fetch_objects_from(dst_repo: &Path, src_repo: &Path) -> anyhow::Result<()> {
         .with_context(|| format!("failed to fetch from {}", src_repo.display()))?;
     // fetch may fail for worktrees (FETCH_HEAD is unavailable) — that's fine,
     // the object is already reachable in the shared store. Ignore errors here;
-    // ff_advance_repo will catch any real problem at reset --hard.
+    // ff_advance_repo will catch any real problem at the ff merge.
     Ok(())
 }
 
@@ -3544,7 +3548,7 @@ mod tests {
         );
     }
 
-    // fo-vsldv.2 — SyncSource::resolve(Workweave) from a primary weave with no
+    // SyncSource::resolve(Workweave) from a primary weave with no
     // active project must error rather than silently producing a garbage path.
     #[test]
     fn sync_source_workweave_resolve_errors_when_no_active_project() {
@@ -3576,7 +3580,7 @@ mod tests {
         );
     }
 
-    // fo-vsldv.3 — post-Phase-1' manifest reload is a hard bail, not warn-and-proceed.
+    // Post-Phase-1' manifest reload is a hard bail, not warn-and-proceed.
     //
     // Before: on Project::from_dir failure after Phase 1', the code emitted a
     // warning (suppressed in --json mode) and fell through to Phase 3 with a
@@ -3626,7 +3630,7 @@ mod tests {
     }
 
     // ---------------------------------------------------------------------------
-    // Extensibility acceptance test (fo-6wpbh)
+    // Extensibility acceptance test
     //
     // Verifies that a fourth output mode can be added by implementing
     // OutputHandler without modifying TextHandler, JsonEnvelopeHandler, or

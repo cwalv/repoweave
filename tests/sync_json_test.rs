@@ -840,7 +840,7 @@ fn sync_json_envelope_round_trips() {
 }
 
 // ---------------------------------------------------------------------------
-// fo-auikb: structured payload / renamed-field tests
+// Structured payload / renamed-field tests
 // ---------------------------------------------------------------------------
 
 /// The `error` field on SyncFailureOutput is now `message`. Verify the

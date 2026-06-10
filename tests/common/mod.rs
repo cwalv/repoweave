@@ -60,7 +60,7 @@ pub fn git() -> Command {
 /// the log of `repo`.
 ///
 /// This is the canonical "history shape" helper for the silent-fallback
-/// elimination suite (fo-vsldv). Use it whenever a sync test must verify that
+/// elimination suite. Use it whenever a sync test must verify that
 /// CWD's commits land *on top of* a target's prior tip — not below it.
 ///
 /// `commit_messages` is a slice of substrings; each element must match exactly

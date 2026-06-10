@@ -4,7 +4,7 @@
 //! every Rust repo in the active project as a workspace member, then lets
 //! `cargo generate-lockfile` produce a shared `Cargo.lock`.
 //!
-//! ## Hybrid file ownership (fo-cnpjy.7 — the cargo merge port)
+//! ## Hybrid file ownership (the cargo merge port)
 //!
 //! `Cargo.toml` is a **hybrid** file: rwv owns a declared key set, the user
 //! owns everything else. Authoring goes through the shared `TomlDoc`
@@ -37,7 +37,7 @@
 //! otherwise be empty. Hand-written `Cargo.toml` files (no marker) are
 //! left strictly alone — the strip is a no-op.
 //!
-//! ## Design decisions — locked in fo-cnpjy.6 (plan §7.2)
+//! ## Design decisions — locked in plan §7.2
 //!
 //! **(a) Members sub-path config.** `CargoWorkspaceConfig::members` maps a
 //! repo path string to a `MemberSpec{include, exclude}`. When a repo appears
@@ -111,7 +111,7 @@ impl CargoWorkspace {
     ///   (the members-subpath case, e.g. rvtty — no root file but
     ///   `cfg.members.<repo>.include` contributes sub-packages).
     ///
-    /// The second arm is what unblocks fo-cnpjy.8 scenario 4: without it
+    /// The second arm is what unblocks the members-subpath scenario: without it
     /// `activate()` early-returns and the rvtty case never reaches
     /// `partition()`.
     fn has_active_cargo_work(ctx: &IntegrationContext, cfg: &CargoWorkspaceConfig) -> bool {
@@ -138,7 +138,7 @@ impl CargoWorkspace {
     /// - Any other Rust repo contributes its root as a member; if the root
     ///   declares `[workspace]`, it joins the nested-conflict list.
     ///
-    /// **Members-subpath repos without a root Cargo.toml** (fo-cnpjy.8): a
+    /// **Members-subpath repos without a root Cargo.toml**: a
     /// repo listed under `cfg.members` whose root has no `Cargo.toml` (the
     /// canonical rvtty olb.5.4 shape — sub-packages `daemon/`/`client/`/...
     /// with no root manifest) is still emitted: `detect_repos_with_manifest`
@@ -429,7 +429,7 @@ impl Integration for CargoWorkspace {
     /// (`rwv.yaml` membership configuration). Called by `rwv doctor` and
     /// context verbs; **read-only** — never authors content.
     ///
-    /// Three findings (see bead fo-cnpjy.18 design doc for rationale):
+    /// Three findings (see the verify design doc for rationale):
     ///
     /// - **MISSING** (`safe_to_fix = true`): file absent; `--fix` regenerates.
     /// - **DRIFT** (`safe_to_fix = true`): markers present but on-disk values

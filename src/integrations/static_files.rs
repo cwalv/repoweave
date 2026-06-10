@@ -28,10 +28,10 @@
 //! Silently picking one of the two is a footgun (rwv-c5h originally went
 //! the wrong way). The fix has two layers: the framework's owner-scoped
 //! removal predicate preserves the `workweave.link` symlink at activation
-//! time (defensive — fo-cnpjy.3), and this integration raises a loud
+//! time (defensive), and this integration raises a loud
 //! Severity::Error pre-activate so an operator who wrote the conflicting
 //! config sees a clear message rather than relying on the framework's
-//! tie-breaking (defense in depth — fo-cnpjy.13, plan §7 res #9).
+//! tie-breaking (defense in depth — plan §7 res #9).
 
 use crate::integration::{Integration, IntegrationContext, Issue, Severity};
 use serde::Deserialize;

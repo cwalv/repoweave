@@ -1,14 +1,14 @@
 //! Integration tests for working-tree drift detection (`rwv doctor`) and
 //! auto-fix (`rwv doctor --fix`).
 //!
-//! These tests exercise the seven acceptance scenarios described in fo-rwv-worktree-drift:
+//! These tests exercise the seven acceptance scenarios:
 //!   1. Stale-working-tree detection
 //!   2. Stale-working-tree auto-fix
 //!   3. Live edit NOT fixed
 //!   4. Sync post-refresh (working-tree version)
 //!   5. 3+ worktrees
 //!   6. Reachable-blob guard
-//!   7. Composition with index fix (the real fo-city 2026-04-23 case)
+//!   7. Composition with index fix (the real 2026-04-23 production case)
 //!
 //! # How working-tree drift is simulated
 //!
@@ -399,9 +399,8 @@ fn sync_post_refresh_clears_stale_working_tree() {
 
     // Mirror the lock advance in the workweave's own project worktree so
     // that sync's CWD-lock-freshness precondition passes once the server
-    // ref is advanced below. (Per fo-rwv-lock-cross-workspace-confusion the
-    // workweave's freshness check reads its own committed lock, not
-    // primary's.)
+    // ref is advanced below. (The workweave's freshness check reads its
+    // own committed lock, not primary's.)
     write_lock(&project_ww, &[(SERVER_PATH, SERVER_URL, &c2)]);
     git(&["add", "rwv.lock"], &project_ww);
     git(&["commit", "-m", "lock: ww advance"], &project_ww);
@@ -554,7 +553,7 @@ fn doctor_fix_refuses_when_working_tree_has_unreachable_content() {
 }
 
 // ---------------------------------------------------------------------------
-// Test 7: Composition with index fix (the real fo-city 2026-04-23 case)
+// Test 7: Composition with index fix (the real 2026-04-23 production case)
 // ---------------------------------------------------------------------------
 
 /// Combined scenario: BOTH index and working tree are stale.

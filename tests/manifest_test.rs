@@ -305,7 +305,7 @@ fn project_name_strips_projects_prefix() {
 }
 
 // ---------------------------------------------------------------------------
-// CargoWorkspaceConfig deserialization (fo-cnpjy.6)
+// CargoWorkspaceConfig deserialization
 // ---------------------------------------------------------------------------
 
 /// Parse a `CargoWorkspaceConfig` directly from an `IntegrationConfig` YAML

@@ -516,7 +516,7 @@ fn fetch_second_project_does_not_auto_activate() {
 }
 
 // ============================================================================
-// Test 6 — fo-p89x0.1: --json envelope assertion
+// Test 6 — --json envelope assertion
 //
 // Doc claim: `rwv fetch --json -j 1` emits `{ "$schema": "<url>", "outcomes": [...] }`
 // envelope. Each element of `outcomes` has `path`, `absolute_path`, and `status`.
@@ -604,7 +604,7 @@ fn fetch_json_envelope_shape() {
 }
 
 // ============================================================================
-// Test 7 — fo-p89x0.1: --json -j N NDJSON assertion
+// Test 7 — --json -j N NDJSON assertion
 //
 // Doc claim: `rwv fetch -j 2 --json` streams NDJSON — one JSON object per
 // line, each carrying its own `$schema` field, no envelope wrapper.
