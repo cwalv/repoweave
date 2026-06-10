@@ -352,6 +352,202 @@ fn advance_target_reentry_on_equal_tips_is_a_noop_success() {
 }
 
 // ---------------------------------------------------------------------------
+// Lease-side --continue: end-state parity with owner-side --continue.
+//
+// Plant an owner record at the SOURCE workweave (ww), a thin lease at the
+// TARGET (primary), and make the workspaces genuinely diverge. Invoke
+// `rwv sync-to --continue` FROM the LEASE workspace and assert that the end
+// state is identical to what an owner-side `--continue` would produce:
+//   - target's project tip advanced to the owner's converged tip;
+//   - owner's savepoints dropped;
+//   - both the owner record (.rwv-op) and the lease (.rwv-op-lease) cleared.
+//
+// Pre-fix, lease-side `--continue` runs the engine against the lease's own
+// CWD (cwd_ctx / cwd_workspace_dir resolved from invocation CWD): replay
+// enumerates the target's repos against the target's own lock (silent no-op),
+// record_converged_tips records target tips instead of owner tips, and
+// cleanup deletes savepoints under the target. Post-fix, the engine roots at
+// the owner record's workspace; the literal invocation CWD only locates op-
+// state.
+// ---------------------------------------------------------------------------
+
+fn write_sync_to_owner_record_at_phase(
+    owner: &Path,
+    source: &Path,
+    target: &Path,
+    phase: &str,
+    id: &str,
+) {
+    let body = format!(
+        "id: \"{id}\"\n\
+         verb: sync-to\n\
+         strategy: rebase\n\
+         source: \"{src}\"\n\
+         target: \"{tgt}\"\n\
+         retire: false\n\
+         phase: {phase}\n\
+         converged_tips: {{}}\n\
+         overrides: []\n\
+         started_at: \"2026-06-10T00:00:00Z\"\n",
+        src = source.display(),
+        tgt = target.display(),
+    );
+    std::fs::write(owner.join(".rwv-op"), body).unwrap();
+}
+
+fn write_lease_with_id(workspace: &Path, owner: &Path, id: &str) {
+    let body = format!(
+        "id: \"{id}\"\nowner: \"{owner}\"\n",
+        owner = owner.display(),
+    );
+    std::fs::write(workspace.join(".rwv-op-lease"), body).unwrap();
+}
+
+#[test]
+fn sync_to_continue_from_lease_workspace_drives_owner_to_clean_state() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (primary, ww, _initial_sha) = make_shared_workspaces(tmp.path());
+
+    // Real, multi-repo divergence so the bug's "engine ran against the
+    // lease's workspace" symptom is observable on the manifest repos:
+    //
+    //   1. Advance ww's manifest repo (server) to a new sha S'. primary's
+    //      server worktree stays at S.
+    //   2. Update ww's lock to pin S' and commit it (mirrors what
+    //      `rwv update` would have produced after the divergent commit).
+    //
+    // After these steps: ww has project tip P' with lock pinning S';
+    // primary has project tip P with lock pinning S.
+    //
+    // Under the fix, the engine roots at the owner (ww):
+    //   - replay reads source (= primary) lock S, sees ww/server at S'
+    //     (S is ancestor of S') → AlreadyAhead, not a failure;
+    //   - relock regenerates ww's lock from ww's tips (server=S') —
+    //     already current, no auto-relock commit;
+    //   - advance-target ff's primary's server S → S' and primary's
+    //     project P → P'.
+    //
+    // Under the bug, ctx.cwd_workspace_dir is the lease (primary):
+    //   - replay reads primary/server (head=S, target=S) → NoOp;
+    //   - relock's generate_lock walks ctx.cwd_ctx.primary_path() =
+    //     primary, regenerating a lock pinning S (the LEASE's tip), then
+    //     commits the regressed lock into ww's project — moving ww's
+    //     project tip to a polluted state;
+    //   - advance-target's per-manifest-repo loop reads
+    //     ctx.cwd_workspace_dir.join(server) = primary's server (head=S),
+    //     then ff's primary's server to S — trivial no-op, leaving
+    //     primary's server stuck at S despite ww being at S';
+    //   - ff_advance_repo for the project still uses ctx.cwd_project_dir
+    //     (which was already owner-rooted pre-fix) so the project tip
+    //     does advance — but to the polluted-by-relock ww tip.
+    //
+    // The two manifest-side checks below isolate the load-bearing
+    // differences the bug doesn't escape: primary's server tip moves,
+    // and primary's lock content names S' rather than S.
+    std::fs::write(ww.server_dir.join("feature.txt"), "ww-only feature\n").unwrap();
+    git(&["add", "feature.txt"], &ww.server_dir);
+    git(
+        &["commit", "-m", "ww: divergent server commit"],
+        &ww.server_dir,
+    );
+    let ww_server_tip_pre = git_out(&["rev-parse", "HEAD"], &ww.server_dir);
+    let primary_server_tip_pre = git_out(&["rev-parse", "HEAD"], &primary.server_dir);
+    assert_ne!(
+        ww_server_tip_pre, primary_server_tip_pre,
+        "test setup: ww's server must diverge from primary's"
+    );
+
+    write_lock(&ww.project_dir, &ww_server_tip_pre);
+    git(&["add", "rwv.lock"], &ww.project_dir);
+    git(
+        &["commit", "-m", "lock: pin ww server tip"],
+        &ww.project_dir,
+    );
+    let ww_project_tip_pre = git_out(&["rev-parse", "HEAD"], &ww.project_dir);
+    let primary_project_tip_pre = git_out(&["rev-parse", "HEAD"], &primary.project_dir);
+    assert_ne!(
+        ww_project_tip_pre, primary_project_tip_pre,
+        "test setup: ww's project must diverge from primary's"
+    );
+
+    // Plant op-state v2: full owner record at ww (the sync-to source),
+    // thin lease at primary (the sync-to target). Phase=replay so the
+    // full machine runs: replay → relock → advance-target → cleanup.
+    let op_id = "lease-continue-test";
+    write_sync_to_owner_record_at_phase(&ww.root, &ww.root, &primary.root, "replay", op_id);
+    write_lease_with_id(&primary.root, &ww.root, op_id);
+
+    create_savepoint(&ww.project_dir, op_id);
+    create_savepoint(&ww.server_dir, op_id);
+
+    // Invoke FROM the lease workspace.
+    rwv()
+        .args(["sync-to", "--continue"])
+        .current_dir(&primary.root)
+        .assert()
+        .success();
+
+    // === End-state assertions (real end states, not impl echoes). ===
+
+    assert!(
+        !ww.root.join(".rwv-op").exists(),
+        "owner record must be cleared after lease-side --continue"
+    );
+    assert!(
+        !primary.root.join(".rwv-op-lease").exists(),
+        "lease must be cleared after lease-side --continue"
+    );
+
+    // Target's MANIFEST repo (server) advanced to the owner's server tip.
+    // Pre-fix this assertion fails: advance-target's per-manifest-repo
+    // loop ff's target-against-target via the wrongly-rooted
+    // ctx.cwd_workspace_dir, a trivial no-op.
+    let primary_server_tip_post = git_out(&["rev-parse", "HEAD"], &primary.server_dir);
+    assert_eq!(
+        primary_server_tip_post, ww_server_tip_pre,
+        "target's server tip must be ff'd to the owner's server tip"
+    );
+    assert_ne!(
+        primary_server_tip_post, primary_server_tip_pre,
+        "target's server tip must have moved"
+    );
+
+    // Owner's lock must remain pinned at the operator-intended sha and
+    // primary's lock must reach the same. Pre-fix, relock's
+    // generate_lock walks the lease's primary_path() and regenerates a
+    // regressed lock (pinning S, the lease's tip); the auto-relock
+    // commit then bakes the regression into ww and ff's it into primary.
+    let primary_lock = std::fs::read_to_string(primary.project_dir.join("rwv.lock")).unwrap();
+    assert!(
+        primary_lock.contains(&ww_server_tip_pre),
+        "target lock must reference owner's server tip {ww_server_tip_pre} after sync-to; \
+         got:\n{primary_lock}"
+    );
+
+    // Target's project tip advanced to the owner's project tip.
+    let ww_project_tip_post = git_out(&["rev-parse", "HEAD"], &ww.project_dir);
+    let primary_project_tip_post = git_out(&["rev-parse", "HEAD"], &primary.project_dir);
+    assert_eq!(
+        primary_project_tip_post, ww_project_tip_post,
+        "target's project tip must equal the owner's project tip after sync-to"
+    );
+    assert_ne!(
+        primary_project_tip_post, primary_project_tip_pre,
+        "target's project tip must have moved"
+    );
+
+    // Owner's savepoints dropped (cleanup ran in the OWNER workspace).
+    let owner_savepoint_refs = git_out(
+        &["for-each-ref", &format!("refs/rwv/pre-op/{op_id}")],
+        &ww.project_dir,
+    );
+    assert!(
+        owner_savepoint_refs.is_empty(),
+        "owner savepoints must be dropped by cleanup; refs left: {owner_savepoint_refs}"
+    );
+}
+
+// ---------------------------------------------------------------------------
 // Driver invariant: re-entering the same phase twice in a row is benign.
 //
 // Run sync once to a clean state, then plant an owner record at each phase

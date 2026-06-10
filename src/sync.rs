@@ -1417,28 +1417,32 @@ fn run_machine(
     drive(&ctx)
 }
 
-/// The phase-machine driver. Persists `state.phase` before each phase, then
-/// runs `run_phase` which returns the next phase (or `None` for terminal).
+/// The phase-machine driver. Reads the persisted phase, runs it, persists the
+/// transition to the next phase, loops.
 ///
-/// One persistence point per iteration. Every phase is idempotent and
-/// re-runnable from the record alone — crash inside a phase leaves the
-/// record at that phase, and resume re-enters there.
+/// Invariant: the persisted phase is the phase in progress. The owner record's
+/// `phase` field is the SINGLE source of truth and the persistence point is
+/// the post-transition `advance_phase` write — entry into the loop relies on
+/// either `guard_and_mark`'s initial write (fresh start: phase=replay) or the
+/// prior iteration's post-transition write (resume: phase=whatever crashed).
+///
+/// Crash semantics:
+///   - Inside `run_phase`: record stays at the phase that was running →
+///     `--continue` re-enters that phase (idempotent by construction).
+///   - After `run_phase` returned but before `advance_phase` of the next phase
+///     committed: record still says current → `--continue` re-runs the just-
+///     completed phase (idempotent), then transitions.
+///   - After `advance_phase` of the next phase committed: record says next →
+///     `--continue` enters next directly.
 fn drive(ctx: &OpContext<'_>) -> anyhow::Result<()> {
     loop {
         let phase = ctx.current_phase()?;
-        // One write, one file: persist the phase we're about to enter so a
-        // crash inside `run_phase` leaves the record at `phase`. The owner
-        // record already holds `phase` (either from guard_and_mark's initial
-        // write, or from the previous iteration's transition); this call is
-        // a no-op write the first time around and an advance after that.
-        op_state::advance_phase(&ctx.owner_workspace_dir, phase.clone())
-            .context("failed to persist phase advance")?;
-
         let next = run_phase(ctx, phase)?;
         match next {
             Some(p) => {
-                // The next iteration's advance_phase write is the canonical
-                // persistence point for `p`. We don't write it here.
+                // Post-transition write: the canonical (and only) persistence
+                // point. Until this commits, a crash leaves the record at the
+                // just-completed phase, which re-runs idempotently on resume.
                 op_state::advance_phase(&ctx.owner_workspace_dir, p)
                     .context("failed to advance phase between iterations")?;
             }
@@ -1793,10 +1797,17 @@ fn load_continuing_context<'a>(
     handler: &'a dyn OutputHandler,
 ) -> anyhow::Result<OpContext<'a>> {
     let emit_text = handler.emit_text();
-    let cwd_ctx = WorkspaceContext::resolve(cwd, project_override.clone())?;
-    let cwd_workspace_dir = cwd_ctx.active_path().to_path_buf();
 
-    let (record, owner_workspace_dir) = op_state::resume(&cwd_workspace_dir)?;
+    // The literal invocation CWD is only used to locate op-state; resolving it
+    // as a WorkspaceContext here lets `op_state::resume` follow a lease pointer
+    // (when `--continue` was invoked from the leased target). Everything the
+    // engine consumes is rooted at the OWNER below — design §3: "`--continue`
+    // / `abort` invoked from a leased workspace follow the pointer to the
+    // owner record and operate identically to owner-side invocation."
+    let invocation_ctx = WorkspaceContext::resolve(cwd, project_override.clone())?;
+    let invocation_workspace_dir = invocation_ctx.active_path().to_path_buf();
+
+    let (record, owner_workspace_dir) = op_state::resume(&invocation_workspace_dir)?;
     let op_id = OpId::from_string(record.id.clone());
 
     if emit_text {
@@ -1832,13 +1843,26 @@ fn load_continuing_context<'a>(
         .parse::<SyncStrategy>()
         .context("op-state has invalid strategy")?;
 
+    // Re-root the engine context at the OWNER workspace. When `--continue` is
+    // invoked from the leased target, `invocation_workspace_dir` points at the
+    // target — but every phase (replay's per-repo enumeration, materialize,
+    // record_converged_tips, cleanup's savepoint drop, retire's workweave
+    // identity check) must operate on the owner's workspace, not the target's.
+    // When CWD == owner, `cwd_ctx == invocation_ctx` and this is a no-op.
+    let cwd_ctx = if owner_workspace_dir == invocation_workspace_dir {
+        invocation_ctx
+    } else {
+        WorkspaceContext::resolve(&owner_workspace_dir, project_override.clone())?
+    };
+    let cwd_workspace_dir = owner_workspace_dir.clone();
+
     // Resolve source/dest workspaces by verb. OwnerRecord's `source`/`target`
     // are operator-semantic ("where work came from / where it's going").
     // The engine semantics:
-    //   plain sync:     engine.source = record.source, engine.dest = record.target (== CWD)
+    //   plain sync:     engine.source = record.source, engine.dest = record.target (== owner CWD)
     //   sync-to:        engine.source = record.target (replay pulls from target),
     //                   engine.dest   = record.target (advance-target writes target).
-    //                   record.source (CWD) is tracked separately via cwd_project_dir.
+    //                   record.source (owner CWD) is tracked separately via cwd_project_dir.
     let cwd_project_name = find_project_name(&cwd_ctx)?;
     let cwd_project_dir = owner_workspace_dir.join("projects").join(&cwd_project_name);
 
@@ -1856,7 +1880,7 @@ fn load_continuing_context<'a>(
     };
 
     let other_project_override = match (recorded_verb, &cwd_ctx.location) {
-        // sync-to: target must resolve to CWD's project.
+        // sync-to: target must resolve to CWD's (== owner's) project.
         (MachineVerb::SyncTo, _) => Some(cwd_project_name.clone()),
         (_, WorkspaceLocation::Workweave { project, .. }) => Some(project.clone()),
         (_, WorkspaceLocation::Weave { .. }) => project_override.clone(),
