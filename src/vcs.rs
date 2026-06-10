@@ -675,8 +675,9 @@ pub trait Vcs {
     /// [`refs/rwv/pre-op/<op-id>`]: Vcs::create_savepoint
     fn hard_reset(&self, repo: &Path, to: &ResolvedRevisionId) -> Result<(), VcsError>;
 
-    /// Return `true` when `ancestor` is a strict ancestor of `descendant`
-    /// in `repo`. Returns `false` when they are equal.
+    /// Return `true` when `ancestor` is an ancestor of `descendant` in
+    /// `repo`. A revision counts as its own ancestor, so equal revisions
+    /// return `true` (non-strict, matching `git merge-base --is-ancestor`).
     ///
     /// For [`GitVcs`](crate::git::GitVcs): runs
     /// `git merge-base --is-ancestor <ancestor> <descendant>`.
