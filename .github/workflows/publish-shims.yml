@@ -161,7 +161,7 @@ jobs:
   publish-pypi:
     needs: [build-wheel, build-sdist]
     runs-on: ubuntu-latest
-    environment: pypi  # optional: gate behind a required-reviewer environment
+    environment: pypi
 
     steps:
       - name: Download all distribution artifacts
