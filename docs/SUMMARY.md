@@ -30,6 +30,7 @@
 - [Pyramid of stability](./explanation/joints/pyramid-of-stability.md)
 - [Clone topology](./explanation/joints/clone-topology.md)
 - [Workweave hierarchy](./explanation/joints/workweave-hierarchy.md)
+- [Workweave lifecycle](./explanation/joints/workweave-lifecycle.md)
 - [Lock-as-derived](./explanation/joints/lock-as-derived.md)
 - [Sync semantics](./explanation/joints/sync-semantics.md)
 - [Shared-refs drift](./explanation/joints/shared-refs-drift.md)

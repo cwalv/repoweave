@@ -495,6 +495,9 @@ git reset --hard refs/rwv/pre-op/<op-id>
   phase model is structured around.
 - [workweave-hierarchy](./workweave-hierarchy.md) — the tree the
   parent-tracking auto-target walks.
+- [workweave-lifecycle](./workweave-lifecycle.md) — the operator-facing
+  lifecycle (create → work → sync-to --retire → delete) that the phase
+  machine underpins.
 - [shared-refs-drift](./shared-refs-drift.md) — the post-Phase-2
   reconciliation interacts with shared-refs drift in workweaves.
 - [vcs-as-seam](./vcs-as-seam.md) — replay exclusion, conflict hint

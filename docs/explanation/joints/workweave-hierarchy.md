@@ -190,6 +190,9 @@ ephemeral naming scheme is not just bookkeeping — it is what makes
 
 ## Related joints
 
+- [workweave-lifecycle](./workweave-lifecycle.md) — what happens at each
+  stage of a workweave's existence: creation flags, working state, the
+  retire contract, and deletion semantics.
 - [sync-semantics](./sync-semantics.md) — what happens when a sync runs
   between two workspaces on the tree; the full direction-pair contract.
 - [pyramid-of-stability](./pyramid-of-stability.md) — the project-repo

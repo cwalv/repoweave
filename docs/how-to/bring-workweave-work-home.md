@@ -143,6 +143,7 @@ Step 3 (FF-advance the target) is always fast-forward regardless of this flag.
 
 ## Related
 
+- [workweave lifecycle](../explanation/joints/workweave-lifecycle.md) — the full create → work → land → delete lifecycle; retire contract and deletion semantics
 - [sync-semantics](../explanation/joints/sync-semantics.md) — phase ordering, strategy choices, `--retire`, parallel/NDJSON output
 - [lock-as-derived](../explanation/joints/lock-as-derived.md) — why `rwv.lock` is treated specially in Phase 1' and regenerated in Phase 3
 - [workweave hierarchy](../explanation/joints/workweave-hierarchy.md) — one-hop semantics, parent tracking
