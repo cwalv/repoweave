@@ -232,6 +232,72 @@ mod npm_workspaces {
     }
 
     #[test]
+    fn multi_package_repo_expands_to_prefixed_globs() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+
+        // A multi-package repo: root package.json declares its own workspaces.
+        write_file(
+            root,
+            "github/acme/mono/package.json",
+            r#"{"name":"mono","private":true,"workspaces":["packages/*","./clients/ts"]}"#,
+        );
+        // A plain single-package repo alongside it.
+        touch(root, "github/acme/server/package.json");
+
+        let manifest = make_manifest(vec![
+            ("github/acme/mono", Role::Owned),
+            ("github/acme/server", Role::Owned),
+        ]);
+        let project = ProjectName::new("test-project");
+        let config = IntegrationConfig::default();
+        let cache = HashMap::new();
+        let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+
+        let integration = NpmWorkspaces;
+        integration.activate(&ctx).unwrap();
+
+        let pkg_json = std::fs::read_to_string(root.join("package.json")).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&pkg_json).unwrap();
+        let workspaces = parsed["workspaces"].as_array().unwrap();
+        assert_eq!(workspaces.len(), 3);
+        // Globs are repo-prefixed; leading "./" in member globs is normalized.
+        assert!(workspaces.contains(&serde_json::json!("github/acme/mono/packages/*")));
+        assert!(workspaces.contains(&serde_json::json!("github/acme/mono/clients/ts")));
+        // The multi-package repo root itself is NOT an entry.
+        assert!(!workspaces.contains(&serde_json::json!("github/acme/mono")));
+        // Single-package repo keeps current behavior.
+        assert!(workspaces.contains(&serde_json::json!("github/acme/server")));
+    }
+
+    #[test]
+    fn multi_package_repo_object_form_workspaces_expands() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+
+        write_file(
+            root,
+            "github/acme/mono/package.json",
+            r#"{"private":true,"workspaces":{"packages":["packages/*"],"nohoist":["**/x"]}}"#,
+        );
+
+        let manifest = make_manifest(vec![("github/acme/mono", Role::Owned)]);
+        let project = ProjectName::new("test-project");
+        let config = IntegrationConfig::default();
+        let cache = HashMap::new();
+        let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+
+        let integration = NpmWorkspaces;
+        integration.activate(&ctx).unwrap();
+
+        let pkg_json = std::fs::read_to_string(root.join("package.json")).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&pkg_json).unwrap();
+        let workspaces = parsed["workspaces"].as_array().unwrap();
+        assert_eq!(workspaces.len(), 1);
+        assert_eq!(workspaces[0], "github/acme/mono/packages/*");
+    }
+
+    #[test]
     fn deactivation_strips_author_keys_preserves_default_only_keys() {
         let tmp = TempDir::new().unwrap();
         let root = tmp.path();

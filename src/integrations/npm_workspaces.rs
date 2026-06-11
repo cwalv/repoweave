@@ -79,6 +79,51 @@ fn build_owned(
     }
 }
 
+/// Expand detected repos into workspace entries.
+///
+/// A repo whose root package.json declares its own `workspaces` (array form,
+/// or object form `.packages`) is a multi-package repo. npm does not support
+/// nested workspaces, so listing the repo root would orphan its sub-packages
+/// from the weave-root install/link graph. Instead, emit `<repo-path>/<glob>`
+/// for each member glob. Repos without a `workspaces` key keep the single
+/// `<repo-path>` entry (existing behavior).
+fn expand_workspace_entries(workspace_root: &Path, repo_paths: Vec<String>) -> Vec<String> {
+    let mut entries = Vec::new();
+    for repo in repo_paths {
+        let pkg_path = workspace_root.join(&repo).join("package.json");
+        let globs = std::fs::read_to_string(&pkg_path)
+            .ok()
+            .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok())
+            .and_then(|pkg| member_globs(pkg.get("workspaces")));
+        match globs {
+            Some(globs) if !globs.is_empty() => {
+                entries.extend(
+                    globs
+                        .iter()
+                        .map(|g| format!("{}/{}", repo, g.strip_prefix("./").unwrap_or(g))),
+                );
+            }
+            _ => entries.push(repo),
+        }
+    }
+    entries
+}
+
+/// Member globs from a package.json `workspaces` value: array form, or
+/// object form `{packages: [...]}`. Non-string members are skipped.
+fn member_globs(ws: Option<&serde_json::Value>) -> Option<Vec<String>> {
+    let arr = match ws? {
+        serde_json::Value::Array(a) => a,
+        serde_json::Value::Object(o) => o.get("packages")?.as_array()?,
+        _ => return None,
+    };
+    Some(
+        arr.iter()
+            .filter_map(|v| v.as_str().map(String::from))
+            .collect(),
+    )
+}
+
 /// Return true if the package.json at `path` carries the x-repoweave marker.
 fn has_our_marker(path: &Path) -> bool {
     if !path.exists() {
@@ -107,6 +152,7 @@ impl Integration for NpmWorkspaces {
         if paths.is_empty() {
             return Ok(());
         }
+        let paths = expand_workspace_entries(ctx.workspace_root, paths);
 
         let path = ctx.output_dir.join("package.json");
 
