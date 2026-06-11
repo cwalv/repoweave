@@ -51,10 +51,6 @@ The recovery decision tree:
    rwv push
    ```
 2. **You meant to push the existing lock.** The lock is what's authoritative; reset each diverged manifest repo to the SHA recorded in `rwv.lock` (use `rwv status` to find which repos are ahead or diverged), then re-run `rwv push`.
-3. **You meant to push past a divergence.** The lock-precondition is a safety check; `--force` bypasses it. Use with care:
-   ```bash
-   rwv push --force
-   ```
 
 The lock-precondition prevents the common footgun: pushing manifest-repo work before the project repo's lock-bearing commit, leaving downstream consumers seeing the new manifest tips with the old lock pointing at the old SHAs.
 

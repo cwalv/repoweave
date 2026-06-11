@@ -150,7 +150,7 @@ Coordinated cross-repo push. Default scope: `owned` and `fork` repos (the roles 
 | Flag | Effect |
 |---|---|
 | `--role` / `--repo` | Selector filters |
-| `--force` | Bypass lock-precondition check |
+| `--force` | Force-push every repo in the operation (manifest repos and the project repo). Default deny. The lock-precondition check still runs unconditionally |
 | `-j N` | Parallel push (up to N concurrent for manifest repos; project repo always last and serial) |
 | `--json` / `-j N` | Structured output / parallel push (NDJSON when N > 1) |
 | `--dry-run` | Print the push plan without executing |
