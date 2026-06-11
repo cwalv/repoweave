@@ -8,7 +8,7 @@ repoweave is a coordination layer that addresses those without merging the repos
 
 ### Why it exists
 
-A monorepo eliminates most of the coordination pain — at the cost of vendoring every repo into one tree and giving up per-repo ownership. repoweave gives you the coordination wins while leaving each repo sovereign:
+A monorepo eliminates most of the coordination pain — at the cost of vendoring every repo into one tree and giving up per-repo ownership. repoweave gives you the coordination wins while leaving each repo sovereign. ([Alternatives comparison](docs/comparison.md) — when git submodules, gita, or a monorepo actually wins.)
 
 - **A committable manifest and lock.** `projects/<name>/rwv.yaml` lists the repos; `rwv.lock` pins every revision. `sha256sum rwv.lock` is the multi-repo equivalent of `git rev-parse HEAD`.
 - **One command reproduces the workspace.** `rwv fetch <url>` clones the project, every repo it lists, generates ecosystem workspace files where they apply, and runs install commands. For toolchain pins, env activation, or full OS-level reproduction, drop a `.mise.toml` / `.envrc` / `devcontainer.json` into the project repo (they're cross-cutting artifacts) — `rwv fetch` carries them with everything else. See [adjacent-tools](docs/adjacent-tools.md).
@@ -89,8 +89,11 @@ cd .workweaves/web-app--payments
 | `rwv lock` | Snapshot repo HEADs into `rwv.lock`. Errors on uncommitted changes (`--dirty` to bypass) |
 | `rwv doctor` | Convention enforcement: orphans, dangling refs, stale locks, integration checks. `--locked` for scriptable lock-freshness check |
 | `rwv status` | Show per-repo state: branch, tip, lock entry, relation, mid-op state. `--json` for machine-readable output |
-| `rwv sync <source>` | Align CWD workspace with another workspace's committed `rwv.lock`. `--strategy ff\|rebase\|merge`; `--allow-stale-lock` to skip lock-freshness check; `--discard-local-commits` to hard-reset project repo to source tip |
+| `rwv sync <source>` | Pull: align CWD to another workspace's committed `rwv.lock`. `--strategy ff\|rebase\|merge` (default `ff`); `--allow-stale-lock` to skip lock-freshness check; `--discard-local-commits` to hard-reset project repo to source tip |
+| `rwv sync-to [<target>]` | Push: land CWD's commits into target (3-step: rebase CWD against target → auto-relock → FF-advance target). `--strategy rebase\|ff\|merge` (default `rebase`); `--retire` deletes the workweave on success. Bare `rwv sync-to` auto-targets the parent recorded in `.rwv-workweave` |
 | `rwv abort` | Restore CWD workspace to its pre-sync state using savepoint refs |
+| `rwv push` | Coordinated cross-repo push: manifest repos first, then project repo. `--dry-run` to preview; `--force` for force-push consent; `--role`/`--repo` selectors to limit scope |
+| `rwv update` | Advance each repo to its branch HEAD and re-snapshot `rwv.lock` (network bump; analogous to `cargo update`). `--commit` to commit the lock after writing it |
 | `rwv workweave <project> create <name>` | Create an isolated working copy (worktrees on ephemeral branches) |
 | `rwv workweave <project> delete <name>` | Delete a workweave (remove worktrees, clean up ephemeral branches) |
 | `rwv workweave <project> list` | List workweaves for a project |
@@ -127,6 +130,38 @@ rwv setup agents-md
 ```
 
 Both commands are idempotent and safe to re-run.
+
+### Run agents in parallel
+
+A workweave is a full isolated copy of the workspace — its own branches, its own `node_modules`/`.venv`/`target`, its own lock. Hand one to an agent and it works without touching the primary weave:
+
+```bash
+# 1. Create an isolated workspace for the agent
+rwv workweave web-app create fix-auth
+
+# 2. Hand the workweave path to the agent
+#    The agent CDs into .workweaves/web-app--fix-auth/ and works normally.
+#    It can commit, run tests, and rwv lock — primary is undisturbed.
+
+# 3. Review the diff in the workweave before landing
+git -C .workweaves/web-app--fix-auth/projects/web-app log --oneline main..
+git -C .workweaves/web-app--fix-auth/github/chatly/server diff HEAD~1
+
+# 4. Land the work and retire the workweave
+cd .workweaves/web-app--fix-auth
+rwv sync-to --retire
+```
+
+`rwv sync-to --retire` runs a three-step landing: rebases the workweave's commits onto the parent's current tip, re-snapshots the lock, then fast-forwards the parent to the new tip. The workweave is deleted on success. Every landing is abortable: savepoints at `refs/rwv/pre-op/<id>` let `rwv abort` roll both workspaces back to their exact pre-op state.
+
+Multiple agents can work in parallel — one workweave each. The first landing is a clean fast-forward; subsequent ones absorb the primary's new state via `rwv sync primary --strategy rebase` before calling `rwv sync-to --retire`.
+
+- [How to hand a task to an agent](docs/how-to/hand-task-to-agent.md) — discover the workspace, drive verbs via `rwv explain`, selector grammar
+- [Bring workweave work home](docs/how-to/bring-workweave-work-home.md) — sync-to semantics, `--retire`, and conflict resolution
+- [Workweave lifecycle](docs/explanation/joints/workweave-lifecycle.md) — create → work → sync-to --retire, the retire contract, and deletion
+- [Resume or abort a mid-op sync](docs/how-to/resume-or-abort-mid-op-sync.md) — inspect op-state, `--continue`, `rwv abort` detail
+
+The existing "Agent integration" section above covers context injection (`rwv prime` / `AGENTS.md`); this section is the *workflow* half — isolated sandboxes and the transactional landing path.
 
 ### Documentation
 

@@ -59,6 +59,7 @@
 # Adjacent
 
 - [Adjacent tools](./adjacent-tools.md)
+- [Alternatives](./comparison.md)
 
 # Contributing
 
