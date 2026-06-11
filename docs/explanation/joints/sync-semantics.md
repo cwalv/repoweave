@@ -36,6 +36,78 @@ guard → mark → savepoint → replay → relock → advance-target → retire
                                               (sync-to only)   (--retire only)
 ```
 
+### State diagram
+
+The diagram shows the states a sync operation can be in. The grey box
+(`guard → mark → savepoint`) runs once before the driver loop and is not
+persisted; a crash there leaves no trace. The white states (`replay`
+onward) are the phases the driver persists in `.rwv-op` before entering
+each one.
+
+```mermaid
+stateDiagram-v2
+    direction LR
+
+    state "pre-loop (not persisted)" as pre {
+        direction LR
+        guard --> mark
+        mark --> savepoint
+    }
+
+    [*] --> pre : invoke
+    pre --> [*] : precondition refusal (no trace)
+    pre --> replay : savepoints written
+
+    replay --> relock
+    relock --> advance_target : sync-to
+    relock --> cleanup : sync (done)
+    advance_target : advance-target
+    advance_target --> retire : --retire
+    advance_target --> cleanup : sync-to (done)
+    retire --> cleanup : checks pass
+
+    cleanup --> [*] : op-state cleared
+
+    replay --> op_kept : failure or crash
+    relock --> op_kept : failure or crash
+    advance_target --> op_kept : failure or crash
+    retire --> op_kept : check failed
+
+    op_kept : op-state kept
+    op_kept --> replay : --continue (recorded phase)
+    op_kept --> relock : --continue (recorded phase)
+    op_kept --> advance_target : --continue (recorded phase)
+    op_kept --> retire : --continue (recorded phase)
+    op_kept --> [*] : rwv abort (restore and clear)
+
+    note right of op_kept
+        --continue re-enters whichever phase
+        the record names — only one arc fires.
+        rwv abort restores via savepoint refs.
+    end note
+```
+
+**Which phases run by verb:**
+
+| Phase | `rwv sync` | `rwv sync-to` | `rwv sync-to --retire` |
+|---|:---:|:---:|:---:|
+| guard / mark / savepoint | yes | yes | yes |
+| replay | yes | yes | yes |
+| relock | yes | yes | yes |
+| advance-target | — | yes | yes |
+| retire | — | — | yes |
+| cleanup | yes | yes | yes |
+
+**Op-state lifecycle:**
+
+| Exit path | Owner record + leases |
+|---|---|
+| Precondition refusal (guard, before any mutation) | No trace left |
+| All phases complete (cleanup) | Cleared everywhere |
+| Phase failure or crash | Kept everywhere; `--continue` resumes, `rwv abort` restores |
+| `retire` check failure | Kept at `retire` phase; `--continue` retries checks |
+| `rwv abort` completes | Cleared after verified restore |
+
 The guard, mark, and savepoint steps run once before the driver loop.
 The persisted record then names which phase the driver is in — the
 single source of truth for op state. The driver writes the phase before

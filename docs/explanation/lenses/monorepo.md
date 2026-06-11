@@ -92,15 +92,9 @@ repoweave's sync surface is a direction-explicit verb pair:
 - **`rwv sync <source>`** — CWD absorbs the source workspace's state; CWD's unique commits land on top of source's tip. CWD changes; source is read-only. Use this to pull work in (e.g., absorb primary's new commits into a feature workweave before landing).
 - **`rwv sync-to <target>`** — CWD's committed state lands in the target workspace. CWD absorbs the target's state first (CWD's commits on top), then the target fast-forwards to CWD's new tip. Both workspaces change; use this to push work out (e.g., land a feature workweave's commits into primary).
 
-Both verbs handle N repos in coordinated phases:
+Both verbs run the same phase machine: first the manifest repos are advanced to the named workspace's lock targets using the chosen strategy (`ff` / `rebase` / `merge`); then CWD's unique project commits are replayed onto the named workspace's project tip with `rwv.lock` excluded from each commit's diff (lock-only commits become empty patches and are dropped); then `rwv.lock` is regenerated from the post-replay manifest tips. For `rwv sync-to`, a final step advances the target to CWD's new tip via fast-forward.
 
-1. **Phase 2** — advance each manifest repo's branch to the named workspace's lock target using the chosen strategy (`ff` / `rebase` / `merge`).
-2. **Phase 1'** — replay CWD's unique project commits onto the named workspace's project tip, with `rwv.lock` excluded from each commit's diff. Lock-only commits become empty patches and are dropped automatically.
-3. **Phase 3** — regenerate `rwv.lock` from the post-Phase-2 manifest tips.
-
-For `rwv sync-to`, a step 3 follows: the target fast-forwards to CWD's new tip.
-
-`rwv.lock` is never merged. It is recomputed in Phase 3 every time, so lock-file conflicts never arise regardless of how many workweaves are in flight. See [sync semantics](../joints/sync-semantics.md) and [lock-as-derived](../joints/lock-as-derived.md).
+`rwv.lock` is never merged. It is recomputed fresh every time, so lock-file conflicts never arise regardless of how many workweaves are in flight. See [sync semantics](../joints/sync-semantics.md) and [lock-as-derived](../joints/lock-as-derived.md).
 
 For the common case — work in a feature workweave, bring it home — the one-liner is:
 
@@ -167,6 +161,6 @@ Workspace wiring eliminates the development-time version dance: edit a library, 
 - [Workspace lens](./workspace.md) — the project-as-coordination-entity model this builds on
 - [Agent lens](./agent.md) — the workweave-as-sandbox pattern for automation
 - [Pyramid of stability](../joints/pyramid-of-stability.md) — canonical cross-repo tips
-- [Sync semantics](../joints/sync-semantics.md) — Phase 2, Phase 1', Phase 3
+- [Sync semantics](../joints/sync-semantics.md) — the phase machine, abort, and snapshot-read contracts
 - [Workweave hierarchy](../joints/workweave-hierarchy.md) — the tree model, flow direction
 - [Verb-vs-composition](../joints/verb-vs-composition.md) — what earns an `rwv` verb
