@@ -51,14 +51,17 @@ The key is verb-specific:
 |---|---|
 | `rwv status --json` | `repos` |
 | `rwv doctor --json` | `violations` |
+| `rwv fetch --json` | `outcomes` |
+| `rwv update --json` | `repos` |
 | `rwv sync --json` | `outcomes` |
 | `rwv sync-to --json` | `outcomes` |
+| `rwv push --json` | `outcomes` |
 
 Schemas live at `docs/reference/schemas/<verb>.json` and are also embedded inside the corresponding `rwv explain <verb>` bundle. Agents should resolve `$schema` once and cache, not assume any shape.
 
 ### NDJSON under `-j N > 1`
 
-`rwv sync` and `rwv sync-to` both switch to NDJSON when run with `-j N > 1` and `--json`:
+`rwv fetch`, `rwv update`, `rwv push`, `rwv sync`, and `rwv sync-to` all switch to NDJSON when run with `-j N > 1` and `--json`:
 
 - **Serial / envelope mode** (`-j 1`, the default): one envelope document on stdout at the end of the run.
 - **Parallel / NDJSON mode** (`-j N > 1`): each per-repo outcome streamed as one JSON line as its worker finishes. The envelope wrapper is dropped; every line carries its own `$schema` field so a consumer can identify it without context.
@@ -95,8 +98,8 @@ This lands the workweave's commits into its recorded parent (primary in this cas
 Action verbs that scan repos accept `--role` and `--repo` filters:
 
 ```bash
-rwv fetch --role owned                   # only repos with role: owned
-rwv push --repo glob:'github/chatly/*'   # owned + manifest-path glob
+rwv fetch chatly/web-app --role owned       # only repos with role: owned
+rwv push --repo glob:'github/chatly/*'      # owned + manifest-path glob
 rwv update --role owned --repo re:'^proto'
 ```
 

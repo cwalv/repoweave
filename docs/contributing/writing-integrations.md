@@ -53,7 +53,7 @@ Each hook receives an `IntegrationContext` with:
 
 ## Registration
 
-New integrations are registered in `src/integrations/registry.rs`. Add an entry there alongside the existing built-ins; the rest of `rwv` picks it up automatically.
+New integrations are registered in `builtin_integrations()` in `src/integrations/mod.rs`. Add a `Box::new(YourIntegration)` entry alongside the existing built-ins; the rest of `rwv` picks it up automatically.
 
 ## Style guidelines
 

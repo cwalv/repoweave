@@ -57,15 +57,13 @@ Then resume from the workweave root:
 ```bash
 cd <workweave-root>
 rwv sync-to --continue
-# or, if the original invocation named an explicit target:
-rwv sync-to primary --continue
 ```
 
-`--continue` validates that your invocation parameters match what op-state recorded (target, strategy, `--retire` flag). Repeat the same flags you used originally — a mismatch errors out so you don't accidentally resume with different intent. If the original invocation had `--retire`, pass it again on the `--continue` resume; the cleanup step runs after the resumed operation completes successfully.
+`--continue` reads all parameters — target, strategy, `--retire` — from the in-progress op-state file. Do not re-supply the original flags (including `--retire`); any flag other than `--project` alongside `--continue` is rejected. See [Resume or abort a mid-op sync](./resume-or-abort-mid-op-sync.md) for op-state inspection and the full `--continue` contract.
 
 ### Step 3 failure (FF-advance failure)
 
-If steps 1 and 2 succeed but step 3 (the parent's fast-forward advance) fails — this requires a concurrent operation on the target between steps 2 and 3, so it is rare — op-state is preserved in the same way. Re-run `rwv sync-to --continue` (or `rwv sync-to <target> --continue`) to retry step 3. No conflict resolution is needed; step 3 is always a fast-forward and will succeed once the concurrent op-state clears.
+If steps 1 and 2 succeed but step 3 (the parent's fast-forward advance) fails — this requires a concurrent operation on the target between steps 2 and 3, so it is rare — op-state is preserved in the same way. Re-run `rwv sync-to --continue` to retry step 3. No conflict resolution is needed; step 3 is always a fast-forward and will succeed once the concurrent op-state clears.
 
 ## Give up entirely
 
@@ -87,7 +85,7 @@ After abort, both workspaces are in their exact pre-op state. Discarded commits 
 
 **Lock precondition failure.** The operation refused before any repo was touched because `rwv doctor --locked` failed. Fix the unlocked repos (commit, then `rwv lock`, then commit the lock) and re-run. This is not a conflict — there's no savepoint to abort because nothing was mutated.
 
-**`--retire` conflict.** When `rwv sync-to --retire` hits a conflict in steps 1–3, the workweave is preserved (the `--retire` cleanup is not reached until all three steps succeed). Resolve the conflict, then resume with `rwv sync-to --retire --continue` — pass `--retire` again so the parameter-match check passes. The cleanup runs after the resumed steps complete successfully.
+**`--retire` conflict.** When `rwv sync-to --retire` hits a conflict in steps 1–3, the workweave is preserved (the `--retire` cleanup is not reached until all three steps succeed). Resolve the conflict, then resume with bare `rwv sync-to --continue` — `--retire` is already recorded in op-state and is restored automatically; do not pass it again.
 
 ## Related
 

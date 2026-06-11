@@ -1,6 +1,6 @@
 # How-to guides
 
-Task-shaped recipes. Each page leads with the command; the conceptual material is in the [joints](../explanation/joints/) and the [lenses](../explanation/lenses/).
+Task-shaped recipes. Each page leads with the command; the conceptual material is in the [explanation](../explanation/index.md) section (joints and lenses).
 
 ## Day-to-day
 
@@ -11,7 +11,7 @@ Task-shaped recipes. Each page leads with the command; the conceptual material i
 ## Cross-repo features
 
 - [Create a feature workweave](./create-feature-workweave.md) — isolated cross-repo branch
-- [Bring workweave work home](./bring-workweave-work-home.md) — `rwv sync --retire` and manual ceremony
+- [Bring workweave work home](./bring-workweave-work-home.md) — `rwv sync-to --retire` and manual ceremony
 - [Recover from a sync conflict](./recover-from-sync-conflict.md) — fix-and-resume, `rwv abort`
 - [Resume or abort a mid-op sync](./resume-or-abort-mid-op-sync.md) — inspect op-state, `--continue`, `rwv abort`
 - [Push a cross-repo feature](./push-cross-repo-feature.md) — `rwv push`, role policy, lock-precondition recovery

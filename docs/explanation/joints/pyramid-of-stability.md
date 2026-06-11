@@ -62,10 +62,11 @@ project repo is a git repo, and every branch in that git repo carries
 its own `rwv.lock`. Collaborators choose which channel to track by
 checking out that branch:
 
-```
-rwv fetch chatly/web-app             # project's default branch
-rwv fetch chatly/web-app --ref stable # the stable branch
-rwv fetch chatly/web-app --ref v1.2.3 # a release tag
+```bash
+# Check out the project at a specific channel before fetching
+git -C projects/chatly/web-app checkout stable   # stable channel
+git -C projects/chatly/web-app checkout v1.2.3   # release tag
+rwv fetch chatly/web-app                          # align repos to that lock
 ```
 
 That last set of revisions is reproducible byte-for-byte because the

@@ -72,10 +72,10 @@ git rebase --continue
 
 # then resume from the workweave root
 cd <workweave-root>
-rwv sync-to --continue          # or: rwv sync-to primary --continue
+rwv sync-to --continue
 ```
 
-`--continue` resumes from where the operation paused. It validates that the invocation parameters match what op-state recorded (target, strategy, `--retire` flag) — a mismatch errors out so you don't accidentally resume with different intent. Repeat the same flags you used originally; in particular, pass `--retire` again if the original invocation had it.
+`--continue` resumes from where the operation paused. All parameters — target, strategy, `--retire` — are read from the in-progress op-state file. Do not re-supply the original flags (including `--retire`); any flag other than `--project` alongside `--continue` is rejected. See [Resume or abort a mid-op sync](./resume-or-abort-mid-op-sync.md) for the full `--continue` semantics and how to inspect op-state records.
 
 If step 3 (the parent's FF-advance) fails — rare; requires a concurrent op on the parent between steps 2 and 3 — op-state is similarly preserved. `rwv sync-to --continue` retries step 3.
 

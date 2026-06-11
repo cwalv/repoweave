@@ -254,7 +254,7 @@ Per-verb reflection — *replaces hand-maintained `--help` scraping* in agent ha
 | `rwv explain` | List of explainable verbs |
 | `rwv explain <verb>` | Markdown bundle: purpose, invocation, output description, JSON Schema (for `--json`-capable verbs), exit codes, examples, common errors |
 
-Use case: agent harness asks "what flags does `rwv push` take, and what does it print?" — the bundle is authoritative. For `--json`-capable verbs (`status`, `doctor`, `sync`, `push`), the JSON Schema is embedded as a fenced code block inside the bundle.
+Use case: agent harness asks "what flags does `rwv push` take, and what does it print?" — the bundle is authoritative. For `--json`-capable verbs (`status`, `doctor`, `fetch`, `update`, `sync`, `sync-to`, `push`), the JSON Schema is embedded as a fenced code block inside the bundle.
 
 The rendered bundles are checked in at `docs/reference/explain/` for offline browsing. CI fails if they diverge from the generator output.
 
@@ -326,6 +326,7 @@ Every JSON-capable verb emits a self-describing envelope:
 | `rwv status --json` | `repos` |
 | `rwv doctor --json` | `violations` |
 | `rwv fetch --json` | `outcomes` |
+| `rwv update --json` | `repos` |
 | `rwv sync --json` | `outcomes` |
 | `rwv sync-to --json` | `outcomes` |
 | `rwv push --json` | `outcomes` |
