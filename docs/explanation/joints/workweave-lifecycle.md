@@ -242,7 +242,7 @@ invocations:
 cd .workweaves/web-app--feat-child
 rwv sync-to --retire               # → parent workweave; deletes child
 
-cd ..web-app--feat
+cd ../web-app--feat
 rwv sync-to --retire               # → primary; deletes parent
 ```
 
