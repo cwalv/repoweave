@@ -12,13 +12,17 @@ Generates a `go.work` file listing every project repo (excluding `reference` rep
 ## Generated file
 
 ```
-go 1.21
+go 1.26
 
 use (
     ./github/chatly/protocol
     ./github/chatly/server
 )
 ```
+
+The `go` line reflects the maximum Go version declared across the member repos'
+`go.mod` files (`max_go_version()`). The value above is illustrative; your
+workspace will show whatever version your repos declare.
 
 Generated in the project directory, symlinked to the weave directory. Committable. The corresponding `go.sum` is produced by the Go toolchain and is also committable persistent state.
 
