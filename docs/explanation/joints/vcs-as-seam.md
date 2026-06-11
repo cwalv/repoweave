@@ -275,7 +275,7 @@ verbs design discussion ("the trait captures the per-role push policy
 — refs come from the manifest, not from `git push` argument
 parsing"), the right shape was a trait method whose contract names the
 *intent* ("push this branch on the role-conventional remote") and
-hides the *mechanism* ("git push origin <branch>" or some entirely
+hides the *mechanism* (`git push origin <branch>` or some entirely
 different command on another VCS).
 
 Note the trait-level Fork policy is *neutral*:
