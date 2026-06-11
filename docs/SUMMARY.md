@@ -12,6 +12,7 @@
 - [Create a feature workweave](./how-to/create-feature-workweave.md)
 - [Bring workweave work home](./how-to/bring-workweave-work-home.md)
 - [Recover from a sync conflict](./how-to/recover-from-sync-conflict.md)
+- [Resume or abort a mid-op sync](./how-to/resume-or-abort-mid-op-sync.md)
 - [Push a cross-repo feature](./how-to/push-cross-repo-feature.md)
 - [Review a PR with a workweave](./how-to/review-pr-with-workweave.md)
 - [Hand a task to an agent](./how-to/hand-task-to-agent.md)

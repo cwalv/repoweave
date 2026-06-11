@@ -91,6 +91,7 @@ After abort, both workspaces are in their exact pre-op state. Discarded commits 
 
 ## Related
 
+- [Resume or abort a mid-op sync](./resume-or-abort-mid-op-sync.md) — inspect op-state records, `--continue` semantics, `rwv abort` detail
 - [sync-semantics](../explanation/joints/sync-semantics.md) — the three phases and where conflicts arise; abort and savepoint protocol
 - [vcs-as-seam](../explanation/joints/vcs-as-seam.md) — why the hint text comes from the VCS impl
 - [bring workweave work home](./bring-workweave-work-home.md) — the normal-path sync-to workflow

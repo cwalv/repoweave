@@ -110,6 +110,10 @@ rwv sync primary --strategy rebase
 rwv sync-to --retire
 ```
 
+If `rwv sync` stops mid-way with a conflict or crash, see
+[Resume or abort a mid-op sync](./resume-or-abort-mid-op-sync.md) for how to
+inspect op-state, resume with `--continue`, or roll back with `rwv abort`.
+
 ## n-way landing (two workweaves)
 
 When two workweaves both have project commits, land them serially. The first lands with a clean fast-forward (the default `rebase` strategy in `sync-to` step 1 becomes a no-op when CWD is already strictly ahead). The second must first absorb the primary's new state:
@@ -148,3 +152,4 @@ Step 3 (FF-advance the target) is always fast-forward regardless of this flag.
 - [lock-as-derived](../explanation/joints/lock-as-derived.md) — why `rwv.lock` is treated specially in Phase 1' and regenerated in Phase 3
 - [workweave hierarchy](../explanation/joints/workweave-hierarchy.md) — one-hop semantics, parent tracking
 - [recover from sync conflict](./recover-from-sync-conflict.md) — what to do when Phase 1' or Phase 2 hits a real conflict
+- [resume or abort a mid-op sync](./resume-or-abort-mid-op-sync.md) — inspect op-state, `--continue`, `rwv abort` detail
