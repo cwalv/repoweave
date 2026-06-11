@@ -569,3 +569,169 @@ fn sync_discard_local_commits_refuses_when_cwd_project_dirty() {
         .assert()
         .success();
 }
+
+// ===========================================================================
+// 4. --allow-stale-lock: refusal names condition + flag; flag bypasses both
+//    source and destination preconditions.
+//
+// Doc claim (cli.md §sync, --allow-stale-lock row):
+//   "Consent: skip the lock-freshness precondition on both source and
+//   destination."
+//
+// (i)  Without --allow-stale-lock, a stale lock produces an error message
+//      that names the condition ("lock-freshness precondition") AND the flag
+//      ("--allow-stale-lock").
+// (ii) With --allow-stale-lock, the sync succeeds despite the stale lock
+//      on both source and destination.
+// ===========================================================================
+
+/// Helper: build the two-workspace fixture with a stale destination (CWD) lock.
+///
+/// Both workspaces start at SHA_INIT, but ww's lock is patched to a fabricated
+/// SHA that does not match the actual server HEAD. Primary's lock is fresh.
+///
+/// When syncing from primary → ww: the lock-freshness check fires on the
+/// destination because ww's lock doesn't match ww's actual server HEAD.
+/// With --allow-stale-lock, the sync proceeds using primary's lock (SHA_INIT)
+/// to converge ww's server, which is already at SHA_INIT → no-op → success.
+fn make_shared_with_stale_destination(parent: &Path) -> (Workspace, Workspace) {
+    let (primary, ww, initial_sha) = make_shared(parent);
+
+    // Patch ww's lock to a fabricated SHA that doesn't match server HEAD.
+    // This is the stale-lock condition: lock says X, repo HEAD says Y.
+    let fake_sha = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    assert_ne!(
+        fake_sha,
+        initial_sha.as_str(),
+        "fake sha must differ from real"
+    );
+    write_lock(&ww.project_dir, &[(SERVER_PATH, SERVER_URL, fake_sha)]);
+    // Note: we don't commit the changed lock — the lock file on disk is stale,
+    // but the stale-lock check reads the file directly (not from git history).
+
+    (primary, ww)
+}
+
+/// (i) Stale lock on the *destination* (CWD) produces a refusal that names
+/// "lock-freshness precondition" AND "--allow-stale-lock".
+#[test]
+fn sync_stale_destination_lock_names_condition_and_flag() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (primary, ww) = make_shared_with_stale_destination(tmp.path());
+
+    let assert = rwv()
+        .args(["sync", &primary.root.to_string_lossy()])
+        .current_dir(&ww.root)
+        .assert()
+        .failure();
+    let stderr = String::from_utf8_lossy(&assert.get_output().stderr).into_owned();
+
+    assert!(
+        stderr.contains("lock-freshness precondition"),
+        "stale-lock refusal must name 'lock-freshness precondition'; got:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("--allow-stale-lock"),
+        "stale-lock refusal must name the '--allow-stale-lock' flag; got:\n{stderr}"
+    );
+}
+
+/// (ii) --allow-stale-lock bypasses the destination stale-lock precondition.
+///
+/// With the same stale-destination fixture, passing --allow-stale-lock makes
+/// `rwv sync` succeed.
+#[test]
+fn sync_allow_stale_lock_bypasses_destination_precondition() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (primary, ww) = make_shared_with_stale_destination(tmp.path());
+
+    rwv()
+        .args([
+            "sync",
+            &primary.root.to_string_lossy(),
+            "--allow-stale-lock",
+        ])
+        .current_dir(&ww.root)
+        .assert()
+        .success();
+}
+
+/// Helper: build a fixture where the *source* (primary) has a stale lock.
+///
+/// Both workspaces start at SHA_INIT. Primary's lock is patched to a fabricated
+/// SHA that does not match the actual server HEAD. WW's lock is fresh.
+///
+/// When syncing from primary → ww: the lock-freshness check fires on the source
+/// because primary's lock doesn't match primary's actual server HEAD.
+/// With --allow-stale-lock, sync proceeds using primary's lock as-is. The lock
+/// says a fake SHA for the server — the server repo in ww is already clean and
+/// at the initial state, so the sync resolves without content conflicts.
+///
+/// Note: because primary's lock has a fake SHA, the sync may encounter an
+/// unknown-ref error during convergence. To avoid this, we make the source
+/// lock point at the SAME real SHA as the ww server HEAD (but via a different
+/// written string that still doesn't match primary's server HEAD), so that
+/// the convergence step can find the target SHA in the ww clone.
+fn make_shared_with_stale_source(parent: &Path) -> (Workspace, Workspace) {
+    let (primary, ww, initial_sha) = make_shared(parent);
+
+    // Advance primary's server to C2 (without relocking primary's lock).
+    // Primary's lock still says initial_sha (stale); server is at C2.
+    // The WW's lock says initial_sha and its server IS at initial_sha (clean).
+    make_commit(
+        &primary.server_dir,
+        "primary_advance.txt",
+        "primary\n",
+        "primary: advance without relock",
+    );
+    // primary's project lock still records initial_sha — stale (server is at C2).
+    // primary's project dir has the old lock committed; the stale check reads
+    // the lock from the source's project dir on disk (from the last commit).
+    // For the stale-lock check to fire, we don't need to commit the change;
+    // we just need lock-on-disk != server-HEAD. Since we didn't relock,
+    // primary's lock (committed) = initial_sha, and primary's server HEAD = C2.
+    drop(initial_sha);
+
+    (primary, ww)
+}
+
+/// (i) Stale lock on the *source* produces a refusal that names both the
+/// condition and the flag — establishing that the check runs on both sides.
+#[test]
+fn sync_stale_source_lock_names_condition_and_flag() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (primary, ww) = make_shared_with_stale_source(tmp.path());
+
+    let assert = rwv()
+        .args(["sync", &primary.root.to_string_lossy()])
+        .current_dir(&ww.root)
+        .assert()
+        .failure();
+    let stderr = String::from_utf8_lossy(&assert.get_output().stderr).into_owned();
+
+    assert!(
+        stderr.contains("lock-freshness precondition"),
+        "source stale-lock refusal must name 'lock-freshness precondition'; got:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("--allow-stale-lock"),
+        "source stale-lock refusal must name the '--allow-stale-lock' flag; got:\n{stderr}"
+    );
+}
+
+/// (ii) --allow-stale-lock bypasses the source stale-lock precondition.
+#[test]
+fn sync_allow_stale_lock_bypasses_source_precondition() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (primary, ww) = make_shared_with_stale_source(tmp.path());
+
+    rwv()
+        .args([
+            "sync",
+            &primary.root.to_string_lossy(),
+            "--allow-stale-lock",
+        ])
+        .current_dir(&ww.root)
+        .assert()
+        .success();
+}

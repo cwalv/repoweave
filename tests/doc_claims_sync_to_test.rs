@@ -294,3 +294,200 @@ fn explain_sync_to_returns_content() {
         stdout.len()
     );
 }
+
+// ===========================================================================
+// 4. --allow-stale-lock for sync-to: refusal names condition + flag; flag
+//    bypasses both source (target workspace) and destination (CWD) preconditions.
+//
+// Doc claim (cli.md §sync-to, --allow-stale-lock row):
+//   "Consent: skip the lock-freshness precondition on both source and
+//   destination."
+//
+// For sync-to, the "source" lock check runs against the TARGET workspace's
+// committed lock, and the "destination" check runs against CWD's lock on disk.
+//
+// (i)  Without --allow-stale-lock, a stale lock produces a refusal that names
+//      "lock-freshness precondition" AND "--allow-stale-lock".
+// (ii) With --allow-stale-lock, sync-to succeeds despite the stale lock.
+// ===========================================================================
+
+/// Helper: build a fixture where the CWD (ww) has a stale lock for sync-to.
+///
+/// ww's lock file is patched to a fabricated SHA that does not match the
+/// actual server HEAD. Primary's lock is fresh (matches its server HEAD).
+///
+/// When running sync-to from ww → primary: the "destination" lock check fires
+/// on CWD (ww's lock != ww's server HEAD).
+/// With --allow-stale-lock, sync-to proceeds. The target (primary) already
+/// matches ww's server state → no-op convergence → success.
+fn make_shared_with_stale_cwd_for_sync_to(parent: &Path) -> (Workspace, Workspace) {
+    let (primary, ww, initial_sha) = make_shared(parent);
+
+    // Patch ww's lock to a fabricated SHA — stale destination for sync-to.
+    let fake_sha = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+    assert_ne!(fake_sha, initial_sha.as_str());
+    write_lock(&ww.project_dir, &[(SERVER_PATH, SERVER_URL, fake_sha)]);
+
+    (primary, ww)
+}
+
+/// Helper: build a fixture where the target workspace (primary) has a stale lock.
+///
+/// The stale condition here is "lock ahead of HEAD": primary's committed lock
+/// records C2, but primary's server is reset back to C1. Ww's server is at C2
+/// (ahead of primary's current HEAD, which is C1). This is the "intentionally
+/// ahead" stale-lock scenario.
+///
+/// Stale check on target: committed lock=C2, server HEAD=C1 → fires.
+/// With --allow-stale-lock + strategy=ff: snapshot reads lock=C2; ww is at C2
+/// (strictly ahead of C1 which is primary's server HEAD); step 3 advances
+/// primary's server from C1 to C2 → success.
+fn make_shared_with_stale_target_for_sync_to(parent: &Path) -> (Workspace, Workspace) {
+    let (primary, ww, initial_sha) = make_shared(parent);
+
+    // Step 1: advance primary's server to C2 and commit C2 to ww's worktree
+    // (ww's branch ww/server starts at C1 which is primary's initial commit).
+    let c2 = make_commit(
+        &primary.server_dir,
+        "advance.txt",
+        "advance\n",
+        "primary: advance to C2",
+    );
+
+    // ww's server (worktree from primary) can reach C2 via the shared object db.
+    // Fast-forward ww's worktree branch to C2 so ww is also at C2.
+    git(&["merge", "--ff-only", &c2], &ww.server_dir);
+
+    // Update ww's lock to C2 and commit.
+    write_lock(&ww.project_dir, &[(SERVER_PATH, SERVER_URL, &c2)]);
+    git(&["add", "rwv.lock"], &ww.project_dir);
+    git(&["commit", "-m", "lock: ww at C2"], &ww.project_dir);
+
+    // Update primary's lock to C2 and commit.
+    write_lock(&primary.project_dir, &[(SERVER_PATH, SERVER_URL, &c2)]);
+    git(&["add", "rwv.lock"], &primary.project_dir);
+    git(
+        &["commit", "-m", "lock: primary at C2"],
+        &primary.project_dir,
+    );
+
+    // Now reset primary's server back to C1 (simulate rollback or out-of-sync).
+    // primary's committed lock still says C2, but server HEAD is now C1 → stale.
+    git(&["reset", "--hard", &initial_sha], &primary.server_dir);
+
+    // Verify invariant: primary lock=C2, server=C1 (stale); ww lock=C2, server=C2 (fresh).
+    assert_ne!(
+        git_out(&["rev-parse", "HEAD"], &primary.server_dir),
+        c2,
+        "primary server must be at C1, not C2, after reset"
+    );
+    assert_eq!(
+        git_out(&["rev-parse", "HEAD"], &primary.server_dir),
+        initial_sha,
+        "primary server must be at initial_sha after reset"
+    );
+
+    (primary, ww)
+}
+
+// ---------------------------------------------------------------------------
+// Stale CWD (destination) lock for sync-to
+// ---------------------------------------------------------------------------
+
+/// (i) Stale CWD lock on sync-to names "lock-freshness precondition" AND
+/// "--allow-stale-lock".
+#[test]
+fn sync_to_stale_cwd_lock_names_condition_and_flag() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (primary, ww) = make_shared_with_stale_cwd_for_sync_to(tmp.path());
+
+    let assert = rwv()
+        .args(["sync-to", &primary.root.to_string_lossy()])
+        .current_dir(&ww.root)
+        .assert()
+        .failure();
+    let stderr = String::from_utf8_lossy(&assert.get_output().stderr).into_owned();
+
+    assert!(
+        stderr.contains("lock-freshness precondition"),
+        "sync-to stale-CWD refusal must name 'lock-freshness precondition'; got:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("--allow-stale-lock"),
+        "sync-to stale-CWD refusal must name '--allow-stale-lock'; got:\n{stderr}"
+    );
+}
+
+/// (ii) --allow-stale-lock bypasses the CWD stale-lock precondition for sync-to.
+#[test]
+fn sync_to_allow_stale_lock_bypasses_cwd_precondition() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (primary, ww) = make_shared_with_stale_cwd_for_sync_to(tmp.path());
+
+    // Use --strategy=ff: ww's server is at the same SHA as primary's lock,
+    // so the convergence step is a no-op and ff succeeds.
+    rwv()
+        .args([
+            "sync-to",
+            &primary.root.to_string_lossy(),
+            "--allow-stale-lock",
+            "--strategy=ff",
+        ])
+        .current_dir(&ww.root)
+        .assert()
+        .success();
+}
+
+// ---------------------------------------------------------------------------
+// Stale target (source) lock for sync-to
+// ---------------------------------------------------------------------------
+
+/// (i) Stale target lock on sync-to names "lock-freshness precondition" AND
+/// "--allow-stale-lock".
+#[test]
+fn sync_to_stale_target_lock_names_condition_and_flag() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (primary, ww) = make_shared_with_stale_target_for_sync_to(tmp.path());
+
+    let assert = rwv()
+        .args(["sync-to", &primary.root.to_string_lossy()])
+        .current_dir(&ww.root)
+        .assert()
+        .failure();
+    let stderr = String::from_utf8_lossy(&assert.get_output().stderr).into_owned();
+
+    assert!(
+        stderr.contains("lock-freshness precondition"),
+        "sync-to stale-target refusal must name 'lock-freshness precondition'; got:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("--allow-stale-lock"),
+        "sync-to stale-target refusal must name '--allow-stale-lock'; got:\n{stderr}"
+    );
+}
+
+/// (ii) --allow-stale-lock bypasses the target stale-lock precondition for sync-to.
+///
+/// Fixture: primary's committed lock says C2 but primary's server was reset
+/// to C1. Ww's server is at C2. With --allow-stale-lock, the stale check is
+/// skipped; snapshot reads primary's committed lock (C2) for convergence; ww
+/// is already at C2 (step 1 is a no-op); step 3 FF-advances primary's server
+/// from C1 to C2 (C1 is ancestor of C2) → success.
+#[test]
+fn sync_to_allow_stale_lock_bypasses_target_precondition() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (primary, ww) = make_shared_with_stale_target_for_sync_to(tmp.path());
+
+    // Default strategy (rebase): step 1 rebases ww against primary's lock
+    // state (C2); ww is already at C2, so step 1 is a no-op. Step 3 then
+    // FF-advances primary's server from C1 to C2.
+    rwv()
+        .args([
+            "sync-to",
+            &primary.root.to_string_lossy(),
+            "--allow-stale-lock",
+        ])
+        .current_dir(&ww.root)
+        .assert()
+        .success();
+}

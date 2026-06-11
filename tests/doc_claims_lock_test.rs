@@ -52,9 +52,7 @@ fn git_run(args: &[&str], dir: &Path) -> String {
 
 /// Create a minimal workspace: one manifest repo with a single commit.
 /// Returns (workspace_root, project_dir, initial_head_sha).
-fn make_workspace_with_repo(
-    tmp: &Path,
-) -> (std::path::PathBuf, std::path::PathBuf, String) {
+fn make_workspace_with_repo(tmp: &Path) -> (std::path::PathBuf, std::path::PathBuf, String) {
     let root = tmp.join("ws");
     std::fs::create_dir_all(root.join("github")).unwrap();
     std::fs::create_dir_all(root.join("projects")).unwrap();
@@ -197,11 +195,17 @@ fn lock_records_local_head_not_remote_tip() {
     // Set up a bare remote and clone it locally.
     let bare = tmp.path().join("server.git");
     std::fs::create_dir_all(&bare).unwrap();
-    git_run(&["init", "--bare", "-b", "main", bare.to_str().unwrap()], tmp.path());
+    git_run(
+        &["init", "--bare", "-b", "main", bare.to_str().unwrap()],
+        tmp.path(),
+    );
 
     // Seed the bare via a temp clone.
     let seed = tmp.path().join("seed");
-    git_run(&["clone", bare.to_str().unwrap(), seed.to_str().unwrap()], tmp.path());
+    git_run(
+        &["clone", bare.to_str().unwrap(), seed.to_str().unwrap()],
+        tmp.path(),
+    );
     std::fs::write(seed.join("README"), "seed\n").unwrap();
     git_run(&["add", "."], &seed);
     git_run(&["commit", "-m", "initial"], &seed);
@@ -228,7 +232,10 @@ fn lock_records_local_head_not_remote_tip() {
     git_run(&["push", "origin", "main"], &seed);
     // Verify the bare is ahead of the local clone.
     let remote_sha = git_run(&["rev-parse", "HEAD"], &seed);
-    assert_ne!(local_sha, remote_sha, "remote must have advanced past local");
+    assert_ne!(
+        local_sha, remote_sha,
+        "remote must have advanced past local"
+    );
 
     // Set up the project.
     let project_dir = root.join("projects/my-app");

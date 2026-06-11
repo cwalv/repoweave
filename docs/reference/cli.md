@@ -4,6 +4,8 @@ Lookup-shaped reference for every `rwv` verb. For conceptual material see the [j
 
 > **CI-enforced artifacts.** `docs/reference/explain/` and `docs/reference/schemas/` are build artifacts generated from rust source (schemars + clap-derive) via `rwv explain`. Do not hand-edit those files — CI fails when they diverge from the source. The source-of-truth templates live at `docs/reference/explain/templates/<verb>.md.tmpl`; to add or correct a verb's reflection output, edit the template or the underlying clap-derive struct.
 
+> **Flag table drift gate.** The `--flag` names in each verb's flag table below are drift-gated by `tests/doc_claims_cli_md_test.rs`: every flag listed here must exist in `rwv <verb> --help`. CI fails if a removed flag is not also removed from the table. Effect descriptions are intentionally hand-maintained and not drift-checked.
+
 ## Verbs
 
 ### `rwv` (bare)
@@ -108,7 +110,7 @@ Absorb `<source>`'s committed state into CWD. `<source>` is required: a workspac
 
 See [sync semantics](../explanation/joints/sync-semantics.md) for the three-phase model and the direction-explicit pair with `rwv sync-to`.
 
-Anchored by `tests/doc_claims_sync_test.rs`.
+Anchored by `tests/doc_claims_sync_test.rs`. Flag table drift-gated by `tests/doc_claims_cli_md_test.rs`.
 
 ### `rwv sync-to [<target>] [...]`
 
@@ -128,7 +130,7 @@ Advance `<target>` to CWD's tip via a three-step orchestration: (1) rebase/merge
 
 See [sync semantics](../explanation/joints/sync-semantics.md) for the full three-step model, strategy semantics, and the `--retire` contract.
 
-Anchored by `tests/doc_claims_sync_test.rs` (shared schema; `$schema` URL differs).
+Anchored by `tests/doc_claims_sync_to_test.rs` (shared schema; `$schema` URL differs). Flag table drift-gated by `tests/doc_claims_cli_md_test.rs`.
 
 ### Direction conventions: `sync` vs. `sync-to`
 
