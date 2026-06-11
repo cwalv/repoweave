@@ -164,9 +164,10 @@ Nothing to abort.
   resolution steps and the `--continue` resume flow
 - [Bring workweave work home](./bring-workweave-work-home.md) — the normal
   `sync-to` landing workflow and what to do when it hits a conflict
-- [rwv abort reference](../reference/explain/abort.md) — full abort semantics,
-  the two-rail verified-restore contract, and foreign-tip violation recovery
-- [rwv sync reference](../reference/explain/sync.md) — `--continue` flag,
-  phase machine, and op-state overrides
-- [rwv sync-to reference](../reference/explain/sync-to.md) — multi-workspace
-  op-state, `--continue`, and step-3 FF-advance failure
+- `rwv explain abort` (rendered at `docs/reference/explain/abort.md`) — full
+  abort semantics, the two-rail verified-restore contract, and foreign-tip
+  violation recovery
+- `rwv explain sync` (rendered at `docs/reference/explain/sync.md`) —
+  `--continue` flag, phase machine, and op-state overrides
+- `rwv explain sync-to` (rendered at `docs/reference/explain/sync-to.md`) —
+  multi-workspace op-state, `--continue`, and step-3 FF-advance failure
