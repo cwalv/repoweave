@@ -66,7 +66,7 @@ Then read [hand task to agent](./how-to/hand-task-to-agent.md) for the harness r
 |---|---|---|
 | **Tutorial** | A first walkthrough | [tutorial.md](./tutorial.md) — one path, no choice points |
 | **How-to** | A focused recipe | [how-to/](./how-to/index.md) — task-shaped, terse |
-| **Explanation** | The "why" and the model | [explanation/](./explanation/lenses/workspace.md) — motivational pages plus cross-cutting concepts |
+| **Explanation** | The "why" and the model | [explanation/](./explanation/index.md) — motivational lenses plus cross-cutting joints |
 | **Reference** | Lookup-shaped facts | [reference/](./reference/cli.md) — verbs, file formats, roles, glossary, integrations |
 
 If you're building or maintaining `rwv` itself, see [contributing/](./contributing/developing.md).

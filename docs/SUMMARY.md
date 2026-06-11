@@ -20,6 +20,7 @@
 
 # Explanation — Lenses
 
+- [Lenses and joints](./explanation/index.md)
 - [Workspace lens](./explanation/lenses/workspace.md)
 - [Monorepo lens](./explanation/lenses/monorepo.md)
 - [Agent lens](./explanation/lenses/agent.md)
@@ -35,6 +36,7 @@
 - [Verb vs composition](./explanation/joints/verb-vs-composition.md)
 - [Verb vs vocabulary](./explanation/joints/verb-vs-vocabulary.md)
 - [VCS as seam](./explanation/joints/vcs-as-seam.md)
+- [File ownership](./explanation/joints/file-ownership.md)
 
 # Reference
 

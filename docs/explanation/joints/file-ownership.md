@@ -26,8 +26,8 @@ Consequences:
   **and** its `read_link` target resolves to `projects/<project>/<file>`. A name claimed by two
   integrations is a hard `Severity::Error` before any symlink mutation.
 
-See [[sync-semantics]] for how the project-repo commit structure interacts with workweave syncing.
-See [[vcs-as-seam]] for the VCS-layer abstraction that makes symlink mechanics portable.
+See [sync-semantics](./sync-semantics.md) for how the project-repo commit structure interacts with workweave syncing.
+See [vcs-as-seam](./vcs-as-seam.md) for the VCS-layer abstraction that makes symlink mechanics portable.
 
 ## Axis 2 — Content ownership
 
@@ -125,9 +125,7 @@ the switch.
 ## The trigger model
 
 The hybrid-merge contract governs *how* rwv authors managed keys. A separate, orthogonal question
-is *when* it authors them. See
-`projects/foundations/docs/repoweave/integration-ownership/trigger-model.md` for the full
-treatment. In brief:
+is *when* it authors them. In brief:
 
 | Verb class | Verbs | Action on managed region |
 |---|---|---|
@@ -182,11 +180,11 @@ Both halves (merge-activate and strip-not-delete-deactivate) must land **in the 
 shipping merge-activate while leaving the old whole-delete deactivate would let the standalone
 deactivate path destroy content the merge protects.
 
-See [[lock-as-derived]] for how lockfiles fit into the fully-owned category.
+See [lock-as-derived](./lock-as-derived.md) for how lockfiles fit into the fully-owned category.
 
 ## Related joints
 
-- [[sync-semantics]] — how project-repo commits and workweave syncing interact with the files
+- [sync-semantics](./sync-semantics.md) — how project-repo commits and workweave syncing interact with the files
   hybrid integrations write.
-- [[lock-as-derived]] — why lockfiles are fully owned, not hybrid.
-- [[vcs-as-seam]] — the VCS-layer abstraction that owns symlink mechanics and replay exclusion.
+- [lock-as-derived](./lock-as-derived.md) — why lockfiles are fully owned, not hybrid.
+- [vcs-as-seam](./vcs-as-seam.md) — the VCS-layer abstraction that owns symlink mechanics and replay exclusion.
