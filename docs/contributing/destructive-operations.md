@@ -31,34 +31,38 @@ Examples in the current tree:
   with actionable error messages.
 - `rwv remove --delete` refuses to delete the canonical store while
   another project's manifest still references the repo.
-- `rwv sync --force` Phase 1' discards commits only after the
+- `rwv sync --discard-local-commits` Phase 1' discards commits only after the
   clean-project precondition has passed; the discarded commits remain
   recoverable via the `refs/rwv/pre-op/<op-id>` savepoint.
 
-### 2. `--force` is informed
+### 2. Named overrides are narrow and informed
 
-When the operator invokes a destructive operation with `--force`, they
-must have been shown — or have had the chance to be shown — what
-would be lost. "Informed" means:
+When the operator invokes a destructive operation with a named override
+flag, they must have been shown — or have had the chance to be shown —
+what would be lost. "Informed" means:
 
 - The output of the refusing path lists the specific lost-work items
   (which commits, which files, which dirty paths). The operator running
-  the operation once without `--force`, reading the refusal, and
-  re-running with `--force` has seen the loss list.
-- `--force` is documented at the verb's CLI surface with a short
+  the operation once without the override, reading the refusal, and
+  re-running with the override has seen the loss list.
+- The override flag is documented at the verb's CLI surface with a short
   one-line description of what consent is being granted. Hidden or
-  undocumented force flags are not informed consent.
-- Adding a new `--force`-gated destructive path requires extending the
+  undocumented override flags are not informed consent.
+- Adding a new override-gated destructive path requires extending the
   refusal output to enumerate the loss, not just signalling that
   something is at risk.
 
-`--force` is a narrow override for one named precondition at a time.
-It does not turn into "disable all checks" — each precondition that
-`--force` is allowed to bypass is enumerated at the call site.
+**The house rule:** a flag's name states what it destroys — consent to
+a consequence, never a category. `--discard-local-commits` names the
+exact loss; the operator reading it knows what they are signing.
+
+Each named override is narrow — it bypasses one named precondition at a
+time. It does not turn into "disable all checks" — each precondition
+that an override bypasses is enumerated at the call site.
 
 ### 3. Discards stay recoverable
 
-Discard-by-design operations — `rwv sync --abort`, `rwv sync --force`,
+Discard-by-design operations — `rwv abort`, `rwv sync --discard-local-commits`,
 ref surgery during phase replay — must keep what they discard
 recoverable where possible, and the operation's documentation must
 say where.
@@ -67,7 +71,7 @@ The current mechanism is **named savepoints**: ref surgery operations
 write a `refs/rwv/pre-op/<op-id>` ref pointing at the pre-operation
 state before any destructive write. The ref namespace is rwv-internal
 (no user ref ever lives under `refs/rwv/`); the ref is tied to a
-specific operation id; and `rwv sync --abort` knows how to roll back
+specific operation id; and `rwv abort` knows how to roll back
 to it.
 
 Operations that *cannot* leave a recoverable artifact — e.g., disk

@@ -138,6 +138,56 @@ Consumed by:
 
 See [workweave hierarchy](../explanation/joints/workweave-hierarchy.md) for one-hop semantics.
 
+## `.rwv-op` — owner op-state record
+
+Written at the **initiating workspace** (the owner) when a `rwv sync` or `rwv sync-to` operation starts. Holds all op parameters plus the current phase. It is the sole copy of mutable op state. Cleared on success, precondition refusal, and after `rwv abort`; preserved on phase failure so `--continue` and `rwv abort` can resume.
+
+Schema v2 (no back-compat with v1; in-flight v1 ops must be resolved with `rwv abort` before upgrading).
+
+```yaml
+id: "1779769917405921588"       # op id, shared with savepoint refs
+verb: sync                       # "sync" | "sync-to"
+strategy: rebase                 # "ff" | "rebase" | "merge"
+source: /abs/path/src
+target: /abs/path/tgt
+retire: false
+phase: replay                    # replay | relock | advance-target | retire
+converged_tips: {}               # written at relock completion; empty before
+overrides: []                    # named overrides supplied at invocation
+started_at: 2026-06-10T21:14:03Z
+```
+
+| Field | Description |
+|---|---|
+| `id` | Unique operation identifier (nanosecond wall-clock string). Shared with savepoint refs and lease files |
+| `verb` | Which top-level verb started this op: `sync` or `sync-to` |
+| `strategy` | Strategy supplied to the op: `ff`, `rebase`, or `merge` |
+| `source` | Absolute path of the source workspace |
+| `target` | Absolute path of the target workspace. For `sync`: same as the owner workspace. For `sync-to`: the named target workspace |
+| `retire` | Whether `--retire` was passed |
+| `phase` | Current phase in execution order: `replay` → `relock` → `advance-target` (sync-to only) → `retire` (`--retire` only). Persisted before entering each phase so a crash re-enters the same phase on resume |
+| `converged_tips` | Per-repo converged tips written at relock completion. Key: repo path relative to workspace root. Value: SHA string. Consumed by advance-target and abort's HEAD check |
+| `overrides` | Named overrides supplied at invocation (e.g. `allow-stale-lock`, `discard-local-commits`). Recorded for audit fidelity on `--continue` — resume re-applies the same consents |
+| `started_at` | RFC3339 UTC timestamp when the op started |
+
+Lives at the workspace root (same directory as `.rwv-active`). Source: `src/op_state.rs`.
+
+## `.rwv-op-lease` — thin lease pointer
+
+Written at every **other workspace the op mutates** (never at the owner workspace). Immutable once written. Provides mutex semantics (prevents concurrent ops on the same workspace) and a pointer back to the owner record for `--continue` and `rwv abort`. Cleared after the owning op completes or is aborted.
+
+```yaml
+id: "1779769917405921588"
+owner: /abs/path/to/owner/workspace
+```
+
+| Field | Description |
+|---|---|
+| `id` | Unique operation identifier. Same as the owner record's `id` |
+| `owner` | Absolute path to the owner workspace. Follow this pointer to load the full op state |
+
+Lives at the workspace root of the non-owner mutated workspace. Source: `src/op_state.rs`.
+
 ## Directory layout
 
 repoweave uses a flat, provenance-based layout for repos: `{registry}/{owner}/{repo}/`. Project directories live under `projects/{name}/`.

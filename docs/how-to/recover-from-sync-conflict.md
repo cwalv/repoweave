@@ -32,11 +32,11 @@ git add <files>
 git rebase --continue
 ```
 
-Then re-run the same sync command with `--continue`:
+Then resume by running `rwv sync` with `--continue` from the workspace root. All parameters (source, strategy, overrides) are read from the in-progress op-state file — do not pass them again:
 
 ```bash
 cd <workspace-root>
-rwv sync <source> --strategy rebase --continue
+rwv sync --continue
 ```
 
 Already-advanced repos are no-ops. The fixed repo finishes, then any remaining repos proceed. Phase 3 regenerates `rwv.lock` at the end.

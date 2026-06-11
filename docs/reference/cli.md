@@ -39,6 +39,9 @@ Anchored by `tests/doc_claims_fetch_test.rs`.
 | `--role` / `--repo` | Selector filters |
 | `-j N` | Parallel per-repo workers (default: min(nproc, 8)) |
 | `--json` | Structured output: envelope under `-j 1`, NDJSON under `-j > 1` |
+| `--dirty` | Allow update with uncommitted changes in repos when relocking |
+| `--commit` | Commit `rwv.lock` after writing it |
+| `--project <name>` | Operate on this project instead of the active project (does not change `.rwv-active`) |
 
 `--json` emits one record per repo with `path`, `absolute_path`, `branch`, `kind` (`updated` / `up-to-date` / `failed`), `old_sha`, `new_sha`, and `error`. See `rwv explain update`.
 
@@ -52,7 +55,9 @@ Reads HEAD from each repo; records the tag name if HEAD is tagged, otherwise the
 
 | Flag | Effect |
 |---|---|
-| `--dirty` | Lock anyway when working trees have uncommitted changes |
+| `--dirty` | Allow locking repos with uncommitted changes |
+| `--commit` | Commit `rwv.lock` after writing it |
+| `--project <name>` | Operate on this project instead of the active project (does not change `.rwv-active`) |
 
 Pure git SHA snapshot — no integration hooks fire. To refresh ecosystem lockfiles (`node_modules`, `.venv`, etc.) after membership changes, run `rwv activate`.
 
@@ -95,8 +100,11 @@ Absorb `<source>`'s committed state into CWD. `<source>` is required: a workspac
 | Flag | Effect |
 |---|---|
 | `--strategy ff\|rebase\|merge` | Default `ff`. Applies uniformly to project and manifest repos; `rwv.lock` is excluded from project-repo merge inputs and regenerated in Phase 3 |
-| `--force` | Bypass lock-freshness precondition; hard-reset project repo to source tip |
+| `--allow-stale-lock` | Consent: skip the lock-freshness precondition on both source and destination |
+| `--discard-local-commits` | Consent: discard CWD's project commits not reachable from source, hard-resetting the project repo to source's tip. Pre-sync state preserved in `refs/rwv/pre-op/<id>` |
+| `--continue` | Resume a sync interrupted mid-op. All parameters are read from the in-progress op-state file; no other flags may be passed alongside `--continue` (except `--project`) |
 | `--json` / `-j N` | Structured output / parallel sync (NDJSON when N > 1) |
+| `--project <name>` | Operate on this project instead of the active project (does not change `.rwv-active`) |
 
 See [sync semantics](../explanation/joints/sync-semantics.md) for the three-phase model and the direction-explicit pair with `rwv sync-to`.
 
@@ -112,9 +120,11 @@ Advance `<target>` to CWD's tip via a three-step orchestration: (1) rebase/merge
 |---|---|
 | `--strategy ff\|rebase\|merge` | Default `rebase` (unlike `rwv sync`). Step 3 is always FF regardless |
 | `--retire` | Delete the workweave on success. Requires a workweave context; warning + no-op in a primary weave |
-| `--force` | Bypass lock-freshness precondition |
-| `--continue` | Resume after resolving a mid-op conflict |
+| `--allow-stale-lock` | Consent: skip the lock-freshness precondition on both source and destination |
+| `--discard-local-commits` | Consent: discard CWD's project commits not reachable from target, hard-resetting the project repo to target's tip. Pre-sync state preserved in `refs/rwv/pre-op/<id>` |
+| `--continue` | Resume after resolving a mid-op conflict. All parameters are read from the in-progress op-state file |
 | `--json` / `-j N` | Structured output / parallel step-1 sync (NDJSON when N > 1) |
+| `--project <name>` | Operate on this project instead of the active project (does not change `.rwv-active`) |
 
 See [sync semantics](../explanation/joints/sync-semantics.md) for the full three-step model, strategy semantics, and the `--retire` contract.
 
@@ -201,7 +211,9 @@ Create a workweave: worktrees on ephemeral branches for each repo, generated eco
 
 | Flag | Effect |
 |---|---|
-| `--from <source>` | Fork from a specific source (default: CWD's active workspace) |
+| `--from <source>` | Fork from a specific source (default: CWD's active workspace). Accepts `primary`, an absolute or relative path, or omitted to fork from CWD's active workspace |
+| `--force` | Destroy an existing workweave at this path before recreating. Without this flag, re-invoking `create` against an existing workweave is the idempotent path. Refuses if the existing workweave has uncommitted changes |
+| `--capture-dirty` | Allow creation when the source project directory has uncommitted changes. The dirty state is captured into the new workweave's project worktree |
 
 Workweaves live at `<parent>/.workweaves/<project>--<name>/`.
 
