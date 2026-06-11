@@ -27,8 +27,8 @@ Three categories qualify:
 1. **Per-repo policy from role.** The manifest assigns each repo a
    role (`primary`/`owned`, `fork`, `dependency`, `reference`). A
    verb's behavior depends on role-specific policy that the VCS
-   doesn't know about — e.g. "skip fork repos when pushing because the
-   source-of-record is upstream, not here."
+   doesn't know about — e.g. "exclude dependency and reference repos
+   from the default push scope because they are not operator-writable."
 2. **Cross-repo dependency ordering.** The verb must do work in repo A
    before doing it in repo B because A's state is a precondition for
    the eventual recorded state. The lock-as-precondition relationship
@@ -71,9 +71,9 @@ shrinks (e.g., when a composition recipe gets cleaner upstream).
 Reads `rwv.lock`, materializes constituent clones to the recorded
 SHAs. Bootstrap when no lock exists.
 
-- *Per-repo policy from role?* Yes — `Role::Fork` clones use
-  `upstream` as the remote name (so a stray `git push` doesn't target
-  the source-of-record); other roles use `origin`.
+- *Per-repo policy from role?* Yes — role determines which repos are
+  fetched and to which recorded SHA; the VCS impl routes all roles
+  through `origin` but the manifest knows which SHAs to target.
 - *Cross-repo dependency ordering?* The project repo must come first
   to read the lock; manifest repos follow.
 - *rwv-owned state?* The lock is read.
@@ -106,13 +106,14 @@ the snapshot logic and lock format.
 
 ### `rwv push`
 
-Pushes each non-fork manifest repo, then the project repo last;
-refuses on lock mismatch.
+Pushes each manifest repo in the default scope (owned + fork), then
+the project repo last; refuses on lock mismatch.
 
-- *Per-repo policy from role?* Yes — `Role::Fork` is skipped at the
-  loop level (anchored by `tests/doc_claims_push_test.rs`). Pushing
-  to a fork's `upstream` would target the source-of-record, which is
-  almost never what the user wants.
+- *Per-repo policy from role?* Yes — `Role::Dependency` and
+  `Role::Reference` are excluded from the default push scope (anchored
+  by `tests/doc_claims_push_test.rs`). Dependency and reference repos
+  return 403 against upstreams the operator doesn't own. Fork repos
+  push just like owned repos; both use `origin`.
 - *Cross-repo ordering?* Yes — project repo last. The committed lock
   must never reference unpushed manifest SHAs (otherwise
   collaborators' `rwv fetch` hits "object missing" against
@@ -189,7 +190,7 @@ Proposed as a symmetry-with-push counterpart: "fetch and merge in all
 manifest repos."
 
 - *Per-repo policy from role?* Same role-conventional remote
-  selection — fork uses `upstream`, others use `origin`.
+  selection as `rwv fetch` (all roles use `origin` in the git impl).
 - *Cross-repo ordering?* No — pull is per-repo independent.
 - *rwv-owned state?* The lock would have to be updated (pulling
   changes the manifest tips); but at that point the verb is just
@@ -258,8 +259,8 @@ not as a runner.
 
 ## Anchoring
 
-- `rwv push` Role::Fork skip is anchored by
-  `tests/doc_claims_push_test.rs`.
+- `rwv push` default scope (owned + fork; dependency/reference
+  excluded) is anchored by `tests/doc_claims_push_test.rs`.
 - `rwv push` project-repo-last ordering is exercised by
   `tests/push_test.rs`.
 - `rwv update` lock-snapshot behavior is anchored by

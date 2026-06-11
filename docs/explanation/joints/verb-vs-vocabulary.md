@@ -46,14 +46,16 @@ analogue.
 
 ### `rwv push` (not `publish`)
 
-Pure transmit. Pushes commits in every manifest repo, then the project
-repo last; refuses on lock mismatch; skips `Role::Fork`. The lock is
-**read** as a precondition (HEAD must match the recorded SHA) but never
-mutated. The audience expectation is "behaves like `git push` plus
-manifest-knowledge ordering" — exactly what it does. `publish` would
-suggest a package-manager release operation (registry upload, version
-bump, side effects beyond transmit) that doesn't match the verb's
-behavior. VCS verb.
+Pure transmit. Pushes commits in manifest repos within the default
+scope (owned + fork), then the project repo last; refuses on lock
+mismatch. Dependency and reference repos are excluded from the default
+scope (not operator-writable). The lock is **read** as a precondition
+(HEAD must match the recorded SHA) but never mutated. The audience
+expectation is "behaves like `git push` plus manifest-knowledge
+ordering" — exactly what it does. `publish` would suggest a
+package-manager release operation (registry upload, version bump, side
+effects beyond transmit) that doesn't match the verb's behavior. VCS
+verb.
 
 ### `rwv update` (not `pull`)
 

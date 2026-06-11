@@ -35,8 +35,8 @@ Vcs impl (inner).
 Each of these is a place where a single concept manifests differently
 per VCS. Centralizing the concept-to-detail mapping in the Vcs impl
 keeps rwv core readable: the higher layer says "push this branch on the
-remote associated with this role" without knowing that git calls the
-remote `upstream` for forks.
+remote associated with this role" without needing to know which remote
+name the VCS implementation uses for a given role.
 
 The trait surface lives in `src/vcs.rs`; the git implementation lives
 in `src/git.rs`. Future implementations (jj, hg, sl) would each own
@@ -65,16 +65,18 @@ back: the abstraction belongs in the Vcs trait.
 
 ## Worked examples
 
-### (a) `Vcs::resolve_branch_on_remote` + role-aware remote naming
+### (a) `Vcs::resolve_branch_on_remote` + role-accepting remote resolution
 
 **Concept:** "look up branch X on whichever remote a repo of this role
-uses." For git, fork repos use `upstream` as the remote name (so a stray
-`git push` does not target the source-of-record); other roles use
-`origin`.
+uses." The trait accepts a `Role` so future VCS impls can route
+differently per role. The git impl accepts and ignores the role: all
+clones use `origin` regardless of role (the `role` parameter is kept
+as a signal value — a future VCS impl could route differently).
 
 **Anchor:** commit `1b76456`.
 
-**Trait surface** (`src/vcs.rs:430`, `src/vcs.rs:442`):
+**Trait surface** (`Vcs::clone_with_role`, `Vcs::resolve_branch_on_remote`
+in `src/vcs.rs`):
 
 ```rust
 fn clone_with_role(&self, url: &str, dest: &Path, role: Role)
@@ -88,11 +90,13 @@ fn resolve_branch_on_remote(
 ) -> Result<ResolvedRevisionId, VcsError>;
 ```
 
-**Git impl** (`src/git.rs:241`, `src/git.rs:245`):
+**Git impl** (`GitVcs::clone_with_role`, `GitVcs::resolve_branch_on_remote`
+in `src/git.rs`):
 
 ```rust
 fn clone_with_role(&self, url: &str, dest: &Path, role: Role) -> Result<(), VcsError> {
-    self.clone_repo_with_remote_name(url, dest, remote_name_for_role(role))
+    let _ = role; // role label kept for signal value; all clones use `origin`
+    self.clone_repo_with_remote_name(url, dest, "origin")
 }
 
 fn resolve_branch_on_remote(
@@ -101,31 +105,19 @@ fn resolve_branch_on_remote(
     role: Role,
     branch: &RefName,
 ) -> Result<ResolvedRevisionId, VcsError> {
-    let qualified = format!("{}/{}", remote_name_for_role(role), branch.as_str());
+    let _ = role; // all remotes use `origin`
+    let qualified = format!("origin/{}", branch.as_str());
     self.resolve_revision(repo, &qualified)
-}
-```
-
-The role-to-remote-name function (`remote_name_for_role`,
-`src/git.rs:139`) is a single helper:
-
-```rust
-fn remote_name_for_role(role: Role) -> &'static str {
-    match role {
-        Role::Fork => "upstream",
-        Role::Primary | Role::Dependency | Role::Reference => "origin",
-    }
 }
 ```
 
 **Why this is the seam shape.** Before the refactor, the
 `origin/<branch>` qualifier was spelled out in multiple call sites
-inside `update.rs` / `fetch.rs`, each of which had to encode the
-role-to-remote convention independently. Pulling the convention into
-one helper and exposing role-aware resolution as a trait method means:
+inside `update.rs` / `fetch.rs`. Exposing role-aware resolution as a
+trait method means:
 
-- rwv core never spells `origin` or `upstream`.
-- The convention is decided once, in one place.
+- rwv core never spells `origin` directly.
+- The remote convention is decided once, in the VCS impl.
 - A different VCS impl can choose a different convention (jj's `default`
   / hg's `default-push`) without rwv core caring.
 
@@ -144,18 +136,18 @@ rebase --continue`" — specific commands a user will type.
 
 **Anchor:** commit `26ba786`.
 
-**Trait surface** (`src/vcs.rs:561`):
+**Trait surface** (`Vcs::conflict_resolution_hint` in `src/vcs.rs`):
 
 ```rust
 fn conflict_resolution_hint(&self, op: ConflictOp) -> String;
 ```
 
-`ConflictOp` is a small enum in the same file (`src/vcs.rs:182`) that
-distinguishes the three in-flight ops sync's project-repo path can
-leave behind: `Rebase`, `Merge`, `CherryPick`.
+`ConflictOp` is a small enum in the same file (`ConflictOp` in
+`src/vcs.rs`) that distinguishes the three in-flight ops sync's
+project-repo path can leave behind: `Rebase`, `Merge`, `CherryPick`.
 
-**Git impl** (`src/git.rs:477` plus the free helper at
-`src/git.rs:153`):
+**Git impl** (`GitVcs::conflict_resolution_hint` plus the free helper
+`git_conflict_resolution_hint` in `src/git.rs`):
 
 ```rust
 fn conflict_resolution_hint(&self, op: ConflictOp) -> String {
@@ -174,7 +166,7 @@ fn git_conflict_resolution_hint(op: ConflictOp) -> String {
 ```
 
 **Call sites** in sync use the trait method to compose conflict-bail
-messages — e.g., `src/sync.rs:803`:
+messages (search for `conflict_resolution_hint` in `src/sync.rs`):
 
 ```rust
 let hint = GitVcs.conflict_resolution_hint(op);
@@ -207,8 +199,8 @@ config wired up per-rebase.
 
 **Anchor:** commit `d29bb2f`.
 
-**Trait surface** (`src/vcs.rs:601`, with the companion query at
-`src/vcs.rs:613`):
+**Trait surface** (`Vcs::set_replay_exclusion` and the companion
+`Vcs::has_replay_exclusion` in `src/vcs.rs`):
 
 ```rust
 fn set_replay_exclusion(&self, repo: &Path, path: &Path) -> Result<(), VcsError>;
@@ -216,12 +208,12 @@ fn set_replay_exclusion(&self, repo: &Path, path: &Path) -> Result<(), VcsError>
 fn has_replay_exclusion(&self, repo: &Path, path: &Path) -> Result<bool, VcsError>;
 ```
 
-**Git impl** (`src/git.rs:573`): appends `<path> merge=ours` to
-`<repo>/.gitattributes`, idempotently. The `merge.ours.driver=true`
-shell hook (which makes the `ours` driver succeed without modifying
-the merged file) is set inline at `src/git.rs:519`-ish during the
-rebase command itself, so no persistent `.git/config` change is
-required.
+**Git impl** (`GitVcs::set_replay_exclusion` in `src/git.rs`): appends
+`<path> merge=ours` to `<repo>/.gitattributes`, idempotently. The
+`merge.ours.driver=true` shell hook (which makes the `ours` driver
+succeed without modifying the merged file) is set inline inside
+`GitVcs::rebase` during the rebase command itself, so no persistent
+`.git/config` change is required.
 
 **Used by** [sync-semantics](./sync-semantics.md)'s Phase 1' to keep
 `rwv.lock` out of the merge inputs. The lock is regenerated from
@@ -250,31 +242,32 @@ the missing entry. The detection logic in core stays VCS-agnostic.
 **Concept:** push the currently-checked-out branch on the remote
 associated with the given role. For git, this resolves the current
 branch via `current_ref` (refusing detached HEAD with a typed
-`CommandFailed`), selects the remote via the role convention from
-example (a), and runs `git push <remote> <branch>`.
+`CommandFailed`), ignores the role (all roles push to `origin` — see
+example (a)), and runs `git push origin <branch>`.
 
 **Anchor:** commit `6066ce1`.
 
-**Trait surface** (`src/vcs.rs:471`):
+**Trait surface** (`Vcs::push_with_role` in `src/vcs.rs`):
 
 ```rust
 fn push_with_role(&self, repo: &Path, role: Role, force: bool)
     -> Result<(), VcsError>;
 ```
 
-**Git impl** (`src/git.rs:255`): see the file for the full body. The
-relevant detail is that the impl owns:
+**Git impl** (`GitVcs::push_with_role` in `src/git.rs`): see the file
+for the full body. The relevant detail is that the impl owns:
 
 - The `current_ref` lookup and the detached-HEAD failure mode.
-- The role-to-remote selection (`remote_name_for_role`, shared with
-  examples (a) and (d)).
+- The remote name selection (all roles push to `origin`; the `role`
+  parameter is accepted and ignored, kept for signal value and future
+  VCS impl flexibility — see example (a)).
 - The `--force` flag spelling.
 - The argument shape `git push <remote> <branch>`.
 
 `src/push.rs` (the verb-level orchestrator) does the cross-repo work —
 walking the manifest, applying selectors, ordering project-repo last,
 checking the lock-state precondition — but never invokes git directly.
-It calls `git.push_with_role(repo, role, force)`.
+It calls `vcs.push_with_role(repo, role, force)`.
 
 **Why this is the seam shape.** Before this method existed, the
 push-loop draft constructed `git push` argument strings inline. Per the
@@ -282,19 +275,19 @@ verbs design discussion ("the trait captures the per-role push policy
 — refs come from the manifest, not from `git push` argument
 parsing"), the right shape was a trait method whose contract names the
 *intent* ("push this branch on the role-conventional remote") and
-hides the *mechanism* ("git push origin <branch>" or "git push
-upstream <branch>" or some entirely different command on another VCS).
+hides the *mechanism* ("git push origin <branch>" or some entirely
+different command on another VCS).
 
 Note the trait-level Fork policy is *neutral*:
-`push_with_role(Role::Fork)` will push to `upstream` (since that is
-what the role convention selects). The "skip forks with an info line"
-caller-side policy lives in `src/push.rs`. The trait stays a thin
-shell over the VCS surface; the policy of which roles to push from
-the loop lives where the loop lives. The asymmetry is deliberate: it
-keeps the trait composable (a future verb that *did* want to push
-forks could call `push_with_role(Role::Fork)` without surprises) and
-keeps verb-level policy debuggable (the "skip forks" choice is one
-visible line in one file).
+`push_with_role(Role::Fork)` pushes to `origin` just like any other
+role. The plan-time default scope (owned + fork; dependency and
+reference excluded before the loop) lives in `src/push.rs`. The trait
+stays a thin shell over the VCS surface; the policy of which roles to
+include in the push loop lives where the loop lives. The asymmetry is
+deliberate: it keeps the trait composable (a future verb that wants to
+push only owned repos calls `push_with_role` after filtering out forks)
+and keeps verb-level policy debuggable (the default-scope choice is one
+visible location in `src/push.rs`).
 
 ## What this means for code review
 
@@ -305,7 +298,8 @@ Concrete checklist for reviewers when a PR adds VCS-aware code:
    `src/git.rs`, send it back — the wrapper belongs in the Vcs impl.
 2. **Does the PR introduce a remote name?** ("origin", "upstream",
    "fork".) If outside `src/git.rs`, send it back — the naming
-   policy is `remote_name_for_role`.
+   policy belongs in the VCS impl (currently `GitVcs`, which uses
+   `origin` for all roles).
 3. **Does the PR introduce a `.git*` file convention?**
    (`.gitattributes`, `.gitignore`, `.gitmodules`.) If outside
    `src/git.rs`, send it back — the file convention belongs in the
@@ -333,8 +327,9 @@ sync codepath that depends on examples (b) and (c) is covered by:
 The push codepath (example (d)) is covered by:
 
 - `tests/push_test.rs` — direct exercises of the push loop.
-- `tests/doc_claims_push_test.rs` — anchors the documented Role::Fork
-  skip and the project-repo-last ordering.
+- `tests/doc_claims_push_test.rs` — anchors fork-pushes-like-owned,
+  dependency/reference excluded from default scope, and
+  project-repo-last ordering.
 
 ## Related joints
 
