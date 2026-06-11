@@ -114,8 +114,8 @@ The behaviors above are tool behaviors, anchored in source and tests:
 
 - `rwv lock` does not run integrations:
   `src/lock.rs` — no integration-runner call in the lock codepath.
-  (A `doc_claims_lock_test.rs` covering this is not yet in tree;
-  cite it once it lands.)
+  Anchored by `tests/doc_claims_lock_test.rs` (all three claims:
+  no integration hooks, overwrites prior lock, no network fetch).
 - `rwv.lock` exclusion during sync's project-repo replay:
   `tests/e2e_two_workweaves_test.rs` covers the n-way landing contract
   (lock-only changes, doc changes, genuine conflict).
