@@ -266,7 +266,7 @@ not as a runner.
 - `rwv update` lock-snapshot behavior is anchored by
   `tests/doc_claims_update_test.rs`.
 - The composition recipes that replace candidate verbs live in
-  `how-to/run-a-command-across-repos.md` (forthcoming Phase 3).
+  [how-to/run-a-command-across-repos.md](../../how-to/run-a-command-across-repos.md).
 
 ## Reference for proposers
 
