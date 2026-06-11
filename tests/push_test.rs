@@ -383,6 +383,15 @@ fn push_refuses_from_workweave() {
         stderr.contains("workweave"),
         "error should mention workweave; got: {stderr}"
     );
+    // Hint must name sync-to, not the wrong direction `sync primary`.
+    assert!(
+        stderr.contains("sync-to"),
+        "error hint must name `rwv sync-to` (not `rwv sync primary`); got: {stderr}"
+    );
+    assert!(
+        !stderr.contains("sync primary"),
+        "error hint must NOT say `sync primary` (wrong direction); got: {stderr}"
+    );
 }
 
 // ============================================================================

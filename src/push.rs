@@ -150,7 +150,7 @@ pub fn run_push(
         anyhow::bail!(
             "rwv push: refusing to push from workweave '{}'; \
              workweave branches shouldn't leak to shared remotes. \
-             Run `rwv sync primary` to land changes on primary first.",
+             Run `rwv sync-to` from the workweave to land changes on the parent first.",
             name
         );
     }
