@@ -25,6 +25,15 @@ Consequences:
 - A root symlink is removed only when its name is in the owning integration's declared file set
   **and** its `read_link` target resolves to `projects/<project>/<file>`. A name claimed by two
   integrations is a hard `Severity::Error` before any symlink mutation.
+- Surfacing is checked **framework-side**, not per-integration. The same
+  `generated_files() ∪ managed_files()` union that drives symlink creation has a second consumer:
+  `rwv doctor` asserts every file in the union exists at the weave root as a symlink resolving to
+  `projects/<project>/<file>`, and `rwv doctor --fix` re-surfaces any that are missing or
+  mis-resolved. This catches divergence the per-integration `verify()` (Axis-2 content drift)
+  cannot see — a manual `rm`, an interrupted create, a manifest that gained a file after a
+  workweave was created, or an integration enabled in an existing workweave. The repair is a pure
+  re-surface (symlink (re)creation bound to the current weave directory); it never re-selects the
+  active project, so it is valid inside a workweave where `rwv activate` is refused.
 
 See [sync-semantics](./sync-semantics.md) for how the project-repo commit structure interacts with workweave syncing.
 See [vcs-as-seam](./vcs-as-seam.md) for the VCS-layer abstraction that makes symlink mechanics portable.
@@ -131,7 +140,7 @@ is *when* it authors them. In brief:
 |---|---|---|
 | **Intent** | `add`, `remove`, `update`, `lock` | Regenerate and commit |
 | **Context** | `activate`, `fetch`, workweave-create | Surface (symlink, always) + verify-and-warn; never author |
-| **Recovery** | `rwv doctor` / `rwv doctor --fix` | Report drift; `--fix` regenerates |
+| **Recovery** | `rwv doctor` / `rwv doctor --fix` | Report Axis-2 content drift **and** Axis-1 surfacing gaps; `--fix` regenerates content and re-surfaces symlinks |
 
 `activate` creates the symlink unconditionally (Axis-1 surfacing). It never authors the committed
 file. The committed file is always consistent with committed `rwv.yaml` + `rwv.lock` by

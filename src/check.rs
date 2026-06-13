@@ -3509,6 +3509,61 @@ pub fn run_check(
         } else {
             all_issues.extend(fixable_issues);
         }
+
+        // Framework-level Axis-1 surfacing check (fo-huwqqc). Distinct from the
+        // per-integration `verify()` pass above, which only sees Axis-2 content
+        // drift: nothing there asserts that the *symlinks* the surfacing layer
+        // should have created actually exist and resolve. This pass is a SECOND
+        // CONSUMER of the same `generated_files() ∪ managed_files()` union that
+        // drives symlink CREATION — it lives in the framework (byte-identical
+        // across all integrations) rather than being duplicated into each
+        // `verify()`. It scopes to `workspace_dir` (= `ctx.active_path()`), so
+        // run at primary it checks primary's surfacing and run in a workweave it
+        // checks that workweave's. The recovery hatch is `--fix`, which re-runs
+        // the surfacing PRIMITIVE (`surface_symlinks`) bound to this weave
+        // directory — NOT `activate_intent`, since project re-selection is a
+        // primary-only step-1 concept that fo-9fnae forbids in a workweave.
+        let in_workweave = matches!(ctx.location, WorkspaceLocation::Workweave { .. });
+        let surfacing_issues = crate::activate::verify_surfacing(
+            &workspace_dir,
+            &project.name,
+            &project.manifest,
+            in_workweave,
+        );
+        let (surf_fixable, surf_user_held): (Vec<_>, Vec<_>) =
+            surfacing_issues.into_iter().partition(|i| i.safe_to_fix);
+        // A real file/dir occupying a surfacing path is user-held — never
+        // auto-clobbered; always surfaced as-is.
+        all_issues.extend(surf_user_held);
+        if fix && !surf_fixable.is_empty() {
+            // Re-surface by re-running the step-2 surfacing primitive against
+            // this weave directory. Unlike `activate_intent`, this writes no
+            // `.rwv-active` and authors no content — it only (re)creates the
+            // owner-scoped symlinks, which is valid in any weave (it is exactly
+            // what workweave-create runs at creation).
+            match crate::activate::surface_symlinks(
+                &workspace_dir,
+                &project.name,
+                &project.manifest,
+                in_workweave,
+            ) {
+                Ok(()) => println!(
+                    "[fixed] core: re-surfaced symlinks for project `{}` (missing/mis-resolved surfacing)",
+                    project.name
+                ),
+                Err(e) => all_issues.push(Issue {
+                    integration: "core".into(),
+                    severity: Severity::Error,
+                    message: format!(
+                        "doctor --fix: failed to re-surface symlinks for `{}`: {e}",
+                        project.name
+                    ),
+                    safe_to_fix: true,
+                }),
+            }
+        } else {
+            all_issues.extend(surf_fixable);
+        }
     }
 
     // Index-drift + working-tree-drift detection.

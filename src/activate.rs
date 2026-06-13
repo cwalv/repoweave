@@ -248,140 +248,15 @@ fn activate_at(
         }
     }
 
-    // 2. Collect the owner-scoped surfacing set from all enabled
-    //    integrations. The union of `generated_files()` and `managed_files()`
-    //    is the complete set of root-relative paths that the framework
-    //    symlinks for this project. The same union drives the owner-scoped
-    //    removal predicate in step 3.
-    let default_config = IntegrationConfig::default();
-    let mut new_owned: BTreeSet<String> = BTreeSet::new();
-
-    for integration in &integrations {
-        let config = manifest
-            .integrations
-            .get(integration.name())
-            .unwrap_or(&default_config);
-
-        if !is_enabled(*integration, config) {
-            continue;
-        }
-
-        let int_ctx = IntegrationContext {
-            output_dir: &project_dir,
-            workspace_root: root,
-            project: &project_name,
-            repos: manifest
-                .iter_entries()
-                .map(|(rp, e)| (rp.clone(), e.clone()))
-                .collect(),
-            config,
-            all_repos_on_disk: session.repos_on_disk(),
-            all_project_paths: session.project_paths(),
-            detection_cache: &detection_cache,
-            workweave: manifest.workweave.as_ref(),
-        };
-
-        for f in integration.generated_files(&int_ctx) {
-            new_owned.insert(f);
-        }
-        for f in integration.managed_files(&int_ctx) {
-            new_owned.insert(f);
-        }
-    }
-    let new_generated: Vec<String> = new_owned.iter().cloned().collect();
-
-    // 3. Remove old symlinks from a previous activation using the
-    //    owner-scoped predicate: a root symlink is unlinked only if its
-    //    name is in the **removal candidate set** AND `read_link` resolves
-    //    to `projects/<some-project>/<that-file>`. Replaces the previous
-    //    blanket "target has a `projects` component" check, which would
-    //    sweep up unrelated symlinks (cf. rwv-c5h: the static-files
-    //    framework concern).
-    //
-    //    The candidate set is the UNION of:
-    //      - `new_owned` — the new project's integration outputs, and
-    //      - the previously-active project's owned set (read .rwv-active,
-    //        load its manifest, recompute) — without this, switching A→B
-    //        leaves orphaned symlinks for integrations B doesn't enable
-    //        (e.g. A had cargo + npm, B has only npm → Cargo.toml symlink
-    //        would survive pointing at A).
-    //    Each candidate's target is independently verified to resolve to
-    //    `projects/<some-project>/<rel>` via the predicate.
-    let removal_candidates = {
-        let mut union = new_owned.clone();
-        if let Ok(prev_owned) = compute_active_owned_set(root) {
-            for f in prev_owned {
-                union.insert(f);
-            }
-        }
-        union
-    };
-    remove_activation_symlinks(root, &removal_candidates)?;
-
-    // 4. Create new symlinks at root pointing to project_dir files.
-    //    Failures are collected as warnings so that partial symlink creation
-    //    does not prevent .rwv-active from being written.
-    for file in &new_generated {
-        let source = project_dir.join(file);
-        let link = root.join(file);
-
-        if skip_missing_sources && !source.exists() {
-            continue;
-        }
-
-        // When skip_missing_sources is false, create symlinks even if the
-        // target doesn't exist yet — lock files (Cargo.lock, package-lock.json,
-        // etc.) are populated by ecosystem tools on first build/install,
-        // writing through the dangling symlink.
-
-        // Ensure parent directory exists for nested files (e.g., gita/repos.csv).
-        if let Some(parent) = link.parent() {
-            if !parent.exists() {
-                if let Err(e) = std::fs::create_dir_all(parent) {
-                    eprintln!(
-                        "[warning] symlink: failed to create parent directory {}: {e}",
-                        parent.display()
-                    );
-                    continue;
-                }
-            }
-        }
-
-        // Compute a relative symlink target from the link location to the
-        // source in the project directory. For top-level files this is just
-        // `projects/{project}/{file}`. For nested files like `gita/repos.csv`
-        // we need to prepend `../` for each directory level.
-        let file_path = Path::new(file);
-        let depth = file_path
-            .parent()
-            .map(|p| p.components().count())
-            .unwrap_or(0);
-        let mut relative_target = std::path::PathBuf::new();
-        for _ in 0..depth {
-            relative_target.push("..");
-        }
-        relative_target.push("projects");
-        relative_target.push(project);
-        relative_target.push(file);
-
-        #[cfg(unix)]
-        if let Err(e) = std::os::unix::fs::symlink(&relative_target, &link) {
-            eprintln!(
-                "[warning] symlink: failed to create {} -> {}: {e}",
-                link.display(),
-                relative_target.display()
-            );
-        }
-
-        #[cfg(windows)]
-        if let Err(e) = std::os::windows::fs::symlink_file(&relative_target, &link) {
-            eprintln!(
-                "[warning] symlink: failed to create {} -> {}: {e}",
-                link.display(),
-                relative_target.display()
-            );
-        }
-    }
+    // 2-4. Surface the owner-scoped symlink set. This is the framework
+    //    surfacing primitive (`surface_symlinks`): compute the
+    //    `generated_files() ∪ managed_files()` union, remove stale
+    //    owner-scoped symlinks, and (re)create the symlinks at `root`
+    //    pointing into `projects/<project>/`. It is the step-2 path that
+    //    workweave-create also runs, and is re-runnable on its own — it
+    //    does NOT write `.rwv-active` (project SELECTION, a primary-only
+    //    step-1 concept) and does NOT author integration content.
+    surface_symlinks(root, &project_name, &manifest, skip_missing_sources)?;
 
     // 5. Run integration activate hooks (install commands).
     //    Per-integration hooks operate on the now-in-place symlinks at the
@@ -629,29 +504,33 @@ pub fn deactivate(cwd: &Path) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Compute the owner-scoped surfacing set for the currently-active project,
-/// reading `.rwv-active` from `root`. Returns an empty set if no project is
-/// active (in which case no symlinks are owned by rwv and nothing gets
-/// removed). This is the deactivate-side analogue of step 2 in
-/// [`activate_at`].
-fn compute_active_owned_set(root: &Path) -> anyhow::Result<BTreeSet<String>> {
-    let mut owned: BTreeSet<String> = BTreeSet::new();
-    let active = match crate::workspace::read_active_project(root) {
-        Some(name) => name,
-        None => return Ok(owned),
-    };
-    let project_dir = root.join("projects").join(active.as_str());
-    let manifest_path = project_dir.join("rwv.yaml");
-    if !manifest_path.exists() {
-        return Ok(owned);
-    }
-    let manifest = Manifest::from_path(&manifest_path)?;
+/// Compute the owner-scoped surfacing set for `project` at `root`: the union
+/// of `generated_files()` and `managed_files()` across all enabled
+/// integrations, mapping each file to the integration that declares it.
+///
+/// This is the single source of truth for the surfacing union — the set of
+/// root-relative paths the framework symlinks for a project. Its consumers are
+/// the surfacing primitive ([`surface_symlinks`]) and the framework surfacing
+/// check ([`verify_surfacing`]). When a path is declared by more than one
+/// enabled integration the first declarer wins for the label; the path itself
+/// is coalesced (the set is keyed by path).
+///
+/// Returns `(path -> declaring-integration-name)`. Iteration order is sorted
+/// by path (`BTreeMap`), matching the deterministic ordering the previous
+/// `BTreeSet` provided to symlink creation.
+fn compute_owned_set(
+    root: &Path,
+    project: &ProjectName,
+    manifest: &Manifest,
+) -> std::collections::BTreeMap<String, String> {
+    let project_dir = root.join("projects").join(project.as_str());
     let session = WorkspaceSession::new(root);
     let detection_cache = build_detection_cache(root, manifest.iter_entries());
     let builtin = builtin_integrations();
     let integrations: Vec<&dyn Integration> = builtin.iter().map(|b| b.as_ref()).collect();
     let default_config = IntegrationConfig::default();
 
+    let mut owned: std::collections::BTreeMap<String, String> = std::collections::BTreeMap::new();
     for integration in &integrations {
         let config = manifest
             .integrations
@@ -663,7 +542,7 @@ fn compute_active_owned_set(root: &Path) -> anyhow::Result<BTreeSet<String>> {
         let int_ctx = IntegrationContext {
             output_dir: &project_dir,
             workspace_root: root,
-            project: &active,
+            project,
             repos: manifest
                 .iter_entries()
                 .map(|(rp, e)| (rp.clone(), e.clone()))
@@ -674,14 +553,287 @@ fn compute_active_owned_set(root: &Path) -> anyhow::Result<BTreeSet<String>> {
             detection_cache: &detection_cache,
             workweave: manifest.workweave.as_ref(),
         };
-        for f in integration.generated_files(&int_ctx) {
-            owned.insert(f);
-        }
-        for f in integration.managed_files(&int_ctx) {
-            owned.insert(f);
+        for f in integration
+            .generated_files(&int_ctx)
+            .into_iter()
+            .chain(integration.managed_files(&int_ctx))
+        {
+            owned
+                .entry(f)
+                .or_insert_with(|| integration.name().to_string());
         }
     }
-    Ok(owned)
+    owned
+}
+
+/// Compute the owner-scoped surfacing set for the currently-active project,
+/// reading `.rwv-active` from `root`. Returns an empty set if no project is
+/// active (in which case no symlinks are owned by rwv and nothing gets
+/// removed). This is the deactivate-side analogue of step 2 in
+/// [`activate_at`].
+fn compute_active_owned_set(root: &Path) -> anyhow::Result<BTreeSet<String>> {
+    let active = match crate::workspace::read_active_project(root) {
+        Some(name) => name,
+        None => return Ok(BTreeSet::new()),
+    };
+    let manifest_path = root.join("projects").join(active.as_str()).join("rwv.yaml");
+    if !manifest_path.exists() {
+        return Ok(BTreeSet::new());
+    }
+    let manifest = Manifest::from_path(&manifest_path)?;
+    Ok(compute_owned_set(root, &active, &manifest)
+        .into_keys()
+        .collect())
+}
+
+/// Surface the owner-scoped symlink set for `project` into `root` (the
+/// **step-2 surfacing primitive**, factored out of [`activate_at`]).
+///
+/// This is the re-runnable framework primitive that:
+///  1. Computes the `generated_files() ∪ managed_files()` union
+///     ([`compute_owned_set`]).
+///  2. Removes stale owner-scoped symlinks (union of the new set with the
+///     previously-active project's set, each verified to resolve to
+///     `projects/<some-project>/<rel>`).
+///  3. Creates the symlinks at `<root>/<file>` pointing at
+///     `projects/<project>/<file>`.
+///
+/// It does **not** write `.rwv-active` (that is step-1 project SELECTION, a
+/// primary-only concept) and does **not** author integration content. Because
+/// it is bound to `root` (the CWD weave directory) rather than to primary, it
+/// is valid in any weave — it is exactly what workweave-create runs at
+/// creation, and what `rwv doctor --fix` re-runs to repair missing surfacing.
+///
+/// `skip_missing_sources`: when `true`, symlinks whose source file does not yet
+/// exist are skipped (workweave surfacing — a view onto an existing project).
+/// When `false`, dangling symlinks are created intentionally so ecosystem lock
+/// files written later flow back through the symlink into the project dir.
+pub fn surface_symlinks(
+    root: &Path,
+    project: &ProjectName,
+    manifest: &Manifest,
+    skip_missing_sources: bool,
+) -> anyhow::Result<()> {
+    let project_dir = root.join("projects").join(project.as_str());
+
+    // 1. Collect the owner-scoped surfacing set.
+    let owned = compute_owned_set(root, project, manifest);
+    let new_owned: BTreeSet<String> = owned.keys().cloned().collect();
+    let new_generated: Vec<String> = new_owned.iter().cloned().collect();
+
+    // 2. Remove old symlinks from a previous activation using the
+    //    owner-scoped predicate: a root symlink is unlinked only if its
+    //    name is in the **removal candidate set** AND `read_link` resolves
+    //    to `projects/<some-project>/<that-file>`.
+    //
+    //    The candidate set is the UNION of:
+    //      - `new_owned` — the new project's integration outputs, and
+    //      - the previously-active project's owned set (read .rwv-active,
+    //        load its manifest, recompute) — without this, switching A→B
+    //        leaves orphaned symlinks for integrations B doesn't enable.
+    let removal_candidates = {
+        let mut union = new_owned.clone();
+        if let Ok(prev_owned) = compute_active_owned_set(root) {
+            for f in prev_owned {
+                union.insert(f);
+            }
+        }
+        union
+    };
+    remove_activation_symlinks(root, &removal_candidates)?;
+
+    // 3. Create new symlinks at root pointing to project_dir files.
+    //    Failures are collected as warnings so that partial symlink creation
+    //    does not prevent the caller from proceeding.
+    for file in &new_generated {
+        let source = project_dir.join(file);
+        let link = root.join(file);
+
+        if skip_missing_sources && !source.exists() {
+            continue;
+        }
+
+        // When skip_missing_sources is false, create symlinks even if the
+        // target doesn't exist yet — lock files (Cargo.lock, package-lock.json,
+        // etc.) are populated by ecosystem tools on first build/install,
+        // writing through the dangling symlink.
+
+        // Ensure parent directory exists for nested files (e.g., gita/repos.csv).
+        if let Some(parent) = link.parent() {
+            if !parent.exists() {
+                if let Err(e) = std::fs::create_dir_all(parent) {
+                    eprintln!(
+                        "[warning] symlink: failed to create parent directory {}: {e}",
+                        parent.display()
+                    );
+                    continue;
+                }
+            }
+        }
+
+        // Compute a relative symlink target from the link location to the
+        // source in the project directory. For top-level files this is just
+        // `projects/{project}/{file}`. For nested files like `gita/repos.csv`
+        // we need to prepend `../` for each directory level.
+        let relative_target = relative_symlink_target(project.as_str(), file);
+
+        #[cfg(unix)]
+        if let Err(e) = std::os::unix::fs::symlink(&relative_target, &link) {
+            eprintln!(
+                "[warning] symlink: failed to create {} -> {}: {e}",
+                link.display(),
+                relative_target.display()
+            );
+        }
+
+        #[cfg(windows)]
+        if let Err(e) = std::os::windows::fs::symlink_file(&relative_target, &link) {
+            eprintln!(
+                "[warning] symlink: failed to create {} -> {}: {e}",
+                link.display(),
+                relative_target.display()
+            );
+        }
+    }
+
+    Ok(())
+}
+
+/// The relative symlink target a surfaced file should point at, from the link
+/// location (`<root>/<file>`) to the source (`projects/<project>/<file>`).
+///
+/// For top-level files this is `projects/<project>/<file>`. For nested files
+/// like `gita/repos.csv` we prepend `../` once per directory level so the link
+/// remains relative. This is the single source of truth shared by symlink
+/// creation ([`surface_symlinks`]) and the surfacing check
+/// ([`verify_surfacing`]) so the "what target should exist" question has one
+/// answer.
+fn relative_symlink_target(project: &str, file: &str) -> std::path::PathBuf {
+    let depth = Path::new(file)
+        .parent()
+        .map(|p| p.components().count())
+        .unwrap_or(0);
+    let mut relative_target = std::path::PathBuf::new();
+    for _ in 0..depth {
+        relative_target.push("..");
+    }
+    relative_target.push("projects");
+    relative_target.push(project);
+    relative_target.push(file);
+    relative_target
+}
+
+/// Framework-level **Axis-1 surfacing** check: assert that every file in the
+/// owner-scoped surfacing union exists at `<root>/<file>` as a symlink that
+/// resolves to `projects/<project>/<file>`.
+///
+/// This is a SECOND CONSUMER of the same `generated_files() ∪ managed_files()`
+/// union that drives symlink creation ([`compute_owned_set`]) — it lives in the
+/// framework and is byte-identical across all integrations, so it is NOT
+/// duplicated into per-integration `verify()` bodies (those own Axis-2 content
+/// drift). Any divergence between an integration's declared surfacing set and
+/// the on-disk symlinks (manual `rm`, interrupted create, a manifest change
+/// that adds a file, enabling an integration in an existing workweave) is
+/// invisible to the per-integration verify pass; this closes that gap.
+///
+/// Emits one `Severity::Warning`, `safe_to_fix=true` `Issue` per missing or
+/// mis-resolved symlink. The recovery hatch is `rwv doctor --fix`, which calls
+/// [`surface_symlinks`] (NOT `activate_intent` — re-surfacing is valid in any
+/// weave, project re-selection is not).
+///
+/// `skip_missing_sources` mirrors the create path: when `true` (workweave
+/// surfacing), a file whose source does not yet exist on disk is NOT expected
+/// to be surfaced, so its missing symlink is not flagged — this keeps the
+/// check symmetric with what [`surface_symlinks`] actually creates.
+pub fn verify_surfacing(
+    root: &Path,
+    project: &ProjectName,
+    manifest: &Manifest,
+    skip_missing_sources: bool,
+) -> Vec<crate::integration::Issue> {
+    use crate::integration::{Issue, Severity};
+
+    let project_dir = root.join("projects").join(project.as_str());
+    let owned = compute_owned_set(root, project, manifest);
+    let mut issues = Vec::new();
+
+    for (file, integration) in &owned {
+        let source = project_dir.join(file);
+        // Mirror the create path: a file whose source is absent in a workweave
+        // is intentionally not surfaced, so don't flag its missing symlink.
+        if skip_missing_sources && !source.exists() {
+            continue;
+        }
+
+        let link = root.join(file);
+        let expected_target = relative_symlink_target(project.as_str(), file);
+
+        let link_meta = match link.symlink_metadata() {
+            Ok(m) => m,
+            Err(_) => {
+                // Nothing at the surfacing location at all.
+                issues.push(Issue {
+                    integration: integration.clone(),
+                    severity: Severity::Warning,
+                    message: format!(
+                        "surfacing: `{file}` is not surfaced (no symlink at `{}`; safe to --fix)",
+                        link.display()
+                    ),
+                    safe_to_fix: true,
+                });
+                continue;
+            }
+        };
+
+        if !link_meta.file_type().is_symlink() {
+            // A regular file/dir sits where the surfacing symlink should be.
+            // This is a real, hand-held divergence — surface it, but flag it
+            // as not-safe-to-fix so doctor --fix never clobbers user content
+            // sitting at the surfacing path.
+            issues.push(Issue {
+                integration: integration.clone(),
+                severity: Severity::Warning,
+                message: format!(
+                    "surfacing: `{file}` is not a symlink (a real file/dir occupies `{}`; \
+                     not auto-fixed)",
+                    link.display()
+                ),
+                safe_to_fix: false,
+            });
+            continue;
+        }
+
+        match std::fs::read_link(&link) {
+            Ok(actual) if actual == expected_target => {
+                // Surfaced correctly.
+            }
+            Ok(actual) => {
+                issues.push(Issue {
+                    integration: integration.clone(),
+                    severity: Severity::Warning,
+                    message: format!(
+                        "surfacing: `{file}` symlink resolves to `{}` (expected `{}`; safe to --fix)",
+                        actual.display(),
+                        expected_target.display()
+                    ),
+                    safe_to_fix: true,
+                });
+            }
+            Err(e) => {
+                issues.push(Issue {
+                    integration: integration.clone(),
+                    severity: Severity::Warning,
+                    message: format!(
+                        "surfacing: `{file}` symlink unreadable at `{}` ({e}; safe to --fix)",
+                        link.display()
+                    ),
+                    safe_to_fix: true,
+                });
+            }
+        }
+    }
+
+    issues
 }
 
 #[cfg(test)]
@@ -736,5 +888,235 @@ mod tests {
         ];
         let err = report_and_check_activation_issues(&issues).unwrap_err();
         assert!(err.to_string().contains("2 integration error"));
+    }
+
+    // -----------------------------------------------------------------------
+    // relative_symlink_target
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn relative_target_top_level_is_projects_project_file() {
+        let t = relative_symlink_target("web-app", ".claude");
+        assert_eq!(t, Path::new("projects/web-app/.claude"));
+    }
+
+    #[test]
+    fn relative_target_nested_prepends_parent_dirs() {
+        // gita/repos.csv lives one dir deep, so the link must climb out once.
+        let t = relative_symlink_target("p", "gita/repos.csv");
+        assert_eq!(t, Path::new("../projects/p/gita/repos.csv"));
+    }
+
+    // -----------------------------------------------------------------------
+    // surface_symlinks + verify_surfacing (Axis-1 surfacing, fo-huwqqc)
+    // -----------------------------------------------------------------------
+
+    /// Build a workspace on disk with one project whose static-files
+    /// integration declares `files`. Each declared file is created in the
+    /// project directory with placeholder content. Returns the workspace root.
+    fn make_surfacing_workspace(files: &[&str]) -> (tempfile::TempDir, ProjectName) {
+        make_surfacing_workspace_authoring(files, files)
+    }
+
+    /// Like [`make_surfacing_workspace`] but `declared` are the files the
+    /// static-files integration declares (the surfacing union) while only
+    /// `authored` are actually written into the project dir. A declared-but-
+    /// not-authored file models a source that does not exist on disk (e.g. a
+    /// lockfile not yet generated) — without resorting to a destructive
+    /// `remove_file` in test code (the codebase keeps deletes out of `src/`
+    /// test modules; see the destructive-ops tripwire).
+    fn make_surfacing_workspace_authoring(
+        declared: &[&str],
+        authored: &[&str],
+    ) -> (tempfile::TempDir, ProjectName) {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        // Registry marker dir so WorkspaceSession scans cleanly.
+        std::fs::create_dir_all(root.join("github")).unwrap();
+        let project = "web-app";
+        let project_dir = root.join("projects").join(project);
+        std::fs::create_dir_all(&project_dir).unwrap();
+
+        let files_yaml = declared
+            .iter()
+            .map(|f| format!("      - {f}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        // Disable the default-enabled integrations that declare files
+        // unconditionally (vscode-workspace surfaces `<project>.code-workspace`,
+        // go-work surfaces `go.sum`) so the surfacing union under test is
+        // exactly the static-files set we declare. The surfacing machinery is
+        // integration-agnostic; isolating one integration keeps the asserts
+        // deterministic.
+        let manifest_yaml = format!(
+            "repositories: {{}}\n\
+             integrations:\n\
+             \x20 static-files:\n\
+             \x20   enabled: true\n\
+             \x20   files:\n{files_yaml}\n\
+             \x20 vscode-workspace:\n\
+             \x20   enabled: false\n\
+             \x20 go-work:\n\
+             \x20   enabled: false\n"
+        );
+        std::fs::write(project_dir.join("rwv.yaml"), &manifest_yaml).unwrap();
+
+        // Author the requested files in the project dir so they can be surfaced.
+        for f in authored {
+            let p = project_dir.join(f);
+            if let Some(parent) = p.parent() {
+                std::fs::create_dir_all(parent).unwrap();
+            }
+            std::fs::write(&p, format!("content of {f}\n")).unwrap();
+        }
+
+        (tmp, ProjectName::new(project))
+    }
+
+    fn load_manifest(root: &Path, project: &ProjectName) -> Manifest {
+        let path = root.join("projects").join(project.as_str()).join("rwv.yaml");
+        Manifest::from_path(&path).unwrap()
+    }
+
+    #[test]
+    fn surface_then_verify_is_clean() {
+        let (tmp, project) = make_surfacing_workspace(&[".claude"]);
+        let root = tmp.path();
+        let manifest = load_manifest(root, &project);
+
+        surface_symlinks(root, &project, &manifest, false).unwrap();
+
+        // The symlink exists at the root and resolves to the project copy.
+        let link = root.join(".claude");
+        let meta = link.symlink_metadata().unwrap();
+        assert!(meta.file_type().is_symlink(), ".claude should be a symlink");
+        assert_eq!(
+            std::fs::read_link(&link).unwrap(),
+            Path::new("projects/web-app/.claude")
+        );
+
+        // verify_surfacing reports nothing — surfacing matches the union.
+        let issues = verify_surfacing(root, &project, &manifest, false);
+        assert!(issues.is_empty(), "expected clean surfacing, got: {issues:?}");
+    }
+
+    #[test]
+    fn verify_flags_missing_symlink_safe_to_fix() {
+        // The motivating case: the union gained a file (e.g. static-files set
+        // gained `.claude`) but the symlink was never created in this weave.
+        let (tmp, project) = make_surfacing_workspace(&[".claude"]);
+        let root = tmp.path();
+        let manifest = load_manifest(root, &project);
+
+        // Do NOT surface — the symlink is absent.
+        let issues = verify_surfacing(root, &project, &manifest, false);
+        assert_eq!(issues.len(), 1, "expected one missing-surfacing issue");
+        let issue = &issues[0];
+        assert_eq!(issue.integration, "static-files");
+        assert_eq!(issue.severity, Severity::Warning);
+        assert!(issue.safe_to_fix, "missing symlink is safe to --fix");
+        assert!(
+            issue.message.contains(".claude") && issue.message.contains("not surfaced"),
+            "message should name the file and the gap: {}",
+            issue.message
+        );
+    }
+
+    #[test]
+    fn verify_flags_mis_resolved_symlink() {
+        let (tmp, project) = make_surfacing_workspace(&[".claude"]);
+        let root = tmp.path();
+        let manifest = load_manifest(root, &project);
+
+        // Place a symlink that points somewhere wrong (the owner would have
+        // produced `projects/web-app/.claude`). Construct the bad state
+        // directly rather than surface-then-delete.
+        std::os::unix::fs::symlink("projects/other/.claude", root.join(".claude")).unwrap();
+
+        let issues = verify_surfacing(root, &project, &manifest, false);
+        assert_eq!(issues.len(), 1);
+        assert!(issues[0].safe_to_fix);
+        assert!(
+            issues[0].message.contains("resolves to") && issues[0].message.contains("expected"),
+            "mis-resolved message should name actual + expected: {}",
+            issues[0].message
+        );
+    }
+
+    #[test]
+    fn verify_flags_non_symlink_as_user_held() {
+        // A real file sitting at the surfacing path is hand-held content — the
+        // owner-scoped removal never touches non-symlinks, so re-surfacing
+        // can't repair it. Flag it not-safe-to-fix so --fix won't claim a fix.
+        let (tmp, project) = make_surfacing_workspace(&[".claude"]);
+        let root = tmp.path();
+        let manifest = load_manifest(root, &project);
+
+        std::fs::write(root.join(".claude"), "i am a real file\n").unwrap();
+
+        let issues = verify_surfacing(root, &project, &manifest, false);
+        assert_eq!(issues.len(), 1);
+        assert!(
+            !issues[0].safe_to_fix,
+            "a real file at the surfacing path must not be auto-fixed"
+        );
+        assert!(issues[0].message.contains("not a symlink"));
+    }
+
+    #[test]
+    fn fix_path_re_surfaces_missing_symlink() {
+        // End-to-end of the --fix primitive: detect missing → re-surface →
+        // verify clean. This is what doctor --fix calls in a workweave.
+        let (tmp, project) = make_surfacing_workspace(&[".claude"]);
+        let root = tmp.path();
+        let manifest = load_manifest(root, &project);
+
+        // Start from the un-surfaced (missing) state — the symlink was never
+        // created in this weave (manifest gained the file after create, or a
+        // manual rm). The check flags it.
+        assert_eq!(verify_surfacing(root, &project, &manifest, false).len(), 1);
+
+        // The fix primitive (NOT activate_intent) creates the symlink.
+        surface_symlinks(root, &project, &manifest, false).unwrap();
+        assert!(
+            verify_surfacing(root, &project, &manifest, false).is_empty(),
+            "re-surfacing should clear the missing-symlink finding"
+        );
+    }
+
+    #[test]
+    fn surface_does_not_write_rwv_active() {
+        // The factored primitive is step-2 ONLY: it must not perform step-1
+        // project SELECTION (.rwv-active write), which is the primary-only
+        // concept fo-9fnae forbids dragging into a workweave.
+        let (tmp, project) = make_surfacing_workspace(&[".claude"]);
+        let root = tmp.path();
+        let manifest = load_manifest(root, &project);
+
+        surface_symlinks(root, &project, &manifest, false).unwrap();
+        assert!(
+            !root.join(".rwv-active").exists(),
+            "surface_symlinks must not write .rwv-active (that is step-1 selection)"
+        );
+    }
+
+    #[test]
+    fn verify_skips_missing_source_in_workweave_mode() {
+        // In workweave mode (skip_missing_sources=true), a declared file whose
+        // source does not exist on disk is intentionally not surfaced, so its
+        // absent symlink must NOT be flagged — the check stays symmetric with
+        // what surface_symlinks actually creates.
+        //
+        // Build the state directly: `.claude` is DECLARED but NOT authored in
+        // the project dir, modelling a source that doesn't exist yet.
+        let (tmp, project) = make_surfacing_workspace_authoring(&[".claude"], &[]);
+        let root = tmp.path();
+        let manifest = load_manifest(root, &project);
+
+        // skip_missing_sources = true → no finding (source absent, not surfaced).
+        assert!(verify_surfacing(root, &project, &manifest, true).is_empty());
+        // skip_missing_sources = false → the missing symlink IS flagged
+        // (primary semantics create dangling symlinks for lockfiles etc.).
+        assert_eq!(verify_surfacing(root, &project, &manifest, false).len(), 1);
     }
 }
