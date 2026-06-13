@@ -16,6 +16,54 @@ fn packages_key() -> KeyPath {
     vec!["packages".to_string()]
 }
 
+/// Expand detected repos into pnpm workspace entries.
+///
+/// pnpm reads workspace member globs from `pnpm-workspace.yaml`'s `packages:`
+/// key — it does **not** use `package.json`'s `workspaces` key at all.
+///
+/// A repo whose root `pnpm-workspace.yaml` declares its own `packages:` list
+/// is a multi-package (monorepo) member. Listing the repo root in the
+/// weave-root `pnpm-workspace.yaml` would orphan its sub-packages from pnpm's
+/// install/link graph. Instead, emit `<repo-path>/<glob>` for each member glob.
+///
+/// Repos without a `pnpm-workspace.yaml`, or whose `pnpm-workspace.yaml` has
+/// no `packages:` list, keep the single `<repo-path>` entry (existing
+/// behavior).
+fn expand_workspace_entries(workspace_root: &Path, repo_paths: Vec<String>) -> Vec<String> {
+    let mut entries = Vec::new();
+    for repo in repo_paths {
+        let yaml_path = workspace_root.join(&repo).join("pnpm-workspace.yaml");
+        let globs = read_pnpm_packages_globs(&yaml_path);
+        match globs {
+            Some(globs) if !globs.is_empty() => {
+                entries.extend(
+                    globs
+                        .iter()
+                        .map(|g| format!("{}/{}", repo, g.strip_prefix("./").unwrap_or(g))),
+                );
+            }
+            _ => entries.push(repo),
+        }
+    }
+    entries
+}
+
+/// Read the `packages:` sequence from a `pnpm-workspace.yaml` file.
+///
+/// Returns `None` if the file is absent, unreadable, not valid YAML, or
+/// has no `packages:` key. Non-string entries in the sequence are skipped.
+fn read_pnpm_packages_globs(path: &Path) -> Option<Vec<String>> {
+    let text = std::fs::read_to_string(path).ok()?;
+    let doc: serde_yaml::Value = serde_yaml::from_str(&text).ok()?;
+    let packages = doc.get("packages")?.as_sequence()?;
+    Some(
+        packages
+            .iter()
+            .filter_map(|v| v.as_str().map(String::from))
+            .collect(),
+    )
+}
+
 impl Integration for PnpmWorkspaces {
     fn name(&self) -> &str {
         "pnpm-workspaces"
@@ -32,6 +80,9 @@ impl Integration for PnpmWorkspaces {
         }
 
         let path = ctx.output_dir.join("pnpm-workspace.yaml");
+
+        // Expand multi-package member repos into prefixed globs before sorting.
+        let paths = expand_workspace_entries(ctx.workspace_root, paths);
 
         // Sorted list of member paths — deterministic output.
         let mut members: Vec<String> = paths.into_iter().map(|p| p.to_string()).collect();

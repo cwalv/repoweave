@@ -1406,6 +1406,128 @@ packages:
             "exactly one packages: block; got:\n{after_second}"
         );
     }
+
+    // -----------------------------------------------------------------------
+    // Multi-package repo expansion (pnpm uses pnpm-workspace.yaml, not
+    // package.json workspaces — mirror of npm expansion tests but reading
+    // from `pnpm-workspace.yaml`'s `packages:` key in the member repo)
+    // -----------------------------------------------------------------------
+
+    /// A member repo with its own `pnpm-workspace.yaml` declaring sub-package
+    /// globs (array form) gets expanded into prefixed entries; the repo root
+    /// itself is NOT emitted as an entry.
+    #[test]
+    fn multi_package_repo_expands_to_prefixed_globs() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+
+        // A multi-package repo: root package.json present (triggers detection)
+        // and a pnpm-workspace.yaml declaring its own sub-packages.
+        touch(root, "github/acme/mono/package.json");
+        write_file(
+            root,
+            "github/acme/mono/pnpm-workspace.yaml",
+            "packages:\n  - packages/*\n  - ./clients/ts\n",
+        );
+        // A plain single-package repo alongside it.
+        touch(root, "github/acme/server/package.json");
+
+        let manifest = make_manifest(vec![
+            ("github/acme/mono", Role::Owned),
+            ("github/acme/server", Role::Owned),
+        ]);
+        let project = ProjectName::new("test-project");
+        let config = IntegrationConfig::default();
+        let cache = HashMap::new();
+        let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+
+        let integration = PnpmWorkspaces;
+        integration.activate(&ctx).unwrap();
+
+        let content = std::fs::read_to_string(root.join("pnpm-workspace.yaml")).unwrap();
+        // Prefixed globs from the member repo's pnpm-workspace.yaml.
+        assert!(
+            content.contains("github/acme/mono/packages/*"),
+            "expected prefixed glob; got:\n{content}"
+        );
+        // Leading './' in member globs is stripped during prefixing.
+        assert!(
+            content.contains("github/acme/mono/clients/ts"),
+            "expected ./ stripped; got:\n{content}"
+        );
+        // The multi-package repo root itself is NOT listed.
+        assert!(
+            !content.contains("  - github/acme/mono\n"),
+            "repo root must not appear as bare entry; got:\n{content}"
+        );
+        // Single-package repo keeps the bare path entry.
+        assert!(
+            content.contains("github/acme/server"),
+            "single-package repo must appear; got:\n{content}"
+        );
+    }
+
+    /// A member repo with its own `pnpm-workspace.yaml` but an empty
+    /// `packages:` list is treated as a single-package repo (bare path entry).
+    #[test]
+    fn multi_package_repo_empty_packages_list_keeps_bare_path() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+
+        touch(root, "github/acme/mono/package.json");
+        write_file(
+            root,
+            "github/acme/mono/pnpm-workspace.yaml",
+            "packages: []\ncatalog:\n  react: ^18\n",
+        );
+
+        let manifest = make_manifest(vec![("github/acme/mono", Role::Owned)]);
+        let project = ProjectName::new("test-project");
+        let config = IntegrationConfig::default();
+        let cache = HashMap::new();
+        let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+
+        let integration = PnpmWorkspaces;
+        integration.activate(&ctx).unwrap();
+
+        let content = std::fs::read_to_string(root.join("pnpm-workspace.yaml")).unwrap();
+        // Empty packages list → falls back to bare repo path.
+        assert!(
+            content.contains("github/acme/mono"),
+            "empty packages list must yield bare entry; got:\n{content}"
+        );
+    }
+
+    /// A member repo without any `pnpm-workspace.yaml` keeps the single
+    /// `<repo-path>` entry (existing behavior, no regression).
+    #[test]
+    fn single_package_repo_no_pnpm_workspace_yaml_keeps_bare_path() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+
+        touch(root, "github/acme/server/package.json");
+        // No pnpm-workspace.yaml in this repo.
+
+        let manifest = make_manifest(vec![("github/acme/server", Role::Owned)]);
+        let project = ProjectName::new("test-project");
+        let config = IntegrationConfig::default();
+        let cache = HashMap::new();
+        let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+
+        let integration = PnpmWorkspaces;
+        integration.activate(&ctx).unwrap();
+
+        let content = std::fs::read_to_string(root.join("pnpm-workspace.yaml")).unwrap();
+        assert!(
+            content.contains("github/acme/server"),
+            "single-package repo must appear as bare entry; got:\n{content}"
+        );
+        // And the root of that repo must NOT have been globbed into sub-entries.
+        assert!(
+            !content.contains("github/acme/server/"),
+            "single-package repo must not produce prefixed sub-entries; got:\n{content}"
+        );
+    }
 }
 
 // ===========================================================================
