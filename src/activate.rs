@@ -974,7 +974,10 @@ mod tests {
     }
 
     fn load_manifest(root: &Path, project: &ProjectName) -> Manifest {
-        let path = root.join("projects").join(project.as_str()).join("rwv.yaml");
+        let path = root
+            .join("projects")
+            .join(project.as_str())
+            .join("rwv.yaml");
         Manifest::from_path(&path).unwrap()
     }
 
@@ -997,7 +1000,10 @@ mod tests {
 
         // verify_surfacing reports nothing — surfacing matches the union.
         let issues = verify_surfacing(root, &project, &manifest, false);
-        assert!(issues.is_empty(), "expected clean surfacing, got: {issues:?}");
+        assert!(
+            issues.is_empty(),
+            "expected clean surfacing, got: {issues:?}"
+        );
     }
 
     #[test]

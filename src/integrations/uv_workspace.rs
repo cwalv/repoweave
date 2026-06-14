@@ -500,8 +500,7 @@ impl Integration for UvWorkspace {
         let marker_present = toml_doc.has_marker(&owned_keys);
 
         // ── USER-HELD ──────────────────────────────────────────────────────
-        if !marker_present
-            && toml_doc.key_present(&keypath(["tool", "uv", "workspace", "members"]))
+        if !marker_present && toml_doc.key_present(&keypath(["tool", "uv", "workspace", "members"]))
         {
             return Ok(vec![Issue {
                 integration: self.name().to_string(),
@@ -526,8 +525,7 @@ impl Integration for UvWorkspace {
         let on_disk_members =
             toml_array_strings(&edit_doc, &["tool", "uv", "workspace", "members"]);
 
-        let members_drift =
-            on_disk_members.as_deref() != Some(expected_members.as_slice());
+        let members_drift = on_disk_members.as_deref() != Some(expected_members.as_slice());
 
         if members_drift {
             return Ok(vec![Issue {

@@ -107,10 +107,12 @@ impl Integration for GoWork {
         //     but still serializes + writes the file (could mutate bytes when
         //     a go-version default is injected).
         if go_work_path.exists() {
-            let text = std::fs::read_to_string(&go_work_path)
-                .with_context(|| format!("reading {} for ownership check", go_work_path.display()))?;
-            let doc = GoWorkDoc::parse(&text)
-                .with_context(|| format!("parsing {} for ownership check", go_work_path.display()))?;
+            let text = std::fs::read_to_string(&go_work_path).with_context(|| {
+                format!("reading {} for ownership check", go_work_path.display())
+            })?;
+            let doc = GoWorkDoc::parse(&text).with_context(|| {
+                format!("parsing {} for ownership check", go_work_path.display())
+            })?;
             let owned_keys = vec![keypath(["use"])];
             if !doc.has_marker(&owned_keys) && doc.key_present(&keypath(["use"])) {
                 // User-held: use block present but no rwv marker.
@@ -244,10 +246,7 @@ impl Integration for GoWork {
         // Compare on-disk `use` entries against what activate() would write.
         // activate() produces `./<repo-path>` sorted entries.
         let expected_use: Vec<String> = {
-            let mut paths: Vec<String> = repo_paths
-                .iter()
-                .map(|p| format!("./{}", p))
-                .collect();
+            let mut paths: Vec<String> = repo_paths.iter().map(|p| format!("./{}", p)).collect();
             paths.sort();
             paths
         };

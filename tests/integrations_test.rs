@@ -6686,7 +6686,10 @@ mod s7_npm_doctor {
         NpmWorkspaces.activate(&ctx).unwrap();
 
         let pkg_path = root.join("package.json");
-        assert!(pkg_path.exists(), "package.json must be created after activate");
+        assert!(
+            pkg_path.exists(),
+            "package.json must be created after activate"
+        );
 
         let content = std::fs::read_to_string(&pkg_path).unwrap();
         assert!(
@@ -6846,7 +6849,8 @@ mod s7_npm_doctor {
         let tmp = TempDir::new().unwrap();
         let root = tmp.path();
 
-        let original = r#"{"name":"test-project","private":true,"workspaces":["github/acme/server"]}"#;
+        let original =
+            r#"{"name":"test-project","private":true,"workspaces":["github/acme/server"]}"#;
         write_file(root, "package.json", original);
         touch(root, "github/acme/server/package.json");
 
@@ -6859,7 +6863,10 @@ mod s7_npm_doctor {
         // Verify reports USER-HELD with safe_to_fix=false.
         let issues = NpmWorkspaces.verify(&ctx).unwrap();
         assert_eq!(issues.len(), 1);
-        assert!(!issues[0].safe_to_fix, "must be USER-HELD (not safe_to_fix)");
+        assert!(
+            !issues[0].safe_to_fix,
+            "must be USER-HELD (not safe_to_fix)"
+        );
 
         // Even if activate() is called, the workspaces key is left intact.
         NpmWorkspaces.activate(&ctx).unwrap();
@@ -6967,7 +6974,10 @@ mod s7_pnpm_doctor {
         PnpmWorkspaces.activate(&ctx).unwrap();
 
         let path = root.join("pnpm-workspace.yaml");
-        assert!(path.exists(), "pnpm-workspace.yaml must exist after activate");
+        assert!(
+            path.exists(),
+            "pnpm-workspace.yaml must exist after activate"
+        );
 
         let content = std::fs::read_to_string(&path).unwrap();
         assert!(
@@ -7095,7 +7105,10 @@ mod s7_pnpm_doctor {
             "expected exactly one USER-HELD issue, got: {issues:?}"
         );
         let issue = &issues[0];
-        assert!(!issue.safe_to_fix, "USER-HELD issue must NOT be safe_to_fix");
+        assert!(
+            !issue.safe_to_fix,
+            "USER-HELD issue must NOT be safe_to_fix"
+        );
         assert!(
             issue.message.contains("NOT auto-take-over")
                 || issue.message.contains("not auto")
@@ -7237,7 +7250,10 @@ mod s7_uv_doctor {
         UvWorkspace.activate(&ctx).unwrap();
 
         let path = root.join("pyproject.toml");
-        assert!(path.exists(), "pyproject.toml must be created after activate");
+        assert!(
+            path.exists(),
+            "pyproject.toml must be created after activate"
+        );
 
         let content = std::fs::read_to_string(&path).unwrap();
         assert!(
@@ -7474,7 +7490,11 @@ mod s7_go_work_doctor {
     }
 
     fn write_go_mod(root: &Path, repo: &str) {
-        write_file(root, &format!("{repo}/go.mod"), "module example.com/x\n\ngo 1.22\n");
+        write_file(
+            root,
+            &format!("{repo}/go.mod"),
+            "module example.com/x\n\ngo 1.22\n",
+        );
     }
 
     // -----------------------------------------------------------------------
@@ -7686,7 +7706,10 @@ mod s7_go_work_doctor {
             "expected exactly one USER-HELD issue, got: {issues:?}"
         );
         let issue = &issues[0];
-        assert!(!issue.safe_to_fix, "USER-HELD issue must NOT be safe_to_fix");
+        assert!(
+            !issue.safe_to_fix,
+            "USER-HELD issue must NOT be safe_to_fix"
+        );
         assert!(
             issue.message.contains("NOT auto-take-over")
                 || issue.message.contains("not auto")
@@ -7722,7 +7745,10 @@ mod s7_go_work_doctor {
         // Verify the pre-condition: USER-HELD detected before activate.
         let issues = GoWork.verify(&ctx).unwrap();
         assert_eq!(issues.len(), 1);
-        assert!(!issues[0].safe_to_fix, "must be USER-HELD (safe_to_fix=false)");
+        assert!(
+            !issues[0].safe_to_fix,
+            "must be USER-HELD (safe_to_fix=false)"
+        );
 
         // Read the file before activate.
         let before = std::fs::read(root.join("go.work")).unwrap();
@@ -7842,7 +7868,10 @@ mod s7_vscode_doctor {
         VscodeWorkspace.activate(&ctx).unwrap();
 
         let filepath = root.join("test-project.code-workspace");
-        assert!(filepath.exists(), "code-workspace must be created after activate");
+        assert!(
+            filepath.exists(),
+            "code-workspace must be created after activate"
+        );
 
         let content = std::fs::read_to_string(&filepath).unwrap();
         assert!(
@@ -7974,7 +8003,10 @@ mod s7_vscode_doctor {
             "expected exactly one USER-HELD issue, got: {issues:?}"
         );
         let issue = &issues[0];
-        assert!(!issue.safe_to_fix, "USER-HELD issue must NOT be safe_to_fix");
+        assert!(
+            !issue.safe_to_fix,
+            "USER-HELD issue must NOT be safe_to_fix"
+        );
         assert!(
             issue.message.contains("NOT auto-take-over")
                 || issue.message.contains("not auto")
