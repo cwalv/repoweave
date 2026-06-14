@@ -1,6 +1,6 @@
 use crate::integration::{Integration, IntegrationContext, Issue, Severity};
 use crate::integrations::merge::{
-    merge_activate, strip_deactivate, KeyPath, OwnedValue, Ownership, YamlDoc,
+    merge_activate, strip_deactivate, KeyPath, ManagedDoc, OwnedValue, Ownership, YamlDoc,
 };
 use anyhow::Context;
 use std::path::Path;
@@ -128,6 +128,87 @@ impl Integration for PnpmWorkspaces {
             });
         }
         Ok(issues)
+    }
+
+    /// Content-correct check (Axis-2) for `pnpm-workspace.yaml`.
+    ///
+    /// States mirrored from cargo-workspace:
+    ///
+    /// - **MISSING** (`safe_to_fix=true`): file absent but repos detected.
+    /// - **USER-HELD** (`safe_to_fix=false`): file present, has `packages:` key,
+    ///   but NO `# managed by repoweave` marker.
+    /// - **DRIFT** (`safe_to_fix=true`): marker present, `packages:` content
+    ///   diverges from what the current config would generate.
+    /// - **CLEAN**: marker present and content matches.
+    fn verify(&self, ctx: &IntegrationContext) -> anyhow::Result<Vec<Issue>> {
+        let repo_paths = ctx.detect_repos_with_manifest("package.json");
+        if repo_paths.is_empty() {
+            return Ok(vec![]);
+        }
+
+        let path = ctx.output_dir.join("pnpm-workspace.yaml");
+
+        // ── MISSING ────────────────────────────────────────────────────────
+        if !path.exists() {
+            return Ok(vec![Issue {
+                integration: self.name().to_string(),
+                severity: Severity::Warning,
+                message: format!(
+                    "pnpm-workspaces managed file missing: {}; run rwv doctor --fix to regenerate",
+                    path.display()
+                ),
+                safe_to_fix: true,
+            }]);
+        }
+
+        let text = std::fs::read_to_string(&path)
+            .with_context(|| format!("reading {} for verify", path.display()))?;
+        let doc = YamlDoc::parse(&text)
+            .with_context(|| format!("parsing {} for verify", path.display()))?;
+
+        let owned_keys = [packages_key()];
+        let marker_present = doc.has_marker(&owned_keys);
+
+        // ── USER-HELD ──────────────────────────────────────────────────────
+        if !marker_present && doc.key_present(&packages_key()) {
+            return Ok(vec![Issue {
+                integration: self.name().to_string(),
+                severity: Severity::Warning,
+                message: format!(
+                    "pnpm-workspaces managed file present but unmarked: {}; \
+                     rwv will NOT auto-take-over (would discard user content). \
+                     Cut over manually or add the '# managed by repoweave' marker",
+                    path.display()
+                ),
+                safe_to_fix: false,
+            }]);
+        }
+
+        // ── DRIFT ──────────────────────────────────────────────────────────
+        // Regenerate what activate() would produce and compare.
+        let expanded = expand_workspace_entries(ctx.workspace_root, repo_paths);
+        let mut expected: Vec<String> = expanded.into_iter().map(|p| p.to_string()).collect();
+        expected.sort();
+
+        // Read on-disk packages from the YAML text (reuse existing helper).
+        let on_disk = read_pnpm_packages_globs(&path).unwrap_or_default();
+
+        if on_disk != expected {
+            return Ok(vec![Issue {
+                integration: self.name().to_string(),
+                severity: Severity::Warning,
+                message: format!(
+                    "pnpm-workspaces managed file has drift: {}; \
+                     on-disk packages: content differs from rwv.yaml config. \
+                     Run rwv doctor --fix to regenerate",
+                    path.display()
+                ),
+                safe_to_fix: true,
+            }]);
+        }
+
+        // ── CLEAN ──────────────────────────────────────────────────────────
+        Ok(vec![])
     }
 
     fn activate_hook(&self, ctx: &IntegrationContext) -> anyhow::Result<()> {

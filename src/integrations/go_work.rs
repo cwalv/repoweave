@@ -45,6 +45,7 @@ use crate::integrations::merge::{
     keypath, merge_activate, strip_deactivate, GoWorkDoc, OwnedValue, Ownership,
 };
 use crate::manifest::GoWorkConfig;
+use anyhow::Context;
 use std::path::Path;
 
 pub struct GoWork;
@@ -143,6 +144,102 @@ impl Integration for GoWork {
             });
         }
         Ok(issues)
+    }
+
+    /// Content-correct check (Axis-2) for `go.work`.
+    ///
+    /// States mirrored from cargo-workspace:
+    ///
+    /// - **MISSING** (`safe_to_fix=true`): file absent but repos detected.
+    /// - **USER-HELD** (`safe_to_fix=false`): file present, has a `use (...)` block,
+    ///   but NO `// managed by repoweave` marker.
+    /// - **DRIFT** (`safe_to_fix=true`): marker present but `use` entries diverge
+    ///   from what the current config would generate.
+    /// - **CLEAN**: marker present and content matches.
+    ///
+    /// Note: always uses the fallback path for comparison (GoWorkDoc) so verify()
+    /// is deterministic regardless of whether `go` is on PATH.
+    fn verify(&self, ctx: &IntegrationContext) -> anyhow::Result<Vec<Issue>> {
+        use crate::integrations::merge::ManagedDoc;
+
+        let repo_paths = ctx.detect_repos_with_manifest("go.mod");
+        if repo_paths.is_empty() {
+            return Ok(vec![]);
+        }
+
+        let path = ctx.output_dir.join("go.work");
+
+        // ── MISSING ────────────────────────────────────────────────────────
+        if !path.exists() {
+            return Ok(vec![Issue {
+                integration: self.name().to_string(),
+                severity: Severity::Warning,
+                message: format!(
+                    "go-work managed file missing: {}; run rwv doctor --fix to regenerate",
+                    path.display()
+                ),
+                safe_to_fix: true,
+            }]);
+        }
+
+        let text = std::fs::read_to_string(&path)
+            .with_context(|| format!("reading {} for verify", path.display()))?;
+        let doc = GoWorkDoc::parse(&text)
+            .with_context(|| format!("parsing {} for verify", path.display()))?;
+
+        let owned_keys = vec![keypath(["use"])];
+        let marker_present = doc.has_marker(&owned_keys);
+
+        // ── USER-HELD ──────────────────────────────────────────────────────
+        // `use (...)` block present but no marker.
+        if !marker_present && doc.key_present(&keypath(["use"])) {
+            return Ok(vec![Issue {
+                integration: self.name().to_string(),
+                severity: Severity::Warning,
+                message: format!(
+                    "go-work managed file present but unmarked: {}; \
+                     rwv will NOT auto-take-over (would discard user content). \
+                     Cut over manually or add the '// managed by repoweave' marker",
+                    path.display()
+                ),
+                safe_to_fix: false,
+            }]);
+        }
+
+        // ── DRIFT ──────────────────────────────────────────────────────────
+        // Compare on-disk `use` entries against what activate() would write.
+        // activate() produces `./<repo-path>` sorted entries.
+        let expected_use: Vec<String> = {
+            let mut paths: Vec<String> = repo_paths
+                .iter()
+                .map(|p| format!("./{}", p))
+                .collect();
+            paths.sort();
+            paths
+        };
+
+        // Read on-disk use entries via the same lightweight parser used in
+        // activate_via_go_tool.
+        let on_disk_use = read_current_uses_from_file(&path);
+
+        let drift = on_disk_use != expected_use;
+
+        if drift {
+            return Ok(vec![Issue {
+                integration: self.name().to_string(),
+                severity: Severity::Warning,
+                message: format!(
+                    "go-work managed file has drift: {}; \
+                     on-disk use entries differ from rwv.yaml config. \
+                     Run rwv doctor --fix to regenerate",
+                    path.display()
+                ),
+                safe_to_fix: true,
+            }]);
+        }
+
+        // ── CLEAN ──────────────────────────────────────────────────────────
+        Ok(vec![])
     }
 
     /// go.work is HYBRID — it lives in managed_files(), not generated_files().

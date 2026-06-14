@@ -6,6 +6,24 @@ use crate::integrations::merge::{
 use anyhow::Context;
 use std::path::Path;
 
+/// Extract the on-disk `workspaces` array from a parsed `package.json` value.
+///
+/// Handles both array-form (`workspaces: [...]`) and object-form
+/// (`workspaces: {packages: [...]}`).  Returns `None` if the key is absent.
+fn workspaces_array(pkg: &serde_json::Value) -> Option<Vec<String>> {
+    let ws = pkg.get("workspaces")?;
+    let arr = match ws {
+        serde_json::Value::Array(a) => a,
+        serde_json::Value::Object(o) => o.get("packages")?.as_array()?,
+        _ => return None,
+    };
+    Some(
+        arr.iter()
+            .filter_map(|v| v.as_str().map(String::from))
+            .collect(),
+    )
+}
+
 pub struct NpmWorkspaces;
 
 /// Keys stripped on deactivate.
@@ -214,6 +232,97 @@ impl Integration for NpmWorkspaces {
             });
         }
         Ok(issues)
+    }
+
+    /// Content-correct check (Axis-2) for `package.json`.
+    ///
+    /// States mirrored from cargo-workspace:
+    ///
+    /// - **MISSING** (`safe_to_fix=true`): `package.json` absent but repos detected.
+    /// - **Parse-error** (Error): malformed JSON — can't assess drift; bail.
+    /// - **USER-HELD** (`safe_to_fix=false`): file present, has `workspaces` key,
+    ///   but NO `x-repoweave` marker.
+    /// - **DRIFT** (`safe_to_fix=true`): marker present, `workspaces` content
+    ///   diverges from what the current config would generate.
+    /// - **CLEAN**: marker present and content matches.
+    fn verify(&self, ctx: &IntegrationContext) -> anyhow::Result<Vec<Issue>> {
+        let repo_paths = ctx.detect_repos_with_manifest("package.json");
+        if repo_paths.is_empty() {
+            return Ok(vec![]);
+        }
+
+        let path = ctx.output_dir.join("package.json");
+
+        // ── MISSING ────────────────────────────────────────────────────────
+        if !path.exists() {
+            return Ok(vec![Issue {
+                integration: self.name().to_string(),
+                severity: Severity::Warning,
+                message: format!(
+                    "npm-workspaces managed file missing: {}; run rwv doctor --fix to regenerate",
+                    path.display()
+                ),
+                safe_to_fix: true,
+            }]);
+        }
+
+        // Parse the on-disk file.
+        let text = std::fs::read_to_string(&path)
+            .with_context(|| format!("reading {} for verify", path.display()))?;
+        let doc = JsonDoc::<XRepoweaveMarker>::parse(&text)
+            .with_context(|| format!("parsing {} for verify", path.display()))?;
+        let pkg: serde_json::Value = serde_json::from_str(&text)
+            .with_context(|| format!("parsing {} for verify (serde_json)", path.display()))?;
+
+        let marker_present = doc.has_marker(&[]);
+
+        // ── USER-HELD ──────────────────────────────────────────────────────
+        // File has `workspaces` key but no x-repoweave marker.
+        if !marker_present && pkg.get("workspaces").is_some() {
+            return Ok(vec![Issue {
+                integration: self.name().to_string(),
+                severity: Severity::Warning,
+                message: format!(
+                    "npm-workspaces managed file present but unmarked: {}; \
+                     rwv will NOT auto-take-over (would discard user content). \
+                     Cut over manually or add the x-repoweave marker",
+                    path.display()
+                ),
+                safe_to_fix: false,
+            }]);
+        }
+
+        // ── DRIFT ──────────────────────────────────────────────────────────
+        // Regenerate what activate() would produce and compare.
+        let expected_paths = expand_workspace_entries(ctx.workspace_root, repo_paths);
+        // OwnedValue::sorted_array sorts and dedupes — mirror that here.
+        let expected_ws: Vec<String> = {
+            let mut sorted = expected_paths;
+            sorted.sort();
+            sorted.dedup();
+            sorted
+        };
+
+        let on_disk_ws = workspaces_array(&pkg);
+
+        let drift = on_disk_ws.as_deref() != Some(expected_ws.as_slice());
+
+        if drift {
+            return Ok(vec![Issue {
+                integration: self.name().to_string(),
+                severity: Severity::Warning,
+                message: format!(
+                    "npm-workspaces managed file has drift: {}; \
+                     on-disk workspaces content differs from rwv.yaml config. \
+                     Run rwv doctor --fix to regenerate",
+                    path.display()
+                ),
+                safe_to_fix: true,
+            }]);
+        }
+
+        // ── CLEAN ──────────────────────────────────────────────────────────
+        Ok(vec![])
     }
 
     fn activate_hook(&self, ctx: &IntegrationContext) -> anyhow::Result<()> {
