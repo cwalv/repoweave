@@ -7696,16 +7696,13 @@ mod s7_go_work_doctor {
         );
     }
 
-    /// Given: USER-HELD go.work.
-    /// Then:  verify() reports USER-HELD with safe_to_fix=false.
+    /// Given: USER-HELD go.work (use block present, no marker).
+    /// When:  activate() runs (forced-fallback path).
+    /// Then:  the file is byte-for-byte unchanged — the ownership guard
+    ///        short-circuits before any mutation.
     ///
-    /// Note: go-work's activate() has two paths:
-    /// - `go` on PATH: uses `go work edit` + `ensure_marker_present` (always adds marker).
-    /// - fallback: uses `merge_activate::<GoWorkDoc>` which defers on user-held keys.
-    ///
-    /// This test only checks the verify() contract (USER-HELD detection), not
-    /// activate() behavior under the primary path. The unchanged-after-activate
-    /// invariant is tracked by fo-4jwdsy.1 (go-work activate ownership guard).
+    /// This is the parity test with cargo-workspace's equivalent invariant:
+    /// a present-but-unmarked managed file is left strictly alone.
     #[test]
     fn s7_go_work_doctor_user_held_file_unchanged_after_activate() {
         force_fallback();
@@ -7722,14 +7719,35 @@ mod s7_go_work_doctor {
         let cache = HashMap::new();
         let ctx = make_ctx(root, &project, &manifest, &config, &cache);
 
+        // Verify the pre-condition: USER-HELD detected before activate.
         let issues = GoWork.verify(&ctx).unwrap();
         assert_eq!(issues.len(), 1);
         assert!(!issues[0].safe_to_fix, "must be USER-HELD (safe_to_fix=false)");
-        // The USER-HELD finding must be present (that's the contract this test checks).
-        // Whether activate() respects the user-held state depends on the go tool path;
-        // the merge-fallback path defers (the use block survives unchanged), while
-        // the primary path (`go work edit`) always writes the marker.  The critical
-        // invariant is verify() correctly identifies the pre-activate state.
+
+        // Read the file before activate.
+        let before = std::fs::read(root.join("go.work")).unwrap();
+
+        // Call activate() — the ownership guard must short-circuit; no mutation.
+        GoWork.activate(&ctx).unwrap();
+
+        // Read the file after activate.
+        let after = std::fs::read(root.join("go.work")).unwrap();
+
+        assert_eq!(
+            before, after,
+            "user-held go.work must be byte-for-byte unchanged after activate()"
+        );
+
+        // Confirm the file still has no rwv marker (takeover did NOT happen).
+        let text = std::fs::read_to_string(root.join("go.work")).unwrap();
+        assert!(
+            !text.contains("managed by repoweave"),
+            "marker must NOT be injected into a user-held file: {text}"
+        );
+        assert!(
+            text.contains("./github/acme/server"),
+            "user use entry must survive unchanged: {text}"
+        );
     }
 
     // -----------------------------------------------------------------------

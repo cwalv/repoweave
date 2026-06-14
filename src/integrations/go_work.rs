@@ -42,7 +42,7 @@
 
 use crate::integration::{Integration, IntegrationContext, Issue, Severity};
 use crate::integrations::merge::{
-    keypath, merge_activate, strip_deactivate, GoWorkDoc, OwnedValue, Ownership,
+    keypath, merge_activate, strip_deactivate, GoWorkDoc, ManagedDoc, OwnedValue, Ownership,
 };
 use crate::manifest::GoWorkConfig;
 use anyhow::Context;
@@ -93,6 +93,40 @@ impl Integration for GoWork {
         }
 
         let go_work_path = ctx.output_dir.join("go.work");
+
+        // ── USER-HELD OWNERSHIP GUARD ──────────────────────────────────────
+        // Parity with cargo-workspace: if go.work already exists with a `use`
+        // block but NO `// managed by repoweave` marker, the user holds the
+        // pen. Leave the file byte-for-byte unchanged and return without
+        // dispatching to either the go-tool or hand-edit path.
+        //
+        // This guard must live here (before the path split) so it covers both:
+        //   - `activate_via_go_tool`: would unconditionally run `go work use`
+        //     and inject the marker via `ensure_marker_present`.
+        //   - `activate_via_hand_edit`: `merge_activate` defers the `use` key
+        //     but still serializes + writes the file (could mutate bytes when
+        //     a go-version default is injected).
+        if go_work_path.exists() {
+            let text = std::fs::read_to_string(&go_work_path)
+                .with_context(|| format!("reading {} for ownership check", go_work_path.display()))?;
+            let doc = GoWorkDoc::parse(&text)
+                .with_context(|| format!("parsing {} for ownership check", go_work_path.display()))?;
+            let owned_keys = vec![keypath(["use"])];
+            if !doc.has_marker(&owned_keys) && doc.key_present(&keypath(["use"])) {
+                // User-held: use block present but no rwv marker.
+                // Surface the same "will NOT auto-take-over" signal as verify()
+                // (Severity::Warning, safe_to_fix=false) — but activate() has
+                // no Issue-return mechanism; emit a warning to stderr so
+                // operators see the skip, consistent with the intent-mode design.
+                eprintln!(
+                    "go-work: {} is user-held (use block present, no managed-by marker); \
+                     rwv will NOT auto-take-over. Cut over manually or add the \
+                     '// managed by repoweave' marker.",
+                    go_work_path.display()
+                );
+                return Ok(());
+            }
+        }
 
         // Parse per-integration config (tolerates absent block).
         let cfg: GoWorkConfig = ctx.config.settings().unwrap_or_default();
