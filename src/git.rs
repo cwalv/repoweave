@@ -850,6 +850,7 @@ impl Vcs for GitVcs {
         &self,
         repo: &Path,
         op_id: &str,
+        recorded_intent_tip: Option<&str>,
         recorded_converged_tip: Option<&str>,
     ) -> Result<VerifiedRestoreOutcome, VcsError> {
         // Resolve the savepoint first: no savepoint → nothing to do.
@@ -878,6 +879,16 @@ impl Vcs for GitVcs {
             // post-condition; the pre-abort ref preserves the tip regardless).
             self.drop_savepoint(repo, op_id);
             return Ok(VerifiedRestoreOutcome::Untouched);
+        }
+
+        // Intent tip: the op advanced this repo during replay (before relock).
+        // Exact-match only — no heuristic (§6 rules out any descendant check).
+        if let Some(intent) = recorded_intent_tip {
+            if head_sha == intent {
+                Self::run(&["reset", "--hard", savepoint.as_str()], repo)?;
+                self.drop_savepoint(repo, op_id);
+                return Ok(VerifiedRestoreOutcome::RestoredFromIntent);
+            }
         }
 
         if let Some(converged) = recorded_converged_tip {

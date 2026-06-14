@@ -429,6 +429,11 @@ pub enum VerifiedRestoreOutcome {
     /// (from the owner record). The op moved the repo to convergence
     /// before crashing; the repo was reset back to the savepoint.
     RestoredFromConverged,
+    /// The current tip equals the op's recorded intent tip for this repo
+    /// (from the owner record's `advanced_tips` map). The op advanced
+    /// the repo during replay before crashing; the repo was reset back
+    /// to the savepoint. Exact-match only — no heuristic.
+    RestoredFromIntent,
     /// The repo was in a VCS-native mid-op state (rebase/merge/cherry-
     /// pick). The mid-op was cancelled and the repo was reset back to
     /// the savepoint.
@@ -824,27 +829,33 @@ pub trait Vcs {
     /// HEAD-verified restore: classify the repo's current tip and restore
     /// to the savepoint ONLY when the tip is attributable to the op.
     ///
-    /// Classification:
-    /// - `tip == savepoint` → [`VerifiedRestoreOutcome::Untouched`],
-    ///   restore is a no-op (HEAD is not touched).
-    /// - `tip ==` `recorded_converged_tip` → the op moved this repo to
-    ///   convergence; restore proceeds and returns
-    ///   [`VerifiedRestoreOutcome::RestoredFromConverged`].
+    /// Classification (evaluated in order):
+    /// - no savepoint exists for `op_id` → [`VerifiedRestoreOutcome::NoSavepoint`].
     /// - repo is in a VCS-native mid-op state (rebase/merge/cherry-pick)
     ///   → mid-op is cancelled and restore proceeds, returning
     ///   [`VerifiedRestoreOutcome::RestoredFromMidOp`].
-    /// - no savepoint exists for `op_id` → [`VerifiedRestoreOutcome::NoSavepoint`].
+    /// - `tip == savepoint` → [`VerifiedRestoreOutcome::Untouched`],
+    ///   restore is a no-op (HEAD is not touched).
+    /// - `tip ==` `recorded_intent_tip` → the op advanced this repo during
+    ///   replay before crashing; restore proceeds and returns
+    ///   [`VerifiedRestoreOutcome::RestoredFromIntent`]. Exact-match only.
+    /// - `tip ==` `recorded_converged_tip` → the op moved this repo to
+    ///   convergence; restore proceeds and returns
+    ///   [`VerifiedRestoreOutcome::RestoredFromConverged`].
     /// - **anything else** → [`VerifiedRestoreOutcome::ForeignTip`] is
     ///   returned without touching HEAD. The caller is responsible for
     ///   surfacing the named violation and continuing with other repos.
     ///   The destructive primitive is fenced behind this enumerable set
     ///   of attributable states.
     ///
-    /// `recorded_converged_tip` is the SHA the owner record's
+    /// `recorded_intent_tip` is the SHA the owner record's `advanced_tips`
+    /// map holds for this repo (written at replay entry), or `None` when no
+    /// entry exists (op predates the field, or the op had not yet reached
+    /// replay). `recorded_converged_tip` is the SHA the owner record's
     /// `converged_tips` map holds for this repo (relock-completed), or
-    /// `None` when the op crashed before relock recorded any converged
-    /// tips. The caller derives the key (e.g. the repo's path relative
-    /// to the workspace root, or `"(project)"` for the project repo).
+    /// `None` when the op crashed before relock recorded any converged tips.
+    /// The caller derives the key (e.g. the repo's path relative to the
+    /// workspace root, or `"(project)"` for the project repo).
     ///
     /// For [`GitVcs`](crate::git::GitVcs): when restoring, runs
     /// `git reset --hard refs/rwv/pre-op/<op_id>` and drops the savepoint
@@ -857,6 +868,7 @@ pub trait Vcs {
         &self,
         repo: &Path,
         op_id: &str,
+        recorded_intent_tip: Option<&str>,
         recorded_converged_tip: Option<&str>,
     ) -> Result<VerifiedRestoreOutcome, VcsError>;
 

@@ -3267,8 +3267,14 @@ pub fn run_abort(cwd: &Path) -> anyhow::Result<()> {
     // `converged_tips` is the per-repo attributable-tip table. Keys: repo
     // path string (e.g. `github/foo/bar`) for manifest repos, `"(project)"`
     // for the project repo. Empty before relock completes — in that case the
-    // attributable set reduces to {savepoint, mid-op}.
+    // attributable set reduces to {savepoint, advanced_tips, mid-op}.
     let converged_tips = &owner_record.converged_tips;
+    // `advanced_tips` is the op's replay-phase intent: the planned target
+    // (ff advances) or captured actual tip (rebased advances), written before
+    // or right after each advance. Source/owner side only — target tips land
+    // in converged_tips post-relock (§7). Empty for pre-field records
+    // (serde(default)) — graceful degradation to pre-change behavior.
+    let advanced_tips = &owner_record.advanced_tips;
 
     // Side-specific restore ids: repos in the op's TARGET workspace were
     // savepointed under `<op_id>-target` (see `target_savepoint_id`) so that
@@ -3306,8 +3312,9 @@ pub fn run_abort(cwd: &Path) -> anyhow::Result<()> {
         if !abs.exists() {
             continue;
         }
+        let intent = advanced_tips.get(repo_path.as_str()).map(String::as_str);
         let converged = converged_tips.get(repo_path.as_str()).map(String::as_str);
-        match abort_one_repo(&abs, &cwd_restore_id, converged) {
+        match abort_one_repo(&abs, &cwd_restore_id, intent, converged) {
             Ok(outcome) => report_abort_outcome(repo_path.as_str(), &outcome, &mut any_foreign),
             Err(e) => {
                 eprintln!("  {repo_path}: {e}");
@@ -3317,8 +3324,9 @@ pub fn run_abort(cwd: &Path) -> anyhow::Result<()> {
     }
 
     // Restore CWD project repo.
+    let project_intent = advanced_tips.get("(project)").map(String::as_str);
     let project_converged = converged_tips.get("(project)").map(String::as_str);
-    match abort_one_repo(&cwd_project_dir, &cwd_restore_id, project_converged) {
+    match abort_one_repo(&cwd_project_dir, &cwd_restore_id, project_intent, project_converged) {
         Ok(outcome) => report_abort_outcome("(project)", &outcome, &mut any_foreign),
         Err(e) => {
             eprintln!("  (project): {e}");
@@ -3371,8 +3379,10 @@ pub fn run_abort(cwd: &Path) -> anyhow::Result<()> {
                     if !abs.exists() {
                         continue;
                     }
+                    // Target-side repos: advanced_tips is source/owner side only (§7).
+                    // Target tips land in converged_tips post-relock; no intent entry.
                     let converged = converged_tips.get(repo_path.as_str()).map(String::as_str);
-                    match abort_one_repo(&abs, &extra_restore_id, converged) {
+                    match abort_one_repo(&abs, &extra_restore_id, None, converged) {
                         Ok(outcome) => report_abort_outcome(
                             &format!("[target] {repo_path}"),
                             &outcome,
@@ -3388,6 +3398,7 @@ pub fn run_abort(cwd: &Path) -> anyhow::Result<()> {
                 match abort_one_repo(
                     &extra_project_dir,
                     &extra_restore_id,
+                    None, // target-side: no advanced_tips entry (§7)
                     extra_project_converged,
                 ) {
                     Ok(outcome) => {
@@ -3447,11 +3458,16 @@ pub fn run_abort(cwd: &Path) -> anyhow::Result<()> {
 ///    information-preserving and undoable via that ref.
 /// 2. **HEAD-verified restore**: the destructive `reset --hard` to the
 ///    savepoint is gated on the current tip being attributable to the op
-///    (== savepoint, == recorded converged tip, or mid-op). Anything else
-///    is reported as foreign, not reset.
+///    (== savepoint, == recorded intent tip, == recorded converged tip,
+///    or mid-op). Anything else is reported as foreign, not reset.
+///
+/// `recorded_intent_tip` is the SHA from the owner record's `advanced_tips`
+/// map for this repo (source/owner side only — target side passes `None`).
+/// `recorded_converged_tip` is from `converged_tips` (written at relock).
 fn abort_one_repo(
     repo: &Path,
     op_id: &OpId,
+    recorded_intent_tip: Option<&str>,
     recorded_converged_tip: Option<&str>,
 ) -> anyhow::Result<VerifiedRestoreOutcome> {
     // Rail 1: write the pre-abort ref BEFORE any verified restore. Even if
@@ -3470,7 +3486,12 @@ fn abort_one_repo(
     // the classification + restore-if-attributable atomically; foreign tips
     // are returned as `ForeignTip` for the caller to report.
     GitVcs
-        .verified_restore_savepoint(repo, op_id.as_str(), recorded_converged_tip)
+        .verified_restore_savepoint(
+            repo,
+            op_id.as_str(),
+            recorded_intent_tip,
+            recorded_converged_tip,
+        )
         .context("verified restore failed")
 }
 
@@ -3487,6 +3508,9 @@ fn report_abort_outcome(label: &str, outcome: &VerifiedRestoreOutcome, any_forei
         }
         VerifiedRestoreOutcome::Untouched => {
             println!("  {label}: untouched (tip == savepoint)");
+        }
+        VerifiedRestoreOutcome::RestoredFromIntent => {
+            println!("  {label}: restored (from recorded intent tip)");
         }
         VerifiedRestoreOutcome::RestoredFromConverged => {
             println!("  {label}: restored (from recorded converged tip)");
@@ -3513,9 +3537,6 @@ fn report_abort_outcome(label: &str, outcome: &VerifiedRestoreOutcome, any_forei
                  \trecovery options:\n\
                  \t  - if a foreign agent advanced this branch after a crash, manually move the branch back \
                        (e.g. `git update-ref refs/heads/<branch> {savepoint}`) and re-run `rwv abort`.\n\
-                 \t  - if the op had just converged this repo before crashing and the tip is the intended \
-                       lock target, accept it and run `rwv lock` to re-pin (note: this side-steps verified \
-                       restore — you are taking responsibility for the divergence).\n\
                  \t  - if you want to keep the foreign tip and discard the op, move the branch off the \
                        pre-abort ref and delete the savepoint manually.",
                 ref_label = pre_abort_ref.label,

@@ -129,7 +129,7 @@ const ALLOWLIST: &[Allowed] = &[
     Allowed {
         file: "git.rs",
         pattern: "\"--hard\"",
-        count: 4,
+        count: 5,
         justification: "(1) hard_reset(): the operation's intent is to \
             discard divergent commits; the sole sync caller (--force Phase \
             1') gates on a clean-project precondition and creates a \
@@ -141,9 +141,14 @@ const ALLOWLIST: &[Allowed] = &[
             mid-op branch: gated on Vcs::mid_op detecting a VCS-native \
             rebase/merge/cherry-pick state — wreckage attributable to the \
             op (design § 5; fo-jsbr3i.4). (4) verified_restore_savepoint() \
-            converged branch: gated on the current tip matching the owner \
-            record's `converged_tips` entry for this repo — convergence \
-            attributable to the op. Foreign tips are reported, not reset.",
+            intent branch: gated on the current tip exact-matching the owner \
+            record's `advanced_tips` entry for this repo — replay-phase \
+            advance attributable to the op (fo-6rysot.3). Exact-match only, \
+            no heuristic (§6 rules out descendant predicate). (5) \
+            verified_restore_savepoint() converged branch: gated on the \
+            current tip matching the owner record's `converged_tips` entry \
+            for this repo — convergence attributable to the op. Foreign tips \
+            are reported, not reset.",
     },
     Allowed {
         file: "git.rs",
