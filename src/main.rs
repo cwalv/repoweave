@@ -188,7 +188,21 @@ enum Commands {
         #[arg(long)]
         project: Option<String>,
     },
-    /// Align CWD workspace with another workspace's committed rwv.lock
+    /// Bring another workspace's committed state into this one (pull/align; use `rwv sync-to` to land work upward)
+    ///
+    /// Absorbs `<source>`'s committed lock and advances each manifest repo to the locked SHA.
+    /// Default strategy is `ff` (fast-forward only); pass `--strategy=rebase` when histories
+    /// have diverged and ff would bail.
+    ///
+    /// Examples:
+    ///
+    ///   Bring primary's HEAD into the workweave you are iterating in:
+    ///
+    ///     rwv sync primary
+    ///
+    ///   Rebase instead of fast-forward when divergent:
+    ///
+    ///     rwv sync primary --strategy=rebase
     Sync {
         /// Source workspace: `primary`, a bare workweave name, or a path
         /// (absolute, or relative to the primary workspace). Required unless
