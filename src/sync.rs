@@ -337,6 +337,19 @@ impl From<&SyncFailure> for SyncFailureOutput {
     }
 }
 
+/// Step-3 fast-forward advance record for one repo in `rwv sync-to --json` output.
+///
+/// Present in a per-repo outcome iff step 3 (advance-target) actually advanced
+/// that repo's branch pointer. Omitted (`skip_serializing_if = "Option::is_none"`)
+/// when the repo was a no-op in advance-target (target already at CWD's tip).
+#[derive(Debug, Serialize, JsonSchema, Clone)]
+pub struct Step3AdvanceOutput {
+    /// Target repo's HEAD SHA before the fast-forward.
+    pub from_sha: String,
+    /// Target repo's HEAD SHA after the fast-forward (== CWD's tip).
+    pub to_sha: String,
+}
+
 /// One per-repo record in `rwv sync --json` output.
 #[derive(Debug, Serialize, JsonSchema)]
 #[serde(tag = "kind", rename_all = "kebab-case")]
@@ -344,20 +357,37 @@ pub enum SyncOutcomeOutput {
     Converged {
         path: String,
         absolute_path: String,
+        /// Step-3 fast-forward advance for this repo; present only in
+        /// `rwv sync-to --json` output when step 3 advanced this repo.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        step3_advance: Option<Step3AdvanceOutput>,
     },
     AlreadyAhead {
         path: String,
         absolute_path: String,
         commits_ahead: usize,
+        /// Step-3 fast-forward advance for this repo; present only in
+        /// `rwv sync-to --json` output when step 3 advanced this repo.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        step3_advance: Option<Step3AdvanceOutput>,
     },
     NoOp {
         path: String,
         absolute_path: String,
+        /// Step-3 fast-forward advance for this repo; present only in
+        /// `rwv sync-to --json` output when step 3 advanced this repo.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        step3_advance: Option<Step3AdvanceOutput>,
     },
     Failed {
         path: String,
         absolute_path: String,
         failure: SyncFailureOutput,
+        /// Step-3 fast-forward advance for this repo; present only in
+        /// `rwv sync-to --json` output when step 3 advanced this repo.
+        /// Typically absent when the repo failed in step 1.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        step3_advance: Option<Step3AdvanceOutput>,
     },
 }
 
@@ -367,26 +397,40 @@ impl SyncOutcomeOutput {
             RepoSyncOutcome::Converged => Self::Converged {
                 path,
                 absolute_path,
+                step3_advance: None,
             },
             RepoSyncOutcome::AlreadyAhead { commits_ahead } => Self::AlreadyAhead {
                 path,
                 absolute_path,
                 commits_ahead: *commits_ahead,
+                step3_advance: None,
             },
             RepoSyncOutcome::NoOp => Self::NoOp {
                 path,
                 absolute_path,
+                step3_advance: None,
             },
             RepoSyncOutcome::Failed(failure) => Self::Failed {
                 path,
                 absolute_path,
                 failure: SyncFailureOutput::from(failure),
+                step3_advance: None,
             },
         }
     }
 
     pub fn is_failure(&self) -> bool {
         matches!(self, Self::Failed { .. })
+    }
+
+    /// Return a mutable reference to the `step3_advance` field regardless of variant.
+    fn step3_advance_mut(&mut self) -> &mut Option<Step3AdvanceOutput> {
+        match self {
+            Self::Converged { step3_advance, .. }
+            | Self::AlreadyAhead { step3_advance, .. }
+            | Self::NoOp { step3_advance, .. }
+            | Self::Failed { step3_advance, .. } => step3_advance,
+        }
     }
 }
 
@@ -400,14 +444,36 @@ pub struct SyncJsonOutput {
 
 /// Top-level envelope for `rwv sync-to --json` (serial mode).
 ///
-/// Identical shape to [`SyncJsonOutput`]; differs only in the `$schema` URL
-/// embedded at runtime. Kept as a separate type so the generated schema
-/// artifact (`docs/reference/schemas/sync-to.json`) has its own title/description.
+/// Extends [`SyncJsonOutput`] with sync-to-specific observability fields:
+/// - `source_workweave` — the workweave the command was invoked from (null
+///   when invoked from the primary weave).
+/// - `target` — the absolute path of the target workspace that was advanced.
+/// - `retired` — true iff `--retire` was passed AND the workweave was deleted.
+/// - `project_repo_advance` — step-3 advance of `projects/<project>/.git`;
+///   omitted when the project repo was already at CWD's tip (no-op advance).
+/// - per-outcome `step3_advance` — step-3 advance SHA pair for each manifest
+///   repo; omitted on a no-op advance.
+///
+/// Kept as a separate type so the generated schema artifact
+/// (`docs/reference/schemas/sync-to.json`) has its own title/description.
 #[derive(Debug, Serialize, JsonSchema)]
 pub struct SyncToJsonOutput {
     #[serde(rename = "$schema")]
     pub schema: String,
+    /// The workweave name the command was invoked from; null when invoked from
+    /// the primary weave.
+    pub source_workweave: Option<String>,
+    /// Absolute path of the target workspace that step-3 fast-forwarded.
+    pub target: String,
+    /// True iff `--retire` was passed AND retire actually fired (the workweave
+    /// was deleted). False when `--retire` was not passed, or when retire was
+    /// skipped (e.g. invoked from the primary weave).
+    pub retired: bool,
     pub outcomes: Vec<SyncOutcomeOutput>,
+    /// Step-3 advance of the project repo (`projects/<project>/.git`). Omitted
+    /// when the project repo was already at CWD's tip (no-op fast-forward).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub project_repo_advance: Option<Step3AdvanceOutput>,
 }
 
 /// One NDJSON record emitted by `rwv sync --json -j N` with `N > 1`.
@@ -1131,6 +1197,10 @@ fn prune_dropped_repo(ctx: &WorkspaceContext, repo_path: &RepoPath) -> anyhow::R
 /// - `emit_text` controls whether the orchestration body emits human-readable
 ///   progress lines to stdout/stderr. Returning `false` suppresses all
 ///   non-record chatter (used by JSON modes).
+/// - `record_step3_advance` is called by the advance-target phase for each
+///   repo whose target branch pointer was actually moved (no-ops are not
+///   reported). The default no-op implementation is suitable for text-mode
+///   handlers and plain-sync JSON handlers that do not surface step-3 SHAs.
 ///
 /// ## Thread safety
 ///
@@ -1148,6 +1218,17 @@ pub trait OutputHandler: Send + Sync {
     /// Return `true` if the orchestration body should emit human-readable
     /// text progress to stdout/stderr. JSON-mode handlers return `false`.
     fn emit_text(&self) -> bool;
+
+    /// Record a step-3 (advance-target) fast-forward for one repo or the
+    /// project repo. Called iff the branch pointer actually moved.
+    ///
+    /// `path` matches the key used in `record` (manifest-relative repo path,
+    /// or the sentinel `"(project)"` for the project repo).
+    /// `from_sha` is the target's tip before the FF; `to_sha` is after.
+    ///
+    /// Default implementation is a no-op — suitable for text-mode and
+    /// plain-sync JSON handlers that do not need step-3 SHAs.
+    fn record_step3_advance(&self, _path: &str, _from_sha: &str, _to_sha: &str) {}
 }
 
 /// Text-mode handler: prints one line per repo to stdout/stderr and discards
@@ -1231,6 +1312,47 @@ impl OutputHandler for JsonNdjsonHandler<'_> {
         }
         let mut guard = self.records.lock().unwrap_or_else(|e| e.into_inner());
         guard.push(out);
+    }
+}
+
+/// Envelope-mode handler for `rwv sync-to --json` (serial mode).
+///
+/// Extends [`JsonEnvelopeHandler`]'s buffering with a second accumulator for
+/// step-3 advance records (one per repo that was actually fast-forwarded in
+/// the advance-target phase). After the machine completes, the caller reads
+/// both `records` and `step3_advances` to assemble the full
+/// [`SyncToJsonOutput`] envelope.
+///
+/// Text chatter is suppressed (`emit_text` returns `false`).
+pub struct JsonEnvelopeSyncToHandler<'a> {
+    records: &'a Mutex<Vec<SyncOutcomeOutput>>,
+    /// Per-repo step-3 advance records keyed by the repo path string (same
+    /// key as `record`'s `path` argument, or `"(project)"` for the project
+    /// repo). Only populated when the target's branch pointer actually moved.
+    step3_advances: &'a Mutex<std::collections::HashMap<String, Step3AdvanceOutput>>,
+}
+
+impl OutputHandler for JsonEnvelopeSyncToHandler<'_> {
+    fn emit_text(&self) -> bool {
+        false
+    }
+
+    fn record(&self, path: &str, abs_path: &str, outcome: &RepoSyncOutcome) {
+        let out = SyncOutcomeOutput::from_outcome(path.to_owned(), abs_path.to_owned(), outcome);
+        let mut guard = self.records.lock().unwrap_or_else(|e| e.into_inner());
+        guard.push(out);
+    }
+
+    fn record_step3_advance(&self, path: &str, from_sha: &str, to_sha: &str) {
+        let advance = Step3AdvanceOutput {
+            from_sha: from_sha.to_owned(),
+            to_sha: to_sha.to_owned(),
+        };
+        let mut guard = self
+            .step3_advances
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        guard.insert(path.to_owned(), advance);
     }
 }
 
@@ -2561,6 +2683,8 @@ fn run_advance_target(ctx: &OpContext<'_>) -> anyhow::Result<()> {
                 continue;
             }
         };
+        // Read target tip BEFORE the advance so we can report from_sha.
+        let target_tip_before = GitVcs.head_revision(&target_repo).ok();
         match ff_advance_repo(&target_repo, &cwd_repo, &cwd_tip) {
             Ok(()) => {
                 if emit_text {
@@ -2569,6 +2693,16 @@ fn run_advance_target(ctx: &OpContext<'_>) -> anyhow::Result<()> {
                         repo_path,
                         &cwd_tip.as_str()[..8.min(cwd_tip.as_str().len())]
                     );
+                }
+                // Record step-3 advance iff the branch pointer actually moved.
+                if let Some(ref before) = target_tip_before {
+                    if before != &cwd_tip {
+                        ctx.handler.record_step3_advance(
+                            repo_path.as_str(),
+                            before.as_str(),
+                            cwd_tip.as_str(),
+                        );
+                    }
                 }
             }
             Err(e) => {
@@ -2584,6 +2718,8 @@ fn run_advance_target(ctx: &OpContext<'_>) -> anyhow::Result<()> {
         .head_revision(&ctx.cwd_project_dir)
         .context("failed to read CWD project HEAD for advance-target")?;
 
+    // Read project target tip BEFORE the advance so we can report from_sha.
+    let project_target_tip_before = GitVcs.head_revision(&ctx.dest_project_dir).ok();
     match ff_advance_repo(
         &ctx.dest_project_dir,
         &ctx.cwd_project_dir,
@@ -2595,6 +2731,16 @@ fn run_advance_target(ctx: &OpContext<'_>) -> anyhow::Result<()> {
                     "  (project): ff-advanced to {}",
                     &cwd_project_tip.as_str()[..8.min(cwd_project_tip.as_str().len())]
                 );
+            }
+            // Record step-3 advance for the project repo iff it actually moved.
+            if let Some(ref before) = project_target_tip_before {
+                if before != &cwd_project_tip {
+                    ctx.handler.record_step3_advance(
+                        "(project)",
+                        before.as_str(),
+                        cwd_project_tip.as_str(),
+                    );
+                }
             }
         }
         Err(e) => {
@@ -3413,11 +3559,52 @@ pub fn run_sync_to(cwd: &Path, request: SyncRequest) -> anyhow::Result<()> {
 }
 
 /// Execute `rwv sync-to <target> --json`.
+///
+/// Emits a [`SyncToJsonOutput`] envelope with the new observability fields:
+/// `source_workweave`, `target`, `retired`, per-outcome `step3_advance`, and
+/// `project_repo_advance`. These fields are absent from the plain
+/// `rwv sync --json` envelope ([`SyncJsonOutput`]).
 pub fn run_sync_to_json(cwd: &Path, request: SyncRequest) -> anyhow::Result<()> {
+    // Derive source_workweave from the CWD context before running the machine.
+    // This mirrors what guard_and_mark computes internally.
+    let source_workweave: Option<String> = {
+        match WorkspaceContext::resolve(cwd, request.project_override.clone()) {
+            Ok(ctx) => match &ctx.location {
+                WorkspaceLocation::Workweave { name, .. } => Some(name.as_str().to_owned()),
+                WorkspaceLocation::Weave { .. } => None,
+            },
+            Err(_) => None,
+        }
+    };
+
+    // Derive the target path: the resolved destination workspace directory.
+    // For sync-to the operator-supplied arg is the target; resolve it the same
+    // way guard_and_mark does (SyncSource::resolve against the CWD context).
+    let target_path: String = {
+        let cwd_ctx = WorkspaceContext::resolve(cwd, request.project_override.clone())
+            .unwrap_or_else(|_| {
+                // If context resolution fails, guard_and_mark will fail too.
+                // Return a placeholder; the machine will surface the error.
+                WorkspaceContext::resolve(cwd, None).expect("cwd must be resolvable")
+            });
+        match &request.source {
+            Some(src) => src
+                .resolve(&cwd_ctx)
+                .map(|p| p.to_string_lossy().into_owned())
+                .unwrap_or_default(),
+            None => String::new(),
+        }
+    };
+
     let records: Mutex<Vec<SyncOutcomeOutput>> = Mutex::new(Vec::new());
+    let step3_advances: Mutex<std::collections::HashMap<String, Step3AdvanceOutput>> =
+        Mutex::new(std::collections::HashMap::new());
     let stdout_lock: Mutex<()> = Mutex::new(());
     let ndjson = request.jobs > 1;
     let project_level_result = if ndjson {
+        // NDJSON mode: use the standard NDJSON handler (step3 SHAs are not
+        // surfaced per-line in NDJSON; the envelope-level fields are only
+        // emitted in serial mode).
         let handler = JsonNdjsonHandler {
             stdout_lock: &stdout_lock,
             records: &records,
@@ -3425,19 +3612,70 @@ pub fn run_sync_to_json(cwd: &Path, request: SyncRequest) -> anyhow::Result<()> 
         };
         run_machine(MachineVerb::SyncTo, cwd, &request, &handler)
     } else {
-        let handler = JsonEnvelopeHandler { records: &records };
+        let handler = JsonEnvelopeSyncToHandler {
+            records: &records,
+            step3_advances: &step3_advances,
+        };
         run_machine(MachineVerb::SyncTo, cwd, &request, &handler)
     };
 
     let records = records.into_inner().unwrap_or_else(|e| e.into_inner());
+    let mut step3_map = step3_advances
+        .into_inner()
+        .unwrap_or_else(|e| e.into_inner());
 
-    run_sync_json_impl(
-        ndjson,
-        records,
-        SYNC_TO_JSON_SCHEMA_URL,
-        project_level_result,
-        true,
-    )
+    // If we never reached the per-repo loop (project-level precondition
+    // failure), propagate the error so main prints it via anyhow.
+    if records.is_empty() && project_level_result.is_err() {
+        return project_level_result;
+    }
+
+    let any_failure = records.iter().any(SyncOutcomeOutput::is_failure);
+
+    if !ndjson {
+        // Splice step3_advance into each per-outcome record.
+        let mut outcomes: Vec<SyncOutcomeOutput> = records;
+        for outcome in &mut outcomes {
+            // Match by path field to look up the advance record.
+            let path_key = match outcome {
+                SyncOutcomeOutput::Converged { path, .. }
+                | SyncOutcomeOutput::AlreadyAhead { path, .. }
+                | SyncOutcomeOutput::NoOp { path, .. }
+                | SyncOutcomeOutput::Failed { path, .. } => path.clone(),
+            };
+            if let Some(adv) = step3_map.remove(&path_key) {
+                *outcome.step3_advance_mut() = Some(adv);
+            }
+        }
+
+        // project_repo_advance: the "(project)" sentinel key.
+        let project_repo_advance = step3_map.remove("(project)");
+
+        // `retired` is true iff --retire was passed AND retire actually fired
+        // (i.e., CWD was a workweave, not a primary weave) AND the machine
+        // completed without error. When invoked from a primary weave, run_retire
+        // returns Ok(()) without deleting anything (warns instead), so we gate
+        // on source_workweave being Some() to distinguish the two cases.
+        let actually_retired =
+            request.retire && source_workweave.is_some() && project_level_result.is_ok();
+
+        let payload = SyncToJsonOutput {
+            schema: SYNC_TO_JSON_SCHEMA_URL.to_owned(),
+            source_workweave,
+            target: target_path,
+            retired: actually_retired,
+            outcomes,
+            project_repo_advance,
+        };
+        let out = serde_json::to_string_pretty(&payload)
+            .context("failed to serialize sync-to output")?;
+        println!("{out}");
+    }
+
+    if any_failure {
+        std::process::exit(1);
+    }
+    project_level_result
 }
 
 /// Fast-forward `target_repo` to `cwd_tip`.

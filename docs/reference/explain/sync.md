@@ -138,6 +138,24 @@ Schema:
         }
       ]
     },
+    "Step3AdvanceOutput": {
+      "description": "Step-3 fast-forward advance record for one repo in `rwv sync-to --json` output.\n\nPresent in a per-repo outcome iff step 3 (advance-target) actually advanced that repo's branch pointer. Omitted (`skip_serializing_if = \"Option::is_none\"`) when the repo was a no-op in advance-target (target already at CWD's tip).",
+      "type": "object",
+      "required": [
+        "from_sha",
+        "to_sha"
+      ],
+      "properties": {
+        "from_sha": {
+          "description": "Target repo's HEAD SHA before the fast-forward.",
+          "type": "string"
+        },
+        "to_sha": {
+          "description": "Target repo's HEAD SHA after the fast-forward (== CWD's tip).",
+          "type": "string"
+        }
+      }
+    },
     "SyncFailureOutput": {
       "description": "Wire-output mirror of [`SyncFailure`] for `--json` emission.\n\nCarries the same payload as the in-memory enum but with a `cause` represented as the serialisable [`VcsErrorOutput`]. The hand-rolled tag strings match [`SyncFailure::kind`] (verified via snapshot tests).\n\n`message` is the human-readable display string of the failure (free-form text, not a typed discriminant). `cause` is the structured typed cause when the failure originated from a [`crate::vcs::VcsError`] call — consumers that want to branch on failure mode should inspect `cause.kind` rather than parsing `message`.",
       "oneOf": [
@@ -252,6 +270,17 @@ Schema:
             },
             "path": {
               "type": "string"
+            },
+            "step3_advance": {
+              "description": "Step-3 fast-forward advance for this repo; present only in `rwv sync-to --json` output when step 3 advanced this repo.",
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/Step3AdvanceOutput"
+                },
+                {
+                  "type": "null"
+                }
+              ]
             }
           }
         },
@@ -280,6 +309,17 @@ Schema:
             },
             "path": {
               "type": "string"
+            },
+            "step3_advance": {
+              "description": "Step-3 fast-forward advance for this repo; present only in `rwv sync-to --json` output when step 3 advanced this repo.",
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/Step3AdvanceOutput"
+                },
+                {
+                  "type": "null"
+                }
+              ]
             }
           }
         },
@@ -302,6 +342,17 @@ Schema:
             },
             "path": {
               "type": "string"
+            },
+            "step3_advance": {
+              "description": "Step-3 fast-forward advance for this repo; present only in `rwv sync-to --json` output when step 3 advanced this repo.",
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/Step3AdvanceOutput"
+                },
+                {
+                  "type": "null"
+                }
+              ]
             }
           }
         },
@@ -328,6 +379,17 @@ Schema:
             },
             "path": {
               "type": "string"
+            },
+            "step3_advance": {
+              "description": "Step-3 fast-forward advance for this repo; present only in `rwv sync-to --json` output when step 3 advanced this repo. Typically absent when the repo failed in step 1.",
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/Step3AdvanceOutput"
+                },
+                {
+                  "type": "null"
+                }
+              ]
             }
           }
         }

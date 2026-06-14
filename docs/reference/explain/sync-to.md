@@ -113,11 +113,13 @@ Schema:
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "SyncToJsonOutput",
-  "description": "Top-level envelope for `rwv sync-to --json` (serial mode).\n\nIdentical shape to [`SyncJsonOutput`]; differs only in the `$schema` URL embedded at runtime. Kept as a separate type so the generated schema artifact (`docs/reference/schemas/sync-to.json`) has its own title/description.",
+  "description": "Top-level envelope for `rwv sync-to --json` (serial mode).\n\nExtends [`SyncJsonOutput`] with sync-to-specific observability fields: - `source_workweave` — the workweave the command was invoked from (null when invoked from the primary weave). - `target` — the absolute path of the target workspace that was advanced. - `retired` — true iff `--retire` was passed AND the workweave was deleted. - `project_repo_advance` — step-3 advance of `projects/<project>/.git`; omitted when the project repo was already at CWD's tip (no-op advance). - per-outcome `step3_advance` — step-3 advance SHA pair for each manifest repo; omitted on a no-op advance.\n\nKept as a separate type so the generated schema artifact (`docs/reference/schemas/sync-to.json`) has its own title/description.",
   "type": "object",
   "required": [
     "$schema",
-    "outcomes"
+    "outcomes",
+    "retired",
+    "target"
   ],
   "properties": {
     "$schema": {
@@ -128,6 +130,32 @@ Schema:
       "items": {
         "$ref": "#/definitions/SyncOutcomeOutput"
       }
+    },
+    "project_repo_advance": {
+      "description": "Step-3 advance of the project repo (`projects/<project>/.git`). Omitted when the project repo was already at CWD's tip (no-op fast-forward).",
+      "anyOf": [
+        {
+          "$ref": "#/definitions/Step3AdvanceOutput"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "retired": {
+      "description": "True iff `--retire` was passed AND retire actually fired (the workweave was deleted). False when `--retire` was not passed, or when retire was skipped (e.g. invoked from the primary weave).",
+      "type": "boolean"
+    },
+    "source_workweave": {
+      "description": "The workweave name the command was invoked from; null when invoked from the primary weave.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "target": {
+      "description": "Absolute path of the target workspace that step-3 fast-forwarded.",
+      "type": "string"
     }
   },
   "definitions": {
@@ -156,6 +184,24 @@ Schema:
           ]
         }
       ]
+    },
+    "Step3AdvanceOutput": {
+      "description": "Step-3 fast-forward advance record for one repo in `rwv sync-to --json` output.\n\nPresent in a per-repo outcome iff step 3 (advance-target) actually advanced that repo's branch pointer. Omitted (`skip_serializing_if = \"Option::is_none\"`) when the repo was a no-op in advance-target (target already at CWD's tip).",
+      "type": "object",
+      "required": [
+        "from_sha",
+        "to_sha"
+      ],
+      "properties": {
+        "from_sha": {
+          "description": "Target repo's HEAD SHA before the fast-forward.",
+          "type": "string"
+        },
+        "to_sha": {
+          "description": "Target repo's HEAD SHA after the fast-forward (== CWD's tip).",
+          "type": "string"
+        }
+      }
     },
     "SyncFailureOutput": {
       "description": "Wire-output mirror of [`SyncFailure`] for `--json` emission.\n\nCarries the same payload as the in-memory enum but with a `cause` represented as the serialisable [`VcsErrorOutput`]. The hand-rolled tag strings match [`SyncFailure::kind`] (verified via snapshot tests).\n\n`message` is the human-readable display string of the failure (free-form text, not a typed discriminant). `cause` is the structured typed cause when the failure originated from a [`crate::vcs::VcsError`] call — consumers that want to branch on failure mode should inspect `cause.kind` rather than parsing `message`.",
@@ -271,6 +317,17 @@ Schema:
             },
             "path": {
               "type": "string"
+            },
+            "step3_advance": {
+              "description": "Step-3 fast-forward advance for this repo; present only in `rwv sync-to --json` output when step 3 advanced this repo.",
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/Step3AdvanceOutput"
+                },
+                {
+                  "type": "null"
+                }
+              ]
             }
           }
         },
@@ -299,6 +356,17 @@ Schema:
             },
             "path": {
               "type": "string"
+            },
+            "step3_advance": {
+              "description": "Step-3 fast-forward advance for this repo; present only in `rwv sync-to --json` output when step 3 advanced this repo.",
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/Step3AdvanceOutput"
+                },
+                {
+                  "type": "null"
+                }
+              ]
             }
           }
         },
@@ -321,6 +389,17 @@ Schema:
             },
             "path": {
               "type": "string"
+            },
+            "step3_advance": {
+              "description": "Step-3 fast-forward advance for this repo; present only in `rwv sync-to --json` output when step 3 advanced this repo.",
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/Step3AdvanceOutput"
+                },
+                {
+                  "type": "null"
+                }
+              ]
             }
           }
         },
@@ -347,6 +426,17 @@ Schema:
             },
             "path": {
               "type": "string"
+            },
+            "step3_advance": {
+              "description": "Step-3 fast-forward advance for this repo; present only in `rwv sync-to --json` output when step 3 advanced this repo. Typically absent when the repo failed in step 1.",
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/Step3AdvanceOutput"
+                },
+                {
+                  "type": "null"
+                }
+              ]
             }
           }
         }
