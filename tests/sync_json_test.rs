@@ -401,19 +401,6 @@ fn outcome_failed_rebase_failed_serializes() {
 }
 
 #[test]
-fn outcome_failed_merge_failed_serializes() {
-    let v = serialize_outcome(
-        "github/cwalv/foo",
-        "/abs/foo",
-        &RepoSyncOutcome::Failed(SyncFailure::MergeFailed {
-            error: "merge conflict".into(),
-            cause: None,
-        }),
-    );
-    assert_eq!(v["failure"]["kind"], "merge-failed");
-}
-
-#[test]
 fn outcome_failed_with_rebase_conflict_cause_surfaces() {
     let cause = VcsError::RebaseConflict {
         repo: PathBuf::from("/abs/foo"),

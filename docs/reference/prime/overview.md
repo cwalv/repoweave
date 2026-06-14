@@ -59,8 +59,8 @@ These four commands are easy to confuse — they cooperate around the lock-autho
 
 | Command | When to use |
 |---------|-------------|
-| `rwv sync <source> [--strategy ff\|rebase\|merge] [--allow-stale-lock] [--discard-local-commits]` | Align CWD workspace with `<source>`'s committed `rwv.lock`. Default `ff`; use `rebase` or `merge` when both sides advanced |
-| `rwv abort` | Restore CWD workspace to its pre-sync state via savepoint refs; runs VCS-native abort for in-progress rebase/merge |
+| `rwv sync <source> [--strategy ff\|rebase] [--allow-stale-lock] [--discard-local-commits]` | Align CWD workspace with `<source>`'s committed `rwv.lock`. Default `ff`; use `rebase` when both sides advanced |
+| `rwv abort` | Restore CWD workspace to its pre-sync state via savepoint refs; runs VCS-native abort for an in-progress rebase |
 | `rwv status [--json]` | Show per-repo branch, tip, lock SHA, and relation (`ok`/`ahead`/`behind`/`diverged`/`no-lock`) without changing anything |
 | `rwv doctor --locked` | Zero exit iff every repo's tip matches its lock entry — the precondition `rwv sync` enforces. Scriptable |
 | `rwv doctor` | Full convention audit (orphans, dangling refs, stale locks, workweave drift, integration checks) |

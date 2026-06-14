@@ -147,7 +147,7 @@ Schema v2 (no back-compat with v1; in-flight v1 ops must be resolved with `rwv a
 ```yaml
 id: "1779769917405921588"       # op id, shared with savepoint refs
 verb: sync                       # "sync" | "sync-to"
-strategy: rebase                 # "ff" | "rebase" | "merge"
+strategy: rebase                 # "ff" | "rebase"
 source: /abs/path/src
 target: /abs/path/tgt
 retire: false
@@ -161,7 +161,7 @@ started_at: 2026-06-10T21:14:03Z
 |---|---|
 | `id` | Unique operation identifier (nanosecond wall-clock string). Shared with savepoint refs and lease files |
 | `verb` | Which top-level verb started this op: `sync` or `sync-to` |
-| `strategy` | Strategy supplied to the op: `ff`, `rebase`, or `merge` |
+| `strategy` | Strategy supplied to the op: `ff` or `rebase` |
 | `source` | Absolute path of the source workspace |
 | `target` | Absolute path of the target workspace. For `sync`: same as the owner workspace. For `sync-to`: the named target workspace |
 | `retire` | Whether `--retire` was passed |

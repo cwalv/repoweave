@@ -134,35 +134,6 @@
               "type": "string"
             }
           }
-        },
-        {
-          "type": "object",
-          "required": [
-            "kind",
-            "message"
-          ],
-          "properties": {
-            "cause": {
-              "anyOf": [
-                {
-                  "$ref": "#/definitions/VcsErrorOutput"
-                },
-                {
-                  "type": "null"
-                }
-              ]
-            },
-            "kind": {
-              "type": "string",
-              "enum": [
-                "merge-failed"
-              ]
-            },
-            "message": {
-              "description": "Free-form display message for this failure. Not a typed discriminant.",
-              "type": "string"
-            }
-          }
         }
       ]
     },

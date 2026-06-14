@@ -24,7 +24,7 @@ Terminology lookup. For deeper material on each concept, follow the cross-links.
 | **Phase 2** | First runtime phase of `rwv sync`: advance manifest repos to the source's lock targets. |
 | **Phase 1'** | Second runtime phase of `rwv sync`: replay CWD's unique project commits onto source's project tip, with `rwv.lock` excluded. |
 | **Phase 3** | Third runtime phase of `rwv sync`: regenerate `rwv.lock` from post-Phase-2 manifest tips. |
-| **Strategy** | Sync strategy: `ff` (fast-forward, default), `rebase`, or `merge`. Applies uniformly to project and manifest repos. |
+| **Strategy** | Sync strategy: `ff` (fast-forward, default) or `rebase`. Applies uniformly to project and manifest repos. (`merge` is not offered — see [sync semantics](../explanation/joints/sync-semantics.md#why-no-merge-strategy).) |
 | **Retire** | `rwv sync-to --retire` — post-sync-to cleanup that deletes the workweave on success. The `--retire` flag lives on `rwv sync-to` (the landing direction), not `rwv sync`. |
 | **Parent (of a workweave)** | The workspace the workweave was forked from. Recorded in `.rwv-workweave`'s `parent` field. Bare `rwv sync-to` (no target) auto-targets the parent. |
 | **sync-to** | `rwv sync-to [<target>]` — the landing verb. Advances a named target to CWD's tip via a three-step orchestration: (1) rebase CWD against target, (2) auto-relock CWD, (3) FF-advance target. Bare invocation inside a workweave auto-targets the recorded parent. Contrast with `rwv sync <source>`, which absorbs state into CWD. See [sync semantics](../explanation/joints/sync-semantics.md). |

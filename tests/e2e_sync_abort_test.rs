@@ -698,10 +698,10 @@ fn sync_discard_local_commits_bypasses_phase1_ancestor_refusal_and_preserves_sav
     );
 }
 
-/// Refusal message also names `--strategy rebase` / `--strategy merge` as the
-/// rwv-native paths to land diverging project commits without `--force`.
+/// Refusal message names `--strategy rebase` as the rwv-native path to land
+/// diverging project commits without `--force`.
 #[test]
-fn sync_refusal_message_suggests_rebase_or_merge_strategy() {
+fn sync_refusal_message_suggests_rebase_strategy() {
     let tmp = tempfile::tempdir().unwrap();
     let (primary, ww, c1) = make_shared_workspaces(tmp.path());
 
@@ -715,8 +715,8 @@ fn sync_refusal_message_suggests_rebase_or_merge_strategy() {
     let stderr = String::from_utf8_lossy(&assertion.get_output().stderr).to_string();
 
     assert!(
-        stderr.contains("--strategy rebase") || stderr.contains("--strategy merge"),
-        "expected refusal to suggest --strategy rebase or --strategy merge; got: {stderr}"
+        stderr.contains("--strategy rebase"),
+        "expected refusal to suggest --strategy rebase; got: {stderr}"
     );
 }
 
@@ -749,45 +749,6 @@ fn sync_rebase_lands_lock_only_divergence_without_force() {
         primary_tip_after, ww_tip_before,
         "after rebase landed lock-only divergence, primary tip should equal ww tip; \
          got primary={primary_tip_after} ww={ww_tip_before}"
-    );
-}
-
-/// Backward sync with `--strategy merge` produces a merge commit on top of
-/// CWD whose tree matches source on non-lock paths.
-#[test]
-fn sync_merge_lands_lock_only_divergence_without_force() {
-    let tmp = tempfile::tempdir().unwrap();
-    let (primary, ww, c1) = make_shared_workspaces(tmp.path());
-
-    // primary advances its project by a lock-only commit.
-    primary_advance_project_one_commit(&primary, &c1);
-    let primary_pre_sync = git_out(&["rev-parse", "HEAD"], &primary.project_dir);
-
-    rwv()
-        .args(["sync", &ww.root.to_string_lossy(), "--strategy", "merge"])
-        .current_dir(&primary.root)
-        .assert()
-        .success();
-
-    // Either a merge commit was created (ff impossible), or primary's tip
-    // already had ww's tip as ancestor (ff'd through merge). Either way,
-    // primary's history must reach the pre-sync commit (no commits lost).
-    let primary_post_sync = git_out(&["rev-parse", "HEAD"], &primary.project_dir);
-    let reachable = common::git()
-        .args([
-            "merge-base",
-            "--is-ancestor",
-            &primary_pre_sync,
-            &primary_post_sync,
-        ])
-        .current_dir(&primary.project_dir)
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false);
-    assert!(
-        reachable,
-        "after --strategy merge, pre-sync commit {primary_pre_sync} should still be reachable \
-         from primary's HEAD {primary_post_sync}"
     );
 }
 
@@ -1007,58 +968,6 @@ fn sync_rebase_replays_local_commits_on_source_tip() {
     // We check the manifest repo (server) log at the ww/main branch.
     // "ww: local commit" must appear above "primary: advance".
     common::assert_log_ordering(&ww.server_dir, &["ww: local commit", "primary: advance"]);
-}
-
-/// When both sides have diverged, --strategy merge creates a merge commit.
-#[test]
-fn sync_merge_creates_merge_commit_from_diverged_sides() {
-    let tmp = tempfile::tempdir().unwrap();
-    let (primary, ww, _c1) = make_shared_workspaces(tmp.path());
-
-    // Primary: advance to C2 on a different file.
-    let c2 = make_commit(
-        &primary.server_dir,
-        "primary.txt",
-        "primary\n",
-        "primary: advance",
-    );
-    write_lock(&primary.project_dir, &[(SERVER_PATH, SERVER_URL, &c2)]);
-    git(&["add", "rwv.lock"], &primary.project_dir);
-    git(
-        &["commit", "-m", "lock: primary advance"],
-        &primary.project_dir,
-    );
-
-    // Workweave: advance to C_ww on a different file (no conflict).
-    let c_ww = make_commit(&ww.server_dir, "ww.txt", "ww\n", "ww: advance");
-    write_lock(&ww.project_dir, &[(SERVER_PATH, SERVER_URL, &c_ww)]);
-    git(&["add", "rwv.lock"], &ww.project_dir);
-    git(&["commit", "-m", "lock: ww advance"], &ww.project_dir);
-
-    // --strategy merge should create a merge commit on ww/main.
-    // Project repos diverge from independent lock commits; --discard-local-commits
-    // is required to bypass the Phase 1 ancestor precondition (adapted from
-    // --force per bead fo-jsbr3i.6). The test's intent is the Phase 2 merge
-    // strategy on the manifest repo.
-    rwv()
-        .args([
-            "sync",
-            &primary.root.to_string_lossy(),
-            "--strategy",
-            "merge",
-            "--discard-local-commits",
-        ])
-        .current_dir(&ww.root)
-        .assert()
-        .success();
-
-    // The merge commit should have both C2 and C_ww as parents.
-    let ww_head = git_out(&["rev-parse", "ww/main"], &primary.server_dir);
-    let parents = git_out(&["log", "--pretty=%P", "-1", &ww_head], &primary.server_dir);
-    assert!(
-        parents.contains(&c2) || parents.contains(&c_ww),
-        "merge commit parents should include both sides; got: {parents}"
-    );
 }
 
 // ---------------------------------------------------------------------------

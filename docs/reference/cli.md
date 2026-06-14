@@ -101,7 +101,7 @@ Absorb `<source>`'s committed state into CWD. `<source>` is required: a workspac
 
 | Flag | Effect |
 |---|---|
-| `--strategy ff\|rebase\|merge` | Default `ff`. Applies uniformly to project and manifest repos; `rwv.lock` is excluded from project-repo merge inputs and regenerated in Phase 3 |
+| `--strategy ff\|rebase` | Default `ff`. Applies uniformly to project and manifest repos; `rwv.lock` is excluded from the per-commit merge inputs git uses during rebase replay and regenerated in Phase 3. (`merge` is not offered — see [sync semantics](../explanation/joints/sync-semantics.md#why-no-merge-strategy).) |
 | `--allow-stale-lock` | Consent: skip the lock-freshness precondition on both source and destination |
 | `--discard-local-commits` | Consent: discard CWD's project commits not reachable from source, hard-resetting the project repo to source's tip. Pre-sync state preserved in `refs/rwv/pre-op/<id>` |
 | `--continue` | Resume a sync interrupted mid-op. All parameters are read from the in-progress op-state file; no other flags may be passed alongside `--continue` (except `--project`) |
@@ -114,13 +114,13 @@ Anchored by `tests/doc_claims_sync_test.rs`. Flag table drift-gated by `tests/do
 
 ### `rwv sync-to [<target>] [...]`
 
-Advance `<target>` to CWD's tip via a three-step orchestration: (1) rebase/merge CWD against target; (2) auto-relock CWD if manifest tips moved; (3) FF-advance target to CWD's new tip. All rewriting happens in CWD; target is only ever advanced via fast-forward.
+Advance `<target>` to CWD's tip via a three-step orchestration: (1) rebase CWD against target; (2) auto-relock CWD if manifest tips moved; (3) FF-advance target to CWD's new tip. All rewriting happens in CWD; target is only ever advanced via fast-forward.
 
 `<target>` is a workspace name (`primary`, a workweave name) or a path. Omit inside a workweave to auto-target the parent recorded in `.rwv-workweave`. Required in a primary weave.
 
 | Flag | Effect |
 |---|---|
-| `--strategy ff\|rebase\|merge` | Default `rebase` (unlike `rwv sync`). Step 3 is always FF regardless |
+| `--strategy ff\|rebase` | Default `rebase` (unlike `rwv sync`). Step 3 is always FF regardless. (`merge` is not offered — see [sync semantics](../explanation/joints/sync-semantics.md#why-no-merge-strategy).) |
 | `--retire` | Delete the workweave on success. Requires a workweave context; warning + no-op in a primary weave |
 | `--allow-stale-lock` | Consent: skip the lock-freshness precondition on both source and destination |
 | `--discard-local-commits` | Consent: discard CWD's project commits not reachable from target, hard-resetting the project repo to target's tip. Pre-sync state preserved in `refs/rwv/pre-op/<id>` |

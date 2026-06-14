@@ -196,7 +196,7 @@ enum Commands {
         /// op-state file). If you meant to land work upward, use `rwv sync-to`.
         #[arg(required_unless_present = "do_continue")]
         source: Option<SyncSource>,
-        /// Sync strategy: ff (default), rebase, or merge
+        /// Sync strategy: ff (default) or rebase
         #[arg(long, default_value = "ff", value_enum, conflicts_with = "do_continue")]
         strategy: SyncStrategy,
         /// Consent: skip the lock-freshness precondition on both source and destination.
@@ -242,7 +242,6 @@ enum Commands {
         /// Sync strategy for step 1 (rebase CWD against target). Default: rebase.
         /// ff means CWD must already be strictly ahead of target (no-op step 1).
         /// rebase replays CWD's unique commits onto target's tip.
-        /// merge merges target into CWD with an auto-generated commit.
         /// Step 3 (FF-advance target) is always ff regardless of this flag.
         #[arg(
             long,

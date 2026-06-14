@@ -24,15 +24,16 @@ for the direction-explicit pair contract.
 ## Invocation
 
 ```
-rwv sync <source> [--json] [--strategy <ff|rebase|merge>] [-j <N>] [--allow-stale-lock] [--discard-local-commits] [--project <name>]
+rwv sync <source> [--json] [--strategy <ff|rebase>] [-j <N>] [--allow-stale-lock] [--discard-local-commits] [--project <name>]
 ```
 
 - `<source>` is the source workspace: `primary`, a bare workweave name, or
   a path. Required — `rwv sync` has no auto-target.
 - `--json` emits machine-readable output (see Output below).
-- `--strategy` picks the reconciliation strategy (`ff` default, `rebase`,
-  or `merge`). `rebase`/`merge` replay CWD's project commits onto the
-  source tip with `rwv.lock` excluded.
+- `--strategy` picks the reconciliation strategy (`ff` default or
+  `rebase`). `rebase` replays CWD's project commits onto the
+  source tip with `rwv.lock` excluded. (`merge` is not offered; see
+  [sync semantics](../explanation/joints/sync-semantics.md#why-no-merge-strategy).)
 - `--allow-stale-lock` skips the lock-freshness precondition on both source
   and destination. Use when the lock is intentionally ahead of HEAD. Usual
   fix without this flag: run `rwv lock` in the relevant workspace first.
@@ -73,7 +74,7 @@ pretty-printed envelope:
 Outcome `kind` tags include `converged`, `already-ahead`, `no-op`, and
 `failed`. The `failed` variant carries a nested `failure` record whose own
 `kind` tells you what failed (`head-unreadable`, `ff-impossible`,
-`rebase-failed`, `merge-failed`) plus an optional structured `cause`
+`rebase-failed`) plus an optional structured `cause`
 surfacing the underlying `VcsError`.
 
 Under `--json -j N` with `N > 1`, the envelope is dropped and output
@@ -219,35 +220,6 @@ Schema:
               "type": "string",
               "enum": [
                 "rebase-failed"
-              ]
-            },
-            "message": {
-              "description": "Free-form display message for this failure. Not a typed discriminant.",
-              "type": "string"
-            }
-          }
-        },
-        {
-          "type": "object",
-          "required": [
-            "kind",
-            "message"
-          ],
-          "properties": {
-            "cause": {
-              "anyOf": [
-                {
-                  "$ref": "#/definitions/VcsErrorOutput"
-                },
-                {
-                  "type": "null"
-                }
-              ]
-            },
-            "kind": {
-              "type": "string",
-              "enum": [
-                "merge-failed"
               ]
             },
             "message": {

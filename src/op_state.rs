@@ -13,7 +13,7 @@
 //! ```yaml
 //! id: "1779769917405921588"       # op id, shared with savepoint refs
 //! verb: sync                       # "sync" | "sync-to"
-//! strategy: rebase                 # "ff" | "rebase" | "merge"
+//! strategy: rebase                 # "ff" | "rebase"
 //! source: /abs/path/src
 //! target: /abs/path/tgt
 //! retire: false

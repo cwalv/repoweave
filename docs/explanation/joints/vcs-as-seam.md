@@ -191,11 +191,13 @@ VCS-specific noun phrases, not the entire prose.
 
 ### (c) `Vcs::set_replay_exclusion`
 
-**Concept:** configure a repo such that during replay (rebase, merge)
-any changes to a specified path are silently overridden by the replay
+**Concept:** configure a repo such that during replay (rebase) any
+changes to a specified path are silently overridden by the replay
 target's version. For git, this is a `merge=ours` entry in
 `.gitattributes` paired with the inline `merge.ours.driver=true`
-config wired up per-rebase.
+config wired up per-rebase. (rebase replays each commit as a 3-way
+merge, which is why the `merge=ours` driver is still needed even though
+the `merge` sync strategy was removed.)
 
 **Anchor:** commit `d29bb2f`.
 

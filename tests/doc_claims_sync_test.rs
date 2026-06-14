@@ -13,8 +13,8 @@
 //!     record, pinning consumers at
 //!     `docs/reference/schemas/sync.json` under repoweave's main branch.
 //!   - Per-failure records carry a stable kebab-case `kind` tag at
-//!     `outcome.failure.kind` (e.g. `ff-impossible`, `rebase-failed`,
-//!     `merge-failed`). The outcome's own `kind` is `failed` in that case.
+//!     `outcome.failure.kind` (e.g. `ff-impossible`, `rebase-failed`).
+//!     The outcome's own `kind` is `failed` in that case.
 //!
 //! This test is deliberately CLI-only: the lower-level wire-shape
 //! invariants are already pinned in `tests/sync_json_test.rs` via direct
@@ -493,12 +493,9 @@ fn sync_json_failed_outcome_has_stable_kebab_kind() {
         .as_str()
         .unwrap_or_else(|| panic!("failure.kind must be a string:\n{stdout}"));
     assert!(
-        kind == "ff-impossible"
-            || kind == "rebase-failed"
-            || kind == "merge-failed"
-            || kind == "head-unreadable",
+        kind == "ff-impossible" || kind == "rebase-failed" || kind == "head-unreadable",
         "failure.kind must be a stable kebab-case tag from the documented \
-         set (ff-impossible / rebase-failed / merge-failed / head-unreadable); \
+         set (ff-impossible / rebase-failed / head-unreadable); \
          got: {kind}\nstdout:\n{stdout}"
     );
     // The tag must be kebab-case: lowercase + hyphens only (no

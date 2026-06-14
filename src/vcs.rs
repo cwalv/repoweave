@@ -710,22 +710,6 @@ pub trait Vcs {
     fn advance_if_fast_forward(&self, repo: &Path, to: &ResolvedRevisionId)
         -> Result<(), VcsError>;
 
-    /// Merge `rev` into `repo`'s current branch with an auto-generated
-    /// commit message; rely on the [`set_replay_exclusion`] configuration
-    /// to keep excluded paths out of the merge inputs.
-    ///
-    /// For [`GitVcs`](crate::git::GitVcs): runs `git merge --no-edit <rev>`
-    /// with the `ours` merge driver registered inline (so any
-    /// `<path> merge=ours` line in the committed `.gitattributes` resolves
-    /// to "keep ours"). On conflict, leaves the repo in the VCS-native
-    /// in-flight state (for git: `MERGE_HEAD` present + conflict markers
-    /// in the working tree) and returns
-    /// [`VcsError::RebaseConflict { repo, op: ConflictOp::Merge }`] so the
-    /// caller can pair with [`Vcs::conflict_resolution_hint`].
-    ///
-    /// [`set_replay_exclusion`]: Vcs::set_replay_exclusion
-    fn merge_from(&self, repo: &Path, rev: &ResolvedRevisionId) -> Result<(), VcsError>;
-
     /// Hard-reset `repo`'s current branch to `to`, discarding any divergent
     /// commits and overwriting the working tree.
     ///

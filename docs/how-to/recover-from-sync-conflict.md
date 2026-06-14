@@ -81,7 +81,7 @@ After abort, both workspaces are in their exact pre-op state. Discarded commits 
 
 **Phase 1' (project repo) conflict.** Two workweaves edited the same file in `projects/<name>/docs/` and both committed. The `rwv.lock` line itself never conflicts — it is excluded from Phase 1' inputs and regenerated in Phase 3. Resolve the non-lock conflict, `git rebase --continue`, re-run with `--continue`.
 
-**Phase 2 (manifest repo) conflict.** A manifest repo's branch needs `rebase` or `merge` to advance, and the cross-history has a genuine textual conflict. Same procedure: resolve in the repo, complete the in-progress VCS op, re-run with `--continue`.
+**Phase 2 (manifest repo) conflict.** A manifest repo's branch needs `rebase` to advance, and the cross-history has a genuine textual conflict. Same procedure: resolve in the repo, complete the in-progress VCS op, re-run with `--continue`.
 
 **Lock precondition failure.** The operation refused before any repo was touched because `rwv doctor --locked` failed. Fix the unlocked repos (commit, then `rwv lock`, then commit the lock) and re-run. This is not a conflict — there's no savepoint to abort because nothing was mutated.
 

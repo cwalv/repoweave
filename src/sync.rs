@@ -57,6 +57,10 @@ fn workspace_name(ctx: &WorkspaceContext) -> String {
 // ---------------------------------------------------------------------------
 
 /// How `rwv sync` advances each repo to its lock target.
+///
+/// `merge` is intentionally not offered (state-space shrink). See the
+/// "documented absence" note in `docs/explanation/joints/sync-semantics.md`
+/// for the justification test and the origin-less weave-to-weave escape hatch.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
 #[clap(rename_all = "lowercase")]
 pub enum SyncStrategy {
@@ -64,8 +68,6 @@ pub enum SyncStrategy {
     Ff,
     /// Rebase the local branch onto the lock target.
     Rebase,
-    /// Merge the lock target into the local branch with an auto-generated commit.
-    Merge,
 }
 
 impl fmt::Display for SyncStrategy {
@@ -73,7 +75,6 @@ impl fmt::Display for SyncStrategy {
         f.write_str(match self {
             Self::Ff => "ff",
             Self::Rebase => "rebase",
-            Self::Merge => "merge",
         })
     }
 }
@@ -85,10 +86,13 @@ impl FromStr for SyncStrategy {
         match s {
             "ff" => Ok(Self::Ff),
             "rebase" => Ok(Self::Rebase),
-            "merge" => Ok(Self::Merge),
-            other => anyhow::bail!(
-                "unknown sync strategy `{other}` in op-state; expected ff, rebase, or merge"
-            ),
+            // `merge` was removed (state-space shrink). A pre-removal in-flight
+            // op recorded with strategy=merge resolves here as an invalid
+            // op-state strategy; per the alpha no-back-compat convention the
+            // operator aborts (`rwv abort`) and re-invokes. No migration path.
+            other => {
+                anyhow::bail!("unknown sync strategy `{other}` in op-state; expected ff or rebase")
+            }
         }
     }
 }
@@ -216,11 +220,6 @@ pub enum SyncFailure {
         error: String,
         cause: Option<VcsError>,
     },
-    /// `--strategy merge` failed (conflict or git error).
-    MergeFailed {
-        error: String,
-        cause: Option<VcsError>,
-    },
 }
 
 impl SyncFailure {
@@ -230,7 +229,6 @@ impl SyncFailure {
             Self::HeadUnreadable { .. } => "head-unreadable",
             Self::FastForwardImpossible { .. } => "ff-impossible",
             Self::RebaseFailed { .. } => "rebase-failed",
-            Self::MergeFailed { .. } => "merge-failed",
         }
     }
 
@@ -238,8 +236,7 @@ impl SyncFailure {
         match self {
             Self::HeadUnreadable { error, .. }
             | Self::FastForwardImpossible { error, .. }
-            | Self::RebaseFailed { error, .. }
-            | Self::MergeFailed { error, .. } => error,
+            | Self::RebaseFailed { error, .. } => error,
         }
     }
 
@@ -247,8 +244,7 @@ impl SyncFailure {
         match self {
             Self::HeadUnreadable { cause, .. }
             | Self::FastForwardImpossible { cause, .. }
-            | Self::RebaseFailed { cause, .. }
-            | Self::MergeFailed { cause, .. } => cause.as_ref(),
+            | Self::RebaseFailed { cause, .. } => cause.as_ref(),
         }
     }
 
@@ -256,7 +252,6 @@ impl SyncFailure {
         match strategy {
             SyncStrategy::Ff => Self::FastForwardImpossible { error, cause },
             SyncStrategy::Rebase => Self::RebaseFailed { error, cause },
-            SyncStrategy::Merge => Self::MergeFailed { error, cause },
         }
     }
 }
@@ -326,12 +321,6 @@ pub enum SyncFailureOutput {
         #[serde(skip_serializing_if = "Option::is_none")]
         cause: Option<VcsErrorOutput>,
     },
-    MergeFailed {
-        /// Free-form display message for this failure. Not a typed discriminant.
-        message: String,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        cause: Option<VcsErrorOutput>,
-    },
 }
 
 impl From<&SyncFailure> for SyncFailureOutput {
@@ -344,7 +333,6 @@ impl From<&SyncFailure> for SyncFailureOutput {
                 Self::FastForwardImpossible { message, cause }
             }
             SyncFailure::RebaseFailed { .. } => Self::RebaseFailed { message, cause },
-            SyncFailure::MergeFailed { .. } => Self::MergeFailed { message, cause },
         }
     }
 }
@@ -601,7 +589,7 @@ fn apply_strategy(
         SyncStrategy::Ff => {
             if let Err(e) = GitVcs.advance_if_fast_forward(repo, target) {
                 return Err(StrategyError::from_message(format!(
-                    "cannot fast-forward; rerun with --strategy rebase or --strategy merge. {}",
+                    "cannot fast-forward; rerun with --strategy rebase. {}",
                     e
                 )));
             }
@@ -615,12 +603,6 @@ fn apply_strategy(
             GitVcs
                 .rebase(repo, target, target)
                 .map_err(StrategyError::from_vcs)?;
-        }
-        SyncStrategy::Merge => {
-            // Merge with auto-generated commit message.
-            GitVcs
-                .merge_from(repo, target)
-                .map_err(|e| StrategyError::from_message(format!("merge failed: {e}")))?;
         }
     }
     Ok(())
@@ -772,7 +754,7 @@ fn check_phase1_ancestor(
         "destination workspace '{cwd_workspace_name}' project repo at {cwd_tip} has {extra_count} \
          commits not in source workspace '{source_workspace_name}'.\n\
          \n\
-         To land them: rerun with `--strategy rebase` or `--strategy merge`.\n\
+         To land them: rerun with `--strategy rebase`.\n\
          To bring source in sync first: sync the other direction.\n\
          To discard them (recoverable via `rwv abort`): rerun with `--discard-local-commits` \
          (pre-sync state preserved in refs/rwv/pre-op/<id>).",
@@ -814,9 +796,9 @@ impl Phase {
 fn conflict_op_for_strategy(strategy: SyncStrategy) -> ConflictOp {
     match strategy {
         // `--strategy ff` cannot conflict; pick Rebase as the resolution
-        // mode the user is likely to fall back to.
+        // mode the user is likely to fall back to. `rebase` resolves with
+        // the same in-flight op.
         SyncStrategy::Ff | SyncStrategy::Rebase => ConflictOp::Rebase,
-        SyncStrategy::Merge => ConflictOp::Merge,
     }
 }
 
@@ -903,8 +885,13 @@ fn per_conflict_bail_message(
 // than being inlined here. See those trait method doc-comments.
 
 /// Precondition: the CWD project repo's committed `.gitattributes` must contain
-/// `rwv.lock merge=ours` before any sync strategy that performs a 3-way merge
-/// (`Rebase` or `Merge`).
+/// `rwv.lock merge=ours` before the `Rebase` strategy runs.
+///
+/// `Rebase` is still gated even though `merge` (the strategy) was removed: git
+/// rebase replays each commit as a 3-way merge against the new base, so the
+/// `merge=ours` driver is required to keep lock-only commits from conflicting
+/// on `rwv.lock`. The requirement is about git's *per-commit merge* during
+/// replay, not the removed merge *strategy*.
 ///
 /// The mechanism has two halves: the inline `-c merge.ours.driver=true` flag
 /// *defines* a merge driver named "ours", and the `.gitattributes` line
@@ -935,7 +922,7 @@ fn verify_replay_exclusion_invariant(cwd_project_dir: &Path) -> anyhow::Result<(
     }
 
     anyhow::bail!(
-        "sync --strategy=rebase and --strategy=merge require `rwv.lock merge=ours` \
+        "sync --strategy=rebase requires `rwv.lock merge=ours` \
          in the project repo's committed .gitattributes, but {ga} does not contain \
          that line.\n\
          \n\
@@ -1719,7 +1706,7 @@ fn guard_and_mark<'a>(
             )?;
         }
     }
-    if matches!(strategy, SyncStrategy::Rebase | SyncStrategy::Merge) {
+    if matches!(strategy, SyncStrategy::Rebase) {
         verify_replay_exclusion_invariant(&cwd_project_dir)?;
     }
     let cwd_project_tip = GitVcs
@@ -2863,8 +2850,6 @@ fn short_sha(sha: &str) -> &str {
 /// - `Rebase`: native `git rebase` via [`Vcs::rebase`]. On conflict, leaves
 ///   the repo mid-rebase so `git rebase --continue` resumes after manual
 ///   resolution.
-/// - `Merge`: native `git merge --no-edit`. The `merge=ours` attribute
-///   resolves any lock-line collision automatically.
 ///
 /// Conflicts on non-lock paths halt the operation, leaving the VCS-native
 /// in-flight state for the operator to resolve and re-run sync, or
@@ -2907,28 +2892,6 @@ fn apply_project_strategy(
                     );
                 }
                 Err(e) => anyhow::bail!("project repo rebase failed: {e}"),
-            }
-        }
-        SyncStrategy::Merge => {
-            // `Vcs::merge_from` wires the `merge=ours` driver inline so any
-            // `rwv.lock` collision auto-resolves in source's favour. On
-            // conflict it returns RebaseConflict { op: Merge } with the repo
-            // left in mid-merge state.
-            match GitVcs.merge_from(cwd_project_dir, source_tip) {
-                Ok(()) => {}
-                Err(VcsError::RebaseConflict { repo, op }) => {
-                    anyhow::bail!(
-                        "{}",
-                        per_conflict_bail_message(
-                            &repo,
-                            op,
-                            "merge (project repo)",
-                            "see in-flight merge state for conflicting paths",
-                            resolved_source,
-                        )
-                    );
-                }
-                Err(e) => anyhow::bail!("project repo merge failed: {e}"),
             }
         }
     }
@@ -3636,14 +3599,6 @@ mod tests {
             .kind(),
             "rebase-failed"
         );
-        assert_eq!(
-            SyncFailure::MergeFailed {
-                error: "x".into(),
-                cause: None
-            }
-            .kind(),
-            "merge-failed"
-        );
     }
 
     #[test]
@@ -3655,10 +3610,6 @@ mod tests {
         assert!(matches!(
             SyncFailure::for_strategy(SyncStrategy::Rebase, "e".into(), None),
             SyncFailure::RebaseFailed { .. }
-        ));
-        assert!(matches!(
-            SyncFailure::for_strategy(SyncStrategy::Merge, "e".into(), None),
-            SyncFailure::MergeFailed { .. }
         ));
     }
 
@@ -3702,17 +3653,6 @@ mod tests {
         assert_resolution_first_abort_last(&msg);
     }
 
-    #[test]
-    fn manifest_repo_failure_message_merge_includes_merge_hint() {
-        let src = SyncSource::Primary;
-        let msg = manifest_repo_failure_message(SyncStrategy::Merge, &src);
-        assert!(
-            msg.contains("git merge --continue"),
-            "expected merge hint in: {msg}"
-        );
-        assert_resolution_first_abort_last(&msg);
-    }
-
     // Site 2 — Phase 1' (project repo) outer bail.
     #[test]
     fn phase1_bail_message_includes_resolution_steps_and_rwv_abort_last() {
@@ -3740,14 +3680,14 @@ mod tests {
     fn phase3_bail_message_includes_resolution_steps_and_rwv_abort_last() {
         let src = SyncSource::Path(PathBuf::from("/abs/source"));
         let cwd = Path::new("/ws/projects/web-app");
-        let msg = phase1_or_phase3_failure_message(Phase::Three, cwd, SyncStrategy::Merge, &src);
+        let msg = phase1_or_phase3_failure_message(Phase::Three, cwd, SyncStrategy::Rebase, &src);
         assert!(
             msg.contains("Phase 3 (re-lock)"),
             "expected phase label in: {msg}"
         );
         assert!(
-            msg.contains("git merge --continue"),
-            "expected merge hint in: {msg}"
+            msg.contains("git rebase --continue"),
+            "expected rebase hint in: {msg}"
         );
         assert!(
             msg.contains("rwv sync /abs/source"),
@@ -3809,7 +3749,8 @@ mod tests {
     #[test]
     fn conflict_op_for_strategy_maps_ff_to_rebase() {
         // ff cannot leave a conflict; we still nominate Rebase as the
-        // fallback the user is likely to switch to.
+        // fallback the user is likely to switch to. rebase resolves with
+        // the same in-flight op.
         assert_eq!(
             conflict_op_for_strategy(SyncStrategy::Ff),
             ConflictOp::Rebase
@@ -3817,10 +3758,6 @@ mod tests {
         assert_eq!(
             conflict_op_for_strategy(SyncStrategy::Rebase),
             ConflictOp::Rebase
-        );
-        assert_eq!(
-            conflict_op_for_strategy(SyncStrategy::Merge),
-            ConflictOp::Merge
         );
     }
 

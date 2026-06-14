@@ -4,7 +4,7 @@
 //! 1. Concurrent-op detection: an in-progress op-state blocks new ops on either workspace.
 //! 2. Mid-step-1 resume: conflict → resolve → `--continue` → completion.
 //! 3. Mid-step-3 resume: op-state left at step3-ff phase → `--continue` → FF-advance completes.
-//! 4. Parameter-mismatch error: `--strategy=rebase` start → `--strategy=merge` continue → error.
+//! 4. Parameter exclusivity: `--strategy` passed alongside `--continue` → error.
 //! 5. Abort cross-workspace: `rwv abort` from either workspace clears both op-state files.
 //!
 //! Notes:
@@ -500,7 +500,7 @@ fn continue_with_strategy_flag_is_rejected() {
 
     // Passing --strategy alongside --continue must be rejected.
     let assertion = rwv()
-        .args(["sync", "--strategy", "merge", "--continue"])
+        .args(["sync", "--strategy", "rebase", "--continue"])
         .current_dir(&ww.root)
         .assert()
         .failure();
@@ -596,9 +596,9 @@ fn sync_to_continue_with_strategy_flag_is_rejected() {
     let tmp = tempfile::tempdir().unwrap();
     let (_primary, ww, _c1) = make_shared_workspaces(tmp.path());
 
-    // rwv sync-to --strategy=merge --continue must be rejected.
+    // rwv sync-to --strategy=rebase --continue must be rejected.
     let assertion = rwv()
-        .args(["sync-to", "--strategy", "merge", "--continue"])
+        .args(["sync-to", "--strategy", "rebase", "--continue"])
         .current_dir(&ww.root)
         .assert()
         .failure();
@@ -606,7 +606,7 @@ fn sync_to_continue_with_strategy_flag_is_rejected() {
 
     assert!(
         stderr.contains("cannot be used with") || stderr.contains("--continue"),
-        "expected clap exclusivity error for sync-to --strategy=merge --continue; got: {stderr}"
+        "expected clap exclusivity error for sync-to --strategy=rebase --continue; got: {stderr}"
     );
 }
 

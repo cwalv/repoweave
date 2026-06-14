@@ -681,59 +681,6 @@ impl Vcs for GitVcs {
         Ok(())
     }
 
-    fn merge_from(&self, repo: &Path, rev: &ResolvedRevisionId) -> Result<(), VcsError> {
-        // Wire up the `ours` merge driver inline so any `<path> merge=ours`
-        // line written by [`set_replay_exclusion`] resolves to "keep ours"
-        // during this merge. Doing it per-invocation (rather than at
-        // `rwv init` time) means the driver is available on every clone
-        // without per-clone setup. Mirrors the inline driver registration
-        // used by [`rebase`].
-        let output = git_command()
-            .args([
-                "-c",
-                "merge.ours.name=keep ours during replay (rwv replay-exclusion)",
-                "-c",
-                "merge.ours.driver=true",
-                "merge",
-                "--no-edit",
-                rev.as_str(),
-            ])
-            .current_dir(repo)
-            .output()
-            .map_err(|e| VcsError::Io {
-                ctx: format!(
-                    "failed to spawn git merge --no-edit {} in {}",
-                    rev.as_str(),
-                    repo.display()
-                ),
-                source: e,
-            })?;
-
-        if output.status.success() {
-            return Ok(());
-        }
-
-        // Non-zero exit. If the repo is in mid-merge, this is a conflict;
-        // otherwise it's some other merge error.
-        if matches!(Self::mid_op_state(repo).as_deref(), Some("mid-merge")) {
-            return Err(VcsError::RebaseConflict {
-                repo: repo.to_path_buf(),
-                op: ConflictOp::Merge,
-            });
-        }
-
-        let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
-        Err(VcsError::CommandFailed {
-            args: vec![
-                "merge".to_owned(),
-                "--no-edit".to_owned(),
-                rev.as_str().to_owned(),
-            ],
-            repo: repo.to_path_buf(),
-            stderr,
-        })
-    }
-
     fn hard_reset(&self, repo: &Path, to: &ResolvedRevisionId) -> Result<(), VcsError> {
         Self::run(&["reset", "--hard", to.as_str()], repo)?;
         Ok(())

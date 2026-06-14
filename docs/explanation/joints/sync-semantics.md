@@ -152,7 +152,7 @@ Runs Phase 2 (manifest repos) and Phase 1' (project repo):
 - **Phase 2 — manifest repos**: advance each of CWD's manifest repo
   branches to the named workspace's lock target, using the chosen
   `--strategy`. Repos already at the target SHA are no-ops. Repos behind
-  the target are advanced via the strategy (ff / rebase / merge). Repos
+  the target are advanced via the strategy (ff / rebase). Repos
   ahead of the target surface as `already-ahead` — the engine does not
   silently rewind CWD's working state.
 
@@ -160,10 +160,8 @@ Runs Phase 2 (manifest repos) and Phase 1' (project repo):
   project commits onto the named workspace's project tip using
   `--strategy`, with `rwv.lock` excluded from each commit's effective
   diff. With `--strategy=rebase`, lock-only commits become empty patches
-  and are dropped by git's `--empty=drop`. With `--strategy=merge`, the
-  `merge=ours` driver resolves any lock-line collision in source's
-  favour. With `--strategy=ff`, the branch pointer advances without
-  replaying anything.
+  and are dropped by git's `--empty=drop`. With `--strategy=ff`, the
+  branch pointer advances without replaying anything.
 
 Re-entry rule: per-repo state is derived from the VCS itself. A repo
 at its savepoint is redone; a repo mid-conflict resumes via the
@@ -243,7 +241,7 @@ state.
 ```yaml
 id: "1779769917405921588"       # op id, shared with savepoint refs
 verb: sync                       # "sync" | "sync-to"
-strategy: rebase                 # "ff" | "rebase" | "merge"
+strategy: rebase                 # "ff" | "rebase"
 source: /abs/path/src
 target: /abs/path/tgt
 retire: false
@@ -384,10 +382,13 @@ Both repo classes — project repo (Phase 1') and manifest repos (Phase
 |---|---|---|
 | `ff` (default for `sync`) | Fast-forward only; refuse on divergence | Fast-forward only; refuse on divergence |
 | `rebase` (default for `sync-to`) | Replay CWD's unique commits onto named-workspace's tip; lock excluded | Advance CWD's repos to named-workspace's lock targets |
-| `merge` | Merge named-workspace's tip into CWD's history; lock excluded | Advance CWD's repos to named-workspace's lock targets |
 
-`--strategy=rebase` and `--strategy=merge` require `rwv.lock merge=ours`
-in the project repo's **committed** `.gitattributes`. Both halves must
+`--strategy=rebase` requires `rwv.lock merge=ours`
+in the project repo's **committed** `.gitattributes`. This is still
+required even though the `merge` *strategy* was removed (see below): git
+rebase replays each commit as a 3-way merge against the new base, so the
+`merge=ours` driver is what keeps a lock-only commit from conflicting on
+`rwv.lock` during replay. Both halves must
 be in place: `rwv` passes `-c merge.ours.driver=true` on each git
 invocation (defines the driver), and the `.gitattributes` line assigns
 that driver to `rwv.lock`. The check fires against the committed file
@@ -396,6 +397,35 @@ invariant must survive rebases. Run `rwv doctor --fix` to add the line.
 
 `--strategy=ff` does not need the precondition: FF advances the branch
 pointer without performing a merge.
+
+### Why no `merge` strategy
+
+`--strategy` accepts only `ff` and `rebase`. A `merge` strategy is
+deliberately **not** offered. The single question that justifies a merge
+strategy is: *"would rebase rewrite commits that are already published?"*
+If yes, you cannot rebase and must merge; if no, rebase is strictly
+preferable (linear history, no merge bubbles). In repoweave that question
+is always **no**:
+
+- **Workweave branches are unpublished by construction.** The enforced
+  invariant is that workweave branches are never pushed — `rwv push`
+  refuses from a workweave — so rebasing them rewrites nothing anyone
+  else can have seen.
+- **Landing is routed through `sync-to`, which only rebases the
+  unpublished side.** The canonical "land my work" path rebases CWD
+  (the workweave) against the target and then *fast-forwards* the
+  primary; the published side is never rewritten.
+- **Origin-mediated divergence is handled by `update`/git,** not by a
+  sync merge strategy.
+
+The only surviving case is a direct weave-to-weave sync between two
+workspaces that share no origin and both carry published history — not
+encountered in practice. **Escape hatch:** for that case, reconcile each
+repo by hand with `git merge` in the affected repo, then run `rwv lock`
+to re-pin the lock to the merged tips. If the facts ever change — if a
+weave-to-weave reconciliation against published commits becomes routine —
+re-apply the justification test ("would rebase rewrite published
+commits?") and reconsider adding the strategy back.
 
 ## Named overrides and the naming rule
 
@@ -425,7 +455,7 @@ operator to re-supply flags. The record is an audit trail.
 Before Phase 1', the engine checks the ancestor relationship between
 CWD's project tip and the named workspace's project tip:
 
-| Relation | `ff` | `rebase` / `merge` |
+| Relation | `ff` | `rebase` |
 |---|---|---|
 | Equal tips | No-op, allowed | No-op, allowed |
 | CWD is ancestor of named workspace | Allowed — fast-forward | Allowed |
@@ -434,11 +464,11 @@ CWD's project tip and the named workspace's project tip:
 
 With `ff`, the engine refuses when CWD has project commits not reachable
 from the named workspace. The error message points at `--strategy
-rebase` or `--strategy merge` as the paths that *land* those commits,
+rebase` as the path that *lands* those commits,
 and at `--discard-local-commits` as the path that *discards* them
 (preserving them in the savepoint tombstone).
 
-With `rebase` or `merge`, the strategy itself is the answer to
+With `rebase`, the strategy itself is the answer to
 divergence; the precondition is bypassed.
 
 ## VCS mapping (git)
@@ -452,13 +482,13 @@ mechanism is:
 | Target-side pre-op snapshot reference | `refs/rwv/pre-op/<op-id>-target` |
 | Pre-abort reference | `refs/rwv/pre-abort/<op-id>` |
 | Target-side pre-abort reference | `refs/rwv/pre-abort/<op-id>-target` |
-| VCS-native mid-op state / continue / abort | rebase/merge/cherry-pick state dirs; `--continue` / `--abort` |
+| VCS-native mid-op state / continue / abort | rebase/cherry-pick state dirs; `--continue` / `--abort` |
 | Atomic source pin (T₀) | one `HEAD` resolution of the source project repo |
 | Read manifest/lock at a revision | `git show <rev>:<path>` (`Vcs::read_file_at_revision`) |
 | ff-advance to converged tip | `git merge --ff-only <rev>` (never `reset --hard`) |
 | Verified restore | `git reset --hard <savepoint>` gated on tip ∈ {savepoint, converged tip, mid-op} |
 | Object transfer of pinned revisions | shared object store (worktrees: no-op) |
-| Lock replay-exclusion (rebase/merge) | `rwv.lock merge=ours` in `.gitattributes`; `-c merge.ours.driver=true` per invocation |
+| Lock replay-exclusion (rebase) | `rwv.lock merge=ours` in `.gitattributes`; `-c merge.ours.driver=true` per invocation |
 
 All of these are intent-named `Vcs` trait methods; the phase machine
 contains no VCS-specific spellings.

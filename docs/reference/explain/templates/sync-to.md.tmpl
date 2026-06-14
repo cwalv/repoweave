@@ -12,7 +12,7 @@ CWD, and target is only ever advanced via fast-forward.
 
 ### The three steps
 
-1. **Step 1 — rebase/merge CWD against target.** Equivalent to `rwv sync <target>
+1. **Step 1 — rebase CWD against target.** Equivalent to `rwv sync <target>
    --strategy=<X>` from CWD: the existing sync engine is called with target as
    source and CWD as destination. End state: CWD has target's history with CWD's
    unique commits replayed on top (per `--strategy`).
@@ -43,8 +43,9 @@ After `rwv sync-to <target> --strategy=rebase`:
   pointing at `--strategy=rebase`.
 - `--strategy=rebase` (default) — step 1 rebases CWD's unique commits onto
   target's tip. Step 2 auto-relocks. Step 3 FFs target.
-- `--strategy=merge` — step 1 merges target into CWD with an auto-generated
-  commit. Step 2 auto-relocks. Step 3 FFs target.
+
+(A `merge` strategy is not offered; see
+[sync semantics](../explanation/joints/sync-semantics.md#why-no-merge-strategy).)
 
 ### Multi-workspace op-state
 
@@ -60,7 +61,7 @@ back both workspaces.
 ## Invocation
 
 ```
-rwv sync-to [<target>] [--json] [--strategy <ff|rebase|merge>] [-j <N>] [--allow-stale-lock] [--discard-local-commits] [--retire] [--project <name>] [--continue]
+rwv sync-to [<target>] [--json] [--strategy <ff|rebase>] [-j <N>] [--allow-stale-lock] [--discard-local-commits] [--retire] [--project <name>] [--continue]
 ```
 
 - `<target>` is the target workspace: `primary`, a bare workweave name, or
@@ -68,8 +69,9 @@ rwv sync-to [<target>] [--json] [--strategy <ff|rebase|merge>] [-j <N>] [--allow
   a workweave to auto-target the parent recorded in `.rwv-workweave`. Required
   in a primary weave.
 - `--json` emits machine-readable output (see Output below).
-- `--strategy` picks the step-1 strategy (`rebase` default, `ff`, or `merge`).
-  Step 3 is always FF regardless of this flag.
+- `--strategy` picks the step-1 strategy (`rebase` default or `ff`).
+  Step 3 is always FF regardless of this flag. (`merge` is not offered; see
+  [sync semantics](../explanation/joints/sync-semantics.md#why-no-merge-strategy).)
 - `--allow-stale-lock` skips the lock-freshness precondition on both sides.
   Recorded as `allow-stale-lock` in the op-state `overrides` field for audit
   fidelity on `--continue`.

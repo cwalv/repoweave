@@ -93,8 +93,8 @@ const PRIME_OVERVIEW_MD: &str = include_str!("../docs/reference/prime/overview.m
 //   - Table cells: `rwv prime [--no-suppress]`  => --no-suppress
 //   - Table cells: `rwv fetch SOURCE [--frozen]` => --frozen
 //   - Table cells: `rwv doctor --locked`         => --locked
-//   - Table cells: `rwv sync <source> [--strategy ff|rebase|merge] [--force]`
-//                                                => --strategy, --force
+//   - Table cells: `rwv sync <source> [--strategy ff|rebase]`
+//                                                => --strategy
 //   - Table cells: `rwv status [--json]`         => --json
 //   - Code fences: bare `rwv <verb> --flag` lines (no placeholders / comments)
 //
