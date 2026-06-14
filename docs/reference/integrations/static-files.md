@@ -36,6 +36,15 @@ Symlinks are removed by the activation framework (any symlink at the weave direc
 
 Warns if any declared file is missing from the project directory.
 
+The framework-level Axis-1 surfacing check (run by `rwv doctor`) additionally
+warns when a surfacing symlink for a declared file is missing or mis-resolved
+at the weave directory — for example, after a manual `rm` of a symlink, after
+enabling the integration in an existing workweave, or after a file is added to
+the `files:` list after a workweave was created. These surfacing warnings are
+emitted framework-side (not by this integration's `check()`) and are safe to
+fix with `rwv doctor --fix`. A real file occupying the surfacing path is
+reported but never auto-clobbered.
+
 ## Examples
 
 ### Turborepo with npm workspaces

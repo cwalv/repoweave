@@ -33,9 +33,13 @@ rwv doctor [--all] [--locked] [--json] [--fix]
 - `--fix` attempts auto-remediation for variants that are safe to fix:
   index drift where the displaced tree is a known ancestor, working-tree
   drift where on-disk content matches a known blob, missing
-  `rwv.lock merge=ours` replay-exclusion, and legacy `role: primary`
+  `rwv.lock merge=ours` replay-exclusion, legacy `role: primary`
   manifest spellings (rewritten to `role: owned` in place — preserves
-  comments and key order). Idempotent. Mutually exclusive with
+  comments and key order), and missing or mis-resolved surfacing symlinks
+  (re-runs the framework surfacing primitive to (re)create symlinks for
+  every file in the active project's `generated_files() ∪ managed_files()`
+  union; a real file occupying a surfacing path is user-held and is
+  reported but never auto-clobbered). Idempotent. Mutually exclusive with
   `--locked` and `--json`.
 
 Run `rwv --help doctor` for the full clap surface.
@@ -61,6 +65,12 @@ Every per-repo variant carries `path` (manifest-relative) and
 (`workweave-drift`, `index-drift`, `working-tree-drift`) carry an
 additional `sub_kind` field. `legacy-role-primary` carries `project` and
 `manifest_path` so the caller can locate the file `--fix` will rewrite.
+
+Surfacing violations (missing or mis-resolved symlinks in the active
+project's surfacing set) are reported as `core` integration warnings in
+the text output; they do not have a dedicated `--json` kind because they
+are emitted as `Issue` values through the same integration-issue channel
+as per-integration check results.
 
 Schema:
 
@@ -113,3 +123,9 @@ rwv doctor --fix
 - *orphaned-clone* — a directory under a registry path that isn't listed in
   any `rwv.yaml`. Only surfaced under `--all`. Either add it to a manifest
   or remove it.
+- *surfacing: `<file>` is not surfaced* (or *symlink resolves to …*) — the
+  framework Axis-1 surfacing check found a missing or mis-resolved symlink
+  in the active project's surfacing set. Run `rwv doctor --fix` to
+  re-surface the symlink. If a real file occupies the surfacing path, the
+  warning is marked not-safe-to-fix; resolve manually (move or remove the
+  occupying file, then rerun `--fix`).

@@ -27,19 +27,34 @@ previous state.
 `activate` does not regenerate integration files — it surfaces them. The flow:
 
 1. **Verification pass:** the integrations' `verify()` is called to detect
-   drift between on-disk generated content and what the intent verb produced.
-   Drift is reported as a warning (`warning (drift): ...`), not an error —
-   context verbs never author content; the recovery hatch is `rwv doctor --fix`.
+   drift between on-disk generated content and what the intent verb produced
+   (Axis-2 content drift). Drift is reported as a warning
+   (`warning (drift): ...`), not an error — context verbs never author
+   content; the recovery hatch is `rwv doctor --fix`.
 2. **Symlink removal:** any root-level symlinks from the previous activation
    that are owned by the integrations are removed (owner-scoped predicate:
    unlinked only if the symlink target resolves to
    `projects/<some-project>/<that-file>`).
 3. **Symlink creation:** new symlinks are created at the weave root pointing
    to `projects/<project>/<file>` for each file in the active integrations'
-   union of `generated_files()` and `managed_files()`.
+   union of `generated_files()` and `managed_files()` (Axis-1 surfacing).
 4. **Install hooks:** integration install commands run against the now-in-place
    symlinks. Suppressed by `--no-install`.
 5. **Write `.rwv-active`.**
+
+The per-integration `verify()` pass (step 1) covers Axis-2 content drift
+only — it does not assert that the surfacing symlinks themselves are present
+and resolve correctly. The framework-level **Axis-1 surfacing check** is a
+separate pass in `rwv doctor`: it asserts every file in the
+`generated_files() ∪ managed_files()` union has a valid symlink at the weave
+root. This distinction matters inside a workweave: `rwv activate` is refused
+there (the project is fixed at creation), but `rwv doctor --fix` re-runs the
+step-2 surfacing primitive (`surface_symlinks`) bound to the workweave
+directory — it creates missing or mis-resolved symlinks without re-selecting
+the project, so it is safe and valid in a workweave. Use `rwv doctor --fix`
+as the in-workweave recourse for any surfacing-symlink drift (e.g. a file
+added to the manifest after the workweave was created, or a manual `rm` of a
+surfaced symlink).
 
 ### Workweave restriction
 
@@ -104,7 +119,12 @@ cat .rwv-active
 ## Common errors
 
 - *rwv activate has no effect in a workweave* — called from inside a
-  workweave. `cd` to the primary weave and rerun.
+  workweave. The project is fixed at creation time; switching is not
+  supported in a workweave. `cd` to the primary weave and rerun. If you
+  need to repair missing or mis-resolved surfacing symlinks inside the
+  workweave, use `rwv doctor --fix` instead — it re-runs the surfacing
+  primitive scoped to the workweave directory without re-selecting the
+  project.
 - *project directory not found* — `projects/<project>/` does not exist or
   has no valid `rwv.yaml`. Verify the project name.
 - *integration activate-hook error* — an install command (`npm install`,
