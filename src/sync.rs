@@ -2422,22 +2422,109 @@ fn run_replay(ctx: &OpContext<'_>) -> anyhow::Result<()> {
         });
     }
 
-    let strategy = ctx.strategy;
-    let task_outcomes: Vec<bool> = run_in_parallel(&sync_tasks, ctx.jobs, |_idx, task| {
-        let outcome = sync_one_repo(&task.abs, &task.target, strategy);
-        let is_failure = outcome.is_failure();
-        if !is_failure {
-            GitVcs.refresh_index_to_head_if_safe(&task.abs);
-            GitVcs.refresh_working_tree_to_head_if_safe(&task.abs);
+    // === advanced_tips write 1: pre-write planned targets for genuine ff-movers ===
+    //
+    // Before the parallel fan-out, classify every sync task: if the repo's
+    // current HEAD is a STRICT ancestor of the lock target (head ≠ target AND
+    // head ⊏ target), this is a genuine fast-forward and the landing tip is
+    // knowable now.  Pre-write target → advanced_tips so abort can attribute the
+    // repo the instant it is advanced, with no window (§4 case 1).
+    //
+    // Repos whose HEAD equals target (NoOp) or whose HEAD is ahead of target
+    // (AlreadyAhead) are skipped — savepoint already attributes the no-op case,
+    // and recording an unreached target for an already-ahead repo is forgeable
+    // (§10 Q4).  Repos with local commits that diverge (not strict ancestors)
+    // are skipped here; their fresh rebased tip is captured post-join (write 3).
+    {
+        let mut entry_tips: std::collections::BTreeMap<String, String> =
+            std::collections::BTreeMap::new();
+        for task in &sync_tasks {
+            if let Ok(head) = GitVcs.head_revision(&task.abs) {
+                if head != task.target
+                    && GitVcs
+                        .is_ancestor(&task.abs, &head, &task.target)
+                        .unwrap_or(false)
+                {
+                    entry_tips.insert(
+                        task.repo_path.as_str().to_owned(),
+                        task.target.as_str().to_owned(),
+                    );
+                }
+            }
         }
-        ctx.handler.record(
-            task.repo_path.as_str(),
-            &task.abs.to_string_lossy(),
-            &outcome,
-        );
-        is_failure
-    });
-    if task_outcomes.iter().any(|f| *f) {
+        if !entry_tips.is_empty() {
+            let mut owner = op_state::read_owner(&ctx.owner_workspace_dir)?.ok_or_else(|| {
+                anyhow::anyhow!("internal: owner record missing during replay entry write")
+            })?;
+            owner.advanced_tips.extend(entry_tips);
+            op_state::write_owner(&ctx.owner_workspace_dir, &owner)
+                .context("failed to write advanced_tips at replay entry")?;
+        }
+    }
+
+    let strategy = ctx.strategy;
+    // Return type: (is_failure, Option<actual_head_if_converged>).
+    // The actual HEAD is read inside the closure (single-repo reads, no shared
+    // state) and returned for the post-join batch write.  No write to the owner
+    // record happens inside this closure — that would be a race (§4).
+    let task_results: Vec<(bool, Option<String>)> =
+        run_in_parallel(&sync_tasks, ctx.jobs, |_idx, task| {
+            let outcome = sync_one_repo(&task.abs, &task.target, strategy);
+            let is_failure = outcome.is_failure();
+            // Capture the actual post-advance HEAD if this task converged.
+            // For ff-movers this equals the pre-written target (idempotent
+            // overwrite in write 3); for rebased repos it is the fresh SHA.
+            let converged_head = if matches!(outcome, RepoSyncOutcome::Converged) {
+                GitVcs
+                    .head_revision(&task.abs)
+                    .ok()
+                    .map(|h| h.as_str().to_owned())
+            } else {
+                None
+            };
+            if !is_failure {
+                GitVcs.refresh_index_to_head_if_safe(&task.abs);
+                GitVcs.refresh_working_tree_to_head_if_safe(&task.abs);
+            }
+            ctx.handler.record(
+                task.repo_path.as_str(),
+                &task.abs.to_string_lossy(),
+                &outcome,
+            );
+            (is_failure, converged_head)
+        });
+
+    // === advanced_tips write 3: batch-write actual tips of converged manifest repos ===
+    //
+    // Single-threaded post-join, so no race against write_owner.  Overwrites the
+    // ff-pre-written entries (same value, idempotent) and captures fresh rebased
+    // SHAs for manifest repos that had local commits to replay (§4 case 2, §6).
+    // Must precede the any_failure bail so partially-advanced repos are captured
+    // even when the overall fan-out fails.
+    {
+        let post_join_tips: Vec<(String, String)> = sync_tasks
+            .iter()
+            .zip(task_results.iter())
+            .filter_map(|(task, (_, head_opt))| {
+                head_opt
+                    .as_ref()
+                    .map(|h| (task.repo_path.as_str().to_owned(), h.clone()))
+            })
+            .collect();
+        if !post_join_tips.is_empty() {
+            let mut owner =
+                op_state::read_owner(&ctx.owner_workspace_dir)?.ok_or_else(|| {
+                    anyhow::anyhow!("internal: owner record missing during post-fan-out write")
+                })?;
+            for (repo_path, tip) in post_join_tips {
+                owner.advanced_tips.insert(repo_path, tip);
+            }
+            op_state::write_owner(&ctx.owner_workspace_dir, &owner)
+                .context("failed to write advanced_tips after fan-out join")?;
+        }
+    }
+
+    if task_results.iter().any(|(f, _)| *f) {
         any_failure = true;
     }
 
@@ -2482,6 +2569,27 @@ fn run_replay(ctx: &OpContext<'_>) -> anyhow::Result<()> {
                 &ctx.resolved_source,
             )
         );
+    }
+
+    // === advanced_tips write 2: capture actual post-Phase-1' project repo tip ===
+    //
+    // Phase 1' may rebase CWD's project commits onto source_project_tip, landing
+    // at a fresh SHA T1 that was not knowable at replay entry.  Overwrite
+    // advanced_tips["(project)"] with the actual post-rebase HEAD (§4 case 2,
+    // §6).  This also covers the ff/discard-local-commits case (tip == source
+    // tip, idempotent overwrite).
+    {
+        let project_tip = GitVcs
+            .head_revision(&ctx.cwd_project_dir)
+            .context("failed to read project HEAD after Phase 1'")?;
+        let mut owner = op_state::read_owner(&ctx.owner_workspace_dir)?.ok_or_else(|| {
+            anyhow::anyhow!("internal: owner record missing after Phase 1'")
+        })?;
+        owner
+            .advanced_tips
+            .insert("(project)".to_owned(), project_tip.as_str().to_owned());
+        op_state::write_owner(&ctx.owner_workspace_dir, &owner)
+            .context("failed to write advanced_tips after Phase 1'")?;
     }
 
     Ok(())
@@ -2619,6 +2727,10 @@ fn record_converged_tips(ctx: &OpContext<'_>, cwd_project: &Project) -> anyhow::
     let mut owner = op_state::read_owner(&ctx.owner_workspace_dir)?
         .ok_or_else(|| anyhow::anyhow!("internal: owner record missing during relock"))?;
     owner.converged_tips.clear();
+    // Clear advanced_tips in the SAME persist as converged_tips (§4 "Clearing order").
+    // Clearing advanced_tips before converged_tips is durable would reopen the
+    // original attribution gap; they must land together.
+    owner.advanced_tips.clear();
     for repo_path in cwd_project.manifest.iter_repo_paths() {
         let abs = ctx.cwd_workspace_dir.join(repo_path.as_path());
         if !abs.exists() {
