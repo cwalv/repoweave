@@ -18,6 +18,7 @@
 //! target: /abs/path/tgt
 //! retire: false
 //! phase: replay                    # replay | relock | advance-target | retire
+//! advanced_tips: {}                # replay-phase intent: repo → planned/actual tip; empty before replay entry; cleared at relock (same write as converged_tips)
 //! converged_tips: {}               # written at relock completion; empty before
 //! overrides: []                    # named overrides supplied at invocation
 //! started_at: 2026-06-10T21:14:03Z
@@ -132,9 +133,12 @@ impl std::fmt::Display for OpPhase {
 /// The owner op record written to `.rwv-op` at the initiating workspace.
 ///
 /// All path fields are absolute. `started_at` is RFC3339 UTC.
-/// `converged_tips` is populated at relock completion; empty before.
-/// `overrides` records named overrides supplied at invocation for audit
-/// fidelity on `--continue`.
+/// `advanced_tips` records the op's self-attributable tip per repo during the
+/// replay phase (see abort-intent-journal.md §3); empty before replay entry
+/// and cleared (in the same write) when `converged_tips` is populated at
+/// relock completion. `converged_tips` is populated at relock completion;
+/// empty before. `overrides` records named overrides supplied at invocation
+/// for audit fidelity on `--continue`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct OwnerRecord {
     /// Unique operation identifier (nanosecond wall-clock string). Shared
@@ -153,6 +157,14 @@ pub struct OwnerRecord {
     pub retire: bool,
     /// Current phase. The driver persists this before entering each phase.
     pub phase: OpPhase,
+    /// Per-repo advancement-intent tips, written at replay entry and cleared at
+    /// relock completion (in the same write as `converged_tips`).
+    /// Key: manifest repo path (e.g. `github/foo/bar`) or `(project)` for the
+    /// project repo.  Value: planned target revision for fast-forward advances;
+    /// actual post-rebase tip for rebased advances (see abort-intent-journal.md §3).
+    /// Empty on records predating this field (`#[serde(default)]`).
+    #[serde(default)]
+    pub advanced_tips: BTreeMap<String, String>,
     /// Per-repo converged tips written at relock completion.
     /// Key: repo path (relative to workspace root, e.g. `github/foo/bar`).
     /// Value: SHA string. Consumed by advance-target and abort's HEAD check.
@@ -183,6 +195,7 @@ impl OwnerRecord {
             target: cwd_workspace,
             retire: false,
             phase: OpPhase::Replay,
+            advanced_tips: BTreeMap::new(),
             converged_tips: BTreeMap::new(),
             overrides: Vec::new(),
             started_at: utc_now_rfc3339(),
@@ -207,6 +220,7 @@ impl OwnerRecord {
             target: target_workspace,
             retire,
             phase: OpPhase::Replay,
+            advanced_tips: BTreeMap::new(),
             converged_tips: BTreeMap::new(),
             overrides: Vec::new(),
             started_at: utc_now_rfc3339(),
@@ -607,8 +621,81 @@ mod tests {
         assert_eq!(read_back.strategy, "rebase");
         assert_eq!(read_back.phase, OpPhase::Replay);
         assert!(!read_back.retire);
+        assert!(read_back.advanced_tips.is_empty());
         assert!(read_back.converged_tips.is_empty());
         assert!(read_back.overrides.is_empty());
+    }
+
+    // -----------------------------------------------------------------------
+    // advanced_tips field round-trip tests (fo-6rysot.1)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn advanced_tips_populated_roundtrip() {
+        // Write a record with advanced_tips populated, read it back, verify the
+        // map survives serialisation/deserialisation unchanged.
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path();
+        let op_id = OpId::new_now();
+        let mut record = OwnerRecord::new_sync(
+            &op_id,
+            crate::sync::SyncStrategy::Rebase,
+            PathBuf::from("/src/ws"),
+            PathBuf::from("/cwd/ws"),
+        );
+        record.advanced_tips.insert(
+            "github/foo/bar".to_owned(),
+            "aabbccdd".to_owned(),
+        );
+        record.advanced_tips.insert(
+            "(project)".to_owned(),
+            "deadbeef".to_owned(),
+        );
+        write_owner(dir, &record).unwrap();
+        let read_back = read_owner(dir).unwrap().unwrap();
+        assert_eq!(read_back.advanced_tips.len(), 2);
+        assert_eq!(
+            read_back.advanced_tips.get("github/foo/bar").map(String::as_str),
+            Some("aabbccdd"),
+        );
+        assert_eq!(
+            read_back.advanced_tips.get("(project)").map(String::as_str),
+            Some("deadbeef"),
+        );
+        // converged_tips is unaffected.
+        assert!(read_back.converged_tips.is_empty());
+    }
+
+    #[test]
+    fn advanced_tips_default_empty_when_field_absent() {
+        // A serialised record that pre-dates the advanced_tips field (i.e. the
+        // YAML has no advanced_tips key) must parse to an empty map.
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path();
+        // Craft a minimal YAML record without the advanced_tips key, exactly as
+        // an in-flight record from before this change would look.
+        let yaml = r#"id: "9999999999999999999"
+verb: sync
+strategy: ff
+source: /src/ws
+target: /cwd/ws
+retire: false
+phase: replay
+converged_tips: {}
+overrides: []
+started_at: 2026-06-01T00:00:00Z
+"#;
+        let path = dir.join(OP_STATE_FILE);
+        std::fs::write(&path, yaml).unwrap();
+        let record = read_owner(dir).unwrap().unwrap();
+        assert!(
+            record.advanced_tips.is_empty(),
+            "expected empty advanced_tips on legacy record, got {:?}",
+            record.advanced_tips,
+        );
+        // Verify the rest of the record parsed correctly too.
+        assert_eq!(record.id, "9999999999999999999");
+        assert_eq!(record.verb, OpVerb::Sync);
     }
 
     #[test]
