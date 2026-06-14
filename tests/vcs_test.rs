@@ -1200,3 +1200,90 @@ fn rebase_auto_resolves_lock_collision_when_replay_exclusion_set() {
         "successful rebase must leave repo in a clean state"
     );
 }
+
+// ============================================================================
+// rebase_stopped_commit_detail
+// ============================================================================
+
+/// When a rebase is stopped mid-way by a conflict, `rebase_stopped_commit_detail`
+/// returns a string containing the short SHA and subject of the stopped commit.
+#[test]
+fn rebase_stopped_commit_detail_returns_sha_and_subject() {
+    // Set up a repo where feature and main conflict on shared.txt.
+    let dir = init_repo();
+    let p = dir.path();
+    fs::write(p.join("shared.txt"), "base\n").unwrap();
+    git(p, &["add", "shared.txt"]);
+    git(p, &["commit", "-m", "add shared"]);
+    let c1 = git(p, &["rev-parse", "HEAD"]);
+
+    // main advances with a conflicting change.
+    fs::write(p.join("shared.txt"), "main side\n").unwrap();
+    git(p, &["add", "shared.txt"]);
+    git(p, &["commit", "-m", "main: conflicting change"]);
+    let main_tip = ResolvedRevisionId::from_canonical(git(p, &["rev-parse", "main"]), None);
+
+    // feature branches off c1 and commits with a known subject.
+    git(p, &["checkout", "-b", "feature", &c1]);
+    fs::write(p.join("shared.txt"), "feature side\n").unwrap();
+    git(p, &["add", "shared.txt"]);
+    git(
+        p,
+        &[
+            "commit",
+            "-m",
+            "lock: refresh — post-OOB drift in gc-formulas",
+        ],
+    );
+    let feature_sha = git(p, &["rev-parse", "HEAD"]);
+
+    // Rebase feature onto main — will conflict on shared.txt.
+    let result = GitVcs.rebase(p, &main_tip, &main_tip);
+    assert!(result.is_err(), "expected conflict on rebase");
+    assert_eq!(
+        GitVcs::mid_op_state(p).as_deref(),
+        Some("mid-rebase"),
+        "repo must be mid-rebase after conflicting rebase"
+    );
+
+    // rebase_stopped_commit_detail must include the short SHA and subject.
+    let detail = GitVcs::rebase_stopped_commit_detail(p);
+    let short = &feature_sha[..7];
+    assert!(
+        detail.contains(short),
+        "expected short SHA '{short}' in detail: {detail}"
+    );
+    assert!(
+        detail.contains("lock: refresh"),
+        "expected commit subject in detail: {detail}"
+    );
+    assert!(
+        detail.contains("post-OOB drift"),
+        "expected subject continuation in detail: {detail}"
+    );
+}
+
+/// When the repo is NOT mid-rebase, `rebase_stopped_commit_detail` returns a
+/// non-empty fallback string (no panic, no empty string).
+#[test]
+fn rebase_stopped_commit_detail_falls_back_when_no_rebase_in_progress() {
+    let dir = init_repo();
+    let p = dir.path();
+
+    // Repo is clean (init_repo leaves it in a normal state).
+    assert!(
+        GitVcs::mid_op_state(p).is_none(),
+        "repo should not be mid-rebase after init"
+    );
+
+    let detail = GitVcs::rebase_stopped_commit_detail(p);
+    assert!(
+        !detail.is_empty(),
+        "fallback must be non-empty; got: {detail}"
+    );
+    // Fallback must not start with "commit " since there is no stopped commit.
+    assert!(
+        !detail.starts_with("commit "),
+        "unexpected SHA prefix in fallback: {detail}"
+    );
+}

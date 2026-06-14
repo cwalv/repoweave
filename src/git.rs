@@ -118,6 +118,61 @@ impl GitVcs {
         }
         None
     }
+
+    /// Return a human-readable detail string identifying the commit that
+    /// stopped a rebase, for use in conflict-bail messages.
+    ///
+    /// During a `git rebase` conflict the stopped commit's SHA is written to
+    /// `.git/rebase-merge/stopped-sha`. This helper reads that file, resolves
+    /// the short SHA via `git rev-parse --short`, and fetches the subject line
+    /// via `git log -1 --format=%s`. If any step fails (e.g. the file is
+    /// absent or the object is unreachable) it returns a generic fallback so
+    /// the caller's conflict message still renders.
+    ///
+    /// The returned string is suitable as the `detail` arg to
+    /// `per_conflict_bail_message` in sync, e.g.:
+    /// `"commit abc1234 (lock: refresh — post-OOB drift in gc-formulas)"`
+    pub fn rebase_stopped_commit_detail(repo: &Path) -> String {
+        let fallback = "see in-flight rebase state for conflicting paths".to_owned();
+
+        // Resolve the .git directory so we can locate rebase-merge/stopped-sha.
+        let git_dir = match Self::run(&["rev-parse", "--git-dir"], repo) {
+            Ok(s) => {
+                let p = std::path::PathBuf::from(s.trim());
+                if p.is_absolute() {
+                    p
+                } else {
+                    repo.join(p)
+                }
+            }
+            Err(_) => return fallback,
+        };
+
+        // Read the full SHA of the stopped commit.
+        let stopped_sha_path = git_dir.join("rebase-merge").join("stopped-sha");
+        let full_sha = match std::fs::read_to_string(&stopped_sha_path) {
+            Ok(s) => s.trim().to_owned(),
+            Err(_) => return fallback,
+        };
+        if full_sha.is_empty() {
+            return fallback;
+        }
+
+        // Shorten the SHA for display.
+        let short_sha = Self::run(&["rev-parse", "--short", &full_sha], repo)
+            .unwrap_or_else(|_| full_sha.chars().take(7).collect());
+
+        // Fetch the commit subject line.
+        let subject = match Self::run(&["log", "-1", "--format=%s", &full_sha], repo) {
+            Ok(s) => s.trim().to_owned(),
+            Err(_) => return format!("commit {short_sha}"),
+        };
+        if subject.is_empty() {
+            return format!("commit {short_sha}");
+        }
+
+        format!("commit {short_sha} ({subject})")
+    }
 }
 
 impl GitVcs {

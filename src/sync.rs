@@ -3026,13 +3026,14 @@ fn apply_project_strategy(
             match GitVcs.rebase(cwd_project_dir, source_tip, source_tip) {
                 Ok(()) => {}
                 Err(VcsError::RebaseConflict { repo, op }) => {
+                    let detail = GitVcs::rebase_stopped_commit_detail(&repo);
                     anyhow::bail!(
                         "{}",
                         per_conflict_bail_message(
                             &repo,
                             op,
                             "rebase (project repo)",
-                            "see in-flight rebase state for conflicting paths",
+                            &detail,
                             resolved_source,
                         )
                     );
@@ -3980,6 +3981,47 @@ mod tests {
         assert!(
             msg.contains("rwv sync primary"),
             "expected re-run hint: {msg}"
+        );
+        assert_resolution_first_abort_last(&msg);
+    }
+
+    // Site 6 — Phase 1' rebase inner bail: subject appears in rendered message.
+    //
+    // This tests that per_conflict_bail_message surfaces the subject when a
+    // stopped-commit detail string containing the subject is passed as the
+    // `detail` arg — as `apply_project_strategy` now does via
+    // `GitVcs::rebase_stopped_commit_detail`.
+    #[test]
+    fn per_conflict_bail_rebase_project_repo_includes_commit_subject_in_detail() {
+        let src = SyncSource::Primary;
+        let repo = Path::new("/ws/projects/web-app");
+        let detail = "commit abc1234 (lock: refresh — post-OOB drift in gc-formulas)";
+        let msg = per_conflict_bail_message(
+            repo,
+            ConflictOp::Rebase,
+            "rebase (project repo)",
+            detail,
+            &src,
+        );
+        assert!(
+            msg.contains("abc1234"),
+            "expected short SHA in message: {msg}"
+        );
+        assert!(
+            msg.contains("lock: refresh"),
+            "expected commit subject in message: {msg}"
+        );
+        assert!(
+            msg.contains("post-OOB drift"),
+            "expected commit subject continuation in message: {msg}"
+        );
+        assert!(
+            msg.contains("git rebase --continue"),
+            "expected rebase hint in message: {msg}"
+        );
+        assert!(
+            msg.contains("rwv sync primary"),
+            "expected re-run hint in message: {msg}"
         );
         assert_resolution_first_abort_last(&msg);
     }
