@@ -3667,8 +3667,8 @@ pub fn run_sync_to_json(cwd: &Path, request: SyncRequest) -> anyhow::Result<()> 
             outcomes,
             project_repo_advance,
         };
-        let out = serde_json::to_string_pretty(&payload)
-            .context("failed to serialize sync-to output")?;
+        let out =
+            serde_json::to_string_pretty(&payload).context("failed to serialize sync-to output")?;
         println!("{out}");
     }
 

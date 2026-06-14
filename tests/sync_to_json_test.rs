@@ -206,7 +206,15 @@ fn make_workweave_ahead_fixture(
     git(&["add", "rwv.lock"], &ww_project);
     git(&["commit", "-m", "lock: ww advance"], &ww_project);
 
-    (primary, ww, primary_server, ww_server, primary_project, ww_project, advance_sha)
+    (
+        primary,
+        ww,
+        primary_server,
+        ww_server,
+        primary_project,
+        ww_project,
+        advance_sha,
+    )
 }
 
 // ===========================================================================
@@ -252,11 +260,7 @@ fn sync_to_retire_json_round_trip() {
     let source_ww = obj
         .get("source_workweave")
         .and_then(Value::as_str)
-        .unwrap_or_else(|| {
-            panic!(
-                "source_workweave must be present and a string; got:\n{stdout}"
-            )
-        });
+        .unwrap_or_else(|| panic!("source_workweave must be present and a string; got:\n{stdout}"));
     assert_eq!(
         source_ww, workweave_name,
         "source_workweave must match the workweave basename; got: {source_ww}"
@@ -299,19 +303,11 @@ fn sync_to_retire_json_round_trip() {
     let server_outcome = outcomes
         .iter()
         .find(|o| o.get("path").and_then(Value::as_str) == Some(SERVER_PATH))
-        .unwrap_or_else(|| {
-            panic!(
-                "expected outcome for {SERVER_PATH}; outcomes:\n{stdout}"
-            )
-        });
+        .unwrap_or_else(|| panic!("expected outcome for {SERVER_PATH}; outcomes:\n{stdout}"));
 
-    let step3 = server_outcome
-        .get("step3_advance")
-        .unwrap_or_else(|| {
-            panic!(
-                "server outcome must carry step3_advance; got outcome:\n{server_outcome}"
-            )
-        });
+    let step3 = server_outcome.get("step3_advance").unwrap_or_else(|| {
+        panic!("server outcome must carry step3_advance; got outcome:\n{server_outcome}")
+    });
     assert!(
         !step3.is_null(),
         "step3_advance must be non-null when the repo was advanced; got:\n{stdout}"
@@ -326,9 +322,9 @@ fn sync_to_retire_json_round_trip() {
     );
 
     // --- project_repo_advance ---
-    let proj_adv = obj.get("project_repo_advance").unwrap_or_else(|| {
-        panic!("project_repo_advance must be present; got:\n{stdout}")
-    });
+    let proj_adv = obj
+        .get("project_repo_advance")
+        .unwrap_or_else(|| panic!("project_repo_advance must be present; got:\n{stdout}"));
     assert!(
         !proj_adv.is_null(),
         "project_repo_advance must be non-null (project repo was advanced); got:\n{stdout}"
@@ -439,8 +435,7 @@ fn sync_to_json_source_workweave_is_null_from_primary() {
 
     // source_workweave must be null (or missing) since we're in a primary weave.
     let source_ww = parsed.get("source_workweave");
-    let is_null_or_absent = source_ww.is_none()
-        || source_ww.map(Value::is_null).unwrap_or(false);
+    let is_null_or_absent = source_ww.is_none() || source_ww.map(Value::is_null).unwrap_or(false);
     assert!(
         is_null_or_absent,
         "source_workweave must be null when invoked from a primary weave; got:\n{stdout}"
