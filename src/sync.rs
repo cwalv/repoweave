@@ -1388,34 +1388,58 @@ impl MachineVerb {
 /// an op-state file is present, the call resumes from the recorded phase.
 /// All parameters are read from the recorded state in that path.
 #[allow(clippy::too_many_arguments)]
-pub fn run_sync(
-    cwd: &Path,
-    source: Option<&SyncSource>,
-    strategy: SyncStrategy,
-    allow_stale_lock: bool,
-    discard_local_commits: bool,
-    retire: bool,
-    project_override: Option<ProjectName>,
-    jobs: usize,
-    do_continue: bool,
-) -> anyhow::Result<()> {
+/// Bundled arguments for a `sync` or `sync-to` invocation.
+///
+/// Replaces the positional argument lists that were duplicated across the
+/// `run_sync*` / `run_sync_to*` entry points and threaded into `run_machine`,
+/// `guard_and_mark`, and `load_continuing_context`. Callers build one
+/// `SyncRequest` and pass it by value to an entry point.
+#[derive(Debug, Clone)]
+pub struct SyncRequest {
+    /// Source (sync) or target (sync-to) workspace. `None` under `--continue`
+    /// (read from op-state) or for a bare `rwv sync` inside a workweave
+    /// (read from the `.rwv-workweave` parent marker).
+    pub source: Option<SyncSource>,
+    /// How to advance each repo to its lock target. Defaults to `ff`.
+    pub strategy: SyncStrategy,
+    /// Bypass the lock-freshness precondition (`--allow-stale-lock`).
+    pub allow_stale_lock: bool,
+    /// Hard-reset the project repo when CWD is not an ancestor of the source
+    /// tip (`--discard-local-commits`).
+    pub discard_local_commits: bool,
+    /// Delete the workweave after a successful `sync-to` (`--retire`).
+    pub retire: bool,
+    /// Override the active project (`--project`); `None` uses `.rwv-active`.
+    pub project_override: Option<ProjectName>,
+    /// Parallel per-repo worker count (resolved `-j N`); `1` runs serially.
+    pub jobs: usize,
+    /// Resume an in-flight op from op-state (`--continue`).
+    pub do_continue: bool,
+}
+
+impl Default for SyncRequest {
+    fn default() -> Self {
+        Self {
+            source: None,
+            strategy: SyncStrategy::Ff,
+            allow_stale_lock: false,
+            discard_local_commits: false,
+            retire: false,
+            project_override: None,
+            // 0 is never a valid worker count; default to serial (1) so that
+            // SyncRequest::default() is immediately safe to pass to run_sync.
+            jobs: 1,
+            do_continue: false,
+        }
+    }
+}
+
+pub fn run_sync(cwd: &Path, request: SyncRequest) -> anyhow::Result<()> {
     let stdout_lock: Mutex<()> = Mutex::new(());
     let handler = TextHandler {
         stdout_lock: &stdout_lock,
     };
-    run_machine(
-        MachineVerb::Sync,
-        cwd,
-        source,
-        strategy,
-        allow_stale_lock,
-        discard_local_commits,
-        retire,
-        project_override,
-        jobs,
-        &handler,
-        do_continue,
-    )
+    run_machine(MachineVerb::Sync, cwd, &request, &handler)
 }
 
 // ---------------------------------------------------------------------------
@@ -1430,35 +1454,16 @@ pub fn run_sync(
 /// `None` under `--continue` (read from op-state). `do_continue = true` means
 /// "resolve op-state from CWD (following a lease pointer if invoked from a
 /// non-owner workspace), enter the driver loop at the recorded phase".
-#[allow(clippy::too_many_arguments)]
 fn run_machine(
     verb: MachineVerb,
     cwd: &Path,
-    source: Option<&SyncSource>,
-    strategy: SyncStrategy,
-    allow_stale_lock: bool,
-    discard_local_commits: bool,
-    retire: bool,
-    project_override: Option<ProjectName>,
-    jobs: usize,
+    request: &SyncRequest,
     handler: &dyn OutputHandler,
-    do_continue: bool,
 ) -> anyhow::Result<()> {
-    let ctx = if do_continue {
-        load_continuing_context(verb, cwd, project_override.clone(), jobs, handler)?
+    let ctx = if request.do_continue {
+        load_continuing_context(verb, cwd, request, handler)?
     } else {
-        guard_and_mark(
-            verb,
-            cwd,
-            source,
-            strategy,
-            allow_stale_lock,
-            discard_local_commits,
-            retire,
-            project_override.clone(),
-            jobs,
-            handler,
-        )?
+        guard_and_mark(verb, cwd, request, handler)?
     };
 
     drive(&ctx)
@@ -1552,19 +1557,20 @@ fn next_after_advance_target(ctx: &OpContext<'_>) -> Option<op_state::OpPhase> {
 /// Guard (preconditions), mark (write owner record + leases), savepoint
 /// (per-repo pre-op refs). Returns the immutable [`OpContext`] driving the
 /// loop. Refusals here leave no trace.
-#[allow(clippy::too_many_arguments)]
 fn guard_and_mark<'a>(
     verb: MachineVerb,
     cwd: &Path,
-    source: Option<&SyncSource>,
-    strategy: SyncStrategy,
-    allow_stale_lock: bool,
-    discard_local_commits: bool,
-    retire: bool,
-    project_override: Option<ProjectName>,
-    jobs: usize,
+    request: &SyncRequest,
     handler: &'a dyn OutputHandler,
 ) -> anyhow::Result<OpContext<'a>> {
+    let source = request.source.as_ref();
+    let strategy = request.strategy;
+    let allow_stale_lock = request.allow_stale_lock;
+    let discard_local_commits = request.discard_local_commits;
+    let retire = request.retire;
+    let project_override = request.project_override.clone();
+    let jobs = request.jobs;
+
     let emit_text = handler.emit_text();
     let cwd_ctx = WorkspaceContext::resolve(cwd, project_override.clone())?;
     let cwd_workspace_dir = cwd_ctx.active_path().to_path_buf();
@@ -1886,10 +1892,12 @@ fn guard_and_mark<'a>(
 fn load_continuing_context<'a>(
     verb: MachineVerb,
     cwd: &Path,
-    project_override: Option<ProjectName>,
-    jobs: usize,
+    request: &SyncRequest,
     handler: &'a dyn OutputHandler,
 ) -> anyhow::Result<OpContext<'a>> {
+    let project_override = request.project_override.clone();
+    let jobs = request.jobs;
+
     let emit_text = handler.emit_text();
 
     // The literal invocation CWD is only used to locate op-state; resolving it
@@ -3327,54 +3335,20 @@ fn report_abort_outcome(label: &str, outcome: &VerifiedRestoreOutcome, any_forei
 /// can't even reach the per-repo loop, there are no per-repo outcomes to
 /// emit, so the structured channel has nothing to say.
 #[allow(clippy::too_many_arguments)]
-pub fn run_sync_json(
-    cwd: &Path,
-    source: Option<&SyncSource>,
-    strategy: SyncStrategy,
-    allow_stale_lock: bool,
-    discard_local_commits: bool,
-    retire: bool,
-    project_override: Option<ProjectName>,
-    jobs: usize,
-    do_continue: bool,
-) -> anyhow::Result<()> {
+pub fn run_sync_json(cwd: &Path, request: SyncRequest) -> anyhow::Result<()> {
     let records: Mutex<Vec<SyncOutcomeOutput>> = Mutex::new(Vec::new());
     let stdout_lock: Mutex<()> = Mutex::new(());
-    let ndjson = jobs > 1;
+    let ndjson = request.jobs > 1;
     let project_level_result = if ndjson {
         let handler = JsonNdjsonHandler {
             stdout_lock: &stdout_lock,
             records: &records,
             schema_url: SYNC_JSON_SCHEMA_URL,
         };
-        run_machine(
-            MachineVerb::Sync,
-            cwd,
-            source,
-            strategy,
-            allow_stale_lock,
-            discard_local_commits,
-            retire,
-            project_override,
-            jobs,
-            &handler,
-            do_continue,
-        )
+        run_machine(MachineVerb::Sync, cwd, &request, &handler)
     } else {
         let handler = JsonEnvelopeHandler { records: &records };
-        run_machine(
-            MachineVerb::Sync,
-            cwd,
-            source,
-            strategy,
-            allow_stale_lock,
-            discard_local_commits,
-            retire,
-            project_override,
-            jobs,
-            &handler,
-            do_continue,
-        )
+        run_machine(MachineVerb::Sync, cwd, &request, &handler)
     };
 
     let records = records.into_inner().unwrap_or_else(|e| e.into_inner());
@@ -3467,86 +3441,29 @@ fn run_sync_json_impl(
 /// expressed as phases in the data-driven machine; `--continue` resumes at
 /// the recorded phase from either workspace.
 #[allow(clippy::too_many_arguments)]
-pub fn run_sync_to(
-    cwd: &Path,
-    target: Option<&SyncSource>,
-    strategy: SyncStrategy,
-    allow_stale_lock: bool,
-    discard_local_commits: bool,
-    retire: bool,
-    project_override: Option<ProjectName>,
-    jobs: usize,
-    do_continue: bool,
-) -> anyhow::Result<()> {
+pub fn run_sync_to(cwd: &Path, request: SyncRequest) -> anyhow::Result<()> {
     let stdout_lock: Mutex<()> = Mutex::new(());
     let handler = TextHandler {
         stdout_lock: &stdout_lock,
     };
-    run_machine(
-        MachineVerb::SyncTo,
-        cwd,
-        target,
-        strategy,
-        allow_stale_lock,
-        discard_local_commits,
-        retire,
-        project_override,
-        jobs,
-        &handler,
-        do_continue,
-    )
+    run_machine(MachineVerb::SyncTo, cwd, &request, &handler)
 }
 
 /// Execute `rwv sync-to <target> --json`.
-#[allow(clippy::too_many_arguments)]
-pub fn run_sync_to_json(
-    cwd: &Path,
-    target: Option<&SyncSource>,
-    strategy: SyncStrategy,
-    allow_stale_lock: bool,
-    discard_local_commits: bool,
-    retire: bool,
-    project_override: Option<ProjectName>,
-    jobs: usize,
-    do_continue: bool,
-) -> anyhow::Result<()> {
+pub fn run_sync_to_json(cwd: &Path, request: SyncRequest) -> anyhow::Result<()> {
     let records: Mutex<Vec<SyncOutcomeOutput>> = Mutex::new(Vec::new());
     let stdout_lock: Mutex<()> = Mutex::new(());
-    let ndjson = jobs > 1;
+    let ndjson = request.jobs > 1;
     let project_level_result = if ndjson {
         let handler = JsonNdjsonHandler {
             stdout_lock: &stdout_lock,
             records: &records,
             schema_url: SYNC_TO_JSON_SCHEMA_URL,
         };
-        run_machine(
-            MachineVerb::SyncTo,
-            cwd,
-            target,
-            strategy,
-            allow_stale_lock,
-            discard_local_commits,
-            retire,
-            project_override,
-            jobs,
-            &handler,
-            do_continue,
-        )
+        run_machine(MachineVerb::SyncTo, cwd, &request, &handler)
     } else {
         let handler = JsonEnvelopeHandler { records: &records };
-        run_machine(
-            MachineVerb::SyncTo,
-            cwd,
-            target,
-            strategy,
-            allow_stale_lock,
-            discard_local_commits,
-            retire,
-            project_override,
-            jobs,
-            &handler,
-            do_continue,
-        )
+        run_machine(MachineVerb::SyncTo, cwd, &request, &handler)
     };
 
     let records = records.into_inner().unwrap_or_else(|e| e.into_inner());

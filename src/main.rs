@@ -649,31 +649,20 @@ fn main() -> anyhow::Result<()> {
             };
             // When --continue is set, source is None (read from op-state).
             // When --continue is absent, source is Some (required by clap).
-            let source_ref = source.as_ref();
+            let request = sync::SyncRequest {
+                source,
+                strategy,
+                allow_stale_lock,
+                discard_local_commits,
+                retire: false,
+                project_override,
+                jobs,
+                do_continue,
+            };
             if json {
-                sync::run_sync_json(
-                    &cwd,
-                    source_ref,
-                    strategy,
-                    allow_stale_lock,
-                    discard_local_commits,
-                    false,
-                    project_override,
-                    jobs,
-                    do_continue,
-                )?;
+                sync::run_sync_json(&cwd, request)?;
             } else {
-                sync::run_sync(
-                    &cwd,
-                    source_ref,
-                    strategy,
-                    allow_stale_lock,
-                    discard_local_commits,
-                    false,
-                    project_override,
-                    jobs,
-                    do_continue,
-                )?;
+                sync::run_sync(&cwd, request)?;
             }
         }
         Some(Commands::SyncTo {
@@ -730,30 +719,20 @@ fn main() -> anyhow::Result<()> {
                     }
                 })
             };
+            let request = sync::SyncRequest {
+                source: resolved_target,
+                strategy,
+                allow_stale_lock,
+                discard_local_commits,
+                retire,
+                project_override,
+                jobs,
+                do_continue,
+            };
             if json {
-                sync::run_sync_to_json(
-                    &cwd,
-                    resolved_target.as_ref(),
-                    strategy,
-                    allow_stale_lock,
-                    discard_local_commits,
-                    retire,
-                    project_override,
-                    jobs,
-                    do_continue,
-                )?;
+                sync::run_sync_to_json(&cwd, request)?;
             } else {
-                sync::run_sync_to(
-                    &cwd,
-                    resolved_target.as_ref(),
-                    strategy,
-                    allow_stale_lock,
-                    discard_local_commits,
-                    retire,
-                    project_override,
-                    jobs,
-                    do_continue,
-                )?;
+                sync::run_sync_to(&cwd, request)?;
             }
         }
         Some(Commands::Abort) => {
