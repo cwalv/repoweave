@@ -7702,8 +7702,10 @@ mod s7_go_work_doctor {
     /// Note: go-work's activate() has two paths:
     /// - `go` on PATH: uses `go work edit` + `ensure_marker_present` (always adds marker).
     /// - fallback: uses `merge_activate::<GoWorkDoc>` which defers on user-held keys.
+    ///
     /// This test only checks the verify() contract (USER-HELD detection), not
-    /// activate() behavior under the primary path.
+    /// activate() behavior under the primary path. The unchanged-after-activate
+    /// invariant is tracked by fo-4jwdsy.1 (go-work activate ownership guard).
     #[test]
     fn s7_go_work_doctor_user_held_file_unchanged_after_activate() {
         force_fallback();
