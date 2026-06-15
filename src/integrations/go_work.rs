@@ -117,16 +117,11 @@ impl Integration for GoWork {
             let owned_keys = vec![keypath(["use"])];
             if !doc.has_marker(&owned_keys) && doc.key_present(&keypath(["use"])) {
                 // User-held: use block present but no rwv marker.
-                // Surface the same "will NOT auto-take-over" signal as verify()
-                // (Severity::Warning, safe_to_fix=false) — but activate() has
-                // no Issue-return mechanism; emit a warning to stderr so
-                // operators see the skip, consistent with the intent-mode design.
-                eprintln!(
-                    "go-work: {} is user-held (use block present, no managed-by marker); \
-                     rwv will NOT auto-take-over. Cut over manually or add the \
-                     '// managed by repoweave' marker.",
-                    go_work_path.display()
-                );
+                // Do NOT clobber the file. The ownership condition is surfaced
+                // structurally by verify() via drift_issues() (Severity::Warning,
+                // safe_to_fix=false), consistent with all other hybrid integrations.
+                // No ad-hoc eprintln here — callers see the Issue through the
+                // standard Issue stream.
                 return Ok(());
             }
         }
@@ -844,6 +839,60 @@ mod tests {
         assert!(
             text.contains("./mine"),
             "user use entry must survive: {text}"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // USER-HELD: activate() must not clobber a user-held go.work;
+    //            verify() must surface it as a structured Issue (safe_to_fix=false).
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn user_held_activate_noop_and_verify_returns_issue() {
+        force_fallback();
+
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+
+        // Hand-written go.work: use block present but NO managed-by marker.
+        let seed = "go 1.26\n\nuse (\n\t./mine\n)\n";
+        write_file(root, "go.work", seed);
+
+        // A repo with a go.mod so activate() and verify() detect repos.
+        touch(root, "github/test/repoweave/go.mod");
+
+        let manifest = make_manifest_local(vec![("github/test/repoweave", Role::Owned)]);
+        let project = ProjectName::new("test-project");
+        let config = IntegrationConfig::default();
+        let cache = HashMap::new();
+        let ctx = make_ctx_local(root, &project, &manifest, &config, &cache);
+
+        let integration = GoWork;
+
+        // activate() must return Ok(()) without touching the file.
+        integration.activate(&ctx).unwrap();
+        let text_after = std::fs::read_to_string(root.join("go.work")).unwrap();
+        assert_eq!(
+            text_after, seed,
+            "activate() must not mutate a user-held go.work"
+        );
+
+        // verify() must return a single USER-HELD Issue with safe_to_fix=false.
+        let issues = integration.verify(&ctx).unwrap();
+        assert_eq!(
+            issues.len(),
+            1,
+            "expected exactly one USER-HELD issue: {issues:?}"
+        );
+        let issue = &issues[0];
+        assert!(
+            !issue.safe_to_fix,
+            "USER-HELD issue must have safe_to_fix=false: {issue:?}"
+        );
+        assert!(
+            issue.message.contains("unmarked") || issue.message.contains("user content"),
+            "issue message should describe the USER-HELD condition: {}",
+            issue.message
         );
     }
 
