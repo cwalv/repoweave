@@ -39,6 +39,32 @@ fn workweave_bare_name_is_reframed_as_missing_subcommand() {
         );
 }
 
+/// A subcommand *typo* (`crete`, edit distance 1 from `create`) must NOT be
+/// reframed: it is far more likely a fumbled subcommand than a workweave name.
+/// The interceptor defers near-misses (edit distance <= 2 from
+/// `create`/`delete`/`list`) to clap, whose native "unrecognized subcommand /
+/// tip: a similar subcommand exists" message is strictly more helpful here than
+/// suggesting we create a workweave literally named `crete`.
+#[test]
+fn workweave_subcommand_typo_defers_to_clap() {
+    rwv()
+        .args(["workweave", "foundations", "crete"])
+        .assert()
+        .failure()
+        .stderr(
+            // Not our reframe, and not the misleading "create crete" hint.
+            predicate::str::contains("is not a valid subcommand")
+                .not()
+                .and(predicate::str::contains("create crete").not())
+                // Clap's native subcommand handling fires: "unrecognized
+                // subcommand 'crete'" + "tip: a similar subcommand exists:
+                // 'create'". Assert the robust pair (clap mentions both
+                // "subcommand" and the real "create" name).
+                .and(predicate::str::contains("subcommand"))
+                .and(predicate::str::contains("create")),
+        );
+}
+
 /// Same invocation with a trailing `--help`: still the reframed error (the
 /// 3rd token is a bare name, not a flag, so interception still fires), and the
 /// "try '--help'" footer must NOT appear.

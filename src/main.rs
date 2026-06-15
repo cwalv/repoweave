@@ -462,6 +462,37 @@ enum SetupAction {
     },
 }
 
+/// Levenshtein edit distance between two strings (two-row dynamic-programming
+/// variant). Kept self-contained here so the early-dispatch interceptor can
+/// distinguish a workweave-subcommand *typo* (small distance from
+/// `create`/`delete`/`list`) from a genuine bare workweave name (large
+/// distance). Intentionally a local copy rather than a dependency on
+/// `explain.rs`'s sibling helper, to keep `main()`'s pre-parse path free of
+/// cross-module coupling.
+fn levenshtein(a: &str, b: &str) -> usize {
+    let a: Vec<char> = a.chars().collect();
+    let b: Vec<char> = b.chars().collect();
+    let m = a.len();
+    let n = b.len();
+    if m == 0 {
+        return n;
+    }
+    if n == 0 {
+        return m;
+    }
+    let mut prev: Vec<usize> = (0..=n).collect();
+    let mut curr = vec![0usize; n + 1];
+    for i in 1..=m {
+        curr[0] = i;
+        for j in 1..=n {
+            let cost = if a[i - 1] == b[j - 1] { 0 } else { 1 };
+            curr[j] = (prev[j] + 1).min(curr[j - 1] + 1).min(prev[j - 1] + cost);
+        }
+        std::mem::swap(&mut prev, &mut curr);
+    }
+    prev[n]
+}
+
 fn main() -> anyhow::Result<()> {
     // Early-dispatch did-you-mean hints for removed/relocated flags.
     // These run before clap's full parse so we can produce a friendly error
@@ -508,13 +539,37 @@ fn main() -> anyhow::Result<()> {
         //     --claude-hook` (no [PROJECT]) is untouched.
         //   - Skip when WORD is a known WorkweaveAction so the real subcommand
         //     path (create/delete/list, plus clap's `help`) keeps working.
+        //   - Skip when WORD is a *near-miss* of a known WorkweaveAction (edit
+        //     distance <= SUBCOMMAND_TYPO_THRESHOLD). A bare WORD that is one or
+        //     two edits from `create`/`delete`/`list` (e.g. `crete`) is far more
+        //     likely a subcommand typo than a workweave name; deferring to clap
+        //     lets its native "tip: a similar subcommand exists" message fire,
+        //     which is strictly more helpful than suggesting we create a
+        //     workweave literally named `crete`. The genuine bare-name case
+        //     (`fo-city`, edit distance >= 6 from every action) is far from any
+        //     subcommand and still gets the create-shaped reframe. See rwv-b2z
+        //     review (TL).
         if raw_args.get(1).map(|s| s.as_str()) == Some("workweave") {
             let project = raw_args.get(2).map(|s| s.as_str());
             let word = raw_args.get(3).map(|s| s.as_str());
             let is_flag = |s: &str| s.starts_with('-');
             if let (Some(project), Some(word)) = (project, word) {
                 const KNOWN_SUBCOMMANDS: &[&str] = &["create", "delete", "list", "help"];
-                if !is_flag(project) && !is_flag(word) && !KNOWN_SUBCOMMANDS.contains(&word) {
+                // WorkweaveAction names a typo could be aiming at. `help` is a
+                // clap builtin, not a typo target worth fuzzy-matching, so it's
+                // excluded here (an exact `help` is already handled above).
+                const SUBCOMMAND_ACTIONS: &[&str] = &["create", "delete", "list"];
+                // Edit-distance threshold below which WORD is treated as a
+                // subcommand typo and deferred to clap's native suggestion.
+                const SUBCOMMAND_TYPO_THRESHOLD: usize = 2;
+                let near_subcommand = SUBCOMMAND_ACTIONS
+                    .iter()
+                    .any(|sub| levenshtein(word, sub) <= SUBCOMMAND_TYPO_THRESHOLD);
+                if !is_flag(project)
+                    && !is_flag(word)
+                    && !KNOWN_SUBCOMMANDS.contains(&word)
+                    && !near_subcommand
+                {
                     eprintln!(
                         "error: '{word}' is not a valid subcommand for 'rwv workweave {project}'\n\
                          Did you mean:  rwv workweave {project} create {word}\n\
