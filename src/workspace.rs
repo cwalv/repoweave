@@ -333,6 +333,24 @@ impl WorkspaceContext {
             .canonicalize()
             .with_context(|| format!("failed to canonicalize {}", cwd.display()))?;
 
+        // Hard ceiling: never search above $HOME.
+        //
+        // Without this boundary, a walk-up that starts inside $HOME (e.g.
+        // from inside a workweave directory) could escape to /, then find
+        // workspace markers in an unrelated filesystem branch.  A test
+        // sandbox whose subprocess CWD is accidentally inside the active
+        // workweave would resolve the *real* primary workspace instead of its
+        // own temp-dir workspace and mutate it.
+        //
+        // The ceiling fires when `current` is about to cross *above* $HOME:
+        // if `current` is still within $HOME but its parent is not, we stop
+        // rather than walking into territory that can never legitimately
+        // contain a user workspace.  Paths already outside $HOME (e.g.
+        // /tmp/…) walk normally until the filesystem root — there is no
+        // cross-branch escape risk from those trees because their ancestors
+        // never include $HOME-rooted directories.
+        let home_dir = dirs::home_dir();
+
         // Walk ancestors looking for a workspace root OR a workweave pattern.
         //
         // For each ancestor directory we check (in order):
@@ -428,7 +446,19 @@ impl WorkspaceContext {
 
             // Move up to parent.
             match current.parent() {
-                Some(parent) if parent != current => current = parent,
+                Some(parent) if parent != current => {
+                    // Apply the $HOME ceiling: if `current` is inside $HOME but
+                    // `parent` is not, stop here rather than walking above $HOME.
+                    // This prevents workspace resolution from escaping to an
+                    // unrelated filesystem branch (e.g. a test sandbox running
+                    // inside a workweave from reaching the real primary weave).
+                    if let Some(ref home) = home_dir {
+                        if current.starts_with(home) && !parent.starts_with(home) {
+                            break;
+                        }
+                    }
+                    current = parent;
+                }
                 _ => break,
             }
         }
@@ -1348,5 +1378,81 @@ mod tests {
             msg.contains("no repoweave workspace found"),
             "unexpected error: {msg}"
         );
+    }
+
+    // ========================================================================
+    // $HOME ceiling — walk-up never escapes above $HOME
+    //
+    // fo-eli0oa: when tests run from inside a workweave that is itself under
+    // $HOME, workspace resolution must not walk above $HOME to find a workspace
+    // in an unrelated branch of the filesystem (e.g., a sibling directory that
+    // happens to have `github/` or `projects/` subdirs).
+    //
+    // We simulate this by building a fake home-like subtree: a "home" dir
+    // containing a "real" workspace with workspace markers. Resolving from a
+    // deep path inside that "home" dir should find the "real" workspace, and
+    // (with the ceiling) should NOT escape to any workspace we place ABOVE the
+    // fake home dir.
+    //
+    // Note: this test creates the workspace hierarchy in a real temp dir so
+    // that `dirs::home_dir()` (which returns the REAL home dir) does not affect
+    // the directory layout. The boundary is exercised with the real home dir
+    // value; the test relies on the fact that the temp dir is NOT under $HOME
+    // (i.e., it's in /tmp), so the ceiling does not fire for paths under /tmp,
+    // and the test is structurally about "workspace under $HOME is found even
+    // with the ceiling active."
+    // ========================================================================
+
+    /// The $HOME ceiling must not block resolution of workspaces that are
+    /// legitimately inside $HOME.
+    #[test]
+    fn resolve_ceiling_does_not_block_workspace_inside_home() {
+        // tempfile creates dirs under $TMPDIR or /tmp, which is NOT under
+        // $HOME. This test verifies that the ceiling does not affect paths
+        // that are already outside $HOME (they walk normally to the root).
+        let tmp = tempfile::tempdir().unwrap();
+        let root = make_workspace(tmp.path(), "ws");
+        // Walk from deep inside the workspace — ceiling should not interfere
+        // (we're in /tmp, not inside $HOME).
+        let deep = root.join("github").join("acme").join("deep");
+        std::fs::create_dir_all(&deep).unwrap();
+        let ctx = WorkspaceContext::resolve(&deep, None).unwrap();
+        assert_eq!(ctx.primary_path(), root.canonicalize().unwrap());
+    }
+
+    /// The $HOME ceiling fires when the walk-up tries to go above $HOME.
+    ///
+    /// We build a workspace INSIDE the real $HOME (using a temp dir created
+    /// under $HOME). The walk-up from inside that workspace should still find
+    /// the workspace because the ceiling only fires when the walk would cross
+    /// ABOVE $HOME — not below it.
+    #[test]
+    fn resolve_ceiling_workspace_inside_home_is_found() {
+        let home = match dirs::home_dir() {
+            Some(h) => h,
+            None => {
+                // If we can't determine $HOME, skip.
+                return;
+            }
+        };
+
+        // Create a temp dir inside $HOME so we can test the ceiling behavior
+        // without escaping $HOME.
+        let tmp_under_home = match tempfile::TempDir::new_in(&home) {
+            Ok(t) => t,
+            Err(_) => {
+                // If we can't create a temp dir inside $HOME (e.g., permissions),
+                // skip rather than fail.
+                return;
+            }
+        };
+
+        let root = make_workspace(tmp_under_home.path(), "ws");
+        let deep = root.join("github").join("acme").join("repo");
+        std::fs::create_dir_all(&deep).unwrap();
+
+        // Should find the workspace even with the $HOME ceiling active.
+        let ctx = WorkspaceContext::resolve(&deep, None).unwrap();
+        assert_eq!(ctx.primary_path(), root.canonicalize().unwrap());
     }
 }

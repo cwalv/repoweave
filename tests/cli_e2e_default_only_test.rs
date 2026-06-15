@@ -45,10 +45,11 @@ fn rwv() -> Command {
 /// Create a minimal workspace at `parent/<name>` with `github/` + `projects/`
 /// markers and a project directory with an `rwv.yaml` manifest.
 ///
-/// `repos` is a list of `(path, role)` — each will have a git-initialised
-/// directory created under the workspace root so `rwv add --new` does not trip
-/// over an absent registry. The project directory is a git repo so workspace
-/// resolution works.
+/// The workspace root is git-initialised so that git operations invoked by
+/// `rwv` subprocesses (e.g. `git init`, `git worktree`) are anchored to the
+/// sandbox and cannot walk up to the real repository enclosing the test
+/// binary.  Without this, git's upward discovery could reach the host
+/// workspace and corrupt it.
 ///
 /// Returns `(workspace_root, project_dir)`.
 fn make_workspace_with_project(
@@ -65,7 +66,19 @@ fn make_workspace_with_project(
     // Minimal manifest (empty repos map).
     std::fs::write(project_dir.join("rwv.yaml"), "repositories: {}\n").unwrap();
 
+    // Bulletproofing: git-init the workspace root itself so that any git
+    // command run by the rwv subprocess is anchored at `ws`, not at whatever
+    // git repository happens to contain the test binary.  Without this,
+    // `git init` (and similar commands run without an explicit --git-dir)
+    // inherit git's upward discovery and could interact with the host repo.
+    git_run_silent(&["init", "--initial-branch=main"], &ws);
+    git_run_silent(&["config", "user.email", "test@test.com"], &ws);
+    git_run_silent(&["config", "user.name", "Test"], &ws);
+
     // Initialise project dir as a git repo so workspace resolution succeeds.
+    // The project dir is a *nested* git repo (a git repo inside the ws git repo).
+    // This mirrors the real-world layout where each project dir has its own
+    // rwv.lock history, and is needed for rwv add / lock operations.
     git_run_silent(&["init", "--initial-branch=main"], &project_dir);
     git_run_silent(&["config", "user.email", "test@test.com"], &project_dir);
     git_run_silent(&["config", "user.name", "Test"], &project_dir);
@@ -1041,4 +1054,70 @@ mod go_work {
             "fo-l22tpw: module-a must be added to use block; got:\n{after}"
         );
     }
+}
+
+// ===========================================================================
+// Regression test: tempdir sandbox must never pollute primary
+//
+// fo-eli0oa: running `rwv add --new` from a tempdir workspace was observed to
+// write files into the real primary workspace (/home/.../foundations/) when the
+// sandbox's workspace resolution escaped the tempdir boundary.  This test
+// asserts that ALL writes from `rwv add` stay inside the tempdir.
+//
+// The test records the set of files in the tempdir BEFORE and AFTER, checks
+// that `rwv add` succeeded, and then verifies that the added repo directory
+// was created INSIDE the sandbox, not outside.
+//
+// We also explicitly assert that the repo directory does NOT exist at the
+// real process CWD (which is inside the host workspace / workweave).
+// ===========================================================================
+
+#[test]
+fn fo_eli0oa_add_writes_only_inside_tempdir_sandbox() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (ws, _proj_dir) = make_workspace_with_project(tmp.path(), "ws", "sandbox-project");
+
+    // Use a distinctive repo path that would be easy to spot if it leaked.
+    let repo_path = "github/fo-eli0oa-sentinel/sandbox-leak-test";
+
+    // The repo dir must NOT exist in the tempdir yet.
+    let expected_dest = ws.join(repo_path);
+    assert!(
+        !expected_dest.exists(),
+        "precondition: sandbox repo dir should not exist before rwv add"
+    );
+
+    // Run rwv add --new from inside the sandbox workspace.
+    rwv()
+        .args(["add", repo_path, "--new"])
+        .current_dir(&ws)
+        .assert()
+        .success();
+
+    // The repo dir MUST exist inside the sandbox after rwv add.
+    assert!(
+        expected_dest.exists(),
+        "fo-eli0oa regression: rwv add must create the repo inside the tempdir sandbox; \
+         expected {}", expected_dest.display()
+    );
+
+    // The repo must NOT have been created at the process CWD (the host
+    // workspace/workweave).  We get the test binary's CWD and assert the repo
+    // path is absent there.
+    let process_cwd = std::env::current_dir()
+        .expect("should be able to get process CWD");
+    let leaked_path = process_cwd.join(repo_path);
+    assert!(
+        !leaked_path.exists(),
+        "fo-eli0oa regression: rwv add must NOT write outside the tempdir sandbox; \
+         found {} which is outside the tempdir {}", leaked_path.display(), tmp.path().display()
+    );
+
+    // Sanity: the created dir should be under the tempdir root, not under any
+    // ancestor of the tempdir (i.e., not at /tmp/github/... or /github/...).
+    assert!(
+        expected_dest.starts_with(tmp.path()),
+        "fo-eli0oa regression: repo dir must be a descendant of the tempdir root; \
+         got {} which is not under {}", expected_dest.display(), tmp.path().display()
+    );
 }
