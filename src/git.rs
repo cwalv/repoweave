@@ -931,9 +931,12 @@ impl Vcs for GitVcs {
         // the mid-op first, then restore.
         if self.mid_op(repo).is_some() {
             self.cancel_in_flight_op(repo);
-            Self::run(&["reset", "--hard", savepoint.as_str()], repo)?;
-            self.drop_savepoint(repo, op_id);
-            return Ok(VerifiedRestoreOutcome::RestoredFromMidOp);
+            return self.reset_and_drop_savepoint(
+                repo,
+                op_id,
+                &savepoint,
+                VerifiedRestoreOutcome::RestoredFromMidOp,
+            );
         }
 
         // Classify the current tip against the enumerable attributable set.
@@ -952,17 +955,23 @@ impl Vcs for GitVcs {
         // Exact-match only — no heuristic (§6 rules out any descendant check).
         if let Some(intent) = recorded_intent_tip {
             if head_sha == intent {
-                Self::run(&["reset", "--hard", savepoint.as_str()], repo)?;
-                self.drop_savepoint(repo, op_id);
-                return Ok(VerifiedRestoreOutcome::RestoredFromIntent);
+                return self.reset_and_drop_savepoint(
+                    repo,
+                    op_id,
+                    &savepoint,
+                    VerifiedRestoreOutcome::RestoredFromIntent,
+                );
             }
         }
 
         if let Some(converged) = recorded_converged_tip {
             if head_sha == converged {
-                Self::run(&["reset", "--hard", savepoint.as_str()], repo)?;
-                self.drop_savepoint(repo, op_id);
-                return Ok(VerifiedRestoreOutcome::RestoredFromConverged);
+                return self.reset_and_drop_savepoint(
+                    repo,
+                    op_id,
+                    &savepoint,
+                    VerifiedRestoreOutcome::RestoredFromConverged,
+                );
             }
         }
 
@@ -1385,6 +1394,24 @@ fn savepoint_ref(op_id: &str) -> String {
 /// directly. Centralising the format here keeps create / resolve in sync.
 fn pre_abort_ref(op_id: &str) -> String {
     format!("refs/rwv/pre-abort/{op_id}")
+}
+
+impl GitVcs {
+    /// Reset `repo` to `savepoint` via `git reset --hard`, drop the savepoint
+    /// ref, and return `outcome`. This factors out the identical reset+drop
+    /// sequence shared by the intent, converged, and mid-op restore branches
+    /// of [`Vcs::verified_restore_savepoint`].
+    fn reset_and_drop_savepoint(
+        &self,
+        repo: &Path,
+        op_id: &str,
+        savepoint: &ResolvedRevisionId,
+        outcome: VerifiedRestoreOutcome,
+    ) -> Result<VerifiedRestoreOutcome, VcsError> {
+        Self::run(&["reset", "--hard", savepoint.as_str()], repo)?;
+        self.drop_savepoint(repo, op_id);
+        Ok(outcome)
+    }
 }
 
 impl GitVcs {

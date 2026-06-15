@@ -129,7 +129,7 @@ const ALLOWLIST: &[Allowed] = &[
     Allowed {
         file: "git.rs",
         pattern: "\"--hard\"",
-        count: 5,
+        count: 3,
         justification: "(1) hard_reset(): the operation's intent is to \
             discard divergent commits; the sole sync caller (--force Phase \
             1') gates on a clean-project precondition and creates a \
@@ -137,18 +137,12 @@ const ALLOWLIST: &[Allowed] = &[
             recoverable via `rwv abort`. (2) restore_savepoint(): restoring \
             the pre-op state is the operation's contract; any dirt at \
             abort time is churn from the failed op being rolled back \
-            (relocated from sync.rs). (3) verified_restore_savepoint() \
-            mid-op branch: gated on Vcs::mid_op detecting a VCS-native \
-            rebase/merge/cherry-pick state — wreckage attributable to the \
-            op (design § 5; fo-jsbr3i.4). (4) verified_restore_savepoint() \
-            intent branch: gated on the current tip exact-matching the owner \
-            record's `advanced_tips` entry for this repo — replay-phase \
-            advance attributable to the op (fo-6rysot.3). Exact-match only, \
-            no heuristic (§6 rules out descendant predicate). (5) \
-            verified_restore_savepoint() converged branch: gated on the \
-            current tip matching the owner record's `converged_tips` entry \
-            for this repo — convergence attributable to the op. Foreign tips \
-            are reported, not reset.",
+            (relocated from sync.rs). (3) reset_and_drop_savepoint(): \
+            shared helper factored from verified_restore_savepoint(); called \
+            only from the mid-op, intent, and converged branches — each \
+            gated on their respective attributable-tip precondition before \
+            the helper is reached (design § 5; fo-jsbr3i.4, fo-6rysot.3, \
+            fo-wbbqof.9).",
     },
     Allowed {
         file: "git.rs",
