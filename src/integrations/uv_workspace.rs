@@ -70,8 +70,8 @@
 
 use crate::integration::{Integration, IntegrationContext, Issue, Severity};
 use crate::integrations::merge::{
-    keypath, merge_activate, strip_deactivate, KeyPath, ManagedDoc, MergeResult, OwnedValue,
-    Ownership, TomlDoc,
+    keypath, merge_activate, strip_deactivate, toml_array_strings, KeyPath, ManagedDoc,
+    MergeResult, OwnedValue, Ownership, TomlDoc,
 };
 use anyhow::Context;
 use std::path::Path;
@@ -347,31 +347,6 @@ fn prune_if_empty(doc: &mut toml_edit::DocumentMut, path: &[&str]) {
         }
     }
     t.remove(path[path.len() - 1]);
-}
-
-/// Walk `doc` along `path` segments and return the array as `Vec<String>`.
-///
-/// Returns `None` if the path does not exist, is not an array, or contains
-/// non-string elements. Used by `verify()` to read back the on-disk `members`
-/// array for DRIFT comparison.
-fn toml_array_strings(doc: &toml_edit::DocumentMut, path: &[&str]) -> Option<Vec<String>> {
-    if path.is_empty() {
-        return None;
-    }
-    let mut table: &toml_edit::Table = doc.as_table();
-    for seg in &path[..path.len() - 1] {
-        match table.get(seg) {
-            Some(toml_edit::Item::Table(t)) => table = t,
-            _ => return None,
-        }
-    }
-    let item = table.get(path.last().unwrap())?;
-    let arr = item.as_array()?;
-    let mut out = Vec::with_capacity(arr.len());
-    for v in arr.iter() {
-        out.push(v.as_str()?.to_string());
-    }
-    Some(out)
 }
 
 impl Integration for UvWorkspace {

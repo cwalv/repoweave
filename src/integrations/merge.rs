@@ -1554,6 +1554,39 @@ impl ManagedDoc for GoWorkDoc {
 }
 
 // ===========================================================================
+// Shared parse helpers
+// ===========================================================================
+
+/// Walk `doc` along `path` segments and return the array as `Vec<String>`.
+///
+/// Returns `None` if the path does not exist, is not an array, or contains
+/// non-string elements. Used by TOML-backed `verify()` implementations to read
+/// back on-disk arrays for DRIFT comparison.
+pub(crate) fn toml_array_strings(
+    doc: &toml_edit::DocumentMut,
+    path: &[&str],
+) -> Option<Vec<String>> {
+    if path.is_empty() {
+        return None;
+    }
+    let mut table: &toml_edit::Table = doc.as_table();
+    for seg in &path[..path.len() - 1] {
+        match table.get(seg) {
+            Some(toml_edit::Item::Table(t)) => table = t,
+            _ => return None,
+        }
+    }
+    let item = table.get(path.last().unwrap())?;
+    let arr = item.as_array()?;
+    // Collect all string elements; if any element is not a string, return None.
+    let mut out = Vec::with_capacity(arr.len());
+    for v in arr.iter() {
+        out.push(v.as_str()?.to_string());
+    }
+    Some(out)
+}
+
+// ===========================================================================
 // Tests
 // ===========================================================================
 

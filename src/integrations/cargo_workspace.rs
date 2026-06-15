@@ -92,8 +92,8 @@
 
 use crate::integration::{Integration, IntegrationContext, Issue, Severity};
 use crate::integrations::merge::{
-    keypath, merge_activate, strip_deactivate, KeyPath, ManagedDoc, MergeResult, OwnedValue,
-    Ownership, TomlDoc,
+    keypath, merge_activate, strip_deactivate, toml_array_strings, KeyPath, ManagedDoc,
+    MergeResult, OwnedValue, Ownership, TomlDoc,
 };
 use crate::manifest::{CargoWorkspaceConfig, MemberSpec};
 use anyhow::Context;
@@ -992,34 +992,7 @@ fn nested_workspace_error(conflicts: &[String]) -> String {
 }
 
 // ===========================================================================
-// TOML read helpers for verify()
-// ===========================================================================
-
-/// Read a string array value from a `toml_edit::DocumentMut` by key path.
-/// Returns `None` if the path doesn't exist or the leaf is not an array of strings.
-fn toml_array_strings(doc: &toml_edit::DocumentMut, path: &[&str]) -> Option<Vec<String>> {
-    if path.is_empty() {
-        return None;
-    }
-    let mut table: &toml_edit::Table = doc.as_table();
-    for seg in &path[..path.len() - 1] {
-        match table.get(seg) {
-            Some(toml_edit::Item::Table(t)) => table = t,
-            _ => return None,
-        }
-    }
-    let item = table.get(path.last().unwrap())?;
-    let arr = item.as_array()?;
-    // Collect all string elements; if any element is not a string, return None.
-    let mut out = Vec::with_capacity(arr.len());
-    for v in arr.iter() {
-        out.push(v.as_str()?.to_string());
-    }
-    Some(out)
-}
-
-// ===========================================================================
-// Unit tests for the parser helper
+// Unit tests
 // ===========================================================================
 
 #[cfg(test)]

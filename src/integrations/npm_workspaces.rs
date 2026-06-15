@@ -6,24 +6,6 @@ use crate::integrations::merge::{
 use anyhow::Context;
 use std::path::Path;
 
-/// Extract the on-disk `workspaces` array from a parsed `package.json` value.
-///
-/// Handles both array-form (`workspaces: [...]`) and object-form
-/// (`workspaces: {packages: [...]}`).  Returns `None` if the key is absent.
-fn workspaces_array(pkg: &serde_json::Value) -> Option<Vec<String>> {
-    let ws = pkg.get("workspaces")?;
-    let arr = match ws {
-        serde_json::Value::Array(a) => a,
-        serde_json::Value::Object(o) => o.get("packages")?.as_array()?,
-        _ => return None,
-    };
-    Some(
-        arr.iter()
-            .filter_map(|v| v.as_str().map(String::from))
-            .collect(),
-    )
-}
-
 pub struct NpmWorkspaces;
 
 /// Keys stripped on deactivate.
@@ -303,7 +285,7 @@ impl Integration for NpmWorkspaces {
             sorted
         };
 
-        let on_disk_ws = workspaces_array(&pkg);
+        let on_disk_ws = member_globs(pkg.get("workspaces"));
 
         let drift = on_disk_ws.as_deref() != Some(expected_ws.as_slice());
 
