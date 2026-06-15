@@ -341,7 +341,9 @@ impl From<&SyncFailure> for SyncFailureOutput {
 ///
 /// Present in a per-repo outcome iff step 3 (advance-target) actually advanced
 /// that repo's branch pointer. Omitted (`skip_serializing_if = "Option::is_none"`)
-/// when the repo was a no-op in advance-target (target already at CWD's tip).
+/// in two cases: (a) no-op advance — target was already at CWD's tip; or (b) the
+/// pre-advance HEAD read failed (`head_revision` returned `Err`) — in that case
+/// `target_tip_before` is `None` and no record is emitted even if the ff succeeded.
 #[derive(Debug, Serialize, JsonSchema, Clone)]
 pub struct Step3AdvanceOutput {
     /// Target repo's HEAD SHA before the fast-forward.
