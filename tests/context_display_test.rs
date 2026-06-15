@@ -18,6 +18,20 @@ fn make_workspace(parent: &Path, name: &str) -> std::path::PathBuf {
     root
 }
 
+/// Write a `.rwv-workweave` marker into `weave_dir` pointing at `primary`
+/// with the given project name. Required because marker-less resolution has
+/// been removed.
+fn write_marker(weave_dir: &Path, primary: &Path, project: &str) {
+    let primary_canon = primary.canonicalize().unwrap();
+    let marker = format!(
+        "primary: {}\nproject: {}\nparent: {}\n",
+        primary_canon.display(),
+        project,
+        primary_canon.display()
+    );
+    fs::write(weave_dir.join(".rwv-workweave"), marker).unwrap();
+}
+
 // ============================================================================
 // 1. `rwv` (no subcommand) in a primary directory
 // ============================================================================
@@ -68,11 +82,12 @@ fn context_display_in_primary_subdir() {
 
 fn context_display_in_weave_shows_weave_info() {
     let tmp = tempfile::tempdir().unwrap();
-    let _root = make_workspace(tmp.path(), "ws");
+    let root = make_workspace(tmp.path(), "ws");
 
-    // Create the workweave sibling directory
+    // Create the workweave sibling directory with a marker.
     let weave_dir = tmp.path().join("ws--hotfix");
     fs::create_dir_all(&weave_dir).unwrap();
+    write_marker(&weave_dir, &root, "ws");
 
     Command::cargo_bin("rwv")
         .unwrap()
@@ -88,11 +103,12 @@ fn context_display_in_weave_shows_weave_info() {
 
 fn context_display_in_weave_subdir() {
     let tmp = tempfile::tempdir().unwrap();
-    let _root = make_workspace(tmp.path(), "ws");
+    let root = make_workspace(tmp.path(), "ws");
 
     let weave_dir = tmp.path().join("ws--feat-login");
     let repo_dir = weave_dir.join("github").join("acme").join("server");
     fs::create_dir_all(&repo_dir).unwrap();
+    write_marker(&weave_dir, &root, "ws");
 
     Command::cargo_bin("rwv")
         .unwrap()
@@ -155,10 +171,11 @@ fn resolve_at_workspace_root_prints_root_path() {
 
 fn resolve_in_weave_prints_weave_dir_path() {
     let tmp = tempfile::tempdir().unwrap();
-    let _root = make_workspace(tmp.path(), "ws");
+    let root = make_workspace(tmp.path(), "ws");
 
     let weave_dir = tmp.path().join("ws--hotfix");
     fs::create_dir_all(&weave_dir).unwrap();
+    write_marker(&weave_dir, &root, "ws");
 
     let canonical_weave = weave_dir.canonicalize().unwrap();
 
@@ -177,11 +194,12 @@ fn resolve_in_weave_prints_weave_dir_path() {
 
 fn resolve_in_weave_subdir_prints_weave_dir_path() {
     let tmp = tempfile::tempdir().unwrap();
-    let _root = make_workspace(tmp.path(), "ws");
+    let root = make_workspace(tmp.path(), "ws");
 
     let weave_dir = tmp.path().join("ws--agent-42");
     let repo_dir = weave_dir.join("github").join("acme").join("client");
     fs::create_dir_all(&repo_dir).unwrap();
+    write_marker(&weave_dir, &root, "ws");
 
     let canonical_weave = weave_dir.canonicalize().unwrap();
 

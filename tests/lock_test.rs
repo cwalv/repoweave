@@ -183,7 +183,7 @@ fn lock_in_workweave_writes_to_workweave_project_dir_not_primary() {
         &[(repo_path, "https://github.com/acme/server.git")],
     );
 
-    // Workweave dir using the legacy `{primary}--{name}` naming convention.
+    // Workweave dir using the `{project}--{name}` naming convention with a marker.
     // Mirror the layout produced by `rwv workweave create`: the workweave has
     // its own project dir with the same manifest committed.
     let workweave_dir = tmp.path().join("ws--hotfix");
@@ -193,6 +193,17 @@ fn lock_in_workweave_writes_to_workweave_project_dir_not_primary() {
         &workweave_project_dir,
         &[(repo_path, "https://github.com/acme/server.git")],
     );
+
+    // Write the .rwv-workweave marker and .rwv-active so resolve() recognises
+    // this as a workweave (marker-less resolution was removed).
+    let primary_canon = root.canonicalize().unwrap();
+    let marker = format!(
+        "primary: {}\nproject: ws\nparent: {}\n",
+        primary_canon.display(),
+        primary_canon.display()
+    );
+    std::fs::write(workweave_dir.join(".rwv-workweave"), marker).unwrap();
+    std::fs::write(workweave_dir.join(".rwv-active"), "ws\n").unwrap();
 
     // Repo also exists in the workweave on a different commit so we can
     // observe whose tip ends up in which lock.

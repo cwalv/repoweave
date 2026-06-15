@@ -360,6 +360,17 @@ integrations:
         let workweave_dir = tmp.path().join("ws--hotfix");
         std::fs::create_dir_all(&workweave_dir).unwrap();
 
+        // Write the .rwv-workweave marker so resolve() recognizes this as a
+        // workweave (marker-less resolution was removed).
+        let primary_canon = root.canonicalize().unwrap();
+        crate::workspace::WorkweaveMarker {
+            primary: primary_canon.clone(),
+            project: crate::manifest::ProjectName::new("ws"),
+            parent: primary_canon,
+        }
+        .write(&workweave_dir)
+        .unwrap();
+
         write_manifest(
             &root,
             "ws",

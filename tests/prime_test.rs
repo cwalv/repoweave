@@ -133,6 +133,17 @@ repositories:
     let weave_dir = tmp.path().join("ws--hotfix");
     fs::create_dir_all(&weave_dir).unwrap();
 
+    // Write the .rwv-workweave marker so resolve() recognises this as a
+    // workweave (marker-less resolution was removed).
+    let primary_canon = root.canonicalize().unwrap();
+    let marker = format!(
+        "primary: {}\nproject: ws\nparent: {}\n",
+        primary_canon.display(),
+        primary_canon.display()
+    );
+    fs::write(weave_dir.join(".rwv-workweave"), &marker).unwrap();
+    fs::write(weave_dir.join(".rwv-active"), "ws\n").unwrap();
+
     Command::cargo_bin("rwv")
         .unwrap()
         .arg("prime")

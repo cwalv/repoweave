@@ -355,11 +355,8 @@ impl WorkspaceContext {
         //
         // For each ancestor directory we check (in order):
         //   1. Does it have a `.rwv-workweave` marker? If so, use that.
-        //   2. Does its name match `{project}--{name}` (or legacy
-        //      `{primary}--{name}`)? If so, fall back to sibling-resolution
-        //      using the parsed left component. The marker is authoritative;
-        //      this path only fires for workweaves missing a marker.
-        //   3. Is it a workspace root itself?
+        //      The marker is authoritative; all live workweaves carry one.
+        //   2. Is it a workspace root itself?
         let mut current = cwd.as_path();
         loop {
             // 1. Check for `.rwv-workweave` marker file in the current directory.
@@ -399,41 +396,7 @@ impl WorkspaceContext {
                 }
             }
 
-            // 2. Check the `{left}--{name}` naming convention (legacy
-            //    sibling-resolution fallback for workweaves missing a marker).
-            //    A workweave directory may also contain registry subdirs (e.g.
-            //    github/), so check this BEFORE workspace root markers.
-            //
-            //    The left component is taken as the legacy primary's basename
-            //    (the only form that ever shipped without a marker). If the
-            //    sibling resolves to a workspace root we use it; otherwise we
-            //    fall through.
-            if let Some(dir_name) = current.file_name().and_then(|n| n.to_str()) {
-                if let Some((left_name, workweave_name)) = parse_weave_dir_name(dir_name) {
-                    // The workspace root is the sibling named after the left
-                    // component (legacy primary-name convention).
-                    let parent = current
-                        .parent()
-                        .ok_or_else(|| anyhow::anyhow!("workweave directory has no parent"))?;
-                    let root = parent.join(left_name);
-                    if is_workspace_root(&root) {
-                        let project =
-                            project_override.unwrap_or_else(|| ProjectName::new(left_name));
-                        let cwd_project_hint = detect_project(&cwd, &root);
-                        return Ok(WorkspaceContext {
-                            primary_root: root.clone(),
-                            location: WorkspaceLocation::Workweave {
-                                name: workweave_name,
-                                dir: current.to_path_buf(),
-                                project,
-                            },
-                            cwd_project_hint,
-                        });
-                    }
-                }
-            }
-
-            // 3. Check if current directory IS the workspace root.
+            // 2. Check if current directory IS the workspace root.
             if is_workspace_root(current) {
                 let cwd_project_hint = detect_project(&cwd, current);
                 let project = project_override.or_else(|| read_active_project(current));
@@ -676,20 +639,15 @@ impl WorkspaceContext {
 ///
 /// Workweaves are keyed by the project they're created for so that the directory
 /// layout makes the project explicit and `<project>--<name>` is stable across
-/// fork sources. Old workweaves on disk may follow the legacy
-/// `{primary}--{name}` form (where the left side was the primary weave's
-/// directory basename); both are accepted by [`WorkspaceContext::resolve`] via
-/// the `.rwv-workweave` marker file (see [`WorkweaveMarker`]), which is
-/// authoritative.
+/// fork sources. The `.rwv-workweave` marker (see [`WorkweaveMarker`]) is
+/// authoritative for all live workweaves.
 pub fn weave_dir_name(project_name: &str, workweave_name: &WorkweaveName) -> String {
     format!("{project_name}--{workweave_name}")
 }
 
 /// Parse a directory name into `(left, workweave_name)` if it matches the
-/// `{left}--{name}` shape. The `left` component is the project name under the
-/// current convention; for legacy on-disk workweaves it is the primary weave's
-/// directory basename. Disambiguation, when it matters, is done by reading the
-/// `.rwv-workweave` marker.
+/// `{left}--{name}` shape. The `left` component is the project name. Used by
+/// resolve() to extract the workweave name from a marker-bearing directory.
 pub fn parse_weave_dir_name(dir_name: &str) -> Option<(&str, WorkweaveName)> {
     let (left, workweave) = dir_name.split_once("--")?;
     if left.is_empty() || workweave.is_empty() {
@@ -836,50 +794,64 @@ mod tests {
     }
 
     // ========================================================================
-    // Resolve from inside a workweave directory (legacy -- naming)
+    // Resolve from inside a workweave directory without a marker — should fail
+    //
+    // The legacy marker-less {left}--{name} sibling-resolution fallback has
+    // been removed. A `{left}--{name}` directory without a `.rwv-workweave`
+    // marker is not recognized as a workweave; resolve() must return an error.
     // ========================================================================
 
     #[test]
-    fn resolve_from_inside_weave_dir() {
+    fn resolve_from_inside_weave_dir_without_marker_errors() {
         let tmp = tempfile::tempdir().unwrap();
-        let root = make_workspace(tmp.path(), "ws");
-        // Create a workweave sibling: ws--hotfix
+        let _root = make_workspace(tmp.path(), "ws");
+        // Create a workweave-shaped sibling with no marker.
         let weave_dir = tmp.path().join("ws--hotfix");
         std::fs::create_dir_all(&weave_dir).unwrap();
 
-        let ctx = WorkspaceContext::resolve(&weave_dir, None).unwrap();
-        assert_eq!(ctx.primary_path(), root.canonicalize().unwrap());
-        match &ctx.location {
-            WorkspaceLocation::Workweave { name, dir, project } => {
-                assert_eq!(name.as_str(), "hotfix");
-                assert_eq!(*dir, weave_dir.canonicalize().unwrap());
-                assert_eq!(project.as_str(), "ws");
-            }
-            WorkspaceLocation::Weave { .. } => panic!("expected Workweave"),
-        }
+        // Without a .rwv-workweave marker the directory is not recognized as a
+        // workweave; resolution should fail.
+        let result = WorkspaceContext::resolve(&weave_dir, None);
+        assert!(
+            result.is_err(),
+            "expected error for marker-less workweave dir, got Ok"
+        );
     }
 
     // ========================================================================
-    // Resolve from inside a repo within a workweave
+    // Resolve from inside a repo within a marker-less {left}--{name} dir.
+    //
+    // Without the legacy fallback the {left}--{name} directory is not treated
+    // as a workweave. If the directory happens to contain registry subdirs
+    // (github/ etc.) it is recognized as a workspace root (Weave) instead —
+    // the same behaviour as any other directory that has workspace markers.
+    // `rwv doctor` will flag such a directory as an unregistered workweave-
+    // shaped directory.
     // ========================================================================
 
     #[test]
-    fn resolve_from_repo_inside_weave() {
+    fn resolve_from_repo_inside_weave_without_marker_resolves_as_weave() {
         let tmp = tempfile::tempdir().unwrap();
-        let root = make_workspace(tmp.path(), "ws");
+        let _root = make_workspace(tmp.path(), "ws");
         let weave_dir = tmp.path().join("ws--feat-login");
         let repo_dir = weave_dir.join("github").join("acme").join("server");
         std::fs::create_dir_all(&repo_dir).unwrap();
 
+        // No marker in ws--feat-login. The walk-up finds `github/` inside
+        // ws--feat-login and treats it as a workspace root.
         let ctx = WorkspaceContext::resolve(&repo_dir, None).unwrap();
-        assert_eq!(ctx.primary_path(), root.canonicalize().unwrap());
         match &ctx.location {
-            WorkspaceLocation::Workweave { name, dir, project } => {
-                assert_eq!(name.as_str(), "feat-login");
-                assert_eq!(*dir, weave_dir.canonicalize().unwrap());
-                assert_eq!(project.as_str(), "ws");
+            WorkspaceLocation::Weave { .. } => {
+                // Correct: treated as an anonymous workspace root, not a workweave.
+                assert_eq!(
+                    ctx.primary_path(),
+                    weave_dir.canonicalize().unwrap(),
+                    "should resolve to the marker-less dir as workspace root"
+                );
             }
-            WorkspaceLocation::Weave { .. } => panic!("expected Workweave"),
+            WorkspaceLocation::Workweave { .. } => {
+                panic!("should NOT be resolved as a workweave without a marker");
+            }
         }
     }
 
@@ -923,9 +895,18 @@ mod tests {
     #[test]
     fn resolve_with_project_override_in_workweave() {
         let tmp = tempfile::tempdir().unwrap();
-        let _root = make_workspace(tmp.path(), "ws");
+        let root = make_workspace(tmp.path(), "ws");
         let weave_dir = tmp.path().join("ws--hotfix");
         std::fs::create_dir_all(&weave_dir).unwrap();
+
+        // Write a marker so the workweave is recognized.
+        let primary_canon = root.canonicalize().unwrap();
+        let marker = WorkweaveMarker {
+            primary: primary_canon.clone(),
+            project: ProjectName::new("ws"),
+            parent: primary_canon,
+        };
+        marker.write(&weave_dir).unwrap();
 
         let ctx =
             WorkspaceContext::resolve(&weave_dir, Some(ProjectName::new("custom-proj"))).unwrap();
@@ -1303,26 +1284,6 @@ mod tests {
                 assert_eq!(name.as_str(), "feat");
                 assert_eq!(*dir, weave_dir.canonicalize().unwrap());
                 assert_eq!(project.as_str(), "web-app");
-            }
-            WorkspaceLocation::Weave { .. } => panic!("expected Workweave"),
-        }
-    }
-
-    #[test]
-    fn resolve_from_workweave_with_dash_naming_fallback() {
-        let tmp = tempfile::tempdir().unwrap();
-        let root = make_workspace(tmp.path(), "ws");
-        // Sibling with -- naming, no marker file
-        let weave_dir = tmp.path().join("ws--hotfix");
-        std::fs::create_dir_all(&weave_dir).unwrap();
-
-        let ctx = WorkspaceContext::resolve(&weave_dir, None).unwrap();
-        assert_eq!(ctx.primary_path(), root.canonicalize().unwrap());
-        match &ctx.location {
-            WorkspaceLocation::Workweave { name, dir, project } => {
-                assert_eq!(name.as_str(), "hotfix");
-                assert_eq!(*dir, weave_dir.canonicalize().unwrap());
-                assert_eq!(project.as_str(), "ws");
             }
             WorkspaceLocation::Weave { .. } => panic!("expected Workweave"),
         }
