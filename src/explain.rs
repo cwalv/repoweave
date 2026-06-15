@@ -30,9 +30,9 @@ const ACTIVATE_EXPLAIN: &str = include_str!("../docs/reference/explain/activate.
 
 /// The complete set of verbs recognized by `rwv explain`.
 ///
-/// This slice is the single source of truth shared by the dispatch `match` and
-/// the did-you-mean suggester. Adding a verb here without adding a match arm
-/// (or vice-versa) will produce a compile-time or test-time failure.
+/// This slice feeds the did-you-mean suggester. It must be kept in sync by hand
+/// with the dispatch `match` arms below — the two are independent literals and
+/// are not linked at compile time.
 pub const KNOWN_VERBS: &[&str] = &[
     "status",
     "doctor",
