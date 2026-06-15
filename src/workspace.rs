@@ -88,6 +88,25 @@ fn is_workspace_root(dir: &Path) -> bool {
     false
 }
 
+/// Returns `true` when the $HOME ceiling should block the walk from `current`
+/// to `parent`.
+///
+/// The ceiling fires when `current` is inside `home` but `parent` is not —
+/// i.e., the walk is about to cross above the home directory boundary.
+///
+/// Both `current` and `parent` must already be canonicalized (symlinks
+/// resolved), and `home` must likewise be the canonicalized home path so that
+/// the `starts_with` comparison is reliable on symlinked-home systems.
+///
+/// Extracted as a pure function so tests can drive it with an arbitrary
+/// (possibly symlinked) home path without mutating process-wide state.
+fn home_ceiling_blocks(current: &Path, parent: &Path, home: Option<&Path>) -> bool {
+    match home {
+        Some(h) => current.starts_with(h) && !parent.starts_with(h),
+        None => false,
+    }
+}
+
 /// Detect the project name if `cwd` is inside `{root}/projects/{name}/...`.
 ///
 /// This is a *soft hint* only: action verbs no longer use it to override
@@ -349,7 +368,14 @@ impl WorkspaceContext {
         // /tmp/…) walk normally until the filesystem root — there is no
         // cross-branch escape risk from those trees because their ancestors
         // never include $HOME-rooted directories.
-        let home_dir = dirs::home_dir();
+        // Canonicalize home so that the ceiling check compares against the
+        // real path.  On systems where $HOME contains a symlinked component
+        // (e.g. /home -> /private/home on macOS, or a bespoke symlink on
+        // Linux), `dirs::home_dir()` returns the raw env value while `cwd`
+        // above has already been canonicalized.  Without canonicalization the
+        // `starts_with` test always returns false (the paths are spelled
+        // differently) and the ceiling silently never fires.
+        let home_dir = dirs::home_dir().and_then(|h| h.canonicalize().ok());
 
         // Walk ancestors looking for a workspace root OR a workweave pattern.
         //
@@ -415,10 +441,8 @@ impl WorkspaceContext {
                     // This prevents workspace resolution from escaping to an
                     // unrelated filesystem branch (e.g. a test sandbox running
                     // inside a workweave from reaching the real primary weave).
-                    if let Some(ref home) = home_dir {
-                        if current.starts_with(home) && !parent.starts_with(home) {
-                            break;
-                        }
+                    if home_ceiling_blocks(current, parent, home_dir.as_deref()) {
+                        break;
                     }
                     current = parent;
                 }
@@ -1415,5 +1439,150 @@ mod tests {
         // Should find the workspace even with the $HOME ceiling active.
         let ctx = WorkspaceContext::resolve(&deep, None).unwrap();
         assert_eq!(ctx.primary_path(), root.canonicalize().unwrap());
+    }
+
+    // ========================================================================
+    // $HOME ceiling — symlinked home path
+    //
+    // fo-wbbqof.3: `resolve()` canonicalizes `cwd` but the original code
+    // bound `home_dir` as the raw (un-canonicalized) value from
+    // `dirs::home_dir()`.  On systems where $HOME contains a symlinked
+    // component the `starts_with` comparison always returns false (the
+    // spellings differ) and the ceiling silently never fires.
+    //
+    // We test the pure helper `home_ceiling_blocks` directly with a
+    // symlinked-home layout so the test is independent of the process-level
+    // $HOME value and safe under parallel test execution.
+    // ========================================================================
+
+    /// `home_ceiling_blocks` must return `true` when `current` is inside the
+    /// REAL (canonicalized) home but `parent` is not — even when the caller
+    /// passes in the symlink spelling of home (pre-fix behaviour would have
+    /// returned `false` and let the walk escape).
+    ///
+    /// Layout built in /tmp:
+    ///   /tmp/rwv-test-XXXX/
+    ///     real_home/          ← the actual directory
+    ///     link_home -> real_home   ← symlink spelling of home
+    ///     above/              ← directory that lives *above* home
+    ///
+    /// We set `current = link_home/subdir` and `parent = above`.
+    /// With the symlink spelling as `home`, `current.starts_with(home)` is
+    /// false (path prefix mismatch) so the pre-fix code would return `false`.
+    /// After the fix we canonicalize home before passing it in, so the helper
+    /// gets the real path and correctly returns `true`.
+    #[test]
+    fn home_ceiling_blocks_symlinked_home() {
+        let tmp = tempfile::tempdir().unwrap();
+        let base = tmp.path();
+
+        // 1. Create the real home directory and a symlinked alias.
+        let real_home = base.join("real_home");
+        std::fs::create_dir_all(&real_home).unwrap();
+        let link_home = base.join("link_home");
+        std::os::unix::fs::symlink(&real_home, &link_home).unwrap();
+
+        // 2. Create a directory inside the real home (reached via symlink).
+        let subdir = link_home.join("subdir");
+        std::fs::create_dir_all(&subdir).unwrap();
+
+        // 3. Create a directory that sits *above* home (sibling of real_home).
+        let above = base.join("above");
+        std::fs::create_dir_all(&above).unwrap();
+
+        // Canonicalize paths as `resolve()` does for `current` and `parent`.
+        let current_canon = subdir.canonicalize().unwrap();
+        let parent_canon = above.canonicalize().unwrap();
+
+        // Pre-fix: passing the raw symlink spelling → ceiling silently no-ops.
+        assert!(
+            !home_ceiling_blocks(&current_canon, &parent_canon, Some(&link_home)),
+            "raw symlink path does NOT match canonicalized current — ceiling is blind (this is the bug)"
+        );
+
+        // Post-fix: passing the canonicalized home → ceiling fires correctly.
+        let canon_home = link_home.canonicalize().unwrap();
+        assert!(
+            home_ceiling_blocks(&current_canon, &parent_canon, Some(&canon_home)),
+            "canonicalized home must make the ceiling fire and block the walk"
+        );
+    }
+
+    /// `home_ceiling_blocks` must NOT fire when both `current` and `parent`
+    /// are inside the (canonicalized) home — the walk stays within home and
+    /// should continue.
+    #[test]
+    fn home_ceiling_blocks_does_not_fire_within_home() {
+        let tmp = tempfile::tempdir().unwrap();
+        let base = tmp.path();
+
+        let real_home = base.join("real_home");
+        std::fs::create_dir_all(real_home.join("deep").join("inner")).unwrap();
+
+        let current = real_home.join("deep").join("inner").canonicalize().unwrap();
+        let parent = real_home.join("deep").canonicalize().unwrap();
+        let canon_home = real_home.canonicalize().unwrap();
+
+        assert!(
+            !home_ceiling_blocks(&current, &parent, Some(&canon_home)),
+            "ceiling must NOT fire when both current and parent are inside home"
+        );
+    }
+
+    /// Full integration: `resolve()` with a symlinked component in the walk
+    /// path must still find a workspace inside the real home and NOT escape
+    /// above it.
+    ///
+    /// Layout:
+    ///   /tmp/rwv-test-XXXX/
+    ///     real_home/
+    ///       ws/               ← workspace root (has github/ + projects/)
+    ///         github/acme/repo/   ← cwd
+    ///     link_home -> real_home
+    ///     decoy/              ← workspace root ABOVE home (must NOT be found)
+    ///
+    /// We resolve from `link_home/ws/github/acme/repo`.  The canonicalized
+    /// path walks through `real_home`, so the canonicalized ceiling fires and
+    /// the decoy above is never reached.
+    #[test]
+    fn resolve_ceiling_fires_on_symlinked_home_layout() {
+        let tmp = tempfile::tempdir().unwrap();
+        let base = tmp.path();
+
+        // Real home directory.
+        let real_home = base.join("real_home");
+        std::fs::create_dir_all(&real_home).unwrap();
+
+        // Symlinked alias of home.
+        let link_home = base.join("link_home");
+        std::os::unix::fs::symlink(&real_home, &link_home).unwrap();
+
+        // Workspace inside home (accessible via symlink path).
+        let ws_via_link = link_home.join("ws");
+        let cwd_via_link = ws_via_link.join("github").join("acme").join("repo");
+        std::fs::create_dir_all(&cwd_via_link).unwrap();
+        // Create workspace markers via the real path so make_workspace works.
+        let ws_real = real_home.join("ws");
+        std::fs::create_dir_all(ws_real.join("github")).unwrap();
+        std::fs::create_dir_all(ws_real.join("projects")).unwrap();
+
+        // Decoy workspace above home — must NOT be found.
+        let decoy = make_workspace(base, "decoy");
+
+        // Resolve from the symlink-spelled cwd.
+        let ctx = WorkspaceContext::resolve(&cwd_via_link, None).unwrap();
+
+        // Must find the workspace inside home, not the decoy above.
+        let found = ctx.primary_path();
+        assert_ne!(
+            found,
+            decoy.canonicalize().unwrap(),
+            "ceiling must block the walk from reaching the decoy above home"
+        );
+        assert_eq!(
+            found,
+            ws_real.canonicalize().unwrap(),
+            "must find the workspace inside the (symlinked) home"
+        );
     }
 }
