@@ -26,34 +26,12 @@ struct Cli {
     command: Option<Commands>,
 }
 
+// Commands are listed in declaration order; that order is the grouping — no
+// labeled help sections. (clap 4 `next_help_heading` applies to args/options,
+// not to flattened Subcommand variants, so heading strings would be dead config.)
 #[derive(Subcommand)]
 enum Commands {
-    #[command(flatten, next_help_heading = "Workspace context")]
-    WorkspaceContext(WorkspaceContextCmd),
-
-    #[command(flatten, next_help_heading = "Setup & lifecycle")]
-    SetupLifecycle(SetupLifecycleCmd),
-
-    #[command(flatten, next_help_heading = "Workweaves")]
-    Workweaves(WorkweavesCmd),
-
-    #[command(flatten, next_help_heading = "Locking & verification")]
-    LockingVerification(LockingVerificationCmd),
-
-    #[command(flatten, next_help_heading = "Multi-workspace ops")]
-    MultiWorkspaceOps(MultiWorkspaceOpsCmd),
-
-    #[command(flatten, next_help_heading = "Network & publishing")]
-    NetworkPublishing(NetworkPublishingCmd),
-
-    #[command(flatten, next_help_heading = "Tooling")]
-    Tooling(ToolingCmd),
-}
-
-// ── Workspace context ─────────────────────────────────────────────────────────
-
-#[derive(Subcommand)]
-enum WorkspaceContextCmd {
+    // ── Workspace context ─────────────────────────────────────────────────────
     /// Activate a project (generate ecosystem files, create symlinks, then run integration install hooks like `npm install` / `uv sync` / `cargo generate-lockfile`)
     Activate {
         /// Project name
@@ -70,12 +48,8 @@ enum WorkspaceContextCmd {
     },
     /// Print workspace root path
     Resolve,
-}
 
-// ── Setup & lifecycle ─────────────────────────────────────────────────────────
-
-#[derive(Subcommand)]
-enum SetupLifecycleCmd {
+    // ── Setup & lifecycle ─────────────────────────────────────────────────────
     /// Add a repo to the active project
     Add {
         /// Repository URL or path (with --new)
@@ -144,12 +118,8 @@ enum SetupLifecycleCmd {
         #[arg(long)]
         project: Option<String>,
     },
-}
 
-// ── Workweaves ────────────────────────────────────────────────────────────────
-
-#[derive(Subcommand)]
-enum WorkweavesCmd {
+    // ── Workweaves ────────────────────────────────────────────────────────────
     /// Create, delete, or list workweaves
     Workweave {
         /// Project name (not required when --claude-hook is set)
@@ -164,12 +134,8 @@ enum WorkweavesCmd {
         #[command(subcommand)]
         action: Option<WorkweaveAction>,
     },
-}
 
-// ── Locking & verification ────────────────────────────────────────────────────
-
-#[derive(Subcommand)]
-enum LockingVerificationCmd {
+    // ── Locking & verification ────────────────────────────────────────────────
     /// Convention enforcement and lock-freshness checking
     Doctor {
         /// Zero exit iff every repo's tip matches its rwv.lock entry (scriptable precondition for rwv sync)
@@ -210,12 +176,8 @@ enum LockingVerificationCmd {
         #[arg(long)]
         project: Option<String>,
     },
-}
 
-// ── Multi-workspace ops ───────────────────────────────────────────────────────
-
-#[derive(Subcommand)]
-enum MultiWorkspaceOpsCmd {
+    // ── Multi-workspace ops ───────────────────────────────────────────────────
     /// Restore CWD workspace to its pre-sync state using savepoint refs
     Abort,
     /// Bring another workspace's committed state into this one (pull/align; use `rwv sync-to` to land work upward)
@@ -327,12 +289,8 @@ enum MultiWorkspaceOpsCmd {
         #[arg(long = "continue")]
         do_continue: bool,
     },
-}
 
-// ── Network & publishing ──────────────────────────────────────────────────────
-
-#[derive(Subcommand)]
-enum NetworkPublishingCmd {
+    // ── Network & publishing ──────────────────────────────────────────────────
     /// Push manifest repos and then the project repo, in that order. Refuses from a workweave. Manifest pushes are attempt-all-and-collect; project repo is gated on every manifest repo succeeding.
     Push {
         /// Operate on this project instead of the active project (does not change `.rwv-active`)
@@ -382,12 +340,8 @@ enum NetworkPublishingCmd {
         #[arg(long)]
         json: bool,
     },
-}
 
-// ── Tooling ───────────────────────────────────────────────────────────────────
-
-#[derive(Subcommand)]
-enum ToolingCmd {
+    // ── Tooling ───────────────────────────────────────────────────────────────
     /// Generate shell completions
     Completions {
         /// Shell to generate completions for
@@ -611,12 +565,95 @@ fn main() -> anyhow::Result<()> {
             let ctx = WorkspaceContext::resolve(&cwd, None)?;
             println!("{}", ctx.display());
         }
-        Some(Commands::Workweaves(WorkweavesCmd::Workweave {
+        Some(Commands::Activate {
+            project,
+            no_install,
+        }) => {
+            let cwd = std::env::current_dir()?;
+            activate::activate_with_options(
+                &project,
+                &cwd,
+                activate::ActivateOptions { no_install },
+            )?;
+        }
+        Some(Commands::Prime { no_suppress }) => {
+            let cwd = std::env::current_dir()?;
+            prime::prime(&cwd, no_suppress)?;
+        }
+        Some(Commands::Resolve) => {
+            let cwd = std::env::current_dir()?;
+            let ctx = WorkspaceContext::resolve(&cwd, None)?;
+            println!("{}", ctx.active_path().display());
+        }
+        Some(Commands::Add {
+            url,
+            role,
+            new,
+            project,
+        }) => {
+            let cwd = std::env::current_dir()?;
+            let project_override = project.map(repoweave::manifest::ProjectName::new);
+            if new {
+                add_remove::run_add_new(&url, &cwd, project_override)?;
+            } else {
+                add_remove::run_add(&url, role, &cwd, project_override)?;
+            }
+        }
+        Some(Commands::Fetch {
+            source,
+            frozen,
+            force,
+            no_reference,
+            roles,
+            repos,
+            jobs,
+            json,
+        }) => {
+            let cwd = std::env::current_dir()?;
+            repoweave::workspace::require_workspace_or_empty(&cwd, force)?;
+            let mode = if frozen {
+                fetch::FetchMode::Frozen
+            } else {
+                fetch::FetchMode::Default
+            };
+            let filter = repoweave::selector::RepoFilter::parse(&roles, &repos)?;
+            // fetch's default is auto-resolve (min(nproc, 8)), unlike sync which
+            // defaults to serial to preserve envelope vs NDJSON contract. fetch's
+            // JSON contract follows the same shape: envelope when -j 1 or no -j
+            // with default resolution, NDJSON when -j > 1. Because the default
+            // can resolve to > 1 on multi-core hosts, agents should pass `-j 1`
+            // explicitly when they require the envelope shape.
+            let jobs = repoweave::parallel::resolve_jobs(jobs);
+            fetch::run_fetch(&source, &cwd, mode, no_reference, &filter, jobs, json)?;
+        }
+        Some(Commands::Init {
+            project,
+            provider,
+            adopt,
+        }) => {
+            let cwd = std::env::current_dir()?;
+            if adopt {
+                init::init_adopt(&project, &cwd)?;
+            } else {
+                init::init(&project, provider.as_deref(), &cwd)?;
+            }
+        }
+        Some(Commands::Remove {
+            path,
+            delete,
+            force,
+            project,
+        }) => {
+            let cwd = std::env::current_dir()?;
+            let project_override = project.map(repoweave::manifest::ProjectName::new);
+            add_remove::run_remove(&path, delete, force, &cwd, project_override)?;
+        }
+        Some(Commands::Workweave {
             project,
             hook_mode,
             claude_hook,
             action,
-        })) => {
+        }) => {
             if claude_hook {
                 repoweave::workweave::handle_claude_hook()?;
             } else {
@@ -674,117 +711,13 @@ fn main() -> anyhow::Result<()> {
                 }
             }
         }
-        Some(Commands::SetupLifecycle(SetupLifecycleCmd::Fetch {
-            source,
-            frozen,
-            force,
-            no_reference,
-            roles,
-            repos,
-            jobs,
-            json,
-        })) => {
-            let cwd = std::env::current_dir()?;
-            repoweave::workspace::require_workspace_or_empty(&cwd, force)?;
-            let mode = if frozen {
-                fetch::FetchMode::Frozen
-            } else {
-                fetch::FetchMode::Default
-            };
-            let filter = repoweave::selector::RepoFilter::parse(&roles, &repos)?;
-            // fetch's default is auto-resolve (min(nproc, 8)), unlike sync which
-            // defaults to serial to preserve envelope vs NDJSON contract. fetch's
-            // JSON contract follows the same shape: envelope when -j 1 or no -j
-            // with default resolution, NDJSON when -j > 1. Because the default
-            // can resolve to > 1 on multi-core hosts, agents should pass `-j 1`
-            // explicitly when they require the envelope shape.
-            let jobs = repoweave::parallel::resolve_jobs(jobs);
-            fetch::run_fetch(&source, &cwd, mode, no_reference, &filter, jobs, json)?;
-        }
-        Some(Commands::SetupLifecycle(SetupLifecycleCmd::Add {
-            url,
-            role,
-            new,
-            project,
-        })) => {
-            let cwd = std::env::current_dir()?;
-            let project_override = project.map(repoweave::manifest::ProjectName::new);
-            if new {
-                add_remove::run_add_new(&url, &cwd, project_override)?;
-            } else {
-                add_remove::run_add(&url, role, &cwd, project_override)?;
-            }
-        }
-        Some(Commands::SetupLifecycle(SetupLifecycleCmd::Remove {
-            path,
-            delete,
-            force,
-            project,
-        })) => {
-            let cwd = std::env::current_dir()?;
-            let project_override = project.map(repoweave::manifest::ProjectName::new);
-            add_remove::run_remove(&path, delete, force, &cwd, project_override)?;
-        }
-        Some(Commands::LockingVerification(LockingVerificationCmd::Lock {
-            dirty,
-            commit,
-            project,
-        })) => {
-            let cwd = std::env::current_dir()?;
-            let project_override = project.map(repoweave::manifest::ProjectName::new);
-            lock::lock(&cwd, dirty, commit, project_override)?;
-        }
-        Some(Commands::NetworkPublishing(NetworkPublishingCmd::Update {
-            dirty,
-            commit,
-            project,
-            roles,
-            repos,
-            jobs,
-            json,
-        })) => {
-            let cwd = std::env::current_dir()?;
-            let project_override = project.map(repoweave::manifest::ProjectName::new);
-            let filter = repoweave::selector::RepoFilter::parse(&roles, &repos)?;
-            // Update's default is auto-parallel (min(nproc, 8)). The envelope/NDJSON
-            // split mirrors sync: -j 1 (or unspecified with --json) emits the
-            // envelope; -j > 1 streams NDJSON. Note: unlike sync, update defaults
-            // to auto-parallel even without --json, so --json + no -j will default
-            // to multi-worker NDJSON on multi-core machines. Callers that want the
-            // envelope must pass `-j 1` explicitly alongside --json.
-            let jobs = repoweave::parallel::resolve_jobs(jobs);
-            update::run_update(&cwd, dirty, commit, json, project_override, &filter, jobs)?;
-        }
-        Some(Commands::NetworkPublishing(NetworkPublishingCmd::Push {
-            project,
-            dry_run,
-            force,
-            roles,
-            repos,
-            jobs,
-            json,
-        })) => {
-            let cwd = std::env::current_dir()?;
-            let project_override = project.map(repoweave::manifest::ProjectName::new);
-            let filter = repoweave::selector::RepoFilter::parse(&roles, &repos)?;
-            // push's default is serial (jobs=1). This differs from fetch/update
-            // (which auto-resolve to min(nproc, 8)) because push's `--json`
-            // contract pins envelope output under `-j 1` and NDJSON under
-            // `-j > 1`; defaulting to auto would silently switch envelope ->
-            // NDJSON on multi-core hosts.
-            let jobs = match jobs {
-                Some(n) => repoweave::parallel::resolve_jobs(Some(n)),
-                None => 1,
-            };
-            push::run_push(&cwd, project_override, dry_run, force, &filter, jobs, json)?;
-        }
-        Some(Commands::LockingVerification(LockingVerificationCmd::Doctor {
+        Some(Commands::Doctor {
             locked,
             fix,
             json,
             all,
             project,
-        })) => {
+        }) => {
             let cwd = std::env::current_dir()?;
             let project_override = project.map(repoweave::manifest::ProjectName::new);
             if locked {
@@ -804,12 +737,25 @@ fn main() -> anyhow::Result<()> {
                 }
             }
         }
-        Some(Commands::LockingVerification(LockingVerificationCmd::Status { json, project })) => {
+        Some(Commands::Lock {
+            dirty,
+            commit,
+            project,
+        }) => {
+            let cwd = std::env::current_dir()?;
+            let project_override = project.map(repoweave::manifest::ProjectName::new);
+            lock::lock(&cwd, dirty, commit, project_override)?;
+        }
+        Some(Commands::Status { json, project }) => {
             let cwd = std::env::current_dir()?;
             let project_override = project.map(repoweave::manifest::ProjectName::new);
             status::run_status(&cwd, json, project_override)?;
         }
-        Some(Commands::MultiWorkspaceOps(MultiWorkspaceOpsCmd::Sync {
+        Some(Commands::Abort) => {
+            let cwd = std::env::current_dir()?;
+            sync::run_abort(&cwd)?;
+        }
+        Some(Commands::Sync {
             source,
             strategy,
             allow_stale_lock,
@@ -818,7 +764,7 @@ fn main() -> anyhow::Result<()> {
             jobs,
             project,
             do_continue,
-        })) => {
+        }) => {
             let cwd = std::env::current_dir()?;
             let project_override = project.map(repoweave::manifest::ProjectName::new);
             // sync's default is serial (jobs=1). This differs from fetch/update
@@ -849,7 +795,7 @@ fn main() -> anyhow::Result<()> {
                 sync::run_sync(&cwd, request)?;
             }
         }
-        Some(Commands::MultiWorkspaceOps(MultiWorkspaceOpsCmd::SyncTo {
+        Some(Commands::SyncTo {
             target,
             strategy,
             allow_stale_lock,
@@ -859,7 +805,7 @@ fn main() -> anyhow::Result<()> {
             jobs,
             project,
             do_continue,
-        })) => {
+        }) => {
             let cwd = std::env::current_dir()?;
             let project_override = project.map(repoweave::manifest::ProjectName::new);
             let jobs = match jobs {
@@ -919,43 +865,58 @@ fn main() -> anyhow::Result<()> {
                 sync::run_sync_to(&cwd, request)?;
             }
         }
-        Some(Commands::MultiWorkspaceOps(MultiWorkspaceOpsCmd::Abort)) => {
-            let cwd = std::env::current_dir()?;
-            sync::run_abort(&cwd)?;
-        }
-        Some(Commands::WorkspaceContext(WorkspaceContextCmd::Resolve)) => {
-            let cwd = std::env::current_dir()?;
-            let ctx = WorkspaceContext::resolve(&cwd, None)?;
-            println!("{}", ctx.active_path().display());
-        }
-        Some(Commands::SetupLifecycle(SetupLifecycleCmd::Init {
+        Some(Commands::Push {
             project,
-            provider,
-            adopt,
-        })) => {
+            dry_run,
+            force,
+            roles,
+            repos,
+            jobs,
+            json,
+        }) => {
             let cwd = std::env::current_dir()?;
-            if adopt {
-                init::init_adopt(&project, &cwd)?;
-            } else {
-                init::init(&project, provider.as_deref(), &cwd)?;
-            }
+            let project_override = project.map(repoweave::manifest::ProjectName::new);
+            let filter = repoweave::selector::RepoFilter::parse(&roles, &repos)?;
+            // push's default is serial (jobs=1). This differs from fetch/update
+            // (which auto-resolve to min(nproc, 8)) because push's `--json`
+            // contract pins envelope output under `-j 1` and NDJSON under
+            // `-j > 1`; defaulting to auto would silently switch envelope ->
+            // NDJSON on multi-core hosts.
+            let jobs = match jobs {
+                Some(n) => repoweave::parallel::resolve_jobs(Some(n)),
+                None => 1,
+            };
+            push::run_push(&cwd, project_override, dry_run, force, &filter, jobs, json)?;
         }
-        Some(Commands::WorkspaceContext(WorkspaceContextCmd::Activate {
+        Some(Commands::Update {
+            dirty,
+            commit,
             project,
-            no_install,
-        })) => {
+            roles,
+            repos,
+            jobs,
+            json,
+        }) => {
             let cwd = std::env::current_dir()?;
-            activate::activate_with_options(
-                &project,
-                &cwd,
-                activate::ActivateOptions { no_install },
-            )?;
+            let project_override = project.map(repoweave::manifest::ProjectName::new);
+            let filter = repoweave::selector::RepoFilter::parse(&roles, &repos)?;
+            // Update's default is auto-parallel (min(nproc, 8)). The envelope/NDJSON
+            // split mirrors sync: -j 1 (or unspecified with --json) emits the
+            // envelope; -j > 1 streams NDJSON. Note: unlike sync, update defaults
+            // to auto-parallel even without --json, so --json + no -j will default
+            // to multi-worker NDJSON on multi-core machines. Callers that want the
+            // envelope must pass `-j 1` explicitly alongside --json.
+            let jobs = repoweave::parallel::resolve_jobs(jobs);
+            update::run_update(&cwd, dirty, commit, json, project_override, &filter, jobs)?;
         }
-        Some(Commands::WorkspaceContext(WorkspaceContextCmd::Prime { no_suppress })) => {
-            let cwd = std::env::current_dir()?;
-            prime::prime(&cwd, no_suppress)?;
+        Some(Commands::Completions { shell }) => {
+            let mut cmd = Cli::command();
+            clap_complete::generate(shell, &mut cmd, "rwv", &mut std::io::stdout());
         }
-        Some(Commands::Tooling(ToolingCmd::Setup { action })) => {
+        Some(Commands::Explain { command }) => {
+            explain::explain(command.as_deref())?;
+        }
+        Some(Commands::Setup { action }) => {
             let cwd = std::env::current_dir()?;
             match action {
                 SetupAction::AgentsMd => setup::agents_md(&cwd)?,
@@ -967,13 +928,6 @@ fn main() -> anyhow::Result<()> {
                     }
                 }
             }
-        }
-        Some(Commands::Tooling(ToolingCmd::Completions { shell })) => {
-            let mut cmd = Cli::command();
-            clap_complete::generate(shell, &mut cmd, "rwv", &mut std::io::stdout());
-        }
-        Some(Commands::Tooling(ToolingCmd::Explain { command })) => {
-            explain::explain(command.as_deref())?;
         }
     }
 
