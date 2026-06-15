@@ -1,9 +1,9 @@
 //! E2E integration tests for `rwv sync`, `rwv abort`, `rwv doctor --locked`, and `rwv status`.
 //!
-//! These are the acceptance criteria for `rwv sync` and `rwv abort`.
-//! They are expected to FAIL until those implementations land.
+//! These exercise the acceptance criteria for `rwv sync` and `rwv abort`.
 //!
-//! Scenarios follow the rewritten tutorial in docs/tutorial.md.
+//! Scenarios mirror the sync/abort how-tos in docs/how-to/ (e.g.
+//! resume-or-abort-mid-op-sync.md, recover-from-sync-conflict.md).
 
 use assert_cmd::Command as AssertCommand;
 use predicates::prelude::*;
