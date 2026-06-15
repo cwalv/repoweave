@@ -3768,11 +3768,39 @@ pub fn run_sync_json(cwd: &Path, request: SyncRequest) -> anyhow::Result<()> {
     )
 }
 
-/// Shared post-impl JSON emitter: emits the envelope (serial) or a no-op
-/// (NDJSON already streamed), then maps exit codes.
+/// Shared JSON exit/return tail for `run_sync_json_impl` and `run_sync_to_json`.
 ///
-/// Factored out so both `run_sync_json` and `run_sync_to_json` can share
-/// the envelope/NDJSON emission logic with their respective schema URLs.
+/// After serialization is done (or skipped for NDJSON), both callers share
+/// the same exit logic: exit 1 when any per-repo outcome failed, otherwise
+/// propagate `project_level_result`. Factored here so the logic lives in
+/// exactly one place.
+///
+/// Uses `process::exit` rather than `Err` when repos fail so that the JSON
+/// already printed to stdout is not contaminated by anyhow's stderr
+/// formatter (the test harness asserts on stdout + exit code only).
+fn json_exit_tail(
+    any_failure: bool,
+    project_level_result: anyhow::Result<()>,
+) -> anyhow::Result<()> {
+    // Map exit code: non-zero iff any per-repo outcome was a failure.
+    // We use process::exit directly so the JSON we just printed is the
+    // only thing on stdout — bubbling Err would route through anyhow's
+    // stderr formatter (acceptable, but the test harness asserts only on
+    // stdout + exit code).
+    if any_failure {
+        std::process::exit(1);
+    }
+    // Also propagate any project-level error that fired AFTER per-repo
+    // outcomes were captured (e.g., Phase 1' or Phase 3 failure). The
+    // outcomes JSON has been emitted; surface the error via Err so
+    // main's anyhow display fires.
+    project_level_result
+}
+
+/// Post-machine JSON emitter for `rwv sync --json`.
+///
+/// Emits the envelope (serial mode) or a no-op (NDJSON already streamed each
+/// record as it arrived), then delegates to [`json_exit_tail`] for exit/return.
 ///
 /// When `emit_empty_envelope` is true, an envelope with an empty `outcomes`
 /// array is emitted even when `records` is empty (used by sync-to where
@@ -3807,19 +3835,7 @@ fn run_sync_json_impl(
         println!("{out}");
     }
 
-    // Map exit code: non-zero iff any per-repo outcome was a failure.
-    // We use process::exit directly so the JSON we just printed is the
-    // only thing on stdout — bubbling Err would route through anyhow's
-    // stderr formatter (acceptable, but the test harness asserts only on
-    // stdout + exit code).
-    if any_failure {
-        std::process::exit(1);
-    }
-    // Also propagate any project-level error that fired AFTER per-repo
-    // outcomes were captured (e.g., Phase 1' or Phase 3 failure). The
-    // outcomes JSON has been emitted; surface the error via Err so
-    // main's anyhow display fires.
-    project_level_result
+    json_exit_tail(any_failure, project_level_result)
 }
 
 // ---------------------------------------------------------------------------
@@ -3969,10 +3985,7 @@ pub fn run_sync_to_json(cwd: &Path, request: SyncRequest) -> anyhow::Result<()> 
         println!("{out}");
     }
 
-    if any_failure {
-        std::process::exit(1);
-    }
-    project_level_result
+    json_exit_tail(any_failure, project_level_result)
 }
 
 /// Fast-forward `target_repo` to `cwd_tip`.
