@@ -42,7 +42,8 @@
 
 use crate::integration::{Integration, IntegrationContext, Issue, Severity};
 use crate::integrations::merge::{
-    keypath, merge_activate, strip_deactivate, GoWorkDoc, ManagedDoc, OwnedValue, Ownership,
+    drift_issues, keypath, merge_activate, missing_issue, strip_deactivate, GoWorkDoc, ManagedDoc,
+    OwnedValue, Ownership,
 };
 use crate::manifest::GoWorkConfig;
 use anyhow::Context;
@@ -207,15 +208,7 @@ impl Integration for GoWork {
 
         // ── MISSING ────────────────────────────────────────────────────────
         if !path.exists() {
-            return Ok(vec![Issue {
-                integration: self.name().to_string(),
-                severity: Severity::Warning,
-                message: format!(
-                    "go-work managed file missing: {}; run rwv doctor --fix to regenerate",
-                    path.display()
-                ),
-                safe_to_fix: true,
-            }]);
+            return Ok(vec![missing_issue(self.name(), &path)]);
         }
 
         let text = std::fs::read_to_string(&path)
@@ -225,54 +218,27 @@ impl Integration for GoWork {
 
         let owned_keys = vec![keypath(["use"])];
         let marker_present = doc.has_marker(&owned_keys);
+        let owned_key_present = doc.key_present(&keypath(["use"]));
 
-        // ── USER-HELD ──────────────────────────────────────────────────────
-        // `use (...)` block present but no marker.
-        if !marker_present && doc.key_present(&keypath(["use"])) {
-            return Ok(vec![Issue {
-                integration: self.name().to_string(),
-                severity: Severity::Warning,
-                message: format!(
-                    "go-work managed file present but unmarked: {}; \
-                     rwv will NOT auto-take-over (would discard user content). \
-                     Cut over manually or add the '// managed by repoweave' marker",
-                    path.display()
-                ),
-                safe_to_fix: false,
-            }]);
-        }
+        // Compare on-disk `use` entries against what activate() would write
+        // (`./<repo-path>` entries). The shared helper sorts + dedups both
+        // sides before comparing and dispatches USER-HELD → DRIFT → CLEAN.
+        let expected: Vec<String> = repo_paths.iter().map(|p| format!("./{}", p)).collect();
+        // `read_current_uses_from_file` returns an empty vec when the use block
+        // is absent (never `None`); pre-lift compared that empty vec directly,
+        // so pass `Some`.
+        let on_disk = read_current_uses_from_file(&path);
 
-        // ── DRIFT ──────────────────────────────────────────────────────────
-        // Compare on-disk `use` entries against what activate() would write.
-        // activate() produces `./<repo-path>` sorted entries.
-        let expected_use: Vec<String> = {
-            let mut paths: Vec<String> = repo_paths.iter().map(|p| format!("./{}", p)).collect();
-            paths.sort();
-            paths
-        };
-
-        // Read on-disk use entries via the same lightweight parser used in
-        // activate_via_go_tool.
-        let on_disk_use = read_current_uses_from_file(&path);
-
-        let drift = on_disk_use != expected_use;
-
-        if drift {
-            return Ok(vec![Issue {
-                integration: self.name().to_string(),
-                severity: Severity::Warning,
-                message: format!(
-                    "go-work managed file has drift: {}; \
-                     on-disk use entries differ from rwv.yaml config. \
-                     Run rwv doctor --fix to regenerate",
-                    path.display()
-                ),
-                safe_to_fix: true,
-            }]);
-        }
-
-        // ── CLEAN ──────────────────────────────────────────────────────────
-        Ok(vec![])
+        Ok(drift_issues(
+            self.name(),
+            &path,
+            marker_present,
+            owned_key_present,
+            Some(&on_disk),
+            &expected,
+            "Cut over manually or add the '// managed by repoweave' marker",
+            "on-disk use entries differ from rwv.yaml config.",
+        ))
     }
 
     /// go.work is HYBRID — it lives in managed_files(), not generated_files().

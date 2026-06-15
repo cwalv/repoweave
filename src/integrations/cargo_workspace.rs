@@ -92,8 +92,8 @@
 
 use crate::integration::{Integration, IntegrationContext, Issue, Severity};
 use crate::integrations::merge::{
-    keypath, merge_activate, strip_deactivate, toml_array_strings, KeyPath, ManagedDoc,
-    MergeResult, OwnedValue, Ownership, TomlDoc,
+    drift_issues, keypath, merge_activate, missing_issue, strip_deactivate, toml_array_strings,
+    KeyPath, ManagedDoc, MergeResult, OwnedValue, Ownership, TomlDoc,
 };
 use crate::manifest::{CargoWorkspaceConfig, MemberSpec};
 use anyhow::Context;
@@ -451,15 +451,7 @@ impl Integration for CargoWorkspace {
 
         // ── MISSING ────────────────────────────────────────────────────────
         if !path.exists() {
-            return Ok(vec![Issue {
-                integration: self.name().to_string(),
-                severity: Severity::Warning,
-                message: format!(
-                    "cargo-workspace managed file missing: {}; run rwv doctor --fix to regenerate",
-                    path.display()
-                ),
-                safe_to_fix: true,
-            }]);
+            return Ok(vec![missing_issue(self.name(), &path)]);
         }
 
         // Parse the on-disk file. A parse failure is surfaced as an error
@@ -482,39 +474,38 @@ impl Integration for CargoWorkspace {
 
         let marker_present = toml_doc.has_marker(&owned_keys);
 
-        // ── USER-HELD ──────────────────────────────────────────────────────
-        // File has [workspace] with members/resolver but no rwv marker.
-        if !marker_present
-            && (toml_doc.key_present(&keypath(["workspace", "members"]))
-                || toml_doc.key_present(&keypath(["workspace", "resolver"])))
-        {
-            return Ok(vec![Issue {
-                integration: self.name().to_string(),
-                severity: Severity::Warning,
-                message: format!(
-                    "cargo-workspace managed file present but unmarked: {}; \
-                     rwv will NOT auto-take-over (would discard user content). \
-                     Cut over manually by removing [workspace] from the file \
-                     or by exercising the intent-mode merge",
-                    path.display()
-                ),
-                safe_to_fix: false,
-            }]);
+        // cargo's USER-HELD predicate is bespoke: members OR resolver present
+        // (either owned [workspace] key counts). The other five integrations
+        // have a single owned key; cargo's two-key OR stays here, and the
+        // result feeds the shared four-state dispatch.
+        let owned_key_present = toml_doc.key_present(&keypath(["workspace", "members"]))
+            || toml_doc.key_present(&keypath(["workspace", "resolver"]));
+
+        // The nested-conflict early-return is cargo-specific and must run
+        // BETWEEN USER-HELD and DRIFT (a conflict suppresses the DRIFT finding
+        // — `check()` already surfaces it as an Error — but USER-HELD still
+        // wins if the user holds the pen). So handle USER-HELD first via the
+        // shared helper, then short-circuit on conflicts, then let the helper
+        // decide DRIFT vs CLEAN.
+        if !marker_present && owned_key_present {
+            return Ok(drift_issues(
+                self.name(),
+                &path,
+                marker_present,
+                owned_key_present,
+                None,
+                &[],
+                "Cut over manually by removing [workspace] from the file \
+                 or by exercising the intent-mode merge",
+                "",
+            ));
         }
 
-        // ── DRIFT ──────────────────────────────────────────────────────────
-        // Markers are present (or the file has no [workspace] at all and
-        // `merge_activate` would create one). Compare on-disk owned values
-        // against what the current config would produce.
-        //
         // Only `Ownership::Author` keys are checked for drift:
         //   - `members` is `Ownership::Author` → drift is a DRIFT finding.
         //   - `resolver` is `Ownership::DefaultOnly` → operators may override
         //     it (e.g. `resolver = "1"` for compat); any on-disk value is
         //     CLEAN. Skip the resolver drift check entirely.
-        //
-        // Skip the nested-conflict check here — `check()` already surfaces
-        // that as an Error; we don't duplicate it in verify().
         let (members, nested_conflicts) = Self::partition(ctx, &cfg)?;
         if !nested_conflicts.is_empty() {
             // Nested-workspace conflict: activation would fail anyway;
@@ -522,29 +513,25 @@ impl Integration for CargoWorkspace {
             return Ok(vec![]);
         }
 
-        // Read on-disk members from the toml_edit document.
-        // resolver is DefaultOnly — not checked for drift (always CLEAN).
-        let on_disk_members = toml_array_strings(&edit_doc, &["workspace", "members"]);
+        // Read on-disk members. resolver is DefaultOnly — not checked for drift
+        // (always CLEAN). Only `members` (Ownership::Author) is compared; the
+        // shared helper sorts + dedups both sides and emits DRIFT/CLEAN.
+        // `None` (no `members` key) is distinct from present-but-empty: an
+        // absent owned key is always DRIFT even when `members` (expected) is
+        // empty — preserves the pre-lift `Option` compare exactly.
+        let on_disk = toml_array_strings(&edit_doc, &["workspace", "members"]);
 
-        // Only `members` (Ownership::Author) is checked for drift.
-        let members_drift = on_disk_members.as_deref() != Some(members.as_slice());
-
-        if members_drift {
-            return Ok(vec![Issue {
-                integration: self.name().to_string(),
-                severity: Severity::Warning,
-                message: format!(
-                    "cargo-workspace managed file has drift: {}; \
-                     on-disk [workspace] content differs from rwv.yaml config. \
-                     Run rwv doctor --fix to regenerate",
-                    path.display()
-                ),
-                safe_to_fix: true,
-            }]);
-        }
-
-        // ── CLEAN ──────────────────────────────────────────────────────────
-        Ok(vec![])
+        Ok(drift_issues(
+            self.name(),
+            &path,
+            marker_present,
+            owned_key_present,
+            on_disk.as_deref(),
+            &members,
+            "Cut over manually by removing [workspace] from the file \
+             or by exercising the intent-mode merge",
+            "on-disk [workspace] content differs from rwv.yaml config.",
+        ))
     }
 
     /// `Cargo.toml` is **hybrid** (rwv owns the `[workspace]` region; the

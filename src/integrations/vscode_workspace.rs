@@ -1,6 +1,7 @@
 use crate::integration::{Integration, IntegrationContext, Issue, Severity};
 use crate::integrations::merge::{
-    keypath, strip_deactivate, JsonDoc, KeyPath, ManagedDoc, RwvGeneratedMarker,
+    drift_issues, keypath, missing_issue, strip_deactivate, JsonDoc, KeyPath, ManagedDoc,
+    RwvGeneratedMarker,
 };
 use anyhow::Context;
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -400,16 +401,7 @@ impl Integration for VscodeWorkspace {
 
         // ── MISSING ────────────────────────────────────────────────────────
         if !filepath.exists() {
-            return Ok(vec![Issue {
-                integration: self.name().to_string(),
-                severity: Severity::Warning,
-                message: format!(
-                    "vscode-workspace managed file missing: {}; \
-                     run rwv doctor --fix to regenerate",
-                    filepath.display()
-                ),
-                safe_to_fix: true,
-            }]);
+            return Ok(vec![missing_issue(self.name(), &filepath)]);
         }
 
         let text = std::fs::read_to_string(&filepath)
@@ -421,26 +413,19 @@ impl Integration for VscodeWorkspace {
 
         let marker_present = doc.has_marker(&[]);
 
-        // ── USER-HELD ──────────────────────────────────────────────────────
-        // File exists but does not carry the rwv.generated marker.
-        if !marker_present {
-            return Ok(vec![Issue {
-                integration: self.name().to_string(),
-                severity: Severity::Warning,
-                message: format!(
-                    "vscode-workspace managed file present but unmarked: {}; \
-                     rwv will NOT auto-take-over (would discard user content). \
-                     Cut over manually or add the rwv.generated marker",
-                    filepath.display()
-                ),
-                safe_to_fix: false,
-            }]);
-        }
-
-        // ── DRIFT ──────────────────────────────────────────────────────────
-        // Check the primary folder entry (folders[0]) which is the only purely
-        // rwv-derived content in the folders array.
-        let expected_primary_name = format!("{} (primary)", ctx.project.as_str());
+        // vscode's USER-HELD is marker-absence alone (file present but no
+        // `rwv.generated` marker → user created it). The shared helper treats
+        // USER-HELD as `!marker_present && owned_key_present`, so we pass
+        // `owned_key_present = true` unconditionally: the file's mere presence
+        // is the "owned region" here.
+        //
+        // DRIFT is the `folders[0]` primary-entry compare (NOT an array of
+        // members like the other five). We serialize the on-disk and expected
+        // primary tuple to a single deterministic string so the shared
+        // array-compare reduces to "primary matches?". `settings.files.exclude`
+        // is intentionally NOT checked — its content depends on runtime
+        // all_repos_on_disk / all_project_paths sets and is not reproducible
+        // from the manifest alone.
         let on_disk_primary = parsed
             .get("folders")
             .and_then(|v| v.as_array())
@@ -451,25 +436,24 @@ impl Integration for VscodeWorkspace {
                     f.get("name").and_then(|v| v.as_str()).map(str::to_string),
                 )
             });
+        let expected_primary = Some((
+            Some(".".to_string()),
+            Some(format!("{} (primary)", ctx.project.as_str())),
+        ));
 
-        let expected_primary = Some((Some(".".to_string()), Some(expected_primary_name)));
+        let on_disk = vec![format!("{on_disk_primary:?}")];
+        let expected = vec![format!("{expected_primary:?}")];
 
-        if on_disk_primary != expected_primary {
-            return Ok(vec![Issue {
-                integration: self.name().to_string(),
-                severity: Severity::Warning,
-                message: format!(
-                    "vscode-workspace managed file has drift: {}; \
-                     on-disk folders[0] (primary entry) differs from expected. \
-                     Run rwv doctor --fix to regenerate",
-                    filepath.display()
-                ),
-                safe_to_fix: true,
-            }]);
-        }
-
-        // ── CLEAN ──────────────────────────────────────────────────────────
-        Ok(vec![])
+        Ok(drift_issues(
+            self.name(),
+            &filepath,
+            marker_present,
+            /* owned_key_present = */ true,
+            Some(&on_disk),
+            &expected,
+            "Cut over manually or add the rwv.generated marker",
+            "on-disk folders[0] (primary entry) differs from expected.",
+        ))
     }
 
     fn generated_files(&self, ctx: &IntegrationContext) -> Vec<String> {

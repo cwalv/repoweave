@@ -48,6 +48,7 @@
 //! through `set_owned`, it merges into the existing map rather than replacing
 //! the whole value. Leaf variants (`Bool`, `String`, `Array`) replace.
 
+use crate::integration::{Issue, Severity};
 use anyhow::{Context, Result};
 use std::collections::BTreeMap;
 use std::marker::PhantomData;
@@ -1587,6 +1588,173 @@ pub(crate) fn toml_array_strings(
 }
 
 // ===========================================================================
+// Shared verify() state machine
+// ===========================================================================
+
+/// The four states every hybrid integration's `verify()` resolves to.
+///
+/// Each hybrid integration's `verify()` reduces to: detect-repos, locate the
+/// managed file + owned key, compute the expected on-disk content, read the
+/// actual on-disk content, then map the result to one of these states. The
+/// state → [`Issue`] construction (severity, `safe_to_fix`, message template)
+/// is centralized in [`drift_issues`] so the four-state dispatch and its
+/// byte-identical `Issue` values live in exactly one place.
+///
+/// This is the root-cause fix for the shallow-wrapper duplication that
+/// produced the pnpm false-DRIFT bug: previously each of the six integrations
+/// re-implemented the same MISSING → USER-HELD → DRIFT → CLEAN ladder and
+/// re-built the same `Severity::Warning` issues by hand.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum VerifyState {
+    /// The managed file is absent but repos were detected. `safe_to_fix=true`.
+    Missing,
+    /// The owned key/region is present on disk but the rwv ownership marker is
+    /// absent — the user holds the pen. `safe_to_fix=false` (auto-overwrite
+    /// would silently destroy user content).
+    UserHeld,
+    /// The marker is present but the on-disk owned content diverges from what
+    /// the current config would generate. `safe_to_fix=true`.
+    Drift,
+    /// Marker present and content matches. No issue.
+    Clean,
+}
+
+/// Classify the four-state verify outcome from the primitive inputs.
+///
+/// - `marker_present`: does the file carry the rwv ownership marker?
+/// - `owned_key_present`: is the owned key/region present on disk? (USER-HELD
+///   is `!marker_present && owned_key_present`.)
+/// - `on_disk` vs `expected`: the owned content read back vs what config would
+///   generate. **The caller is responsible for normalizing both sides
+///   identically** (sort + dedup) so an integration cannot regress to a false
+///   DRIFT — see [`drift_issues`].
+///
+/// This is the genuinely-common dispatch lifted out of all six `verify()`
+/// impls. It does NOT handle the MISSING case — that is a path-existence check
+/// the caller performs before reading the file (parse failures must bail with
+/// context first). Callers that have already confirmed the file exists pass the
+/// remaining three signals here.
+fn classify_verify(
+    marker_present: bool,
+    owned_key_present: bool,
+    on_disk_matches: bool,
+) -> VerifyState {
+    if !marker_present && owned_key_present {
+        VerifyState::UserHeld
+    } else if !on_disk_matches {
+        VerifyState::Drift
+    } else {
+        VerifyState::Clean
+    }
+}
+
+/// Build the canonical `verify()` issues for a hybrid integration.
+///
+/// This is the single home for the four-state dispatch and the byte-identical
+/// `Issue` templates that every hybrid `verify()` produced by hand. Each
+/// integration reduces to: detect-repos, locate file + key, compute `expected`,
+/// read `on_disk`, then call this helper.
+///
+/// Parameters:
+/// - `name`: the integration name (goes into `Issue::integration`).
+/// - `path`: the managed file path (rendered into every message).
+/// - `marker_present`: whether the rwv ownership marker is on the file.
+/// - `owned_key_present`: whether the owned key/region is present on disk.
+/// - `on_disk` / `expected`: the owned content read back vs what config would
+///   generate. **Both sides are sorted+deduped here** before comparison, so no
+///   integration can regress to a false DRIFT from overlapping/repeated globs
+///   (the pnpm dedup fix is now enforced uniformly for every caller). Pass the
+///   raw on-disk and raw expected lists; the helper normalizes both.
+///   `on_disk` is an `Option`: `None` means the owned key/value is **absent**
+///   on disk (distinct from present-but-empty) — an absent owned key is always
+///   DRIFT, never CLEAN, even when `expected` is empty. (Callers whose reader
+///   never distinguishes absent from empty pass `Some(vec)`.)
+/// - `user_held_suffix`: the integration-specific cut-over instruction appended
+///   to the USER-HELD message (e.g. how to add the marker for that format).
+/// - `drift_detail`: the integration-specific sentence describing what drifted
+///   (e.g. "on-disk [workspace] content differs from rwv.yaml config.").
+///
+/// Returns a single-issue `Vec` for MISSING/USER-HELD/DRIFT and an empty `Vec`
+/// for CLEAN — matching the pre-lift behavior exactly (each state produced one
+/// `Issue` or none).
+///
+/// MISSING is detected by the caller (a path-existence check that runs before
+/// reading/parsing the file); this helper covers USER-HELD → DRIFT → CLEAN.
+/// Use [`missing_issue`] for the MISSING template so it stays consistent too.
+#[allow(clippy::too_many_arguments)]
+pub fn drift_issues(
+    name: &str,
+    path: &Path,
+    marker_present: bool,
+    owned_key_present: bool,
+    on_disk: Option<&[String]>,
+    expected: &[String],
+    user_held_suffix: &str,
+    drift_detail: &str,
+) -> Vec<Issue> {
+    // An absent owned key (`None`) never matches expected — always DRIFT.
+    // Otherwise normalize BOTH sides identically (sort + dedup) so overlapping
+    // or repeated globs never produce a false DRIFT. This makes the pnpm/npm
+    // sorted.dedup() fix structural — every integration inherits it.
+    let on_disk_matches = match on_disk {
+        None => false,
+        Some(on_disk) => sorted_deduped(on_disk) == sorted_deduped(expected),
+    };
+
+    match classify_verify(marker_present, owned_key_present, on_disk_matches) {
+        VerifyState::Missing => unreachable!("MISSING is caller-detected; use missing_issue()"),
+        VerifyState::UserHeld => vec![Issue {
+            integration: name.to_string(),
+            severity: Severity::Warning,
+            message: format!(
+                "{name} managed file present but unmarked: {}; \
+                 rwv will NOT auto-take-over (would discard user content). {user_held_suffix}",
+                path.display()
+            ),
+            safe_to_fix: false,
+        }],
+        VerifyState::Drift => vec![Issue {
+            integration: name.to_string(),
+            severity: Severity::Warning,
+            message: format!(
+                "{name} managed file has drift: {}; {drift_detail} \
+                 Run rwv doctor --fix to regenerate",
+                path.display()
+            ),
+            safe_to_fix: true,
+        }],
+        VerifyState::Clean => vec![],
+    }
+}
+
+/// The canonical MISSING-state issue for a hybrid integration's `verify()`.
+///
+/// Kept separate from [`drift_issues`] because MISSING is detected by the
+/// caller (a path-existence check that must precede reading/parsing the file).
+/// Centralized here so the template stays byte-identical across integrations.
+pub fn missing_issue(name: &str, path: &Path) -> Issue {
+    Issue {
+        integration: name.to_string(),
+        severity: Severity::Warning,
+        message: format!(
+            "{name} managed file missing: {}; run rwv doctor --fix to regenerate",
+            path.display()
+        ),
+        safe_to_fix: true,
+    }
+}
+
+/// Sort + dedup a string slice into an owned `Vec`. Mirrors
+/// [`OwnedValue::sorted_array`]'s normalization so DRIFT comparison and the
+/// authored on-disk value use the same ordering and deduplication.
+fn sorted_deduped(items: &[String]) -> Vec<String> {
+    let mut v = items.to_vec();
+    v.sort();
+    v.dedup();
+    v
+}
+
+// ===========================================================================
 // Tests
 // ===========================================================================
 
@@ -2395,6 +2563,154 @@ replace example.com/legacy => ./vendor/legacy
             );
             assert!(!text.contains("./repoweave"));
             assert!(!text.contains(GO_MARKER_LINE));
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Shared verify() state machine: classify_verify / drift_issues / missing_issue
+    // -----------------------------------------------------------------------
+
+    mod verify_state_machine {
+        use super::*;
+
+        fn p() -> std::path::PathBuf {
+            std::path::PathBuf::from("/tmp/Cargo.toml")
+        }
+
+        fn s(items: &[&str]) -> Vec<String> {
+            items.iter().map(|x| x.to_string()).collect()
+        }
+
+        #[test]
+        fn classify_user_held_when_unmarked_key_present() {
+            assert_eq!(
+                classify_verify(false, true, true),
+                VerifyState::UserHeld,
+                "unmarked + key present → USER-HELD regardless of on-disk match"
+            );
+        }
+
+        #[test]
+        fn classify_drift_when_marked_but_mismatch() {
+            assert_eq!(classify_verify(true, true, false), VerifyState::Drift);
+        }
+
+        #[test]
+        fn classify_clean_when_marked_and_match() {
+            assert_eq!(classify_verify(true, true, true), VerifyState::Clean);
+        }
+
+        #[test]
+        fn classify_clean_when_no_owned_key_and_match() {
+            // No marker AND no owned key (e.g. a fresh marked-but-empty file
+            // the merge would author) → not USER-HELD; CLEAN if matched.
+            assert_eq!(classify_verify(false, false, true), VerifyState::Clean);
+        }
+
+        #[test]
+        fn user_held_issue_shape() {
+            let issues = drift_issues(
+                "cargo-workspace",
+                &p(),
+                /* marker_present */ false,
+                /* owned_key_present */ true,
+                None,
+                &[],
+                "Cut over manually",
+                "ignored detail",
+            );
+            assert_eq!(issues.len(), 1);
+            let i = &issues[0];
+            assert_eq!(i.integration, "cargo-workspace");
+            assert_eq!(i.severity, Severity::Warning);
+            assert!(!i.safe_to_fix, "USER-HELD must be safe_to_fix=false");
+            assert!(i.message.contains("present but unmarked"));
+            assert!(i.message.contains("NOT auto-take-over"));
+            assert!(i.message.contains("Cut over manually"));
+        }
+
+        #[test]
+        fn drift_issue_shape() {
+            let issues = drift_issues(
+                "npm-workspaces",
+                &p(),
+                true,
+                true,
+                Some(&s(&["a"])),
+                &s(&["a", "b"]),
+                "suffix",
+                "on-disk workspaces content differs from rwv.yaml config.",
+            );
+            assert_eq!(issues.len(), 1);
+            let i = &issues[0];
+            assert_eq!(i.severity, Severity::Warning);
+            assert!(i.safe_to_fix, "DRIFT must be safe_to_fix=true");
+            assert!(i.message.contains("has drift"));
+            assert!(i.message.contains("rwv doctor --fix"));
+            assert!(i.message.contains("on-disk workspaces content differs"));
+        }
+
+        #[test]
+        fn clean_returns_no_issue() {
+            let issues = drift_issues(
+                "uv-workspace",
+                &p(),
+                true,
+                true,
+                Some(&s(&["a", "b"])),
+                &s(&["a", "b"]),
+                "suffix",
+                "detail",
+            );
+            assert!(issues.is_empty(), "CLEAN must return no issue");
+        }
+
+        #[test]
+        fn absent_on_disk_is_always_drift_even_when_expected_empty() {
+            // `None` on_disk (owned key absent) vs empty expected → DRIFT, NOT
+            // CLEAN. This is the cargo corner case the Option preserves.
+            let issues = drift_issues(
+                "cargo-workspace",
+                &p(),
+                true,
+                false,
+                None,
+                &[],
+                "suffix",
+                "detail",
+            );
+            assert_eq!(issues.len(), 1, "absent owned key must be DRIFT");
+            assert!(issues[0].message.contains("has drift"));
+        }
+
+        #[test]
+        fn sort_and_dedup_normalizes_both_sides() {
+            // Differently-ordered + duplicated on-disk vs expected must be CLEAN
+            // — no false DRIFT (the pnpm dedup fix, now structural).
+            let issues = drift_issues(
+                "pnpm-workspaces",
+                &p(),
+                true,
+                true,
+                Some(&s(&["b", "a", "a"])),
+                &s(&["a", "b", "b"]),
+                "suffix",
+                "detail",
+            );
+            assert!(
+                issues.is_empty(),
+                "sorted+deduped equal sets must be CLEAN, got: {issues:?}"
+            );
+        }
+
+        #[test]
+        fn missing_issue_shape() {
+            let i = missing_issue("go-work", &p());
+            assert_eq!(i.integration, "go-work");
+            assert_eq!(i.severity, Severity::Warning);
+            assert!(i.safe_to_fix, "MISSING must be safe_to_fix=true");
+            assert!(i.message.contains("managed file missing"));
+            assert!(i.message.contains("rwv doctor --fix"));
         }
     }
 }

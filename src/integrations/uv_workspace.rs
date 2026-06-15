@@ -70,8 +70,8 @@
 
 use crate::integration::{Integration, IntegrationContext, Issue, Severity};
 use crate::integrations::merge::{
-    keypath, merge_activate, strip_deactivate, toml_array_strings, KeyPath, ManagedDoc,
-    MergeResult, OwnedValue, Ownership, TomlDoc,
+    drift_issues, keypath, merge_activate, missing_issue, strip_deactivate, toml_array_strings,
+    KeyPath, ManagedDoc, MergeResult, OwnedValue, Ownership, TomlDoc,
 };
 use anyhow::Context;
 use std::path::Path;
@@ -452,15 +452,7 @@ impl Integration for UvWorkspace {
 
         // ── MISSING ────────────────────────────────────────────────────────
         if !path.exists() {
-            return Ok(vec![Issue {
-                integration: self.name().to_string(),
-                severity: Severity::Warning,
-                message: format!(
-                    "uv-workspace managed file missing: {}; run rwv doctor --fix to regenerate",
-                    path.display()
-                ),
-                safe_to_fix: true,
-            }]);
+            return Ok(vec![missing_issue(self.name(), &path)]);
         }
 
         let text = std::fs::read_to_string(&path)
@@ -473,51 +465,26 @@ impl Integration for UvWorkspace {
 
         let owned_keys = Self::deactivate_owned_keys();
         let marker_present = toml_doc.has_marker(&owned_keys);
+        let owned_key_present =
+            toml_doc.key_present(&keypath(["tool", "uv", "workspace", "members"]));
 
-        // ── USER-HELD ──────────────────────────────────────────────────────
-        if !marker_present && toml_doc.key_present(&keypath(["tool", "uv", "workspace", "members"]))
-        {
-            return Ok(vec![Issue {
-                integration: self.name().to_string(),
-                severity: Severity::Warning,
-                message: format!(
-                    "uv-workspace managed file present but unmarked: {}; \
-                     rwv will NOT auto-take-over (would discard user content). \
-                     Cut over manually or add the '# managed by rwv' marker",
-                    path.display()
-                ),
-                safe_to_fix: false,
-            }]);
-        }
+        // `members` is the only Ownership::Author key — the one checked for
+        // drift. Compute expected vs on-disk and dispatch via the shared helper.
+        let expected: Vec<String> = repo_paths;
+        // `None` (no `members` key) is distinct from present-but-empty:
+        // an absent key is always DRIFT — preserves the pre-lift Option compare.
+        let on_disk = toml_array_strings(&edit_doc, &["tool", "uv", "workspace", "members"]);
 
-        // ── DRIFT ──────────────────────────────────────────────────────────
-        // Regenerate what activate() would produce and compare.
-        // `members` is an Ownership::Author key — the only one checked for drift.
-        let mut expected_members = repo_paths;
-        expected_members.sort();
-
-        // Read on-disk members from toml_edit.
-        let on_disk_members =
-            toml_array_strings(&edit_doc, &["tool", "uv", "workspace", "members"]);
-
-        let members_drift = on_disk_members.as_deref() != Some(expected_members.as_slice());
-
-        if members_drift {
-            return Ok(vec![Issue {
-                integration: self.name().to_string(),
-                severity: Severity::Warning,
-                message: format!(
-                    "uv-workspace managed file has drift: {}; \
-                     on-disk [tool.uv.workspace].members differs from rwv.yaml config. \
-                     Run rwv doctor --fix to regenerate",
-                    path.display()
-                ),
-                safe_to_fix: true,
-            }]);
-        }
-
-        // ── CLEAN ──────────────────────────────────────────────────────────
-        Ok(vec![])
+        Ok(drift_issues(
+            self.name(),
+            &path,
+            marker_present,
+            owned_key_present,
+            on_disk.as_deref(),
+            &expected,
+            "Cut over manually or add the '# managed by rwv' marker",
+            "on-disk [tool.uv.workspace].members differs from rwv.yaml config.",
+        ))
     }
 
     fn activate_hook(&self, ctx: &IntegrationContext) -> anyhow::Result<()> {

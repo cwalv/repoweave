@@ -1,7 +1,7 @@
 use crate::integration::{Integration, IntegrationContext, Issue, Severity};
 use crate::integrations::merge::{
-    keypath, merge_activate, strip_deactivate, JsonDoc, ManagedDoc, OwnedValue, Ownership,
-    XRepoweaveMarker,
+    drift_issues, keypath, merge_activate, missing_issue, strip_deactivate, JsonDoc, ManagedDoc,
+    OwnedValue, Ownership, XRepoweaveMarker,
 };
 use anyhow::Context;
 use std::path::Path;
@@ -237,15 +237,7 @@ impl Integration for NpmWorkspaces {
 
         // ── MISSING ────────────────────────────────────────────────────────
         if !path.exists() {
-            return Ok(vec![Issue {
-                integration: self.name().to_string(),
-                severity: Severity::Warning,
-                message: format!(
-                    "npm-workspaces managed file missing: {}; run rwv doctor --fix to regenerate",
-                    path.display()
-                ),
-                safe_to_fix: true,
-            }]);
+            return Ok(vec![missing_issue(self.name(), &path)]);
         }
 
         // Parse the on-disk file.
@@ -258,53 +250,24 @@ impl Integration for NpmWorkspaces {
 
         let marker_present = doc.has_marker(&[]);
 
-        // ── USER-HELD ──────────────────────────────────────────────────────
-        // File has `workspaces` key but no x-repoweave marker.
-        if !marker_present && pkg.get("workspaces").is_some() {
-            return Ok(vec![Issue {
-                integration: self.name().to_string(),
-                severity: Severity::Warning,
-                message: format!(
-                    "npm-workspaces managed file present but unmarked: {}; \
-                     rwv will NOT auto-take-over (would discard user content). \
-                     Cut over manually or add the x-repoweave marker",
-                    path.display()
-                ),
-                safe_to_fix: false,
-            }]);
-        }
+        // Locate owned key + compute expected vs on-disk, then defer the
+        // four-state dispatch (USER-HELD → DRIFT → CLEAN) to the shared helper.
+        let owned_key_present = pkg.get("workspaces").is_some();
+        let expected = expand_workspace_entries(ctx.workspace_root, repo_paths);
+        // `None` (no `workspaces` key) is distinct from present-but-empty:
+        // an absent key is always DRIFT — preserves the pre-lift Option compare.
+        let on_disk = member_globs(pkg.get("workspaces"));
 
-        // ── DRIFT ──────────────────────────────────────────────────────────
-        // Regenerate what activate() would produce and compare.
-        let expected_paths = expand_workspace_entries(ctx.workspace_root, repo_paths);
-        // OwnedValue::sorted_array sorts and dedupes — mirror that here.
-        let expected_ws: Vec<String> = {
-            let mut sorted = expected_paths;
-            sorted.sort();
-            sorted.dedup();
-            sorted
-        };
-
-        let on_disk_ws = member_globs(pkg.get("workspaces"));
-
-        let drift = on_disk_ws.as_deref() != Some(expected_ws.as_slice());
-
-        if drift {
-            return Ok(vec![Issue {
-                integration: self.name().to_string(),
-                severity: Severity::Warning,
-                message: format!(
-                    "npm-workspaces managed file has drift: {}; \
-                     on-disk workspaces content differs from rwv.yaml config. \
-                     Run rwv doctor --fix to regenerate",
-                    path.display()
-                ),
-                safe_to_fix: true,
-            }]);
-        }
-
-        // ── CLEAN ──────────────────────────────────────────────────────────
-        Ok(vec![])
+        Ok(drift_issues(
+            self.name(),
+            &path,
+            marker_present,
+            owned_key_present,
+            on_disk.as_deref(),
+            &expected,
+            "Cut over manually or add the x-repoweave marker",
+            "on-disk workspaces content differs from rwv.yaml config.",
+        ))
     }
 
     fn activate_hook(&self, ctx: &IntegrationContext) -> anyhow::Result<()> {

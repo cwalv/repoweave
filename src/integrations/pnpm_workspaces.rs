@@ -1,6 +1,7 @@
 use crate::integration::{Integration, IntegrationContext, Issue, Severity};
 use crate::integrations::merge::{
-    merge_activate, strip_deactivate, KeyPath, ManagedDoc, OwnedValue, Ownership, YamlDoc,
+    drift_issues, merge_activate, missing_issue, strip_deactivate, KeyPath, ManagedDoc, OwnedValue,
+    Ownership, YamlDoc,
 };
 use anyhow::Context;
 use std::path::Path;
@@ -150,15 +151,7 @@ impl Integration for PnpmWorkspaces {
 
         // ── MISSING ────────────────────────────────────────────────────────
         if !path.exists() {
-            return Ok(vec![Issue {
-                integration: self.name().to_string(),
-                severity: Severity::Warning,
-                message: format!(
-                    "pnpm-workspaces managed file missing: {}; run rwv doctor --fix to regenerate",
-                    path.display()
-                ),
-                safe_to_fix: true,
-            }]);
+            return Ok(vec![missing_issue(self.name(), &path)]);
         }
 
         let text = std::fs::read_to_string(&path)
@@ -168,50 +161,26 @@ impl Integration for PnpmWorkspaces {
 
         let owned_keys = [packages_key()];
         let marker_present = doc.has_marker(&owned_keys);
+        let owned_key_present = doc.key_present(&packages_key());
 
-        // ── USER-HELD ──────────────────────────────────────────────────────
-        if !marker_present && doc.key_present(&packages_key()) {
-            return Ok(vec![Issue {
-                integration: self.name().to_string(),
-                severity: Severity::Warning,
-                message: format!(
-                    "pnpm-workspaces managed file present but unmarked: {}; \
-                     rwv will NOT auto-take-over (would discard user content). \
-                     Cut over manually or add the '# managed by repoweave' marker",
-                    path.display()
-                ),
-                safe_to_fix: false,
-            }]);
-        }
-
-        // ── DRIFT ──────────────────────────────────────────────────────────
-        // Regenerate what activate() would produce and compare.
-        let expanded = expand_workspace_entries(ctx.workspace_root, repo_paths);
-        let mut expected: Vec<String> = expanded.into_iter().map(|p| p.to_string()).collect();
-        expected.sort();
-        // OwnedValue::sorted_array sorts and dedupes — mirror that here so
-        // overlapping/repeated globs don't cause a false DRIFT report.
-        expected.dedup();
-
-        // Read on-disk packages from the YAML text (reuse existing helper).
+        // Compute expected vs on-disk; the shared helper normalizes both
+        // (sort + dedup) so overlapping/repeated globs never cause a false
+        // DRIFT, then dispatches USER-HELD → DRIFT → CLEAN.
+        let expected: Vec<String> = expand_workspace_entries(ctx.workspace_root, repo_paths);
+        // Pre-lift pnpm collapsed absent → empty (`unwrap_or_default`) before
+        // comparing; preserve that by passing `Some` of the (possibly empty) vec.
         let on_disk = read_pnpm_packages_globs(&path).unwrap_or_default();
 
-        if on_disk != expected {
-            return Ok(vec![Issue {
-                integration: self.name().to_string(),
-                severity: Severity::Warning,
-                message: format!(
-                    "pnpm-workspaces managed file has drift: {}; \
-                     on-disk packages: content differs from rwv.yaml config. \
-                     Run rwv doctor --fix to regenerate",
-                    path.display()
-                ),
-                safe_to_fix: true,
-            }]);
-        }
-
-        // ── CLEAN ──────────────────────────────────────────────────────────
-        Ok(vec![])
+        Ok(drift_issues(
+            self.name(),
+            &path,
+            marker_present,
+            owned_key_present,
+            Some(&on_disk),
+            &expected,
+            "Cut over manually or add the '# managed by repoweave' marker",
+            "on-disk packages: content differs from rwv.yaml config.",
+        ))
     }
 
     fn activate_hook(&self, ctx: &IntegrationContext) -> anyhow::Result<()> {
