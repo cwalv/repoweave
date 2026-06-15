@@ -7177,6 +7177,51 @@ mod s7_pnpm_doctor {
             "verify() must return no issues for a freshly-activated pnpm-workspace.yaml, got: {issues:?}"
         );
     }
+
+    // -----------------------------------------------------------------------
+    // §7.5 CLEAN — duplicate/overlapping globs must not cause false DRIFT
+    // -----------------------------------------------------------------------
+
+    /// Regression: when a member repo's pnpm-workspace.yaml has duplicate
+    /// glob entries, expand_workspace_entries() produces a list with repeated
+    /// items.  activate() writes the deduped set (via OwnedValue::sorted_array)
+    /// but the old verify() only sorted — not deduped — its expected list,
+    /// making a CLEAN file look like DRIFT.
+    ///
+    /// Given: member repo whose pnpm-workspace.yaml lists the same glob twice.
+    /// When:  activate() runs (on-disk is deduped), then verify() runs.
+    /// Then:  verify() returns no issues (CLEAN).
+    #[test]
+    fn s7_pnpm_doctor_clean_when_member_has_duplicate_globs() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+
+        // Multi-package repo whose pnpm-workspace.yaml repeats "packages/*".
+        // expand_workspace_entries() will emit the glob twice; activate() dedupes
+        // it before writing.  verify() must also dedup before comparing.
+        touch(root, "github/acme/mono/package.json");
+        write_file(
+            root,
+            "github/acme/mono/pnpm-workspace.yaml",
+            "packages:\n  - packages/*\n  - packages/*\n",
+        );
+
+        let manifest = make_manifest(vec![("github/acme/mono", Role::Owned)]);
+        let project = ProjectName::new("test-project");
+        let config = IntegrationConfig::default();
+        let cache = HashMap::new();
+        let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+
+        // activate() writes the deduped, sorted set.
+        PnpmWorkspaces.activate(&ctx).unwrap();
+
+        // verify() must agree with what activate() wrote — no false DRIFT.
+        let issues = PnpmWorkspaces.verify(&ctx).unwrap();
+        assert!(
+            issues.is_empty(),
+            "verify() must return CLEAN when on-disk matches the deduped member globs, got: {issues:?}"
+        );
+    }
 }
 
 // ===========================================================================

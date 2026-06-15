@@ -189,6 +189,9 @@ impl Integration for PnpmWorkspaces {
         let expanded = expand_workspace_entries(ctx.workspace_root, repo_paths);
         let mut expected: Vec<String> = expanded.into_iter().map(|p| p.to_string()).collect();
         expected.sort();
+        // OwnedValue::sorted_array sorts and dedupes — mirror that here so
+        // overlapping/repeated globs don't cause a false DRIFT report.
+        expected.dedup();
 
         // Read on-disk packages from the YAML text (reuse existing helper).
         let on_disk = read_pnpm_packages_globs(&path).unwrap_or_default();
