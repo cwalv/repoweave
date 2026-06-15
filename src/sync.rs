@@ -3305,6 +3305,7 @@ pub fn run_abort(cwd: &Path) -> anyhow::Result<()> {
 
     let mut any_failure = false;
     let mut any_foreign = false;
+    let mut noise_summary = AbortNoiseSummary::default();
 
     // Restore CWD manifest repos first.
     for repo_path in cwd_project.manifest.iter_repo_paths() {
@@ -3315,7 +3316,13 @@ pub fn run_abort(cwd: &Path) -> anyhow::Result<()> {
         let intent = advanced_tips.get(repo_path.as_str()).map(String::as_str);
         let converged = converged_tips.get(repo_path.as_str()).map(String::as_str);
         match abort_one_repo(&abs, &cwd_restore_id, intent, converged) {
-            Ok(outcome) => report_abort_outcome(repo_path.as_str(), &outcome, &mut any_foreign),
+            Ok(outcome) => report_abort_outcome(
+                repo_path.as_str(),
+                &outcome,
+                Some(abs.as_path()),
+                &mut noise_summary,
+                &mut any_foreign,
+            ),
             Err(e) => {
                 eprintln!("  {repo_path}: {e}");
                 any_failure = true;
@@ -3327,7 +3334,13 @@ pub fn run_abort(cwd: &Path) -> anyhow::Result<()> {
     let project_intent = advanced_tips.get("(project)").map(String::as_str);
     let project_converged = converged_tips.get("(project)").map(String::as_str);
     match abort_one_repo(&cwd_project_dir, &cwd_restore_id, project_intent, project_converged) {
-        Ok(outcome) => report_abort_outcome("(project)", &outcome, &mut any_foreign),
+        Ok(outcome) => report_abort_outcome(
+            "(project)",
+            &outcome,
+            Some(cwd_project_dir.as_path()),
+            &mut noise_summary,
+            &mut any_foreign,
+        ),
         Err(e) => {
             eprintln!("  (project): {e}");
             any_failure = true;
@@ -3386,6 +3399,8 @@ pub fn run_abort(cwd: &Path) -> anyhow::Result<()> {
                         Ok(outcome) => report_abort_outcome(
                             &format!("[target] {repo_path}"),
                             &outcome,
+                            Some(abs.as_path()),
+                            &mut noise_summary,
                             &mut any_foreign,
                         ),
                         Err(e) => {
@@ -3401,9 +3416,13 @@ pub fn run_abort(cwd: &Path) -> anyhow::Result<()> {
                     None, // target-side: no advanced_tips entry (§7)
                     extra_project_converged,
                 ) {
-                    Ok(outcome) => {
-                        report_abort_outcome("[target] (project)", &outcome, &mut any_foreign)
-                    }
+                    Ok(outcome) => report_abort_outcome(
+                        "[target] (project)",
+                        &outcome,
+                        Some(extra_project_dir.as_path()),
+                        &mut noise_summary,
+                        &mut any_foreign,
+                    ),
                     Err(e) => {
                         eprintln!("  [target] (project): {e}");
                         any_failure = true;
@@ -3425,6 +3444,17 @@ pub fn run_abort(cwd: &Path) -> anyhow::Result<()> {
         }
     }
 
+    // Emit the aggregate noise summary (skipped / untouched) as a single line.
+    print_abort_noise_summary(&noise_summary);
+
+    // Print the recovery-options block ONCE, only when at least one repo
+    // refused (foreign-tip violation). The per-repo block above shows the
+    // evidence (savepoint, tip, blocking commits); this block tells the
+    // operator what to do about it.
+    if any_foreign {
+        print_abort_recovery_options();
+    }
+
     // Clear op-state from CWD workspace only on a fully clean abort. If any
     // repo refused (foreign tip) or errored, retain op-state so the operator
     // can re-run `rwv abort` after manually reconciling the divergence.
@@ -3432,7 +3462,7 @@ pub fn run_abort(cwd: &Path) -> anyhow::Result<()> {
         op_state::clear_all_at(&workspace_dir);
     } else if any_foreign {
         eprintln!(
-            "abort refused on at least one repo (foreign-tip violation); \
+            "\nabort refused on at least one repo (foreign-tip violation); \
              op-state retained at {} so you can re-run `rwv abort` after \
              reconciling.",
             workspace_dir.display()
@@ -3495,19 +3525,42 @@ fn abort_one_repo(
         .context("verified restore failed")
 }
 
-/// Print the per-repo abort outcome line and update the `any_foreign` flag
-/// when the repo's tip was refused. Centralised here so the run_abort body
-/// stays readable and the violation wording is uniform across CWD and
-/// target repos.
-fn report_abort_outcome(label: &str, outcome: &VerifiedRestoreOutcome, any_foreign: &mut bool) {
+/// Accumulated counts for non-actionable per-repo abort outcomes. Gathered
+/// during the reporting loop so a single summary line can be emitted at the
+/// end rather than one line per boring repo.
+#[derive(Default)]
+struct AbortNoiseSummary {
+    no_savepoint: usize,
+    untouched: usize,
+}
+
+/// Number of commits to show inline per refused repo before summarising the
+/// rest as "and N more".
+const BLOCKING_COMMITS_CAP: usize = 5;
+
+/// Record a per-repo abort outcome into `summary`/`any_foreign`, printing
+/// actionable lines immediately and deferring non-actionable counts to the
+/// summary. The recovery-options block is NOT printed here — callers print
+/// it once after all repos are processed.
+///
+/// `repo_abs` is the absolute path to the repo on disk, used only for the
+/// read-only `git log` lookup on foreign-tip refusals; pass `None` when the
+/// path is unavailable (e.g. the repo does not exist on disk).
+fn report_abort_outcome(
+    label: &str,
+    outcome: &VerifiedRestoreOutcome,
+    repo_abs: Option<&Path>,
+    summary: &mut AbortNoiseSummary,
+    any_foreign: &mut bool,
+) {
     match outcome {
         VerifiedRestoreOutcome::NoSavepoint => {
-            // Nothing to roll back here — typically a repo that pre-dates
-            // the op's per-repo savepoint creation. Don't spam output.
-            println!("  {label}: no savepoint (skipped)");
+            // Demoted to the noise summary — printed as one aggregate line.
+            summary.no_savepoint += 1;
         }
         VerifiedRestoreOutcome::Untouched => {
-            println!("  {label}: untouched (tip == savepoint)");
+            // Demoted to the noise summary — printed as one aggregate line.
+            summary.untouched += 1;
         }
         VerifiedRestoreOutcome::RestoredFromIntent => {
             println!("  {label}: restored (from recorded intent tip)");
@@ -3529,19 +3582,85 @@ fn report_abort_outcome(label: &str, outcome: &VerifiedRestoreOutcome, any_forei
                 Some(c) => format!("recorded converged tip: {c}"),
                 None => "no converged tip recorded (op crashed before relock)".to_string(),
             };
+
+            // Determine the commit-graph shape and fetch blocking commits.
+            let shape_and_commits = if let Some(repo) = repo_abs {
+                let (ahead, behind) = GitVcs::ahead_behind(repo, savepoint, observed_tip);
+                let shape = if behind == 0 && ahead > 0 {
+                    format!("tip is {ahead} commit(s) ahead of savepoint (strictly ahead — common recoverable case)")
+                } else if ahead > 0 && behind > 0 {
+                    format!("tip and savepoint have diverged ({ahead} ahead, {behind} behind — requires manual reconciliation)")
+                } else {
+                    // ahead == 0 && behind == 0: equal — shouldn't reach ForeignTip, but be safe.
+                    "tip equals savepoint (unexpected ForeignTip state)".to_string()
+                };
+                let (commits, total) =
+                    GitVcs::log_oneline_range(repo, savepoint, observed_tip, BLOCKING_COMMITS_CAP);
+                let commit_block = if commits.is_empty() {
+                    "\t  (no commits in range or range unresolvable)".to_string()
+                } else {
+                    let mut block = commits
+                        .iter()
+                        .map(|c| format!("\t  {c}"))
+                        .collect::<Vec<_>>()
+                        .join("\n");
+                    if total > BLOCKING_COMMITS_CAP {
+                        block.push_str(&format!(
+                            "\n\t  ... and {} more",
+                            total - BLOCKING_COMMITS_CAP
+                        ));
+                    }
+                    block
+                };
+                format!("\tblocking commits ({shape}):\n{commit_block}")
+            } else {
+                "\tblocking commits: (repo path unavailable)".to_string()
+            };
+
             eprintln!(
                 "  {label}: foreign-tip violation — refusing to reset.\n\
-                 \tobserved tip: {observed_tip}\n\
+                 \tobserved tip:  {observed_tip}\n\
                  \texpected one of: savepoint {savepoint}, {converged_text}, or a VCS-native mid-op state\n\
-                 \tthe tip has been preserved at {ref_label} (in case you want to keep it).\n\
-                 \trecovery options:\n\
-                 \t  - if a foreign agent advanced this branch after a crash, manually move the branch back \
-                       (e.g. `git update-ref refs/heads/<branch> {savepoint}`) and re-run `rwv abort`.\n\
-                 \t  - if you want to keep the foreign tip and discard the op, move the branch off the \
-                       pre-abort ref and delete the savepoint manually.",
+                 \ttip preserved at: {ref_label}\n\
+                 {shape_and_commits}",
                 ref_label = pre_abort_ref.label,
             );
         }
+    }
+}
+
+/// Print the one-time recovery-options block. Called exactly once at the end
+/// of `run_abort` when `any_foreign` is true. Kept separate so the per-repo
+/// loop in `run_abort` stays free of repeated options text.
+fn print_abort_recovery_options() {
+    eprintln!(
+        "\nrecovery options (apply to each refused repo above):\n\
+         \t- if a foreign agent advanced this branch after a crash, manually move the \
+           branch back (e.g. `git update-ref refs/heads/<branch> <savepoint>`) \
+           and re-run `rwv abort`.\n\
+         \t- if you want to keep the foreign tip and discard the op, move the branch \
+           off the pre-abort ref and delete the savepoint manually."
+    );
+}
+
+/// Emit a one-line summary of non-actionable (noise) outcomes. Suppressed
+/// when both counts are zero (nothing to say).
+fn print_abort_noise_summary(summary: &AbortNoiseSummary) {
+    let mut parts: Vec<String> = Vec::new();
+    if summary.no_savepoint > 0 {
+        parts.push(format!(
+            "{} repo(s) skipped (no savepoint)",
+            summary.no_savepoint
+        ));
+    }
+    if summary.untouched > 0 {
+        parts.push(format!(
+            "{} untouched (tip == savepoint)",
+            summary.untouched
+        ));
+    }
+    if !parts.is_empty() {
+        println!("  summary: {}", parts.join(", "));
     }
 }
 

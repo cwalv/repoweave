@@ -173,6 +173,66 @@ impl GitVcs {
 
         format!("commit {short_sha} ({subject})")
     }
+
+    /// Return up to `cap` one-line commit summaries for the range `from..to`
+    /// plus the total commit count in that range.
+    ///
+    /// Uses `git log --oneline -<cap+1> <from>..<to>` to fetch at most
+    /// `cap + 1` lines, then returns `(lines[..cap], total)` where `total`
+    /// is the actual `git rev-list --count` so the caller can display "and N
+    /// more" when `total > cap`.
+    ///
+    /// Returns `(vec![], 0)` on any error so callers can degrade gracefully
+    /// when the range is unresolvable (e.g. the object is unreachable in a
+    /// shallow clone or the SHA is malformed).
+    pub fn log_oneline_range(repo: &Path, from: &str, to: &str, cap: usize) -> (Vec<String>, usize) {
+        // Fetch up to cap+1 lines so we can detect truncation without a
+        // separate rev-list call in the common case where total <= cap.
+        let limit_arg = format!("-{}", cap + 1);
+        let range = format!("{from}..{to}");
+        let log_out = match Self::run(
+            &["log", "--oneline", &limit_arg, &range],
+            repo,
+        ) {
+            Ok(s) => s,
+            Err(_) => return (vec![], 0),
+        };
+        let lines: Vec<String> = log_out
+            .lines()
+            .filter(|l| !l.is_empty())
+            .map(str::to_owned)
+            .collect();
+
+        if lines.len() <= cap {
+            // All commits fit — total equals what we received.
+            let total = lines.len();
+            (lines, total)
+        } else {
+            // More than cap commits exist; count the full range.
+            let count_out = Self::run(&["rev-list", "--count", &range], repo)
+                .unwrap_or_default();
+            let total = count_out.trim().parse::<usize>().unwrap_or(lines.len());
+            (lines[..cap].to_vec(), total)
+        }
+    }
+
+    /// Return `(ahead, behind)` commit counts for `savepoint..tip` and
+    /// `tip..savepoint` respectively. Used to determine whether tip is
+    /// strictly ahead of savepoint (behind == 0, ahead > 0) or diverged
+    /// (both > 0).
+    ///
+    /// Returns `(0, 0)` on any git error.
+    pub fn ahead_behind(repo: &Path, savepoint: &str, tip: &str) -> (usize, usize) {
+        let ahead = Self::run(&["rev-list", "--count", &format!("{savepoint}..{tip}")], repo)
+            .ok()
+            .and_then(|s| s.trim().parse::<usize>().ok())
+            .unwrap_or(0);
+        let behind = Self::run(&["rev-list", "--count", &format!("{tip}..{savepoint}")], repo)
+            .ok()
+            .and_then(|s| s.trim().parse::<usize>().ok())
+            .unwrap_or(0);
+        (ahead, behind)
+    }
 }
 
 impl GitVcs {

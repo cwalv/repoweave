@@ -599,3 +599,152 @@ fn pre_abort_refs_persist_after_clean_abort() {
         "pre-abort tip must be a reachable commit"
     );
 }
+
+// ---------------------------------------------------------------------------
+// fo-502xyn: legible refusal output
+// ---------------------------------------------------------------------------
+
+/// When repos are skipped (no savepoint) or untouched, they must NOT produce
+/// one line each — instead a single aggregate "summary:" line is emitted on
+/// stdout. This avoids the 90-line noise seen in the motivating incident.
+#[test]
+fn abort_noise_collapses_to_summary_line() {
+    let tmp = tempfile::tempdir().unwrap();
+    let ws = make_fixture(tmp.path(), "primary");
+
+    let op_id = "20991231T000010Z";
+    // Plant ONLY a project savepoint; server has no savepoint → NoSavepoint.
+    // Project tip == savepoint → Untouched.
+    let project_savepoint = git_out(&["rev-parse", "HEAD"], &ws.project_dir);
+    plant_savepoint(&ws.project_dir, op_id, &project_savepoint);
+    plant_owner_record(&ws.root, op_id, "replay", &[]);
+
+    let assert = rwv()
+        .arg("abort")
+        .current_dir(&ws.root)
+        .assert()
+        .success();
+
+    // A "summary:" line must appear somewhere in stdout.
+    assert.stdout(predicate::str::contains("summary:"));
+}
+
+/// When a foreign-tip refusal occurs, the recovery-options block must appear
+/// EXACTLY ONCE in stderr, not once per refused repo. Two repos both foreign
+/// → single options block.
+#[test]
+fn abort_foreign_tip_options_block_printed_once() {
+    let tmp = tempfile::tempdir().unwrap();
+
+    // Build a fixture with TWO manifest repos to exercise the "multiple
+    // refusals, options block once" path.
+    let root = tmp.path().join("ws");
+    std::fs::create_dir_all(root.join("github/chatly")).unwrap();
+    std::fs::create_dir_all(root.join("github/chatly2")).unwrap();
+    std::fs::create_dir_all(root.join("projects")).unwrap();
+
+    let server1_dir = root.join("github/chatly/server");
+    let server1_sha = init_repo(&server1_dir);
+    let server2_dir = root.join("github/chatly2/server");
+    let server2_sha = init_repo(&server2_dir);
+
+    let project_dir = root.join("projects/web-app");
+    init_repo(&project_dir);
+    std::fs::write(project_dir.join(".gitattributes"), "rwv.lock merge=ours\n").unwrap();
+    let yaml = format!(
+        "repositories:\n  github/chatly/server:\n    type: git\n    url: https://github.com/chatly/server.git\n    version: main\n    role: owned\n  github/chatly2/server:\n    type: git\n    url: https://github.com/chatly2/server.git\n    version: main\n    role: owned\n"
+    );
+    std::fs::write(project_dir.join("rwv.yaml"), &yaml).unwrap();
+    let lock_yaml = format!(
+        "repositories:\n  github/chatly/server:\n    type: git\n    url: https://github.com/chatly/server.git\n    version: {server1_sha}\n  github/chatly2/server:\n    type: git\n    url: https://github.com/chatly2/server.git\n    version: {server2_sha}\n"
+    );
+    std::fs::write(project_dir.join("rwv.lock"), &lock_yaml).unwrap();
+    git(&["add", ".gitattributes", "rwv.yaml", "rwv.lock"], &project_dir);
+    git(&["commit", "-m", "lock: initial"], &project_dir);
+    std::fs::write(root.join(".rwv-active"), "web-app\n").unwrap();
+
+    let op_id = "20991231T000011Z";
+
+    // Advance both repos to foreign tips.
+    let s1_savepoint = server1_sha.clone();
+    make_commit(&server1_dir, "foreign.txt", "foreign\n", "foreign: s1");
+    plant_savepoint(&server1_dir, op_id, &s1_savepoint);
+
+    let s2_savepoint = server2_sha.clone();
+    make_commit(&server2_dir, "foreign.txt", "foreign\n", "foreign: s2");
+    plant_savepoint(&server2_dir, op_id, &s2_savepoint);
+
+    let project_savepoint = git_out(&["rev-parse", "HEAD"], &project_dir);
+    plant_savepoint(&project_dir, op_id, &project_savepoint);
+
+    plant_owner_record(&root, op_id, "replay", &[]);
+
+    let output = rwv()
+        .arg("abort")
+        .current_dir(&root)
+        .assert()
+        .failure()
+        .get_output()
+        .clone();
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    // "recovery options" must appear exactly once.
+    let occurrence_count = stderr.matches("recovery options").count();
+    assert_eq!(
+        occurrence_count, 1,
+        "recovery options block must appear exactly once in stderr, found {occurrence_count} time(s).\nstderr:\n{stderr}"
+    );
+
+    // Both repos must be mentioned (one line per refused repo).
+    assert!(
+        stderr.contains("github/chatly/server"),
+        "stderr must name first refused repo"
+    );
+    assert!(
+        stderr.contains("github/chatly2/server"),
+        "stderr must name second refused repo"
+    );
+}
+
+/// When a foreign-tip refusal occurs, the output must include the blocking
+/// commits (savepoint..tip) inline for each refused repo.
+#[test]
+fn abort_foreign_tip_shows_blocking_commits() {
+    let tmp = tempfile::tempdir().unwrap();
+    let ws = make_fixture(tmp.path(), "primary");
+
+    let op_id = "20991231T000012Z";
+
+    let server_savepoint = git_out(&["rev-parse", "HEAD"], &ws.server_dir);
+    // Make two identifiable commits on the server.
+    make_commit(&ws.server_dir, "a.txt", "a\n", "chore: upstream-main-advance-1");
+    make_commit(&ws.server_dir, "b.txt", "b\n", "chore: upstream-main-advance-2");
+    plant_savepoint(&ws.server_dir, op_id, &server_savepoint);
+
+    let project_savepoint = git_out(&["rev-parse", "HEAD"], &ws.project_dir);
+    plant_savepoint(&ws.project_dir, op_id, &project_savepoint);
+    plant_owner_record(&ws.root, op_id, "replay", &[]);
+
+    let output = rwv()
+        .arg("abort")
+        .current_dir(&ws.root)
+        .assert()
+        .failure()
+        .get_output()
+        .clone();
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    // Commit subjects from the blocking range should appear in stderr.
+    assert!(
+        stderr.contains("upstream-main-advance-1") || stderr.contains("upstream-main-advance-2"),
+        "blocking commits must appear in stderr.\nstderr:\n{stderr}"
+    );
+
+    // Shape text should indicate strictly-ahead (2 commits ahead, 0 behind).
+    assert!(
+        stderr.contains("ahead"),
+        "shape description must appear in stderr.\nstderr:\n{stderr}"
+    );
+}
