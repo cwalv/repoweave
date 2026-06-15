@@ -28,19 +28,67 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Create, delete, or list workweaves
-    Workweave {
-        /// Project name (not required when --claude-hook is set)
-        #[arg(required_unless_present = "claude_hook")]
-        project: Option<String>,
-        /// Hook mode: print only the workweave path to stdout (for Claude Code WorktreeCreate hook)
+    #[command(flatten, next_help_heading = "Workspace context")]
+    WorkspaceContext(WorkspaceContextCmd),
+
+    #[command(flatten, next_help_heading = "Setup & lifecycle")]
+    SetupLifecycle(SetupLifecycleCmd),
+
+    #[command(flatten, next_help_heading = "Workweaves")]
+    Workweaves(WorkweavesCmd),
+
+    #[command(flatten, next_help_heading = "Locking & verification")]
+    LockingVerification(LockingVerificationCmd),
+
+    #[command(flatten, next_help_heading = "Multi-workspace ops")]
+    MultiWorkspaceOps(MultiWorkspaceOpsCmd),
+
+    #[command(flatten, next_help_heading = "Network & publishing")]
+    NetworkPublishing(NetworkPublishingCmd),
+
+    #[command(flatten, next_help_heading = "Tooling")]
+    Tooling(ToolingCmd),
+}
+
+// ── Workspace context ─────────────────────────────────────────────────────────
+
+#[derive(Subcommand)]
+enum WorkspaceContextCmd {
+    /// Activate a project (generate ecosystem files, create symlinks, then run integration install hooks like `npm install` / `uv sync` / `cargo generate-lockfile`)
+    Activate {
+        /// Project name
+        project: String,
+        /// Skip integration install hooks (e.g., `npm install`, `uv sync`) for fast context-switch
         #[arg(long)]
-        hook_mode: bool,
-        /// Claude Code hook mode: read JSON from stdin, handle create/remove automatically
-        #[arg(long, conflicts_with = "hook_mode")]
-        claude_hook: bool,
-        #[command(subcommand)]
-        action: Option<WorkweaveAction>,
+        no_install: bool,
+    },
+    /// Print structured workspace context for agent system prompts
+    Prime {
+        /// Always emit output, even when CWD is not inside a weave or workweave
+        #[arg(long)]
+        no_suppress: bool,
+    },
+    /// Print workspace root path
+    Resolve,
+}
+
+// ── Setup & lifecycle ─────────────────────────────────────────────────────────
+
+#[derive(Subcommand)]
+enum SetupLifecycleCmd {
+    /// Add a repo to the active project
+    Add {
+        /// Repository URL or path (with --new)
+        url: String,
+        /// Role for the repo
+        #[arg(long, default_value = "owned", value_enum)]
+        role: manifest::Role,
+        /// Create a new repo (git init) at the canonical path instead of cloning
+        #[arg(long)]
+        new: bool,
+        /// Operate on this project instead of the active project (does not change `.rwv-active`)
+        #[arg(long)]
+        project: Option<String>,
     },
     /// Clone a project and align repos to rwv.lock (no network bump). Use `rwv update` to advance to branch HEAD.
     Fetch {
@@ -71,68 +119,16 @@ enum Commands {
         #[arg(long)]
         json: bool,
     },
-    /// Advance each repo to its branch HEAD and re-snapshot the lock (network bump; analogous to `cargo update` / `npm update`). Use `rwv fetch` for the read-only counterpart that aligns clones to the existing lock.
-    Update {
-        /// Allow update with uncommitted changes in repos when relocking
+    /// Initialize a new project
+    Init {
+        /// Project name (or URL / shorthand when --adopt is used)
+        project: String,
+        /// Provider in registry/owner format (e.g., github/myorg)
+        #[arg(long, conflicts_with = "adopt")]
+        provider: Option<String>,
+        /// Adopt an existing repo: clone from URL or shorthand instead of git init
         #[arg(long)]
-        dirty: bool,
-        /// Commit rwv.lock after writing it
-        #[arg(long)]
-        commit: bool,
-        /// Operate on this project instead of the active project (does not change `.rwv-active`)
-        #[arg(long)]
-        project: Option<String>,
-        /// Limit the operation to repos with this role. Repeat to union multiple roles. Combined as a union with --repo.
-        #[arg(long = "role")]
-        roles: Vec<String>,
-        /// Limit the operation to repos matching this selector. Bare strings match exactly; `re:<pat>` matches as regex; `glob:<pat>` matches as glob. Repeat for union. Combined as a union with --role.
-        #[arg(long = "repo")]
-        repos: Vec<String>,
-        /// Number of parallel per-repo workers. Default: min(nproc, 8). `-j 1` is explicit serial.
-        #[arg(short = 'j', long = "jobs")]
-        jobs: Option<usize>,
-        /// Emit per-repo outcomes as JSON (envelope under -j 1, NDJSON under -j > 1). See `rwv explain update`.
-        #[arg(long)]
-        json: bool,
-    },
-    /// Push manifest repos and then the project repo, in that order. Refuses from a workweave. Manifest pushes are attempt-all-and-collect; project repo is gated on every manifest repo succeeding.
-    Push {
-        /// Operate on this project instead of the active project (does not change `.rwv-active`)
-        #[arg(long)]
-        project: Option<String>,
-        /// Print the push plan without executing
-        #[arg(long)]
-        dry_run: bool,
-        /// Force-push every repo in the operation (manifest repos and the project repo). Default deny.
-        #[arg(long)]
-        force: bool,
-        /// Limit the push to repos with this role. Repeat to union multiple roles. Combined as a union with --repo. Lock-precondition still runs against the full manifest.
-        #[arg(long = "role")]
-        roles: Vec<String>,
-        /// Limit the push to repos matching this selector. Bare strings match exactly; `re:<pat>` matches as regex; `glob:<pat>` matches as glob. Repeat for union. Combined as a union with --role. Lock-precondition still runs against the full manifest.
-        #[arg(long = "repo")]
-        repos: Vec<String>,
-        /// Number of parallel per-repo workers for manifest-repo pushes. Default: min(nproc, 8). `-j 1` is explicit serial. Project-repo push always runs serially as the last step.
-        #[arg(short = 'j', long = "jobs")]
-        jobs: Option<usize>,
-        /// Emit per-repo outcomes as JSON (array-of-records with stable per-variant `kind`). See `rwv explain push`.
-        /// Under `-j > 1`, output switches to NDJSON (one record per line, streamed as each repo completes).
-        #[arg(long)]
-        json: bool,
-    },
-    /// Add a repo to the active project
-    Add {
-        /// Repository URL or path (with --new)
-        url: String,
-        /// Role for the repo
-        #[arg(long, default_value = "owned", value_enum)]
-        role: manifest::Role,
-        /// Create a new repo (git init) at the canonical path instead of cloning
-        #[arg(long)]
-        new: bool,
-        /// Operate on this project instead of the active project (does not change `.rwv-active`)
-        #[arg(long)]
-        project: Option<String>,
+        adopt: bool,
     },
     /// Remove a repo from the active project
     Remove {
@@ -148,18 +144,32 @@ enum Commands {
         #[arg(long)]
         project: Option<String>,
     },
-    /// Snapshot repo versions (pure git SHA snapshot — no integration hooks fire). Run `rwv activate` after lock changes the workspace membership to refresh node_modules / .venv / etc.
-    Lock {
-        /// Allow locking repos with uncommitted changes
-        #[arg(long)]
-        dirty: bool,
-        /// Commit rwv.lock after writing it
-        #[arg(long)]
-        commit: bool,
-        /// Operate on this project instead of the active project (does not change `.rwv-active`)
-        #[arg(long)]
+}
+
+// ── Workweaves ────────────────────────────────────────────────────────────────
+
+#[derive(Subcommand)]
+enum WorkweavesCmd {
+    /// Create, delete, or list workweaves
+    Workweave {
+        /// Project name (not required when --claude-hook is set)
+        #[arg(required_unless_present = "claude_hook")]
         project: Option<String>,
+        /// Hook mode: print only the workweave path to stdout (for Claude Code WorktreeCreate hook)
+        #[arg(long)]
+        hook_mode: bool,
+        /// Claude Code hook mode: read JSON from stdin, handle create/remove automatically
+        #[arg(long, conflicts_with = "hook_mode")]
+        claude_hook: bool,
+        #[command(subcommand)]
+        action: Option<WorkweaveAction>,
     },
+}
+
+// ── Locking & verification ────────────────────────────────────────────────────
+
+#[derive(Subcommand)]
+enum LockingVerificationCmd {
     /// Convention enforcement and lock-freshness checking
     Doctor {
         /// Zero exit iff every repo's tip matches its rwv.lock entry (scriptable precondition for rwv sync)
@@ -179,6 +189,18 @@ enum Commands {
         #[arg(long)]
         project: Option<String>,
     },
+    /// Snapshot repo versions (pure git SHA snapshot — no integration hooks fire). Run `rwv activate` after lock changes the workspace membership to refresh node_modules / .venv / etc.
+    Lock {
+        /// Allow locking repos with uncommitted changes
+        #[arg(long)]
+        dirty: bool,
+        /// Commit rwv.lock after writing it
+        #[arg(long)]
+        commit: bool,
+        /// Operate on this project instead of the active project (does not change `.rwv-active`)
+        #[arg(long)]
+        project: Option<String>,
+    },
     /// Show per-repo state of the CWD workspace
     Status {
         /// Output as JSON
@@ -188,6 +210,14 @@ enum Commands {
         #[arg(long)]
         project: Option<String>,
     },
+}
+
+// ── Multi-workspace ops ───────────────────────────────────────────────────────
+
+#[derive(Subcommand)]
+enum MultiWorkspaceOpsCmd {
+    /// Restore CWD workspace to its pre-sync state using savepoint refs
+    Abort,
     /// Bring another workspace's committed state into this one (pull/align; use `rwv sync-to` to land work upward)
     ///
     /// Absorbs `<source>`'s committed lock and advances each manifest repo to the locked SHA.
@@ -297,40 +327,67 @@ enum Commands {
         #[arg(long = "continue")]
         do_continue: bool,
     },
-    /// Restore CWD workspace to its pre-sync state using savepoint refs
-    Abort,
-    /// Print workspace root path
-    Resolve,
-    /// Initialize a new project
-    Init {
-        /// Project name (or URL / shorthand when --adopt is used)
-        project: String,
-        /// Provider in registry/owner format (e.g., github/myorg)
-        #[arg(long, conflicts_with = "adopt")]
-        provider: Option<String>,
-        /// Adopt an existing repo: clone from URL or shorthand instead of git init
+}
+
+// ── Network & publishing ──────────────────────────────────────────────────────
+
+#[derive(Subcommand)]
+enum NetworkPublishingCmd {
+    /// Push manifest repos and then the project repo, in that order. Refuses from a workweave. Manifest pushes are attempt-all-and-collect; project repo is gated on every manifest repo succeeding.
+    Push {
+        /// Operate on this project instead of the active project (does not change `.rwv-active`)
         #[arg(long)]
-        adopt: bool,
-    },
-    /// Activate a project (generate ecosystem files, create symlinks, then run integration install hooks like `npm install` / `uv sync` / `cargo generate-lockfile`)
-    Activate {
-        /// Project name
-        project: String,
-        /// Skip integration install hooks (e.g., `npm install`, `uv sync`) for fast context-switch
+        project: Option<String>,
+        /// Print the push plan without executing
         #[arg(long)]
-        no_install: bool,
-    },
-    /// Print structured workspace context for agent system prompts
-    Prime {
-        /// Always emit output, even when CWD is not inside a weave or workweave
+        dry_run: bool,
+        /// Force-push every repo in the operation (manifest repos and the project repo). Default deny.
         #[arg(long)]
-        no_suppress: bool,
+        force: bool,
+        /// Limit the push to repos with this role. Repeat to union multiple roles. Combined as a union with --repo. Lock-precondition still runs against the full manifest.
+        #[arg(long = "role")]
+        roles: Vec<String>,
+        /// Limit the push to repos matching this selector. Bare strings match exactly; `re:<pat>` matches as regex; `glob:<pat>` matches as glob. Repeat for union. Combined as a union with --role. Lock-precondition still runs against the full manifest.
+        #[arg(long = "repo")]
+        repos: Vec<String>,
+        /// Number of parallel per-repo workers for manifest-repo pushes. Default: min(nproc, 8). `-j 1` is explicit serial. Project-repo push always runs serially as the last step.
+        #[arg(short = 'j', long = "jobs")]
+        jobs: Option<usize>,
+        /// Emit per-repo outcomes as JSON (array-of-records with stable per-variant `kind`). See `rwv explain push`.
+        /// Under `-j > 1`, output switches to NDJSON (one record per line, streamed as each repo completes).
+        #[arg(long)]
+        json: bool,
     },
-    /// Generate workspace-level configuration files
-    Setup {
-        #[command(subcommand)]
-        action: SetupAction,
+    /// Advance each repo to its branch HEAD and re-snapshot the lock (network bump; analogous to `cargo update` / `npm update`). Use `rwv fetch` for the read-only counterpart that aligns clones to the existing lock.
+    Update {
+        /// Allow update with uncommitted changes in repos when relocking
+        #[arg(long)]
+        dirty: bool,
+        /// Commit rwv.lock after writing it
+        #[arg(long)]
+        commit: bool,
+        /// Operate on this project instead of the active project (does not change `.rwv-active`)
+        #[arg(long)]
+        project: Option<String>,
+        /// Limit the operation to repos with this role. Repeat to union multiple roles. Combined as a union with --repo.
+        #[arg(long = "role")]
+        roles: Vec<String>,
+        /// Limit the operation to repos matching this selector. Bare strings match exactly; `re:<pat>` matches as regex; `glob:<pat>` matches as glob. Repeat for union. Combined as a union with --role.
+        #[arg(long = "repo")]
+        repos: Vec<String>,
+        /// Number of parallel per-repo workers. Default: min(nproc, 8). `-j 1` is explicit serial.
+        #[arg(short = 'j', long = "jobs")]
+        jobs: Option<usize>,
+        /// Emit per-repo outcomes as JSON (envelope under -j 1, NDJSON under -j > 1). See `rwv explain update`.
+        #[arg(long)]
+        json: bool,
     },
+}
+
+// ── Tooling ───────────────────────────────────────────────────────────────────
+
+#[derive(Subcommand)]
+enum ToolingCmd {
     /// Generate shell completions
     Completions {
         /// Shell to generate completions for
@@ -340,6 +397,11 @@ enum Commands {
     Explain {
         /// Verb to explain. Omit to list explainable verbs.
         command: Option<String>,
+    },
+    /// Generate workspace-level configuration files
+    Setup {
+        #[command(subcommand)]
+        action: SetupAction,
     },
 }
 
@@ -440,12 +502,12 @@ fn main() -> anyhow::Result<()> {
             let ctx = WorkspaceContext::resolve(&cwd, None)?;
             println!("{}", ctx.display());
         }
-        Some(Commands::Workweave {
+        Some(Commands::Workweaves(WorkweavesCmd::Workweave {
             project,
             hook_mode,
             claude_hook,
             action,
-        }) => {
+        })) => {
             if claude_hook {
                 repoweave::workweave::handle_claude_hook()?;
             } else {
@@ -503,7 +565,7 @@ fn main() -> anyhow::Result<()> {
                 }
             }
         }
-        Some(Commands::Fetch {
+        Some(Commands::SetupLifecycle(SetupLifecycleCmd::Fetch {
             source,
             frozen,
             force,
@@ -512,7 +574,7 @@ fn main() -> anyhow::Result<()> {
             repos,
             jobs,
             json,
-        }) => {
+        })) => {
             let cwd = std::env::current_dir()?;
             repoweave::workspace::require_workspace_or_empty(&cwd, force)?;
             let mode = if frozen {
@@ -530,12 +592,12 @@ fn main() -> anyhow::Result<()> {
             let jobs = repoweave::parallel::resolve_jobs(jobs);
             fetch::run_fetch(&source, &cwd, mode, no_reference, &filter, jobs, json)?;
         }
-        Some(Commands::Add {
+        Some(Commands::SetupLifecycle(SetupLifecycleCmd::Add {
             url,
             role,
             new,
             project,
-        }) => {
+        })) => {
             let cwd = std::env::current_dir()?;
             let project_override = project.map(repoweave::manifest::ProjectName::new);
             if new {
@@ -544,26 +606,26 @@ fn main() -> anyhow::Result<()> {
                 add_remove::run_add(&url, role, &cwd, project_override)?;
             }
         }
-        Some(Commands::Remove {
+        Some(Commands::SetupLifecycle(SetupLifecycleCmd::Remove {
             path,
             delete,
             force,
             project,
-        }) => {
+        })) => {
             let cwd = std::env::current_dir()?;
             let project_override = project.map(repoweave::manifest::ProjectName::new);
             add_remove::run_remove(&path, delete, force, &cwd, project_override)?;
         }
-        Some(Commands::Lock {
+        Some(Commands::LockingVerification(LockingVerificationCmd::Lock {
             dirty,
             commit,
             project,
-        }) => {
+        })) => {
             let cwd = std::env::current_dir()?;
             let project_override = project.map(repoweave::manifest::ProjectName::new);
             lock::lock(&cwd, dirty, commit, project_override)?;
         }
-        Some(Commands::Update {
+        Some(Commands::NetworkPublishing(NetworkPublishingCmd::Update {
             dirty,
             commit,
             project,
@@ -571,7 +633,7 @@ fn main() -> anyhow::Result<()> {
             repos,
             jobs,
             json,
-        }) => {
+        })) => {
             let cwd = std::env::current_dir()?;
             let project_override = project.map(repoweave::manifest::ProjectName::new);
             let filter = repoweave::selector::RepoFilter::parse(&roles, &repos)?;
@@ -584,7 +646,7 @@ fn main() -> anyhow::Result<()> {
             let jobs = repoweave::parallel::resolve_jobs(jobs);
             update::run_update(&cwd, dirty, commit, json, project_override, &filter, jobs)?;
         }
-        Some(Commands::Push {
+        Some(Commands::NetworkPublishing(NetworkPublishingCmd::Push {
             project,
             dry_run,
             force,
@@ -592,7 +654,7 @@ fn main() -> anyhow::Result<()> {
             repos,
             jobs,
             json,
-        }) => {
+        })) => {
             let cwd = std::env::current_dir()?;
             let project_override = project.map(repoweave::manifest::ProjectName::new);
             let filter = repoweave::selector::RepoFilter::parse(&roles, &repos)?;
@@ -607,13 +669,13 @@ fn main() -> anyhow::Result<()> {
             };
             push::run_push(&cwd, project_override, dry_run, force, &filter, jobs, json)?;
         }
-        Some(Commands::Doctor {
+        Some(Commands::LockingVerification(LockingVerificationCmd::Doctor {
             locked,
             fix,
             json,
             all,
             project,
-        }) => {
+        })) => {
             let cwd = std::env::current_dir()?;
             let project_override = project.map(repoweave::manifest::ProjectName::new);
             if locked {
@@ -633,12 +695,12 @@ fn main() -> anyhow::Result<()> {
                 }
             }
         }
-        Some(Commands::Status { json, project }) => {
+        Some(Commands::LockingVerification(LockingVerificationCmd::Status { json, project })) => {
             let cwd = std::env::current_dir()?;
             let project_override = project.map(repoweave::manifest::ProjectName::new);
             status::run_status(&cwd, json, project_override)?;
         }
-        Some(Commands::Sync {
+        Some(Commands::MultiWorkspaceOps(MultiWorkspaceOpsCmd::Sync {
             source,
             strategy,
             allow_stale_lock,
@@ -647,7 +709,7 @@ fn main() -> anyhow::Result<()> {
             jobs,
             project,
             do_continue,
-        }) => {
+        })) => {
             let cwd = std::env::current_dir()?;
             let project_override = project.map(repoweave::manifest::ProjectName::new);
             // sync's default is serial (jobs=1). This differs from fetch/update
@@ -678,7 +740,7 @@ fn main() -> anyhow::Result<()> {
                 sync::run_sync(&cwd, request)?;
             }
         }
-        Some(Commands::SyncTo {
+        Some(Commands::MultiWorkspaceOps(MultiWorkspaceOpsCmd::SyncTo {
             target,
             strategy,
             allow_stale_lock,
@@ -688,7 +750,7 @@ fn main() -> anyhow::Result<()> {
             jobs,
             project,
             do_continue,
-        }) => {
+        })) => {
             let cwd = std::env::current_dir()?;
             let project_override = project.map(repoweave::manifest::ProjectName::new);
             let jobs = match jobs {
@@ -748,20 +810,20 @@ fn main() -> anyhow::Result<()> {
                 sync::run_sync_to(&cwd, request)?;
             }
         }
-        Some(Commands::Abort) => {
+        Some(Commands::MultiWorkspaceOps(MultiWorkspaceOpsCmd::Abort)) => {
             let cwd = std::env::current_dir()?;
             sync::run_abort(&cwd)?;
         }
-        Some(Commands::Resolve) => {
+        Some(Commands::WorkspaceContext(WorkspaceContextCmd::Resolve)) => {
             let cwd = std::env::current_dir()?;
             let ctx = WorkspaceContext::resolve(&cwd, None)?;
             println!("{}", ctx.active_path().display());
         }
-        Some(Commands::Init {
+        Some(Commands::SetupLifecycle(SetupLifecycleCmd::Init {
             project,
             provider,
             adopt,
-        }) => {
+        })) => {
             let cwd = std::env::current_dir()?;
             if adopt {
                 init::init_adopt(&project, &cwd)?;
@@ -769,10 +831,10 @@ fn main() -> anyhow::Result<()> {
                 init::init(&project, provider.as_deref(), &cwd)?;
             }
         }
-        Some(Commands::Activate {
+        Some(Commands::WorkspaceContext(WorkspaceContextCmd::Activate {
             project,
             no_install,
-        }) => {
+        })) => {
             let cwd = std::env::current_dir()?;
             activate::activate_with_options(
                 &project,
@@ -780,11 +842,11 @@ fn main() -> anyhow::Result<()> {
                 activate::ActivateOptions { no_install },
             )?;
         }
-        Some(Commands::Prime { no_suppress }) => {
+        Some(Commands::WorkspaceContext(WorkspaceContextCmd::Prime { no_suppress })) => {
             let cwd = std::env::current_dir()?;
             prime::prime(&cwd, no_suppress)?;
         }
-        Some(Commands::Setup { action }) => {
+        Some(Commands::Tooling(ToolingCmd::Setup { action })) => {
             let cwd = std::env::current_dir()?;
             match action {
                 SetupAction::AgentsMd => setup::agents_md(&cwd)?,
@@ -797,11 +859,11 @@ fn main() -> anyhow::Result<()> {
                 }
             }
         }
-        Some(Commands::Completions { shell }) => {
+        Some(Commands::Tooling(ToolingCmd::Completions { shell })) => {
             let mut cmd = Cli::command();
             clap_complete::generate(shell, &mut cmd, "rwv", &mut std::io::stdout());
         }
-        Some(Commands::Explain { command }) => {
+        Some(Commands::Tooling(ToolingCmd::Explain { command })) => {
             explain::explain(command.as_deref())?;
         }
     }
