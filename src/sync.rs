@@ -2928,6 +2928,24 @@ fn run_retire(ctx: &OpContext<'_>) -> anyhow::Result<()> {
 fn cleanup(ctx: &OpContext<'_>) -> anyhow::Result<()> {
     let emit_text = ctx.handler.emit_text();
 
+    // Savepoint refs (`refs/rwv/pre-op/*`) live in the shared clone refdb, not
+    // in any worktree, so `git update-ref -d` from ANY live worktree of the
+    // same clone drops the shared ref. Crucially, in the `sync-to --retire`
+    // flow the phase order is `… → retire → cleanup`: retire deletes CWD's
+    // workweave BEFORE cleanup runs, so `ctx.cwd_project_dir` /
+    // `ctx.cwd_workspace_dir` now point at a deleted directory. Dropping
+    // savepoints through those paths silently no-ops while the ref survives in
+    // the surviving clone — the leak this code path fixes (fo-i8eq4e).
+    //
+    // We therefore target the CANONICAL/PRIMARY clone (`primary_path()`), which
+    // survives workweave deletion: workweave repos are `git worktree add`ed
+    // from the primary's clones, so the primary holds the shared refdb. When
+    // CWD is itself the primary weave (plain `sync` from primary), the
+    // canonical path equals CWD, so this is also correct for the non-retire
+    // case.
+    let primary = ctx.cwd_ctx.primary_path();
+    let canonical_project_dir = primary.join("projects").join(ctx.cwd_project_name.as_str());
+
     // Drop savepoints. Exception: when --discard-local-commits bypassed the
     // Phase 1' ancestor check (recorded as the `discard-local-commits`
     // override), preserve the project savepoint as a tombstone — the only
@@ -2939,7 +2957,7 @@ fn cleanup(ctx: &OpContext<'_>) -> anyhow::Result<()> {
         .unwrap_or(false);
 
     if !discard_tombstone {
-        delete_savepoint(&ctx.cwd_project_dir, &ctx.op_id);
+        delete_savepoint(&canonical_project_dir, &ctx.op_id);
     } else if emit_text {
         eprintln!(
             "note: --discard-local-commits discarded project commits; pre-sync state preserved at \
@@ -2950,13 +2968,15 @@ fn cleanup(ctx: &OpContext<'_>) -> anyhow::Result<()> {
         );
     }
 
-    // Manifest savepoints: reload the project so we see post-replay shape.
-    if let Ok(project) = Project::from_dir(&ctx.cwd_project_dir) {
+    // Manifest savepoints: load the manifest from the canonical project repo
+    // (the workweave's may be gone after retire) and drop each repo's savepoint
+    // through the canonical clone. A missing ref is a harmless no-op, so no
+    // existence guard is needed (and `if abs.exists()` would re-introduce the
+    // leak by skipping the now-deleted workweave paths).
+    if let Ok(project) = Project::from_dir_skip_lock(&canonical_project_dir) {
         for repo_path in project.manifest.iter_repo_paths() {
-            let abs = ctx.cwd_workspace_dir.join(repo_path.as_path());
-            if abs.exists() {
-                delete_savepoint(&abs, &ctx.op_id);
-            }
+            let abs = primary.join(repo_path.as_path());
+            delete_savepoint(&abs, &ctx.op_id);
         }
     }
 

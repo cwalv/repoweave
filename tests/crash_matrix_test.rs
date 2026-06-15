@@ -1749,6 +1749,95 @@ fn cell_e_retire_sync_to_owner_continue_when_reconciled() {
     );
 }
 
+/// Regression (fo-i8eq4e): `sync-to --retire` leaks live-orphaned pre-op
+/// savepoints. Phase order is `… → retire → cleanup`, so retire deletes the
+/// workweave BEFORE cleanup drops savepoints. The buggy cleanup dropped
+/// savepoints through the now-deleted workweave paths (`ctx.cwd_project_dir`,
+/// `ctx.cwd_workspace_dir.join(repo)`), which silently no-op while the ref
+/// survives in the shared clone refdb (`refs/rwv/*` is not worktree-local, and
+/// `git worktree remove` never prunes it). With rebase-by-default the pre-op
+/// tip becomes unreachable → `rwv doctor` classifies it "Live" and refuses to
+/// auto-drop → every retire leaks one savepoint.
+///
+/// The workweave's server/project repos are `git worktree add`ed from the
+/// primary's clones, so any savepoint ref planted in the workweave lives in
+/// the primary's (surviving) refdb. After a successful retire+cleanup, NO
+/// `refs/rwv/pre-op/<op_id>` (source side) and NO `…-target` (target side) may
+/// remain in the surviving canonical repos.
+///
+/// FAILS before the fix (refs survive the deleted-path drop), PASSES after
+/// (cleanup drops through `primary_path()`, which survives the workweave).
+#[test]
+fn cell_retire_sync_to_drops_savepoints_in_surviving_clone() {
+    let tmp = tempfile::tempdir().unwrap();
+    let RetireFixture { primary, ww } = make_retire_fixture(tmp.path());
+
+    let op_id = "crash-matrix-retire-savepoint-leak";
+    plant_owner_record(
+        &ww.root,
+        &OwnerRecordYaml {
+            id: op_id.to_owned(),
+            verb_str: PlantedVerb::SyncTo.yaml(),
+            source: ww.root.display().to_string(),
+            target: primary.root.display().to_string(),
+            retire: true,
+            phase: "retire",
+            ..Default::default()
+        },
+    );
+    plant_lease(&primary.root, &ww.root, op_id);
+    // Source-side savepoints (planted in the workweave worktrees, but the refs
+    // live in the primary's shared refdb).
+    plant_savepoint(&ww.project_dir, op_id);
+    plant_savepoint(&ww.server_dir, op_id);
+    // Target-side savepoints (`<op_id>-target` namespace) on the primary.
+    let target_id = target_op_id(op_id);
+    plant_savepoint(&primary.project_dir, &target_id);
+    plant_savepoint(&primary.server_dir, &target_id);
+
+    // Sanity: the refs exist before the op (visible from the surviving primary
+    // clones, which is where the workweave's shared refs actually live).
+    let source_ref = format!("refs/rwv/pre-op/{op_id}");
+    let target_ref = format!("refs/rwv/pre-op/{target_id}");
+    assert!(
+        ref_exists(&primary.server_dir, &source_ref),
+        "fixture must plant the source-side savepoint in the shared refdb"
+    );
+    assert!(
+        ref_exists(&primary.project_dir, &source_ref),
+        "fixture must plant the source-side project savepoint in the shared refdb"
+    );
+
+    // ww and primary share tips: merged-check passes, retire deletes the ww,
+    // then cleanup runs against the (now-deleted) workweave paths.
+    run_continue(Verb::SyncTo, &ww.root, "retire/sync-to/savepoint-leak");
+
+    assert!(
+        !ww.root.exists(),
+        "workweave must be deleted after a successful retire"
+    );
+
+    // The acceptance criterion: cleanup must have dropped every pre-op
+    // savepoint for the op's own repos through the SURVIVING clone. Before the
+    // fix these refs survive (cleanup hit the deleted workweave paths).
+    assert!(
+        !ref_exists(&primary.server_dir, &source_ref),
+        "source-side server savepoint {source_ref} leaked into the surviving clone refdb after retire"
+    );
+    assert!(
+        !ref_exists(&primary.project_dir, &source_ref),
+        "source-side project savepoint {source_ref} leaked into the surviving clone refdb after retire"
+    );
+    assert!(
+        !ref_exists(&primary.server_dir, &target_ref),
+        "target-side server savepoint {target_ref} leaked after retire"
+    );
+    assert!(
+        !ref_exists(&primary.project_dir, &target_ref),
+        "target-side project savepoint {target_ref} leaked after retire"
+    );
+}
+
 /// Cell `E(retire) / sync-to / lease-side`: same set-up as above, invoked
 /// from the lease workspace. The recorded epic decision (fo-jsbr3i.2) is
 /// that this MUST be observationally identical.
