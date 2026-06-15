@@ -2262,7 +2262,11 @@ fn cell_advanced_tips_rebase_captured_project_at_t1_abort_restores() {
         },
     );
     // Savepoints record PRE-OP tips (before Phase 1').
-    plant_savepoint_at(&ww.server_dir, op_id, &git_out(&["rev-parse", "HEAD"], &ww.server_dir));
+    plant_savepoint_at(
+        &ww.server_dir,
+        op_id,
+        &git_out(&["rev-parse", "HEAD"], &ww.server_dir),
+    );
     plant_savepoint_at(&ww.project_dir, op_id, &ww_project_pre);
 
     run_abort_ok(&ww.root, "cell3/rebase-captured");
@@ -2327,7 +2331,11 @@ fn cell_advanced_tips_one_write_window_project_at_t1_abort_refuses() {
         },
     );
     // Savepoints record PRE-op tips.
-    plant_savepoint_at(&ww.server_dir, op_id, &git_out(&["rev-parse", "HEAD"], &ww.server_dir));
+    plant_savepoint_at(
+        &ww.server_dir,
+        op_id,
+        &git_out(&["rev-parse", "HEAD"], &ww.server_dir),
+    );
     plant_savepoint_at(&ww.project_dir, op_id, &ww_project_pre);
 
     // Abort must REFUSE: T1 is not attributable.

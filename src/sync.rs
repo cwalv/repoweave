@@ -2512,10 +2512,9 @@ fn run_replay(ctx: &OpContext<'_>) -> anyhow::Result<()> {
             })
             .collect();
         if !post_join_tips.is_empty() {
-            let mut owner =
-                op_state::read_owner(&ctx.owner_workspace_dir)?.ok_or_else(|| {
-                    anyhow::anyhow!("internal: owner record missing during post-fan-out write")
-                })?;
+            let mut owner = op_state::read_owner(&ctx.owner_workspace_dir)?.ok_or_else(|| {
+                anyhow::anyhow!("internal: owner record missing during post-fan-out write")
+            })?;
             for (repo_path, tip) in post_join_tips {
                 owner.advanced_tips.insert(repo_path, tip);
             }
@@ -2582,9 +2581,8 @@ fn run_replay(ctx: &OpContext<'_>) -> anyhow::Result<()> {
         let project_tip = GitVcs
             .head_revision(&ctx.cwd_project_dir)
             .context("failed to read project HEAD after Phase 1'")?;
-        let mut owner = op_state::read_owner(&ctx.owner_workspace_dir)?.ok_or_else(|| {
-            anyhow::anyhow!("internal: owner record missing after Phase 1'")
-        })?;
+        let mut owner = op_state::read_owner(&ctx.owner_workspace_dir)?
+            .ok_or_else(|| anyhow::anyhow!("internal: owner record missing after Phase 1'"))?;
         owner
             .advanced_tips
             .insert("(project)".to_owned(), project_tip.as_str().to_owned());
@@ -3333,7 +3331,12 @@ pub fn run_abort(cwd: &Path) -> anyhow::Result<()> {
     // Restore CWD project repo.
     let project_intent = advanced_tips.get("(project)").map(String::as_str);
     let project_converged = converged_tips.get("(project)").map(String::as_str);
-    match abort_one_repo(&cwd_project_dir, &cwd_restore_id, project_intent, project_converged) {
+    match abort_one_repo(
+        &cwd_project_dir,
+        &cwd_restore_id,
+        project_intent,
+        project_converged,
+    ) {
         Ok(outcome) => report_abort_outcome(
             "(project)",
             &outcome,

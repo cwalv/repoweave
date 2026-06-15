@@ -643,19 +643,20 @@ mod tests {
             PathBuf::from("/src/ws"),
             PathBuf::from("/cwd/ws"),
         );
-        record.advanced_tips.insert(
-            "github/foo/bar".to_owned(),
-            "aabbccdd".to_owned(),
-        );
-        record.advanced_tips.insert(
-            "(project)".to_owned(),
-            "deadbeef".to_owned(),
-        );
+        record
+            .advanced_tips
+            .insert("github/foo/bar".to_owned(), "aabbccdd".to_owned());
+        record
+            .advanced_tips
+            .insert("(project)".to_owned(), "deadbeef".to_owned());
         write_owner(dir, &record).unwrap();
         let read_back = read_owner(dir).unwrap().unwrap();
         assert_eq!(read_back.advanced_tips.len(), 2);
         assert_eq!(
-            read_back.advanced_tips.get("github/foo/bar").map(String::as_str),
+            read_back
+                .advanced_tips
+                .get("github/foo/bar")
+                .map(String::as_str),
             Some("aabbccdd"),
         );
         assert_eq!(

@@ -619,11 +619,7 @@ fn abort_noise_collapses_to_summary_line() {
     plant_savepoint(&ws.project_dir, op_id, &project_savepoint);
     plant_owner_record(&ws.root, op_id, "replay", &[]);
 
-    let assert = rwv()
-        .arg("abort")
-        .current_dir(&ws.root)
-        .assert()
-        .success();
+    let assert = rwv().arg("abort").current_dir(&ws.root).assert().success();
 
     // A "summary:" line must appear somewhere in stdout.
     assert.stdout(predicate::str::contains("summary:"));
@@ -657,7 +653,10 @@ fn abort_foreign_tip_options_block_printed_once() {
         "repositories:\n  github/chatly/server:\n    type: git\n    url: https://github.com/chatly/server.git\n    version: {server1_sha}\n  github/chatly2/server:\n    type: git\n    url: https://github.com/chatly2/server.git\n    version: {server2_sha}\n"
     );
     std::fs::write(project_dir.join("rwv.lock"), &lock_yaml).unwrap();
-    git(&["add", ".gitattributes", "rwv.yaml", "rwv.lock"], &project_dir);
+    git(
+        &["add", ".gitattributes", "rwv.yaml", "rwv.lock"],
+        &project_dir,
+    );
     git(&["commit", "-m", "lock: initial"], &project_dir);
     std::fs::write(root.join(".rwv-active"), "web-app\n").unwrap();
 
@@ -716,8 +715,18 @@ fn abort_foreign_tip_shows_blocking_commits() {
 
     let server_savepoint = git_out(&["rev-parse", "HEAD"], &ws.server_dir);
     // Make two identifiable commits on the server.
-    make_commit(&ws.server_dir, "a.txt", "a\n", "chore: upstream-main-advance-1");
-    make_commit(&ws.server_dir, "b.txt", "b\n", "chore: upstream-main-advance-2");
+    make_commit(
+        &ws.server_dir,
+        "a.txt",
+        "a\n",
+        "chore: upstream-main-advance-1",
+    );
+    make_commit(
+        &ws.server_dir,
+        "b.txt",
+        "b\n",
+        "chore: upstream-main-advance-2",
+    );
     plant_savepoint(&ws.server_dir, op_id, &server_savepoint);
 
     let project_savepoint = git_out(&["rev-parse", "HEAD"], &ws.project_dir);
