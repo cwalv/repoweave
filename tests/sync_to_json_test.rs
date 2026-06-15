@@ -19,6 +19,7 @@
 //! - `retired` is false when `--retire` is not passed.
 
 use assert_cmd::Command as AssertCommand;
+use predicates::prelude::*;
 use serde_json::Value;
 use std::path::{Path, PathBuf};
 
@@ -585,4 +586,32 @@ fn sync_to_json_step3_advance_absent_for_noop_repos() {
         proj_is_absent_or_null,
         "project_repo_advance must be absent or null for a no-op advance; got:\n{stdout}"
     );
+}
+
+/// Regression: `rwv sync-to <target> --json` from a directory that is not
+/// inside any repoweave workspace must NOT panic. Before the fix, the
+/// `target_path` derivation block called
+/// `WorkspaceContext::resolve(cwd, None).expect("cwd must be resolvable")` as
+/// its error fallback — which panicked with a backtrace instead of surfacing
+/// the real "no repoweave workspace found" error (fo-wbbqof.2).
+///
+/// After the fix the binary must:
+///   - exit non-zero,
+///   - emit the normal no-workspace anyhow error on stderr,
+///   - produce NO panic / backtrace output anywhere.
+#[test]
+fn sync_to_json_outside_workspace_no_panic() {
+    // A plain temp dir is not inside any repoweave workspace.
+    let tmp = tempfile::tempdir().unwrap();
+
+    rwv()
+        .args(["sync-to", "/some/nonexistent/target", "--json"])
+        .current_dir(tmp.path())
+        .assert()
+        .failure()
+        // The real no-workspace error must appear on stderr.
+        .stderr(predicate::str::contains("no repoweave workspace found"))
+        // No panic or backtrace.
+        .stderr(predicate::str::contains("panicked").not())
+        .stderr(predicate::str::contains("RUST_BACKTRACE").not());
 }

@@ -3856,19 +3856,19 @@ pub fn run_sync_to_json(cwd: &Path, request: SyncRequest) -> anyhow::Result<()> 
     // Derive the target path: the resolved destination workspace directory.
     // For sync-to the operator-supplied arg is the target; resolve it the same
     // way guard_and_mark does (SyncSource::resolve against the CWD context).
+    // When CWD is not inside any workspace, leave target_path empty; the
+    // machine (run_machine below) will surface the real no-workspace error
+    // rather than panicking here.
     let target_path: String = {
-        let cwd_ctx = WorkspaceContext::resolve(cwd, request.project_override.clone())
-            .unwrap_or_else(|_| {
-                // If context resolution fails, guard_and_mark will fail too.
-                // Return a placeholder; the machine will surface the error.
-                WorkspaceContext::resolve(cwd, None).expect("cwd must be resolvable")
-            });
-        match &request.source {
-            Some(src) => src
-                .resolve(&cwd_ctx)
-                .map(|p| p.to_string_lossy().into_owned())
-                .unwrap_or_default(),
-            None => String::new(),
+        match WorkspaceContext::resolve(cwd, request.project_override.clone()) {
+            Ok(cwd_ctx) => match &request.source {
+                Some(src) => src
+                    .resolve(&cwd_ctx)
+                    .map(|p| p.to_string_lossy().into_owned())
+                    .unwrap_or_default(),
+                None => String::new(),
+            },
+            Err(_) => String::new(),
         }
     };
 
