@@ -2456,7 +2456,15 @@ fn run_replay(ctx: &OpContext<'_>) -> anyhow::Result<()> {
             let mut owner = op_state::read_owner(&ctx.owner_workspace_dir)?.ok_or_else(|| {
                 anyhow::anyhow!("internal: owner record missing during replay entry write")
             })?;
-            owner.advanced_tips.extend(entry_tips);
+            owner
+                .tips
+                .advanced_mut()
+                .ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "internal: advanced_tips write after convergence at replay entry"
+                    )
+                })?
+                .extend(entry_tips);
             op_state::write_owner(&ctx.owner_workspace_dir, &owner)
                 .context("failed to write advanced_tips at replay entry")?;
         }
@@ -2515,8 +2523,11 @@ fn run_replay(ctx: &OpContext<'_>) -> anyhow::Result<()> {
             let mut owner = op_state::read_owner(&ctx.owner_workspace_dir)?.ok_or_else(|| {
                 anyhow::anyhow!("internal: owner record missing during post-fan-out write")
             })?;
+            let advanced = owner.tips.advanced_mut().ok_or_else(|| {
+                anyhow::anyhow!("internal: advanced_tips write after convergence post fan-out")
+            })?;
             for (repo_path, tip) in post_join_tips {
-                owner.advanced_tips.insert(repo_path, tip);
+                advanced.insert(repo_path, tip);
             }
             op_state::write_owner(&ctx.owner_workspace_dir, &owner)
                 .context("failed to write advanced_tips after fan-out join")?;
@@ -2584,7 +2595,11 @@ fn run_replay(ctx: &OpContext<'_>) -> anyhow::Result<()> {
         let mut owner = op_state::read_owner(&ctx.owner_workspace_dir)?
             .ok_or_else(|| anyhow::anyhow!("internal: owner record missing after Phase 1'"))?;
         owner
-            .advanced_tips
+            .tips
+            .advanced_mut()
+            .ok_or_else(|| {
+                anyhow::anyhow!("internal: advanced_tips write after convergence post Phase 1'")
+            })?
             .insert("(project)".to_owned(), project_tip.as_str().to_owned());
         op_state::write_owner(&ctx.owner_workspace_dir, &owner)
             .context("failed to write advanced_tips after Phase 1'")?;
@@ -2724,27 +2739,27 @@ fn run_relock(ctx: &OpContext<'_>) -> anyhow::Result<()> {
 fn record_converged_tips(ctx: &OpContext<'_>, cwd_project: &Project) -> anyhow::Result<()> {
     let mut owner = op_state::read_owner(&ctx.owner_workspace_dir)?
         .ok_or_else(|| anyhow::anyhow!("internal: owner record missing during relock"))?;
-    owner.converged_tips.clear();
-    // Clear advanced_tips in the SAME persist as converged_tips (§4 "Clearing order").
-    // Clearing advanced_tips before converged_tips is durable would reopen the
-    // original attribution gap; they must land together.
-    owner.advanced_tips.clear();
+    // Build the converged table from post-replay HEADs...
+    let mut converged: std::collections::BTreeMap<String, String> =
+        std::collections::BTreeMap::new();
     for repo_path in cwd_project.manifest.iter_repo_paths() {
         let abs = ctx.cwd_workspace_dir.join(repo_path.as_path());
         if !abs.exists() {
             continue;
         }
         if let Ok(rev) = GitVcs.head_revision(&abs) {
-            owner
-                .converged_tips
-                .insert(repo_path.as_str().to_owned(), rev.as_str().to_owned());
+            converged.insert(repo_path.as_str().to_owned(), rev.as_str().to_owned());
         }
     }
     if let Ok(rev) = GitVcs.head_revision(&ctx.cwd_project_dir) {
-        owner
-            .converged_tips
-            .insert("(project)".to_owned(), rev.as_str().to_owned());
+        converged.insert("(project)".to_owned(), rev.as_str().to_owned());
     }
+    // ...then swap atomically: `PhaseTips::converge` discards the replay-phase
+    // advanced_tips and installs converged_tips in one move, so they land in the
+    // SAME persist (§4 "Clearing order"). The ADT makes the both-populated state
+    // unrepresentable, so the prior "clear advanced before populating converged"
+    // ordering hazard cannot recur.
+    owner.tips.converge(converged);
     op_state::write_owner(&ctx.owner_workspace_dir, &owner)
         .context("failed to write converged_tips back to owner record")?;
     Ok(())
@@ -3282,17 +3297,23 @@ pub fn run_abort(cwd: &Path) -> anyhow::Result<()> {
             }
             None => anyhow::bail!("no operation in progress"),
         };
-    // `converged_tips` is the per-repo attributable-tip table. Keys: repo
-    // path string (e.g. `github/foo/bar`) for manifest repos, `"(project)"`
-    // for the project repo. Empty before relock completes — in that case the
-    // attributable set reduces to {savepoint, advanced_tips, mid-op}.
-    let converged_tips = &owner_record.converged_tips;
+    // The op's tip table is phase-scoped (`PhaseTips`): exactly one of the two
+    // tables is populated at a time. `converged_tips` is the per-repo
+    // attributable-tip table. Keys: repo path string (e.g. `github/foo/bar`)
+    // for manifest repos, `"(project)"` for the project repo. Empty before
+    // relock completes — in that case the attributable set reduces to
+    // {savepoint, advanced_tips, mid-op}.
+    //
     // `advanced_tips` is the op's replay-phase intent: the planned target
     // (ff advances) or captured actual tip (rebased advances), written before
     // or right after each advance. Source/owner side only — target tips land
-    // in converged_tips post-relock (§7). Empty for pre-field records
-    // (serde(default)) — graceful degradation to pre-change behavior.
-    let advanced_tips = &owner_record.advanced_tips;
+    // in converged_tips post-relock (§7). Empty for pre-field records and
+    // once converged — graceful degradation to pre-change behavior. The
+    // inactive half reads as an empty map so the `.get()` lookups below are
+    // unchanged.
+    let empty_tips = std::collections::BTreeMap::new();
+    let converged_tips = owner_record.tips.converged().unwrap_or(&empty_tips);
+    let advanced_tips = owner_record.tips.advanced().unwrap_or(&empty_tips);
 
     // Side-specific restore ids: repos in the op's TARGET workspace were
     // savepointed under `<op_id>-target` (see `target_savepoint_id`) so that

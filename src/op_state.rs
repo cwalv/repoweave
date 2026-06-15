@@ -127,19 +127,105 @@ impl std::fmt::Display for OpPhase {
 }
 
 // ---------------------------------------------------------------------------
+// PhaseTips — phase-scoped tip table (fo-wbbqof.5)
+// ---------------------------------------------------------------------------
+
+/// The op's per-repo tip table, scoped to the lifecycle half that owns it.
+///
+/// Background: the abort-intent journal records two disjoint tip tables —
+/// `advanced_tips` (replay-phase intent) and `converged_tips` (written at
+/// relock completion). The original schema carried both as flat `BTreeMap`
+/// fields on [`OwnerRecord`], governed only by a comment-enforced temporal
+/// invariant ("advanced_tips valid only during replay; cleared in the same
+/// write that populates converged_tips"). That left the illegal
+/// *both-populated* state representable, ruled out only by convention.
+///
+/// `PhaseTips` makes that state **structurally unrepresentable**: a record
+/// holds exactly one table at a time, and the only transition from the replay
+/// table to the converged table is the atomic [`PhaseTips::converge`] swap.
+///
+/// Wire format: this ADT is *in-memory only*. The persisted `.rwv-op` YAML
+/// keeps the historical flat shape (two independent top-level keys
+/// `advanced_tips:` / `converged_tips:`) via the [`OwnerRecord`] serde shim,
+/// so persisted op-state round-trips byte-for-byte across this change.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PhaseTips {
+    /// Replay-phase intent table (`advanced_tips`). Empty before replay entry;
+    /// extended/overwritten as repos advance; consumed by `abort`.
+    Replay(BTreeMap<String, String>),
+    /// Converged table (`converged_tips`) written at relock completion.
+    /// Consumed by advance-target and abort's HEAD check.
+    Converged(BTreeMap<String, String>),
+}
+
+impl Default for PhaseTips {
+    /// A fresh op starts in the replay half with no recorded tips.
+    fn default() -> Self {
+        Self::Replay(BTreeMap::new())
+    }
+}
+
+impl PhaseTips {
+    /// The replay-phase intent table, or `None` once converged.
+    ///
+    /// Readers that want the journal entry for a repo during replay use this;
+    /// it yields `None` after [`PhaseTips::converge`], by which point the
+    /// replay table no longer exists.
+    pub fn advanced(&self) -> Option<&BTreeMap<String, String>> {
+        match self {
+            Self::Replay(m) => Some(m),
+            Self::Converged(_) => None,
+        }
+    }
+
+    /// The converged table, or `None` while still in the replay half.
+    pub fn converged(&self) -> Option<&BTreeMap<String, String>> {
+        match self {
+            Self::Converged(m) => Some(m),
+            Self::Replay(_) => None,
+        }
+    }
+
+    /// Mutable access to the replay-phase intent table during replay.
+    ///
+    /// Returns `None` if the record has already converged — replay-phase
+    /// writes after convergence are a logic error and the type refuses them.
+    pub fn advanced_mut(&mut self) -> Option<&mut BTreeMap<String, String>> {
+        match self {
+            Self::Replay(m) => Some(m),
+            Self::Converged(_) => None,
+        }
+    }
+
+    /// Atomically swap the replay table out and the converged table in.
+    ///
+    /// This is the *single guarded place* the temporal invariant lives now:
+    /// converging discards the replay table and installs `converged` in one
+    /// move, so a record can never hold both. Idempotent re-convergence (a
+    /// `--continue` re-running relock) simply replaces the converged table.
+    pub fn converge(&mut self, converged: BTreeMap<String, String>) {
+        *self = Self::Converged(converged);
+    }
+}
+
+// ---------------------------------------------------------------------------
 // OwnerRecord — the full op record at the initiating workspace
 // ---------------------------------------------------------------------------
 
 /// The owner op record written to `.rwv-op` at the initiating workspace.
 ///
 /// All path fields are absolute. `started_at` is RFC3339 UTC.
-/// `advanced_tips` records the op's self-attributable tip per repo during the
-/// replay phase (see abort-intent-journal.md §3); empty before replay entry
-/// and cleared (in the same write) when `converged_tips` is populated at
-/// relock completion. `converged_tips` is populated at relock completion;
-/// empty before. `overrides` records named overrides supplied at invocation
-/// for audit fidelity on `--continue`.
+///
+/// The replay-intent (`advanced_tips`) and converged (`converged_tips`) tip
+/// tables are carried by the [`PhaseTips`] ADT in `tips`, which makes the
+/// illegal *both-populated* state unrepresentable (see [`PhaseTips`]). The
+/// persisted `.rwv-op` YAML keeps the historical flat shape — two independent
+/// top-level keys `advanced_tips:` / `converged_tips:` — via a serde shim
+/// ([`WireOwnerRecord`]), so on-disk op-state round-trips unchanged.
+/// `overrides` records named overrides supplied at invocation for audit
+/// fidelity on `--continue`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(from = "WireOwnerRecord", into = "WireOwnerRecord")]
 pub struct OwnerRecord {
     /// Unique operation identifier (nanosecond wall-clock string). Shared
     /// with savepoint refs and lease files.
@@ -157,24 +243,95 @@ pub struct OwnerRecord {
     pub retire: bool,
     /// Current phase. The driver persists this before entering each phase.
     pub phase: OpPhase,
-    /// Per-repo advancement-intent tips, written at replay entry and cleared at
-    /// relock completion (in the same write as `converged_tips`).
-    /// Key: manifest repo path (e.g. `github/foo/bar`) or `(project)` for the
-    /// project repo.  Value: planned target revision for fast-forward advances;
-    /// actual post-rebase tip for rebased advances (see abort-intent-journal.md §3).
-    /// Empty on records predating this field (`#[serde(default)]`).
-    #[serde(default)]
-    pub advanced_tips: BTreeMap<String, String>,
-    /// Per-repo converged tips written at relock completion.
-    /// Key: repo path (relative to workspace root, e.g. `github/foo/bar`).
-    /// Value: SHA string. Consumed by advance-target and abort's HEAD check.
-    #[serde(default)]
-    pub converged_tips: BTreeMap<String, String>,
+    /// The op's per-repo tip table, scoped to exactly one lifecycle half at a
+    /// time (see [`PhaseTips`]). Replay-phase intent during replay; converged
+    /// tips after the atomic [`PhaseTips::converge`] swap at relock completion.
+    pub tips: PhaseTips,
     /// Named overrides supplied at invocation (e.g. `allow-stale-lock`).
-    #[serde(default)]
     pub overrides: Vec<String>,
     /// RFC3339 UTC timestamp when the op started.
     pub started_at: String,
+}
+
+// ---------------------------------------------------------------------------
+// WireOwnerRecord — flat persisted shape for OwnerRecord (serde shim)
+// ---------------------------------------------------------------------------
+
+/// On-disk representation of [`OwnerRecord`]: the historical flat YAML with
+/// two independent tip maps. Exists solely to keep the persisted `.rwv-op`
+/// shape stable while the in-memory model uses the [`PhaseTips`] ADT.
+///
+/// The flat↔ADT mapping is driven by which table is populated, preserving the
+/// temporal invariant: a converged record (non-empty `converged_tips`) maps to
+/// [`PhaseTips::Converged`]; otherwise the record is still in the replay half
+/// and maps to [`PhaseTips::Replay`], carrying `advanced_tips`. A both-empty
+/// record canonicalises to the empty replay half and serialises identically.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct WireOwnerRecord {
+    id: String,
+    verb: OpVerb,
+    strategy: String,
+    source: PathBuf,
+    target: PathBuf,
+    retire: bool,
+    phase: OpPhase,
+    /// Empty on records predating this field (`#[serde(default)]`).
+    #[serde(default)]
+    advanced_tips: BTreeMap<String, String>,
+    #[serde(default)]
+    converged_tips: BTreeMap<String, String>,
+    #[serde(default)]
+    overrides: Vec<String>,
+    started_at: String,
+}
+
+impl From<WireOwnerRecord> for OwnerRecord {
+    fn from(w: WireOwnerRecord) -> Self {
+        // Reconstruct the phase-scoped ADT from the two flat maps. A populated
+        // converged table is the unambiguous signal that the op has crossed the
+        // relock boundary (the swap clears advanced_tips in the same write), so
+        // it wins; otherwise the record is still in the replay half.
+        let tips = if !w.converged_tips.is_empty() {
+            PhaseTips::Converged(w.converged_tips)
+        } else {
+            PhaseTips::Replay(w.advanced_tips)
+        };
+        Self {
+            id: w.id,
+            verb: w.verb,
+            strategy: w.strategy,
+            source: w.source,
+            target: w.target,
+            retire: w.retire,
+            phase: w.phase,
+            tips,
+            overrides: w.overrides,
+            started_at: w.started_at,
+        }
+    }
+}
+
+impl From<OwnerRecord> for WireOwnerRecord {
+    fn from(r: OwnerRecord) -> Self {
+        // Flatten the ADT back to two maps; the inactive half serialises empty.
+        let (advanced_tips, converged_tips) = match r.tips {
+            PhaseTips::Replay(m) => (m, BTreeMap::new()),
+            PhaseTips::Converged(m) => (BTreeMap::new(), m),
+        };
+        Self {
+            id: r.id,
+            verb: r.verb,
+            strategy: r.strategy,
+            source: r.source,
+            target: r.target,
+            retire: r.retire,
+            phase: r.phase,
+            advanced_tips,
+            converged_tips,
+            overrides: r.overrides,
+            started_at: r.started_at,
+        }
+    }
 }
 
 impl OwnerRecord {
@@ -195,8 +352,7 @@ impl OwnerRecord {
             target: cwd_workspace,
             retire: false,
             phase: OpPhase::Replay,
-            advanced_tips: BTreeMap::new(),
-            converged_tips: BTreeMap::new(),
+            tips: PhaseTips::default(),
             overrides: Vec::new(),
             started_at: utc_now_rfc3339(),
         }
@@ -220,8 +376,7 @@ impl OwnerRecord {
             target: target_workspace,
             retire,
             phase: OpPhase::Replay,
-            advanced_tips: BTreeMap::new(),
-            converged_tips: BTreeMap::new(),
+            tips: PhaseTips::default(),
             overrides: Vec::new(),
             started_at: utc_now_rfc3339(),
         }
@@ -621,8 +776,10 @@ mod tests {
         assert_eq!(read_back.strategy, "rebase");
         assert_eq!(read_back.phase, OpPhase::Replay);
         assert!(!read_back.retire);
-        assert!(read_back.advanced_tips.is_empty());
-        assert!(read_back.converged_tips.is_empty());
+        // Fresh record is in the replay half with an empty intent table.
+        assert_eq!(read_back.tips, PhaseTips::Replay(BTreeMap::new()));
+        assert!(read_back.tips.advanced().unwrap().is_empty());
+        assert!(read_back.tips.converged().is_none());
         assert!(read_back.overrides.is_empty());
     }
 
@@ -643,28 +800,23 @@ mod tests {
             PathBuf::from("/src/ws"),
             PathBuf::from("/cwd/ws"),
         );
-        record
-            .advanced_tips
-            .insert("github/foo/bar".to_owned(), "aabbccdd".to_owned());
-        record
-            .advanced_tips
-            .insert("(project)".to_owned(), "deadbeef".to_owned());
+        let advanced = record.tips.advanced_mut().unwrap();
+        advanced.insert("github/foo/bar".to_owned(), "aabbccdd".to_owned());
+        advanced.insert("(project)".to_owned(), "deadbeef".to_owned());
         write_owner(dir, &record).unwrap();
         let read_back = read_owner(dir).unwrap().unwrap();
-        assert_eq!(read_back.advanced_tips.len(), 2);
+        let advanced = read_back.tips.advanced().expect("still in replay half");
+        assert_eq!(advanced.len(), 2);
         assert_eq!(
-            read_back
-                .advanced_tips
-                .get("github/foo/bar")
-                .map(String::as_str),
+            advanced.get("github/foo/bar").map(String::as_str),
             Some("aabbccdd"),
         );
         assert_eq!(
-            read_back.advanced_tips.get("(project)").map(String::as_str),
+            advanced.get("(project)").map(String::as_str),
             Some("deadbeef"),
         );
-        // converged_tips is unaffected.
-        assert!(read_back.converged_tips.is_empty());
+        // No converged table while in the replay half.
+        assert!(read_back.tips.converged().is_none());
     }
 
     #[test]
@@ -689,14 +841,124 @@ started_at: 2026-06-01T00:00:00Z
         let path = dir.join(OP_STATE_FILE);
         std::fs::write(&path, yaml).unwrap();
         let record = read_owner(dir).unwrap().unwrap();
-        assert!(
-            record.advanced_tips.is_empty(),
-            "expected empty advanced_tips on legacy record, got {:?}",
-            record.advanced_tips,
-        );
+        // A legacy record (no advanced_tips key, empty converged_tips) maps to
+        // the empty replay half.
+        assert_eq!(record.tips, PhaseTips::Replay(BTreeMap::new()));
         // Verify the rest of the record parsed correctly too.
         assert_eq!(record.id, "9999999999999999999");
         assert_eq!(record.verb, OpVerb::Sync);
+    }
+
+    // -----------------------------------------------------------------------
+    // PhaseTips ADT — phase-scoped tip table (fo-wbbqof.5)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn phase_tips_converge_is_atomic_swap() {
+        // The illegal "both populated" state is unrepresentable: converging
+        // discards the replay table and installs the converged one in a single
+        // move, so no value of `PhaseTips` ever holds both.
+        let mut tips = PhaseTips::default();
+        tips.advanced_mut()
+            .unwrap()
+            .insert("github/foo/bar".to_owned(), "aabb".to_owned());
+        assert!(tips.advanced().is_some());
+        assert!(tips.converged().is_none());
+
+        let mut converged = BTreeMap::new();
+        converged.insert("github/foo/bar".to_owned(), "ccdd".to_owned());
+        tips.converge(converged);
+
+        // After the swap the replay table is gone — replay-phase reads/writes
+        // now yield None, and only the converged table is visible.
+        assert!(tips.advanced().is_none());
+        assert!(tips.advanced_mut().is_none());
+        assert_eq!(
+            tips.converged()
+                .and_then(|m| m.get("github/foo/bar"))
+                .map(String::as_str),
+            Some("ccdd"),
+        );
+
+        // Re-convergence (idempotent --continue replay) just replaces the table.
+        let mut again = BTreeMap::new();
+        again.insert("(project)".to_owned(), "eeff".to_owned());
+        tips.converge(again);
+        assert!(tips.advanced().is_none());
+        assert_eq!(tips.converged().map(BTreeMap::len), Some(1));
+    }
+
+    #[test]
+    fn converged_tips_wire_roundtrip_and_clears_advanced() {
+        // A converged record serialises with a populated `converged_tips:` and
+        // an empty `advanced_tips:` (the swap cleared it) — and reads back as
+        // the Converged half. This mirrors the J(relock) crash-matrix state.
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path();
+        let op_id = OpId::new_now();
+        let mut record = OwnerRecord::new_sync(
+            &op_id,
+            crate::sync::SyncStrategy::Rebase,
+            PathBuf::from("/src/ws"),
+            PathBuf::from("/cwd/ws"),
+        );
+        // Populate the replay half, then converge (the atomic swap).
+        record
+            .tips
+            .advanced_mut()
+            .unwrap()
+            .insert("github/foo/bar".to_owned(), "aabb".to_owned());
+        let mut converged = BTreeMap::new();
+        converged.insert("github/foo/bar".to_owned(), "ccdd".to_owned());
+        converged.insert("(project)".to_owned(), "deadbeef".to_owned());
+        record.tips.converge(converged);
+        record.phase = OpPhase::Relock;
+
+        write_owner(dir, &record).unwrap();
+        // The persisted YAML keeps the flat shape with advanced_tips emptied.
+        let raw = std::fs::read_to_string(dir.join(OP_STATE_FILE)).unwrap();
+        assert!(
+            raw.contains("advanced_tips: {}"),
+            "expected emptied flat advanced_tips key, got:\n{raw}"
+        );
+        assert!(
+            raw.contains("converged_tips:"),
+            "expected converged_tips key, got:\n{raw}"
+        );
+
+        let read_back = read_owner(dir).unwrap().unwrap();
+        assert_eq!(read_back, record);
+        assert!(read_back.tips.advanced().is_none());
+        let converged = read_back.tips.converged().expect("converged half");
+        assert_eq!(converged.len(), 2);
+        assert_eq!(
+            converged.get("github/foo/bar").map(String::as_str),
+            Some("ccdd"),
+        );
+    }
+
+    #[test]
+    fn legacy_both_empty_record_canonicalises_to_replay() {
+        // A record with both maps empty (the common at-entry state) round-trips
+        // to the empty replay half and serialises identically — the both-empty
+        // case has a single canonical ADT representation.
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path();
+        let yaml = r#"id: "1"
+verb: sync
+strategy: rebase
+source: /src/ws
+target: /cwd/ws
+retire: false
+phase: relock
+advanced_tips: {}
+converged_tips: {}
+overrides: []
+started_at: 2026-06-01T00:00:00Z
+"#;
+        std::fs::write(dir.join(OP_STATE_FILE), yaml).unwrap();
+        let record = read_owner(dir).unwrap().unwrap();
+        assert_eq!(record.tips, PhaseTips::Replay(BTreeMap::new()));
     }
 
     #[test]
