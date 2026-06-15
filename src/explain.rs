@@ -28,6 +28,75 @@ const REMOVE_EXPLAIN: &str = include_str!("../docs/reference/explain/remove.md")
 const LOCK_EXPLAIN: &str = include_str!("../docs/reference/explain/lock.md");
 const ACTIVATE_EXPLAIN: &str = include_str!("../docs/reference/explain/activate.md");
 
+/// The complete set of verbs recognized by `rwv explain`.
+///
+/// This slice is the single source of truth shared by the dispatch `match` and
+/// the did-you-mean suggester. Adding a verb here without adding a match arm
+/// (or vice-versa) will produce a compile-time or test-time failure.
+pub const KNOWN_VERBS: &[&str] = &[
+    "status",
+    "doctor",
+    "sync",
+    "sync-to",
+    "fetch",
+    "update",
+    "push",
+    "prime",
+    "explain",
+    "workweave",
+    "abort",
+    "add",
+    "remove",
+    "lock",
+    "activate",
+];
+
+/// Compute the Levenshtein edit distance between two strings.
+///
+/// Uses the standard DP approach with two alternating rows to keep memory O(n).
+fn levenshtein(a: &str, b: &str) -> usize {
+    let a: Vec<char> = a.chars().collect();
+    let b: Vec<char> = b.chars().collect();
+    let m = a.len();
+    let n = b.len();
+    // Fast paths.
+    if m == 0 {
+        return n;
+    }
+    if n == 0 {
+        return m;
+    }
+    let mut prev: Vec<usize> = (0..=n).collect();
+    let mut curr = vec![0usize; n + 1];
+    for i in 1..=m {
+        curr[0] = i;
+        for j in 1..=n {
+            let cost = if a[i - 1] == b[j - 1] { 0 } else { 1 };
+            curr[j] = (prev[j] + 1)
+                .min(curr[j - 1] + 1)
+                .min(prev[j - 1] + cost);
+        }
+        std::mem::swap(&mut prev, &mut curr);
+    }
+    prev[n]
+}
+
+/// Return the closest verb from `KNOWN_VERBS` if its edit distance from
+/// `input` is within the suggestion threshold, otherwise `None`.
+///
+/// Threshold: distance ≤ 2. This accepts single-character typos up to
+/// two-character transpositions while excluding completely unrelated words
+/// like "frobnicate".
+fn suggest(input: &str) -> Option<&'static str> {
+    const THRESHOLD: usize = 2;
+    KNOWN_VERBS
+        .iter()
+        .map(|&v| (v, levenshtein(input, v)))
+        .filter(|&(_, d)| d <= THRESHOLD)
+        .min_by_key(|&(_, d)| d)
+        .map(|(v, _)| v)
+}
+
 /// Print the explain bundle for the requested verb, or the index when none given.
 ///
 /// Returns an error only when an unknown verb is requested (matches the
@@ -53,7 +122,16 @@ pub fn explain(cmd: Option<&str>) -> anyhow::Result<()> {
         Some("lock") => print!("{LOCK_EXPLAIN}"),
         Some("activate") => print!("{ACTIVATE_EXPLAIN}"),
         Some(unknown) => {
-            anyhow::bail!("no explain entry for '{unknown}'; try `rwv explain` for the index");
+            if let Some(candidate) = suggest(unknown) {
+                anyhow::bail!(
+                    "no explain entry for '{unknown}'; did you mean: {candidate}? \
+                     Try `rwv explain` for the full index."
+                );
+            } else {
+                anyhow::bail!(
+                    "no explain entry for '{unknown}'; try `rwv explain` for the index"
+                );
+            }
         }
     }
     Ok(())

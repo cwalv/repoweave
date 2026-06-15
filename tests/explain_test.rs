@@ -155,6 +155,40 @@ fn explain_unknown_verb_exits_nonzero_with_friendly_pointer() {
 }
 
 #[test]
+fn explain_close_typo_suggests_status() {
+    // "statu" is one deletion away from "status" — should trigger did-you-mean.
+    rwv()
+        .args(["explain", "statu"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("did you mean: status"));
+}
+
+#[test]
+fn explain_close_typo_suggests_sync_to() {
+    // "sync-tto" has an extra 't' — should suggest "sync-to".
+    rwv()
+        .args(["explain", "sync-tto"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("did you mean: sync-to"));
+}
+
+#[test]
+fn explain_far_typo_no_spurious_suggestion() {
+    // "frobnicate" is unrelated to any known verb — no did-you-mean should appear.
+    rwv()
+        .args(["explain", "frobnicate"])
+        .assert()
+        .failure()
+        .stderr(
+            predicate::str::contains("no explain entry for 'frobnicate'")
+                .and(predicate::str::contains("rwv explain"))
+                .and(predicate::str::contains("did you mean").not()),
+        );
+}
+
+#[test]
 fn every_acceptance_verb_has_a_discoverable_explain_entry() {
     for verb in ACCEPTANCE_VERBS {
         rwv()
