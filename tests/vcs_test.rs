@@ -1247,7 +1247,7 @@ fn rebase_stopped_commit_detail_returns_sha_and_subject() {
     );
 
     // rebase_stopped_commit_detail must include the short SHA and subject.
-    let detail = GitVcs::rebase_stopped_commit_detail(p);
+    let detail = GitVcs.rebase_stopped_commit_detail(p);
     let short = &feature_sha[..7];
     assert!(
         detail.contains(short),
@@ -1276,7 +1276,7 @@ fn rebase_stopped_commit_detail_falls_back_when_no_rebase_in_progress() {
         "repo should not be mid-rebase after init"
     );
 
-    let detail = GitVcs::rebase_stopped_commit_detail(p);
+    let detail = GitVcs.rebase_stopped_commit_detail(p);
     assert!(
         !detail.is_empty(),
         "fallback must be non-empty; got: {detail}"

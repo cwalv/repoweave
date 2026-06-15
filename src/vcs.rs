@@ -1105,4 +1105,40 @@ pub trait Vcs {
         revision: &ResolvedRevisionId,
         file_path: &Path,
     ) -> Result<String, VcsError>;
+
+    /// Return a human-readable detail string identifying the commit that
+    /// stopped an in-flight rebase in `repo`, for use in conflict-bail messages.
+    ///
+    /// During a rebase conflict the stopped commit's SHA is written to a
+    /// VCS-specific path (for git: `.git/rebase-merge/stopped-sha`). This
+    /// method reads that file, resolves the short SHA, and fetches the commit
+    /// subject. If any step fails it returns a generic fallback so the
+    /// caller's conflict message still renders.
+    ///
+    /// The returned string is suitable as the `detail` arg to
+    /// `per_conflict_bail_message` in sync, e.g.:
+    /// `"commit abc1234 (lock: refresh — post-OOB drift in gc-formulas)"`
+    fn rebase_stopped_commit_detail(&self, repo: &Path) -> String;
+
+    /// Return up to `cap` one-line commit summaries for the range `from..to`
+    /// plus the total commit count in that range.
+    ///
+    /// Returns `(vec![], 0)` on any error so callers can degrade gracefully
+    /// when the range is unresolvable (e.g. the object is unreachable in a
+    /// shallow clone or the SHA is malformed).
+    fn log_oneline_range(
+        &self,
+        repo: &Path,
+        from: &str,
+        to: &str,
+        cap: usize,
+    ) -> (Vec<String>, usize);
+
+    /// Return `(ahead, behind)` commit counts for `savepoint..tip` and
+    /// `tip..savepoint` respectively. Used to determine whether `tip` is
+    /// strictly ahead of `savepoint` (`behind == 0, ahead > 0`) or diverged
+    /// (both > 0).
+    ///
+    /// Returns `(0, 0)` on any VCS error.
+    fn ahead_behind(&self, repo: &Path, savepoint: &str, tip: &str) -> (usize, usize);
 }

@@ -3173,7 +3173,7 @@ fn apply_project_strategy(
             match GitVcs.rebase(cwd_project_dir, source_tip, source_tip) {
                 Ok(()) => {}
                 Err(VcsError::RebaseConflict { repo, op }) => {
-                    let detail = GitVcs::rebase_stopped_commit_detail(&repo);
+                    let detail = GitVcs.rebase_stopped_commit_detail(&repo);
                     anyhow::bail!(
                         "{}",
                         per_conflict_bail_message(
@@ -3631,7 +3631,7 @@ fn report_abort_outcome(
 
             // Determine the commit-graph shape and fetch blocking commits.
             let shape_and_commits = if let Some(repo) = repo_abs {
-                let (ahead, behind) = GitVcs::ahead_behind(repo, savepoint, observed_tip);
+                let (ahead, behind) = GitVcs.ahead_behind(repo, savepoint, observed_tip);
                 let shape = if behind == 0 && ahead > 0 {
                     format!("tip is {ahead} commit(s) ahead of savepoint (strictly ahead — common recoverable case)")
                 } else if ahead > 0 && behind > 0 {
@@ -3641,7 +3641,7 @@ fn report_abort_outcome(
                     "tip equals savepoint (unexpected ForeignTip state)".to_string()
                 };
                 let (commits, total) =
-                    GitVcs::log_oneline_range(repo, savepoint, observed_tip, BLOCKING_COMMITS_CAP);
+                    GitVcs.log_oneline_range(repo, savepoint, observed_tip, BLOCKING_COMMITS_CAP);
                 let commit_block = if commits.is_empty() {
                     "\t  (no commits in range or range unresolvable)".to_string()
                 } else {
@@ -4301,7 +4301,7 @@ mod tests {
     // This tests that per_conflict_bail_message surfaces the subject when a
     // stopped-commit detail string containing the subject is passed as the
     // `detail` arg — as `apply_project_strategy` now does via
-    // `GitVcs::rebase_stopped_commit_detail`.
+    // `Vcs::rebase_stopped_commit_detail` (now a trait method).
     #[test]
     fn per_conflict_bail_rebase_project_repo_includes_commit_subject_in_detail() {
         let src = SyncSource::Primary;

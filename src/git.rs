@@ -132,7 +132,7 @@ impl GitVcs {
     /// The returned string is suitable as the `detail` arg to
     /// `per_conflict_bail_message` in sync, e.g.:
     /// `"commit abc1234 (lock: refresh — post-OOB drift in gc-formulas)"`
-    pub fn rebase_stopped_commit_detail(repo: &Path) -> String {
+    fn rebase_stopped_commit_detail_impl(repo: &Path) -> String {
         let fallback = "see in-flight rebase state for conflicting paths".to_owned();
 
         // Resolve the .git directory so we can locate rebase-merge/stopped-sha.
@@ -185,7 +185,7 @@ impl GitVcs {
     /// Returns `(vec![], 0)` on any error so callers can degrade gracefully
     /// when the range is unresolvable (e.g. the object is unreachable in a
     /// shallow clone or the SHA is malformed).
-    pub fn log_oneline_range(
+    fn log_oneline_range_impl(
         repo: &Path,
         from: &str,
         to: &str,
@@ -223,7 +223,7 @@ impl GitVcs {
     /// (both > 0).
     ///
     /// Returns `(0, 0)` on any git error.
-    pub fn ahead_behind(repo: &Path, savepoint: &str, tip: &str) -> (usize, usize) {
+    fn ahead_behind_impl(repo: &Path, savepoint: &str, tip: &str) -> (usize, usize) {
         let ahead = Self::run(
             &["rev-list", "--count", &format!("{savepoint}..{tip}")],
             repo,
@@ -1373,6 +1373,24 @@ impl Vcs for GitVcs {
             }
             Err(e) => Err(e),
         }
+    }
+
+    fn rebase_stopped_commit_detail(&self, repo: &Path) -> String {
+        GitVcs::rebase_stopped_commit_detail_impl(repo)
+    }
+
+    fn log_oneline_range(
+        &self,
+        repo: &Path,
+        from: &str,
+        to: &str,
+        cap: usize,
+    ) -> (Vec<String>, usize) {
+        GitVcs::log_oneline_range_impl(repo, from, to, cap)
+    }
+
+    fn ahead_behind(&self, repo: &Path, savepoint: &str, tip: &str) -> (usize, usize) {
+        GitVcs::ahead_behind_impl(repo, savepoint, tip)
     }
 }
 
