@@ -246,6 +246,7 @@ source: /abs/path/src
 target: /abs/path/tgt
 retire: false
 phase: replay                    # replay | relock | advance-target | retire
+advanced_tips: {}                # replay-phase intent: repo → planned/actual tip; empty before replay entry; cleared at relock (same write as converged_tips)
 converged_tips: {}               # written at relock completion; empty before
 overrides: []                    # named overrides supplied at invocation
 started_at: 2026-06-10T21:14:03Z
@@ -255,7 +256,13 @@ started_at: 2026-06-10T21:14:03Z
 flows TO. For plain `sync`, `target` is CWD (the op writes into the
 owner workspace). For `sync-to`, `target` is the named target workspace.
 All path fields are absolute. `started_at` is RFC3339 UTC.
-`converged_tips` is populated at relock completion; empty before.
+`advanced_tips` holds the op's self-attributable tip per repo during the
+replay phase — written at replay entry (ff-movers) or right after the
+advance succeeds (rebased repos), and cleared atomically with
+`converged_tips` at relock completion. `converged_tips` is populated at
+relock completion; empty before. Old records without `advanced_tips`
+parse to an empty map (`#[serde(default)]`), so abort degrades gracefully
+to pre-journal behavior with no migration code.
 
 ### Thin lease (`.rwv-op-lease`)
 
@@ -303,33 +310,56 @@ repos that will be classified as `untouched` (no restore needed).
 ### Rail 2 — HEAD-verified restore
 
 The destructive `reset --hard` to the savepoint is gated on the repo's
-current tip being **attributable to the op**. The classification has
-four outcomes:
+current tip being **attributable to the op**. The attributable set is
+`{savepoint, advanced_tips[repo], converged_tips[repo], VCS-native mid-op}`.
+The classification has five outcomes:
 
 | Current tip | Outcome |
 |---|---|
 | Equal to the savepoint | `Untouched` — op never moved this repo; HEAD not touched |
-| Equal to the recorded converged tip | `RestoredFromConverged` — op converged this repo; reset to savepoint |
+| Equal to `advanced_tips[repo]` (the op's recorded intent tip) | `RestoredFromIntent` — op advanced this repo during replay; reset to savepoint |
+| Equal to `converged_tips[repo]` (the recorded converged tip) | `RestoredFromConverged` — op converged this repo; reset to savepoint |
 | Repo is in a VCS-native mid-op state (rebase / merge / cherry-pick) | `RestoredFromMidOp` — mid-op cancelled; reset to savepoint |
 | Anything else | `ForeignTip` — restore **refused**; violation reported; op-state retained |
 
-The `ForeignTip` case means commits landed in the repo after the op
-crashed that abort cannot attribute to the op. Abort reports the
-observed tip, the expected savepoint and converged tip, the pre-abort
-ref label, and recovery options. Op-state is retained so the operator
-can re-run `rwv abort` after manually reconciling the divergence.
+**`advanced_tips` — the advancement-intent journal.** The `advanced_tips`
+owner-record map closes the mid-replay attribution gap. It is written during
+the replay phase in two passes:
 
-**Post-replay-pre-relock crash case (documented deviation from initial
-design):** A repo can converge in replay before relock records
-`converged_tips`. If the op crashes in this window, the tip is neither
-the savepoint, nor a recorded converged tip (empty before relock), nor
-a mid-op state. This case is classified as `ForeignTip` — abort refuses
-rather than trying to re-derive the source's lock to re-classify the
-tip. The rationale: re-pinning the source has a TOCTOU race (source may
-have moved between the crash and abort), and foreign-tip refusal is the
-conservative safe position. The refusal message explicitly names this
-case and offers the recovery option of manually accepting the converged
-tip and running `rwv lock` to re-pin.
+1. **Pre-advance (ff-movers):** at replay entry, the planned target SHA is
+   written for every repo whose advance is a genuine fast-forward (current ⊏
+   target) — before the fan-out. This is a true write-ahead log: the intent
+   precedes the advance, so the landing tip always equals the recorded target
+   and there is no window.
+
+2. **Post-advance (rebased repos):** because a rebase lands at a fresh SHA
+   unknowable before the rebase runs, the actual tip is captured right after
+   the rebase succeeds — for the project repo (serial Phase 1') immediately,
+   for parallel manifest repos in a single batch-write after the fan-out
+   joins.
+
+`advanced_tips` is cleared in the same atomic owner-record persist that
+writes `converged_tips` at relock completion. This means mid-replay crashes
+where the op cleanly advanced repos no longer produce foreign-tip refusals on
+those repos — they auto-restore as `RestoredFromIntent` (reported as
+`restored (from recorded intent tip)`).
+
+**Residual foreign-tip case.** After `advanced_tips` lands, `ForeignTip`
+fires only for genuinely-foreign tips (e.g. an operator commit made after the
+crash), plus the irreducible one-write window between a rebase completing and
+its tip being persisted into `advanced_tips`. That window is a documented
+floor (spec §6), not a bug: the tip cannot be recorded before it exists.
+During that instant, abort degrades to today's behavior — foreign-tip refusal
+on that one repo, tip preserved at the pre-abort ref.
+
+**Refusal output.** When `ForeignTip` fires, abort emits to stderr (per
+repo): a one-line noise summary (skipped/untouched repos), per-refused-repo
+blocking commits (`git log savepoint..tip`, capped at 5 with a remainder
+count) plus a shape line (strictly-ahead vs diverged), and the
+recovery-options block printed exactly once at the end. The options block
+contains only operator-facing choices — the machine-decidable "if the op had
+just converged this" option was removed once `advanced_tips` makes that case
+auto-attributable.
 
 ### First-write-wins for pre-abort refs
 
@@ -486,7 +516,8 @@ mechanism is:
 | Atomic source pin (T₀) | one `HEAD` resolution of the source project repo |
 | Read manifest/lock at a revision | `git show <rev>:<path>` (`Vcs::read_file_at_revision`) |
 | ff-advance to converged tip | `git merge --ff-only <rev>` (never `reset --hard`) |
-| Verified restore | `git reset --hard <savepoint>` gated on tip ∈ {savepoint, converged tip, mid-op} |
+| Capture post-rebase tip for `advanced_tips` | `HEAD` resolution immediately after `git rebase` succeeds |
+| Verified restore | `git reset --hard <savepoint>` gated on tip ∈ {savepoint, advanced tip, converged tip, mid-op} |
 | Object transfer of pinned revisions | shared object store (worktrees: no-op) |
 | Lock replay-exclusion (rebase) | `rwv.lock merge=ours` in `.gitattributes`; `-c merge.ours.driver=true` per invocation |
 

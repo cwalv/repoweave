@@ -29,9 +29,25 @@ classification:
 | Current tip | Outcome |
 |---|---|
 | Equal to the savepoint | `untouched` — op never moved this repo; HEAD not touched |
-| Equal to the recorded converged tip | `restored` — op converged repo before crash; reset to savepoint |
-| Repo in a VCS-native mid-op state (rebase / merge / cherry-pick) | `restored` — mid-op cancelled; reset to savepoint |
+| Equal to the recorded intent tip (`advanced_tips[repo]`) | `restored (from recorded intent tip)` — op advanced this repo during replay before crashing; reset to savepoint |
+| Equal to the recorded converged tip (`converged_tips[repo]`) | `restored (from recorded converged tip)` — op converged repo before crash; reset to savepoint |
+| Repo in a VCS-native mid-op state (rebase / merge / cherry-pick) | `restored (from mid-op state)` — mid-op cancelled; reset to savepoint |
 | Anything else | `foreign-tip violation` — restore refused; violation reported |
+
+The `advanced_tips` map is the op's **advancement-intent journal**: written
+during the replay phase, it records the planned target tip for genuine
+fast-forward advances (before the advance), and the actual post-rebase tip
+for rebased advances (right after the rebase succeeds). It is cleared
+atomically when `converged_tips` is written at relock completion. This means
+a mid-replay crash where the op cleanly advanced repos no longer produces
+foreign-tip refusals on those repos — they auto-restore as `restored (from
+recorded intent tip)`.
+
+The residual foreign-tip case fires only for genuinely-foreign tips (e.g. an
+operator commit made after the crash), plus the irreducible one-write window
+between a rebase completing and its tip being persisted into `advanced_tips`
+(a documented floor — the tip cannot be recorded before it exists; degrades
+to today's behavior for that instant only).
 
 The foreign-tip case means commits landed in the repo that abort cannot
 attribute to the op. Abort reports the violation, retains op-state (so the
@@ -94,15 +110,32 @@ Run `rwv --help abort` for the full clap surface.
 Per-repo restoration lines to stdout. Each line names the outcome:
 
 ```
-  <repo-path>: untouched (tip == savepoint)
+  <repo-path>: restored (from recorded intent tip)
   <repo-path>: restored (from recorded converged tip)
   <repo-path>: restored (from mid-op state)
-  <repo-path>: no savepoint (skipped)
+```
+
+Non-actionable outcomes (`untouched` and `no savepoint`) are demoted to a
+single aggregate summary line printed at the end:
+
+```
+  summary: N repo(s) skipped (no savepoint), N untouched (tip == savepoint)
 ```
 
 Foreign-tip violations are printed to stderr with the observed tip, the
-expected savepoint and converged tip, the pre-abort ref label, and
-recovery options.
+expected savepoint, the recorded converged tip (if any), the pre-abort ref
+label, and a list of blocking commits between the savepoint and the observed
+tip (`git log savepoint..tip`, capped at 5 with a count of any remainder).
+Each foreign-tip block also notes whether the tip is strictly ahead of or
+diverged from the savepoint.
+
+The recovery-options block is printed exactly once at the end (to stderr)
+when at least one repo refused, with only the operator-facing choices:
+
+- if a foreign agent advanced the branch after the crash: move the branch
+  back and re-run `rwv abort`.
+- if you want to keep the foreign tip and discard the op: move the branch
+  off the pre-abort ref and delete the savepoint manually.
 
 On failure for any repo, `abort` continues to the next repo before exiting
 non-zero.
@@ -148,9 +181,12 @@ rwv abort   # re-run; op-state was retained
 
 - *no operation in progress* — no `.rwv-op` file found. Either no sync is
   in flight, or the op already completed and was cleaned up. Nothing to abort.
-- *foreign-tip violation* — a repo's HEAD does not match the savepoint,
-  the recorded converged tip, or a VCS-native mid-op state. Another agent may
-  have advanced the branch after the op crashed. See the violation message for
+- *foreign-tip violation* — a repo's HEAD does not match the savepoint, the
+  recorded intent tip (`advanced_tips`), the recorded converged tip
+  (`converged_tips`), or a VCS-native mid-op state. Likely causes: a foreign
+  agent advanced the branch after the op crashed, or the op crashed in the
+  sub-second window between a rebase completing and its tip being persisted
+  (the documented one-write-window floor). See the violation message for
   recovery options; the pre-abort ref captures the tip for later recovery.
   Op-state is retained so you can re-run `rwv abort` after reconciling.
 - *create pre-abort ref failed* — abort could not write the pre-abort reference
