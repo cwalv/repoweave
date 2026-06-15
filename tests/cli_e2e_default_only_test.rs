@@ -1098,19 +1098,21 @@ fn fo_eli0oa_add_writes_only_inside_tempdir_sandbox() {
     assert!(
         expected_dest.exists(),
         "fo-eli0oa regression: rwv add must create the repo inside the tempdir sandbox; \
-         expected {}", expected_dest.display()
+         expected {}",
+        expected_dest.display()
     );
 
     // The repo must NOT have been created at the process CWD (the host
     // workspace/workweave).  We get the test binary's CWD and assert the repo
     // path is absent there.
-    let process_cwd = std::env::current_dir()
-        .expect("should be able to get process CWD");
+    let process_cwd = std::env::current_dir().expect("should be able to get process CWD");
     let leaked_path = process_cwd.join(repo_path);
     assert!(
         !leaked_path.exists(),
         "fo-eli0oa regression: rwv add must NOT write outside the tempdir sandbox; \
-         found {} which is outside the tempdir {}", leaked_path.display(), tmp.path().display()
+         found {} which is outside the tempdir {}",
+        leaked_path.display(),
+        tmp.path().display()
     );
 
     // Sanity: the created dir should be under the tempdir root, not under any
@@ -1118,6 +1120,8 @@ fn fo_eli0oa_add_writes_only_inside_tempdir_sandbox() {
     assert!(
         expected_dest.starts_with(tmp.path()),
         "fo-eli0oa regression: repo dir must be a descendant of the tempdir root; \
-         got {} which is not under {}", expected_dest.display(), tmp.path().display()
+         got {} which is not under {}",
+        expected_dest.display(),
+        tmp.path().display()
     );
 }
