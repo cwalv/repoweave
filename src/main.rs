@@ -492,9 +492,63 @@ fn main() -> anyhow::Result<()> {
             );
             std::process::exit(2);
         }
+        // Detect: rwv workweave <PROJECT> <WORD> where WORD is a bare token that
+        // is neither a known subcommand nor a flag. clap consumes <PROJECT> as
+        // the `[PROJECT]` positional, then sees WORD as an *unexpected argument*
+        // for the outer `workweave` command (it never reaches the subcommand
+        // recognition path), so its generic message is "unexpected argument" and
+        // it can't offer a "did you mean". Reframe it as a missing-subcommand
+        // error with a create-shaped suggestion. See rwv-b2z / the CLI UX audit.
+        //
+        // Guards (audit §5 design note):
+        //   - Only fire when a 4th token (argv[3]) is present and non-flag, so
+        //     `rwv workweave foundations` (list default) and
+        //     `rwv workweave foundations --help` (help) are untouched.
+        //   - PROJECT (argv[2]) must itself be non-flag, so `rwv workweave
+        //     --claude-hook` (no [PROJECT]) is untouched.
+        //   - Skip when WORD is a known WorkweaveAction so the real subcommand
+        //     path (create/delete/list, plus clap's `help`) keeps working.
+        if raw_args.get(1).map(|s| s.as_str()) == Some("workweave") {
+            let project = raw_args.get(2).map(|s| s.as_str());
+            let word = raw_args.get(3).map(|s| s.as_str());
+            let is_flag = |s: &str| s.starts_with('-');
+            if let (Some(project), Some(word)) = (project, word) {
+                const KNOWN_SUBCOMMANDS: &[&str] = &["create", "delete", "list", "help"];
+                if !is_flag(project) && !is_flag(word) && !KNOWN_SUBCOMMANDS.contains(&word) {
+                    eprintln!(
+                        "error: '{word}' is not a valid subcommand for 'rwv workweave {project}'\n\
+                         Did you mean:  rwv workweave {project} create {word}\n\
+                         Available subcommands: create, delete, list"
+                    );
+                    std::process::exit(2);
+                }
+            }
+        }
     }
 
-    let cli = Cli::parse();
+    // Suppress the "For more information, try '--help'" footer on clap errors
+    // when `--help`/`-h` is already present in the invocation: re-advising the
+    // flag the user just typed is noise. We can't hook this cleanly in clap 4
+    // (no stable on-error footer override in derive mode), so detect `--help`
+    // in the raw args and, on a clap error, re-render it with that one footer
+    // line filtered out. Non-help invocations keep clap's default error path.
+    let cli = match Cli::try_parse() {
+        Ok(cli) => cli,
+        Err(err) => {
+            let help_requested = std::env::args().any(|a| a == "--help" || a == "-h");
+            if help_requested && err.use_stderr() {
+                let rendered = err.render().to_string();
+                let stripped: String = rendered
+                    .lines()
+                    .filter(|line| !line.contains("For more information, try"))
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                eprintln!("{stripped}");
+                std::process::exit(err.exit_code());
+            }
+            err.exit();
+        }
+    };
 
     match cli.command {
         None => {
