@@ -1529,23 +1529,25 @@ mod tests {
         );
     }
 
-    /// Full integration: `resolve()` with a symlinked component in the walk
-    /// path must still find a workspace inside the real home and NOT escape
-    /// above it.
+    /// Integration smoke test: `resolve()` from a symlink-spelled cwd must
+    /// canonicalize and resolve to the workspace inside the real home.
     ///
     /// Layout:
     ///   /tmp/rwv-test-XXXX/
     ///     real_home/
     ///       ws/               ← workspace root (has github/ + projects/)
-    ///         github/acme/repo/   ← cwd
+    ///         github/acme/repo/   ← cwd (reached via the symlink alias)
     ///     link_home -> real_home
-    ///     decoy/              ← workspace root ABOVE home (must NOT be found)
+    ///     decoy/              ← workspace root ABOVE home
     ///
-    /// We resolve from `link_home/ws/github/acme/repo`.  The canonicalized
-    /// path walks through `real_home`, so the canonicalized ceiling fires and
-    /// the decoy above is never reached.
+    /// Note: this does NOT exercise the $HOME ceiling. `ws` is the nearest
+    /// workspace root, so it is found before the walk could ever reach the
+    /// decoy — and `resolve()` reads the real process `$HOME`, not this
+    /// tempdir, so the ceiling never applies here. The ceiling itself is
+    /// covered directly by `home_ceiling_blocks_symlinked_home`. What this
+    /// verifies: a symlink-spelled cwd resolves to the canonical `real_home/ws`.
     #[test]
-    fn resolve_ceiling_fires_on_symlinked_home_layout() {
+    fn resolve_symlinked_cwd_resolves_to_canonical_workspace() {
         let tmp = tempfile::tempdir().unwrap();
         let base = tmp.path();
 
@@ -1577,7 +1579,7 @@ mod tests {
         assert_ne!(
             found,
             decoy.canonicalize().unwrap(),
-            "ceiling must block the walk from reaching the decoy above home"
+            "nearest workspace root (ws) must win; the decoy above home is never reached"
         );
         assert_eq!(
             found,
