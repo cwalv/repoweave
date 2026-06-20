@@ -576,8 +576,7 @@ fn workweave_create_succeeds_after_rm_rf_leaves_stale_git_registration() {
 
     // ---- Simulate the failure scenario: remove the workweave directory but
     //      leave the .git/worktrees/<name> registration intact. ----
-    std::fs::remove_dir_all(&target_ww_dir)
-        .expect("rm -rf of target workweave dir should succeed");
+    std::fs::remove_dir_all(&target_ww_dir).expect("rm -rf of target workweave dir should succeed");
     assert!(
         !target_ww_dir.exists(),
         "target workweave dir should be gone after rm -rf"

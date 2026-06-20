@@ -591,7 +591,9 @@ fn fix_stale_ephemeral_branch_scoped_to_active_project() {
         .output()
         .unwrap();
     assert!(
-        !String::from_utf8_lossy(&still_there.stdout).trim().is_empty(),
+        !String::from_utf8_lossy(&still_there.stdout)
+            .trim()
+            .is_empty(),
         "project-b's stale branch must survive a project-a-scoped --fix"
     );
 
@@ -651,10 +653,9 @@ fn json_branch_discipline_scoped_to_active_project() {
         .unwrap_or_else(|e| panic!("doctor --json invalid JSON: {e}\noutput: {stdout}"));
 
     let violations = json["violations"].as_array().expect("violations is array");
-    let has_project_b_bd = violations.iter().any(|v| {
-        v["kind"] == "branch-discipline"
-            && v.to_string().contains("project-b--dead")
-    });
+    let has_project_b_bd = violations
+        .iter()
+        .any(|v| v["kind"] == "branch-discipline" && v.to_string().contains("project-b--dead"));
     assert!(
         !has_project_b_bd,
         "doctor --json (project-a active) must not include project-b branch-discipline finding; violations: {violations:?}"
@@ -669,11 +670,12 @@ fn json_branch_discipline_scoped_to_active_project() {
     let stdout_all = String::from_utf8(out_all.stdout).unwrap();
     let json_all: serde_json::Value = serde_json::from_str(&stdout_all)
         .unwrap_or_else(|e| panic!("doctor --all --json invalid JSON: {e}\noutput: {stdout_all}"));
-    let violations_all = json_all["violations"].as_array().expect("violations is array");
-    let has_project_b_bd_all = violations_all.iter().any(|v| {
-        v["kind"] == "branch-discipline"
-            && v.to_string().contains("project-b--dead")
-    });
+    let violations_all = json_all["violations"]
+        .as_array()
+        .expect("violations is array");
+    let has_project_b_bd_all = violations_all
+        .iter()
+        .any(|v| v["kind"] == "branch-discipline" && v.to_string().contains("project-b--dead"));
     assert!(
         has_project_b_bd_all,
         "doctor --all --json must include project-b branch-discipline finding; violations: {violations_all:?}"
