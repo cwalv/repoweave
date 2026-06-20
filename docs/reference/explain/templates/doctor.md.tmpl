@@ -35,12 +35,21 @@ rwv doctor [--all] [--locked] [--json] [--fix]
   drift where on-disk content matches a known blob, missing
   `rwv.lock merge=ours` replay-exclusion, legacy `role: primary`
   manifest spellings (rewritten to `role: owned` in place — preserves
-  comments and key order), and missing or mis-resolved surfacing symlinks
+  comments and key order), missing or mis-resolved surfacing symlinks
   (re-runs the framework surfacing primitive to (re)create symlinks for
   every file in the active project's `generated_files() ∪ managed_files()`
   union; a real file occupying a surfacing path is user-held and is
-  reported but never auto-clobbered). Idempotent. Mutually exclusive with
-  `--locked` and `--json`.
+  reported but never auto-clobbered), stale safe-class ephemeral branches
+  in canonical clones (branches whose `<project>--<workweave>` workweave
+  no longer exists on disk and whose tip is an ancestor of the primary
+  tracking-branch tip — no unique commits are lost; scoped to the active
+  project unless `--all`), orphaned savepoints classified as `Redundant`
+  (a `refs/rwv/pre-op/<op-id>` ref whose op-id matches no live `.rwv-op`
+  file and whose tip is already reachable from the current branch; dropping
+  the ref loses no objects), and stale worktree registrations (git worktree
+  entries pointing at directories that no longer exist, pruned via
+  `git worktree prune`). Idempotent. Mutually exclusive with `--locked`
+  and `--json`.
 
 Run `rwv --help doctor` for the full clap surface.
 

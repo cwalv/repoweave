@@ -513,6 +513,174 @@ fn ephemeral_branch_with_existing_workweave_is_clean() {
 }
 
 // ===========================================================================
+// Project-scope isolation (fo-q5pj2e): --fix without --all must NOT delete
+// stale ephemeral branches belonging to OTHER projects.
+// ===========================================================================
+
+/// Write a minimal `rwv.yaml` for `project_name` that declares a single repo
+/// at `repo_path` (manifest-relative forward-slash string).
+fn write_project_manifest(ws: &Path, project_name: &str, repo_path: &str) {
+    let project_dir = ws.join("projects").join(project_name);
+    std::fs::create_dir_all(&project_dir).unwrap();
+    let manifest = format!(
+        "repositories:\n  {repo_path}:\n    type: git\n    url: https://example.com/{repo_path}.git\n    version: main\n    role: owned\n"
+    );
+    std::fs::write(project_dir.join("rwv.yaml"), manifest).unwrap();
+}
+
+/// Set the active project by writing `.rwv-active` into the workspace root.
+fn set_active_project(ws: &Path, project_name: &str) {
+    std::fs::write(ws.join(".rwv-active"), format!("{project_name}\n")).unwrap();
+}
+
+/// `rwv doctor --fix` without `--all`, with project-a active, must NOT delete
+/// a safe-class stale ephemeral branch in a repo owned by project-b.  With
+/// `--all`, the deletion must happen normally.
+///
+/// Regression for fo-q5pj2e: before the fix, branch-discipline --fix walked
+/// the entire weave regardless of scope, deleting branches across projects.
+#[test]
+fn fix_stale_ephemeral_branch_scoped_to_active_project() {
+    let tmp = tempfile::tempdir().unwrap();
+    let ws = make_primary(tmp.path());
+
+    // Two repos: repo-a (owned by project-a) and repo-b (owned by project-b).
+    let repo_a = ws.join("github").join("acme").join("repo-a");
+    let repo_b = ws.join("github").join("acme").join("repo-b");
+    init_repo_with_commit(&repo_a);
+    init_repo_with_commit(&repo_b);
+
+    // Create a stale safe-class ephemeral branch in repo-b for project-b's
+    // dead workweave.  Safe-class: tip is an ancestor of repo-b's primary tip.
+    create_branch(&repo_b, "project-b--dead/main", "main");
+    add_commit(&repo_b, "advance.txt", "advance main");
+    // repo-b's main now strictly dominates the stale branch tip → safe class.
+
+    // Project manifests: project-a owns repo-a, project-b owns repo-b.
+    write_project_manifest(&ws, "project-a", "github/acme/repo-a");
+    write_project_manifest(&ws, "project-b", "github/acme/repo-b");
+
+    // Activate project-a.
+    set_active_project(&ws, "project-a");
+
+    // Doctor (no --fix): should NOT report the project-b branch at all under
+    // project-a scope (it belongs to a different project).
+    let report = rwv().args(["doctor"]).current_dir(&ws).output().unwrap();
+    let report_stdout = String::from_utf8_lossy(&report.stdout).into_owned();
+    assert!(
+        !report_stdout.contains("project-b--dead/main"),
+        "doctor (no --fix) with project-a active must not report project-b's branch; got:\n{report_stdout}"
+    );
+
+    // --fix with project-a active: must NOT delete the branch.
+    let fix_out = rwv()
+        .args(["doctor", "--fix"])
+        .current_dir(&ws)
+        .output()
+        .unwrap();
+    let fix_stdout = String::from_utf8_lossy(&fix_out.stdout).into_owned();
+    assert!(
+        !fix_stdout.contains("project-b--dead/main"),
+        "--fix with project-a active must not touch project-b's branch; got:\n{fix_stdout}"
+    );
+
+    // Branch still present after project-scoped --fix.
+    let still_there = git()
+        .args(["branch", "--list", "project-b--dead/main"])
+        .current_dir(&repo_b)
+        .output()
+        .unwrap();
+    assert!(
+        !String::from_utf8_lossy(&still_there.stdout).trim().is_empty(),
+        "project-b's stale branch must survive a project-a-scoped --fix"
+    );
+
+    // --all --fix: now the deletion should happen.
+    let all_fix_out = rwv()
+        .args(["doctor", "--all", "--fix"])
+        .current_dir(&ws)
+        .output()
+        .unwrap();
+    let all_fix_stdout = String::from_utf8_lossy(&all_fix_out.stdout).into_owned();
+    assert!(
+        all_fix_stdout.contains("[fixed]") && all_fix_stdout.contains("project-b--dead/main"),
+        "--all --fix must delete the branch weave-wide; got:\n{all_fix_stdout}"
+    );
+
+    // Branch gone after weave-wide --all --fix.
+    let gone = git()
+        .args(["branch", "--list", "project-b--dead/main"])
+        .current_dir(&repo_b)
+        .output()
+        .unwrap();
+    assert!(
+        String::from_utf8_lossy(&gone.stdout).trim().is_empty(),
+        "project-b's stale branch must be deleted after --all --fix"
+    );
+}
+
+/// `rwv doctor --json` without `--all`, with project-a active, must NOT include
+/// branch-discipline findings for project-b's canonical repos.  Mirrors the
+/// text-output scope check above but exercises the JSON/collect path.
+#[test]
+fn json_branch_discipline_scoped_to_active_project() {
+    let tmp = tempfile::tempdir().unwrap();
+    let ws = make_primary(tmp.path());
+
+    let repo_a = ws.join("github").join("acme").join("repo-a");
+    let repo_b = ws.join("github").join("acme").join("repo-b");
+    init_repo_with_commit(&repo_a);
+    init_repo_with_commit(&repo_b);
+
+    // Stale safe-class ephemeral branch in repo-b only.
+    create_branch(&repo_b, "project-b--dead/main", "main");
+    add_commit(&repo_b, "advance.txt", "advance main");
+
+    write_project_manifest(&ws, "project-a", "github/acme/repo-a");
+    write_project_manifest(&ws, "project-b", "github/acme/repo-b");
+    set_active_project(&ws, "project-a");
+
+    // --json without --all: no project-b finding.
+    let out = rwv()
+        .args(["doctor", "--json"])
+        .current_dir(&ws)
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    let json: serde_json::Value = serde_json::from_str(&stdout)
+        .unwrap_or_else(|e| panic!("doctor --json invalid JSON: {e}\noutput: {stdout}"));
+
+    let violations = json["violations"].as_array().expect("violations is array");
+    let has_project_b_bd = violations.iter().any(|v| {
+        v["kind"] == "branch-discipline"
+            && v.to_string().contains("project-b--dead")
+    });
+    assert!(
+        !has_project_b_bd,
+        "doctor --json (project-a active) must not include project-b branch-discipline finding; violations: {violations:?}"
+    );
+
+    // --all --json: project-b finding IS included.
+    let out_all = rwv()
+        .args(["doctor", "--all", "--json"])
+        .current_dir(&ws)
+        .output()
+        .unwrap();
+    let stdout_all = String::from_utf8(out_all.stdout).unwrap();
+    let json_all: serde_json::Value = serde_json::from_str(&stdout_all)
+        .unwrap_or_else(|e| panic!("doctor --all --json invalid JSON: {e}\noutput: {stdout_all}"));
+    let violations_all = json_all["violations"].as_array().expect("violations is array");
+    let has_project_b_bd_all = violations_all.iter().any(|v| {
+        v["kind"] == "branch-discipline"
+            && v.to_string().contains("project-b--dead")
+    });
+    assert!(
+        has_project_b_bd_all,
+        "doctor --all --json must include project-b branch-discipline finding; violations: {violations_all:?}"
+    );
+}
+
+// ===========================================================================
 // JSON output exposes the branch-discipline kind.
 // ===========================================================================
 

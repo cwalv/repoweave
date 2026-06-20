@@ -141,7 +141,7 @@ enum Commands {
         /// Zero exit iff every repo's tip matches its rwv.lock entry (scriptable precondition for rwv sync)
         #[arg(long)]
         locked: bool,
-        /// Auto-fix safely-fixable index drift and working-tree drift (see `rwv doctor` description for classification rules)
+        /// Auto-fix safely-fixable violations: index/working-tree drift, rwv.lock merge=ours, legacy role:primary manifests, surfacing symlinks, safe-class stale ephemeral branches (active-project scoped; use --all to widen), Redundant orphaned savepoints, and stale worktree registrations. See `rwv explain doctor`.
         #[arg(long, conflicts_with = "locked")]
         fix: bool,
         /// Emit violations as JSON (array-of-records with stable per-variant `kind`). See `rwv explain doctor`.

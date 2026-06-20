@@ -2037,6 +2037,82 @@ pub fn scan_state_hygiene(
     violations
 }
 
+/// Return `true` if `violation` is a [`CheckViolation::BranchDiscipline`]
+/// that belongs to `active_project`.
+///
+/// Used to scope branch-discipline findings (and the corresponding `--fix`
+/// deletions) to the active project when `scope_all` is `false`.
+///
+/// Two path shapes are handled:
+///
+/// - **Workweave checkout** (sub-kinds a: `SharedBranch`, `ForeignEphemeral`,
+///   `Detached`): `repo_path` lives under the workweave parent directory
+///   (`<ws_root>/../.workweaves/<project>--<ww_name>/`).  The project is
+///   the `<project>` prefix extracted from the workweave directory basename
+///   via [`crate::workspace::parse_weave_dir_name`].
+///
+/// - **Canonical clone** (sub-kinds b/c: `EphemeralAtPrimary`,
+///   `StaleEphemeralBranchSafe`, `StaleEphemeralBranchLive`): `repo_path`
+///   lives directly under `ws_root`.  The manifest-relative path is
+///   derived by stripping `ws_root`, normalised to forward slashes, and
+///   looked up in `known_repos`.  When `known_repos` was built from only
+///   the active project's manifest (the default when `!scope_all`), a hit
+///   means the active project owns this repo.
+///
+/// Returns `true` (include) when:
+/// * the violation is not `BranchDiscipline` (shouldn't happen in
+///   callers, but be safe),
+/// * the project matches `active_project`, or
+/// * the repo is in `known_repos`.
+///
+/// Returns `false` (exclude / out of scope) otherwise.
+fn branch_discipline_in_scope(
+    violation: &CheckViolation,
+    ws_root: &Path,
+    active_project: &str,
+    known_repos: &BTreeSet<RepoPath>,
+) -> bool {
+    let repo_path = match violation {
+        CheckViolation::BranchDiscipline { repo_path, .. } => repo_path,
+        _ => return true, // non-BD violations: caller handles them separately
+    };
+
+    // Determine the workweave parent (mirrors `workweave_parent_pub`).
+    let ww_parent = crate::workweave::workweave_parent_pub(ws_root);
+
+    if let Ok(rel_from_ww_parent) = repo_path.strip_prefix(&ww_parent) {
+        // (a) path: under .workweaves/<project>--<ww_name>/...
+        // Extract the first path component — that is the workweave dir name.
+        let ww_dir_name = rel_from_ww_parent
+            .components()
+            .next()
+            .map(|c| c.as_os_str().to_string_lossy().into_owned());
+        if let Some(dir_name) = ww_dir_name {
+            if let Some((proj, _)) = crate::workspace::parse_weave_dir_name(&dir_name) {
+                return proj == active_project;
+            }
+        }
+        // Can't parse the workweave dir name → conservative: exclude.
+        false
+    } else if let Ok(rel_from_ws) = repo_path.strip_prefix(ws_root) {
+        // (b)/(c) path: under ws_root.
+        // Convert to forward-slash string and look up in known_repos.
+        let rel_str = rel_from_ws
+            .components()
+            .map(|c| c.as_os_str().to_string_lossy())
+            .collect::<Vec<_>>()
+            .join("/");
+        if let Ok(rp) = RepoPath::new(rel_str) {
+            return known_repos.contains(&rp);
+        }
+        false
+    } else {
+        // Path is neither under the workweave parent nor under ws_root.
+        // Shouldn't happen in practice; conservative: exclude.
+        false
+    }
+}
+
 /// Apply the `rwv doctor --fix` deletion for safe-class stale ephemeral
 /// branches in canonicals.
 ///
@@ -2049,11 +2125,18 @@ pub fn scan_state_hygiene(
 /// branches are never touched: the operator must recover or delete by
 /// hand.
 ///
+/// When `active_project` is `Some(name)`, only safe-class branches that
+/// belong to that project are deleted (same scoping as `run_check` without
+/// `--all`). Pass `None` to apply the deletion weave-wide (matches the
+/// `--all` path).
+///
 /// Returns `(deleted, errors)` so the caller can render `[fixed]` lines
 /// for successful deletions and surface failures as issues.
 pub fn fix_stale_ephemeral_branches(
     ws_root: &Path,
     vcs: &dyn crate::vcs::Vcs,
+    active_project: Option<&str>,
+    known_repos: &BTreeSet<RepoPath>,
 ) -> (Vec<(PathBuf, String)>, Vec<String>) {
     use crate::vcs::RefName;
     let mut deleted = Vec::new();
@@ -2063,6 +2146,13 @@ pub fn fix_stale_ephemeral_branches(
     // the safe-class precondition. `--fix` is meant to be idempotent: a
     // second invocation finds no safe-class violations to act on.
     for violation in scan_branch_discipline(ws_root, vcs) {
+        // Project-scope filter: only act on findings that belong to the
+        // active project (or all when active_project is None).
+        if let Some(ap) = active_project {
+            if !branch_discipline_in_scope(&violation, ws_root, ap, known_repos) {
+                continue;
+            }
+        }
         let (repo_path, branch_name) = match violation {
             CheckViolation::BranchDiscipline {
                 repo_path,
@@ -3346,9 +3436,34 @@ pub fn run_check(
     // live-class (never auto-deleted). The --fix path is applied below
     // before violations are emitted so a successful delete is reported as
     // `[fixed]` instead of surfacing the corresponding warning.
+    //
+    // Scope: when scope_all is false and an active project is set, filter
+    // findings to only those belonging to the active project. This mirrors
+    // the legacy_role_primary filter above and fixes the cross-project
+    // stale-ephemeral-branch deletion described in fo-q5pj2e.
     let mut branch_discipline_violations = scan_branch_discipline(ctx.primary_path(), &git);
+    if !scope_all {
+        if let Some(ref active) = active_project_name {
+            branch_discipline_violations.retain(|v| {
+                branch_discipline_in_scope(
+                    v,
+                    ctx.primary_path(),
+                    active.as_str(),
+                    &input.known_repos,
+                )
+            });
+        }
+    }
     if fix {
-        let (deleted, fix_errs) = fix_stale_ephemeral_branches(ctx.primary_path(), &git);
+        // Pass the active-project scope into the deleter so it only removes
+        // branches that belong to the active project.
+        let fix_active = if scope_all {
+            None
+        } else {
+            active_project_name.as_ref().map(|n| n.as_str())
+        };
+        let (deleted, fix_errs) =
+            fix_stale_ephemeral_branches(ctx.primary_path(), &git, fix_active, &input.known_repos);
         for (repo_path, branch) in &deleted {
             println!(
                 "[fixed] core: deleted safe-class stale ephemeral branch `{}` in {}",
@@ -4171,9 +4286,22 @@ fn collect_doctor_violations(
     for v in scan_clone_topology(ctx.primary_path(), &input.known_repos) {
         violations.push(v);
     }
-    // Branch-discipline findings (fo-hycb06.2). Workspace-level, always run.
+    // Branch-discipline findings (fo-hycb06.2).
     // JSON channel never auto-fixes; `--fix` is reserved for `run_check`.
+    // Scope: filter to active project unless scope_all (mirrors run_check).
     for v in scan_branch_discipline(ctx.primary_path(), &git) {
+        if !scope_all {
+            if let Some(ref active) = active_project_name {
+                if !branch_discipline_in_scope(
+                    &v,
+                    ctx.primary_path(),
+                    active.as_str(),
+                    &input.known_repos,
+                ) {
+                    continue;
+                }
+            }
+        }
         violations.push(v);
     }
 
