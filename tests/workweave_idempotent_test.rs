@@ -513,6 +513,143 @@ fn workweave_recreate_force_refuses_dirty_when_marker_missing() {
     assert!(ww_dir.join(".rwv-workweave").exists());
 }
 
+/// After the workweave directory is removed (e.g. `rm -rf`) but the
+/// `.git/worktrees/<name>` registration survives in the canonical repo,
+/// `rwv workweave PROJECT create NAME` must succeed without requiring a
+/// manual `git worktree prune`.
+///
+/// Repro for the "missing but already registered worktree" failure:
+///   fatal: '<path>' is a missing but already registered worktree;
+///          use 'add -f' to override, or 'prune'/'remove' to clear
+///
+/// Safety assertion: a *live* peer workweave's worktree registration must
+/// not be touched by this create.
+#[test]
+fn workweave_create_succeeds_after_rm_rf_leaves_stale_git_registration() {
+    let tmp = tempfile::tempdir().unwrap();
+    let ws = make_workspace(tmp.path(), "web-app");
+    let weaveroot = tmp.path().join(".workweaves");
+    std::fs::create_dir_all(&weaveroot).unwrap();
+
+    // ---- Create the target workweave and a peer (live) workweave. ----
+    rwv()
+        .args(["workweave", "web-app", "create", "target"])
+        .env("RWV_WORKWEAVE_DIR", &weaveroot)
+        .current_dir(&ws)
+        .assert()
+        .success();
+
+    rwv()
+        .args(["workweave", "web-app", "create", "live-peer"])
+        .env("RWV_WORKWEAVE_DIR", &weaveroot)
+        .current_dir(&ws)
+        .assert()
+        .success();
+
+    let target_ww_dir = weaveroot.join("web-app--target");
+    let peer_ww_dir = weaveroot.join("web-app--live-peer");
+    assert!(target_ww_dir.exists(), "target workweave should exist");
+    assert!(peer_ww_dir.exists(), "peer workweave should exist");
+
+    // Confirm the stale registration we're about to simulate is currently
+    // present (i.e., git knows about this worktree).
+    let repo_abs = ws.join("github/org/repo");
+    let worktree_listing_before = common::git()
+        .args(["worktree", "list", "--porcelain"])
+        .current_dir(&repo_abs)
+        .output()
+        .expect("git worktree list should work");
+    let listing_before = String::from_utf8_lossy(&worktree_listing_before.stdout);
+    assert!(
+        listing_before.contains("web-app--target"),
+        "target worktree should appear in git worktree list before rm -rf; got:\n{listing_before}"
+    );
+    assert!(
+        listing_before.contains("web-app--live-peer"),
+        "peer worktree should appear in git worktree list before rm -rf; got:\n{listing_before}"
+    );
+
+    // Record the peer worktree's HEAD so we can assert it is unchanged later.
+    let peer_repo = peer_ww_dir.join("github/org/repo");
+    let peer_branch_before = current_branch(&peer_repo);
+    let peer_head_before = head_sha(&peer_repo);
+
+    // ---- Simulate the failure scenario: remove the workweave directory but
+    //      leave the .git/worktrees/<name> registration intact. ----
+    std::fs::remove_dir_all(&target_ww_dir)
+        .expect("rm -rf of target workweave dir should succeed");
+    assert!(
+        !target_ww_dir.exists(),
+        "target workweave dir should be gone after rm -rf"
+    );
+
+    // Confirm the stale registration is still present (git has NOT pruned it
+    // automatically — this is the broken state we need to self-heal).
+    let worktree_listing_stale = common::git()
+        .args(["worktree", "list", "--porcelain"])
+        .current_dir(&repo_abs)
+        .output()
+        .expect("git worktree list should work");
+    let listing_stale = String::from_utf8_lossy(&worktree_listing_stale.stdout);
+    assert!(
+        listing_stale.contains("web-app--target"),
+        "stale registration should still be present after rm -rf (no auto-prune); got:\n{listing_stale}"
+    );
+
+    // ---- Re-create: must succeed WITHOUT any manual git worktree prune. ----
+    rwv()
+        .args(["workweave", "web-app", "create", "target"])
+        .env("RWV_WORKWEAVE_DIR", &weaveroot)
+        .current_dir(&ws)
+        .assert()
+        .success();
+
+    assert!(
+        target_ww_dir.exists(),
+        "target workweave directory should exist after re-create"
+    );
+    assert!(
+        target_ww_dir.join("github/org/repo").exists(),
+        "worktree repo should exist inside re-created workweave"
+    );
+    assert!(
+        target_ww_dir.join(".rwv-workweave").exists(),
+        ".rwv-workweave marker should be present after re-create"
+    );
+
+    // ---- Safety: peer workweave's registration and files are untouched. ----
+    assert!(
+        peer_ww_dir.exists(),
+        "live peer workweave directory should still exist"
+    );
+    assert!(
+        peer_repo.exists(),
+        "peer worktree repo should still exist on disk"
+    );
+    assert_eq!(
+        current_branch(&peer_repo),
+        peer_branch_before,
+        "peer worktree should still be on the same ephemeral branch"
+    );
+    assert_eq!(
+        head_sha(&peer_repo),
+        peer_head_before,
+        "peer worktree HEAD should be unchanged"
+    );
+
+    // The peer registration should still appear in git worktree list.
+    let worktree_listing_after = common::git()
+        .args(["worktree", "list", "--porcelain"])
+        .current_dir(&repo_abs)
+        .output()
+        .expect("git worktree list should work");
+    let listing_after = String::from_utf8_lossy(&worktree_listing_after.stdout);
+    assert!(
+        listing_after.contains("web-app--live-peer"),
+        "live peer registration must remain in git worktree list; got:\n{listing_after}"
+    );
+}
+
 /// `workweave delete` without `--force` must refuse when the workweave's
 /// worktrees hold commits not merged into the primary repos — the
 /// ephemeral-branch cleanup would force-delete the only ref to them.

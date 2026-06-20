@@ -452,6 +452,42 @@ pub fn create_workweave(
     // so a missing-HEAD failure leaves no partial workweave directory behind.
     preflight_check_heads(source_root, project, &manifest)?;
 
+    // Pre-add prune: clear any orphaned `.git/worktrees/<name>` registrations
+    // left over from a previous (failed or manually-deleted) create attempt.
+    //
+    // The failure mode this targets: the workweave directory is fully gone (rm
+    // -rf'd, or a partial create was interrupted before the directory was
+    // written) yet the `.git/worktrees/<name>` administrative entry survives in
+    // one or more canonical repos. Without this prune, the subsequent
+    // `git worktree add` calls fail with:
+    //
+    //   fatal: '<path>' is a missing but already registered worktree;
+    //          use 'add -f' to override, or 'prune'/'remove' to clear
+    //
+    // This is idempotent: `prune_orphan_worktrees_for` only calls
+    // `git worktree remove --force` when the worktree directory EXISTS on disk
+    // (so a live workweave's files are never touched), and then always calls
+    // `git worktree prune`, which only removes administrative entries whose
+    // worktree directory is absent. A clean repo with no stale registration
+    // is a no-op.
+    //
+    // This does NOT duplicate the dir-exists path above (which either runs
+    // delete_workweave or prune_orphan_worktrees_for on the surviving dir): at
+    // this point we know workweave_dir does NOT exist (the block above handled
+    // the exists() case and either returned or deleted the directory).
+    {
+        let orphan_pairs: Vec<(PathBuf, PathBuf)> = manifest
+            .repositories
+            .keys()
+            .map(|repo_path| {
+                let repo_abs = source_root.join(repo_path.as_path());
+                let worktree_dest = workweave_dir.join(repo_path.as_path());
+                (repo_abs, worktree_dest)
+            })
+            .collect();
+        prune_orphan_worktrees_for(&orphan_pairs);
+    }
+
     std::fs::create_dir_all(&workweave_dir)?;
 
     // B7: Rollback guard — automatically undoes partial state on any failure
