@@ -12,6 +12,14 @@ CWD's `rwv.lock` from the now-merged manifest tips and commits it. Per-repo
 conflicts are reported with non-zero exit; already-converged repos are
 no-ops, so re-runs are cheap.
 
+`role: reference` repos materialized as symlinks (the default; see
+[`rwv workweave`](workweave.md)) are **excluded from the sync graph**: they
+are read-only aliases of the single canonical clone, identical across
+workweaves, so no phase savepoints, advances, or mutates them — the shared
+canonical store is never touched through the symlink. They stay pinned in
+`rwv.lock` for reproducibility. A `reference` repo created with
+`--worktree-references` is a real worktree and syncs normally.
+
 The wire shape is engineered for agent consumption: each per-repo outcome
 is a tagged record whose `kind` tells the agent what to do next (retry,
 abort, escalate to a human). Failures embed a `failure` sub-record with its

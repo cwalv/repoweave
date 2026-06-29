@@ -36,6 +36,17 @@ After `rwv sync-to <target> --strategy=rebase`:
 - If target had unique commits since CWD's fork point, those form the BASE of
   the resulting linear history, with CWD's contributions ON TOP.
 
+### Reference repos
+
+`role: reference` repos materialized as symlinks (the default; see
+[`rwv workweave`](workweave.md)) are **excluded from every step**: they are
+read-only aliases of the single canonical clone, so no savepoint, rebase,
+FF-advance, or abort touches the shared canonical store through the symlink,
+on either CWD or target. With `--retire`, the merged-check and dirty-check
+skip them, and the workweave's reference symlinks are unlinked (never the
+canonical) on delete. They remain pinned in `rwv.lock`. A `reference` repo
+created with `--worktree-references` is a real worktree and is synced normally.
+
 ### Strategy semantics
 
 - `--strategy=ff` — step 1 is a no-op; CWD must already be strictly ahead of
