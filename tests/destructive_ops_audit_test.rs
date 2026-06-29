@@ -77,6 +77,18 @@ const ALLOWLIST: &[Allowed] = &[
             refusals unless --force, which lists what is lost first.",
     },
     Allowed {
+        file: "workweave.rs",
+        pattern: "remove_file",
+        count: 1,
+        justification: "delete_workweave: unlinks a reference-repo SYMLINK \
+            (classify_checkout == ReferenceAlias) before any git call. \
+            remove_file removes the link itself, never following it, so the \
+            shared canonical store the symlink aliases is never touched — \
+            making explicit the safety the old code only got accidentally \
+            (is_lone_canonical + remove_dir_all not following symlinks). No \
+            --force needed: removing a read-only alias destroys no work.",
+    },
+    Allowed {
         file: "add_remove.rs",
         pattern: "remove_dir_all",
         count: 1,

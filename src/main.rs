@@ -389,6 +389,14 @@ enum WorkweaveAction {
         /// explicitly.
         #[arg(long)]
         capture_dirty: bool,
+        /// Cut a real `git worktree` for `role: reference` repos instead of
+        /// the default symlink to the canonical weave-root clone. Restores
+        /// the legacy behavior (per-workweave reference refs) at the cost of
+        /// duplicating each reference repo's full working tree into this
+        /// workweave. By default, reference repos are symlinked — zero
+        /// working-tree duplication, byte-identical across workweaves.
+        #[arg(long)]
+        worktree_references: bool,
     },
     /// Delete a workweave
     Delete {
@@ -683,6 +691,7 @@ fn main() -> anyhow::Result<()> {
                         force,
                         from,
                         capture_dirty,
+                        worktree_references,
                     }) => {
                         let source_root = match from.as_deref() {
                             None => ctx.active_path().to_path_buf(),
@@ -703,6 +712,7 @@ fn main() -> anyhow::Result<()> {
                             &WorkweaveName::new(name),
                             force,
                             capture_dirty,
+                            worktree_references,
                         )?;
                         if hook_mode {
                             println!("{}", workweave_path.display());

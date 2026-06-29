@@ -32,9 +32,16 @@ against the primary weave root. The source must be a workspace whose
 
 ### What create writes
 
-1. One `git worktree` per manifest repo (plus the project repo), at
-   `{workweave}/{repo-path}/`, each on a fresh ephemeral branch named
-   `{project}--{name}/{source-branch}`.
+1. One `git worktree` per `owned`/`fork`/`dependency` manifest repo (plus the
+   project repo), at `{workweave}/{repo-path}/`, each on a fresh ephemeral
+   branch named `{project}--{name}/{source-branch}`. `role: reference` repos
+   are instead **symlinked** to the canonical weave-root clone
+   (`<primary_root>/{repo-path}`): read-only study material wants the same
+   lock-pinned ref in every workweave, so a worktree's per-workweave branch
+   isolation is moot while its full working-tree duplication cost is not. The
+   symlink targets PRIMARY's canonical (never the source workspace), so a
+   nested workweave never chains symlink→symlink. `--worktree-references`
+   restores the worktree behavior for reference repos.
 2. `workweave:` artifacts from `rwv.yaml` (`copy:` entries deep-copied;
    `link:` entries are absolute symlinks into the source root).
 3. A `.rwv-workweave` marker recording `{primary, project, parent}`.
@@ -204,6 +211,9 @@ changes. Any dirty path blocks retire.
 On success, retire calls `delete_workweave` with `force: false`:
 
 - Every manifest-repo worktree is removed (`git worktree remove`).
+- Each `role: reference` symlink is unlinked (`remove_file`, never followed),
+  so the shared canonical clone it aliases is left untouched — no worktree
+  remove, no branch delete, no mutation of that store.
 - Stale `.git/worktrees/` entries are pruned.
 - All ephemeral branches (`{project}--{name}/*`) are force-deleted.
 - The project-repo worktree and its ephemeral branches are removed.

@@ -182,9 +182,16 @@ repositories:\n  \
 
     let ww_name = repoweave::manifest::WorkweaveName::new("agent-1");
     let ww_project = repoweave::manifest::ProjectName::new("web-app");
-    let ww_dir =
-        repoweave::workweave::create_workweave(&ws, &ws, &ww_project, &ww_name, false, false)
-            .expect("create_workweave should succeed");
+    let ww_dir = repoweave::workweave::create_workweave(
+        &ws,
+        &ws,
+        &ww_project,
+        &ww_name,
+        false,
+        false,
+        false,
+    )
+    .expect("create_workweave should succeed");
 
     // ------------------------------------------------------------------
     // 6. Verify workweave directory exists and repos are git worktrees

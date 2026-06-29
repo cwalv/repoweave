@@ -209,13 +209,14 @@ Convention audit. Reports orphaned clones, dangling references, missing roles, s
 
 ### `rwv workweave <project> create <name>`
 
-Create a workweave: worktrees on ephemeral branches for each repo, generated ecosystem files, per-workweave tool state.
+Create a workweave: worktrees on ephemeral branches for each `owned`/`fork`/`dependency` repo, symlinks to the canonical weave-root clone for each `role: reference` repo, generated ecosystem files, per-workweave tool state.
 
 | Flag | Effect |
 |---|---|
 | `--from <source>` | Fork from a specific source (default: CWD's active workspace). Accepts `primary`, an absolute or relative path, or omitted to fork from CWD's active workspace |
 | `--force` | Destroy an existing workweave at this path before recreating. Without this flag, re-invoking `create` against an existing workweave is the idempotent path. Refuses if the existing workweave has uncommitted changes |
 | `--capture-dirty` | Allow creation when the source project directory has uncommitted changes. The dirty state is captured into the new workweave's project worktree |
+| `--worktree-references` | Cut a real `git worktree` for `role: reference` repos instead of the default symlink to the canonical weave-root clone. Restores the legacy behavior (per-workweave reference refs) at the cost of duplicating each reference repo's working tree into the workweave |
 
 Workweaves live at `<parent>/.workweaves/<project>--<name>/`.
 

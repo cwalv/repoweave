@@ -7,13 +7,69 @@
 //! and `.rwv-active` file so it is fully self-describing.
 
 use crate::git::GitVcs;
-use crate::manifest::{Manifest, ProjectName, WorkweaveName};
+use crate::manifest::{Manifest, ProjectName, Role, WorkweaveName};
 use crate::vcs::{vcs_for, RefName, Vcs};
 use crate::workspace::{
     parse_weave_dir_name, read_active_project, set_active_project, weave_dir_name, WorkweaveMarker,
 };
 use anyhow::{anyhow, bail, Context};
 use std::path::{Path, PathBuf};
+
+/// How a repo is materialized inside a workweave.
+///
+/// This is the single, self-describing on-disk authority for "what kind of
+/// checkout is this?" — every lifecycle command (delete, dirty/diverged
+/// checks, idempotent reuse, orphan prune, foreign-worktree refusal) and the
+/// downstream `doctor` (check.rs) and `sync` (sync.rs) consumers branch on
+/// this enum rather than re-deriving the symlink trick or, critically,
+/// keying on the manifest `Role`.
+///
+/// The distinction is load-bearing once the `--worktree-references` escape
+/// hatch exists: a `reference` repo created with that flag has
+/// `role == Role::Reference` but is a *real worktree*, so it must flow
+/// through every normal worktree code path. Keying any downstream skip on
+/// `role == Reference` would silently break the escape hatch. Keying on
+/// [`CheckoutKind`] instead means the escape hatch needs zero downstream
+/// plumbing: a worktree'd reference is simply a [`CheckoutKind::Worktree`].
+///
+/// `role` is consulted at exactly one place — *creation*
+/// ([`create_workweave`]) — to pick the default materialization. Every other
+/// command routes on this enum.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CheckoutKind {
+    /// A real `git worktree` (or the project-repo copy): an independent
+    /// working tree on its own ephemeral branch. Covers `owned`/`fork`/
+    /// `dependency` repos and any `reference` repo created with
+    /// `--worktree-references`. Flows through every existing code path.
+    Worktree,
+    /// A symlink aliasing the single canonical weave-root clone of a
+    /// `reference` repo. Shared, read-only, and identical across workweaves:
+    /// it has no per-workweave branch, no per-workweave dirty state, and must
+    /// never be operated on as a worktree (no `git worktree remove`, no
+    /// branch delete, no savepoint/sync). Deleting a workweave unlinks it
+    /// with `remove_file`, never touching the canonical store.
+    ReferenceAlias,
+}
+
+/// Classify a workweave checkout path by its on-disk materialization.
+///
+/// Returns [`CheckoutKind::ReferenceAlias`] iff `path` is itself a symlink
+/// (checked with [`Path::is_symlink`], which does *not* follow the link), and
+/// [`CheckoutKind::Worktree`] otherwise. This is the single chokepoint for
+/// "is this a shared read-only alias"; downstream code must consult this
+/// rather than calling `is_symlink()` ad hoc, so the meaning of the symlink
+/// lives in exactly one place.
+///
+/// A non-existent path classifies as [`CheckoutKind::Worktree`]: a path that
+/// is not a symlink is, by construction, not a reference alias, and callers
+/// that care about existence check it separately.
+pub fn classify_checkout(path: &Path) -> CheckoutKind {
+    if path.is_symlink() {
+        CheckoutKind::ReferenceAlias
+    } else {
+        CheckoutKind::Worktree
+    }
+}
 
 /// Determine where workweave directories live.
 ///
@@ -141,6 +197,36 @@ pub fn prune_orphan_worktrees_for(pairs: &[(PathBuf, PathBuf)]) {
             );
         }
     }
+}
+
+/// Build the `(repo_abs, worktree_dest)` pairs that
+/// [`prune_orphan_worktrees_for`] operates on, excluding reference aliases.
+///
+/// `repo_abs = source_root/<repo_path>`, `worktree_dest =
+/// workweave_dir/<repo_path>`. A checkout that materialized as a
+/// [`CheckoutKind::ReferenceAlias`] (a symlink to the canonical store) is
+/// excluded: it has no `.git/worktrees/` registration to prune, and feeding
+/// its symlink path to `git worktree remove` would operate on the shared
+/// canonical store through the link. Reference aliases are classified by
+/// their on-disk `worktree_dest`, so a reference repo created with
+/// `--worktree-references` (a real worktree) is correctly retained.
+fn orphan_prune_pairs(
+    manifest: &Manifest,
+    source_root: &Path,
+    workweave_dir: &Path,
+) -> Vec<(PathBuf, PathBuf)> {
+    manifest
+        .repositories
+        .keys()
+        .filter_map(|repo_path| {
+            let worktree_dest = workweave_dir.join(repo_path.as_path());
+            if classify_checkout(&worktree_dest) == CheckoutKind::ReferenceAlias {
+                return None;
+            }
+            let repo_abs = source_root.join(repo_path.as_path());
+            Some((repo_abs, worktree_dest))
+        })
+        .collect()
 }
 
 /// Scope guard that rolls back a partial workweave create on drop.
@@ -306,6 +392,18 @@ pub fn preflight_check_heads(
 /// - `true`: capture the dirty state into the workweave (legacy behavior).
 ///   The workweave's project worktree will reflect the uncommitted edits.
 ///
+/// `worktree_references` controls how `role: reference` repos are
+/// materialized — the *only* place `role` influences materialization:
+/// - `false` (default): materialize each reference repo as a **symlink** to
+///   the canonical weave-root clone (`<primary_root>/<repo_path>`). No
+///   worktree is cut and nothing is recorded for rollback (removing the
+///   workweave dir unlinks the symlink without following it). Every
+///   downstream command sees a [`CheckoutKind::ReferenceAlias`] and skips
+///   worktree/branch/dirty/sync semantics for it.
+/// - `true` (escape hatch, `--worktree-references`): cut a real worktree for
+///   reference repos too (the legacy behavior). Such a repo is a
+///   [`CheckoutKind::Worktree`] and flows through every normal code path.
+///
 /// Returns the absolute path of the created workweave directory.
 pub fn create_workweave(
     primary_root: &Path,
@@ -314,6 +412,7 @@ pub fn create_workweave(
     name: &WorkweaveName,
     force: bool,
     capture_dirty: bool,
+    worktree_references: bool,
 ) -> anyhow::Result<PathBuf> {
     let manifest = load_manifest(source_root, project)?;
     let workweave_dir = workweave_path_for(primary_root, project, name);
@@ -379,16 +478,11 @@ pub fn create_workweave(
                 // entries in the primary repos even though the workweave
                 // directory survived (or had its marker stripped).
                 // Build (repo_abs, worktree_dest) pairs from the
-                // manifest and prune before the raw remove.
-                let orphan_pairs: Vec<(PathBuf, PathBuf)> = manifest
-                    .repositories
-                    .keys()
-                    .map(|repo_path| {
-                        let repo_abs = source_root.join(repo_path.as_path());
-                        let worktree_dest = workweave_dir.join(repo_path.as_path());
-                        (repo_abs, worktree_dest)
-                    })
-                    .collect();
+                // manifest and prune before the raw remove. Reference
+                // aliases (symlinks) are excluded — they hold no worktree
+                // registration and must not be `git worktree remove`d
+                // through the link into the canonical store.
+                let orphan_pairs = orphan_prune_pairs(&manifest, source_root, &workweave_dir);
                 prune_orphan_worktrees_for(&orphan_pairs);
                 std::fs::remove_dir_all(&workweave_dir)?;
             }
@@ -475,11 +569,19 @@ pub fn create_workweave(
     // delete_workweave or prune_orphan_worktrees_for on the surviving dir): at
     // this point we know workweave_dir does NOT exist (the block above handled
     // the exists() case and either returned or deleted the directory).
+    //
+    // Reference repos that this create will materialize as symlinks (the
+    // default) are excluded: they never had a worktree registration, so
+    // pruning `source_root/<repo_path>` for them is meaningless and could run
+    // `git worktree remove` against the canonical store. The workweave dir
+    // does not exist yet, so on-disk classification can't see the intent;
+    // here — uniquely in the creation path — we key on the to-be-materialized
+    // kind, mirroring the materialization decision in the create loop below.
     {
         let orphan_pairs: Vec<(PathBuf, PathBuf)> = manifest
-            .repositories
-            .keys()
-            .map(|repo_path| {
+            .iter_entries()
+            .filter(|(_, entry)| entry.role != Role::Reference || worktree_references)
+            .map(|(repo_path, _)| {
                 let repo_abs = source_root.join(repo_path.as_path());
                 let worktree_dest = workweave_dir.join(repo_path.as_path());
                 (repo_abs, worktree_dest)
@@ -498,14 +600,46 @@ pub fn create_workweave(
 
     let mut errors: Vec<String> = Vec::new();
 
-    // Create worktrees for each repo in the manifest. Forks come from
-    // source_root so peer workweaves rooted in another workweave's HEADs
-    // diverge cleanly from that parent rather than from primary.
+    // Materialize each repo in the manifest. Forks come from source_root so
+    // peer workweaves rooted in another workweave's HEADs diverge cleanly from
+    // that parent rather than from primary.
+    //
+    // `role: reference` repos materialize as a SYMLINK to the canonical
+    // weave-root clone (`primary_root/<repo_path>`) by default — they are
+    // read-only, lock-pinned, and identical across workweaves, so a worktree's
+    // independent-branch value is moot while its full working-tree duplication
+    // cost is paid per workweave. The escape hatch (`worktree_references`)
+    // restores the worktree behavior. Everything else (owned/fork/dependency)
+    // always cuts a worktree.
     for (repo_path, entry) in manifest.iter_entries() {
+        // The single place `role` decides materialization: a reference repo,
+        // unless the escape hatch is set, becomes a symlink alias. Downstream
+        // commands key on the on-disk CheckoutKind, never on role.
+        let materialize_as_alias = entry.role == Role::Reference && !worktree_references;
+
         let vcs = vcs_for(entry.vcs_type);
         let repo_abs = source_root.join(repo_path.as_path());
+        let worktree_dest = workweave_dir.join(repo_path.as_path());
 
         let result = (|| -> anyhow::Result<()> {
+            // Ensure parent directories exist (both branches need this).
+            if let Some(parent_dir) = worktree_dest.parent() {
+                std::fs::create_dir_all(parent_dir)?;
+            }
+
+            if materialize_as_alias {
+                // Symlink to PRIMARY's canonical clone, not source_root: a
+                // nested workweave forked from another workweave must point at
+                // the one canonical store, never at the parent workweave's own
+                // symlink (which would form a symlink→symlink chain that breaks
+                // if the parent is deleted). See
+                // docs/repoweave/reference-symlink-materialization.md §1.
+                let canonical = primary_root.join(repo_path.as_path());
+                #[cfg(unix)]
+                std::os::unix::fs::symlink(&canonical, &worktree_dest)?;
+                return Ok(());
+            }
+
             // Get the current HEAD revision as the start point.
             let head = vcs.head_revision(&repo_abs)?;
 
@@ -519,22 +653,22 @@ pub fn create_workweave(
 
             let ephemeral_branch = ephemeral_branch_name(project, name, &branch_segment);
 
-            let worktree_dest = workweave_dir.join(repo_path.as_path());
-
-            // Ensure parent directories exist.
-            if let Some(parent_dir) = worktree_dest.parent() {
-                std::fs::create_dir_all(parent_dir)?;
-            }
-
             vcs.create_worktree(&repo_abs, &worktree_dest, &ephemeral_branch, &head)?;
             Ok(())
         })();
 
         match result {
             Ok(()) => {
-                // Record the successful registration so rollback can prune it.
-                let worktree_dest = workweave_dir.join(repo_path.as_path());
-                rollback.record_worktree(repo_abs, worktree_dest);
+                // A symlinked reference alias is NOT recorded for rollback:
+                // rollback removes the workweave dir (which unlinks the
+                // symlink without following it) and prunes worktree
+                // registrations — a symlink has neither a worktree
+                // registration nor any canonical-store state to undo, and
+                // `prune_orphan_worktrees_for` would wrongly run
+                // `git worktree remove` against the canonical through it.
+                if !materialize_as_alias {
+                    rollback.record_worktree(repo_abs, worktree_dest);
+                }
             }
             Err(e) => {
                 let msg = format!("{}: {e}", repo_path.as_str());
@@ -757,6 +891,14 @@ fn reuse_existing_workweave(
     for (repo_path, entry) in manifest.iter_entries() {
         let vcs = vcs_for(entry.vcs_type);
         let worktree_dest = workweave_dir.join(repo_path.as_path());
+        // A reference alias is a shared symlink with no per-workweave state:
+        // it has no uncommitted changes and no HEAD that can "diverge from
+        // source" (it IS the source). Checking it through the symlink would
+        // report a dirty canonical store as this workweave's modification and
+        // refuse the idempotent reuse path. Skip it.
+        if classify_checkout(&worktree_dest) == CheckoutKind::ReferenceAlias {
+            continue;
+        }
         if !worktree_dest.exists() {
             continue;
         }
@@ -822,6 +964,13 @@ pub fn collect_dirty_paths(
     // Manifest-repo worktrees.
     for (repo_path, entry) in manifest.iter_entries() {
         let wt = workweave_dir.join(repo_path.as_path());
+        // A reference alias is a shared symlink onto the canonical store and
+        // has no per-workweave dirty state. A dirty canonical must not be
+        // attributed to this workweave (it would block delete/replace of
+        // every workweave sharing the reference). Skip it.
+        if classify_checkout(&wt) == CheckoutKind::ReferenceAlias {
+            continue;
+        }
         if !wt.exists() {
             continue;
         }
@@ -952,6 +1101,14 @@ fn collect_diverged_paths(
 
     for (repo_path, _entry) in manifest.iter_entries() {
         let wt = workweave_dir.join(repo_path.as_path());
+        // A reference alias shares the canonical's branch (e.g. `main`); it
+        // has no per-workweave commits that could be "unmerged" and force-
+        // deleted on retire. Resolving it through the symlink would compare
+        // the canonical's HEAD against the baselines and could spuriously
+        // flag it. Skip it.
+        if classify_checkout(&wt) == CheckoutKind::ReferenceAlias {
+            continue;
+        }
         check(&wt, repo_path.as_path(), repo_path.as_str().to_string());
     }
 
@@ -1109,6 +1266,13 @@ fn refuse_if_checkouts_host_foreign_worktrees(
     // Manifest repos.
     for (repo_path, _entry) in manifest.iter_entries() {
         let wt = workweave_dir.join(repo_path.as_path());
+        // A reference alias resolves THROUGH the symlink to the canonical
+        // store, whose own (legitimate) worktrees in other workweaves would
+        // then look "foreign" and wrongly BLOCK this delete. The alias is not
+        // a canonical store this workweave owns — skip it.
+        if classify_checkout(&wt) == CheckoutKind::ReferenceAlias {
+            continue;
+        }
         check(&wt, repo_path.as_str().to_string());
     }
 
@@ -1208,6 +1372,26 @@ pub fn delete_workweave(
     for (repo_path, entry) in manifest.iter_entries() {
         let vcs = vcs_for(entry.vcs_type);
         let worktree_path = workweave_dir.join(repo_path.as_path());
+
+        // A reference alias is a symlink onto the shared canonical store.
+        // Unlink it explicitly with `remove_file` (which removes the link,
+        // never follows it) BEFORE any git/worktree/branch call. Today this
+        // is only ACCIDENTALLY safe (the `is_lone_canonical` branch happens
+        // to `continue`, and `remove_dir_all` at the end unlinks symlinks
+        // rather than following them); making it explicit guarantees no
+        // `git worktree remove` / `delete_branch` ever runs against the
+        // canonical store through the link. The final dir-removal would also
+        // unlink it, but unlinking here keeps the canonical untouched even if
+        // a later refactor changes that.
+        if classify_checkout(&worktree_path) == CheckoutKind::ReferenceAlias {
+            if let Err(e) = std::fs::remove_file(&worktree_path) {
+                let msg = format!("{}: removing reference symlink: {e}", repo_path.as_str());
+                eprintln!("rwv workweave delete: error: {msg}");
+                errors.push(msg);
+            }
+            continue;
+        }
+
         // Resolve the worktree's ACTUAL canonical store on disk rather than
         // assuming `ws_root.join(repo_path)` is the parent. Under
         // tier-0-correct topology these match; under inverted topology
@@ -1502,6 +1686,7 @@ pub fn handle_claude_hook() -> anyhow::Result<()> {
                 source_root,
                 &project,
                 &WorkweaveName::new(&name),
+                false,
                 false,
                 false,
             )?;

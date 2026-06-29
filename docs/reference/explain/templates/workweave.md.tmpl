@@ -3,9 +3,13 @@
 ## Purpose
 
 Create, delete, or list workweaves for a project. A workweave is a parallel
-working directory containing `git worktree` checkouts for every repo in the
-project's manifest (including the project repo itself), on ephemeral branches
-named `{project}--{name}/{source-branch}`. Each workweave is fully
+working directory that materializes every repo in the project's manifest
+(including the project repo itself). `owned`/`fork`/`dependency` repos become
+`git worktree` checkouts on ephemeral branches named
+`{project}--{name}/{source-branch}`. `reference` repos — read-only study
+material — are instead **symlinked** to the single canonical weave-root clone
+(`<primary_root>/<repo-path>`): zero working-tree duplication, byte-identical
+across workweaves, and no per-workweave branch. Each workweave is fully
 self-describing: it carries `.rwv-workweave` (recording the primary weave,
 project, and parent workspace) and `.rwv-active` (the active project).
 
@@ -25,7 +29,7 @@ Create a new workweave. Forks from CWD's active workspace by default; use
 `--from` to specify a different source.
 
 ```
-rwv workweave <project> create <name> [--from <source>] [--force] [--capture-dirty]
+rwv workweave <project> create <name> [--from <source>] [--force] [--capture-dirty] [--worktree-references]
 ```
 
 - `--from <source>` — workspace to fork from. Accepts `primary`, an absolute
@@ -41,6 +45,15 @@ rwv workweave <project> create <name> [--from <source>] [--force] [--capture-dir
   project worktree. Without this flag, `create` refuses and names the dirty
   files. Default behavior is recommended; use `--capture-dirty` only when you
   intentionally want to continue in-flight edits inside the workweave.
+- `--worktree-references` — cut a real `git worktree` for `role: reference`
+  repos instead of the default symlink to the canonical weave-root clone. This
+  restores the legacy behavior (per-workweave reference refs) at the cost of
+  duplicating each reference repo's full working tree into this workweave. By
+  default, reference repos are symlinked — zero working-tree duplication, and
+  a worktree's per-workweave branch isolation is moot for read-only material.
+  This flag affects only this `create`; it records nothing, so every
+  downstream command keys on the resulting on-disk shape (a worktree'd
+  reference flows through every normal worktree path).
 
 **Re-invocation without `--force`** (idempotent path): if the workweave already
 exists and is clean, `create` validates the `.rwv-workweave` marker (same
@@ -49,8 +62,11 @@ between invocations (`.runtime/`, `.claude/`, etc.) is preserved. Re-invocation
 is the Gas City rig's standard "ensure workweave exists" path.
 
 **What `create` writes:**
-1. One `git worktree` per manifest repo (plus the project repo) at
-   `{workweave}/{repo-path}/`, on a fresh ephemeral branch.
+1. One `git worktree` per `owned`/`fork`/`dependency` manifest repo (plus the
+   project repo) at `{workweave}/{repo-path}/`, on a fresh ephemeral branch.
+   `role: reference` repos are instead **symlinked** to the canonical
+   weave-root clone (`<primary_root>/{repo-path}`) — no worktree, no ephemeral
+   branch (override with `--worktree-references`).
 2. `workweave:` artifacts from `rwv.yaml` — `copy:` entries are deep-copied;
    `link:` entries are absolute symlinks pointing at the source root.
 3. `.rwv-workweave` marker recording `{primary, project, parent}`. `parent`
@@ -78,6 +94,9 @@ it consents to destroying whatever is in the workweave. The operator must have
 reviewed the contents (or not care). After the operator confirms intent,
 `delete --force` removes worktrees, prunes stale `.git/worktrees/` entries,
 force-deletes all ephemeral branches, and removes the workweave directory.
+Reference symlinks are simply unlinked (never followed), so the shared
+canonical clone they alias is left untouched — delete never mutates it,
+deletes no branch in it, and is safe even when that clone is dirty.
 
 ### `rwv workweave <project> list`
 
@@ -86,7 +105,7 @@ List existing workweave names for the project. One name per line.
 ## Invocation
 
 ```
-rwv workweave <project> create <name> [--from <source>] [--force] [--capture-dirty]
+rwv workweave <project> create <name> [--from <source>] [--force] [--capture-dirty] [--worktree-references]
 rwv workweave <project> delete <name> [--force]
 rwv workweave <project> list
 ```
