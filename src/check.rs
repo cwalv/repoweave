@@ -382,6 +382,14 @@ pub enum CloneTopologyKind {
     /// case (fo-a0spgj `tmuxcc-broker`): the canonical store has migrated
     /// into one workweave and other workweaves' checkouts link into *it*,
     /// not into `<weave>/<repo_path>`.
+    ///
+    /// Reference-alias carve-out: a symlinked `reference` checkout (a
+    /// `CheckoutKind::ReferenceAlias`, i.e. the workweave path is itself a
+    /// symlink to the canonical store) is *not* a standalone store — it is the
+    /// single canonical store viewed through a symlink, which upholds the
+    /// single-canonical-store invariant by identity. The scan excludes it
+    /// before this check. A *real* standalone store inside a workweave is a
+    /// real directory (not a symlink) and still fires this finding.
     StandaloneInWorkweave {
         /// Absolute path of the standalone canonical store under
         /// `.workweaves/`.
@@ -455,6 +463,15 @@ pub enum BranchDisciplineKind {
     /// sub-kind exercises the bare-main-in-workweave case from the bead's
     /// acceptance criteria: the violation must flag from creation, before
     /// any commit lands. Report-only.
+    ///
+    /// Reference-alias carve-out: a symlinked `reference` checkout (a
+    /// `CheckoutKind::ReferenceAlias`) legitimately shares the canonical
+    /// store's non-ephemeral branch (e.g. `main`) — it has no per-workweave
+    /// ephemeral branch by design, because it is the canonical store viewed
+    /// through a symlink. The I3 branch-discipline scan skips such aliases, so
+    /// they never fire this finding. A `reference` repo created with
+    /// `--worktree-references` is a real worktree (`CheckoutKind::Worktree`) on
+    /// its own ephemeral branch and is checked normally.
     SharedBranch {
         /// The branch currently checked out (e.g. `main`).
         actual_branch: String,
@@ -1440,6 +1457,7 @@ pub fn scan_provenance(workspace_dir: &Path, projects: &[Project]) -> Vec<CheckV
 pub fn scan_clone_topology(ws_root: &Path, repo_paths: &BTreeSet<RepoPath>) -> Vec<CheckViolation> {
     use crate::git::GitVcs;
     use crate::vcs::Vcs;
+    use crate::workweave::{classify_checkout, CheckoutKind};
 
     let mut violations = Vec::new();
     if repo_paths.is_empty() {
@@ -1497,6 +1515,25 @@ pub fn scan_clone_topology(ws_root: &Path, repo_paths: &BTreeSet<RepoPath>) -> V
         let mut representative_ww_store: Option<PathBuf> = None;
         for (_ww_name, ww_dir) in &workweaves {
             let ww_checkout = ww_dir.join(repo.as_path());
+
+            // A symlinked reference checkout ([`CheckoutKind::ReferenceAlias`])
+            // is the canonical store viewed through a symlink, not a second
+            // store: it *upholds* I1 by identity. Skip it before any topology
+            // sub-check.
+            //
+            // `git rev-parse --git-common-dir` follows the symlink and resolves
+            // to `<weave>/<repo_path>/.git`, so `ww_self_store_canon` (also
+            // resolved through the link) would equal it and fire a false
+            // `StandaloneInWorkweave` (the fo-a0spgj inversion). Excluding the
+            // alias here — and only the alias — leaves genuine standalone
+            // detection intact: a *real* standalone store inside a workweave is
+            // a real directory, not a symlink, so it classifies as
+            // [`CheckoutKind::Worktree`] and still flows through the
+            // `StandaloneInWorkweave` check below.
+            if classify_checkout(&ww_checkout) == CheckoutKind::ReferenceAlias {
+                continue;
+            }
+
             let ww_store_raw = match git.resolve_canonical_store(&ww_checkout) {
                 Some(p) => p,
                 None => continue, // not a workspace there; skip silently
@@ -1694,11 +1731,30 @@ fn scan_workweave_repo_branches(
     workweave_name: &str,
     out: &mut Vec<CheckViolation>,
 ) {
+    use crate::workweave::{classify_checkout, CheckoutKind};
+
     let expected_prefix = format!("{project_name}--{workweave_name}");
     let registries = crate::registry::builtin_registries();
     let repos = crate::workspace::scan_repos_on_disk(workweave_dir, &registries, vcs);
     for repo in repos {
         let abs = workweave_dir.join(repo.as_path());
+
+        // `scan_repos_on_disk` discovers entries with `is_dir()`, which
+        // *follows* symlinks — so a symlinked reference checkout
+        // ([`CheckoutKind::ReferenceAlias`]) is surfaced as a repo. It is the
+        // canonical store viewed through a symlink, sitting on the canonical's
+        // shared non-ephemeral branch (e.g. `main`) by design; the I3
+        // branch-discipline scan would mis-read that as a `SharedBranch`
+        // violation. Skip the alias before the branch check.
+        //
+        // This excludes *only* the symlink: a `reference` repo materialized via
+        // `--worktree-references` is a real worktree on its own ephemeral
+        // branch — it classifies as [`CheckoutKind::Worktree`] and flows
+        // through the I3 check unchanged.
+        if classify_checkout(&abs) == CheckoutKind::ReferenceAlias {
+            continue;
+        }
+
         match read_current_branch(vcs, &abs) {
             Ok(Some(branch)) => {
                 let bare = branch.as_str();

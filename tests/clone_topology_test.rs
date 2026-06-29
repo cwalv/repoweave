@@ -360,3 +360,145 @@ fn lone_canonical_with_no_workweaves_is_clean() {
         violations
     );
 }
+
+// ===========================================================================
+// Reference-alias carve-out (fo-5mhtf3.2)
+//
+// A `reference` repo is materialized as a *symlink* to the single canonical
+// weave-root clone, not a worktree. `git rev-parse --git-common-dir` follows
+// the symlink and resolves to `<weave>/<repo>/.git`, so the workweave
+// checkout's self-store equals its resolved store — the exact shape that
+// triggers `standalone-in-workweave`. The scan must exclude the symlink
+// (a `CheckoutKind::ReferenceAlias`) *before* that check, because the symlink
+// IS the canonical store viewed through a link — it upholds the
+// single-canonical-store invariant by identity rather than violating it.
+//
+// The adversarial requirement: the carve-out must distinguish a symlink-alias
+// (valid) from a *real* standalone store (the genuine fo-a0spgj inversion).
+// If the skip is too broad, it blinds the scanner to real corruption.
+// ===========================================================================
+
+/// Create a symlinked reference checkout at `ww_repo` pointing at the
+/// canonical clone `canon` — the on-disk shape `rwv workweave create`
+/// produces for a `role: reference` repo. The parent directory is created
+/// first; the symlink is the leaf.
+#[cfg(unix)]
+fn symlink_reference_checkout(ww_repo: &Path, canon: &Path) {
+    std::fs::create_dir_all(ww_repo.parent().unwrap()).unwrap();
+    std::os::unix::fs::symlink(canon, ww_repo).unwrap();
+    assert!(
+        ww_repo.is_symlink(),
+        "fixture must produce a symlink at {}",
+        ww_repo.display()
+    );
+}
+
+/// A workweave holding a *symlinked* reference checkout of the manifest repo
+/// produces zero clone-topology violations. The symlink resolves through to
+/// the canonical store (its self-store equals its resolved store), which would
+/// look identical to `standalone-in-workweave` — but it is the canonical store
+/// viewed through a symlink, which upholds I1 by identity. The
+/// `ReferenceAlias` carve-out must skip it.
+#[cfg(unix)]
+#[test]
+fn symlinked_reference_in_workweave_is_clean() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (ws, canon) = build_primary_with_canonical(tmp.path());
+
+    let ww_dir = tmp.path().join(".workweaves/app--ref");
+    write_marker(&ww_dir, &ws, "app", &ws);
+
+    // Symlink the workweave's `github/acme/widget` at the canonical clone —
+    // the reference-repo materialization mode.
+    let ww_repo = ww_dir.join("github/acme/widget");
+    symlink_reference_checkout(&ww_repo, &canon);
+
+    let violations = doctor_violations(&ws);
+    assert_eq!(
+        count_clone_topology(&violations),
+        0,
+        "a symlinked reference checkout must produce zero clone-topology \
+         violations (it is the canonical store viewed through a symlink, \
+         not a standalone store); got: {:#?}",
+        violations
+    );
+}
+
+/// THE CRITICAL ADVERSARIAL TEST: a *real* fo-a0spgj inversion — an actual
+/// standalone clone (a real `.git` directory, NOT a symlink) living inside a
+/// workweave — STILL fires `standalone-in-workweave`, even with a symlinked
+/// reference present in a sibling workweave. The carve-out must distinguish
+/// the symlink-alias (valid) from the real standalone store (a violation).
+/// If the skip is too broad and blinds the scanner to genuine corruption,
+/// that is a failure of the carve-out.
+#[cfg(unix)]
+#[test]
+fn real_standalone_still_fires_alongside_symlinked_reference() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (ws, canon) = build_primary_with_canonical(tmp.path());
+
+    // Workweave A: a valid symlinked reference checkout (must be skipped).
+    let ref_ww = tmp.path().join(".workweaves/app--ref");
+    write_marker(&ref_ww, &ws, "app", &ws);
+    symlink_reference_checkout(&ref_ww.join("github/acme/widget"), &canon);
+
+    // Workweave B: a REAL standalone clone — its own `.git` directory, a real
+    // directory (not a symlink). This is the genuine inversion the scan must
+    // still catch.
+    let bad_ww = tmp.path().join(".workweaves/app--inverted");
+    std::fs::create_dir_all(bad_ww.join("github/acme")).unwrap();
+    write_marker(&bad_ww, &ws, "app", &ws);
+    let bad_repo = bad_ww.join("github/acme/widget");
+    init_repo_with_commit(&bad_repo);
+    assert!(
+        !bad_repo.is_symlink() && bad_repo.join(".git").is_dir(),
+        "fixture: the standalone checkout must be a real clone, not a symlink"
+    );
+
+    let violations = doctor_violations(&ws);
+    assert!(
+        has_clone_topology_sub_kind(&violations, "standalone-in-workweave"),
+        "a REAL standalone clone inside a workweave must STILL fire \
+         standalone-in-workweave even when a symlinked reference is present; \
+         the carve-out must not blind the scanner to genuine corruption. \
+         got: {:#?}",
+        violations
+    );
+
+    // The standalone-in-workweave finding must name the REAL inversion's
+    // checkout (`app--inverted`), not the symlinked reference (`app--ref`).
+    let standalone_paths: Vec<&str> = violations
+        .iter()
+        .filter(|v| {
+            v["kind"] == "clone-topology"
+                && v["sub_kind"]
+                    .as_object()
+                    .map(|o| o.contains_key("standalone-in-workweave"))
+                    .unwrap_or(false)
+        })
+        .filter_map(|v| v["absolute_path"].as_str())
+        .collect();
+    assert!(
+        standalone_paths.iter().any(|p| p.contains("app--inverted")),
+        "the standalone-in-workweave finding must name the real inversion; \
+         got paths: {standalone_paths:?}"
+    );
+
+    // The carve-out must produce NO finding of any kind pointing at the
+    // symlinked reference checkout — it is excluded before every sub-check.
+    let ref_checkout = ref_ww.join("github/acme/widget");
+    let ref_checkout_str = ref_checkout.to_string_lossy().into_owned();
+    let mentions_reference = violations.iter().any(|v| {
+        [v["absolute_path"].as_str(), v["repo_path"].as_str()]
+            .into_iter()
+            .flatten()
+            .any(|p| p == ref_checkout_str)
+    });
+    assert!(
+        !mentions_reference,
+        "no violation may point at the symlinked reference checkout {}; \
+         the carve-out excludes it before every sub-check. got: {:#?}",
+        ref_checkout.display(),
+        violations
+    );
+}
