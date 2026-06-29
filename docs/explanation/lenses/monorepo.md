@@ -72,7 +72,7 @@ This is the [pyramid of stability](../joints/pyramid-of-stability.md): canonical
 
 Traditional isolation means cloning a repo into a temp folder — but then you lose the rest of the project context. The `git worktree` primitive solves this for one repo; repoweave extends the pattern across the project.
 
-A **workweave** is a worktree-derived copy of an entire workspace. Each repo gets a git worktree on an ephemeral branch; ecosystem files are symlinked from the project directory (managed keys are merged, preserving user-authored content); `node_modules/`, `.venv/`, and `target/` are per-workweave. The primary weave stays undisturbed.
+A **workweave** is a worktree-derived copy of an entire workspace. Each worktree-materialized repo (roles `owned`, `fork`, `dependency`) gets a git worktree on an ephemeral branch; `role: reference` repos are materialized as a symlink to the canonical weave-root clone instead (read-only study material shared across all workweaves). Ecosystem files are symlinked from the project directory (managed keys are merged, preserving user-authored content); `node_modules/`, `.venv/`, and `target/` are per-workweave. The primary weave stays undisturbed.
 
 The hero moments:
 

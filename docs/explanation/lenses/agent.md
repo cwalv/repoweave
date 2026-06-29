@@ -92,7 +92,7 @@ rwv sync-to --retire
 
 Three properties make this pattern work:
 
-1. **Isolation from human state.** The agent's workweave has its own `node_modules/`, `.venv/`, `target/`. The human's in-progress edits in the primary weave can't disturb the agent's build, and vice versa.
+1. **Isolation from human state.** The agent's workweave has its own `node_modules/`, `.venv/`, `target/`. The human's in-progress edits in the primary weave can't disturb the agent's build, and vice versa. Repos with `role: reference` are an intentional exception: they are materialized as a symlink to the single canonical weave-root clone and are physically shared across every workweave (human's and agent's alike). This is safe because reference repos are read-only — neither side writes to them — and it avoids duplicating large study-material trees (e.g. a 270 MB upstream codebase) into every workweave.
 2. **Project context preserved.** Unlike "clone a repo into a tempdir," the agent sees the *full* workspace — every repo at the project's lock, with `package.json` workspaces / `go.work` / `Cargo.toml [workspace]` wired up. Cross-repo imports work, integration tests work, the agent's refactors can span repos.
 3. **Verification, then landing.** The human inspects the workweave's state before running `rwv sync-to --retire` from inside the workweave. `sync-to` lands CWD's commits into the parent — the workweave pushes its work to primary, linearly. Asymmetric in cost: the workweave absorbs the parent's latest state in step 1 (mostly a no-op on the happy path); then the parent fast-forwards to the workweave's tip in step 3.
 

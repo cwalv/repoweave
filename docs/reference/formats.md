@@ -225,8 +225,11 @@ repoweave uses a flat, provenance-based layout for repos: `{registry}/{owner}/{r
 │
 └── .workweaves/                              # workweaves live here
     └── web-app--payments/                    # one workweave
-        ├── github/chatly/server/             # worktree
-        ├── github/chatly/web/                # worktree
+        ├── github/chatly/server/             # worktree (role: owned)
+        ├── github/chatly/web/                # worktree (role: owned)
+        ├── github/socketio/engine.io/        # worktree (role: fork)
+        ├── github/other/reference-lib -> ~/work/github/other/reference-lib/
+        │                                     # symlink (role: reference)
         ├── projects/web-app/                 # worktree
         ├── .rwv-active                       # "web-app"
         └── .rwv-workweave                    # parent: ~/work

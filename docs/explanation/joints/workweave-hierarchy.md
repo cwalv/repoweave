@@ -1,7 +1,8 @@
 # Workweave hierarchy
 
 A workweave is a worktree-derived copy of a workspace: its own
-constituent-repo branches, its own ecosystem files, its own tool state.
+constituent-repo branches (for worktree-materialized repos), its own
+ecosystem files, its own tool state.
 Workweaves are how repoweave gives operators (and agents) parallel,
 isolated cross-repo work without disturbing the primary weave.
 
@@ -200,6 +201,8 @@ ephemeral naming scheme is not just bookkeeping — it is what makes
 - [clone-topology](./clone-topology.md) — the ephemeral-branch
   convention is invariant I3 in the tier-0 topology spec; the
   hierarchy's worktree-sharing model is the physical artifact those
-  invariants govern.
+  invariants govern. Note the I2/I3 carve-out for `role: reference`
+  repos, which are materialized as symlinks to the canonical store
+  rather than linked worktrees and therefore carry no ephemeral branch.
 - [verb-vs-composition](./verb-vs-composition.md) — why "sync through
   sibling" / "cross-pick across workweaves" aren't rwv verbs.

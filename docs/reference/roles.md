@@ -52,6 +52,31 @@ Cloned for reading or study, not as a build input. Examples: a sibling project's
 
 `rwv doctor` reports untracked clones in registry directories as **orphans**. Tracking a clone as `reference` is how you tell `rwv` "I cloned this on purpose, leave it alone."
 
+#### Workweave materialization: symlink, not worktree
+
+When `rwv workweave create` materializes a workweave, `reference` repos
+are created as a **symlink** at `<workweave>/<repo_path>` pointing to
+the single canonical weave-root clone `<weave>/<repo_path>` — not as a
+per-workweave `git worktree`. Every workweave therefore shares the same
+on-disk files for reference repos; `git fetch` on the canonical clone is
+immediately visible in all workweaves without updating N worktrees.
+
+This is why reference repos are safe to share: they are read-only by
+definition, so no per-workweave branch divergence needs to be isolated.
+The symlink satisfies clone-topology invariant I1 (single canonical
+store) by identity, and I2/I3's worktree and ephemeral-branch
+requirements do not apply to symlinked references — see
+[clone-topology](../explanation/joints/clone-topology.md) for the
+precise carve-out.
+
+**Escape hatch.** Pass **`--worktree-references`** to `rwv workweave
+create` to restore the old behavior and cut a proper `git worktree` for
+reference repos in that workweave. The resulting checkout is treated
+identically to any other worktree (it has its own ephemeral branch, is
+eligible for sync, and flows through all normal paths); only the default
+materialization changes. This flag records nothing — the on-disk
+`is_symlink()` test is the sole authority for downstream commands.
+
 ## Per-project, not per-repo
 
 The same repo can have different roles in different projects. `engine.io` might be a `fork` in `web-app` (patched for reconnection logic) and a `dependency` in another project (used unmodified).

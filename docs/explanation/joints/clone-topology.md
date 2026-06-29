@@ -59,9 +59,9 @@ their own clones.
 
 ### I2 — Workweave checkouts are linked into the canonical store
 
-Each workweave's on-disk view of a manifest repo is a **linked
-workspace** — a workspace whose object DAG and refs come from the
-canonical store, not from a separate copy. Every commit reachable in
+For **worktree-materialized** repos, each workweave's on-disk view is a
+**linked workspace** — a workspace whose object DAG and refs come from
+the canonical store, not from a separate copy. Every commit reachable in
 the canonical store is reachable from the workweave checkout, and
 vice versa.
 
@@ -69,13 +69,24 @@ Operationally: a workweave's `<workweave>/<repo_path>/` is created by
 asking the canonical store to add a workspace pointed at the workweave
 directory. The two share one object DAG.
 
+**Reference-repo carve-out.** A `role: reference` repo is materialized
+in a workweave as a **symlink** to the canonical store at
+`<weave>/<repo_path>`, not as a linked worktree. I2's same-DAG guarantee
+holds by identity rather than by worktree-linkage — the symlink *is* the
+canonical store, so there is no second DAG to diverge from. I1 holds
+trivially: the symlink aliases the one canonical store directly. What I2
+does not govern for a symlinked reference is the linked-workspace
+creation ceremony (`git worktree add`); that step is replaced by a
+`symlink(<weave>/<repo_path>, <workweave>/<repo_path>)`.
+
 ### I3 — Branches are owned by exactly one workspace
 
-A repo's checked-out branch is owned by exactly one workspace. The
-canonical store sits on a non-ephemeral branch (the manifest's tracking
-branch, e.g. `main`). Every workweave checkout sits on an **ephemeral
-branch** named `<project>--<workweave>/<segment>` — a branch name
-visible only to that workweave.
+For **worktree-materialized** repos, a repo's checked-out branch is owned
+by exactly one workspace. The canonical store sits on a non-ephemeral
+branch (the manifest's tracking branch, e.g. `main`). Every worktree
+checkout sits on an **ephemeral branch** named
+`<project>--<workweave>/<segment>` — a branch name visible only to that
+workweave.
 
 Operationally: the ephemeral naming scheme is what makes two
 workweaves both "on main" non-contradictory — they are on disjoint
@@ -89,6 +100,18 @@ at a time. If two workspaces both held the literal branch `main`, "is
 ancestor" would be asking about a single ref that disagrees with itself
 across workspaces. The ephemeral-branch convention makes the question
 well-defined.
+
+**Reference-repo carve-out.** A symlinked reference repo has no
+per-workweave checkout and therefore no ephemeral branch. It shares the
+canonical store's non-ephemeral branch (e.g. `main`) across every
+workweave that holds a symlink to it. The branch-ownership hazard I3
+guards against — two workspaces disagreeing about the content of a single
+named ref — does not arise, because reference repos are read-only and
+excluded from sync, push, and retire. Their shared branch is never
+advanced by workweave operations, so the ref namespace stays coherent
+without an ephemeral name. `rwv doctor`'s branch-discipline scan (I3
+enforcement) explicitly excludes symlinked reference checkouts and does
+not flag the shared branch as a violation.
 
 ## Why these are tier-0 invariants, not implementation details
 
@@ -152,17 +175,27 @@ worked example of the general spec; future Vcs impls
 | Spec | Git mechanism |
 |---|---|
 | Canonical store at `<weave>/<repo_path>` (I1) | A directory containing a `.git/` (or a `.git` file resolving into the canonical store, but not into a workweave). |
-| Linked workspace (I2) | A `git worktree`-created checkout whose `.git` file resolves into the canonical store's `git-common-dir`. |
-| Ephemeral branch ownership (I3) | A branch named `<project>--<workweave>/<segment>`, present in the canonical store's refs, checked out only in the workweave's worktree. |
+| Linked workspace (I2) — worktree-materialized | A `git worktree`-created checkout whose `.git` file resolves into the canonical store's `git-common-dir`. |
+| Linked workspace (I2) — reference symlink | A symlink at `<workweave>/<repo_path>` pointing directly to `<weave>/<repo_path>`. No `git worktree` involvement; the alias satisfies I1 by identity. |
+| Ephemeral branch ownership (I3) — worktree-materialized | A branch named `<project>--<workweave>/<segment>`, present in the canonical store's refs, checked out only in the workweave's worktree. |
+| Ephemeral branch ownership (I3) — reference symlink | Not applicable. A symlinked reference has no per-workweave checkout and no ephemeral branch; see the I3 carve-out above. |
 
 The decisive git query is `git rev-parse --git-common-dir`. Run from
 inside any workspace, it resolves to the path of the shared object/refs
 directory:
 
 - **Canonical store.** `git-common-dir` resolves to `<weave>/<repo_path>/.git`.
-- **Workweave checkout under I2.** `git-common-dir` resolves to
+- **Workweave checkout under I2 (worktree).** `git-common-dir` resolves to
   `<weave>/<repo_path>/.git` — the *same* path as the canonical store's.
   Both workspaces share one object DAG.
+- **Reference symlink (I2 carve-out).** `git-common-dir` resolves to
+  `<weave>/<repo_path>/.git` — the canonical store itself, because the
+  symlink is not followed by `git rev-parse`'s path resolution in this
+  context; git operates in the store the symlink points at. The
+  same-DAG check is satisfied trivially. `rwv doctor`'s topology scan
+  detects the symlink via `is_symlink()` before running the
+  `git-common-dir` query and skips the sub-check that would otherwise
+  misread the alias as a topology inversion.
 - **Disconnected clone (violation of I1).** `git-common-dir` resolves to
   some other path — typically `<weave>/.workweaves/<workweave>/<repo_path>/.git`.
   The workspace at `<weave>/<repo_path>` and the canonical store referenced
@@ -173,7 +206,8 @@ content-addressed: a check that asks "does every workspace pointing
 at this `repo_path` resolve `git-common-dir` to `<weave>/<repo_path>/.git`?"
 catches both the disconnected-clone case and the inverted-canonical
 case (canonical store living inside a workweave) without enumerating
-either by name.
+either by name. Reference symlinks are excluded from this check before
+it runs; they are not false positives and are not violations.
 
 The ephemeral branch convention — `<project>--<workweave>/<segment>` —
 is the same scheme described in
@@ -195,6 +229,16 @@ The invariants are about clone topology, not about repo-internal state:
 - rwv does not police bare clones the operator made by hand outside
   any `<repo_path>` slot. The invariants govern the manifest-named
   slots; anything else is the operator's territory.
+- **rwv does not create a linked worktree for every manifest repo.**
+  `role: reference` repos are materialized as a symlink to the
+  canonical store rather than a `git worktree` checkout. This is the
+  default behavior; the **`--worktree-references`** flag on
+  `rwv workweave create` restores the old worktree behavior for
+  reference repos in that workweave (the resulting worktree is then a
+  `Worktree`-kind checkout, flows through all normal paths including
+  I2/I3 and sync, and is not treated as a `ReferenceAlias`). The
+  symlink choice is self-describing on disk — downstream commands key
+  on `is_symlink()` at the checkout path, not on the `role` field.
 
 ## Anchoring
 
