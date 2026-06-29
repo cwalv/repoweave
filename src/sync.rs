@@ -12,7 +12,7 @@ use crate::vcs::{
     ConflictOp, RefName, ResolvedRevisionId, Vcs, VcsError, VcsErrorOutput, VerifiedRestoreOutcome,
 };
 use crate::workspace::{WorkspaceContext, WorkspaceLocation};
-use crate::workweave::workweave_path_for;
+use crate::workweave::{classify_checkout, workweave_path_for, CheckoutKind};
 use anyhow::Context;
 use schemars::JsonSchema;
 use serde::Serialize;
@@ -1024,6 +1024,60 @@ fn find_project_name(ctx: &WorkspaceContext) -> anyhow::Result<ProjectName> {
 }
 
 // ---------------------------------------------------------------------------
+// Sync's reference-alias chokepoint
+// ---------------------------------------------------------------------------
+//
+// The sync/abort phase machine has no single shared repo-set object: each phase
+// legitimately iterates a *different* manifest or lock (CWD manifest, source
+// lock, target manifest, …). What every mutating phase *does* share is one
+// shape — iterate `repo_path`s, join each against a workspace dir to form the
+// on-disk checkout `abs`, gate on `abs.exists()`, then operate on `abs`. That
+// per-checkout existence gate is the narrowest chokepoint, so the reference
+// exclusion lives there, in a single predicate every site routes through.
+//
+// A `reference` repo materialized as a symlink (`CheckoutKind::ReferenceAlias`)
+// aliases the single canonical weave-root clone shared by *every* workweave.
+// Operating on it through the symlink — savepoint `refs/rwv/pre-op/*`, rebase /
+// ff its branch, `reset --hard` on abort, `worktree add/remove` — mutates that
+// shared store (cross-workweave ref collisions, a branch other workspaces
+// read). A reference symlink is also read-only, lock-pinned, and byte-identical
+// across workweaves, so there is *nothing to sync*. Excluding it here makes the
+// canonical store **unreachable by construction** from every mutating phase: an
+// absent element cannot be operated on, where a per-call-site guard could be
+// forgotten at the next site.
+//
+// The predicate keys on `CheckoutKind::ReferenceAlias` (⇔ the checkout path is
+// a symlink), **never on `role`**. A `reference` repo created with
+// `--worktree-references` is a real worktree on its own ephemeral branch:
+// `classify_checkout` returns `Worktree` for it, so it passes this gate and
+// syncs exactly like any owned/fork worktree. Keying on `role == Reference`
+// would silently break that escape hatch. `rwv lock` is unaffected — it reads
+// HEAD through the symlink (resolving to the canonical), which correctly pins
+// the shared SHA; reference repos stay in the lock for reproducibility and
+// `rwv fetch`. Only sync's *advancement / mutation* skips them.
+
+/// Whether a sync/abort phase may operate on the checkout at `abs`.
+///
+/// True iff `abs` is an on-disk **worktree** checkout. This combines the two
+/// conditions every mutating site needs:
+/// - it must exist (an absent checkout has nothing to mutate / restore), and
+/// - it must not be a [`CheckoutKind::ReferenceAlias`] — a symlink aliasing the
+///   shared canonical store, which is read-only and must never be mutated.
+///
+/// This is the single chokepoint for the reference-repo exclusion: every
+/// savepoint / replay / advance-target / abort / materialize / prune loop gates
+/// the checkout it is about to touch through this predicate, so the canonical
+/// store is unreachable from all of them. Keyed on alias-ness, never on role,
+/// so `--worktree-references` reference repos (real worktrees) sync normally.
+///
+/// Note `classify_checkout` returns [`CheckoutKind::Worktree`] for a
+/// non-existent path, so the `abs.exists()` term is load-bearing and cannot be
+/// folded away.
+fn checkout_is_syncable(abs: &Path) -> bool {
+    abs.exists() && classify_checkout(abs) == CheckoutKind::Worktree
+}
+
+// ---------------------------------------------------------------------------
 // Phase 3 helpers: materialize new repos / prune dropped repos
 // ---------------------------------------------------------------------------
 
@@ -1939,7 +1993,9 @@ fn guard_and_mark<'a>(
     create_savepoint(&cwd_project_dir, &op_id)?;
     for repo_path in cwd_project.manifest.iter_repo_paths() {
         let abs = cwd_workspace_dir.join(repo_path.as_path());
-        if abs.exists() {
+        // Skip reference symlinks: a savepoint here would write
+        // `refs/rwv/pre-op/*` into the shared canonical store.
+        if checkout_is_syncable(&abs) {
             let _ = create_savepoint(&abs, &op_id);
         }
     }
@@ -1967,7 +2023,8 @@ fn guard_and_mark<'a>(
             if let Ok(tp) = crate::manifest::Project::from_dir_skip_lock(&target_project_dir) {
                 for repo_path in tp.manifest.iter_repo_paths() {
                     let abs = dest_workspace_dir.join(repo_path.as_path());
-                    if abs.exists() {
+                    // Skip reference symlinks (shared canonical store).
+                    if checkout_is_syncable(&abs) {
                         let _ = create_savepoint(&abs, &tsp_id);
                     }
                 }
@@ -2246,7 +2303,11 @@ fn check_dirty_target_preflight(
     let mut dirty: Vec<String> = Vec::new();
     for repo_path in cwd_project.manifest.iter_repo_paths() {
         let target_repo = target_workspace_dir.join(repo_path.as_path());
-        if target_repo.exists() && GitVcs.has_uncommitted_changes(&target_repo).unwrap_or(true) {
+        // Skip reference symlinks: a dirty shared canonical must not block a
+        // sync-to that never touches it (advance-target excludes it too).
+        if checkout_is_syncable(&target_repo)
+            && GitVcs.has_uncommitted_changes(&target_repo).unwrap_or(true)
+        {
             dirty.push(repo_path.to_string());
         }
     }
@@ -2325,7 +2386,12 @@ fn run_replay(ctx: &OpContext<'_>) -> anyhow::Result<()> {
     let mut materialize_failures: Vec<crate::manifest::RepoPath> = Vec::new();
     for repo_path in snapshot.raw_source_lock.iter_repo_paths() {
         let abs = ctx.cwd_workspace_dir.join(repo_path.as_path());
-        if abs.exists() {
+        // Skip a checkout that already exists. Also skip a reference symlink:
+        // even a *dangling* symlink (whose `exists()` follows the link and
+        // returns false) must never be replaced by a `git worktree add` against
+        // the shared canonical store. `classify_checkout` keys on `is_symlink`,
+        // which does not follow the link, so it catches the dangling case.
+        if abs.exists() || classify_checkout(&abs) == CheckoutKind::ReferenceAlias {
             continue;
         }
         let entry = match snapshot.source_manifest.get_entry(repo_path) {
@@ -2350,6 +2416,13 @@ fn run_replay(ctx: &OpContext<'_>) -> anyhow::Result<()> {
     if let Some(ref cwd_lock) = cwd_project.lock {
         for repo_path in cwd_lock.iter_repo_paths() {
             if snapshot.raw_source_lock.contains_repo(repo_path) {
+                continue;
+            }
+            // Skip reference symlinks: pruning would `git worktree remove`
+            // against the shared canonical store. Unlinking a reference alias
+            // is the workweave-delete path's job, not sync's.
+            let abs = ctx.cwd_workspace_dir.join(repo_path.as_path());
+            if classify_checkout(&abs) == CheckoutKind::ReferenceAlias {
                 continue;
             }
             match prune_dropped_repo(&ctx.cwd_ctx, repo_path) {
@@ -2387,9 +2460,18 @@ fn run_replay(ctx: &OpContext<'_>) -> anyhow::Result<()> {
 
     for (repo_path, raw_entry) in snapshot.raw_source_lock.iter_entries() {
         let abs = ctx.cwd_workspace_dir.join(repo_path.as_path());
-        if !abs.exists() {
+        // The reference exclusion: a reference symlink is read-only and aliases
+        // the shared canonical store, so it never becomes a sync task. Without
+        // a task it is never rebased/ff'd and never gets a planned-target write,
+        // so replay Phase 2 cannot move the canonical's branch.
+        if !checkout_is_syncable(&abs) {
             if emit_text {
-                println!("  {repo_path}: skipped (not on disk)");
+                let reason = if classify_checkout(&abs) == CheckoutKind::ReferenceAlias {
+                    "reference (read-only alias)"
+                } else {
+                    "not on disk"
+                };
+                println!("  {repo_path}: skipped ({reason})");
             }
             continue;
         }
@@ -2791,10 +2873,13 @@ fn run_advance_target(ctx: &OpContext<'_>) -> anyhow::Result<()> {
     for repo_path in cwd_project_final.manifest.iter_repo_paths() {
         let cwd_repo = ctx.cwd_workspace_dir.join(repo_path.as_path());
         let target_repo = ctx.dest_workspace_dir.join(repo_path.as_path());
-        if !cwd_repo.exists() {
+        // Skip reference symlinks on either side: ff'ing the target alias would
+        // move the shared canonical's branch. Both sides of a reference alias
+        // resolve to the same canonical anyway, so there is nothing to advance.
+        if !checkout_is_syncable(&cwd_repo) {
             continue;
         }
-        if !target_repo.exists() {
+        if !checkout_is_syncable(&target_repo) {
             if emit_text {
                 eprintln!("  {}: skipped (not on disk in target)", repo_path);
             }
@@ -3351,7 +3436,11 @@ pub fn run_abort(cwd: &Path) -> anyhow::Result<()> {
     // Restore CWD manifest repos first.
     for repo_path in cwd_project.manifest.iter_repo_paths() {
         let abs = workspace_dir.join(repo_path.as_path());
-        if !abs.exists() {
+        // Skip reference symlinks: `reset --hard` here would rewind the shared
+        // canonical store. Sync never savepoints or advances a reference (the
+        // savepoint/replay/advance loops exclude it via the same predicate), so
+        // there is by construction nothing to restore.
+        if !checkout_is_syncable(&abs) {
             continue;
         }
         let intent = advanced_tips.get(repo_path.as_str()).map(String::as_str);
@@ -3435,7 +3524,9 @@ pub fn run_abort(cwd: &Path) -> anyhow::Result<()> {
                 let extra_ws_dir = extra_ctx.active_path().to_path_buf();
                 for repo_path in extra_project.manifest.iter_repo_paths() {
                     let abs = extra_ws_dir.join(repo_path.as_path());
-                    if !abs.exists() {
+                    // Skip reference symlinks (shared canonical store): nothing
+                    // was savepointed or advanced for them, so nothing to reset.
+                    if !checkout_is_syncable(&abs) {
                         continue;
                     }
                     // Target-side repos: advanced_tips is source/owner side only (§7).
@@ -4066,6 +4157,70 @@ fn ff_advance_repo(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // -----------------------------------------------------------------------
+    // checkout_is_syncable — the sync reference-exclusion chokepoint predicate
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn checkout_is_syncable_true_for_a_real_directory_worktree() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("repo");
+        std::fs::create_dir_all(&dir).unwrap();
+        assert_eq!(classify_checkout(&dir), CheckoutKind::Worktree);
+        assert!(
+            checkout_is_syncable(&dir),
+            "a real on-disk worktree directory must be syncable"
+        );
+    }
+
+    #[test]
+    fn checkout_is_syncable_false_for_a_symlink_reference_alias() {
+        let tmp = tempfile::tempdir().unwrap();
+        let canonical = tmp.path().join("canonical");
+        std::fs::create_dir_all(&canonical).unwrap();
+        let link = tmp.path().join("alias");
+        std::os::unix::fs::symlink(&canonical, &link).unwrap();
+        // The alias resolves to a real dir (so `exists()` is true), but it is a
+        // symlink, so it must be excluded — proving the predicate keys on
+        // alias-ness, not on existence.
+        assert!(link.exists(), "symlink target exists");
+        assert_eq!(classify_checkout(&link), CheckoutKind::ReferenceAlias);
+        assert!(
+            !checkout_is_syncable(&link),
+            "a symlink reference alias must NOT be syncable even though it exists"
+        );
+    }
+
+    #[test]
+    fn checkout_is_syncable_false_for_a_nonexistent_path() {
+        let tmp = tempfile::tempdir().unwrap();
+        let missing = tmp.path().join("nope");
+        // A non-existent path classifies as Worktree, so the `exists()` term is
+        // load-bearing: without it a missing checkout would wrongly be syncable.
+        assert_eq!(classify_checkout(&missing), CheckoutKind::Worktree);
+        assert!(
+            !checkout_is_syncable(&missing),
+            "a non-existent checkout must NOT be syncable"
+        );
+    }
+
+    #[test]
+    fn checkout_is_syncable_false_for_a_dangling_symlink() {
+        let tmp = tempfile::tempdir().unwrap();
+        let link = tmp.path().join("dangling");
+        std::os::unix::fs::symlink(tmp.path().join("missing-target"), &link).unwrap();
+        // A dangling symlink: `exists()` (which follows the link) is false, but
+        // `classify_checkout` (which does not follow) still flags it as an
+        // alias. Either way it is excluded — and must never be materialized as
+        // a worktree against the canonical.
+        assert!(!link.exists(), "dangling symlink target is missing");
+        assert_eq!(classify_checkout(&link), CheckoutKind::ReferenceAlias);
+        assert!(
+            !checkout_is_syncable(&link),
+            "a dangling reference symlink must NOT be syncable"
+        );
+    }
 
     #[test]
     fn sync_source_parses_primary() {
