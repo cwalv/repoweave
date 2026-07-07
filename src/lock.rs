@@ -248,6 +248,16 @@ pub fn lock(
 ) -> anyhow::Result<()> {
     let ctx = WorkspaceContext::resolve(cwd, project_override)?;
 
+    // Cross-verb mutex (Correction 1, COVERAGE), scoped to `--commit`. Writing
+    // the working-tree `rwv.lock` (plain `rwv lock`) is benign — it is the
+    // auto-relock's own input and the carve-out in Correction 3 treats a dirty
+    // `rwv.lock` as non-dirt. But `--commit` writes a NEW lock commit into the
+    // project repo, mutating the same history a mid-op replay is reconciling;
+    // refuse while an op involves this workspace, via the shared op-state guard.
+    if commit {
+        crate::op_state::check_no_op_in_progress(&[ctx.active_path()])?;
+    }
+
     let (project_name, workweave_name, workweave_dir) = match &ctx.location {
         WorkspaceLocation::Weave { .. } => {
             let name = ctx.require_active_project_on_disk()?.clone();

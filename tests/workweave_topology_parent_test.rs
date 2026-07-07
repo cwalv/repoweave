@@ -214,6 +214,89 @@ fn delete_with_zero_children_adopts_nothing() {
     assert!(!ww.root.exists(), "workweave dir should be gone");
 }
 
+/// Cross-verb mutex (fo-4rpnkm.2, Correction 1 COVERAGE): `workweave delete`
+/// refuses while an op involves the target workweave, naming the in-flight op.
+/// The workweave must NOT be destroyed — `rwv abort` (not delete) clears a
+/// stale record.
+#[test]
+fn delete_refuses_while_workweave_is_mid_op() {
+    let tmp = tempfile::tempdir().unwrap();
+    let main = make_main_workspace(tmp.path());
+    let ww = create_workweave(&main, "busy", None);
+
+    // Plant a v2 owner record in the workweave root (simulate an in-flight op).
+    let op_yaml = format!(
+        "id: \"planted-delete-op\"\nverb: sync-to\nstrategy: rebase\nsource: \"{src}\"\n\
+         target: \"{tgt}\"\nretire: false\nphase: replay\nconverged_tips: {{}}\n\
+         overrides: []\nstarted_at: \"2026-05-27T10:00:00Z\"\n",
+        src = ww.root.display(),
+        tgt = main.root.display(),
+    );
+    std::fs::write(ww.root.join(".rwv-op"), &op_yaml).unwrap();
+
+    let out = rwv()
+        .args(["workweave", PROJECT, "delete", &ww.name])
+        .env("RWV_WORKWEAVE_DIR", &main.weaveroot)
+        .current_dir(&main.root)
+        .output()
+        .unwrap();
+    assert!(
+        !out.status.success(),
+        "delete must refuse while the workweave is mid-op"
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("sync-to in progress") && stderr.contains("in progress (started"),
+        "refusal must name the in-flight op with its age; got:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("--continue") && stderr.contains("rwv abort"),
+        "refusal must offer `--continue` and `rwv abort`; got:\n{stderr}"
+    );
+    assert!(
+        ww.root.exists(),
+        "the mid-op workweave must NOT be destroyed by the refused delete"
+    );
+}
+
+/// `--force` does NOT bypass the op mutex on delete: the hazard is to the op's
+/// recovery, and force is for dirty/unmerged work, not stale op-state.
+#[test]
+fn delete_force_does_not_bypass_op_mutex() {
+    let tmp = tempfile::tempdir().unwrap();
+    let main = make_main_workspace(tmp.path());
+    let ww = create_workweave(&main, "busyforce", None);
+
+    let op_yaml = format!(
+        "id: \"planted-delete-op-2\"\nverb: sync\nstrategy: rebase\nsource: \"{src}\"\n\
+         target: \"{tgt}\"\nretire: false\nphase: relock\nconverged_tips: {{}}\n\
+         overrides: []\nstarted_at: \"2026-05-27T10:00:00Z\"\n",
+        src = main.root.display(),
+        tgt = ww.root.display(),
+    );
+    std::fs::write(ww.root.join(".rwv-op"), &op_yaml).unwrap();
+
+    let out = rwv()
+        .args(["workweave", PROJECT, "delete", &ww.name, "--force"])
+        .env("RWV_WORKWEAVE_DIR", &main.weaveroot)
+        .current_dir(&main.root)
+        .output()
+        .unwrap();
+    assert!(
+        !out.status.success(),
+        "delete --force must still refuse while the workweave is mid-op"
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("sync in progress"),
+        "refusal must name the in-flight op even under --force; got:\n{stderr}"
+    );
+    assert!(
+        ww.root.exists(),
+        "workweave must survive the refused --force delete"
+    );
+}
+
 /// Deleting a parent with ONE child re-points the child to the parent's own
 /// parent (here: primary, since the parent was forked from primary), and
 /// prints the loud line.

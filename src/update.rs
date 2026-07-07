@@ -120,6 +120,13 @@ pub fn run_update(
 ) -> anyhow::Result<()> {
     let ctx = WorkspaceContext::resolve(cwd, project_override.clone())?;
 
+    // Cross-verb mutex (Correction 1, COVERAGE). `update` advances tips and
+    // re-snapshots the lock in the active workspace; if an in-flight
+    // `sync`/`sync-to` op involves that workspace (owner record or lease), its
+    // half-applied state must not be perturbed. Refuse, naming the op and its
+    // exits, via the SAME guard the sync engine uses — no new lease machinery.
+    crate::op_state::check_no_op_in_progress(&[ctx.active_path()])?;
+
     let (project_name, workweave_name, workweave_dir) = match &ctx.location {
         WorkspaceLocation::Weave { .. } => {
             let name = ctx.require_active_project_on_disk()?.clone();

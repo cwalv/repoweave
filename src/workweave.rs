@@ -1418,6 +1418,37 @@ pub fn delete_workweave(
     name: &WorkweaveName,
     force: bool,
 ) -> anyhow::Result<()> {
+    // Public `rwv workweave delete`: an INTERRUPTING verb. A mid-op workweave
+    // refuses (op guard on).
+    delete_workweave_inner(ws_root, project, name, force, false)
+}
+
+/// Delete a workweave as the terminal step of the OWNING op (`sync-to
+/// --retire`).
+///
+/// Same as [`delete_workweave`] but skips the cross-verb op guard: the op that
+/// is deleting this workweave still holds its own `.rwv-op` record here (the
+/// record is cleared in the later `cleanup` phase), so the guard would
+/// otherwise refuse the op's own retire. Only the sync engine's retire phase
+/// calls this — never a standalone verb.
+pub(crate) fn delete_workweave_for_retire(
+    ws_root: &Path,
+    project: &ProjectName,
+    name: &WorkweaveName,
+    force: bool,
+) -> anyhow::Result<()> {
+    delete_workweave_inner(ws_root, project, name, force, true)
+}
+
+/// Shared delete implementation. `skip_op_guard` is `true` only for the
+/// op-owned retire path (see [`delete_workweave_for_retire`]).
+fn delete_workweave_inner(
+    ws_root: &Path,
+    project: &ProjectName,
+    name: &WorkweaveName,
+    force: bool,
+    skip_op_guard: bool,
+) -> anyhow::Result<()> {
     let manifest = load_manifest(ws_root, project)?;
     let workweave_dir = workweave_path_for(ws_root, project, name);
 
@@ -1429,6 +1460,21 @@ pub fn delete_workweave(
     // docs/contributing/destructive-operations.md (precondition-or-stop).
     if workweave_dir.exists() {
         refuse_if_checkouts_host_foreign_worktrees(&workweave_dir, project, &manifest)?;
+    }
+
+    // Cross-verb mutex (Correction 1, COVERAGE). A workweave that is mid-op
+    // (holds an `.rwv-op` owner record or an `.rwv-op-lease`) must not be
+    // deleted out from under the op — that would strand the owner record's
+    // pointer or destroy the workspace `--continue`/`rwv abort` restore into.
+    // Refuse FIRST (before the dirty/unmerged checks) so a mid-op delete reports
+    // the in-flight op, not a dirty-tree error, mirroring the sync entry
+    // ordering. `--force` does NOT bypass this: the hazard is to the op's
+    // recovery, and `rwv abort` (not `--force delete`) is the way to clear a
+    // stale record. Runs only when the dir exists (nothing to lose otherwise).
+    // The op's OWN terminal retire (`delete_workweave_for_retire`) skips this —
+    // its record is present by design and is cleared in the later cleanup phase.
+    if workweave_dir.exists() && !skip_op_guard {
+        crate::op_state::check_no_op_in_progress(&[workweave_dir.as_path()])?;
     }
 
     // Safety check: refuse to delete dirty or diverged workweaves without

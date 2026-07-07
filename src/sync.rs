@@ -6,7 +6,7 @@
 use crate::git::GitVcs;
 use crate::lock::{commit_lock_file_with_message, generate_lock};
 use crate::manifest::{LockFile, Manifest, Project, ProjectName, RepoPath, Role, WorkweaveName};
-use crate::op_state::{self, LeaseRecord, OwnerRecord};
+use crate::op_state::{self, LeaseRecord, OpVerb, OwnerRecord};
 use crate::parallel::run_in_parallel;
 use crate::status::{compute_relation, LockRelation};
 use crate::vcs::{
@@ -835,18 +835,18 @@ impl Phase {
     }
 }
 
-/// Map a [`SyncStrategy`] to the in-flight VCS op a conflict would leave behind.
+/// The operator-facing resume command for a mid-op verb (Correction 4).
 ///
-/// `Ff` cannot leave a conflict (fast-forward refuses without altering state);
-/// we still return a hint shape for the message — the user will likely want to
-/// rerun with `--strategy rebase` and resolve there.
-fn conflict_op_for_strategy(strategy: SyncStrategy) -> ConflictOp {
-    match strategy {
-        // `--strategy ff` cannot conflict; pick Rebase as the resolution
-        // mode the user is likely to fall back to. `rebase` resolves with
-        // the same in-flight op.
-        SyncStrategy::Ff | SyncStrategy::Rebase => ConflictOp::Rebase,
-    }
+/// A failed op is resumed with `--continue` from the OWNING workspace, which
+/// reads every parameter (source, strategy, target, retire, overrides) back
+/// out of op-state — so the resume text is `rwv {verb} --continue`, NEVER a
+/// hardcoded `rwv sync {source}`. Hardcoding `rwv sync` was wrong two ways:
+/// it named the PULL verb for a `sync-to` (landing) op, and it re-supplied
+/// arguments the record already holds. The verb comes from the op's `verb`
+/// field ([`OpVerb`]) so the string is derived from op-state, not the engine's
+/// guess.
+fn resume_command(verb: OpVerb) -> String {
+    format!("rwv {verb} --continue")
 }
 
 /// Bail message for the manifest-repo per-repo sync loop (Site 1).
@@ -854,64 +854,99 @@ fn conflict_op_for_strategy(strategy: SyncStrategy) -> ConflictOp {
 /// One or more repos in the loop emitted a per-repo failure (printed already).
 /// Lead with the resolution steps that apply uniformly to each conflicted
 /// repo; mention `rwv abort` last as the rollback option.
-fn manifest_repo_failure_message(strategy: SyncStrategy, resolved_source: &SyncSource) -> String {
-    let op = conflict_op_for_strategy(strategy);
-    let hint = GitVcs.conflict_resolution_hint(op);
-    format!(
-        "sync hit failures in one or more manifest repos (see per-repo lines above).\n\
-         \n\
-         To resolve each conflicted repo:\n\
-           cd <repo>\n\
-         {hint}\n\
-           rwv sync {resolved_source}   # re-run; already-converged repos are no-ops\n\
-         \n\
-         If you'd rather roll everything back: `rwv abort`."
-    )
+///
+/// `live_conflict` is `Some(op)` only when a manifest repo is genuinely left
+/// in a VCS-native in-flight state (a live [`ConflictOp`]); the VCS-native
+/// resolution steps (`cd <repo>` / `git … --continue`) are emitted ONLY then
+/// (Correction 4). A non-conflict batch of failures (e.g. a fetch error) omits
+/// the VCS block and points straight at the resume command.
+fn manifest_repo_failure_message(verb: OpVerb, live_conflict: Option<ConflictOp>) -> String {
+    let resume = resume_command(verb);
+    match live_conflict {
+        Some(op) => {
+            let hint = GitVcs.conflict_resolution_hint(op);
+            format!(
+                "sync hit conflicts in one or more manifest repos (see per-repo lines above).\n\
+                 \n\
+                 To resolve each conflicted repo:\n\
+                   cd <repo>\n\
+                 {hint}\n\
+                   {resume}   # resume; already-converged repos are no-ops\n\
+                 \n\
+                 If you'd rather roll everything back: `rwv abort`."
+            )
+        }
+        None => format!(
+            "sync hit failures in one or more manifest repos (see per-repo lines above).\n\
+             \n\
+             Fix the underlying issue in each failed repo, then:\n\
+               {resume}   # resume; already-converged repos are no-ops\n\
+             \n\
+             If you'd rather roll everything back: `rwv abort`."
+        ),
+    }
 }
 
 /// Bail message for the Phase 1' / Phase 3 top-level failures (Sites 2 and 3).
 ///
 /// Both phases print their inner error via `eprintln!` before bailing; this
-/// message gives the operator a uniform "what next?" block that leads with
-/// resolution steps (for the conflict sub-case the inner error implies) and
-/// closes with `rwv abort` as the rollback option.
+/// message gives the operator a uniform "what next?" block that closes with
+/// `rwv abort` as the rollback option.
+///
+/// `live_conflict` is `Some(op)` only when the project repo is actually left
+/// mid-op (a rebase/merge/cherry-pick conflict). The VCS-native resolution
+/// steps are emitted ONLY then (Correction 4) — Phase 3 (relock) is never a
+/// VCS conflict, so it always passes `None` and never teaches a spurious
+/// `git rebase --continue` (which would print "No rebase in progress").
 fn phase1_or_phase3_failure_message(
     phase: Phase,
     cwd_project_dir: &Path,
-    strategy: SyncStrategy,
-    resolved_source: &SyncSource,
+    verb: OpVerb,
+    live_conflict: Option<ConflictOp>,
 ) -> String {
-    let op = conflict_op_for_strategy(strategy);
-    let hint = GitVcs.conflict_resolution_hint(op);
+    let resume = resume_command(verb);
     let phase_label = phase.label();
     let repo_display = cwd_project_dir.display();
-    format!(
-        "sync failed in {phase_label} (see error above).\n\
-         \n\
-         If the failure is a conflict, resolve in {repo_display}:\n\
-           cd {repo_display}\n\
-         {hint}\n\
-           rwv sync {resolved_source}   # re-run; already-converged repos are no-ops\n\
-         \n\
-         For other failures: fix the underlying issue then `rwv sync {resolved_source}`.\n\
-         If you'd rather roll everything back: `rwv abort`."
-    )
+    match live_conflict {
+        Some(op) => {
+            let hint = GitVcs.conflict_resolution_hint(op);
+            format!(
+                "sync failed in {phase_label} (see error above).\n\
+                 \n\
+                 Resolve the conflict in {repo_display}:\n\
+                   cd {repo_display}\n\
+                 {hint}\n\
+                   {resume}   # resume; already-converged repos are no-ops\n\
+                 \n\
+                 If you'd rather roll everything back: `rwv abort`."
+            )
+        }
+        None => format!(
+            "sync failed in {phase_label} (see error above).\n\
+             \n\
+             Fix the underlying issue, then: {resume}\n\
+             If you'd rather roll everything back: `rwv abort`."
+        ),
+    }
 }
 
 /// Bail message for an inner per-conflict-site.
 ///
 /// Used by Phase 1' when a rebase or merge leaves the project repo in the
-/// VCS-native in-flight state. The per-VCS resolution steps come from the
-/// trait method; this helper builds the surrounding framing (which repo,
-/// how to re-run, how to abort).
+/// VCS-native in-flight state. This site ALWAYS has a live [`ConflictOp`] (`op`
+/// comes from the `RebaseConflict` variant), so the VCS-native steps are
+/// unconditional here. The per-VCS resolution steps come from the trait method;
+/// this helper builds the surrounding framing (which repo, how to resume, how
+/// to abort).
 fn per_conflict_bail_message(
     repo: &Path,
     op: ConflictOp,
     op_label: &str,
     detail: &str,
-    resolved_source: &SyncSource,
+    verb: OpVerb,
 ) -> String {
     let hint = GitVcs.conflict_resolution_hint(op);
+    let resume = resume_command(verb);
     let repo_display = repo.display();
     format!(
         "sync hit a conflict in {repo_display} during {op_label} ({detail}).\n\
@@ -919,7 +954,7 @@ fn per_conflict_bail_message(
          To resolve:\n\
            cd {repo_display}\n\
          {hint}\n\
-           rwv sync {resolved_source}   # re-run; already-converged repos are no-ops\n\
+           {resume}   # resume; already-converged repos are no-ops\n\
          \n\
          If you'd rather roll everything back: `rwv abort`."
     )
@@ -1448,9 +1483,6 @@ struct OpContext<'a> {
     /// CWD project name (used for materialize_missing_repo's ephemeral
     /// branch namespace in workweaves).
     cwd_project_name: ProjectName,
-    /// `SyncSource` form of `source_workspace_dir`, retained for the
-    /// human-readable hints in bail messages (`rwv sync <thing>`).
-    resolved_source: SyncSource,
     /// Path arg the operator passed on the CLI (or recorded in op-state),
     /// retained for hint messages that show the original target spelling.
     cli_path: PathBuf,
@@ -1806,16 +1838,27 @@ fn guard_and_mark<'a>(
         MachineVerb::SyncTo => source_project_dir.clone(),
     };
 
-    // `resolved_source` is the source-of-content for replay's bail messages
-    // ("rwv sync <thing>"). For both verbs, that's the operator's arg.
-    let resolved_source_for_hints = resolved_arg.clone();
-
     // Sibling-sync warning: only meaningful for plain sync.
     if matches!(verb, MachineVerb::Sync) {
         warn_on_sibling_sync(&cwd_ctx, &source_workspace_dir, emit_text);
     }
 
     // === Preconditions (no mutation yet) ===
+
+    // Concurrency guard FIRST (Correction 1, ORDERING). An `.rwv-op` /
+    // `.rwv-op-lease` involving any touched workspace means a prior op is still
+    // in flight; that fact dominates every other precondition. Running it ahead
+    // of the lock-relation classification (and the dirty preflights) means a
+    // verb hitting a mid-op workspace reports the in-flight op — its name, age,
+    // and the two exits (`--continue` / `rwv abort`) — instead of a stale-lock /
+    // relation refusal computed against a workspace another op is mutating. The
+    // touched set is the same set the mark phase writes op-state into: CWD for
+    // sync; CWD + target for sync-to.
+    let touched: Vec<&Path> = match verb {
+        MachineVerb::Sync => vec![cwd_workspace_dir.as_path()],
+        MachineVerb::SyncTo => vec![cwd_workspace_dir.as_path(), dest_workspace_dir.as_path()],
+    };
+    op_state::check_no_op_in_progress(&touched)?;
 
     // CWD project repo must not be mid-op.
     if let Some(op) = GitVcs.mid_op(&cwd_project_dir) {
@@ -2074,12 +2117,10 @@ fn guard_and_mark<'a>(
         false
     };
 
-    // Concurrency guard: refuse if any touched workspace carries op-state.
-    let touched: Vec<&Path> = match verb {
-        MachineVerb::Sync => vec![cwd_workspace_dir.as_path()],
-        MachineVerb::SyncTo => vec![cwd_workspace_dir.as_path(), dest_workspace_dir.as_path()],
-    };
-    op_state::check_no_op_in_progress(&touched)?;
+    // NOTE: the concurrency guard (`check_no_op_in_progress`) now runs as the
+    // FIRST precondition above, before lock-relation classification and the
+    // dirty preflights (Correction 1, ORDERING). It is intentionally not
+    // repeated here.
 
     // === Mark: write owner record + leases ===
 
@@ -2230,7 +2271,6 @@ fn guard_and_mark<'a>(
         dest_project_dir,
         cwd_project_dir,
         cwd_project_name,
-        resolved_source: resolved_source_for_hints,
         cli_path,
         strategy,
         discard_local_commits: phase1_ancestor_bypassed,
@@ -2357,8 +2397,6 @@ fn load_continuing_context<'a>(
         MachineVerb::SyncTo => source_project_dir.clone(),
     };
 
-    let resolved_source_for_hints = SyncSource::Path(cli_path.clone());
-
     // Re-pin the source snapshot for this --continue session. The source's
     // T0 is "the start of the (resumed) replay" — re-pinning here gives
     // replay's re-entry rule a coherent set of inputs. Per-repo no-op
@@ -2385,7 +2423,6 @@ fn load_continuing_context<'a>(
         dest_project_dir,
         cwd_project_dir,
         cwd_project_name,
-        resolved_source: resolved_source_for_hints,
         cli_path,
         strategy,
         discard_local_commits: discard_local_commits_resumed,
@@ -2723,13 +2760,17 @@ fn unresolvable_lock_refusal(
 ) -> String {
     let side_str = side.as_str();
     let raw = raw_version.as_str();
+    // Atomic `--commit` form (Correction 4): the two-step `rwv lock` +
+    // "commit before syncing" teaches the broken pattern where a
+    // written-but-unstaged `rwv.lock` then kills the re-run mid-op. `rwv lock
+    // --commit` writes AND commits in one step.
     let recovery = match side {
         Side::Source => format!(
-            "Run `rwv lock --project {project_name}` in the source workspace and commit before \
+            "Run `rwv lock --commit --project {project_name}` in the source workspace before \
              syncing"
         ),
         Side::Destination => {
-            format!("Run `rwv lock --project {project_name}` to refresh before syncing")
+            format!("Run `rwv lock --commit --project {project_name}` to refresh before syncing")
         }
     };
     format!(
@@ -2775,13 +2816,16 @@ fn lock_relation_refusal(
         lines.push_str(&format!("\n  {}: HEAD {} lock", r.repo_path, r.relation));
     }
     let side_str = side.as_str();
+    // Atomic `--commit` form (Correction 4): teach `rwv lock --commit`, not the
+    // two-step `rwv lock` + "commit before syncing" whose written-but-unstaged
+    // `rwv.lock` kills a re-run mid-op.
     let recovery = match side {
         Side::Source => format!(
-            "Run `rwv lock --project {project_name}` in the source workspace and commit before \
+            "Run `rwv lock --commit --project {project_name}` in the source workspace before \
              syncing"
         ),
         Side::Destination => {
-            format!("Run `rwv lock --project {project_name}` to refresh before syncing")
+            format!("Run `rwv lock --commit --project {project_name}` to refresh before syncing")
         }
     };
     // Lead with the documented phrase (`lock-freshness precondition`) so the
@@ -3102,10 +3146,12 @@ fn run_replay(ctx: &OpContext<'_>) -> anyhow::Result<()> {
     }
 
     if any_failure {
-        anyhow::bail!(
-            "{}",
-            manifest_repo_failure_message(strategy, &ctx.resolved_source)
-        );
+        // A VCS-native resolution hint is only correct when a manifest repo is
+        // genuinely left mid-op (Correction 4). Probe the involved repos for a
+        // live conflict rather than assuming one from the strategy — a batch of
+        // fetch/head-unreadable failures leaves no rebase to `--continue`.
+        let live_conflict = sync_tasks.iter().find_map(|t| GitVcs.mid_op(&t.abs));
+        anyhow::bail!("{}", manifest_repo_failure_message(ctx.verb, live_conflict));
     }
 
     // === Phase 1' (project repo) — strategy on the project repo ===
@@ -3125,7 +3171,7 @@ fn run_replay(ctx: &OpContext<'_>) -> anyhow::Result<()> {
             &snapshot.source_project_tip,
             &cwd_project_tip,
             strategy,
-            &ctx.resolved_source,
+            ctx.verb,
         )
     };
 
@@ -3133,13 +3179,17 @@ fn run_replay(ctx: &OpContext<'_>) -> anyhow::Result<()> {
         if emit_text {
             eprintln!("Phase 1' (project repo) failed: {e}");
         }
+        // Only teach the VCS-native resume when the project repo is actually
+        // left mid-op (Correction 4). A `--discard-local-commits` hard-reset
+        // failure or a non-conflict rebase error leaves no in-flight VCS op.
+        let live_conflict = GitVcs.mid_op(&ctx.cwd_project_dir);
         anyhow::bail!(
             "{}",
             phase1_or_phase3_failure_message(
                 Phase::One,
                 &ctx.cwd_project_dir,
-                strategy,
-                &ctx.resolved_source,
+                ctx.verb,
+                live_conflict,
             )
         );
     }
@@ -3278,14 +3328,13 @@ fn run_relock(ctx: &OpContext<'_>) -> anyhow::Result<()> {
         if emit_text {
             eprintln!("Phase 3 (re-lock) failed: {e}");
         }
+        // Phase 3 (relock) is a lock regeneration + commit, never a VCS
+        // rebase/merge — so there is never a live ConflictOp to resume with a
+        // `git … --continue` (Correction 4). Pass `None`: the message points at
+        // `rwv {verb} --continue`, not a spurious `git rebase --continue`.
         anyhow::bail!(
             "{}",
-            phase1_or_phase3_failure_message(
-                Phase::Three,
-                &ctx.cwd_project_dir,
-                ctx.strategy,
-                &ctx.resolved_source,
-            )
+            phase1_or_phase3_failure_message(Phase::Three, &ctx.cwd_project_dir, ctx.verb, None,)
         );
     }
 
@@ -3684,9 +3733,17 @@ fn retire_workweave_after_sync_to(
     // Both invariants hold: delete the workweave. Pass `force: false` —
     // collect_dirty_paths already returned empty, so the inner check is
     // belt-and-braces. Use the primary path (delete_workweave needs to
-    // locate the workweave under the primary's parent dir).
-    crate::workweave::delete_workweave(ctx.primary_path(), project, workweave_name, false)
-        .context("--retire: workweave delete failed")?;
+    // locate the workweave under the primary's parent dir). Use the
+    // retire-specific entry point, which skips the cross-verb op guard: THIS op
+    // still holds its `.rwv-op` record on the workweave (cleared later in
+    // cleanup), so the guard would otherwise refuse the op's own retire.
+    crate::workweave::delete_workweave_for_retire(
+        ctx.primary_path(),
+        project,
+        workweave_name,
+        false,
+    )
+    .context("--retire: workweave delete failed")?;
 
     eprintln!("retired workweave {}", workweave_name.as_str());
     Ok(())
@@ -3716,7 +3773,7 @@ fn apply_project_strategy(
     source_tip: &ResolvedRevisionId,
     cwd_tip: &ResolvedRevisionId,
     strategy: SyncStrategy,
-    resolved_source: &SyncSource,
+    verb: OpVerb,
 ) -> anyhow::Result<()> {
     if cwd_tip == source_tip {
         // No-op.
@@ -3745,7 +3802,7 @@ fn apply_project_strategy(
                             op,
                             "rebase (project repo)",
                             &detail,
-                            resolved_source,
+                            verb,
                         )
                     );
                 }
@@ -4821,28 +4878,66 @@ mod tests {
         );
     }
 
-    // Site 1 — manifest-repo per-repo sync loop failure summary.
+    // Correction 4 — resume verb is derived from the op's `verb` field, NEVER
+    // hardcoded `rwv sync`. The plain resume string builder is the single
+    // source of that vocabulary.
     #[test]
-    fn manifest_repo_failure_message_rebase_includes_rebase_hint() {
-        let src = SyncSource::Primary;
-        let msg = manifest_repo_failure_message(SyncStrategy::Rebase, &src);
+    fn resume_command_derives_from_op_verb() {
+        assert_eq!(resume_command(OpVerb::Sync), "rwv sync --continue");
+        assert_eq!(resume_command(OpVerb::SyncTo), "rwv sync-to --continue");
+    }
+
+    // Site 1 — manifest-repo per-repo sync loop failure summary. With a live
+    // conflict the VCS-native resume steps are present; the resume verb is
+    // derived from the op verb.
+    #[test]
+    fn manifest_repo_failure_message_live_conflict_includes_vcs_and_verb_resume() {
+        let msg = manifest_repo_failure_message(OpVerb::SyncTo, Some(ConflictOp::Rebase));
         assert!(
             msg.contains("git rebase --continue"),
-            "expected rebase hint in: {msg}"
+            "expected rebase hint under a live conflict: {msg}"
+        );
+        // Resume verb from op-state, never a hardcoded pull `rwv sync`.
+        assert!(
+            msg.contains("rwv sync-to --continue"),
+            "expected verb-derived resume: {msg}"
         );
         assert!(
-            msg.contains("rwv sync primary"),
-            "expected re-run hint: {msg}"
+            !msg.contains("rwv sync primary") && !msg.contains("rwv sync /"),
+            "must NOT hardcode `rwv sync <source>`: {msg}"
         );
         assert_resolution_first_abort_last(&msg);
     }
 
-    // Site 2 — Phase 1' (project repo) outer bail.
+    // Site 1 — NO live conflict (e.g. fetch/head-unreadable failures): the
+    // VCS-native hint is OMITTED (nothing to `--continue` in git), and the
+    // message points straight at the verb-derived resume.
     #[test]
-    fn phase1_bail_message_includes_resolution_steps_and_rwv_abort_last() {
-        let src = SyncSource::Workweave(WorkweaveName::new("ww1"));
+    fn manifest_repo_failure_message_no_conflict_omits_vcs_hint() {
+        let msg = manifest_repo_failure_message(OpVerb::Sync, None);
+        assert!(
+            !msg.contains("git rebase --continue")
+                && !msg.contains("git merge --continue")
+                && !msg.contains("git cherry-pick --continue"),
+            "VCS hint must be absent without a live conflict: {msg}"
+        );
+        assert!(
+            msg.contains("rwv sync --continue"),
+            "expected verb-derived resume: {msg}"
+        );
+        assert!(msg.contains("rwv abort"), "expected rollback option: {msg}");
+    }
+
+    // Site 2 — Phase 1' (project repo) outer bail, live conflict.
+    #[test]
+    fn phase1_bail_message_live_conflict_includes_resolution_and_verb_resume() {
         let cwd = Path::new("/ws/projects/web-app");
-        let msg = phase1_or_phase3_failure_message(Phase::One, cwd, SyncStrategy::Rebase, &src);
+        let msg = phase1_or_phase3_failure_message(
+            Phase::One,
+            cwd,
+            OpVerb::SyncTo,
+            Some(ConflictOp::Rebase),
+        );
         assert!(
             msg.contains("Phase 1' (project repo)"),
             "expected phase label in: {msg}"
@@ -4855,44 +4950,72 @@ mod tests {
             msg.contains("/ws/projects/web-app"),
             "expected repo path: {msg}"
         );
-        assert!(msg.contains("rwv sync ww1"), "expected re-run hint: {msg}");
+        assert!(
+            msg.contains("rwv sync-to --continue"),
+            "expected verb-derived resume: {msg}"
+        );
+        assert!(
+            !msg.contains("rwv sync ww1") && !msg.contains("rwv sync /"),
+            "must NOT hardcode `rwv sync <source>`: {msg}"
+        );
         assert_resolution_first_abort_last(&msg);
     }
 
-    // Site 3 — Phase 3 (re-lock) outer bail.
+    // Site 2 — Phase 1' non-conflict failure (e.g. discard-local-commits
+    // hard-reset error): no live ConflictOp, so no VCS-native hint.
     #[test]
-    fn phase3_bail_message_includes_resolution_steps_and_rwv_abort_last() {
-        let src = SyncSource::Path(PathBuf::from("/abs/source"));
+    fn phase1_bail_message_no_conflict_omits_vcs_hint() {
         let cwd = Path::new("/ws/projects/web-app");
-        let msg = phase1_or_phase3_failure_message(Phase::Three, cwd, SyncStrategy::Rebase, &src);
+        let msg = phase1_or_phase3_failure_message(Phase::One, cwd, OpVerb::Sync, None);
+        assert!(
+            !msg.contains("git rebase --continue"),
+            "VCS hint must be absent without a live conflict: {msg}"
+        );
+        assert!(
+            msg.contains("rwv sync --continue"),
+            "expected verb-derived resume: {msg}"
+        );
+        assert!(msg.contains("rwv abort"), "expected rollback option: {msg}");
+    }
+
+    // Site 3 — Phase 3 (re-lock) outer bail: relock is NEVER a VCS conflict, so
+    // the caller passes `None` and the message must NOT teach a spurious
+    // `git rebase --continue` (which would print "No rebase in progress").
+    #[test]
+    fn phase3_bail_message_never_teaches_vcs_hint() {
+        let cwd = Path::new("/ws/projects/web-app");
+        let msg = phase1_or_phase3_failure_message(Phase::Three, cwd, OpVerb::SyncTo, None);
         assert!(
             msg.contains("Phase 3 (re-lock)"),
             "expected phase label in: {msg}"
         );
         assert!(
-            msg.contains("git rebase --continue"),
-            "expected rebase hint in: {msg}"
+            !msg.contains("git rebase --continue"),
+            "relock is never a rebase conflict — no `git rebase --continue`: {msg}"
         );
         assert!(
-            msg.contains("rwv sync /abs/source"),
-            "expected re-run hint: {msg}"
+            msg.contains("rwv sync-to --continue"),
+            "expected verb-derived resume: {msg}"
         );
-        assert_resolution_first_abort_last(&msg);
+        assert!(
+            !msg.contains("rwv sync /abs/source"),
+            "must NOT hardcode `rwv sync <source>`: {msg}"
+        );
     }
 
     // Site 4 — cherry-pick op hint (trait surface; sync no longer uses
     // cherry-pick directly but the message builder must still render the
-    // op's hint correctly for any VCS impl that does).
+    // op's hint correctly for any VCS impl that does). This site ALWAYS has a
+    // live ConflictOp, so the VCS hint is unconditional.
     #[test]
     fn per_conflict_bail_cherry_pick_includes_cherry_pick_hint() {
-        let src = SyncSource::Primary;
         let repo = Path::new("/ws/projects/web-app");
         let msg = per_conflict_bail_message(
             repo,
             ConflictOp::CherryPick,
             "cherry-pick (rebase replay)",
             "commit deadbeef on paths: foo.txt",
-            &src,
+            OpVerb::Sync,
         );
         assert!(
             msg.contains("git cherry-pick --continue"),
@@ -4905,8 +5028,12 @@ mod tests {
         assert!(msg.contains("deadbeef"), "expected detail in: {msg}");
         assert!(msg.contains("foo.txt"), "expected detail in: {msg}");
         assert!(
-            msg.contains("rwv sync primary"),
-            "expected re-run hint: {msg}"
+            msg.contains("rwv sync --continue"),
+            "expected verb-derived resume: {msg}"
+        );
+        assert!(
+            !msg.contains("rwv sync primary"),
+            "must NOT hardcode `rwv sync <source>`: {msg}"
         );
         assert_resolution_first_abort_last(&msg);
     }
@@ -4914,18 +5041,22 @@ mod tests {
     // Site 5 — Phase 1' merge inner bail.
     #[test]
     fn per_conflict_bail_merge_includes_merge_hint() {
-        let src = SyncSource::Primary;
         let repo = Path::new("/ws/projects/web-app");
-        let msg =
-            per_conflict_bail_message(repo, ConflictOp::Merge, "merge", "paths: bar.txt", &src);
+        let msg = per_conflict_bail_message(
+            repo,
+            ConflictOp::Merge,
+            "merge",
+            "paths: bar.txt",
+            OpVerb::SyncTo,
+        );
         assert!(
             msg.contains("git merge --continue"),
             "expected merge hint in: {msg}"
         );
         assert!(msg.contains("bar.txt"), "expected detail in: {msg}");
         assert!(
-            msg.contains("rwv sync primary"),
-            "expected re-run hint: {msg}"
+            msg.contains("rwv sync-to --continue"),
+            "expected verb-derived resume: {msg}"
         );
         assert_resolution_first_abort_last(&msg);
     }
@@ -4938,7 +5069,6 @@ mod tests {
     // `Vcs::rebase_stopped_commit_detail` (now a trait method).
     #[test]
     fn per_conflict_bail_rebase_project_repo_includes_commit_subject_in_detail() {
-        let src = SyncSource::Primary;
         let repo = Path::new("/ws/projects/web-app");
         let detail = "commit abc1234 (lock: refresh — post-OOB drift in gc-formulas)";
         let msg = per_conflict_bail_message(
@@ -4946,7 +5076,7 @@ mod tests {
             ConflictOp::Rebase,
             "rebase (project repo)",
             detail,
-            &src,
+            OpVerb::Sync,
         );
         assert!(
             msg.contains("abc1234"),
@@ -4965,24 +5095,70 @@ mod tests {
             "expected rebase hint in message: {msg}"
         );
         assert!(
-            msg.contains("rwv sync primary"),
-            "expected re-run hint in message: {msg}"
+            msg.contains("rwv sync --continue"),
+            "expected verb-derived resume: {msg}"
+        );
+        assert!(
+            !msg.contains("rwv sync primary"),
+            "must NOT hardcode `rwv sync <source>`: {msg}"
         );
         assert_resolution_first_abort_last(&msg);
     }
 
+    // Correction 4 — the stale-lock recovery hint teaches the ATOMIC
+    // `rwv lock --commit`, never the broken two-step `rwv lock` + "commit"
+    // (whose written-but-unstaged `rwv.lock` kills a re-run mid-op).
     #[test]
-    fn conflict_op_for_strategy_maps_ff_to_rebase() {
-        // ff cannot leave a conflict; we still nominate Rebase as the
-        // fallback the user is likely to switch to. rebase resolves with
-        // the same in-flight op.
-        assert_eq!(
-            conflict_op_for_strategy(SyncStrategy::Ff),
-            ConflictOp::Rebase
+    fn stale_lock_refusal_hint_names_lock_commit() {
+        let offending = RepoRelation {
+            repo_path: crate::manifest::RepoPath::new("github/org/lib").unwrap(),
+            relation: LockRelation::Behind,
+            ahead_count: None,
+        };
+        for side in [Side::Source, Side::Destination] {
+            let msg = lock_relation_refusal(side, "ws", "app", &[&offending])
+                .expect("non-empty offending set yields a refusal");
+            assert!(
+                msg.contains("rwv lock --commit"),
+                "stale-lock hint must name `rwv lock --commit` ({side:?}): {msg}"
+            );
+            assert!(
+                !msg.contains("and commit before syncing"),
+                "must NOT teach the broken two-step form ({side:?}): {msg}"
+            );
+        }
+    }
+
+    // The diverged-repo bless-HEAD hint AND the recovery hint both name
+    // `rwv lock --commit`.
+    #[test]
+    fn diverged_lock_refusal_blesses_head_with_lock_commit() {
+        let diverged = RepoRelation {
+            repo_path: crate::manifest::RepoPath::new("github/org/lib").unwrap(),
+            relation: LockRelation::Diverged,
+            ahead_count: None,
+        };
+        let msg = lock_relation_refusal(Side::Source, "ws", "app", &[&diverged])
+            .expect("non-empty offending set yields a refusal");
+        assert!(
+            msg.contains("bless the current HEAD with `rwv lock --commit`"),
+            "diverged repo must earn the bless-HEAD `rwv lock --commit` hint: {msg}"
         );
-        assert_eq!(
-            conflict_op_for_strategy(SyncStrategy::Rebase),
-            ConflictOp::Rebase
+    }
+
+    // The unresolvable-lock (corrupt lock) refusal also names `rwv lock --commit`.
+    #[test]
+    fn unresolvable_lock_refusal_hint_names_lock_commit() {
+        let msg = unresolvable_lock_refusal(
+            Side::Source,
+            "ws",
+            "app",
+            &crate::manifest::RepoPath::new("github/org/lib").unwrap(),
+            &crate::vcs::RawRevisionId::new("v-does-not-exist"),
+        );
+        assert!(
+            msg.contains("rwv lock --commit"),
+            "unresolvable-lock hint must name `rwv lock --commit`: {msg}"
         );
     }
 

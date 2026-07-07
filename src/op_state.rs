@@ -67,7 +67,7 @@ pub const OP_LEASE_FILE: &str = ".rwv-op-lease";
 // ---------------------------------------------------------------------------
 
 /// Which top-level verb started this op.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum OpVerb {
     /// Single-step sync (existing `rwv sync`).
@@ -582,31 +582,62 @@ pub fn clear_all_at(workspace_dir: &Path) {
 /// Check that no op-state file (owner record or lease) exists in any of the
 /// given workspace directories.
 ///
-/// Returns an error if any workspace carries an owner record or a lease,
-/// naming the workspace and the in-progress op's details so the operator
-/// knows what they interrupted.
+/// This is the cross-verb mutex: any verb that mutates repo state in an
+/// involved workspace (sync / sync-to / update / `lock --commit` / workweave
+/// delete / retire) calls it and refuses while an op involves that workspace.
+///
+/// Returns an error if any workspace carries an owner record or a lease. Both
+/// branches name the op (verb), its age, the phase it stalled in, and the two
+/// exits — `--continue` from the OWNING workspace, or `rwv abort` — so the
+/// operator knows exactly what they interrupted and how to clear it. When the
+/// workspace only holds a thin lease, the pointer is followed to the owner
+/// record so the message carries the same detail (naming the owner workspace
+/// where `--continue` must run). A crashed op leaves a stale record on purpose:
+/// there is no auto-expiry; `rwv abort`'s verified restore is the way out.
 pub fn check_no_op_in_progress(workspace_dirs: &[&Path]) -> anyhow::Result<()> {
     for &dir in workspace_dirs {
-        // Check for owner record.
+        // Owner record: full detail is right here.
         if let Some(record) = read_owner(dir)? {
             let elapsed = elapsed_since(&record.started_at);
             anyhow::bail!(
-                "{} in progress (started {elapsed} ago, mid `{phase}`) at {dir}.\n\
-                 Resolve and rerun with `--continue`, or `rwv abort` to discard.",
-                record.verb,
+                "{verb} in progress (started {elapsed} ago, mid `{phase}`) at {dir}.\n\
+                 Rerun with `rwv {verb} --continue` from that workspace after resolving, \
+                 or `rwv abort` to discard.",
+                verb = record.verb,
                 phase = record.phase,
                 dir = dir.display(),
             );
         }
-        // Check for lease.
+        // Lease: follow the pointer to the owner record so the refusal carries
+        // the same op / age / phase detail and names where `--continue` runs.
         if let Some(lease) = read_lease(dir)? {
-            anyhow::bail!(
-                "op {} in progress (lease at {dir}; owner workspace: {owner}).\n\
-                 Resolve and rerun with `--continue`, or `rwv abort` to discard.",
-                lease.id,
-                dir = dir.display(),
-                owner = lease.owner.display(),
-            );
+            // A resolvable owner record gives the rich message; if the pointer
+            // is dangling (owner workspace moved / op-state hand-removed), fall
+            // back to the lease's own fields rather than failing the guard —
+            // the operator still learns an op involves this workspace.
+            match read_owner(&lease.owner) {
+                Ok(Some(record)) => {
+                    let elapsed = elapsed_since(&record.started_at);
+                    anyhow::bail!(
+                        "{verb} in progress (started {elapsed} ago, mid `{phase}`); this \
+                         workspace ({dir}) is leased to it. Owner workspace: {owner}.\n\
+                         Rerun with `rwv {verb} --continue` from the owner workspace after \
+                         resolving, or `rwv abort` to discard.",
+                        verb = record.verb,
+                        phase = record.phase,
+                        dir = dir.display(),
+                        owner = lease.owner.display(),
+                    );
+                }
+                _ => anyhow::bail!(
+                    "op {id} in progress (lease at {dir}; owner workspace: {owner}).\n\
+                     Rerun the owning verb with `--continue` from the owner workspace, or \
+                     `rwv abort` to discard.",
+                    id = lease.id,
+                    dir = dir.display(),
+                    owner = lease.owner.display(),
+                ),
+            }
         }
     }
     Ok(())
@@ -1164,6 +1195,106 @@ started_at: 2026-06-01T00:00:00Z
         assert!(
             err.contains("in progress"),
             "expected 'in progress' in error: {err}"
+        );
+    }
+
+    #[test]
+    fn check_no_op_owner_refusal_names_verb_and_both_exits() {
+        // The cross-verb mutex refusal (fo-4rpnkm.2, Correction 1) names the
+        // op's verb, its age, and BOTH exits: `rwv <verb> --continue` and
+        // `rwv abort`.
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path();
+        let op_id = OpId::new_now();
+        let record = OwnerRecord::new_sync_to(
+            &op_id,
+            crate::sync::SyncStrategy::Rebase,
+            PathBuf::from("/cwd"),
+            PathBuf::from("/tgt"),
+            false,
+        );
+        write_owner(dir, &record).unwrap();
+        let err = check_no_op_in_progress(&[dir]).unwrap_err().to_string();
+        assert!(
+            err.contains("sync-to in progress"),
+            "refusal must name the op's verb: {err}"
+        );
+        assert!(
+            err.contains("started") && err.contains("ago"),
+            "refusal must name the op's age: {err}"
+        );
+        assert!(
+            err.contains("rwv sync-to --continue"),
+            "refusal must offer verb-derived `--continue`: {err}"
+        );
+        assert!(
+            err.contains("rwv abort"),
+            "refusal must offer `rwv abort`: {err}"
+        );
+    }
+
+    #[test]
+    fn check_no_op_lease_refusal_follows_pointer_for_rich_message() {
+        // A workspace holding only a thin lease still gets the full op / age /
+        // owner detail — the guard follows the lease pointer to the owner
+        // record (fo-4rpnkm.2 wired the existing lease into the mutex).
+        let tmp = tempfile::tempdir().unwrap();
+        let owner_dir = tmp.path().join("owner");
+        let lease_dir = tmp.path().join("lease");
+        std::fs::create_dir_all(&owner_dir).unwrap();
+        std::fs::create_dir_all(&lease_dir).unwrap();
+
+        let op_id = OpId::new_now();
+        let record = OwnerRecord::new_sync_to(
+            &op_id,
+            crate::sync::SyncStrategy::Rebase,
+            owner_dir.clone(),
+            PathBuf::from("/tgt"),
+            false,
+        );
+        write_owner(&owner_dir, &record).unwrap();
+        let lease = LeaseRecord {
+            id: op_id.as_str().to_owned(),
+            owner: owner_dir.clone(),
+        };
+        write_lease(&lease_dir, &lease).unwrap();
+
+        let err = check_no_op_in_progress(&[lease_dir.as_path()])
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains("sync-to in progress"),
+            "lease refusal must name the op's verb via the pointer: {err}"
+        );
+        assert!(
+            err.contains(&owner_dir.display().to_string()),
+            "lease refusal must name the owner workspace: {err}"
+        );
+        assert!(
+            err.contains("rwv sync-to --continue") && err.contains("rwv abort"),
+            "lease refusal must offer both exits: {err}"
+        );
+    }
+
+    #[test]
+    fn check_no_op_lease_refusal_falls_back_on_dangling_pointer() {
+        // If the lease pointer is dangling (owner record gone), the guard still
+        // refuses — falling back to the lease's own fields rather than passing.
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path();
+        let lease = LeaseRecord {
+            id: "dangling-op".to_owned(),
+            owner: tmp.path().join("nonexistent-owner"),
+        };
+        write_lease(dir, &lease).unwrap();
+        let err = check_no_op_in_progress(&[dir]).unwrap_err().to_string();
+        assert!(
+            err.contains("dangling-op") && err.contains("in progress"),
+            "dangling-pointer refusal must still name the op id: {err}"
+        );
+        assert!(
+            err.contains("--continue") && err.contains("rwv abort"),
+            "dangling-pointer refusal must still offer both exits: {err}"
         );
     }
 

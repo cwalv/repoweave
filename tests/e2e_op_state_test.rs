@@ -410,7 +410,7 @@ fn mid_step1_resume_with_continue_after_conflict_resolution() {
     let out = result.get_output().clone();
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
-        !stderr.contains("Resolve and rerun with `--continue`"),
+        !stderr.contains("in progress (started"),
         "--continue should not produce the 'in progress' refusal; got: {stderr}"
     );
 }
@@ -470,7 +470,7 @@ fn mid_step3_continue_does_not_produce_in_progress_refusal() {
     let stderr = String::from_utf8_lossy(&out.stderr);
     // Must not be the "in-progress" refusal — it should be a --continue resume.
     assert!(
-        !stderr.contains("Resolve and rerun with `--continue`"),
+        !stderr.contains("in progress (started"),
         "--continue must not produce the in-progress refusal; got: {stderr}"
     );
 }
@@ -792,6 +792,196 @@ fn abort_restores_repos_and_removes_op_state() {
     assert_eq!(
         post_abort_project, ww_project_sha,
         "project repo should be restored to pre-op SHA after abort"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Cross-verb mutex (fo-4rpnkm.2, Correction 1 COVERAGE + ORDERING).
+//
+// The op-state mutex must extend beyond `sync`: every verb that mutates repo
+// state in an involved workspace (`update`, `lock --commit`, `workweave
+// delete`, retire) refuses while a `.rwv-op` / `.rwv-op-lease` involves that
+// workspace. Each refusal names the in-flight op (verb), its age, and the two
+// exits (`--continue` from the owning workspace / `rwv abort`). The `workweave
+// delete` case lives in `workweave_topology_parent_test.rs` where the fixture
+// can create + delete a real workweave.
+// ---------------------------------------------------------------------------
+
+/// Plant a v2 owner record for an in-flight op at `ws_root`.
+fn plant_owner_record(ws_root: &Path, verb: &str, phase: &str, src: &Path, tgt: &Path) {
+    let yaml = format!(
+        "id: \"planted-op-1234\"\nverb: {verb}\nstrategy: rebase\nsource: \"{src}\"\n\
+         target: \"{tgt}\"\nretire: false\nphase: {phase}\nconverged_tips: {{}}\n\
+         overrides: []\nstarted_at: \"2026-05-27T10:00:00Z\"\n",
+        src = src.display(),
+        tgt = tgt.display(),
+    );
+    std::fs::write(ws_root.join(".rwv-op"), &yaml).unwrap();
+}
+
+/// Assert an in-flight-op refusal: names the verb, phase, age, and both exits.
+fn assert_in_flight_op_refusal(stderr: &str, expect_verb: &str) {
+    assert!(
+        stderr.contains("in progress (started"),
+        "refusal must name the in-flight op with its age; got: {stderr}"
+    );
+    assert!(
+        stderr.contains(&format!("{expect_verb} in progress")),
+        "refusal must name the op's verb `{expect_verb}`; got: {stderr}"
+    );
+    assert!(
+        stderr.contains("--continue"),
+        "refusal must offer `--continue`; got: {stderr}"
+    );
+    assert!(
+        stderr.contains("rwv abort"),
+        "refusal must offer `rwv abort`; got: {stderr}"
+    );
+}
+
+/// `rwv update` refuses while an op involves the active workspace.
+#[test]
+fn mid_op_update_refuses_with_in_flight_message() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (primary, ww, _c1) = make_shared_workspaces(tmp.path());
+    plant_owner_record(&ww.root, "sync-to", "replay", &ww.root, &primary.root);
+
+    let assertion = rwv()
+        .args(["update"])
+        .current_dir(&ww.root)
+        .assert()
+        .failure();
+    let stderr = String::from_utf8_lossy(&assertion.get_output().stderr).to_string();
+    assert_in_flight_op_refusal(&stderr, "sync-to");
+}
+
+/// `rwv lock --commit` refuses while an op involves the active workspace.
+#[test]
+fn mid_op_lock_commit_refuses_with_in_flight_message() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (primary, ww, _c1) = make_shared_workspaces(tmp.path());
+    plant_owner_record(&ww.root, "sync", "relock", &primary.root, &ww.root);
+
+    let assertion = rwv()
+        .args(["lock", "--commit"])
+        .current_dir(&ww.root)
+        .assert()
+        .failure();
+    let stderr = String::from_utf8_lossy(&assertion.get_output().stderr).to_string();
+    assert_in_flight_op_refusal(&stderr, "sync");
+}
+
+/// Plain `rwv lock` (no `--commit`) is NOT gated: writing the working-tree
+/// `rwv.lock` is the auto-relock's own input (Correction 3 carve-out), so the
+/// mutex is scoped to `--commit`. This guards the scope from over-broadening.
+#[test]
+fn mid_op_plain_lock_is_not_gated() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (primary, ww, _c1) = make_shared_workspaces(tmp.path());
+    plant_owner_record(&ww.root, "sync", "relock", &primary.root, &ww.root);
+
+    // Plain `rwv lock` writes the working-tree lock and must NOT hit the op
+    // guard (it succeeds despite the planted op-state).
+    let assertion = rwv()
+        .args(["lock"])
+        .current_dir(&ww.root)
+        .assert()
+        .success();
+    let stderr = String::from_utf8_lossy(&assertion.get_output().stderr).to_string();
+    assert!(
+        !stderr.contains("in progress (started"),
+        "plain `rwv lock` must not be gated by the op mutex; got: {stderr}"
+    );
+}
+
+/// `rwv sync-to` (the retire entry point) refuses while an op involves the
+/// workspace — the op guard reports the in-flight op, covering the retire verb.
+#[test]
+fn mid_op_sync_to_refuses_with_in_flight_message() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (primary, ww, _c1) = make_shared_workspaces(tmp.path());
+    plant_owner_record(&ww.root, "sync-to", "replay", &ww.root, &primary.root);
+
+    let assertion = rwv()
+        .args(["sync-to", "--retire", &primary.root.to_string_lossy()])
+        .current_dir(&ww.root)
+        .assert()
+        .failure();
+    let stderr = String::from_utf8_lossy(&assertion.get_output().stderr).to_string();
+    assert_in_flight_op_refusal(&stderr, "sync-to");
+}
+
+/// A workspace holding only a thin `.rwv-op-lease` (not the owner record) also
+/// refuses; the guard follows the lease pointer to name the op / age / exits.
+#[test]
+fn mid_op_lease_side_verb_refuses_and_names_owner() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (primary, ww, _c1) = make_shared_workspaces(tmp.path());
+
+    // Owner record at ww (the op's initiating workspace), thin lease at primary.
+    plant_owner_record(
+        &ww.root,
+        "sync-to",
+        "advance-target",
+        &ww.root,
+        &primary.root,
+    );
+    let lease_yaml = format!(
+        "id: \"planted-op-1234\"\nowner: \"{owner}\"\n",
+        owner = ww.root.display(),
+    );
+    std::fs::write(primary.root.join(".rwv-op-lease"), &lease_yaml).unwrap();
+
+    // From the LEASED workspace (primary), `rwv update` must refuse, following
+    // the lease pointer to the owner record for the rich message.
+    let assertion = rwv()
+        .args(["update"])
+        .current_dir(&primary.root)
+        .assert()
+        .failure();
+    let stderr = String::from_utf8_lossy(&assertion.get_output().stderr).to_string();
+    assert_in_flight_op_refusal(&stderr, "sync-to");
+    assert!(
+        stderr.contains(&ww.root.display().to_string()),
+        "lease-side refusal must name the owner workspace; got: {stderr}"
+    );
+}
+
+/// Correction 1 ORDERING: the op guard fires BEFORE lock-relation
+/// classification. A mid-op workspace whose lock is ALSO in an anomalous
+/// relation (would otherwise trip a lock/relation refusal) must report the
+/// in-flight op, not the stale-lock error — that is the whole point of the
+/// reorder.
+#[test]
+fn op_guard_precedes_lock_relation_classification() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (primary, ww, _c1) = make_shared_workspaces(tmp.path());
+
+    // Make ww's committed lock DIVERGE from HEAD so that, absent the op guard,
+    // the lock-relation classifier would refuse with a relation error. Advance
+    // the server repo without relocking, then rewrite history so the lock's
+    // pinned SHA is neither ancestor nor descendant of HEAD (diverged).
+    make_commit(&ww.server_dir, "a.txt", "a\n", "ww: A");
+    git(&["checkout", "-b", "throwaway"], &ww.server_dir);
+    make_commit(&ww.server_dir, "b.txt", "b\n", "ww: B (diverged)");
+
+    // Plant an in-flight op on ww at the same time.
+    plant_owner_record(&ww.root, "sync-to", "replay", &ww.root, &primary.root);
+
+    // A `rwv sync-to` must report the in-flight op, NOT a lock/relation error.
+    let assertion = rwv()
+        .args(["sync-to", &primary.root.to_string_lossy()])
+        .current_dir(&ww.root)
+        .assert()
+        .failure();
+    let stderr = String::from_utf8_lossy(&assertion.get_output().stderr).to_string();
+    assert_in_flight_op_refusal(&stderr, "sync-to");
+    assert!(
+        !stderr.contains("diverged")
+            && !stderr.contains("lock behind")
+            && !stderr.contains("lock ahead")
+            && !stderr.contains("stale lock"),
+        "op guard must preempt any lock-relation refusal; got: {stderr}"
     );
 }
 
