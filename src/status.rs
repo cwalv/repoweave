@@ -51,6 +51,29 @@ impl std::fmt::Display for LockRelation {
     }
 }
 
+/// Recorded-parent exposure for a per-repo status entry.
+///
+/// Parent identity comes from the workweave's `.rwv-workweave` marker
+/// (`parent:`), NOT from the branch name: workweave branches are stacked
+/// (`lab--wwb/lab--wwa/main`), so a constructed `basename(parent)/main` name
+/// silently breaks for a workweave whose parent is itself a workweave, and is
+/// also wrong after adoption re-points the parent to primary. Consumers that
+/// need the parent must read this field, never reconstruct it from `branch`.
+///
+/// `path` is the recorded parent workspace path (identical for every repo in
+/// the workweave). `tip` is this specific repo's parent tip — the SHA that
+/// `git rev-parse HEAD` yields in the parent's checkout of the SAME repo — or
+/// `None` when the parent has no checkout of this repo (or HEAD is
+/// unreadable). The tip is what `git log <parent-tip>..HEAD` needs to compute
+/// the workweave's unique commits without re-deriving branch layout.
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+pub struct ParentInfo {
+    /// Recorded parent workspace path (from the `.rwv-workweave` marker).
+    pub path: String,
+    /// This repo's HEAD in the parent's checkout, if resolvable.
+    pub tip: Option<String>,
+}
+
 /// Per-repo status entry.
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct RepoStatus {
@@ -64,6 +87,10 @@ pub struct RepoStatus {
     pub url: String,
     pub project: String,
     pub absolute_path: String,
+    /// Recorded parent (path + per-repo parent tip) when CWD is a workweave;
+    /// `None` in the primary weave (no marker, hence no recorded parent).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent: Option<ParentInfo>,
 }
 
 fn compute_relation(
@@ -123,6 +150,17 @@ pub fn run_status(
     let git = GitVcs;
     let workspace_dir = ctx.active_path().to_path_buf();
 
+    // Recorded parent path from the `.rwv-workweave` marker (workweave-level;
+    // identical for every repo). `None` in the primary weave, where there is
+    // no marker and hence no recorded parent. Read from the marker — never
+    // reconstructed from a branch name (which is wrong for stacked or
+    // adopted-to-primary parents).
+    let recorded_parent: Option<std::path::PathBuf> =
+        crate::workspace::WorkweaveMarker::read(&workspace_dir)
+            .ok()
+            .flatten()
+            .map(|m| m.parent);
+
     let mut entries: Vec<RepoStatus> = Vec::new();
 
     for pname in project_names_for_ctx(&ctx) {
@@ -166,6 +204,21 @@ pub fn run_status(
 
             let mid_op = GitVcs::mid_op_state(&repo_abs);
 
+            // Per-repo parent tip: resolve THIS repo's HEAD in the parent's
+            // checkout of the same repo path. Read from the recorded parent
+            // path, not a reconstructed branch name.
+            let parent = recorded_parent.as_ref().map(|parent_path| {
+                let parent_repo_abs = parent_path.join(repo_path.as_path());
+                let parent_tip = git
+                    .head_revision(&parent_repo_abs)
+                    .ok()
+                    .map(|r| r.as_str().to_owned());
+                ParentInfo {
+                    path: parent_path.to_string_lossy().to_string(),
+                    tip: parent_tip,
+                }
+            });
+
             entries.push(RepoStatus {
                 path: repo_path.to_string(),
                 branch,
@@ -177,6 +230,7 @@ pub fn run_status(
                 url: entry.url.to_string(),
                 project: pname.to_string(),
                 absolute_path: repo_abs.to_string_lossy().to_string(),
+                parent,
             });
         }
     }
@@ -278,6 +332,7 @@ mod tests {
                 url: "https://example.com/repo.git".into(),
                 project: "demo".into(),
                 absolute_path: "/abs/github/org/repo".into(),
+                parent: None,
             }],
         };
 
@@ -300,5 +355,56 @@ mod tests {
         assert_eq!(decoded.repos.len(), 1);
         assert_eq!(decoded.repos[0].path, "github/org/repo");
         assert_eq!(decoded.repos[0].relation, LockRelation::Ok);
+        // A repo with no recorded parent omits the field entirely.
+        assert!(
+            repos[0].get("parent").is_none(),
+            "parent field should be omitted when None; got: {}",
+            repos[0]
+        );
+        assert!(decoded.repos[0].parent.is_none());
+    }
+
+    /// The `parent` field carries both the recorded path and the per-repo
+    /// parent tip, and round-trips cleanly.
+    #[test]
+    fn status_json_parent_field_round_trips() {
+        let envelope = StatusJsonOutput {
+            schema_url: STATUS_SCHEMA_URL.to_string(),
+            repos: vec![RepoStatus {
+                path: "github/org/repo".into(),
+                branch: Some("app--wwb/app--wwa/main".into()),
+                tip: Some("deadbeef".into()),
+                lock_sha: Some("deadbeef".into()),
+                relation: LockRelation::Ok,
+                mid_op: None,
+                role: "owned".into(),
+                url: "https://example.com/repo.git".into(),
+                project: "demo".into(),
+                absolute_path: "/abs/github/org/repo".into(),
+                parent: Some(ParentInfo {
+                    // A STACKED parent path: the recorded parent is itself a
+                    // workweave, NOT primary. basename(parent)/main would be
+                    // wrong here — the field pins the real path instead.
+                    path: "/abs/.workweaves/demo--wwa".into(),
+                    tip: Some("cafef00d".into()),
+                }),
+            }],
+        };
+
+        let json = serde_json::to_string(&envelope).expect("serializes");
+        let v: serde_json::Value = serde_json::from_str(&json).expect("parses");
+        assert_eq!(
+            v["repos"][0]["parent"]["path"],
+            "/abs/.workweaves/demo--wwa"
+        );
+        assert_eq!(v["repos"][0]["parent"]["tip"], "cafef00d");
+
+        let decoded: StatusJsonOutput = serde_json::from_str(&json).expect("deserializes");
+        let parent = decoded.repos[0]
+            .parent
+            .as_ref()
+            .expect("parent present after round-trip");
+        assert_eq!(parent.path, "/abs/.workweaves/demo--wwa");
+        assert_eq!(parent.tip.as_deref(), Some("cafef00d"));
     }
 }

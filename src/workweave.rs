@@ -1298,6 +1298,105 @@ fn refuse_if_checkouts_host_foreign_worktrees(
     )
 }
 
+/// Resolve the parent that children of the workweave at `retiree_dir` should
+/// be adopted by when the retiree is retired or deleted.
+///
+/// Per Correction 5: children re-point to the RETIREE'S OWN recorded parent
+/// (the grandparent), so the lineage stays transitive by construction — the
+/// retiree's unique commits have just landed in that grandparent. If the
+/// retiree's marker is unreadable, records no parent, or records a parent that
+/// no longer exists on disk (itself already retired), fall back to `primary`,
+/// which always exists.
+///
+/// The returned path is canonicalized when possible so the written child
+/// marker records a stable absolute path (matching what `create_workweave`
+/// writes via `source_root.canonicalize()`).
+fn adoptive_parent_for_children(retiree_dir: &Path, primary_root: &Path) -> PathBuf {
+    let grandparent = match WorkweaveMarker::read(retiree_dir) {
+        Ok(Some(marker)) if marker.parent.exists() => Some(marker.parent),
+        _ => None,
+    };
+    let target = grandparent.unwrap_or_else(|| primary_root.to_path_buf());
+    target.canonicalize().unwrap_or(target)
+}
+
+/// Enumerate the live children of the workweave at `retiree_dir` and re-point
+/// each child's `.rwv-workweave` `parent:` to `new_parent`, printing one loud
+/// line per adopted child.
+///
+/// A "child" is any workweave under the same primary whose marker's `parent`
+/// field canonically resolves to `retiree_dir`. Branch names are creation-time
+/// namespaces, NOT lineage records, so they are deliberately left untouched —
+/// this is exactly why consumers must read parent from the marker, never from
+/// the branch name.
+///
+/// Shared by both the retire (`sync-to --retire`) and `workweave delete` paths
+/// so the adoption semantics live in exactly one place. Runs BEFORE the retiree
+/// directory is removed (the enumeration reads on-disk markers, but the
+/// grandparent resolution in [`adoptive_parent_for_children`] must see the
+/// retiree's own marker while it still exists).
+///
+/// Best-effort per child: a marker that can't be rewritten is reported to
+/// stderr but does not abort the retire/delete (the alternative — leaving the
+/// retiree in place — is strictly worse, and `rwv doctor --fix` re-points any
+/// child left dangling by a partial failure).
+fn adopt_children_of(retiree_dir: &Path, primary_root: &Path) {
+    let new_parent = adoptive_parent_for_children(retiree_dir, primary_root);
+
+    let retiree_canonical = retiree_dir
+        .canonicalize()
+        .unwrap_or_else(|_| retiree_dir.to_path_buf());
+
+    // A retiree that IS its own adoptive parent (should not happen — the
+    // grandparent is a different workspace) would create a self-loop; guard
+    // against it defensively.
+    let new_parent_canonical = new_parent
+        .canonicalize()
+        .unwrap_or_else(|_| new_parent.clone());
+
+    for (child_name, child_dir) in list_workweave_dirs(primary_root) {
+        let child_canonical = child_dir
+            .canonicalize()
+            .unwrap_or_else(|_| child_dir.clone());
+        // Never re-point the retiree's own marker.
+        if child_canonical == retiree_canonical {
+            continue;
+        }
+        let mut marker = match WorkweaveMarker::read(&child_dir) {
+            Ok(Some(m)) => m,
+            _ => continue,
+        };
+        let marker_parent_canonical = marker
+            .parent
+            .canonicalize()
+            .unwrap_or_else(|_| marker.parent.clone());
+        if marker_parent_canonical != retiree_canonical {
+            continue;
+        }
+        // Defensive: don't create a self-parent marker.
+        if new_parent_canonical == child_canonical {
+            eprintln!(
+                "warning: not adopting child workweave {child_name}: adoptive parent \
+                 {} is the child itself; run `rwv doctor --fix` to re-point to primary",
+                new_parent.display()
+            );
+            continue;
+        }
+        marker.parent = new_parent.clone();
+        if let Err(e) = marker.write(&child_dir) {
+            eprintln!(
+                "warning: failed to adopt child workweave {child_name}: could not rewrite \
+                 marker ({e}); run `rwv doctor --fix` to re-point its parent"
+            );
+            continue;
+        }
+        eprintln!(
+            "adopted child workweave {child_name}: parent now {}",
+            new_parent.display()
+        );
+    }
+}
+
 /// Delete a workweave: remove worktrees (including project repo) and delete
 /// the workweave directory.
 ///
@@ -1364,6 +1463,15 @@ pub fn delete_workweave(
                 diverged.join("\n  ")
             );
         }
+    }
+
+    // Adopt any living children BEFORE destroying the retiree. This re-points
+    // each child's recorded parent to the retiree's own recorded parent (the
+    // grandparent; fall back to primary) so a bare `rwv sync-to` from a child
+    // does not later die on a dangling parent. Runs while the retiree's marker
+    // still exists (it names the grandparent). Shared by delete and retire.
+    if workweave_dir.exists() {
+        adopt_children_of(&workweave_dir, ws_root);
     }
 
     // Remove worktrees for each repo, collecting errors.
@@ -1612,6 +1720,241 @@ fn load_manifest(ws_root: &Path, project: &ProjectName) -> anyhow::Result<Manife
         .join(project.as_str())
         .join("rwv.yaml");
     Manifest::from_path(&manifest_path)
+}
+
+// ---------------------------------------------------------------------------
+// `rwv workweave log` / `rwv workweave diff` — parent-relative history
+// ---------------------------------------------------------------------------
+
+/// A single commit in a `workweave log` listing, for `--json`.
+#[derive(Debug, Clone, serde::Serialize, schemars::JsonSchema)]
+pub struct WorkweaveLogCommit {
+    /// Full 40-hex commit SHA.
+    pub sha: String,
+    /// Abbreviated commit SHA.
+    pub short: String,
+    /// First line of the commit message.
+    pub subject: String,
+}
+
+/// Per-repo entry in a `workweave log` / `workweave diff` result.
+#[derive(Debug, Clone, serde::Serialize, schemars::JsonSchema)]
+pub struct WorkweaveLogRepo {
+    /// Manifest-relative repo path (e.g. `github/org/lib`).
+    pub path: String,
+    /// This workweave checkout's HEAD, if readable.
+    pub head: Option<String>,
+    /// The recorded parent's tip for THIS repo — `git rev-parse HEAD` in the
+    /// parent's checkout of the same path — if resolvable.
+    pub parent_tip: Option<String>,
+    /// The workweave's UNIQUE commits vs the parent tip (`log <parent>..HEAD`),
+    /// newest first. Populated for `log`; empty for a pure `diff`.
+    pub unique_commits: Vec<WorkweaveLogCommit>,
+    /// The whole-bead diff range anchor: `git merge-base <parent-tip> HEAD`.
+    /// Populated only in `--diff` mode. Anchoring at the merge-base (not the
+    /// parent tip) avoids phantom reversals when the parent advanced after the
+    /// fork.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub diff_base: Option<String>,
+    /// The unified diff text for `diff_base..HEAD`, in `--diff` mode.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub diff: Option<String>,
+    /// A non-fatal note when this repo could not be fully processed (parent
+    /// checkout missing, unreadable HEAD, etc.). The repo is still listed so
+    /// the operator sees the gap rather than a silent omission.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
+}
+
+/// Top-level `workweave log --json` / `workweave diff --json` envelope.
+#[derive(Debug, Clone, serde::Serialize, schemars::JsonSchema)]
+pub struct WorkweaveLogOutput {
+    /// The workweave name.
+    pub workweave: String,
+    /// The recorded parent workspace path (from the `.rwv-workweave` marker).
+    pub parent: String,
+    /// Whether this is a `diff` result (`true`) or a `log` result (`false`).
+    pub diff: bool,
+    /// Per-repo results, one per manifest repo.
+    pub repos: Vec<WorkweaveLogRepo>,
+}
+
+/// Print (or JSON-emit) the workweave's UNIQUE commits vs the recorded parent,
+/// per manifest repo.
+///
+/// Semantics (per fo-eycci9 headline layer A):
+///   - Parent identity comes from the `.rwv-workweave` marker, NOT the branch
+///     name (stacked branches like `lab--wwb/lab--wwa/main` make a constructed
+///     `basename(parent)/main` wrong, and it is also wrong after
+///     adoption-to-primary).
+///   - `unique` = reachable-from-HEAD-not-parent-tip: `git log
+///     <parent-tip>..HEAD`, resolving the parent tip by `rev-parse HEAD` in the
+///     parent's checkout of the same repo. This stays correct when the parent
+///     ADVANCED since the fork.
+///   - `diff` mode uses `git merge-base <parent-tip> HEAD` as the diff base,
+///     NOT the parent tip: diffing against a parent tip that advanced after the
+///     fork shows phantom reversals of other beads' changes.
+///
+/// `cwd` must be inside a workweave. `diff` selects diff mode; `json` selects
+/// machine output.
+pub fn workweave_log(cwd: &Path, diff: bool, json: bool) -> anyhow::Result<()> {
+    use crate::workspace::{WorkspaceContext, WorkspaceLocation};
+
+    let ctx = WorkspaceContext::resolve(cwd, None)?;
+    let (ww_name, ww_dir, project) = match &ctx.location {
+        WorkspaceLocation::Workweave { name, dir, project } => {
+            (name.clone(), dir.clone(), project.clone())
+        }
+        WorkspaceLocation::Weave { .. } => {
+            bail!(
+                "`rwv workweave log`/`diff` reports a workweave's history relative to its \
+                 recorded parent, but CWD ({}) is in the primary weave, not a workweave.",
+                cwd.display()
+            );
+        }
+    };
+
+    let marker = WorkweaveMarker::read(&ww_dir)?.ok_or_else(|| {
+        anyhow!(
+            "`rwv workweave log` requires a `.rwv-workweave` marker in the workweave; \
+             found none at {}",
+            ww_dir.display()
+        )
+    })?;
+    let parent_path = marker.parent.clone();
+    if !parent_path.exists() {
+        // Reuse the friendly dangling-parent remediation the sync path uses.
+        crate::sync::check_parent_not_dangling(&parent_path, ctx.primary_path())?;
+    }
+
+    let manifest = load_manifest(ctx.primary_path(), &project)?;
+
+    let mut repos: Vec<WorkweaveLogRepo> = Vec::new();
+    for (repo_path, _entry) in manifest.iter_entries() {
+        let repo_rel = repo_path.as_path();
+        let ww_repo = ww_dir.join(repo_rel);
+        let parent_repo = parent_path.join(repo_rel);
+
+        let mut note: Option<String> = None;
+
+        let head = match GitVcs::rev_parse(&ww_repo, "HEAD") {
+            Ok(sha) => Some(sha),
+            Err(e) => {
+                note = Some(format!("workweave checkout HEAD unreadable: {e}"));
+                None
+            }
+        };
+
+        let parent_tip = match GitVcs::rev_parse(&parent_repo, "HEAD") {
+            Ok(sha) => Some(sha),
+            Err(e) => {
+                if note.is_none() {
+                    note = Some(format!("parent checkout HEAD unreadable: {e}"));
+                }
+                None
+            }
+        };
+
+        let mut unique_commits: Vec<WorkweaveLogCommit> = Vec::new();
+        let mut diff_base: Option<String> = None;
+        let mut diff_text: Option<String> = None;
+
+        if let (Some(head_sha), Some(parent_sha)) = (&head, &parent_tip) {
+            if diff {
+                // Whole-bead diff range: anchor at merge-base(parent, HEAD),
+                // never the parent tip directly (phantom-reversal guard).
+                match GitVcs::merge_base(&ww_repo, parent_sha, head_sha) {
+                    Ok(base) => {
+                        match GitVcs::diff_range(&ww_repo, &base, head_sha) {
+                            Ok(d) => diff_text = Some(d),
+                            Err(e) => note = Some(format!("diff failed: {e}")),
+                        }
+                        diff_base = Some(base);
+                    }
+                    Err(e) => note = Some(format!("merge-base failed: {e}")),
+                }
+            } else {
+                match GitVcs::commits_in_range(&ww_repo, parent_sha, head_sha) {
+                    Ok(entries) => {
+                        unique_commits = entries
+                            .into_iter()
+                            .map(|c| WorkweaveLogCommit {
+                                sha: c.sha,
+                                short: c.short,
+                                subject: c.subject,
+                            })
+                            .collect();
+                    }
+                    Err(e) => note = Some(format!("log failed: {e}")),
+                }
+            }
+        }
+
+        repos.push(WorkweaveLogRepo {
+            path: repo_path.to_string(),
+            head,
+            parent_tip,
+            unique_commits,
+            diff_base,
+            diff: diff_text,
+            note,
+        });
+    }
+
+    let output = WorkweaveLogOutput {
+        workweave: ww_name.as_str().to_string(),
+        parent: parent_path.to_string_lossy().to_string(),
+        diff,
+        repos,
+    };
+
+    if json {
+        let out = serde_json::to_string_pretty(&output)
+            .context("failed to serialize workweave log to JSON")?;
+        println!("{out}");
+    } else {
+        print_workweave_log_text(&output);
+    }
+
+    Ok(())
+}
+
+/// Human-readable rendering of a `workweave log` / `diff` result.
+fn print_workweave_log_text(output: &WorkweaveLogOutput) {
+    let verb = if output.diff { "diff" } else { "log" };
+    println!(
+        "workweave {} {} vs parent {}",
+        output.workweave, verb, output.parent
+    );
+    for repo in &output.repos {
+        println!();
+        println!("=== {} ===", repo.path);
+        if let Some(note) = &repo.note {
+            println!("  note: {note}");
+        }
+        if output.diff {
+            match &repo.diff {
+                Some(d) if !d.is_empty() => {
+                    if let Some(base) = &repo.diff_base {
+                        println!("  (diff range: {}..HEAD)", short12(base));
+                    }
+                    println!("{d}");
+                }
+                _ => println!("  (no diff vs parent)"),
+            }
+        } else if repo.unique_commits.is_empty() {
+            println!("  (no unique commits vs parent)");
+        } else {
+            for c in &repo.unique_commits {
+                println!("  {} {}", c.short, c.subject);
+            }
+        }
+    }
+}
+
+/// Truncate a SHA to 12 chars for display.
+fn short12(sha: &str) -> &str {
+    &sha[..sha.len().min(12)]
 }
 
 // ---------------------------------------------------------------------------

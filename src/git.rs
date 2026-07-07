@@ -38,6 +38,21 @@ pub(crate) fn git_command() -> Command {
 /// Git-based version control operations.
 pub struct GitVcs;
 
+/// One commit from a `git log <range>` listing.
+///
+/// Produced by [`GitVcs::commits_in_range`] for `rwv workweave log`. `sha` is
+/// the full 40-hex SHA (stable identity for agents); `short` is the
+/// abbreviated form; `subject` is the first line of the commit message.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CommitEntry {
+    /// Full 40-hex commit SHA.
+    pub sha: String,
+    /// Abbreviated commit SHA (as git chose the length).
+    pub short: String,
+    /// First line of the commit message.
+    pub subject: String,
+}
+
 impl GitVcs {
     /// Run a git command in `dir` and return trimmed stdout on success.
     ///
@@ -92,6 +107,71 @@ impl GitVcs {
             .status()
             .map(|s| s.success())
             .unwrap_or(false)
+    }
+
+    /// Resolve `rev` to its canonical 40-hex SHA in `repo`.
+    ///
+    /// Thin wrapper over `git rev-parse --verify <rev>^{commit}`. Returns the
+    /// error string on failure (unknown revision, not a repo) so the caller can
+    /// decide whether that repo is skippable. Used to resolve a parent tip in
+    /// the parent's checkout for `rwv workweave log`.
+    pub fn rev_parse(repo: &Path, rev: &str) -> Result<String, String> {
+        let deref = format!("{rev}^{{commit}}");
+        Self::run(&["rev-parse", "--verify", &deref], repo).map_err(|e| e.to_string())
+    }
+
+    /// Compute the merge-base of `a` and `b` in `repo`.
+    ///
+    /// Returns the common-ancestor SHA. Used by `rwv workweave diff` to anchor
+    /// the whole-bead diff range at `git merge-base <parent-tip> HEAD` rather
+    /// than the parent tip directly — diffing against a parent tip that
+    /// advanced after the fork shows phantom reversals of other beads' changes.
+    pub fn merge_base(repo: &Path, a: &str, b: &str) -> Result<String, String> {
+        Self::run(&["merge-base", a, b], repo).map_err(|e| e.to_string())
+    }
+
+    /// List the commits reachable from `to` but not from `from` in `repo`,
+    /// newest first, as `git log --oneline`-style `<short-sha> <subject>`
+    /// lines.
+    ///
+    /// This is `git log <from>..<to>` semantics: with `from` = the parent tip
+    /// and `to` = HEAD, the result is exactly the workweave's UNIQUE commits,
+    /// and it stays correct when the parent advanced since the fork (the
+    /// range excludes commits the parent already has). An empty vec means no
+    /// unique commits.
+    pub fn commits_in_range(repo: &Path, from: &str, to: &str) -> Result<Vec<CommitEntry>, String> {
+        // `%H` full SHA, `%h` short SHA, `%s` subject — NUL-delimited fields,
+        // newline-delimited records, so subjects with spaces/tabs survive.
+        let range = format!("{from}..{to}");
+        let fmt = "--pretty=format:%H%x00%h%x00%s";
+        let out = Self::run(&["log", fmt, &range], repo).map_err(|e| e.to_string())?;
+        let entries = out
+            .lines()
+            .filter(|l| !l.is_empty())
+            .filter_map(|line| {
+                let mut parts = line.splitn(3, '\0');
+                let sha = parts.next()?.to_string();
+                let short = parts.next()?.to_string();
+                let subject = parts.next().unwrap_or("").to_string();
+                Some(CommitEntry {
+                    sha,
+                    short,
+                    subject,
+                })
+            })
+            .collect();
+        Ok(entries)
+    }
+
+    /// Produce the unified diff of `from..to` in `repo` (three-dot range so the
+    /// diff is anchored at the merge-base of the endpoints when the caller
+    /// passes a merge-base as `from`, this is a two-dot equivalent).
+    ///
+    /// Callers pass `from` = `git merge-base <parent-tip> HEAD` and `to` =
+    /// HEAD, so the output is the whole-bead diff with no phantom reversals.
+    pub fn diff_range(repo: &Path, from: &str, to: &str) -> Result<String, String> {
+        let range = format!("{from}..{to}");
+        Self::run(&["diff", &range], repo).map_err(|e| e.to_string())
     }
 
     /// Detect if a repo is in a mid-operation VCS state (mid-rebase, mid-merge, etc.).

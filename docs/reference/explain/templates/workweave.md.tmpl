@@ -98,9 +98,58 @@ Reference symlinks are simply unlinked (never followed), so the shared
 canonical clone they alias is left untouched — delete never mutates it,
 deletes no branch in it, and is safe even when that clone is dirty.
 
+**Child adoption.** Before the workweave is destroyed, any living child
+workweave that records it as `parent:` is re-pointed to the retiree's OWN
+recorded parent (the grandparent; falls back to `primary`, which always
+exists). One loud line is printed per child:
+`adopted child workweave <name>: parent now <path>`. Lineage stays transitive
+by construction — the retiree's unique commits have just landed in that
+grandparent. Branch names are NOT rewritten (they are creation-time
+namespaces, not lineage), which is exactly why consumers must read the parent
+from the marker / `rwv status --json .parent`, never from the branch name. The
+same adoption step runs on `rwv sync-to --retire`. A parent that goes away
+another way (crash, hand-deletion) leaves a `dangling-parent` that
+`rwv doctor --fix` re-points to primary.
+
 ### `rwv workweave <project> list`
 
 List existing workweave names for the project. One name per line.
+
+### `rwv workweave <project> log [--diff] [--json]`
+
+Show this workweave's **unique commits vs its recorded parent**, per manifest
+repo. Must be run from inside a workweave.
+
+Parent identity comes from the `.rwv-workweave` marker's `parent:` field — NOT
+the branch name. Workweave branches are stacked (`{project}--wwb/{project}--wwa/main`),
+so a constructed `basename(parent)/main` name silently breaks when the parent
+is itself a workweave, and is wrong after adoption re-points a child to primary.
+The verb reads the marker, so it is correct for stacked and adopted parents
+alike.
+
+For each repo, "unique" is `git log <parent-tip>..HEAD` — the commits reachable
+from the workweave's HEAD but not from the parent's tip of the same repo (the
+parent tip is resolved by `git rev-parse HEAD` in the parent's checkout). This
+stays correct when the parent **advanced** after the fork: commits the parent
+already has are excluded.
+
+- `--diff` — instead of the commit listing, show the whole-bead unified diff.
+  The diff range is anchored at `git merge-base <parent-tip> HEAD`, NOT the
+  parent tip: diffing against a parent tip that advanced after the fork would
+  show phantom reversals of other beads' changes. Equivalent to
+  `rwv workweave <project> diff`.
+- `--json` — machine-readable output (envelope: `workweave`, `parent`, `diff`,
+  `repos[]`; each repo carries `head`, `parent_tip`, `unique_commits[]`, and —
+  in diff mode — `diff_base` + `diff`).
+
+This is the surface consumers use to read a workweave's parent-relative history
+instead of hand-rolling branch-name derivation.
+
+### `rwv workweave <project> diff [--json]`
+
+Show this workweave's whole-bead unified diff vs its recorded parent, per repo.
+Anchored at `git merge-base <parent-tip> HEAD` (see `log --diff` above). A
+convenience alias for `rwv workweave <project> log --diff`.
 
 ## Invocation
 
@@ -108,6 +157,8 @@ List existing workweave names for the project. One name per line.
 rwv workweave <project> create <name> [--from <source>] [--force] [--capture-dirty] [--worktree-references]
 rwv workweave <project> delete <name> [--force]
 rwv workweave <project> list
+rwv workweave <project> log [--diff] [--json]
+rwv workweave <project> diff [--json]
 ```
 
 Run `rwv --help workweave` for the full clap surface.

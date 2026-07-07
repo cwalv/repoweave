@@ -46,10 +46,12 @@ rwv doctor [--all] [--locked] [--json] [--fix]
   project unless `--all`), orphaned savepoints classified as `Redundant`
   (a `refs/rwv/pre-op/<op-id>` ref whose op-id matches no live `.rwv-op`
   file and whose tip is already reachable from the current branch; dropping
-  the ref loses no objects), and stale worktree registrations (git worktree
+  the ref loses no objects), stale worktree registrations (git worktree
   entries pointing at directories that no longer exist, pruned via
-  `git worktree prune`). Idempotent. Mutually exclusive with `--locked`
-  and `--json`.
+  `git worktree prune`), and dangling workweave parents (a `.rwv-workweave`
+  marker whose `parent:` path no longer exists on disk — re-pointed to
+  primary, which always exists; branch names are left untouched). Idempotent.
+  Mutually exclusive with `--locked` and `--json`.
 
 Run `rwv --help doctor` for the full clap surface.
 
@@ -1041,7 +1043,7 @@ Schema:
       "description": "Discriminator for `CheckViolation::WorkweaveTreeIntegrity` findings.",
       "oneOf": [
         {
-          "description": "The marker's `parent:` path no longer exists on disk. The workweave's parent was retired or deleted while this child remained. Bare `rwv sync-to` and `--retire` will mis-fire until the operator re-points `parent` to a valid workspace. Report-only.",
+          "description": "The marker's `parent:` path no longer exists on disk. The workweave's parent was retired or deleted out-of-band (a crash mid-adopt, or a hand-deletion) while this child remained. Bare `rwv sync-to` would otherwise mis-fire; instead it now surfaces friendly doctor-remediation text. Auto-fixable: `rwv doctor --fix` re-points `parent` to primary (which always exists). Normal retire/delete adopts children before the parent is destroyed, so this only arises off the happy path.",
           "type": "object",
           "required": [
             "dangling-parent"

@@ -128,8 +128,10 @@ pub enum CheckViolation {
     /// A `.rwv-workweave` marker tree anomaly: dangling parent, chain anomaly,
     /// unregistered directory, or foreign-primary marker.
     ///
-    /// Always report-only: no auto-fix is safe without operator input (e.g.
-    /// re-pointing a dangling parent changes what bare `rwv sync-to` does).
+    /// The `dangling-parent` sub-kind is auto-fixable (`rwv doctor --fix`
+    /// re-points the child's `parent:` to primary, which always exists). The
+    /// other three sub-kinds are report-only: no auto-fix is safe without
+    /// operator input.
     WorkweaveTreeIntegrity {
         /// Absolute path to the workweave directory (or the marker file for
         /// file-level violations).
@@ -302,9 +304,12 @@ pub enum WorkingTreeDriftKind {
 #[serde(rename_all = "kebab-case")]
 pub enum WorkweaveTreeIntegrityKind {
     /// The marker's `parent:` path no longer exists on disk. The workweave's
-    /// parent was retired or deleted while this child remained. Bare
-    /// `rwv sync-to` and `--retire` will mis-fire until the operator
-    /// re-points `parent` to a valid workspace. Report-only.
+    /// parent was retired or deleted out-of-band (a crash mid-adopt, or a
+    /// hand-deletion) while this child remained. Bare `rwv sync-to` would
+    /// otherwise mis-fire; instead it now surfaces friendly doctor-remediation
+    /// text. Auto-fixable: `rwv doctor --fix` re-points `parent` to primary
+    /// (which always exists). Normal retire/delete adopts children before the
+    /// parent is destroyed, so this only arises off the happy path.
     DanglingParent {
         /// The missing parent path recorded in the marker.
         parent_path: PathBuf,
@@ -1087,6 +1092,58 @@ pub fn fix_legacy_workweave_marker(finding: &LegacyWorkweaveMarkerFile) -> anyho
     Ok(true)
 }
 
+/// Re-point a `dangling-parent` workweave marker's `parent:` field to
+/// `primary` (which always exists).
+///
+/// The `workweave-tree-integrity` / `dangling-parent` violation message
+/// already tells the operator to "re-point parent to a valid workspace";
+/// `--fix` gives that instruction a verb. Primary is the safe universal
+/// target: it is guaranteed present, and lineage remains sound because a
+/// workweave's unique work ultimately lands in primary regardless of the
+/// intermediate chain.
+///
+/// `marker_dir` is the workweave directory whose `.rwv-workweave` will be
+/// rewritten. Returns `true` if the marker was rewritten, `false` if the
+/// parent already resolves (a race where the dangling condition healed before
+/// the fix ran). `Err` only on I/O or a genuinely unreadable/legacy marker.
+///
+/// The `parent:` path is rewritten to `primary`'s canonical path; the marker's
+/// other fields (`primary`, `project`) are preserved. Branch names are NOT
+/// touched — they are creation-time namespaces, not lineage.
+pub fn fix_dangling_parent(marker_dir: &Path, primary: &Path) -> anyhow::Result<bool> {
+    let mut marker = crate::workspace::WorkweaveMarker::read(marker_dir)
+        .with_context(|| {
+            format!(
+                "failed to read {}/.rwv-workweave for --fix",
+                marker_dir.display()
+            )
+        })?
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "{}/.rwv-workweave vanished before --fix could re-point it",
+                marker_dir.display()
+            )
+        })?;
+
+    // Race guard: if the parent already exists, the dangling condition healed
+    // (e.g. the parent was recreated) — leave the marker alone.
+    if marker.parent.exists() {
+        return Ok(false);
+    }
+
+    let new_parent = primary
+        .canonicalize()
+        .unwrap_or_else(|_| primary.to_path_buf());
+    marker.parent = new_parent;
+    marker.write(marker_dir).with_context(|| {
+        format!(
+            "failed to write {}/.rwv-workweave during --fix",
+            marker_dir.display()
+        )
+    })?;
+    Ok(true)
+}
+
 // ---------------------------------------------------------------------------
 // Workweave-tree integrity scanning
 // ---------------------------------------------------------------------------
@@ -1094,9 +1151,11 @@ pub fn fix_legacy_workweave_marker(finding: &LegacyWorkweaveMarkerFile) -> anyho
 /// Scan the workweave parent directory for `.rwv-workweave` marker tree
 /// anomalies.
 ///
-/// Checks performed (all report-only; no auto-fix):
+/// Checks performed:
 ///
 /// 1. **`dangling-parent`** — marker's `parent:` path does not exist on disk.
+///    Auto-fixable via `rwv doctor --fix` (re-points to primary); the other
+///    three sub-kinds are report-only.
 /// 2. **`parent-chain-anomaly`** — cycle (A→B→A…), parent==self, or the
 ///    parent marker's `project` differs from the child's `project`.
 /// 3. **`unregistered-dir`** — a directory under `.workweaves/` that has no
@@ -3465,10 +3524,38 @@ pub fn run_check(
     }
 
     // Workweave-tree integrity: dangling parent, chain anomalies, unregistered
-    // dirs, foreign-primary markers. Always report-only (no --fix path).
-    // Run from the primary weave so the scan covers all workweaves belonging
-    // to this workspace.
+    // dirs, foreign-primary markers. Chain-anomaly / unregistered-dir /
+    // foreign-primary are report-only; `dangling-parent` gains a `--fix` that
+    // re-points the child's marker to primary. Run from the primary weave so
+    // the scan covers all workweaves belonging to this workspace.
+    let mut dangling_parent_fix_errors: Vec<String> = Vec::new();
     for v in scan_workweave_tree_integrity(ctx.primary_path()) {
+        if fix {
+            if let CheckViolation::WorkweaveTreeIntegrity {
+                workweave_dir,
+                sub_kind: WorkweaveTreeIntegrityKind::DanglingParent { .. },
+            } = &v
+            {
+                match fix_dangling_parent(workweave_dir, ctx.primary_path()) {
+                    Ok(true) => {
+                        println!(
+                            "[fixed] core: re-pointed dangling parent of {} to primary",
+                            workweave_dir.display()
+                        );
+                        continue;
+                    }
+                    Ok(false) => {
+                        // Race: parent existed by the time we tried to fix.
+                        continue;
+                    }
+                    Err(e) => {
+                        dangling_parent_fix_errors.push(e.to_string());
+                        // Fall through and still report the violation so the
+                        // operator sees the unresolved dangling parent.
+                    }
+                }
+            }
+        }
         violations.push(v);
     }
 
@@ -3569,6 +3656,15 @@ pub fn run_check(
             integration: "core".into(),
             severity: Severity::Error,
             message: msg,
+            safe_to_fix: true,
+        });
+    }
+
+    for msg in dangling_parent_fix_errors {
+        all_issues.push(Issue {
+            integration: "core".into(),
+            severity: Severity::Error,
+            message: format!("dangling-parent --fix failed: {msg}"),
             safe_to_fix: true,
         });
     }

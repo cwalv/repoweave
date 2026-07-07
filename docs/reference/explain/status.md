@@ -76,6 +76,26 @@ Schema:
         "unknown"
       ]
     },
+    "ParentInfo": {
+      "description": "Recorded-parent exposure for a per-repo status entry.\n\nParent identity comes from the workweave's `.rwv-workweave` marker (`parent:`), NOT from the branch name: workweave branches are stacked (`lab--wwb/lab--wwa/main`), so a constructed `basename(parent)/main` name silently breaks for a workweave whose parent is itself a workweave, and is also wrong after adoption re-points the parent to primary. Consumers that need the parent must read this field, never reconstruct it from `branch`.\n\n`path` is the recorded parent workspace path (identical for every repo in the workweave). `tip` is this specific repo's parent tip — the SHA that `git rev-parse HEAD` yields in the parent's checkout of the SAME repo — or `None` when the parent has no checkout of this repo (or HEAD is unreadable). The tip is what `git log <parent-tip>..HEAD` needs to compute the workweave's unique commits without re-deriving branch layout.",
+      "type": "object",
+      "required": [
+        "path"
+      ],
+      "properties": {
+        "path": {
+          "description": "Recorded parent workspace path (from the `.rwv-workweave` marker).",
+          "type": "string"
+        },
+        "tip": {
+          "description": "This repo's HEAD in the parent's checkout, if resolvable.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
     "RepoStatus": {
       "description": "Per-repo status entry.",
       "type": "object",
@@ -107,6 +127,17 @@ Schema:
           "type": [
             "string",
             "null"
+          ]
+        },
+        "parent": {
+          "description": "Recorded parent (path + per-repo parent tip) when CWD is a workweave; `None` in the primary weave (no marker, hence no recorded parent).",
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ParentInfo"
+            },
+            {
+              "type": "null"
+            }
           ]
         },
         "path": {

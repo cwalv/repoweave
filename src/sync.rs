@@ -188,6 +188,32 @@ fn looks_path_like(s: &str) -> bool {
         || PathBuf::from(s).is_absolute()
 }
 
+/// Refuse a bare `rwv sync` / `rwv sync-to` when the workweave's recorded
+/// `parent:` no longer exists on disk (retired or deleted out-of-band).
+///
+/// Without this guard the parent path flows into `WorkspaceContext::resolve`,
+/// which calls `.canonicalize()` and dies with a raw `failed to canonicalize
+/// … (os error 2)` that names no remedy. Replace that with the doctor
+/// remediation the operator can act on directly. `primary_root` is named so
+/// the operator knows where `--fix` will re-point the parent.
+pub fn check_parent_not_dangling(parent: &Path, primary_root: &Path) -> anyhow::Result<()> {
+    if parent.exists() {
+        return Ok(());
+    }
+    anyhow::bail!(
+        "recorded parent workspace does not exist on disk:\n  {}\n\
+         \n\
+         The parent was retired or deleted out-of-band, leaving this workweave's \
+         `.rwv-workweave` `parent:` dangling. Re-point it and retry:\n\
+         \n  rwv doctor --fix   # re-points the dangling parent to primary ({})\n\
+         \n\
+         Then re-run the sync. (Normal `sync-to --retire` / `workweave delete` adopts \
+         children automatically; a dangling parent means the parent went away another way.)",
+        parent.display(),
+        primary_root.display(),
+    )
+}
+
 // ---------------------------------------------------------------------------
 // RepoSyncOutcome — per-repo result of a sync operation
 // ---------------------------------------------------------------------------
@@ -1755,6 +1781,11 @@ fn guard_and_mark<'a>(
                         dir.display()
                     )
                 })?;
+                // A dangling parent (retired/deleted out-of-band) would
+                // otherwise die on a raw `failed to canonicalize … (os error
+                // 2)` inside WorkspaceContext::resolve. Detect it here and
+                // emit the friendly doctor-remediation text instead.
+                check_parent_not_dangling(&marker.parent, cwd_ctx.primary_path())?;
                 SyncSource::Path(marker.parent)
             }
             (MachineVerb::Sync, WorkspaceLocation::Weave { .. }) => {

@@ -410,6 +410,32 @@ enum WorkweaveAction {
     },
     /// List existing workweaves
     List,
+    /// Show this workweave's UNIQUE commits vs its recorded parent, per repo.
+    ///
+    /// Parent identity comes from the `.rwv-workweave` marker (not the branch
+    /// name). Unique commits are `git log <parent-tip>..HEAD` per repo, correct
+    /// even when the parent advanced since the fork. Must be run from inside a
+    /// workweave.
+    Log {
+        /// Show the whole-bead unified diff (anchored at `git merge-base
+        /// <parent-tip> HEAD`) instead of the commit listing. Equivalent to
+        /// `rwv workweave <project> diff`.
+        #[arg(long)]
+        diff: bool,
+        /// Emit machine-readable JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Show this workweave's whole-bead diff vs its recorded parent, per repo.
+    ///
+    /// Anchored at `git merge-base <parent-tip> HEAD` (NOT the parent tip), so
+    /// a parent that advanced after the fork does not produce phantom reversals
+    /// of other beads' changes. Must be run from inside a workweave.
+    Diff {
+        /// Emit machine-readable JSON.
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -516,11 +542,12 @@ fn main() -> anyhow::Result<()> {
             let word = raw_args.get(3).map(|s| s.as_str());
             let is_flag = |s: &str| s.starts_with('-');
             if let (Some(project), Some(word)) = (project, word) {
-                const KNOWN_SUBCOMMANDS: &[&str] = &["create", "delete", "list", "help"];
+                const KNOWN_SUBCOMMANDS: &[&str] =
+                    &["create", "delete", "list", "log", "diff", "help"];
                 // WorkweaveAction names a typo could be aiming at. `help` is a
                 // clap builtin, not a typo target worth fuzzy-matching, so it's
                 // excluded here (an exact `help` is already handled above).
-                const SUBCOMMAND_ACTIONS: &[&str] = &["create", "delete", "list"];
+                const SUBCOMMAND_ACTIONS: &[&str] = &["create", "delete", "list", "log", "diff"];
                 // Edit-distance threshold below which WORD is treated as a
                 // subcommand typo and deferred to clap's native suggestion.
                 const SUBCOMMAND_TYPO_THRESHOLD: usize = 2;
@@ -535,7 +562,7 @@ fn main() -> anyhow::Result<()> {
                     eprintln!(
                         "error: '{word}' is not a valid subcommand for 'rwv workweave {project}'\n\
                          Did you mean:  rwv workweave {project} create {word}\n\
-                         Available subcommands: create, delete, list"
+                         Available subcommands: create, delete, list, log, diff"
                     );
                     std::process::exit(2);
                 }
@@ -718,6 +745,12 @@ fn main() -> anyhow::Result<()> {
                             println!("{}", workweave_path.display());
                         }
                     }
+                    Some(WorkweaveAction::Log { diff, json }) => {
+                        repoweave::workweave::workweave_log(&cwd, diff, json)?;
+                    }
+                    Some(WorkweaveAction::Diff { json }) => {
+                        repoweave::workweave::workweave_log(&cwd, true, json)?;
+                    }
                 }
             }
         }
@@ -845,6 +878,14 @@ fn main() -> anyhow::Result<()> {
                                             dir.display()
                                         )
                                     })?;
+                                // Replace the raw `failed to canonicalize …
+                                // (os error 2)` a dangling parent would
+                                // otherwise produce with friendly
+                                // doctor-remediation text.
+                                sync::check_parent_not_dangling(
+                                    &marker.parent,
+                                    ctx.primary_path(),
+                                )?;
                                 sync::SyncSource::Path(marker.parent)
                             }
                             repoweave::workspace::WorkspaceLocation::Weave { .. } => {
