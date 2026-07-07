@@ -39,7 +39,7 @@ After `rwv sync-to <target> --strategy=rebase`:
 ### Reference repos
 
 `role: reference` repos materialized as symlinks (the default; see
-[`rwv workweave`](workweave.md)) are **excluded from every step**: they are
+`rwv explain workweave`) are **excluded from every step**: they are
 read-only aliases of the single canonical clone, so no savepoint, rebase,
 FF-advance, or abort touches the shared canonical store through the symlink,
 on either CWD or target. With `--retire`, the merged-check and dirty-check
@@ -55,8 +55,8 @@ created with `--worktree-references` is a real worktree and is synced normally.
 - `--strategy=rebase` (default) — step 1 rebases CWD's unique commits onto
   target's tip. Step 2 auto-relocks. Step 3 FFs target.
 
-(A `merge` strategy is not offered; see
-[sync semantics](../explanation/joints/sync-semantics.md#why-no-merge-strategy).)
+(A `merge` strategy is not offered; `ff` requires CWD to already be strictly
+ahead of target.)
 
 ### Multi-workspace op-state
 
@@ -81,8 +81,8 @@ rwv sync-to [<target>] [--json] [--strategy <ff|rebase>] [-j <N>] [--allow-stale
   in a primary weave.
 - `--json` emits machine-readable output (see Output below).
 - `--strategy` picks the step-1 strategy (`rebase` default or `ff`).
-  Step 3 is always FF regardless of this flag. (`merge` is not offered; see
-  [sync semantics](../explanation/joints/sync-semantics.md#why-no-merge-strategy).)
+  Step 3 is always FF regardless of this flag. (`merge` is not offered; `ff`
+  requires CWD to be strictly ahead of target with no divergence.)
 - `--allow-stale-lock` skips the lock-freshness precondition on both sides.
   Recorded as `allow-stale-lock` in the op-state `overrides` field for audit
   fidelity on `--continue`.

@@ -20,8 +20,8 @@ inputs always produces the same lock. This has two practical consequences:
    encodes this by excluding the lock from the merge phase and regenerating
    it in Phase 3.
 
-See [lock-as-derived](../explanation/joints/lock-as-derived.md) for the
-full conceptual treatment.
+The lock is fully determined by the current HEAD SHAs — running `lock` on
+the same inputs always produces the same result.
 
 ### When to run `lock`
 

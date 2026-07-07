@@ -124,7 +124,7 @@ Schema:
       }
     },
     "FetchOutcomeStatus": {
-      "description": "Status discriminant for [`FetchOutcomeOutput`].",
+      "description": "Status discriminant for `FetchOutcomeOutput`.",
       "type": "string",
       "enum": [
         "ok",

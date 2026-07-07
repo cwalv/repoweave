@@ -32,10 +32,7 @@ references.
 Clones live at the canonical path under the primary weave root, not inside
 workweaves (which use `git worktree`). `remove --delete` therefore removes the
 canonical clone, which also invalidates any live worktrees pointing at it.
-See [docs/explanation/joints/clone-topology.md](../explanation/joints/clone-topology.md)
-for the topology rationale. (Note: that joint is written in parallel with this
-page — if it is not yet on disk, refer to `docs/reference/cli.md` as the
-interim source of truth.)
+(See `rwv explain workweave` for the workweave topology model.)
 
 ## Invocation
 

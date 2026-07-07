@@ -39,7 +39,7 @@ After `rwv sync-to <target> --strategy=rebase`:
 ### Reference repos
 
 `role: reference` repos materialized as symlinks (the default; see
-[`rwv workweave`](workweave.md)) are **excluded from every step**: they are
+`rwv explain workweave`) are **excluded from every step**: they are
 read-only aliases of the single canonical clone, so no savepoint, rebase,
 FF-advance, or abort touches the shared canonical store through the symlink,
 on either CWD or target. With `--retire`, the merged-check and dirty-check
@@ -55,8 +55,8 @@ created with `--worktree-references` is a real worktree and is synced normally.
 - `--strategy=rebase` (default) — step 1 rebases CWD's unique commits onto
   target's tip. Step 2 auto-relocks. Step 3 FFs target.
 
-(A `merge` strategy is not offered; see
-[sync semantics](../explanation/joints/sync-semantics.md#why-no-merge-strategy).)
+(A `merge` strategy is not offered; `ff` requires CWD to already be strictly
+ahead of target.)
 
 ### Multi-workspace op-state
 
@@ -81,8 +81,8 @@ rwv sync-to [<target>] [--json] [--strategy <ff|rebase>] [-j <N>] [--allow-stale
   in a primary weave.
 - `--json` emits machine-readable output (see Output below).
 - `--strategy` picks the step-1 strategy (`rebase` default or `ff`).
-  Step 3 is always FF regardless of this flag. (`merge` is not offered; see
-  [sync semantics](../explanation/joints/sync-semantics.md#why-no-merge-strategy).)
+  Step 3 is always FF regardless of this flag. (`merge` is not offered; `ff`
+  requires CWD to be strictly ahead of target with no divergence.)
 - `--allow-stale-lock` skips the lock-freshness precondition on both sides.
   Recorded as `allow-stale-lock` in the op-state `overrides` field for audit
   fidelity on `--continue`.
@@ -124,7 +124,7 @@ Schema:
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "SyncToJsonOutput",
-  "description": "Top-level envelope for `rwv sync-to --json` (serial mode).\n\nExtends [`SyncJsonOutput`] with sync-to-specific observability fields: - `source_workweave` — the workweave the command was invoked from (null when invoked from the primary weave). - `target` — the absolute path of the target workspace that was advanced. - `retired` — true iff `--retire` was passed AND the workweave was deleted. - `project_repo_advance` — step-3 advance of `projects/<project>/.git`; omitted when the project repo was already at CWD's tip (no-op advance). - per-outcome `step3_advance` — step-3 advance SHA pair for each manifest repo; omitted on a no-op advance.\n\nKept as a separate type so the generated schema artifact (`docs/reference/schemas/sync-to.json`) has its own title/description.",
+  "description": "Top-level envelope for `rwv sync-to --json` (serial mode).\n\nExtends `SyncJsonOutput` with sync-to-specific observability fields: - `source_workweave` — the workweave the command was invoked from (null when invoked from the primary weave). - `target` — the absolute path of the target workspace that was advanced. - `retired` — true iff `--retire` was passed AND the workweave was deleted. - `project_repo_advance` — step-3 advance of `projects/<project>/.git`; omitted when the project repo was already at CWD's tip (no-op advance). - per-outcome `step3_advance` — step-3 advance SHA pair for each manifest repo; omitted on a no-op advance.\n\nKept as a separate type so the generated schema artifact (`docs/reference/schemas/sync-to.json`) has its own title/description.",
   "type": "object",
   "required": [
     "$schema",
@@ -171,7 +171,7 @@ Schema:
   },
   "definitions": {
     "ConflictOp": {
-      "description": "In-flight VCS operation whose conflict needs human resolution.\n\nPassed to [`Vcs::conflict_resolution_hint`] so sync's conflict-bail messages embed VCS-appropriate \"how do I resume this?\" text without hardcoding git vocabulary.",
+      "description": "In-flight VCS operation whose conflict needs human resolution.\n\nPassed to `Vcs::conflict_resolution_hint` so sync's conflict-bail messages embed VCS-appropriate \"how do I resume this?\" text without hardcoding git vocabulary.",
       "oneOf": [
         {
           "description": "Native rebase (`git rebase`) — resumes with `git rebase --continue`.",
@@ -215,7 +215,7 @@ Schema:
       }
     },
     "SyncFailureOutput": {
-      "description": "Wire-output mirror of [`SyncFailure`] for `--json` emission.\n\nCarries the same payload as the in-memory enum but with a `cause` represented as the serialisable [`VcsErrorOutput`]. The hand-rolled tag strings match [`SyncFailure::kind`] (verified via snapshot tests).\n\n`message` is the human-readable display string of the failure (free-form text, not a typed discriminant). `cause` is the structured typed cause when the failure originated from a [`crate::vcs::VcsError`] call — consumers that want to branch on failure mode should inspect `cause.kind` rather than parsing `message`.",
+      "description": "Wire-output mirror of `SyncFailure` for `--json` emission.\n\nCarries the same payload as the in-memory enum but with a `cause` represented as the serialisable `VcsErrorOutput`. The hand-rolled tag strings match `SyncFailure::kind` (verified via snapshot tests).\n\n`message` is the human-readable display string of the failure (free-form text, not a typed discriminant). `cause` is the structured typed cause when the failure originated from a `crate::vcs::VcsError` call — consumers that want to branch on failure mode should inspect `cause.kind` rather than parsing `message`.",
       "oneOf": [
         {
           "type": "object",
@@ -454,7 +454,7 @@ Schema:
       ]
     },
     "VcsErrorOutput": {
-      "description": "Wire-output mirror of [`VcsError`] for `--json` emission.\n\n`VcsError` itself can't derive `Serialize` cleanly because tuple variants (and `io::Error`) don't play nicely with serde's internally-tagged enum representation. This struct-only mirror does: every variant carries named fields, the tag matches [`VcsError::kind`], and a `From<&VcsError>` impl converts at JSON-emission time.",
+      "description": "Wire-output mirror of `VcsError` for `--json` emission.\n\n`VcsError` itself can't derive `Serialize` cleanly because tuple variants (and `io::Error`) don't play nicely with serde's internally-tagged enum representation. This struct-only mirror does: every variant carries named fields, the tag matches `VcsError::kind`, and a `From<&VcsError>` impl converts at JSON-emission time.",
       "oneOf": [
         {
           "type": "object",

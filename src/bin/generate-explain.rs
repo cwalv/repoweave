@@ -9,10 +9,29 @@
 //! Run with `cargo run --bin generate-explain`. CI re-runs the generator and
 //! fails on drift via `git diff --exit-code docs/reference/explain/
 //! docs/reference/schemas/`.
+//!
+//! # Link-cleanliness invariant
+//!
+//! The assembled explain docs are agent-facing CLI reflection — a relative
+//! markdown link is not clickable and a rustdoc intra-doc link (`](Self::`,
+//! `](crate::`, bare `` [`Ty::Variant`] ``) means nothing to an agent.
+//! This file enforces two guarantees at generation time:
+//!
+//! 1. **Rustdoc-link flattening**: schemars pulls `///` doc-comments verbatim
+//!    into JSON Schema `description` fields. Any rustdoc intra-doc link syntax
+//!    is rewritten to plain backtick-quoted identifiers before embedding. The
+//!    Rust source doc-comments are NOT touched — they remain valid rustdoc.
+//!
+//! 2. **Relative-link check**: after all assembled `.md` files are written,
+//!    every relative markdown link `[text](path)` (non-URL, non-anchor) in
+//!    those files must resolve to an existing file on disk (relative to
+//!    `docs/reference/explain/`). Any unresolvable link or any surviving
+//!    rustdoc intra-doc syntax is a hard generator error.
 
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use regex::Regex;
 use schemars::schema_for;
 use serde::Serialize;
 
@@ -164,6 +183,156 @@ fn verbs() -> Vec<Verb> {
     ]
 }
 
+/// Flatten rustdoc intra-doc link syntax that schemars pulls verbatim from
+/// `///` doc-comments into JSON Schema `description` fields.
+///
+/// Rewrites:
+/// - `` [`X`](Self::X) `` → `` `X` ``
+/// - `` [`Ty::Variant`](crate::path::Ty::Variant) `` → `` `Ty::Variant` ``
+/// - `` [`X`](crate::X) `` → `` `X` ``
+/// - `` [`Ty::Variant`] `` (bare autolink, no target) → `` `Ty::Variant` ``
+/// - `[text](../../docs/...)` (relative path escaping the explain dir) → `text`
+/// - `[text](../path)` (relative path, broken cross-reference) → `text`
+///
+/// Intentionally left untouched:
+/// - `$schema` JSON Schema standard URLs (http(s)://json-schema.org/…)
+/// - Example repo URLs (https://github.com/…)
+/// - Anchors (#…)
+///
+/// Applied to the raw JSON string *before* embedding it in the assembled
+/// markdown. The Rust source doc-comments are never modified.
+fn flatten_rustdoc_links(json: &str) -> String {
+    // Pattern: [`display`](Self::target) or [`display`](crate::target)
+    // The backtick-quoted display text may contain `::` separators.
+    let bracketed_link = Regex::new(r"\[`([^`]+)`\]\((?:Self|crate)::[^)]*\)").unwrap();
+    let out = bracketed_link.replace_all(json, "`$1`");
+
+    // Pattern: bare autolink [`Ty::Variant`] with no explicit target.
+    // We match `[`...`]` followed by anything other than `(`, by capturing
+    // two cases: followed by end-of-text, or followed by a non-`(` char.
+    // Implemented via two passes to avoid lookahead (not supported by `regex`).
+    //
+    // Pass A: [`X`] at end of string.
+    let bare_autolink_end = Regex::new(r"\[`([^`]+)`\]$").unwrap();
+    let out = bare_autolink_end.replace_all(&out, "`$1`");
+    // Pass B: [`X`] followed by a character that is not `(`.
+    // We capture the trailing character and re-emit it.
+    let bare_autolink_mid = Regex::new(r"\[`([^`]+)`\]([^(])").unwrap();
+    let out = bare_autolink_mid.replace_all(&out, "`$1`$2");
+
+    // Pattern: relative path links that escape out of the explain dir.
+    // Matches [text](../../...) and [text](../...) style paths.
+    // Leave `#anchor` links and absolute URLs untouched.
+    let relative_link = Regex::new(r"\[([^\]]+)\]\(\.\.(?:/[^)]+)?\)").unwrap();
+    let out = relative_link.replace_all(&out, "$1");
+
+    out.into_owned()
+}
+
+/// Verify that the assembled explain docs are free of:
+/// 1. Relative markdown links that don't resolve on disk.
+/// 2. Rustdoc intra-doc link syntax (`](Self::`, `](crate::`,
+///    bare `` [`Ty::Variant`] ``).
+///
+/// `explain_dir` is the directory the assembled `.md` files live in; relative
+/// links are resolved from there. Returns a list of error messages (one per
+/// finding); an empty vec means clean.
+fn check_assembled_docs(explain_dir: &Path) -> Vec<String> {
+    // Matches all markdown links: [text](target)
+    let link_re = Regex::new(r"\[([^\]]*)\]\(([^)]+)\)").unwrap();
+    // Detects rustdoc intra-doc target: ](Self:: or ](crate::
+    let rustdoc_target_re = Regex::new(r"\((?:Self|crate)::").unwrap();
+    // Detects bare backtick autolink: [`Ty::Variant`] with no `(` after `]`.
+    // Two patterns to avoid lookahead: end-of-line and followed by non-`(`.
+    let bare_autolink_eol_re = Regex::new(r"\[`[^`]+`\]\s*$").unwrap();
+    let bare_autolink_mid_re = Regex::new(r"\[`[^`]+`\][^(]").unwrap();
+
+    let mut errors: Vec<String> = Vec::new();
+
+    let md_files: Vec<PathBuf> = match std::fs::read_dir(explain_dir) {
+        Ok(rd) => rd
+            .filter_map(|e| e.ok())
+            .map(|e| e.path())
+            .filter(|p| p.extension().and_then(|s| s.to_str()) == Some("md"))
+            .collect(),
+        Err(e) => {
+            errors.push(format!(
+                "link-check: could not read {}: {e}",
+                explain_dir.display()
+            ));
+            return errors;
+        }
+    };
+
+    for md_path in &md_files {
+        let content = match std::fs::read_to_string(md_path) {
+            Ok(c) => c,
+            Err(e) => {
+                errors.push(format!(
+                    "link-check: could not read {}: {e}",
+                    md_path.display()
+                ));
+                continue;
+            }
+        };
+
+        // --- Check for bare autolinks (rustdoc leakage not caught by the
+        // link regex, since they have no target paren).
+        for line in content.lines() {
+            if bare_autolink_eol_re.is_match(line) || bare_autolink_mid_re.is_match(line) {
+                // Find the actual match for the error message.
+                let m = bare_autolink_eol_re
+                    .find(line)
+                    .or_else(|| bare_autolink_mid_re.find(line))
+                    .map(|m| m.as_str())
+                    .unwrap_or(line);
+                errors.push(format!(
+                    "link-check: {}: rustdoc bare autolink in assembled doc: {}",
+                    md_path.display(),
+                    m
+                ));
+            }
+        }
+
+        for cap in link_re.captures_iter(&content) {
+            let target = &cap[2];
+
+            // Skip anchors-only and absolute URLs (http/https/ftp).
+            if target.starts_with('#') || target.contains("://") {
+                continue;
+            }
+
+            // Strip a trailing fragment before resolving.
+            let path_part = target.split('#').next().unwrap_or(target);
+
+            // Reject rustdoc intra-doc targets that leaked through:
+            // ](Self::...) or ](crate::...).
+            if rustdoc_target_re.is_match(&format!("({target}")) {
+                errors.push(format!(
+                    "link-check: {}: rustdoc intra-doc link in assembled doc: {}",
+                    md_path.display(),
+                    &cap[0]
+                ));
+                continue;
+            }
+
+            // Resolve the relative path against the explain dir and check it
+            // exists on disk.
+            let resolved = explain_dir.join(path_part);
+            if !resolved.exists() {
+                errors.push(format!(
+                    "link-check: {}: unresolvable relative link: [{}]({})",
+                    md_path.display(),
+                    &cap[1],
+                    target
+                ));
+            }
+        }
+    }
+
+    errors
+}
+
 /// Splice `schema_json` (raw JSON) into `template` by replacing the
 /// `{{SCHEMA}}` placeholder with a fenced ```json block.
 fn render_template(template: &str, schema_json: Option<&str>) -> String {
@@ -288,7 +457,14 @@ fn main() -> anyhow::Result<()> {
         let (schema_json_for_template, schema_artifact) = match verb.schema {
             Some(gen) => {
                 let json = gen();
-                (Some(json.clone()), Some(json))
+                // Flatten rustdoc intra-doc links that schemars pulls verbatim
+                // from /// doc-comments into schema descriptions. The raw
+                // artifact (written to docs/reference/schemas/) is left as-is
+                // so tooling that consumes the JSON Schema directly gets the
+                // unmodified output; only the human/agent-facing embedded copy
+                // is cleaned.
+                let clean = flatten_rustdoc_links(&json);
+                (Some(clean), Some(json))
             }
             None => (None, None),
         };
@@ -348,6 +524,22 @@ fn main() -> anyhow::Result<()> {
     let index = render_index(&verbs);
     let index_path = explain_dir.join("index.md");
     write_if_changed(&index_path, &index)?;
+
+    // --- Link-cleanliness gate -------------------------------------------
+    // Every relative markdown link in the assembled explain docs must resolve
+    // on disk; rustdoc intra-doc syntax must not appear in assembled output.
+    // This catches dead cross-doc links in templates and rustdoc leakage from
+    // schemars-derived schema descriptions (fo-r20czg).
+    let link_errors = check_assembled_docs(&explain_dir);
+    if !link_errors.is_empty() {
+        let msg = link_errors.join("\n");
+        anyhow::bail!(
+            "assembled explain docs failed link-cleanliness check:\n{msg}\n\n\
+             Fix: remove broken relative links from templates (use plain text or \
+             `rwv explain <verb>` references) and ensure rustdoc intra-doc \
+             link syntax is not present in assembled output."
+        );
+    }
 
     Ok(())
 }

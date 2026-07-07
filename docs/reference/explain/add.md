@@ -15,11 +15,8 @@ the `rwv.yaml` change.
 Clones always land at the **canonical path** under the primary weave root,
 regardless of whether `rwv add` is invoked from inside a workweave. This
 reflects the shared-clone topology: manifest repos are global infrastructure,
-with `git worktree` providing per-workweave isolation. See
-[docs/explanation/joints/clone-topology.md](../explanation/joints/clone-topology.md)
-for the full rationale. (Note: that joint is written in parallel with this
-page — if it is not yet on disk, refer to `docs/reference/cli.md` as the
-interim source of truth.)
+with `git worktree` providing per-workweave isolation. (See
+`rwv explain workweave` for the workweave topology model.)
 
 If the clone already exists on disk at the canonical path, `add` skips the
 network clone and registers the existing directory.

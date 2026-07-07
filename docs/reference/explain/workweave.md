@@ -18,8 +18,8 @@ in the primary weave while an agent works in `.workweaves/{project}--{name}/`.
 They are also the landing model: `rwv sync-to --retire` brings the workweave's
 commits into the parent and deletes the workweave in one step.
 
-See [workweave hierarchy](../explanation/joints/workweave-hierarchy.md) for
-the parent-tracking and one-hop sync-to semantics.
+The parent workspace recorded in `.rwv-workweave` becomes the default sync-to
+target for bare `rwv sync-to` from inside the workweave.
 
 ## Subcommands
 
