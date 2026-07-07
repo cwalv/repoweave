@@ -7,9 +7,13 @@ Restore CWD's workspace to its pre-sync state using savepoint refs written by
 sync or sync-to has left the workspace in an unresolvable state and you want to
 get back to the last known-good position rather than continue forward.
 
-`abort` reads the `.rwv-op` op-state file to find the in-flight operation's
-id and the list of involved workspaces. For `sync-to` ops, both CWD and the
-recorded target workspace are rolled back.
+`abort` reads op-state to find the in-flight operation. The **owner record**
+(`.rwv-op`) lives at the initiating workspace (CWD for `rwv sync`; CWD for
+`rwv sync-to`). Every other workspace the op mutates holds a **thin lease**
+(`.rwv-op-lease`) pointing back at the owner. `abort` can be invoked from
+any involved workspace — from a leased workspace it follows the pointer to
+the owner record automatically. For `sync-to` ops, both CWD and the recorded
+target workspace are rolled back.
 
 ### What is restored
 
@@ -68,7 +72,7 @@ when all repos restored without a foreign-tip violation.
 ### When `abort` refuses
 
 `abort` returns an error with `no operation in progress` when no `.rwv-op`
-file is found in CWD's workspace.
+owner record or `.rwv-op-lease` thin lease is found in CWD's workspace.
 
 This can happen if:
 - No sync or sync-to was ever started.

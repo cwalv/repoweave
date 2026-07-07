@@ -12,6 +12,15 @@ CWD's `rwv.lock` from the now-merged manifest tips and commits it. Per-repo
 conflicts are reported with non-zero exit; already-converged repos are
 no-ops, so re-runs are cheap.
 
+When the source is a **workweave** (not the primary weave) and one or more of
+its repos have new commits since the source's last lock (`LockRelation::Ahead`
+— lock is behind HEAD), `rwv sync` treats those repos as **tips-as-truth**: it
+pulls the source's committed tips directly, leaving the source's lock file
+untouched (the source's next op will heal its lock). A note is printed per
+affected repo. This relaxation applies only to workweave sources; a primary
+source with a lock behind HEAD is still refused (primary locks are a
+reproducibility anchor).
+
 `role: reference` repos materialized as symlinks (the default; see
 `rwv explain workweave`) are **excluded from the sync graph**: they
 are read-only aliases of the single canonical clone, identical across
@@ -42,8 +51,8 @@ rwv sync <source> [--json] [--strategy <ff|rebase>] [-j <N>] [--allow-stale-lock
   source tip with `rwv.lock` excluded. (`merge` is not offered; `ff`
   requires CWD to already be strictly ahead of source.)
 - `--allow-stale-lock` skips the lock-freshness precondition on both source
-  and destination. Use when the lock is intentionally ahead of HEAD. Usual
-  fix without this flag: run `rwv lock` in the relevant workspace first.
+  and destination. Use when the lock is intentionally stale. Usual fix without
+  this flag: run `rwv lock --commit` in the relevant workspace.
   Recorded as `allow-stale-lock` in the op-state `overrides` field for audit
   fidelity on `--continue`.
 - `--discard-local-commits` hard-resets the CWD project repo to the source

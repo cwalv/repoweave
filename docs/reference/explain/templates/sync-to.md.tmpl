@@ -58,16 +58,44 @@ created with `--worktree-references` is a real worktree and is synced normally.
 (A `merge` strategy is not offered; `ff` requires CWD to already be strictly
 ahead of target.)
 
+### Source-side cleanliness preflight
+
+Before step 1 begins, `sync-to` checks that CWD has no uncommitted **tracked**
+changes in any manifest repo or (outside `rwv.lock`) in the project repo.
+Untracked files are fine. A project repo that is dirty only in `rwv.lock` is
+also fine — the op commits that file itself. If tracked dirt is found, sync-to
+refuses up front, naming the offending paths, so you can commit or stash before
+running again.
+
+### Op-start auto-relock
+
+If one or more of CWD's manifest repos has new commits since the last lock
+(`LockRelation::Ahead` — lock is behind HEAD), `sync-to` auto-relocks at op
+start (after writing savepoints, so the auto-relock commit is covered by
+`rwv abort`). One line per affected repo is printed naming the repo and how
+many commits HEAD is ahead of the lock. Phase 3 re-relocks idempotently at op
+end regardless.
+
 ### Multi-workspace op-state
 
-Op-state is written to both CWD and target before step 1. The owner record at
-CWD holds all op parameters plus the current phase (replay → relock →
-advance-target → retire); the target workspace holds a thin lease pointing back
-at CWD. Named overrides supplied at invocation (`--allow-stale-lock`,
-`--discard-local-commits`) are recorded in the `overrides` field so `--continue`
-resumes with the same consents. If any step fails, op-state is left in place so
-the operator can resolve and rerun with `--continue`, or use `rwv abort` to roll
-back both workspaces.
+Op-state is written to both CWD and target before step 1. The owner record
+(`.rwv-op`) at CWD holds all op parameters plus the current phase (replay →
+relock → advance-target → retire); the target workspace holds a thin lease
+(`.rwv-op-lease`) pointing back at CWD. Named overrides supplied at invocation
+(`--allow-stale-lock`, `--discard-local-commits`) are recorded in the
+`overrides` field so `--continue` resumes with the same consents.
+
+If another verb (sync, update, `lock --commit`, workweave delete, retire) hits
+a workspace that is already involved in an in-flight op, it refuses immediately,
+naming the op, its age, the phase it stalled in, and the two exits:
+`rwv sync-to --continue` from the owning workspace, or `rwv abort` to roll back.
+This check runs first — before lock-freshness classification — so the error is
+always about the in-flight op, not about a stale lock computed on a mutating
+workspace.
+
+If any step fails, op-state is left in place so the operator can resolve and
+rerun with `rwv sync-to --continue`, or use `rwv abort` to roll back both
+workspaces.
 
 ## Invocation
 
@@ -179,3 +207,13 @@ rwv abort
   in `.gitattributes`. Run `rwv doctor --fix`.
 - *bare sync-to in primary weave* — `rwv sync-to` (no target) requires a
   workweave context. Provide an explicit `<target>` or run from inside a workweave.
+- *lock-freshness precondition failed (stale lock)* — a repo's lock↔HEAD relation
+  is not `ok` (e.g. `behind`, `diverged`, `no-lock`). Usual fix: run
+  `rwv lock --commit` in the relevant workspace to refresh the lock, then retry.
+  Pass `--allow-stale-lock` to skip this check when the stale state is intentional.
+- *uncommitted tracked changes in source* — CWD has tracked dirt in a manifest
+  repo or project repo (outside `rwv.lock`). Commit or stash the changes, then
+  retry.
+- *op in progress* — CWD or target is already involved in a sync-to (or other
+  mutating) op. Resume with `rwv sync-to --continue` from the owner workspace,
+  or roll back with `rwv abort`.

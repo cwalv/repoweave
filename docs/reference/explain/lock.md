@@ -28,8 +28,6 @@ the same inputs always produces the same result.
 Run `rwv lock` after committing changes across manifest repos (or in a
 single repo) to record the new cross-repo state. Common patterns:
 
-- Agent work sessions: run `rwv lock` before landing via `rwv sync-to --retire`
-  so the workweave carries a coherent lock.
 - Manual cross-repo feature: commit in each affected repo, then `rwv lock`
   to capture the joint state.
 - After `rwv add`/`rwv remove`: those verbs regenerate integration files

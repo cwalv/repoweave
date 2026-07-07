@@ -25,8 +25,10 @@ rwv doctor [--all] [--locked] [--json] [--fix]
   project — flagging it as orphaned would produce false positives).
 - `--locked` exits zero iff every repo's tip matches its `rwv.lock`
   entry. Prints per-repo `ok` / `tip ≠ lock` lines to stdout. Useful
-  as a scriptable precondition before `rwv sync`. Mutually exclusive
-  with `--fix` and `--json`.
+  as a scriptable precondition before `rwv sync` (note: `rwv sync`
+  also runs its own lock-freshness check at op start; `--locked` is
+  the explicit external gate). Mutually exclusive with `--fix` and
+  `--json`.
 - `--json` emits machine-readable output (see Output below). Mutually
   exclusive with `--locked` and `--fix`. Honors the same scoping as the
   default text output: project-scoped by default, weave-wide with `--all`.
@@ -70,12 +72,17 @@ severity. Under `--json`, output is the envelope:
 The `$schema` URL points to the committed schema artifact. Variants are
 discriminated by the `kind` tag — `orphaned-clone`, `dangling-reference`,
 `missing-role`, `stale-lock`, `workweave-drift`, `index-drift`,
-`working-tree-drift`, `missing-replay-exclusion`, `legacy-role-primary`.
+`working-tree-drift`, `missing-replay-exclusion`, `legacy-role-primary`,
+`workweave-tree-integrity`.
 Every per-repo variant carries `path` (manifest-relative) and
 `absolute_path` (fully resolved). Variants with subkinds
-(`workweave-drift`, `index-drift`, `working-tree-drift`) carry an
-additional `sub_kind` field. `legacy-role-primary` carries `project` and
+(`workweave-drift`, `index-drift`, `working-tree-drift`,
+`workweave-tree-integrity`) carry an additional `sub_kind` field.
+`legacy-role-primary` carries `project` and
 `manifest_path` so the caller can locate the file `--fix` will rewrite.
+`workweave-tree-integrity` carries `workweave_dir` and a `sub_kind`
+(`dangling-parent`, `parent-chain-anomaly`, `unregistered-dir`,
+`foreign-primary`); only `dangling-parent` is auto-fixable via `--fix`.
 
 Surfacing violations (missing or mis-resolved symlinks in the active
 project's surfacing set) are reported as `core` integration warnings in
@@ -1174,3 +1181,11 @@ rwv doctor --fix
   re-surface the symlink. If a real file occupies the surfacing path, the
   warning is marked not-safe-to-fix; resolve manually (move or remove the
   occupying file, then rerun `--fix`).
+- *workweave-tree-integrity / dangling-parent* — a workweave's `.rwv-workweave`
+  marker records a `parent:` path that no longer exists on disk (the parent
+  was retired or deleted out-of-band). Run `rwv doctor --fix` to re-point
+  the marker to the primary workspace. Branch names are left untouched. Once
+  fixed, re-run `rwv sync` or `rwv sync-to` from the workweave.
+- *workweave-tree-integrity / parent-chain-anomaly*, *unregistered-dir*,
+  *foreign-primary* — other marker tree anomalies; report-only (`--fix` does
+  not auto-remediate them).
