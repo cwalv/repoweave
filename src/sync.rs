@@ -8,6 +8,7 @@ use crate::lock::{commit_lock_file_with_message, generate_lock};
 use crate::manifest::{LockFile, Manifest, Project, ProjectName, RepoPath, Role, WorkweaveName};
 use crate::op_state::{self, LeaseRecord, OwnerRecord};
 use crate::parallel::run_in_parallel;
+use crate::status::{compute_relation, LockRelation};
 use crate::vcs::{
     ConflictOp, RefName, ResolvedRevisionId, Vcs, VcsError, VcsErrorOutput, VerifiedRestoreOutcome,
 };
@@ -50,6 +51,20 @@ fn workspace_name(ctx: &WorkspaceContext) -> String {
             .unwrap_or("unknown")
             .to_owned(),
     }
+}
+
+/// The commit message for the auto-relock the sync engine writes into the CWD
+/// project repo when it regenerates `rwv.lock` from the converged manifest tips.
+///
+/// This is the ONE home of the literal (`fo-4rpnkm.1` §3): both the op-start
+/// benign-staleness relock and the post-replay Phase-3 relock format their
+/// commit message here, and the explain generator (`fo-m26yws`) splices the
+/// same string into `rwv explain sync-to` via a `{{MSG:auto_relock}}`
+/// placeholder so the docs cannot drift from the code. `<source>` is the
+/// display name of the workspace the sync pulled from. Text is unchanged from
+/// the pre-extraction literal.
+pub fn auto_relock_commit_message(source: &str) -> String {
+    format!("lock: auto-relock after sync from {source}")
 }
 
 // ---------------------------------------------------------------------------
@@ -725,75 +740,13 @@ fn target_savepoint_id(op_id: &OpId) -> String {
     format!("{}-target", op_id.as_str())
 }
 
-/// The recovery instruction differs by side: source's lock is committed
-/// upstream from the operator's perspective ("Run `rwv lock --project <p>` in
-/// the source workspace and commit before syncing"), destination's is right here
-/// ("Run `rwv lock --project <p>` to refresh before syncing").
-///
-/// `project_name` is the project the refusing sync was operating on; spelling
-/// it in the hint avoids the footgun where the operator runs bare `rwv lock`
-/// and locks the *active* project (which may differ from the project that was
-/// refused).
-fn lock_recovery(side: Side, project_name: &str) -> String {
-    match side {
-        Side::Source => format!(
-            "Run `rwv lock --project {project_name}` in the source workspace and commit before syncing"
-        ),
-        Side::Destination => format!(
-            "Run `rwv lock --project {project_name}` to refresh before syncing"
-        ),
-    }
-}
-
-fn check_lock_freshness(
-    workspace_dir: &Path,
-    lock: &LockFile,
-    side: Side,
-    workspace_name: &str,
-    project_name: &str,
-) -> anyhow::Result<()> {
-    // Resolve lock entries against on-disk repos so the comparison below is
-    // purely a canonical-SHA equality check. Tag-form entries (e.g. v0.3.4)
-    // resolve to the canonical SHA; SHA-form entries pass through unchanged.
-    let (resolved, failures) = lock.clone().resolve_versions(workspace_dir);
-    if let Some((repo_path, raw_version)) = failures.first() {
-        let raw = raw_version.as_str().to_string();
-        let side_str = side.as_str();
-        let recovery = lock_recovery(side, project_name);
-        anyhow::bail!(
-            "lock-freshness precondition failed: {side_str} workspace '{workspace_name}' lock \
-             references unknown revision {raw} for {repo_path}.\n\
-             \n\
-             Usual fix: {recovery}.\n\
-             To skip this check: pass `--allow-stale-lock` (use when you know the lock is \
-             intentionally ahead of HEAD).",
-        );
-    }
-
-    for (repo_path, lock_entry) in resolved.iter_entries() {
-        let abs = workspace_dir.join(repo_path.as_path());
-        if !abs.exists() {
-            continue;
-        }
-        if let Ok(actual) = GitVcs.head_revision(&abs) {
-            if actual != lock_entry.version {
-                let side_str = side.as_str();
-                let recovery = lock_recovery(side, project_name);
-                anyhow::bail!(
-                    "lock-freshness precondition failed: {side_str} workspace '{workspace_name}' \
-                     has a stale lock — {repo_path} tip={actual} doesn't match \
-                     lock={}.\n\
-                     \n\
-                     Usual fix: {recovery}.\n\
-                     To skip this check: pass `--allow-stale-lock` (use when you know the lock \
-                     is intentionally ahead of HEAD).",
-                    lock_entry.version
-                );
-            }
-        }
-    }
-    Ok(())
-}
+// NOTE (`fo-4rpnkm.1`, §2): the old `check_lock_freshness` / `lock_recovery`
+// pair — which refused on ANY lock↔HEAD mismatch — is replaced by the
+// benign-staleness classification (`classify_lock_relations` +
+// `anomalous_relation_refusal` + the tips-as-truth / op-start-relock handling
+// in `guard_and_mark`). `behind` is no longer an error; only genuinely
+// anomalous relations (ahead / diverged / no-lock / unknown) refuse, naming the
+// relation. `--allow-stale-lock` still bypasses the whole gate.
 
 /// Phase 1 precondition predicate: would resetting `cwd_tip` to `source_tip`
 /// discard reachable commits? Returns `true` when CWD is an ancestor of (or
@@ -1828,7 +1781,11 @@ fn guard_and_mark<'a>(
 
     // source_workspace_dir is the operator's arg for both verbs (sync's <src>
     // and sync-to's <tgt> — replay pulls from there in either case).
-    let (source_project_dir, source_workspace_name, source_project_name) = {
+    // `source_is_workweave` scopes tips-as-truth (§2): a `behind` source lock is
+    // pulled-as-tips only when the source is workweave-typed; a primary-weave
+    // source keeps the refusal (a reproducibility-sensitive locked-snapshot pull
+    // from the primary must not silently take live tips over its committed lock).
+    let (source_project_dir, source_workspace_name, source_project_name, source_is_workweave) = {
         let override_arg = match verb {
             MachineVerb::Sync => other_project_override.clone(),
             // For sync-to, the target workspace must resolve to CWD's project.
@@ -1837,7 +1794,8 @@ fn guard_and_mark<'a>(
         let source_ctx = WorkspaceContext::resolve(&source_workspace_dir, override_arg)?;
         let pname = find_project_name(&source_ctx)?;
         let dir = source_ctx.active_path().join("projects").join(&pname);
-        (dir, workspace_name(&source_ctx), pname)
+        let is_workweave = matches!(source_ctx.location, WorkspaceLocation::Workweave { .. });
+        (dir, workspace_name(&source_ctx), pname, is_workweave)
     };
 
     // dest_project_dir is where the terminal write lands.
@@ -1873,12 +1831,20 @@ fn guard_and_mark<'a>(
         check_sync_to_ff_precondition(&cwd_project_dir, &dest_project_dir, emit_text)?;
     }
 
-    // sync-to dirty-target preflight: refuse up-front if the target
-    // workweave has uncommitted changes the advance-target phase would
-    // overwrite.
+    // sync-to preflights (both refuse before op-state / any mutation):
+    //   - dirty-source (§1): CWD-side tracked dirt would go stale mid-rebase.
+    //   - dirty-target: the target's uncommitted work advance-target overwrites.
+    // Source before target: the operator's own workspace is the first thing they
+    // can fix, and a dirty source is the state we most want to define away.
     if matches!(verb, MachineVerb::SyncTo) {
         let cwd_project_preflight = Project::from_dir(&cwd_project_dir)
-            .context("failed to load CWD project for dirty-target preflight")?;
+            .context("failed to load CWD project for sync-to preflights")?;
+        check_dirty_source_preflight(
+            &cwd_project_preflight,
+            &cwd_workspace_dir,
+            &cwd_project_dir,
+            cwd,
+        )?;
         check_dirty_target_preflight(
             &cwd_project_preflight,
             &dest_workspace_dir,
@@ -1897,22 +1863,174 @@ fn guard_and_mark<'a>(
     let cwd_project = Project::from_dir(&cwd_project_dir)
         .context("failed to load CWD project for guard preconditions")?;
     let cwd_workspace_name_str = workspace_name(&cwd_ctx);
-    if !allow_stale_lock {
-        check_lock_freshness(
+
+    // === Benign-staleness classification (§2, Correction 2) ===
+    //
+    // Classify each side's committed lock↔HEAD relation with the SAME per-repo
+    // vocabulary `rwv status` uses ([`LockRelation`]). Recall the terminology
+    // inversion: the bead's benign "lock behind HEAD" is `LockRelation::Ahead`
+    // (tip ahead of lock). `--allow-stale-lock` bypasses the whole gate.
+    //
+    // Scope of the benign relaxation (kept to the bead's EXPLICIT §2 bullets;
+    // see the FLAG in the summary re: the pull destination):
+    //   - sync-to (landing): CWD is the landing set. A lock-behind-HEAD (`Ahead`)
+    //     CWD repo auto-relocks at op start (below), LOUD line per repo with
+    //     commit count. Every other non-`ok` CWD relation refuses.
+    //   - sync (pull) SOURCE: a lock-behind-HEAD (`Ahead`) source is tips-as-truth
+    //     for a WORKWEAVE source (note + pull committed tips, leave source lock
+    //     alone); a PRIMARY-weave source keeps the refusal (reproducibility scope
+    //     decision). Every other non-`ok` source relation refuses.
+    //   - sync (pull) DESTINATION (CWD): kept at the pre-Design-B behavior — any
+    //     non-`ok` relation (INCLUDING `Ahead`) refuses. The bead relaxed only the
+    //     pull SOURCE; relaxing the pull destination too would be cleaner but is
+    //     NOT in the explicit scope, so it is held and flagged rather than
+    //     silently widened.
+    //
+    // Unresolvable lock entries (a pinned tag/branch that no longer exists) are a
+    // corrupt-lock error distinct from any relation and refuse first, naming the
+    // unknown revision.
+    let source_class = if allow_stale_lock {
+        None
+    } else {
+        Some(classify_lock_relations(
             &source_workspace_dir,
-            &snapshot.raw_source_lock,
+            &snapshot.source_manifest,
+            Some(&snapshot.raw_source_lock),
+        ))
+    };
+    let cwd_class = if allow_stale_lock {
+        None
+    } else {
+        Some(classify_lock_relations(
+            &cwd_workspace_dir,
+            &cwd_project.manifest,
+            cwd_project.lock.as_ref(),
+        ))
+    };
+
+    // CWD repos whose lock is behind HEAD (relation `Ahead`) that a sync-to
+    // landing auto-relocks at op start.
+    let mut cwd_lock_behind: Vec<RepoRelation> = Vec::new();
+
+    if let (Some(source_class), Some(cwd_class)) = (source_class, cwd_class) {
+        // Corrupt (unresolvable) lock entries refuse first, naming the revision.
+        if let Some((rp, raw)) = source_class.unresolvable.first() {
+            anyhow::bail!(
+                "{}",
+                unresolvable_lock_refusal(
+                    Side::Source,
+                    &source_workspace_name,
+                    source_project_name.as_str(),
+                    rp,
+                    raw,
+                )
+            );
+        }
+        if let Some((rp, raw)) = cwd_class.unresolvable.first() {
+            anyhow::bail!(
+                "{}",
+                unresolvable_lock_refusal(
+                    Side::Destination,
+                    &cwd_workspace_name_str,
+                    cwd_project_name.as_str(),
+                    rp,
+                    raw,
+                )
+            );
+        }
+
+        // Source side: refuse on any non-`ok`, non-`Ahead` relation. (`Ahead` is
+        // handled per verb below.)
+        let source_anomalous: Vec<&RepoRelation> = source_class
+            .relations
+            .iter()
+            .filter(|r| !matches!(r.relation, LockRelation::Ok | LockRelation::Ahead))
+            .collect();
+        if let Some(msg) = lock_relation_refusal(
             Side::Source,
             &source_workspace_name,
             source_project_name.as_str(),
-        )?;
-        if let Some(ref lock) = cwd_project.lock {
-            check_lock_freshness(
-                &cwd_workspace_dir,
-                lock,
-                Side::Destination,
-                &cwd_workspace_name_str,
-                cwd_project_name.as_str(),
-            )?;
+            &source_anomalous,
+        ) {
+            anyhow::bail!("{msg}");
+        }
+
+        match verb {
+            MachineVerb::Sync => {
+                // Pull SOURCE `Ahead` = lock behind HEAD (source advanced but has
+                // not relocked). Workweave source: tips-as-truth (note, pull
+                // committed tips, leave the source lock alone). Primary source:
+                // keep the refusal (scope decision).
+                let source_lock_behind: Vec<&RepoRelation> = source_class
+                    .relations
+                    .iter()
+                    .filter(|r| r.relation == LockRelation::Ahead)
+                    .collect();
+                if !source_lock_behind.is_empty() {
+                    if source_is_workweave {
+                        if emit_text {
+                            for r in &source_lock_behind {
+                                let n = r
+                                    .ahead_count
+                                    .map(|c| c.to_string())
+                                    .unwrap_or_else(|| "?".to_string());
+                                eprintln!(
+                                    "note: {source_workspace_name}/{}: source lock behind HEAD \
+                                     by {n} commits — pulling committed tips (source lock left \
+                                     alone; its next op heals it)",
+                                    r.repo_path,
+                                );
+                            }
+                        }
+                    } else if let Some(msg) = lock_relation_refusal(
+                        Side::Source,
+                        &source_workspace_name,
+                        source_project_name.as_str(),
+                        &source_lock_behind,
+                    ) {
+                        anyhow::bail!("{msg}");
+                    }
+                }
+
+                // Pull DESTINATION (CWD): held at pre-Design-B behavior — refuse
+                // on ANY non-`ok` relation (including `Ahead`).
+                let cwd_stale: Vec<&RepoRelation> = cwd_class
+                    .relations
+                    .iter()
+                    .filter(|r| r.relation != LockRelation::Ok)
+                    .collect();
+                if let Some(msg) = lock_relation_refusal(
+                    Side::Destination,
+                    &cwd_workspace_name_str,
+                    cwd_project_name.as_str(),
+                    &cwd_stale,
+                ) {
+                    anyhow::bail!("{msg}");
+                }
+            }
+            MachineVerb::SyncTo => {
+                // Landing DESTINATION (CWD): refuse on any non-`ok`, non-`Ahead`
+                // relation; a lock-behind-HEAD (`Ahead`) CWD auto-relocks at op
+                // start (LOUD line + commit count below).
+                let cwd_anomalous: Vec<&RepoRelation> = cwd_class
+                    .relations
+                    .iter()
+                    .filter(|r| !matches!(r.relation, LockRelation::Ok | LockRelation::Ahead))
+                    .collect();
+                if let Some(msg) = lock_relation_refusal(
+                    Side::Destination,
+                    &cwd_workspace_name_str,
+                    cwd_project_name.as_str(),
+                    &cwd_anomalous,
+                ) {
+                    anyhow::bail!("{msg}");
+                }
+                cwd_lock_behind = cwd_class
+                    .relations
+                    .into_iter()
+                    .filter(|r| r.relation == LockRelation::Ahead)
+                    .collect();
+            }
         }
     }
     if matches!(strategy, SyncStrategy::Rebase) {
@@ -2059,6 +2177,46 @@ fn guard_and_mark<'a>(
                         let _ = create_savepoint(&abs, &tsp_id);
                     }
                 }
+            }
+        }
+    }
+
+    // === Op-start auto-relock (§2, sync-to landing) ===
+    //
+    // Runs AFTER savepoints so abort can roll the relock commit back with the
+    // rest of the op. When CWD's manifest repos have a lock behind HEAD (relation
+    // `Ahead` — new commits since the last relock, the benign landing shape),
+    // emit one LOUD line per repo INCLUDING the commit count, then
+    // regenerate+commit CWD's `rwv.lock` so the landing never propagates a lock
+    // that mismatches the tips it lands. Phase 3 re-runs relock at op end
+    // idempotently; doing it here surfaces the surprising number at the moment it
+    // matters (the ancestry-gate guardrail). Best-effort: a relock-commit failure
+    // here does not abort the op — Phase 3 will still regenerate the lock
+    // post-replay.
+    if !cwd_lock_behind.is_empty() {
+        if emit_text {
+            for r in &cwd_lock_behind {
+                let n = r
+                    .ahead_count
+                    .map(|c| c.to_string())
+                    .unwrap_or_else(|| "?".to_string());
+                eprintln!(
+                    "{cwd_workspace_name_str}/{}: lock behind HEAD by {n} commits — auto-relocked",
+                    r.repo_path,
+                );
+            }
+        }
+        if let Err(e) = regenerate_lock_phase3(
+            &cwd_ctx,
+            &cwd_project_dir,
+            &cwd_project,
+            &source_workspace_name,
+        ) {
+            if emit_text {
+                eprintln!(
+                    "warning: op-start relock could not commit ({e}); Phase 3 will retry \
+                     post-replay"
+                );
             }
         }
     }
@@ -2359,6 +2517,296 @@ fn check_dirty_target_preflight(
         );
     }
     Ok(())
+}
+
+/// The lock file path relative to a project directory. Its tracked-dirty state
+/// is carved out of the source preflight (it is the auto-relock's own input).
+const RWV_LOCK_FILE: &str = "rwv.lock";
+
+/// sync-to source-side cleanliness preflight (`fo-4rpnkm.1` §1, Correction 3).
+///
+/// Before writing op-state or touching any repo, refuse if the CWD side (the
+/// operator's own workspace — where replay runs) carries uncommitted **tracked**
+/// changes in any manifest repo or the project repo. This defines the
+/// "half-rebased op with a pre-rebase lock" state out of existence for the
+/// dirty-tree class: today the blast radius depends on repo iteration order —
+/// repos before the dirty one get rebased, the lock goes stale, then the op dies
+/// mid-replay. One refusal naming every dirty path, before anything rebases.
+///
+/// - **Untracked files are fine** — they survive the replay untouched, matching
+///   the intent recorded on the bead (a scratch file must not block a landing).
+///   Only tracked modifications (staged or unstaged) refuse.
+/// - **Carve-out:** a dirty `projects/<p>/rwv.lock` *alone* is NOT dirt — it is
+///   the auto-relock's own input (§2) and the op commits it. A project repo that
+///   is dirty *only* in `rwv.lock` passes; any other tracked project-repo change
+///   still refuses (and the project entry names the specific files so the lock
+///   carve-out is auditable).
+fn check_dirty_source_preflight(
+    cwd_project: &Project,
+    cwd_workspace_dir: &Path,
+    cwd_project_dir: &Path,
+    cwd_path: &Path,
+) -> anyhow::Result<()> {
+    let mut dirty: Vec<String> = Vec::new();
+
+    for repo_path in cwd_project.manifest.iter_repo_paths() {
+        let repo = cwd_workspace_dir.join(repo_path.as_path());
+        // Skip reference symlinks: a dirty shared canonical must not block a
+        // sync-to that never rebases it (replay excludes it too).
+        if checkout_is_syncable(&repo) {
+            let tracked = GitVcs::tracked_dirty_file_names(&repo).unwrap_or_else(|_| {
+                // Treat an unreadable repo as dirty so we fail closed rather
+                // than silently rebasing over an unknown state.
+                vec!["(status unreadable)".to_string()]
+            });
+            if !tracked.is_empty() {
+                dirty.push(repo_path.to_string());
+            }
+        }
+    }
+
+    // Project repo: apply the rwv.lock carve-out. A project repo dirty ONLY in
+    // rwv.lock is the auto-relock's expected input, not dirt.
+    let project_tracked = GitVcs::tracked_dirty_file_names(cwd_project_dir)
+        .unwrap_or_else(|_| vec!["(status unreadable)".to_string()]);
+    let non_lock: Vec<&String> = project_tracked
+        .iter()
+        .filter(|p| p.as_str() != RWV_LOCK_FILE)
+        .collect();
+    if !non_lock.is_empty() {
+        // Name the specific tracked files so the operator sees exactly what
+        // refuses (and can confirm the rwv.lock carve-out was applied).
+        let files = non_lock
+            .iter()
+            .map(|p| p.as_str())
+            .collect::<Vec<_>>()
+            .join(", ");
+        dirty.push(format!("(project): {files}"));
+    }
+
+    if !dirty.is_empty() {
+        anyhow::bail!(
+            "sync-to precondition failed: source workspace has uncommitted tracked changes in:\n  {}\n\
+             \n\
+             replay rebases these repos onto the target and regenerates the lock; committing \
+             mid-op would leave a half-rebased op with a stale lock. Commit or stash the tracked \
+             changes in the source ({}), then re-run. (Untracked files are fine; a dirty rwv.lock \
+             alone is committed by the op.)",
+            dirty.join("\n  "),
+            cwd_path.display(),
+        );
+    }
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Benign-staleness classification (`fo-4rpnkm.1` §2, Correction 2)
+// ---------------------------------------------------------------------------
+//
+// At op start each manifest repo's committed lock SHA is classified against its
+// on-disk HEAD via the SAME per-repo relation vocabulary `rwv status` surfaces
+// ([`crate::status::LockRelation`] — no parallel enum).
+//
+// TERMINOLOGY (load-bearing — the bead and the enum name this from opposite
+// vantage points): the bead's "lock behind HEAD" (lock is a strict ancestor of
+// HEAD — new commits since the last lock, the normal shape of in-progress work)
+// is [`LockRelation::Ahead`] — the *tip* is ahead of the lock. That relation is
+// the BENIGN case: a landing auto-relocks, a pull takes the source's committed
+// tips. The bead's "ahead" case (HEAD is a strict ancestor of the lock — a reset
+// or an `update` without FF) is [`LockRelation::Behind`] — the *tip* is behind
+// the lock; that is anomalous and refuses. Every non-`ok` relation other than
+// `Ahead` (i.e. `Behind` / `Diverged` / `NoLock` / `Unknown`) hard-refuses,
+// naming the relation. The ancestry gate is the whole answer — a benign `Ahead`
+// cannot conceal divergence, because the "missing" lock entries are exactly the
+// commits the op will replay/FF.
+
+/// One manifest repo's lock↔HEAD relation, plus the commit count for the benign
+/// `Ahead` case (the tip is ahead of the lock — "lock behind HEAD" in the bead's
+/// phrasing). The count makes the surprising number visible at the moment it
+/// matters — the LOUD auto-relock line.
+struct RepoRelation {
+    repo_path: RepoPath,
+    relation: LockRelation,
+    /// `Some(n)` only when `relation == Ahead`: how many commits HEAD is ahead
+    /// of the lock (`lock..HEAD`). `None` for every other relation.
+    ahead_count: Option<usize>,
+}
+
+/// Result of classifying a workspace's committed lock against its repos: the
+/// per-repo relations, plus any lock entries whose pinned revision could not be
+/// resolved on disk (a tag/branch that no longer exists). Unresolvable entries
+/// are a corrupt-lock error distinct from any relation and are reported first
+/// (naming the unknown revision), preserving the old lock-freshness diagnostic.
+struct LockClassification {
+    relations: Vec<RepoRelation>,
+    unresolvable: Vec<(RepoPath, crate::vcs::RawRevisionId)>,
+}
+
+/// Classify every manifest repo's committed lock SHA against its on-disk HEAD.
+///
+/// Reference-symlink checkouts are skipped (they alias the shared canonical and
+/// are never rebased). Repos missing on disk are skipped (nothing to classify).
+/// The lock is resolved against the workspace so tag/branch/SHA lock forms all
+/// compare as canonical SHAs, exactly like `rwv status`. `lock` is `None` when
+/// the project carries no committed lock at all (every entry then classifies as
+/// `no-lock`). Lock entries whose revision does not resolve on disk are returned
+/// in `unresolvable` rather than silently dropped.
+fn classify_lock_relations(
+    workspace_dir: &Path,
+    manifest: &Manifest,
+    lock: Option<&LockFile>,
+) -> LockClassification {
+    let (resolved_lock, unresolvable) = match lock {
+        Some(raw) => {
+            let (resolved, failures) = raw.clone().resolve_versions(workspace_dir);
+            (Some(resolved), failures)
+        }
+        None => (None, Vec::new()),
+    };
+
+    let mut out = Vec::new();
+    for repo_path in manifest.iter_repo_paths() {
+        let repo_abs = workspace_dir.join(repo_path.as_path());
+        // Reference aliases are read-only and never rebased; do not classify.
+        if !checkout_is_syncable(&repo_abs) {
+            continue;
+        }
+        if !repo_abs.exists() {
+            continue;
+        }
+        let tip = GitVcs.head_revision(&repo_abs).ok();
+        // A repo whose lock entry failed to resolve is reported via
+        // `unresolvable` (a corrupt-lock error), not as a `no-lock` relation —
+        // skip it here to avoid a double-report.
+        if unresolvable.iter().any(|(p, _)| p == repo_path) {
+            continue;
+        }
+        let lock_sha = resolved_lock
+            .as_ref()
+            .and_then(|l| l.get_entry(repo_path))
+            .map(|e| e.version.clone());
+        let relation = compute_relation(&repo_abs, &tip, &lock_sha);
+        let ahead_count = if relation == LockRelation::Ahead {
+            // `Ahead` ⟺ lock is a strict ancestor of tip (both present, per
+            // compute_relation). Count lock..HEAD — the commits the landing
+            // replays / the auto-relock pins.
+            match (lock_sha.as_ref(), tip.as_ref()) {
+                (Some(lock), Some(tip)) => GitVcs.count_commits_in_range(&repo_abs, lock, tip).ok(),
+                _ => None,
+            }
+        } else {
+            None
+        };
+        out.push(RepoRelation {
+            repo_path: repo_path.clone(),
+            relation,
+            ahead_count,
+        });
+    }
+    LockClassification {
+        relations: out,
+        unresolvable,
+    }
+}
+
+/// Refusal naming the first unresolvable lock entry (a tag/branch the lock pins
+/// that no longer exists on disk). Distinct from a relation — the lock itself is
+/// corrupt. Preserves the old lock-freshness "unknown revision" diagnostic,
+/// including the `--project <p>`-qualified recovery hint (fo-mxw3ew) and the
+/// `--allow-stale-lock` escape hatch.
+fn unresolvable_lock_refusal(
+    side: Side,
+    workspace_name: &str,
+    project_name: &str,
+    repo_path: &RepoPath,
+    raw_version: &crate::vcs::RawRevisionId,
+) -> String {
+    let side_str = side.as_str();
+    let raw = raw_version.as_str();
+    let recovery = match side {
+        Side::Source => format!(
+            "Run `rwv lock --project {project_name}` in the source workspace and commit before \
+             syncing"
+        ),
+        Side::Destination => {
+            format!("Run `rwv lock --project {project_name}` to refresh before syncing")
+        }
+    };
+    format!(
+        "lock-freshness precondition failed: {side_str} workspace '{workspace_name}' lock \
+         references unknown revision {raw} for {repo_path}.\n\
+         \n\
+         Usual fix: {recovery}.\n\
+         To skip this check: pass `--allow-stale-lock` (use when you know the lock is \
+         intentionally ahead of HEAD).",
+    )
+}
+
+/// Build a lock-freshness refusal naming each offending repo, its relation, and
+/// the recovery path — the single refusal used for every non-benign lock-relation
+/// gate (anomalous relations on either side; a primary-weave source or a pull
+/// destination whose lock is behind HEAD). Returns `None` when `offending` is
+/// empty (nothing to refuse).
+///
+/// Preserves the documented `lock-freshness precondition` phrase (cli.md §sync
+/// `--allow-stale-lock` row), the "stale lock" wording, the `--project <p>`-
+/// qualified recovery hint (fo-mxw3ew), and the `--allow-stale-lock` escape
+/// hatch, while additionally NAMING each repo's relation (§2 guardrail). A
+/// `diverged` repo also earns the `rwv lock --commit` bless-HEAD hint.
+fn lock_relation_refusal(
+    side: Side,
+    workspace_name: &str,
+    project_name: &str,
+    offending: &[&RepoRelation],
+) -> Option<String> {
+    if offending.is_empty() {
+        return None;
+    }
+    let mut any_diverged = false;
+    let mut lines = String::new();
+    for r in offending {
+        if r.relation == LockRelation::Diverged {
+            any_diverged = true;
+        }
+        // Phrase the relation from a single fixed vantage point (HEAD relative to
+        // lock) to match `LockRelation`'s tip-relative naming: `HEAD ahead of
+        // lock` is "lock behind HEAD" (a primary source / pull destination that
+        // hasn't relocked), `HEAD behind lock` is the reset case, etc.
+        lines.push_str(&format!("\n  {}: HEAD {} lock", r.repo_path, r.relation));
+    }
+    let side_str = side.as_str();
+    let recovery = match side {
+        Side::Source => format!(
+            "Run `rwv lock --project {project_name}` in the source workspace and commit before \
+             syncing"
+        ),
+        Side::Destination => {
+            format!("Run `rwv lock --project {project_name}` to refresh before syncing")
+        }
+    };
+    // Lead with the documented phrase (`lock-freshness precondition`) so the
+    // `--allow-stale-lock` doc stays accurate; keep the "stale lock" wording the
+    // detailed message tests assert on.
+    let mut msg = format!(
+        "lock-freshness precondition failed: {side_str} workspace '{workspace_name}' has a stale \
+         lock — the lock↔HEAD relation is not `ok` for:{lines}\n\
+         \n\
+         `ahead` (HEAD ahead of lock) means the lock is behind HEAD; on a primary source or a \
+         pull destination this is only accepted with consent. `behind` = the lock records \
+         commits HEAD lacks (a reset, or `update` without fast-forward). `diverged` = the lock \
+         and HEAD have rewritten past a shared base. `no-lock` / `unknown` = no comparable lock \
+         entry.\n\
+         \n\
+         Usual fix: {recovery}.\n"
+    );
+    if any_diverged {
+        msg.push_str("\nFor a diverged repo, bless the current HEAD with `rwv lock --commit`.\n");
+    }
+    msg.push_str(
+        "\nTo skip this check: pass `--allow-stale-lock` (use when you know the lock is \
+         intentionally ahead of HEAD).",
+    );
+    Some(msg)
 }
 
 // ---------------------------------------------------------------------------
@@ -3332,7 +3780,7 @@ fn regenerate_lock_phase3(
     let lock_path = cwd_project_dir.join("rwv.lock");
     crate::lock::write_lock(&new_lock, &lock_path)?;
 
-    let message = format!("lock: auto-relock after sync from {source_workspace_name}");
+    let message = auto_relock_commit_message(source_workspace_name);
     if commit_lock_file_with_message(cwd_project_dir, &message)? {
         eprintln!("  (project): re-locked after sync from {source_workspace_name}");
     }

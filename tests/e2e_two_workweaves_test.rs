@@ -818,9 +818,15 @@ fn sync_to_retire_clean_path_deletes_workweave() {
     );
 }
 
-/// Dirty-after-sync path: if any worktree in the workweave has uncommitted
-/// changes when --retire runs the post-sync-to check, retire must refuse to
-/// delete and leave the workweave intact for the operator to fix.
+/// Dirty-tree path: if any manifest-repo worktree in the workweave has
+/// uncommitted TRACKED changes when `sync-to --retire` runs, the op must refuse
+/// and leave the workweave intact for the operator to fix.
+///
+/// Since `fo-4rpnkm.1` §1 (source-side cleanliness preflight), the refusal fires
+/// UP FRONT at op start — before any rebase or op-state write — rather than at
+/// the post-sync retire dirty-check. This defines the "half-rebased op with a
+/// stale lock" state out of existence for the dirty-tree class; the refusal
+/// names every dirty repo so the operator can commit or stash and re-run.
 #[test]
 fn sync_to_retire_with_dirty_worktree_refuses_to_delete() {
     let tmp = tempfile::tempdir().unwrap();
@@ -831,9 +837,8 @@ fn sync_to_retire_with_dirty_worktree_refuses_to_delete() {
     std::fs::write(main.root.join(".rwv-active"), format!("{PROJECT}\n")).unwrap();
     let ww1 = create_workweave(&main, &weaveroot, "ww1");
 
-    // Dirty up the manifest-repo worktree before retire runs. The sync-to
-    // itself will succeed (no manifest changes to apply), but the
-    // post-sync-to dirty check must catch the staged-edit and refuse delete.
+    // Dirty a TRACKED file in the manifest-repo worktree before retire runs.
+    // The source-side cleanliness preflight catches this at op start and refuses.
     std::fs::write(ww1.manifest_repo.join("README.md"), "dirtied\n").unwrap();
 
     let assert = rwv()
@@ -843,8 +848,9 @@ fn sync_to_retire_with_dirty_worktree_refuses_to_delete() {
         .failure();
     let stderr = String::from_utf8_lossy(&assert.get_output().stderr).into_owned();
     assert!(
-        stderr.contains("--retire") && stderr.contains("uncommitted"),
-        "expected --retire to surface dirty-state refusal, got stderr: {stderr}"
+        stderr.contains("uncommitted tracked changes"),
+        "expected source-cleanliness preflight to surface the dirty-state refusal, \
+         got stderr: {stderr}"
     );
     assert!(
         ww1.root.exists(),
