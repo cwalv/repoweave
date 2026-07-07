@@ -19,7 +19,7 @@ CWD, and target is only ever advanced via fast-forward.
 
 2. **Step 2 — auto-relock.** If step 1 moved any manifest-repo tip in CWD,
    regenerate `rwv.lock` and commit it in CWD's project repo with the message
-   `lock: post-rebase refresh`. This keeps the lock consistent without requiring
+   `lock: auto-relock after sync from <source>`. This keeps the lock consistent without requiring
    a separate `rwv lock` invocation.
 
 3. **Step 3 — FF-advance target.** Fast-forward each manifest repo and the

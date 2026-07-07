@@ -8,6 +8,8 @@
 //! - Each verb advertised in the acceptance set has a discoverable entry.
 //! - Drift safety: re-running the generator over the committed tree
 //!   produces no changes (templates + Rust types are in sync).
+//! - {{MSG:auto_relock}} resolves in the assembled sync-to doc and matches the
+//!   string `repoweave::sync::auto_relock_commit_message` emits (fo-m26yws).
 
 use assert_cmd::Command as AssertCommand;
 use predicates::prelude::*;
@@ -264,5 +266,67 @@ fn generator_produces_no_drift_against_committed_artifacts() {
         drift.is_empty(),
         "regenerating produced drift; commit the generator output or update templates:\n{}",
         drift.join("\n")
+    );
+}
+
+/// Verify that the `{{MSG:auto_relock}}` splice mechanism works end-to-end:
+///
+/// 1. The assembled `sync-to.md` must contain the exact string that
+///    `repoweave::sync::auto_relock_commit_message` emits (with the `<source>`
+///    sentinel the generator uses).  This proves the doc and the code share one
+///    origin and will never silently diverge again (fo-m26yws).
+///
+/// 2. No raw `{{MSG:…}}` placeholder must survive in any assembled explain doc
+///    (the generator resolves all of them or aborts with an error, but this
+///    guards against a regression in the resolver's coverage).
+#[test]
+fn msg_auto_relock_splice_resolves_and_matches_code() {
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let sync_to_md = manifest_dir.join("docs/reference/explain/sync-to.md");
+
+    let content = std::fs::read_to_string(&sync_to_md).expect(
+        "docs/reference/explain/sync-to.md must exist (run cargo run --bin generate-explain)",
+    );
+
+    // The sentinel form the generator uses: auto_relock_commit_message("<source>").
+    let expected = repoweave::sync::auto_relock_commit_message("<source>");
+    assert!(
+        content.contains(&expected),
+        "sync-to.md does not contain the auto-relock commit message '{expected}'; \
+         the {{{{MSG:auto_relock}}}} splice may not have resolved correctly.\n\
+         Hint: run `cargo run --bin generate-explain` and commit the output.\n\
+         sync-to.md content (first 500 chars):\n{}",
+        &content[..content.len().min(500)]
+    );
+
+    // Guard: no raw {{MSG:...}} placeholder must survive in any assembled doc.
+    let explain_dir = manifest_dir.join("docs/reference/explain");
+    let md_files: Vec<_> = std::fs::read_dir(&explain_dir)
+        .expect("read explain dir")
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .filter(|p| p.extension().and_then(|s| s.to_str()) == Some("md"))
+        .collect();
+
+    let mut unresolved: Vec<String> = Vec::new();
+    for path in &md_files {
+        let text = std::fs::read_to_string(path).expect("read assembled md");
+        if text.contains("{{MSG:") {
+            // Find the first occurrence for the error message.
+            let snippet = text
+                .find("{{MSG:")
+                .map(|i| &text[i..text.len().min(i + 40)])
+                .unwrap_or("(unknown)");
+            unresolved.push(format!(
+                "{}: unresolved placeholder near '{snippet}'",
+                path.display()
+            ));
+        }
+    }
+    assert!(
+        unresolved.is_empty(),
+        "raw {{{{MSG:…}}}} placeholders found in assembled explain docs — \
+         the generator resolver did not substitute them:\n{}",
+        unresolved.join("\n")
     );
 }

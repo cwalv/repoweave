@@ -28,6 +28,7 @@
 //!    `docs/reference/explain/`). Any unresolvable link or any surviving
 //!    rustdoc intra-doc syntax is a hard generator error.
 
+use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -40,7 +41,8 @@ use repoweave::fetch::FetchJsonOutput;
 use repoweave::push::{PushJsonOutput, PUSH_SCHEMA_URL};
 use repoweave::status::StatusJsonOutput;
 use repoweave::sync::{
-    SyncJsonOutput, SyncToJsonOutput, SYNC_JSON_SCHEMA_URL, SYNC_TO_JSON_SCHEMA_URL,
+    auto_relock_commit_message, SyncJsonOutput, SyncToJsonOutput, SYNC_JSON_SCHEMA_URL,
+    SYNC_TO_JSON_SCHEMA_URL,
 };
 use repoweave::update::{UpdateJsonOutput, UPDATE_SCHEMA_URL};
 
@@ -350,6 +352,76 @@ fn render_template(template: &str, schema_json: Option<&str>) -> String {
     }
 }
 
+/// Registry mapping `{{MSG:<key>}}` placeholder keys → the exact string the
+/// runtime emits, sourced directly from the code that produces it.
+///
+/// Populated by [`build_msg_registry`]. Using a `HashMap` here keeps the
+/// resolver generic: templates reference keys, not hard-coded strings.
+type MsgRegistry = HashMap<&'static str, String>;
+
+/// Build the registry of named runtime strings available for `{{MSG:<key>}}`
+/// splicing in explain templates.
+///
+/// # Single-source contract
+///
+/// Every value MUST be derived from the function or constant in the production
+/// code that emits the string at runtime. Do NOT hand-author the value here —
+/// that recreates the drift you're eliminating. For interpolated messages (those
+/// that take parameters), call the function with a representative sentinel so
+/// the doc form shows the structure (e.g. `<source>`) rather than a real value.
+///
+/// # Adding a new key
+///
+/// 1. Export the emitting function/constant from the relevant module.
+/// 2. Add an entry below, calling the function (possibly with a sentinel).
+/// 3. Add `{{MSG:<key>}}` in the relevant template.
+/// 4. Re-run `cargo run --bin generate-explain`.
+fn build_msg_registry() -> MsgRegistry {
+    let mut m: MsgRegistry = HashMap::new();
+
+    // "auto_relock": the commit message written by the sync engine when it
+    // regenerates rwv.lock after a rebase step.  The function interpolates the
+    // source workspace name; we call it with the sentinel `"<source>"` so the
+    // spliced doc form shows the template structure rather than a literal name.
+    // Single-source: `repoweave::sync::auto_relock_commit_message` is the ONE
+    // place this string lives — both the runtime and the doc derive from it.
+    m.insert("auto_relock", auto_relock_commit_message("<source>"));
+
+    m
+}
+
+/// Replace every `{{MSG:<key>}}` placeholder in `template` with the
+/// corresponding value from `registry`.
+///
+/// Unknown keys are a hard error at generator time so template drift is caught
+/// immediately rather than silently emitting a raw placeholder into the doc.
+fn resolve_msg_placeholders(template: &str, registry: &MsgRegistry) -> anyhow::Result<String> {
+    // Fast path: no placeholder present.
+    if !template.contains("{{MSG:") {
+        return Ok(template.to_owned());
+    }
+
+    let mut out = template.to_owned();
+    // Collect all distinct {{MSG:...}} tokens to substitute.
+    let re = regex::Regex::new(r"\{\{MSG:([^}]+)\}\}").unwrap();
+    let keys: Vec<String> = re
+        .captures_iter(template)
+        .map(|c| c[1].to_owned())
+        .collect();
+
+    for key in keys {
+        let placeholder = format!("{{{{MSG:{key}}}}}");
+        let value = registry.get(key.as_str()).ok_or_else(|| {
+            anyhow::anyhow!(
+                "unknown {{{{MSG:{key}}}}} key in template — \
+                 add it to `build_msg_registry()` in generate-explain.rs"
+            )
+        })?;
+        out = out.replace(&placeholder, value);
+    }
+    Ok(out)
+}
+
 fn render_index(verbs: &[Verb]) -> String {
     let mut out = String::new();
     out.push_str("# rwv explain — index\n");
@@ -443,6 +515,7 @@ fn main() -> anyhow::Result<()> {
     fs::create_dir_all(&schemas_dir)?;
 
     let verbs = verbs();
+    let msg_registry = build_msg_registry();
 
     for verb in &verbs {
         let template_path = templates_dir.join(format!("{}.md.tmpl", verb.name));
@@ -469,7 +542,11 @@ fn main() -> anyhow::Result<()> {
             None => (None, None),
         };
 
-        let rendered = render_template(&template, schema_json_for_template.as_deref());
+        // Phase 1: splice {{SCHEMA}} with the schemars-derived JSON Schema block.
+        let after_schema = render_template(&template, schema_json_for_template.as_deref());
+        // Phase 2: splice {{MSG:<key>}} placeholders from the named-string registry.
+        let rendered = resolve_msg_placeholders(&after_schema, &msg_registry)
+            .map_err(|e| anyhow::anyhow!("verb '{}': {e}", verb.name))?;
 
         let md_path = explain_dir.join(format!("{}.md", verb.name));
         // Ensure trailing newline.
