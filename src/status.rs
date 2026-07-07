@@ -95,12 +95,13 @@ pub struct RepoStatus {
 
 /// Classify a repo's HEAD tip against its lock SHA into a [`LockRelation`].
 ///
-/// The single ancestry gate the sync engine relies on (`fo-4rpnkm.1`): `behind`
-/// means the lock is a strict ancestor of HEAD (new commits since last lock —
-/// the benign in-progress shape), `ahead` means HEAD is a strict ancestor of
-/// the lock (a reset or an `update` without FF), `diverged` means neither is an
-/// ancestor of the other. Exposed `pub(crate)` so `sync` can reuse this exact
-/// vocabulary rather than inventing a parallel enum.
+/// The single ancestry gate the sync engine relies on (`fo-4rpnkm.1`). Relations
+/// are named from the TIP's vantage (the opposite of "lock behind HEAD" prose):
+/// `ahead` means the tip is a strict descendant of the lock (new commits since
+/// last lock — the benign in-progress shape), `behind` means the tip is a strict
+/// ancestor of the lock (a reset or an `update` without FF), `diverged` means
+/// neither is an ancestor of the other. Exposed `pub(crate)` so `sync` can reuse
+/// this exact vocabulary rather than inventing a parallel enum.
 pub(crate) fn compute_relation(
     repo_abs: &Path,
     tip: &Option<ResolvedRevisionId>,
