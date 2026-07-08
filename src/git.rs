@@ -2,7 +2,8 @@
 
 use crate::manifest::Role;
 use crate::vcs::{
-    ConflictOp, PreAbortRef, RefName, ResolvedRevisionId, Vcs, VcsError, VerifiedRestoreOutcome,
+    CommitSummary, ConflictOp, PreAbortRef, RefName, ResolvedRevisionId, UniqueDiff, Vcs, VcsError,
+    VerifiedRestoreOutcome,
 };
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -37,21 +38,6 @@ pub(crate) fn git_command() -> Command {
 
 /// Git-based version control operations.
 pub struct GitVcs;
-
-/// One commit from a `git log <range>` listing.
-///
-/// Produced by [`GitVcs::commits_in_range`] for `rwv workweave log`. `sha` is
-/// the full 40-hex SHA (stable identity for agents); `short` is the
-/// abbreviated form; `subject` is the first line of the commit message.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CommitEntry {
-    /// Full 40-hex commit SHA.
-    pub sha: String,
-    /// Abbreviated commit SHA (as git chose the length).
-    pub short: String,
-    /// First line of the commit message.
-    pub subject: String,
-}
 
 impl GitVcs {
     /// Run a git command in `dir` and return trimmed stdout on success.
@@ -111,67 +97,62 @@ impl GitVcs {
 
     /// Resolve `rev` to its canonical 40-hex SHA in `repo`.
     ///
-    /// Thin wrapper over `git rev-parse --verify <rev>^{commit}`. Returns the
-    /// error string on failure (unknown revision, not a repo) so the caller can
-    /// decide whether that repo is skippable. Used to resolve a parent tip in
-    /// the parent's checkout for `rwv workweave log`.
-    pub fn rev_parse(repo: &Path, rev: &str) -> Result<String, String> {
+    /// Thin wrapper over `git rev-parse --verify <rev>^{commit}`. Private
+    /// helper for the [`Vcs::unique_commits`] / [`Vcs::unique_diff`] impls,
+    /// which resolve the workweave's HEAD before computing the parent-relative
+    /// range.
+    fn rev_parse(repo: &Path, rev: &str) -> Result<String, VcsError> {
         let deref = format!("{rev}^{{commit}}");
-        Self::run(&["rev-parse", "--verify", &deref], repo).map_err(|e| e.to_string())
+        Self::run(&["rev-parse", "--verify", &deref], repo)
     }
 
-    /// Compute the merge-base of `a` and `b` in `repo`.
+    /// Compute the merge-base (common ancestor) of `a` and `b` in `repo`.
     ///
-    /// Returns the common-ancestor SHA. Used by `rwv workweave diff` to anchor
-    /// the whole-bead diff range at `git merge-base <parent-tip> HEAD` rather
-    /// than the parent tip directly — diffing against a parent tip that
-    /// advanced after the fork shows phantom reversals of other beads' changes.
-    pub fn merge_base(repo: &Path, a: &str, b: &str) -> Result<String, String> {
-        Self::run(&["merge-base", a, b], repo).map_err(|e| e.to_string())
+    /// Returns the common-ancestor SHA. Private helper for [`Vcs::unique_diff`],
+    /// which anchors the diff range at `git merge-base <parent-tip> HEAD`
+    /// rather than the parent tip directly — diffing against a parent tip that
+    /// advanced after the fork shows phantom reversals of the work the parent
+    /// gained in the meantime.
+    fn merge_base(repo: &Path, a: &str, b: &str) -> Result<String, VcsError> {
+        Self::run(&["merge-base", a, b], repo)
     }
 
     /// List the commits reachable from `to` but not from `from` in `repo`,
-    /// newest first, as `git log --oneline`-style `<short-sha> <subject>`
-    /// lines.
+    /// newest first, as [`CommitSummary`] records.
     ///
     /// This is `git log <from>..<to>` semantics: with `from` = the parent tip
     /// and `to` = HEAD, the result is exactly the workweave's UNIQUE commits,
     /// and it stays correct when the parent advanced since the fork (the
     /// range excludes commits the parent already has). An empty vec means no
-    /// unique commits.
-    pub fn commits_in_range(repo: &Path, from: &str, to: &str) -> Result<Vec<CommitEntry>, String> {
+    /// unique commits. Private helper for [`Vcs::unique_commits`].
+    fn commits_in_range(repo: &Path, from: &str, to: &str) -> Result<Vec<CommitSummary>, VcsError> {
         // `%H` full SHA, `%h` short SHA, `%s` subject — NUL-delimited fields,
         // newline-delimited records, so subjects with spaces/tabs survive.
         let range = format!("{from}..{to}");
         let fmt = "--pretty=format:%H%x00%h%x00%s";
-        let out = Self::run(&["log", fmt, &range], repo).map_err(|e| e.to_string())?;
+        let out = Self::run(&["log", fmt, &range], repo)?;
         let entries = out
             .lines()
             .filter(|l| !l.is_empty())
             .filter_map(|line| {
                 let mut parts = line.splitn(3, '\0');
-                let sha = parts.next()?.to_string();
+                let id = parts.next()?.to_string();
                 let short = parts.next()?.to_string();
                 let subject = parts.next().unwrap_or("").to_string();
-                Some(CommitEntry {
-                    sha,
-                    short,
-                    subject,
-                })
+                Some(CommitSummary { id, short, subject })
             })
             .collect();
         Ok(entries)
     }
 
-    /// Produce the unified diff of `from..to` in `repo` (three-dot range so the
-    /// diff is anchored at the merge-base of the endpoints when the caller
-    /// passes a merge-base as `from`, this is a two-dot equivalent).
+    /// Produce the unified diff of `from..to` in `repo`.
     ///
-    /// Callers pass `from` = `git merge-base <parent-tip> HEAD` and `to` =
-    /// HEAD, so the output is the whole-bead diff with no phantom reversals.
-    pub fn diff_range(repo: &Path, from: &str, to: &str) -> Result<String, String> {
+    /// Private helper for [`Vcs::unique_diff`], which passes `from` = `git
+    /// merge-base <parent-tip> HEAD` and `to` = HEAD so the output is the
+    /// workweave's unique work with no phantom reversals.
+    fn diff_range(repo: &Path, from: &str, to: &str) -> Result<String, VcsError> {
         let range = format!("{from}..{to}");
-        Self::run(&["diff", &range], repo).map_err(|e| e.to_string())
+        Self::run(&["diff", &range], repo)
     }
 
     /// Detect if a repo is in a mid-operation VCS state (mid-rebase, mid-merge, etc.).
@@ -1471,6 +1452,37 @@ impl Vcs for GitVcs {
 
     fn ahead_behind(&self, repo: &Path, savepoint: &str, tip: &str) -> (usize, usize) {
         GitVcs::ahead_behind_impl(repo, savepoint, tip)
+    }
+
+    fn unique_commits(
+        &self,
+        repo: &Path,
+        parent_tip: &ResolvedRevisionId,
+    ) -> Result<Vec<CommitSummary>, VcsError> {
+        // Resolve this workweave's current tip, then list `parent..tip`. The
+        // range excludes anything the parent already has, so a parent that
+        // advanced after the fork does not pollute the result.
+        let tip = Self::rev_parse(repo, "HEAD")?;
+        Self::commits_in_range(repo, parent_tip.as_str(), &tip)
+    }
+
+    fn unique_diff(
+        &self,
+        repo: &Path,
+        parent_tip: &ResolvedRevisionId,
+    ) -> Result<UniqueDiff, VcsError> {
+        // Anchor the diff at the common ancestor of the tip and the parent
+        // tip — NOT the parent tip directly. If the parent advanced after the
+        // fork, diffing against its tip would show the parent's later work as
+        // phantom deletions; the merge-base is the fork point, so the diff is
+        // exactly this workweave's unique changes.
+        let tip = Self::rev_parse(repo, "HEAD")?;
+        let base = Self::merge_base(repo, parent_tip.as_str(), &tip)?;
+        let text = Self::diff_range(repo, &base, &tip)?;
+        Ok(UniqueDiff {
+            base: Some(base),
+            text,
+        })
     }
 }
 

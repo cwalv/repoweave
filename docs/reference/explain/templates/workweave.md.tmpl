@@ -127,29 +127,22 @@ is itself a workweave, and is wrong after adoption re-points a child to primary.
 The verb reads the marker, so it is correct for stacked and adopted parents
 alike.
 
-For each repo, "unique" is `git log <parent-tip>..HEAD` — the commits reachable
-from the workweave's HEAD but not from the parent's tip of the same repo (the
-parent tip is resolved by `git rev-parse HEAD` in the parent's checkout). This
-stays correct when the parent **advanced** after the fork: commits the parent
-already has are excluded.
+For each repo, "unique" commits are those in the workweave's history but not
+the parent's — reachable from the workweave's tip but not from the parent's tip
+of the same repo. This stays correct when the parent **advanced** after the
+fork: commits the parent already has are excluded.
 
-- `--diff` — instead of the commit listing, show the whole-bead unified diff.
-  The diff range is anchored at `git merge-base <parent-tip> HEAD`, NOT the
-  parent tip: diffing against a parent tip that advanced after the fork would
-  show phantom reversals of other beads' changes. Equivalent to
-  `rwv workweave <project> diff`.
+- `--diff` — instead of the commit listing, show the workweave's unique diff vs
+  its parent. The diff is anchored at the **common ancestor** of the workweave
+  tip and the parent tip, NOT the parent tip directly: anchoring at the common
+  ancestor keeps commits the parent gained after the fork from being shown as
+  reversals.
 - `--json` — machine-readable output (envelope: `workweave`, `parent`, `diff`,
   `repos[]`; each repo carries `head`, `parent_tip`, `unique_commits[]`, and —
   in diff mode — `diff_base` + `diff`).
 
 This is the surface consumers use to read a workweave's parent-relative history
 instead of hand-rolling branch-name derivation.
-
-### `rwv workweave <project> diff [--json]`
-
-Show this workweave's whole-bead unified diff vs its recorded parent, per repo.
-Anchored at `git merge-base <parent-tip> HEAD` (see `log --diff` above). A
-convenience alias for `rwv workweave <project> log --diff`.
 
 ## Invocation
 
@@ -158,7 +151,6 @@ rwv workweave <project> create <name> [--from <source>] [--force] [--capture-dir
 rwv workweave <project> delete <name> [--force]
 rwv workweave <project> list
 rwv workweave <project> log [--diff] [--json]
-rwv workweave <project> diff [--json]
 ```
 
 Run `rwv --help workweave` for the full clap surface.

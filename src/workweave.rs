@@ -158,10 +158,10 @@ fn copy_dir_recursive(src: &Path, dst: &Path) -> anyhow::Result<()> {
 ///
 /// This is the canonical cleanup path used by:
 /// - `create_workweave` rollback — called on any mid-create failure.
-/// - Sibling bead .3's `--force` path — call this before recreating to clear
+/// - The `create --force` path — call this before recreating to clear
 ///   any orphan registrations left by a previous partial create.
 ///
-/// # API contract for callers (bead .3)
+/// # API contract for callers
 ///
 /// ```text
 /// prune_orphan_worktrees_for(&[
@@ -1769,7 +1769,7 @@ fn load_manifest(ws_root: &Path, project: &ProjectName) -> anyhow::Result<Manife
 }
 
 // ---------------------------------------------------------------------------
-// `rwv workweave log` / `rwv workweave diff` — parent-relative history
+// `rwv workweave log [--diff]` — parent-relative history
 // ---------------------------------------------------------------------------
 
 /// A single commit in a `workweave log` listing, for `--json`.
@@ -1783,26 +1783,28 @@ pub struct WorkweaveLogCommit {
     pub subject: String,
 }
 
-/// Per-repo entry in a `workweave log` / `workweave diff` result.
+/// Per-repo entry in a `workweave log [--diff]` result.
 #[derive(Debug, Clone, serde::Serialize, schemars::JsonSchema)]
 pub struct WorkweaveLogRepo {
     /// Manifest-relative repo path (e.g. `github/org/lib`).
     pub path: String,
     /// This workweave checkout's HEAD, if readable.
     pub head: Option<String>,
-    /// The recorded parent's tip for THIS repo — `git rev-parse HEAD` in the
-    /// parent's checkout of the same path — if resolvable.
+    /// The recorded parent's tip for THIS repo — the HEAD of the parent's
+    /// checkout of the same path — if resolvable.
     pub parent_tip: Option<String>,
-    /// The workweave's UNIQUE commits vs the parent tip (`log <parent>..HEAD`),
-    /// newest first. Populated for `log`; empty for a pure `diff`.
+    /// The workweave's UNIQUE commits vs the parent tip — the commits in the
+    /// workweave's history but not the parent's, newest first. Populated for
+    /// `log`; empty in `--diff` mode.
     pub unique_commits: Vec<WorkweaveLogCommit>,
-    /// The whole-bead diff range anchor: `git merge-base <parent-tip> HEAD`.
-    /// Populated only in `--diff` mode. Anchoring at the merge-base (not the
-    /// parent tip) avoids phantom reversals when the parent advanced after the
-    /// fork.
+    /// The diff anchor: the common ancestor of the workweave tip and the
+    /// parent tip. Populated only in `--diff` mode. Anchoring at the common
+    /// ancestor (not the parent tip) avoids phantom reversals when the parent
+    /// advanced after the fork.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub diff_base: Option<String>,
-    /// The unified diff text for `diff_base..HEAD`, in `--diff` mode.
+    /// The unified diff text of the workweave's unique work vs `diff_base`,
+    /// in `--diff` mode.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub diff: Option<String>,
     /// A non-fatal note when this repo could not be fully processed (parent
@@ -1812,7 +1814,7 @@ pub struct WorkweaveLogRepo {
     pub note: Option<String>,
 }
 
-/// Top-level `workweave log --json` / `workweave diff --json` envelope.
+/// Top-level `workweave log [--diff] --json` envelope.
 #[derive(Debug, Clone, serde::Serialize, schemars::JsonSchema)]
 pub struct WorkweaveLogOutput {
     /// The workweave name.
@@ -1833,13 +1835,17 @@ pub struct WorkweaveLogOutput {
 ///     name (stacked branches like `lab--wwb/lab--wwa/main` make a constructed
 ///     `basename(parent)/main` wrong, and it is also wrong after
 ///     adoption-to-primary).
-///   - `unique` = reachable-from-HEAD-not-parent-tip: `git log
-///     <parent-tip>..HEAD`, resolving the parent tip by `rev-parse HEAD` in the
-///     parent's checkout of the same repo. This stays correct when the parent
-///     ADVANCED since the fork.
-///   - `diff` mode uses `git merge-base <parent-tip> HEAD` as the diff base,
-///     NOT the parent tip: diffing against a parent tip that advanced after the
-///     fork shows phantom reversals of other beads' changes.
+///   - `unique` commits are those in the workweave's history but not the
+///     parent's, resolving the parent tip from the parent's checkout of the
+///     same repo. This stays correct when the parent ADVANCED since the fork:
+///     commits the parent already has are excluded.
+///   - `diff` mode anchors at the COMMON ANCESTOR of the workweave tip and the
+///     parent tip, NOT the parent tip directly: diffing against a parent tip
+///     that advanced after the fork would show phantom reversals of the work
+///     the parent gained in the meantime.
+///
+/// All VCS specifics are delegated to the [`Vcs`] impl for each repo's
+/// `vcs_type` via [`vcs_for`]; this function stays VCS-agnostic.
 ///
 /// `cwd` must be inside a workweave. `diff` selects diff mode; `json` selects
 /// machine output.
@@ -1853,7 +1859,7 @@ pub fn workweave_log(cwd: &Path, diff: bool, json: bool) -> anyhow::Result<()> {
         }
         WorkspaceLocation::Weave { .. } => {
             bail!(
-                "`rwv workweave log`/`diff` reports a workweave's history relative to its \
+                "`rwv workweave log` reports a workweave's history relative to its \
                  recorded parent, but CWD ({}) is in the primary weave, not a workweave.",
                 cwd.display()
             );
@@ -1876,23 +1882,29 @@ pub fn workweave_log(cwd: &Path, diff: bool, json: bool) -> anyhow::Result<()> {
     let manifest = load_manifest(ctx.primary_path(), &project)?;
 
     let mut repos: Vec<WorkweaveLogRepo> = Vec::new();
-    for (repo_path, _entry) in manifest.iter_entries() {
+    for (repo_path, entry) in manifest.iter_entries() {
         let repo_rel = repo_path.as_path();
         let ww_repo = ww_dir.join(repo_rel);
         let parent_repo = parent_path.join(repo_rel);
+        let vcs = vcs_for(entry.vcs_type);
 
         let mut note: Option<String> = None;
 
-        let head = match GitVcs::rev_parse(&ww_repo, "HEAD") {
-            Ok(sha) => Some(sha),
+        // This workweave checkout's tip. Kept as the resolved id for the
+        // output's `head` field; the trait methods re-resolve HEAD internally.
+        let head = match vcs.head_revision(&ww_repo) {
+            Ok(rev) => Some(rev),
             Err(e) => {
                 note = Some(format!("workweave checkout HEAD unreadable: {e}"));
                 None
             }
         };
 
-        let parent_tip = match GitVcs::rev_parse(&parent_repo, "HEAD") {
-            Ok(sha) => Some(sha),
+        // The recorded parent's tip for THIS repo — HEAD in the parent's
+        // checkout of the same path. Used as the exclusion boundary for
+        // unique commits and as one endpoint of the diff's common ancestor.
+        let parent_tip = match vcs.head_revision(&parent_repo) {
+            Ok(rev) => Some(rev),
             Err(e) => {
                 if note.is_none() {
                     note = Some(format!("parent checkout HEAD unreadable: {e}"));
@@ -1905,41 +1917,41 @@ pub fn workweave_log(cwd: &Path, diff: bool, json: bool) -> anyhow::Result<()> {
         let mut diff_base: Option<String> = None;
         let mut diff_text: Option<String> = None;
 
-        if let (Some(head_sha), Some(parent_sha)) = (&head, &parent_tip) {
-            if diff {
-                // Whole-bead diff range: anchor at merge-base(parent, HEAD),
-                // never the parent tip directly (phantom-reversal guard).
-                match GitVcs::merge_base(&ww_repo, parent_sha, head_sha) {
-                    Ok(base) => {
-                        match GitVcs::diff_range(&ww_repo, &base, head_sha) {
-                            Ok(d) => diff_text = Some(d),
-                            Err(e) => note = Some(format!("diff failed: {e}")),
+        if let Some(parent_rev) = &parent_tip {
+            if head.is_some() {
+                if diff {
+                    // The workweave's unique work vs the parent, anchored at
+                    // their common ancestor so a parent that advanced after
+                    // the fork does not show phantom reversals.
+                    match vcs.unique_diff(&ww_repo, parent_rev) {
+                        Ok(ud) => {
+                            diff_base = ud.base;
+                            diff_text = Some(ud.text);
                         }
-                        diff_base = Some(base);
+                        Err(e) => note = Some(format!("diff failed: {e}")),
                     }
-                    Err(e) => note = Some(format!("merge-base failed: {e}")),
-                }
-            } else {
-                match GitVcs::commits_in_range(&ww_repo, parent_sha, head_sha) {
-                    Ok(entries) => {
-                        unique_commits = entries
-                            .into_iter()
-                            .map(|c| WorkweaveLogCommit {
-                                sha: c.sha,
-                                short: c.short,
-                                subject: c.subject,
-                            })
-                            .collect();
+                } else {
+                    match vcs.unique_commits(&ww_repo, parent_rev) {
+                        Ok(entries) => {
+                            unique_commits = entries
+                                .into_iter()
+                                .map(|c| WorkweaveLogCommit {
+                                    sha: c.id,
+                                    short: c.short,
+                                    subject: c.subject,
+                                })
+                                .collect();
+                        }
+                        Err(e) => note = Some(format!("log failed: {e}")),
                     }
-                    Err(e) => note = Some(format!("log failed: {e}")),
                 }
             }
         }
 
         repos.push(WorkweaveLogRepo {
             path: repo_path.to_string(),
-            head,
-            parent_tip,
+            head: head.map(|r| r.as_str().to_string()),
+            parent_tip: parent_tip.map(|r| r.as_str().to_string()),
             unique_commits,
             diff_base,
             diff: diff_text,
@@ -1965,7 +1977,7 @@ pub fn workweave_log(cwd: &Path, diff: bool, json: bool) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Human-readable rendering of a `workweave log` / `diff` result.
+/// Human-readable rendering of a `workweave log [--diff]` result.
 fn print_workweave_log_text(output: &WorkweaveLogOutput) {
     let verb = if output.diff { "diff" } else { "log" };
     println!(

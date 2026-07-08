@@ -172,6 +172,41 @@ impl<'de> serde::Deserialize<'de> for RawRevisionId {
     }
 }
 
+/// One commit in a [`Vcs::unique_commits`] listing — a VCS-agnostic
+/// one-line summary.
+///
+/// `id` is the full, stable commit identifier (for git, the 40-hex SHA);
+/// `short` is the abbreviated form a human reads; `subject` is the first
+/// line of the commit message. The type carries no git-specific spelling so
+/// callers (e.g. `rwv workweave log`) render the same shape regardless of
+/// the underlying VCS.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+pub struct CommitSummary {
+    /// Full, stable commit identifier (for git, the 40-hex SHA).
+    pub id: String,
+    /// Abbreviated commit identifier for display.
+    pub short: String,
+    /// First line of the commit message.
+    pub subject: String,
+}
+
+/// The result of [`Vcs::unique_diff`] — the unified diff of a workweave's
+/// unique work vs its parent, anchored at their common ancestor.
+///
+/// `base` is the common-ancestor revision the diff is anchored at (the
+/// point the workweave forked from), returned so callers can display the
+/// anchor; it is `None` when no anchor could be computed. `text` is the
+/// unified-diff body. Anchoring at the common ancestor — not the parent tip
+/// directly — is what keeps a parent that advanced after the fork from
+/// showing phantom reversals of work the parent gained.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+pub struct UniqueDiff {
+    /// The common-ancestor revision the diff is anchored at, if computable.
+    pub base: Option<String>,
+    /// The unified-diff text of the workweave's unique work vs `base`.
+    pub text: String,
+}
+
 /// In-flight VCS operation whose conflict needs human resolution.
 ///
 /// Passed to [`Vcs::conflict_resolution_hint`] so sync's conflict-bail
@@ -1141,4 +1176,40 @@ pub trait Vcs {
     ///
     /// Returns `(0, 0)` on any VCS error.
     fn ahead_behind(&self, repo: &Path, savepoint: &str, tip: &str) -> (usize, usize);
+
+    /// List the commits reachable from `repo`'s current tip but NOT from
+    /// `parent_tip`, newest first.
+    ///
+    /// These are the workweave's UNIQUE commits: the work that landed on top
+    /// of the parent. Returns an empty vec when nothing landed on top of the
+    /// parent (the tip is an ancestor of, or equal to, `parent_tip`). The
+    /// result stays correct when the parent ADVANCED after the fork —
+    /// commits the parent already has are excluded because they are
+    /// reachable from `parent_tip`.
+    ///
+    /// For [`GitVcs`](crate::git::GitVcs): computes `git log
+    /// <parent-tip>..<tip>` and maps each entry into a [`CommitSummary`].
+    fn unique_commits(
+        &self,
+        repo: &Path,
+        parent_tip: &ResolvedRevisionId,
+    ) -> Result<Vec<CommitSummary>, VcsError>;
+
+    /// Produce the unified diff of `repo`'s unique work vs `parent_tip`,
+    /// anchored at the COMMON ANCESTOR of the current tip and `parent_tip`.
+    ///
+    /// Anchoring at the common ancestor — not `parent_tip` directly — is
+    /// what keeps a parent that advanced after the fork from producing
+    /// phantom reversals: work the parent gained after the fork is not part
+    /// of the workweave's unique history, so it must not appear (as a
+    /// deletion) in the workweave's diff. The returned [`UniqueDiff::base`]
+    /// carries the anchor revision so callers can display it.
+    ///
+    /// For [`GitVcs`](crate::git::GitVcs): anchors at `git merge-base
+    /// <parent-tip> <tip>` and diffs `<anchor>..<tip>`.
+    fn unique_diff(
+        &self,
+        repo: &Path,
+        parent_tip: &ResolvedRevisionId,
+    ) -> Result<UniqueDiff, VcsError>;
 }

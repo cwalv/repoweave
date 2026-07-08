@@ -683,18 +683,19 @@ fn workweave_log_and_diff_correct_when_parent_advanced() {
         "parent's post-fork advance must NOT appear as a unique commit; got: {subjects:?}"
     );
 
-    // `rwv workweave diff --json`: the diff base is merge-base(parent-tip,
-    // HEAD), NOT the parent tip. So the diff shows ONLY wwb's change and never
-    // a phantom reversal of wwa_advance.txt (which wwb's HEAD doesn't have).
+    // `rwv workweave log --diff --json`: the diff base is the common ancestor
+    // of the parent tip and HEAD, NOT the parent tip. So the diff shows ONLY
+    // wwb's change and never a phantom reversal of wwa_advance.txt (which wwb's
+    // HEAD doesn't have).
     let dout = rwv()
-        .args(["workweave", PROJECT, "diff", "--json"])
+        .args(["workweave", PROJECT, "log", "--diff", "--json"])
         .env("RWV_WORKWEAVE_DIR", &main.weaveroot)
         .current_dir(&wwb.root)
         .output()
         .unwrap();
     assert!(
         dout.status.success(),
-        "workweave diff failed:\n{}",
+        "workweave log --diff failed:\n{}",
         String::from_utf8_lossy(&dout.stderr)
     );
     let dv: serde_json::Value = serde_json::from_slice(&dout.stdout).unwrap();

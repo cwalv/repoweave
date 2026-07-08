@@ -1840,7 +1840,7 @@ repositories:
 
     /// An empty string is accepted — it is the degenerate case and current
     /// internal code never produces it; we preserve the prior (unchecked)
-    /// behavior rather than adding a new restriction outside this bead's scope.
+    /// behavior rather than adding a new restriction outside this spec's scope.
     #[test]
     fn repo_path_deserialize_empty_string_accepted() {
         let rp: RepoPath = serde_yaml::from_str("''").unwrap();

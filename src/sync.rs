@@ -1911,10 +1911,10 @@ fn guard_and_mark<'a>(
     //
     // Classify each side's committed lock↔HEAD relation with the SAME per-repo
     // vocabulary `rwv status` uses ([`LockRelation`]). Recall the terminology
-    // inversion: the bead's benign "lock behind HEAD" is `LockRelation::Ahead`
+    // inversion: the spec's benign "lock behind HEAD" is `LockRelation::Ahead`
     // (tip ahead of lock). `--allow-stale-lock` bypasses the whole gate.
     //
-    // Scope of the benign relaxation (kept to the bead's EXPLICIT §2 bullets;
+    // Scope of the benign relaxation (kept to the spec's EXPLICIT §2 bullets;
     // see the FLAG in the summary re: the pull destination):
     //   - sync-to (landing): CWD is the landing set. A lock-behind-HEAD (`Ahead`)
     //     CWD repo auto-relocks at op start (below), LOUD line per repo with
@@ -1924,7 +1924,7 @@ fn guard_and_mark<'a>(
     //     alone); a PRIMARY-weave source keeps the refusal (reproducibility scope
     //     decision). Every other non-`ok` source relation refuses.
     //   - sync (pull) DESTINATION (CWD): kept at the pre-Design-B behavior — any
-    //     non-`ok` relation (INCLUDING `Ahead`) refuses. The bead relaxed only the
+    //     non-`ok` relation (INCLUDING `Ahead`) refuses. The spec relaxed only the
     //     pull SOURCE; relaxing the pull destination too would be cleaner but is
     //     NOT in the explicit scope, so it is held and flagged rather than
     //     silently widened.
@@ -2571,7 +2571,7 @@ const RWV_LOCK_FILE: &str = "rwv.lock";
 /// mid-replay. One refusal naming every dirty path, before anything rebases.
 ///
 /// - **Untracked files are fine** — they survive the replay untouched, matching
-///   the intent recorded on the bead (a scratch file must not block a landing).
+///   the intent recorded in the spec (a scratch file must not block a landing).
 ///   Only tracked modifications (staged or unstaged) refuse.
 /// - **Carve-out:** a dirty `projects/<p>/rwv.lock` *alone* is NOT dirt — it is
 ///   the auto-relock's own input (§2) and the op commits it. A project repo that
@@ -2644,12 +2644,12 @@ fn check_dirty_source_preflight(
 // on-disk HEAD via the SAME per-repo relation vocabulary `rwv status` surfaces
 // ([`crate::status::LockRelation`] — no parallel enum).
 //
-// TERMINOLOGY (load-bearing — the bead and the enum name this from opposite
-// vantage points): the bead's "lock behind HEAD" (lock is a strict ancestor of
+// TERMINOLOGY (load-bearing — the spec and the enum name this from opposite
+// vantage points): the spec's "lock behind HEAD" (lock is a strict ancestor of
 // HEAD — new commits since the last lock, the normal shape of in-progress work)
 // is [`LockRelation::Ahead`] — the *tip* is ahead of the lock. That relation is
 // the BENIGN case: a landing auto-relocks, a pull takes the source's committed
-// tips. The bead's "ahead" case (HEAD is a strict ancestor of the lock — a reset
+// tips. The spec's "ahead" case (HEAD is a strict ancestor of the lock — a reset
 // or an `update` without FF) is [`LockRelation::Behind`] — the *tip* is behind
 // the lock; that is anomalous and refuses. Every non-`ok` relation other than
 // `Ahead` (i.e. `Behind` / `Diverged` / `NoLock` / `Unknown`) hard-refuses,
@@ -2658,7 +2658,7 @@ fn check_dirty_source_preflight(
 // commits the op will replay/FF.
 
 /// One manifest repo's lock↔HEAD relation, plus the commit count for the benign
-/// `Ahead` case (the tip is ahead of the lock — "lock behind HEAD" in the bead's
+/// `Ahead` case (the tip is ahead of the lock — "lock behind HEAD" in the spec's
 /// phrasing). The count makes the surprising number visible at the moment it
 /// matters — the LOUD auto-relock line.
 struct RepoRelation {
@@ -3521,7 +3521,7 @@ fn run_advance_target(ctx: &OpContext<'_>) -> anyhow::Result<()> {
 //
 // Abort from phase=retire: run_abort scans the target workspace for repos with
 // op-id savepoints and restores them to their pre-op state. Target savepoints
-// are created in guard_and_mark for verb=SyncTo (this bead's scope); sibling
+// are created in guard_and_mark for verb=SyncTo (this spec's scope); sibling
 // .4 adds HEAD-verification on top of the savepoint restore.
 
 fn run_retire(ctx: &OpContext<'_>) -> anyhow::Result<()> {
@@ -3655,7 +3655,7 @@ fn cleanup(ctx: &OpContext<'_>) -> anyhow::Result<()> {
 /// `workweave:` field into the lock, which the primary's lock lacks). That
 /// commit is purely derived — the parent will regenerate it on its next
 /// sync — so refusing on project-tip inequality would refuse every retire,
-/// even the happy path the bead describes. Manifest tip equality is the
+/// even the happy path the spec describes. Manifest tip equality is the
 /// honest "work has converged" signal: Phase 2 advances both sides to the
 /// same SHAs, so post-sync the manifest repos should be byte-equal.
 fn retire_workweave_after_sync_to(
@@ -4366,7 +4366,7 @@ fn print_abort_noise_summary(summary: &AbortNoiseSummary) {
 /// Project-level errors raised before any per-repo work (lock freshness,
 /// active-project mismatch, etc.) propagate via `Err` and main's anyhow
 /// printer surfaces them — no JSON is emitted in that case. This matches
-/// the bead's "non-zero iff at least one repo failed" semantic: when sync
+/// the spec's "non-zero iff at least one repo failed" semantic: when sync
 /// can't even reach the per-repo loop, there are no per-repo outcomes to
 /// emit, so the structured channel has nothing to say.
 #[allow(clippy::too_many_arguments)]
@@ -4452,7 +4452,7 @@ fn run_sync_json_impl(
 
     // Under envelope mode we still need to emit the envelope to stdout
     // (NDJSON streamed each record as it arrived, so there's nothing
-    // extra to write). Per the bead spec, NDJSON does NOT emit an
+    // extra to write). Per the spec, NDJSON does NOT emit an
     // envelope wrapper around the stream.
     if !ndjson {
         let payload = SyncJsonOutput {

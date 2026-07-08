@@ -407,10 +407,9 @@ mod tests {
 
     // ---- additional thin-spot coverage ----------------------------------
 
-    /// `resolve_jobs(Some(1))` is exactly serial. The bead description
-    /// requires that `-j 1` matches the pre-`-j` (no flag) output bit
-    /// for bit; this guarantees the `<= 1` branch in `run_in_parallel`
-    /// is taken.
+    /// `resolve_jobs(Some(1))` is exactly serial. The spec requires that
+    /// `-j 1` matches the pre-`-j` (no flag) output bit for bit; this
+    /// guarantees the `<= 1` branch in `run_in_parallel` is taken.
     #[test]
     fn resolve_jobs_one_is_serial() {
         // resolve_jobs is a pure mapping; pin the value `1` so callers
