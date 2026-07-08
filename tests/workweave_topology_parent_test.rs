@@ -472,9 +472,13 @@ fn doctor_fix_repoints_dangling_parent_to_primary() {
     let wwb = create_workweave(&main, "wwb", Some(&wwa.root));
 
     // Simulate an out-of-band parent loss: blow away wwa's directory WITHOUT
-    // running the adopting delete. wwb is now dangling.
+    // running the adopting delete. wwb is now dangling. Capture wwa's canonical
+    // path BEFORE removal: the marker stored the canonicalized form at create
+    // time, but `canon()` on a since-deleted path falls back to the raw form,
+    // which differs on macOS (TMPDIR `/var/...` symlinks to `/private/var/...`).
+    let wwa_canonical = canon(&wwa.root);
     std::fs::remove_dir_all(&wwa.root).unwrap();
-    assert_eq!(recorded_parent(&wwb.root), canon(&wwa.root));
+    assert_eq!(recorded_parent(&wwb.root), wwa_canonical);
 
     // doctor (no --fix) reports the dangling parent.
     let report = rwv()
