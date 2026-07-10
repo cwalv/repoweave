@@ -1,0 +1,11 @@
+# Pins the Rust toolchain for local dev AND CI to ONE version, so
+# `scripts/ci-local.sh` (clippy/fmt in particular) behaves identically
+# everywhere. rustup honors this file automatically for any cargo command run
+# inside the repo — no `rustup update` needed locally, and CI reads it too
+# (ci.yml provisions via `rustup show`; release.yml installs via rustup).
+#
+# Bump deliberately: raising `channel` surfaces new clippy/rustfmt lints in the
+# LOCAL gate first, before they can fail CI.
+[toolchain]
+channel = "1.97.0"
+components = ["clippy", "rustfmt"]

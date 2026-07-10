@@ -16,10 +16,12 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      - name: Install Rust (stable)
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          components: clippy, rustfmt
+      - name: Install Rust (pinned by rust-toolchain.toml)
+        # Single source of truth for the toolchain version + components is
+        # rust-toolchain.toml. `rustup show` provisions the pinned toolchain
+        # (and its listed components) so CI runs the exact clippy/rustfmt that
+        # `scripts/ci-local.sh` runs locally — no "stable drifts per-machine".
+        run: rustup show
 
       - name: Install uv (required by uv-workspace e2e tests)
         uses: astral-sh/setup-uv@v5
