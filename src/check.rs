@@ -4564,7 +4564,7 @@ fn collect_doctor_violations(
         vec![StateHygieneOpStateTarget {
             workspace_dir: workspace_dir.clone(),
         }];
-    for (_ww_name, ww_dir) in workweave_dirs.iter() {
+    for ww_dir in workweave_dirs.values() {
         if !hygiene_op_state_targets
             .iter()
             .any(|t| &t.workspace_dir == ww_dir)
