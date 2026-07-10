@@ -8,7 +8,7 @@
 //!   - `.rwv-active` pointing at the project
 //!
 //! Then exercises `rwv push` via the CLI and asserts the publish-ordering
-//! invariant and the precondition refuse-paths from the bead.
+//! invariant and the precondition refuse-paths from the spec.
 
 use assert_cmd::Command;
 use std::path::{Path, PathBuf};
@@ -657,7 +657,7 @@ fn push_surfaces_project_push_failure_after_manifest_pushed() {
     );
 
     // The manifest bare DID move (manifest repos pushed before the project
-    // attempt). This is the surface-clearly behaviour the bead requires.
+    // attempt). This is the surface-clearly behaviour the spec requires.
     assert_eq!(
         bare_main_sha(manifest_bare),
         Some(manifest_sha),

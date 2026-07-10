@@ -7,7 +7,7 @@
 //! - `project_repo_advance` — step-3 advance for the project repo.
 //! - per-outcome `step3_advance` — step-3 advance for each manifest repo.
 //!
-//! Round-trip test (bead acceptance criterion): invoke `rwv sync-to --retire
+//! Round-trip test (spec acceptance criterion): invoke `rwv sync-to --retire
 //! --json` from a workweave; parse the envelope; assert
 //! - `source_workweave` matches the workweave basename,
 //! - `retired == true`,
@@ -221,7 +221,7 @@ fn make_workweave_ahead_fixture(
 // ===========================================================================
 // Round-trip test: sync-to --retire --json from a workweave
 //
-// Acceptance criteria (bead fo-w977z):
+// Acceptance criteria (spec fo-w977z):
 //   - `source_workweave` matches the workweave name ("fo-test")
 //   - `retired == true`
 //   - per-outcome `step3_advance.to_sha` matches `git rev-parse HEAD` of the

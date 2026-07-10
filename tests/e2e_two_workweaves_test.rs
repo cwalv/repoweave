@@ -374,7 +374,7 @@ fn sync_two_workweaves_with_project_doc_changes() {
     // the correct commit ordering — ww2's contribution ON TOP of ww1's.
     //
     // Project repo: feat-b.md's commit must appear above feat-a.md's commit.
-    // This is the specific instance called out in the bead spec.
+    // This is the specific instance called out in the spec.
     common::assert_log_ordering(
         &main.project_dir,
         &["docs: add feat-b notes", "docs: add feat-a notes"],

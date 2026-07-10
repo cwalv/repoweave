@@ -120,8 +120,8 @@ fn rwv() -> assert_cmd::Command {
 /// Expected: destination's `lib` converges to V1 (the committed lock SHA),
 /// not V2 (the working-tree SHA).
 ///
-/// Pre-bead: sync would have read V2 from the working tree and converged
-/// to the wrong SHA. Post-bead: sync reads the committed lock at the pinned
+/// Before this fix: sync would have read V2 from the working tree and converged
+/// to the wrong SHA. After this fix: sync reads the committed lock at the pinned
 /// revision and converges to V1.
 #[test]
 fn sync_reads_committed_lock_not_working_tree() {
@@ -210,7 +210,7 @@ fn sync_reads_committed_lock_not_working_tree() {
 /// Sync result is provably source-as-of-T0 when the source is mutated
 /// mid-operation (working tree mutation between commits).
 ///
-/// This is the canonical acceptance test for the snapshot-reads bead.
+/// This is the canonical acceptance test for the snapshot-reads change.
 ///
 /// Setup:
 ///   - source has lib pinned at sha_t0 in the COMMITTED lock

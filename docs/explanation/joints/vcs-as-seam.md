@@ -318,7 +318,7 @@ names it so reviewers have one canonical pointer.
 
 ## Anchoring
 
-The examples above each cite a closed bead and a landed commit. The
+The examples above each cite a closed work item and a landed commit. The
 sync codepath that depends on examples (b) and (c) is covered by:
 
 - `tests/e2e_two_workweaves_test.rs` — exercises the `merge=ours`

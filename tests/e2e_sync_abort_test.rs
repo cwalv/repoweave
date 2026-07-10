@@ -465,7 +465,7 @@ fn sync_refuses_when_cwd_lock_is_stale() {
 /// --allow-stale-lock bypasses the lock-freshness precondition; the specific
 /// "stale lock" error must not appear even when CWD lock is stale.
 /// (Adapted from sync_force_bypasses_lock_freshness_precondition — same
-/// end-state assertion, new flag spelling per bead fo-jsbr3i.6.)
+/// end-state assertion, new flag spelling per spec fo-jsbr3i.6.)
 #[test]
 fn sync_allow_stale_lock_bypasses_lock_freshness_precondition() {
     let tmp = tempfile::tempdir().unwrap();
@@ -562,7 +562,7 @@ fn sync_refuses_when_destination_project_repo_is_ahead_of_source() {
         stderr.contains("sync the other direction"),
         "expected refusal to name the rwv-native recovery; got: {stderr}"
     );
-    // Names the --discard-local-commits override explicitly (per bead fo-jsbr3i.6).
+    // Names the --discard-local-commits override explicitly (per spec fo-jsbr3i.6).
     assert!(
         stderr.contains("--discard-local-commits") || stderr.contains("discard"),
         "expected refusal to name the --discard-local-commits override; got: {stderr}"
@@ -650,7 +650,7 @@ fn sync_allows_when_destination_project_repo_equals_source() {
 /// `--discard-local-commits` bypasses the ancestor precondition: backward sync
 /// succeeds and the savepoint preserves the discarded commits for `rwv abort`.
 /// (Adapted from sync_force_bypasses_phase1_ancestor_refusal_and_preserves_savepoint
-/// — same end-state assertions, new flag spelling per bead fo-jsbr3i.6.)
+/// — same end-state assertions, new flag spelling per spec fo-jsbr3i.6.)
 #[test]
 fn sync_discard_local_commits_bypasses_phase1_ancestor_refusal_and_preserves_savepoint() {
     let tmp = tempfile::tempdir().unwrap();
@@ -786,7 +786,7 @@ fn sync_other_direction_first_unblocks_a_refused_backward_sync() {
 
 /// Lock-freshness error names the source workspace, the recovery path, and
 /// the --allow-stale-lock override. Does NOT mention the old `--force` flag
-/// (removed per bead fo-jsbr3i.6). Per fo-mxw3ew: recovery hint includes
+/// (removed per spec fo-jsbr3i.6). Per fo-mxw3ew: recovery hint includes
 /// `--project <p>` so the operator locks the right project even when the
 /// active project differs from the one being synced.
 #[test]
@@ -840,7 +840,7 @@ fn lock_freshness_source_error_names_workspace_and_recovery_path() {
 
 /// Lock-freshness destination error names the destination workspace, the
 /// recovery path, and the --allow-stale-lock override. Does NOT mention
-/// the old `--force` flag (removed per bead fo-jsbr3i.6). Per fo-mxw3ew:
+/// the old `--force` flag (removed per spec fo-jsbr3i.6). Per fo-mxw3ew:
 /// recovery hint includes `--project <p>` so the operator locks the right
 /// project even when the active project differs from the one being synced.
 #[test]
@@ -934,7 +934,7 @@ fn sync_rebase_replays_local_commits_on_source_tip() {
     // repos diverged too. Phase 1's ancestor precondition refuses divergent
     // project repos; this test deliberately constructs that to exercise Phase
     // 2's rebase strategy on the manifest repo, so it opts in via
-    // --discard-local-commits (adapted from --force per bead fo-jsbr3i.6).
+    // --discard-local-commits (adapted from --force per spec fo-jsbr3i.6).
     rwv()
         .args([
             "sync",
@@ -1027,7 +1027,7 @@ fn abort_restores_repos_to_pre_op_state() {
     // Attempt rebase sync — should hit a conflict and leave repos mid-op.
     // Project repos diverged from independent lock commits → --discard-local-commits
     // is required to reach Phase 2 where the rebase conflict is the focus
-    // (adapted from --force per bead fo-jsbr3i.6).
+    // (adapted from --force per spec fo-jsbr3i.6).
     let _ = rwv()
         .args([
             "sync",
@@ -1085,7 +1085,7 @@ fn abort_succeeds_when_rwv_lock_contains_conflict_markers() {
     );
 
     // Write a v2 owner record so `rwv abort` thinks an op is in progress.
-    // [v1→v2 bead fo-jsbr3i.1: phase "running" → "replay"; added converged_tips/overrides.]
+    // [v1→v2 spec fo-jsbr3i.1: phase "running" → "replay"; added converged_tips/overrides.]
     let op_state_yaml = format!(
         "id: \"{op_id}\"\nverb: sync\nstrategy: rebase\nsource: \"{root}\"\ntarget: \"{root}\"\nretire: false\nphase: replay\nconverged_tips: {{}}\noverrides: []\nstarted_at: \"2026-05-27T10:00:00Z\"\n",
         root = ws.root.display(),
@@ -1605,7 +1605,7 @@ fn sync_reports_already_ahead_when_cwd_is_past_lock_target() {
     // --discard-local-commits bypasses the Phase 1 ancestor precondition because
     // ww's project repo has the C3 lock commit primary doesn't; the test's intent
     // is Phase 2 behavior on the manifest repo (already-ahead reporting), not the
-    // Phase 1 guard. (Adapted from --force per bead fo-jsbr3i.6.)
+    // Phase 1 guard. (Adapted from --force per spec fo-jsbr3i.6.)
     let out = rwv()
         .args([
             "sync",
@@ -1657,7 +1657,7 @@ fn sync_ff_reports_failed_for_diverged_repo() {
     // --discard-local-commits bypasses the Phase 1 ancestor precondition because
     // ww's project repo has the C_ww lock commit primary doesn't; the test's
     // intent is Phase 2's ff failure on the manifest repo, not the Phase 1 guard.
-    // (Adapted from --force per bead fo-jsbr3i.6.)
+    // (Adapted from --force per spec fo-jsbr3i.6.)
     let out = rwv()
         .args([
             "sync",
@@ -1678,7 +1678,7 @@ fn sync_ff_reports_failed_for_diverged_repo() {
 }
 
 // ---------------------------------------------------------------------------
-// bead fo-jsbr3i.6: named override flags — new tests
+// spec fo-jsbr3i.6: named override flags — new tests
 // ---------------------------------------------------------------------------
 
 /// `--force` is rejected on `rwv sync` with a migration hint naming both
@@ -2025,5 +2025,5 @@ fn sync_bails_hard_when_post_phase1_manifest_reload_fails() {
 // `git status` step). Core --no-reference logic is now covered by the
 // `find_stale_repos_*_no_reference_*` unit tests in src/fetch.rs. A proper
 // end-to-end test would set up bare repos for both the project source and
-// each manifest repo (per the fetch_test.rs pattern); follow-up bead
+// each manifest repo (per the fetch_test.rs pattern); follow-up work item
 // captures that work.

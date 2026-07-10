@@ -13,17 +13,17 @@
 //! `projects/foundations/docs/repoweave/integration-ownership/plan.md` are
 //! realized here as RED-first tests, per [[feedback_no_workaround_assertions]].
 //! Tests that assert behavior the current code does NOT yet implement are
-//! marked `#[ignore = "RED: turned green by <port bead>"]`. The port author
+//! marked `#[ignore = "RED: turned green by <port spec>"]`. The port author
 //! (npm: C4, vscode: C5, cargo: C7, uv: C9, pnpm: C10, go: C11, static-files:
 //! C13) removes the `#[ignore]` attribute when their port lands and the test
 //! turns green naturally.
 //!
-//! **Why `#[ignore]` rather than letting tests fail?** The bead offered both;
-//! we picked `#[ignore]` because (a) the port beads land incrementally over
-//! Phase 3 and a permanently-red suite would block other beads in the epic
+//! **Why `#[ignore]` rather than letting tests fail?** The spec offered both;
+//! we picked `#[ignore]` because (a) the port work items land incrementally over
+//! Phase 3 and a permanently-red suite would block other work items in the epic
 //! from confirming their own greens, and (b) `cargo test -- --ignored`
-//! enumerates every RED test in one run, which is the visibility the bead
-//! wants for port authors. The `#[ignore]` annotation always names the bead
+//! enumerates every RED test in one run, which is the visibility the spec
+//! wants for port authors. The `#[ignore]` annotation always names the spec
 //! that will flip it.
 //!
 //! Assertions describe the REAL desired behavior; they are not contorted to
@@ -616,7 +616,7 @@ mod npm_workspaces {
     /// Regression: a tmuxcc-style package.json with a real name and
     /// custom scripts must survive `merge_activate` with name and scripts intact.
     ///
-    /// Before this bead, name was Ownership::Author, so activate always
+    /// Before this change, name was Ownership::Author, so activate always
     /// overwrote `name` with the hardcoded literal "repoweave" — trashing e.g.
     /// `name: "tmuxcc"` in a tmuxcc workweave.
     #[test]
@@ -2854,7 +2854,7 @@ mod cargo_workspace {
     fn opt_out_for_non_rust_repo_is_silently_ignored() {
         // Operators should be able to pre-emptively opt out a repo path even
         // if that repo isn't a Rust repo today; the integration should not
-        // complain. (No-op fallback per bead spec.)
+        // complain. (No-op fallback per spec.)
         let tmp = TempDir::new().unwrap();
         let root = tmp.path();
 
@@ -3382,7 +3382,7 @@ vendor-foo = { git = "https://example.com/vendor-foo" }
 // ===========================================================================
 //
 // Verify() + doctor --fix acceptance tests for cargo-workspace.
-// Named `s7_cargo_doctor_*` per the bead spec so they are discoverable as
+// Named `s7_cargo_doctor_*` per the spec so they are discoverable as
 // a battery: `cargo test --test integrations_test s7_cargo_doctor_`.
 //
 // These tests drive the integration directly (verify() / activate()) rather
@@ -6115,7 +6115,7 @@ mod static_files {
         //
         // The integration's `Integration::deactivate(root)` is a no-op, so
         // exercising this end-to-end requires the framework path that
-        // C3 + C13 deliver. The bead acknowledges this
+        // C3 + C13 deliver. The spec acknowledges this
         // scenario is "extended if needed" — extension lands when the
         // framework-call seam exists.
         panic!(
@@ -6137,7 +6137,7 @@ mod static_files {
 // These tests use the same fixture-setup style (TempDir, write_file, make_ctx,
 // Integration.activate()) and the same assertion shape across all ports, making
 // the cross-port contract visible at a glance.  Each test also notes the
-// port-specific equivalent added by the per-port bead, so reviewers can see
+// port-specific equivalent added by the per-port spec, so reviewers can see
 // that no coverage is duplicated — only the s8_ naming convention is new.
 //
 // Contract being tested (from merge.rs § Ownership::DefaultOnly):

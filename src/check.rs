@@ -438,7 +438,7 @@ pub enum CloneTopologyKind {
 }
 /// Discriminator for [`CheckViolation::BranchDiscipline`] findings.
 ///
-/// Three groupings, mirroring the three checks in the bead:
+/// Three groupings, mirroring the three checks in the spec:
 ///
 /// * (a) workweave-branch — a workweave checkout is on the wrong branch:
 ///   [`SharedBranch`](Self::SharedBranch),
@@ -465,7 +465,7 @@ pub enum BranchDisciplineKind {
     ///
     /// Caused by `git switch main` inside a workweave or by a bare clone
     /// that was never moved to an ephemeral branch. The fixture for this
-    /// sub-kind exercises the bare-main-in-workweave case from the bead's
+    /// sub-kind exercises the bare-main-in-workweave case from the spec's
     /// acceptance criteria: the violation must flag from creation, before
     /// any commit lands. Report-only.
     ///
@@ -1167,7 +1167,7 @@ pub fn fix_dangling_parent(marker_dir: &Path, primary: &Path) -> anyhow::Result<
 /// [`crate::workweave::workweave_parent_pub`]. Only top-level entries under
 /// the parent directory are scanned (children of nested workweaves are under
 /// a different parent and will be picked up when doctor runs from those
-/// workweaves, or via a recursive descent — but the bead asks for a single
+/// workweaves, or via a recursive descent — but the spec calls for a single
 /// flat scan at the primary's `.workweaves/` level).
 pub fn scan_workweave_tree_integrity(ws_root: &Path) -> Vec<CheckViolation> {
     let parent_dir = crate::workweave::workweave_parent_pub(ws_root);
@@ -1774,7 +1774,7 @@ fn read_current_branch(
 ///     branch (e.g. an explicit `git checkout <sha>`).
 ///   * [`BranchDisciplineKind::SharedBranch`] — HEAD is on a non-ephemeral
 ///     branch (e.g. `main`); covers the bare-main-in-workweave case from
-///     the bead's acceptance criteria.
+///     the spec's acceptance criteria.
 ///   * [`BranchDisciplineKind::ForeignEphemeral`] — HEAD is on an
 ///     ephemeral branch belonging to a *different* workweave (e.g. the
 ///     directory was rsync'd from another workweave whose branches it
@@ -2037,7 +2037,7 @@ pub struct StateHygieneOpStateTarget {
 /// findings; none of them depend on the manifest or per-project lock,
 /// so they share a single scanner entry point.
 ///
-/// **Classification policy** (bead fo-hycb06.4):
+/// **Classification policy** (spec fo-hycb06.4):
 ///
 /// - **stale-worktree-registration**: produced by
 ///   [`Vcs::list_stale_worktree_registrations`]. `--fix` (in `run_check`)
@@ -4232,7 +4232,7 @@ pub fn build_doctor_json(
 /// Mirrors the scaffolding in [`run_check`] but returns a typed enum vector
 /// instead of mixing `Issue`s and `CheckViolation`s. Integration-runner
 /// findings and lock-resolution / HEAD-read failures are out of scope: they
-/// are not `CheckViolation` variants today and the bead explicitly excludes
+/// are not `CheckViolation` variants today and the spec explicitly excludes
 /// them from `--json` (the acceptance criterion is "each `CheckViolation`
 /// variant serializes").
 ///
@@ -4605,7 +4605,7 @@ fn collect_doctor_violations(
 /// Only `CheckViolation` variants are surfaced — integration-runner
 /// findings (which are `Issue`s, not `CheckViolation`s) and ad-hoc
 /// failures (HEAD-unreadable, lock-resolve failures) are intentionally
-/// out of scope for the JSON channel (see the bead body for rationale).
+/// out of scope for the JSON channel (see the design notes for rationale).
 ///
 /// When `scope_all` is `false` (the default), only the active project is
 /// checked and orphan detection is skipped. Pass `scope_all = true` (`--all`)

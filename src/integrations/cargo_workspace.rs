@@ -243,7 +243,7 @@ impl CargoWorkspace {
             // `[workspace.package]`. The Manifest type does not yet carry a
             // `project` section (cargo-workspace-vs-repo.md §324-376 is the
             // forward-looking design; the manifest extension is a separate
-            // bead). Until that lands, the opt-in writes an empty
+            // work item). Until that lands, the opt-in writes an empty
             // `[workspace.package]` table.
             //
             // The wiring is correct: when the project metadata field lands,

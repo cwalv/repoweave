@@ -1,6 +1,6 @@
 //! Per-phase idempotent re-entry tests for the sync phase machine.
 //!
-//! Acceptance criteria for bead fo-jsbr3i.2: phase functions are individually
+//! Acceptance criteria for spec fo-jsbr3i.2: phase functions are individually
 //! exercised for idempotent re-entry. The full (phase × kill-point) crash
 //! matrix is sibling fo-jsbr3i.7's scope; here we just pin that re-entering
 //! each phase from a quiescent state is a no-op-shaped success.
@@ -622,7 +622,7 @@ fn make_retire_workspaces(parent: &Path) -> (Workspace, Workspace, String) {
 // Retire phase: phase=retire record survives a merged-check failure,
 // --continue retries, abort restores both sides.
 //
-// Acceptance criteria for bead fo-jsbr3i.3:
+// Acceptance criteria for spec fo-jsbr3i.3:
 //   1. Merged-check failure leaves phase=retire record AND target lease.
 //   2. --continue completes retire after the operator reconciles.
 //   3. Abort from phase=retire restores source (CWD workweave) and target.

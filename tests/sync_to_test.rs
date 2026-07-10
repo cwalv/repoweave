@@ -409,7 +409,7 @@ fn sync_to_conflict_leaves_op_state_in_both_workspaces() {
 
     // Run sync-to; expect failure due to conflict in step 1.
     // --allow-stale-lock replaces the removed --force for bypassing
-    // the lock-freshness precondition (adapted per bead fo-jsbr3i.6).
+    // the lock-freshness precondition (adapted per spec fo-jsbr3i.6).
     let assert = rwv()
         .args([
             "sync-to",

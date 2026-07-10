@@ -1,7 +1,7 @@
 //! Integration tests for documentation claims about `rwv activate`, `rwv doctor`,
 //! and the `static-files` integration.
 //!
-//! Tests are keyed to their bead/claim IDs:
+//! Tests are keyed to their spec/claim IDs:
 //!   - project-reporoot-201  workspace context from project dir
 //!   - project-reporoot-85h9 check: missing role field, workweave drift
 //!   - project-reporoot-c3ad activate symlinks ecosystem + lock files

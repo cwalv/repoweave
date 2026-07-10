@@ -4,11 +4,11 @@
 //! tips-as-truth pulls from a workweave source.
 //!
 //! TERMINOLOGY (load-bearing): `LockRelation` names the relation from the TIP's
-//! vantage point, which is inverted from the bead's prose.
+//! vantage point, which is inverted from the spec's prose.
 //!
-//! - bead "lock behind HEAD" (new commits since the last lock, the benign
+//! - spec term "lock behind HEAD" (new commits since the last lock, the benign
 //!   in-progress shape) == `LockRelation::Ahead` (tip ahead of lock).
-//! - bead "ahead" (HEAD is ancestor of lock — a reset) == `LockRelation::Behind`.
+//! - spec term "ahead" (HEAD is ancestor of lock — a reset) == `LockRelation::Behind`.
 //!
 //! These tests exercise BOTH the `LockRelation::Ahead` (benign) branch and the
 //! `LockRelation::Behind` / `Diverged` / `NoLock` / `Unknown` (refuse) branches
@@ -218,7 +218,7 @@ fn relation_ok_sync_succeeds() {
 }
 
 // ===========================================================================
-// LockRelation::Ahead (bead "lock behind HEAD") — benign
+// LockRelation::Ahead (spec term "lock behind HEAD") — benign
 // ===========================================================================
 
 /// sync-to: a workweave whose manifest repo advanced past its committed lock
@@ -323,7 +323,7 @@ fn relation_ahead_sync_from_primary_source_refuses() {
 }
 
 // ===========================================================================
-// LockRelation::Behind (bead "ahead" — HEAD reset below lock) — refuse
+// LockRelation::Behind (spec term "ahead" — HEAD reset below lock) — refuse
 // ===========================================================================
 
 /// sync-to: CWD's committed lock records a manifest SHA that HEAD does not have

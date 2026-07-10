@@ -1,7 +1,7 @@
 //! E2E tests for `rwv add` and `rwv remove`.
 //!
 //! Tests that require the add/remove commands to be fully implemented are
-//! marked `#[ignore]` until bead 6b lands the implementation.
+//! marked `#[ignore]` until spec 6b lands the implementation.
 
 use assert_cmd::Command;
 use predicates::prelude::*;

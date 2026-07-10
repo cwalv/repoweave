@@ -93,7 +93,7 @@
 //!
 //! - Existing tests (`phase_reentry_test`, `abort_hardening_test`,
 //!   `e2e_sync_abort_test`) cover anecdotal slices of this matrix. We do
-//!   not replace them — they are the per-bead acceptance tests. This file
+//!   not replace them — they are the per-spec acceptance tests. This file
 //!   is the matrix sweep that makes the shrunk state space provable.
 //! - The destructive-ops tripwire (`destructive_ops_audit_test.rs`) tracks
 //!   `update-ref`, `--hard`, `remove_file` etc. We audit (but do not edit)

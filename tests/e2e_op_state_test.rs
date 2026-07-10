@@ -9,8 +9,8 @@
 //!
 //! Notes:
 //! - Tests 3 and 5 are "sync-to" scenarios (multi-workspace), but since `sync-to` is not yet
-//!   implemented (bead 1), we simulate the cross-workspace state by manually writing op-state
-//!   files and driving `rwv abort`. This mirrors the test-hook pattern requested in the bead:
+//!   implemented (spec 1), we simulate the cross-workspace state by manually writing op-state
+//!   files and driving `rwv abort`. This mirrors the test-hook pattern requested in the spec:
 //!   manufacture mid-op state, then verify recovery.
 //! - Test 1 uses `rwv sync` from two directions to trigger the in-progress check.
 //! - Test 2 uses `rwv sync --strategy rebase` to induce a conflict, then `--continue`.
@@ -231,7 +231,7 @@ fn concurrent_op_detection_blocks_new_sync_in_cwd_workspace() {
     // to simulate a sync that was interrupted mid-way.
     //
     // Write a v2 owner record into ww's workspace (simulating an in-progress op).
-    // [v1→v2 bead fo-jsbr3i.1: phase "running" → "replay"; added converged_tips/overrides.]
+    // [v1→v2 spec fo-jsbr3i.1: phase "running" → "replay"; added converged_tips/overrides.]
     let op_id = "test-concurrent-op-1234";
     let op_state_yaml = format!(
         "id: \"{op_id}\"\nverb: sync\nstrategy: ff\nsource: \"{src}\"\ntarget: \"{tgt}\"\nretire: false\nphase: replay\nconverged_tips: {{}}\noverrides: []\nstarted_at: \"2026-05-27T10:00:00Z\"\n",
@@ -287,7 +287,7 @@ fn concurrent_op_detection_error_names_phase_and_start_time() {
     let (primary, ww, _c1) = make_shared_workspaces(tmp.path());
 
     // Write a v2 owner record at a specific phase.
-    // [v1→v2 bead fo-jsbr3i.1: phase "step1-rebase" → "relock" (mid-op relock phase).]
+    // [v1→v2 spec fo-jsbr3i.1: phase "step1-rebase" → "relock" (mid-op relock phase).]
     let op_state_yaml = format!(
         "id: \"test-phase-detect\"\nverb: sync\nstrategy: rebase\nsource: \"{src}\"\ntarget: \"{tgt}\"\nretire: false\nphase: relock\nconverged_tips: {{}}\noverrides: []\nstarted_at: \"2026-05-27T10:00:00Z\"\n",
         src = primary.root.display(),
@@ -302,7 +302,7 @@ fn concurrent_op_detection_error_names_phase_and_start_time() {
         .failure();
     let stderr = String::from_utf8_lossy(&assertion.get_output().stderr).to_string();
 
-    // [v1→v2 bead fo-jsbr3i.1: phase "step1-rebase" → "relock" in v2 schema.]
+    // [v1→v2 spec fo-jsbr3i.1: phase "step1-rebase" → "relock" in v2 schema.]
     assert!(
         stderr.contains("relock"),
         "error should mention the in-progress phase; got: {stderr}"
@@ -345,7 +345,7 @@ fn mid_step1_resume_with_continue_after_conflict_resolution() {
 
     // Attempt rebase sync from ww → primary. Phase 2 (server repo) will conflict.
     // --discard-local-commits bypasses the Phase 1 ancestor precondition
-    // (project repos diverged). Adapted from --force per bead fo-jsbr3i.6.
+    // (project repos diverged). Adapted from --force per spec fo-jsbr3i.6.
     let out = rwv()
         .args([
             "sync",
@@ -421,7 +421,7 @@ fn mid_step1_resume_with_continue_after_conflict_resolution() {
 // Since sync-to is not yet implemented, we simulate this by manually writing
 // an op-state at `step3-ff` phase and verifying that `--continue` picks it up
 // without the in-progress refusal. The actual FF-advance completion logic is
-// in bead 1; here we just test the op-state machinery.
+// in spec 1; here we just test the op-state machinery.
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -430,7 +430,7 @@ fn mid_step3_continue_does_not_produce_in_progress_refusal() {
     let (primary, ww, _c1) = make_shared_workspaces(tmp.path());
 
     // Write a v2 owner record at advance-target phase into ww's workspace.
-    // [v1→v2 bead fo-jsbr3i.1: phase "step3-ff" → "advance-target" in v2 schema.]
+    // [v1→v2 spec fo-jsbr3i.1: phase "step3-ff" → "advance-target" in v2 schema.]
     let op_state_yaml = format!(
         "id: \"test-step3-ff-1234\"\nverb: sync\nstrategy: ff\nsource: \"{src}\"\ntarget: \"{tgt}\"\nretire: false\nphase: advance-target\nconverged_tips: {{}}\noverrides: []\nstarted_at: \"2026-05-27T10:00:00Z\"\n",
         src = primary.root.display(),
@@ -490,7 +490,7 @@ fn continue_with_strategy_flag_is_rejected() {
     let (primary, ww, _c1) = make_shared_workspaces(tmp.path());
 
     // Plant a v2 owner record so --continue would proceed if it were alone.
-    // [v1→v2 bead fo-jsbr3i.1: phase "running" → "replay"; added converged_tips/overrides.]
+    // [v1→v2 spec fo-jsbr3i.1: phase "running" → "replay"; added converged_tips/overrides.]
     let op_state_yaml = format!(
         "id: \"test-exclusive-1234\"\nverb: sync\nstrategy: rebase\nsource: \"{src}\"\ntarget: \"{tgt}\"\nretire: false\nphase: replay\nconverged_tips: {{}}\noverrides: []\nstarted_at: \"2026-05-27T10:00:00Z\"\n",
         src = primary.root.display(),
@@ -514,7 +514,7 @@ fn continue_with_strategy_flag_is_rejected() {
 }
 
 /// --force is removed from sync/sync-to; passing it must produce an actionable
-/// error (from the early-dispatch did-you-mean hint in main.rs) per bead fo-jsbr3i.6.
+/// error (from the early-dispatch did-you-mean hint in main.rs) per spec fo-jsbr3i.6.
 #[test]
 fn sync_force_flag_is_removed_and_produces_friendly_error() {
     let tmp = tempfile::tempdir().unwrap();
@@ -712,7 +712,7 @@ fn abort_from_cwd_cleans_cross_workspace_op_state() {
     // v2: ww is the owner (CWD/source of sync-to) → owner record at ww.root/.rwv-op.
     // primary is the target workspace → thin lease at primary.root/.rwv-op-lease.
     //
-    // [v1→v2 bead fo-jsbr3i.1: replaced dual full-record writes with owner record
+    // [v1→v2 spec fo-jsbr3i.1: replaced dual full-record writes with owner record
     // + thin lease. Phase "step1-rebase" → "replay". Primary gets lease, not owner record.]
     let ww_op_state_yaml = format!(
         "id: \"{op_id}\"\nverb: sync-to\nstrategy: ff\nsource: \"{src}\"\ntarget: \"{tgt}\"\nretire: false\nphase: replay\nconverged_tips: {{}}\noverrides: []\nstarted_at: \"2026-05-27T10:00:00Z\"\n",
@@ -770,7 +770,7 @@ fn abort_restores_repos_and_removes_op_state() {
     );
 
     // v2 owner record: phase "running" → "replay"; added converged_tips/overrides.
-    // [v1→v2 bead fo-jsbr3i.1]
+    // [v1→v2 spec fo-jsbr3i.1]
     let op_state_yaml = format!(
         "id: \"{op_id}\"\nverb: sync\nstrategy: ff\nsource: \"{src}\"\ntarget: \"{tgt}\"\nretire: false\nphase: replay\nconverged_tips: {{}}\noverrides: []\nstarted_at: \"2026-05-27T10:00:00Z\"\n",
         src = primary.root.display(),

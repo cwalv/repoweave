@@ -497,7 +497,7 @@ fn resolve_revision_unknown_revision_errors() {
 #[test]
 fn resolve_revision_then_equal_to_head_revision() {
     // Equality between the tag-form lock entry's resolved ResolvedRevisionId and
-    // the HEAD's ResolvedRevisionId — the canonical-SHA equality the bead requires.
+    // the HEAD's ResolvedRevisionId — the canonical-SHA equality the spec requires.
     let dir = init_repo();
     let p = dir.path();
     git(p, &["tag", "v0.3.4"]);

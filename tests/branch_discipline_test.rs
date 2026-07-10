@@ -208,7 +208,7 @@ fn shared_branch_main_in_workweave_is_reported() {
     write_marker(&ww_dir, &ws, "myproj", &ws);
     let ww_checkout = ww_dir.join("github").join("acme").join("repo");
     std::fs::create_dir_all(ww_checkout.parent().unwrap()).unwrap();
-    // The bead's bare-main case: workweave checkout sits on `main`, no
+    // The spec's bare-main case: workweave checkout sits on `main`, no
     // commits beyond the canonical's first commit.
     worktree_add_existing(&canonical, &ww_checkout, "main");
 

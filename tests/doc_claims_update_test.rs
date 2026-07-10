@@ -15,7 +15,7 @@
 //!
 //! Style note: this fixture is the bare-remote-plus-clone-plus-project
 //! shape from `update_test.rs`; we keep it local rather than forking
-//! helpers (the constraint from the bead) since `update_test.rs` doesn't
+//! helpers (the constraint from the spec) since `update_test.rs` doesn't
 //! expose its helpers and the doc_claims_* convention is to be
 //! self-contained per file. The verb-vs-fetch contrast claim is the
 //! reason this file exists at all.

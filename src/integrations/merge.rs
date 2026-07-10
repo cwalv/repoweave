@@ -394,7 +394,7 @@ impl JsonMarker for RwvGeneratedMarker {
 /// `preserve_order` feature on `serde_json`, the JsonDoc preserves insertion
 /// order automatically (serde_json::Map becomes IndexMap). Without it the
 /// Map is alphabetized. Enabling the feature is C4's concern (npm migration),
-/// not this bead's.
+/// not this change's.
 pub struct JsonDoc<M: JsonMarker = XRepoweaveMarker> {
     root: serde_json::Map<String, serde_json::Value>,
     _marker: PhantomData<M>,
@@ -1439,7 +1439,7 @@ impl ManagedDoc for GoWorkDoc {
 
     fn is_empty(&self) -> bool {
         // "Empty" means: no user-authored content remains after the owned
-        // `use` region has been stripped.  Per the bead spec the delete-if-
+        // `use` region has been stripped.  Per the spec the delete-if-
         // empty predicate is: no `use` entries AND no `replace`/`godebug`/
         // non-comment lines beyond `go`/`toolchain`/whitespace.
         //

@@ -101,7 +101,7 @@ fn project_repo_failed_serializes_with_project_repo_failed_kind() {
 }
 
 /// The project-repo kind tags are distinguishable from manifest-repo kind tags.
-/// This is the core distinguishability requirement from the bead spec.
+/// This is the core distinguishability requirement from the spec.
 #[test]
 fn project_repo_kind_is_distinguishable_from_manifest_kind() {
     let manifest_kinds = ["pushed", "skipped", "failed"];

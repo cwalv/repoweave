@@ -1,7 +1,7 @@
 //! E2E tests for `rwv lock` and `rwv lock-all` commands.
 //!
 //! These tests exercise the CLI binary via `assert_cmd`. Tests that depend on
-//! the lock implementation (bead 7b) are marked `#[ignore]`.
+//! the lock implementation (phase 7b) are marked `#[ignore]`.
 
 use assert_cmd::Command;
 use predicates::prelude::*;

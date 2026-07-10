@@ -1,4 +1,4 @@
-//! Tests for `rwv doctor`'s state-hygiene checks (bead fo-hycb06.4).
+//! Tests for `rwv doctor`'s state-hygiene checks (spec fo-hycb06.4).
 //!
 //! Exercises the three check kinds:
 //!
@@ -161,7 +161,7 @@ fn rwv_cmd() -> Command {
 /// Write a `.rwv-op` v2 owner record by hand (sync.rs writes the same shape,
 /// but we don't want to drive a real sync to produce one).
 ///
-/// [v1→v2 bead fo-jsbr3i.1: phase "running" → "replay"; added converged_tips/overrides.]
+/// [v1→v2 spec fo-jsbr3i.1: phase "running" → "replay"; added converged_tips/overrides.]
 fn write_op_state(workspace_dir: &Path, op_id: &str) {
     let yaml = format!(
         "id: {op_id}\n\

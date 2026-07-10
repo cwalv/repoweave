@@ -1354,7 +1354,7 @@ mod fo_cnpjy_3 {
     //    unchanged.
     //
     // This is the "an integration declaring only generated_files() is
-    // treated the same as today" assertion from the bead.
+    // treated the same as today" assertion from the spec.
     // -----------------------------------------------------------------------
 
     #[test]
@@ -1461,7 +1461,7 @@ mod fo_cnpjy_3 {
 
         // We can't easily plug a fake integration into the builtin set
         // without restructuring `activate_at` to accept a custom set
-        // (which the bead says we should avoid as scope creep). Instead,
+        // (which the spec says to avoid as scope creep). Instead,
         // we drive `verify()` and `activate()` directly on a FakeHybrid
         // via the trait, mirroring what the framework would do — the
         // framework-side wiring is already covered by the

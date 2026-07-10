@@ -1,6 +1,6 @@
 //! Acceptance tests for `rwv fetch -j N` and `rwv update -j N`.
 //!
-//! These cover the visible behaviours pinned in the bead notes:
+//! These cover the visible behaviours pinned in the spec notes:
 //!
 //! - `-j N` accepted as a flag on both verbs.
 //! - `-j 1` reproduces serial behaviour (no `[<repo>]` prefix in output).

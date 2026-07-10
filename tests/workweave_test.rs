@@ -2856,7 +2856,7 @@ fn create_workweave_fails_actionably_when_project_repo_has_no_commits() {
 
 #[test]
 fn create_workweave_preflight_error_names_project_path() {
-    // Verify the exact shape of the error message matches the bead spec:
+    // Verify the exact shape of the error message matches the spec:
     //   "project <name> has no commits yet — run "git -C projects/<name> commit" ..."
     let tmp = tempfile::tempdir().unwrap();
     let ws = make_workspace_with_uncommitted_project(tmp.path(), "myproj");

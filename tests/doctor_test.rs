@@ -1,7 +1,7 @@
 //! E2E tests for `rwv doctor` — convention enforcement.
 //!
 //! These tests exercise the CLI binary via `assert_cmd`. Tests that depend on
-//! the full check implementation (bead 8b) are marked `#[ignore]`.
+//! the full check implementation (phase 8b) are marked `#[ignore]`.
 
 use assert_cmd::Command;
 use predicates::prelude::*;
@@ -698,7 +698,7 @@ fn check_fix_writes_replay_exclusion() {
 //     `ViolationOutput::from_violation` so the wire shape is fully covered
 //     without requiring elaborate workweave fixtures.
 //
-// Acceptance from the bead body:
+// Acceptance from the spec:
 //   - top-level envelope `{ "$schema": ..., "violations": [...] }`
 //   - each violation has a kebab-case `kind` and (where applicable)
 //     `path` + `absolute_path`
@@ -1083,7 +1083,7 @@ mod doctor_json {
     #[test]
     fn wire_all_eight_variant_tags_stable() {
         // Construct one of each variant and confirm the `kind` tags match
-        // the table in the bead body verbatim. The table is part of the
+        // the table in the spec verbatim. The table is part of the
         // public contract: if a serde rename strips, capitalises, or
         // reorders these, downstream agents break silently.
         let ws = workspace_dir();

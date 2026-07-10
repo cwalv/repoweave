@@ -2,7 +2,7 @@
 //!
 //! This module captures the three regression-test shapes shared by every
 //! hybrid integration (npm/vscode/cargo/uv — the four hybrid JSON/TOML cases
-//! the bead names) plus pnpm/go-work where the helper applies. The shapes
+//! the spec names) plus pnpm/go-work where the helper applies. The shapes
 //! are extracted from the npm precedent in `tests/integrations_test.rs:290-385`
 //! and described normatively in `docs/explanation/joints/file-ownership.md`.
 //!
@@ -21,7 +21,7 @@
 //!    - marker + owned + foreign content → file rewritten without the marker
 //!      or owned keys; foreign content survives byte-stable.
 //!
-//! # API shape (the bead asked us to pick one and document)
+//! # API shape (the spec asked us to pick one and document)
 //!
 //! The helper is a small set of free functions, each taking:
 //! - a closure `activate: FnOnce(&Path)` (the caller wraps `integration.activate(&ctx)`),
