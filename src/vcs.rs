@@ -215,7 +215,14 @@ pub struct UniqueDiff {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, JsonSchema)]
 #[serde(rename_all = "kebab-case")]
 pub enum ConflictOp {
-    /// Native rebase (`git rebase`) — resumes with `git rebase --continue`.
+    /// Native rebase (`git rebase`).
+    ///
+    /// The operator-facing resume path is `rwv sync --continue` /
+    /// `rwv sync-to --continue` — not bare `git rebase --continue`. The VCS
+    /// hint for this variant stops at staging (`git add <files>`); rwv core
+    /// appends the `rwv <verb> --continue` line. Bare `git rebase --continue`
+    /// remains a safe fallback (the durable `merge.rwv-ours.driver` config
+    /// plant carries the exclusion), but it is not the primary operator path.
     Rebase,
     /// Merge (`git merge`) — resumes with `git merge --continue`.
     Merge,

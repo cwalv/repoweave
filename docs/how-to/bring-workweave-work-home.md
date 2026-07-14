@@ -68,9 +68,8 @@ After resolving conflicts in the indicated repo:
 cd github/chatly/server
 # edit conflicted files
 git add <files>
-git rebase --continue
 
-# then resume from the workweave root
+# then resume from the workweave root — rwv drives the remaining picks and relock
 cd <workweave-root>
 rwv sync-to --continue
 ```

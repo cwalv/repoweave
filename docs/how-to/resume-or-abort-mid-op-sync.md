@@ -44,35 +44,45 @@ workspace (the one that has `.rwv-op`, not `.rwv-op-lease`).
 ## Step 2a — resume with `--continue`
 
 If you want to finish the operation, resolve any conflict first (the error
-message names the repo and the exact git commands), then re-run with bare
+message names the repo and the exact next steps), then re-run with bare
 `--continue`:
 
-**After a `rwv sync` conflict:**
+**After a `rwv sync` rebase conflict:**
 
 ```bash
 # 1. Resolve the conflict in the named repo
 cd github/chatly/server
 # edit conflicted files
 git add <files>
-git rebase --continue   # or: git merge --continue / git cherry-pick --continue
 
-# 2. Resume the sync from the workspace root
+# 2. Resume the sync from the workspace root — rwv drives the rest
 cd <workspace-root>
 rwv sync --continue
 ```
 
-**After a `rwv sync-to` conflict:**
+**After a `rwv sync-to` rebase conflict:**
 
 ```bash
-# 1. Resolve the conflict in the named repo (same as above)
+# 1. Resolve the conflict in the named repo
 cd github/chatly/server
+# edit conflicted files
 git add <files>
-git rebase --continue
 
-# 2. Resume the sync-to from the workweave root
+# 2. Resume the sync-to from the workweave root — rwv drives the rest
 cd <workweave-root>
 rwv sync-to --continue
 ```
+
+For merge or cherry-pick conflicts (rare, non-rebase strategies), the error
+message includes `git merge --continue` or `git cherry-pick --continue` as the
+intermediate VCS step before re-running `rwv <verb> --continue`.
+
+**Fallback: bare `git rebase --continue`.** If you need to resume a stopped
+rebase outside rwv, bare `git rebase --continue` is safe — the durable
+`merge.rwv-ours.driver` repo-local config keeps the lock exclusion active. After
+the bare-git resume finishes, re-run `rwv sync --continue` (or
+`rwv sync-to --continue`) so rwv can complete relocking and clean up op-state.
+This is a fallback path; prefer the `resolve → git add → rwv --continue` loop.
 
 ### What `--continue` does (and does not) need
 

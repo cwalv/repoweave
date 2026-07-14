@@ -15,13 +15,12 @@ To resolve:
   edit the conflicted files
   cd github/chatly/server
   git add <files>
-  git rebase --continue
 
-Then re-run with `--continue` to resume.
+Then re-run with `rwv sync --continue` to resume.
 To give up entirely: `rwv abort`.
 ```
 
-The hint text is owned by the VCS layer (`Vcs::conflict_resolution_hint` — see [vcs-as-seam](../explanation/joints/vcs-as-seam.md)). The sync engine embeds it verbatim so the operator sees concrete next steps without trial-and-error.
+The hint text is owned by the VCS layer (`Vcs::conflict_resolution_hint` — see [vcs-as-seam](../explanation/joints/vcs-as-seam.md)). For rebase ops, the hint stops at staging; rwv core appends the appropriate `rwv <verb> --continue` line. The sync engine composes and emits the full message so the operator sees concrete next steps without trial-and-error.
 
 ## Fix and resume — `rwv sync`
 
@@ -29,7 +28,6 @@ The hint text is owned by the VCS layer (`Vcs::conflict_resolution_hint` — see
 cd github/chatly/server
 # edit conflicted files
 git add <files>
-git rebase --continue
 ```
 
 Then resume by running `rwv sync` with `--continue` from the workspace root. All parameters (source, strategy, overrides) are read from the in-progress op-state file — do not pass them again:
@@ -39,17 +37,18 @@ cd <workspace-root>
 rwv sync --continue
 ```
 
-Already-advanced repos are no-ops. The fixed repo finishes, then any remaining repos proceed. Phase 3 regenerates `rwv.lock` at the end.
+`--continue` drives the remaining rebase picks, including any lock-only commits (resolved via the inline `rwv-ours` driver flags), then relocks and clears op-state. Already-advanced repos are no-ops. Phase 3 regenerates `rwv.lock` at the end.
+
+**Fallback: bare `git rebase --continue`.** If you need to resume outside rwv — for example, to inspect git's own conflict markers one pick at a time — bare `git rebase --continue` works safely because the durable `merge.rwv-ours.driver` repo-local config keeps the lock exclusion active. After the bare-git resume finishes, re-run `rwv sync --continue` so rwv can complete relocking and clean up op-state. This is a fallback, not the primary path.
 
 ## Fix and resume — `rwv sync-to`
 
-The procedure is the same: resolve the conflict in the named repo, complete the VCS operation, then re-run with `--continue`:
+The procedure is the same: resolve the conflict in the named repo, stage the fixes, then re-run with `--continue`:
 
 ```bash
 cd github/chatly/server
 # edit conflicted files
 git add <files>
-git rebase --continue
 ```
 
 Then resume from the workweave root:
@@ -79,7 +78,7 @@ After abort, both workspaces are in their exact pre-op state. Discarded commits 
 
 ## Common cases
 
-**Phase 1' (project repo) conflict.** Two workweaves edited the same file in `projects/<name>/docs/` and both committed. The `rwv.lock` line itself never conflicts — it is excluded from Phase 1' inputs and regenerated in Phase 3. Resolve the non-lock conflict, `git rebase --continue`, re-run with `--continue`.
+**Phase 1' (project repo) conflict.** Two workweaves edited the same file in `projects/<name>/docs/` and both committed. The `rwv.lock` line itself never conflicts — it is excluded from Phase 1' inputs and regenerated in Phase 3. Resolve the non-lock conflict, stage with `git add <files>`, then re-run with `rwv sync --continue` (or `rwv sync-to --continue`).
 
 **Phase 2 (manifest repo) conflict.** A manifest repo's branch needs `rebase` to advance, and the cross-history has a genuine textual conflict. Same procedure: resolve in the repo, complete the in-progress VCS op, re-run with `--continue`.
 

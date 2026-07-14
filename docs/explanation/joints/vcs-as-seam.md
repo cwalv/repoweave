@@ -26,7 +26,7 @@ Vcs impl (inner).
 - Command names (`git push`, `git rebase`, `hg pull`, `jj rebase`).
 - Remote conventions (`origin`, `upstream`).
 - File conventions (`.gitattributes`, `.gitignore`, `.hgrc`).
-- Configuration mechanisms (`merge=ours`, `[core] sparseCheckout`).
+- Configuration mechanisms (`merge=rwv-ours`, `[core] sparseCheckout`).
 - Error message text and recovery instructions ("git rebase --continue",
   "hg resolve --mark").
 - In-flight state names ("mid-rebase", "mid-merge", "in-progress
@@ -131,8 +131,11 @@ remote target" failure mode.
 
 **Concept:** the human-readable text we splice into sync's bail
 messages explaining how to resume after the user resolves conflicts.
-For git, this is "edit conflicted files; `git add <files>`; `git
-rebase --continue`" — specific commands a user will type.
+The VCS impl owns git-vocabulary steps (stage the resolution, run the
+VCS-native continue for merge/cherry-pick ops). For rebase ops,
+rwv has a native `rwv sync --continue` / `rwv sync-to --continue` that
+drives the remaining picks; the VCS impl stops at staging and rwv core
+appends the `rwv <verb> --continue` line.
 
 **Anchor:** commit `26ba786`.
 
@@ -154,14 +157,22 @@ fn conflict_resolution_hint(&self, op: ConflictOp) -> String {
     git_conflict_resolution_hint(op)
 }
 
-// helper:
+// helper (asymmetric by op — Rebase stops at staging):
 fn git_conflict_resolution_hint(op: ConflictOp) -> String {
-    let continue_cmd = match op {
-        ConflictOp::Rebase => "git rebase --continue",
-        ConflictOp::Merge => "git merge --continue",
-        ConflictOp::CherryPick => "git cherry-pick --continue",
-    };
-    format!("  # edit conflicted files\n  git add <files>\n  {continue_cmd}")
+    match op {
+        ConflictOp::Rebase => {
+            // Stop at staging. rwv core appends `rwv sync --continue` /
+            // `rwv sync-to --continue` — the VCS impl must not spell rwv
+            // vocabulary.
+            "  # edit conflicted files\n  git add <files>".to_string()
+        }
+        ConflictOp::Merge => {
+            "  # edit conflicted files\n  git add <files>\n  git merge --continue".to_string()
+        }
+        ConflictOp::CherryPick => {
+            "  # edit conflicted files\n  git add <files>\n  git cherry-pick --continue".to_string()
+        }
+    }
 }
 ```
 
@@ -184,6 +195,12 @@ the trait method means:
 - A hg impl returns `hg resolve --mark` text without changing any sync
   bail site.
 
+The seam also enforces the `Rebase` asymmetry at a boundary: the VCS
+impl owns git vocabulary, so it must not name rwv verbs (`rwv sync
+--continue`). By stopping at staging for `Rebase` and leaving the
+`rwv <verb> --continue` line to rwv core, each layer owns exactly the
+vocabulary it should know about.
+
 The trait method is small on purpose: it returns a short block, not a
 full bail message. Surrounding context (which repo, how to re-run
 sync, how to abort) is composed in `src/sync.rs`. The seam carries the
@@ -193,13 +210,22 @@ VCS-specific noun phrases, not the entire prose.
 
 **Concept:** configure a repo such that during replay (rebase) any
 changes to a specified path are silently overridden by the replay
-target's version. For git, this is a `merge=ours` entry in
-`.gitattributes` paired with the inline `merge.ours.driver=true`
-config wired up per-rebase. (rebase replays each commit as a 3-way
-merge, which is why the `merge=ours` driver is still needed even though
-the `merge` sync strategy was removed.)
+target's version. For git, this is a three-layer mechanism: a
+namespaced `merge=rwv-ours` entry in committed `.gitattributes`
+(assigns the driver to the path), an inline `-c merge.rwv-ours.driver=true`
+flag on each `git rebase` and `git rebase --continue` invocation
+(defines the driver for that process), and a durable `merge.rwv-ours.*`
+repo-local config planted at the start of every rebase-strategy sync
+(makes bare `git rebase --continue` safe when the operator resumes
+outside rwv). The namespaced name `rwv-ours` avoids collisions with
+any unrelated global `merge.ours.driver` config or third-party
+`merge=ours` lines in the same repo.
 
-**Anchor:** commit `d29bb2f`.
+Rebase replays each commit as a 3-way merge, which is why the driver
+is still needed even though the `merge` sync strategy was removed.
+
+**Anchor:** commit `d29bb2f` (initial refactor); fo-yk0rlj (driver
+rename + durable config plant).
 
 **Trait surface** (`Vcs::set_replay_exclusion` and the companion
 `Vcs::has_replay_exclusion` in `src/vcs.rs`):
@@ -211,11 +237,15 @@ fn has_replay_exclusion(&self, repo: &Path, path: &Path) -> Result<bool, VcsErro
 ```
 
 **Git impl** (`GitVcs::set_replay_exclusion` in `src/git.rs`): appends
-`<path> merge=ours` to `<repo>/.gitattributes`, idempotently. The
-`merge.ours.driver=true` shell hook (which makes the `ours` driver
-succeed without modifying the merged file) is set inline inside
-`GitVcs::rebase` during the rebase command itself, so no persistent
-`.git/config` change is required.
+`<path> merge=rwv-ours` to `<repo>/.gitattributes`, idempotently (and
+migrates legacy `merge=ours` lines in place when found). The
+`merge.rwv-ours.driver=true` config that makes the driver succeed
+without modifying the merged file is supplied in two ways: inline `-c`
+flags on every `GitVcs::rebase` and `GitVcs::rebase_continue`
+invocation (belt-and-braces for the rwv-driven path), plus a durable
+repo-local config plant that `verify_replay_exclusion_invariant` writes
+before each rebase-strategy sync (so bare `git rebase --continue` —
+the git-native resume path — is safe without rwv's inline flags).
 
 **Used by** [sync-semantics](./sync-semantics.md)'s Phase 1' to keep
 `rwv.lock` out of the merge inputs. The lock is regenerated from
@@ -321,8 +351,11 @@ names it so reviewers have one canonical pointer.
 The examples above each cite a closed work item and a landed commit. The
 sync codepath that depends on examples (b) and (c) is covered by:
 
-- `tests/e2e_two_workweaves_test.rs` — exercises the `merge=ours`
+- `tests/e2e_two_workweaves_test.rs` — exercises the `merge=rwv-ours`
   replay-exclusion path end-to-end.
+- `tests/e2e_sync_lock_replay_test.rs` — pins the three-layer driver
+  mechanism (namespaced name, inline flags, durable config plant) and
+  the `rwv sync --continue` / `rwv sync-to --continue` resume path.
 - `tests/e2e_sync_abort_test.rs` — covers the conflict-hint text
   surfacing through the bail messages.
 

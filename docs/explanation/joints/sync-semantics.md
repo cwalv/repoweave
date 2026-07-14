@@ -158,7 +158,7 @@ non-owner workspace), enter the driver loop.
 
 Runs all preconditions before any mutation. Covers: no-op-in-progress
 check on every workspace the op will touch, replay-exclusion invariant
-(`rwv.lock merge=ours` in committed `.gitattributes`), lock freshness,
+(`rwv.lock merge=rwv-ours` in committed `.gitattributes`), lock freshness,
 Phase 1' ancestor check (`--strategy=ff`), and the dirty-target
 preflight (`rwv sync-to`). Refusals here leave no trace.
 
@@ -451,17 +451,26 @@ Both repo classes — project repo (Phase 1') and manifest repos (Phase
 | `ff` (default for `sync`) | Fast-forward only; refuse on divergence | Fast-forward only; refuse on divergence |
 | `rebase` (default for `sync-to`) | Replay CWD's unique commits onto named-workspace's tip; lock excluded | Advance CWD's repos to named-workspace's lock targets |
 
-`--strategy=rebase` requires `rwv.lock merge=ours`
+`--strategy=rebase` requires `rwv.lock merge=rwv-ours`
 in the project repo's **committed** `.gitattributes`. This is still
 required even though the `merge` *strategy* was removed (see below): git
 rebase replays each commit as a 3-way merge against the new base, so the
-`merge=ours` driver is what keeps a lock-only commit from conflicting on
-`rwv.lock` during replay. Both halves must
-be in place: `rwv` passes `-c merge.ours.driver=true` on each git
-invocation (defines the driver), and the `.gitattributes` line assigns
-that driver to `rwv.lock`. The check fires against the committed file
+`merge=rwv-ours` driver is what keeps a lock-only commit from conflicting
+on `rwv.lock` during replay. Three layers keep the exclusion active:
+
+1. The committed `.gitattributes` line `rwv.lock merge=rwv-ours` assigns the
+   driver to `rwv.lock`.
+2. `rwv` passes `-c merge.rwv-ours.driver=true` on each `git rebase` and
+   `git rebase --continue` invocation (defines the driver for that process).
+3. `verify_replay_exclusion_invariant` (called before every rebase-strategy
+   sync) plants a durable `merge.rwv-ours.driver=true` repo-local config so
+   bare `git rebase --continue` — the fallback resume path — is safe without
+   rwv's inline flags.
+
+The check fires against the committed file
 (via `git show HEAD:.gitattributes`), not the working tree, because the
-invariant must survive rebases. Run `rwv doctor --fix` to add the line.
+invariant must survive rebases. Run `rwv doctor --fix` to add the line
+(or migrate a legacy `merge=ours` spelling).
 
 `--strategy=ff` does not need the precondition: FF advances the branch
 pointer without performing a merge.
@@ -557,7 +566,7 @@ mechanism is:
 | Capture post-rebase tip for `advanced_tips` | `HEAD` resolution immediately after `git rebase` succeeds |
 | Verified restore | `git reset --hard <savepoint>` gated on tip ∈ {savepoint, advanced tip, converged tip, mid-op} |
 | Object transfer of pinned revisions | shared object store (worktrees: no-op) |
-| Lock replay-exclusion (rebase) | `rwv.lock merge=ours` in `.gitattributes`; `-c merge.ours.driver=true` per invocation |
+| Lock replay-exclusion (rebase) | `rwv.lock merge=rwv-ours` in `.gitattributes`; `-c merge.rwv-ours.driver=true` per invocation; durable `merge.rwv-ours.driver` repo-local config planted before each sync |
 
 All of these are intent-named `Vcs` trait methods; the phase machine
 contains no VCS-specific spellings.

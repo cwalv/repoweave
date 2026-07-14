@@ -65,7 +65,7 @@ known.
 excluded from the project-repo merge phase (Phase 1') and regenerated
 in Phase 3 from the now-aligned manifest tips. Any lock-only commit on
 the source side becomes an empty patch on the target side and is
-dropped automatically. The phase model and the `merge=ours`
+dropped automatically. The phase model and the `merge=rwv-ours`
 replay-exclusion mechanism are described in
 [sync-semantics](./sync-semantics.md).
 
