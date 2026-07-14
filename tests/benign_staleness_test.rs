@@ -112,7 +112,11 @@ fn make_main_workspace(tmp: &Path) -> MainWorkspace {
 
     let project_dir = ws.join("projects").join(PROJECT);
     init_repo(&project_dir);
-    std::fs::write(project_dir.join(".gitattributes"), "rwv.lock merge=ours\n").unwrap();
+    std::fs::write(
+        project_dir.join(".gitattributes"),
+        "rwv.lock merge=rwv-ours\n",
+    )
+    .unwrap();
 
     let manifest = format!(
         "repositories:\n  {path}:\n    type: git\n    url: file://{repo}\n    version: main\n    role: owned\n",
