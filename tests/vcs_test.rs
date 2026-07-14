@@ -864,18 +864,21 @@ fn resolve_branch_on_remote_missing_branch_errors() {
 // so a wording drift won't slip past CI.
 
 #[test]
-fn conflict_resolution_hint_rebase_uses_git_rebase_continue() {
+fn conflict_resolution_hint_rebase_does_not_spell_git_rebase_continue() {
+    // Seam-rule: the VCS impl stops at staging for Rebase; rwv core appends
+    // `rwv sync --continue` / `rwv sync-to --continue`. The hint must NOT
+    // spell `git rebase --continue` in operator-facing text.
     let vcs = GitVcs;
     let hint = vcs.conflict_resolution_hint(ConflictOp::Rebase);
     assert!(
-        hint.contains("git rebase --continue"),
-        "rebase hint must mention `git rebase --continue`; got: {hint:?}"
+        !hint.contains("git rebase --continue"),
+        "rebase hint must NOT spell `git rebase --continue` (seam-rule violation); got: {hint:?}"
     );
     assert!(
         hint.contains("git add <files>"),
         "rebase hint must mention `git add <files>`; got: {hint:?}"
     );
-    // Sanity: the hint must NOT carry the wrong op's continue verb.
+    // Sanity: must not leak other ops' continue verbs.
     assert!(
         !hint.contains("git merge --continue"),
         "rebase hint leaked merge vocabulary: {hint:?}"

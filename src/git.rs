@@ -607,18 +607,41 @@ impl GitVcs {
 /// Git-specific "how do I resume this operation?" text for [`ConflictOp`].
 ///
 /// Returned text is a short indented block (no trailing newline) that
-/// [`crate::sync`] splices into its conflict-bail messages, sandwiched
-/// between an opening "what happened" line and a closing "or `rwv abort`
-/// to roll back" line. Kept as a free helper so the VCS impl is the sole
-/// owner of git vocabulary; rwv core never spells "git add" or
-/// "git rebase --continue".
+/// [`crate::sync`] splices into its conflict-bail messages. The block
+/// covers git-vocabulary steps only: edit conflicted files, stage them.
+///
+/// ## Seam rule and asymmetry by op
+///
+/// The VCS impl owns git vocabulary (`git add`, `git merge --continue`,
+/// `git cherry-pick --continue`). For [`ConflictOp::Merge`] and
+/// [`ConflictOp::CherryPick`] the git `--continue` command is the right
+/// next step for the operator and is part of this hint.
+///
+/// [`ConflictOp::Rebase`] is different: rwv has a native
+/// `rwv sync --continue` / `rwv sync-to --continue` that covers all
+/// remaining replay steps after staging, so the git-level
+/// `git rebase --continue` must NOT appear in operator-facing text — rwv
+/// core (in `sync.rs`) appends the appropriate `rwv <verb> --continue`
+/// line immediately after this hint. The VCS impl deliberately stops at
+/// staging for Rebase and lets rwv core own the continue command.
+///
+/// Callers (rwv core) append the `rwv <verb> --continue` line for Rebase
+/// conflicts and `rwv abort` as the final rollback option.
 fn git_conflict_resolution_hint(op: ConflictOp) -> String {
-    let continue_cmd = match op {
-        ConflictOp::Rebase => "git rebase --continue",
-        ConflictOp::Merge => "git merge --continue",
-        ConflictOp::CherryPick => "git cherry-pick --continue",
-    };
-    format!("  # edit conflicted files\n  git add <files>\n  {continue_cmd}")
+    match op {
+        ConflictOp::Rebase => {
+            // Stop at staging. rwv core appends `rwv sync --continue` /
+            // `rwv sync-to --continue` — the VCS impl must not spell rwv
+            // vocabulary.
+            "  # edit conflicted files\n  git add <files>".to_string()
+        }
+        ConflictOp::Merge => {
+            "  # edit conflicted files\n  git add <files>\n  git merge --continue".to_string()
+        }
+        ConflictOp::CherryPick => {
+            "  # edit conflicted files\n  git add <files>\n  git cherry-pick --continue".to_string()
+        }
+    }
 }
 
 /// True when stderr signals "revision unknown / no such object".

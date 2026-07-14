@@ -895,9 +895,12 @@ fn resume_command(verb: OpVerb) -> String {
 ///
 /// `live_conflict` is `Some(op)` only when a manifest repo is genuinely left
 /// in a VCS-native in-flight state (a live [`ConflictOp`]); the VCS-native
-/// resolution steps (`cd <repo>` / `git … --continue`) are emitted ONLY then
+/// resolution steps (`cd <repo>` / stage the resolution) are emitted ONLY then
 /// (Correction 4). A non-conflict batch of failures (e.g. a fetch error) omits
-/// the VCS block and points straight at the resume command.
+/// the VCS block and points straight at the resume command. For
+/// [`ConflictOp::Rebase`] the VCS hint stops at staging — the rwv-native
+/// `{resume}` line IS the continue step (fo-w2ajvn.2); merge/cherry-pick
+/// hints still carry their VCS-native continue since rwv cannot resume those.
 fn manifest_repo_failure_message(verb: OpVerb, live_conflict: Option<ConflictOp>) -> String {
     let resume = resume_command(verb);
     match live_conflict {
@@ -976,6 +979,13 @@ fn phase1_or_phase3_failure_message(
 /// unconditional here. The per-VCS resolution steps come from the trait method;
 /// this helper builds the surrounding framing (which repo, how to resume, how
 /// to abort).
+///
+/// For [`ConflictOp::Rebase`] the VCS hint stops at staging and the appended
+/// `{resume}` line is the continue step (rwv resumes the rebase natively,
+/// fo-w2ajvn.2). For [`ConflictOp::Merge`] / [`ConflictOp::CherryPick`] the
+/// VCS hint still carries its own `git … --continue` — rwv has no native
+/// resume for those ops; the operator finishes them in git, then `{resume}`
+/// picks the op back up.
 fn per_conflict_bail_message(
     repo: &Path,
     op: ConflictOp,
@@ -3857,12 +3867,16 @@ fn short_sha(sha: &str) -> &str {
 /// - `Ff`: requires CWD ancestor of source (caller already verified). Performs
 ///   a fast-forward via `git merge --ff-only`.
 /// - `Rebase`: native `git rebase` via [`Vcs::rebase`]. On conflict, leaves
-///   the repo mid-rebase so `git rebase --continue` resumes after manual
-///   resolution.
+///   the repo mid-rebase; the operator resolves, `git add`s, then runs
+///   `rwv sync --continue` (or `rwv sync-to --continue` for sync-to).
 ///
 /// Conflicts on non-lock paths halt the operation, leaving the VCS-native
 /// in-flight state for the operator to resolve and re-run sync, or
 /// `rwv abort`.
+///
+/// `verb` is the running op's verb ([`OpVerb`]), threaded through so the
+/// conflict-bail message shows the correct rwv-native resume command
+/// (`rwv sync --continue` / `rwv sync-to --continue`).
 fn apply_project_strategy(
     cwd_project_dir: &Path,
     source_tip: &ResolvedRevisionId,
@@ -5012,14 +5026,16 @@ mod tests {
     }
 
     // Site 1 — manifest-repo per-repo sync loop failure summary. With a live
-    // conflict the VCS-native resume steps are present; the resume verb is
-    // derived from the op verb.
+    // rebase conflict the VCS-native staging steps are present; the resume
+    // verb is derived from the op verb; and the rebase hint must NOT spell
+    // raw `git rebase --continue` (fo-w2ajvn.2: `rwv <verb> --continue` IS
+    // the continue step — rwv resumes the rebase natively).
     #[test]
     fn manifest_repo_failure_message_live_conflict_includes_vcs_and_verb_resume() {
         let msg = manifest_repo_failure_message(OpVerb::SyncTo, Some(ConflictOp::Rebase));
         assert!(
-            msg.contains("git rebase --continue"),
-            "expected rebase hint under a live conflict: {msg}"
+            !msg.contains("git rebase --continue"),
+            "rebase hint must NOT spell raw `git rebase --continue`; got: {msg}"
         );
         // Resume verb from op-state, never a hardcoded pull `rwv sync`.
         assert!(
@@ -5067,8 +5083,8 @@ mod tests {
             "expected phase label in: {msg}"
         );
         assert!(
-            msg.contains("git rebase --continue"),
-            "expected rebase hint in: {msg}"
+            !msg.contains("git rebase --continue"),
+            "rebase bail must NOT spell raw `git rebase --continue`; got: {msg}"
         );
         assert!(
             msg.contains("/ws/projects/web-app"),
@@ -5130,7 +5146,9 @@ mod tests {
     // Site 4 — cherry-pick op hint (trait surface; sync no longer uses
     // cherry-pick directly but the message builder must still render the
     // op's hint correctly for any VCS impl that does). This site ALWAYS has a
-    // live ConflictOp, so the VCS hint is unconditional.
+    // live ConflictOp, so the VCS hint is unconditional. CherryPick has no
+    // rwv-native continue, so its VCS hint retains the raw git continue; the
+    // verb-derived resume line then picks the op back up.
     #[test]
     fn per_conflict_bail_cherry_pick_includes_cherry_pick_hint() {
         let repo = Path::new("/ws/projects/web-app");
@@ -5163,6 +5181,8 @@ mod tests {
     }
 
     // Site 5 — Phase 1' merge inner bail.
+    //
+    // Merge has no rwv-native continue; continue_cmd carries the raw git form.
     #[test]
     fn per_conflict_bail_merge_includes_merge_hint() {
         let repo = Path::new("/ws/projects/web-app");
@@ -5191,6 +5211,9 @@ mod tests {
     // stopped-commit detail string containing the subject is passed as the
     // `detail` arg — as `apply_project_strategy` now does via
     // `Vcs::rebase_stopped_commit_detail` (now a trait method).
+    //
+    // Key contract: Rebase bail must use `rwv sync --continue`, NOT raw
+    // `git rebase --continue`. `rwv abort` comes last.
     #[test]
     fn per_conflict_bail_rebase_project_repo_includes_commit_subject_in_detail() {
         let repo = Path::new("/ws/projects/web-app");
@@ -5215,8 +5238,8 @@ mod tests {
             "expected commit subject continuation in message: {msg}"
         );
         assert!(
-            msg.contains("git rebase --continue"),
-            "expected rebase hint in message: {msg}"
+            !msg.contains("git rebase --continue"),
+            "rebase bail must NOT spell raw `git rebase --continue`; got: {msg}"
         );
         assert!(
             msg.contains("rwv sync --continue"),

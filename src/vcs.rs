@@ -649,21 +649,29 @@ pub trait Vcs {
     /// Falls back to `"main"` when no remote or no `origin/HEAD` is configured.
     fn default_branch(&self, repo: &Path) -> Result<RefName, VcsError>;
 
-    /// Human-readable hint text for resuming `op` after the user resolves
-    /// conflicts left in the working tree.
+    /// Human-readable hint text for the VCS-level steps to resolve a conflict
+    /// and stage the result. Embedded verbatim in sync's conflict-bail messages.
     ///
-    /// Embedded verbatim in sync's conflict-bail messages so the operator
-    /// sees concrete next steps (`git add <files>`; `git rebase --continue`)
-    /// instead of an opaque "fix conflicts and re-run". Returned text is a
-    /// short multi-line block suitable for splicing into a larger message —
-    /// callers are expected to add surrounding context (which repo, how to
-    /// re-run sync, how to abort) themselves.
+    /// Returned text is a short multi-line block suitable for splicing into a
+    /// larger message — callers are expected to add surrounding context (which
+    /// repo, the `rwv <verb> --continue` line for Rebase, and `rwv abort` as
+    /// the rollback option).
     ///
     /// `op` is the in-flight operation that produced the conflict (rebase,
     /// merge, cherry-pick); the hint text varies per VCS and per op. No
     /// `repo` param: the hint text for [`GitVcs`](crate::git::GitVcs)
     /// doesn't vary per-repo, and adding a parameter we don't read would be
     /// noise. Add one if a future VCS needs to inspect on-disk state.
+    ///
+    /// ## Seam rule
+    ///
+    /// The VCS impl owns git vocabulary only. For [`ConflictOp::Merge`] and
+    /// [`ConflictOp::CherryPick`], the hint includes the git `--continue`
+    /// command (those ops have no rwv-native resume path from the sync rebase
+    /// flow). For [`ConflictOp::Rebase`], the hint stops at `git add <files>`;
+    /// the caller (rwv core) appends the appropriate `rwv sync --continue` /
+    /// `rwv sync-to --continue` line — rwv vocabulary must not appear inside
+    /// a VCS impl.
     fn conflict_resolution_hint(&self, op: ConflictOp) -> String;
 
     /// Rebase commits in the range `upstream..` of `repo`'s current branch
