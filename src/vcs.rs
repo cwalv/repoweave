@@ -679,9 +679,10 @@ pub trait Vcs {
     ///
     /// Lock-file exclusion happens via [`set_replay_exclusion`] — set it once
     /// on the repo (e.g. at `rwv init` time) and every rebase silently keeps
-    /// the rebase target's version of the configured path. This is git's
-    /// built-in `merge=ours` driver wired through `.gitattributes`; the trait
-    /// hides the spelling so other VCS impls can use their own mechanism.
+    /// the rebase target's version of the configured path. For git this is a
+    /// per-path merge driver (`merge=rwv-ours` in `.gitattributes` paired
+    /// with `merge.rwv-ours.driver=true` in config); the trait hides the
+    /// spelling so other VCS impls can use their own mechanism.
     ///
     /// [`set_replay_exclusion`]: Vcs::set_replay_exclusion
     fn rebase(
@@ -695,9 +696,13 @@ pub trait Vcs {
     /// `path` are silently overridden — the replay target's version of `path`
     /// always wins.
     ///
-    /// For [`GitVcs`](crate::git::GitVcs): appends a `<path> merge=ours` line
-    /// to `<repo>/.gitattributes` (idempotent — re-running is a no-op if the
-    /// line is already present). Other VCS impls choose their own mechanism.
+    /// For [`GitVcs`](crate::git::GitVcs): appends a
+    /// `<path> merge=rwv-ours` line to `<repo>/.gitattributes` (idempotent
+    /// — re-running is a no-op if the line is already present). If the
+    /// file still carries the legacy `<path> merge=ours` line (pre-fo-yk0rlj
+    /// rename), the writer migrates it in place rather than appending a
+    /// second, ambiguous assignment. Other VCS impls choose their own
+    /// mechanism.
     ///
     /// Used by rwv to keep `rwv.lock` out of the merge inputs during sync's
     /// project-repo rebase: the lock is regenerated from manifest tips in
@@ -710,7 +715,11 @@ pub trait Vcs {
     /// `repo`.
     ///
     /// For [`GitVcs`](crate::git::GitVcs): true iff `<repo>/.gitattributes`
-    /// contains a `<path> merge=ours` line.
+    /// contains a `<path> merge=rwv-ours` line. The legacy `merge=ours`
+    /// spelling is NOT accepted — a repo carrying only the legacy line is
+    /// reported as missing so `rwv doctor --fix` migrates it. See
+    /// [`crate::git::has_working_tree_legacy_replay_exclusion`] for
+    /// migration detection.
     ///
     /// Used by `rwv doctor` to detect projects initialised before the
     /// replay-exclusion path landed and offer to add the missing entry.
@@ -725,7 +734,7 @@ pub trait Vcs {
     /// `.gitattributes`; this one reads the committed-at-HEAD copy. The
     /// committed form is the one that survives a rebase (the replay starts
     /// from the committed tree, not the working tree), so sync's precondition
-    /// check ("can rebase/merge rely on `merge=ours` to keep `rwv.lock`
+    /// check ("can rebase/merge rely on `merge=rwv-ours` to keep `rwv.lock`
     /// out of the merge inputs?") must consult the committed form.
     ///
     /// Returns `false` when the file isn't committed yet.

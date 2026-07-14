@@ -120,7 +120,11 @@ fn make_locked_workspace(parent: &Path, name: &str) -> (Workspace, String) {
 
     let project_dir = root.join("projects/web-app");
     init_repo(&project_dir);
-    std::fs::write(project_dir.join(".gitattributes"), "rwv.lock merge=ours\n").unwrap();
+    std::fs::write(
+        project_dir.join(".gitattributes"),
+        "rwv.lock merge=rwv-ours\n",
+    )
+    .unwrap();
     write_manifest(&project_dir, &[(SERVER_PATH, SERVER_URL)]);
     write_lock(&project_dir, &[(SERVER_PATH, SERVER_URL, &sha)]);
     git(
@@ -564,7 +568,7 @@ fn make_multi_repo_workspaces(parent: &Path) -> (Workspace, Workspace, Vec<Strin
     init_repo(&primary_project_dir);
     std::fs::write(
         primary_project_dir.join(".gitattributes"),
-        "rwv.lock merge=ours\n",
+        "rwv.lock merge=rwv-ours\n",
     )
     .unwrap();
     let manifest_pairs: Vec<(&str, String)> = REPO_PATHS.iter().map(|p| (*p, url_for(p))).collect();

@@ -203,8 +203,9 @@ rwv abort
 - *step 3 FF-advance failed* — target's repo was modified concurrently after
   step 1 completed. Investigate, then `rwv sync-to --continue` or
   `rwv abort`.
-- *missing-replay-exclusion* — the project repo doesn't have `rwv.lock merge=ours`
-  in `.gitattributes`. Run `rwv doctor --fix`.
+- *missing-replay-exclusion* — the project repo doesn't have
+  `rwv.lock merge=rwv-ours` in `.gitattributes` (or still carries the
+  legacy `merge=ours` spelling). Run `rwv doctor --fix`.
 - *bare sync-to in primary weave* — `rwv sync-to` (no target) requires a
   workweave context. Provide an explicit `<target>` or run from inside a workweave.
 - *lock-freshness precondition failed (stale lock)* — a repo's lock↔HEAD relation

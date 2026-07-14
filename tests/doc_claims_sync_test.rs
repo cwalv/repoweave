@@ -129,7 +129,7 @@ fn make_shared(parent: &Path) -> (Workspace, Workspace, String) {
     init_repo(&primary_project);
     std::fs::write(
         primary_project.join(".gitattributes"),
-        "rwv.lock merge=ours\n",
+        "rwv.lock merge=rwv-ours\n",
     )
     .unwrap();
     write_manifest(&primary_project, &[(SERVER_PATH, SERVER_URL)]);
@@ -283,7 +283,7 @@ fn sync_json_parallel_emits_ndjson_records_with_embedded_schema() {
     init_repo(&primary_project);
     std::fs::write(
         primary_project.join(".gitattributes"),
-        "rwv.lock merge=ours\n",
+        "rwv.lock merge=rwv-ours\n",
     )
     .unwrap();
     let manifest_pairs: Vec<(&str, String)> = repo_paths

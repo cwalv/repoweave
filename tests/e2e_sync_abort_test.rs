@@ -134,8 +134,12 @@ fn make_locked_workspace(parent: &Path, name: &str) -> (Workspace, String) {
     init_repo(&project_dir);
     // Mirror what `rwv init` writes: `.gitattributes` so `rwv sync`'s
     // native rebase keeps source's rwv.lock through the replay (the
-    // `merge=ours` driver).
-    std::fs::write(project_dir.join(".gitattributes"), "rwv.lock merge=ours\n").unwrap();
+    // `merge=rwv-ours` driver).
+    std::fs::write(
+        project_dir.join(".gitattributes"),
+        "rwv.lock merge=rwv-ours\n",
+    )
+    .unwrap();
     write_manifest(&project_dir, &[(SERVER_PATH, SERVER_URL)], None);
     write_lock(&project_dir, &[(SERVER_PATH, SERVER_URL, &sha)]);
     git(
@@ -722,7 +726,7 @@ fn sync_refusal_message_suggests_rebase_strategy() {
 
 /// Backward sync that ff refuses lands cleanly under `--strategy rebase`:
 /// CWD's lock-only divergence is replayed onto source's tip — the
-/// `.gitattributes rwv.lock merge=ours` contract plus native `git rebase`
+/// `.gitattributes rwv.lock merge=rwv-ours` contract plus native `git rebase`
 /// with `--force-rebase --no-keep-empty --empty=drop` makes the lock-only
 /// commit become empty (or it was already empty via `--allow-empty`) and
 /// git drops it. Phase 3 then leaves the lock consistent with manifest

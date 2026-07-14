@@ -1463,3 +1463,90 @@ fn resolve_versions_roundtrip_raw_then_resolved_yaml_shape() {
         [&repoweave::manifest::RepoPath::new(repo_path).expect("known-safe literal")];
     assert_eq!(entry.version, repoweave::vcs::RawRevisionId::new("v1.0.0"));
 }
+
+// ---------------------------------------------------------------------------
+// Regression: `rwv lock` succeeds over a conflict-markered rwv.lock
+// (fo-yk0rlj bug 2)
+// ---------------------------------------------------------------------------
+//
+// Before the fix, `rwv lock` loaded the project via `Project::from_dir`,
+// which hard-parses `rwv.lock` and errors on git conflict markers
+// (`<<<<<<<`, `=======`, `>>>>>>>`). That turned the naive recovery
+// sequence for a lock-only rebase conflict — `rwv lock; git add
+// rwv.lock; git rebase --continue` — into a footgun: `rwv lock` failed,
+// the operator kept the markered file, `git add + git rebase --continue`
+// then silently committed the markers into the lock.
+//
+// Fix: `rwv lock` uses `Project::from_dir_skip_lock`, the parse-free
+// loader — `rwv.lock` is derived state and must be regenerable OVER an
+// arbitrarily corrupt existing file.
+#[test]
+fn lock_succeeds_over_conflict_markered_rwv_lock() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = make_workspace(tmp.path(), "ws");
+
+    let repo_path = "github/acme/server";
+    let sha = init_git_repo(&root.join(repo_path));
+
+    let project_dir = root.join("projects").join("my-app");
+    write_manifest(
+        &project_dir,
+        &[(repo_path, "https://github.com/acme/server.git")],
+    );
+
+    // Plant a conflict-markered rwv.lock — the state you'd see after a
+    // `git rebase` stopped on rwv.lock and left the file with 3-way
+    // merge markers in it. Strict YAML parsing dies on the marker
+    // lines; `Project::from_dir_skip_lock` bypasses that.
+    let markered = format!(
+        "repositories:\n\
+         <<<<<<< HEAD\n\
+           {path}:\n\
+             type: git\n\
+             url: https://github.com/acme/server.git\n\
+             version: cafefacecafefacecafefacecafefacecafeface\n\
+         =======\n\
+           {path}:\n\
+             type: git\n\
+             url: https://github.com/acme/server.git\n\
+             version: deadbeefdeadbeefdeadbeefdeadbeefdeadbeef\n\
+         >>>>>>> upstream\n",
+        path = repo_path,
+    );
+    let lock_path = project_dir.join("rwv.lock");
+    std::fs::write(&lock_path, &markered).unwrap();
+
+    // Sanity: the current file really is unparseable via the strict loader.
+    // (If this ever starts to succeed the regression is meaningless.)
+    assert!(
+        repoweave::manifest::LockFile::from_path(&lock_path).is_err(),
+        "test precondition: markered rwv.lock must fail strict parse"
+    );
+
+    // The actual regression: `rwv lock` must succeed and rewrite the file.
+    rwv_cmd()
+        .arg("lock")
+        .current_dir(&project_dir)
+        .assert()
+        .success();
+
+    // Post-condition: no conflict markers remain, and the fresh lock
+    // pins the manifest repo at its actual HEAD.
+    let regen = std::fs::read_to_string(&lock_path).unwrap();
+    assert!(
+        !regen.contains("<<<<<<<") && !regen.contains(">>>>>>>") && !regen.contains("======="),
+        "regenerated rwv.lock must not contain conflict markers, got:\n{regen}"
+    );
+    assert!(
+        regen.contains(&sha),
+        "regenerated rwv.lock must pin the manifest repo at HEAD ({sha}), got:\n{regen}"
+    );
+
+    // And the strict loader now parses it — the write really produced
+    // clean YAML, not something merely "not conflict-markered".
+    let reparsed = repoweave::manifest::LockFile::from_path(&lock_path)
+        .expect("strict parse must succeed post-regeneration");
+    let entry = &reparsed.repo_map()
+        [&repoweave::manifest::RepoPath::new(repo_path).expect("known-safe literal")];
+    assert_eq!(entry.version.as_str(), &sha);
+}

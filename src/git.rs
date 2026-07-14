@@ -36,6 +36,273 @@ pub(crate) fn git_command() -> Command {
     cmd
 }
 
+// ---------------------------------------------------------------------------
+// Replay-exclusion (rwv.lock) — merge-driver constants
+// ---------------------------------------------------------------------------
+//
+// git's per-path merge driver mechanism has two halves:
+//
+//   1. `.gitattributes` line: `<path> merge=<driver-name>` — assigns a driver
+//      by name to the path. This lives in the tree and travels with commits.
+//   2. `merge.<driver-name>.driver` config: the shell command git runs to
+//      resolve the merge. If the driver name is not defined in *any* config
+//      git can see (system/global/local/inline), git falls back to a normal
+//      3-way merge — so a `.gitattributes` assignment with no matching
+//      `merge.<name>.driver` entry does NOTHING useful for `rwv.lock`.
+//
+// The driver name is a namespaced key — `rwv-ours` rather than the
+// gitattributes(5) example name `ours`. Namespacing pairs the assignment
+// and the definition: only rwv writes `merge=rwv-ours`, only rwv defines
+// `merge.rwv-ours.driver`. Two accidental collisions the plain `ours` name
+// created are closed by this choice:
+//
+//   - A third-party repo with an unrelated `<somepath> merge=ours` line
+//     would previously get rwv's inline `merge.ours.driver=true` applied to
+//     it during any rwv-driven rebase, silently keeping the target-side
+//     version. `rwv-ours` never collides that way.
+//   - A user's global `merge.ours.driver=true` would previously apply to
+//     `rwv.lock merge=ours` when the operator ran bare `git rebase
+//     --continue` (bug 1). Under `rwv-ours` an unrelated global cannot
+//     activate the driver by accident.
+//
+// The constants are declared here so the inline `-c` flags in
+// [`GitVcs::rebase`], the `.gitattributes` writer in
+// [`GitVcs::set_replay_exclusion`], the readers in
+// [`GitVcs::has_replay_exclusion`] and
+// [`GitVcs::has_committed_replay_exclusion`], the invariant in
+// `sync::verify_replay_exclusion_invariant`, and the doctor `--fix`
+// migrator all reference a single source of truth for the name.
+
+/// Merge-driver name assigned to `rwv.lock` in `.gitattributes` and defined
+/// via `merge.<name>.driver` config.
+pub const RWV_MERGE_DRIVER_NAME: &str = "rwv-ours";
+
+/// `merge.<name>.driver` config key that defines the driver's shell command.
+/// Setting this to `true` (the shell command `/bin/true`, i.e. no-op success)
+/// tells git "keep the current (target-side) content unchanged when the
+/// assigned path would otherwise 3-way merge".
+pub const RWV_MERGE_DRIVER_CONFIG_KEY: &str = "merge.rwv-ours.driver";
+
+/// `merge.<name>.name` config key — human-readable description git shows in
+/// `git config --list` and diagnostic output. Not functional; paired with the
+/// `.driver` entry so an operator inspecting config sees why the entry exists.
+pub const RWV_MERGE_DRIVER_NAME_KEY: &str = "merge.rwv-ours.name";
+
+/// Human-readable description written to [`RWV_MERGE_DRIVER_NAME_KEY`].
+pub const RWV_MERGE_DRIVER_NAME_DESC: &str = "keep ours during replay (rwv replay-exclusion)";
+
+/// Legacy driver name from before the fo-yk0rlj rename. Read-only: the
+/// migrator in [`GitVcs::set_replay_exclusion`] rewrites `merge=ours` lines
+/// to the new name, and `sync::verify_replay_exclusion_invariant` produces
+/// a targeted "run rwv doctor --fix" bail when it finds the legacy line
+/// committed in `.gitattributes`.
+pub const LEGACY_RWV_MERGE_DRIVER_NAME: &str = "ours";
+
+/// Build the `.gitattributes` line that assigns the rwv driver to `path`.
+///
+/// Callers compare against this via `.trim() == needle` so leading/trailing
+/// whitespace variations in a hand-edited `.gitattributes` don't defeat the
+/// idempotence check.
+pub fn rwv_replay_exclusion_needle(path_str: &str) -> String {
+    format!("{path_str} merge={RWV_MERGE_DRIVER_NAME}")
+}
+
+/// Legacy needle (`<path> merge=ours`) recognised by the migrator so
+/// `doctor --fix` and `set_replay_exclusion` can rewrite it in place.
+pub fn legacy_rwv_replay_exclusion_needle(path_str: &str) -> String {
+    format!("{path_str} merge={LEGACY_RWV_MERGE_DRIVER_NAME}")
+}
+
+/// Plant the durable repo-local `merge.rwv-ours.*` config that keeps the
+/// exclusion working during bare `git rebase --continue` (the resume path
+/// git itself advertises in conflict stderr). Idempotent — repeated writes
+/// are no-ops.
+///
+/// rwv's own rebase invocations pass the definition inline as `-c` flags
+/// (see [`GitVcs::rebase`]) so they don't depend on config state. But when
+/// a rebase stops on a genuine non-lock conflict and the operator resumes
+/// with plain `git rebase --continue`, that new git process has no inline
+/// `-c` — without the durable config, every subsequent lock-only pick would
+/// 3-way merge on `rwv.lock` and conflict.
+///
+/// Worktrees share `.git/config` with the canonical repo, so a single plant
+/// covers every workweave checkout — `git config` resolves the right file
+/// itself. Called from `sync::verify_replay_exclusion_invariant` (self-heals
+/// before every rebase-strategy sync) and from `rwv doctor --fix`.
+pub fn plant_rwv_merge_driver_config(repo: &Path) -> Result<(), VcsError> {
+    let driver_status = git_command()
+        .args(["config", RWV_MERGE_DRIVER_CONFIG_KEY, "true"])
+        .current_dir(repo)
+        .output()
+        .map_err(|e| VcsError::Io {
+            ctx: format!(
+                "failed to spawn git config {RWV_MERGE_DRIVER_CONFIG_KEY} in {}",
+                repo.display()
+            ),
+            source: e,
+        })?;
+    if !driver_status.status.success() {
+        let stderr = String::from_utf8_lossy(&driver_status.stderr).into_owned();
+        return Err(VcsError::CommandFailed {
+            args: vec![
+                "config".to_owned(),
+                RWV_MERGE_DRIVER_CONFIG_KEY.to_owned(),
+                "true".to_owned(),
+            ],
+            repo: repo.to_path_buf(),
+            stderr,
+        });
+    }
+
+    let name_status = git_command()
+        .args([
+            "config",
+            RWV_MERGE_DRIVER_NAME_KEY,
+            RWV_MERGE_DRIVER_NAME_DESC,
+        ])
+        .current_dir(repo)
+        .output()
+        .map_err(|e| VcsError::Io {
+            ctx: format!(
+                "failed to spawn git config {RWV_MERGE_DRIVER_NAME_KEY} in {}",
+                repo.display()
+            ),
+            source: e,
+        })?;
+    if !name_status.status.success() {
+        let stderr = String::from_utf8_lossy(&name_status.stderr).into_owned();
+        return Err(VcsError::CommandFailed {
+            args: vec![
+                "config".to_owned(),
+                RWV_MERGE_DRIVER_NAME_KEY.to_owned(),
+                RWV_MERGE_DRIVER_NAME_DESC.to_owned(),
+            ],
+            repo: repo.to_path_buf(),
+            stderr,
+        });
+    }
+    Ok(())
+}
+
+/// Read `.gitattributes` from the committed tree at HEAD, if any.
+///
+/// Returns `Ok(None)` when the file isn't tracked at HEAD (fresh repo, or
+/// `.gitattributes` was never added) — that's a definitive "no committed
+/// content", not an error. Returns `Ok(Some(contents))` when the file is
+/// tracked. Used by the sync precondition and doctor: they must consult
+/// the committed form because a working-tree-only `.gitattributes` doesn't
+/// survive a rebase and won't help subsequent operators.
+pub fn read_committed_gitattributes(repo: &Path) -> Result<Option<String>, VcsError> {
+    let output = git_command()
+        .args(["show", "HEAD:.gitattributes"])
+        .current_dir(repo)
+        .output()
+        .map_err(|e| VcsError::Io {
+            ctx: format!(
+                "failed to spawn git show HEAD:.gitattributes in {}",
+                repo.display()
+            ),
+            source: e,
+        })?;
+    if !output.status.success() {
+        return Ok(None);
+    }
+    Ok(Some(String::from_utf8_lossy(&output.stdout).into_owned()))
+}
+
+/// `true` when the committed `.gitattributes` at HEAD still carries the
+/// **legacy** `<path> merge=ours` line (the fo-yk0rlj rename replaced it
+/// with `merge=rwv-ours`). Used by `sync::verify_replay_exclusion_invariant`
+/// so its bail message can direct the operator at `rwv doctor --fix` for
+/// migration rather than the generic "add the line" fix.
+pub fn has_committed_legacy_replay_exclusion(repo: &Path, path: &Path) -> Result<bool, VcsError> {
+    let path_str = path.to_str().ok_or_else(|| VcsError::Io {
+        ctx: format!(
+            "replay-exclusion path {} is not valid UTF-8",
+            path.display()
+        ),
+        source: std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "non-utf8 replay-exclusion path",
+        ),
+    })?;
+    let legacy = legacy_rwv_replay_exclusion_needle(path_str);
+    let content = match read_committed_gitattributes(repo)? {
+        Some(c) => c,
+        None => return Ok(false),
+    };
+    Ok(content.lines().any(|line| line.trim() == legacy))
+}
+
+/// `true` when the on-disk (working-tree) `.gitattributes` carries the
+/// **legacy** `<path> merge=ours` line. Used by `rwv doctor` to detect
+/// projects still on the legacy needle so `--fix` can migrate them.
+pub fn has_working_tree_legacy_replay_exclusion(
+    repo: &Path,
+    path: &Path,
+) -> Result<bool, VcsError> {
+    let attrs_path = repo.join(".gitattributes");
+    let path_str = path.to_str().ok_or_else(|| VcsError::Io {
+        ctx: format!(
+            "replay-exclusion path {} is not valid UTF-8",
+            path.display()
+        ),
+        source: std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "non-utf8 replay-exclusion path",
+        ),
+    })?;
+    let legacy = legacy_rwv_replay_exclusion_needle(path_str);
+    let contents = match std::fs::read_to_string(&attrs_path) {
+        Ok(s) => s,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(e) => {
+            return Err(VcsError::Io {
+                ctx: format!("failed to read {}", attrs_path.display()),
+                source: e,
+            })
+        }
+    };
+    Ok(contents.lines().any(|line| line.trim() == legacy))
+}
+
+/// `true` when `merge.rwv-ours.driver` is set (to anything) in any config
+/// scope git can see for `repo`. Used by `rwv doctor` to detect projects
+/// that haven't had the durable plant run yet.
+pub fn has_rwv_merge_driver_config(repo: &Path) -> Result<bool, VcsError> {
+    let output = git_command()
+        .args(["config", "--get", RWV_MERGE_DRIVER_CONFIG_KEY])
+        .current_dir(repo)
+        .output()
+        .map_err(|e| VcsError::Io {
+            ctx: format!(
+                "failed to spawn git config --get {RWV_MERGE_DRIVER_CONFIG_KEY} in {}",
+                repo.display()
+            ),
+            source: e,
+        })?;
+    // `git config --get` exits 0 when the key is set, 1 when unset. Other
+    // non-zero exits (invalid key syntax, config file unreadable) are rare
+    // enough that we surface them as errors rather than silently treating
+    // as "unset".
+    if output.status.success() {
+        return Ok(true);
+    }
+    if output.status.code() == Some(1) {
+        return Ok(false);
+    }
+    let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+    Err(VcsError::CommandFailed {
+        args: vec![
+            "config".to_owned(),
+            "--get".to_owned(),
+            RWV_MERGE_DRIVER_CONFIG_KEY.to_owned(),
+        ],
+        repo: repo.to_path_buf(),
+        stderr,
+    })
+}
+
 /// Git-based version control operations.
 pub struct GitVcs;
 
@@ -659,13 +926,19 @@ impl Vcs for GitVcs {
         onto: &ResolvedRevisionId,
         upstream: &ResolvedRevisionId,
     ) -> Result<(), VcsError> {
-        // Wire up the `ours` merge driver inline (no persistent
-        // `.git/config` change) so the `merge=ours` lines written by
+        // Wire up the `rwv-ours` merge driver inline (no persistent
+        // `.git/config` change) so the `merge=rwv-ours` lines written by
         // [`set_replay_exclusion`] resolve to "keep the rebase-target's
         // version" — `driver = true` is the shell command `true`, which
         // succeeds without modifying the merged file. Doing this per
-        // invocation (rather than at `rwv init` time) means the driver is
-        // available on every clone without per-clone setup.
+        // invocation (rather than only via durable config) means the
+        // driver is available even when someone runs rwv against a repo
+        // whose local config hasn't been planted yet (fresh clone before
+        // doctor --fix, or before verify_replay_exclusion_invariant's
+        // self-heal has run for the first time). The durable plant in
+        // `plant_rwv_merge_driver_config` is what keeps the driver defined
+        // across a bare `git rebase --continue` — see that function for
+        // the rationale.
         //
         // [`set_replay_exclusion`]: Vcs::set_replay_exclusion
         // `git rebase --onto <onto> <upstream>` replays commits in
@@ -675,7 +948,7 @@ impl Vcs for GitVcs {
         // pair with conflict_resolution_hint(ConflictOp::Rebase).
         // `--empty=drop`: drop commits that become empty after rebase. This
         // is what makes lock-only commits silently disappear when the
-        // `merge=ours` driver on rwv.lock (configured via
+        // `merge=rwv-ours` driver on rwv.lock (configured via
         // [`set_replay_exclusion`]) leaves nothing for the commit to record.
         //
         // `--no-keep-empty`: also drop commits that were originally empty
@@ -691,12 +964,14 @@ impl Vcs for GitVcs {
         // invariant true after every rebase regardless of which side moved.
         //
         // [`set_replay_exclusion`]: Vcs::set_replay_exclusion
+        let driver_name_flag = format!("{RWV_MERGE_DRIVER_NAME_KEY}={RWV_MERGE_DRIVER_NAME_DESC}");
+        let driver_flag = format!("{RWV_MERGE_DRIVER_CONFIG_KEY}=true");
         let output = git_command()
             .args([
                 "-c",
-                "merge.ours.name=keep ours during replay (rwv replay-exclusion)",
+                driver_name_flag.as_str(),
                 "-c",
-                "merge.ours.driver=true",
+                driver_flag.as_str(),
                 "rebase",
                 "--force-rebase",
                 "--no-keep-empty",
@@ -757,7 +1032,8 @@ impl Vcs for GitVcs {
                 "non-utf8 replay-exclusion path",
             ),
         })?;
-        let needle = format!("{path_str} merge=ours");
+        let needle = rwv_replay_exclusion_needle(path_str);
+        let legacy_needle = legacy_rwv_replay_exclusion_needle(path_str);
 
         let existing = match std::fs::read_to_string(&attrs_path) {
             Ok(s) => s,
@@ -770,19 +1046,65 @@ impl Vcs for GitVcs {
             }
         };
 
-        if existing.lines().any(|line| line.trim() == needle) {
+        // Migration path (fo-yk0rlj): if the file still carries the legacy
+        // `<path> merge=ours` line, rewrite it in place to the namespaced
+        // `<path> merge=rwv-ours` name. Rewrite — don't append alongside —
+        // because two conflicting `merge=` assignments on the same path in
+        // the same .gitattributes file are ill-defined (last-wins, in
+        // reading order), and leaving the old line in place would activate
+        // any user's global `merge.ours.driver` on rwv.lock during bare
+        // `git rebase --continue` (the exact hazard the rename closes).
+        // Detection is trim-only so a hand-edited file with a trailing
+        // space or CRLF still migrates.
+        let has_legacy = existing.lines().any(|line| line.trim() == legacy_needle);
+        let has_new = existing.lines().any(|line| line.trim() == needle);
+        if has_new && !has_legacy {
             return Ok(());
         }
 
-        // Append, preserving any existing entries. Ensure exactly one
-        // trailing newline before the new line so concatenation is clean
-        // whether the file ended with a newline or not.
-        let mut next = existing;
-        if !next.is_empty() && !next.ends_with('\n') {
+        let (mut next, migrated) = if has_legacy {
+            let mut out = String::with_capacity(existing.len());
+            let mut wrote_new = has_new;
+            for line in existing.split_inclusive('\n') {
+                // `split_inclusive('\n')` preserves the trailing newline
+                // (and yields a final line without one when the file
+                // doesn't end in `\n`). Compare the trimmed form so a
+                // trailing `\r` (CRLF) or stray whitespace on the legacy
+                // line still matches.
+                let bare = line.trim_end_matches(['\n', '\r']);
+                if bare.trim() == legacy_needle {
+                    if !wrote_new {
+                        // Preserve the caller's ending style: if the
+                        // legacy line had a trailing newline, so does the
+                        // replacement.
+                        out.push_str(&needle);
+                        if line.ends_with('\n') {
+                            out.push('\n');
+                        }
+                        wrote_new = true;
+                    }
+                    // Drop this line (either replaced above or dropped as
+                    // a duplicate of the already-present new needle).
+                } else {
+                    out.push_str(line);
+                }
+            }
+            (out, true)
+        } else {
+            (existing, false)
+        };
+
+        // Append the new needle if it wasn't planted via migration and
+        // wasn't already present. Ensure exactly one trailing newline
+        // before the new line so concatenation is clean whether the file
+        // ended with a newline or not.
+        if !migrated && !has_new {
+            if !next.is_empty() && !next.ends_with('\n') {
+                next.push('\n');
+            }
+            next.push_str(&needle);
             next.push('\n');
         }
-        next.push_str(&needle);
-        next.push('\n');
 
         std::fs::write(&attrs_path, next).map_err(|e| VcsError::Io {
             ctx: format!("failed to write {}", attrs_path.display()),
@@ -803,7 +1125,7 @@ impl Vcs for GitVcs {
                 "non-utf8 replay-exclusion path",
             ),
         })?;
-        let needle = format!("{path_str} merge=ours");
+        let needle = rwv_replay_exclusion_needle(path_str);
 
         let contents = match std::fs::read_to_string(&attrs_path) {
             Ok(s) => s,
@@ -830,28 +1152,11 @@ impl Vcs for GitVcs {
                 "non-utf8 replay-exclusion path",
             ),
         })?;
-        let needle = format!("{path_str} merge=ours");
-
-        // `git show HEAD:.gitattributes` — if `.gitattributes` is not
-        // committed at HEAD, git exits non-zero and we treat the line as
-        // absent (the precondition concern is "is the line in the committed
-        // tree?", so a missing file is a definitive No).
-        let output = git_command()
-            .args(["show", "HEAD:.gitattributes"])
-            .current_dir(repo)
-            .output()
-            .map_err(|e| VcsError::Io {
-                ctx: format!(
-                    "failed to spawn git show HEAD:.gitattributes in {}",
-                    repo.display()
-                ),
-                source: e,
-            })?;
-
-        if !output.status.success() {
-            return Ok(false);
-        }
-        let content = String::from_utf8_lossy(&output.stdout);
+        let needle = rwv_replay_exclusion_needle(path_str);
+        let content = match read_committed_gitattributes(repo)? {
+            Some(c) => c,
+            None => return Ok(false),
+        };
         Ok(content.lines().any(|line| line.trim() == needle))
     }
 

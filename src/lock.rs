@@ -272,7 +272,16 @@ pub fn lock(
         .active_path()
         .join("projects")
         .join(project_name.as_str());
-    let project = Project::from_dir(&project_dir)
+    // Use the parse-free loader: `rwv.lock` is derived state and must be
+    // regenerable *over* a corrupted or conflict-markered existing lock.
+    // `from_dir` hard-parses `rwv.lock` and errors on conflict markers,
+    // which turned the naive recovery sequence (`rwv lock; git add; git
+    // rebase --continue`) into a footgun that silently committed the
+    // markers — see fo-yk0rlj bug 2. `lock()` never reads `project.lock`
+    // (it regenerates from manifest tips and reads the old lock
+    // tolerantly further down via `.ok()`), so skipping the parse
+    // costs nothing and closes the recovery gap.
+    let project = Project::from_dir_skip_lock(&project_dir)
         .with_context(|| format!("failed to load project '{}'", project_name))?;
 
     let workweave_pair = workweave_name.as_ref().zip(workweave_dir.as_deref());

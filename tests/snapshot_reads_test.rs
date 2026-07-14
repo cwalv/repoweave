@@ -143,7 +143,11 @@ fn sync_reads_committed_lock_not_working_tree() {
     let lib_url = format!("file://{}", lib_path.display());
     write_manifest(&source_proj, &[("lib", &lib_url)]);
     // Write .gitattributes for replay exclusion.
-    std::fs::write(source_proj.join(".gitattributes"), "rwv.lock merge=ours\n").unwrap();
+    std::fs::write(
+        source_proj.join(".gitattributes"),
+        "rwv.lock merge=rwv-ours\n",
+    )
+    .unwrap();
     git(&["add", "rwv.yaml", ".gitattributes"], &source_proj);
     git(&["commit", "-m", "chore: manifest + attrs"], &source_proj);
 
@@ -243,7 +247,11 @@ fn sync_result_is_source_as_of_t0_not_working_tree_mutation() {
     init_repo(&source_proj);
 
     write_manifest(&source_proj, &[("lib", &lib_url)]);
-    std::fs::write(source_proj.join(".gitattributes"), "rwv.lock merge=ours\n").unwrap();
+    std::fs::write(
+        source_proj.join(".gitattributes"),
+        "rwv.lock merge=rwv-ours\n",
+    )
+    .unwrap();
     git(&["add", "rwv.yaml", ".gitattributes"], &source_proj);
     git(&["commit", "-m", "chore: manifest + attrs"], &source_proj);
 

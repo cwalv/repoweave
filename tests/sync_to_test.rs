@@ -143,7 +143,7 @@ fn make_shared_workspaces(parent: &Path) -> (Workspace, Workspace, String) {
     init_repo(&primary_project);
     std::fs::write(
         primary_project.join(".gitattributes"),
-        "rwv.lock merge=ours\n",
+        "rwv.lock merge=rwv-ours\n",
     )
     .unwrap();
     write_manifest(&primary_project, &[(SERVER_PATH, SERVER_URL)]);
@@ -267,7 +267,7 @@ fn sync_to_ff_clean_advances_target() {
 //
 // We use non-lock project commits (actual files in the project repo) because
 // lock-only commits are correctly dropped during Phase 1' rebase — they become
-// empty patches via the `rwv.lock merge=ours` mechanism. Non-lock commits survive
+// empty patches via the `rwv.lock merge=rwv-ours` mechanism. Non-lock commits survive
 // and their ordering in the history is the meaningful signal.
 // ---------------------------------------------------------------------------
 
@@ -489,7 +489,7 @@ fn sync_to_auto_relock_commit_appears_after_rebase() {
     //   Phase 2 must REBASE ww's server onto primary_c2 (divergent, not ff).
     //   The rebased server gets a NEW sha (different from primary_c2).
     //   Phase 1' rebases ww's project onto primary's tip (lock=primary_c2).
-    //   The lock commit is dropped (merge=ours), "feat: ww unique commit" replays.
+    //   The lock commit is dropped (merge=rwv-ours), "feat: ww unique commit" replays.
     //   After Phase 1', lock = primary_c2 (from rebase base), but server = rebased sha.
     //   Phase 3 detects the mismatch and emits "lock: auto-relock after sync from...".
     let ww_c2 = make_commit(
@@ -944,7 +944,7 @@ fn make_nested_workweaves(parent_tmp: &Path) -> (Workspace, PathBuf, PathBuf, Pa
     init_repo(&primary_project);
     std::fs::write(
         primary_project.join(".gitattributes"),
-        "rwv.lock merge=ours\n",
+        "rwv.lock merge=rwv-ours\n",
     )
     .unwrap();
     write_manifest(&primary_project, &[(SERVER_PATH, SERVER_URL)]);

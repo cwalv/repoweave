@@ -624,7 +624,8 @@ rwv sync --json -j 8 | jq -c 'select(.kind == "failed")'
   couldn't merge cleanly. Resolve manually in the repo, then commit and
   re-run.
 - *missing-replay-exclusion* surfaced via `doctor` — the project repo
-  doesn't have `rwv.lock merge=ours` in `.gitattributes`; sync's native
-  rebase would carry user lock-edits through. Run `rwv doctor --fix`.
+  doesn't have `rwv.lock merge=rwv-ours` in `.gitattributes` (or still
+  carries the legacy `merge=ours` spelling); sync's native rebase would
+  carry user lock-edits through. Run `rwv doctor --fix`.
 - *network-error* — a remote fetch failed. Retry after checking
   connectivity.

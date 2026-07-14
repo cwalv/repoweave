@@ -168,7 +168,11 @@ fn make_primary(parent: &Path) -> Primary {
     let project_dir = ws.join("projects").join(PROJECT);
     init_repo(&project_dir, "PLACEHOLDER", "p\n");
     // `rwv init` writes this so sync's native rebase keeps source's rwv.lock.
-    std::fs::write(project_dir.join(".gitattributes"), "rwv.lock merge=ours\n").unwrap();
+    std::fs::write(
+        project_dir.join(".gitattributes"),
+        "rwv.lock merge=rwv-ours\n",
+    )
+    .unwrap();
 
     let manifest = format!(
         "repositories:\n\

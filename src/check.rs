@@ -67,10 +67,14 @@ pub enum CheckViolation {
         kind: WorkingTreeDriftKind,
     },
 
-    /// A project repo is missing the `rwv.lock merge=ours` entry in
+    /// A project repo is missing the `rwv.lock merge=rwv-ours` entry in
     /// `.gitattributes`. Without it, `rwv sync`'s native rebase would carry
     /// user lock-edits through the merge inputs instead of letting Phase 3
-    /// regenerate them. Auto-fixable: append the line.
+    /// regenerate them. Auto-fixable: append the line, or (if the legacy
+    /// `merge=ours` spelling is present in `.gitattributes`) migrate it in
+    /// place and commit. The committed-form check is the one sync's
+    /// invariant reads; the migration commit is what makes it visible on
+    /// the next rebase.
     MissingReplayExclusion { project: ProjectName },
 
     /// A project's `rwv.yaml` uses the legacy `role: primary` spelling
@@ -1142,6 +1146,133 @@ pub fn fix_dangling_parent(marker_dir: &Path, primary: &Path) -> anyhow::Result<
         )
     })?;
     Ok(true)
+}
+
+// ---------------------------------------------------------------------------
+// Replay-exclusion (.gitattributes) migration commit helper
+// ---------------------------------------------------------------------------
+
+/// Result of an rwv-authored .gitattributes commit attempt.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum CommitOutcome {
+    /// The migration was staged and committed.
+    Committed,
+    /// The project repo had unrelated staged changes; the migration was
+    /// left in the working tree unstaged (or with only `.gitattributes`
+    /// staged) so the operator can review before committing. Skipping is
+    /// the safe behaviour: never bundle a user's WIP with an rwv-authored
+    /// fix. Bead fo-yk0rlj records this exception explicitly.
+    SkippedUnrelatedStaged,
+    /// The migration produced no diff (e.g. race — the file was already
+    /// on the new spelling by the time we tried to commit). Idempotent no-op.
+    NothingToCommit,
+}
+
+/// Stage and commit the `.gitattributes` change written by
+/// [`Vcs::set_replay_exclusion`] during the fo-yk0rlj legacy-name migration.
+///
+/// Refuses to commit when the project repo has any staged change other than
+/// `.gitattributes` — returns [`CommitOutcome::SkippedUnrelatedStaged`] and
+/// leaves the working-tree migration in place. This mirrors
+/// `lock::commit_lock_file`'s bundling refusal, adapted for `.gitattributes`.
+///
+/// Commit message follows the same convention as
+/// `chore: add rwv.lock replay-exclusion` mentioned in
+/// `sync::verify_replay_exclusion_invariant`'s fallback hint so the two
+/// forms of the fix (auto and hand-run) sit on adjacent commits with
+/// consistent framing.
+pub(crate) fn commit_replay_exclusion_migration(
+    project_dir: &Path,
+) -> anyhow::Result<CommitOutcome> {
+    use crate::git::git_command;
+
+    // Check for unrelated staged content BEFORE we touch the index.
+    // `git status --porcelain` porcelain-v1 lines are `XY path` where X is
+    // the index status and Y is the worktree status. A staged unrelated
+    // file has X != ' ' and path != ".gitattributes". Untracked files
+    // (`??`) don't count — they've never been staged.
+    let status_out = git_command()
+        .args(["status", "--porcelain", "--untracked-files=no"])
+        .current_dir(project_dir)
+        .output()
+        .with_context(|| {
+            format!(
+                "failed to run git status --porcelain in {}",
+                project_dir.display()
+            )
+        })?;
+    if !status_out.status.success() {
+        let stderr = String::from_utf8_lossy(&status_out.stderr);
+        anyhow::bail!("git status failed: {}", stderr.trim());
+    }
+    let status_str = String::from_utf8_lossy(&status_out.stdout);
+    let has_other_staged = status_str.lines().any(|line| {
+        // Porcelain v1: 2-char status column, one space, then path.
+        let bytes = line.as_bytes();
+        if bytes.len() < 3 {
+            return false;
+        }
+        let index_status = bytes[0];
+        if index_status == b' ' || index_status == b'?' {
+            return false;
+        }
+        // The path begins at byte 3. A rename appears as `R  old -> new`;
+        // detecting only the "new" name after `-> ` is enough for the
+        // bundling check since renames touching non-.gitattributes count
+        // as unrelated staged work regardless of the old name.
+        let path_part = line.get(3..).unwrap_or("").trim();
+        let path = match path_part.split_once(" -> ") {
+            Some((_, new_name)) => new_name,
+            None => path_part,
+        };
+        path != ".gitattributes"
+    });
+    if has_other_staged {
+        return Ok(CommitOutcome::SkippedUnrelatedStaged);
+    }
+
+    // Stage the migration.
+    let add_out = git_command()
+        .args(["add", ".gitattributes"])
+        .current_dir(project_dir)
+        .output()
+        .with_context(|| format!("failed to run git add in {}", project_dir.display()))?;
+    if !add_out.status.success() {
+        let stderr = String::from_utf8_lossy(&add_out.stderr);
+        anyhow::bail!("git add .gitattributes failed: {}", stderr.trim());
+    }
+
+    // `git diff --cached --quiet` exits 0 when nothing is staged.
+    let nothing_staged = git_command()
+        .args(["diff", "--cached", "--quiet"])
+        .current_dir(project_dir)
+        .output()
+        .with_context(|| {
+            format!(
+                "failed to check staged changes in {}",
+                project_dir.display()
+            )
+        })?
+        .status
+        .success();
+    if nothing_staged {
+        return Ok(CommitOutcome::NothingToCommit);
+    }
+
+    let commit_out = git_command()
+        .args([
+            "commit",
+            "-m",
+            "chore: migrate rwv.lock merge=ours → merge=rwv-ours (rwv doctor --fix)",
+        ])
+        .current_dir(project_dir)
+        .output()
+        .with_context(|| format!("failed to run git commit in {}", project_dir.display()))?;
+    if !commit_out.status.success() {
+        let stderr = String::from_utf8_lossy(&commit_out.stderr);
+        anyhow::bail!("git commit failed: {}", stderr.trim());
+    }
+    Ok(CommitOutcome::Committed)
 }
 
 // ---------------------------------------------------------------------------
@@ -2502,7 +2633,7 @@ pub fn violations_to_issues(violations: Vec<CheckViolation>) -> Vec<Issue> {
                 CheckViolation::MissingReplayExclusion { project } => (
                     crate::integration::Severity::Warning,
                     format!(
-                        "{project}: project repo missing `rwv.lock merge=ours` in .gitattributes \
+                        "{project}: project repo missing `rwv.lock merge=rwv-ours` in .gitattributes \
                          (run `rwv doctor --fix` to add)"
                     ),
                 ),
@@ -4136,24 +4267,83 @@ pub fn run_check(
     }
 
     // Replay-exclusion check: each project repo should carry
-    // `rwv.lock merge=ours` in `.gitattributes`. Older projects don't
-    // have it; `--fix` writes the line in place (idempotent — re-running
-    // on a fixed repo is a no-op).
+    // `rwv.lock merge=rwv-ours` in `.gitattributes` AND the paired
+    // `merge.rwv-ours.driver=true` durable config. Older projects
+    // don't have either; the fo-yk0rlj rename also means projects
+    // may carry the LEGACY `rwv.lock merge=ours` line, which
+    // `--fix` migrates in place. `--fix` writes the line in place
+    // (idempotent — re-running on a fixed repo is a no-op) and, when
+    // the change is a legacy-name migration, commits it (skipping the
+    // commit when the repo has unrelated staged work so we never
+    // bundle a user's WIP).
     for project in &input.projects {
         let project_repo = workspace_dir.join("projects").join(project.name.as_str());
         if !project_repo.is_dir() {
             continue;
         }
+
+        // Detect legacy `rwv.lock merge=ours` in the working tree so
+        // `--fix` can migrate + commit even when the on-disk `.gitattributes`
+        // carries the old spelling.
+        let has_legacy = crate::git::has_working_tree_legacy_replay_exclusion(
+            &project_repo,
+            std::path::Path::new("rwv.lock"),
+        )
+        .unwrap_or(false);
+
         match git.has_replay_exclusion(&project_repo, std::path::Path::new("rwv.lock")) {
-            Ok(true) => {}
-            Ok(false) => {
+            Ok(true) if !has_legacy => {}
+            Ok(has_new) => {
                 if fix {
+                    // `set_replay_exclusion` migrates a legacy line to
+                    // the new name in place (rewrite, not append-alongside)
+                    // and appends the new needle when neither is present.
+                    // Idempotent when the new line is already the only one.
                     match git.set_replay_exclusion(&project_repo, std::path::Path::new("rwv.lock"))
                     {
-                        Ok(()) => println!(
-                            "[fixed] core: wrote `rwv.lock merge=ours` to {}/.gitattributes",
-                            project.name
-                        ),
+                        Ok(()) => {
+                            if has_legacy {
+                                // Migration path: also commit the change so
+                                // the invariant (which reads the *committed*
+                                // form) sees the new spelling on the next
+                                // sync. Skip the commit if the repo carries
+                                // unrelated staged changes — user work must
+                                // not be bundled with an rwv-authored fix.
+                                match commit_replay_exclusion_migration(&project_repo) {
+                                    Ok(CommitOutcome::Committed) => println!(
+                                        "[fixed] core: migrated `rwv.lock merge=ours` → \
+                                         `rwv.lock merge=rwv-ours` in {}/.gitattributes (committed)",
+                                        project.name
+                                    ),
+                                    Ok(CommitOutcome::SkippedUnrelatedStaged) => println!(
+                                        "[fixed] core: migrated `rwv.lock merge=ours` → \
+                                         `rwv.lock merge=rwv-ours` in {}/.gitattributes (NOT committed: \
+                                         project repo has unrelated staged changes; commit them, then \
+                                         re-run `rwv doctor --fix` to complete the migration)",
+                                        project.name
+                                    ),
+                                    Ok(CommitOutcome::NothingToCommit) => println!(
+                                        "[fixed] core: migrated `rwv.lock merge=ours` → \
+                                         `rwv.lock merge=rwv-ours` in {}/.gitattributes",
+                                        project.name
+                                    ),
+                                    Err(e) => all_issues.push(Issue {
+                                        integration: "core".into(),
+                                        severity: Severity::Error,
+                                        message: format!(
+                                            "{}: migrated .gitattributes but commit failed: {e}",
+                                            project.name
+                                        ),
+                                        safe_to_fix: true,
+                                    }),
+                                }
+                            } else if !has_new {
+                                println!(
+                                    "[fixed] core: wrote `rwv.lock merge=rwv-ours` to {}/.gitattributes",
+                                    project.name
+                                );
+                            }
+                        }
                         Err(e) => all_issues.push(Issue {
                             integration: "core".into(),
                             severity: Severity::Error,
@@ -4165,14 +4355,25 @@ pub fn run_check(
                         }),
                     }
                 } else {
+                    let msg = if has_legacy {
+                        format!(
+                            "{}: project repo has legacy `rwv.lock merge=ours` in .gitattributes; \
+                             the driver was renamed to close a global-config collision hazard \
+                             (run `rwv doctor --fix` to migrate to `rwv.lock merge=rwv-ours` \
+                             and commit)",
+                            project.name
+                        )
+                    } else {
+                        format!(
+                            "{}: project repo missing `rwv.lock merge=rwv-ours` in .gitattributes \
+                             (run `rwv doctor --fix` to add)",
+                            project.name
+                        )
+                    };
                     all_issues.push(Issue {
                         integration: "core".into(),
                         severity: Severity::Warning,
-                        message: format!(
-                            "{}: project repo missing `rwv.lock merge=ours` in .gitattributes \
-                             (run `rwv doctor --fix` to add)",
-                            project.name
-                        ),
+                        message: msg,
                         safe_to_fix: true,
                     });
                 }
@@ -4183,6 +4384,58 @@ pub fn run_check(
                 message: format!(
                     "{}: failed to read .gitattributes for replay-exclusion check: {e}",
                     project.name
+                ),
+                safe_to_fix: true,
+            }),
+        }
+
+        // Durable-config plant: `merge.rwv-ours.driver` config keeps the
+        // exclusion working across bare `git rebase --continue` (see
+        // `plant_rwv_merge_driver_config`). Detect via `git config --get`;
+        // `--fix` writes both `.driver` and `.name` entries.
+        match crate::git::has_rwv_merge_driver_config(&project_repo) {
+            Ok(true) => {}
+            Ok(false) => {
+                if fix {
+                    match crate::git::plant_rwv_merge_driver_config(&project_repo) {
+                        Ok(()) => println!(
+                            "[fixed] core: planted `{}` config in {}",
+                            crate::git::RWV_MERGE_DRIVER_CONFIG_KEY,
+                            project.name
+                        ),
+                        Err(e) => all_issues.push(Issue {
+                            integration: "core".into(),
+                            severity: Severity::Error,
+                            message: format!(
+                                "{}: failed to plant `{}`: {e}",
+                                project.name,
+                                crate::git::RWV_MERGE_DRIVER_CONFIG_KEY
+                            ),
+                            safe_to_fix: true,
+                        }),
+                    }
+                } else {
+                    all_issues.push(Issue {
+                        integration: "core".into(),
+                        severity: Severity::Warning,
+                        message: format!(
+                            "{}: project repo missing `{}` config \
+                             (defines the `rwv-ours` merge driver used by bare \
+                             `git rebase --continue`; run `rwv doctor --fix` to plant)",
+                            project.name,
+                            crate::git::RWV_MERGE_DRIVER_CONFIG_KEY,
+                        ),
+                        safe_to_fix: true,
+                    });
+                }
+            }
+            Err(e) => all_issues.push(Issue {
+                integration: "core".into(),
+                severity: Severity::Warning,
+                message: format!(
+                    "{}: failed to read `{}` config: {e}",
+                    project.name,
+                    crate::git::RWV_MERGE_DRIVER_CONFIG_KEY,
                 ),
                 safe_to_fix: true,
             }),
@@ -4579,7 +4832,11 @@ fn collect_doctor_violations(
     violations.extend(hygiene_violations);
 
     // Replay-exclusion check: each project repo should carry
-    // `rwv.lock merge=ours` in `.gitattributes`.
+    // `rwv.lock merge=rwv-ours` in `.gitattributes`. A project still on
+    // the legacy `merge=ours` spelling (pre-fo-yk0rlj) reports missing
+    // too — `has_replay_exclusion` matches only the new needle so the
+    // legacy line drives the same `--fix`-migrates code path via the
+    // JSON channel that the text channel already exposes.
     for project in &input.projects {
         let project_repo = workspace_dir.join("projects").join(project.name.as_str());
         if !project_repo.is_dir() {

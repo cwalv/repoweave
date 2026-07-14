@@ -8,7 +8,7 @@
 //! 1. **N=2 lock-only convergence** (`sync_two_workweaves_lock_only_rebase_converges`):
 //!    Two workweaves both bump the manifest lock. Primary absorbs WA; WB then
 //!    syncs primary with `--strategy=rebase`. The lock-only commit in WB's
-//!    project history should drop silently (empty patch via `merge=ours`). No
+//!    project history should drop silently (empty patch via `merge=rwv-ours`). No
 //!    manual `git rebase --continue`.
 //!
 //! 2. **N=3 lock-only convergence** (`sync_three_workweaves_lock_only_rebase_converges`):
@@ -20,7 +20,7 @@
 //!    (`sync_rebase_without_gitattributes_bails_cleanly`): the precondition
 //!    check fires before any git ops; exit non-zero, no `.git/rebase-merge/`,
 //!    `git status` clean. The check fires for rebase because git replays each
-//!    commit as a 3-way merge — the inline `-c merge.ours.driver=true` only
+//!    commit as a 3-way merge — the inline `-c merge.rwv-ours.driver=true` only
 //!    *defines* a driver; the `.gitattributes` line *assigns* it to `rwv.lock`.
 //!
 //! ### FF strategy (advances branch pointer, no replay)
@@ -136,7 +136,7 @@ struct Workweave {
 /// {tmp}/ws/                      -- workspace root
 /// {tmp}/ws/github/org/lib/       -- manifest repo, initial commit
 /// {tmp}/ws/projects/app/         -- project repo with rwv.yaml, rwv.lock,
-///                                   and .gitattributes (rwv.lock merge=ours)
+///                                   and .gitattributes (rwv.lock merge=rwv-ours)
 /// ```
 fn make_primary(tmp: &Path) -> PrimaryWorkspace {
     let ws = tmp.join("ws");
@@ -147,7 +147,11 @@ fn make_primary(tmp: &Path) -> PrimaryWorkspace {
     init_repo(&project_dir);
 
     // The replay-exclusion line that sync depends on.
-    std::fs::write(project_dir.join(".gitattributes"), "rwv.lock merge=ours\n").unwrap();
+    std::fs::write(
+        project_dir.join(".gitattributes"),
+        "rwv.lock merge=rwv-ours\n",
+    )
+    .unwrap();
 
     let manifest = format!(
         "repositories:\n  {path}:\n    type: git\n    url: file://{repo}\n    version: main\n    role: owned\n",
@@ -213,7 +217,7 @@ fn rwv_lock_commit(workspace_root: &Path) {
 /// Two workweaves (WA and WB) both do a commit in the manifest repo and bump
 /// the lock. Primary absorbs WA (ff); WB then syncs primary with
 /// `--strategy=rebase`. WB's lock-only commit should drop silently via the
-/// `merge=ours` + `--empty=drop` mechanism. No manual `git rebase --continue`.
+/// `merge=rwv-ours` + `--empty=drop` mechanism. No manual `git rebase --continue`.
 #[test]
 fn sync_two_workweaves_lock_only_rebase_converges() {
     let tmp = tempfile::tempdir().unwrap();
@@ -248,7 +252,7 @@ fn sync_two_workweaves_lock_only_rebase_converges() {
 
     // From WB: sync primary with rebase. This is the exact repro step:
     // WB's project history has a lock-only commit that conflicts with primary's
-    // post-WA lock on the same lines. With `.gitattributes merge=ours`, the
+    // post-WA lock on the same lines. With `.gitattributes merge=rwv-ours`, the
     // lock-only commit produces an empty patch and is dropped silently.
     //
     // Before the lock-replay fix landed this step would fail with a
@@ -418,7 +422,7 @@ fn sync_three_workweaves_lock_only_rebase_converges() {
 // ---------------------------------------------------------------------------
 
 /// When the CWD project repo's committed `.gitattributes` does NOT contain
-/// `rwv.lock merge=ours`, `rwv sync --strategy=rebase` must:
+/// `rwv.lock merge=rwv-ours`, `rwv sync --strategy=rebase` must:
 /// 1. Exit non-zero.
 /// 2. Leave no in-flight rebase state (`.git/rebase-merge/` absent).
 /// 3. Leave `git status` clean (no partial changes committed or staged).
@@ -522,8 +526,8 @@ fn sync_rebase_without_gitattributes_bails_cleanly() {
 
     // (a) Error message must name the missing line and the fix command.
     assert!(
-        stderr.contains("rwv.lock merge=ours"),
-        "error must name the missing line `rwv.lock merge=ours`; got stderr:\n{stderr}"
+        stderr.contains("rwv.lock merge=rwv-ours"),
+        "error must name the missing line `rwv.lock merge=rwv-ours`; got stderr:\n{stderr}"
     );
     assert!(
         stderr.contains("rwv doctor --fix"),
@@ -641,5 +645,181 @@ fn sync_ff_preserves_lock_only_commits() {
     assert!(
         primary_lock.contains(&lib_head),
         "primary lock should pin lib at final HEAD ({lib_head}); lock:\n{primary_lock}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// fo-yk0rlj: durable driver-config plant + legacy-needle bail message
+// ---------------------------------------------------------------------------
+
+/// The rebase-strategy sync invariant PLANTS the durable
+/// `merge.rwv-ours.driver=true` config as its first act. This is what
+/// keeps a bare `git rebase --continue` (the resume path git itself
+/// prints in conflict stderr) from re-conflicting on every subsequent
+/// lock-only pick. Test: run `rwv sync --strategy=rebase` from a
+/// workweave whose canonical clone has NO `merge.rwv-ours.*` config, and
+/// assert the config is set after the sync completes.
+#[test]
+fn sync_rebase_plants_merge_driver_config() {
+    let tmp = tempfile::tempdir().unwrap();
+    let weaveroot = tmp.path().join(".workweaves");
+    std::fs::create_dir_all(&weaveroot).unwrap();
+
+    let primary = make_primary(tmp.path());
+    let ww = create_workweave(&primary, &weaveroot, "ww");
+
+    // Sanity: the config must be UNSET pre-sync. Worktrees share
+    // `.git/config` with the canonical clone, so check the project
+    // repo's canonical `.git/config` — that's what a bare
+    // `git rebase --continue` from any worktree would consult.
+    let pre = std::process::Command::new("git")
+        .args(["config", "--local", "--get", "merge.rwv-ours.driver"])
+        .current_dir(&primary.project_dir)
+        .output()
+        .unwrap();
+    assert!(
+        !pre.status.success(),
+        "pre-sync: merge.rwv-ours.driver must be unset; got stdout={:?} stderr={:?}",
+        String::from_utf8_lossy(&pre.stdout),
+        String::from_utf8_lossy(&pre.stderr)
+    );
+
+    // WW: bump the manifest repo + lock. Setup for a rebase-strategy sync.
+    commit_file(&ww.manifest_repo, "ww.txt", "from ww\n", "ww: add ww.txt");
+    rwv_lock_commit(&ww.root);
+
+    // Also advance primary so ww's rebase has a divergence to replay.
+    let wa = create_workweave(&primary, &weaveroot, "wa");
+    commit_file(&wa.manifest_repo, "wa.txt", "from wa\n", "wa: add wa.txt");
+    rwv_lock_commit(&wa.root);
+    rwv()
+        .args(["sync", &wa.root.to_string_lossy()])
+        .current_dir(&primary.root)
+        .assert()
+        .success();
+
+    // From WW: rebase-sync onto primary. Must succeed AND plant the config.
+    rwv()
+        .args(["sync", "primary", "--strategy", "rebase"])
+        .current_dir(&ww.root)
+        .assert()
+        .success();
+
+    // Post-sync assertion: `merge.rwv-ours.driver=true` is now set in
+    // the canonical clone's local config, so bare `git rebase
+    // --continue` in this or any other worktree would find the driver
+    // defined.
+    let post = std::process::Command::new("git")
+        .args(["config", "--local", "--get", "merge.rwv-ours.driver"])
+        .current_dir(&primary.project_dir)
+        .output()
+        .unwrap();
+    assert!(
+        post.status.success(),
+        "post-sync: merge.rwv-ours.driver must be planted; got stderr={:?}",
+        String::from_utf8_lossy(&post.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&post.stdout).trim(),
+        "true",
+        "post-sync: merge.rwv-ours.driver value must be `true`"
+    );
+}
+
+/// When the CWD project repo's committed `.gitattributes` still carries
+/// the LEGACY `rwv.lock merge=ours` line (pre-fo-yk0rlj rename), the
+/// invariant bails with a migration-specific message that directs the
+/// operator at `rwv doctor --fix`. It must NOT silently accept the
+/// legacy needle — sync's guarantee is the new spelling that closes the
+/// global-config collision hazard.
+#[test]
+fn sync_rebase_with_legacy_needle_bails_pointing_at_doctor_fix() {
+    let tmp = tempfile::tempdir().unwrap();
+    let weaveroot = tmp.path().join(".workweaves");
+    std::fs::create_dir_all(&weaveroot).unwrap();
+
+    // Build a primary workspace by hand with the LEGACY `.gitattributes`
+    // spelling. This mirrors `make_primary` structurally so a workweave
+    // can be created from it, but the .gitattributes line is the old
+    // form.
+    let ws = tmp.path().join("ws");
+    let manifest_repo = ws.join(MANIFEST_REPO_PATH);
+    let initial_sha = init_repo(&manifest_repo);
+
+    let project_dir = ws.join("projects").join(PROJECT);
+    init_repo(&project_dir);
+    std::fs::write(project_dir.join(".gitattributes"), "rwv.lock merge=ours\n").unwrap();
+
+    let manifest = format!(
+        "repositories:\n  {path}:\n    type: git\n    url: file://{repo}\n    version: main\n    role: owned\n",
+        path = MANIFEST_REPO_PATH,
+        repo = manifest_repo.display()
+    );
+    std::fs::write(project_dir.join("rwv.yaml"), manifest).unwrap();
+    let lock = format!(
+        "repositories:\n  {path}:\n    type: git\n    url: file://{repo}\n    version: {sha}\n",
+        path = MANIFEST_REPO_PATH,
+        repo = manifest_repo.display(),
+        sha = initial_sha
+    );
+    std::fs::write(project_dir.join("rwv.lock"), lock).unwrap();
+    git(
+        &["add", ".gitattributes", "rwv.yaml", "rwv.lock"],
+        &project_dir,
+    );
+    git(
+        &["commit", "-m", "lock: initial (legacy attrs)"],
+        &project_dir,
+    );
+    std::fs::write(ws.join(".rwv-active"), format!("{PROJECT}\n")).unwrap();
+
+    let primary = PrimaryWorkspace {
+        root: ws.clone(),
+        project_dir: project_dir.clone(),
+        manifest_repo: manifest_repo.clone(),
+    };
+
+    // Create a workweave; workweaves inherit the primary's .gitattributes.
+    let ww = create_workweave(&primary, &weaveroot, "ww");
+
+    // Advance ww so a rebase has actual work to do (otherwise the fast
+    // path might short-circuit before the invariant fires).
+    commit_file(&ww.manifest_repo, "ww.txt", "from ww\n", "ww: add ww.txt");
+    rwv_lock_commit(&ww.root);
+
+    // Advance primary via a sibling workweave so ww's rebase has a
+    // divergence point.
+    let wa = create_workweave(&primary, &weaveroot, "wa");
+    commit_file(&wa.manifest_repo, "wa.txt", "from wa\n", "wa: add wa.txt");
+    rwv_lock_commit(&wa.root);
+    // Land wa via ff (does not require the invariant).
+    rwv()
+        .args(["sync", &wa.root.to_string_lossy()])
+        .current_dir(&primary.root)
+        .assert()
+        .success();
+
+    // From ww: attempt rebase sync onto primary. Must FAIL with a
+    // migration-specific bail message.
+    let assert = rwv()
+        .args(["sync", "primary", "--strategy", "rebase"])
+        .current_dir(&ww.root)
+        .assert()
+        .failure();
+    let stderr = String::from_utf8_lossy(&assert.get_output().stderr).to_string();
+
+    assert!(
+        stderr.contains("legacy `rwv.lock merge=ours`"),
+        "bail must call out the legacy spelling; got stderr:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("rwv doctor --fix"),
+        "bail must direct the operator at `rwv doctor --fix`; got stderr:\n{stderr}"
+    );
+    // And it must NOT direct the operator at the generic "add the line" fix
+    // (which would leave them writing the WRONG spelling).
+    assert!(
+        !stderr.contains("chore: add rwv.lock replay-exclusion"),
+        "legacy-needle bail must not use the generic add-the-line hint; got stderr:\n{stderr}"
     );
 }

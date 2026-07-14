@@ -151,7 +151,7 @@ fn make_workweave_ahead_fixture(
     init_repo(&primary_project);
     std::fs::write(
         primary_project.join(".gitattributes"),
-        "rwv.lock merge=ours\n",
+        "rwv.lock merge=rwv-ours\n",
     )
     .unwrap();
     write_manifest(&primary_project, &[(SERVER_PATH, SERVER_URL)]);
@@ -365,7 +365,7 @@ fn sync_to_json_source_workweave_is_null_from_primary() {
     init_repo(&source_project);
     std::fs::write(
         source_project.join(".gitattributes"),
-        "rwv.lock merge=ours\n",
+        "rwv.lock merge=rwv-ours\n",
     )
     .unwrap();
     write_manifest(&source_project, &[(SERVER_PATH, SERVER_URL)]);
@@ -501,7 +501,7 @@ fn sync_to_json_step3_advance_absent_for_noop_repos() {
     init_repo(&primary_project);
     std::fs::write(
         primary_project.join(".gitattributes"),
-        "rwv.lock merge=ours\n",
+        "rwv.lock merge=rwv-ours\n",
     )
     .unwrap();
     write_manifest(&primary_project, &[(SERVER_PATH, SERVER_URL)]);

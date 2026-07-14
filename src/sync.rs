@@ -966,20 +966,35 @@ fn per_conflict_bail_message(
 // (reachability check before any clobber) lives in the VCS impl rather
 // than being inlined here. See those trait method doc-comments.
 
-/// Precondition: the CWD project repo's committed `.gitattributes` must contain
-/// `rwv.lock merge=ours` before the `Rebase` strategy runs.
+/// Precondition + self-heal: the CWD project repo's committed `.gitattributes`
+/// must contain `rwv.lock merge=rwv-ours`, and the repo-local `merge.rwv-ours.*`
+/// config must be planted, before the `Rebase` strategy runs.
 ///
 /// `Rebase` is still gated even though `merge` (the strategy) was removed: git
 /// rebase replays each commit as a 3-way merge against the new base, so the
-/// `merge=ours` driver is required to keep lock-only commits from conflicting
-/// on `rwv.lock`. The requirement is about git's *per-commit merge* during
-/// replay, not the removed merge *strategy*.
+/// `merge=rwv-ours` driver is required to keep lock-only commits from
+/// conflicting on `rwv.lock`. The requirement is about git's *per-commit
+/// merge* during replay, not the removed merge *strategy*.
 ///
-/// The mechanism has two halves: the inline `-c merge.ours.driver=true` flag
-/// *defines* a merge driver named "ours", and the `.gitattributes` line
-/// *assigns* that driver to `rwv.lock`. Without the assignment, git's default
-/// 3-way merge runs on `rwv.lock` and conflicts whenever both sides have
-/// lock edits — regardless of which drivers are defined in config.
+/// The mechanism has two halves that MUST both be present:
+/// 1. The `.gitattributes` line `rwv.lock merge=rwv-ours` *assigns* the
+///    driver to `rwv.lock` — this half lives in the committed tree.
+/// 2. A `merge.rwv-ours.driver` config entry *defines* the driver's shell
+///    command. This half must be visible to whatever git process runs the
+///    replay — rwv's own rebase passes it inline with `-c` (belt-and-braces),
+///    but bare `git rebase --continue` (the resume path git itself
+///    advertises in conflict stderr) inherits neither the inline flag nor
+///    the environment; only durable config keeps the driver defined on
+///    that resume. This function plants that config as its first act — it
+///    is derived, local, idempotent state, so writing (not just checking)
+///    is the right primitive.
+///
+/// Worktrees share `.git/config` with the canonical repo, so one plant
+/// covers every workweave checkout.
+///
+/// Without half (1), git's default 3-way merge runs on `rwv.lock` and
+/// conflicts whenever both sides have lock edits — regardless of what
+/// drivers are defined in config.
 ///
 /// `Ff` does not perform any merge — it advances the branch pointer — so
 /// the invariant is not required.
@@ -990,21 +1005,63 @@ fn per_conflict_bail_message(
 /// 2. A `.gitattributes` that exists only in the working tree is not
 ///    durable — it won't be present after a `git reset --hard` or fresh clone.
 ///
-/// If absent, bails with an actionable message naming the file path, the exact
-/// missing line, and the command to fix (`rwv doctor --fix`). Does NOT write
-/// the file — that is `rwv doctor --fix`'s job; sync's invariant is "only
-/// change what the source says to change".
+/// If the committed `.gitattributes` still carries the LEGACY `merge=ours`
+/// spelling (pre-fo-yk0rlj), the invariant bails with a migration-specific
+/// message directing the operator at `rwv doctor --fix` — which rewrites
+/// AND commits the .gitattributes migration. If neither the new nor the
+/// legacy line is present, the invariant bails with the classic
+/// "add-the-line" message.
+///
+/// The .gitattributes assignment itself is NOT written by this function
+/// — that's `rwv doctor --fix`'s job, and requires a commit which sync
+/// must not silently make on the operator's behalf.
 fn verify_replay_exclusion_invariant(cwd_project_dir: &Path) -> anyhow::Result<()> {
-    let has_line = GitVcs
+    // Plant the durable config first — regardless of whether the
+    // .gitattributes assignment is present, having the driver defined
+    // makes any downstream `git rebase --continue` safe against the
+    // lock-only pick conflict. This is idempotent; if the config is
+    // already planted, `git config` writes the same value.
+    crate::git::plant_rwv_merge_driver_config(cwd_project_dir).with_context(|| {
+        format!(
+            "failed to plant `{}` config in {}",
+            crate::git::RWV_MERGE_DRIVER_CONFIG_KEY,
+            cwd_project_dir.display()
+        )
+    })?;
+
+    let has_new = GitVcs
         .has_committed_replay_exclusion(cwd_project_dir, Path::new("rwv.lock"))
         .unwrap_or(false);
-
-    if has_line {
+    if has_new {
         return Ok(());
     }
 
+    let has_legacy =
+        crate::git::has_committed_legacy_replay_exclusion(cwd_project_dir, Path::new("rwv.lock"))
+            .unwrap_or(false);
+
+    if has_legacy {
+        anyhow::bail!(
+            "sync --strategy=rebase requires `rwv.lock merge=rwv-ours` \
+             in the project repo's committed .gitattributes, but {ga} still \
+             carries the legacy `rwv.lock merge=ours` spelling. The rename \
+             (fo-yk0rlj) closes an accidental-collision hazard where an \
+             unrelated `merge.ours.driver` in the operator's global git \
+             config would silently activate on rwv.lock during a bare \
+             `git rebase --continue`.\n\
+             \n\
+             To migrate: run `rwv doctor --fix` from this workspace. It \
+             rewrites the `.gitattributes` line to the new spelling AND \
+             commits the change:\n\
+               cd {dir}\n\
+               rwv doctor --fix",
+            ga = cwd_project_dir.join(".gitattributes").display(),
+            dir = cwd_project_dir.display(),
+        )
+    }
+
     anyhow::bail!(
-        "sync --strategy=rebase requires `rwv.lock merge=ours` \
+        "sync --strategy=rebase requires `rwv.lock merge=rwv-ours` \
          in the project repo's committed .gitattributes, but {ga} does not contain \
          that line.\n\
          \n\
@@ -3755,9 +3812,9 @@ fn short_sha(sha: &str) -> &str {
 }
 
 /// Phase 1': replay CWD's unique project commits onto `source_tip` via
-/// `strategy`, relying on `.gitattributes rwv.lock merge=ours` (configured at
-/// `rwv init` time) to silently keep source's version of the lock through the
-/// replay. Phase 3 regenerates the lock from manifest tips afterwards.
+/// `strategy`, relying on `.gitattributes rwv.lock merge=rwv-ours` (configured
+/// at `rwv init` time) to silently keep source's version of the lock through
+/// the replay. Phase 3 regenerates the lock from manifest tips afterwards.
 ///
 /// - `Ff`: requires CWD ancestor of source (caller already verified). Performs
 ///   a fast-forward via `git merge --ff-only`.
@@ -3786,7 +3843,7 @@ fn apply_project_strategy(
             GitVcs.advance_if_fast_forward(cwd_project_dir, source_tip)?;
         }
         SyncStrategy::Rebase => {
-            // `Vcs::rebase` wires the `merge=ours` driver inline; lock-only
+            // `Vcs::rebase` wires the `merge=rwv-ours` driver inline; lock-only
             // commits become empty patches and git drops them by default
             // (`--empty=drop`), so source's version of `rwv.lock` survives
             // the replay untouched. Phase 3 then regenerates the lock from

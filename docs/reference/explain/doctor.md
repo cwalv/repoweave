@@ -35,7 +35,10 @@ rwv doctor [--all] [--locked] [--json] [--fix]
 - `--fix` attempts auto-remediation for variants that are safe to fix:
   index drift where the displaced tree is a known ancestor, working-tree
   drift where on-disk content matches a known blob, missing
-  `rwv.lock merge=ours` replay-exclusion, legacy `role: primary`
+  `rwv.lock merge=rwv-ours` replay-exclusion (including migration from the
+  legacy `merge=ours` spelling — auto-commits when the repo has no other
+  staged changes) and its paired durable `merge.rwv-ours.driver` config,
+  legacy `role: primary`
   manifest spellings (rewritten to `role: owned` in place — preserves
   comments and key order), missing or mis-resolved surfacing symlinks
   (re-runs the framework surfacing primitive to (re)create symlinks for
@@ -1164,8 +1167,13 @@ rwv doctor --fix
 ## Common errors
 
 - *missing-replay-exclusion* on a project repo — the project repo lacks
-  `rwv.lock merge=ours` in `.gitattributes`. Either run `rwv doctor --fix`
-  to append it, or add the line manually.
+  `rwv.lock merge=rwv-ours` in `.gitattributes`, or still carries the
+  legacy `rwv.lock merge=ours` spelling (pre-fo-yk0rlj rename; renamed to
+  close an accidental-collision hazard with an unrelated global
+  `merge.ours.driver` during bare `git rebase --continue`). Run
+  `rwv doctor --fix` to add or migrate the line — the migration path also
+  commits the change (skipping the commit when the repo has other staged
+  work).
 - *legacy-role-primary* — a project `rwv.yaml` still uses `role: primary`
   (renamed to `role: owned`; the back-compat alias has since been dropped).
   Run `rwv doctor --fix` to migrate every affected manifest in place;

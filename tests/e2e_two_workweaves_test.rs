@@ -118,7 +118,11 @@ fn make_main_workspace(tmp: &Path) -> MainWorkspace {
 
     // Mirror what `rwv init` writes: `.gitattributes` so sync's native
     // rebase keeps source's `rwv.lock` through the replay.
-    std::fs::write(project_dir.join(".gitattributes"), "rwv.lock merge=ours\n").unwrap();
+    std::fs::write(
+        project_dir.join(".gitattributes"),
+        "rwv.lock merge=rwv-ours\n",
+    )
+    .unwrap();
 
     let manifest = format!(
         "repositories:\n  {path}:\n    type: git\n    url: file://{repo}\n    version: main\n    role: owned\n",
@@ -279,7 +283,7 @@ fn sync_two_workweaves_lock_only_changes() {
     //
     // We assert on the manifest repo (github/org/lib) because that is where
     // the two workweaves' contributions land. The project repo's lock-only
-    // commits are skipped/dropped during rebase (merge=ours), so there is no
+    // commits are skipped/dropped during rebase (merge=rwv-ours), so there is no
     // meaningful project-repo shape to assert here.
     common::assert_log_ordering(&main.manifest_repo, &["ww2: add bar", "ww1: add foo"]);
 }

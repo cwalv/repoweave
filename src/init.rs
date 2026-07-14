@@ -72,6 +72,14 @@ pub fn init(name: &str, provider: Option<&str>, cwd: &Path) -> anyhow::Result<()
     GitVcs
         .set_replay_exclusion(&project_dir, Path::new("rwv.lock"))
         .context("failed to write .gitattributes")?;
+    // Plant the durable `merge.rwv-ours.*` config in the fresh project
+    // repo so bare `git rebase --continue` after a partial-conflict resume
+    // finds the driver defined (see `plant_rwv_merge_driver_config`).
+    // `sync::verify_replay_exclusion_invariant` also self-heals this, but
+    // planting at init means even a `git rebase` run outside sync's
+    // wrapper is armed from day one.
+    crate::git::plant_rwv_merge_driver_config(&project_dir)
+        .context("failed to plant merge.rwv-ours config")?;
 
     // Set up remote from --provider
     if let Some(provider_str) = provider {
@@ -175,9 +183,14 @@ pub fn init_adopt(source: &str, cwd: &Path) -> anyhow::Result<()> {
     }
 
     // Configure replay-exclusion for `rwv.lock`. Idempotent — adopted repos
-    // that already carry the entry are a no-op.
+    // that already carry the entry are a no-op. Adopted repos on the
+    // legacy `merge=ours` spelling get migrated in place by
+    // `set_replay_exclusion`. Also plant the durable `merge.rwv-ours.*`
+    // config; see `plant_rwv_merge_driver_config`.
     git.set_replay_exclusion(&project_dir, Path::new("rwv.lock"))
         .context("failed to write .gitattributes")?;
+    crate::git::plant_rwv_merge_driver_config(&project_dir)
+        .context("failed to plant merge.rwv-ours config")?;
 
     eprintln!(
         "Adopted project '{}' at {}",

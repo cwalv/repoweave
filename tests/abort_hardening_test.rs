@@ -142,7 +142,11 @@ fn make_fixture(parent: &Path, name: &str) -> Fixture {
 
     let project_dir = root.join("projects/web-app");
     init_repo(&project_dir);
-    std::fs::write(project_dir.join(".gitattributes"), "rwv.lock merge=ours\n").unwrap();
+    std::fs::write(
+        project_dir.join(".gitattributes"),
+        "rwv.lock merge=rwv-ours\n",
+    )
+    .unwrap();
     write_manifest(&project_dir, &[(SERVER_PATH, SERVER_URL)]);
     write_lock(&project_dir, &[(SERVER_PATH, SERVER_URL, &server_sha)]);
     git(
@@ -646,7 +650,11 @@ fn abort_foreign_tip_options_block_printed_once() {
 
     let project_dir = root.join("projects/web-app");
     init_repo(&project_dir);
-    std::fs::write(project_dir.join(".gitattributes"), "rwv.lock merge=ours\n").unwrap();
+    std::fs::write(
+        project_dir.join(".gitattributes"),
+        "rwv.lock merge=rwv-ours\n",
+    )
+    .unwrap();
     let yaml = "repositories:\n  github/chatly/server:\n    type: git\n    url: https://github.com/chatly/server.git\n    version: main\n    role: owned\n  github/chatly2/server:\n    type: git\n    url: https://github.com/chatly2/server.git\n    version: main\n    role: owned\n".to_string();
     std::fs::write(project_dir.join("rwv.yaml"), &yaml).unwrap();
     let lock_yaml = format!(
