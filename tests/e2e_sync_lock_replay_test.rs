@@ -1078,3 +1078,322 @@ fn bare_git_rebase_continue_resolves_lock_pick_via_planted_config_only() {
         "the resolved non-lock conflict must survive the completed rebase"
     );
 }
+
+// ---------------------------------------------------------------------------
+// rwv-native `--continue` end-to-end (fo-w2ajvn.1)
+//
+// The fo-yk0rlj set of tests above proves that BARE `git rebase --continue`
+// is safe after the durable driver plant. This section proves the operator
+// no longer has to reach for bare git at all — `rwv sync --continue` itself
+// drives a stopped rebase through the remaining picks (including a lock-only
+// pick that must resolve to ours via the inline driver flags), runs relock,
+// and clears op-state.
+// ---------------------------------------------------------------------------
+
+/// Build a workweave-side commit history containing both a genuine non-lock
+/// conflict (against primary's post-lock docs edit) AND a subsequent
+/// lock-only commit that must merge to ours via the inline `rwv-ours`
+/// driver flags during rebase replay. Returns the workweave paths and the
+/// primary's post-setup manifest-tip SHA (== primary's lock content).
+///
+/// Layout after this helper returns:
+/// - primary: base + one commit editing `notes/shared.md` on `main` +
+///   one lock-bump project commit reflecting `primary_manifest_sha`.
+/// - workweave `ww`: base + one commit editing `notes/shared.md`
+///   (conflicts with primary's docs edit) + one lock-bump project commit
+///   reflecting `ww_manifest_sha` (that lock content differs from
+///   primary's, so the pick is a legitimate 3-way merge target for the
+///   `rwv-ours` driver — patch becomes empty after driver-resolve and
+///   `--empty=drop` retires it).
+struct MidRebaseFixture {
+    primary: PrimaryWorkspace,
+    ww: Workweave,
+}
+
+fn build_project_conflict_with_lock_only_pick(
+    tmp: &Path,
+    weaveroot: &Path,
+    ww_name: &str,
+) -> MidRebaseFixture {
+    let primary = make_primary(tmp);
+    let ww = create_workweave(&primary, weaveroot, ww_name);
+
+    // Primary: edit notes/shared.md, commit. This is what ww's F1 will
+    // conflict with when ww rebases onto primary.
+    commit_file(
+        &primary.project_dir,
+        "notes/shared.md",
+        "primary version\n",
+        "docs: primary take",
+    );
+    // Primary bumps its manifest and locks — this puts primary's rwv.lock
+    // at a value ww's forthcoming lock-only commit will collide with.
+    commit_file(
+        &primary.manifest_repo,
+        "primary.txt",
+        "from primary\n",
+        "primary: add primary.txt",
+    );
+    rwv_lock_commit(&primary.root);
+
+    // ww: conflicting docs edit (this is F1 — the pick that will stop the
+    // rebase mid-way).
+    commit_file(
+        &ww.project_dir,
+        "notes/shared.md",
+        "ww version\n",
+        "docs: ww take",
+    );
+    // ww bumps its own manifest (different content than primary's) and
+    // locks — this is F2, the lock-only project commit that must be
+    // replayed after F1 resolves. Its lock content collides with
+    // primary's; the `rwv-ours` driver keeps primary's version and the
+    // patch drops via `--empty=drop`.
+    commit_file(&ww.manifest_repo, "ww.txt", "from ww\n", "ww: add ww.txt");
+    rwv_lock_commit(&ww.root);
+
+    MidRebaseFixture { primary, ww }
+}
+
+/// Assert `dir` is (or is not) mid-rebase. For a worktree, `.git` is a file
+/// pointing at the shared git-dir under the canonical repo; the
+/// `rebase-merge/` directory lives inside THAT git-dir, not inside the
+/// worktree's `.git` file. `git rev-parse --git-dir` resolves it correctly.
+fn assert_mid_rebase(dir: &Path, expected: bool, msg: &str) {
+    let git_dir_str = bare_git_ok(&["rev-parse", "--git-dir"], dir);
+    let git_dir = if PathBuf::from(&git_dir_str).is_absolute() {
+        PathBuf::from(git_dir_str)
+    } else {
+        dir.join(git_dir_str)
+    };
+    let has_rebase_merge = git_dir.join("rebase-merge").exists();
+    let has_rebase_apply = git_dir.join("rebase-apply").exists();
+    let actual = has_rebase_merge || has_rebase_apply;
+    assert_eq!(
+        actual,
+        expected,
+        "{msg} (mid-rebase actual={actual}, expected={expected}, git-dir={})",
+        git_dir.display()
+    );
+}
+
+/// Golden path for fo-w2ajvn.1: a `rwv sync --strategy=rebase` that stops on
+/// a genuine non-lock conflict in the project repo can be resumed by the
+/// operator with `resolve + git add + rwv sync --continue` — no `git rebase
+/// --continue` step. `--continue` MUST drive the entire remaining op:
+///
+///   1. Complete the mid-rebase (including any lock-only pick that must
+///      merge to ours via the inline `rwv-ours` driver flags — proven by
+///      deleting the durable driver config just before `--continue` so the
+///      resume rebase depends on the flags rwv re-supplies).
+///   2. Regenerate `rwv.lock` from source's manifest tips (relock).
+///   3. Clear op-state (`.rwv-op` gone).
+///
+/// If any of the three fails, the operator is worse off than before —
+/// `--continue` promised to be end-to-end and delivered only step 1.
+#[test]
+fn sync_continue_completes_mid_rebase_with_lock_only_pick_via_inline_flags() {
+    let tmp = tempfile::tempdir().unwrap();
+    let weaveroot = tmp.path().join(".workweaves");
+    std::fs::create_dir_all(&weaveroot).unwrap();
+
+    let fx = build_project_conflict_with_lock_only_pick(tmp.path(), &weaveroot, "ww1");
+    let primary = &fx.primary;
+    let ww = &fx.ww;
+
+    // Start the rebase from ww. It must stop on F1's docs conflict.
+    rwv()
+        .args(["sync", "primary", "--strategy", "rebase"])
+        .current_dir(&ww.root)
+        .assert()
+        .failure();
+
+    // The project repo (a worktree) must be mid-rebase.
+    assert_mid_rebase(
+        &ww.project_dir,
+        true,
+        "expected ww project repo mid-rebase after first sync",
+    );
+    let op_state_path = ww.root.join(".rwv-op");
+    assert!(
+        op_state_path.exists(),
+        "expected op-state file after conflict-stopped sync"
+    );
+
+    // Operator resolves the conflict on notes/shared.md and stages.
+    std::fs::write(
+        ww.project_dir.join("notes/shared.md"),
+        "merged: keep ww's take, acknowledge primary\n",
+    )
+    .unwrap();
+    git(&["add", "notes/shared.md"], &ww.project_dir);
+
+    // Prove `rebase_continue` re-supplies the driver flags inline (not by
+    // silently piggybacking on the durable plant) — remove the plant just
+    // before `--continue` in the project repo's config. If `--continue`
+    // still resolves the lock-only pick without conflict, it's because the
+    // inline `-c merge.rwv-ours.driver=true` in Vcs::rebase_continue is
+    // doing the work — the whole point of the bead's "re-supplying driver
+    // flags on replay re-entry" title.
+    let project_git_dir_str = bare_git_ok(&["rev-parse", "--git-dir"], &ww.project_dir);
+    let project_git_dir = if PathBuf::from(&project_git_dir_str).is_absolute() {
+        PathBuf::from(project_git_dir_str)
+    } else {
+        ww.project_dir.join(project_git_dir_str)
+    };
+    let config_path = project_git_dir.join("config");
+    if config_path.exists() {
+        // Unset the two keys the plant writes. Failure is OK — the plant
+        // may not have run yet in this fixture path.
+        let _ = common::git()
+            .args(["config", "--unset", "merge.rwv-ours.driver"])
+            .current_dir(&ww.project_dir)
+            .output();
+        let _ = common::git()
+            .args(["config", "--unset", "merge.rwv-ours.name"])
+            .current_dir(&ww.project_dir)
+            .output();
+        // Sanity: unset actually took.
+        let after = common::git()
+            .args(["config", "--local", "--get", "merge.rwv-ours.driver"])
+            .current_dir(&ww.project_dir)
+            .output()
+            .expect("git config failed to spawn");
+        assert!(
+            !after.status.success(),
+            "test setup: merge.rwv-ours.driver must be unset before --continue \
+             so the test proves the inline flag is what drives the lock pick; \
+             was: {}",
+            String::from_utf8_lossy(&after.stdout)
+        );
+    }
+
+    // `rwv sync --continue` must complete the whole op.
+    rwv()
+        .args(["sync", "--continue"])
+        .current_dir(&ww.root)
+        .assert()
+        .success();
+
+    // (1) Rebase complete: not mid-op anywhere.
+    assert_mid_rebase(
+        &ww.project_dir,
+        false,
+        "project repo must not be mid-rebase after --continue",
+    );
+
+    // The operator's resolution survived and the lock-only F2 pick was
+    // dropped (empty via driver + --empty=drop).
+    let shared = std::fs::read_to_string(ww.project_dir.join("notes/shared.md")).unwrap();
+    assert_eq!(
+        shared, "merged: keep ww's take, acknowledge primary\n",
+        "the resolved non-lock conflict must survive the completed rebase"
+    );
+
+    // (2) Relock ran — the current rwv.lock reflects source's manifest tip
+    // (post-rebase Phase 3 regenerates it from manifest tips). ww's
+    // manifest repo now carries primary's + ww's commits.
+    assert!(
+        ww.manifest_repo.join("primary.txt").exists(),
+        "ww manifest should carry primary's commit after rebase"
+    );
+    assert!(
+        ww.manifest_repo.join("ww.txt").exists(),
+        "ww manifest should still carry its own commit after rebase"
+    );
+
+    // (3) op-state cleared.
+    assert!(
+        !op_state_path.exists(),
+        "op-state file must be gone after successful --continue"
+    );
+
+    let _ = primary; // silence unused-binding lint; fixture kept for symmetry.
+}
+
+/// Negative-path complement to the golden test: `rwv sync --continue` with
+/// the operator's resolution NOT staged must bail cleanly — the conflict
+/// message renders, the repo stays mid-rebase, and op-state is retained so
+/// a second `--continue` after `git add` succeeds. Losing either the
+/// mid-rebase state OR the op-state at this point would strand the operator
+/// (bare `git rebase --continue` would then error, `rwv abort` would be the
+/// only recovery).
+#[test]
+fn sync_continue_with_unstaged_resolution_bails_and_second_continue_succeeds() {
+    let tmp = tempfile::tempdir().unwrap();
+    let weaveroot = tmp.path().join(".workweaves");
+    std::fs::create_dir_all(&weaveroot).unwrap();
+
+    let fx = build_project_conflict_with_lock_only_pick(tmp.path(), &weaveroot, "ww1");
+    let ww = &fx.ww;
+
+    // First sync stops on the docs conflict, same as the golden path.
+    rwv()
+        .args(["sync", "primary", "--strategy", "rebase"])
+        .current_dir(&ww.root)
+        .assert()
+        .failure();
+    assert_mid_rebase(
+        &ww.project_dir,
+        true,
+        "expected mid-rebase after conflict-stopped sync",
+    );
+    let op_state_path = ww.root.join(".rwv-op");
+    assert!(op_state_path.exists(), "op-state must exist after conflict");
+
+    // Operator "resolves" the conflict but forgets to `git add` — content
+    // still shows as needing merge in `git status` output.
+    std::fs::write(
+        ww.project_dir.join("notes/shared.md"),
+        "merged (unstaged)\n",
+    )
+    .unwrap();
+
+    // First `--continue` must fail; specifically it must NOT clear op-state
+    // or leave the repo clean of the rebase.
+    let out = rwv()
+        .args(["sync", "--continue"])
+        .current_dir(&ww.root)
+        .assert()
+        .failure()
+        .get_output()
+        .clone();
+    let stderr = String::from_utf8_lossy(&out.stderr);
+
+    // Post-conditions after the bail: op-state and mid-rebase both intact.
+    assert_mid_rebase(
+        &ww.project_dir,
+        true,
+        "repo must stay mid-rebase after unstaged-continue bail",
+    );
+    assert!(
+        op_state_path.exists(),
+        "op-state must be retained after unstaged-continue bail so a second \
+         --continue after staging succeeds; stderr was:\n{stderr}"
+    );
+
+    // The message must mention the conflict / continue path (sibling bead
+    // fo-w2ajvn.2 owns exact wording; assert only the load-bearing tokens).
+    assert!(
+        stderr.contains("rebase") && (stderr.contains("continue") || stderr.contains("conflict")),
+        "expected bail stderr to name rebase + continue/conflict; got:\n{stderr}"
+    );
+
+    // Now stage the resolution — the second `--continue` must succeed.
+    git(&["add", "notes/shared.md"], &ww.project_dir);
+    rwv()
+        .args(["sync", "--continue"])
+        .current_dir(&ww.root)
+        .assert()
+        .success();
+
+    assert_mid_rebase(
+        &ww.project_dir,
+        false,
+        "second --continue must complete the rebase",
+    );
+    assert!(
+        !op_state_path.exists(),
+        "op-state must be cleared after successful second --continue"
+    );
+}

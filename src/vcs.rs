@@ -692,6 +692,41 @@ pub trait Vcs {
         upstream: &ResolvedRevisionId,
     ) -> Result<(), VcsError>;
 
+    /// Resume an in-flight rebase in `repo` after the operator has resolved
+    /// (and staged) the conflicting paths that stopped the previous
+    /// [`rebase`] or [`rebase_continue`] call.
+    ///
+    /// Contract:
+    /// - Caller MUST ensure `repo` is mid-rebase before calling. The mid-op
+    ///   check lives at the caller (which already inspects [`mid_op`] to
+    ///   decide between [`rebase`] and this method), so a call on a repo
+    ///   that is NOT mid-rebase is a caller bug, not an in-band condition —
+    ///   returns [`VcsError::CommandFailed`] rather than silently no-op'ing.
+    /// - When the resumed rebase completes (all remaining picks apply
+    ///   cleanly, or drop as empty via `--empty=drop` set by [`rebase`]):
+    ///   `Ok(())`.
+    /// - When the resumed rebase stops again on a further genuine
+    ///   non-lock conflict, or when the operator's resolution was
+    ///   incomplete (unstaged conflict markers): repo is left in the same
+    ///   mid-rebase state git leaves it, and returns
+    ///   [`VcsError::RebaseConflict { repo, op: ConflictOp::Rebase }`] so
+    ///   the operator loop stays: resolve → `git add` → `rwv sync
+    ///   --continue`, iterating per conflicted pick.
+    ///
+    /// For [`GitVcs`](crate::git::GitVcs): runs `git rebase --continue` with
+    /// the `rwv-ours` merge-driver flags supplied inline (same flags as
+    /// [`rebase`] so any remaining lock-only picks resolve to the target's
+    /// version — the durable config plant makes bare `git rebase --continue`
+    /// safe too, but the inline flags are the source-of-truth path). The
+    /// invocation runs non-interactively — git's editor spawn for the
+    /// stopped commit's message is suppressed so a `--continue` never hangs
+    /// waiting for `$EDITOR` in an automated pipeline.
+    ///
+    /// [`rebase`]: Vcs::rebase
+    /// [`rebase_continue`]: Vcs::rebase_continue
+    /// [`mid_op`]: Vcs::mid_op
+    fn rebase_continue(&self, repo: &Path) -> Result<(), VcsError>;
+
     /// Configure `repo` so that during replay (rebase, merge) any changes to
     /// `path` are silently overridden — the replay target's version of `path`
     /// always wins.

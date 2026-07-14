@@ -1451,3 +1451,204 @@ fn rebase_stopped_commit_detail_falls_back_when_no_rebase_in_progress() {
         "unexpected SHA prefix in fallback: {detail}"
     );
 }
+
+// ============================================================================
+// rebase_continue
+// ============================================================================
+
+/// Calling `rebase_continue` on a repo that is NOT mid-rebase must fail with
+/// an error rather than silently no-op. Silent no-op would hide a caller bug:
+/// the replay re-entry code routes between `Vcs::rebase` and
+/// `Vcs::rebase_continue` by inspecting `mid_op`, so reaching this method on
+/// a clean repo means the invariant was violated somewhere upstream.
+#[test]
+fn rebase_continue_on_clean_repo_returns_error_not_silent_noop() {
+    let dir = init_repo();
+    let p = dir.path();
+
+    assert!(
+        GitVcs::mid_op_state(p).is_none(),
+        "fixture precondition: repo must not be mid-rebase"
+    );
+
+    let err = GitVcs
+        .rebase_continue(p)
+        .expect_err("rebase_continue on a clean repo must return an error");
+
+    // The exact variant matters: it must be a structured error the sync layer
+    // can distinguish from `RebaseConflict` (which is the operator-loop case
+    // where more resolution is needed). We surface `CommandFailed` as the
+    // generic "wrong state" class, consistent with `rebase`'s own fall-through
+    // when the underlying command failed for a reason not further classified.
+    assert!(
+        matches!(err, VcsError::CommandFailed { .. }),
+        "expected CommandFailed, got {err:?}"
+    );
+
+    // The HEAD must not have moved — the wrong-state error must be diagnostic,
+    // not destructive.
+    let head_after = git(p, &["rev-parse", "HEAD"]);
+    assert_eq!(
+        head_after,
+        git(p, &["rev-parse", "HEAD"]),
+        "HEAD must be stable across a wrong-state rebase_continue call"
+    );
+}
+
+/// When the operator's resolution left conflict markers unstaged (or a
+/// further pick brought its own conflict), `rebase_continue` must surface
+/// `RebaseConflict` and leave the repo mid-rebase for another resolve-and-
+/// continue cycle. Losing the mid-rebase state here would strand the
+/// operator: `git rebase --continue` outside rwv would then bail with
+/// "no rebase in progress" and abort would be the only escape.
+#[test]
+fn rebase_continue_with_unstaged_conflicts_bails_and_leaves_mid_rebase() {
+    // Build a repo where main and feat both modify `shared`.
+    let dir = init_repo();
+    let p = dir.path();
+    fs::write(p.join("shared"), "v0\n").unwrap();
+    git(p, &["add", "shared"]);
+    git(p, &["commit", "-m", "add shared"]);
+    let c1 = git(p, &["rev-parse", "HEAD"]);
+
+    fs::write(p.join("shared"), "main version\n").unwrap();
+    git(p, &["add", "shared"]);
+    git(p, &["commit", "-m", "main: change shared"]);
+
+    git(p, &["checkout", "-b", "feat", &c1]);
+    fs::write(p.join("shared"), "feat version\n").unwrap();
+    git(p, &["add", "shared"]);
+    git(p, &["commit", "-m", "feat: change shared"]);
+
+    let main_tip = ResolvedRevisionId::from_canonical(git(p, &["rev-parse", "main"]), None);
+
+    // First rebase stops on the conflict.
+    let first = GitVcs.rebase(p, &main_tip, &main_tip);
+    assert!(
+        matches!(first, Err(VcsError::RebaseConflict { .. })),
+        "first rebase must conflict; got {first:?}"
+    );
+    assert_eq!(
+        GitVcs::mid_op_state(p).as_deref(),
+        Some("mid-rebase"),
+        "fixture precondition: repo must be mid-rebase"
+    );
+
+    // Operator "resolves" by writing merged content but forgets to stage —
+    // the working tree still shows the conflicted path as needing merge.
+    // git refuses to continue in this state.
+    fs::write(p.join("shared"), "merged\n").unwrap();
+    // Deliberately no `git add`.
+
+    let cont = GitVcs.rebase_continue(p);
+
+    assert!(
+        matches!(cont, Err(VcsError::RebaseConflict { ref op, .. }) if *op == ConflictOp::Rebase),
+        "expected RebaseConflict, got {cont:?}"
+    );
+    assert_eq!(
+        GitVcs::mid_op_state(p).as_deref(),
+        Some("mid-rebase"),
+        "repo must still be mid-rebase after a failed continue so the \
+         operator can stage-and-retry"
+    );
+}
+
+/// Golden path at the Vcs level: after staging the operator's resolution,
+/// `rebase_continue` drives the rebase to completion, leaves the repo clean,
+/// and re-supplies the `rwv-ours` merge-driver flags inline so any remaining
+/// lock-only pick is resolved to the target's version (no conflict on
+/// `rwv.lock`) even when the durable driver config is unset. This is what
+/// makes `rebase_continue` the equivalent of `rwv sync`'s fresh
+/// `Vcs::rebase` invocation for resume purposes.
+#[test]
+fn rebase_continue_after_staging_completes_and_resolves_lock_pick_via_inline_flags() {
+    let dir = init_repo();
+    let p = dir.path();
+
+    // Base commit: rwv.lock + shared exist, and `.gitattributes` assigns the
+    // `rwv-ours` driver to `rwv.lock` via the production path (so committed
+    // trees carry the assignment).
+    fs::write(p.join("rwv.lock"), "v0\n").unwrap();
+    fs::write(p.join("shared"), "v0\n").unwrap();
+    git(p, &["add", "rwv.lock", "shared"]);
+    GitVcs
+        .set_replay_exclusion(p, std::path::Path::new("rwv.lock"))
+        .unwrap();
+    git(p, &["add", ".gitattributes"]);
+    git(p, &["commit", "-m", "base + attrs"]);
+    let c1 = git(p, &["rev-parse", "HEAD"]);
+
+    // main: bump shared AND lock in one commit (both will conflict with feat).
+    fs::write(p.join("shared"), "main version\n").unwrap();
+    fs::write(p.join("rwv.lock"), "main lock\n").unwrap();
+    git(p, &["add", "shared", "rwv.lock"]);
+    git(p, &["commit", "-m", "main: bump shared + lock"]);
+    let main_lock = fs::read_to_string(p.join("rwv.lock")).unwrap();
+
+    // feat: F1 = shared conflict, then F2 = lock-only bump.
+    git(p, &["checkout", "-b", "feat", &c1]);
+    fs::write(p.join("shared"), "feat version\n").unwrap();
+    git(p, &["add", "shared"]);
+    git(p, &["commit", "-m", "F1: change shared"]);
+    fs::write(p.join("rwv.lock"), "feat lock\n").unwrap();
+    git(p, &["add", "rwv.lock"]);
+    git(p, &["commit", "-m", "F2: bump lock only"]);
+
+    let main_tip = ResolvedRevisionId::from_canonical(git(p, &["rev-parse", "main"]), None);
+
+    // Sanity: the durable merge-driver config MUST be unset, so the test
+    // proves `rebase_continue` re-supplies the flag inline (the whole point
+    // of the bead — the resume rung must not silently depend on the plant
+    // any more than the initial `Vcs::rebase` does).
+    let pre = common::git()
+        .args(["config", "--local", "--get", "merge.rwv-ours.driver"])
+        .current_dir(p)
+        .output()
+        .expect("git config failed to spawn");
+    assert!(
+        !pre.status.success(),
+        "fixture precondition: merge.rwv-ours.driver must be unset"
+    );
+
+    // Step 1: `Vcs::rebase` stops on F1's shared conflict.
+    let first = GitVcs.rebase(p, &main_tip, &main_tip);
+    assert!(
+        matches!(first, Err(VcsError::RebaseConflict { .. })),
+        "expected first rebase to conflict on shared; got {first:?}"
+    );
+    assert_eq!(
+        GitVcs::mid_op_state(p).as_deref(),
+        Some("mid-rebase"),
+        "repo must be mid-rebase after F1 conflict"
+    );
+
+    // Operator resolves and stages.
+    fs::write(p.join("shared"), "merged version\n").unwrap();
+    git(p, &["add", "shared"]);
+
+    // Step 2: `rebase_continue` must apply the resolved F1 pick, then also
+    // apply F2 (the lock-only pick) via the inline merge-driver flag — no
+    // second conflict on rwv.lock.
+    GitVcs
+        .rebase_continue(p)
+        .expect("rebase_continue must complete after staging");
+
+    // Repo is no longer mid-rebase.
+    assert!(
+        GitVcs::mid_op_state(p).is_none(),
+        "rebase must be complete after successful continue"
+    );
+
+    // Lock ended up as MAIN's version — the F2 lock-only pick merged to
+    // "ours" via the inline driver flag (never touched the durable config).
+    let final_lock = fs::read_to_string(p.join("rwv.lock")).unwrap();
+    assert_eq!(
+        final_lock, main_lock,
+        "rwv.lock must be main's version after continue (inline rwv-ours flag)"
+    );
+
+    // And the resolved non-lock content survived.
+    let final_shared = fs::read_to_string(p.join("shared")).unwrap();
+    assert_eq!(final_shared, "merged version\n");
+}

@@ -266,6 +266,28 @@ pub fn has_working_tree_legacy_replay_exclusion(
     Ok(contents.lines().any(|line| line.trim() == legacy))
 }
 
+/// Build the two `KEY=VALUE` argument strings that inline-define the
+/// `rwv-ours` merge driver for a single git invocation.
+///
+/// Every git command that needs the driver defined (currently: [`GitVcs::rebase`]
+/// and [`GitVcs::rebase_continue`]) prepends `-c <name>=<desc>` and
+/// `-c <config-key>=true` from these strings. Extracted so the two callers
+/// share a single spelling of the flag pair — the driver name / description /
+/// value spread across [`RWV_MERGE_DRIVER_NAME_KEY`],
+/// [`RWV_MERGE_DRIVER_NAME_DESC`], and [`RWV_MERGE_DRIVER_CONFIG_KEY`] must
+/// stay in lockstep across every rwv-spawned rebase step, otherwise a
+/// `rwv sync --continue` mid-rebase resume could reach a different resolution
+/// than the fresh-start rebase phase that stopped there.
+///
+/// Returns `(name_arg, driver_arg)` where each is a single `KEY=VALUE`
+/// string suitable as the argument after a `-c` flag.
+pub(crate) fn rwv_ours_driver_flag_args() -> (String, String) {
+    (
+        format!("{RWV_MERGE_DRIVER_NAME_KEY}={RWV_MERGE_DRIVER_NAME_DESC}"),
+        format!("{RWV_MERGE_DRIVER_CONFIG_KEY}=true"),
+    )
+}
+
 /// `true` when `merge.rwv-ours.driver` is set (to anything) in any config
 /// scope git can see for `repo`. Used by `rwv doctor` to detect projects
 /// that haven't had the durable plant run yet.
@@ -964,8 +986,7 @@ impl Vcs for GitVcs {
         // invariant true after every rebase regardless of which side moved.
         //
         // [`set_replay_exclusion`]: Vcs::set_replay_exclusion
-        let driver_name_flag = format!("{RWV_MERGE_DRIVER_NAME_KEY}={RWV_MERGE_DRIVER_NAME_DESC}");
-        let driver_flag = format!("{RWV_MERGE_DRIVER_CONFIG_KEY}=true");
+        let (driver_name_flag, driver_flag) = rwv_ours_driver_flag_args();
         let output = git_command()
             .args([
                 "-c",
@@ -1015,6 +1036,90 @@ impl Vcs for GitVcs {
                 onto.as_str().to_owned(),
                 upstream.as_str().to_owned(),
             ],
+            repo: repo.to_path_buf(),
+            stderr,
+        })
+    }
+
+    fn rebase_continue(&self, repo: &Path) -> Result<(), VcsError> {
+        // Caller contract: `repo` must be mid-rebase. Enforce it here — the
+        // call site (sync's replay re-entry) already inspects `mid_op` to
+        // route between `rebase` and this method, so reaching this function
+        // on a clean repo is a bug, not an in-band condition. Silent no-op
+        // would hide it; instead surface a `CommandFailed` naming the wrong
+        // state, matching how `rebase` itself falls through to
+        // `CommandFailed` when a non-conflict rebase failure isn't
+        // classifiable further.
+        if !matches!(Self::mid_op_state(repo).as_deref(), Some("mid-rebase")) {
+            return Err(VcsError::CommandFailed {
+                args: vec!["rebase".to_owned(), "--continue".to_owned()],
+                repo: repo.to_path_buf(),
+                stderr: format!(
+                    "rebase_continue called on {} which is not mid-rebase",
+                    repo.display()
+                ),
+            });
+        }
+
+        // Re-supply the `rwv-ours` merge-driver flags inline. The durable
+        // config plant is what makes bare `git rebase --continue` safe for
+        // the operator, but rwv-driven rebase steps must not depend on
+        // config state (they can run against a fresh clone that has not had
+        // the plant self-heal yet, so keep the driver definition inline for
+        // every rwv-spawned git subprocess). Same flag pair as
+        // [`GitVcs::rebase`] via `rwv_ours_driver_flag_args`.
+        let (driver_name_flag, driver_flag) = rwv_ours_driver_flag_args();
+
+        // `git rebase --continue` invokes `$EDITOR` on the stopped commit's
+        // message before recording it. rwv is a non-interactive tool driven
+        // from CI and shell scripts, so an editor spawn here would hang the
+        // process. Pin both `GIT_EDITOR` and `GIT_SEQUENCE_EDITOR` to the
+        // `true` command — the same convention the test harness uses (see
+        // `tests/common/mod.rs`). Env is scoped to this single subprocess;
+        // the operator's own `git rebase --continue` outside rwv is
+        // unaffected.
+        let output = git_command()
+            .args([
+                "-c",
+                driver_name_flag.as_str(),
+                "-c",
+                driver_flag.as_str(),
+                "rebase",
+                "--continue",
+            ])
+            .env("GIT_EDITOR", "true")
+            .env("GIT_SEQUENCE_EDITOR", "true")
+            .current_dir(repo)
+            .output()
+            .map_err(|e| VcsError::Io {
+                ctx: format!(
+                    "failed to spawn git rebase --continue in {}",
+                    repo.display()
+                ),
+                source: e,
+            })?;
+
+        if output.status.success() {
+            return Ok(());
+        }
+
+        // Non-zero exit. If the repo is STILL mid-rebase, git either
+        // stopped on a further genuine conflict OR the operator's
+        // resolution left conflict markers unstaged ("needs merge" / "must
+        // edit all merge conflicts"). Both surface as the same operator
+        // signal: resolve → stage → rerun `--continue`. If the repo is no
+        // longer mid-rebase, this is some other rebase error we don't have
+        // a specific class for; fall through to `CommandFailed`.
+        if matches!(Self::mid_op_state(repo).as_deref(), Some("mid-rebase")) {
+            return Err(VcsError::RebaseConflict {
+                repo: repo.to_path_buf(),
+                op: ConflictOp::Rebase,
+            });
+        }
+
+        let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+        Err(VcsError::CommandFailed {
+            args: vec!["rebase".to_owned(), "--continue".to_owned()],
             repo: repo.to_path_buf(),
             stderr,
         })

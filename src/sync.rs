@@ -568,6 +568,23 @@ fn sync_one_repo(
     target: &ResolvedRevisionId,
     strategy: SyncStrategy,
 ) -> RepoSyncOutcome {
+    // Replay re-entry (`rwv sync --continue`) can find a manifest repo
+    // mid-rebase from a previous phase that stopped on a conflict. HEAD in
+    // that state points at the last-applied pick (descended from `target`),
+    // which would falsely match the AlreadyAhead branch below and skip the
+    // remaining picks entirely. Route mid-rebase repos straight to
+    // `apply_strategy` so the `rebase_continue` path drives the rebase
+    // forward; the head-equality / AlreadyAhead short-circuits assume a
+    // repo not in a mid-op state.
+    if matches!(GitVcs.mid_op(repo), Some(ConflictOp::Rebase)) && strategy == SyncStrategy::Rebase {
+        return match apply_strategy(repo, target, strategy) {
+            Ok(()) => RepoSyncOutcome::Converged,
+            Err(StrategyError { message, cause }) => {
+                RepoSyncOutcome::Failed(SyncFailure::for_strategy(strategy, message, cause))
+            }
+        };
+    }
+
     let head = match GitVcs.head_revision(repo) {
         Ok(h) => h,
         Err(e) => {
@@ -709,9 +726,30 @@ fn apply_strategy(
             // for both manifest and project repos. `git rebase <target>` is
             // equivalent to `git rebase --onto <target> <target>` — git
             // computes the merge-base internally to bound the replay set.
-            GitVcs
-                .rebase(repo, target, target)
-                .map_err(StrategyError::from_vcs)?;
+            //
+            // Replay re-entry (`rwv sync --continue`): if the repo is
+            // already mid-rebase from a previous phase that stopped on a
+            // conflict, `Vcs::rebase` would fail immediately ("cannot
+            // rebase: you have unstaged changes" / "another rebase is in
+            // progress"). Route through `Vcs::rebase_continue` instead so
+            // the operator's resolve+stage-then-`rwv sync --continue` loop
+            // actually drives the rebase forward through remaining picks
+            // (including lock-only picks that must merge to ours via the
+            // inline driver flags). A mid-op state that is NOT rebase
+            // (mid-merge, mid-cherry-pick) is not rwv-initiated for this
+            // path; fall through to `Vcs::rebase` and let it fail loudly.
+            match GitVcs.mid_op(repo) {
+                Some(ConflictOp::Rebase) => {
+                    GitVcs
+                        .rebase_continue(repo)
+                        .map_err(StrategyError::from_vcs)?;
+                }
+                _ => {
+                    GitVcs
+                        .rebase(repo, target, target)
+                        .map_err(StrategyError::from_vcs)?;
+                }
+            }
         }
     }
     Ok(())
@@ -3832,7 +3870,18 @@ fn apply_project_strategy(
     strategy: SyncStrategy,
     verb: OpVerb,
 ) -> anyhow::Result<()> {
-    if cwd_tip == source_tip {
+    // Replay re-entry (`rwv sync --continue`): a project repo that stopped
+    // mid-rebase on a conflict has HEAD sitting at `source_tip` (git checked
+    // it out as the rebase onto and stopped on the very first pick). The
+    // no-op short-circuit below would then trip and return `Ok(())` without
+    // ever driving the rebase forward — leaving the repo mid-rebase forever
+    // and lying to the caller that Phase 1' completed. Mid-rebase is the
+    // signal that trumps head-equality: always route through
+    // `Vcs::rebase_continue` (below) when we see it under a rebase strategy.
+    let mid_rebase = matches!(GitVcs.mid_op(cwd_project_dir), Some(ConflictOp::Rebase))
+        && strategy == SyncStrategy::Rebase;
+
+    if !mid_rebase && cwd_tip == source_tip {
         // No-op.
         return Ok(());
     }
@@ -3848,7 +3897,25 @@ fn apply_project_strategy(
             // (`--empty=drop`), so source's version of `rwv.lock` survives
             // the replay untouched. Phase 3 then regenerates the lock from
             // manifest tips.
-            match GitVcs.rebase(cwd_project_dir, source_tip, source_tip) {
+            //
+            // Replay re-entry (`rwv sync --continue`): if the project repo
+            // is already mid-rebase from a previous phase that stopped on a
+            // conflict, `Vcs::rebase` would fail immediately ("another
+            // rebase is in progress"). Route through `Vcs::rebase_continue`
+            // so `resolve → git add → rwv sync --continue` iterates per
+            // conflicted pick. `rebase_continue` re-supplies the same
+            // inline driver flags, so any remaining lock-only picks merge
+            // to ours the same way a fresh `Vcs::rebase` would. A mid-op
+            // that is NOT rebase (mid-merge, mid-cherry-pick) is not
+            // rwv-initiated for this path — preserve today's behavior of
+            // calling `Vcs::rebase`, which will fail loudly rather than
+            // silently adopting foreign state.
+            let outcome = if mid_rebase {
+                GitVcs.rebase_continue(cwd_project_dir)
+            } else {
+                GitVcs.rebase(cwd_project_dir, source_tip, source_tip)
+            };
+            match outcome {
                 Ok(()) => {}
                 Err(VcsError::RebaseConflict { repo, op }) => {
                     let detail = GitVcs.rebase_stopped_commit_detail(&repo);
