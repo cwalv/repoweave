@@ -125,6 +125,16 @@ This is monorepo atomic-ness without monorepo storage cost. The commit-and-lock 
 
 For projects where this matters more than the two-phase commit is worth, scripting it as a single command is straightforward — `rwv lock` is idempotent and the lock commit is mechanical.
 
+## The exporter tax: sharing a slice
+
+There is one act where the monorepo's costs concentrate into visible tooling: **sharing a slice of it with the outside world** — open-sourcing a component, publishing an SDK, giving a partner team a buildable subset.
+
+An exporter is the tax a system pays when its *unit of composition* differs from its *unit of sharing*. A monorepo composes in directories, but the world shares in repos — git has no per-path access control, and nobody clones the whole tree. So crossing the boundary requires copying and translating: compute the dependency closure, generate a standalone root manifest, vendor the third-party code, erase path-based identity (provenance doesn't survive the translation), and re-run the pipeline on a schedule to keep the export fresh. Meta's ShipIt and Google's Copybara are entire toolchains that exist to pay this tax; every "synced periodically from our monorepo" repo on GitHub is a receipt. Accepting contributions to the export requires the same machinery in reverse.
+
+In a weave the two units coincide, so the tax vanishes. A shareable slice is just a **project**: an `rwv.yaml` listing member repos, roles assigned, a lock naming the blessed combination. Publishing it is an ACL decision per repo plus making the project manifest visible — a *subset*, not a copy. Provenance can't be erased because identity was never path-based to begin with: each member already *is* its upstream, so the backchannel (issues, PRs, independent releases) stays intact. "Accept PRs, or not" is per-repo policy — which is exactly what the role axis expresses.
+
+The same asymmetry read from the other side: a monorepo pays the exporter tax per boundary, lossily, on a schedule; a weave pays a reconciliation tax instead — continuous, automatable (`rwv sync`, `rwv doctor`), and lossless. See [Alternatives](../../comparison.md) for where that trade is honestly hard.
+
 ## Where the monorepo equivalence holds (and where it doesn't)
 
 A useful heuristic for staying inside the monorepo-ergonomics envelope:
