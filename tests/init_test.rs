@@ -628,3 +628,170 @@ fn adopt_conflicts_with_provider() {
         .failure()
         .stderr(predicate::str::contains("cannot be used with"));
 }
+
+// ============================================================================
+// Empty-directory bootstrap
+// ============================================================================
+
+/// `rwv init` in a completely empty directory must succeed and leave a valid
+/// workspace skeleton so that the caller can immediately use other rwv verbs.
+#[test]
+fn init_bootstraps_empty_directory() {
+    let tmp = tempfile::tempdir().unwrap();
+    let ws = tmp.path().join("fresh");
+    std::fs::create_dir_all(&ws).unwrap();
+
+    // Directory is empty — no projects/, no registry dirs.
+    assert!(
+        std::fs::read_dir(&ws).unwrap().next().is_none(),
+        "precondition: fresh/ must be empty"
+    );
+
+    // `rwv init` should bootstrap the workspace and create the project.
+    rwv()
+        .args(["init", "my-app"])
+        .current_dir(&ws)
+        .assert()
+        .success();
+
+    // projects/ skeleton was created.
+    assert!(
+        ws.join("projects").is_dir(),
+        "projects/ must exist after bootstrap"
+    );
+
+    // The project itself was created.
+    assert!(
+        ws.join("projects/my-app").is_dir(),
+        "projects/my-app/ must exist after init in empty dir"
+    );
+
+    // The rwv.yaml is present and valid.
+    let manifest_path = ws.join("projects/my-app/rwv.yaml");
+    assert!(manifest_path.exists(), "rwv.yaml must exist");
+    let manifest = repoweave::manifest::Manifest::from_path(&manifest_path)
+        .expect("rwv.yaml from bootstrapped init must parse cleanly");
+    assert!(manifest.is_empty(), "repositories map must be empty");
+}
+
+/// After an empty-dir bootstrap, workspace context resolves (i.e. rwv verbs
+/// that need a workspace work immediately without any extra steps).
+#[test]
+fn init_empty_dir_workspace_context_resolves_after() {
+    let tmp = tempfile::tempdir().unwrap();
+    let ws = tmp.path().join("ctx-fresh");
+    std::fs::create_dir_all(&ws).unwrap();
+
+    rwv()
+        .args(["init", "proj"])
+        .current_dir(&ws)
+        .assert()
+        .success();
+
+    // Running any workspace-context verb (e.g. bare `rwv` status) must not
+    // fail with "no repoweave workspace found". Use `rwv init` with a second
+    // project as the proxy: it needs a workspace context and it would fail if
+    // the bootstrap left the workspace in an unresolvable state.
+    rwv()
+        .args(["init", "proj2"])
+        .current_dir(&ws)
+        .assert()
+        .success();
+
+    // Both projects exist.
+    assert!(ws.join("projects/proj").is_dir());
+    assert!(ws.join("projects/proj2").is_dir());
+}
+
+/// `rwv init` in a non-empty, non-workspace directory must refuse with a
+/// clear message — naming the state and the next step.
+#[test]
+fn init_refuses_non_empty_non_workspace_directory() {
+    let tmp = tempfile::tempdir().unwrap();
+    let noisy = tmp.path().join("noisy");
+    std::fs::create_dir_all(&noisy).unwrap();
+    // Seed with an unrelated file so it is non-empty.
+    std::fs::write(noisy.join("some-file.txt"), "random content").unwrap();
+
+    rwv()
+        .args(["init", "proj"])
+        .current_dir(&noisy)
+        .assert()
+        .failure()
+        .stderr(
+            // Must name the state — "not a workspace" and "not empty".
+            predicate::str::contains("not a workspace")
+                .and(predicate::str::contains("not empty"))
+                // Must name the next step — use an empty dir or existing workspace.
+                .and(
+                    predicate::str::contains("empty directory")
+                        .or(predicate::str::contains("existing workspace")),
+                ),
+        );
+}
+
+/// Existing-workspace behavior of `init` must be unchanged after the
+/// empty-dir bootstrap path was added.  Running init in an already-valid
+/// workspace (one with a registry dir marker) must succeed without touching
+/// anything outside the new project.
+#[test]
+fn init_existing_workspace_unaffected_by_bootstrap_path() {
+    let tmp = tempfile::tempdir().unwrap();
+    // Use make_empty_workspace which creates github/ + projects/.
+    let ws = make_empty_workspace(tmp.path());
+
+    // First project — creates projects/first/.
+    rwv()
+        .args(["init", "first"])
+        .current_dir(&ws)
+        .assert()
+        .success();
+
+    // Second project — reuses the existing workspace without any re-bootstrap.
+    rwv()
+        .args(["init", "second"])
+        .current_dir(&ws)
+        .assert()
+        .success();
+
+    assert!(ws.join("projects/first").is_dir());
+    assert!(ws.join("projects/second").is_dir());
+    // .rwv-active was updated by the second init.
+    let active = std::fs::read_to_string(ws.join(".rwv-active")).unwrap();
+    assert_eq!(active.trim(), "second");
+}
+
+/// `rwv init --adopt` in an empty directory must also bootstrap the workspace
+/// skeleton before cloning.
+#[test]
+fn adopt_bootstraps_empty_directory() {
+    let tmp = tempfile::tempdir().unwrap();
+    let ws = tmp.path().join("adopt-fresh");
+    std::fs::create_dir_all(&ws).unwrap();
+    let bare = make_repo_with_commit(tmp.path(), "adopted-proj");
+
+    rwv()
+        .args(["init", "--adopt", &format!("file://{}", bare.display())])
+        .current_dir(&ws)
+        .assert()
+        .success();
+
+    // projects/ skeleton was created and the adopted project landed inside it.
+    assert!(
+        ws.join("projects").is_dir(),
+        "projects/ must exist after adopt bootstrap"
+    );
+    assert!(
+        ws.join("projects/adopted-proj").is_dir(),
+        "projects/adopted-proj/ must exist after adopt in empty dir"
+    );
+    // Must be a real git repo (cloned, not init'd).
+    let toplevel = git_output(
+        &["rev-parse", "--git-dir"],
+        &ws.join("projects/adopted-proj"),
+    );
+    assert!(
+        toplevel.contains(".git"),
+        "adopted project must be a git repo"
+    );
+}

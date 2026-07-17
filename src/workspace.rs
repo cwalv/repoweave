@@ -300,7 +300,7 @@ impl WorkspaceSession {
 }
 
 /// Check that `cwd` is safe to use as a workspace root for bootstrapping
-/// commands (`fetch`, future `init --adopt`).
+/// commands (`fetch`, `init`).
 ///
 /// - If [`WorkspaceContext::resolve`] succeeds, returns `Ok(())` — we are
 ///   inside an existing workspace.
@@ -310,6 +310,10 @@ impl WorkspaceSession {
 ///   the caller to use `--force`.
 ///
 /// Pass `force = true` to skip the non-empty check entirely.
+///
+/// Callers that expose a different interface (e.g. `init`, which has no
+/// `--force` flag) should map the returned error to a command-specific
+/// message rather than surfacing the raw `--force` hint.
 pub fn require_workspace_or_empty(cwd: &Path, force: bool) -> anyhow::Result<()> {
     match WorkspaceContext::resolve(cwd, None) {
         Ok(_) => return Ok(()),           // existing workspace — proceed

@@ -8,18 +8,75 @@
 //! can be a URL or a shorthand (`owner/repo` or `registry/owner/repo`). The
 //! cloned repo is placed under `projects/{name}/`, an `rwv.yaml` is written if
 //! missing, and the project is activated.
+//!
+//! ## Empty-directory bootstrap
+//!
+//! When invoked in an empty directory (no workspace markers), `rwv init`
+//! creates the minimal workspace skeleton (`projects/`) before proceeding.
+//! This makes the standard day-0 flow work immediately:
+//!
+//! ```text
+//! mkdir my-ws && cd my-ws
+//! rwv init my-project        # bootstraps projects/ and initialises the project
+//! rwv add <url>              # works — workspace context resolves
+//! ```
+//!
+//! Running `rwv init` in a non-empty, non-workspace directory is refused with
+//! a clear actionable error.
 
 use crate::git::git_command;
 use crate::git::GitVcs;
 use crate::manifest::RepoUrl;
 use crate::registry::{builtin_registries, resolve_to_clone_info, RepoId};
 use crate::vcs::Vcs;
-use crate::workspace::WorkspaceContext;
+use crate::workspace::{require_workspace_or_empty, WorkspaceContext};
 use anyhow::Context;
 use std::path::Path;
 
+/// Bootstrap a workspace skeleton in `cwd` if it is an empty directory.
+///
+/// Reuses [`require_workspace_or_empty`] as the gate:
+///
+/// - Already a workspace → no-op; the caller's subsequent [`WorkspaceContext::resolve`]
+///   will succeed as before.
+/// - Empty directory → creates `projects/` so that [`WorkspaceContext::resolve`]
+///   can find a workspace marker and proceed.
+/// - Non-empty, non-workspace directory → returns a clear refusal error naming
+///   the state, what `init` would do, and the next step.
+fn bootstrap_workspace_if_empty(cwd: &Path) -> anyhow::Result<()> {
+    // Reuse the shared gate — don't duplicate emptiness / workspace logic.
+    // Map the error to an init-specific message (the generic message mentions
+    // --force, which `init` does not expose).
+    require_workspace_or_empty(cwd, false).map_err(|_| {
+        anyhow::anyhow!(
+            "`rwv init` requires either an existing workspace or an empty directory; \
+             {} is not a workspace and is not empty. \
+             `rwv init` would create a workspace skeleton (projects/) and initialise a project. \
+             To proceed: run `rwv init` in an empty directory, or `cd` into an existing workspace.",
+            cwd.display()
+        )
+    })?;
+
+    // Gate passed. If we are NOT already a workspace (resolve would fail), we
+    // are in an empty dir — create the minimal `projects/` marker so that the
+    // subsequent `WorkspaceContext::resolve` call in `init`/`init_adopt` finds
+    // a workspace root.
+    if WorkspaceContext::resolve(cwd, None).is_err() {
+        let projects_dir = cwd.join("projects");
+        std::fs::create_dir_all(&projects_dir)
+            .with_context(|| format!("failed to create {}", projects_dir.display()))?;
+        eprintln!(
+            "Bootstrapped workspace at {} (created projects/)",
+            cwd.display()
+        );
+    }
+
+    Ok(())
+}
+
 /// Initialize a new project in the workspace.
 ///
+/// - Bootstraps a workspace skeleton if `cwd` is an empty directory.
 /// - Resolves the workspace root from `cwd`.
 /// - Creates `projects/{name}/`.
 /// - Runs `git init` in the new directory.
@@ -27,6 +84,7 @@ use std::path::Path;
 /// - If `provider` is given (e.g., `"github/owner"`), configures a git remote.
 /// - Activates the project (writes `.rwv-active` and generates ecosystem files).
 pub fn init(name: &str, provider: Option<&str>, cwd: &Path) -> anyhow::Result<()> {
+    bootstrap_workspace_if_empty(cwd)?;
     let ctx = WorkspaceContext::resolve(cwd, None)?;
     let project_dir = ctx.primary_path().join("projects").join(name);
 
@@ -141,12 +199,14 @@ pub fn init(name: &str, provider: Option<&str>, cwd: &Path) -> anyhow::Result<()
 ///
 /// `source` is a URL or shorthand (`owner/repo` or `registry/owner/repo`).
 /// The function:
-/// 1. Resolves the workspace root from `cwd`.
-/// 2. Determines the clone URL and project name from `source`.
-/// 3. Clones the repo to `projects/{name}/` (skips if already exists).
-/// 4. Writes an empty `rwv.yaml` if the clone does not already contain one.
-/// 5. Activates the project.
+/// 1. Bootstraps a workspace skeleton if `cwd` is an empty directory.
+/// 2. Resolves the workspace root from `cwd`.
+/// 3. Determines the clone URL and project name from `source`.
+/// 4. Clones the repo to `projects/{name}/` (skips if already exists).
+/// 5. Writes an empty `rwv.yaml` if the clone does not already contain one.
+/// 6. Activates the project.
 pub fn init_adopt(source: &str, cwd: &Path) -> anyhow::Result<()> {
+    bootstrap_workspace_if_empty(cwd)?;
     let ctx = WorkspaceContext::resolve(cwd, None)?;
     let root = ctx.primary_path();
 
