@@ -251,6 +251,38 @@ pub enum CheckViolation {
         /// Safe-vs-live classification.
         sub_kind: OrphanedSavepointKind,
     },
+
+    /// Version skew across cargo workspace members: the same crate name is
+    /// required at different version-req strings by two or more members
+    /// (post `workspace = true` indirection). Always **warning** severity
+    /// and report-only — the observatory is informational; rwv cannot
+    /// mandate versions across sovereign repos. See Finding 3 of
+    /// `docs/repoweave/grok-build-export-findings.md`.
+    CargoVersionSkew {
+        /// The registry crate name (e.g. `serde`, `tokio`).
+        crate_name: String,
+        /// Per-member requirement strings, sorted for stable output.
+        occurrences: Vec<crate::integrations::cargo_workspace::CargoSkewOccurrence>,
+    },
+
+    /// A member's `.cargo/config.toml` declares a `[patch.<registry>].<crate>`
+    /// key that would silently defeat a weave-level entry for the same key
+    /// (cargo's closest-config-wins per-key shadowing — probe P5b in the
+    /// design doc). Warning severity, report-only. Doubles as the mandatory
+    /// precheck for the future derived-patches bead (fo-t9x0l1.2), because
+    /// cargo's mismatch diagnostic actively misleads (blames crates.io) when
+    /// a patch silently doesn't apply (probe P6).
+    CargoPatchShadowing {
+        /// Weave-level file that carries the (would-be) inert patch entry.
+        weave_config: PathBuf,
+        /// Member-level `.cargo/config.toml` that wins (closest-wins per key).
+        member_config: PathBuf,
+        /// Registry sub-table name (typically `crates-io`; git-source
+        /// patches use the git URL).
+        registry: String,
+        /// The specific crate name whose key collides.
+        crate_name: String,
+    },
 }
 
 /// Classification of an orphaned savepoint, controlling `--fix` policy.
@@ -692,6 +724,39 @@ pub enum ViolationOutput {
         #[serde(rename = "sub_kind")]
         sub_kind: OrphanedSavepointKind,
     },
+    /// See [`CheckViolation::CargoVersionSkew`].
+    CargoVersionSkew {
+        /// Registry crate name.
+        crate_name: String,
+        /// Per-member requirement strings (post-`workspace = true`
+        /// indirection). Sorted for stable output.
+        occurrences: Vec<CargoSkewOccurrenceOutput>,
+    },
+    /// See [`CheckViolation::CargoPatchShadowing`].
+    CargoPatchShadowing {
+        /// Weave-level file (Cargo.toml or .cargo/config.toml) that
+        /// carries the shadowed patch entry.
+        weave_config: String,
+        /// Member-level `.cargo/config.toml` that wins per cargo's
+        /// closest-config-wins-per-key shadowing.
+        member_config: String,
+        /// Registry sub-table name (e.g. `crates-io`).
+        registry: String,
+        /// The specific crate name whose key collides.
+        crate_name: String,
+    },
+}
+
+/// Wire representation of [`crate::integrations::cargo_workspace::CargoSkewOccurrence`].
+///
+/// Kept separate so the internal type stays free of serde/schemars deps
+/// and the wire shape is a single-source-of-truth definition here.
+#[derive(Debug, Serialize, JsonSchema, Clone)]
+pub struct CargoSkewOccurrenceOutput {
+    /// Weave-relative member path.
+    pub member: String,
+    /// Requirement string (post `workspace = true` indirection).
+    pub requirement: String,
 }
 
 impl ViolationOutput {
@@ -891,6 +956,30 @@ impl ViolationOutput {
                 workweave: workweave.map(|w| w.to_string()),
                 op_id,
                 sub_kind,
+            },
+            CheckViolation::CargoVersionSkew {
+                crate_name,
+                occurrences,
+            } => Self::CargoVersionSkew {
+                crate_name,
+                occurrences: occurrences
+                    .into_iter()
+                    .map(|o| CargoSkewOccurrenceOutput {
+                        member: o.member,
+                        requirement: o.requirement,
+                    })
+                    .collect(),
+            },
+            CheckViolation::CargoPatchShadowing {
+                weave_config,
+                member_config,
+                registry,
+                crate_name,
+            } => Self::CargoPatchShadowing {
+                weave_config: weave_config.to_string_lossy().into_owned(),
+                member_config: member_config.to_string_lossy().into_owned(),
+                registry,
+                crate_name,
             },
         }
     }
@@ -1507,6 +1596,59 @@ pub fn scan_workweave_tree_integrity(ws_root: &Path) -> Vec<CheckViolation> {
 // ---------------------------------------------------------------------------
 // Provenance scanning
 // ---------------------------------------------------------------------------
+
+/// Run the cargo version-skew + patch-shadowing scans for a single project
+/// and translate their outputs to [`CheckViolation`]s.
+///
+/// The scan is opt-in through the same enablement rules as the cargo-workspace
+/// integration itself (silent no-op if disabled, or if no cargo work is
+/// present in the workspace). The two scans are purely additive to doctor:
+/// they never fail activation, never modify state, and always surface as
+/// warnings so `rwv doctor` exit-status stays 0 by default.
+///
+/// Nested-workspace repos are still hard-errored at activation time, but the
+/// scanner reads them anyway (see [`crate::integrations::cargo_workspace::CargoWorkspace::scan_members`]).
+/// The grok-build test case (85 crates under a single nested workspace) is
+/// exactly the shape this covers.
+pub fn scan_cargo_ecosystem(
+    ctx: &crate::integration::IntegrationContext,
+) -> anyhow::Result<Vec<CheckViolation>> {
+    use crate::integration::is_enabled;
+    use crate::integrations::cargo_workspace::CargoWorkspace;
+    use crate::manifest::CargoWorkspaceConfig;
+
+    let integration = CargoWorkspace;
+    if !is_enabled(&integration, ctx.config) {
+        return Ok(Vec::new());
+    }
+
+    let cfg: CargoWorkspaceConfig = ctx.config.settings()?;
+    // Reuse the integration's enablement predicate for "does this workspace
+    // have cargo work at all?" so the scan silently no-ops in workspaces
+    // without any Rust members.
+    let members = CargoWorkspace::scan_members(ctx, &cfg)?;
+    if members.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let mut violations = Vec::new();
+    for (crate_name, occurrences) in CargoWorkspace::scan_version_skew(ctx.workspace_root, &members)
+    {
+        violations.push(CheckViolation::CargoVersionSkew {
+            crate_name,
+            occurrences,
+        });
+    }
+    for rec in CargoWorkspace::scan_patch_shadowing(ctx.workspace_root, &members) {
+        violations.push(CheckViolation::CargoPatchShadowing {
+            weave_config: rec.weave_config,
+            member_config: rec.member_config,
+            registry: rec.registry,
+            crate_name: rec.crate_name,
+        });
+    }
+    Ok(violations)
+}
 
 /// Scan all repos in `projects` for provenance violations.
 ///
@@ -2939,6 +3081,50 @@ pub fn violations_to_issues(violations: Vec<CheckViolation>) -> Vec<Issue> {
                         format!("{location}: {detail} op_id={op_id}"),
                     )
                 }
+                CheckViolation::CargoVersionSkew {
+                    crate_name,
+                    occurrences,
+                } => {
+                    // Report-not-mandate (Finding 3): skew is informational.
+                    // Warning severity so doctor's exit stays 0 by default;
+                    // safe_to_fix is true only in the trivial sense that
+                    // there's nothing for --fix to do (rwv cannot mandate
+                    // versions in sovereign repos) — leaving it true keeps
+                    // the finding out of the not-safe-to-fix "user held"
+                    // bucket meant for pen-holding conflicts.
+                    let mut msg = format!(
+                        "cargo version skew: `{crate_name}` required at differing versions across \
+                         members (report-only — rwv cannot mandate versions in sovereign repos)"
+                    );
+                    for occ in &occurrences {
+                        msg.push_str(&format!("\n  - {}: {}", occ.member, occ.requirement));
+                    }
+                    (crate::integration::Severity::Warning, msg)
+                }
+                CheckViolation::CargoPatchShadowing {
+                    weave_config,
+                    member_config,
+                    registry,
+                    crate_name,
+                } => {
+                    // Report-only precheck: cargo's closest-config-wins per-key
+                    // shadowing means the member config silently defeats the
+                    // weave-level entry. Cargo does not warn; its version-
+                    // mismatch diagnostic actively misleads (blames crates.io
+                    // — probe P6). This finding is what agents/scripts key on
+                    // before generating derived patches (fo-t9x0l1.2).
+                    (
+                        crate::integration::Severity::Warning,
+                        format!(
+                            "cargo patch shadowing: `[patch.{registry}].{crate_name}` in {} \
+                             silently defeats the weave-level entry in {} \
+                             (cargo merges .cargo/config.toml closest-wins per key, with no \
+                             warning when a patch is inert)",
+                            member_config.display(),
+                            weave_config.display(),
+                        ),
+                    )
+                }
             };
             Issue {
                 integration: "core".into(),
@@ -3862,6 +4048,31 @@ pub fn run_check(
         let integration_issues = run_checks(&integrations, &project.manifest, &ctx_base);
         all_issues.extend(integration_issues);
 
+        // Cargo version-skew observatory + patch-shadowing precheck
+        // (fo-t9x0l1.1). Warning-only findings; feed the same
+        // `violations_to_issues` path the built-in `CheckViolation`s use so
+        // exit-status and formatting stay consistent. Emitted here (not in
+        // `find_violations`) because the scan needs an `IntegrationContext`
+        // — it walks the cargo integration's members-with-config expansion.
+        {
+            let default_cfg = crate::manifest::IntegrationConfig::default();
+            let cargo_cfg = project
+                .manifest
+                .integrations
+                .get("cargo-workspace")
+                .unwrap_or(&default_cfg);
+            let cargo_ctx = ctx_base.build_context(cargo_cfg, &project.manifest);
+            match scan_cargo_ecosystem(&cargo_ctx) {
+                Ok(vs) => all_issues.extend(violations_to_issues(vs)),
+                Err(e) => all_issues.push(Issue {
+                    integration: "cargo-workspace".into(),
+                    severity: Severity::Warning,
+                    message: format!("skew/patch scan failed: {e}"),
+                    safe_to_fix: true,
+                }),
+            }
+        }
+
         // Trigger-model drift check (see `trigger-model.md`): the integrations'
         // `verify()` pass reports drift between on-disk managed/generated content
         // and what `activate()` would produce. Under `--fix`, doctor invokes the
@@ -4684,6 +4895,39 @@ fn collect_doctor_violations(
     // Always report-only (no --fix path).
     for v in scan_provenance(&workspace_dir, &input.projects) {
         violations.push(v);
+    }
+
+    // Cargo version-skew + patch-shadowing scans (fo-t9x0l1.1). Per-project
+    // because they consume the cargo-workspace integration config; findings
+    // are always Warning severity so `--json` reports them but exit-status
+    // stays 0 by default (they are informational, not gates).
+    {
+        let session_for_cargo = crate::workspace::WorkspaceSession::new(&workspace_dir);
+        for project in &input.projects {
+            let detection_cache = crate::integration_runner::build_detection_cache(
+                &workspace_dir,
+                project.manifest.iter_entries(),
+            );
+            let ctx_base = session_for_cargo.context_base(
+                &workspace_dir,
+                &project.name,
+                &detection_cache,
+                project.manifest.workweave.as_ref(),
+            );
+            let default_cfg = crate::manifest::IntegrationConfig::default();
+            let cargo_cfg = project
+                .manifest
+                .integrations
+                .get("cargo-workspace")
+                .unwrap_or(&default_cfg);
+            let cargo_ctx = ctx_base.build_context(cargo_cfg, &project.manifest);
+            if let Ok(vs) = scan_cargo_ecosystem(&cargo_ctx) {
+                violations.extend(vs);
+            }
+            // Silent skip on Err — the text channel surfaces the failure;
+            // JSON stays clean rather than emit a bespoke "scan-failed"
+            // pseudo-record. Failure is rare (cfg deser error).
+        }
     }
 
     // Clone-topology findings. Tier-0 invariants from clone-topology.md;

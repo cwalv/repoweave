@@ -218,6 +218,65 @@ impl CargoWorkspace {
         Ok((members, nested_conflicts))
     }
 
+    /// Enumerate cargo-workspace members for the READ-ONLY scan path
+    /// (version-skew + patch-shadowing).
+    ///
+    /// Distinct from [`partition`] (activation-time): the scan path must
+    /// include repos whose root declares `[workspace]` (grok-build shape),
+    /// because that is where `[workspace.dependencies]` typically lives.
+    /// Activation still hard-errors on those repos (they cannot be members
+    /// of the weave workspace); the scan just reads them.
+    ///
+    /// Returned member paths are weave-relative and sorted. When a repo has
+    /// a `members.<repo>` sub-path spec (rvtty-style), its sub-paths are
+    /// emitted; when a repo is a nested workspace, its ROOT is emitted (the
+    /// scanner then reads `<root>/Cargo.toml`'s `[workspace.dependencies]`
+    /// directly). Opt-outs are respected.
+    pub fn scan_members(
+        ctx: &IntegrationContext,
+        cfg: &CargoWorkspaceConfig,
+    ) -> anyhow::Result<Vec<String>> {
+        let rust_repos = ctx.detect_repos_with_manifest("Cargo.toml");
+        let rust_repo_set: BTreeSet<&str> = rust_repos.iter().map(String::as_str).collect();
+        let opt_out: BTreeSet<&str> = cfg.exclude.iter().map(String::as_str).collect();
+
+        let active_members_in_cfg: BTreeSet<String> = ctx
+            .active_repos()
+            .map(|(rp, _)| rp.as_str().to_string())
+            .filter(|p| cfg.members.contains_key(p))
+            .collect();
+
+        let mut all_repos: BTreeSet<String> = BTreeSet::new();
+        all_repos.extend(rust_repos.iter().cloned());
+        all_repos.extend(active_members_in_cfg.iter().cloned());
+
+        let mut members: Vec<String> = Vec::new();
+        for repo in &all_repos {
+            if opt_out.contains(repo.as_str()) {
+                continue;
+            }
+            // members-subpath repo: emit each sub-path exactly like
+            // activation. Do NOT skip if the root declares [workspace] —
+            // activation's hard-error is orthogonal to the scan.
+            if let Some(spec) = cfg.members.get(repo) {
+                for sub in resolve_member_spec(spec) {
+                    members.push(format!("{repo}/{sub}"));
+                }
+                continue;
+            }
+            // Default: emit the repo root if it has a Cargo.toml. This
+            // includes nested-workspace repos (grok-build shape) for the
+            // scan — activation still bails on them via `partition`, but
+            // the scanner can still read their `[workspace.dependencies]`.
+            if rust_repo_set.contains(repo.as_str()) {
+                members.push(repo.clone());
+            }
+        }
+        members.sort();
+        members.dedup();
+        Ok(members)
+    }
+
     /// Build the (key, ownership, value) triples the merge helper will set
     /// during `activate()`. Pure — no I/O.
     fn owned_pairs(
@@ -976,6 +1035,424 @@ fn nested_workspace_error(conflicts: &[String]) -> String {
          with an `include:` list to contribute the sub-paths instead\n",
     );
     msg
+}
+
+// ===========================================================================
+// Version-skew observatory + same-key patch shadowing scanner (fo-t9x0l1.1)
+// ===========================================================================
+//
+// Read-only scans that feed `rwv doctor` (both the text and `--json` channels)
+// without going through the Integration trait — Integration::check returns
+// `Issue`s which do not surface in `--json`, but the design (Finding 3 in
+// grok-build-export-findings.md) requires structured records for agent/script
+// consumers.
+//
+// Both scans are **warnings** — they never fail doctor's exit status by
+// default. They are informational for the operator (version skew), or a
+// precondition check for the future derived-patches bead (patch shadowing).
+
+/// One member's requirement for one crate.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CargoSkewOccurrence {
+    /// Weave-relative member path (e.g. `github/cwalv/foo`, or
+    /// `<repo>/<sub>` for members-subpath repos).
+    pub member: String,
+    /// Requirement string as declared by the member, post
+    /// `workspace = true` indirection (so what cargo would actually
+    /// resolve against). For inline-table deps the version field is
+    /// used; for plain string deps the string itself.
+    pub requirement: String,
+}
+
+/// A single same-key patch-shadowing finding.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PatchShadowingRecord {
+    /// The weave-level file that declares the (would-be) inert patch key.
+    /// Today this is the weave-root `Cargo.toml`; when Finding 2's
+    /// `.cargo/config.toml` surface lands, this may also point there.
+    pub weave_config: std::path::PathBuf,
+    /// The member-level `.cargo/config.toml` that shadows the weave key
+    /// (per cargo's closest-config-wins per key).
+    pub member_config: std::path::PathBuf,
+    /// The registry sub-table (`crates-io`, or a git URL string).
+    pub registry: String,
+    /// The specific crate name whose key collides.
+    pub crate_name: String,
+}
+
+impl CargoWorkspace {
+    /// Aggregate every workspace-member's external (registry) dependencies
+    /// and report **version skew**: same crate name required at differing
+    /// version-req strings across members.
+    ///
+    /// Resolves `dep.workspace = true` through the member's own
+    /// `[workspace.dependencies]` before recording the effective
+    /// requirement. Members that ARE workspaces (grok-build shape) are
+    /// scanned by reading their own `[workspace.dependencies]`; the scan
+    /// path is decoupled from the activation-time nested-workspace
+    /// hard-error (which still applies).
+    ///
+    /// Version comparison is at the raw-string level for v1 — an exact
+    /// difference is skew, ambiguous cases (`"1"` vs `"1.0"`, caret
+    /// implicit vs explicit) surface as skew and the operator decides.
+    /// A semver-smarter comparison is a defensible future refinement but
+    /// out of scope here — the observatory is report-not-mandate, so
+    /// noisy is safer than silent.
+    ///
+    /// Returns records sorted by crate name for stable output.
+    pub fn scan_version_skew(
+        workspace_root: &Path,
+        members: &[String],
+    ) -> Vec<(String, Vec<CargoSkewOccurrence>)> {
+        // Per member, load its Cargo.toml and any workspace-dep table
+        // reachable from the member (either its own `[workspace.dependencies]`
+        // when the member is a workspace root, or the containing repo's when
+        // the member is a `<repo>/<sub>` sub-path).
+        let mut per_crate: BTreeMap<String, Vec<CargoSkewOccurrence>> = BTreeMap::new();
+
+        for member in members {
+            let member_dir = workspace_root.join(member);
+            let cargo_toml = member_dir.join("Cargo.toml");
+            let Ok(text) = std::fs::read_to_string(&cargo_toml) else {
+                continue;
+            };
+            let Ok(doc) = text.parse::<toml_edit::DocumentMut>() else {
+                continue;
+            };
+
+            // Locate the workspace-deps table this member's `workspace = true`
+            // inheritances would resolve against. Two cases:
+            //
+            // (a) `member/Cargo.toml` has its own `[workspace.dependencies]`
+            //     (the member is itself a workspace root — grok-build shape).
+            // (b) `member` is a sub-path (`<repo>/<sub>`), so walk up to the
+            //     repo root's `Cargo.toml` and read its
+            //     `[workspace.dependencies]`.
+            //
+            // Failing both, `workspace = true` deps in this member are
+            // uninterpretable and get skipped.
+            let workspace_deps_doc: Option<toml_edit::DocumentMut> =
+                if extract_workspace_deps_table(&doc).is_some() {
+                    Some(doc.clone())
+                } else {
+                    find_ancestor_workspace_deps(workspace_root, member)
+                };
+
+            for deps_key in ["dependencies", "dev-dependencies", "build-dependencies"] {
+                let Some(deps) = doc.get(deps_key).and_then(|i| i.as_table()) else {
+                    continue;
+                };
+                for (dep_name, dep_item) in deps.iter() {
+                    let effective = resolve_effective_requirement(
+                        dep_item,
+                        dep_name,
+                        workspace_deps_doc.as_ref(),
+                    );
+                    if let Some(req) = effective {
+                        per_crate.entry(dep_name.to_string()).or_default().push(
+                            CargoSkewOccurrence {
+                                member: member.clone(),
+                                requirement: req,
+                            },
+                        );
+                    }
+                }
+            }
+        }
+
+        // Emit only crates that have >=2 distinct requirement strings.
+        let mut out: Vec<(String, Vec<CargoSkewOccurrence>)> = Vec::new();
+        for (name, occs) in per_crate {
+            let distinct: BTreeSet<&str> = occs.iter().map(|o| o.requirement.as_str()).collect();
+            if distinct.len() > 1 {
+                let mut occs = occs;
+                // Sort by (member, requirement) for stable output.
+                occs.sort_by(|a, b| {
+                    a.member
+                        .cmp(&b.member)
+                        .then_with(|| a.requirement.cmp(&b.requirement))
+                });
+                out.push((name, occs));
+            }
+        }
+        out
+    }
+
+    /// Detect `.cargo/config.toml` files in the member-directory discovery
+    /// chain that carry `[patch.*].<crate>` keys colliding with the
+    /// weave-level patch table.
+    ///
+    /// Cargo's config discovery merges `.cargo/config.toml` files by
+    /// **closest-wins per key**: a member's own `.cargo/config.toml` with
+    /// `[patch.crates-io].foo = ...` **wholly replaces** the weave-level
+    /// entry for `foo`, silently, with no warning from cargo.
+    ///
+    /// Weave-level patch keys are collected from two sources:
+    ///
+    /// 1. `<workspace_root>/Cargo.toml`'s `[patch.<reg>]` sub-tables (the
+    ///    surface today — see `compute_patches`).
+    /// 2. `<workspace_root>/.cargo/config.toml`'s `[patch.<reg>]` sub-tables
+    ///    (the surface Finding 2 will add; already-supported today).
+    ///
+    /// Member-level configs are discovered by walking upward from each
+    /// member directory to `workspace_root` (exclusive), reading any
+    /// `.cargo/config.toml` found. Each collision produces one record —
+    /// callers can group as they see fit.
+    ///
+    /// Runs standalone (does not require `cfg.patch == true`) — it is the
+    /// mandatory precheck for the future derived-patches bead
+    /// (fo-t9x0l1.2), which relies on cargo actually applying the patches
+    /// generated.
+    pub fn scan_patch_shadowing(
+        workspace_root: &Path,
+        members: &[String],
+    ) -> Vec<PatchShadowingRecord> {
+        // ---- weave-level patch keys ----
+        // {registry -> {crate_name -> source_file}} so each finding names the
+        // exact file the weave key came from.
+        let mut weave_keys: BTreeMap<String, BTreeMap<String, std::path::PathBuf>> =
+            BTreeMap::new();
+        collect_patch_keys(&workspace_root.join("Cargo.toml"), &mut weave_keys);
+        collect_patch_keys(
+            &workspace_root.join(".cargo").join("config.toml"),
+            &mut weave_keys,
+        );
+
+        if weave_keys.is_empty() {
+            return Vec::new();
+        }
+
+        // ---- member-level `.cargo/config.toml`s in each member's
+        // discovery chain (walk from member upward, exclusive of
+        // workspace_root; the weave-level file is treated as the ceiling
+        // and is not itself a "member" config for shadowing purposes).
+        let mut records: Vec<PatchShadowingRecord> = Vec::new();
+        let mut seen: BTreeSet<(std::path::PathBuf, String, String)> = BTreeSet::new();
+
+        // Canonicalize the ceiling once for identity comparison.
+        let ceiling =
+            std::fs::canonicalize(workspace_root).unwrap_or_else(|_| workspace_root.to_path_buf());
+
+        for member in members {
+            let member_dir = workspace_root.join(member);
+            for config_path in walk_cargo_configs(&member_dir, &ceiling) {
+                let mut member_keys: BTreeMap<String, BTreeMap<String, std::path::PathBuf>> =
+                    BTreeMap::new();
+                collect_patch_keys(&config_path, &mut member_keys);
+                for (registry, crates) in &member_keys {
+                    let Some(weave_crates) = weave_keys.get(registry) else {
+                        continue;
+                    };
+                    for crate_name in crates.keys() {
+                        let Some(weave_source) = weave_crates.get(crate_name) else {
+                            continue;
+                        };
+                        let key = (config_path.clone(), registry.clone(), crate_name.clone());
+                        if !seen.insert(key) {
+                            continue;
+                        }
+                        records.push(PatchShadowingRecord {
+                            weave_config: weave_source.clone(),
+                            member_config: config_path.clone(),
+                            registry: registry.clone(),
+                            crate_name: crate_name.clone(),
+                        });
+                    }
+                }
+            }
+        }
+
+        // Stable output.
+        records.sort_by(|a, b| {
+            a.member_config
+                .cmp(&b.member_config)
+                .then_with(|| a.registry.cmp(&b.registry))
+                .then_with(|| a.crate_name.cmp(&b.crate_name))
+        });
+        records
+    }
+}
+
+/// Read `[patch.<registry>].<crate>` keys from `path` into `into`.
+///
+/// Silent no-op if the file doesn't exist or doesn't parse. Both are
+/// acceptable in scan context — we surface findings, not parse errors.
+fn collect_patch_keys(
+    path: &Path,
+    into: &mut BTreeMap<String, BTreeMap<String, std::path::PathBuf>>,
+) {
+    let Ok(text) = std::fs::read_to_string(path) else {
+        return;
+    };
+    let Ok(doc) = text.parse::<toml_edit::DocumentMut>() else {
+        return;
+    };
+    let Some(patch) = doc.get("patch").and_then(|i| i.as_table()) else {
+        return;
+    };
+    for (registry, sub) in patch.iter() {
+        let Some(sub) = sub.as_table() else { continue };
+        for (crate_name, _) in sub.iter() {
+            into.entry(registry.to_string())
+                .or_default()
+                .insert(crate_name.to_string(), path.to_path_buf());
+        }
+    }
+}
+
+/// Walk from `start` upward toward (but not including) `ceiling`, yielding
+/// every `.cargo/config.toml` found on the way. Order is closest-first
+/// (member's own config first, then its parent's, etc.).
+///
+/// `ceiling` is compared by canonical path; if `start` is not under
+/// `ceiling` (e.g. a symlinked or foreign path), the walk still terminates
+/// at filesystem root.
+fn walk_cargo_configs(start: &Path, ceiling: &Path) -> Vec<std::path::PathBuf> {
+    let mut out = Vec::new();
+    let start_canonical = std::fs::canonicalize(start).unwrap_or_else(|_| start.to_path_buf());
+    let mut cur: Option<&Path> = Some(&start_canonical);
+    while let Some(dir) = cur {
+        if dir == ceiling {
+            break;
+        }
+        let cfg = dir.join(".cargo").join("config.toml");
+        if cfg.is_file() {
+            out.push(cfg);
+        }
+        cur = dir.parent();
+    }
+    out
+}
+
+/// If `doc` has a `[workspace.dependencies]` table, return an anchor
+/// referencing it (the caller can then look up a specific dep name via
+/// [`workspace_dep_requirement`]).
+fn extract_workspace_deps_table(doc: &toml_edit::DocumentMut) -> Option<&toml_edit::Table> {
+    doc.get("workspace")
+        .and_then(|i| i.as_table())
+        .and_then(|t| t.get("dependencies"))
+        .and_then(|i| i.as_table())
+}
+
+/// Walk ancestor directories of `<workspace_root>/<member>` looking for a
+/// `Cargo.toml` that declares `[workspace.dependencies]`, and return the
+/// parsed document. Stops at (and does not include) `workspace_root`. This
+/// covers the `<repo>/<sub>` case where a repo's sub-package inherits
+/// workspace deps from the repo's own root `Cargo.toml`.
+fn find_ancestor_workspace_deps(
+    workspace_root: &Path,
+    member: &str,
+) -> Option<toml_edit::DocumentMut> {
+    let member_dir = workspace_root.join(member);
+    let mut cur = member_dir.parent();
+    while let Some(dir) = cur {
+        // Terminate at workspace_root (exclusive) — the weave-root
+        // `Cargo.toml` is rwv's aggregating root, its
+        // `[workspace.dependencies]` is user-supplied and orthogonal to a
+        // member's inheritance choice.
+        if dir == workspace_root {
+            break;
+        }
+        let candidate = dir.join("Cargo.toml");
+        if candidate.is_file() {
+            if let Ok(text) = std::fs::read_to_string(&candidate) {
+                if let Ok(doc) = text.parse::<toml_edit::DocumentMut>() {
+                    if extract_workspace_deps_table(&doc).is_some() {
+                        return Some(doc);
+                    }
+                }
+            }
+        }
+        cur = dir.parent();
+    }
+    None
+}
+
+/// Compute the effective version-requirement string for one dep entry,
+/// resolving `workspace = true` through `workspace_deps_doc`'s
+/// `[workspace.dependencies]` table.
+///
+/// Returns `None` for entries that are not registry deps (path-only, git-
+/// only, or workspace-inherit with no matching workspace-deps table).
+fn resolve_effective_requirement(
+    dep_item: &toml_edit::Item,
+    dep_name: &str,
+    workspace_deps_doc: Option<&toml_edit::DocumentMut>,
+) -> Option<String> {
+    // Case 1: plain string version (`foo = "1.2"`).
+    if let Some(s) = dep_item.as_str() {
+        return Some(s.to_string());
+    }
+
+    // Case 2: inline table or sub-table. Both expose a `get(...)` API via
+    // conversion.
+    let (workspace_inherit, version_field, has_path, has_git) =
+        if let Some(inline) = dep_item.as_inline_table() {
+            (
+                inline.get("workspace").and_then(|v| v.as_bool()) == Some(true),
+                inline
+                    .get("version")
+                    .and_then(|v| v.as_str())
+                    .map(str::to_string),
+                inline.contains_key("path"),
+                inline.contains_key("git"),
+            )
+        } else {
+            let table = dep_item.as_table()?;
+            (
+                table.get("workspace").and_then(|i| i.as_bool()) == Some(true),
+                table
+                    .get("version")
+                    .and_then(|i| i.as_str())
+                    .map(str::to_string),
+                table.contains_key("path"),
+                table.contains_key("git"),
+            )
+        };
+
+    if workspace_inherit {
+        let doc = workspace_deps_doc?;
+        return workspace_dep_requirement(doc, dep_name);
+    }
+    if has_path || has_git {
+        // Not a registry requirement. Skew comparison would be misleading:
+        // two members can share a name at different local sources
+        // legitimately (canonical-path patch, monorepo sibling).
+        return None;
+    }
+    version_field
+}
+
+/// Look up the effective requirement for `dep_name` in `doc`'s
+/// `[workspace.dependencies]` table.
+fn workspace_dep_requirement(doc: &toml_edit::DocumentMut, dep_name: &str) -> Option<String> {
+    let table = extract_workspace_deps_table(doc)?;
+    let item = table.get(dep_name)?;
+    // Reuse the leaf logic, but disable `workspace = true` recursion — a
+    // workspace-deps table entry that itself says `workspace = true` is
+    // ill-formed cargo; ignore rather than infinite-loop.
+    if let Some(s) = item.as_str() {
+        return Some(s.to_string());
+    }
+    if let Some(inline) = item.as_inline_table() {
+        if inline.contains_key("path") || inline.contains_key("git") {
+            return None;
+        }
+        return inline
+            .get("version")
+            .and_then(|v| v.as_str())
+            .map(str::to_string);
+    }
+    if let Some(t) = item.as_table() {
+        if t.contains_key("path") || t.contains_key("git") {
+            return None;
+        }
+        return t
+            .get("version")
+            .and_then(|i| i.as_str())
+            .map(str::to_string);
+    }
+    None
 }
 
 // ===========================================================================

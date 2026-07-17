@@ -264,6 +264,24 @@ Schema:
         }
       ]
     },
+    "CargoSkewOccurrenceOutput": {
+      "description": "Wire representation of `crate::integrations::cargo_workspace::CargoSkewOccurrence`.\n\nKept separate so the internal type stays free of serde/schemars deps and the wire shape is a single-source-of-truth definition here.",
+      "type": "object",
+      "required": [
+        "member",
+        "requirement"
+      ],
+      "properties": {
+        "member": {
+          "description": "Weave-relative member path.",
+          "type": "string"
+        },
+        "requirement": {
+          "description": "Requirement string (post `workspace = true` indirection).",
+          "type": "string"
+        }
+      }
+    },
     "CloneTopologyKind": {
       "description": "Discriminator for `CheckViolation::CloneTopology` findings.\n\nThe four sub-kinds enumerate the ways the bottom tier of the stability stack (clone-topology.md) can break: a manifest repo's slot at `<weave>/<repo_path>` must be a \"canonical store\" (a full clone), and every workweave checkout `<workweave>/<repo_path>` must be a linked workspace whose VCS common store resolves to that canonical store. Each variant names a distinct way the on-disk shape diverges from that spec.",
       "oneOf": [
@@ -1025,6 +1043,69 @@ Schema:
                 "string",
                 "null"
               ]
+            }
+          }
+        },
+        {
+          "description": "See `CheckViolation::CargoVersionSkew`.",
+          "type": "object",
+          "required": [
+            "crate_name",
+            "kind",
+            "occurrences"
+          ],
+          "properties": {
+            "crate_name": {
+              "description": "Registry crate name.",
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "enum": [
+                "cargo-version-skew"
+              ]
+            },
+            "occurrences": {
+              "description": "Per-member requirement strings (post-`workspace = true` indirection). Sorted for stable output.",
+              "type": "array",
+              "items": {
+                "$ref": "#/definitions/CargoSkewOccurrenceOutput"
+              }
+            }
+          }
+        },
+        {
+          "description": "See `CheckViolation::CargoPatchShadowing`.",
+          "type": "object",
+          "required": [
+            "crate_name",
+            "kind",
+            "member_config",
+            "registry",
+            "weave_config"
+          ],
+          "properties": {
+            "crate_name": {
+              "description": "The specific crate name whose key collides.",
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "enum": [
+                "cargo-patch-shadowing"
+              ]
+            },
+            "member_config": {
+              "description": "Member-level `.cargo/config.toml` that wins per cargo's closest-config-wins-per-key shadowing.",
+              "type": "string"
+            },
+            "registry": {
+              "description": "Registry sub-table name (e.g. `crates-io`).",
+              "type": "string"
+            },
+            "weave_config": {
+              "description": "Weave-level file (Cargo.toml or .cargo/config.toml) that carries the shadowed patch entry.",
+              "type": "string"
             }
           }
         }

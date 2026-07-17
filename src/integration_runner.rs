@@ -80,7 +80,7 @@ pub fn build_detection_cache<'a>(
 
 impl<'a> IntegrationContextBase<'a> {
     /// Build an `IntegrationContext` from this base and per-integration config.
-    fn build_context(
+    pub fn build_context(
         &self,
         config: &'a IntegrationConfig,
         manifest: &'a Manifest,
