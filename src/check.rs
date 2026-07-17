@@ -235,6 +235,32 @@ pub enum CheckViolation {
         started_at: String,
     },
 
+    /// A `.rwv-op-lease` file whose recorded owner workspace has no matching
+    /// `.rwv-op` with the same op id — the **structural dead-lease** case.
+    ///
+    /// Unlike [`StaleOpState`], this **is** auto-fixable: the classification
+    /// is by *structural comparison* — the lease pointer resolves to no
+    /// paired owner record (either because the owner file is gone or because
+    /// it now belongs to a different op id). No wall-clock input; no timeout;
+    /// no daemon-required liveness guess. Dropping a lease whose owner is
+    /// provably absent unblocks the workspace without any risk of clobbering
+    /// an in-flight op (there is no such op to clobber). See
+    /// [`crate::op_state::detect_dead_lease`] for the classification.
+    ///
+    /// Reports the age of the lease as informational context (RFC3339 +
+    /// humanized) so the operator can gauge how long the shared-state
+    /// bookkeeping has been off — never as a decision input.
+    DeadOpLease {
+        /// Absolute path to the workspace dir that holds the dangling lease.
+        workspace_dir: PathBuf,
+        /// Op id recorded in the lease.
+        op_id: String,
+        /// Owner workspace the lease pointed at.
+        recorded_owner: PathBuf,
+        /// Discriminator for the specific dead-lease shape.
+        sub_kind: DeadOpLeaseKind,
+    },
+
     /// A `refs/rwv/pre-op/<op-id>` savepoint whose op-id is not present
     /// in any `.rwv-op` file in this workspace tree. Sub-kind picks the
     /// classification — savepoint tip reachable from current HEAD
@@ -300,6 +326,27 @@ pub enum OrphanedSavepointKind {
     /// on the FORBIDDEN tripwire list, same rationale: don't cut the
     /// last recovery path.
     Live,
+}
+
+/// Discriminator for [`CheckViolation::DeadOpLease`] findings. Both shapes
+/// share the same `--fix` disposition (safe to remove the lease file) but
+/// name distinct root causes so the human-facing message can be specific.
+#[derive(Debug, Serialize, JsonSchema, Clone)]
+#[serde(rename_all = "kebab-case")]
+pub enum DeadOpLeaseKind {
+    /// The recorded owner workspace has no `.rwv-op` file at all — either
+    /// the owner workspace was deleted, or the owner record was
+    /// hand-removed while the lease survived. The classical
+    /// crash-between-acquire-and-mark shape.
+    OwnerRecordAbsent,
+    /// The recorded owner workspace has an `.rwv-op` file, but with a
+    /// *different* op id than the lease references. The owner cleared and
+    /// a new op started while this stale lease survived — the lease
+    /// points at a completed op, not an in-flight one.
+    OwnerOpIdMismatch {
+        /// Op id of the record currently living at the owner workspace.
+        owner_op_id: String,
+    },
 }
 
 #[derive(Debug, Serialize, JsonSchema)]
@@ -713,6 +760,17 @@ pub enum ViolationOutput {
         /// Raw `started_at` string from the op-state file (RFC3339 UTC).
         started_at: String,
     },
+    DeadOpLease {
+        /// Absolute path to the workspace dir holding the dangling lease.
+        workspace_dir: String,
+        /// Op id recorded in the lease.
+        op_id: String,
+        /// Owner workspace the lease pointed at.
+        recorded_owner: String,
+        /// Discriminator for the specific dead-lease shape.
+        #[serde(rename = "sub_kind")]
+        sub_kind: DeadOpLeaseKind,
+    },
     OrphanedSavepoint {
         path: String,
         absolute_path: String,
@@ -944,6 +1002,17 @@ impl ViolationOutput {
             } => Self::StaleOpState {
                 workspace_dir: ws_dir.to_string_lossy().into_owned(),
                 started_at,
+            },
+            CheckViolation::DeadOpLease {
+                workspace_dir: ws_dir,
+                op_id,
+                recorded_owner,
+                sub_kind,
+            } => Self::DeadOpLease {
+                workspace_dir: ws_dir.to_string_lossy().into_owned(),
+                op_id,
+                recorded_owner: recorded_owner.to_string_lossy().into_owned(),
+                sub_kind,
             },
             CheckViolation::OrphanedSavepoint {
                 workweave,
@@ -2358,6 +2427,29 @@ pub fn scan_state_hygiene(
             });
             live_op_ids.insert(state.id);
         }
+        // Dead-lease check: a workspace holding an `.rwv-op-lease` whose
+        // recorded owner has no matching `.rwv-op` (or has one with a
+        // different op id) is structurally broken. Classified by pointer
+        // resolution alone — no wall-clock input. Safe to auto-fix by
+        // removing the lease file (the paired owner record is either gone
+        // or belongs to a different op, so removing the lease can't clobber
+        // an in-flight op).
+        if let Ok(Some(dead)) = crate::op_state::detect_dead_lease(&target.workspace_dir) {
+            let sub_kind = match dead.reason {
+                crate::op_state::DeadLeaseReason::OwnerRecordAbsent => {
+                    DeadOpLeaseKind::OwnerRecordAbsent
+                }
+                crate::op_state::DeadLeaseReason::OwnerOpIdMismatch { owner_op_id } => {
+                    DeadOpLeaseKind::OwnerOpIdMismatch { owner_op_id }
+                }
+            };
+            violations.push(CheckViolation::DeadOpLease {
+                workspace_dir: dead.workspace_dir,
+                op_id: dead.op_id,
+                recorded_owner: dead.recorded_owner,
+                sub_kind,
+            });
+        }
     }
 
     // Phase 2: per-repo checks (stale worktree registrations + orphaned
@@ -2581,6 +2673,12 @@ pub fn fix_stale_ephemeral_branches(
 ///   [`OrphanedSavepointKind::Redundant`] → [`Vcs::drop_savepoint`].
 ///   The ref tip is reachable from the current branch, so dropping the
 ///   ref does not unanchor any commits.
+/// - [`CheckViolation::DeadOpLease`] → [`crate::op_state::fix_dead_lease`]
+///   removes the dangling `.rwv-op-lease`. Safe by construction: the
+///   classification proved the lease is paired with no live owner record
+///   (either the owner file is gone or the owner is now on a different
+///   op), so no in-flight op can be disrupted. Structural — no wall-clock
+///   input.
 ///
 /// All other variants (`StaleOpState`, `OrphanedSavepoint { Live, .. }`)
 /// return `Ok(false)`: not auto-fixable, the caller should report only.
@@ -2606,6 +2704,10 @@ pub fn fix_state_hygiene(
             // drop_savepoint swallows ref-update errors by design — the
             // savepoint is purely a recovery aid.
             vcs.drop_savepoint(repo_abs, op_id);
+            Ok(true)
+        }
+        CheckViolation::DeadOpLease { workspace_dir, .. } => {
+            crate::op_state::fix_dead_lease(workspace_dir);
             Ok(true)
         }
         // Live orphaned savepoints, stale op-state, and every other variant
@@ -3058,6 +3160,31 @@ pub fn violations_to_issues(violations: Vec<CheckViolation>) -> Vec<Issue> {
                         workspace_dir.display()
                     ),
                 ),
+                CheckViolation::DeadOpLease {
+                    workspace_dir,
+                    op_id,
+                    recorded_owner,
+                    sub_kind,
+                } => {
+                    let cause = match &sub_kind {
+                        DeadOpLeaseKind::OwnerRecordAbsent => format!(
+                            "recorded owner workspace {} has no `.rwv-op` file",
+                            recorded_owner.display()
+                        ),
+                        DeadOpLeaseKind::OwnerOpIdMismatch { owner_op_id } => format!(
+                            "recorded owner workspace {} holds a different op (owner op_id={owner_op_id}, lease op_id={op_id})",
+                            recorded_owner.display()
+                        ),
+                    };
+                    (
+                        crate::integration::Severity::Warning,
+                        format!(
+                            "{}/.rwv-op-lease: dead-op-lease op_id={op_id} — {cause}; \
+                             safe to auto-fix with `rwv doctor --fix` (removes the lease file).",
+                            workspace_dir.display()
+                        ),
+                    )
+                }
                 CheckViolation::OrphanedSavepoint {
                     workweave,
                     repo,
@@ -4419,9 +4546,12 @@ pub fn run_check(
             .collect();
 
     for violation in hygiene_violations {
-        // Try the --fix path first when enabled; only `StaleWorktreeRegistration`
-        // and `OrphanedSavepoint { Redundant }` are auto-fixable (see
-        // `fix_state_hygiene` for the policy).
+        // Try the --fix path first when enabled; the auto-fixable set is:
+        //   - `StaleWorktreeRegistration`
+        //   - `OrphanedSavepoint { Redundant }`
+        //   - `DeadOpLease` (routes to op_state::fix_dead_lease directly, no
+        //     repo lookup needed)
+        // See `fix_state_hygiene` for the policy rationale.
         let fix_attempted = if fix {
             match &violation {
                 CheckViolation::StaleWorktreeRegistration {
@@ -4465,6 +4595,35 @@ pub fn run_check(
                             }
                         },
                         None => false,
+                    }
+                }
+                CheckViolation::DeadOpLease {
+                    workspace_dir,
+                    op_id,
+                    ..
+                } => {
+                    // fix_state_hygiene ignores repo_abs for this variant —
+                    // it operates on the lease's workspace_dir directly. We
+                    // pass workspace_dir as a stand-in so the signature is
+                    // unchanged.
+                    match fix_state_hygiene(&git, &violation, workspace_dir) {
+                        Ok(true) => {
+                            println!(
+                                "[fixed] core: dead-op-lease for {}: removed lease (op_id={op_id})",
+                                workspace_dir.display()
+                            );
+                            true
+                        }
+                        Ok(false) => false,
+                        Err(e) => {
+                            all_issues.push(Issue {
+                                integration: "core".into(),
+                                severity: Severity::Error,
+                                message: format!("state-hygiene --fix failed: {e}"),
+                                safe_to_fix: true,
+                            });
+                            true
+                        }
                     }
                 }
                 _ => false,

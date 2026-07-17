@@ -38,6 +38,19 @@
 //!
 //! Not marked. Safe because source reads are snapshots (§6 of the design).
 //!
+//! ## Acquisition atomicity
+//!
+//! For `sync` / `sync-to`, the owner record and every touched-workspace lease
+//! are acquired **atomically at guard time** via [`acquire_op`]: each file is
+//! created with `create_new(true)` (`O_CREAT|O_EXCL`), and on `AlreadyExists`
+//! anywhere the acquisition unwinds any partial state it created and returns
+//! the standard in-flight refusal. This closes the guard→mark TOCTOU window
+//! that a plain [`check_no_op_in_progress`] would leave: two concurrent ops
+//! could otherwise both pass a `check_no_op_in_progress` guard and only collide
+//! later at the git layer. The acquired handle carries the touched-workspace
+//! set so a precondition refusal after acquisition can call
+//! [`release_acquired`] and clear its records per the cleanup table below.
+//!
 //! ## Cleanup ownership
 //!
 //! | Exit path | Record + leases |
@@ -485,12 +498,15 @@ pub fn resolve_to_owner(workspace_dir: &Path) -> anyhow::Result<Option<ResolvedO
 
 /// Write `record` to the `.rwv-op` file in `workspace_dir`.
 ///
-/// This is the **only write path for op state** — all phase persistence
-/// calls go through here to guarantee the "one write, one file" invariant.
+/// This is the **phase-persistence write path**: [`advance_phase`] and any
+/// caller updating fields on an *already-acquired* owner record (overrides,
+/// converged tips, `--continue` restarts) call it. It overwrites any existing
+/// file.
 ///
-/// Overwrites any existing file. Callers must call
-/// [`check_no_op_in_progress`] on all touched workspaces before the first
-/// write.
+/// **The first write of a fresh op must go through [`acquire_op`]**, not this
+/// function — a bare `write_owner` would silently overwrite a peer op's
+/// in-flight record. Callers that just need a check without a claim use
+/// [`check_no_op_in_progress`].
 pub fn write_owner(workspace_dir: &Path, record: &OwnerRecord) -> anyhow::Result<()> {
     let path = OwnerRecord::path_in(workspace_dir);
     let yaml = serde_yaml::to_string(record).context("failed to serialize owner record")?;
@@ -594,53 +610,415 @@ pub fn clear_all_at(workspace_dir: &Path) {
 /// record so the message carries the same detail (naming the owner workspace
 /// where `--continue` must run). A crashed op leaves a stale record on purpose:
 /// there is no auto-expiry; `rwv abort`'s verified restore is the way out.
+///
+/// For non-mutating callers this is enough — they don't write op state, so
+/// there is no TOCTOU exposure. For `sync` / `sync-to`, which do write op
+/// state, use [`acquire_op`] instead: it performs the same refusal shape but
+/// via an atomic create so two concurrent ops cannot both pass and only
+/// collide later at the git layer.
 pub fn check_no_op_in_progress(workspace_dirs: &[&Path]) -> anyhow::Result<()> {
     for &dir in workspace_dirs {
-        // Owner record: full detail is right here.
-        if let Some(record) = read_owner(dir)? {
-            let elapsed = elapsed_since(&record.started_at);
-            anyhow::bail!(
-                "{verb} in progress (started {elapsed} ago, mid `{phase}`) at {dir}.\n\
-                 Rerun with `rwv {verb} --continue` from that workspace after resolving, \
-                 or `rwv abort` to discard.",
-                verb = record.verb,
-                phase = record.phase,
-                dir = dir.display(),
-            );
+        if let Some(err) = in_flight_refusal_for(dir)? {
+            return Err(err);
         }
-        // Lease: follow the pointer to the owner record so the refusal carries
-        // the same op / age / phase detail and names where `--continue` runs.
-        if let Some(lease) = read_lease(dir)? {
-            // A resolvable owner record gives the rich message; if the pointer
-            // is dangling (owner workspace moved / op-state hand-removed), fall
-            // back to the lease's own fields rather than failing the guard —
-            // the operator still learns an op involves this workspace.
-            match read_owner(&lease.owner) {
-                Ok(Some(record)) => {
-                    let elapsed = elapsed_since(&record.started_at);
-                    anyhow::bail!(
-                        "{verb} in progress (started {elapsed} ago, mid `{phase}`); this \
-                         workspace ({dir}) is leased to it. Owner workspace: {owner}.\n\
-                         Rerun with `rwv {verb} --continue` from the owner workspace after \
-                         resolving, or `rwv abort` to discard.",
-                        verb = record.verb,
-                        phase = record.phase,
-                        dir = dir.display(),
-                        owner = lease.owner.display(),
-                    );
-                }
-                _ => anyhow::bail!(
+    }
+    Ok(())
+}
+
+/// Build the standard in-flight-op refusal for `dir` if it carries an op-state
+/// file, or `Ok(None)` if the directory is clean.
+///
+/// Split out of [`check_no_op_in_progress`] so [`acquire_op`] can emit the
+/// identical refusal shape on an atomic-create `AlreadyExists`.
+fn in_flight_refusal_for(dir: &Path) -> anyhow::Result<Option<anyhow::Error>> {
+    // Owner record: full detail is right here.
+    if let Some(record) = read_owner(dir)? {
+        let elapsed = elapsed_since(&record.started_at);
+        return Ok(Some(anyhow::anyhow!(
+            "{verb} in progress (started {elapsed} ago, mid `{phase}`) at {dir}.\n\
+             Rerun with `rwv {verb} --continue` from that workspace after resolving, \
+             or `rwv abort` to discard.",
+            verb = record.verb,
+            phase = record.phase,
+            dir = dir.display(),
+        )));
+    }
+    // Lease: follow the pointer to the owner record so the refusal carries
+    // the same op / age / phase detail and names where `--continue` runs.
+    if let Some(lease) = read_lease(dir)? {
+        // A resolvable owner record gives the rich message; if the pointer
+        // is dangling (owner workspace moved / op-state hand-removed), fall
+        // back to the lease's own fields rather than failing the guard —
+        // the operator still learns an op involves this workspace.
+        match read_owner(&lease.owner) {
+            Ok(Some(record)) => {
+                let elapsed = elapsed_since(&record.started_at);
+                return Ok(Some(anyhow::anyhow!(
+                    "{verb} in progress (started {elapsed} ago, mid `{phase}`); this \
+                     workspace ({dir}) is leased to it. Owner workspace: {owner}.\n\
+                     Rerun with `rwv {verb} --continue` from the owner workspace after \
+                     resolving, or `rwv abort` to discard.",
+                    verb = record.verb,
+                    phase = record.phase,
+                    dir = dir.display(),
+                    owner = lease.owner.display(),
+                )));
+            }
+            _ => {
+                return Ok(Some(anyhow::anyhow!(
                     "op {id} in progress (lease at {dir}; owner workspace: {owner}).\n\
                      Rerun the owning verb with `--continue` from the owner workspace, or \
                      `rwv abort` to discard.",
                     id = lease.id,
                     dir = dir.display(),
                     owner = lease.owner.display(),
-                ),
+                )));
             }
         }
     }
-    Ok(())
+    Ok(None)
+}
+
+// ---------------------------------------------------------------------------
+// Atomic acquisition (guard→mark TOCTOU fix)
+// ---------------------------------------------------------------------------
+
+/// Handle returned by a successful [`acquire_op`] — records which files were
+/// atomically created so a subsequent precondition refusal can undo them.
+///
+/// The plain "concurrency guard" (`check_no_op_in_progress`) is a check, not a
+/// claim: two ops can both pass it and collide later at the git layer (R7 root
+/// cause, fo-u57y0b). Atomic acquisition writes each file with `O_CREAT|O_EXCL`
+/// so the OS refuses the second creator; the handle carries the created set so
+/// the caller can [`release_acquired`] on a downstream precondition refusal
+/// (per the cleanup table's "refusal → cleared everywhere" row).
+///
+/// Cleanup ownership after success:
+///
+/// - Op runs to success / precondition-refusal AFTER acquisition → caller calls
+///   [`release_acquired`] to clear the acquired records.
+/// - Op crashes after acquisition → records remain on disk; `--continue` /
+///   `rwv abort` are the exits (structural cleanup by the dead-lease doctor
+///   check when leases become provably-dead is a hygiene backstop, not a
+///   policy).
+#[must_use = "an acquired op handle must either be committed to the running op \
+              or released via release_acquired on refusal"]
+#[derive(Debug)]
+pub struct AcquiredOp {
+    /// Owner workspace where the `.rwv-op` file was created.
+    owner_workspace: PathBuf,
+    /// Lease workspaces where `.rwv-op-lease` files were created (never
+    /// includes the owner workspace — the owner holds the record, not a lease).
+    lease_workspaces: Vec<PathBuf>,
+}
+
+impl AcquiredOp {
+    /// The owner workspace this acquisition writes into.
+    pub fn owner_workspace(&self) -> &Path {
+        &self.owner_workspace
+    }
+}
+
+/// Atomically acquire an op across `touched` — the owner workspace plus every
+/// additional workspace the op will mutate.
+///
+/// Semantics:
+///
+/// - `owner_workspace_dir` gets `.rwv-op` written with the full `owner_record`.
+/// - Every workspace in `lease_workspaces` (must not include the owner) gets
+///   `.rwv-op-lease` written pointing back at the owner.
+/// - Every file is created with `O_CREAT|O_EXCL`. On `AlreadyExists` anywhere,
+///   any files already created by *this* call are removed and the returned
+///   error is the standard [`check_no_op_in_progress`]-shape refusal reading
+///   the *pre-existing* holder (name, age, phase, `--continue` / `abort`
+///   exits). This preserves the cleanup-table row that says a refusal leaves
+///   no trace.
+/// - A crash between successful acquisition and the caller's next persistent
+///   write (Mark's overrides update, savepoints) leaves records with no
+///   savepoints. That partial state is what the dead-lease doctor check
+///   diagnoses (a lease whose recorded owner workspace has no matching
+///   `.rwv-op` with the same op id is structurally dead).
+///
+/// Ordering: the owner record is written first, then leases. This makes the
+/// crash-partial case symmetric to the abort/rollback path — an owner record
+/// with no leases is a valid resume target; a lease with no owner record is
+/// the dead-lease case doctor auto-fixes.
+pub fn acquire_op(
+    owner_workspace_dir: &Path,
+    owner_record: &OwnerRecord,
+    lease_workspaces: &[&Path],
+) -> anyhow::Result<AcquiredOp> {
+    // Belt-and-braces: acquisition dominates every other refusal, so if any
+    // touched workspace already carries op-state we must emit the rich in-flight
+    // refusal from IT rather than a raw AlreadyExists context. We check first
+    // (cheap) and then atomic-create; a losing racer whose file lands between
+    // check and create still gets the correct shape via the AlreadyExists
+    // branch below (which re-reads and re-derives the same message).
+    if let Some(err) = in_flight_refusal_for(owner_workspace_dir)? {
+        return Err(err);
+    }
+    for &ws in lease_workspaces {
+        if let Some(err) = in_flight_refusal_for(ws)? {
+            return Err(err);
+        }
+    }
+
+    // Owner first, then leases.
+    let owner_path = OwnerRecord::path_in(owner_workspace_dir);
+    let owner_yaml = serde_yaml::to_string(owner_record)
+        .context("failed to serialize owner record for acquisition")?;
+    match atomic_write_new(&owner_path, owner_yaml.as_bytes()) {
+        Ok(()) => {}
+        Err(AtomicWriteError::AlreadyExists) => {
+            // Race: another op landed here. Read it back for the standard
+            // refusal shape. If it disappeared between EEXIST and re-read
+            // (the winner completed successfully already), fall through with a
+            // generic refusal — the operator can retry.
+            return Err(
+                in_flight_refusal_for(owner_workspace_dir)?.unwrap_or_else(|| {
+                    anyhow::anyhow!(
+                        "raced with a concurrent op at {}; retry",
+                        owner_workspace_dir.display()
+                    )
+                }),
+            );
+        }
+        Err(AtomicWriteError::Io(e)) => {
+            return Err(anyhow::Error::new(e).context(format!(
+                "failed to acquire owner record at {}",
+                owner_path.display()
+            )));
+        }
+    }
+
+    let mut acquired_leases: Vec<PathBuf> = Vec::with_capacity(lease_workspaces.len());
+    for &ws in lease_workspaces {
+        let lease_path = LeaseRecord::path_in(ws);
+        let lease = LeaseRecord {
+            id: owner_record.id.clone(),
+            owner: owner_workspace_dir.to_path_buf(),
+        };
+        let lease_yaml = match serde_yaml::to_string(&lease) {
+            Ok(s) => s,
+            Err(e) => {
+                // Serialize failure is not I/O contention but still needs to
+                // roll back the owner + any leases we already wrote so refusal
+                // leaves no trace.
+                rollback_acquired(owner_workspace_dir, &acquired_leases);
+                return Err(anyhow::Error::new(e).context("failed to serialize lease record"));
+            }
+        };
+        match atomic_write_new(&lease_path, lease_yaml.as_bytes()) {
+            Ok(()) => acquired_leases.push(ws.to_path_buf()),
+            Err(AtomicWriteError::AlreadyExists) => {
+                // Race on a lease: undo owner + any leases we already wrote,
+                // then emit the in-flight refusal reading the *existing*
+                // lease (following its pointer for the rich message shape,
+                // matching what a plain check_no_op_in_progress would emit).
+                rollback_acquired(owner_workspace_dir, &acquired_leases);
+                return Err(in_flight_refusal_for(ws)?.unwrap_or_else(|| {
+                    anyhow::anyhow!("raced with a concurrent op at {}; retry", ws.display())
+                }));
+            }
+            Err(AtomicWriteError::Io(e)) => {
+                rollback_acquired(owner_workspace_dir, &acquired_leases);
+                return Err(anyhow::Error::new(e).context(format!(
+                    "failed to acquire lease at {}",
+                    lease_path.display()
+                )));
+            }
+        }
+    }
+
+    Ok(AcquiredOp {
+        owner_workspace: owner_workspace_dir.to_path_buf(),
+        lease_workspaces: acquired_leases,
+    })
+}
+
+/// Undo an acquisition performed by [`acquire_op`] — clear the owner record and
+/// every acquired lease. Idempotent; missing files are ignored.
+///
+/// Called when a precondition refuses AFTER a successful acquisition (the
+/// cleanup table's "precondition refusal → cleared everywhere" row), and by
+/// [`acquire_op`] itself when a partial acquisition hits `AlreadyExists` on a
+/// later file.
+pub fn release_acquired(acquired: &AcquiredOp) {
+    rollback_acquired(&acquired.owner_workspace, &acquired.lease_workspaces);
+}
+
+fn rollback_acquired(owner_workspace_dir: &Path, acquired_leases: &[PathBuf]) {
+    for ws in acquired_leases {
+        clear_lease(ws);
+    }
+    clear_owner(owner_workspace_dir);
+}
+
+/// Local error type for [`atomic_write_new`] so acquisition can distinguish
+/// "race with another op" (map to in-flight refusal) from generic I/O failure.
+enum AtomicWriteError {
+    AlreadyExists,
+    Io(std::io::Error),
+}
+
+/// Atomically publish `bytes` at `path` with **content-complete** semantics:
+/// no other observer ever sees `path` half-written.
+///
+/// Implementation: write the full content to a sibling temp file (unique via
+/// PID + nanoseconds), fsync-optional, then `link(2)` it into place. `link` is
+/// atomic and fails with `EEXIST` when the target already exists — exactly the
+/// `O_CREAT|O_EXCL` semantic we want, but applied to an already-populated
+/// inode so the loser reads a complete file. The temp file is unlinked
+/// afterwards (both on success and on link EEXIST — cleanup is idempotent).
+///
+/// Rationale (vs. `OpenOptions::create_new`): with plain `create_new`, the
+/// winner creates the file and then writes bytes; a concurrent loser that
+/// hits `EEXIST` and immediately opens the file for reading may see it empty
+/// or partially populated (race window between create and write). The reader
+/// then fails with a YAML parse error rather than the standard in-flight
+/// refusal, defeating the whole point of atomic acquisition. Content-complete
+/// publish via `link` closes that window.
+///
+/// Cross-platform note: `std::fs::hard_link` works on POSIX and NTFS. If we
+/// ever grow platforms without hard-link support (rare) we would swap in a
+/// platform-specific atomic rename with the same exclusive-create semantics.
+fn atomic_write_new(path: &Path, bytes: &[u8]) -> Result<(), AtomicWriteError> {
+    use std::io::Write as _;
+    let parent = path.parent().unwrap_or_else(|| Path::new("."));
+    let file_name = path
+        .file_name()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "op-state".to_owned());
+    // Unique-per-attempt sibling: PID + nanoseconds keeps racers apart even
+    // within a single process.
+    let now_ns = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let tmp_name = format!(".{file_name}.tmp.{pid}.{now_ns}", pid = std::process::id());
+    let tmp_path = parent.join(tmp_name);
+
+    // Write the full content into the sibling temp. If this fails, drop the
+    // temp and surface the I/O error — we haven't touched `path`.
+    match (|| -> std::io::Result<()> {
+        let mut f = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&tmp_path)?;
+        f.write_all(bytes)?;
+        Ok(())
+    })() {
+        Ok(()) => {}
+        Err(e) => {
+            let _ = std::fs::remove_file(&tmp_path);
+            return Err(AtomicWriteError::Io(e));
+        }
+    }
+
+    // Atomic exclusive publish: link() fails EEXIST if target already there.
+    // Independent of whether it succeeds, unlink the temp — its role ends
+    // here.
+    let link_result = std::fs::hard_link(&tmp_path, path);
+    let _ = std::fs::remove_file(&tmp_path);
+    match link_result {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+            Err(AtomicWriteError::AlreadyExists)
+        }
+        Err(e) => Err(AtomicWriteError::Io(e)),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Dead-lease detection (structural, no wall-clock policy)
+// ---------------------------------------------------------------------------
+
+/// A lease whose recorded owner workspace has no matching `.rwv-op` with the
+/// same op id — the structural dead-lease case.
+///
+/// Structural because it is derived from ancestry-of-state, not from elapsed
+/// time: the operator's precedent (fo-u57y0b, matching the stale-op-state
+/// doctor check) is that time may be *surfaced* to the operator, never
+/// consumed as policy. A dead lease arises from:
+///
+/// - crash between owner-record acquisition and the caller writing the lease
+///   (this concrete window is why we detect it — the crash pattern the
+///   acquire→mark ordering leaves behind);
+/// - owner workspace deleted / moved out from under the lease;
+/// - manual `rm .rwv-op` without also clearing the lease.
+///
+/// The reverse pattern (owner record with no matching lease anywhere) is
+/// caught by the existing `StaleOpState` doctor finding — that scan already
+/// walks every workspace and reports every `.rwv-op` it sees. So the *only*
+/// gap this new check covers is the lease-side dangling-pointer case.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DeadLease {
+    /// Absolute path to the workspace directory holding the dangling lease.
+    pub workspace_dir: PathBuf,
+    /// Op id recorded in the lease.
+    pub op_id: String,
+    /// Owner workspace the lease pointed at.
+    pub recorded_owner: PathBuf,
+    /// Why the lease is dead (owner missing vs owner op id mismatch), for the
+    /// human-facing message.
+    pub reason: DeadLeaseReason,
+}
+
+/// Discriminator for why a lease is structurally dead. Reported to the
+/// operator so `doctor` can name the specific shape.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DeadLeaseReason {
+    /// The recorded owner workspace has no `.rwv-op` at all.
+    OwnerRecordAbsent,
+    /// The recorded owner workspace has an `.rwv-op` but with a *different*
+    /// op id — the lease references an op the owner has since moved past
+    /// (owner cleared and a new op started, but this stale lease survived).
+    OwnerOpIdMismatch { owner_op_id: String },
+}
+
+/// Inspect the lease at `workspace_dir` and classify it as dead if its owner
+/// pointer is dangling. Returns `Ok(None)` when there is no lease, when the
+/// lease reads as invalid (surfaced separately by the parse error), or when
+/// the lease resolves to an owner record with the matching op id (the live
+/// case).
+///
+/// The classification is purely structural: existence of the owner file and
+/// id equality. No elapsed-time input; no filesystem timestamps.
+pub fn detect_dead_lease(workspace_dir: &Path) -> anyhow::Result<Option<DeadLease>> {
+    let Some(lease) = read_lease(workspace_dir)? else {
+        return Ok(None);
+    };
+    let owner_path = OwnerRecord::path_in(&lease.owner);
+    if !owner_path.exists() {
+        return Ok(Some(DeadLease {
+            workspace_dir: workspace_dir.to_path_buf(),
+            op_id: lease.id,
+            recorded_owner: lease.owner,
+            reason: DeadLeaseReason::OwnerRecordAbsent,
+        }));
+    }
+    // Owner record exists — check op-id match. If the owner file is present
+    // but unparseable, treat that as a live/undecided case: the stale-op-state
+    // check will surface the parse issue via its own path.
+    if let Ok(Some(owner_record)) = read_owner(&lease.owner) {
+        if owner_record.id != lease.id {
+            let owner_op_id = owner_record.id.clone();
+            return Ok(Some(DeadLease {
+                workspace_dir: workspace_dir.to_path_buf(),
+                op_id: lease.id,
+                recorded_owner: lease.owner,
+                reason: DeadLeaseReason::OwnerOpIdMismatch { owner_op_id },
+            }));
+        }
+    }
+    Ok(None)
+}
+
+/// Remove the lease file at `workspace_dir`. Used by `doctor --fix` on a
+/// dead-lease finding — safe because the classification proved the lease is
+/// no longer paired with a live owner record.
+pub fn fix_dead_lease(workspace_dir: &Path) {
+    clear_lease(workspace_dir);
 }
 
 // ---------------------------------------------------------------------------
@@ -1427,5 +1805,339 @@ started_at: 2026-06-01T00:00:00Z
             let display = phase.to_string();
             assert_eq!(display, expected, "Display mismatch for {phase:?}");
         }
+    }
+
+    // -----------------------------------------------------------------------
+    // Atomic acquisition (guard→mark TOCTOU fix)
+    // -----------------------------------------------------------------------
+
+    fn make_sync_record(op_id: &OpId, owner: &Path, source: &Path) -> OwnerRecord {
+        OwnerRecord::new_sync(
+            op_id,
+            crate::sync::SyncStrategy::Rebase,
+            source.to_path_buf(),
+            owner.to_path_buf(),
+        )
+    }
+
+    fn make_sync_to_record(op_id: &OpId, owner: &Path, target: &Path) -> OwnerRecord {
+        OwnerRecord::new_sync_to(
+            op_id,
+            crate::sync::SyncStrategy::Rebase,
+            owner.to_path_buf(),
+            target.to_path_buf(),
+            false,
+        )
+    }
+
+    #[test]
+    fn acquire_op_writes_owner_only_for_plain_sync() {
+        // Plain `sync` has no lease workspaces — only the owner record is
+        // written. This is the minimal-acquisition case.
+        let tmp = tempfile::tempdir().unwrap();
+        let owner = tmp.path();
+        let op_id = OpId::new_now();
+        let record = make_sync_record(&op_id, owner, &PathBuf::from("/src"));
+
+        let acquired = acquire_op(owner, &record, &[]).unwrap();
+
+        assert!(OwnerRecord::path_in(owner).exists());
+        assert_eq!(acquired.owner_workspace(), owner);
+        // Round-trip preserves the record.
+        let read_back = read_owner(owner).unwrap().unwrap();
+        assert_eq!(read_back.id, record.id);
+    }
+
+    #[test]
+    fn acquire_op_writes_owner_plus_lease_for_sync_to() {
+        // `sync-to` writes an owner at CWD and a lease at the target.
+        let tmp = tempfile::tempdir().unwrap();
+        let owner_dir = tmp.path().join("owner");
+        let target_dir = tmp.path().join("target");
+        std::fs::create_dir_all(&owner_dir).unwrap();
+        std::fs::create_dir_all(&target_dir).unwrap();
+        let op_id = OpId::new_now();
+        let record = make_sync_to_record(&op_id, &owner_dir, &target_dir);
+
+        let acquired = acquire_op(&owner_dir, &record, &[target_dir.as_path()]).unwrap();
+
+        // Owner record + lease both present.
+        assert!(OwnerRecord::path_in(&owner_dir).exists());
+        assert!(LeaseRecord::path_in(&target_dir).exists());
+        // Lease points back at the owner.
+        let lease = read_lease(&target_dir).unwrap().unwrap();
+        assert_eq!(lease.id, op_id.as_str());
+        assert_eq!(lease.owner, owner_dir);
+        assert_eq!(acquired.owner_workspace(), owner_dir);
+    }
+
+    #[test]
+    fn acquire_op_refuses_when_owner_workspace_already_has_op() {
+        // If a prior op left an owner record, acquisition must refuse with the
+        // standard in-flight-op refusal (verb / age / phase / both exits) —
+        // NOT a raw "AlreadyExists" I/O error.
+        let tmp = tempfile::tempdir().unwrap();
+        let owner_dir = tmp.path();
+        // Plant a prior op.
+        let prior_id = OpId::new_now();
+        let prior = make_sync_to_record(&prior_id, owner_dir, &PathBuf::from("/prior/target"));
+        write_owner(owner_dir, &prior).unwrap();
+
+        // Second acquisition attempt.
+        let new_id = OpId::new_now();
+        let new_record = make_sync_record(&new_id, owner_dir, &PathBuf::from("/new/src"));
+        let err = acquire_op(owner_dir, &new_record, &[])
+            .unwrap_err()
+            .to_string();
+
+        assert!(
+            err.contains("in progress"),
+            "refusal must name in-flight state; got: {err}"
+        );
+        assert!(
+            err.contains("sync-to in progress"),
+            "refusal must name the prior op's verb: {err}"
+        );
+        assert!(
+            err.contains("--continue") && err.contains("rwv abort"),
+            "refusal must offer both exits: {err}"
+        );
+        // The prior op's record must survive (no clobbering).
+        let after = read_owner(owner_dir).unwrap().unwrap();
+        assert_eq!(after.id, prior_id.as_str());
+    }
+
+    #[test]
+    fn acquire_op_rolls_back_owner_when_lease_workspace_taken() {
+        // sync-to acquires owner then lease. If the lease workspace already
+        // holds an op-state file, the just-written owner MUST be rolled back
+        // so a refusal leaves no trace (cleanup table).
+        let tmp = tempfile::tempdir().unwrap();
+        let owner_dir = tmp.path().join("owner");
+        let target_dir = tmp.path().join("target");
+        std::fs::create_dir_all(&owner_dir).unwrap();
+        std::fs::create_dir_all(&target_dir).unwrap();
+        // Plant a lease at the target (as if a prior sync-to already claimed it).
+        let prior_lease = LeaseRecord {
+            id: "prior-op".to_owned(),
+            owner: PathBuf::from("/some/prior/owner"),
+        };
+        write_lease(&target_dir, &prior_lease).unwrap();
+
+        let op_id = OpId::new_now();
+        let record = make_sync_to_record(&op_id, &owner_dir, &target_dir);
+        let err = acquire_op(&owner_dir, &record, &[target_dir.as_path()])
+            .unwrap_err()
+            .to_string();
+
+        assert!(
+            err.contains("in progress"),
+            "lease-side refusal must name in-flight state; got: {err}"
+        );
+        // The owner file we would have written must NOT persist — refusal
+        // leaves no trace.
+        assert!(
+            !OwnerRecord::path_in(&owner_dir).exists(),
+            "owner record must be rolled back on lease-side EEXIST; still present"
+        );
+        // The prior lease must survive untouched.
+        let after = read_lease(&target_dir).unwrap().unwrap();
+        assert_eq!(after.id, "prior-op");
+    }
+
+    #[test]
+    fn release_acquired_clears_owner_and_leases() {
+        // After a successful acquisition, `release_acquired` must clear every
+        // file it created — this is the cleanup-table row for a precondition
+        // refusal AFTER acquisition.
+        let tmp = tempfile::tempdir().unwrap();
+        let owner_dir = tmp.path().join("owner");
+        let target_dir = tmp.path().join("target");
+        std::fs::create_dir_all(&owner_dir).unwrap();
+        std::fs::create_dir_all(&target_dir).unwrap();
+        let op_id = OpId::new_now();
+        let record = make_sync_to_record(&op_id, &owner_dir, &target_dir);
+        let acquired = acquire_op(&owner_dir, &record, &[target_dir.as_path()]).unwrap();
+        assert!(OwnerRecord::path_in(&owner_dir).exists());
+        assert!(LeaseRecord::path_in(&target_dir).exists());
+
+        release_acquired(&acquired);
+
+        assert!(
+            !OwnerRecord::path_in(&owner_dir).exists(),
+            "owner cleared on release"
+        );
+        assert!(
+            !LeaseRecord::path_in(&target_dir).exists(),
+            "lease cleared on release"
+        );
+    }
+
+    #[test]
+    fn acquire_op_is_atomic_under_concurrent_racers() {
+        // Two threads race to acquire the same owner workspace: exactly one
+        // succeeds, the other gets an in-flight refusal.
+        //
+        // This is the core TOCTOU regression test — a check-then-write guard
+        // would let both racers pass; atomic O_CREAT|O_EXCL forces a serial
+        // winner. Repeated across trials to expose ordering flakiness.
+        for _ in 0..20 {
+            let tmp = tempfile::tempdir().unwrap();
+            let owner_dir = tmp.path().to_path_buf();
+            let barrier = std::sync::Arc::new(std::sync::Barrier::new(2));
+
+            let owner_dir_a = owner_dir.clone();
+            let barrier_a = barrier.clone();
+            let h1 = std::thread::spawn(move || {
+                let op = OpId::new_now();
+                let rec = make_sync_record(&op, &owner_dir_a, &PathBuf::from("/src"));
+                barrier_a.wait();
+                acquire_op(&owner_dir_a, &rec, &[])
+            });
+
+            let owner_dir_b = owner_dir.clone();
+            let barrier_b = barrier.clone();
+            let h2 = std::thread::spawn(move || {
+                let op = OpId::new_now();
+                let rec = make_sync_record(&op, &owner_dir_b, &PathBuf::from("/src2"));
+                barrier_b.wait();
+                acquire_op(&owner_dir_b, &rec, &[])
+            });
+
+            let r1 = h1.join().unwrap();
+            let r2 = h2.join().unwrap();
+
+            let (ok, err) = match (r1, r2) {
+                (Ok(a), Err(e)) => (a, e),
+                (Err(e), Ok(a)) => (a, e),
+                (Ok(_), Ok(_)) => panic!("both racers acquired — TOCTOU regression"),
+                (Err(e1), Err(e2)) => panic!("both racers failed: {e1} / {e2}"),
+            };
+
+            assert_eq!(ok.owner_workspace(), owner_dir);
+            let err_s = err.to_string();
+            assert!(
+                err_s.contains("in progress"),
+                "loser must see in-flight refusal; got: {err_s}"
+            );
+            assert!(
+                err_s.contains("--continue") && err_s.contains("rwv abort"),
+                "loser must see both exits: {err_s}"
+            );
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Dead-lease detection
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn detect_dead_lease_returns_none_when_absent() {
+        let tmp = tempfile::tempdir().unwrap();
+        assert!(detect_dead_lease(tmp.path()).unwrap().is_none());
+    }
+
+    #[test]
+    fn detect_dead_lease_returns_none_when_owner_matches() {
+        let tmp = tempfile::tempdir().unwrap();
+        let owner_dir = tmp.path().join("owner");
+        let lease_dir = tmp.path().join("lease");
+        std::fs::create_dir_all(&owner_dir).unwrap();
+        std::fs::create_dir_all(&lease_dir).unwrap();
+        let op_id = OpId::new_now();
+        let record = make_sync_to_record(&op_id, &owner_dir, &lease_dir);
+        write_owner(&owner_dir, &record).unwrap();
+        write_lease(
+            &lease_dir,
+            &LeaseRecord {
+                id: op_id.as_str().to_owned(),
+                owner: owner_dir.clone(),
+            },
+        )
+        .unwrap();
+
+        assert!(detect_dead_lease(&lease_dir).unwrap().is_none());
+    }
+
+    #[test]
+    fn detect_dead_lease_flags_missing_owner_record() {
+        // The concrete crash pattern: a lease whose owner workspace has no
+        // `.rwv-op` — either the owner file was hand-removed or the workspace
+        // was deleted out-of-band. Doctor auto-fixes this.
+        let tmp = tempfile::tempdir().unwrap();
+        let owner_dir = tmp.path().join("owner");
+        let lease_dir = tmp.path().join("lease");
+        std::fs::create_dir_all(&owner_dir).unwrap();
+        std::fs::create_dir_all(&lease_dir).unwrap();
+        write_lease(
+            &lease_dir,
+            &LeaseRecord {
+                id: "dangling-op".to_owned(),
+                owner: owner_dir.clone(),
+            },
+        )
+        .unwrap();
+
+        let dead = detect_dead_lease(&lease_dir).unwrap().unwrap();
+        assert_eq!(dead.workspace_dir, lease_dir);
+        assert_eq!(dead.op_id, "dangling-op");
+        assert_eq!(dead.recorded_owner, owner_dir);
+        assert_eq!(dead.reason, DeadLeaseReason::OwnerRecordAbsent);
+    }
+
+    #[test]
+    fn detect_dead_lease_flags_owner_op_id_mismatch() {
+        // A stale lease survived past its op — the owner is now on a fresh op
+        // with a different id. The lease is dead by structural comparison of
+        // op ids, not by any time input.
+        let tmp = tempfile::tempdir().unwrap();
+        let owner_dir = tmp.path().join("owner");
+        let lease_dir = tmp.path().join("lease");
+        std::fs::create_dir_all(&owner_dir).unwrap();
+        std::fs::create_dir_all(&lease_dir).unwrap();
+        let fresh_op_id = OpId::new_now();
+        let owner_record = make_sync_to_record(&fresh_op_id, &owner_dir, &lease_dir);
+        write_owner(&owner_dir, &owner_record).unwrap();
+        // Lease references an OLDER op id — stale carry-over.
+        write_lease(
+            &lease_dir,
+            &LeaseRecord {
+                id: "old-op-id".to_owned(),
+                owner: owner_dir.clone(),
+            },
+        )
+        .unwrap();
+
+        let dead = detect_dead_lease(&lease_dir).unwrap().unwrap();
+        assert_eq!(dead.op_id, "old-op-id");
+        assert!(matches!(
+            dead.reason,
+            DeadLeaseReason::OwnerOpIdMismatch { .. }
+        ));
+        if let DeadLeaseReason::OwnerOpIdMismatch { owner_op_id } = dead.reason {
+            assert_eq!(owner_op_id, fresh_op_id.as_str());
+        }
+    }
+
+    #[test]
+    fn fix_dead_lease_removes_lease_file() {
+        let tmp = tempfile::tempdir().unwrap();
+        let lease_dir = tmp.path();
+        write_lease(
+            lease_dir,
+            &LeaseRecord {
+                id: "dangling-op".to_owned(),
+                owner: PathBuf::from("/gone"),
+            },
+        )
+        .unwrap();
+        assert!(LeaseRecord::path_in(lease_dir).exists());
+
+        fix_dead_lease(lease_dir);
+
+        assert!(
+            !LeaseRecord::path_in(lease_dir).exists(),
+            "fix_dead_lease removes the lease file"
+        );
     }
 }

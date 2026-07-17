@@ -6,7 +6,7 @@
 use crate::git::GitVcs;
 use crate::lock::{commit_lock_file_with_message, generate_lock};
 use crate::manifest::{LockFile, Manifest, Project, ProjectName, RepoPath, Role, WorkweaveName};
-use crate::op_state::{self, LeaseRecord, OpVerb, OwnerRecord};
+use crate::op_state::{self, OpVerb, OwnerRecord};
 use crate::parallel::run_in_parallel;
 use crate::status::{compute_relation, LockRelation};
 use crate::vcs::{
@@ -1835,6 +1835,309 @@ fn next_after_advance_target(ctx: &OpContext<'_>) -> Option<op_state::OpPhase> {
 // Pre-loop: guard + mark + savepoint (fresh start)
 // ---------------------------------------------------------------------------
 
+/// Outputs of the post-acquisition precondition sweep. Threaded from
+/// [`run_preconditions_after_acquire`] into the surrounding Mark / Savepoint
+/// code in [`guard_and_mark`].
+///
+/// Kept as a plain struct rather than a tuple because the fields are consumed
+/// out-of-order downstream (`snapshot` at the very end, `cwd_project` and
+/// `cwd_workspace_name_str` in Savepoint and the auto-relock line, and so on),
+/// so nameable field access is easier to review than positional indices.
+struct PreconditionOutcome {
+    /// Source pinned at T₀ (§6 snapshot reads).
+    snapshot: SourceSnapshot,
+    /// CWD's parsed project (manifest + lock, if present).
+    cwd_project: Project,
+    /// Human name of the CWD workspace, used in the auto-relock LOUD line.
+    cwd_workspace_name_str: String,
+    /// CWD repos whose committed lock is behind HEAD — auto-relocked at op
+    /// start in the sync-to landing shape. Empty for plain `sync`.
+    cwd_lock_behind: Vec<RepoRelation>,
+    /// Whether the Phase 1' ancestor precondition was bypassed via
+    /// `--discard-local-commits`. Recorded on the owner record so cleanup
+    /// preserves the project savepoint as a tombstone.
+    phase1_ancestor_bypassed: bool,
+}
+
+/// Run every precondition that gates the op AFTER the atomic acquire.
+///
+/// The whole block is factored out so [`guard_and_mark`] can wrap it in a
+/// single `match` on the result: on `Ok`, the Mark section proceeds; on `Err`,
+/// the caller invokes `op_state::release_acquired` before propagating (the
+/// cleanup table's "precondition refusal → cleared everywhere" row).
+///
+/// This function must remain a **pure precondition** — every `?` inside it can
+/// return an error, but nothing here mutates workspace-wide state; on refusal
+/// the workspace looks exactly like it did before acquisition (once the caller
+/// releases the acquired records).
+#[allow(clippy::too_many_arguments)]
+fn run_preconditions_after_acquire(
+    verb: MachineVerb,
+    cwd: &Path,
+    strategy: SyncStrategy,
+    allow_stale_lock: bool,
+    discard_local_commits: bool,
+    source_is_workweave: bool,
+    cwd_project_dir: &Path,
+    cwd_workspace_dir: &Path,
+    cwd_ctx: &WorkspaceContext,
+    source_project_dir: &Path,
+    source_workspace_dir: &Path,
+    source_workspace_name: &str,
+    source_project_name: &ProjectName,
+    cwd_project_name: &ProjectName,
+    dest_project_dir: &Path,
+    dest_workspace_dir: &Path,
+    cli_path: &Path,
+    emit_text: bool,
+) -> anyhow::Result<PreconditionOutcome> {
+    // CWD project repo must not be mid-op.
+    if let Some(op) = GitVcs.mid_op(cwd_project_dir) {
+        anyhow::bail!(
+            "CWD project repo is mid-{op}; resolve before running sync",
+            op = mid_op_label(op),
+        );
+    }
+
+    // sync-to: --strategy=ff has special semantics (CWD must be strictly
+    // ahead of target). Bail before any side effects on a refusal.
+    if matches!(verb, MachineVerb::SyncTo) && strategy == SyncStrategy::Ff {
+        check_sync_to_ff_precondition(cwd_project_dir, dest_project_dir, emit_text)?;
+    }
+
+    // sync-to preflights (both refuse before any side effects):
+    //   - dirty-source (§1): CWD-side tracked dirt would go stale mid-rebase.
+    //   - dirty-target: the target's uncommitted work advance-target overwrites.
+    // Source before target: the operator's own workspace is the first thing they
+    // can fix, and a dirty source is the state we most want to define away.
+    if matches!(verb, MachineVerb::SyncTo) {
+        let cwd_project_preflight = Project::from_dir(cwd_project_dir)
+            .context("failed to load CWD project for sync-to preflights")?;
+        check_dirty_source_preflight(
+            &cwd_project_preflight,
+            cwd_workspace_dir,
+            cwd_project_dir,
+            cwd,
+        )?;
+        check_dirty_target_preflight(
+            &cwd_project_preflight,
+            dest_workspace_dir,
+            dest_project_dir,
+            cli_path,
+        )?;
+    }
+
+    // Pin the source snapshot now so the remaining replay preconditions are
+    // all reads against a coherent T0. This is the §6 "snapshot reads"
+    // mechanism: one atomic ref read pins source; manifest + lock are read
+    // at that revision; everything downstream is content-addressed.
+    let snapshot = pin_source_snapshot(source_project_dir)?;
+
+    // Replay preconditions (pure reads; refusals leave no trace on-workspace —
+    // the acquired op-state is cleaned up by the caller on Err).
+    let cwd_project = Project::from_dir(cwd_project_dir)
+        .context("failed to load CWD project for guard preconditions")?;
+    let cwd_workspace_name_str = workspace_name(cwd_ctx);
+
+    // === Benign-staleness classification (§2, Correction 2) ===
+    //
+    // Classify each side's committed lock↔HEAD relation with the SAME per-repo
+    // vocabulary `rwv status` uses ([`LockRelation`]). Recall the terminology
+    // inversion: the spec's benign "lock behind HEAD" is `LockRelation::Ahead`
+    // (tip ahead of lock). `--allow-stale-lock` bypasses the whole gate.
+    //
+    // Scope of the benign relaxation (kept to the spec's EXPLICIT §2 bullets):
+    //   - sync-to (landing): CWD is the landing set. A lock-behind-HEAD (`Ahead`)
+    //     CWD repo auto-relocks at op start (below), LOUD line per repo with
+    //     commit count. Every other non-`ok` CWD relation refuses.
+    //   - sync (pull) SOURCE: a lock-behind-HEAD (`Ahead`) source is tips-as-truth
+    //     for a WORKWEAVE source; a PRIMARY-weave source keeps the refusal.
+    //   - sync (pull) DESTINATION (CWD): held at pre-Design-B behavior — any
+    //     non-`ok` relation (INCLUDING `Ahead`) refuses.
+    //
+    // Unresolvable lock entries (a pinned tag/branch that no longer exists) are a
+    // corrupt-lock error distinct from any relation and refuse first, naming the
+    // unknown revision.
+    let source_class = if allow_stale_lock {
+        None
+    } else {
+        Some(classify_lock_relations(
+            source_workspace_dir,
+            &snapshot.source_manifest,
+            Some(&snapshot.raw_source_lock),
+        ))
+    };
+    let cwd_class = if allow_stale_lock {
+        None
+    } else {
+        Some(classify_lock_relations(
+            cwd_workspace_dir,
+            &cwd_project.manifest,
+            cwd_project.lock.as_ref(),
+        ))
+    };
+
+    let mut cwd_lock_behind: Vec<RepoRelation> = Vec::new();
+
+    if let (Some(source_class), Some(cwd_class)) = (source_class, cwd_class) {
+        if let Some((rp, raw)) = source_class.unresolvable.first() {
+            anyhow::bail!(
+                "{}",
+                unresolvable_lock_refusal(
+                    Side::Source,
+                    source_workspace_name,
+                    source_project_name.as_str(),
+                    rp,
+                    raw,
+                )
+            );
+        }
+        if let Some((rp, raw)) = cwd_class.unresolvable.first() {
+            anyhow::bail!(
+                "{}",
+                unresolvable_lock_refusal(
+                    Side::Destination,
+                    &cwd_workspace_name_str,
+                    cwd_project_name.as_str(),
+                    rp,
+                    raw,
+                )
+            );
+        }
+
+        // Source side: refuse on any non-`ok`, non-`Ahead` relation. (`Ahead` is
+        // handled per verb below.)
+        let source_anomalous: Vec<&RepoRelation> = source_class
+            .relations
+            .iter()
+            .filter(|r| !matches!(r.relation, LockRelation::Ok | LockRelation::Ahead))
+            .collect();
+        if let Some(msg) = lock_relation_refusal(
+            Side::Source,
+            source_workspace_name,
+            source_project_name.as_str(),
+            &source_anomalous,
+        ) {
+            anyhow::bail!("{msg}");
+        }
+
+        match verb {
+            MachineVerb::Sync => {
+                let source_lock_behind: Vec<&RepoRelation> = source_class
+                    .relations
+                    .iter()
+                    .filter(|r| r.relation == LockRelation::Ahead)
+                    .collect();
+                if !source_lock_behind.is_empty() {
+                    if source_is_workweave {
+                        if emit_text {
+                            for r in &source_lock_behind {
+                                let n = r
+                                    .ahead_count
+                                    .map(|c| c.to_string())
+                                    .unwrap_or_else(|| "?".to_string());
+                                eprintln!(
+                                    "note: {source_workspace_name}/{}: source lock behind HEAD \
+                                     by {n} commits — pulling committed tips (source lock left \
+                                     alone; its next op heals it)",
+                                    r.repo_path,
+                                );
+                            }
+                        }
+                    } else if let Some(msg) = lock_relation_refusal(
+                        Side::Source,
+                        source_workspace_name,
+                        source_project_name.as_str(),
+                        &source_lock_behind,
+                    ) {
+                        anyhow::bail!("{msg}");
+                    }
+                }
+
+                let cwd_stale: Vec<&RepoRelation> = cwd_class
+                    .relations
+                    .iter()
+                    .filter(|r| r.relation != LockRelation::Ok)
+                    .collect();
+                if let Some(msg) = lock_relation_refusal(
+                    Side::Destination,
+                    &cwd_workspace_name_str,
+                    cwd_project_name.as_str(),
+                    &cwd_stale,
+                ) {
+                    anyhow::bail!("{msg}");
+                }
+            }
+            MachineVerb::SyncTo => {
+                let cwd_anomalous: Vec<&RepoRelation> = cwd_class
+                    .relations
+                    .iter()
+                    .filter(|r| !matches!(r.relation, LockRelation::Ok | LockRelation::Ahead))
+                    .collect();
+                if let Some(msg) = lock_relation_refusal(
+                    Side::Destination,
+                    &cwd_workspace_name_str,
+                    cwd_project_name.as_str(),
+                    &cwd_anomalous,
+                ) {
+                    anyhow::bail!("{msg}");
+                }
+                cwd_lock_behind = cwd_class
+                    .relations
+                    .into_iter()
+                    .filter(|r| r.relation == LockRelation::Ahead)
+                    .collect();
+            }
+        }
+    }
+    if matches!(strategy, SyncStrategy::Rebase) {
+        verify_replay_exclusion_invariant(cwd_project_dir)?;
+    }
+    let cwd_project_tip = GitVcs
+        .head_revision(cwd_project_dir)
+        .context("failed to read CWD project HEAD")?;
+    let phase1_ancestor_bypassed = if discard_local_commits {
+        if GitVcs
+            .has_uncommitted_changes(cwd_project_dir)
+            .unwrap_or(true)
+        {
+            anyhow::bail!(
+                "--discard-local-commits precondition failed: project repo at {} has uncommitted \
+                 changes.\n\
+                 --discard-local-commits discards committed divergence (recoverable via \
+                 refs/rwv/pre-op), but the hard-reset would destroy uncommitted changes \
+                 unrecoverably. Commit or stash them, then re-run.",
+                cwd_project_dir.display(),
+            );
+        }
+        !cwd_is_ancestor_or_equal(
+            cwd_project_dir,
+            &cwd_project_tip,
+            &snapshot.source_project_tip,
+        )
+    } else if strategy == SyncStrategy::Ff && matches!(verb, MachineVerb::Sync) {
+        // Plain sync + ff: CWD must be ancestor-or-equal of source.
+        check_phase1_ancestor(
+            cwd_project_dir,
+            &cwd_project_tip,
+            &snapshot.source_project_tip,
+            &cwd_workspace_name_str,
+            source_workspace_name,
+        )?;
+        false
+    } else {
+        false
+    };
+
+    Ok(PreconditionOutcome {
+        snapshot,
+        cwd_project,
+        cwd_workspace_name_str,
+        cwd_lock_behind,
+        phase1_ancestor_bypassed,
+    })
+}
+
 /// Guard (preconditions), mark (write owner record + leases), savepoint
 /// (per-repo pre-op refs). Returns the immutable [`OpContext`] driving the
 /// loop. Refusals here leave no trace.
@@ -1948,291 +2251,37 @@ fn guard_and_mark<'a>(
         warn_on_sibling_sync(&cwd_ctx, &source_workspace_dir, emit_text);
     }
 
-    // === Preconditions (no mutation yet) ===
-
-    // Concurrency guard FIRST (Correction 1, ORDERING). An `.rwv-op` /
-    // `.rwv-op-lease` involving any touched workspace means a prior op is still
-    // in flight; that fact dominates every other precondition. Running it ahead
-    // of the lock-relation classification (and the dirty preflights) means a
-    // verb hitting a mid-op workspace reports the in-flight op — its name, age,
-    // and the two exits (`--continue` / `rwv abort`) — instead of a stale-lock /
-    // relation refusal computed against a workspace another op is mutating. The
-    // touched set is the same set the mark phase writes op-state into: CWD for
-    // sync; CWD + target for sync-to.
-    let touched: Vec<&Path> = match verb {
-        MachineVerb::Sync => vec![cwd_workspace_dir.as_path()],
-        MachineVerb::SyncTo => vec![cwd_workspace_dir.as_path(), dest_workspace_dir.as_path()],
-    };
-    op_state::check_no_op_in_progress(&touched)?;
-
-    // CWD project repo must not be mid-op.
-    if let Some(op) = GitVcs.mid_op(&cwd_project_dir) {
-        anyhow::bail!(
-            "CWD project repo is mid-{op}; resolve before running sync",
-            op = mid_op_label(op),
-        );
-    }
-
-    // sync-to: --strategy=ff has special semantics (CWD must be strictly
-    // ahead of target). Bail before any side effects on a refusal.
-    if matches!(verb, MachineVerb::SyncTo) && strategy == SyncStrategy::Ff {
-        check_sync_to_ff_precondition(&cwd_project_dir, &dest_project_dir, emit_text)?;
-    }
-
-    // sync-to preflights (both refuse before op-state / any mutation):
-    //   - dirty-source (§1): CWD-side tracked dirt would go stale mid-rebase.
-    //   - dirty-target: the target's uncommitted work advance-target overwrites.
-    // Source before target: the operator's own workspace is the first thing they
-    // can fix, and a dirty source is the state we most want to define away.
-    if matches!(verb, MachineVerb::SyncTo) {
-        let cwd_project_preflight = Project::from_dir(&cwd_project_dir)
-            .context("failed to load CWD project for sync-to preflights")?;
-        check_dirty_source_preflight(
-            &cwd_project_preflight,
-            &cwd_workspace_dir,
-            &cwd_project_dir,
-            cwd,
-        )?;
-        check_dirty_target_preflight(
-            &cwd_project_preflight,
-            &dest_workspace_dir,
-            &dest_project_dir,
-            &cli_path,
-        )?;
-    }
-
-    // Pin the source snapshot now so the remaining replay preconditions are
-    // all reads against a coherent T0. This is the §6 "snapshot reads"
-    // mechanism: one atomic ref read pins source; manifest + lock are read
-    // at that revision; everything downstream is content-addressed.
-    let snapshot = pin_source_snapshot(&source_project_dir)?;
-
-    // Replay preconditions (pure reads; refusals leave no trace).
-    let cwd_project = Project::from_dir(&cwd_project_dir)
-        .context("failed to load CWD project for guard preconditions")?;
-    let cwd_workspace_name_str = workspace_name(&cwd_ctx);
-
-    // === Benign-staleness classification (§2, Correction 2) ===
+    // === Acquire op-state (atomic claim) ===
     //
-    // Classify each side's committed lock↔HEAD relation with the SAME per-repo
-    // vocabulary `rwv status` uses ([`LockRelation`]). Recall the terminology
-    // inversion: the spec's benign "lock behind HEAD" is `LockRelation::Ahead`
-    // (tip ahead of lock). `--allow-stale-lock` bypasses the whole gate.
+    // ATOMICITY (fo-u57y0b): the touched-workspace set is claimed via
+    // `acquire_op`, which writes `.rwv-op` + every lease with
+    // `create_new(true)` (`O_CREAT|O_EXCL`). This closes the guard→mark
+    // TOCTOU window a bare `check_no_op_in_progress` guard would leave open
+    // — two concurrent invocations otherwise both pass the check and only
+    // collide later at the git layer (R7 root cause). Acquisition dominates
+    // every other refusal: an `.rwv-op` / `.rwv-op-lease` involving any
+    // touched workspace means a prior op is still in flight, and the caller
+    // sees the in-flight refusal (verb, age, phase, `--continue` / `rwv
+    // abort` exits) rather than any downstream lock-relation / dirty
+    // refusal computed against a workspace another op is mutating.
     //
-    // Scope of the benign relaxation (kept to the spec's EXPLICIT §2 bullets;
-    // see the FLAG in the summary re: the pull destination):
-    //   - sync-to (landing): CWD is the landing set. A lock-behind-HEAD (`Ahead`)
-    //     CWD repo auto-relocks at op start (below), LOUD line per repo with
-    //     commit count. Every other non-`ok` CWD relation refuses.
-    //   - sync (pull) SOURCE: a lock-behind-HEAD (`Ahead`) source is tips-as-truth
-    //     for a WORKWEAVE source (note + pull committed tips, leave source lock
-    //     alone); a PRIMARY-weave source keeps the refusal (reproducibility scope
-    //     decision). Every other non-`ok` source relation refuses.
-    //   - sync (pull) DESTINATION (CWD): kept at the pre-Design-B behavior — any
-    //     non-`ok` relation (INCLUDING `Ahead`) refuses. The spec relaxed only the
-    //     pull SOURCE; relaxing the pull destination too would be cleaner but is
-    //     NOT in the explicit scope, so it is held and flagged rather than
-    //     silently widened.
+    // ORDERING (Correction 1, retained): every precondition that could
+    // refuse the op runs AFTER acquisition; on refusal we call
+    // `release_acquired` so the acquired records are cleared (cleanup
+    // table's "precondition refusal → cleared everywhere" row). Refusal
+    // still leaves no trace on disk — but the atomic claim means only ONE
+    // op can be running these precondition checks at a time on a given
+    // touched-workspace set.
     //
-    // Unresolvable lock entries (a pinned tag/branch that no longer exists) are a
-    // corrupt-lock error distinct from any relation and refuse first, naming the
-    // unknown revision.
-    let source_class = if allow_stale_lock {
-        None
-    } else {
-        Some(classify_lock_relations(
-            &source_workspace_dir,
-            &snapshot.source_manifest,
-            Some(&snapshot.raw_source_lock),
-        ))
-    };
-    let cwd_class = if allow_stale_lock {
-        None
-    } else {
-        Some(classify_lock_relations(
-            &cwd_workspace_dir,
-            &cwd_project.manifest,
-            cwd_project.lock.as_ref(),
-        ))
-    };
-
-    // CWD repos whose lock is behind HEAD (relation `Ahead`) that a sync-to
-    // landing auto-relocks at op start.
-    let mut cwd_lock_behind: Vec<RepoRelation> = Vec::new();
-
-    if let (Some(source_class), Some(cwd_class)) = (source_class, cwd_class) {
-        // Corrupt (unresolvable) lock entries refuse first, naming the revision.
-        if let Some((rp, raw)) = source_class.unresolvable.first() {
-            anyhow::bail!(
-                "{}",
-                unresolvable_lock_refusal(
-                    Side::Source,
-                    &source_workspace_name,
-                    source_project_name.as_str(),
-                    rp,
-                    raw,
-                )
-            );
-        }
-        if let Some((rp, raw)) = cwd_class.unresolvable.first() {
-            anyhow::bail!(
-                "{}",
-                unresolvable_lock_refusal(
-                    Side::Destination,
-                    &cwd_workspace_name_str,
-                    cwd_project_name.as_str(),
-                    rp,
-                    raw,
-                )
-            );
-        }
-
-        // Source side: refuse on any non-`ok`, non-`Ahead` relation. (`Ahead` is
-        // handled per verb below.)
-        let source_anomalous: Vec<&RepoRelation> = source_class
-            .relations
-            .iter()
-            .filter(|r| !matches!(r.relation, LockRelation::Ok | LockRelation::Ahead))
-            .collect();
-        if let Some(msg) = lock_relation_refusal(
-            Side::Source,
-            &source_workspace_name,
-            source_project_name.as_str(),
-            &source_anomalous,
-        ) {
-            anyhow::bail!("{msg}");
-        }
-
-        match verb {
-            MachineVerb::Sync => {
-                // Pull SOURCE `Ahead` = lock behind HEAD (source advanced but has
-                // not relocked). Workweave source: tips-as-truth (note, pull
-                // committed tips, leave the source lock alone). Primary source:
-                // keep the refusal (scope decision).
-                let source_lock_behind: Vec<&RepoRelation> = source_class
-                    .relations
-                    .iter()
-                    .filter(|r| r.relation == LockRelation::Ahead)
-                    .collect();
-                if !source_lock_behind.is_empty() {
-                    if source_is_workweave {
-                        if emit_text {
-                            for r in &source_lock_behind {
-                                let n = r
-                                    .ahead_count
-                                    .map(|c| c.to_string())
-                                    .unwrap_or_else(|| "?".to_string());
-                                eprintln!(
-                                    "note: {source_workspace_name}/{}: source lock behind HEAD \
-                                     by {n} commits — pulling committed tips (source lock left \
-                                     alone; its next op heals it)",
-                                    r.repo_path,
-                                );
-                            }
-                        }
-                    } else if let Some(msg) = lock_relation_refusal(
-                        Side::Source,
-                        &source_workspace_name,
-                        source_project_name.as_str(),
-                        &source_lock_behind,
-                    ) {
-                        anyhow::bail!("{msg}");
-                    }
-                }
-
-                // Pull DESTINATION (CWD): held at pre-Design-B behavior — refuse
-                // on ANY non-`ok` relation (including `Ahead`).
-                let cwd_stale: Vec<&RepoRelation> = cwd_class
-                    .relations
-                    .iter()
-                    .filter(|r| r.relation != LockRelation::Ok)
-                    .collect();
-                if let Some(msg) = lock_relation_refusal(
-                    Side::Destination,
-                    &cwd_workspace_name_str,
-                    cwd_project_name.as_str(),
-                    &cwd_stale,
-                ) {
-                    anyhow::bail!("{msg}");
-                }
-            }
-            MachineVerb::SyncTo => {
-                // Landing DESTINATION (CWD): refuse on any non-`ok`, non-`Ahead`
-                // relation; a lock-behind-HEAD (`Ahead`) CWD auto-relocks at op
-                // start (LOUD line + commit count below).
-                let cwd_anomalous: Vec<&RepoRelation> = cwd_class
-                    .relations
-                    .iter()
-                    .filter(|r| !matches!(r.relation, LockRelation::Ok | LockRelation::Ahead))
-                    .collect();
-                if let Some(msg) = lock_relation_refusal(
-                    Side::Destination,
-                    &cwd_workspace_name_str,
-                    cwd_project_name.as_str(),
-                    &cwd_anomalous,
-                ) {
-                    anyhow::bail!("{msg}");
-                }
-                cwd_lock_behind = cwd_class
-                    .relations
-                    .into_iter()
-                    .filter(|r| r.relation == LockRelation::Ahead)
-                    .collect();
-            }
-        }
-    }
-    if matches!(strategy, SyncStrategy::Rebase) {
-        verify_replay_exclusion_invariant(&cwd_project_dir)?;
-    }
-    let cwd_project_tip = GitVcs
-        .head_revision(&cwd_project_dir)
-        .context("failed to read CWD project HEAD")?;
-    let phase1_ancestor_bypassed = if discard_local_commits {
-        if GitVcs
-            .has_uncommitted_changes(&cwd_project_dir)
-            .unwrap_or(true)
-        {
-            anyhow::bail!(
-                "--discard-local-commits precondition failed: project repo at {} has uncommitted \
-                 changes.\n\
-                 --discard-local-commits discards committed divergence (recoverable via \
-                 refs/rwv/pre-op), but the hard-reset would destroy uncommitted changes \
-                 unrecoverably. Commit or stash them, then re-run.",
-                cwd_project_dir.display(),
-            );
-        }
-        !cwd_is_ancestor_or_equal(
-            &cwd_project_dir,
-            &cwd_project_tip,
-            &snapshot.source_project_tip,
-        )
-    } else if strategy == SyncStrategy::Ff && matches!(verb, MachineVerb::Sync) {
-        // Plain sync + ff: CWD must be ancestor-or-equal of source.
-        // sync-to's ff precondition was checked separately above
-        // (CWD must be strictly AHEAD of target).
-        check_phase1_ancestor(
-            &cwd_project_dir,
-            &cwd_project_tip,
-            &snapshot.source_project_tip,
-            &cwd_workspace_name_str,
-            &source_workspace_name,
-        )?;
-        false
-    } else {
-        false
-    };
-
-    // NOTE: the concurrency guard (`check_no_op_in_progress`) now runs as the
-    // FIRST precondition above, before lock-relation classification and the
-    // dirty preflights (Correction 1, ORDERING). It is intentionally not
-    // repeated here.
-
-    // === Mark: write owner record + leases ===
-
+    // The touched set is the workspaces the op writes op-state into: CWD
+    // for sync; CWD + target for sync-to. Overrides (`allow-stale-lock`,
+    // `discard-local-commits`) are pushed onto the record AFTER preconditions
+    // (they depend on precondition outcomes) via a second `write_owner` in
+    // the Mark section below — the acquired file is then overwritten in
+    // place with the final record shape.
     let op_id = OpId::new_now();
     let owner_workspace_dir = cwd_workspace_dir.clone();
-
-    let mut record = match verb {
+    let initial_record = match verb {
         MachineVerb::Sync => OwnerRecord::new_sync(
             &op_id,
             strategy,
@@ -2247,9 +2296,62 @@ fn guard_and_mark<'a>(
             retire,
         ),
     };
+    let lease_workspaces: Vec<&Path> = match verb {
+        MachineVerb::Sync => Vec::new(),
+        MachineVerb::SyncTo => vec![dest_workspace_dir.as_path()],
+    };
+    let acquired = op_state::acquire_op(&owner_workspace_dir, &initial_record, &lease_workspaces)?;
+
+    // From here on, any early return from a precondition refusal must release
+    // the acquired records (see the cleanup-table row for "refusal → cleared
+    // everywhere"). We wrap the precondition block in a closure so `?` inside
+    // routes through the release path.
+    let precondition_result = run_preconditions_after_acquire(
+        verb,
+        cwd,
+        strategy,
+        allow_stale_lock,
+        discard_local_commits,
+        source_is_workweave,
+        &cwd_project_dir,
+        &cwd_workspace_dir,
+        &cwd_ctx,
+        &source_project_dir,
+        &source_workspace_dir,
+        &source_workspace_name,
+        &source_project_name,
+        &cwd_project_name,
+        &dest_project_dir,
+        &dest_workspace_dir,
+        &cli_path,
+        emit_text,
+    );
+    let PreconditionOutcome {
+        snapshot,
+        cwd_project,
+        cwd_workspace_name_str,
+        cwd_lock_behind,
+        phase1_ancestor_bypassed,
+    } = match precondition_result {
+        Ok(v) => v,
+        Err(e) => {
+            op_state::release_acquired(&acquired);
+            return Err(e);
+        }
+    };
+
+    // === Mark: overrides update ===
+    //
+    // `acquire_op` above already wrote the initial owner record at CWD and every
+    // touched-workspace lease. The final Mark write is the OVERRIDES update:
+    // `allow-stale-lock` and `discard-local-commits` are consent flags recorded
+    // in the audit-trail `overrides` field so cleanup preserves the appropriate
+    // savepoint (tombstone case) and `--continue` resumes with the same
+    // consent. Both are determined by precondition outcomes, so this write is
+    // sequenced after the acquire+precondition pair. Consumed by the release
+    // path on any downstream mid-op error since the record is already on disk.
+    let mut record = initial_record;
     if allow_stale_lock {
-        // Record that the lock-freshness precondition was bypassed so audit
-        // trails and --continue resumptions carry the same consent.
         record.overrides.push("allow-stale-lock".to_owned());
     }
     if phase1_ancestor_bypassed {
@@ -2259,18 +2361,25 @@ fn guard_and_mark<'a>(
         // tombstone and --continue resumes with the same consent.
         record.overrides.push("discard-local-commits".to_owned());
     }
-    op_state::write_owner(&owner_workspace_dir, &record).context("failed to write owner record")?;
-
-    // Lease at every other mutated workspace. For plain sync there is no
-    // other mutated workspace; for sync-to the target gets a lease.
-    if matches!(verb, MachineVerb::SyncTo) {
-        let lease = LeaseRecord {
-            id: op_id.as_str().to_owned(),
-            owner: owner_workspace_dir.clone(),
-        };
-        op_state::write_lease(&dest_workspace_dir, &lease)
-            .context("failed to write lease to target workspace")?;
+    if !record.overrides.is_empty() {
+        // Only rewrite when we actually have overrides — otherwise the
+        // acquire-time record is already correct byte-for-byte.
+        if let Err(e) = op_state::write_owner(&owner_workspace_dir, &record)
+            .context("failed to update owner record with overrides")
+        {
+            // A failure to record consent means the audit trail would lie on
+            // `--continue`. Release the claim so a retry starts clean.
+            op_state::release_acquired(&acquired);
+            return Err(e);
+        }
     }
+    // Suppress the "acquired but not otherwise inspected" lint — the handle's
+    // purpose is fulfilled: it kept the claim atomic across preconditions, and
+    // from here the on-disk record lifecycle is owned by the phase driver +
+    // cleanup path. `AcquiredOp` intentionally does not clean up on drop
+    // (crash-persistence + operator-visible `--continue` / `abort` are the
+    // exits from that point on).
+    let _ = acquired;
 
     // === Savepoint: per-repo pre-op anchor refs ===
     //

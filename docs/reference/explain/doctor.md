@@ -385,6 +385,40 @@ Schema:
         }
       ]
     },
+    "DeadOpLeaseKind": {
+      "description": "Discriminator for `CheckViolation::DeadOpLease` findings. Both shapes share the same `--fix` disposition (safe to remove the lease file) but name distinct root causes so the human-facing message can be specific.",
+      "oneOf": [
+        {
+          "description": "The recorded owner workspace has no `.rwv-op` file at all — either the owner workspace was deleted, or the owner record was hand-removed while the lease survived. The classical crash-between-acquire-and-mark shape.",
+          "type": "string",
+          "enum": [
+            "owner-record-absent"
+          ]
+        },
+        {
+          "description": "The recorded owner workspace has an `.rwv-op` file, but with a *different* op id than the lease references. The owner cleared and a new op started while this stale lease survived — the lease points at a completed op, not an in-flight one.",
+          "type": "object",
+          "required": [
+            "owner-op-id-mismatch"
+          ],
+          "properties": {
+            "owner-op-id-mismatch": {
+              "type": "object",
+              "required": [
+                "owner_op_id"
+              ],
+              "properties": {
+                "owner_op_id": {
+                  "description": "Op id of the record currently living at the owner workspace.",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
     "DriftKind": {
       "oneOf": [
         {
@@ -999,6 +1033,44 @@ Schema:
             },
             "workspace_dir": {
               "description": "Absolute path to the workspace dir that holds the `.rwv-op` file.",
+              "type": "string"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "kind",
+            "op_id",
+            "recorded_owner",
+            "sub_kind",
+            "workspace_dir"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "dead-op-lease"
+              ]
+            },
+            "op_id": {
+              "description": "Op id recorded in the lease.",
+              "type": "string"
+            },
+            "recorded_owner": {
+              "description": "Owner workspace the lease pointed at.",
+              "type": "string"
+            },
+            "sub_kind": {
+              "description": "Discriminator for the specific dead-lease shape.",
+              "allOf": [
+                {
+                  "$ref": "#/definitions/DeadOpLeaseKind"
+                }
+              ]
+            },
+            "workspace_dir": {
+              "description": "Absolute path to the workspace dir holding the dangling lease.",
               "type": "string"
             }
           }

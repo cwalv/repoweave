@@ -162,10 +162,34 @@ check on every workspace the op will touch, replay-exclusion invariant
 Phase 1' ancestor check (`--strategy=ff`), and the dirty-target
 preflight (`rwv sync-to`). Refusals here leave no trace.
 
+**Acquisition atomicity (fo-u57y0b).** The no-op-in-progress check is not
+a plain read followed by a later write. `sync` / `sync-to` acquire the
+owner record and every touched-workspace lease **atomically at guard
+time** via `O_CREAT|O_EXCL`: the OS refuses the second creator, so two
+concurrent invocations cannot both pass the guard and only collide later
+at the git layer. On `AlreadyExists`, the caller sees the standard
+in-flight refusal (verb, age, phase, `--continue` / `rwv abort` exits)
+reading the *existing* holder. Every precondition that follows runs
+after acquisition; on refusal, the acquired records are cleared (the
+cleanup-table row "precondition refusal → cleared everywhere"), so
+refusals still leave no trace. Content is published via a sibling temp
+file + `link(2)` so a loser never reads a half-written owner file.
+
+Time is never a decision input: crash between acquisition and Mark
+leaves records with no savepoints. That partial state is diagnosed by
+the doctor's structural dead-lease check (a `.rwv-op-lease` whose
+recorded owner workspace has no matching `.rwv-op` for the same op id
+is provably dead — safe to auto-fix by removing the lease file).
+Elapsed time is surfaced to the operator as observability, never
+consumed as a timeout.
+
 ### mark
 
-Write the owner record at the initiating workspace (initial phase:
-`replay`) and a thin lease at every other workspace the op mutates.
+Update the owner record with any acquisition-time overrides
+(`allow-stale-lock`, `discard-local-commits`) that the preconditions
+determined applied, then continue to Savepoint. The owner record + leases
+themselves were written by the atomic acquisition in the guard step
+above; Mark is the field-refinement write, not the first write.
 Source workspaces are read-only and receive no mark — safe because reads
 are snapshots (see "Snapshot reads" below).
 

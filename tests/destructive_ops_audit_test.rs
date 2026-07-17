@@ -194,10 +194,15 @@ const ALLOWLIST: &[Allowed] = &[
     Allowed {
         file: "op_state.rs",
         pattern: "remove_file",
-        count: 2,
+        count: 4,
         justification: "(1) clear_owner: removing the .rwv-op owner record (rwv-internal). \
             (2) clear_lease: removing the .rwv-op-lease thin lease (rwv-internal). \
-            Both are op-state bookkeeping files, not user data.",
+            (3)+(4) atomic_write_new temp-file cleanup: unlinks the sibling temp file \
+            used to publish op-state atomically via link(2) — both on the write-error \
+            path and on the always-runs post-link cleanup. The temp file is created by \
+            atomic_write_new itself with a PID+ns-unique name, so nothing else on disk \
+            can be named that. All four sites operate on rwv-internal bookkeeping, \
+            never user data.",
     },
     Allowed {
         file: "integrations/merge.rs",
