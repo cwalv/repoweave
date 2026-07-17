@@ -1550,3 +1550,219 @@ fn lock_succeeds_over_conflict_markered_rwv_lock() {
         [&repoweave::manifest::RepoPath::new(repo_path).expect("known-safe literal")];
     assert_eq!(entry.version.as_str(), &sha);
 }
+
+// ---------------------------------------------------------------------------
+// 17. Detached HEAD member: lock succeeds with a warning (fo-oueuv7.4)
+// ---------------------------------------------------------------------------
+
+/// Helper: initialise a git repo, detach HEAD at the tip, and return the SHA.
+fn init_git_repo_detached(path: &Path) -> String {
+    std::fs::create_dir_all(path).unwrap();
+
+    let run = |args: &[&str], dir: &Path| -> String {
+        let out = common::git()
+            .args(args)
+            .current_dir(dir)
+            .env("GIT_AUTHOR_NAME", "Test")
+            .env("GIT_AUTHOR_EMAIL", "test@test.com")
+            .env("GIT_COMMITTER_NAME", "Test")
+            .env("GIT_COMMITTER_EMAIL", "test@test.com")
+            .output()
+            .expect("git command failed to start");
+        assert!(
+            out.status.success(),
+            "git {:?} failed: {}",
+            args,
+            String::from_utf8_lossy(&out.stderr)
+        );
+        String::from_utf8(out.stdout).unwrap().trim().to_string()
+    };
+
+    run(&["init", "-b", "main"], path);
+    std::fs::write(path.join("README.md"), "init\n").unwrap();
+    run(&["add", "."], path);
+    run(&["commit", "-m", "initial"], path);
+
+    let sha = run(&["rev-parse", "HEAD"], path);
+
+    // Detach HEAD at the current tip.
+    run(&["checkout", "--detach", "HEAD"], path);
+
+    sha
+}
+
+#[test]
+fn lock_detached_head_member_succeeds_with_warning() {
+    // A repo member in detached-HEAD state: `rwv lock` must succeed
+    // (pinning the detached SHA) but emit a warning to stderr that names:
+    //   - the state ("pinning detached HEAD")
+    //   - the consequence ("no branch names this commit; a later fetch will
+    //     materialize detached")
+    //   - the next verb ("Create/checkout a branch if this is unintended")
+    let tmp = tempfile::tempdir().unwrap();
+    let root = make_workspace(tmp.path(), "ws");
+
+    let repo_path = "github/acme/server";
+    let sha = init_git_repo_detached(&root.join(repo_path));
+
+    let project_dir = root.join("projects").join("my-app");
+    write_manifest(
+        &project_dir,
+        &[(repo_path, "https://github.com/acme/server.git")],
+    );
+
+    // Must succeed (not fail) — detached HEAD is a warning, not a hard error.
+    rwv_cmd()
+        .arg("lock")
+        .current_dir(&project_dir)
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("detached HEAD"))
+        .stderr(predicate::str::contains("no branch names this commit"))
+        .stderr(predicate::str::contains("Create/checkout a branch"));
+
+    // The lock file must be written with the detached SHA pinned.
+    let lock_path = project_dir.join("rwv.lock");
+    assert!(lock_path.exists(), "rwv.lock should be created");
+    let lock = repoweave::manifest::LockFile::from_path(&lock_path).unwrap();
+    let entry = lock
+        .get_entry(&repoweave::manifest::RepoPath::new(repo_path).expect("known-safe literal"))
+        .expect("lock should contain the repo");
+    assert_eq!(
+        entry.version.as_str(),
+        &sha,
+        "lock should pin the detached SHA"
+    );
+}
+
+#[test]
+fn lock_detached_head_warning_contains_short_sha() {
+    // The warning must include the abbreviated SHA so the operator can
+    // identify which commit is pinned without opening rwv.lock.
+    let tmp = tempfile::tempdir().unwrap();
+    let root = make_workspace(tmp.path(), "ws");
+
+    let repo_path = "github/acme/server";
+    let sha = init_git_repo_detached(&root.join(repo_path));
+    let short_sha = &sha[..7];
+
+    let project_dir = root.join("projects").join("my-app");
+    write_manifest(
+        &project_dir,
+        &[(repo_path, "https://github.com/acme/server.git")],
+    );
+
+    rwv_cmd()
+        .arg("lock")
+        .current_dir(&project_dir)
+        .assert()
+        .success()
+        .stderr(predicate::str::contains(short_sha));
+}
+
+#[test]
+fn lock_normal_head_no_detached_warning() {
+    // A repo on a named branch must NOT produce a detached-HEAD warning.
+    let tmp = tempfile::tempdir().unwrap();
+    let root = make_workspace(tmp.path(), "ws");
+
+    let repo_path = "github/acme/server";
+    init_git_repo(&root.join(repo_path));
+
+    let project_dir = root.join("projects").join("my-app");
+    write_manifest(
+        &project_dir,
+        &[(repo_path, "https://github.com/acme/server.git")],
+    );
+
+    rwv_cmd()
+        .arg("lock")
+        .current_dir(&project_dir)
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("detached HEAD").not());
+}
+
+// ---------------------------------------------------------------------------
+// 18. Unborn HEAD member: lock refuses with a clear message (fo-oueuv7.4)
+// ---------------------------------------------------------------------------
+
+/// Helper: create an empty git repo with no commits (unborn HEAD).
+fn init_git_repo_unborn(path: &Path) {
+    std::fs::create_dir_all(path).unwrap();
+    let out = common::git()
+        .args(["init", "-b", "main"])
+        .current_dir(path)
+        .output()
+        .expect("git init failed to start");
+    assert!(
+        out.status.success(),
+        "git init failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    // Deliberately do NOT make any commit — leaves HEAD unborn.
+}
+
+#[test]
+fn lock_unborn_head_member_refuses_with_clear_message() {
+    // A repo member that has no commits yet (unborn HEAD): `rwv lock` must
+    // refuse and emit a clear message that:
+    //   - names the repo path
+    //   - names the state ("unborn HEAD")
+    //   - tells the operator what to do ("make an initial commit")
+    //
+    // Before fo-oueuv7.4 the raw git error ("ambiguous argument 'HEAD'")
+    // leaked to the terminal.
+    let tmp = tempfile::tempdir().unwrap();
+    let root = make_workspace(tmp.path(), "ws");
+
+    let repo_path = "github/acme/server";
+    init_git_repo_unborn(&root.join(repo_path));
+
+    let project_dir = root.join("projects").join("my-app");
+    write_manifest(
+        &project_dir,
+        &[(repo_path, "https://github.com/acme/server.git")],
+    );
+
+    // Must fail — cannot pin an unborn HEAD.
+    rwv_cmd()
+        .arg("lock")
+        .current_dir(&project_dir)
+        .assert()
+        .failure()
+        // Clear state name, not the raw git error.
+        .stderr(predicate::str::contains("unborn HEAD"))
+        // Operator action.
+        .stderr(predicate::str::contains("initial commit"))
+        // Raw git error must NOT leak.
+        .stderr(predicate::str::contains("ambiguous argument").not());
+}
+
+#[test]
+fn lock_unborn_head_does_not_write_lock_file() {
+    // When the member has an unborn HEAD, no rwv.lock should be written —
+    // an early failure before the write step is the safe outcome.
+    let tmp = tempfile::tempdir().unwrap();
+    let root = make_workspace(tmp.path(), "ws");
+
+    let repo_path = "github/acme/server";
+    init_git_repo_unborn(&root.join(repo_path));
+
+    let project_dir = root.join("projects").join("my-app");
+    write_manifest(
+        &project_dir,
+        &[(repo_path, "https://github.com/acme/server.git")],
+    );
+
+    rwv_cmd()
+        .arg("lock")
+        .current_dir(&project_dir)
+        .assert()
+        .failure();
+
+    assert!(
+        !project_dir.join("rwv.lock").exists(),
+        "rwv.lock must not be written when a member has an unborn HEAD"
+    );
+}

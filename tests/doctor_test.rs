@@ -2151,3 +2151,107 @@ fn default_scope_json_no_orphan_when_active_project_set() {
         "default --json scope must not include orphaned-clone; violations: {violations:?}"
     );
 }
+
+// ===========================================================================
+// Unborn HEAD: doctor names the state, not the raw git error (fo-oueuv7.4)
+// ===========================================================================
+
+/// Helper: create an empty git repo with no commits (unborn HEAD).
+fn init_git_repo_unborn(path: &std::path::Path) {
+    std::fs::create_dir_all(path).unwrap();
+    let out = common::git()
+        .args(["init", "-b", "main"])
+        .current_dir(path)
+        .output()
+        .expect("git init failed to start");
+    assert!(
+        out.status.success(),
+        "git init failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    // Deliberately do NOT make any commit — leaves HEAD unborn.
+}
+
+#[test]
+fn doctor_unborn_head_member_names_state_not_raw_git_error() {
+    // When a workspace member has no commits (unborn HEAD), `rwv doctor`
+    // must report a finding that names the state ("unborn HEAD") rather
+    // than leaking git's raw "ambiguous argument 'HEAD'" error.
+    //
+    // The check subsystem collects `head_read_failures` and formats each
+    // one as `{repo_path}: HEAD unreadable ({err_msg})`. The `err_msg` is
+    // the `VcsError::CommandFailed.stderr` field — which, after fo-oueuv7.4,
+    // contains "unborn HEAD ..." instead of the raw git message.
+    let tmp = tempfile::tempdir().unwrap();
+    let root = make_workspace(tmp.path(), "ws");
+
+    let repo_path = "github/acme/server";
+    init_git_repo_unborn(&root.join(repo_path));
+
+    let project_dir = root.join("projects").join("my-app");
+    write_manifest(
+        &project_dir,
+        &[(repo_path, "https://github.com/acme/server.git")],
+    );
+    std::fs::write(root.join(".rwv-active"), "my-app\n").unwrap();
+
+    // Run doctor in the workspace root. It should detect the unreadable HEAD.
+    let output = rwv_cmd()
+        .arg("doctor")
+        .current_dir(&root)
+        .output()
+        .expect("failed to spawn rwv doctor");
+
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    // Must name the condition the operator can act on.
+    assert!(
+        combined.contains("unborn HEAD"),
+        "doctor must surface 'unborn HEAD' but got:\n{combined}"
+    );
+
+    // Must NOT leak git's internal error message verbatim.
+    assert!(
+        !combined.contains("ambiguous argument"),
+        "doctor must not leak raw git error but got:\n{combined}"
+    );
+}
+
+#[test]
+fn doctor_unborn_head_member_includes_action_hint() {
+    // The "unborn HEAD" error message includes actionable guidance:
+    // telling the operator to "make an initial commit".
+    let tmp = tempfile::tempdir().unwrap();
+    let root = make_workspace(tmp.path(), "ws");
+
+    let repo_path = "github/acme/server";
+    init_git_repo_unborn(&root.join(repo_path));
+
+    let project_dir = root.join("projects").join("my-app");
+    write_manifest(
+        &project_dir,
+        &[(repo_path, "https://github.com/acme/server.git")],
+    );
+    std::fs::write(root.join(".rwv-active"), "my-app\n").unwrap();
+
+    let output = rwv_cmd()
+        .arg("doctor")
+        .current_dir(&root)
+        .output()
+        .expect("failed to spawn rwv doctor");
+
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    assert!(
+        combined.contains("initial commit") || combined.contains("unborn HEAD"),
+        "doctor output should hint at making an initial commit, got:\n{combined}"
+    );
+}

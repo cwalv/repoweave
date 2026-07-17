@@ -770,12 +770,34 @@ impl Vcs for GitVcs {
     }
 
     fn head_revision(&self, repo: &Path) -> Result<ResolvedRevisionId, VcsError> {
-        let sha = Self::run(&["rev-parse", "HEAD"], repo)?;
-        // If a tag points at HEAD, preserve it as the display form so callers
-        // get human-readable round-trips (e.g., `v0.3.4`) without an extra
-        // resolve step.
-        let display = self.tag_at_head(repo)?.map(|t| t.as_str().to_string());
-        Ok(ResolvedRevisionId::from_canonical(sha, display))
+        match Self::run(&["rev-parse", "HEAD"], repo) {
+            Err(VcsError::CommandFailed { stderr, .. })
+                if stderr.contains("ambiguous argument") =>
+            {
+                // Unborn HEAD: git cannot resolve HEAD because the repo has no
+                // commits yet. `git symbolic-ref --short HEAD` succeeds (returns
+                // the branch name) even with no commits, so we use it to
+                // distinguish this state from a detached or corrupted HEAD.
+                let branch_hint = Self::run(&["symbolic-ref", "--short", "HEAD"], repo)
+                    .unwrap_or_else(|_| "(unknown)".to_string());
+                Err(VcsError::CommandFailed {
+                    args: vec!["rev-parse".to_owned(), "HEAD".to_owned()],
+                    repo: repo.to_path_buf(),
+                    stderr: format!(
+                        "unborn HEAD (no commits yet, on branch '{branch_hint}'): \
+                         make an initial commit, then re-run rwv lock"
+                    ),
+                })
+            }
+            Err(e) => Err(e),
+            Ok(sha) => {
+                // If a tag points at HEAD, preserve it as the display form so callers
+                // get human-readable round-trips (e.g., `v0.3.4`) without an extra
+                // resolve step.
+                let display = self.tag_at_head(repo)?.map(|t| t.as_str().to_string());
+                Ok(ResolvedRevisionId::from_canonical(sha, display))
+            }
+        }
     }
 
     fn resolve_revision(&self, repo: &Path, rev: &str) -> Result<ResolvedRevisionId, VcsError> {

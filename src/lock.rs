@@ -99,7 +99,26 @@ pub fn generate_lock(
         // points at HEAD, also fills in the tag display form — so the lock
         // serializes as the tag name when available and the canonical SHA
         // otherwise.
-        let version = vcs.head_revision(&repo_dir)?;
+        //
+        // Unborn HEAD: `head_revision` returns a `CommandFailed` whose stderr
+        // contains "unborn HEAD" — return it as-is; the message already names
+        // the repo path and the fix.
+        let version = vcs
+            .head_revision(&repo_dir)
+            .map_err(|e| anyhow::anyhow!("{}: {}", repo_path, e))?;
+
+        // Detached HEAD: warn but do not refuse. Lock runs inside automation
+        // (sync auto-relock) so a hard gate would break legitimate flows.
+        // Warning text follows the house refusal pattern: name the state,
+        // name the consequence, name the next verb.
+        if vcs.current_ref(&repo_dir).ok().flatten().is_none() {
+            let short = &version.as_str()[..version.as_str().len().min(7)];
+            eprintln!(
+                "warning: pinning detached HEAD {short} in {repo_path}: \
+                 no branch names this commit; a later fetch will materialize detached. \
+                 Create/checkout a branch if this is unintended."
+            );
+        }
 
         repositories.insert(
             repo_path.clone(),
