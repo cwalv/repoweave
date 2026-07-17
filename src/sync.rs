@@ -2757,10 +2757,16 @@ fn check_dirty_source_preflight(
 // tips. The spec's "ahead" case (HEAD is a strict ancestor of the lock — a reset
 // or an `update` without FF) is [`LockRelation::Behind`] — the *tip* is behind
 // the lock; that is anomalous and refuses. Every non-`ok` relation other than
-// `Ahead` (i.e. `Behind` / `Diverged` / `NoLock` / `Unknown`) hard-refuses,
-// naming the relation. The ancestry gate is the whole answer — a benign `Ahead`
-// cannot conceal divergence, because the "missing" lock entries are exactly the
-// commits the op will replay/FF.
+// `Ahead` (i.e. `Behind` / `Diverged` / `NoLock` / `Unknown` / `Missing` /
+// `Unreachable`) hard-refuses, naming the relation. The ancestry gate is the
+// whole answer — a benign `Ahead` cannot conceal divergence, because the
+// "missing" lock entries are exactly the commits the op will replay/FF.
+//
+// `Missing` (clone dir absent from disk) and `Unreachable` (clone present but
+// locked SHA not in the local object store) are clone-health states; sync skips
+// repos that don't exist on disk (`if !repo_abs.exists() { continue }`) so
+// these relations are only emitted by `rwv status` — the sync lock-freshness
+// gate never sees them.
 
 /// One manifest repo's lock↔HEAD relation, plus the commit count for the benign
 /// `Ahead` case (the tip is ahead of the lock — "lock behind HEAD" in the spec's

@@ -26,6 +26,21 @@ pub struct StatusJsonOutput {
 }
 
 /// Relation between the current branch tip and the lock SHA.
+///
+/// The two clone-health variants (`Missing` / `Unreachable`) address distinct
+/// failure modes that `NoLock` previously masked:
+///
+/// - `Missing` — the clone directory is absent from disk entirely (out-of-band
+///   `rm -rf`, never fetched, etc.). The lock entry may be fine; the repair
+///   verb is a re-clone / `rwv fetch`.
+///
+/// - `Unreachable` — the clone directory exists but the SHA pinned in the lock
+///   is not present in the local object store (history rewritten, shallow
+///   clone, object pruned). The repair verb is a `git fetch` / `rwv fetch`
+///   to re-materialise the missing object.
+///
+/// Neither state should be attributed to the lock file itself — surfacing them
+/// as `no-lock` misdirects operators at the wrong repair path.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum LockRelation {
@@ -35,6 +50,13 @@ pub enum LockRelation {
     Diverged,
     NoLock,
     Unknown,
+    /// Clone directory is absent from disk (out-of-band removal, never fetched).
+    /// Repair: re-clone / `rwv fetch`.
+    Missing,
+    /// Clone directory exists but the locked SHA is not in the local object
+    /// store (history rewritten, shallow clone, object pruned).
+    /// Repair: `git fetch` / `rwv fetch` to materialise the missing object.
+    Unreachable,
 }
 
 impl std::fmt::Display for LockRelation {
@@ -46,6 +68,8 @@ impl std::fmt::Display for LockRelation {
             LockRelation::Diverged => "diverged",
             LockRelation::NoLock => "no-lock",
             LockRelation::Unknown => "unknown",
+            LockRelation::Missing => "missing",
+            LockRelation::Unreachable => "unreachable",
         };
         f.write_str(s)
     }
@@ -189,12 +213,115 @@ pub fn run_status(
         // Resolve lock entries against their on-disk repos so equality with
         // a tip ResolvedRevisionId (which always carries the canonical SHA) works
         // whether the lock pinned a tag, branch, or raw SHA.
-        let lock = project
-            .lock
-            .map(|raw| raw.resolve_versions(&workspace_dir).0);
+        //
+        // We keep the raw lock alongside the resolved form so we can:
+        //   (a) show the lock version even for repos whose clone is missing,
+        //   (b) detect when a lock entry exists but the SHA is unreachable
+        //       in the local object store (resolve_versions puts those in
+        //       `failures` rather than including them in the resolved map).
+        let (lock, lock_resolve_failures) = match project.lock {
+            Some(raw) => {
+                let raw_clone = raw.clone();
+                let (resolved, failures) = raw.resolve_versions(&workspace_dir);
+                (Some((raw_clone, resolved)), failures)
+            }
+            None => (None, Vec::new()),
+        };
 
         for (repo_path, entry) in &project.manifest.repositories {
             let repo_abs = workspace_dir.join(repo_path.as_path());
+
+            // --- clone-health pre-check ---
+            //
+            // Detect the two states that previously both collapsed into
+            // `NoLock` (misdirecting operators at the lock file instead of
+            // the clone):
+            //
+            //   Missing     — clone dir absent from disk entirely.  The lock
+            //                 entry may be fine; repair = re-clone / rwv fetch.
+            //
+            //   Unreachable — clone dir present but the locked SHA is not in
+            //                 the local object store (history rewritten, shallow
+            //                 clone, object pruned).  Repair = git/rwv fetch.
+            //
+            // Either state short-circuits to an explicit relation before the
+            // normal tip/lock comparison runs.
+
+            if !repo_abs.exists() {
+                // Clone directory is absent.  Retrieve the raw lock version
+                // for the `lock_sha` display field (the resolved map omits
+                // missing repos, but the raw lock still has the entry).
+                let raw_lock_sha = lock
+                    .as_ref()
+                    .and_then(|(raw, _)| raw.get_entry(repo_path))
+                    .map(|e| e.version.as_str().to_owned());
+                entries.push(RepoStatus {
+                    path: repo_path.to_string(),
+                    branch: None,
+                    tip: None,
+                    lock_sha: raw_lock_sha,
+                    relation: LockRelation::Missing,
+                    mid_op: None,
+                    role: entry.role.as_str().to_string(),
+                    url: entry.url.to_string(),
+                    project: pname.to_string(),
+                    absolute_path: repo_abs.to_string_lossy().to_string(),
+                    parent: recorded_parent.as_ref().map(|parent_path| ParentInfo {
+                        path: parent_path.to_string_lossy().to_string(),
+                        tip: None,
+                    }),
+                });
+                continue;
+            }
+
+            // Clone dir exists — check whether the locked SHA is unreachable
+            // in the local object store.  `resolve_versions` puts such entries
+            // in `failures`; they are absent from the resolved lock map.
+            if lock_resolve_failures.iter().any(|(p, _)| p == repo_path) {
+                // The raw lock has an entry for this repo (it was in
+                // `failures`) but the SHA cannot be resolved on disk.
+                let raw_lock_sha = lock
+                    .as_ref()
+                    .and_then(|(raw, _)| raw.get_entry(repo_path))
+                    .map(|e| e.version.as_str().to_owned());
+
+                let branch = git
+                    .current_ref(&repo_abs)
+                    .ok()
+                    .flatten()
+                    .map(|r| r.as_str().to_owned());
+
+                let tip = git.head_revision(&repo_abs).ok();
+
+                let mid_op = GitVcs::mid_op_state(&repo_abs);
+
+                let parent = recorded_parent.as_ref().map(|parent_path| {
+                    let parent_repo_abs = parent_path.join(repo_path.as_path());
+                    let parent_tip = git
+                        .head_revision(&parent_repo_abs)
+                        .ok()
+                        .map(|r| r.as_str().to_owned());
+                    ParentInfo {
+                        path: parent_path.to_string_lossy().to_string(),
+                        tip: parent_tip,
+                    }
+                });
+
+                entries.push(RepoStatus {
+                    path: repo_path.to_string(),
+                    branch,
+                    tip: tip.map(|r| r.display_str().to_owned()),
+                    lock_sha: raw_lock_sha,
+                    relation: LockRelation::Unreachable,
+                    mid_op,
+                    role: entry.role.as_str().to_string(),
+                    url: entry.url.to_string(),
+                    project: pname.to_string(),
+                    absolute_path: repo_abs.to_string_lossy().to_string(),
+                    parent,
+                });
+                continue;
+            }
 
             let branch = git
                 .current_ref(&repo_abs)
@@ -206,7 +333,7 @@ pub fn run_status(
 
             let lock_sha = lock
                 .as_ref()
-                .and_then(|l| l.get_entry(repo_path))
+                .and_then(|(_, resolved)| resolved.get_entry(repo_path))
                 .map(|e| e.version.clone());
 
             let relation = compute_relation(&repo_abs, &tip, &lock_sha);
