@@ -148,6 +148,23 @@ pub fn run_add(
     if !url.contains("://") {
         let candidate = ctx.primary_path().join(url);
         if candidate.is_dir() {
+            // Warn when this clone path is already registered by another project
+            // before adding it here (local-path arm). Same shared-clone detection
+            // as the URL arm.
+            {
+                let repo_path = RepoPath::new(url)?;
+                let primary_project_dir = ctx
+                    .primary_path()
+                    .join("projects")
+                    .join(project_dir.file_name().unwrap_or_default());
+                warn_if_shared_clone(
+                    ctx.primary_path(),
+                    &primary_project_dir,
+                    &repo_path,
+                    &candidate,
+                    role,
+                );
+            }
             run_add_from_local_path(url, &candidate, role, &manifest_path)?;
             let project_name = project_dir
                 .file_name()
@@ -196,6 +213,23 @@ pub fn run_add(
     // than holding their own clones (see
     // `docs/explanation/joints/clone-topology.md`).
     let dest = ctx.primary_path().join(repo_path.as_path());
+
+    // Warn when this clone path is already registered by another project.
+    // The physical clone is shared; the operator should know. This is not a
+    // refusal — sharing is legitimate and supported.
+    {
+        let primary_project_dir = ctx
+            .primary_path()
+            .join("projects")
+            .join(project_dir.file_name().unwrap_or_default());
+        warn_if_shared_clone(
+            ctx.primary_path(),
+            &primary_project_dir,
+            &repo_path,
+            &dest,
+            role,
+        );
+    }
     if dest.exists() {
         eprintln!(
             "Directory already exists at '{}', skipping clone",
@@ -465,6 +499,23 @@ pub fn run_add_new(
     // Create the directory and run git init at primary's canonical path
     // (clones are global infrastructure).
     let dest = ctx.primary_path().join(repo_path.as_path());
+
+    // Warn when this repo path is already registered by another project with
+    // a potentially different role. The physical init'd repo is shared; the
+    // operator should know. This is not a refusal.
+    {
+        let primary_project_dir = ctx
+            .primary_path()
+            .join("projects")
+            .join(project_dir.file_name().unwrap_or_default());
+        warn_if_shared_clone(
+            ctx.primary_path(),
+            &primary_project_dir,
+            &repo_path,
+            &dest,
+            Role::Owned,
+        );
+    }
     if dest.exists() {
         eprintln!(
             "Directory already exists at '{}', skipping init",
@@ -522,8 +573,23 @@ fn find_other_projects_referencing(
     active_project_dir: &Path,
     repo_path: &RepoPath,
 ) -> Vec<String> {
+    find_other_projects_with_roles(workspace_root, active_project_dir, repo_path)
+        .into_iter()
+        .map(|(name, _role)| name)
+        .collect()
+}
+
+/// Scan `projects/*/rwv.yaml` (excluding `active_project_dir`) and return the
+/// `(project_name, role)` pairs for any project that registers `repo_path`.
+///
+/// Used by `run_add` and `run_add_new` to emit shared-clone warnings.
+fn find_other_projects_with_roles(
+    workspace_root: &Path,
+    active_project_dir: &Path,
+    repo_path: &RepoPath,
+) -> Vec<(String, Role)> {
     let projects_dir = workspace_root.join("projects");
-    let mut referencing: Vec<String> = Vec::new();
+    let mut referencing: Vec<(String, Role)> = Vec::new();
 
     let entries = match std::fs::read_dir(&projects_dir) {
         Ok(e) => e,
@@ -541,18 +607,49 @@ fn find_other_projects_referencing(
         }
         let manifest_path = path.join("rwv.yaml");
         if let Ok(manifest) = Manifest::from_path(&manifest_path) {
-            if manifest.repositories.contains_key(repo_path) {
+            if let Some(entry) = manifest.repositories.get(repo_path) {
                 // Derive a human-readable project name from the directory name.
                 let name = path
                     .file_name()
                     .map(|n| n.to_string_lossy().into_owned())
                     .unwrap_or_else(|| path.display().to_string());
-                referencing.push(name);
+                referencing.push((name, entry.role));
             }
         }
     }
 
     referencing
+}
+
+/// Emit `[warning] add: shared-clone` messages when `repo_path` is already
+/// registered by other projects in this weave.
+///
+/// `this_role` is the role the caller is adding `repo_path` as; it is
+/// included in the warning so the operator understands the full picture.
+///
+/// Detection: scan primary's `projects/` directory — that is the canonical
+/// enumeration of project manifests regardless of CWD (matches the same
+/// discovery the `remove --delete` guard uses).
+fn warn_if_shared_clone(
+    workspace_root: &Path,
+    active_project_dir: &Path,
+    repo_path: &RepoPath,
+    clone_dest: &Path,
+    this_role: Role,
+) {
+    // Look up primary-side active project dir for the scan — even from a
+    // workweave the canonical manifest set lives under primary/projects/.
+    let siblings = find_other_projects_with_roles(workspace_root, active_project_dir, repo_path);
+    for (other_project, other_role) in &siblings {
+        eprintln!(
+            "[warning] add: clone {} is already registered by project '{}' with role {}; \
+             this project registers it as {} — the physical clone is shared",
+            clone_dest.display(),
+            other_project,
+            other_role.as_str(),
+            this_role.as_str(),
+        );
+    }
 }
 
 /// Infer a clone URL from a local path by matching the first segment against

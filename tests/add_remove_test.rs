@@ -1273,3 +1273,251 @@ fn add_local_path_arm_from_workweave_git_common_dir_points_to_primary_clone() {
         }
     }
 }
+
+// ============================================================================
+// R29 — shared-clone warning: warn when a second project registers an
+// already-cloned repo path (audit scenario from bead fo-oueuv7.5).
+//
+// The warning must:
+//   1. Fire when a second project adds a repo_path that is already registered
+//      by a sibling project.
+//   2. Name the other project and its role.
+//   3. Not block the add — sharing is legitimate and supported.
+//   4. Not fire when there is no sibling registration for the clone.
+// ============================================================================
+
+/// Build a workspace with TWO projects. `project_a_repos` are pre-populated in
+/// the first project's manifest; `project_b` starts with an empty manifest.
+/// Returns `(workspace_root, project_a_dir, project_b_dir)`.
+///
+/// Layout:
+///   ws/projects/project-a/rwv.yaml  — pre-populated
+///   ws/projects/project-b/rwv.yaml  — empty (caller will `rwv add` into it)
+///   ws/.rwv-active                  — "project-b" (so default CWD sees it)
+fn setup_two_project_workspace(
+    tmp: &tempfile::TempDir,
+    project_a_repos: &[(&str, &str, &str)], // (path, url, role)
+) -> (std::path::PathBuf, std::path::PathBuf, std::path::PathBuf) {
+    use std::process::Stdio;
+    let workspace = tmp.path().join("ws");
+    std::fs::create_dir_all(&workspace).unwrap();
+
+    let git_run = |args: &[&str], cwd: &Path| {
+        let status = common::git()
+            .args(args)
+            .current_dir(cwd)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .expect("git command failed");
+        assert!(status.success(), "git {:?} failed", args);
+    };
+
+    // project-a — pre-populated with repos.
+    let project_a_dir = workspace.join("projects").join("project-a");
+    std::fs::create_dir_all(&project_a_dir).unwrap();
+    git_run(&["init", "--initial-branch=main"], &project_a_dir);
+    git_run(&["config", "user.email", "test@test.com"], &project_a_dir);
+    git_run(&["config", "user.name", "Test"], &project_a_dir);
+    let mut yaml_a = String::from("repositories:\n");
+    if project_a_repos.is_empty() {
+        yaml_a.push_str("  {}\n");
+    }
+    for (path, url, role) in project_a_repos {
+        yaml_a.push_str(&format!(
+            "  {path}:\n    type: git\n    url: {url}\n    version: main\n    role: {role}\n"
+        ));
+    }
+    std::fs::write(project_a_dir.join("rwv.yaml"), &yaml_a).unwrap();
+    git_run(&["add", "rwv.yaml"], &project_a_dir);
+    git_run(&["commit", "-m", "init-a"], &project_a_dir);
+
+    // project-b — empty, active project so `rwv add` targets it.
+    let project_b_dir = workspace.join("projects").join("project-b");
+    std::fs::create_dir_all(&project_b_dir).unwrap();
+    git_run(&["init", "--initial-branch=main"], &project_b_dir);
+    git_run(&["config", "user.email", "test@test.com"], &project_b_dir);
+    git_run(&["config", "user.name", "Test"], &project_b_dir);
+    std::fs::write(project_b_dir.join("rwv.yaml"), "repositories:\n  {}\n").unwrap();
+    git_run(&["add", "rwv.yaml"], &project_b_dir);
+    git_run(&["commit", "-m", "init-b"], &project_b_dir);
+
+    // Active project is project-b so the add below targets it.
+    std::fs::write(workspace.join(".rwv-active"), "project-b\n").unwrap();
+
+    (workspace, project_a_dir, project_b_dir)
+}
+
+/// Scenario R29, URL arm: `rwv add` into project-b fires a shared-clone
+/// warning when project-a already registers the same repo path, names the
+/// other project and role, and still succeeds.
+///
+/// Strategy: drive `rwv add <url> --role=dependency --project=project-a` first
+/// so project-a's manifest gets the exact same repo_path key (derived by the
+/// same URL-parsing logic) that project-b will encounter. Then run
+/// `rwv add <url> --role=owned --project=project-b` explicitly to avoid
+/// `.rwv-active` state contamination from the first add's activation pass.
+#[test]
+fn add_url_arm_warns_shared_clone_names_other_project_and_role() {
+    let tmp = tempfile::tempdir().unwrap();
+
+    // Create a bare repo to serve as the remote (shared by both projects).
+    let bare = tmp.path().join("shared-remote.git");
+    init_bare_repo_with_commit(&bare);
+    let remote_url = format!("file://{}", bare.display());
+
+    // Both projects start empty; the workspace has project-a and project-b.
+    let (workspace, _project_a_dir, _project_b_dir) = setup_two_project_workspace(&tmp, &[]);
+
+    // Step 1: add the repo into project-a as dependency. Pass --project
+    // explicitly to avoid touching project-b's manifest.
+    rwv()
+        .args([
+            "add",
+            &remote_url,
+            "--role=dependency",
+            "--project=project-a",
+        ])
+        .current_dir(&workspace)
+        .assert()
+        .success();
+
+    // Step 2: add the same repo into project-b as owned. The clone already
+    // exists on disk after step 1. Pass --project=project-b explicitly so
+    // the command is not affected by any .rwv-active change from step 1's
+    // activation pass.
+    let output = rwv()
+        .args(["add", &remote_url, "--role=owned", "--project=project-b"])
+        .current_dir(&workspace)
+        .assert()
+        .success()
+        .get_output()
+        .clone();
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    // Must emit a shared-clone warning.
+    assert!(
+        stderr.contains("[warning]") && stderr.contains("shared"),
+        "expected shared-clone [warning] in stderr, got:\n{stderr}"
+    );
+
+    // Must name the other project.
+    assert!(
+        stderr.contains("project-a"),
+        "warning must name the other project 'project-a', got:\n{stderr}"
+    );
+
+    // Must name the other project's role.
+    assert!(
+        stderr.contains("dependency"),
+        "warning must name the other project's role 'dependency', got:\n{stderr}"
+    );
+
+    // Must name this project's role.
+    assert!(
+        stderr.contains("owned"),
+        "warning must name this project's role 'owned', got:\n{stderr}"
+    );
+
+    // Add must still succeed — project-b's manifest should contain the repo.
+    let manifest_b = std::fs::read_to_string(workspace.join("projects/project-b/rwv.yaml"))
+        .expect("project-b rwv.yaml should exist");
+    assert!(
+        manifest_b.contains(&remote_url) || manifest_b.contains("file://"),
+        "project-b manifest should contain the added repo URL, got:\n{manifest_b}"
+    );
+}
+
+/// Scenario R29, no-warning arm: `rwv add` fires NO shared-clone warning when
+/// the clone is not registered by any other project.
+#[test]
+fn add_url_arm_no_warning_when_clone_is_unshared() {
+    let tmp = tempfile::tempdir().unwrap();
+
+    let bare = tmp.path().join("unshared-remote.git");
+    init_bare_repo_with_commit(&bare);
+    let remote_url = format!("file://{}", bare.display());
+
+    // Both projects start empty; project-b adds the repo fresh (unshared).
+    let (workspace, _project_a_dir, _project_b_dir) = setup_two_project_workspace(&tmp, &[]);
+
+    let output = rwv()
+        .args(["add", &remote_url, "--role=owned", "--project=project-b"])
+        .current_dir(&workspace)
+        .assert()
+        .success()
+        .get_output()
+        .clone();
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    // Must NOT emit a shared-clone warning.
+    assert!(
+        !stderr.contains("[warning]") || !stderr.contains("shared"),
+        "unexpected shared-clone warning when clone is unshared; got:\n{stderr}"
+    );
+}
+
+/// Scenario R29, `rwv add --new` arm: warns when a sibling project already
+/// registers the same path, still succeeds, names project + role.
+///
+/// Approach: seed project-a's manifest with the path directly (for --new the
+/// path is the argument itself, so the manifest key is exactly `path_arg`).
+#[test]
+fn add_new_warns_shared_clone_names_other_project_and_role() {
+    let tmp = tempfile::tempdir().unwrap();
+
+    // project-a registers github/testorg/newshared as reference.
+    let (workspace, _project_a_dir, _project_b_dir) = setup_two_project_workspace(
+        &tmp,
+        &[(
+            "github/testorg/newshared",
+            "https://github.com/testorg/newshared.git",
+            "reference",
+        )],
+    );
+
+    // Run `rwv add github/testorg/newshared --new --project=project-b`.
+    // Using --project= avoids .rwv-active contamination (project-a is
+    // already active from setup_two_project_workspace's init of that project
+    // via activation during manifest commit).
+    let output = rwv()
+        .args([
+            "add",
+            "github/testorg/newshared",
+            "--new",
+            "--project=project-b",
+        ])
+        .current_dir(&workspace)
+        .assert()
+        .success()
+        .get_output()
+        .clone();
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    // Must emit a warning.
+    assert!(
+        stderr.contains("[warning]") && stderr.contains("shared"),
+        "expected shared-clone [warning] in stderr for add --new, got:\n{stderr}"
+    );
+
+    // Must name the other project and role.
+    assert!(
+        stderr.contains("project-a"),
+        "warning must name 'project-a', got:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("reference"),
+        "warning must name the other role 'reference', got:\n{stderr}"
+    );
+
+    // Add still succeeds — project-b's manifest should have the entry.
+    let manifest_b = std::fs::read_to_string(workspace.join("projects/project-b/rwv.yaml"))
+        .expect("project-b rwv.yaml should exist");
+    assert!(
+        manifest_b.contains("github/testorg/newshared"),
+        "project-b manifest should contain the added repo, got:\n{manifest_b}"
+    );
+}
