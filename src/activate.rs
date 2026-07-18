@@ -298,7 +298,9 @@ fn report_and_check_activate_hook_issues(
     }
     if error_count > 0 {
         anyhow::bail!(
-            "activate: {error_count} integration activate-hook error(s); workspace may be partially activated"
+            "activate: {error_count} integration activate-hook error(s); \
+             workspace may be partially activated — \
+             run `rwv doctor --fix` to repair symlinks and re-run install hooks"
         );
     }
     Ok(())
@@ -888,6 +890,31 @@ mod tests {
         ];
         let err = report_and_check_activation_issues(&issues).unwrap_err();
         assert!(err.to_string().contains("2 integration error"));
+    }
+
+    // -----------------------------------------------------------------------
+    // Repair-verb naming (fo-oueuv7.2)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn activate_hook_error_names_doctor_fix() {
+        // Partial-activation errors (from install hooks like `npm install`,
+        // `cargo generate-lockfile`) must name `rwv doctor --fix` as the
+        // repair verb — re-running activate does NOT re-run hooks and cannot
+        // self-heal. This test asserts the house pattern:
+        //   state → verb → escape hatch.
+        let issues = vec![issue("cargo", Severity::Error, "generate-lockfile failed")];
+        let err = report_and_check_activate_hook_issues(&issues).unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("doctor --fix"),
+            "partial-activation error must name `rwv doctor --fix` as the repair verb; \
+             got: {msg}"
+        );
+        assert!(
+            msg.contains("partially activated"),
+            "partial-activation error must describe the state; got: {msg}"
+        );
     }
 
     // -----------------------------------------------------------------------

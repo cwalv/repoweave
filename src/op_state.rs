@@ -418,6 +418,17 @@ pub struct LeaseRecord {
     /// Absolute path to the owner workspace (the workspace holding the full
     /// owner record). Follow this pointer to load op state.
     pub owner: PathBuf,
+    /// RFC3339 UTC timestamp at which this lease was written.
+    ///
+    /// Surfaced in `rwv doctor` dead-lease reports as observability-only
+    /// context (RFC3339 raw + humanized elapsed). **Never used as a
+    /// decision input** — the classification is structural (owner record
+    /// absent or op-id mismatch), not elapsed-time based.
+    ///
+    /// `Option` for backward-compatibility: old lease files written before
+    /// this field was added deserialize cleanly (missing field → `None`).
+    #[serde(default)]
+    pub created_at: Option<String>,
 }
 
 impl LeaseRecord {
@@ -797,6 +808,7 @@ pub fn acquire_op(
         let lease = LeaseRecord {
             id: owner_record.id.clone(),
             owner: owner_workspace_dir.to_path_buf(),
+            created_at: Some(utc_now_rfc3339()),
         };
         let lease_yaml = match serde_yaml::to_string(&lease) {
             Ok(s) => s,
@@ -962,6 +974,10 @@ pub struct DeadLease {
     /// Why the lease is dead (owner missing vs owner op id mismatch), for the
     /// human-facing message.
     pub reason: DeadLeaseReason,
+    /// RFC3339 UTC timestamp at which the lease was written, if the field was
+    /// present in the file (new leases carry it; old leases do not).
+    /// Observability-only: surfaced in doctor reports, never a decision input.
+    pub created_at: Option<String>,
 }
 
 /// Discriminator for why a lease is structurally dead. Reported to the
@@ -988,6 +1004,7 @@ pub fn detect_dead_lease(workspace_dir: &Path) -> anyhow::Result<Option<DeadLeas
     let Some(lease) = read_lease(workspace_dir)? else {
         return Ok(None);
     };
+    let created_at = lease.created_at.clone();
     let owner_path = OwnerRecord::path_in(&lease.owner);
     if !owner_path.exists() {
         return Ok(Some(DeadLease {
@@ -995,6 +1012,7 @@ pub fn detect_dead_lease(workspace_dir: &Path) -> anyhow::Result<Option<DeadLeas
             op_id: lease.id,
             recorded_owner: lease.owner,
             reason: DeadLeaseReason::OwnerRecordAbsent,
+            created_at,
         }));
     }
     // Owner record exists — check op-id match. If the owner file is present
@@ -1008,6 +1026,7 @@ pub fn detect_dead_lease(workspace_dir: &Path) -> anyhow::Result<Option<DeadLeas
                 op_id: lease.id,
                 recorded_owner: lease.owner,
                 reason: DeadLeaseReason::OwnerOpIdMismatch { owner_op_id },
+                created_at,
             }));
         }
     }
@@ -1083,7 +1102,10 @@ fn unix_secs_to_ymd_hms(secs: u64) -> (u64, u64, u64, u64, u64, u64) {
 }
 
 /// Human-readable elapsed time since `started_at` (RFC3339).
-fn elapsed_since(started_at: &str) -> String {
+///
+/// Used by doctor reports for both `StaleOpState` and `DeadOpLease` findings.
+/// Observability only — never a decision input.
+pub(crate) fn elapsed_since(started_at: &str) -> String {
     if let Some(elapsed_secs) = parse_rfc3339_to_unix(started_at).map(|start| {
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -1441,6 +1463,7 @@ started_at: 2026-06-01T00:00:00Z
         let lease = LeaseRecord {
             id: "1234567890".to_owned(),
             owner: PathBuf::from("/owner/ws"),
+            created_at: None,
         };
         write_lease(dir, &lease).unwrap();
         let read_back = read_lease(dir).unwrap().unwrap();
@@ -1461,6 +1484,7 @@ started_at: 2026-06-01T00:00:00Z
         let lease = LeaseRecord {
             id: "abc".to_owned(),
             owner: PathBuf::from("/owner"),
+            created_at: None,
         };
         write_lease(dir, &lease).unwrap();
         assert!(read_lease(dir).unwrap().is_some());
@@ -1512,6 +1536,7 @@ started_at: 2026-06-01T00:00:00Z
         let lease = LeaseRecord {
             id: op_id.as_str().to_owned(),
             owner: owner_dir.clone(),
+            created_at: None,
         };
         write_lease(&lease_dir, &lease).unwrap();
 
@@ -1567,6 +1592,7 @@ started_at: 2026-06-01T00:00:00Z
         let lease = LeaseRecord {
             id: "some-op-id".to_owned(),
             owner: PathBuf::from("/owner/ws"),
+            created_at: None,
         };
         write_lease(dir, &lease).unwrap();
         let err = check_no_op_in_progress(&[dir]).unwrap_err().to_string();
@@ -1634,6 +1660,7 @@ started_at: 2026-06-01T00:00:00Z
         let lease = LeaseRecord {
             id: op_id.as_str().to_owned(),
             owner: owner_dir.clone(),
+            created_at: None,
         };
         write_lease(&lease_dir, &lease).unwrap();
 
@@ -1663,6 +1690,7 @@ started_at: 2026-06-01T00:00:00Z
         let lease = LeaseRecord {
             id: "dangling-op".to_owned(),
             owner: tmp.path().join("nonexistent-owner"),
+            created_at: None,
         };
         write_lease(dir, &lease).unwrap();
         let err = check_no_op_in_progress(&[dir]).unwrap_err().to_string();
@@ -1743,6 +1771,7 @@ started_at: 2026-06-01T00:00:00Z
         let lease = LeaseRecord {
             id: op_id.as_str().to_owned(),
             owner: owner_dir.clone(),
+            created_at: None,
         };
         write_lease(&lease_dir, &lease).unwrap();
 
@@ -1780,6 +1809,7 @@ started_at: 2026-06-01T00:00:00Z
         let lease = LeaseRecord {
             id: op_id.as_str().to_owned(),
             owner: PathBuf::from("/owner"),
+            created_at: None,
         };
         write_lease(dir, &lease).unwrap();
         assert!(OwnerRecord::path_in(dir).exists());
@@ -1921,6 +1951,7 @@ started_at: 2026-06-01T00:00:00Z
         let prior_lease = LeaseRecord {
             id: "prior-op".to_owned(),
             owner: PathBuf::from("/some/prior/owner"),
+            created_at: None,
         };
         write_lease(&target_dir, &prior_lease).unwrap();
 
@@ -2052,6 +2083,7 @@ started_at: 2026-06-01T00:00:00Z
             &LeaseRecord {
                 id: op_id.as_str().to_owned(),
                 owner: owner_dir.clone(),
+                created_at: None,
             },
         )
         .unwrap();
@@ -2074,6 +2106,7 @@ started_at: 2026-06-01T00:00:00Z
             &LeaseRecord {
                 id: "dangling-op".to_owned(),
                 owner: owner_dir.clone(),
+                created_at: None,
             },
         )
         .unwrap();
@@ -2104,6 +2137,7 @@ started_at: 2026-06-01T00:00:00Z
             &LeaseRecord {
                 id: "old-op-id".to_owned(),
                 owner: owner_dir.clone(),
+                created_at: None,
             },
         )
         .unwrap();
@@ -2128,6 +2162,7 @@ started_at: 2026-06-01T00:00:00Z
             &LeaseRecord {
                 id: "dangling-op".to_owned(),
                 owner: PathBuf::from("/gone"),
+                created_at: None,
             },
         )
         .unwrap();

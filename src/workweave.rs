@@ -671,7 +671,17 @@ pub fn create_workweave(
                 }
             }
             Err(e) => {
-                let msg = format!("{}: {e}", repo_path.as_str());
+                // R25: when git worktree add fails due to a git hook (post-checkout
+                // or similar), git's stderr mentions "hook". Name the hook and
+                // point at git hook config so the operator knows where to look.
+                let err_str = e.to_string();
+                let hook_hint = if err_str.contains("hook") {
+                    "\n  note: a git hook in this repo rejected the worktree creation; \
+                     check the repo's .git/hooks/ directory or core.hooksPath config"
+                } else {
+                    ""
+                };
+                let msg = format!("{}: {e}{hook_hint}", repo_path.as_str());
                 eprintln!("rwv workweave create: error: {msg}");
                 errors.push(msg);
             }
@@ -712,8 +722,15 @@ pub fn create_workweave(
             Err(e) => {
                 // B7+B8: rollback guard will clean up the workweave dir and
                 // prune all previously-registered worktrees. We just bail.
+                // R25: if a git hook rejected the worktree add, name it.
+                let hook_hint = if e.to_string().contains("hook") {
+                    "; a git hook in the project repo rejected the worktree creation — \
+                     check .git/hooks/ or core.hooksPath config"
+                } else {
+                    ""
+                };
                 bail!(
-                    "could not create project worktree projects/{}: {e}",
+                    "could not create project worktree projects/{}: {e}{hook_hint}",
                     project.as_str()
                 );
             }

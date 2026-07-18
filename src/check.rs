@@ -259,6 +259,10 @@ pub enum CheckViolation {
         recorded_owner: PathBuf,
         /// Discriminator for the specific dead-lease shape.
         sub_kind: DeadOpLeaseKind,
+        /// RFC3339 UTC timestamp at which the lease was written (from the
+        /// lease file's `created_at` field). `None` for old lease files
+        /// written before this field was added. Observability-only.
+        created_at: Option<String>,
     },
 
     /// A `refs/rwv/pre-op/<op-id>` savepoint whose op-id is not present
@@ -770,6 +774,10 @@ pub enum ViolationOutput {
         /// Discriminator for the specific dead-lease shape.
         #[serde(rename = "sub_kind")]
         sub_kind: DeadOpLeaseKind,
+        /// RFC3339 UTC timestamp at which the lease was written.
+        /// `None` for old lease files. Observability-only.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        created_at: Option<String>,
     },
     OrphanedSavepoint {
         path: String,
@@ -1008,11 +1016,13 @@ impl ViolationOutput {
                 op_id,
                 recorded_owner,
                 sub_kind,
+                created_at,
             } => Self::DeadOpLease {
                 workspace_dir: ws_dir.to_string_lossy().into_owned(),
                 op_id,
                 recorded_owner: recorded_owner.to_string_lossy().into_owned(),
                 sub_kind,
+                created_at,
             },
             CheckViolation::OrphanedSavepoint {
                 workweave,
@@ -2448,6 +2458,7 @@ pub fn scan_state_hygiene(
                 op_id: dead.op_id,
                 recorded_owner: dead.recorded_owner,
                 sub_kind,
+                created_at: dead.created_at,
             });
         }
     }
@@ -2818,15 +2829,26 @@ pub fn violations_to_issues(violations: Vec<CheckViolation>) -> Vec<Issue> {
             let (severity, message) = match v {
                 CheckViolation::OrphanedClone { path } => (
                     crate::integration::Severity::Error,
-                    format!("orphaned clone: {path}"),
+                    format!(
+                        "orphaned clone: {path} — not listed in any project's rwv.yaml; \
+                         run `rwv add <url>` to register it, or remove the directory manually"
+                    ),
                 ),
                 CheckViolation::DanglingReference { project, repo } => (
                     crate::integration::Severity::Error,
-                    format!("dangling reference in {project}: {repo}"),
+                    format!(
+                        "dangling reference in {project}: {repo} — \
+                         listed in rwv.yaml but not cloned on disk; \
+                         run `rwv fetch` to clone missing repos"
+                    ),
                 ),
                 CheckViolation::MissingRole { project, repo } => (
                     crate::integration::Severity::Warning,
-                    format!("missing role in {project}: {repo}"),
+                    format!(
+                        "missing role in {project}: {repo} — \
+                         add a `role: owned|dependency|reference` field to the \
+                         rwv.yaml entry for this repo"
+                    ),
                 ),
                 CheckViolation::StaleLock {
                     project,
@@ -2836,8 +2858,8 @@ pub fn violations_to_issues(violations: Vec<CheckViolation>) -> Vec<Issue> {
                 } => (
                     crate::integration::Severity::Error,
                     format!(
-                        "stale lock in {project}: {} locked={} actual={}",
-                        repo, locked, actual
+                        "stale lock in {project}: {repo} locked={locked} actual={actual}; \
+                         run `rwv lock` to re-snapshot current HEAD SHAs"
                     ),
                 ),
                 CheckViolation::WorkweaveDrift {
@@ -2845,13 +2867,21 @@ pub fn violations_to_issues(violations: Vec<CheckViolation>) -> Vec<Issue> {
                     kind,
                     repo,
                 } => {
-                    let kind_str = match kind {
-                        DriftKind::Missing => "missing worktree",
-                        DriftKind::Extra => "extra worktree",
+                    let (kind_str, hint) = match kind {
+                        DriftKind::Missing => (
+                            "missing worktree",
+                            "; run `rwv workweave <project> create --force` to \
+                             recreate, or remove the repo from rwv.yaml",
+                        ),
+                        DriftKind::Extra => (
+                            "extra worktree",
+                            "; this worktree has no manifest entry — \
+                             run `rwv add` to register it or remove it manually",
+                        ),
                     };
                     (
                         crate::integration::Severity::Warning,
-                        format!("workweave drift in {workweave}: {kind_str} {repo}"),
+                        format!("workweave drift in {workweave}: {kind_str} {repo}{hint}"),
                     )
                 }
                 CheckViolation::IndexDrift {
@@ -2864,9 +2894,12 @@ pub fn violations_to_issues(violations: Vec<CheckViolation>) -> Vec<Issue> {
                         None => format!("{repo}"),
                     };
                     let detail = match kind {
-                        IndexDriftKind::SafeToFix => "index stale (safe to --fix)",
+                        IndexDriftKind::SafeToFix => {
+                            "index stale (run `rwv doctor --fix` to reset)"
+                        }
                         IndexDriftKind::LiveStaged => {
-                            "index has live staged changes (manual review)"
+                            "index has live staged changes (commit or stash first; \
+                             not auto-fixed)"
                         }
                     };
                     (
@@ -2907,7 +2940,8 @@ pub fn violations_to_issues(violations: Vec<CheckViolation>) -> Vec<Issue> {
                 } => (
                     crate::integration::Severity::Error,
                     format!(
-                        "{project}: manifest at {} cannot be parsed: {message}",
+                        "{project}: manifest at {} cannot be parsed: {message}; \
+                         fix the YAML by hand and re-run `rwv doctor`",
                         manifest_path.display()
                     ),
                 ),
@@ -2921,9 +2955,12 @@ pub fn violations_to_issues(violations: Vec<CheckViolation>) -> Vec<Issue> {
                         None => format!("{repo}"),
                     };
                     let detail = match kind {
-                        WorkingTreeDriftKind::SafeToFix => "working tree stale (safe to --fix)",
+                        WorkingTreeDriftKind::SafeToFix => {
+                            "working tree stale (run `rwv doctor --fix` to restore)"
+                        }
                         WorkingTreeDriftKind::LiveEdits => {
-                            "working tree has live edits (manual review)"
+                            "working tree has live edits (commit or stash first; \
+                             not auto-fixed)"
                         }
                     };
                     (
@@ -2950,7 +2987,7 @@ pub fn violations_to_issues(violations: Vec<CheckViolation>) -> Vec<Issue> {
                     let msg = match &sub_kind {
                         WorkweaveTreeIntegrityKind::DanglingParent { parent_path } => format!(
                             "{}: marker `parent` points to `{}` which does not exist; \
-                             re-point parent to a valid workspace before using this workweave",
+                             run `rwv doctor --fix` to re-point parent to primary",
                             workweave_dir.display(),
                             parent_path.display()
                         ),
@@ -3021,7 +3058,8 @@ pub fn violations_to_issues(violations: Vec<CheckViolation>) -> Vec<Issue> {
                         CloneTopologyKind::StandaloneInWorkweave { store_path } => format!(
                             "clone-topology: standalone clone of `{repo}` lives in a workweave \
                              ({}); the canonical store should be at `<weave>/{repo}` not under \
-                             `.workweaves/`",
+                             `.workweaves/` (report-only; repair requires object-store re-parenting \
+                             — re-clone into the canonical slot and reconnect workweaves)",
                             store_path.display(),
                         ),
                         CloneTopologyKind::DisconnectedWeaveClone {
@@ -3030,7 +3068,8 @@ pub fn violations_to_issues(violations: Vec<CheckViolation>) -> Vec<Issue> {
                         } => format!(
                             "clone-topology: weave-path clone of `{repo}` at {} is disconnected \
                              — workweave checkouts of this repo use a different canonical store \
-                             ({}); the weave clone publishes an unread object DAG",
+                             ({}); the weave clone publishes an unread object DAG \
+                             (report-only; repair requires object-store re-parenting)",
                             weave_store_path.display(),
                             other_store_path.display(),
                         ),
@@ -3040,7 +3079,8 @@ pub fn violations_to_issues(violations: Vec<CheckViolation>) -> Vec<Issue> {
                         } => format!(
                             "clone-topology: workweave checkout of `{repo}` at {} is linked into \
                              {} instead of the weave canonical {}; cross-DAG merged-checks \
-                             silently answer `no`",
+                             silently answer `no` \
+                             (report-only; repair requires object-store re-parenting)",
                             workspace_path.display(),
                             actual_store_path.display(),
                             expected_store_path.display(),
@@ -3048,7 +3088,8 @@ pub fn violations_to_issues(violations: Vec<CheckViolation>) -> Vec<Issue> {
                         CloneTopologyKind::WeaveCloneIsWorktree { actual_store_path } => format!(
                             "clone-topology: weave-path slot for `{repo}` at {} is itself a \
                              linked worktree of {}; the canonical store has migrated out of \
-                             the manifest slot",
+                             the manifest slot (report-only; repair requires object-store \
+                             re-parenting — re-clone into the canonical slot)",
                             workspace_path.display(),
                             actual_store_path.display(),
                         ),
@@ -3066,10 +3107,12 @@ pub fn violations_to_issues(violations: Vec<CheckViolation>) -> Vec<Issue> {
                         } => format!(
                             "{}: workweave checkout is on shared-branch `{}` (expected an \
                              ephemeral branch under `{}/`); manual `git switch` inside a \
-                             workweave breaks the I3 branch-ownership invariant — see \
-                             docs/explanation/joints/clone-topology.md",
+                             workweave breaks the I3 branch-ownership invariant — \
+                             use `git switch -c {}/main` to move onto an ephemeral branch \
+                             (report-only; no rwv --fix path)",
                             repo_path.display(),
                             actual_branch,
+                            expected_prefix,
                             expected_prefix
                         ),
                         BranchDisciplineKind::ForeignEphemeral {
@@ -3077,21 +3120,26 @@ pub fn violations_to_issues(violations: Vec<CheckViolation>) -> Vec<Issue> {
                             expected_prefix,
                         } => format!(
                             "{}: workweave checkout is on `{}`, which names a different \
-                             workweave (expected an ephemeral branch under `{}/`)",
+                             workweave (expected an ephemeral branch under `{}/`); \
+                             use `git switch -c {}/main` to move onto the correct \
+                             ephemeral branch (report-only; no rwv --fix path)",
                             repo_path.display(),
                             actual_branch,
+                            expected_prefix,
                             expected_prefix
                         ),
                         BranchDisciplineKind::Detached => format!(
                             "{}: workweave checkout is in detached-HEAD state (expected an \
-                             ephemeral branch); a workweave with no current branch breaks \
-                             the merged-check and ref-namespace invariants",
+                             ephemeral branch); use `git switch -c <project>--<workweave>/main` \
+                             to attach to an ephemeral branch \
+                             (report-only; no rwv --fix path)",
                             repo_path.display()
                         ),
                         BranchDisciplineKind::EphemeralAtPrimary { actual_branch } => format!(
                             "{}: canonical clone is checked out on ephemeral branch `{}`; \
-                             canonicals must sit on a non-ephemeral branch (e.g. the \
-                             manifest's tracking branch)",
+                             canonicals must sit on a non-ephemeral branch — \
+                             use `git switch <tracking-branch>` to restore \
+                             (report-only; no rwv --fix path)",
                             repo_path.display(),
                             actual_branch
                         ),
@@ -3165,6 +3213,7 @@ pub fn violations_to_issues(violations: Vec<CheckViolation>) -> Vec<Issue> {
                     op_id,
                     recorded_owner,
                     sub_kind,
+                    created_at,
                 } => {
                     let cause = match &sub_kind {
                         DeadOpLeaseKind::OwnerRecordAbsent => format!(
@@ -3172,14 +3221,25 @@ pub fn violations_to_issues(violations: Vec<CheckViolation>) -> Vec<Issue> {
                             recorded_owner.display()
                         ),
                         DeadOpLeaseKind::OwnerOpIdMismatch { owner_op_id } => format!(
-                            "recorded owner workspace {} holds a different op (owner op_id={owner_op_id}, lease op_id={op_id})",
+                            "recorded owner workspace {} holds a different op \
+                             (owner op_id={owner_op_id}, lease op_id={op_id})",
                             recorded_owner.display()
                         ),
+                    };
+                    // Surface lease age as observability-only context, matching
+                    // the StaleOpState pattern (RFC3339 raw + humanized elapsed).
+                    // Never used as a decision input — classification is structural.
+                    let age_str = match created_at.as_deref() {
+                        Some(ts) => format!(
+                            " (created_at={ts}, age={})",
+                            crate::op_state::elapsed_since(ts)
+                        ),
+                        None => String::new(),
                     };
                     (
                         crate::integration::Severity::Warning,
                         format!(
-                            "{}/.rwv-op-lease: dead-op-lease op_id={op_id} — {cause}; \
+                            "{}/.rwv-op-lease: dead-op-lease op_id={op_id}{age_str} — {cause}; \
                              safe to auto-fix with `rwv doctor --fix` (removes the lease file).",
                             workspace_dir.display()
                         ),
@@ -3197,10 +3257,12 @@ pub fn violations_to_issues(violations: Vec<CheckViolation>) -> Vec<Issue> {
                     };
                     let detail = match sub_kind {
                         OrphanedSavepointKind::Redundant => {
-                            "orphaned-savepoint (redundant, safe to --fix)"
+                            "orphaned-savepoint (redundant — tip reachable from HEAD; \
+                             run `rwv doctor --fix` to drop)"
                         }
                         OrphanedSavepointKind::Live => {
-                            "orphaned-savepoint (last pointer to unreachable commits; keep)"
+                            "orphaned-savepoint (last pointer to unreachable commits; \
+                             keep — recover or delete by hand with `git branch <name> <sha>`)"
                         }
                     };
                     (

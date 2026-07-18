@@ -579,7 +579,14 @@ impl Integration for CargoWorkspace {
             .context("failed to run cargo")?;
 
         if !status.success() {
-            anyhow::bail!("cargo generate-lockfile failed (exit {})", status);
+            anyhow::bail!(
+                "cargo generate-lockfile failed (exit {status}); \
+                 if the error names duplicate crate names across workspace members, \
+                 resolve by one of: (a) opt a repo out via \
+                 `integrations.cargo-workspace.exclude` in rwv.yaml, or (b) use \
+                 `integrations.cargo-workspace.members.<repo>` with an `include:` \
+                 list to contribute sub-paths instead of the repo root"
+            );
         }
 
         Ok(())

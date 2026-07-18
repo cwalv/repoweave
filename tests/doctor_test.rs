@@ -2255,3 +2255,144 @@ fn doctor_unborn_head_member_includes_action_hint() {
         "doctor output should hint at making an initial commit, got:\n{combined}"
     );
 }
+
+// ===========================================================================
+// Repair-verb naming audit (fo-oueuv7.2)
+//
+// Every user-facing error/warning must name the rwv verb that repairs it.
+// House pattern: name the state → name the verb → name the escape hatch.
+// ===========================================================================
+
+/// `orphaned clone` message names `rwv add` and/or `remove` as repair actions.
+#[test]
+fn orphaned_clone_names_repair_verb() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = make_workspace(tmp.path(), "ws");
+
+    let orphan_repo = "github/acme/orphan";
+    init_git_repo(&root.join(orphan_repo));
+
+    // No project manifest — the scan runs in --all mode to see orphans.
+    let project_dir = root.join("projects").join("my-app");
+    write_manifest(&project_dir, &[]);
+    std::fs::write(root.join(".rwv-active"), "my-app\n").unwrap();
+
+    let output = rwv_cmd()
+        .args(["doctor", "--all"])
+        .current_dir(&root)
+        .output()
+        .expect("failed to spawn rwv doctor");
+
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    assert!(
+        combined.contains("orphaned"),
+        "must report orphaned clone; got:\n{combined}"
+    );
+    assert!(
+        combined.contains("rwv add") || combined.contains("remove"),
+        "orphaned-clone message must name the repair verb (`rwv add` or remove); \
+         got:\n{combined}"
+    );
+}
+
+/// `dangling reference` message names `rwv fetch` as the repair verb.
+#[test]
+fn dangling_reference_names_fetch_verb() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = make_workspace(tmp.path(), "ws");
+
+    let real_repo = "github/acme/server";
+    let missing_repo = "github/acme/vanished";
+    init_git_repo(&root.join(real_repo));
+
+    let project_dir = root.join("projects").join("my-app");
+    write_manifest(
+        &project_dir,
+        &[
+            (real_repo, "https://github.com/acme/server.git"),
+            (missing_repo, "https://github.com/acme/vanished.git"),
+        ],
+    );
+
+    let output = rwv_cmd()
+        .arg("doctor")
+        .current_dir(&root)
+        .output()
+        .expect("failed to spawn rwv doctor");
+
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    assert!(
+        combined.contains("dangling"),
+        "must report dangling reference; got:\n{combined}"
+    );
+    assert!(
+        combined.contains("rwv fetch"),
+        "dangling-reference message must name `rwv fetch` as the repair verb; \
+         got:\n{combined}"
+    );
+}
+
+/// Dead-op-lease doctor report names the repair verb AND shows age when
+/// the lease file carries a `created_at` field.
+#[test]
+fn dead_op_lease_names_fix_verb_and_age() {
+    use std::path::PathBuf;
+
+    let tmp = tempfile::tempdir().unwrap();
+    // Build a minimal workspace with the usual layout.
+    let root = tmp.path().join("ws");
+    std::fs::create_dir_all(root.join("github")).unwrap();
+    std::fs::create_dir_all(root.join("projects")).unwrap();
+
+    // Ghost owner directory (no .rwv-op inside).
+    let ghost_owner = tmp.path().join("ghost-owner");
+    std::fs::create_dir_all(&ghost_owner).unwrap();
+
+    // Lease with `created_at` so doctor can surface age.
+    let lease_yaml = format!(
+        "id: \"audit-dead-op-1\"\nowner: \"{}\"\ncreated_at: \"2026-01-01T00:00:00Z\"\n",
+        ghost_owner.display(),
+    );
+    std::fs::write(root.join(".rwv-op-lease"), &lease_yaml).unwrap();
+
+    let project_dir = root.join("projects").join("my-app");
+    write_manifest(&project_dir, &[]);
+    std::fs::write(root.join(".rwv-active"), "my-app\n").unwrap();
+
+    let output = rwv_cmd()
+        .arg("doctor")
+        .current_dir(&root)
+        .output()
+        .expect("failed to spawn rwv doctor");
+
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    assert!(
+        combined.contains("dead-op-lease"),
+        "must report dead-op-lease; got:\n{combined}"
+    );
+    assert!(
+        combined.contains("rwv doctor --fix"),
+        "dead-op-lease message must name `rwv doctor --fix`; got:\n{combined}"
+    );
+    assert!(
+        combined.contains("created_at") || combined.contains("age"),
+        "dead-op-lease message must surface lease age when created_at is present; \
+         got:\n{combined}"
+    );
+    let _ = PathBuf::from(&root); // suppress unused-import lint
+}

@@ -1047,6 +1047,13 @@ Schema:
             "workspace_dir"
           ],
           "properties": {
+            "created_at": {
+              "description": "RFC3339 UTC timestamp at which the lease was written. `None` for old lease files. Observability-only.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
             "kind": {
               "type": "string",
               "enum": [

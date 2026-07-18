@@ -2939,3 +2939,69 @@ fn create_workweave_succeeds_when_all_repos_have_commits() {
         "workweave should be created successfully when all repos have commits"
     );
 }
+
+// ===========================================================================
+// R25: workweave create failure caused by a git hook names the hook
+// (fo-oueuv7.2 repair-verb audit)
+// ===========================================================================
+
+/// When `git worktree add` fails because a git repository hook (e.g.
+/// `post-checkout`) exits non-zero, the error message must attribute the
+/// failure to the hook so the operator knows where to look — not just report
+/// a bare "git command failed" with opaque stderr.
+#[test]
+fn create_names_hook_config_when_git_hook_rejects_worktree() {
+    let tmp = tempfile::tempdir().unwrap();
+    let ws = make_workspace(tmp.path(), "hook-test");
+    let repo_path = ws.join("github/org/repo");
+
+    // Install a failing post-checkout hook in the repo.  `git worktree add`
+    // runs this hook after checking out the new worktree; a non-zero exit
+    // causes the add to fail.  We use `#!/bin/sh\nexit 1` — minimal,
+    // portable, and deterministic.
+    let hooks_dir = repo_path.join(".git/hooks");
+    std::fs::create_dir_all(&hooks_dir).unwrap();
+    let hook_path = hooks_dir.join("post-checkout");
+    std::fs::write(&hook_path, "#!/bin/sh\nexit 1\n").unwrap();
+    // Make the hook executable.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&hook_path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+
+    let weaveroot = tmp.path().join(".workweaves");
+    std::fs::create_dir_all(&weaveroot).unwrap();
+
+    let output = rwv()
+        .args(["workweave", "hook-test", "create", "hook-ww"])
+        .env("RWV_WORKWEAVE_DIR", &weaveroot)
+        .current_dir(&ws)
+        .output()
+        .expect("failed to spawn rwv workweave create");
+
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    // The command must fail (the hook rejects the worktree).
+    assert!(
+        !output.status.success(),
+        "workweave create should fail when a git hook exits non-zero"
+    );
+
+    // R25: the error must attribute the failure to a hook and name
+    // `.git/hooks/` or `core.hooksPath` so the operator knows where to look.
+    assert!(
+        combined.contains("hook"),
+        "error must name 'hook' when git worktree add fails due to a hook; \
+         got:\n{combined}"
+    );
+    assert!(
+        combined.contains(".git/hooks") || combined.contains("hooksPath"),
+        "error must point at `.git/hooks/` or core.hooksPath as the config location; \
+         got:\n{combined}"
+    );
+}
