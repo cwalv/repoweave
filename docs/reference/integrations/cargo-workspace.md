@@ -215,7 +215,7 @@ patch into a `.cargo/config.toml` at the same level as `Cargo.toml`;
 cargo's config discovery walks *upward* from cwd (not by workspace
 membership), so a `cargo build` invoked from inside an opted-out repo
 still sees the weave's patches. See Finding 2 of
-[grok-build-export-findings.md](../../../projects/foundations/docs/repoweave/grok-build-export-findings.md).
+`grok-build-export-findings.md`.
 
 Both surfaces at once is structurally impossible — `patch-surface` is
 an enum, not two booleans.

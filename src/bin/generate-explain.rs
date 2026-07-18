@@ -24,9 +24,13 @@
 //!
 //! 2. **Relative-link check**: after all assembled `.md` files are written,
 //!    every relative markdown link `[text](path)` (non-URL, non-anchor) in
-//!    those files must resolve to an existing file on disk (relative to
-//!    `docs/reference/explain/`). Any unresolvable link or any surviving
-//!    rustdoc intra-doc syntax is a hard generator error.
+//!    every `.md` file under `docs/` (recursively, excluding template
+//!    directories) must resolve to an existing file on disk, each link
+//!    resolved against its own file's directory. Rustdoc intra-doc syntax
+//!    is additionally rejected in assembled output pages
+//!    (`docs/reference/explain/` and `docs/reference/prime/`). Any
+//!    unresolvable link or surviving rustdoc syntax is a hard generator
+//!    error.
 
 use std::collections::HashMap;
 use std::fs;
@@ -236,15 +240,79 @@ fn flatten_rustdoc_links(json: &str) -> String {
     out.into_owned()
 }
 
-/// Verify that the assembled explain docs are free of:
-/// 1. Relative markdown links that don't resolve on disk.
-/// 2. Rustdoc intra-doc link syntax (`](Self::`, `](crate::`,
-///    bare `` [`Ty::Variant`] ``).
+/// Collect all `.md` files under `root` recursively, excluding any path whose
+/// canonical prefix matches one of the entries in `exclude_dirs` (compared as
+/// canonical absolute paths so symlinks don't confuse the check).
+fn collect_md_files(root: &Path, exclude_dirs: &[PathBuf]) -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    collect_md_files_inner(root, exclude_dirs, &mut out);
+    out
+}
+
+fn collect_md_files_inner(dir: &Path, exclude_dirs: &[PathBuf], out: &mut Vec<PathBuf>) {
+    let rd = match std::fs::read_dir(dir) {
+        Ok(rd) => rd,
+        Err(_) => return,
+    };
+    let mut entries: Vec<_> = rd.filter_map(|e| e.ok()).collect();
+    entries.sort_by_key(|e| e.file_name());
+    for entry in entries {
+        let path = entry.path();
+        let canonical = std::fs::canonicalize(&path).unwrap_or_else(|_| path.clone());
+        if path.is_dir() {
+            if exclude_dirs
+                .iter()
+                .any(|ex| canonical == *ex || canonical.starts_with(ex))
+            {
+                continue;
+            }
+            collect_md_files_inner(&path, exclude_dirs, out);
+        } else if path.extension().and_then(|s| s.to_str()) == Some("md") {
+            out.push(path);
+        }
+    }
+}
+
+/// Verify that every `.md` file under `docs_dir` (recursively, excluding
+/// template directories) is free of relative markdown links that don't
+/// resolve on disk.
 ///
-/// `explain_dir` is the directory the assembled `.md` files live in; relative
-/// links are resolved from there. Returns a list of error messages (one per
-/// finding); an empty vec means clean.
-fn check_assembled_docs(explain_dir: &Path) -> Vec<String> {
+/// Additionally, files in the assembled output directories
+/// (`docs/reference/explain/` and `docs/reference/prime/`) are checked for
+/// rustdoc intra-doc link syntax (`](Self::`, `](crate::`, bare
+/// `` [`Ty::Variant`] ``), which means nothing outside rustdoc and must not
+/// appear in generated/human-facing output.
+///
+/// Template directories (`docs/reference/explain/templates/` and
+/// `docs/reference/prime/templates/`) are excluded entirely: they contain
+/// `{{SCHEMA}}`/`{{MSG:...}}` placeholders and template-relative links that
+/// are only meaningful after rendering.
+///
+/// Relative links are resolved against each file's own directory (not a
+/// shared base), so cross-tree links are validated correctly regardless of
+/// where in `docs/` the file lives.
+///
+/// Anchor-only and absolute URLs are skipped (unchanged from prior behavior).
+///
+/// Returns a list of error messages (one per finding); an empty vec means
+/// clean.
+fn check_assembled_docs(docs_dir: &Path) -> Vec<String> {
+    // Template directories to exclude entirely.
+    let mut exclude_dirs: Vec<PathBuf> = Vec::new();
+    for tmpl_rel in &["reference/explain/templates", "reference/prime/templates"] {
+        let p = docs_dir.join(tmpl_rel);
+        let canonical = std::fs::canonicalize(&p).unwrap_or(p);
+        exclude_dirs.push(canonical);
+    }
+
+    // Assembled-output directories: rustdoc-leak detection applies here.
+    let mut assembled_dirs: Vec<PathBuf> = Vec::new();
+    for asm_rel in &["reference/explain", "reference/prime"] {
+        let p = docs_dir.join(asm_rel);
+        let canonical = std::fs::canonicalize(&p).unwrap_or(p);
+        assembled_dirs.push(canonical);
+    }
+
     // Matches all markdown links: [text](target)
     let link_re = Regex::new(r"\[([^\]]*)\]\(([^)]+)\)").unwrap();
     // Detects rustdoc intra-doc target: ](Self:: or ](crate::
@@ -256,20 +324,14 @@ fn check_assembled_docs(explain_dir: &Path) -> Vec<String> {
 
     let mut errors: Vec<String> = Vec::new();
 
-    let md_files: Vec<PathBuf> = match std::fs::read_dir(explain_dir) {
-        Ok(rd) => rd
-            .filter_map(|e| e.ok())
-            .map(|e| e.path())
-            .filter(|p| p.extension().and_then(|s| s.to_str()) == Some("md"))
-            .collect(),
-        Err(e) => {
-            errors.push(format!(
-                "link-check: could not read {}: {e}",
-                explain_dir.display()
-            ));
-            return errors;
-        }
-    };
+    let md_files = collect_md_files(docs_dir, &exclude_dirs);
+    if md_files.is_empty() {
+        errors.push(format!(
+            "link-check: no .md files found under {}",
+            docs_dir.display()
+        ));
+        return errors;
+    }
 
     for md_path in &md_files {
         let content = match std::fs::read_to_string(md_path) {
@@ -283,23 +345,36 @@ fn check_assembled_docs(explain_dir: &Path) -> Vec<String> {
             }
         };
 
-        // --- Check for bare autolinks (rustdoc leakage not caught by the
-        // link regex, since they have no target paren).
-        for line in content.lines() {
-            if bare_autolink_eol_re.is_match(line) || bare_autolink_mid_re.is_match(line) {
-                // Find the actual match for the error message.
-                let m = bare_autolink_eol_re
-                    .find(line)
-                    .or_else(|| bare_autolink_mid_re.find(line))
-                    .map(|m| m.as_str())
-                    .unwrap_or(line);
-                errors.push(format!(
-                    "link-check: {}: rustdoc bare autolink in assembled doc: {}",
-                    md_path.display(),
-                    m
-                ));
+        // Determine whether this file is in an assembled-output directory.
+        let canonical_file = std::fs::canonicalize(md_path).unwrap_or_else(|_| md_path.clone());
+        let is_assembled = assembled_dirs
+            .iter()
+            .any(|ad| canonical_file.starts_with(ad));
+
+        if is_assembled {
+            // --- Check for bare autolinks (rustdoc leakage not caught by the
+            // link regex, since they have no target paren).
+            for line in content.lines() {
+                if bare_autolink_eol_re.is_match(line) || bare_autolink_mid_re.is_match(line) {
+                    // Find the actual match for the error message.
+                    let m = bare_autolink_eol_re
+                        .find(line)
+                        .or_else(|| bare_autolink_mid_re.find(line))
+                        .map(|m| m.as_str())
+                        .unwrap_or(line);
+                    errors.push(format!(
+                        "link-check: {}: rustdoc bare autolink in assembled doc: {}",
+                        md_path.display(),
+                        m
+                    ));
+                }
             }
         }
+
+        // Resolve links against the file's own directory, not a shared base.
+        let file_dir = md_path
+            .parent()
+            .expect("md file always has a parent directory");
 
         for cap in link_re.captures_iter(&content) {
             let target = &cap[2];
@@ -312,20 +387,21 @@ fn check_assembled_docs(explain_dir: &Path) -> Vec<String> {
             // Strip a trailing fragment before resolving.
             let path_part = target.split('#').next().unwrap_or(target);
 
-            // Reject rustdoc intra-doc targets that leaked through:
-            // ](Self::...) or ](crate::...).
-            if rustdoc_target_re.is_match(&format!("({target}")) {
-                errors.push(format!(
-                    "link-check: {}: rustdoc intra-doc link in assembled doc: {}",
-                    md_path.display(),
-                    &cap[0]
-                ));
-                continue;
+            if is_assembled {
+                // Reject rustdoc intra-doc targets that leaked through:
+                // ](Self::...) or ](crate::...).
+                if rustdoc_target_re.is_match(&format!("({target}")) {
+                    errors.push(format!(
+                        "link-check: {}: rustdoc intra-doc link in assembled doc: {}",
+                        md_path.display(),
+                        &cap[0]
+                    ));
+                    continue;
+                }
             }
 
-            // Resolve the relative path against the explain dir and check it
-            // exists on disk.
-            let resolved = explain_dir.join(path_part);
+            // Resolve the relative path against the file's own directory.
+            let resolved = file_dir.join(path_part);
             if !resolved.exists() {
                 errors.push(format!(
                     "link-check: {}: unresolvable relative link: [{}]({})",
@@ -608,20 +684,200 @@ fn main() -> anyhow::Result<()> {
     write_if_changed(&index_path, &index)?;
 
     // --- Link-cleanliness gate -------------------------------------------
-    // Every relative markdown link in the assembled explain docs must resolve
-    // on disk; rustdoc intra-doc syntax must not appear in assembled output.
-    // This catches dead cross-doc links in templates and rustdoc leakage from
-    // schemars-derived schema descriptions (fo-r20czg).
-    let link_errors = check_assembled_docs(&explain_dir);
+    // Every relative markdown link in every .md file under docs/ must resolve
+    // on disk; rustdoc intra-doc syntax must not appear in assembled output
+    // (docs/reference/explain/ and docs/reference/prime/). Template
+    // directories are excluded. This catches dead cross-doc links across the
+    // entire doc tree, not only in assembled explain pages (fo-nto02q.4).
+    let docs_dir = root.join("docs");
+    let link_errors = check_assembled_docs(&docs_dir);
     if !link_errors.is_empty() {
         let msg = link_errors.join("\n");
         anyhow::bail!(
-            "assembled explain docs failed link-cleanliness check:\n{msg}\n\n\
-             Fix: remove broken relative links from templates (use plain text or \
-             `rwv explain <verb>` references) and ensure rustdoc intra-doc \
-             link syntax is not present in assembled output."
+            "docs failed link-cleanliness check:\n{msg}\n\n\
+             Fix: remove broken relative links from docs (use plain text or \
+             absolute paths to out-of-repo references) and ensure rustdoc \
+             intra-doc link syntax is not present in assembled output."
         );
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+
+    /// Build a minimal temp docs tree and return its root path.
+    ///
+    /// Layout:
+    ///
+    /// ```text
+    /// <tmp>/docs/
+    ///   how-to/guide.md         — hand-written, not assembled
+    ///   reference/
+    ///     explain/
+    ///       templates/
+    ///         verb.md.tmpl      — excluded (template)
+    ///       verb.md             — assembled explain page
+    ///     prime/
+    ///       templates/
+    ///         overview.md.tmpl  — excluded (template)
+    ///       overview.md         — assembled prime page
+    ///     target.md             — link target for cross-dir tests
+    /// ```
+    fn make_tree(tmp: &std::path::Path) -> PathBuf {
+        let docs = tmp.join("docs");
+        for d in &[
+            "docs/how-to",
+            "docs/reference/explain/templates",
+            "docs/reference/prime/templates",
+        ] {
+            fs::create_dir_all(tmp.join(d)).unwrap();
+        }
+        // A "target" file that valid links can point to.
+        fs::write(docs.join("reference/target.md"), "# target\n").unwrap();
+        // Assembled explain page — valid link to ../target.md.
+        fs::write(
+            docs.join("reference/explain/verb.md"),
+            "# verb\n\nSee [target](../target.md).\n",
+        )
+        .unwrap();
+        // Assembled prime page — valid link to ../target.md.
+        fs::write(
+            docs.join("reference/prime/overview.md"),
+            "# overview\n\nSee [target](../target.md).\n",
+        )
+        .unwrap();
+        // Template files — must not be checked.
+        fs::write(
+            docs.join("reference/explain/templates/verb.md.tmpl"),
+            "{{SCHEMA}}\n[broken](../nonexistent.md)\n",
+        )
+        .unwrap();
+        fs::write(
+            docs.join("reference/prime/templates/overview.md.tmpl"),
+            "{{MSG:foo}}\n[broken](../nonexistent.md)\n",
+        )
+        .unwrap();
+        // A hand-written how-to page with a valid relative link.
+        fs::write(
+            docs.join("how-to/guide.md"),
+            "# guide\n\nSee [reference target](../reference/target.md).\n",
+        )
+        .unwrap();
+        docs
+    }
+
+    /// The valid tree passes without errors.
+    #[test]
+    fn valid_tree_is_clean() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let docs = make_tree(tmp.path());
+        let errors = check_assembled_docs(&docs);
+        assert!(
+            errors.is_empty(),
+            "expected no errors in valid tree, got:\n{}",
+            errors.join("\n")
+        );
+    }
+
+    /// A broken relative link in a non-explain doc (how-to/) is reported.
+    #[test]
+    fn broken_link_in_non_explain_doc_is_reported() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let docs = make_tree(tmp.path());
+        // Overwrite the how-to guide with a broken link.
+        fs::write(
+            docs.join("how-to/guide.md"),
+            "# guide\n\nSee [missing](../reference/nonexistent.md).\n",
+        )
+        .unwrap();
+        let errors = check_assembled_docs(&docs);
+        assert!(
+            !errors.is_empty(),
+            "expected at least one error for broken link, got none"
+        );
+        let combined = errors.join("\n");
+        assert!(
+            combined.contains("nonexistent.md"),
+            "error should mention the broken target, got:\n{combined}"
+        );
+    }
+
+    /// A broken relative link in an assembled explain doc is also reported.
+    #[test]
+    fn broken_link_in_explain_doc_is_reported() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let docs = make_tree(tmp.path());
+        // Overwrite the assembled explain page with a broken link.
+        fs::write(
+            docs.join("reference/explain/verb.md"),
+            "# verb\n\nSee [gone](../does-not-exist.md).\n",
+        )
+        .unwrap();
+        let errors = check_assembled_docs(&docs);
+        assert!(
+            !errors.is_empty(),
+            "expected error for broken explain link, got none"
+        );
+    }
+
+    /// Template files are excluded — broken links inside them must not be reported.
+    #[test]
+    fn template_files_are_excluded() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let docs = make_tree(tmp.path());
+        // Templates already contain broken links in make_tree; the clean
+        // base tree must pass.
+        let errors = check_assembled_docs(&docs);
+        assert!(
+            errors.is_empty(),
+            "template files leaked into check: {errors:?}"
+        );
+    }
+
+    /// Rustdoc bare autolink syntax in an assembled explain doc is rejected.
+    #[test]
+    fn rustdoc_bare_autolink_in_assembled_doc_is_rejected() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let docs = make_tree(tmp.path());
+        fs::write(
+            docs.join("reference/explain/verb.md"),
+            "# verb\n\n[`SomeType`] is interesting.\n",
+        )
+        .unwrap();
+        let errors = check_assembled_docs(&docs);
+        assert!(
+            !errors.is_empty(),
+            "expected error for bare autolink in assembled doc, got none"
+        );
+        let combined = errors.join("\n");
+        assert!(
+            combined.contains("rustdoc bare autolink"),
+            "error should mention rustdoc autolink, got:\n{combined}"
+        );
+    }
+
+    /// Rustdoc bare autolink in a non-assembled doc (how-to/) is NOT rejected
+    /// by the link check — rustdoc leakage is only meaningful in assembled output.
+    #[test]
+    fn rustdoc_bare_autolink_in_non_assembled_doc_is_allowed() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let docs = make_tree(tmp.path());
+        // Hand-written docs may legitimately use backtick references like
+        // [`Type`] as formatting; only assembled pages must be clean.
+        fs::write(
+            docs.join("how-to/guide.md"),
+            "# guide\n\n[`SomeType`] is fine in hand-written docs.\n",
+        )
+        .unwrap();
+        let errors = check_assembled_docs(&docs);
+        assert!(
+            errors.is_empty(),
+            "should not flag bare autolink in non-assembled doc, got:\n{}",
+            errors.join("\n")
+        );
+    }
 }
