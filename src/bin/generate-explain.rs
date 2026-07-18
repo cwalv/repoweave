@@ -1301,10 +1301,12 @@ mod tests {
     fn cli_md_coverage_placeholder_skip_does_not_overmatch() {
         let paths = vec!["workweave log".to_owned()];
         // Headings for OTHER workweave actions only — `log` is absent.
-        let cli_md = "\
-### `rwv workweave <project> create <name>`\n\n\
-### `rwv workweave <project> list`\n\n\
-### `rwv workweave <project> log-extra`\n";
+        let cli_md = concat!(
+            "### `rwv workweave <project> create <name>`\n\n",
+            "### `rwv workweave <project> list`\n\n",
+            // rwv-advice: not-an-invocation
+            "### `rwv workweave <project> log-extra`\n",
+        );
         let allow: HashSet<String> = HashSet::new();
         let errors = check_cli_md_coverage(&paths, cli_md, &allow);
         assert!(
