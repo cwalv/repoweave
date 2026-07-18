@@ -436,11 +436,22 @@ fn advance_one(
 
     // git fetch the remote(s). Run from the repo dir so default remote
     // selection applies.
+    //
+    // `--prune` removes remote-tracking refs that no longer exist on the
+    // remote. Without it, a branch deleted or renamed upstream leaves a
+    // stale `origin/<branch>` ref that `resolve_branch_on_remote` would
+    // resolve forever, silently diverging from the real upstream state
+    // (R18 GAP). Pruning is safe: remote-tracking refs are derived state;
+    // the lock pins bare SHAs, so pruned refs never lose reachable objects.
+    //
+    // Shallow-clone note: `git fetch --prune` works correctly for shallow
+    // clones (per git-fetch(1)); git does not refuse or warn on shallow
+    // repos for the `--prune` flag. No special handling needed.
     if use_reporter {
         reporter.out(&format!("rwv update: fetching {}", repo_path.as_str()));
     }
     let mut cmd = git_command();
-    cmd.args(["fetch", "--all", "--tags"])
+    cmd.args(["fetch", "--all", "--tags", "--prune"])
         .current_dir(&repo_dir);
     let outcome = match run_subprocess_with_reporter(&mut cmd, reporter) {
         Ok(o) => o,
@@ -470,13 +481,21 @@ fn advance_one(
     // than a fallback chain. No bare-branch fallback —
     // missing-remote produces a clear error rather than silently
     // resolving to the local branch tip.
+    //
+    // When `--prune` above removed a stale remote-tracking ref for
+    // `branch`, this resolution will now correctly fail rather than
+    // resolving against a ghost ref. The error below names the state and
+    // the two actionable exits so the operator knows what to do.
     let branch_ref = RefName::new(branch);
     let resolved = match git.resolve_branch_on_remote(&repo_dir, entry.role, &branch_ref) {
         Ok(r) => r,
-        Err(e) => {
+        Err(_) => {
             return Err(format!(
-                "{}: could not resolve branch '{branch}' on role-conventional remote: {e}",
-                repo_path.as_str()
+                "{repo}: branch '{branch}' no longer exists on the remote \
+                 — deleted or renamed upstream. \
+                 To fix: either update rwv.yaml's `version:` field to the \
+                 new branch name, or pin `version:` to a SHA or tag.",
+                repo = repo_path.as_str(),
             ));
         }
     };

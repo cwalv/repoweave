@@ -451,3 +451,210 @@ fn update_missing_clone_names_manual_reclone_not_fetch() {
          an existing project); got:\n{combined}"
     );
 }
+
+// ============================================================================
+// R18 regression: prune + ghost-ref detection
+// ============================================================================
+
+/// Helper: rename the main branch on a bare remote to a new name. This
+/// simulates the upstream "rename branch" case — the old branch is deleted
+/// and a new one is created under a different name.
+///
+/// Bare repos refuse to delete their current branch (HEAD). We work around
+/// this by first pointing HEAD at the new branch name in the bare, then
+/// deleting the old branch. The sequence:
+///   1. Clone the bare, create the new branch, push it.
+///   2. In the bare repo, change HEAD to point at the new branch.
+///   3. Delete the old branch from the bare.
+fn rename_branch_on_bare(bare: &Path, old_name: &str, new_name: &str) {
+    let parent = bare.parent().unwrap();
+    let stem = bare.file_stem().unwrap().to_string_lossy().into_owned();
+    let work = parent.join(format!("__rename_{stem}"));
+    git_run(
+        parent,
+        &["clone", bare.to_str().unwrap(), work.to_str().unwrap()],
+    );
+    git_run(&work, &["config", "user.email", "test@test.com"]);
+    git_run(&work, &["config", "user.name", "Test"]);
+    // Create the new branch and push it to the bare.
+    git_run(&work, &["checkout", "-b", new_name]);
+    git_run(
+        &work,
+        &["push", "origin", &format!("{new_name}:{new_name}")],
+    );
+    // Update the bare's HEAD to point at the new branch so the old one is
+    // no longer the "current branch" and can be deleted.
+    git_run(
+        bare,
+        &["symbolic-ref", "HEAD", &format!("refs/heads/{new_name}")],
+    );
+    // Now delete the old branch from the bare.
+    git_run(bare, &["branch", "-D", old_name]);
+}
+
+/// R18 regression test: upstream renames a branch (delete + create under new
+/// name). Before this fix, `rwv update` would resolve against the stale
+/// `origin/<old-name>` remote-tracking ref indefinitely (ghost-ref bug).
+/// After this fix, `--prune` removes the stale ref during fetch, and the
+/// subsequent resolution fails with a house-pattern error naming:
+/// - the repo path,
+/// - the branch name that is gone,
+/// - the state ("no longer exists on the remote — deleted or renamed upstream"),
+/// - both exits (update rwv.yaml version, or pin to SHA/tag).
+#[test]
+fn update_prune_detects_deleted_branch_with_actionable_message() {
+    let ws = build_workspace("r18-test", &[("local/org/renamed", "owned")]);
+
+    let (_, bare) = ws
+        .manifest_bares
+        .iter()
+        .find(|(p, _)| p == "local/org/renamed")
+        .unwrap();
+
+    // Rename the tracked branch on the bare remote: "main" -> "main-v2".
+    rename_branch_on_bare(bare, "main", "main-v2");
+
+    // rwv update must fail and produce a house-pattern error.
+    let output = rwv()
+        .args(["update", "--dirty"])
+        .current_dir(&ws.workspace)
+        .output()
+        .expect("failed to spawn rwv update");
+
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    assert!(
+        !output.status.success(),
+        "update must fail when the tracked branch no longer exists upstream; \
+         got:\n{combined}"
+    );
+    assert!(
+        combined.contains("local/org/renamed"),
+        "error must name the repo path; got:\n{combined}"
+    );
+    assert!(
+        combined.contains("main"),
+        "error must name the branch that is gone; got:\n{combined}"
+    );
+    assert!(
+        combined.contains("no longer exists on the remote")
+            || combined.contains("deleted or renamed upstream"),
+        "error must state the upstream-deletion/rename condition; got:\n{combined}"
+    );
+    // Must name both exits.
+    assert!(
+        combined.contains("version:") || combined.contains("new branch name"),
+        "error must name the rwv.yaml version update exit; got:\n{combined}"
+    );
+    assert!(
+        combined.contains("SHA") || combined.contains("tag") || combined.contains("pin"),
+        "error must name the SHA/tag pin exit; got:\n{combined}"
+    );
+}
+
+/// Post-prune normal update still succeeds. Verifies that `--prune` does not
+/// break the happy path: when upstream hasn't renamed or deleted any branch,
+/// `rwv update` continues to work correctly.
+#[test]
+fn update_prune_does_not_break_normal_update() {
+    let ws = build_workspace("prune-happy", &[("local/org/repo", "owned")]);
+
+    let (_, bare) = ws
+        .manifest_bares
+        .iter()
+        .find(|(p, _)| p == "local/org/repo")
+        .unwrap();
+
+    let new_sha = advance_bare_main(bare);
+
+    rwv()
+        .args(["update", "--dirty"])
+        .current_dir(&ws.workspace)
+        .assert()
+        .success();
+
+    let local = ws.workspace.join("local/org/repo");
+    assert_eq!(
+        git_run(&local, &["rev-parse", "HEAD"]),
+        new_sha,
+        "repo should advance to the new upstream SHA after prune-enabled update"
+    );
+}
+
+/// Adversarial: the lock pins a bare SHA. Even if the corresponding remote-
+/// tracking ref is pruned (e.g. the branch that originally contained that
+/// commit was deleted upstream), the object itself is still in the local
+/// clone's object store and is reachable. This test verifies that `rwv lock`
+/// (which reads HEAD, not remote refs) and the object store are the correct
+/// primitives — a pruned tracking ref must NOT prevent the lock SHA from
+/// being available.
+///
+/// Note: `rwv update` advances to the *current* remote branch HEAD and then
+/// snapshots the lock. This test verifies that fetching with `--prune` does
+/// not remove the commit objects that the lock references — only the stale
+/// remote-tracking *refs* are removed, not the objects they pointed to.
+#[test]
+fn update_prune_does_not_lose_lock_pinned_sha() {
+    let ws = build_workspace("sha-pin-test", &[("local/org/obj", "owned")]);
+
+    let (_, bare) = ws
+        .manifest_bares
+        .iter()
+        .find(|(p, _)| p == "local/org/obj")
+        .unwrap();
+
+    // Capture the SHA that the local clone currently has checked out.
+    let local = ws.workspace.join("local/org/obj");
+    let pinned_sha = git_run(&local, &["rev-parse", "HEAD"]);
+
+    // Advance the bare (so main moves forward) but DO NOT advance the local
+    // clone — the local is now "behind" but holds the old SHA in its object
+    // store. The old SHA is in the local object store but no longer at any
+    // remote-tracking ref tip after we prune (main has moved on).
+    advance_bare_main(bare);
+
+    // Verify the pinned SHA is still reachable in the object store.
+    let cat_file_status = common::git()
+        .args(["cat-file", "-e", &format!("{pinned_sha}^{{commit}}")])
+        .current_dir(&local)
+        .status()
+        .expect("git cat-file should be available");
+    assert!(
+        cat_file_status.success(),
+        "pinned SHA {pinned_sha} must still exist in local object store"
+    );
+
+    // Now run update — this fetches with --prune and moves the local clone
+    // to the new upstream HEAD. The old SHA object remains in the store
+    // (git prune/gc would be needed to actually remove it, which rwv never
+    // calls). Confirm update succeeds.
+    rwv()
+        .args(["update", "--dirty"])
+        .current_dir(&ws.workspace)
+        .assert()
+        .success();
+
+    // After update, the repo is at the new HEAD, not the old pinned SHA.
+    let post_sha = git_run(&local, &["rev-parse", "HEAD"]);
+    assert_ne!(
+        post_sha, pinned_sha,
+        "repo should have advanced past the originally-pinned SHA"
+    );
+
+    // The old commit object is still reachable in the object store (not pruned
+    // by --prune, which only removes remote-tracking *refs*, not objects).
+    let cat_file_after = common::git()
+        .args(["cat-file", "-e", &format!("{pinned_sha}^{{commit}}")])
+        .current_dir(&local)
+        .status()
+        .expect("git cat-file should be available");
+    assert!(
+        cat_file_after.success(),
+        "pinned SHA {pinned_sha} must remain in object store after prune-enabled fetch \
+         (--prune only removes stale tracking refs, not commit objects)"
+    );
+}
