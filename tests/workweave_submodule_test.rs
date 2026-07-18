@@ -125,6 +125,12 @@ fn add_submodule(repo_dir: &Path, sub_path: &str, submodule_remote: &Path) {
 
 /// Workweave create: submodule content is present after create when the
 /// member repo has a submodule backed by a reachable (local) remote.
+///
+/// Production no longer injects `protocol.file.allow=always` (CVE-2022-39253
+/// class mitigation — see `init_submodules_in_worktree`), so this test runs
+/// the create through the CLI binary and sets the allowance on ITS OWN
+/// spawned command. The rwv process's child `git submodule update` inherits
+/// the env; nothing is widened in the production code path.
 #[test]
 fn create_initializes_submodules_when_gitmodules_present() {
     let tmp = tempfile::tempdir().unwrap();
@@ -141,29 +147,29 @@ fn create_initializes_submodules_when_gitmodules_present() {
     let repo = ws.join("github/org/repo");
     add_submodule(&repo, "libs/sub", &sub_remote);
 
-    // Create the workweave. Should succeed and init the submodule.
+    // Create the workweave via the CLI. The file-protocol allowance is set
+    // on the spawned rwv process only (common::rwv() already sets
+    // GIT_CONFIG_COUNT=1 for init.defaultBranch; stack entry 1 on top).
     let ww_dir = tmp.path().join(".workweaves");
     std::fs::create_dir_all(&ww_dir).unwrap();
 
-    let result = create_workweave(
-        &ws,
-        &ws,
-        &ProjectName::new("proj"),
-        &WorkweaveName::new("feat"),
-        false,
-        false,
-        false,
-    );
-
-    // Create must succeed.
-    assert!(
-        result.is_ok(),
-        "create_workweave should succeed when submodule remote is reachable: {:?}",
-        result.err()
-    );
+    common::rwv()
+        .args(["workweave", "proj", "create", "feat"])
+        .env("RWV_WORKWEAVE_DIR", &ww_dir)
+        .env("GIT_CONFIG_COUNT", "2")
+        .env("GIT_CONFIG_KEY_1", "protocol.file.allow")
+        .env("GIT_CONFIG_VALUE_1", "always")
+        .current_dir(&ws)
+        .assert()
+        .success();
 
     // The submodule directory in the workweave should be non-empty.
-    let workweave_path = result.unwrap();
+    let workweave_path = ww_dir.join("proj--feat");
+    assert!(
+        workweave_path.is_dir(),
+        "workweave should exist at {}",
+        workweave_path.display()
+    );
     let sub_dir = workweave_path.join("github/org/repo/libs/sub");
     assert!(
         sub_dir.is_dir(),
@@ -191,16 +197,23 @@ fn create_initializes_submodules_when_gitmodules_present() {
 // ---------------------------------------------------------------------------
 
 /// Workweave create: when the submodule remote is unreachable (bad URL),
-/// create still succeeds but emits a warning. The worktree exists; the
-/// submodule directory is empty (or absent). Doctor can later flag it.
+/// create still succeeds but emits a warning naming the repo, the state
+/// ("submodules not initialized"), and the fix command. The worktree exists;
+/// the submodule directory is empty (or absent). Doctor can later flag it.
 ///
-/// We set up `.gitmodules` with a URL that will never resolve (points at a
-/// non-existent path) without going through `git submodule add` so that
-/// no cached submodule objects exist in `.git/modules/`. The commit with
-/// `.gitmodules` but no submodule content is the exact state that results
-/// when a repo records a submodule pointer but the content is not in scope
-/// — for example, a shallow clone or a repo-with-committed-gitmodules where
-/// the submodule init was never run.
+/// We commit BOTH halves of a real submodule pointer — the `.gitmodules`
+/// entry (with a URL that will never resolve) AND a gitlink index entry
+/// (mode 160000, planted via `git update-index --cacheinfo`) — without ever
+/// running `git submodule add`, so no cached submodule objects exist in
+/// `.git/modules/`. The gitlink matters: `git submodule update` iterates
+/// gitlink entries in the index, not `.gitmodules` lines, so a fixture with
+/// only `.gitmodules` would make init a successful no-op and never reach
+/// the failure arm.
+///
+/// Run through the CLI so the per-repo warning and the partial-
+/// materialization summary can be asserted on stderr BY TEXT — the exact
+/// git failure underneath (protocol blocked vs. path not found) is not
+/// asserted; both take the same warn-and-continue arm.
 #[test]
 fn create_succeeds_with_warning_when_submodule_remote_unreachable() {
     let tmp = tempfile::tempdir().unwrap();
@@ -208,7 +221,7 @@ fn create_succeeds_with_warning_when_submodule_remote_unreachable() {
 
     let repo = ws.join("github/org/repo");
 
-    // Write a .gitmodules pointing at a non-existent path, then commit it.
+    // Write a .gitmodules pointing at a non-existent path.
     // This mimics a repo that declares a submodule but whose remote is
     // unreachable (or has never been fetched). There is no .git/modules/
     // entry because we never ran `git submodule add`.
@@ -219,34 +232,49 @@ fn create_succeeds_with_warning_when_submodule_remote_unreachable() {
          \turl = file:///nonexistent/rwv-test/sub-that-does-not-exist\n",
     )
     .unwrap();
-    // Create the empty placeholder directory that git submodule would have
-    // made — it only appears in the worktree if the submodule was ever
-    // initialized; leaving it absent simulates the uninitialized state.
     git(&["add", ".gitmodules"], &repo);
+    // Plant the gitlink entry itself (mode 160000). The recorded commit sha
+    // does not need to exist anywhere — gitlink checkout only creates the
+    // placeholder dir, and submodule update will fail at clone time (which
+    // is the point of this test).
+    git(
+        &[
+            "update-index",
+            "--add",
+            "--cacheinfo",
+            "160000,aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa,libs/sub",
+        ],
+        &repo,
+    );
     git(&["commit", "-m", "record submodule with bad url"], &repo);
 
     let ww_dir = tmp.path().join(".workweaves");
     std::fs::create_dir_all(&ww_dir).unwrap();
 
-    let result = create_workweave(
-        &ws,
-        &ws,
-        &ProjectName::new("proj"),
-        &WorkweaveName::new("feat"),
-        false,
-        false,
-        false,
-    );
-
-    // Create MUST succeed even though submodule init failed.
+    // Create MUST succeed (exit 0) even though submodule init fails, and
+    // the warning must name the state and the fix.
+    let assert = common::rwv()
+        .args(["workweave", "proj", "create", "feat"])
+        .env("RWV_WORKWEAVE_DIR", &ww_dir)
+        .current_dir(&ws)
+        .assert()
+        .success();
+    let stderr = String::from_utf8_lossy(&assert.get_output().stderr).into_owned();
     assert!(
-        result.is_ok(),
-        "create_workweave must succeed even when submodule remote is unreachable: {:?}",
-        result.err()
+        stderr.contains("submodules not initialized"),
+        "stderr should name the state 'submodules not initialized'; got:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("submodule update --init --recursive"),
+        "stderr should name the fix command; got:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("github/org/repo"),
+        "stderr should name the affected repo; got:\n{stderr}"
     );
 
     // The worktree exists and .gitmodules is there (submodule declared).
-    let workweave_path = result.unwrap();
+    let workweave_path = ww_dir.join("proj--feat");
     let worktree_repo = workweave_path.join("github/org/repo");
     assert!(worktree_repo.is_dir(), "worktree should exist");
     assert!(
@@ -449,7 +477,11 @@ fn doctor_scan_reports_uninitialized_submodule_in_workweave() {
     let repo = ws.join("github/org/repo");
     add_submodule(&repo, "libs/sub", &sub_remote);
 
-    // Create the workweave (submodule init will succeed at create time).
+    // Create the workweave. Under git's default `protocol.file.allow=user`
+    // posture the create-time submodule init is blocked (production does not
+    // inject an allowance — CVE-2022-39253 class), so the create succeeds
+    // with a warning and the workweave lands with the submodule dir empty:
+    // exactly the state doctor must detect.
     let ww_dir = tmp.path().join(".workweaves");
     std::fs::create_dir_all(&ww_dir).unwrap();
 
@@ -464,7 +496,9 @@ fn doctor_scan_reports_uninitialized_submodule_in_workweave() {
     )
     .expect("create should succeed");
 
-    // Now simulate the submodule being uninitialized by removing the content.
+    // Defense-in-depth: if the environment's git config DID allow the init
+    // (e.g. an operator global `protocol.file.allow=always`), empty the
+    // submodule dir so the uninitialized state holds either way.
     let sub_dir = workweave_path.join("github/org/repo/libs/sub");
     if sub_dir.is_dir() {
         for entry in std::fs::read_dir(&sub_dir).unwrap().flatten() {

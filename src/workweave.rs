@@ -369,15 +369,15 @@ fn init_submodules_in_worktree(worktree_path: &Path) -> anyhow::Result<()> {
     if !worktree_path.join(".gitmodules").exists() {
         return Ok(());
     }
-    // Allow the `file://` transport so that submodule remotes registered
-    // with local `file://` URLs (common in tests and monorepo setups) work
-    // without requiring a global `git config protocol.file.allow always`.
-    // The env-var form (`GIT_CONFIG_*`) stacks on top of any existing
-    // config without touching disk.
+    // SECURITY: do NOT inject `protocol.file.allow=always` here. Git's
+    // restrictive default (`user`) is the mitigation for hostile-.gitmodules
+    // attacks (CVE-2022-39253 class: a third-party repo's `.gitmodules`
+    // referencing `file://` paths on the operator's host), and workweaves
+    // materialize third-party reference repos. Production submodule init runs
+    // with the operator's own git config posture — if a weave genuinely uses
+    // `file://` submodules, the operator's config already allows it. Tests
+    // that need `file://` remotes set the env on their own spawned commands.
     let output = git_command()
-        .env("GIT_CONFIG_COUNT", "1")
-        .env("GIT_CONFIG_KEY_0", "protocol.file.allow")
-        .env("GIT_CONFIG_VALUE_0", "always")
         .args(["submodule", "update", "--init", "--recursive"])
         .current_dir(worktree_path)
         .output()
