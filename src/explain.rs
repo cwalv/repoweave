@@ -27,6 +27,7 @@ const ADD_EXPLAIN: &str = include_str!("../docs/reference/explain/add.md");
 const REMOVE_EXPLAIN: &str = include_str!("../docs/reference/explain/remove.md");
 const LOCK_EXPLAIN: &str = include_str!("../docs/reference/explain/lock.md");
 const ACTIVATE_EXPLAIN: &str = include_str!("../docs/reference/explain/activate.md");
+const INIT_EXPLAIN: &str = include_str!("../docs/reference/explain/init.md");
 
 /// The complete set of verbs recognized by `rwv explain`.
 ///
@@ -49,6 +50,7 @@ pub const KNOWN_VERBS: &[&str] = &[
     "remove",
     "lock",
     "activate",
+    "init",
 ];
 
 /// Compute the Levenshtein edit distance between two strings.
@@ -119,6 +121,7 @@ pub fn explain(cmd: Option<&str>) -> anyhow::Result<()> {
         Some("remove") => print!("{REMOVE_EXPLAIN}"),
         Some("lock") => print!("{LOCK_EXPLAIN}"),
         Some("activate") => print!("{ACTIVATE_EXPLAIN}"),
+        Some("init") => print!("{INIT_EXPLAIN}"),
         Some(unknown) => {
             if let Some(candidate) = suggest(unknown) {
                 anyhow::bail!(

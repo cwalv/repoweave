@@ -182,6 +182,11 @@ fn verbs() -> Vec<Verb> {
             summary: "set the active project, create symlinks, run integration install hooks",
             schema: None,
         },
+        Verb {
+            name: "init",
+            summary: "create a new project (or adopt an existing repo) and auto-activate it",
+            schema: None,
+        },
     ]
 }
 

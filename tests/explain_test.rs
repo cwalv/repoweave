@@ -31,6 +31,7 @@ const ACCEPTANCE_VERBS: &[&str] = &[
     "remove",
     "lock",
     "activate",
+    "init",
 ];
 
 fn rwv() -> AssertCommand {

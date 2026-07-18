@@ -40,6 +40,7 @@ const ACCEPTANCE_VERBS: &[&str] = &[
     "remove",
     "lock",
     "activate",
+    "init",
 ];
 
 fn rwv() -> AssertCommand {
@@ -175,6 +176,11 @@ fn explain_lock_matches_committed_doc() {
 #[test]
 fn explain_activate_matches_committed_doc() {
     assert_byte_identical("activate");
+}
+
+#[test]
+fn explain_init_matches_committed_doc() {
+    assert_byte_identical("init");
 }
 
 /// Single-shot acceptance test: every verb in the acceptance set
