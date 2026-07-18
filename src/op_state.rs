@@ -877,7 +877,7 @@ enum AtomicWriteError {
 /// no other observer ever sees `path` half-written.
 ///
 /// Implementation: write the full content to a sibling temp file (unique via
-/// PID + nanoseconds), fsync-optional, then `link(2)` it into place. `link` is
+/// PID + process-local counter), fsync-optional, then `link(2)` it into place. `link` is
 /// atomic and fails with `EEXIST` when the target already exists — exactly the
 /// `O_CREAT|O_EXCL` semantic we want, but applied to an already-populated
 /// inode so the loser reads a complete file. The temp file is unlinked
@@ -901,13 +901,19 @@ fn atomic_write_new(path: &Path, bytes: &[u8]) -> Result<(), AtomicWriteError> {
         .file_name()
         .map(|s| s.to_string_lossy().into_owned())
         .unwrap_or_else(|| "op-state".to_owned());
-    // Unique-per-attempt sibling: PID + nanoseconds keeps racers apart even
-    // within a single process.
-    let now_ns = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_nanos())
-        .unwrap_or(0);
-    let tmp_name = format!(".{file_name}.tmp.{pid}.{now_ns}", pid = std::process::id());
+    // Unique-per-attempt sibling: the PID component keeps concurrent
+    // *processes* apart; a process-local monotonic counter keeps concurrent
+    // *threads* within one process apart. Both components are structural —
+    // no wall-clock input. (A previous revision used nanosecond timestamps
+    // for the intra-process component; two barrier-synchronized threads can
+    // read the same `SystemTime::now()` value under load, collide on the tmp
+    // path, and then each sabotage the other's attempt: the create_new loser
+    // unlinked the winner's in-flight temp, so the winner's link(2) hit
+    // ENOENT and *both* acquisitions failed. Structurally-unique names make
+    // that interleave impossible. fo-8cbhpg.4.)
+    static TMP_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let seq = TMP_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let tmp_name = format!(".{file_name}.tmp.{pid}.{seq}", pid = std::process::id());
     let tmp_path = parent.join(tmp_name);
 
     // Write the full content into the sibling temp. If this fails, drop the
