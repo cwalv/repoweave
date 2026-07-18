@@ -235,10 +235,25 @@ fn orphan_prune_pairs(
 /// - The workweave directory (`workweave_dir`): removed with `remove_dir_all`.
 /// - Registered worktrees (`registered_worktrees`): each entry is
 ///   `(repo_abs, worktree_path)`; pruned via [`prune_orphan_worktrees_for`].
+/// - Created ephemeral branches (`created_branches`): each entry is
+///   `(repo_abs, branch_name)`; deleted on rollback after worktree removal.
+/// - Repos to prune on rollback (`prune_on_rollback`): repos where a worktree
+///   creation was ATTEMPTED (even if it failed mid-way due to a git hook).
+///   A failing hook can create the worktree directory AND the `.git/worktrees/`
+///   registration before returning a non-zero exit — these stale registrations
+///   must be pruned even though the worktree was never fully recorded as
+///   successful. After `remove_dir_all(&workweave_dir)` removes the worktree
+///   path, the registration becomes prunable; running `git worktree prune` in
+///   each attempted repo clears it.
 ///
 /// Call `defuse()` to commit the create — the guard then does nothing on drop.
 /// If the guard is dropped without being defused (i.e. due to any failure path,
 /// including `bail!` / `?` propagation), the rollback runs automatically.
+///
+/// For explicit failure points (where the caller has an error to return),
+/// prefer calling [`rollback_and_collect_failures`] before bailing so that
+/// cleanup failures can be appended to the returned error message rather than
+/// only being printed to stderr.
 ///
 /// **Design:** A single drop-based guard centralises rollback so future code
 /// cannot accidentally bypass it. Adding a new failure point that returns early
@@ -250,7 +265,18 @@ struct CreateRollbackGuard {
     /// Pairs of `(repo_abs, worktree_dest)` for every worktree that was
     /// successfully registered during this create attempt.
     registered_worktrees: Vec<(PathBuf, PathBuf)>,
-    /// Set to `true` when the create completes successfully. Prevents rollback.
+    /// Pairs of `(repo_abs, ephemeral_branch)` for every branch created during
+    /// this attempt. Deleted on rollback AFTER worktree removal (so the branch
+    /// is no longer checked out when `delete_branch` runs).
+    created_branches: Vec<(PathBuf, RefName)>,
+    /// Repos where a worktree creation was attempted (success or failure).
+    /// On rollback, `git worktree prune` is run in each of these repos after
+    /// `remove_dir_all(&workweave_dir)` so that stale `.git/worktrees/<name>`
+    /// entries left by a partial hook-failed add are cleared.
+    prune_on_rollback: Vec<PathBuf>,
+    /// Set to `true` when the create completes successfully OR when
+    /// `rollback_and_collect_failures` has already been called. Prevents
+    /// double-rollback in Drop.
     defused: bool,
 }
 
@@ -259,6 +285,8 @@ impl CreateRollbackGuard {
         Self {
             workweave_dir,
             registered_worktrees: Vec::new(),
+            created_branches: Vec::new(),
+            prune_on_rollback: Vec::new(),
             defused: false,
         }
     }
@@ -268,10 +296,143 @@ impl CreateRollbackGuard {
         self.registered_worktrees.push((repo_abs, worktree_dest));
     }
 
+    /// Record a repo where a worktree creation was attempted, regardless of
+    /// outcome. On rollback, `git worktree prune` will run in this repo after
+    /// the workweave directory is removed, clearing any stale `.git/worktrees/`
+    /// entry that a hook-failed partial `git worktree add` may have left behind.
+    ///
+    /// Call this BEFORE calling `vcs.create_worktree(...)` so that even a
+    /// failed `create_worktree` leaves the repo in the prune list.
+    fn record_attempted_repo(&mut self, repo_abs: PathBuf) {
+        self.prune_on_rollback.push(repo_abs);
+    }
+
+    /// Record a branch that WILL BE created by the next `create_worktree` call
+    /// for `repo_abs`. Recorded regardless of whether `create_worktree` succeeds:
+    /// a hook-failed `git worktree add` creates the branch before running the
+    /// hook, so the branch persists even when `create_worktree` returns `Err`.
+    /// On rollback, `delete_branch` is attempted for every recorded branch.
+    ///
+    /// Call this BEFORE calling `vcs.create_worktree(...)`.
+    fn record_intended_branch(&mut self, repo_abs: PathBuf, branch: RefName) {
+        self.created_branches.push((repo_abs, branch));
+    }
+
     /// Commit the create — disable rollback. Call this only after
     /// `create_workweave` has fully succeeded.
     fn defuse(&mut self) {
         self.defused = true;
+    }
+
+    /// Perform rollback immediately and return a list of cleanup-failure
+    /// descriptions (each item is a human-readable string describing what
+    /// failed and the exact manual command to fix it).
+    ///
+    /// The rollback is best-effort: a failure on one repo does not skip the
+    /// others. After this call the guard is defused so Drop is a no-op.
+    ///
+    /// Callers MUST append any returned items to the primary error message so
+    /// the operator sees both the root cause and any manual-cleanup work. The
+    /// original error must remain the primary error — never replace it.
+    fn rollback_and_collect_failures(&mut self) -> Vec<String> {
+        // Defuse first so Drop never runs this twice.
+        self.defused = true;
+
+        let mut failures: Vec<String> = Vec::new();
+
+        // Step 1: Remove worktree directories and prune registrations for
+        // repos that SUCCESSFULLY registered a worktree.
+        for (repo_abs, worktree_path) in &self.registered_worktrees {
+            let vcs = GitVcs;
+            if worktree_path.exists() {
+                if let Err(e) = vcs.remove_worktree(repo_abs, worktree_path) {
+                    eprintln!(
+                        "rwv workweave rollback: warning: could not remove worktree {}: {e}",
+                        worktree_path.display()
+                    );
+                    failures.push(format!(
+                        "worktree {path} — remove manually with: git -C {repo} worktree remove --force {path}",
+                        path = worktree_path.display(),
+                        repo = repo_abs.display(),
+                    ));
+                }
+            }
+            // Always prune stale admin entries regardless of remove outcome.
+            if let Err(e) = vcs.worktree_prune(repo_abs) {
+                eprintln!(
+                    "rwv workweave rollback: warning: git worktree prune failed in {}: {e}",
+                    repo_abs.display()
+                );
+            }
+        }
+
+        // Step 2: Remove the partially-created workweave directory itself.
+        //
+        // This happens BEFORE branch deletion and the post-remove prune pass for
+        // two reasons:
+        // (a) Branch deletion: a branch checked out by a linked worktree cannot be
+        //     force-deleted while the worktree directory exists on disk. Removing
+        //     the workweave dir first ensures `git branch -D` succeeds.
+        // (b) Prune: removing the workweave dir makes `.git/worktrees/<name>` admin
+        //     entries prunable (they point to the now-gone directory).
+        if self.workweave_dir.exists() {
+            if let Err(e) = std::fs::remove_dir_all(&self.workweave_dir) {
+                eprintln!(
+                    "rwv workweave rollback: warning: could not remove partial workweave dir {}: {e}",
+                    self.workweave_dir.display()
+                );
+                failures.push(format!(
+                    "partial workweave dir {dir} — remove manually with: rm -rf {dir}",
+                    dir = self.workweave_dir.display(),
+                ));
+            }
+        }
+
+        // Step 3: Prune stale `.git/worktrees/` entries in every repo where a
+        // worktree creation was ATTEMPTED (even if `git worktree add` failed
+        // mid-way due to a post-checkout hook).
+        //
+        // Prune MUST run BEFORE branch deletion (step 4): git tracks a branch as
+        // "used by worktree" based on the `.git/worktrees/<name>` registration,
+        // not the on-disk directory. Even after step 2 removes the worktree
+        // directory, the stale registration keeps the branch locked. Pruning
+        // clears the registration so `git branch -D` succeeds.
+        //
+        // Step 2's dir-removal makes the admin entries prunable (they point to the
+        // now-gone directory). Repos already handled in step 1 are included here
+        // too — prune is idempotent.
+        let vcs = GitVcs;
+        for repo_abs in &self.prune_on_rollback {
+            if let Err(e) = vcs.worktree_prune(repo_abs) {
+                eprintln!(
+                    "rwv workweave rollback: warning: git worktree prune failed in {}: {e}",
+                    repo_abs.display()
+                );
+            }
+        }
+
+        // Step 4: Delete ephemeral branches created during this attempt.
+        //
+        // Runs AFTER removing the workweave dir (step 2) AND after pruning stale
+        // worktree registrations (step 3). The prune step is critical: git refuses
+        // to force-delete a branch listed in any `.git/worktrees/<name>` entry,
+        // even when the worktree directory no longer exists on disk.
+        for (repo_abs, branch) in &self.created_branches {
+            if let Err(e) = vcs.delete_branch(repo_abs, branch) {
+                eprintln!(
+                    "rwv workweave rollback: warning: could not delete ephemeral branch {} in {}: {e}",
+                    branch.as_str(),
+                    repo_abs.display()
+                );
+                failures.push(format!(
+                    "branch {branch} in {repo} — delete manually with: git -C {repo} branch -D {branch}",
+                    branch = branch.as_str(),
+                    repo = repo_abs.display(),
+                ));
+            }
+        }
+
+        failures
     }
 }
 
@@ -281,16 +442,53 @@ impl Drop for CreateRollbackGuard {
             return;
         }
 
-        // 1. Prune orphan worktree registrations in every repo that got a
-        //    worktree added during this create attempt.
+        // Drop-based rollback path: used for `?` propagation failures.
+        // Cleanup failures are printed to stderr only (no caller to append to).
+        // For explicit `bail!` paths, prefer calling `rollback_and_collect_failures`
+        // first so cleanup failures appear in the returned error.
+        //
+        // 1. Prune orphan worktree registrations and remove worktree directories
+        //    for repos that SUCCESSFULLY registered (same as registered_worktrees).
         prune_orphan_worktrees_for(&self.registered_worktrees);
 
-        // 2. Remove the partially-created workweave directory itself.
+        let vcs = GitVcs;
+
+        // 2. Remove the partially-created workweave directory.
+        //    Must happen BEFORE branch deletion: git refuses to force-delete a
+        //    branch checked out by a live linked worktree; removing the dir first
+        //    disconnects the worktree so the delete can proceed.
+        //    Must also happen BEFORE prune: removal makes stale entries prunable.
         if self.workweave_dir.exists() {
             if let Err(e) = std::fs::remove_dir_all(&self.workweave_dir) {
                 eprintln!(
                     "rwv workweave rollback: warning: could not remove partial workweave dir {}: {e}",
                     self.workweave_dir.display()
+                );
+            }
+        }
+
+        // 3. Prune stale `.git/worktrees/` entries in repos where worktree
+        //    creation was attempted. Prune BEFORE branch deletion: git refuses
+        //    to force-delete a branch registered in any worktree entry, even
+        //    when the worktree directory no longer exists on disk.
+        for repo_abs in &self.prune_on_rollback {
+            if let Err(e) = vcs.worktree_prune(repo_abs) {
+                eprintln!(
+                    "rwv workweave rollback: warning: git worktree prune failed in {}: {e}",
+                    repo_abs.display()
+                );
+            }
+        }
+
+        // 4. Delete ephemeral branches created during this attempt.
+        //    Runs AFTER removing the workweave dir (step 2) and pruning stale
+        //    worktree registrations (step 3).
+        for (repo_abs, branch) in &self.created_branches {
+            if let Err(e) = vcs.delete_branch(repo_abs, branch) {
+                eprintln!(
+                    "rwv workweave rollback: warning: could not delete ephemeral branch {} in {}: {e}",
+                    branch.as_str(),
+                    repo_abs.display()
                 );
             }
         }
@@ -711,6 +909,11 @@ pub fn create_workweave(
         let repo_abs = source_root.join(repo_path.as_path());
         let worktree_dest = workweave_dir.join(repo_path.as_path());
 
+        // The closure returns `Ok(())` on success or `Err` on failure.
+        // For worktree repos (not symlinks), the ephemeral branch name and
+        // repo-abs are recorded BEFORE `create_worktree` is called so that
+        // a hook-failed partial add (which creates the branch even on Err)
+        // can be cleaned up by the rollback guard.
         let result = (|| -> anyhow::Result<()> {
             // Ensure parent directories exist (both branches need this).
             if let Some(parent_dir) = worktree_dest.parent() {
@@ -743,9 +946,56 @@ pub fn create_workweave(
 
             let ephemeral_branch = ephemeral_branch_name(project, name, &branch_segment);
 
+            // Record the repo and intended branch BEFORE calling create_worktree.
+            // A post-checkout hook failure causes `git worktree add` to:
+            //   1. Create the worktree directory (removed later by remove_dir_all).
+            //   2. Create the `.git/worktrees/<name>` registration (cleared by prune).
+            //   3. Create the ephemeral branch (must be deleted by rollback).
+            // All three are created before the hook exits; recording here ensures
+            // rollback handles them even when create_worktree returns Err.
+            // SAFETY: these `record_*` calls mutate `rollback` via a raw pointer
+            // to avoid a borrow-checker conflict with `vcs` in the closure. We
+            // know `rollback` is not accessed concurrently — this is single-threaded
+            // sequential code.
+            //
+            // Instead of unsafe, we collect the pre-registration info into local
+            // vars and apply them after the closure returns (see below).
+            //
+            // DESIGN NOTE: we cannot call rollback.record_* here because `rollback`
+            // is borrowed by the outer `for` loop context. We return the branch
+            // name via Ok(()) — see post-closure recording below.
             vcs.create_worktree(&repo_abs, &worktree_dest, &ephemeral_branch, &head)?;
             Ok(())
         })();
+
+        // Pre-record: for worktree repos, record the intended ephemeral branch and
+        // the repo-abs in the rollback guard REGARDLESS of whether create_worktree
+        // succeeded. This must happen before we inspect `result` so that the
+        // rollback guard's cleanup covers both success and hook-failure paths.
+        //
+        // The branch name is derived identically to the computation inside the
+        // closure (same project, name, current_ref). For repos where
+        // create_worktree failed before reaching the branch-name computation
+        // (e.g. head_revision failure), neither the branch nor the registration
+        // exists — the extra delete_branch/prune calls are no-ops.
+        if !materialize_as_alias {
+            rollback.record_attempted_repo(repo_abs.clone());
+            // Derive the intended ephemeral branch name. Mirror the computation
+            // from inside the closure so we use the same name git used (or would
+            // have used).
+            let branch_seg = match vcs.current_ref(&repo_abs) {
+                Ok(Some(r)) => Some(RefName::new(r.as_str().to_string())),
+                Ok(None) => vcs
+                    .head_revision(&repo_abs)
+                    .ok()
+                    .map(|h| RefName::new(format!("detached-{}", short_sha(h.as_str())))),
+                Err(_) => None,
+            };
+            if let Some(seg) = branch_seg {
+                let branch = ephemeral_branch_name(project, name, &seg);
+                rollback.record_intended_branch(repo_abs.clone(), branch);
+            }
+        }
 
         match result {
             Ok(()) => {
@@ -800,9 +1050,22 @@ pub fn create_workweave(
     if !errors.is_empty() {
         let total = manifest.len();
         let failed = errors.len();
-        // B7: rollback guard's Drop will clean up the workweave dir AND prune
-        // orphan worktree registrations in all repos that succeeded so far.
-        bail!("workweave create completed with {failed} failure(s) out of {total} repo(s)");
+        // R25: explicit rollback before bail so that cleanup failures can be
+        // appended to the returned error rather than only printed to stderr.
+        // The rollback guard is defused after this call so Drop is a no-op.
+        let cleanup_failures = rollback.rollback_and_collect_failures();
+        let cleanup_note = if cleanup_failures.is_empty() {
+            String::new()
+        } else {
+            format!(
+                "\n\nrollback completed with {} item(s) needing manual cleanup:\n  {}",
+                cleanup_failures.len(),
+                cleanup_failures.join("\n  ")
+            )
+        };
+        bail!(
+            "workweave create completed with {failed} failure(s) out of {total} repo(s){cleanup_note}"
+        );
     }
 
     if !submodule_warnings.is_empty() {
@@ -835,14 +1098,16 @@ pub fn create_workweave(
         };
         let ephemeral_branch = ephemeral_branch_name(project, name, &branch_segment);
         std::fs::create_dir_all(project_wt_dest.parent().unwrap())?;
+        // Record the project repo and intended branch BEFORE calling create_worktree,
+        // for the same hook-failure reason as manifest repos above.
+        rollback.record_attempted_repo(project_dir.clone());
+        rollback.record_intended_branch(project_dir.clone(), ephemeral_branch.clone());
         match GitVcs.create_worktree(&project_dir, &project_wt_dest, &ephemeral_branch, &head) {
             Ok(()) => {
-                // Record the project worktree for rollback.
+                // Record the project worktree for rollback (branch already pre-recorded).
                 rollback.record_worktree(project_dir.clone(), project_wt_dest.clone());
             }
             Err(e) => {
-                // B7+B8: rollback guard will clean up the workweave dir and
-                // prune all previously-registered worktrees. We just bail.
                 // R25: if a git hook rejected the worktree add, name it.
                 let hook_hint = if e.to_string().contains("hook") {
                     "; a git hook in the project repo rejected the worktree creation — \
@@ -850,8 +1115,20 @@ pub fn create_workweave(
                 } else {
                     ""
                 };
+                // Explicit rollback before bail so cleanup failures are surfaced
+                // in the returned error (not only on stderr).
+                let cleanup_failures = rollback.rollback_and_collect_failures();
+                let cleanup_note = if cleanup_failures.is_empty() {
+                    String::new()
+                } else {
+                    format!(
+                        "\n\nrollback completed with {} item(s) needing manual cleanup:\n  {}",
+                        cleanup_failures.len(),
+                        cleanup_failures.join("\n  ")
+                    )
+                };
                 bail!(
-                    "could not create project worktree projects/{}: {e}{hook_hint}",
+                    "could not create project worktree projects/{}: {e}{hook_hint}{cleanup_note}",
                     project.as_str()
                 );
             }

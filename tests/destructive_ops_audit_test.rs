@@ -69,12 +69,16 @@ const ALLOWLIST: &[Allowed] = &[
     Allowed {
         file: "workweave.rs",
         pattern: "remove_dir_all",
-        count: 3,
+        count: 4,
         justification: "(1) CreateRollbackGuard::drop: removes the \
-            partially-built workweave of a failed create. (2) create \
-            --force raw replace: behind the dirty-scan refusal. (3) \
-            delete_workweave: behind the dirty + unmerged-commits \
-            refusals unless --force, which lists what is lost first.",
+            partially-built workweave of a failed create. \
+            (2) CreateRollbackGuard::rollback_and_collect_failures: same \
+            intent as (1) but for explicit bail! paths so cleanup failures \
+            can be appended to the returned error; defuses Drop to prevent \
+            double-rollback. (3) create --force raw replace: behind the \
+            dirty-scan refusal. (4) delete_workweave: behind the dirty + \
+            unmerged-commits refusals unless --force, which lists what is \
+            lost first.",
     },
     Allowed {
         file: "workweave.rs",

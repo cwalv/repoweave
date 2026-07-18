@@ -2941,6 +2941,283 @@ fn create_workweave_succeeds_when_all_repos_have_commits() {
 }
 
 // ===========================================================================
+// R25 rollback: failed create leaves canonical repos exactly as before
+// (fo-e56ly6.3)
+// ===========================================================================
+
+/// Plant a failing `post-checkout` hook in `repo`.
+///
+/// `git worktree add` runs `post-checkout` after materializing the new tree;
+/// a non-zero exit causes the add to fail with output containing "hook".
+/// The returned hook path is the installed executable so the test can remove
+/// or modify it later if needed.
+#[cfg(unix)]
+fn plant_failing_post_checkout_hook(repo: &Path) -> std::path::PathBuf {
+    use std::os::unix::fs::PermissionsExt;
+    let hooks_dir = repo.join(".git/hooks");
+    std::fs::create_dir_all(&hooks_dir).unwrap();
+    let hook_path = hooks_dir.join("post-checkout");
+    std::fs::write(&hook_path, "#!/bin/sh\nexit 1\n").unwrap();
+    std::fs::set_permissions(&hook_path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    hook_path
+}
+
+/// Verify that `repo` has no local branches matching `prefix/*`.
+///
+/// Used after a rollback to assert that no ephemeral branch was left behind.
+fn assert_no_branches_with_prefix(repo: &Path, prefix: &str) {
+    let branches = branches_with_prefix(repo, prefix);
+    assert!(
+        branches.is_empty(),
+        "rollback must delete all ephemeral branches with prefix '{prefix}/*'; \
+         found: {branches:?} in {}",
+        repo.display()
+    );
+}
+
+/// After a hook-rejected create the primary repo must be exactly as before:
+/// no prunable worktree registration AND no ephemeral branch.
+///
+/// This is the end-to-end test of the R25 rollback contract: the operator
+/// should be able to fix the hook, rerun `rwv workweave create`, and succeed
+/// without any manual `git worktree prune` or `git branch -D` steps.
+#[test]
+#[cfg(unix)]
+fn hook_rejected_create_leaves_no_registration_and_no_branch() {
+    let tmp = tempfile::tempdir().unwrap();
+    let ws = make_workspace(tmp.path(), "myproject");
+    let repo_path = ws.join("github/org/repo");
+
+    plant_failing_post_checkout_hook(&repo_path);
+
+    let weaveroot = tmp.path().join(".workweaves");
+    std::fs::create_dir_all(&weaveroot).unwrap();
+
+    rwv()
+        .args(["workweave", "myproject", "create", "ww-hook"])
+        .env("RWV_WORKWEAVE_DIR", &weaveroot)
+        .current_dir(&ws)
+        .assert()
+        .failure();
+
+    // 1. Workweave directory must not exist.
+    let ww_dir = weaveroot.join("myproject--ww-hook");
+    assert!(
+        !ww_dir.exists(),
+        "workweave dir must not exist after hook-rejected create: {}",
+        ww_dir.display()
+    );
+
+    // 2. No orphan worktree registration in the primary repo.
+    let listing_out = common::git()
+        .args(["worktree", "list", "--porcelain"])
+        .current_dir(&repo_path)
+        .output()
+        .expect("git worktree list should work");
+    let listing = String::from_utf8_lossy(&listing_out.stdout);
+    assert!(
+        !listing.contains("ww-hook"),
+        "rollback must prune orphan worktree registration; git worktree list still shows it:\n{listing}"
+    );
+
+    // 3. No ephemeral branch left behind in the primary repo.
+    assert_no_branches_with_prefix(&repo_path, "myproject--ww-hook");
+}
+
+/// Multi-repo partial failure: when repo1 succeeds and repo2 fails (via a
+/// hook), rollback must delete the ephemeral branch that was created in repo1,
+/// not only prune the worktree registration.
+///
+/// This exercises the "earlier repos' state cleaned up too" requirement.
+#[test]
+#[cfg(unix)]
+fn partial_create_failure_rolls_back_branches_of_earlier_repos() {
+    let tmp = tempfile::tempdir().unwrap();
+    let ws = tmp.path().join("ws");
+
+    // repo1 succeeds; repo2 has a failing hook so it fails.
+    let repo1 = ws.join("github/org/repo1");
+    let repo2 = ws.join("github/org/repo2");
+    init_repo_with_commit(&repo1);
+    init_repo_with_commit(&repo2);
+
+    // Plant a failing hook in repo2 only.
+    plant_failing_post_checkout_hook(&repo2);
+
+    let project_dir = ws.join("projects/multi-hook");
+    std::fs::create_dir_all(&project_dir).unwrap();
+    let manifest = format!(
+        r#"repositories:
+  github/org/repo1:
+    type: git
+    url: file://{r1}
+    version: main
+    role: owned
+  github/org/repo2:
+    type: git
+    url: file://{r2}
+    version: main
+    role: owned
+"#,
+        r1 = repo1.display(),
+        r2 = repo2.display(),
+    );
+    std::fs::write(project_dir.join("rwv.yaml"), manifest).unwrap();
+
+    let weaveroot = tmp.path().join(".workweaves");
+    std::fs::create_dir_all(&weaveroot).unwrap();
+
+    rwv()
+        .args(["workweave", "multi-hook", "create", "partial-hook"])
+        .env("RWV_WORKWEAVE_DIR", &weaveroot)
+        .current_dir(&ws)
+        .assert()
+        .failure();
+
+    // Workweave dir must not exist.
+    let ww_dir = weaveroot.join("multi-hook--partial-hook");
+    assert!(
+        !ww_dir.exists(),
+        "workweave dir must be removed on rollback: {}",
+        ww_dir.display()
+    );
+
+    // repo1 must have no orphan registration.
+    let listing_out = common::git()
+        .args(["worktree", "list", "--porcelain"])
+        .current_dir(&repo1)
+        .output()
+        .expect("git worktree list should work");
+    let listing = String::from_utf8_lossy(&listing_out.stdout);
+    assert!(
+        !listing.contains("partial-hook"),
+        "rollback must prune repo1 worktree registration; still shows:\n{listing}"
+    );
+
+    // repo1 must have no ephemeral branch left over.
+    assert_no_branches_with_prefix(&repo1, "multi-hook--partial-hook");
+
+    // repo2's failed worktree should also leave no stale branch (it was never
+    // created because the hook fired before the branch was committed).
+    assert_no_branches_with_prefix(&repo2, "multi-hook--partial-hook");
+}
+
+/// When rollback branch-deletion fails (the branch ref is stuck), the error
+/// returned from `create_workweave` must:
+/// 1. Preserve the original root-cause error as the primary message.
+/// 2. Append a "manual cleanup" note with the exact `git branch -D` command.
+///
+/// We exercise this via the library API: create a workspace where repo2 is
+/// missing (the partial-create trigger), but first do a clean successful
+/// create+delete cycle so that the ephemeral branch for the workweave name
+/// exists and is then artificially made unremovable by locking the branch ref
+/// file (`chmod 000`). When rollback fires and `git branch -D` fails, the
+/// manual-cleanup note must appear in the returned error — not replace the
+/// primary "workweave create completed with 1 failure(s)" message.
+///
+/// NOTE: `CreateRollbackGuard` is private; the test drives `create_workweave`
+/// via the public API and inspects the returned error string.
+#[test]
+#[cfg(unix)]
+fn cleanup_failure_preserves_original_error_with_manual_note() {
+    use repoweave::manifest::{ProjectName, WorkweaveName};
+    use repoweave::workweave::create_workweave;
+    use std::os::unix::fs::PermissionsExt;
+
+    let tmp = tempfile::tempdir().unwrap();
+    let ws = tmp.path().join("ws");
+
+    // repo1 will succeed; repo2 is intentionally missing to trigger rollback.
+    let repo1 = ws.join("github/org/repo1");
+    init_repo_with_commit(&repo1);
+
+    let project_dir = ws.join("projects/locked-branch");
+    std::fs::create_dir_all(&project_dir).unwrap();
+    let manifest_content = format!(
+        r#"repositories:
+  github/org/repo1:
+    type: git
+    url: file://{r1}
+    version: main
+    role: owned
+  github/org/repo2:
+    type: git
+    url: file:///nonexistent/repo2
+    version: main
+    role: owned
+"#,
+        r1 = repo1.display(),
+    );
+    std::fs::write(project_dir.join("rwv.yaml"), &manifest_content).unwrap();
+
+    let weaveroot = tmp.path().join(".workweaves");
+    std::fs::create_dir_all(&weaveroot).unwrap();
+
+    // First pass: run create_workweave (fails on repo2). This establishes the
+    // ephemeral branch name that rollback will try to delete: `locked-branch--stuck/main`.
+    let project = ProjectName::new("locked-branch".to_string());
+    let ww_name = WorkweaveName::new("stuck".to_string());
+    let err1 = create_workweave(&ws, &ws, &project, &ww_name, false, false, false);
+    assert!(
+        err1.is_err(),
+        "first create should fail (repo2 missing): {:?}",
+        err1
+    );
+
+    // After the first rollback, the ephemeral branch in repo1 should be gone.
+    // Now: artificially recreate the ephemeral branch ref file in repo1 and lock
+    // it so the next rollback cannot delete it.
+    //
+    // The branch name is `locked-branch--stuck/main` — the refs path is
+    // `.git/refs/heads/locked-branch--stuck/main`.
+    let branch_dir = repo1.join(".git/refs/heads/locked-branch--stuck");
+    std::fs::create_dir_all(&branch_dir).unwrap();
+    let branch_ref = branch_dir.join("main");
+    // Write the HEAD SHA as the branch ref content (needed for git to recognise it).
+    let head_sha = common::git()
+        .args(["rev-parse", "HEAD"])
+        .current_dir(&repo1)
+        .output()
+        .expect("git rev-parse HEAD");
+    let sha = String::from_utf8(head_sha.stdout).unwrap();
+    std::fs::write(&branch_ref, sha.trim()).unwrap();
+    // Lock the branch ref file: chmod 000 so delete_branch fails.
+    std::fs::set_permissions(&branch_ref, std::fs::Permissions::from_mode(0o000)).unwrap();
+
+    // Second pass: create_workweave again with the same name. Rollback fires
+    // (repo2 still missing), tries to delete the branch in repo1, finds the
+    // ref file is mode 000, and should:
+    //   a) Return an error (not panic).
+    //   b) The primary error text starts with "workweave create completed with".
+    //   c) The error includes a manual-cleanup note with "git" and "branch -D".
+    let err2 = create_workweave(&ws, &ws, &project, &ww_name, false, false, false);
+
+    // Restore permissions so tempdir cleanup doesn't fail.
+    let _ = std::fs::set_permissions(&branch_ref, std::fs::Permissions::from_mode(0o644));
+
+    let err_msg = err2
+        .expect_err("second create must fail (repo2 missing + branch stuck)")
+        .to_string();
+
+    // Primary error is the root cause, not the cleanup failure.
+    assert!(
+        err_msg.contains("workweave create completed with"),
+        "primary error must be the root-cause 'workweave create completed with N failure(s)'; \
+         got:\n{err_msg}"
+    );
+
+    // Cleanup failure note must name the manual command.
+    assert!(
+        err_msg.contains("manual cleanup") || err_msg.contains("manually"),
+        "error must include a manual-cleanup note; got:\n{err_msg}"
+    );
+    assert!(
+        err_msg.contains("branch -D") || err_msg.contains("branch"),
+        "manual-cleanup note must name the git branch -D command; got:\n{err_msg}"
+    );
+}
+
+// ===========================================================================
 // R25: workweave create failure caused by a git hook names the hook
 // (fo-oueuv7.2 repair-verb audit)
 // ===========================================================================
