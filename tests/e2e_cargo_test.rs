@@ -316,3 +316,124 @@ fn cargo_release_version_pin_workflow() {
         "server version should be a non-empty SHA"
     );
 }
+
+/// R34 end-to-end regression (fo-t9x0l1.4): an out-of-band cargo invocation
+/// rewriting the fully-owned `Cargo.lock` as VALID TOML must surface a
+/// digest-mismatch WARNING in `rwv doctor` — pre-fix, doctor exited 0 with
+/// no report at all.
+///
+/// Drives the REAL accept-and-stamp path: `activate_intent` runs the cargo
+/// activation hook (`cargo generate-lockfile`), which stamps the accepted
+/// generation's SHA-256 into `.rwv-owned-digests`. The out-of-band mutation
+/// is a genuine cargo rewrite (member version bump + direct
+/// `cargo generate-lockfile`, not through rwv).
+///
+/// Also anchors the TL decision's exit-semantics claim: the finding is
+/// Warning severity, so doctor's exit status is UNCHANGED by the mutation
+/// (report-not-mandate).
+#[test]
+fn e2e_cargo_lock_out_of_band_rewrite_surfaces_digest_warning() {
+    // Skip if cargo is not available.
+    if which::which("cargo").is_err() {
+        eprintln!("skipping e2e_cargo_lock_out_of_band_rewrite: cargo not on PATH");
+        return;
+    }
+
+    let tmp = TempDir::new().unwrap();
+    let root = tmp.path();
+    setup_weave(root);
+
+    // ---- Step 1: activation runs the hook: generate-lockfile + stamp ----
+    repoweave::activate::activate_intent("web-app", root).expect("activate should succeed");
+
+    let project_lock = root.join("projects/web-app/Cargo.lock");
+    assert!(
+        project_lock.exists(),
+        "hook must have generated Cargo.lock into the project dir (via the symlink)"
+    );
+    let digests_path = root.join("projects/web-app/.rwv-owned-digests");
+    assert!(
+        digests_path.exists(),
+        "hook must stamp the accepted generation's digest at the accept moment"
+    );
+    let accepted_lock = std::fs::read_to_string(&project_lock).unwrap();
+
+    // ---- Step 2: doctor baseline — no digest-mismatch report ----
+    let out_clean = common::rwv()
+        .arg("doctor")
+        .current_dir(root)
+        .output()
+        .expect("rwv doctor should run");
+    let stdout_clean = String::from_utf8_lossy(&out_clean.stdout).to_string();
+    assert!(
+        !stdout_clean.contains("rwv-accepted generation"),
+        "freshly-stamped lock must not report a digest mismatch:\n{stdout_clean}"
+    );
+
+    // ---- Step 3: out-of-band cargo rewrite (valid TOML) ----
+    // Bump the protocol crate version and re-run cargo DIRECTLY (not through
+    // rwv) — exactly the R34 evidence shape. cargo rewrites the lock as
+    // valid TOML; the parse check cannot see this.
+    let protocol_manifest = root.join("github/chatly/protocol/Cargo.toml");
+    let manifest_text = std::fs::read_to_string(&protocol_manifest).unwrap();
+    std::fs::write(
+        &protocol_manifest,
+        manifest_text.replace("version = \"0.1.0\"", "version = \"0.9.9\""),
+    )
+    .unwrap();
+    let status = Command::new("cargo")
+        .arg("generate-lockfile")
+        .current_dir(root)
+        .status()
+        .expect("cargo generate-lockfile should run");
+    assert!(status.success(), "out-of-band cargo run should succeed");
+
+    let rewritten_lock = std::fs::read_to_string(&project_lock).unwrap();
+    assert_ne!(
+        accepted_lock, rewritten_lock,
+        "sanity: the out-of-band cargo run must actually rewrite the lock"
+    );
+
+    // ---- Step 4: doctor surfaces the WARNING; exit status unchanged ----
+    let out_drift = common::rwv()
+        .arg("doctor")
+        .current_dir(root)
+        .output()
+        .expect("rwv doctor should run");
+    let stdout_drift = String::from_utf8_lossy(&out_drift.stdout).to_string();
+    assert!(
+        stdout_drift.contains("differs from the last rwv-accepted generation"),
+        "doctor must report the digest mismatch (R34):\n{stdout_drift}"
+    );
+    assert!(
+        stdout_drift.contains("accept the new content"),
+        "finding must name the accept exit:\n{stdout_drift}"
+    );
+    assert!(
+        stdout_drift.contains("restore the file"),
+        "finding must name the restore exit:\n{stdout_drift}"
+    );
+    assert!(
+        stdout_drift.contains("[warning]"),
+        "digest mismatch must be warning severity:\n{stdout_drift}"
+    );
+    assert_eq!(
+        out_clean.status.code(),
+        out_drift.status.code(),
+        "warning severity must leave doctor's exit status unchanged \
+         (clean stdout:\n{stdout_clean}\ndrift stdout:\n{stdout_drift})"
+    );
+
+    // ---- Step 5: the ACCEPT exit — re-activation re-stamps → clean ----
+    repoweave::activate::activate_intent("web-app", root).expect("re-activate should succeed");
+    let out_restamped = common::rwv()
+        .arg("doctor")
+        .current_dir(root)
+        .output()
+        .expect("rwv doctor should run");
+    let stdout_restamped = String::from_utf8_lossy(&out_restamped.stdout).to_string();
+    assert!(
+        !stdout_restamped.contains("rwv-accepted generation"),
+        "re-activation must re-stamp and clear the finding:\n{stdout_restamped}"
+    );
+}

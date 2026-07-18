@@ -38,6 +38,13 @@ toml_edit = "0.22"
 # quoting so repo paths containing commas, quotes, or newlines are emitted as
 # valid CSV rather than corrupting the output.
 csv = "1"
+# Added for fo-t9x0l1.4 (recorded-digest verify of fully-owned generated
+# files). rwv cannot recompute ecosystem lockfile content (cargo/uv/npm own
+# the generation and it depends on registry state), so verify() compares
+# on-disk content against a SHA-256 digest recorded when rwv last accepted a
+# generation. `sha2` is the canonical RustCrypto implementation; pure
+# compute, no I/O or network.
+sha2 = "0.10"
 
 [dev-dependencies]
 tempfile = "3"

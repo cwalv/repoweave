@@ -1772,6 +1772,179 @@ pub fn fully_owned_parse_fail_issue(name: &str, path: &Path, detail: &str) -> Is
     }
 }
 
+// ===========================================================================
+// Recorded-digest verify for fully-owned generated files
+// ===========================================================================
+//
+// rwv cannot recompute an ecosystem lockfile's content: `cargo
+// generate-lockfile` (and `uv sync`, `npm install`, ...) own the generation
+// and their output depends on registry state, so regeneration-compare is
+// impossible in a read-only verify pass. Instead, the intent-side hook that
+// accepts a generation stamps a SHA-256 of the accepted bytes into a small
+// rwv-owned state file; `verify()` compares the current on-disk bytes
+// against the recorded digest. A mismatch means the file changed since rwv
+// last accepted it — a purely structural signal (no wall-clock, no
+// registry access).
+//
+// State file: `.rwv-owned-digests` next to the CANONICAL generated file
+// (the `.rwv-active` / `.rwv-op` naming family). Format: a flat JSON map
+// `filename -> "sha256:<hex>"` — room for future entries as more
+// integrations adopt the axis. The file is advisory bookkeeping: it is
+// wholly rewritten by the next stamp, so corruption is self-healing and
+// never worth failing a verify pass over.
+//
+// "Canonical" matters: generated files live in the project dir and are
+// SURFACED at the weave root via symlinks. The intent-side stamp runs with
+// `output_dir = project_dir` while doctor's verify runs against the
+// weave-root view (`output_dir = workspace root`, where the file is a
+// symlink). Both helpers therefore resolve symlinks on the file path and
+// anchor the state file to the resolved file's directory, so stamp and
+// check converge on ONE state file regardless of which view the caller
+// holds.
+//
+// cargo-workspace is the first consumer; uv/npm/pnpm lockfiles have the
+// identical story and can port by calling the same three helpers.
+
+/// File name of the rwv-owned digest state file, written next to the
+/// canonical (symlink-resolved) generated files it records.
+pub const OWNED_DIGESTS_FILE: &str = ".rwv-owned-digests";
+
+/// Outcome of comparing on-disk content against the recorded digest.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OwnedDigestCheck {
+    /// No digest recorded for this file (state file absent, entry absent, or
+    /// state file unparseable). Pre-upgrade workspaces land here — the axis
+    /// is skipped silently, never errored.
+    NotRecorded,
+    /// On-disk content matches the last rwv-accepted generation.
+    Matches,
+    /// On-disk content differs from the last rwv-accepted generation.
+    Differs,
+}
+
+/// SHA-256 of `content`, in the `"sha256:<hex>"` self-describing form the
+/// state file records.
+fn owned_digest(content: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    let mut hasher = Sha256::new();
+    hasher.update(content);
+    let digest = hasher.finalize();
+    let mut hex = String::with_capacity(7 + digest.len() * 2);
+    hex.push_str("sha256:");
+    for b in digest {
+        use std::fmt::Write;
+        let _ = write!(hex, "{b:02x}");
+    }
+    hex
+}
+
+/// Resolve where `file_path`'s digest state lives: the directory containing
+/// the symlink-RESOLVED file, plus the file's name (the map key).
+///
+/// This is the convergence trick described in the section comment: the
+/// stamp site holds the project-dir path while doctor's verify holds the
+/// weave-root symlink path, and both must land on the same state file. If
+/// the path cannot be canonicalized (file gone — callers check existence
+/// first, but stay total), fall back to the literal path.
+fn owned_digest_state_location(file_path: &Path) -> (std::path::PathBuf, Option<String>) {
+    let canonical = std::fs::canonicalize(file_path).unwrap_or_else(|_| file_path.to_path_buf());
+    let file_name = canonical
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned());
+    let dir = canonical
+        .parent()
+        .map(|p| p.to_path_buf())
+        .unwrap_or_else(|| std::path::PathBuf::from("."));
+    (dir, file_name)
+}
+
+/// Read the digest state map from `state_dir`, tolerating absence and
+/// corruption (both yield an empty map — the file is advisory bookkeeping
+/// that the next stamp rewrites wholesale).
+fn read_owned_digests(state_dir: &Path) -> BTreeMap<String, String> {
+    let path = state_dir.join(OWNED_DIGESTS_FILE);
+    let Ok(text) = std::fs::read_to_string(&path) else {
+        return BTreeMap::new();
+    };
+    serde_json::from_str(&text).unwrap_or_default()
+}
+
+/// Record `content`'s digest for the generated file at `file_path` in the
+/// state file next to the canonical (symlink-resolved) file, creating it if
+/// needed and preserving other files' entries.
+///
+/// Call this at the moment rwv ACCEPTS a generation — the end of the
+/// activation hook that ran the ecosystem generator. The stamp is what makes
+/// [`check_owned_digest`]'s mismatch axis meaningful: "differs from the last
+/// rwv-accepted generation".
+///
+/// An unparseable existing state file is replaced wholesale (its entries are
+/// unreadable anyway; the fresh stamp is the only recovery).
+pub fn stamp_owned_digest(file_path: &Path, content: &[u8]) -> anyhow::Result<()> {
+    let (state_dir, file_name) = owned_digest_state_location(file_path);
+    let Some(file_name) = file_name else {
+        anyhow::bail!(
+            "cannot stamp owned digest: {} has no file name",
+            file_path.display()
+        );
+    };
+    let mut map = read_owned_digests(&state_dir);
+    map.insert(file_name, owned_digest(content));
+    let path = state_dir.join(OWNED_DIGESTS_FILE);
+    let json = serde_json::to_string_pretty(&map)
+        .with_context(|| format!("serializing owned-digest state for {}", path.display()))?;
+    std::fs::write(&path, json)
+        .with_context(|| format!("writing owned-digest state {}", path.display()))?;
+    Ok(())
+}
+
+/// Compare `content` against the digest recorded for the generated file at
+/// `file_path` (state file resolved next to the canonical file — symlinked
+/// views converge with the stamp site).
+///
+/// Total (never errors): a missing state file, a missing entry, or an
+/// unparseable state file all yield [`OwnedDigestCheck::NotRecorded`] — the
+/// caller skips the axis silently. This is the backward-compat contract for
+/// pre-upgrade workspaces that have generated files but no digest state.
+pub fn check_owned_digest(file_path: &Path, content: &[u8]) -> OwnedDigestCheck {
+    let (state_dir, file_name) = owned_digest_state_location(file_path);
+    let Some(file_name) = file_name else {
+        return OwnedDigestCheck::NotRecorded;
+    };
+    let map = read_owned_digests(&state_dir);
+    match map.get(&file_name) {
+        None => OwnedDigestCheck::NotRecorded,
+        Some(recorded) if *recorded == owned_digest(content) => OwnedDigestCheck::Matches,
+        Some(_) => OwnedDigestCheck::Differs,
+    }
+}
+
+/// The canonical DRIFT-state issue for a **fully-owned** generated file whose
+/// on-disk content no longer matches the digest recorded when rwv last
+/// accepted a generation ([`stamp_owned_digest`]).
+///
+/// Report-not-mandate: the ecosystem tool rewriting its own lockfile is
+/// legitimate behavior the operator should SEE, not an error that fails
+/// doctor — so the severity is `Warning` and `safe_to_fix` is **false**
+/// (auto-repair would silently pick one of the two exits for the operator).
+/// The message names the file, the state, and BOTH exits: re-run activation
+/// (`rwv activate` or `rwv doctor --fix`) to accept the new content and
+/// re-stamp, or restore the file to the recorded state.
+pub fn fully_owned_digest_mismatch_issue(name: &str, path: &Path) -> Issue {
+    Issue {
+        integration: name.to_string(),
+        severity: Severity::Warning,
+        message: format!(
+            "{name} generated file has drift: {}; content differs from the last \
+             rwv-accepted generation. Re-run activation (rwv activate or \
+             rwv doctor --fix) to accept the new content and re-stamp, or \
+             restore the file to the recorded state",
+            path.display()
+        ),
+        safe_to_fix: false,
+    }
+}
+
 /// Sort + dedup a string slice into an owned `Vec`. Mirrors
 /// [`OwnedValue::sorted_array`]'s normalization so DRIFT comparison and the
 /// authored on-disk value use the same ordering and deduplication.
@@ -2739,6 +2912,202 @@ replace example.com/legacy => ./vendor/legacy
             assert!(i.safe_to_fix, "MISSING must be safe_to_fix=true");
             assert!(i.message.contains("managed file missing"));
             assert!(i.message.contains("rwv doctor --fix"));
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Recorded-digest verify: stamp_owned_digest / check_owned_digest /
+    // fully_owned_digest_mismatch_issue (fo-t9x0l1.4 / R34)
+    // -----------------------------------------------------------------------
+
+    mod owned_digests {
+        use super::*;
+
+        #[test]
+        fn check_without_state_file_is_not_recorded() {
+            let tmp = TempDir::new().unwrap();
+            assert_eq!(
+                check_owned_digest(&tmp.path().join("Cargo.lock"), b"anything"),
+                OwnedDigestCheck::NotRecorded,
+                "absent state file must skip silently (backward compat)"
+            );
+        }
+
+        #[test]
+        fn check_without_entry_is_not_recorded() {
+            let tmp = TempDir::new().unwrap();
+            stamp_owned_digest(&tmp.path().join("uv.lock"), b"other file").unwrap();
+            assert_eq!(
+                check_owned_digest(&tmp.path().join("Cargo.lock"), b"anything"),
+                OwnedDigestCheck::NotRecorded,
+                "state file present but no entry for this file must skip silently"
+            );
+        }
+
+        #[test]
+        fn stamp_then_check_same_content_matches() {
+            let tmp = TempDir::new().unwrap();
+            let lock = tmp.path().join("Cargo.lock");
+            stamp_owned_digest(&lock, b"version = 3\n").unwrap();
+            assert_eq!(
+                check_owned_digest(&lock, b"version = 3\n"),
+                OwnedDigestCheck::Matches
+            );
+        }
+
+        #[test]
+        fn stamp_then_check_mutated_content_differs() {
+            let tmp = TempDir::new().unwrap();
+            let lock = tmp.path().join("Cargo.lock");
+            stamp_owned_digest(&lock, b"version = 3\n").unwrap();
+            assert_eq!(
+                check_owned_digest(&lock, b"version = 4\n"),
+                OwnedDigestCheck::Differs,
+                "any byte-level mutation must be visible"
+            );
+        }
+
+        #[test]
+        fn restamp_updates_recorded_digest() {
+            let tmp = TempDir::new().unwrap();
+            let lock = tmp.path().join("Cargo.lock");
+            stamp_owned_digest(&lock, b"old").unwrap();
+            stamp_owned_digest(&lock, b"new").unwrap();
+            assert_eq!(
+                check_owned_digest(&lock, b"new"),
+                OwnedDigestCheck::Matches,
+                "re-stamp must accept the new content"
+            );
+            assert_eq!(
+                check_owned_digest(&lock, b"old"),
+                OwnedDigestCheck::Differs,
+                "the previously-recorded digest must be replaced"
+            );
+        }
+
+        #[test]
+        fn stamp_preserves_other_entries() {
+            let tmp = TempDir::new().unwrap();
+            let cargo_lock = tmp.path().join("Cargo.lock");
+            let uv_lock = tmp.path().join("uv.lock");
+            stamp_owned_digest(&cargo_lock, b"cargo bytes").unwrap();
+            stamp_owned_digest(&uv_lock, b"uv bytes").unwrap();
+            assert_eq!(
+                check_owned_digest(&cargo_lock, b"cargo bytes"),
+                OwnedDigestCheck::Matches,
+                "stamping a second file must not clobber the first entry"
+            );
+            assert_eq!(
+                check_owned_digest(&uv_lock, b"uv bytes"),
+                OwnedDigestCheck::Matches
+            );
+        }
+
+        #[test]
+        fn corrupt_state_file_is_not_recorded_and_stamp_recovers() {
+            let tmp = TempDir::new().unwrap();
+            let lock = tmp.path().join("Cargo.lock");
+            std::fs::write(tmp.path().join(OWNED_DIGESTS_FILE), "not json {{{").unwrap();
+            // Corrupt state never errors and never mis-reports: skip silently.
+            assert_eq!(
+                check_owned_digest(&lock, b"x"),
+                OwnedDigestCheck::NotRecorded,
+                "corrupt state file must be treated as advisory and skipped"
+            );
+            // A fresh stamp rewrites the file wholesale — self-healing.
+            stamp_owned_digest(&lock, b"x").unwrap();
+            assert_eq!(check_owned_digest(&lock, b"x"), OwnedDigestCheck::Matches);
+        }
+
+        #[test]
+        fn state_file_is_json_map_with_sha256_prefixed_digests() {
+            let tmp = TempDir::new().unwrap();
+            stamp_owned_digest(&tmp.path().join("Cargo.lock"), b"content").unwrap();
+            let text = std::fs::read_to_string(tmp.path().join(OWNED_DIGESTS_FILE)).unwrap();
+            let map: BTreeMap<String, String> = serde_json::from_str(&text).unwrap();
+            let digest = map.get("Cargo.lock").expect("entry must exist");
+            assert!(
+                digest.starts_with("sha256:"),
+                "digest must be self-describing: {digest}"
+            );
+            assert_eq!(
+                digest.len(),
+                7 + 64,
+                "sha256 hex digest must be 64 chars after the prefix: {digest}"
+            );
+        }
+
+        /// The convergence trick that makes doctor and activate agree: the
+        /// stamp site holds the canonical project-dir path while doctor's
+        /// verify holds a weave-root symlink path. Both must resolve to ONE
+        /// state file (next to the canonical file).
+        #[cfg(unix)]
+        #[test]
+        fn stamp_at_canonical_check_via_symlink_converge() {
+            let tmp = TempDir::new().unwrap();
+            let project_dir = tmp.path().join("projects/web-app");
+            std::fs::create_dir_all(&project_dir).unwrap();
+            let canonical = project_dir.join("Cargo.lock");
+            std::fs::write(&canonical, b"version = 3\n").unwrap();
+
+            // Weave-root symlink view (what doctor's verify sees).
+            let root_view = tmp.path().join("Cargo.lock");
+            std::os::unix::fs::symlink(&canonical, &root_view).unwrap();
+
+            // Stamp with the canonical path (activation-hook context).
+            stamp_owned_digest(&canonical, b"version = 3\n").unwrap();
+
+            // State file must be next to the canonical file, NOT the symlink.
+            assert!(
+                project_dir.join(OWNED_DIGESTS_FILE).exists(),
+                "state file must anchor to the canonical file's directory"
+            );
+            assert!(
+                !tmp.path().join(OWNED_DIGESTS_FILE).exists(),
+                "no state file at the symlink's directory"
+            );
+
+            // Check through the SYMLINK view converges on the same record.
+            assert_eq!(
+                check_owned_digest(&root_view, b"version = 3\n"),
+                OwnedDigestCheck::Matches,
+                "symlink view must find the canonical-side stamp"
+            );
+            assert_eq!(
+                check_owned_digest(&root_view, b"version = 4\n"),
+                OwnedDigestCheck::Differs,
+                "mutation must be visible through the symlink view too"
+            );
+
+            // And stamping through the symlink view updates the same record.
+            stamp_owned_digest(&root_view, b"version = 4\n").unwrap();
+            assert_eq!(
+                check_owned_digest(&canonical, b"version = 4\n"),
+                OwnedDigestCheck::Matches,
+                "symlink-side stamp must update the canonical record"
+            );
+        }
+
+        #[test]
+        fn mismatch_issue_shape() {
+            let tmp = TempDir::new().unwrap();
+            let path = tmp.path().join("Cargo.lock");
+            let i = fully_owned_digest_mismatch_issue("cargo-workspace", &path);
+            assert_eq!(i.integration, "cargo-workspace");
+            assert_eq!(
+                i.severity,
+                Severity::Warning,
+                "report-not-mandate: warning severity, doctor exit unchanged"
+            );
+            assert!(
+                !i.safe_to_fix,
+                "digest mismatch must NOT be auto-fixed — operator chooses an exit"
+            );
+            // House pattern: name the file, the state, and both exits.
+            assert!(i.message.contains("Cargo.lock"));
+            assert!(i.message.contains("last rwv-accepted generation"));
+            assert!(i.message.contains("accept the new content"));
+            assert!(i.message.contains("restore the file"));
         }
     }
 }

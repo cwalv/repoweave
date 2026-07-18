@@ -111,9 +111,10 @@
 
 use crate::integration::{Integration, IntegrationContext, Issue, Severity};
 use crate::integrations::merge::{
-    drift_issues, fully_owned_parse_fail_issue, keypath, merge_activate, missing_issue,
-    strip_deactivate, toml_array_strings, KeyPath, ManagedDoc, MergeResult, OwnedValue, Ownership,
-    TomlDoc,
+    check_owned_digest, drift_issues, fully_owned_digest_mismatch_issue,
+    fully_owned_parse_fail_issue, keypath, merge_activate, missing_issue, stamp_owned_digest,
+    strip_deactivate, toml_array_strings, KeyPath, ManagedDoc, MergeResult, OwnedDigestCheck,
+    OwnedValue, Ownership, TomlDoc,
 };
 use crate::manifest::{CargoWorkspaceConfig, MemberSpec, PatchMode};
 use anyhow::Context;
@@ -615,6 +616,29 @@ impl Integration for CargoWorkspace {
             );
         }
 
+        // Stamp the accepted generation's digest (recorded-digest verify,
+        // R34). This is the ACCEPT moment: rwv just ran the generator, so
+        // whatever cargo wrote is by definition the rwv-accepted content.
+        // `verify()` later compares on-disk bytes against this record; an
+        // out-of-band cargo rewrite (valid TOML — invisible to the parse
+        // check) then surfaces as a digest-mismatch WARNING. cargo wrote
+        // through the workspace-root symlink into the canonical file at
+        // output_dir (the surfacing step precedes hooks and intentionally
+        // creates dangling lockfile symlinks so generated content flows
+        // back into the project directory). The helper resolves symlinks
+        // and anchors the state file next to the CANONICAL file, so
+        // doctor's verify (which sees the weave-root symlink view)
+        // converges on the same record.
+        let lock_path = ctx.output_dir.join("Cargo.lock");
+        let lock_bytes = std::fs::read(&lock_path).with_context(|| {
+            format!(
+                "reading {} to record the accepted-generation digest",
+                lock_path.display()
+            )
+        })?;
+        stamp_owned_digest(&lock_path, &lock_bytes)
+            .context("recording accepted-generation digest for Cargo.lock")?;
+
         Ok(())
     }
 
@@ -648,20 +672,23 @@ impl Integration for CargoWorkspace {
     ///
     /// - **`Cargo.lock` (fully-owned, generated)** — see
     ///   [`Integration::generated_files`]. Fully-owned files never enter the
-    ///   USER-HELD state (that's a hybrid-managed-key concept); the two
+    ///   USER-HELD state (that's a hybrid-managed-key concept); the
     ///   observable states are:
     ///   - **MISSING** (`safe_to_fix = true`): file absent; `--fix` regenerates
     ///     via the ecosystem tool (`cargo generate-lockfile`).
-    ///   - **DRIFT** (`safe_to_fix = true`): file present but not parseable as
-    ///     TOML — a common shape for out-of-band mutation to leave behind.
-    ///     `--fix` regenerates.
-    ///   - **CLEAN**: file present and parseable.
-    ///
-    /// Deeper content-drift detection (e.g. detecting that cargo silently
-    /// rewrote pinned versions out-of-band, R34 in scope for future work) would
-    /// require either running `cargo generate-lockfile` (side-effectful +
-    /// network) or persisting a hash. The named repair verb is `rwv doctor
-    /// --fix`, which regenerates via [`Self::activate_hook`].
+    ///   - **DRIFT, parse-fail** (`safe_to_fix = true`): file present but not
+    ///     parseable as TOML. `--fix` regenerates.
+    ///   - **DRIFT, digest mismatch** (`safe_to_fix = false`,
+    ///     report-not-mandate): file present and parseable, but its bytes
+    ///     differ from the SHA-256 recorded when rwv last accepted a
+    ///     generation (the R34 headline — cargo rewriting the lock as valid
+    ///     TOML). rwv cannot recompute lock content (registry-dependent), so
+    ///     the recorded digest ([`stamp_owned_digest`], written by
+    ///     [`Self::activate_hook`] at the accept moment) is the structural
+    ///     signal. Two exits, both named in the finding: re-run activation
+    ///     to accept + re-stamp, or restore the file. Workspaces without
+    ///     digest state (pre-upgrade) skip this axis silently.
+    ///   - **CLEAN**: present, parseable, digest matches (or not recorded).
     fn verify(&self, ctx: &IntegrationContext) -> anyhow::Result<Vec<Issue>> {
         let cfg: CargoWorkspaceConfig = ctx.config.settings()?;
 
@@ -791,20 +818,27 @@ impl CargoWorkspace {
     }
 
     /// Verify the fully-owned `Cargo.lock`. See [`Self::verify`] for the
-    /// two-state semantics (MISSING / DRIFT / CLEAN; USER-HELD does not apply
+    /// state semantics (MISSING / DRIFT / CLEAN; USER-HELD does not apply
     /// to fully-owned files).
     ///
     /// This closes the R34 gap: previously `verify()` only inspected the
-    /// hybrid `Cargo.toml`, so a missing or corrupted `Cargo.lock` was
-    /// invisible to `rwv doctor`. Now doctor surfaces both file states with
-    /// the same `# managed by rwv` / `rwv doctor --fix` house pattern.
+    /// hybrid `Cargo.toml`, so any mutation of `Cargo.lock` was invisible to
+    /// `rwv doctor`. Three axes, cheapest first:
     ///
-    /// **Deep content-drift** (cargo silently rewrote pinned versions
-    /// out-of-band) is intentionally not attempted here — it would require
-    /// re-running `cargo generate-lockfile` (side-effectful + network) or
-    /// persisting a hash. The two shapes we DO catch are the ones that
-    /// break the workspace at build time: file missing (cargo can't run
-    /// against the workspace) or file corrupted (cargo refuses to parse).
+    /// 1. **MISSING** — file absent; `safe_to_fix=true`.
+    /// 2. **Parse-fail DRIFT** — present but unreadable/unparseable;
+    ///    `safe_to_fix=true` (`--fix` regenerates).
+    /// 3. **Recorded-digest DRIFT** — present, parseable, but the bytes
+    ///    differ from the SHA-256 recorded at the last rwv-accepted
+    ///    generation ([`Self::activate_hook`]'s stamp). This is the R34
+    ///    headline: cargo rewriting the lock as *valid TOML* is the common
+    ///    out-of-band mutation, and no parse check can see it. rwv cannot
+    ///    recompute lock content (registry-dependent), so the recorded
+    ///    digest is the structural signal. Report-not-mandate:
+    ///    `Severity::Warning`, `safe_to_fix=false` — the operator chooses
+    ///    between the two exits (re-run activation to accept + re-stamp, or
+    ///    restore the file). Workspaces with no digest state (pre-upgrade)
+    ///    skip this axis silently.
     fn verify_cargo_lock(&self, ctx: &IntegrationContext) -> Vec<Issue> {
         let path = ctx.output_dir.join("Cargo.lock");
 
@@ -844,8 +878,21 @@ impl CargoWorkspace {
             )];
         }
 
-        // Present and parseable → CLEAN.
-        vec![]
+        // ── DRIFT (recorded-digest mismatch) ──────────────────────────────
+        // The file is valid TOML but may still have been rewritten
+        // out-of-band since rwv last accepted a generation. Compare against
+        // the digest `activate_hook` stamped. The helper resolves symlinks,
+        // so this converges with the stamp regardless of whether `path` is
+        // the project-dir file (activate context) or the weave-root symlink
+        // (doctor context). `NotRecorded` (state file or entry absent, e.g.
+        // a pre-upgrade workspace) skips the axis silently — backward
+        // compat, never an error.
+        match check_owned_digest(&path, text.as_bytes()) {
+            OwnedDigestCheck::Differs => {
+                vec![fully_owned_digest_mismatch_issue(self.name(), &path)]
+            }
+            OwnedDigestCheck::Matches | OwnedDigestCheck::NotRecorded => vec![],
+        }
     }
 
     /// The owned key paths stripped on `deactivate(root)`. Static because

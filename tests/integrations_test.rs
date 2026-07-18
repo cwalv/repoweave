@@ -4907,6 +4907,265 @@ mod s7_cargo_doctor {
             post_issues[0].message
         );
     }
+
+    // -----------------------------------------------------------------------
+    // §7.8 Recorded-digest verify: cargo rewriting Cargo.lock as VALID TOML
+    //      (the R34 headline — invisible to the parse check).
+    //
+    // rwv cannot recompute lock content (cargo generate-lockfile output
+    // depends on registry state), so the activation hook stamps a SHA-256 of
+    // each accepted generation into `.rwv-owned-digests` (output_dir) and
+    // verify() compares. Report-not-mandate: WARNING severity,
+    // safe_to_fix=false, both exits named. Pre-upgrade workspaces (no digest
+    // state) skip the axis silently.
+    //
+    // These tests stamp via the same helper the hook calls
+    // (stamp_owned_digest) — the hook itself needs a real cargo run and is
+    // covered by the e2e battery in e2e_cargo_test.rs.
+    // -----------------------------------------------------------------------
+
+    use repoweave::integrations::merge::{stamp_owned_digest, OWNED_DIGESTS_FILE};
+
+    /// The R34 regression test proper.
+    ///
+    /// Given: Cargo.lock stamped at generation, then rewritten out-of-band
+    ///        as DIFFERENT but VALID TOML (what a cargo invocation does).
+    /// Then:  verify() reports a WARNING naming the file, the state
+    ///        ("differs from the last rwv-accepted generation"), and BOTH
+    ///        exits (accept via re-activation, or restore). NOT safe_to_fix
+    ///        — the operator chooses.
+    #[test]
+    fn s7_8_cargo_rewrite_valid_toml_reports_warning_with_both_exits() {
+        let (tmp, project, manifest, config, cache) = s7_6_fixture();
+        let root = tmp.path();
+
+        // The generation rwv accepted (simulating the activation hook's
+        // stamp — the hook itself needs real cargo; e2e covers it).
+        let accepted = "version = 3\n\n[[package]]\nname = \"mylib\"\nversion = \"0.1.0\"\n";
+        write_file(root, "Cargo.lock", accepted);
+        stamp_owned_digest(&root.join("Cargo.lock"), accepted.as_bytes()).unwrap();
+
+        // Out-of-band cargo rewrite: still perfectly valid TOML — the parse
+        // check CANNOT see this. (A dep version was bumped.)
+        let rewritten = "version = 3\n\n[[package]]\nname = \"mylib\"\nversion = \"0.2.0\"\n";
+        write_file(root, "Cargo.lock", rewritten);
+
+        let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+        let issues = CargoWorkspace.verify(&ctx).unwrap();
+        assert_eq!(
+            issues.len(),
+            1,
+            "expected exactly one digest-mismatch finding, got: {issues:?}"
+        );
+        let issue = &issues[0];
+        assert_eq!(
+            issue.severity,
+            Severity::Warning,
+            "report-not-mandate: warning severity keeps doctor exit semantics unchanged"
+        );
+        assert!(
+            !issue.safe_to_fix,
+            "digest mismatch must NOT be auto-fixed — the operator chooses an exit: {issue:?}"
+        );
+        // House pattern: name the file.
+        assert!(
+            issue.message.contains("Cargo.lock"),
+            "must name the file: {}",
+            issue.message
+        );
+        // Name the state.
+        assert!(
+            issue
+                .message
+                .contains("differs from the last rwv-accepted generation"),
+            "must name the state: {}",
+            issue.message
+        );
+        // Name BOTH exits.
+        assert!(
+            issue.message.contains("accept the new content"),
+            "must name the accept exit: {}",
+            issue.message
+        );
+        assert!(
+            issue.message.contains("restore the file"),
+            "must name the restore exit: {}",
+            issue.message
+        );
+    }
+
+    /// Given: digest mismatch (previous test's shape).
+    /// When:  activation re-runs and re-stamps (the ACCEPT exit — simulated
+    ///        via the same stamp helper the hook calls).
+    /// Then:  verify() is clean.
+    #[test]
+    fn s7_8_reactivation_restamp_returns_clean() {
+        let (tmp, project, manifest, config, cache) = s7_6_fixture();
+        let root = tmp.path();
+
+        write_file(root, "Cargo.lock", "version = 3\n");
+        stamp_owned_digest(&root.join("Cargo.lock"), b"version = 3\n").unwrap();
+
+        // Out-of-band rewrite → mismatch.
+        let rewritten = "version = 4\n";
+        write_file(root, "Cargo.lock", rewritten);
+        let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+        assert_eq!(
+            CargoWorkspace.verify(&ctx).unwrap().len(),
+            1,
+            "precondition: mismatch must be reported"
+        );
+
+        // ACCEPT exit: re-activation re-runs the hook, which re-stamps the
+        // now-current content.
+        stamp_owned_digest(&root.join("Cargo.lock"), rewritten.as_bytes()).unwrap();
+
+        let issues = CargoWorkspace.verify(&ctx).unwrap();
+        assert!(
+            issues.is_empty(),
+            "re-stamp must accept the new content (clean), got: {issues:?}"
+        );
+    }
+
+    /// Given: digest mismatch.
+    /// When:  the operator takes the RESTORE exit (puts the recorded content
+    ///        back, e.g. via VCS).
+    /// Then:  verify() is clean — without any re-stamp.
+    #[test]
+    fn s7_8_restore_exit_returns_clean_without_restamp() {
+        let (tmp, project, manifest, config, cache) = s7_6_fixture();
+        let root = tmp.path();
+
+        let accepted = "version = 3\n";
+        write_file(root, "Cargo.lock", accepted);
+        stamp_owned_digest(&root.join("Cargo.lock"), accepted.as_bytes()).unwrap();
+        write_file(root, "Cargo.lock", "version = 4\n");
+
+        let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+        assert_eq!(
+            CargoWorkspace.verify(&ctx).unwrap().len(),
+            1,
+            "precondition: mismatch must be reported"
+        );
+
+        // RESTORE exit: put the accepted bytes back.
+        write_file(root, "Cargo.lock", accepted);
+
+        let issues = CargoWorkspace.verify(&ctx).unwrap();
+        assert!(
+            issues.is_empty(),
+            "restoring the recorded content must be clean without re-stamp, got: {issues:?}"
+        );
+    }
+
+    /// Backward compat: a pre-upgrade workspace has a generated Cargo.lock
+    /// but NO digest state. The axis is skipped silently — present +
+    /// parseable stays CLEAN, exactly the pre-digest behavior.
+    #[test]
+    fn s7_8_no_digest_state_skips_axis_silently() {
+        let (tmp, project, manifest, config, cache) = s7_6_fixture();
+        let root = tmp.path();
+
+        // Any valid-TOML content; no .rwv-owned-digests anywhere.
+        write_file(root, "Cargo.lock", "version = 3\n");
+        assert!(!root.join(OWNED_DIGESTS_FILE).exists());
+
+        let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+        let issues = CargoWorkspace.verify(&ctx).unwrap();
+        assert!(
+            issues.is_empty(),
+            "no digest state must skip the axis silently (backward compat), got: {issues:?}"
+        );
+    }
+
+    /// Digest state must survive doctor --fix of OTHER issues untouched.
+    ///
+    /// Given: stamped Cargo.lock (digest matches) + a Cargo.toml DRIFT
+    ///        (stale members under markers — a safe_to_fix issue).
+    /// When:  the doctor --fix write path repairs the Cargo.toml drift
+    ///        (unit-level: activate(), which authors the hybrid file but
+    ///        does not run hooks).
+    /// Then:  `.rwv-owned-digests` is byte-identical, and verify() is fully
+    ///        clean (toml repaired; lock digest still matches).
+    #[test]
+    fn s7_8_digest_state_survives_fix_of_other_issues() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+
+        touch(root, "github/cwalv/mylib/Cargo.toml");
+
+        // Cargo.toml with markers but STALE members (drift: config expects
+        // mylib, file names a repo that no longer exists).
+        write_file(
+            root,
+            "Cargo.toml",
+            "[workspace]\n# managed by rwv\nmembers = [\"github/cwalv/oldlib\"]\n\
+             # managed by rwv\nresolver = \"2\"\n",
+        );
+
+        // Stamped, matching Cargo.lock.
+        let lock = "version = 3\n";
+        write_file(root, "Cargo.lock", lock);
+        stamp_owned_digest(&root.join("Cargo.lock"), lock.as_bytes()).unwrap();
+        let digest_before = std::fs::read_to_string(root.join(OWNED_DIGESTS_FILE)).unwrap();
+
+        let config = IntegrationConfig::default();
+        let manifest = make_manifest(vec![("github/cwalv/mylib", Role::Owned)]);
+        let project = ProjectName::new("test-project");
+        let cache = HashMap::new();
+        let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+
+        // Precondition: exactly one issue, and it is the Cargo.toml drift
+        // (safe_to_fix) — the lock axis is clean.
+        let pre = CargoWorkspace.verify(&ctx).unwrap();
+        assert_eq!(pre.len(), 1, "precondition: only the toml drift: {pre:?}");
+        assert!(pre[0].safe_to_fix && !pre[0].message.contains("Cargo.lock"));
+
+        // doctor --fix write path for the OTHER issue.
+        CargoWorkspace.activate(&ctx).unwrap();
+
+        // Digest state untouched.
+        let digest_after = std::fs::read_to_string(root.join(OWNED_DIGESTS_FILE)).unwrap();
+        assert_eq!(
+            digest_before, digest_after,
+            "fixing an unrelated issue must not touch the digest state"
+        );
+
+        // And everything is now clean.
+        let post = CargoWorkspace.verify(&ctx).unwrap();
+        assert!(
+            post.is_empty(),
+            "toml repaired + lock digest still matching must be clean, got: {post:?}"
+        );
+    }
+
+    /// Adversarial: parse-fail beats digest-compare. If the out-of-band
+    /// mutation left the lock UNPARSEABLE, the finding is the parse-fail
+    /// DRIFT (safe_to_fix=true — regeneration is the only sane exit), not a
+    /// digest mismatch on garbage bytes.
+    #[test]
+    fn s7_8_unparseable_mutation_reports_parse_fail_not_digest_mismatch() {
+        let (tmp, project, manifest, config, cache) = s7_6_fixture();
+        let root = tmp.path();
+
+        write_file(root, "Cargo.lock", "version = 3\n");
+        stamp_owned_digest(&root.join("Cargo.lock"), b"version = 3\n").unwrap();
+        // Mutation produced garbage, not valid TOML.
+        write_file(root, "Cargo.lock", "half a write [[[");
+
+        let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+        let issues = CargoWorkspace.verify(&ctx).unwrap();
+        assert_eq!(issues.len(), 1, "exactly one finding, got: {issues:?}");
+        assert!(
+            issues[0].safe_to_fix,
+            "parse-fail must win (regeneration is the exit): {issues:?}"
+        );
+        assert!(
+            issues[0].message.contains("rwv doctor --fix"),
+            "parse-fail names the regeneration verb: {}",
+            issues[0].message
+        );
+    }
 }
 
 // ===========================================================================

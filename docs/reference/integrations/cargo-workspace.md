@@ -241,3 +241,23 @@ and an emptied `[patch]` table are pruned. The file itself is deleted
 
 - A warning if `cargo` is not on PATH when Rust repos are present.
 - An error for every Rust repo that declares its own `[workspace]` without an opt-out — same diagnostic as activation, surfaced ahead of `rwv activate` / `rwv lock`.
+
+## Verify (drift)
+
+`rwv doctor` and context verbs (`rwv activate`, `rwv fetch`,
+workweave-create) also run the read-only verify pass:
+
+- **`Cargo.toml`** (hybrid): MISSING / DRIFT (both auto-fixable via
+  `rwv doctor --fix`) / USER-HELD (surfaced, never auto-overwritten) /
+  CLEAN — the shared four-state dispatch.
+- **`Cargo.lock`** (fully owned): MISSING and unparseable-content DRIFT are
+  auto-fixable (`--fix` regenerates via `cargo generate-lockfile`). A lock
+  that is present and parseable but whose bytes differ from the **last
+  rwv-accepted generation** is reported as a warning: the activation hook
+  records a SHA-256 of each accepted generation in `.rwv-owned-digests`
+  (next to the canonical lock in the project directory), and verify
+  compares. This catches an out-of-band `cargo` invocation rewriting the
+  lock as valid TOML. The finding is report-not-mandate — never
+  auto-repaired; the operator either re-runs activation (accepting and
+  re-stamping the new content) or restores the file. Workspaces without
+  digest state (pre-upgrade) skip this comparison silently.
