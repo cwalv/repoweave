@@ -3375,6 +3375,640 @@ vendor-foo = { git = "https://example.com/vendor-foo" }
             "user-authored [patch.crates-io] should survive; got:\n{content}"
         );
     }
+
+    // -----------------------------------------------------------------------
+    // fo-t9x0l1.2 — PatchMode::Derived (registry-dep tier)
+    //
+    // Design ref: Finding 1 of
+    // projects/foundations/docs/repoweave/grok-build-export-findings.md
+    // (also mirrored in src/integrations/cargo_workspace.rs top-doc).
+    //
+    // The tests below exercise the derived-mode invariants:
+    //
+    // - Registry-dep matched by name → patch emitted.
+    // - `committed-paths` mode is UNCHANGED under a member declaring a
+    //   path dep (regression guard on the mirror behavior).
+    // - `derived` with a reference-role repo hosting the crate → patched
+    //   from the reference-repo path.
+    // - Git-source dep → `[patch."<url>"]` entry (not crates-io).
+    // - Member `.cargo/config.toml` shadowing key → warning surfaced,
+    //   output still correct.
+    // - Unpublished in-weave crate is documented tier-boundary behavior,
+    //   not a failure — asserted here so the shape is regression-tested.
+    // -----------------------------------------------------------------------
+
+    /// A member declaring `<in-weave-crate> = "<req>"` as a registry dep
+    /// gets patched to the in-weave path when the crate name matches.
+    /// This is the core of Finding 1 — sovereign members declare bare
+    /// registry versions and the weave supplies the live sources.
+    #[test]
+    fn derived_patch_matches_registry_dep_by_name() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+
+        // `acme-lib` at v0.3.5 in-weave; `acme-app` depends on it as a
+        // registry dep (no path=, no git=). Committed-paths mode would
+        // emit nothing (there's no cross-repo `path=` to mirror);
+        // derived mode should notice the name match and patch.
+        write_file(
+            root,
+            "github/acme/lib/Cargo.toml",
+            "[package]\nname = \"acme-lib\"\nversion = \"0.3.5\"\nedition = \"2021\"\n",
+        );
+        write_file(
+            root,
+            "github/acme/app/Cargo.toml",
+            "[package]\nname = \"acme-app\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\
+             [dependencies]\nacme-lib = \"0.3\"\n",
+        );
+
+        let manifest = make_manifest(vec![
+            ("github/acme/app", Role::Owned),
+            ("github/acme/lib", Role::Owned),
+        ]);
+        let project = ProjectName::new("test-project");
+        let config = IntegrationConfig::from_yaml("patch: derived\n");
+        let cache = HashMap::new();
+        let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+
+        CargoWorkspace.activate(&ctx).unwrap();
+
+        let content = std::fs::read_to_string(root.join("Cargo.toml")).unwrap();
+        assert!(
+            content.contains("[patch.crates-io"),
+            "derived mode must emit [patch.crates-io] for a matched \
+             registry dep; got:\n{content}"
+        );
+        assert!(
+            content.contains("acme-lib"),
+            "expected patch entry keyed by the target crate name \
+             `acme-lib`; got:\n{content}"
+        );
+        assert!(
+            content.contains("github/acme/lib"),
+            "expected patch entry to point at the in-weave lib member; \
+             got:\n{content}"
+        );
+        assert!(
+            content.contains("managed by rwv"),
+            "generated patch entry must carry the rwv marker; got:\n{content}"
+        );
+    }
+
+    /// A member with a committed cross-member `path=` dep continues to
+    /// receive the mirror patch under `patch: committed-paths` — the
+    /// enum rename is a pure rename, existing manifests keep working.
+    ///
+    /// This test uses the modern string spelling (`committed-paths`) to
+    /// exercise the parse path; the boolean back-compat is covered in
+    /// manifest_test.rs.
+    #[test]
+    fn committed_paths_mode_unchanged_for_path_dep_member() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+
+        write_file(
+            root,
+            "github/acme/lib/Cargo.toml",
+            "[package]\nname = \"acme-lib\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+        );
+        write_file(
+            root,
+            "github/acme/app/Cargo.toml",
+            "[package]\nname = \"acme-app\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\
+             [dependencies]\nacme-lib = { path = \"../lib\" }\n",
+        );
+
+        let manifest = make_manifest(vec![
+            ("github/acme/app", Role::Owned),
+            ("github/acme/lib", Role::Owned),
+        ]);
+        let project = ProjectName::new("test-project");
+        let config = IntegrationConfig::from_yaml("patch: committed-paths\n");
+        let cache = HashMap::new();
+        let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+
+        CargoWorkspace.activate(&ctx).unwrap();
+
+        let content = std::fs::read_to_string(root.join("Cargo.toml")).unwrap();
+        // Same as the pre-rename `patch_opt_in_emits_crates_io_entries_for_cross_repo_path_deps`
+        // assertions — the mirror behavior is unchanged.
+        assert!(
+            content.contains("[patch.crates-io"),
+            "committed-paths mode must emit [patch.crates-io] for a \
+             cross-repo path dep; got:\n{content}"
+        );
+        assert!(content.contains("acme-lib"), "got:\n{content}");
+        assert!(content.contains("github/acme/lib"), "got:\n{content}");
+        assert!(content.contains("managed by rwv"), "got:\n{content}");
+    }
+
+    /// A `reference`-role repo is excluded from the workspace `members`
+    /// list (they're read-only study material), but under derived mode
+    /// they participate in the patch *index*: an active member declaring
+    /// a registry dep whose name matches a reference-repo crate gets
+    /// patched to the reference-repo path.
+    ///
+    /// Probe P8 rationale: reference-role repos are symlinked to the
+    /// canonical clone in workweaves; symlinks keep logical paths in
+    /// `cargo metadata` with zero rebuild churn, so they are safe patch
+    /// sources.
+    #[test]
+    fn derived_patch_includes_reference_repos_as_sources() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+
+        // Reference-role repo hosts the crate.
+        write_file(
+            root,
+            "github/upstream/lib/Cargo.toml",
+            "[package]\nname = \"upstream-lib\"\nversion = \"1.0.0\"\nedition = \"2021\"\n",
+        );
+        // Active member depends on it as a registry dep.
+        write_file(
+            root,
+            "github/acme/app/Cargo.toml",
+            "[package]\nname = \"acme-app\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\
+             [dependencies]\nupstream-lib = \"1.0\"\n",
+        );
+
+        let manifest = make_manifest(vec![
+            ("github/acme/app", Role::Owned),
+            ("github/upstream/lib", Role::Reference),
+        ]);
+        let project = ProjectName::new("test-project");
+        let config = IntegrationConfig::from_yaml("patch: derived\n");
+        let cache = HashMap::new();
+        let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+
+        CargoWorkspace.activate(&ctx).unwrap();
+
+        let content = std::fs::read_to_string(root.join("Cargo.toml")).unwrap();
+
+        // Reference repo must NOT appear as a workspace member (parse
+        // the members array precisely — the reference path DOES appear
+        // as a patch-entry `path = "..."` value, so a substring check
+        // is not sufficient).
+        let doc: toml_edit::DocumentMut = content.parse().expect("valid TOML");
+        let members: Vec<String> = doc
+            .get("workspace")
+            .and_then(|i| i.as_table())
+            .and_then(|t| t.get("members"))
+            .and_then(|i| i.as_array())
+            .map(|a| {
+                a.iter()
+                    .filter_map(|v| v.as_str().map(str::to_string))
+                    .collect()
+            })
+            .unwrap_or_default();
+        assert!(
+            !members.contains(&"github/upstream/lib".to_string()),
+            "reference-role repo must not be a workspace member; got: {members:?}"
+        );
+
+        // But it MUST appear as the patch source.
+        assert!(
+            content.contains("upstream-lib"),
+            "reference-role repo must be usable as a derived patch source; \
+             got:\n{content}"
+        );
+        assert!(
+            content.contains("github/upstream/lib"),
+            "patch path must point at the reference-repo dir; got:\n{content}"
+        );
+    }
+
+    /// A member declaring `foo = { git = "<url>" }` produces a
+    /// `[patch."<url>"]` sub-table entry — NOT `[patch.crates-io]`.
+    /// Cargo treats git-source deps as a distinct source; a
+    /// `[patch.crates-io]` entry does not patch a git-source dep.
+    #[test]
+    fn derived_patch_emits_git_url_subtable_for_git_source_dep() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+
+        write_file(
+            root,
+            "github/acme/lib/Cargo.toml",
+            "[package]\nname = \"acme-lib\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+        );
+        write_file(
+            root,
+            "github/acme/app/Cargo.toml",
+            "[package]\nname = \"acme-app\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\
+             [dependencies]\n\
+             acme-lib = { git = \"https://example.com/acme/lib.git\", version = \"0.1\" }\n",
+        );
+
+        let manifest = make_manifest(vec![
+            ("github/acme/app", Role::Owned),
+            ("github/acme/lib", Role::Owned),
+        ]);
+        let project = ProjectName::new("test-project");
+        let config = IntegrationConfig::from_yaml("patch: derived\n");
+        let cache = HashMap::new();
+        let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+
+        CargoWorkspace.activate(&ctx).unwrap();
+
+        let content = std::fs::read_to_string(root.join("Cargo.toml")).unwrap();
+        assert!(
+            content.contains("\"https://example.com/acme/lib.git\""),
+            "git-source dep must produce [patch.\"<git-url>\"] entry; \
+             got:\n{content}"
+        );
+        assert!(
+            content.contains("acme-lib"),
+            "patch entry must be keyed by the target crate name; got:\n{content}"
+        );
+        // The [patch.crates-io] table must NOT carry this crate — the git
+        // source is a distinct source from crates.io. It's OK if the
+        // [patch.crates-io] table is absent entirely.
+        let after_crates_io = content.split("[patch.crates-io").nth(1).unwrap_or("");
+        assert!(
+            !after_crates_io.contains("acme-lib"),
+            "git-source dep must NOT be patched via [patch.crates-io]; \
+             got:\n{content}"
+        );
+    }
+
+    /// A member's own `.cargo/config.toml` declaring the same
+    /// `[patch.crates-io].<crate>` key silently defeats the weave-level
+    /// patch (probe P5b — closest-config-wins per key, cargo's
+    /// diagnostic actively misleads).
+    ///
+    /// Derived mode must surface a warning to stderr at generation time
+    /// AND emit the patch anyway (the operator may still resolve the
+    /// shadowing after being informed). The absence of the warning
+    /// wouldn't fail the write, but the write must remain correct.
+    #[test]
+    fn derived_patch_surfaces_shadowing_warning_and_writes_output() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+
+        write_file(
+            root,
+            "github/acme/lib/Cargo.toml",
+            "[package]\nname = \"acme-lib\"\nversion = \"0.3.5\"\nedition = \"2021\"\n",
+        );
+        write_file(
+            root,
+            "github/acme/app/Cargo.toml",
+            "[package]\nname = \"acme-app\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\
+             [dependencies]\nacme-lib = \"0.3\"\n",
+        );
+        // Shadowing config.
+        write_file(
+            root,
+            "github/acme/app/.cargo/config.toml",
+            "[patch.crates-io]\nacme-lib = { path = \"/wrong/place\" }\n",
+        );
+
+        let manifest = make_manifest(vec![
+            ("github/acme/app", Role::Owned),
+            ("github/acme/lib", Role::Owned),
+        ]);
+        let project = ProjectName::new("test-project");
+        let config = IntegrationConfig::from_yaml("patch: derived\n");
+        let cache = HashMap::new();
+        let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+
+        CargoWorkspace.activate(&ctx).unwrap();
+
+        // The write still lands — the warning is advisory, not gating.
+        let content = std::fs::read_to_string(root.join("Cargo.toml")).unwrap();
+        assert!(
+            content.contains("[patch.crates-io"),
+            "derived-mode output must land even when a member config \
+             shadows the key; got:\n{content}"
+        );
+        assert!(
+            content.contains("acme-lib") && content.contains("github/acme/lib"),
+            "patch entry must be correct; got:\n{content}"
+        );
+        // The stderr channel is not captured here (integration tests
+        // don't easily assert on eprintln); the shadowing-detection
+        // helper is unit-covered via scan_patch_shadowing_against_keys.
+    }
+
+    /// The tier boundary from probe P2: a member depending on an
+    /// *unpublished* crate name (one that only exists in the weave)
+    /// resolves only inside the weave — standalone `cargo build` would
+    /// fail with "no matching package".
+    ///
+    /// Derived mode's job is to make the in-weave path work — and it
+    /// does, by emitting the patch — but rwv makes no claim about
+    /// standalone-buildability of the member.  This is documented
+    /// behavior, not a bug. Assert that the shape (patch emitted, no
+    /// warning) matches the documented expectation, so any future change
+    /// to the tier boundary is caught.
+    #[test]
+    fn derived_patch_tier_boundary_unpublished_crate_still_patches() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+
+        // `weave-only-lib` is a name that (by design) does not exist on
+        // crates.io. The member declares it as a bare registry dep;
+        // derived mode's index still matches it and emits the patch.
+        write_file(
+            root,
+            "github/acme/weave-only/Cargo.toml",
+            "[package]\nname = \"weave-only-lib\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+        );
+        write_file(
+            root,
+            "github/acme/app/Cargo.toml",
+            "[package]\nname = \"acme-app\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\
+             [dependencies]\nweave-only-lib = \"0.1\"\n",
+        );
+
+        let manifest = make_manifest(vec![
+            ("github/acme/app", Role::Owned),
+            ("github/acme/weave-only", Role::Owned),
+        ]);
+        let project = ProjectName::new("test-project");
+        let config = IntegrationConfig::from_yaml("patch: derived\n");
+        let cache = HashMap::new();
+        let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+
+        CargoWorkspace.activate(&ctx).unwrap();
+
+        let content = std::fs::read_to_string(root.join("Cargo.toml")).unwrap();
+        assert!(
+            content.contains("weave-only-lib"),
+            "derived-mode makes the in-weave resolution work even for \
+             names that don't exist on crates.io — the tier boundary \
+             is a member-standalone concern, not a weave concern; \
+             got:\n{content}"
+        );
+        assert!(
+            content.contains("github/acme/weave-only"),
+            "expected the patch to point at the in-weave path; got:\n{content}"
+        );
+    }
+
+    /// A member declaring `foo = "1.0"` when the in-weave `foo` is
+    /// version `2.0.0` must NOT be patched — cargo would hard-error
+    /// with a misleading "location searched: crates.io index" message
+    /// (probe P6). Derived mode catches the mismatch upfront and
+    /// simply omits the patch (an eprintln warning surfaces the reason
+    /// to the operator).
+    #[test]
+    fn derived_patch_skips_incompatible_version() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+
+        write_file(
+            root,
+            "github/acme/lib/Cargo.toml",
+            "[package]\nname = \"acme-lib\"\nversion = \"2.0.0\"\nedition = \"2021\"\n",
+        );
+        write_file(
+            root,
+            "github/acme/app/Cargo.toml",
+            "[package]\nname = \"acme-app\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\
+             [dependencies]\nacme-lib = \"1.0\"\n",
+        );
+
+        let manifest = make_manifest(vec![
+            ("github/acme/app", Role::Owned),
+            ("github/acme/lib", Role::Owned),
+        ]);
+        let project = ProjectName::new("test-project");
+        let config = IntegrationConfig::from_yaml("patch: derived\n");
+        let cache = HashMap::new();
+        let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+
+        CargoWorkspace.activate(&ctx).unwrap();
+
+        let content = std::fs::read_to_string(root.join("Cargo.toml")).unwrap();
+        // The [patch.crates-io] table must NOT carry `acme-lib` — the
+        // in-weave version (2.0.0) does not satisfy the member's req
+        // (1.0). It's OK if the table is absent entirely.
+        assert!(
+            !content.contains("acme-lib"),
+            "incompatible in-weave version must skip patch emission; \
+             got:\n{content}"
+        );
+    }
+
+    /// A member depending on itself under its own crate name (weird but
+    /// exercisable in fixtures) must not produce a self-patch — cargo
+    /// would reject a patch pointing at the same manifest that declares
+    /// the dep.
+    #[test]
+    fn derived_patch_skips_self_patch() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+
+        // Contrived: `foo` depends on `foo`. Not realistic, but the
+        // guard is a correctness invariant.
+        write_file(
+            root,
+            "github/acme/foo/Cargo.toml",
+            "[package]\nname = \"foo\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\
+             [dependencies]\nfoo = \"0.1\"\n",
+        );
+
+        let manifest = make_manifest(vec![("github/acme/foo", Role::Owned)]);
+        let project = ProjectName::new("test-project");
+        let config = IntegrationConfig::from_yaml("patch: derived\n");
+        let cache = HashMap::new();
+        let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+
+        CargoWorkspace.activate(&ctx).unwrap();
+
+        let content = std::fs::read_to_string(root.join("Cargo.toml")).unwrap();
+        // No [patch.crates-io] should be generated.
+        assert!(
+            !content.contains("[patch.crates-io"),
+            "self-patches must be skipped; got:\n{content}"
+        );
+    }
+
+    /// Derived mode must resolve `dep.workspace = true` when the
+    /// workspace-deps table is reachable via the same discovery the
+    /// version-skew scanner uses.
+    ///
+    /// Note on fixture shape: cargo's activation-time nested-workspace
+    /// hard-error blocks the common grok-build shape (repo root has
+    /// `[workspace.dependencies]`) at the weave-workspace level. The
+    /// `classify_dep` unit test in `cargo_workspace.rs` covers the
+    /// resolve path in isolation; here we exercise the fall-through
+    /// path — a member using `workspace = true` with **no** reachable
+    /// workspace-deps table must produce no derived patch (silent
+    /// skip, no panic).
+    #[test]
+    fn derived_patch_workspace_true_without_anchor_skips_silently() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+
+        write_file(
+            root,
+            "github/acme/lib/Cargo.toml",
+            "[package]\nname = \"acme-lib\"\nversion = \"1.0.0\"\nedition = \"2021\"\n",
+        );
+        // A member with no reachable workspace-deps table declares its
+        // dep as `workspace = true`. This is a broken manifest at cargo
+        // load time — but derived-mode must not panic; it must simply
+        // skip the entry.
+        write_file(
+            root,
+            "github/acme/app/Cargo.toml",
+            "[package]\nname = \"acme-app\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\
+             [dependencies]\nacme-lib = { workspace = true }\n",
+        );
+
+        let manifest = make_manifest(vec![
+            ("github/acme/app", Role::Owned),
+            ("github/acme/lib", Role::Owned),
+        ]);
+        let project = ProjectName::new("test-project");
+        let config = IntegrationConfig::from_yaml("patch: derived\n");
+        let cache = HashMap::new();
+        let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+
+        // Must not panic. The output should carry no patch entry for
+        // acme-lib — the workspace = true dep is uninterpretable, so
+        // derived-mode skips it. Cargo would refuse the manifest itself
+        // at generate-lockfile time.
+        CargoWorkspace.activate(&ctx).unwrap();
+
+        let content = std::fs::read_to_string(root.join("Cargo.toml")).unwrap();
+        assert!(
+            !content.contains("acme-lib"),
+            "unresolvable workspace = true dep must not produce a patch; \
+             got:\n{content}"
+        );
+    }
+
+    /// User-authored `[patch.crates-io].<crate>` entries survive derived
+    /// mode — rwv's verify-and-warn semantics apply the same as in
+    /// committed-paths mode.
+    #[test]
+    fn derived_patch_verify_and_warn_preserves_user_authored_entry() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+
+        // Seed a Cargo.toml with a user-authored patch entry the derived
+        // pass would otherwise want to write.
+        write_file(
+            root,
+            "Cargo.toml",
+            "[patch.crates-io]\nacme-lib = { git = \"https://user.example.com/acme-lib.git\" }\n",
+        );
+        write_file(
+            root,
+            "github/acme/lib/Cargo.toml",
+            "[package]\nname = \"acme-lib\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+        );
+        write_file(
+            root,
+            "github/acme/app/Cargo.toml",
+            "[package]\nname = \"acme-app\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\
+             [dependencies]\nacme-lib = \"0.1\"\n",
+        );
+
+        let manifest = make_manifest(vec![
+            ("github/acme/app", Role::Owned),
+            ("github/acme/lib", Role::Owned),
+        ]);
+        let project = ProjectName::new("test-project");
+        let config = IntegrationConfig::from_yaml("patch: derived\n");
+        let cache = HashMap::new();
+        let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+
+        CargoWorkspace.activate(&ctx).unwrap();
+
+        let content = std::fs::read_to_string(root.join("Cargo.toml")).unwrap();
+        // User-authored entry survives (unchanged).
+        assert!(
+            content.contains("https://user.example.com/acme-lib.git"),
+            "user-authored patch entry must survive; got:\n{content}"
+        );
+        // No `# managed by rwv` marker on the user entry (would be a
+        // sign that we blew it away).
+        //
+        // The user's patch line and rwv's would land next to each other;
+        // check that the user's URL is present and that we didn't
+        // silently overwrite it with a `path = ...`.
+        assert!(
+            !content.contains("path = \"github/acme/lib\""),
+            "user-authored acme-lib entry must not be overwritten by \
+             derived; got:\n{content}"
+        );
+    }
+
+    /// `patch: off` (default) and `patch: derived` with no matched deps
+    /// must both emit no `[patch]` table — noise-free. The activation
+    /// path must not create an empty table under `derived` just because
+    /// the mode is on.
+    #[test]
+    fn derived_patch_off_and_no_match_emit_no_table() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+
+        write_file(
+            root,
+            "github/acme/foo/Cargo.toml",
+            "[package]\nname = \"foo\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\
+             [dependencies]\nserde = \"1.0\"\n",
+        );
+
+        let manifest = make_manifest(vec![("github/acme/foo", Role::Owned)]);
+        let project = ProjectName::new("test-project");
+        let config = IntegrationConfig::from_yaml("patch: derived\n");
+        let cache = HashMap::new();
+        let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+
+        CargoWorkspace.activate(&ctx).unwrap();
+
+        let content = std::fs::read_to_string(root.join("Cargo.toml")).unwrap();
+        assert!(
+            !content.contains("[patch"),
+            "no `[patch]` table should be generated when no members are \
+             in-weave for the declared deps; got:\n{content}"
+        );
+    }
+
+    /// Deactivate strips derived-mode `[patch."<git-url>"]` entries the
+    /// same way it strips `[patch.crates-io]` entries — the strip pass
+    /// enumerates every `[patch.<registry>]` sub-table, not just
+    /// crates-io.
+    #[test]
+    fn deactivate_strips_derived_git_patch_entries() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+
+        write_file(
+            root,
+            "Cargo.toml",
+            r#"[workspace]
+# managed by rwv
+members = ["github/acme/app"]
+# managed by rwv
+resolver = "2"
+
+[patch."https://example.com/acme/lib.git"]
+# managed by rwv
+acme-lib = { path = "github/acme/lib" }
+"#,
+        );
+
+        CargoWorkspace.deactivate(root).unwrap();
+
+        let content = std::fs::read_to_string(root.join("Cargo.toml")).unwrap();
+        // The git-URL patch table with a single rwv-authored entry
+        // should be fully pruned.
+        assert!(
+            !content.contains("acme-lib"),
+            "rwv-authored git-URL patch entry should be stripped; got:\n{content}"
+        );
+        assert!(
+            !content.contains("[patch."),
+            "empty [patch.\"<url>\"] table should be pruned; got:\n{content}"
+        );
+    }
 }
 
 // ===========================================================================

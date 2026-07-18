@@ -53,16 +53,35 @@
 //! `[workspace.package]`. All other tables are user policy and survive
 //! every activate/deactivate cycle unmodified.
 //!
-//! **(c) Cross-repo path deps / `[patch]` opt-in.** Default
-//! (`patch: false`): all-internal — operators commit relative `path = "..."`
-//! deps in member manifests; rwv never touches them. When `patch: true`,
-//! `activate()` scans each member's `Cargo.toml` for cross-repo path deps
-//! (entries whose resolved path lands inside another known member dir) and
-//! writes `[patch.crates-io].<crate> = { path = "<member>" }` entries at the
-//! weave-root `Cargo.toml`, each decorated with the `# managed by rwv`
-//! marker. User-authored `[patch.crates-io]` entries are preserved
-//! (verify-and-warn at the entry level); `deactivate` strips only the
-//! marked entries, then prunes the table if empty.
+//! **(c) Cross-repo `[patch]` — three modes (`PatchMode`).**
+//!
+//! - `off` (default; also accepted as `patch: false`): all-internal —
+//!   operators commit relative `path = "..."` deps in member manifests;
+//!   rwv never touches `[patch]`.
+//! - `committed-paths` (also accepted as `patch: true`, pre-2026 behavior):
+//!   `activate()` scans each member's `Cargo.toml` for cross-repo path
+//!   deps (entries whose resolved path lands inside another known member
+//!   dir) and writes `[patch.crates-io].<crate> = { path = "<member>" }`
+//!   entries at the weave-root `Cargo.toml`.
+//! - `derived`: `activate()` builds an index of every in-weave crate
+//!   (member paths + reference-role repo paths) → package name, then
+//!   matches each member's **registry** deps by crate name and emits
+//!   `[patch.crates-io].<crate> = { path = "<in-weave>" }` entries.
+//!   Git-source deps emit `[patch."<git-url>"].<crate> = ...` entries.
+//!   Sovereign members declaring `beads-core = "0.3"` get the in-weave
+//!   fork without committing anything weave-relative. Version-incompatible
+//!   in-weave crates are skipped (with warning to stderr); a member's own
+//!   `.cargo/config.toml` shadowing the same key is surfaced at generation
+//!   time (probe P5b — cargo silently voids the weave entry).
+//!
+//! In both patch modes, each generated entry is decorated with the
+//! `# managed by rwv` marker. User-authored `[patch.crates-io]` entries
+//! are preserved (verify-and-warn at the entry level); `deactivate` strips
+//! only the marked entries, then prunes the table if empty.
+//!
+//! See Finding 1 of `docs/repoweave/grok-build-export-findings.md` for the
+//! derivation of the derived-mode design (and probes P2 / P6 / P8 for the
+//! tier-boundary / diagnostic / reference-role facts it depends on).
 //!
 //! **(d) Nested-workspace hard error.** Refinement: a repo listed under
 //! `members.<repo>` is exempt from the `declares_workspace()` check on its
@@ -95,12 +114,84 @@ use crate::integrations::merge::{
     drift_issues, keypath, merge_activate, missing_issue, strip_deactivate, toml_array_strings,
     KeyPath, ManagedDoc, MergeResult, OwnedValue, Ownership, TomlDoc,
 };
-use crate::manifest::{CargoWorkspaceConfig, MemberSpec};
+use crate::manifest::{CargoWorkspaceConfig, MemberSpec, PatchMode};
 use anyhow::Context;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 pub struct CargoWorkspace;
+
+/// One entry in the in-weave package-name index built during patch
+/// computation.
+///
+/// Keyed by weave-relative path in the outer map; the value carries the
+/// data both `PatchMode::CommittedPaths` and `PatchMode::Derived` need:
+/// crate name (patch key), declared version (for the derived-mode compat
+/// precheck), and canonicalized absolute path (for the committed-paths
+/// mode's `path = "..."` target resolution).
+#[derive(Debug, Clone)]
+struct PackageIndexEntry {
+    /// `[package].name` — the patch table key.
+    crate_name: String,
+    /// `[package].version` — used for the derived-mode compat check.
+    /// `None` when the manifest is a workspace root with no `[package]`
+    /// table, or when the version is inherited from `[workspace.package]`
+    /// (v1: not resolved through — see the code comment where this is set).
+    version: Option<String>,
+    /// Best-effort canonicalized absolute dir. Used by `compute_patches`
+    /// (committed-paths mode) to match `path = "..."` targets against
+    /// members regardless of workspace layout tricks.
+    absolute_dir: std::path::PathBuf,
+}
+
+/// One rwv-generated `[patch.<registry>].<crate>` entry to emit.
+///
+/// Used by both patch modes on the write side. Committed-paths mode
+/// synthesizes these with `registry = "crates-io"`; derived mode may set
+/// `registry` to a git URL when the source dep was a git-source dep.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct DerivedPatch {
+    /// Registry sub-table key — `crates-io` for the ordinary registry
+    /// tier, a git URL string for git-source deps.
+    registry: String,
+    /// The patch entry's key — the in-weave crate's `[package].name`.
+    /// Not the local dep-name (see the `[dependencies] foo = { package =
+    /// "bar" }` rename mechanism).
+    crate_name: String,
+    /// The `path = "<rel>"` value — weave-root-relative path to the
+    /// in-weave crate.
+    target_path: String,
+}
+
+/// The source shape of one dep entry, as classified for derived patching.
+///
+/// - `Registry`: has a `version` field (or is a bare string), and no
+///   `git` field. This is what `[patch.crates-io]` patches.
+/// - `Git(url)`: has a `git = "<url>"` field. This is what
+///   `[patch."<url>"]` patches (a git-source dep is a distinct source
+///   from crates.io and must be patched by URL).
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum DepSource {
+    Registry,
+    Git(String),
+}
+
+/// The classification result for one dep entry.
+///
+/// `crate_name` is `Some` when the dep uses cargo's rename mechanism
+/// (`foo = { package = "bar" }`) — the emitted patch must key by the
+/// real crate name (`bar`), not the local alias. `None` means the
+/// dep-name in the parent table is the crate name.
+///
+/// `requirement` is `Some` for registry deps that carry a version-req
+/// string. `None` for path-only sources, or git-source deps without a
+/// version pin (the compat precheck is skipped in both cases).
+#[derive(Debug, Clone)]
+struct DepShape {
+    source: DepSource,
+    crate_name: Option<String>,
+    requirement: Option<String>,
+}
 
 impl CargoWorkspace {
     /// Are there active cargo workspace contributions in this context?
@@ -355,22 +446,43 @@ impl Integration for CargoWorkspace {
         let _result: MergeResult = merge_activate::<TomlDoc>(&path, &owned)
             .with_context(|| format!("merge-activate {}", path.display()))?;
 
-        // When `cfg.patch == true`, opt the weave into rwv-generated `[patch]`
-        // entries for cross-repo path deps (plan §5a-c). Patch entries are
-        // dynamic (one per cross-repo path dep), not a fixed owned-key set,
-        // so they don't fit `merge_activate`'s static `(KeyPath, OwnedValue)`
+        // When `cfg.patch` opts in, generate `[patch]` entries. Patch entries
+        // are dynamic (one per matched dep), not a fixed owned-key set, so
+        // they don't fit `merge_activate`'s static `(KeyPath, OwnedValue)`
         // contract; we write them post-merge using toml_edit directly.
         //
-        // Each entry is an inline table `<crate> = { path = "<rel>" }` under
-        // `[patch.crates-io]`, decorated with the `# managed by rwv` marker
-        // on the leaf key so the strip-deactivate pass can discriminate
-        // rwv-authored entries from user-authored ones.
-        if cfg.patch {
-            let patches = Self::compute_patches(ctx, &members)
-                .context("computing cross-repo path-dep patches")?;
-            if !patches.is_empty() {
-                Self::merge_patch_entries(&path, &patches)
-                    .with_context(|| format!("merge-patch {}", path.display()))?;
+        // Each entry is an inline table `<crate> = { path = "<rel>" }`
+        // under `[patch.<registry>]` (`crates-io` for registry deps, the
+        // git URL for git-source deps), decorated with the
+        // `# managed by rwv` marker on the leaf key so the strip-deactivate
+        // pass can discriminate rwv-authored entries from user-authored
+        // ones.
+        //
+        // Dispatch on the operator's chosen mode:
+        //
+        // - `CommittedPaths` mirrors committed cross-member `path=` deps
+        //   into `[patch.crates-io]` (pre-2026 behavior).
+        // - `Derived` matches members' registry (and git) deps by crate
+        //   name against the in-weave package-name index, and runs the
+        //   `.cargo/config.toml` shadowing precheck before emitting.
+        match cfg.patch {
+            PatchMode::Off => {}
+            PatchMode::CommittedPaths => {
+                let patches = Self::compute_patches(ctx, &members)
+                    .context("computing cross-repo path-dep patches")?;
+                if !patches.is_empty() {
+                    Self::merge_patch_entries(&path, &patches)
+                        .with_context(|| format!("merge-patch {}", path.display()))?;
+                }
+            }
+            PatchMode::Derived => {
+                let patches = Self::compute_derived_patches(ctx, &members)
+                    .context("computing derived cross-repo patches")?;
+                Self::warn_derived_patch_shadowing(ctx, &members, &patches);
+                if !patches.is_empty() {
+                    Self::merge_patch_entries_multi_registry(&path, &patches)
+                        .with_context(|| format!("merge-patch {}", path.display()))?;
+                }
             }
         }
 
@@ -665,8 +777,60 @@ impl CargoWorkspace {
         Ok(())
     }
 
-    /// Compute the `[patch.crates-io]` entries rwv should generate, when
-    /// `cfg.patch == true`.
+    /// Index paths (weave-relative) → `PackageIndexEntry` describing the
+    /// crate that lives there.
+    ///
+    /// The key is the weave-relative member path; the value carries the
+    /// crate's `[package].name`, its `[package].version` (when present),
+    /// and the canonicalized absolute path (used for target-of-path-dep
+    /// comparison in `compute_patches`).
+    ///
+    /// Paths without a valid `<path>/Cargo.toml` with a `[package].name`
+    /// are silently skipped — they contribute nothing to either the
+    /// committed-paths mirror or the derived match. Nested workspace roots
+    /// with only `[workspace]` (no `[package]`) are one such case.
+    fn build_package_index(
+        ctx: &IntegrationContext,
+        paths: &[String],
+    ) -> anyhow::Result<BTreeMap<String, PackageIndexEntry>> {
+        let mut out: BTreeMap<String, PackageIndexEntry> = BTreeMap::new();
+        for p in paths {
+            let member_dir = ctx.workspace_root.join(p);
+            let cargo_toml = member_dir.join("Cargo.toml");
+            if !cargo_toml.exists() {
+                continue;
+            }
+            let text = std::fs::read_to_string(&cargo_toml)
+                .with_context(|| format!("reading {}", cargo_toml.display()))?;
+            let doc: toml_edit::DocumentMut = text
+                .parse()
+                .with_context(|| format!("parsing {}", cargo_toml.display()))?;
+            let Some(pkg) = doc.get("package").and_then(|i| i.as_table()) else {
+                continue;
+            };
+            let Some(name) = pkg.get("name").and_then(|i| i.as_str()) else {
+                continue;
+            };
+            let version = pkg
+                .get("version")
+                .and_then(|i| i.as_str())
+                .map(String::from);
+            let abs = std::fs::canonicalize(&member_dir).unwrap_or(member_dir.clone());
+            out.insert(
+                p.clone(),
+                PackageIndexEntry {
+                    crate_name: name.to_string(),
+                    version,
+                    absolute_dir: abs,
+                },
+            );
+        }
+        Ok(out)
+    }
+
+    /// Compute the `[patch.crates-io]` entries rwv should generate under
+    /// `PatchMode::CommittedPaths` — mirror each member's committed
+    /// cross-member `path = "<rel>"` deps into `[patch.crates-io]`.
     ///
     /// Approach (plan §5a-c, opt-in `[patch]` for publishable crates):
     ///
@@ -691,34 +855,15 @@ impl CargoWorkspace {
         ctx: &IntegrationContext,
         members: &[String],
     ) -> anyhow::Result<Vec<(String, String)>> {
-        // Index members by their canonicalized absolute on-disk path so we can
-        // match the resolved target of a `path = "..."` dep against them. The
-        // value side stores both the weave-root-relative member path (for the
-        // emitted `path = "<rel>"`) and the crate name (the patch table key).
+        let index = Self::build_package_index(ctx, members)?;
+        // Inverse: canonical dir → (weave-relative path, crate name).
+        // This is what we look up a `path = "..."` target against.
         let mut by_abs: BTreeMap<std::path::PathBuf, (String, String)> = BTreeMap::new();
-        for member in members {
-            let member_dir = ctx.workspace_root.join(member);
-            let cargo_toml = member_dir.join("Cargo.toml");
-            if !cargo_toml.exists() {
-                continue;
-            }
-            let text = std::fs::read_to_string(&cargo_toml)
-                .with_context(|| format!("reading {}", cargo_toml.display()))?;
-            let doc: toml_edit::DocumentMut = text
-                .parse()
-                .with_context(|| format!("parsing {}", cargo_toml.display()))?;
-            let Some(name) = doc
-                .get("package")
-                .and_then(|i| i.as_table())
-                .and_then(|t| t.get("name"))
-                .and_then(|i| i.as_str())
-            else {
-                continue;
-            };
-            // Best-effort canonicalize; fall back to the joined path so tests
-            // that don't `canonicalize()` test dirs still work.
-            let abs = std::fs::canonicalize(&member_dir).unwrap_or(member_dir.clone());
-            by_abs.insert(abs, (member.clone(), name.to_string()));
+        for (member_path, entry) in &index {
+            by_abs.insert(
+                entry.absolute_dir.clone(),
+                (member_path.clone(), entry.crate_name.clone()),
+            );
         }
 
         let mut patches: BTreeMap<String, String> = BTreeMap::new();
@@ -770,6 +915,234 @@ impl CargoWorkspace {
         Ok(patches.into_iter().collect())
     }
 
+    /// Compute the `[patch.<registry>]` entries rwv should generate under
+    /// `PatchMode::Derived` — match each member's *registry* / git-source
+    /// deps by crate name against the in-weave package-name index.
+    ///
+    /// Approach (Finding 1 of `grok-build-export-findings.md`, sub-bead
+    /// fo-t9x0l1.2):
+    ///
+    /// 1. Build a package-name index over the entire weave: every active
+    ///    workspace member **plus** every `reference`-role repo with a
+    ///    `Cargo.toml`. Reference-role repos are symlinked read-only study
+    ///    material in workweaves; probe P8 confirms symlinked directories
+    ///    keep logical paths, so they are safe patch sources with zero
+    ///    rebuild churn.
+    /// 2. For each workspace member (not reference — reference repos are
+    ///    only patch *sources*, not scan targets), walk `[dependencies]`,
+    ///    `[dev-dependencies]`, and `[build-dependencies]`. For every dep
+    ///    whose *name* matches the index:
+    ///    - **Git-source dep** (`{ git = "<url>", ... }`) → emit under
+    ///      `[patch."<url>"].<crate>`, keyed by the dep's git URL.
+    ///    - **Registry / workspace-inherit dep** → emit under
+    ///      `[patch.crates-io].<crate>`. Resolve `workspace = true` through
+    ///      the ancestor workspace-deps table (the same indirection the
+    ///      version-skew scanner already walks).
+    ///    - **Pure path-only dep** → skip (committed-paths mode's job).
+    ///    - **Self-patch** → skip (a member depending on itself under its
+    ///      own crate name).
+    /// 3. Precondition check: if the in-weave crate's `[package].version`
+    ///    does not satisfy the member's requirement string, skip the patch
+    ///    and warn to stderr. Cargo would otherwise hard-error at
+    ///    generate-lockfile time with a diagnostic that *blames crates.io*
+    ///    (probe P6) — surfacing the mismatch here beats cargo on both
+    ///    timing and clarity.
+    ///
+    /// Returns a sorted `Vec<DerivedPatch>` — one entry per emitted
+    /// `[patch.<registry>].<crate>` key. Order is (registry, crate_name)
+    /// for stable output.
+    fn compute_derived_patches(
+        ctx: &IntegrationContext,
+        members: &[String],
+    ) -> anyhow::Result<Vec<DerivedPatch>> {
+        // Reference-role repos are excluded from `partition()` /
+        // `scan_members` (they're not part of the build graph), but
+        // Finding 1 says they should be included in the patch *index*.
+        // Enumerate them here and merge with the members list before
+        // building the index.
+        let reference_repos: Vec<String> = ctx
+            .repos
+            .iter()
+            .filter(|(_, e)| !e.role.is_active())
+            .map(|(rp, _)| rp.as_str().to_string())
+            .filter(|p| ctx.workspace_root.join(p).join("Cargo.toml").exists())
+            .collect();
+
+        // Some reference-role repos may host sub-package crates rather
+        // than a root package — a full walk is out of scope for v1
+        // (parallels the existing member-root-only scan). Document the
+        // limitation via the fact that `build_package_index` silently
+        // skips paths without a `[package].name`.
+        let mut index_paths: Vec<String> = members.to_vec();
+        for p in &reference_repos {
+            if !index_paths.contains(p) {
+                index_paths.push(p.clone());
+            }
+        }
+        index_paths.sort();
+        index_paths.dedup();
+
+        let index = Self::build_package_index(ctx, &index_paths)?;
+
+        // Inverse index: crate_name → (in-weave path, in-weave version).
+        // Multiple sources sharing a crate name is a corner case (fixture
+        // shape rather than realistic weave); the first-inserted-wins order
+        // is stable because `index_paths` is sorted lexicographically.
+        let mut by_name: BTreeMap<String, (String, Option<String>)> = BTreeMap::new();
+        for (path, entry) in &index {
+            by_name
+                .entry(entry.crate_name.clone())
+                .or_insert_with(|| (path.clone(), entry.version.clone()));
+        }
+
+        // Registry sub-table key → crate name → DerivedPatch. The nested
+        // map dedupes multiple members declaring the same dep against the
+        // same in-weave source (they collapse to one emitted key).
+        let mut out: BTreeMap<String, BTreeMap<String, DerivedPatch>> = BTreeMap::new();
+
+        for member in members {
+            let member_dir = ctx.workspace_root.join(member);
+            let cargo_toml = member_dir.join("Cargo.toml");
+            if !cargo_toml.exists() {
+                continue;
+            }
+            let text = std::fs::read_to_string(&cargo_toml)
+                .with_context(|| format!("reading {}", cargo_toml.display()))?;
+            let doc: toml_edit::DocumentMut = text
+                .parse()
+                .with_context(|| format!("parsing {}", cargo_toml.display()))?;
+
+            // Workspace-deps anchor for resolving `dep.workspace = true`
+            // — same discovery the skew scanner uses.
+            let workspace_deps_doc: Option<toml_edit::DocumentMut> =
+                if extract_workspace_deps_table(&doc).is_some() {
+                    Some(doc.clone())
+                } else {
+                    find_ancestor_workspace_deps(ctx.workspace_root, member)
+                };
+
+            for deps_key in ["dependencies", "dev-dependencies", "build-dependencies"] {
+                let Some(deps) = doc.get(deps_key).and_then(|i| i.as_table()) else {
+                    continue;
+                };
+                for (dep_name, dep_item) in deps.iter() {
+                    let Some(shape) = classify_dep(dep_item, dep_name, workspace_deps_doc.as_ref())
+                    else {
+                        continue;
+                    };
+
+                    // Match by *crate name* against the in-weave index.
+                    // Cargo's rename mechanism (`foo = { package = "bar" }`)
+                    // means the key in the deps table is a local alias — the
+                    // patch must be keyed by the real crate name (`bar`).
+                    // Prefer `shape.crate_name` when the classifier resolved
+                    // one; otherwise fall back to `dep_name`.
+                    let crate_name = shape.crate_name.unwrap_or_else(|| dep_name.to_string());
+
+                    let Some((target_path, target_version)) = by_name.get(&crate_name) else {
+                        continue;
+                    };
+                    if target_path == member {
+                        // Self-patch. Skip.
+                        continue;
+                    }
+
+                    let registry = match &shape.source {
+                        DepSource::Registry => "crates-io".to_string(),
+                        DepSource::Git(url) => url.clone(),
+                    };
+
+                    // Version-compat precheck (only for registry deps that
+                    // carry a requirement string; git-source patches don't
+                    // do version compat this way).
+                    if let (DepSource::Registry, Some(req)) = (&shape.source, &shape.requirement) {
+                        if let Some(version) = target_version {
+                            if !version_satisfies(req, version) {
+                                eprintln!(
+                                    "[warning] cargo-workspace: skipping derived patch for \
+                                     `{crate_name}` — in-weave crate at `{target_path}` is \
+                                     version `{version}` which does not satisfy member \
+                                     `{member}`'s requirement `{req}`. Commit a compatible \
+                                     `[package].version` bump in `{target_path}/Cargo.toml`, \
+                                     or align the member's requirement."
+                                );
+                                continue;
+                            }
+                        }
+                        // Missing in-weave version: cannot check compat.
+                        // Emit anyway — cargo will error if wrong, which is
+                        // the same outcome as pre-derived. Not worse.
+                    }
+
+                    let dp = DerivedPatch {
+                        registry: registry.clone(),
+                        crate_name: crate_name.clone(),
+                        target_path: target_path.clone(),
+                    };
+                    out.entry(registry)
+                        .or_default()
+                        .entry(crate_name)
+                        .or_insert(dp);
+                }
+            }
+        }
+
+        // Flatten to a sorted Vec.
+        let mut flat: Vec<DerivedPatch> = out
+            .into_values()
+            .flat_map(|per_reg| per_reg.into_values())
+            .collect();
+        flat.sort_by(|a, b| {
+            a.registry
+                .cmp(&b.registry)
+                .then_with(|| a.crate_name.cmp(&b.crate_name))
+        });
+        Ok(flat)
+    }
+
+    /// Surface the same-key `.cargo/config.toml` shadowing warning at
+    /// generation time for the `[patch]` entries `PatchMode::Derived` is
+    /// about to emit. Called *before* the patches land on disk.
+    ///
+    /// Reuses [`Self::scan_patch_shadowing_against_keys`] under the hood.
+    /// Cargo's mismatch diagnostic actively misleads here (probe P6 — the
+    /// error blames crates.io), so beating cargo to the punch is not
+    /// optional polish.
+    fn warn_derived_patch_shadowing(
+        ctx: &IntegrationContext,
+        members: &[String],
+        patches: &[DerivedPatch],
+    ) {
+        if patches.is_empty() {
+            return;
+        }
+        // Reshape `patches` into the same {registry -> {crate_name ->
+        // weave_source_file}} shape `collect_patch_keys` produces. Sourced
+        // "from" the not-yet-written weave-root Cargo.toml.
+        let weave_source = ctx.output_dir.join("Cargo.toml");
+        let mut intended: BTreeMap<String, BTreeMap<String, std::path::PathBuf>> = BTreeMap::new();
+        for p in patches {
+            intended
+                .entry(p.registry.clone())
+                .or_default()
+                .insert(p.crate_name.clone(), weave_source.clone());
+        }
+
+        for rec in Self::scan_patch_shadowing_against_keys(ctx.workspace_root, members, intended) {
+            eprintln!(
+                "[warning] cargo-workspace: derived patch for `{}` in `[patch.{}]` will be \
+                 shadowed by `{}` — cargo's closest-config-wins per-key means the weave-level \
+                 patch is silently ignored for this member. Remove the `[patch.{}].{}` key \
+                 from the member's `.cargo/config.toml` to let the weave patch apply.",
+                rec.crate_name,
+                rec.registry,
+                rec.member_config.display(),
+                rec.registry,
+                rec.crate_name,
+            );
+        }
+    }
+
     /// Merge rwv-generated `[patch.crates-io].<crate>` entries into `path`
     /// (the weave-root `Cargo.toml`). Co-requisite of `strip_marked_patch_entries`.
     ///
@@ -781,8 +1154,43 @@ impl CargoWorkspace {
     /// Verify-and-warn semantics (matching the merge model): if a key is
     /// already present on disk and is NOT carrying the rwv marker, the user
     /// holds the pen — rwv leaves that entry alone.
+    ///
+    /// This is the `PatchMode::CommittedPaths` path — every entry lands in
+    /// `[patch.crates-io]`. The `PatchMode::Derived` path uses
+    /// [`Self::merge_patch_entries_multi_registry`] so it can also emit
+    /// `[patch."<git-url>"]` sub-tables for git-source deps.
     fn merge_patch_entries(path: &Path, patches: &[(String, String)]) -> anyhow::Result<()> {
+        // Lift into the multi-registry shape (registry="crates-io") and
+        // delegate. Keeps the write-and-marker logic in one place.
+        let derived: Vec<DerivedPatch> = patches
+            .iter()
+            .map(|(crate_name, target_path)| DerivedPatch {
+                registry: "crates-io".to_string(),
+                crate_name: crate_name.clone(),
+                target_path: target_path.clone(),
+            })
+            .collect();
+        Self::merge_patch_entries_multi_registry(path, &derived)
+    }
+
+    /// Merge rwv-generated `[patch.<registry>].<crate>` entries into `path`,
+    /// where `<registry>` is either `crates-io` or a git-source URL string
+    /// (the derived-mode git-tier target).
+    ///
+    /// Verify-and-warn semantics are identical to
+    /// [`Self::merge_patch_entries`]: user-authored entries (no rwv marker
+    /// on the leaf key) are left alone; rwv-marker entries are written.
+    /// The marker decor is idempotent — writing the same key twice does
+    /// not double-decorate.
+    fn merge_patch_entries_multi_registry(
+        path: &Path,
+        patches: &[DerivedPatch],
+    ) -> anyhow::Result<()> {
         use crate::integrations::merge::TOML_MARKER_TEXT;
+
+        if patches.is_empty() {
+            return Ok(());
+        }
 
         let text = if path.exists() {
             std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?
@@ -793,7 +1201,7 @@ impl CargoWorkspace {
             .parse()
             .with_context(|| format!("parsing {}", path.display()))?;
 
-        // Get-or-create `[patch.crates-io]`.
+        // Get-or-create `[patch]`.
         let patch = doc.as_table_mut().entry("patch").or_insert_with(|| {
             let mut t = toml_edit::Table::new();
             t.set_implicit(true);
@@ -803,19 +1211,21 @@ impl CargoWorkspace {
             toml_edit::Item::Table(t) => t,
             _ => anyhow::bail!("`patch` is present but is not a table"),
         };
-        let crates_io = patch_table
-            .entry("crates-io")
-            .or_insert_with(|| toml_edit::Item::Table(toml_edit::Table::new()));
-        let crates_io_table = match crates_io {
-            toml_edit::Item::Table(t) => t,
-            _ => anyhow::bail!("`patch.crates-io` is present but is not a table"),
-        };
 
-        for (crate_name, target_relpath) in patches {
+        for entry in patches {
+            let registry = entry.registry.as_str();
+            let sub = patch_table
+                .entry(registry)
+                .or_insert_with(|| toml_edit::Item::Table(toml_edit::Table::new()));
+            let sub_table = match sub {
+                toml_edit::Item::Table(t) => t,
+                _ => anyhow::bail!("`patch.{registry}` is present but is not a table"),
+            };
+
             // Verify-and-warn: if the user already authored this entry (no
             // rwv marker on the leaf), do not overwrite.
-            let user_holds_pen = crates_io_table
-                .key(crate_name.as_str())
+            let user_holds_pen = sub_table
+                .key(entry.crate_name.as_str())
                 .map(|k| {
                     let prefix = k
                         .leaf_decor()
@@ -825,7 +1235,7 @@ impl CargoWorkspace {
                     !prefix.contains(TOML_MARKER_TEXT)
                 })
                 .unwrap_or(false)
-                && crates_io_table.contains_key(crate_name.as_str());
+                && sub_table.contains_key(entry.crate_name.as_str());
             if user_holds_pen {
                 continue;
             }
@@ -834,16 +1244,16 @@ impl CargoWorkspace {
             let mut inline = toml_edit::InlineTable::new();
             inline.insert(
                 "path",
-                toml_edit::Value::String(toml_edit::Formatted::new(target_relpath.clone())),
+                toml_edit::Value::String(toml_edit::Formatted::new(entry.target_path.clone())),
             );
-            crates_io_table.insert(
-                crate_name.as_str(),
+            sub_table.insert(
+                entry.crate_name.as_str(),
                 toml_edit::Item::Value(toml_edit::Value::InlineTable(inline)),
             );
 
             // Attach the `# managed by rwv` marker on the leaf key,
             // idempotently and preserving any existing user decor lines.
-            if let Some(mut key_mut) = crates_io_table.key_mut(crate_name.as_str()) {
+            if let Some(mut key_mut) = sub_table.key_mut(entry.crate_name.as_str()) {
                 let decor = key_mut.leaf_decor_mut();
                 let existing = decor.prefix().and_then(|r| r.as_str()).unwrap_or("");
                 if !existing.contains(TOML_MARKER_TEXT) {
@@ -864,15 +1274,21 @@ impl CargoWorkspace {
         Ok(())
     }
 
-    /// Strip every rwv-marker-decorated entry under `[patch.crates-io]`,
-    /// then prune empty `[patch.crates-io]` and `[patch]` tables.
+    /// Strip every rwv-marker-decorated entry under any `[patch.<registry>]`
+    /// sub-table, then prune empty sub-tables and the `[patch]` table itself.
     ///
-    /// Co-requisite of the activate-time `[patch.crates-io]` generation: the
+    /// Co-requisite of the activate-time `[patch.*]` generation: the
     /// generic `strip_deactivate` only handles a static set of owned keys;
-    /// patch entries are dynamic (one per cross-repo path dep), so they're
+    /// patch entries are dynamic (one per cross-repo dep), so they're
     /// enumerated here. The marker decor on each key is the discriminator —
-    /// user-authored `[patch.crates-io].some-crate` entries (decorated by the
-    /// user, not by rwv) survive.
+    /// user-authored `[patch.<registry>].some-crate` entries (decorated by
+    /// the user, not by rwv) survive.
+    ///
+    /// Iterates every `[patch.<registry>]` sub-table (`crates-io` for
+    /// registry-tier derived patches, plus any `<git-url>` sub-tables for
+    /// git-source derived patches). This is important for
+    /// `PatchMode::Derived`, which writes into per-git-URL sub-tables in
+    /// addition to `crates-io`.
     fn strip_marked_patch_entries(path: &Path) -> anyhow::Result<()> {
         use crate::integrations::merge::TOML_MARKER_TEXT;
 
@@ -886,20 +1302,62 @@ impl CargoWorkspace {
             .with_context(|| format!("parsing {}", path.display()))?;
 
         let mut changed = false;
-        // Collect entries to remove under [patch.crates-io] whose key decor
-        // carries the rwv marker. (We avoid mutating while iterating.)
-        let to_remove: Vec<String> = doc
+
+        // Enumerate every sub-table of `[patch]` and, per sub-table,
+        // collect the crate-name keys whose decor carries the rwv marker.
+        // `to_remove_by_registry: registry -> [crate_name]`.
+        let registries: Vec<String> = doc
             .get("patch")
             .and_then(|i| i.as_table())
-            .and_then(|t| t.get("crates-io"))
+            .map(|t| t.iter().map(|(k, _)| k.to_string()).collect())
+            .unwrap_or_default();
+
+        for registry in &registries {
+            let to_remove: Vec<String> = doc
+                .get("patch")
+                .and_then(|i| i.as_table())
+                .and_then(|t| t.get(registry))
+                .and_then(|i| i.as_table())
+                .map(|t| {
+                    t.iter()
+                        .filter_map(|(name, _)| {
+                            let key = t.key(name)?;
+                            let prefix = key.leaf_decor().prefix().and_then(|r| r.as_str())?;
+                            if prefix.contains(TOML_MARKER_TEXT) {
+                                Some(name.to_string())
+                            } else {
+                                None
+                            }
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+
+            if !to_remove.is_empty() {
+                if let Some(sub) = doc
+                    .get_mut("patch")
+                    .and_then(|i| i.as_table_mut())
+                    .and_then(|t| t.get_mut(registry))
+                    .and_then(|i| i.as_table_mut())
+                {
+                    for name in &to_remove {
+                        sub.remove(name);
+                    }
+                    changed = true;
+                }
+            }
+        }
+
+        // Prune every emptied `[patch.<registry>]` sub-table.
+        let empty_registries: Vec<String> = doc
+            .get("patch")
             .and_then(|i| i.as_table())
             .map(|t| {
                 t.iter()
-                    .filter_map(|(name, _)| {
-                        let key = t.key(name)?;
-                        let prefix = key.leaf_decor().prefix().and_then(|r| r.as_str())?;
-                        if prefix.contains(TOML_MARKER_TEXT) {
-                            Some(name.to_string())
+                    .filter_map(|(k, v)| {
+                        let sub = v.as_table()?;
+                        if sub.is_empty() {
+                            Some(k.to_string())
                         } else {
                             None
                         }
@@ -907,31 +1365,11 @@ impl CargoWorkspace {
                     .collect()
             })
             .unwrap_or_default();
-
-        if !to_remove.is_empty() {
-            if let Some(crates_io) = doc
-                .get_mut("patch")
-                .and_then(|i| i.as_table_mut())
-                .and_then(|t| t.get_mut("crates-io"))
-                .and_then(|i| i.as_table_mut())
-            {
-                for name in &to_remove {
-                    crates_io.remove(name);
-                }
-                changed = true;
-            }
-        }
-
-        // Prune `[patch.crates-io]` if it's now empty.
-        let prune_crates_io = doc
-            .get("patch")
-            .and_then(|i| i.as_table())
-            .and_then(|t| t.get("crates-io"))
-            .and_then(|i| i.as_table())
-            .is_some_and(|t| t.is_empty());
-        if prune_crates_io {
+        if !empty_registries.is_empty() {
             if let Some(patch) = doc.get_mut("patch").and_then(|i| i.as_table_mut()) {
-                patch.remove("crates-io");
+                for k in &empty_registries {
+                    patch.remove(k);
+                }
                 changed = true;
             }
         }
@@ -1199,10 +1637,14 @@ impl CargoWorkspace {
     /// `.cargo/config.toml` found. Each collision produces one record —
     /// callers can group as they see fit.
     ///
-    /// Runs standalone (does not require `cfg.patch == true`) — it is the
-    /// mandatory precheck for the future derived-patches bead
-    /// (fo-t9x0l1.2), which relies on cargo actually applying the patches
-    /// generated.
+    /// Runs standalone (does not require `cfg.patch == true`) as a doctor
+    /// axis, and is the mandatory precheck for `PatchMode::Derived` — the
+    /// derived-patches path calls
+    /// [`Self::scan_patch_shadowing_against_keys`] with its intended
+    /// (not-yet-written) keys and surfaces the same findings at
+    /// generation time (cargo's mismatch diagnostic actively misleads —
+    /// probe P6, "location searched: crates.io index" — so beating cargo
+    /// to the punch is not optional polish).
     pub fn scan_patch_shadowing(
         workspace_root: &Path,
         members: &[String],
@@ -1218,6 +1660,26 @@ impl CargoWorkspace {
             &mut weave_keys,
         );
 
+        Self::scan_patch_shadowing_against_keys(workspace_root, members, weave_keys)
+    }
+
+    /// Same as [`Self::scan_patch_shadowing`], but the weave-level patch
+    /// keys come from the caller instead of being read from disk.
+    ///
+    /// Used by `PatchMode::Derived`'s generation-time precheck: at that
+    /// point the intended patch keys are known but not yet written, so the
+    /// on-disk read would miss them. Callers construct the same
+    /// `{registry -> {crate_name -> source_path}}` shape
+    /// `collect_patch_keys` builds; the `source_path` is what surfaces in
+    /// each record's `weave_config` field.
+    ///
+    /// An empty `weave_keys` yields an empty result — the shadowing scan
+    /// has nothing to shadow.
+    pub fn scan_patch_shadowing_against_keys(
+        workspace_root: &Path,
+        members: &[String],
+        weave_keys: BTreeMap<String, BTreeMap<String, std::path::PathBuf>>,
+    ) -> Vec<PatchShadowingRecord> {
         if weave_keys.is_empty() {
             return Vec::new();
         }
@@ -1455,6 +1917,234 @@ fn workspace_dep_requirement(doc: &toml_edit::DocumentMut, dep_name: &str) -> Op
     None
 }
 
+/// Classify one dep entry for derived-mode patching.
+///
+/// Returns:
+/// - `Some(DepShape { source: Registry, requirement: Some(...) })` for
+///   registry deps carrying a version-req (either directly, via
+///   `version = "..."`, or via `workspace = true` resolution).
+/// - `Some(DepShape { source: Git(url), ... })` for git-source deps —
+///   these emit `[patch."<url>"]` regardless of version-req presence.
+/// - `Some(DepShape { source: Registry, requirement: None })` for
+///   registry-shape deps with no version pin (e.g. `foo = { }` — cargo
+///   accepts this only in transitive contexts, but tests may exercise it).
+/// - `None` for path-only, workspace-inherit-with-no-anchor, or otherwise
+///   uninterpretable entries. These skip derived-patch emission.
+///
+/// Notes:
+/// - Cargo's rename mechanism (`foo = { package = "bar" }`) is
+///   surfaced via the `crate_name` field so the caller can key its patch
+///   by the real crate name, not the local alias.
+/// - `workspace = true` follows the same discovery as the version-skew
+///   scanner: if `workspace_deps_doc` carries a `[workspace.dependencies]`
+///   entry for this name, we resolve through it; otherwise we skip.
+fn classify_dep(
+    dep_item: &toml_edit::Item,
+    dep_name: &str,
+    workspace_deps_doc: Option<&toml_edit::DocumentMut>,
+) -> Option<DepShape> {
+    // Case 1: plain string version — `foo = "1.2"`. This is always
+    // registry, always keyed by `dep_name`.
+    if let Some(s) = dep_item.as_str() {
+        return Some(DepShape {
+            source: DepSource::Registry,
+            crate_name: None,
+            requirement: Some(s.to_string()),
+        });
+    }
+
+    // Case 2: inline or full-table dep. Extract the fields we care about
+    // via a small trait-object adapter so the two shapes share the code.
+    // The lambda returns `None` for entries that aren't a table at all —
+    // caught here (early return).
+    let (workspace_inherit, version_field, path_field, git_field, package_rename): (
+        bool,
+        Option<String>,
+        bool,
+        Option<String>,
+        Option<String>,
+    ) = extract_dep_fields(dep_item)?;
+
+    // Git wins over registry — cargo treats `git = "..."` as a distinct
+    // source; the `version` field on a git dep is a *req* on the git
+    // source's `[package].version`, not a crates.io lookup. Derived
+    // patching for a git dep emits under `[patch."<url>"]`.
+    if let Some(url) = git_field {
+        return Some(DepShape {
+            source: DepSource::Git(url),
+            crate_name: package_rename,
+            requirement: version_field,
+        });
+    }
+
+    // workspace = true — resolve through the ancestor workspace-deps
+    // table. Recursion is bounded (workspace-deps entries with their own
+    // workspace = true is ill-formed).
+    if workspace_inherit {
+        let doc = workspace_deps_doc?;
+        // Look up the workspace-deps entry for this name and re-run its
+        // classification. If the workspace-deps entry doesn't resolve
+        // (missing table, `path = ...`, or other shape), skip the dep.
+        let table = extract_workspace_deps_table(doc)?;
+        let item = table.get(dep_name)?;
+        let inner = classify_dep(item, dep_name, None)?;
+        // Preserve any local `package = "..."` rename over the
+        // workspace-inherited one — the local rename is what determines
+        // the crate name for cargo resolution.
+        return Some(DepShape {
+            source: inner.source,
+            crate_name: package_rename.or(inner.crate_name),
+            requirement: inner.requirement,
+        });
+    }
+
+    // Path-only (no git, no version). Not a derived-patch candidate —
+    // it's committed-paths' job.
+    if path_field && version_field.is_none() {
+        return None;
+    }
+
+    // Registry dep (bare version, or version + path).
+    Some(DepShape {
+        source: DepSource::Registry,
+        crate_name: package_rename,
+        requirement: version_field,
+    })
+}
+
+/// Shape-agnostic field extraction for a dep entry.
+///
+/// Cargo accepts a dep as either an inline-table
+/// (`foo = { version = "1", features = [...] }`) or a full sub-table
+/// (`[dependencies.foo] version = "1"`). Both expose the same conceptual
+/// fields; this helper pulls them in one shape regardless of TOML flavor.
+///
+/// Returns `None` when the value is neither an inline-table nor a
+/// sub-table (e.g. a plain string dep — handled up-stack by
+/// [`classify_dep`]).
+///
+/// Fields (in return order):
+/// - `workspace = true` boolean.
+/// - `version` field.
+/// - Whether a `path` field is present (its value is unused here — the
+///   committed-paths mode is a separate path in `compute_patches`).
+/// - `git` URL, if any.
+/// - `package` rename, if any.
+type DepFieldsTuple = (bool, Option<String>, bool, Option<String>, Option<String>);
+
+fn extract_dep_fields(dep_item: &toml_edit::Item) -> Option<DepFieldsTuple> {
+    if let Some(inline) = dep_item.as_inline_table() {
+        return Some((
+            inline.get("workspace").and_then(|v| v.as_bool()) == Some(true),
+            inline
+                .get("version")
+                .and_then(|v| v.as_str())
+                .map(str::to_string),
+            inline.contains_key("path"),
+            inline
+                .get("git")
+                .and_then(|v| v.as_str())
+                .map(str::to_string),
+            inline
+                .get("package")
+                .and_then(|v| v.as_str())
+                .map(str::to_string),
+        ));
+    }
+    let table = dep_item.as_table()?;
+    Some((
+        table.get("workspace").and_then(|i| i.as_bool()) == Some(true),
+        table
+            .get("version")
+            .and_then(|i| i.as_str())
+            .map(str::to_string),
+        table.contains_key("path"),
+        table
+            .get("git")
+            .and_then(|i| i.as_str())
+            .map(str::to_string),
+        table
+            .get("package")
+            .and_then(|i| i.as_str())
+            .map(str::to_string),
+    ))
+}
+
+/// Best-effort version-req satisfaction check for the derived-mode patch
+/// precheck.
+///
+/// v1 fidelity — matches the version-skew scanner's "string-first, don't
+/// pull in a semver resolver" bar (Finding 3 comment: `noisy is safer than
+/// silent`). Rules:
+///
+/// 1. Exact byte-equal (after trimming whitespace and stripping a leading
+///    caret/tilde/`=`) is satisfied.
+/// 2. Otherwise, split each on `.` and check that the version's
+///    components element-wise match the requirement's non-`*` components.
+///    A trailing wildcard (`*`) in the requirement matches any suffix.
+///    A shorter requirement (e.g. `"1.2"`) is satisfied by any version
+///    whose leading components match (`"1.2.3"`, `"1.2.99"`).
+///
+/// This is intentionally *narrower* than cargo's caret semantics: it does
+/// not accept `"0.3.5"` as satisfying requirement `"0.3.0"` even though
+/// cargo would, because a full semver-req implementation is out of scope
+/// for v1 (guidance in the bead: "do NOT add a heavy resolver"). The
+/// consequence is the precheck may skip *some* patches cargo would accept
+/// — but it will never *emit* one cargo rejects, which is the direction
+/// that matters (a broken patch produces cargo's misleading crates.io
+/// error at generate-lockfile time — probe P6).
+///
+/// Empty inputs: an empty requirement is treated as satisfied by anything
+/// (defensive default — a caller that produces `Some("")` is deliberately
+/// broken, not this function's problem). An empty version cannot satisfy
+/// a non-empty requirement.
+fn version_satisfies(requirement: &str, version: &str) -> bool {
+    let req = requirement
+        .trim()
+        .trim_start_matches(|c: char| c == '^' || c == '~' || c == '=' || c.is_whitespace());
+    let ver = version.trim();
+
+    if req.is_empty() {
+        return true;
+    }
+    if ver.is_empty() {
+        return false;
+    }
+    if req == ver {
+        return true;
+    }
+
+    // If the requirement carries any comparator that indicates a range or
+    // exclusive bound we don't model (e.g. `>=`, `<`, `>`, `<=`, `,`), be
+    // conservative and treat as satisfied — we cannot rule the version
+    // out with v1 fidelity, and false negatives would surface as
+    // gratuitous warnings that mask real problems. Cargo will still catch
+    // a truly wrong version at generate-lockfile time.
+    if requirement.contains("<") || requirement.contains(">") || requirement.contains(",") {
+        return true;
+    }
+
+    // Component-wise prefix match.
+    let req_parts: Vec<&str> = req.split('.').collect();
+    let ver_parts: Vec<&str> = ver.split('.').collect();
+
+    if req_parts.len() > ver_parts.len() {
+        // Requirement is more specific than the version can be — mismatch.
+        // (e.g. req `"1.2.3"` vs ver `"1.2"`).
+        return false;
+    }
+
+    for (r, v) in req_parts.iter().zip(ver_parts.iter()) {
+        if *r == "*" {
+            return true;
+        }
+        if r != v {
+            return false;
+        }
+    }
+    true
+}
+
 // ===========================================================================
 // Unit tests
 // ===========================================================================
@@ -1522,5 +2212,143 @@ mod tests {
     fn member_spec_resolve_empty_include_is_empty() {
         let spec = MemberSpec::default();
         assert!(resolve_member_spec(&spec).is_empty());
+    }
+
+    // -----------------------------------------------------------------------
+    // version_satisfies — derived-mode compat precheck
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn version_satisfies_exact_match() {
+        assert!(version_satisfies("1.2.3", "1.2.3"));
+    }
+
+    #[test]
+    fn version_satisfies_caret_prefix_stripped() {
+        assert!(version_satisfies("^1.2.3", "1.2.3"));
+        assert!(version_satisfies("~1.2.3", "1.2.3"));
+        assert!(version_satisfies("=1.2.3", "1.2.3"));
+    }
+
+    #[test]
+    fn version_satisfies_less_specific_requirement() {
+        // req "1.2" — any 1.2.x version satisfies.
+        assert!(version_satisfies("1.2", "1.2.3"));
+        assert!(version_satisfies("1.2", "1.2.0"));
+        // req "1" — any 1.x satisfies.
+        assert!(version_satisfies("1", "1.2.3"));
+    }
+
+    #[test]
+    fn version_satisfies_wildcard_component() {
+        assert!(version_satisfies("1.*", "1.5.99"));
+    }
+
+    #[test]
+    fn version_satisfies_mismatch() {
+        // Major differs.
+        assert!(!version_satisfies("2.0", "1.9.9"));
+        // Requirement more specific than version.
+        assert!(!version_satisfies("1.2.3", "1.2"));
+    }
+
+    #[test]
+    fn version_satisfies_conservative_on_range_ops() {
+        // We don't model `>=` / `<` — treat conservatively as satisfied
+        // so the precheck never blocks a patch it can't confidently rule
+        // out. Cargo will still hard-error at generate-lockfile time if
+        // the version is truly wrong.
+        assert!(version_satisfies(">=1.2, <2.0", "1.5.0"));
+        assert!(version_satisfies("<0.5", "0.4.0"));
+    }
+
+    #[test]
+    fn version_satisfies_empty_requirement() {
+        // Defensive default: an empty req string is treated as satisfied.
+        assert!(version_satisfies("", "0.1.0"));
+    }
+
+    #[test]
+    fn version_satisfies_narrower_than_cargo_semver() {
+        // v1 fidelity is documented as narrower than caret semver. Cargo
+        // would accept 0.3.5 for req 0.3.0 (`^0.3.0` = `>=0.3.0, <0.4.0`),
+        // but our string-first prefix check does not — because we cannot
+        // model caret without a semver crate. Documented in the fn docs;
+        // asserted here so any future upgrade to a real resolver is
+        // caught by this test flipping.
+        assert!(!version_satisfies("0.3.0", "0.3.5"));
+    }
+
+    // -----------------------------------------------------------------------
+    // classify_dep — shape recognition for derived patches
+    // -----------------------------------------------------------------------
+
+    fn parse_dep(dep_line: &str) -> (String, toml_edit::Item) {
+        let doc: toml_edit::DocumentMut = format!("[deps]\n{dep_line}\n").parse().unwrap();
+        let deps = doc.get("deps").and_then(|i| i.as_table()).unwrap();
+        let (name, item) = deps.iter().next().unwrap();
+        (name.to_string(), item.clone())
+    }
+
+    #[test]
+    fn classify_dep_bare_string_is_registry() {
+        let (name, item) = parse_dep("foo = \"1.2\"");
+        let shape = classify_dep(&item, &name, None).unwrap();
+        assert!(matches!(shape.source, DepSource::Registry));
+        assert_eq!(shape.requirement.as_deref(), Some("1.2"));
+        assert_eq!(shape.crate_name, None);
+    }
+
+    #[test]
+    fn classify_dep_git_source_wins() {
+        let (name, item) =
+            parse_dep(r#"foo = { git = "https://example.com/foo.git", version = "1.0" }"#);
+        let shape = classify_dep(&item, &name, None).unwrap();
+        match shape.source {
+            DepSource::Git(url) => assert_eq!(url, "https://example.com/foo.git"),
+            _ => panic!("expected Git source"),
+        }
+    }
+
+    #[test]
+    fn classify_dep_package_rename_surfaces_crate_name() {
+        let (name, item) =
+            parse_dep(r#"local_alias = { version = "1.0", package = "real_crate" }"#);
+        let shape = classify_dep(&item, &name, None).unwrap();
+        assert_eq!(shape.crate_name.as_deref(), Some("real_crate"));
+    }
+
+    #[test]
+    fn classify_dep_path_only_skipped() {
+        let (name, item) = parse_dep(r#"foo = { path = "../foo" }"#);
+        assert!(classify_dep(&item, &name, None).is_none());
+    }
+
+    #[test]
+    fn classify_dep_path_plus_version_registry() {
+        // Some manifests declare `foo = { path = "../foo", version = "1.0" }`
+        // to keep the crate publishable while dev-building from source.
+        // In derived mode this is still a registry dep (has a version),
+        // and the patch is desirable — the operator opted in.
+        let (name, item) = parse_dep(r#"foo = { path = "../foo", version = "1.0" }"#);
+        let shape = classify_dep(&item, &name, None).unwrap();
+        assert!(matches!(shape.source, DepSource::Registry));
+        assert_eq!(shape.requirement.as_deref(), Some("1.0"));
+    }
+
+    #[test]
+    fn classify_dep_workspace_inherit_resolves_through() {
+        let ws_doc: toml_edit::DocumentMut =
+            "[workspace.dependencies]\nfoo = \"1.5\"\n".parse().unwrap();
+        let (name, item) = parse_dep("foo = { workspace = true }");
+        let shape = classify_dep(&item, &name, Some(&ws_doc)).unwrap();
+        assert!(matches!(shape.source, DepSource::Registry));
+        assert_eq!(shape.requirement.as_deref(), Some("1.5"));
+    }
+
+    #[test]
+    fn classify_dep_workspace_inherit_without_anchor_skipped() {
+        let (name, item) = parse_dep("foo = { workspace = true }");
+        assert!(classify_dep(&item, &name, None).is_none());
     }
 }

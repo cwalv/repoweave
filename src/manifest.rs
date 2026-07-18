@@ -552,13 +552,28 @@ pub struct MemberSpec {
 /// `[workspace.dependencies]`, `[workspace.lints.*]`, `[workspace.metadata.*]`,
 /// `[patch.*]` — are user policy and are never written or stripped by rwv.
 ///
-/// **(c) Cross-repo path deps / publishability** — `patch: false` (default)
-/// means all internal crates use committed relative `path=` deps.  Setting
-/// `patch: true` opts the *whole weave* into rwv-generated `[patch]` entries
-/// for cross-repo dependencies.  There is **no per-crate auto-detection**:
-/// rwv never reads or infers `[package].publish` from member manifests (plan
-/// §12.3).  A single operator-controlled boolean, defaulting to the
-/// internal-crate case.
+/// **(c) Cross-repo path deps / publishability** — `patch: off` (default)
+/// means all internal crates use committed relative `path=` deps. Two opt-in
+/// modes let rwv generate `[patch]` entries:
+///
+/// - `patch: committed-paths` — mirrors committed cross-member path deps
+///   into `[patch.crates-io]` (the pre-2026 behavior; also accepted as
+///   `patch: true` for backward compat).
+/// - `patch: derived` — matches each member's **registry** deps by crate
+///   name against the member-path→package-name index and emits patch
+///   entries directly. Sovereign members (publishable repos, `dependency`
+///   / `fork` roles) get live in-weave sources without committing anything
+///   weave-relative. Includes `reference`-role repos in the patchable
+///   index (their symlinked directories keep logical paths; see probe P8
+///   in `docs/repoweave/grok-build-export-findings.md`). Git-source deps
+///   emit `[patch."<url>"]` entries keyed by the dep's git URL rather than
+///   by crates-io.
+///
+/// There is **no per-crate auto-detection**: rwv never reads or infers
+/// `[package].publish` from member manifests (plan §12.3).
+///
+/// See Finding 1 of `docs/repoweave/grok-build-export-findings.md` for the
+/// design derivation.
 ///
 /// **(d) Nested-workspace hard error** — repos with a `[workspace]` at their
 /// root remain a hard activation error unless opted out via `exclude` or
@@ -600,19 +615,41 @@ pub struct CargoWorkspaceConfig {
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub members: BTreeMap<String, MemberSpec>,
 
-    /// When `true`, rwv generates a `[patch]` table at the weave-root
-    /// `Cargo.toml` for cross-repo dependencies via the toml_edit merge.
-    /// When `false` (default), all internal crates use committed relative
-    /// `path=` dependencies.
+    /// Cross-repo `[patch]` generation mode. Three shapes:
+    ///
+    /// - `PatchMode::Off` (the default; also accepted as `patch: false`):
+    ///   rwv writes no `[patch]` entries. All internal crates use committed
+    ///   relative `path=` dependencies.
+    /// - `PatchMode::CommittedPaths` (also accepted as `patch: true`, the
+    ///   pre-2026 shape): rwv mirrors each member's committed cross-member
+    ///   path deps into `[patch.crates-io]` at the weave-root Cargo.toml.
+    ///   The mirror keys off `path=` in member manifests.
+    /// - `PatchMode::Derived`: rwv scans each member's **registry** deps
+    ///   (`foo = "1.0"`, `foo = { version = "1.0" }`, `foo.workspace = true`)
+    ///   and, when the crate name matches an in-weave package, emits a
+    ///   patch entry. Sovereign members that declare `beads-core = "0.3"`
+    ///   get patched to the in-weave fork without committing anything
+    ///   weave-relative. Git-source deps produce `[patch."<url>"]` entries.
+    ///   Version-incompatible in-weave crates are skipped (with a warning);
+    ///   member `.cargo/config.toml` shadowing is surfaced at generation
+    ///   time (see `CargoWorkspace::scan_patch_shadowing`).
     ///
     /// This is an **operator-selected** flag — rwv never auto-detects
     /// publishability from member `[package].publish` fields (plan §12.3).
-    /// Flipping this to `true` opts the *entire weave* into generated
-    /// `[patch]` entries; there is no per-crate granularity.
+    /// The mode applies to the *entire weave*; there is no per-crate
+    /// granularity.
     ///
-    /// Corresponds to plan §7.2 resolution (c).
-    #[serde(default, skip_serializing_if = "is_false")]
-    pub patch: bool,
+    /// **Tier boundary** (documented, not asserted): under `derived`, a
+    /// member depending on an *unpublished* crate name resolves only inside
+    /// the weave — standalone the member fails with "no matching package".
+    /// This is the tier boundary between fully-sovereign members and
+    /// weave-native ones (see probe P2). Not a bug; document it where
+    /// operators pick the mode.
+    ///
+    /// Corresponds to plan §7.2 resolution (c) and Finding 1 of
+    /// `docs/repoweave/grok-build-export-findings.md`.
+    #[serde(default, skip_serializing_if = "PatchMode::is_off")]
+    pub patch: PatchMode,
 
     /// When `true`, rwv writes `[workspace.package]` from the project-level
     /// metadata declared in `rwv.yaml` (`project.license`, `project.authors`,
@@ -636,6 +673,104 @@ pub struct CargoWorkspaceConfig {
 
 fn is_false(b: &bool) -> bool {
     !b
+}
+
+/// Cross-repo `[patch]` generation mode for the cargo-workspace integration.
+///
+/// See [`CargoWorkspaceConfig::patch`] for the semantics of each variant.
+///
+/// ## Backward-compatible serialization
+///
+/// The wire format accepts both the string spellings (`off`, `committed-paths`,
+/// `derived`) and the pre-2026 boolean shape (`false` → `Off`,
+/// `true` → `CommittedPaths`) via a hand-written [`serde::Deserialize`]
+/// impl. Existing manifests with `patch: true` / `patch: false` keep parsing
+/// unchanged — no `rwv doctor --fix` migration machinery is needed
+/// (backward-compat at the parse level only).
+///
+/// Serialization goes out in the string form (`off` / `committed-paths` /
+/// `derived`) so operators who write config back out via `--json` or a
+/// round-trip see the modern spelling.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum PatchMode {
+    /// No rwv-generated `[patch]` entries. Committed relative `path=` deps
+    /// are the only cross-repo mechanism.
+    #[default]
+    Off,
+    /// Mirror each member's committed cross-member `path=` deps into
+    /// `[patch.crates-io]` at the weave-root `Cargo.toml`. Pre-2026 behavior.
+    /// Accepted as `patch: true` for wire-format back-compat.
+    CommittedPaths,
+    /// Match each member's registry/git deps by name against the in-weave
+    /// package-name index and emit `[patch.crates-io].<name>` (registry) or
+    /// `[patch."<git-url>"].<name>` (git-source) entries. See Finding 1 of
+    /// `docs/repoweave/grok-build-export-findings.md`.
+    Derived,
+}
+
+impl PatchMode {
+    /// True if this mode does not write any `[patch]` entries.
+    /// Convenience predicate for `#[serde(skip_serializing_if)]`.
+    pub fn is_off(&self) -> bool {
+        matches!(self, PatchMode::Off)
+    }
+
+    /// True if this mode emits any `[patch]` entries (either mirror or
+    /// derived). Used at activation time to gate the patch-emit branch.
+    pub fn emits_patches(&self) -> bool {
+        !self.is_off()
+    }
+}
+
+impl<'de> Deserialize<'de> for PatchMode {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        // Untagged over (bool | string) via a visitor: this keeps the
+        // wire-format back-compat with `patch: true` / `patch: false` while
+        // adding the modern string spellings. A dedicated visitor is
+        // clearer than #[serde(untagged)] on a wrapper because it lets us
+        // reject unknown strings with a targeted error (typo detection).
+        struct V;
+        impl<'de> serde::de::Visitor<'de> for V {
+            type Value = PatchMode;
+
+            fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
+                write!(
+                    f,
+                    "boolean (`true`/`false`) or one of \
+                     \"off\", \"committed-paths\", \"derived\""
+                )
+            }
+
+            fn visit_bool<E: serde::de::Error>(self, v: bool) -> Result<Self::Value, E> {
+                Ok(if v {
+                    PatchMode::CommittedPaths
+                } else {
+                    PatchMode::Off
+                })
+            }
+
+            fn visit_str<E: serde::de::Error>(self, v: &str) -> Result<Self::Value, E> {
+                match v {
+                    "off" => Ok(PatchMode::Off),
+                    "committed-paths" => Ok(PatchMode::CommittedPaths),
+                    "derived" => Ok(PatchMode::Derived),
+                    other => Err(E::custom(format!(
+                        "unknown patch mode `{other}` (expected `off`, \
+                         `committed-paths`, `derived`, or a boolean)"
+                    ))),
+                }
+            }
+
+            fn visit_string<E: serde::de::Error>(self, v: String) -> Result<Self::Value, E> {
+                self.visit_str(&v)
+            }
+        }
+        deserializer.deserialize_any(V)
+    }
 }
 
 // ---------------------------------------------------------------------------

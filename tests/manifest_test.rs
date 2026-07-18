@@ -1,5 +1,6 @@
 use repoweave::manifest::{
-    CargoWorkspaceConfig, LockFile, Manifest, Project, RepoPath, Role, VcsType, WorkweaveName,
+    CargoWorkspaceConfig, LockFile, Manifest, PatchMode, Project, RepoPath, Role, VcsType,
+    WorkweaveName,
 };
 use repoweave::vcs::{RawRevisionId, RefName};
 
@@ -328,7 +329,11 @@ fn cargo_workspace_config_defaults_when_omitted() {
         cfg.members.is_empty(),
         "members must default to empty BTreeMap"
     );
-    assert!(!cfg.patch, "patch must default to false");
+    assert_eq!(
+        cfg.patch,
+        PatchMode::Off,
+        "patch must default to PatchMode::Off"
+    );
     assert!(
         !cfg.workspace_package,
         "workspace-package must default to false"
@@ -367,7 +372,7 @@ members:
     );
 
     // Defaults still hold for the other fields.
-    assert!(!cfg.patch);
+    assert_eq!(cfg.patch, PatchMode::Off);
     assert!(!cfg.workspace_package);
     assert!(cfg.exclude.is_empty());
 }
@@ -390,14 +395,66 @@ members:
     assert_eq!(spec.exclude, vec!["workspace"]);
 }
 
-/// `patch: true` and `workspace-package: true` (kebab-case serde rename) both
-/// deserialize to the correct boolean fields.
+/// `patch: true` (back-compat wire alias for `committed-paths`) and
+/// `workspace-package: true` (kebab-case serde rename) both deserialize
+/// to the expected fields.
 #[test]
 fn cargo_workspace_config_bool_flags_parse() {
     let yaml = "patch: true\nworkspace-package: true\n";
     let cfg = parse_cargo_config(yaml);
-    assert!(cfg.patch, "patch should be true");
+    assert_eq!(
+        cfg.patch,
+        PatchMode::CommittedPaths,
+        "patch: true is the wire alias for committed-paths (backward compat)"
+    );
     assert!(cfg.workspace_package, "workspace_package should be true");
+}
+
+/// `patch: false` is the wire alias for `off` — the pre-2026 default.
+/// Confirms existing manifests carrying the explicit boolean shape keep
+/// parsing unchanged (no migration machinery needed).
+#[test]
+fn cargo_workspace_config_patch_false_maps_to_off() {
+    let cfg = parse_cargo_config("patch: false\n");
+    assert_eq!(cfg.patch, PatchMode::Off);
+}
+
+/// `patch: committed-paths` (the modern string spelling of the pre-2026
+/// behavior) parses to the same variant as `patch: true`.
+#[test]
+fn cargo_workspace_config_patch_committed_paths_string() {
+    let cfg = parse_cargo_config("patch: committed-paths\n");
+    assert_eq!(cfg.patch, PatchMode::CommittedPaths);
+}
+
+/// `patch: derived` (the fo-t9x0l1.2 tier — registry-dep match against
+/// the in-weave package-name index) parses to `PatchMode::Derived`.
+#[test]
+fn cargo_workspace_config_patch_derived_string() {
+    let cfg = parse_cargo_config("patch: derived\n");
+    assert_eq!(cfg.patch, PatchMode::Derived);
+}
+
+/// `patch: off` is the explicit spelling of the default. Parses to
+/// `PatchMode::Off`.
+#[test]
+fn cargo_workspace_config_patch_off_string() {
+    let cfg = parse_cargo_config("patch: off\n");
+    assert_eq!(cfg.patch, PatchMode::Off);
+}
+
+/// An unknown string is a parse error — typo detection. A silent fallback
+/// to a default would mask a real config mistake.
+#[test]
+fn cargo_workspace_config_patch_unknown_string_is_error() {
+    use repoweave::manifest::IntegrationConfig;
+    let config = IntegrationConfig::from_yaml("patch: mirroir\n");
+    let result = config.settings::<CargoWorkspaceConfig>();
+    assert!(
+        result.is_err(),
+        "unknown patch mode string should be a type error, got Ok({:?})",
+        result.ok()
+    );
 }
 
 /// `patch: "yes"` is not a valid YAML boolean — serde must return a parse
@@ -454,10 +511,14 @@ workspace-package: true
     let spec = cfg.members.get("github/cwalv/rvtty").unwrap();
     assert_eq!(spec.include, vec!["daemon", "client", "common"]);
     assert_eq!(spec.exclude, vec!["fuzz"]);
-    assert!(cfg.patch);
+    // `patch: true` in the YAML is the wire alias for `committed-paths`.
+    assert_eq!(cfg.patch, PatchMode::CommittedPaths);
     assert!(cfg.workspace_package);
 
     // Serialize back to serde_yaml::Value and re-parse — verify it round-trips.
+    // Note: the serialized form emits the modern string spelling
+    // (`committed-paths`), not the legacy `true`; the deserializer accepts
+    // both, so the round-trip lands on the same variant.
     let serialized = serde_yaml::to_string(&cfg).unwrap();
     let restored: CargoWorkspaceConfig = serde_yaml::from_str(&serialized).unwrap();
     assert_eq!(restored.exclude, cfg.exclude);

@@ -25,12 +25,15 @@ rwv owns exactly these keys inside `Cargo.toml`:
 | `[workspace].members` | Always when integration is active |
 | `[workspace].resolver` | Always when integration is active |
 | `[workspace.package]` | Only when `workspace-package: true` is set |
+| `[patch.<registry>].<crate>` (rwv-marked entries only) | Only when `patch:` is `committed-paths` or `derived` (see below) |
 | `# excluded: <path> (opted out)` comments | When `exclude:` is configured |
 
 All other content — `[profile.*]`, `[workspace.dependencies]`,
-`[workspace.lints.*]`, `[workspace.metadata.*]`, `[patch.*]`, `[package]`,
+`[workspace.lints.*]`, `[workspace.metadata.*]`, user-authored
+`[patch.*]` entries (no `# managed by rwv` decor), `[package]`,
 inline comments, key ordering — is user policy and survives every
-activate/deactivate cycle unmodified.
+activate/deactivate cycle unmodified. rwv-marked patch entries are
+stripped on `deactivate`; user-authored ones survive.
 
 ## Example managed section
 
@@ -120,29 +123,69 @@ workspace-wide with no per-member override) or for internal-only
 
 ## Cross-repo path deps and `[patch]`
 
-By default (`patch: false`), cross-repo path dependencies use committed
-relative `path=` entries in each package's `Cargo.toml`. This is the correct
-default for internal-only (`publish = false`) crates.
+The `patch:` mode picks how cross-repo dependencies are made to resolve
+against in-weave sources. Three modes:
 
-For weaves with publishable crates that need `[patch]` overrides for local
-development, set `patch: true`:
+| Mode | YAML value(s) | Behavior |
+|---|---|---|
+| Off (default) | `off`, `false` | rwv writes no `[patch]` entries. Members declare committed relative `path=` deps for cross-repo deps. Correct default for internal-only (`publish = false`) crates. |
+| Committed-paths | `committed-paths`, `true` | rwv mirrors each member's committed cross-member `path=` deps into `[patch.crates-io]` at the weave-root. Sensible when the weave's canonical shape is a bunch of `path=`-consuming publishable crates. |
+| Derived | `derived` | rwv matches each member's **registry** deps by crate name against the in-weave package-name index and emits patch entries — members declare `beads-core = "0.3"` and get the in-weave fork automatically. |
 
 ```yaml
 integrations:
   cargo-workspace:
-    patch: true
+    patch: derived
 ```
 
-<!-- pending C7 -->
-When `patch: true`, rwv generates a `[patch]` table at the weave-root
-`Cargo.toml` for cross-repo dependencies. User-authored `[patch]` entries
-survive (rwv uses the same toml_edit merge for `[patch]`).
+The wire aliases `patch: true` (→ `committed-paths`) and `patch: false`
+(→ `off`) are kept so pre-2026 manifests keep parsing without a
+migration step.
 
-**No per-crate auto-detection:** rwv never reads or infers publishability from
-member `[package].publish` fields. The `patch` flag is an operator decision
-that applies to the entire weave. Flip it only when your weave actually
-contains publishable crates that need the `[patch]` mechanism for local
-development.
+### `derived` mode — details
+
+Under `patch: derived`, rwv:
+
+1. Builds a package-name index over every in-weave crate — active
+   workspace members *and* `reference`-role repos. Reference-role repos
+   are read-only study material in workweaves, symlinked to the
+   canonical clone; their symlinked paths keep logical identity in
+   `cargo metadata`, so patching against them adds no rebuild churn.
+2. Scans each active member's `[dependencies]`, `[dev-dependencies]`,
+   and `[build-dependencies]`, resolving `workspace = true` through the
+   member's ancestor `[workspace.dependencies]` table.
+3. For each dep whose crate name matches an in-weave entry:
+   - **Git-source dep** (`foo = { git = "<url>", version = "..." }`) →
+     emits under `[patch."<url>"].foo` (git deps are a distinct source
+     from crates.io; a `[patch.crates-io]` entry would not apply).
+   - **Registry dep** → emits under `[patch.crates-io].foo`.
+   - **Self-patch** (member depending on itself under its own crate
+     name) → skipped.
+4. Runs a version-compat precheck: if the in-weave crate's
+   `[package].version` does not satisfy the member's requirement, the
+   patch is *skipped* and a warning is printed to stderr naming the
+   crate, in-weave version, and the member's requirement. This is
+   necessary because cargo's mismatch diagnostic misleadingly points
+   at crates.io (probe P6 in the design doc).
+5. Runs a same-key shadowing precheck: if a member's own
+   `.cargo/config.toml` declares the same `[patch.<reg>].<crate>` key
+   that rwv is about to write, cargo's closest-config-wins-per-key rule
+   silently voids the weave-level entry. rwv surfaces the shadowing as
+   a stderr warning at generation time so the operator sees it
+   *before* cargo emits its misleading diagnostic (probe P5b).
+
+**Tier boundary (documented, not a bug):** a member depending on an
+*unpublished* crate name resolves only inside the weave. Standalone
+(outside the weave), the member fails with "no matching package". This
+is the sovereignty tier boundary — `derived` mode gives fully-sovereign
+members live in-weave sources on top of registry deps, but does not
+make unpublished names available outside the weave. If your intent is
+weave-native crates, that is exactly the expected shape; if you need
+standalone-buildable members, keep the target's version published.
+
+**No per-crate auto-detection:** rwv never reads or infers publishability
+from member `[package].publish` fields. The mode is an operator decision
+that applies to the entire weave.
 
 ## Nested workspaces
 
@@ -183,10 +226,14 @@ The detection only inspects the **root** `Cargo.toml` of each repo (unless the r
 ## Deactivation
 
 <!-- pending C7 -->
-Strips only the managed keys (`members`, `resolver`, and when configured
-`[workspace.package]`) from `Cargo.toml`. User-authored content — `[profile.*]`,
-`[workspace.dependencies]`, `[workspace.lints.*]`, `[patch.*]` — survives.
-The file is deleted **only** when nothing user-authored remains after stripping.
+Strips only the managed keys (`members`, `resolver`, when configured
+`[workspace.package]`, and any rwv-marker-decorated
+`[patch.<registry>].<crate>` entries from either `committed-paths` or
+`derived` mode) from `Cargo.toml`. User-authored content — `[profile.*]`,
+`[workspace.dependencies]`, `[workspace.lints.*]`, user-authored
+`[patch.*]` entries — survives. Emptied `[patch.<registry>]` sub-tables
+and an emptied `[patch]` table are pruned. The file itself is deleted
+**only** when nothing user-authored remains after stripping.
 
 ## Check
 
