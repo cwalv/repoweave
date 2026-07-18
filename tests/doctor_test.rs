@@ -2323,12 +2323,13 @@ fn orphaned_clone_names_repair_verb() {
     );
 }
 
-/// `dangling reference` message names the honest manual repair (git clone +
-/// re-run `rwv doctor`) — and must NOT name `rwv fetch`, which cannot perform
-/// this repair: it requires a SOURCE arg and its existing-project path bails
-/// "project already exists" (fetch.rs run_fetch).
+/// `dangling reference` message names `rwv fetch` as the repair verb (its
+/// in-place mode re-materializes missing manifest members) and re-runs
+/// `rwv doctor` for verification. The stale "repair by hand: git clone …"
+/// advice must NOT appear — the verb now performs the repair. See
+/// fetch::run_fetch_in_place.
 #[test]
-fn dangling_reference_names_manual_reclone_not_fetch() {
+fn dangling_reference_names_rwv_fetch_repair_verb() {
     let tmp = tempfile::tempdir().unwrap();
     let root = make_workspace(tmp.path(), "ws");
 
@@ -2361,10 +2362,10 @@ fn dangling_reference_names_manual_reclone_not_fetch() {
         combined.contains("dangling"),
         "must report dangling reference; got:\n{combined}"
     );
-    // Honest manual repair: git clone at the listed path, then verify.
+    // Repair verb is `rwv fetch` (in-place, no SOURCE).
     assert!(
-        combined.contains("git clone"),
-        "dangling-reference message must name the manual `git clone` repair; \
+        combined.contains("rwv fetch"),
+        "dangling-reference message must name `rwv fetch` as the repair verb; \
          got:\n{combined}"
     );
     assert!(
@@ -2372,12 +2373,13 @@ fn dangling_reference_names_manual_reclone_not_fetch() {
         "dangling-reference message must name `rwv doctor` as the verify step; \
          got:\n{combined}"
     );
-    // The known-bad advice: `rwv fetch` cannot re-clone a member of an
-    // existing project (requires SOURCE; bails "project already exists").
+    // The stale honest-manual advice must be gone: no `git clone …` in the
+    // message body. (This is the acceptance criterion from fo-8cbhpg.3: the
+    // repair verb replaces the manual advice.)
     assert!(
-        !combined.contains("rwv fetch"),
-        "dangling-reference message must NOT advise `rwv fetch` (dead advice — \
-         the verb refuses on an existing project); got:\n{combined}"
+        !combined.contains("git clone"),
+        "dangling-reference message must NOT advise manual `git clone` \
+         (repair verb `rwv fetch` performs the repair); got:\n{combined}"
     );
 }
 

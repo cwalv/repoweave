@@ -189,8 +189,8 @@ rwv update --project web-app
 - *workspace could not be resolved* — `cwd` is not inside a weave or
   workweave.
 - *clone missing on disk* — a manifest entry references a repo that isn't
-  cloned on disk; no rwv verb re-clones a missing member today — repair by
-  hand with `git clone <url from rwv.yaml> <path>`, then re-run `rwv update`.
+  cloned on disk; run `rwv fetch` (no SOURCE) from the workspace to
+  re-materialize missing manifest members, then re-run `rwv update`.
 - *could not resolve branch on role-conventional remote* — the branch named
   in the manifest's `version:` field doesn't exist on the upstream remote;
   verify the branch name and remote configuration.

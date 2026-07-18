@@ -74,12 +74,18 @@ fn write_manifest(dir: &Path, repos: &[(&str, &str)]) {
 // ============================================================================
 
 #[test]
-fn fetch_requires_source_argument() {
+fn fetch_no_source_outside_workspace_errors_usage() {
+    // With no SOURCE argument AND no repoweave workspace above CWD,
+    // in-place mode has nothing to operate on. The error must name both
+    // the missing SOURCE and the workspace requirement so the user sees
+    // both viable invocations.
+    let tmp = tempfile::tempdir().unwrap();
     rwv()
         .arg("fetch")
+        .current_dir(tmp.path())
         .assert()
         .failure()
-        .stderr(predicate::str::contains("required"));
+        .stderr(predicate::str::contains("no SOURCE").and(predicate::str::contains("workspace")));
 }
 
 #[test]

@@ -64,10 +64,10 @@ enum Commands {
         #[arg(long)]
         project: Option<String>,
     },
-    /// Clone a project and align repos to rwv.lock (no network bump). Use `rwv update` to advance to branch HEAD.
+    /// Clone a project and align repos to rwv.lock (no network bump). Use `rwv update` to advance to branch HEAD. With no SOURCE, re-materialize missing manifest members of the active project (repair verb for dangling references).
     Fetch {
-        /// Source to fetch from
-        source: String,
+        /// Source to fetch from. Omit to re-materialize missing manifest members of the active project in the current workspace.
+        source: Option<String>,
         /// Error if the lock file is missing or stale (CI mode)
         #[arg(long)]
         frozen: bool,
@@ -635,7 +635,6 @@ fn main() -> anyhow::Result<()> {
             json,
         }) => {
             let cwd = std::env::current_dir()?;
-            repoweave::workspace::require_workspace_or_empty(&cwd, force)?;
             let mode = if frozen {
                 fetch::FetchMode::Frozen
             } else {
@@ -649,7 +648,29 @@ fn main() -> anyhow::Result<()> {
             // can resolve to > 1 on multi-core hosts, agents should pass `-j 1`
             // explicitly when they require the envelope shape.
             let jobs = repoweave::parallel::resolve_jobs(jobs);
-            fetch::run_fetch(&source, &cwd, mode, no_reference, &filter, jobs, json)?;
+            match source {
+                Some(src) => {
+                    // SOURCE-mode: bootstrap a project into the workspace (or
+                    // an empty directory under --force). Unchanged behavior.
+                    repoweave::workspace::require_workspace_or_empty(&cwd, force)?;
+                    fetch::run_fetch(&src, &cwd, mode, no_reference, &filter, jobs, json)?;
+                }
+                None => {
+                    // In-place mode: no SOURCE, no --force needed (in-place
+                    // requires a workspace). Re-materialize missing manifest
+                    // members of the active project. `--force` is a bootstrap
+                    // knob (non-empty non-workspace directory); it has no
+                    // meaning in-place, so reject it to keep the UX honest.
+                    if force {
+                        anyhow::bail!(
+                            "rwv fetch: --force has no effect without SOURCE; \
+                             pass a SOURCE to bootstrap into a non-empty directory, \
+                             or drop --force to re-materialize missing members in place"
+                        );
+                    }
+                    fetch::run_fetch_in_place(&cwd, mode, no_reference, &filter, jobs, json)?;
+                }
+            }
         }
         Some(Commands::Init {
             project,

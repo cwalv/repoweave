@@ -15,6 +15,15 @@ and writes a new lock from those HEAD SHAs. When a manifest entry is missing
 from an existing lock, it is added additively at branch HEAD — already-pinned
 entries are never moved.
 
+With no `source` argument, `fetch` runs *in-place*: it resolves the workspace
+from CWD, iterates the active project's manifest, and clones any repo whose
+canonical clone directory is missing. Repos already present on disk are
+untouched. This is the settled repair verb for a dangling reference (a
+manifest entry pointing at a missing clone — reported by `rwv doctor`, or
+surfaced by `rwv update` / `rwv push` when they hit the missing directory).
+`doctor --fix` intentionally does not auto-clone; network side effects stay
+behind this explicit verb.
+
 `--frozen` is the CI mode: if the lock is absent or does not cover every
 manifest repo, the command errors instead of writing. Reference repos that
 fail to clone are skipped without failing the overall run.
@@ -22,16 +31,21 @@ fail to clone are skipped without failing the overall run.
 ## Invocation
 
 ```
-rwv fetch <source> [--frozen] [--force] [--no-reference]
+rwv fetch [<source>] [--frozen] [--force] [--no-reference]
           [--role <role>...] [--repo <selector>...] [-j <N>] [--json]
 ```
 
-- `<source>` — required. Full clone URL or `owner/repo` / `registry/owner/repo`
-  shorthand. The project repo is cloned from this URL.
+- `<source>` — optional. Full clone URL or `owner/repo` /
+  `registry/owner/repo` shorthand. When present, the project repo is
+  cloned from this URL (bootstrap mode). When absent, `fetch` runs
+  in-place against the active project of the current workspace (repair
+  mode). In-place mode requires an active project — it errors if CWD is
+  not inside a workspace or no project is active.
 - `--frozen` — CI mode: error if the lock is missing or does not cover all
   manifest repos. Never writes the lock.
 - `--force` — bootstrap into a non-empty directory that is not already a
-  workspace (normally an error).
+  workspace (normally an error). Only meaningful in bootstrap mode;
+  rejected when `<source>` is absent.
 - `--no-reference` — skip repos with `role: reference` (useful when mirrors
   are offline).
 - `--role <role>` / `--repo <selector>` — limit the repo fetch to a subset of
@@ -139,12 +153,24 @@ Get absolute paths for every successfully fetched repo:
 rwv fetch owner/myproject -j 1 --json | jq -r '.outcomes[] | select(.status == "ok") | .absolute_path'
 ```
 
+Re-materialize missing manifest members of the active project (repair verb
+for `rwv doctor`'s `DanglingReference` finding — no `<source>`):
+
+```
+rwv fetch
+```
+
 ## Common errors
 
 - *project 'X' already exists at projects/X/* — run `rwv fetch` from a
   fresh directory, or use a scoped path hint printed in the error.
 - *no repoweave workspace found and … is not empty* — the current directory
   is not a workspace; use `--force` to bootstrap here anyway.
+- *no SOURCE and no repoweave workspace found above …* — in-place mode
+  (no `<source>`) requires an existing workspace; either `cd` into one or
+  pass a `<source>` to bootstrap a new project.
+- *--force has no effect without SOURCE* — `--force` is only meaningful in
+  bootstrap mode; drop it to re-materialize missing members in place.
 - *lock file does not exist* (with `--frozen`) — the project has no
   `rwv.lock`; run without `--frozen` to bootstrap it.
 - *lock file is stale* (with `--frozen`) — the lock does not cover all

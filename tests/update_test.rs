@@ -395,12 +395,11 @@ fn update_union_role_and_repo_selectors() {
 // ============================================================================
 
 /// A manifest entry whose clone is absent on disk must produce an error that
-/// names the honest manual repair (`git clone <url> <dest>`, then re-run
-/// `rwv update`) and must NOT advise `rwv fetch` — that verb requires a
-/// SOURCE arg and bails "project already exists" for an existing project,
-/// so it cannot perform this repair.
+/// names `rwv fetch` (in-place mode) as the repair verb, followed by re-running
+/// `rwv update`. Stale manual-git-clone advice must NOT appear — the settled
+/// repair verb replaces the manual repair (see fetch::run_fetch_in_place).
 #[test]
-fn update_missing_clone_names_manual_reclone_not_fetch() {
+fn update_missing_clone_names_rwv_fetch_repair_verb() {
     let ws = build_workspace("proj-missing", &[("local/acme/present", "owned")]);
 
     // Append a manifest entry for a repo that was never cloned locally.
@@ -433,22 +432,21 @@ fn update_missing_clone_names_manual_reclone_not_fetch() {
         combined.contains("clone missing"),
         "error must name the state (clone missing); got:\n{combined}"
     );
-    // Honest manual repair, copy-pasteable: actual URL + destination.
+    // Repair verb: `rwv fetch` (in-place mode re-materializes the member).
     assert!(
-        combined.contains("git clone") && combined.contains(&bare_url),
-        "error must name the manual `git clone <url> <dest>` repair with the \
-         manifest URL; got:\n{combined}"
+        combined.contains("rwv fetch"),
+        "error must name `rwv fetch` as the repair verb; got:\n{combined}"
     );
     assert!(
         combined.contains("rwv update"),
-        "error must name re-running `rwv update` after the manual clone; \
+        "error must name re-running `rwv update` after the repair; \
          got:\n{combined}"
     );
-    // The known-bad advice must be gone.
+    // Stale honest-manual advice must be gone.
     assert!(
-        !combined.contains("rwv fetch"),
-        "error must NOT advise `rwv fetch` (dead advice — the verb refuses on \
-         an existing project); got:\n{combined}"
+        !combined.contains("git clone"),
+        "error must NOT advise manual `git clone` — the repair verb `rwv fetch` \
+         performs the repair; got:\n{combined}"
     );
 }
 

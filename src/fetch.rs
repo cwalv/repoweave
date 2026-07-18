@@ -10,6 +10,7 @@ use crate::parallel::{run_in_parallel, Reporter};
 use crate::registry;
 use crate::selector::RepoFilter;
 use crate::vcs::Vcs;
+use crate::workspace::WorkspaceContext;
 use anyhow::{bail, Context};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -216,6 +217,105 @@ pub fn run_fetch(
         git.clone_repo(&url_str, &project_dir)
             .with_context(|| format!("failed to clone project source '{}'", url))?;
     }
+
+    fetch_project_repos(
+        &name,
+        &project_dir,
+        workspace_root,
+        mode,
+        no_reference,
+        filter,
+        jobs,
+        json,
+        /* auto_activate_on_bootstrap = */ true,
+    )
+}
+
+/// In-place mode: re-materialize missing manifest members for the active
+/// project in the current workspace, aligning each clone to `rwv.lock` (or
+/// branch HEAD if the lock has no entry for the missing repo).
+///
+/// This is the settled repair verb for a dangling reference: no SOURCE
+/// argument, resolves the workspace from CWD, iterates the active project's
+/// manifest, and clones any repo whose canonical clone directory is missing.
+/// Present repos are untouched.
+///
+/// Clone-topology (I1): the canonical clone always lives at primary's
+/// `<weave>/<repo_path>`, even when this verb is invoked from inside a
+/// workweave. In-place fetch therefore materializes into
+/// [`WorkspaceContext::primary_path`]; the workweave will pick up the newly
+/// available canonical via `rwv sync` (which does the worktree-add) — this
+/// matches how `rwv add` and `sync::materialize_missing_repo` divide labor.
+///
+/// The auto-activate step from the SOURCE-mode path is not repeated: in-place
+/// mode operates on an already-active project.
+///
+/// Flag semantics: `--frozen`, `--no-reference`, `--role`/`--repo`, `-j`,
+/// `--json` all carry the same meaning as the SOURCE-mode path. Filtered
+/// runs are additive and skip the lock-write step (same rule as bootstrap).
+#[allow(clippy::too_many_arguments)]
+pub fn run_fetch_in_place(
+    cwd: &Path,
+    mode: FetchMode,
+    no_reference: bool,
+    filter: &RepoFilter,
+    jobs: usize,
+    json: bool,
+) -> anyhow::Result<()> {
+    let ctx = WorkspaceContext::resolve(cwd, None).with_context(|| {
+        format!(
+            "rwv fetch: no SOURCE and no repoweave workspace found above {}",
+            cwd.display(),
+        )
+    })?;
+    let name = ctx.require_active_project_on_disk()?.clone();
+
+    // Per-workspace state (rwv.yaml, rwv.lock) lives under active_path — the
+    // workweave when in one, primary otherwise. Mirrors add_remove.rs's
+    // find_project_dir.
+    let project_dir = ctx.active_path().join("projects").join(name.as_str());
+
+    // Clone destination (canonical store) is always primary's slot — clone-
+    // topology I1. Passing primary_path() as workspace_root routes fetch_one
+    // to write clones at `<primary>/<repo_path>/`, even when CWD is inside a
+    // workweave. See docs/explanation/joints/clone-topology.md.
+    let workspace_root = ctx.primary_path();
+
+    fetch_project_repos(
+        name.as_str(),
+        &project_dir,
+        workspace_root,
+        mode,
+        no_reference,
+        filter,
+        jobs,
+        json,
+        /* auto_activate_on_bootstrap = */ false,
+    )
+}
+
+/// Shared per-project repo-materialization loop for both SOURCE-mode
+/// (bootstrap: `rwv fetch <source>`) and in-place mode (`rwv fetch` with no
+/// SOURCE). Both entries route through this helper so the clone/checkout,
+/// lock-alignment, and lock-write behavior stays identical across both
+/// invocations.
+///
+/// `auto_activate_on_bootstrap` toggles the first-fetch auto-activate step
+/// (only meaningful for SOURCE-mode — the in-place path operates on a
+/// project that is already active).
+#[allow(clippy::too_many_arguments)]
+fn fetch_project_repos(
+    name: &str,
+    project_dir: &Path,
+    workspace_root: &Path,
+    mode: FetchMode,
+    no_reference: bool,
+    filter: &RepoFilter,
+    jobs: usize,
+    json: bool,
+    auto_activate_on_bootstrap: bool,
+) -> anyhow::Result<()> {
+    let git = GitVcs;
 
     // Read the manifest
     let manifest_path = project_dir.join("rwv.yaml");
@@ -526,22 +626,26 @@ pub fn run_fetch(
         }
 
         // Auto-activate only when no project is already active (first fetch).
-        let active_file = workspace_root.join(".rwv-active");
-        if active_file.exists() {
-            // Route to stderr in JSON mode so stdout stays JSON-only.
-            let msg = format!(
-                "rwv fetch: skipping auto-activate (project '{}' already active)",
-                std::fs::read_to_string(&active_file)
-                    .unwrap_or_default()
-                    .trim()
-            );
-            if json {
-                eprintln!("{msg}");
+        // In-place mode always skips auto-activate (the project is already
+        // active — that's how the in-place caller resolved the manifest).
+        if auto_activate_on_bootstrap {
+            let active_file = workspace_root.join(".rwv-active");
+            if active_file.exists() {
+                // Route to stderr in JSON mode so stdout stays JSON-only.
+                let msg = format!(
+                    "rwv fetch: skipping auto-activate (project '{}' already active)",
+                    std::fs::read_to_string(&active_file)
+                        .unwrap_or_default()
+                        .trim()
+                );
+                if json {
+                    eprintln!("{msg}");
+                } else {
+                    println!("{msg}");
+                }
             } else {
-                println!("{msg}");
+                crate::activate::activate(name, workspace_root)?;
             }
-        } else {
-            crate::activate::activate(&name, workspace_root)?;
         }
     }
 
@@ -702,7 +806,14 @@ fn fetch_one(
         }
     } else if existing_lock.is_some() {
         // Lock exists but doesn't cover this repo — leave at branch HEAD
-        // (where the clone landed) and mark for additive lock entry.
+        // (where the clone landed) and mark for additive lock entry. Emit
+        // a message so the additive path is observable to the operator —
+        // matches the "adding … to lock at branch HEAD" text the
+        // dest-already-exists arm above emits.
+        emit(&format!(
+            "rwv fetch: cloned {} at branch HEAD (additive — no lock entry)",
+            repo_path.as_str()
+        ));
         add_to_lock = Some(repo_path.clone());
     }
     // else: bootstrap, will be picked up wholesale below.
