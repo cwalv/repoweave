@@ -3584,10 +3584,11 @@ pub fn worktree_canonical_clone_missing(repo: &Path) -> Option<PathBuf> {
     //                =  /ws/primary/github/repo/.git
     //   canonical    =  /ws/primary/github/repo
     //
-    // We go up exactly two levels: one to exit the `worktrees/<name>` slot,
-    // one more to exit the `.git` directory.
+    // We go up exactly three levels: `<name>` → `worktrees` → `.git` →
+    // canonical clone dir, so the reported path names the repo directory
+    // (consistent with DanglingReference's repair target).
     let gitdir = std::path::Path::new(gitdir_path);
-    let canonical = gitdir.parent()?.parent()?;
+    let canonical = gitdir.parent()?.parent()?.parent()?;
 
     if !canonical.exists() {
         Some(canonical.to_path_buf())
