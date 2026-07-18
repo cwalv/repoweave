@@ -664,23 +664,84 @@ fn load_coverage_allowlist(
     Ok((cli_md, registry))
 }
 
+/// Does one backtick-quoted invocation span (e.g. the text between backticks
+/// in `` `rwv workweave <project> create <name>` ``) cover the subcommand path
+/// given as `components` (e.g. `["workweave", "create"]`)?
+///
+/// The span is tokenized on whitespace. The first token must be `rwv`. Then
+/// each path component must appear in order among the remaining tokens, where
+/// `<placeholder>` tokens interleaved between components are skipped: clap
+/// allows a parent command's positional arguments before the nested
+/// subcommand (`rwv workweave [PROJECT] [COMMAND]`), so the documented
+/// invocation legitimately writes `<project>` between `workweave` and
+/// `create`. Any other literal token where a component is expected fails the
+/// match (so `workweave log` does not match `` `rwv workweave list` `` or a
+/// hypothetical `` `rwv workweave log-extra` ``). Tokens after the last
+/// matched component (flags, further args) are ignored.
+fn span_covers_path(span: &str, components: &[&str]) -> bool {
+    let mut tokens = span.split_whitespace();
+    if tokens.next() != Some("rwv") {
+        return false;
+    }
+    let mut remaining = components.iter();
+    let mut expected = remaining.next();
+    for token in tokens {
+        let Some(&comp) = expected else {
+            // All components matched; trailing args/flags are fine.
+            return true;
+        };
+        if token == comp {
+            expected = remaining.next();
+        } else if token.starts_with('<') && token.ends_with('>') {
+            // A positional placeholder between path components — skip it.
+            continue;
+        } else {
+            // A literal token that is not the expected component: this span
+            // documents a different invocation.
+            return false;
+        }
+    }
+    expected.is_none()
+}
+
+/// Does a heading line cover the subcommand path? A heading covers a path iff
+/// any backtick-quoted span within it satisfies [`span_covers_path`].
+fn heading_covers_path(line: &str, components: &[&str]) -> bool {
+    let mut rest = line;
+    while let Some(open) = rest.find('`') {
+        rest = &rest[open + 1..];
+        let Some(close) = rest.find('`') else {
+            break;
+        };
+        let span = &rest[..close];
+        rest = &rest[close + 1..];
+        if span_covers_path(span, components) {
+            return true;
+        }
+    }
+    false
+}
+
 /// Check that every subcommand path in `paths` appears in `cli_md_content`
-/// as a heading that contains `` `rwv <path>` `` or `` `rwv <path> ``.
+/// as a heading whose backtick-quoted invocation covers the path.
 ///
 /// # Match rule
 ///
-/// A subcommand path is "covered" iff the cli.md content contains at least one
-/// heading line (a line whose first non-whitespace character is `#`) that
-/// includes either:
+/// A subcommand path (e.g. `workweave log`) is "covered" iff the cli.md
+/// content contains at least one heading line (a line whose first
+/// non-whitespace character is `#`) with a backtick-quoted span that starts
+/// with `rwv` and contains the path's literal components in order, allowing
+/// `<placeholder>` positional tokens interleaved between components — see
+/// [`span_covers_path`] for the token-level rule. Examples:
 ///
-/// - `` `rwv <path>` `` — the full invocation is exactly the path (no args), OR
-/// - `` `rwv <path> `` — the path is followed by a space (arguments continue
-///   inside the same backtick span, e.g. `` `rwv fetch <source> [...]` ``).
+/// - `` `rwv fetch <source> [...]` `` covers `fetch`
+/// - `` `rwv workweave <project> log [--diff] [--json]` `` covers
+///   `workweave log` (the `<project>` positional belongs to the parent
+///   command and precedes the action subcommand in the real invocation)
+/// - `` `rwv workweave <project> list` `` does NOT cover `workweave log`
 ///
-/// Both forms start with `` `rwv <path> `` (with a trailing space or closing
-/// backtick), which makes the match unambiguous: `` `rwv workweave log` `` or
-/// `` `rwv workweave log [--diff]` `` match `workweave log` but not
-/// `` `rwv workweave log-extra` `` (which has a different token after `log`).
+/// Restricting the match to headings avoids false positives from incidental
+/// body-text mentions (the word "log" alone would match dozens of lines).
 ///
 /// Entries listed in `allowlist` are silently skipped.
 ///
@@ -701,19 +762,17 @@ fn check_cli_md_coverage(
         if allowlist.contains(path.as_str()) {
             continue;
         }
-        // A match is: backtick-open, then `rwv <path>`, then either a space
-        // (more args follow) or a closing backtick (no args). This prevents
-        // substring collisions (e.g. `workweave log` vs `workweave log-extra`).
-        let prefix_with_space = format!("`rwv {path} ");
-        let prefix_exact = format!("`rwv {path}`");
+        let components: Vec<&str> = path.split(' ').collect();
         let found = heading_lines
             .iter()
-            .any(|line| line.contains(&prefix_with_space) || line.contains(&prefix_exact));
+            .any(|line| heading_covers_path(line, &components));
         if !found {
             errors.push(format!(
                 "coverage-cli-md: `rwv {path}` is absent from docs/reference/cli.md \
-                 (add a heading containing `{prefix_exact}` or `{prefix_with_space}...`, \
-                 or add `cli-md:{path}` to docs/cli-coverage-allowlist.txt with a reason)"
+                 (add a heading whose invocation contains the components `rwv {path}` \
+                 in order — placeholder positionals like `<project>` may sit between \
+                 them — or add `cli-md:{path}` to docs/cli-coverage-allowlist.txt \
+                 with a reason)"
             ));
         }
     }
@@ -757,8 +816,13 @@ fn check_registry_coverage(
 ///
 /// **cli.md check**: a subcommand path (e.g. `workweave log`) is covered iff
 /// `docs/reference/cli.md` contains a heading line (a line whose first
-/// non-whitespace character is `#`) with the literal text `` `rwv <path>` ``
-/// (backtick-quoted). This avoids false positives from incidental body text.
+/// non-whitespace character is `#`) with a backtick-quoted invocation span
+/// that starts with `rwv` and contains the path's literal components in
+/// order; `<placeholder>` positional tokens interleaved between components
+/// are skipped (clap allows a parent command's positionals before the nested
+/// subcommand, so `` `rwv workweave <project> log [--diff]` `` covers
+/// `workweave log`). Restricting to headings avoids false positives from
+/// incidental body text. See [`span_covers_path`] for the token-level rule.
 ///
 /// **Registry check**: a top-level verb is covered iff it appears as a `name`
 /// field in the `verbs()` list in this file. Nested subcommands are not
@@ -1203,6 +1267,76 @@ mod tests {
             "allowlisted path should not be reported, got:\n{}",
             errors.join("\n")
         );
+    }
+
+    /// A `<placeholder>` positional interleaved between path components is
+    /// skipped: `` `rwv workweave <project> log [--diff] [--json]` `` covers
+    /// the path `workweave log` (clap allows the parent command's positionals
+    /// before the nested subcommand: `rwv workweave [OPTIONS] [PROJECT]
+    /// [COMMAND]`).
+    #[test]
+    fn cli_md_coverage_matches_interleaved_placeholder() {
+        let paths = vec![
+            "workweave log".to_owned(),
+            "workweave create".to_owned(),
+            "workweave list".to_owned(),
+        ];
+        let cli_md = "\
+### `rwv workweave <project> create <name>`\n\n\
+### `rwv workweave <project> list`\n\n\
+### `rwv workweave <project> log [--diff] [--json]`\n";
+        let allow: HashSet<String> = HashSet::new();
+        let errors = check_cli_md_coverage(&paths, cli_md, &allow);
+        assert!(
+            errors.is_empty(),
+            "placeholder-interleaved headings should cover the paths, got:\n{}",
+            errors.join("\n")
+        );
+    }
+
+    /// A literal token where a path component is expected fails the span
+    /// match: `` `rwv workweave <project> list` `` must NOT cover
+    /// `workweave log`, and a hyphen-extended token is not a prefix match.
+    #[test]
+    fn cli_md_coverage_placeholder_skip_does_not_overmatch() {
+        let paths = vec!["workweave log".to_owned()];
+        // Headings for OTHER workweave actions only — `log` is absent.
+        let cli_md = "\
+### `rwv workweave <project> create <name>`\n\n\
+### `rwv workweave <project> list`\n\n\
+### `rwv workweave <project> log-extra`\n";
+        let allow: HashSet<String> = HashSet::new();
+        let errors = check_cli_md_coverage(&paths, cli_md, &allow);
+        assert!(
+            !errors.is_empty(),
+            "`workweave log` must not be covered by list/create/log-extra headings"
+        );
+    }
+
+    /// Token-level rule spot checks on `span_covers_path` directly.
+    #[test]
+    fn span_covers_path_token_rules() {
+        // Exact path, no extras.
+        assert!(span_covers_path("rwv abort", &["abort"]));
+        // Trailing args/flags after the last component are ignored.
+        assert!(span_covers_path("rwv fetch <source> [...]", &["fetch"]));
+        // Placeholder between components is skipped.
+        assert!(span_covers_path(
+            "rwv workweave <project> create <name>",
+            &["workweave", "create"]
+        ));
+        // Span must start with `rwv`.
+        assert!(!span_covers_path("cd $(rwv resolve)", &["resolve"]));
+        // A different literal where a component is expected fails.
+        assert!(!span_covers_path(
+            "rwv workweave <project> delete <name>",
+            &["workweave", "create"]
+        ));
+        // Components must all be present.
+        assert!(!span_covers_path(
+            "rwv workweave <project>",
+            &["workweave", "log"]
+        ));
     }
 
     /// All top-level verbs are registered — passes.

@@ -270,7 +270,8 @@ fn cli_md_doctor_flags_exist_in_help() {
 #[test]
 fn cli_md_workweave_create_flags_exist_in_help() {
     let cli_md = read_cli_md();
-    let cli_flags = extract_cli_md_flags_for_section(&cli_md, "### `rwv workweave create");
+    let cli_flags =
+        extract_cli_md_flags_for_section(&cli_md, "### `rwv workweave <project> create");
     let help = help_flags(&["workweave", "create"]);
     assert_all_cli_md_flags_in_help("workweave create", &cli_flags, &help);
 }
