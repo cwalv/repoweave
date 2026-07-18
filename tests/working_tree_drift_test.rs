@@ -415,36 +415,13 @@ fn sync_post_refresh_clears_stale_working_tree() {
         .unwrap();
     assert!(
         !diff_before.stdout.is_empty(),
-        "working tree should be stale before doctor"
-    );
-
-    // The sync pre-flight dirt scan (fo-oueuv7.1) detects working-tree drift
-    // as tracked dirty state and refuses sync. Run `rwv doctor --fix` first
-    // to resolve the drift, then sync proceeds cleanly.
-    //
-    // Note: doctor must be run from primary (it scans all attached workweaves).
-    rwv()
-        .args(["doctor", "--fix"])
-        .current_dir(&primary_root)
-        .assert()
-        .success();
-
-    // Confirm the drift is cleared by doctor --fix.
-    let diff_after_doctor = common::git()
-        .args(["diff-index", "--exit-code", "HEAD"])
-        .current_dir(&server_ww)
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status()
-        .unwrap();
-    assert!(
-        diff_after_doctor.success(),
-        "working tree should match HEAD after doctor --fix"
+        "working tree should be stale before sync"
     );
 
     // Both sides committed independent lock advances above; project repos
     // diverged → --discard-local-commits is required to bypass the Phase 1
-    // ancestor precondition.
+    // ancestor precondition. The test's focus is the post-Phase-2
+    // working-tree refresh.
     rwv()
         .args([
             "sync",
@@ -455,8 +432,8 @@ fn sync_post_refresh_clears_stale_working_tree() {
         .assert()
         .success();
 
-    // After sync: working tree must still match HEAD.
-    let diff_after_sync = common::git()
+    // After sync: working tree must match HEAD.
+    let diff_after = common::git()
         .args(["diff-index", "--exit-code", "HEAD"])
         .current_dir(&server_ww)
         .stdout(std::process::Stdio::null())
@@ -464,7 +441,7 @@ fn sync_post_refresh_clears_stale_working_tree() {
         .status()
         .unwrap();
     assert!(
-        diff_after_sync.success(),
+        diff_after.success(),
         "working tree should match HEAD after sync"
     );
 }

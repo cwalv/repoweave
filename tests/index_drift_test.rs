@@ -369,14 +369,8 @@ fn doctor_fix_does_not_clobber_live_staged_changes() {
 // Test 4: Sync post-condition refresh
 // ---------------------------------------------------------------------------
 
-/// After a stale-index is fixed by `rwv doctor --fix`, `rwv sync` can proceed
-/// cleanly and the index remains consistent after sync completes.
-///
-/// Scenario: primary commits C2 and advances ww's server branch ref via
-/// `git update-ref` (simulating shared-ref advance). The workweave's server
-/// index is stale. The sync pre-flight dirt scan (fo-oueuv7.1) detects the
-/// stale index as tracked dirty changes, so sync requires a clean workspace.
-/// `rwv doctor --fix` resolves the stale index, after which sync proceeds.
+/// After `rwv sync`, if the workweave's server repo had a stale index before
+/// the sync (from a shared-ref advance), the index should be clean afterward.
 #[test]
 fn sync_post_refresh_clears_stale_index() {
     let tmp = tempfile::tempdir().unwrap();
@@ -424,6 +418,8 @@ fn sync_post_refresh_clears_stale_index() {
         ],
         &project_primary,
     );
+    // The ww project worktree inherits the already-committed rwv.lock@c1 from
+    // project_primary. No additional commit needed — the lock already matches HEAD.
 
     let primary_canon = primary_root.canonicalize().unwrap().display().to_string();
     let marker_content = format!(
@@ -431,6 +427,7 @@ fn sync_post_refresh_clears_stale_index() {
         p = primary_canon
     );
     std::fs::write(ww_root.join(".rwv-workweave"), marker_content).unwrap();
+    // Action verbs need `.rwv-active` (or --project).
     std::fs::write(primary_root.join(".rwv-active"), "web-app\n").unwrap();
     std::fs::write(ww_root.join(".rwv-active"), "web-app\n").unwrap();
 
@@ -440,18 +437,20 @@ fn sync_post_refresh_clears_stale_index() {
     git(&["add", "rwv.lock"], &project_primary);
     git(&["commit", "-m", "lock: advance"], &project_primary);
 
-    // Mirror the lock advance into the workweave's project worktree so the
-    // lock-freshness precondition passes (the ww's committed lock must match
-    // what the ww's tip should advance to).
+    // Mirror the lock advance into the workweave's own project worktree so
+    // that the workweave's lock matches the workweave's tip after we advance
+    // the server ref below. Without this, sync's CWD-lock-freshness
+    // precondition (which reads the workweave's own committed lock)
+    // would fail before reaching the
+    // post-refresh path this test is exercising.
     write_lock(&project_ww, &[(SERVER_PATH, SERVER_URL, &c2)]);
     git(&["add", "rwv.lock"], &project_ww);
     git(&["commit", "-m", "lock: ww advance"], &project_ww);
 
     // Advance the workweave's server branch ref to C2 (stale-index setup).
-    // This creates the drift condition: branch ref = C2, index = C1 tree.
     advance_ww_branch(&server_primary, "ww/main", &c2);
 
-    // Verify stale before doctor.
+    // Verify stale before sync.
     let diff_before = common::git()
         .args(["diff-index", "--cached", "--name-only", "HEAD"])
         .current_dir(&server_ww)
@@ -459,36 +458,14 @@ fn sync_post_refresh_clears_stale_index() {
         .unwrap();
     assert!(
         !diff_before.stdout.is_empty(),
-        "workweave index should be stale before doctor"
+        "workweave index should be stale before sync"
     );
 
-    // The sync pre-flight dirt scan (fo-oueuv7.1) detects the stale index as
-    // tracked dirty state and refuses sync. Run `rwv doctor --fix` first to
-    // resolve the stale index, then sync proceeds cleanly.
-    //
-    // Note: doctor must be run from primary (it scans all attached workweaves).
-    rwv()
-        .args(["doctor", "--fix"])
-        .current_dir(&primary_root)
-        .assert()
-        .success();
-
-    // Confirm the stale index is cleared by doctor --fix.
-    let diff_after_doctor = common::git()
-        .args(["diff-index", "--cached", "--exit-code", "HEAD"])
-        .current_dir(&server_ww)
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status()
-        .unwrap();
-    assert!(
-        diff_after_doctor.success(),
-        "workweave index should match HEAD after doctor --fix"
-    );
-
-    // Now sync proceeds cleanly. Both sides committed independent lock
-    // advances (project repos diverge); --discard-local-commits bypasses
-    // the Phase 1 ancestor precondition so the server advance lands.
+    // Sync from primary to workweave. Both sides committed independent lock
+    // advances above (so each side's lock-freshness check passes), which
+    // diverges the project repos; --discard-local-commits is required to
+    // bypass the Phase 1 ancestor precondition. The test's focus is the
+    // Phase 2 post-refresh.
     rwv()
         .args([
             "sync",
@@ -499,8 +476,8 @@ fn sync_post_refresh_clears_stale_index() {
         .assert()
         .success();
 
-    // After sync: index must still match HEAD.
-    let diff_after_sync = common::git()
+    // After sync: index should match HEAD.
+    let diff_after = common::git()
         .args(["diff-index", "--cached", "--exit-code", "HEAD"])
         .current_dir(&server_ww)
         .stdout(std::process::Stdio::null())
@@ -508,7 +485,7 @@ fn sync_post_refresh_clears_stale_index() {
         .status()
         .unwrap();
     assert!(
-        diff_after_sync.success(),
+        diff_after.success(),
         "workweave index should match HEAD after sync"
     );
 }

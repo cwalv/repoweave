@@ -675,3 +675,67 @@ fn sync_retry_after_dirt_refusal_succeeds() {
     );
     assert.success();
 }
+
+// ===========================================================================
+// 9. Attributable drift is excluded; mixed state names only user dirt
+// ===========================================================================
+
+/// A manifest repo whose branch ref was advanced externally (shared-ref
+/// advance — index/working tree lag the moved tip; rwv-attributable drift)
+/// plus a project repo with a genuine user edit. The refusal must name ONLY
+/// the user dirt: the drifted repo is excluded because sync's replay loop
+/// self-heals attributable drift (the pure-drift self-healing spec lives in
+/// index_drift_test.rs / working_tree_drift_test.rs), and advising the
+/// operator to commit/stash a moved-branch diff they never authored would be
+/// harmful.
+#[test]
+fn sync_attributable_drift_excluded_from_refusal_mixed_with_user_dirt() {
+    let f = fixture();
+    let new_sha = advance_primary(&f);
+
+    // Shared-ref advance: move ww's branch to the new tip from the canonical
+    // store, leaving ww's index/working tree at the old state. Structurally
+    // attributable: the lagging index tree is an ancestor commit's tree and
+    // the "missing" file exists in HEAD (D entry — restorable from the DAG).
+    git(
+        &["update-ref", "refs/heads/ww/main", &new_sha],
+        &f.primary.repo_dir,
+    );
+    // Sanity: the drifted repo DOES show tracked differences to git status —
+    // without attribution this would have refused.
+    let porcelain = git_out(
+        &["status", "--porcelain", "--untracked-files=no"],
+        &f.ww.repo_dir,
+    );
+    assert!(
+        !porcelain.is_empty(),
+        "test setup: shared-ref advance must show as tracked differences; got:\n{porcelain}"
+    );
+
+    // Genuine user dirt in the project repo (never-committed content).
+    let yaml_path = f.ww.project_dir.join("rwv.yaml");
+    let mut y = std::fs::read_to_string(&yaml_path).unwrap();
+    y.push_str("# scratch\n");
+    std::fs::write(&yaml_path, y).unwrap();
+
+    let assert = rwv()
+        .args(["sync", &f.primary.root.to_string_lossy()])
+        .current_dir(&f.ww.root)
+        .assert()
+        .failure();
+    let stderr = String::from_utf8_lossy(&assert.get_output().stderr).into_owned();
+
+    assert!(
+        stderr.contains("(project)") && stderr.contains("rwv.yaml"),
+        "refusal must name the genuine user dirt; got:\n{stderr}"
+    );
+    assert!(
+        !stderr.contains(REPO_PATH),
+        "refusal must NOT name the drifted repo ({REPO_PATH}) — its differences are \
+         rwv-attributable and self-heal during replay; got:\n{stderr}"
+    );
+    assert!(
+        !has_op_state(&f.ww.root),
+        "refusal must leave no .rwv-op file behind"
+    );
+}

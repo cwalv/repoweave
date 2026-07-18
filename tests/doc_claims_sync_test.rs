@@ -606,8 +606,15 @@ fn make_shared_with_stale_destination(parent: &Path) -> (Workspace, Workspace) {
     // Commit the stale lock so it is NOT a tracked-dirty file. The stale-lock
     // check (`classify_lock_relations`) reads the lock from disk, so a committed
     // stale lock (pointing at a fake SHA) still triggers the lock-freshness
-    // precondition. Without committing, the new pre-flight dirt scan fires first
-    // and masks the stale-lock error this test is validating.
+    // precondition.
+    //
+    // Why the commit is required (fo-oueuv7.1, verified): an UNCOMMITTED
+    // hand-written fake-SHA lock is GENUINE user dirt by the dirt scan's
+    // structural attribution — its blob was never committed anywhere, so it
+    // classifies as live working-tree edits, not shared-ref-advance drift —
+    // and the dirt refusal would correctly dominate, masking the stale-lock
+    // error this test validates. Committing gives the fixture a clean tree
+    // while preserving the stale-lock condition.
     git(&["add", "rwv.lock"], &ww.project_dir);
     git(&["commit", "-m", "test: plant stale lock"], &ww.project_dir);
 

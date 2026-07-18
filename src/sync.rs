@@ -2805,9 +2805,53 @@ const RWV_LOCK_FILE: &str = "rwv.lock";
 // Sync (pull) destination-side dirt scan (fo-oueuv7.1)
 // ---------------------------------------------------------------------------
 
+/// Classify one dirty checkout for the sync dirt scan.
+///
+/// Returns `None` when every tracked difference is **rwv-attributable**:
+/// doctor's structural drift classification ([`crate::check::classify_drift`])
+/// reports the index tree as an ancestor commit's tree
+/// ([`crate::check::IndexDriftKind::SafeToFix`]) and every modified
+/// working-tree blob as reachable from HEAD
+/// ([`crate::check::WorkingTreeDriftKind::SafeToFix`]). That is the
+/// shared-ref-advance signature — another worktree moved this branch's ref,
+/// and the index/working tree lag the new tip. Sync is DESIGNED to reconcile
+/// that state itself: the replay loop runs
+/// [`Vcs::refresh_index_to_head_if_safe`] /
+/// [`Vcs::refresh_working_tree_to_head_if_safe`] per repo, which apply the
+/// SAME structural reachability test before healing (see
+/// `tests/index_drift_test.rs` / `tests/working_tree_drift_test.rs` — the
+/// self-healing assertions are the spec). Refusing here would both block the
+/// designed behavior and teach the operator to `git commit` a moved-branch
+/// diff they never authored.
+///
+/// Returns `Some(annotated_label)` for genuine user dirt — live staged
+/// content and/or live working-tree edits — annotated with which kind was
+/// found so the operator sees what the commit/stash advice applies to.
+///
+/// The attribution is purely structural (tree/blob reachability in the DAG);
+/// no timestamps or heuristics. `classify_drift`'s own conservative fallback
+/// (git errors during classification → live) keeps the scan fail-closed.
+fn classify_sync_dirt(repo: &Path, label: String) -> Option<String> {
+    use crate::check::{IndexDriftKind, WorkingTreeDriftKind};
+    let (index_drift, wt_drift) = crate::check::classify_drift(repo);
+    let index_live = matches!(index_drift, Some(IndexDriftKind::LiveStaged));
+    let wt_live = matches!(wt_drift, Some(WorkingTreeDriftKind::LiveEdits));
+    let detail = match (index_live, wt_live) {
+        // Every difference is attributable drift (or the repo settled between
+        // the status read and this classification). The replay loop's
+        // safe-refresh heals it; nothing to refuse.
+        (false, false) => return None,
+        (true, true) => "staged changes + working-tree edits",
+        (true, false) => "staged changes",
+        (false, true) => "working-tree edits",
+    };
+    Some(format!("{label} ({detail})"))
+}
+
 /// Pre-flight dirt scan for `rwv sync` (pull): refuse before any mutation if
 /// the CWD workspace (the *destination* that replay will rebase or
-/// fast-forward) carries uncommitted **tracked** changes in any manifest repo
+/// fast-forward) carries uncommitted **tracked** changes that are not
+/// attributable to rwv's own shared-ref-advance drift, in any manifest repo
 /// or the project repo.
 ///
 /// ## Why tracked-only
@@ -2820,6 +2864,16 @@ const RWV_LOCK_FILE: &str = "rwv.lock";
 /// normal in-progress work (scratch files, build artefacts) without any
 /// corresponding git-layer failure. We therefore refuse only on tracked dirt,
 /// matching git's actual failure conditions.
+///
+/// ## Attributable drift is NOT dirt
+///
+/// A worktree whose branch ref was advanced by another workspace (shared-ref
+/// advance) shows tracked differences in `git status` that the operator never
+/// authored: the index/working tree simply lag the moved tip. Doctor's
+/// structural drift classification distinguishes that state from live user
+/// work (see [`classify_sync_dirt`]); attributable drift is excluded from the
+/// refusal set and self-heals in the replay loop's safe-refresh step. Only
+/// live staged content / live working-tree edits refuse.
 ///
 /// ## What this replaces
 ///
@@ -2855,22 +2909,30 @@ fn check_dirty_preflight_sync(
     cwd_project_dir: &Path,
     cwd_path: &Path,
 ) -> anyhow::Result<()> {
-    let mut dirty: Vec<String> = Vec::new();
+    let mut user_dirt: Vec<String> = Vec::new();
+    let mut unreadable: Vec<String> = Vec::new();
 
     for repo_path in cwd_project.manifest.iter_repo_paths() {
         let repo = cwd_workspace_dir.join(repo_path.as_path());
         // Skip reference symlinks: the shared canonical store is never
         // rebased or ff'd by sync (checkout_is_syncable guards every mutating
         // phase). A dirty canonical must not block a sync that never touches it.
-        if checkout_is_syncable(&repo) {
-            let tracked = GitVcs::tracked_dirty_file_names(&repo).unwrap_or_else(|_| {
-                // Unreadable status → fail closed rather than silently rebasing
-                // over an unknown state.
-                vec!["(status unreadable)".to_string()]
-            });
-            if !tracked.is_empty() {
-                dirty.push(repo_path.to_string());
+        if !checkout_is_syncable(&repo) {
+            continue;
+        }
+        match GitVcs::tracked_dirty_file_names(&repo) {
+            // Clean (tracked-wise): untracked-only repos land here too.
+            Ok(tracked) if tracked.is_empty() => {}
+            Ok(_) => {
+                if let Some(label) = classify_sync_dirt(&repo, repo_path.to_string()) {
+                    user_dirt.push(label);
+                }
+                // None → fully attributable drift; replay self-heals it.
             }
+            // Unreadable status → fail closed rather than silently rebasing
+            // over an unknown state, but don't prescribe commit/stash for
+            // changes we cannot enumerate.
+            Err(_) => unreadable.push(repo_path.to_string()),
         }
     }
 
@@ -2878,34 +2940,63 @@ fn check_dirty_preflight_sync(
     // for sync-to). For sync (pull), Phase 1' ff's or rebases the project repo
     // directly, and git refuses on any tracked dirty file including rwv.lock.
     // Name the specific tracked files so the operator sees exactly what refuses.
-    let project_tracked = GitVcs::tracked_dirty_file_names(cwd_project_dir)
-        .unwrap_or_else(|_| vec!["(status unreadable)".to_string()]);
-    if !project_tracked.is_empty() {
-        let files = project_tracked
-            .iter()
-            .map(|p| p.as_str())
-            .collect::<Vec<_>>()
-            .join(", ");
-        dirty.push(format!("(project): {files}"));
+    match GitVcs::tracked_dirty_file_names(cwd_project_dir) {
+        Ok(tracked) if tracked.is_empty() => {}
+        Ok(tracked) => {
+            let files = tracked
+                .iter()
+                .map(|p| p.as_str())
+                .collect::<Vec<_>>()
+                .join(", ");
+            if let Some(label) = classify_sync_dirt(cwd_project_dir, format!("(project): {files}"))
+            {
+                user_dirt.push(label);
+            }
+        }
+        Err(_) => unreadable.push("(project)".to_string()),
     }
 
-    if !dirty.is_empty() {
-        anyhow::bail!(
-            "sync precondition failed: destination workspace has uncommitted tracked changes in:\n  {}\n\
+    if user_dirt.is_empty() && unreadable.is_empty() {
+        return Ok(());
+    }
+
+    // Assemble the refusal. Commit/stash remediation is attached ONLY to the
+    // user-dirt section — for unreadable repos we state what is known and
+    // stop; advising `git commit` for a repo whose state we could not read
+    // (or for drift the operator never authored) would be harmful.
+    let mut msg = String::from("sync precondition failed: ");
+    if !user_dirt.is_empty() {
+        msg.push_str(&format!(
+            "destination workspace has uncommitted tracked changes in:\n  {}\n\
              \n\
              sync rebases or fast-forwards these repos onto the source lock; running with tracked \
              dirt mid-op would leave a half-rebased state requiring `rwv abort` to clear. \
              Commit or stash the changes in the destination ({}), then re-run.\n\
              \n\
              To commit: git -C <repo> commit\n\
-             To stash:  git stash push -u -C <repo>   # or: cd <repo> && git stash push -u\n\
-             \n\
-             (Untracked files are fine — they survive rebase and fast-forward untouched.)",
-            dirty.join("\n  "),
+             To stash:  git stash push -u -C <repo>   # or: cd <repo> && git stash push -u\n",
+            user_dirt.join("\n  "),
             cwd_path.display(),
-        );
+        ));
     }
-    Ok(())
+    if !unreadable.is_empty() {
+        if !user_dirt.is_empty() {
+            msg.push('\n');
+        }
+        msg.push_str(&format!(
+            "git status could not be read in:\n  {}\n\
+             \n\
+             Refusing to sync over unknown state. Inspect these repos manually \
+             (`git -C <repo> status`), then re-run.\n",
+            unreadable.join("\n  "),
+        ));
+    }
+    msg.push_str(
+        "\n(Untracked files are fine — they survive rebase and fast-forward untouched. \
+         Stale index/working-tree drift from a shared-ref advance is reconciled by sync \
+         itself and does not refuse.)",
+    );
+    anyhow::bail!("{msg}");
 }
 
 /// sync-to source-side cleanliness preflight (`fo-4rpnkm.1` §1, Correction 3).
