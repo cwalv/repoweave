@@ -651,6 +651,52 @@ pub struct CargoWorkspaceConfig {
     #[serde(default, skip_serializing_if = "PatchMode::is_off")]
     pub patch: PatchMode,
 
+    /// **Where** rwv emits its `[patch.*]` entries. Orthogonal to
+    /// [`Self::patch`] (which decides *what* patches to compute).
+    ///
+    /// - `PatchSurface::Manifest` (default): entries land in the managed
+    ///   weave-root `Cargo.toml` under `[patch.*]`. Zero migration for
+    ///   pre-2026 workspaces. Reaches every builder that consumes the
+    ///   workspace manifest, but **cannot** reach nested-workspace member
+    ///   builds (cargo hard-errors on nested workspace members; they opt
+    ///   out of the weave workspace, and manifest `[patch]` is
+    ///   workspace-scoped).
+    /// - `PatchSurface::CargoConfig`: entries land in a generated
+    ///   `.cargo/config.toml` alongside the managed `Cargo.toml`
+    ///   (project dir; symlinked to the weave root). Config-level `[patch]`
+    ///   is discovered *upward* from cwd, so nested-workspace opt-outs
+    ///   (rvtty, mcp_agent_mail_rust — repos with their own `[workspace]`
+    ///   root that cargo refuses to nest) *do* see the weave's patches
+    ///   when built from inside their directory. This is the
+    ///   nesting-immune surface (Finding 2 of
+    ///   `docs/repoweave/grok-build-export-findings.md`).
+    ///
+    /// Enforced structurally as an enum — not two booleans — because
+    /// emitting the same `[patch.<reg>].<crate>` key on *both* surfaces
+    /// simultaneously is a cargo error (config-level `[patch]` shadows
+    /// manifest `[patch]`, cargo warns about the manifest entry being
+    /// unused, but a genuine key duplication with divergent paths would
+    /// produce contradictory resolution). The enum makes the choice
+    /// singular by construction.
+    ///
+    /// **Ignored when `patch == PatchMode::Off`** — there are no entries
+    /// to route, so the surface choice is moot. The default (Manifest)
+    /// stays inert.
+    ///
+    /// Caveat (documented in
+    /// `docs/reference/integrations/cargo-workspace.md`): under
+    /// `CargoConfig`, a member's own `.cargo/config.toml` `[patch.*]` key
+    /// silently shadows the weave-level entry via cargo's
+    /// closest-config-wins-per-key rule. Same shadowing surface as the
+    /// existing `scan_patch_shadowing` observability axis (fo-t9x0l1.1);
+    /// under `CargoConfig` the check remains equally load-bearing.
+    #[serde(
+        default,
+        rename = "patch-surface",
+        skip_serializing_if = "PatchSurface::is_manifest"
+    )]
+    pub patch_surface: PatchSurface,
+
     /// When `true`, rwv writes `[workspace.package]` from the project-level
     /// metadata declared in `rwv.yaml` (`project.license`, `project.authors`,
     /// etc.).  When `false` (default), `[workspace.package]` is left entirely
@@ -770,6 +816,49 @@ impl<'de> Deserialize<'de> for PatchMode {
             }
         }
         deserializer.deserialize_any(V)
+    }
+}
+
+/// Where rwv emits its `[patch.*]` entries.
+///
+/// See [`CargoWorkspaceConfig::patch_surface`] for full semantics. The two
+/// values are:
+///
+/// - `Manifest`: `[patch.*]` lands in the managed weave-root `Cargo.toml`.
+///   Pre-2026 behavior; default.
+/// - `CargoConfig`: `[patch.*]` lands in a generated
+///   `.cargo/config.toml` alongside `Cargo.toml`. Reaches nested-workspace
+///   opt-outs via cargo's upward config discovery (Finding 2 of
+///   `docs/repoweave/grok-build-export-findings.md`).
+///
+/// Two surfaces at once is structurally impossible (enum, not two booleans)
+/// because emitting the same patch key on both surfaces would be a
+/// double-patch — config-level `[patch]` takes precedence over manifest-
+/// level `[patch]` in cargo's resolution, but keeping both would drift
+/// silently and confuse the strip pass. One surface at a time is the
+/// invariant this type enforces.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum PatchSurface {
+    /// Patch entries land in the managed weave-root `Cargo.toml`.
+    #[default]
+    Manifest,
+    /// Patch entries land in a generated `.cargo/config.toml`
+    /// alongside the managed `Cargo.toml`. Reaches nested-workspace
+    /// opt-outs via upward config discovery.
+    CargoConfig,
+}
+
+impl PatchSurface {
+    /// True if the surface is the default (`Manifest`). Convenience for
+    /// `#[serde(skip_serializing_if)]`.
+    pub fn is_manifest(&self) -> bool {
+        matches!(self, PatchSurface::Manifest)
+    }
+
+    /// True if the surface is the generated `.cargo/config.toml`.
+    pub fn is_cargo_config(&self) -> bool {
+        matches!(self, PatchSurface::CargoConfig)
     }
 }
 

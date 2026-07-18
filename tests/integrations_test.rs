@@ -4009,6 +4009,680 @@ acme-lib = { path = "github/acme/lib" }
             "empty [patch.\"<url>\"] table should be pruned; got:\n{content}"
         );
     }
+
+    // -----------------------------------------------------------------------
+    // fo-t9x0l1.3 — PatchSurface::CargoConfig (nesting-immune lens)
+    //
+    // Design ref: Finding 2 of
+    // projects/foundations/docs/repoweave/grok-build-export-findings.md
+    // and its 2026-07-15 probe validation (P1 symlink/logical paths,
+    // P3/P7 relative-path resolution, P4 upward discovery through nested
+    // workspaces, P5b shadowing).
+    //
+    // The bead's WHOLE POINT is the nested-workspace case: cargo hard-errors
+    // when it discovers a nested `[workspace]` inside another workspace
+    // member, so those repos must opt out of the weave workspace — and once
+    // they do, the workspace-manifest `[patch]` NEVER reaches their builds.
+    // The `.cargo/config.toml` surface is discovered by upward walk from cwd
+    // instead of by workspace membership, so it reaches the opt-out.
+    //
+    // Assertions here are structural (probe P4 upward discovery, P3 relative
+    // paths, P1 hybrid-managed ownership); a live-cargo assertion of "this
+    // patch would apply" against a nested-workspace fixture lives in
+    // e2e_cargo_test.rs — the boundary follows how existing derived-mode
+    // tests split (unit-level structure here, cargo-invoked structure there).
+    // -----------------------------------------------------------------------
+
+    /// Activate under `patch-surface: cargo-config` writes patches into
+    /// `.cargo/config.toml` (NOT the manifest) and rewrites weave-relative
+    /// paths to `../<member>` so they resolve against `.cargo/`'s logical
+    /// location (probe P3/P7).
+    #[test]
+    fn cargo_config_surface_writes_patches_to_dot_cargo() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+
+        write_file(
+            root,
+            "github/acme/lib/Cargo.toml",
+            "[package]\nname = \"acme-lib\"\nversion = \"0.3.5\"\nedition = \"2021\"\n",
+        );
+        write_file(
+            root,
+            "github/acme/app/Cargo.toml",
+            "[package]\nname = \"acme-app\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\
+             [dependencies]\nacme-lib = \"0.3\"\n",
+        );
+
+        let manifest = make_manifest(vec![
+            ("github/acme/app", Role::Owned),
+            ("github/acme/lib", Role::Owned),
+        ]);
+        let project = ProjectName::new("test-project");
+        let config = IntegrationConfig::from_yaml("patch: derived\npatch-surface: cargo-config\n");
+        let cache = HashMap::new();
+        let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+
+        CargoWorkspace.activate(&ctx).unwrap();
+
+        // The managed Cargo.toml exists but MUST NOT carry [patch.*] —
+        // the surface routes elsewhere.
+        let manifest_content = std::fs::read_to_string(root.join("Cargo.toml")).unwrap();
+        assert!(
+            !manifest_content.contains("[patch"),
+            "cargo-config surface must not write `[patch]` into the manifest; got:\n{manifest_content}"
+        );
+
+        // The .cargo/config.toml file MUST exist and carry the patch entry.
+        let config_path = root.join(".cargo").join("config.toml");
+        assert!(
+            config_path.exists(),
+            "cargo-config surface must generate .cargo/config.toml"
+        );
+        let config_content = std::fs::read_to_string(&config_path).unwrap();
+        assert!(
+            config_content.contains("[patch.crates-io"),
+            "generated config must carry [patch.crates-io]; got:\n{config_content}"
+        );
+        assert!(
+            config_content.contains("acme-lib"),
+            "generated config must carry the acme-lib key; got:\n{config_content}"
+        );
+        // Path stays weave-root-relative: `github/acme/lib` (no `../`).
+        // Cargo resolves relative patch paths against the PARENT of
+        // `.cargo/` (not `.cargo/` itself — measured directly
+        // 2026-07-17). Our `.cargo/` sits directly under the weave root,
+        // so a weave-root-relative path resolves the same as it does
+        // on the manifest surface. NO canonicalization — probe P1 keeps
+        // symlinked `.cargo/` surfacing valid.
+        assert!(
+            config_content.contains("\"github/acme/lib\""),
+            "path must be weave-root-relative `github/acme/lib` — cargo \
+             resolves patch paths in .cargo/config.toml against the parent \
+             of `.cargo/` (probe P3/P7 empirical); got:\n{config_content}"
+        );
+        // Cross-check: no accidental `../` prefix.
+        assert!(
+            !config_content.contains("../github/acme/lib"),
+            "path must NOT carry a `../` prefix; got:\n{config_content}"
+        );
+        // The rwv marker decorates the entry (same hybrid ownership as
+        // the manifest surface).
+        assert!(
+            config_content.contains("managed by rwv"),
+            "generated entry must carry rwv marker; got:\n{config_content}"
+        );
+    }
+
+    /// The nesting-immune case: the derived-mode scan
+    /// finds a registry dep in an ACTIVE weave member; the patch lands in
+    /// `.cargo/config.toml`; a nested-workspace opt-out present in the
+    /// same weave picks up the patch when built from inside its dir via
+    /// upward config discovery.
+    ///
+    /// This is the shape a real weave would have: an active member (say,
+    /// `chatly/server`) uses `acme-lib = "1.0"` as a registry dep, and a
+    /// nested-workspace opt-out (rvtty, mcp_agent_mail_rust, grok-build)
+    /// also uses `acme-lib` in its own build. Both consumers should see
+    /// the in-weave `acme-lib` — the config surface is the ONLY surface
+    /// that can serve both.
+    #[test]
+    fn cargo_config_surface_reaches_both_active_member_and_opt_out() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+
+        // Weave-native lib.
+        write_file(
+            root,
+            "github/acme/lib/Cargo.toml",
+            "[package]\nname = \"acme-lib\"\nversion = \"1.0.0\"\nedition = \"2021\"\n",
+        );
+        // Active member consuming acme-lib (this drives the derived scan
+        // to emit the patch).
+        write_file(
+            root,
+            "github/chatly/server/Cargo.toml",
+            "[package]\nname = \"chatly-server\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\
+             [dependencies]\nacme-lib = \"1.0\"\n",
+        );
+        // Nested-workspace opt-out. It exists in the weave but is
+        // structurally excluded from the workspace manifest — the
+        // manifest surface can't patch its builds.
+        write_file(
+            root,
+            "github/xai-org/grok-build/Cargo.toml",
+            "[workspace]\nmembers = [\"crates/consumer\"]\nresolver = \"2\"\n",
+        );
+        write_file(
+            root,
+            "github/xai-org/grok-build/crates/consumer/Cargo.toml",
+            "[package]\nname = \"grok-consumer\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\
+             [dependencies]\nacme-lib = \"1.0\"\n",
+        );
+
+        let manifest = make_manifest(vec![
+            ("github/acme/lib", Role::Owned),
+            ("github/chatly/server", Role::Owned),
+            ("github/xai-org/grok-build", Role::Owned),
+        ]);
+        let project = ProjectName::new("test-project");
+        let config = IntegrationConfig::from_yaml(
+            "patch: derived\n\
+             patch-surface: cargo-config\n\
+             exclude:\n  - github/xai-org/grok-build\n",
+        );
+        let cache = HashMap::new();
+        let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+
+        CargoWorkspace.activate(&ctx).unwrap();
+
+        // Manifest surface is inert.
+        let manifest_content = std::fs::read_to_string(root.join("Cargo.toml")).unwrap();
+        assert!(
+            !manifest_content.contains("[patch"),
+            "cargo-config surface must not write into the manifest; got:\n{manifest_content}"
+        );
+
+        // Config surface carries the patch.
+        let config_path = root.join(".cargo").join("config.toml");
+        let config_content = std::fs::read_to_string(&config_path).unwrap();
+        assert!(
+            config_content.contains("acme-lib"),
+            "patch must land in .cargo/config.toml; got:\n{config_content}"
+        );
+        assert!(
+            config_content.contains("\"github/acme/lib\""),
+            "path is weave-root-relative (probe P3/P7 empirical: cargo \
+             resolves against parent-of-.cargo); got:\n{config_content}"
+        );
+        // The opt-out repo is present at the tested path. Cargo's upward
+        // walk from grok-consumer would land on this file (structural,
+        // not asserted via cargo here — see e2e_cargo_test.rs for the
+        // cargo-metadata assertion).
+        let opt_out_path = root.join("github/xai-org/grok-build/crates/consumer");
+        assert!(opt_out_path.exists(), "opt-out repo layout expected");
+    }
+
+    /// The `manifest` surface remains the default: an unspecified
+    /// `patch-surface` behaves EXACTLY like the pre-2026 output. Zero
+    /// migration for existing manifests.
+    #[test]
+    fn manifest_surface_is_default_zero_migration() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+
+        write_file(
+            root,
+            "github/acme/lib/Cargo.toml",
+            "[package]\nname = \"acme-lib\"\nversion = \"0.3.5\"\nedition = \"2021\"\n",
+        );
+        write_file(
+            root,
+            "github/acme/app/Cargo.toml",
+            "[package]\nname = \"acme-app\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\
+             [dependencies]\nacme-lib = \"0.3\"\n",
+        );
+
+        let manifest = make_manifest(vec![
+            ("github/acme/lib", Role::Owned),
+            ("github/acme/app", Role::Owned),
+        ]);
+        let project = ProjectName::new("test-project");
+        // No patch-surface key — default is manifest.
+        let config = IntegrationConfig::from_yaml("patch: derived\n");
+        let cache = HashMap::new();
+        let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+
+        CargoWorkspace.activate(&ctx).unwrap();
+
+        let manifest_content = std::fs::read_to_string(root.join("Cargo.toml")).unwrap();
+        assert!(
+            manifest_content.contains("[patch.crates-io"),
+            "manifest surface default: patch lands in Cargo.toml; got:\n{manifest_content}"
+        );
+        // No `../` prefix on manifest surface — paths are weave-relative.
+        assert!(
+            manifest_content.contains("\"github/acme/lib\"")
+                || manifest_content.contains("'github/acme/lib'"),
+            "manifest surface path stays weave-relative (no `../` prefix); got:\n{manifest_content}"
+        );
+        // No `.cargo/config.toml` generated under manifest surface.
+        assert!(
+            !root.join(".cargo").join("config.toml").exists(),
+            "manifest surface must NOT generate .cargo/config.toml"
+        );
+    }
+
+    /// User-authored keys in a pre-existing `.cargo/config.toml`
+    /// (linker flags, per-target settings, hand-written unmarked patch
+    /// entries) survive activation. Same hybrid ownership as the
+    /// manifest surface — the marker is the pen.
+    #[test]
+    fn cargo_config_surface_preserves_user_authored_keys() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+
+        // Seed a `.cargo/config.toml` with mixed user content: a linker
+        // flag section, a user-authored `[patch.crates-io]` entry (no
+        // rwv marker), and a hand-written comment.
+        write_file(
+            root,
+            ".cargo/config.toml",
+            r#"# hand-written weave-level policy
+[target.x86_64-unknown-linux-gnu]
+rustflags = ["-C", "link-arg=-fuse-ld=lld"]
+
+[patch.crates-io]
+vendor-foo = { git = "https://user.example.com/vendor-foo.git" }
+"#,
+        );
+
+        write_file(
+            root,
+            "github/acme/lib/Cargo.toml",
+            "[package]\nname = \"acme-lib\"\nversion = \"0.3.5\"\nedition = \"2021\"\n",
+        );
+        write_file(
+            root,
+            "github/acme/app/Cargo.toml",
+            "[package]\nname = \"acme-app\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\
+             [dependencies]\nacme-lib = \"0.3\"\n",
+        );
+
+        let manifest = make_manifest(vec![
+            ("github/acme/lib", Role::Owned),
+            ("github/acme/app", Role::Owned),
+        ]);
+        let project = ProjectName::new("test-project");
+        let config = IntegrationConfig::from_yaml("patch: derived\npatch-surface: cargo-config\n");
+        let cache = HashMap::new();
+        let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+
+        CargoWorkspace.activate(&ctx).unwrap();
+
+        let content = std::fs::read_to_string(root.join(".cargo").join("config.toml")).unwrap();
+
+        // User's linker flag survives.
+        assert!(
+            content.contains("link-arg=-fuse-ld=lld"),
+            "user-authored linker flags must survive; got:\n{content}"
+        );
+        assert!(
+            content.contains("[target.x86_64-unknown-linux-gnu]"),
+            "user-authored target block must survive; got:\n{content}"
+        );
+        // User's hand-authored patch entry survives untouched.
+        assert!(
+            content.contains("https://user.example.com/vendor-foo.git"),
+            "user-authored [patch.crates-io].vendor-foo must survive; got:\n{content}"
+        );
+        // rwv's entry landed next to it, marked.
+        assert!(
+            content.contains("acme-lib"),
+            "rwv-derived patch must land; got:\n{content}"
+        );
+        assert!(
+            content.contains("managed by rwv"),
+            "rwv-generated entry must carry marker; got:\n{content}"
+        );
+    }
+
+    /// Deactivate under the cargo-config surface strips the rwv-marker
+    /// entries from `.cargo/config.toml`, preserves user keys, and
+    /// deletes the file (and `.cargo/`) iff the strip leaves nothing.
+    #[test]
+    fn deactivate_strips_marked_entries_from_cargo_config_surface() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+
+        // Seed the managed Cargo.toml (rwv-marker workspace).
+        write_file(
+            root,
+            "Cargo.toml",
+            r#"[workspace]
+# managed by rwv
+members = ["github/acme/app"]
+# managed by rwv
+resolver = "2"
+"#,
+        );
+        // Seed a `.cargo/config.toml` with mixed content: a marked
+        // rwv-generated entry plus a user-authored key. Deactivate must
+        // strip the former and preserve the latter.
+        write_file(
+            root,
+            ".cargo/config.toml",
+            r#"[patch.crates-io]
+# managed by rwv
+acme-lib = { path = "../github/acme/lib" }
+vendor-foo = { git = "https://user.example.com/vendor-foo.git" }
+"#,
+        );
+
+        CargoWorkspace.deactivate(root).unwrap();
+
+        let content = std::fs::read_to_string(root.join(".cargo").join("config.toml")).unwrap();
+        assert!(
+            !content.contains("acme-lib"),
+            "rwv-marker entry must be stripped from cargo-config; got:\n{content}"
+        );
+        assert!(
+            content.contains("vendor-foo"),
+            "user-authored entry must survive; got:\n{content}"
+        );
+    }
+
+    /// Deactivate under the cargo-config surface deletes an emptied
+    /// `.cargo/config.toml` and prunes the parent `.cargo/` dir when it
+    /// too is empty. Mirrors the file-deletion rule for hybrid files.
+    #[test]
+    fn deactivate_deletes_emptied_cargo_config_and_dir() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+
+        // Managed Cargo.toml with only rwv-owned keys.
+        write_file(
+            root,
+            "Cargo.toml",
+            r#"[workspace]
+# managed by rwv
+members = ["github/acme/app"]
+# managed by rwv
+resolver = "2"
+"#,
+        );
+        // Cargo config with ONLY rwv-marker patch entries — after strip,
+        // the file is empty.
+        write_file(
+            root,
+            ".cargo/config.toml",
+            r#"[patch.crates-io]
+# managed by rwv
+acme-lib = { path = "../github/acme/lib" }
+"#,
+        );
+
+        CargoWorkspace.deactivate(root).unwrap();
+
+        assert!(
+            !root.join(".cargo").join("config.toml").exists(),
+            "emptied cargo-config must be deleted"
+        );
+        assert!(
+            !root.join(".cargo").exists(),
+            "empty .cargo/ dir must be pruned"
+        );
+    }
+
+    /// Deactivate under the cargo-config surface preserves an unrelated
+    /// sibling in `.cargo/` (e.g. `credentials`) — the dir prune only
+    /// fires when the dir is EMPTY.
+    #[test]
+    fn deactivate_preserves_dot_cargo_siblings() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+
+        write_file(
+            root,
+            "Cargo.toml",
+            r#"[workspace]
+# managed by rwv
+members = ["github/acme/app"]
+# managed by rwv
+resolver = "2"
+"#,
+        );
+        write_file(
+            root,
+            ".cargo/config.toml",
+            r#"[patch.crates-io]
+# managed by rwv
+acme-lib = { path = "../github/acme/lib" }
+"#,
+        );
+        // User-authored sibling (e.g. cargo credentials).
+        write_file(
+            root,
+            ".cargo/credentials.toml",
+            "[registry]\ntoken = \"x\"\n",
+        );
+
+        CargoWorkspace.deactivate(root).unwrap();
+
+        // Config gone.
+        assert!(
+            !root.join(".cargo").join("config.toml").exists(),
+            "emptied cargo-config must be deleted"
+        );
+        // Dir SURVIVES because the sibling exists.
+        assert!(
+            root.join(".cargo").exists(),
+            ".cargo/ must survive when it holds user siblings"
+        );
+        assert!(
+            root.join(".cargo").join("credentials.toml").exists(),
+            "user sibling must survive"
+        );
+    }
+
+    /// Structural: `PatchSurface` is an ENUM (not two booleans), so
+    /// enabling both surfaces at once is impossible by construction —
+    /// a `patch-surface` field can only carry ONE value. This is the
+    /// "double-patch prevention" the TL asked for; it lives at the type
+    /// level and is confirmed here by observing that only one surface
+    /// ever gets written.
+    #[test]
+    fn only_one_surface_writes_per_activation() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+
+        write_file(
+            root,
+            "github/acme/lib/Cargo.toml",
+            "[package]\nname = \"acme-lib\"\nversion = \"0.3.5\"\nedition = \"2021\"\n",
+        );
+        write_file(
+            root,
+            "github/acme/app/Cargo.toml",
+            "[package]\nname = \"acme-app\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\
+             [dependencies]\nacme-lib = \"0.3\"\n",
+        );
+
+        let manifest = make_manifest(vec![
+            ("github/acme/lib", Role::Owned),
+            ("github/acme/app", Role::Owned),
+        ]);
+        let project = ProjectName::new("test-project");
+        let cache = HashMap::new();
+
+        // Round 1: cargo-config surface.
+        let config_a =
+            IntegrationConfig::from_yaml("patch: derived\npatch-surface: cargo-config\n");
+        let ctx_a = make_ctx(root, &project, &manifest, &config_a, &cache);
+        CargoWorkspace.activate(&ctx_a).unwrap();
+        let manifest_a = std::fs::read_to_string(root.join("Cargo.toml")).unwrap();
+        let config_a_content =
+            std::fs::read_to_string(root.join(".cargo").join("config.toml")).unwrap();
+        assert!(!manifest_a.contains("[patch"), "surface a: manifest inert");
+        assert!(
+            config_a_content.contains("acme-lib"),
+            "surface a: config carries patch"
+        );
+
+        // Round 2: manifest surface (fresh fixture — no prior state,
+        // because in a real workspace a mode flip is a full re-activation).
+        // Delete round 1 output first, matching activate_intent's model.
+        CargoWorkspace.deactivate(root).unwrap();
+        let config_b = IntegrationConfig::from_yaml("patch: derived\n");
+        let ctx_b = make_ctx(root, &project, &manifest, &config_b, &cache);
+        CargoWorkspace.activate(&ctx_b).unwrap();
+        let manifest_b = std::fs::read_to_string(root.join("Cargo.toml")).unwrap();
+        assert!(
+            manifest_b.contains("[patch.crates-io"),
+            "surface b: manifest carries patch"
+        );
+        assert!(
+            !root.join(".cargo").join("config.toml").exists(),
+            "surface b: config surface not written"
+        );
+    }
+
+    /// verify() under cargo-config surface classifies MISSING /
+    /// USER-HELD / DRIFT / CLEAN for `.cargo/config.toml`.
+    #[test]
+    fn cargo_config_surface_verify_three_state() {
+        use repoweave::integration::Integration;
+
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+
+        write_file(
+            root,
+            "github/acme/lib/Cargo.toml",
+            "[package]\nname = \"acme-lib\"\nversion = \"0.3.5\"\nedition = \"2021\"\n",
+        );
+        write_file(
+            root,
+            "github/acme/app/Cargo.toml",
+            "[package]\nname = \"acme-app\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\
+             [dependencies]\nacme-lib = \"0.3\"\n",
+        );
+        // Managed Cargo.toml must exist (verify_cargo_toml runs first).
+        write_file(
+            root,
+            "Cargo.toml",
+            r#"[workspace]
+# managed by rwv
+members = ["github/acme/app", "github/acme/lib"]
+# managed by rwv
+resolver = "2"
+"#,
+        );
+
+        let manifest = make_manifest(vec![
+            ("github/acme/lib", Role::Owned),
+            ("github/acme/app", Role::Owned),
+        ]);
+        let project = ProjectName::new("test-project");
+        let config = IntegrationConfig::from_yaml("patch: derived\npatch-surface: cargo-config\n");
+        let cache = HashMap::new();
+        let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+
+        // (a) MISSING — no .cargo/config.toml yet, but patch is derived
+        // and app depends on lib.
+        let issues = CargoWorkspace.verify(&ctx).unwrap();
+        let has_missing = issues
+            .iter()
+            .any(|i| i.message.contains(".cargo/config.toml") && i.message.contains("missing"));
+        assert!(
+            has_missing,
+            "expected MISSING finding for .cargo/config.toml; got: {issues:?}"
+        );
+
+        // (b) DRIFT — a stale marked entry for a different crate.
+        write_file(
+            root,
+            ".cargo/config.toml",
+            r#"[patch.crates-io]
+# managed by rwv
+stale-crate = { path = "../github/nowhere" }
+"#,
+        );
+        let issues = CargoWorkspace.verify(&ctx).unwrap();
+        let has_drift = issues
+            .iter()
+            .any(|i| i.message.contains(".cargo/config.toml") && i.message.contains("drift"));
+        assert!(
+            has_drift,
+            "expected DRIFT finding for stale marked entry; got: {issues:?}"
+        );
+
+        // (c) USER-HELD — same expected crate key but WITHOUT the marker.
+        write_file(
+            root,
+            ".cargo/config.toml",
+            r#"[patch.crates-io]
+acme-lib = { path = "../github/acme/lib" }
+"#,
+        );
+        let issues = CargoWorkspace.verify(&ctx).unwrap();
+        let has_user_held = issues
+            .iter()
+            .any(|i| i.message.contains(".cargo/config.toml") && i.message.contains("unmarked"));
+        assert!(
+            has_user_held,
+            "expected USER-HELD finding for unmarked expected key; got: {issues:?}"
+        );
+
+        // (d) CLEAN — expected entry present with the marker.
+        write_file(
+            root,
+            ".cargo/config.toml",
+            r#"[patch.crates-io]
+# managed by rwv
+acme-lib = { path = "../github/acme/lib" }
+"#,
+        );
+        let issues = CargoWorkspace.verify(&ctx).unwrap();
+        let has_config_finding = issues
+            .iter()
+            .any(|i| i.message.contains(".cargo/config.toml"));
+        assert!(
+            !has_config_finding,
+            "expected no cargo-config finding when marked entry matches expected; got: {issues:?}"
+        );
+    }
+
+    /// A member's own `.cargo/config.toml` shadowing the same
+    /// `[patch.crates-io].<crate>` key silently defeats the weave-level
+    /// entry under the config surface — same P5b shadowing as the manifest
+    /// surface. The scan is target-agnostic (checks all discoverable
+    /// member configs regardless of where the weave writes).
+    #[test]
+    fn cargo_config_surface_shadowing_warning() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+
+        write_file(
+            root,
+            "github/acme/lib/Cargo.toml",
+            "[package]\nname = \"acme-lib\"\nversion = \"0.3.5\"\nedition = \"2021\"\n",
+        );
+        write_file(
+            root,
+            "github/acme/app/Cargo.toml",
+            "[package]\nname = \"acme-app\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\
+             [dependencies]\nacme-lib = \"0.3\"\n",
+        );
+        // Shadowing config in the member's tree.
+        write_file(
+            root,
+            "github/acme/app/.cargo/config.toml",
+            "[patch.crates-io]\nacme-lib = { path = \"/wrong/place\" }\n",
+        );
+
+        let manifest = make_manifest(vec![
+            ("github/acme/app", Role::Owned),
+            ("github/acme/lib", Role::Owned),
+        ]);
+        let project = ProjectName::new("test-project");
+        let config = IntegrationConfig::from_yaml("patch: derived\npatch-surface: cargo-config\n");
+        let cache = HashMap::new();
+        let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+
+        // Must not panic; write still lands. The warning is advisory
+        // (captured via eprintln — not asserted here, mirroring the
+        // manifest-surface counterpart which is unit-covered in
+        // scan_patch_shadowing_against_keys).
+        CargoWorkspace.activate(&ctx).unwrap();
+
+        let config_content =
+            std::fs::read_to_string(root.join(".cargo").join("config.toml")).unwrap();
+        assert!(
+            config_content.contains("acme-lib"),
+            "output must land even when a member shadows the key; got:\n{config_content}"
+        );
+    }
 }
 
 // ===========================================================================

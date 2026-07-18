@@ -240,6 +240,20 @@ const ALLOWLIST: &[Allowed] = &[
             added anything to it.",
     },
     Allowed {
+        file: "integrations/cargo_workspace.rs",
+        pattern: "remove_file",
+        count: 1,
+        justification: "prune_empty_cargo_config on deactivate: deletes \
+            <root>/.cargo/config.toml ONLY when it's semantically empty \
+            (parse-checked; unparseable content is left alone). The \
+            strip_marked_patch_entries pass that runs just before is \
+            marker-gated — only rwv-decorated `[patch.<reg>].<crate>` \
+            entries are removed, so user-authored linker flags, per-target \
+            settings, or hand-authored (unmarked) patch entries survive and \
+            keep the file non-empty. The parent .cargo/ dir is pruned via \
+            remove_dir (not remove_file) and only when empty.",
+    },
+    Allowed {
         file: "integrations/go_work.rs",
         pattern: "remove_file",
         count: 2,

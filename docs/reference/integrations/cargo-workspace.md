@@ -20,13 +20,13 @@ written or stripped by rwv.
 <!-- pending C7 -->
 rwv owns exactly these keys inside `Cargo.toml`:
 
-| Key | Condition |
-|---|---|
-| `[workspace].members` | Always when integration is active |
-| `[workspace].resolver` | Always when integration is active |
-| `[workspace.package]` | Only when `workspace-package: true` is set |
-| `[patch.<registry>].<crate>` (rwv-marked entries only) | Only when `patch:` is `committed-paths` or `derived` (see below) |
-| `# excluded: <path> (opted out)` comments | When `exclude:` is configured |
+| Key | File | Condition |
+|---|---|---|
+| `[workspace].members` | `Cargo.toml` | Always when integration is active |
+| `[workspace].resolver` | `Cargo.toml` | Always when integration is active |
+| `[workspace.package]` | `Cargo.toml` | Only when `workspace-package: true` is set |
+| `[patch.<registry>].<crate>` (rwv-marked entries only) | `Cargo.toml` **or** `.cargo/config.toml` | Only when `patch:` is `committed-paths` or `derived`. File chosen by `patch-surface:` (see below) |
+| `# excluded: <path> (opted out)` comments | `Cargo.toml` | When `exclude:` is configured |
 
 All other content — `[profile.*]`, `[workspace.dependencies]`,
 `[workspace.lints.*]`, `[workspace.metadata.*]`, user-authored
@@ -186,6 +186,79 @@ standalone-buildable members, keep the target's version published.
 **No per-crate auto-detection:** rwv never reads or infers publishability
 from member `[package].publish` fields. The mode is an operator decision
 that applies to the entire weave.
+
+## Patch surface (`manifest` vs `cargo-config`)
+
+`patch-surface:` decides **where** rwv writes the `[patch.*]` tables.
+Orthogonal to `patch:` (which decides *what* patches to compute).
+
+| Surface | YAML value | Where entries land | Reaches |
+|---|---|---|---|
+| Manifest (default) | `manifest` | `[patch.*]` in the managed weave-root `Cargo.toml` | Every consumer of the workspace manifest. **Cannot** reach nested-workspace opt-outs. |
+| Cargo config | `cargo-config` | `[patch.*]` in a generated `.cargo/config.toml` alongside the managed `Cargo.toml` | Every consumer above, PLUS builds run from *inside* a nested-workspace opt-out's directory (via cargo's upward config discovery). |
+
+```yaml
+integrations:
+  cargo-workspace:
+    patch: derived
+    patch-surface: cargo-config
+```
+
+### Why the config surface exists — the nesting-immune lens
+
+Cargo hard-errors when a workspace member itself declares
+`[workspace]` at its root (nested workspaces are illegal). Repos in this
+shape (rvtty, mcp_agent_mail_rust, grok-build) must be `exclude`-d from
+the weave workspace, and once excluded the workspace-manifest `[patch]`
+never applies to their builds. The `cargo-config` surface writes the
+patch into a `.cargo/config.toml` at the same level as `Cargo.toml`;
+cargo's config discovery walks *upward* from cwd (not by workspace
+membership), so a `cargo build` invoked from inside an opted-out repo
+still sees the weave's patches. See Finding 2 of
+[grok-build-export-findings.md](../../../projects/foundations/docs/repoweave/grok-build-export-findings.md).
+
+Both surfaces at once is structurally impossible — `patch-surface` is
+an enum, not two booleans.
+
+### Hybrid ownership
+
+The generated `.cargo/config.toml` is hybrid, same as `Cargo.toml`:
+rwv owns rwv-marker-decorated `[patch.<registry>].<crate>` entries,
+the user owns everything else (linker flags in `[target.*]`, cargo
+credentials, hand-authored unmarked `[patch]` entries). Deactivation
+strips only the marked entries; a config that carries only user keys
+is left alone.
+
+### Path resolution
+
+Cargo resolves relative patch paths in `.cargo/config.toml` against
+the **parent of `.cargo/`** (measured directly 2026-07-17; the
+finding's initial "config's logical location" wording was ambiguous).
+Since our `.cargo/` sits directly under the project root, member paths
+in the generated config stay **weave-root-relative**
+(`github/acme/lib`), the same shape the manifest surface writes. No
+`../` prefix. No canonicalization — this preserves symlinked `.cargo/`
+surfacing at the weave root (probe P1).
+
+### Same-key shadowing
+
+A member's own `.cargo/config.toml` declaring the same
+`[patch.<reg>].<crate>` key silently overrides the weave-level entry
+(cargo's closest-config-wins per key). The `scan_patch_shadowing`
+observatory in `rwv doctor` detects this against both surfaces —
+under `cargo-config` the check is equally load-bearing (probe P5b).
+Generation time surfaces the same warning to stderr.
+
+### Housekeeping — untracked project state
+
+The generated `.cargo/config.toml` lives in the project directory
+alongside `Cargo.toml`, `Cargo.lock`, and `.rwv-owned-digests`.
+rwv does not auto-manage a `.gitignore` for any of these; they are
+part of the composition (or its bookkeeping) and are committable
+persistent state. Operators commit them for reproducibility, or add
+them to a hand-authored `.gitignore` if they prefer local
+regeneration on activation. Same policy applies to all
+rwv-generated files in the project dir.
 
 ## Nested workspaces
 

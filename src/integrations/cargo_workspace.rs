@@ -83,6 +83,44 @@
 //! derivation of the derived-mode design (and probes P2 / P6 / P8 for the
 //! tier-boundary / diagnostic / reference-role facts it depends on).
 //!
+//! **Patch surface** (orthogonal to mode; `PatchSurface` enum in the config):
+//!
+//! - `manifest` (default; pre-2026 behavior): entries land in the managed
+//!   weave-root `Cargo.toml` under `[patch.*]`. Reaches every consumer of
+//!   the workspace manifest but CANNOT reach nested-workspace opt-outs
+//!   (cargo hard-errors on nested workspace members, so those repos opt
+//!   out and the workspace manifest never applies to their builds).
+//! - `cargo-config`: entries land in a generated `.cargo/config.toml`
+//!   alongside `Cargo.toml` (project dir, symlinked to the weave root).
+//!   Config-level `[patch]` is discovered upward from cwd, so nested-
+//!   workspace opt-outs (rvtty, mcp_agent_mail_rust) built from *inside*
+//!   the member dir see the weave's patches. This is Finding 2 of the
+//!   design doc — the nesting-immune lens. Fully validated by probes P1
+//!   (symlinked `.cargo/` dirs work with zero rebuild churn), P3/P7
+//!   (relative paths resolve against the config's logical, non-
+//!   canonicalized location), P4 (upward discovery through nested
+//!   workspaces), and P5b (closest-config-wins per-key shadowing; the
+//!   observatory scan is the detection).
+//!
+//! Both surfaces at once is structurally impossible (`PatchSurface` is an
+//! enum, not two booleans). Emitting the same `[patch.<reg>].<crate>` key
+//! on both would be a genuine double-patch — config-level shadows manifest-
+//! level per cargo's precedence, but the strip pass would then have to
+//! coordinate across two files. One surface at a time keeps the invariant
+//! local.
+//!
+//! **Housekeeping — project-dir untracked state.** Under `cargo-config`
+//! surface the project dir carries a generated `.cargo/config.toml`
+//! alongside the pre-existing `Cargo.toml` and `.rwv-owned-digests`. All
+//! three are treated the same way: they are part of the composition (or
+//! its bookkeeping) and are committable persistent state, matching how
+//! the managed `Cargo.toml` is treated. rwv does NOT auto-manage a
+//! `.gitignore` for them — the operator commits them if they want the
+//! composition reproducible from the repo, or gitignores them locally if
+//! they prefer to regenerate on activation. This matches the existing
+//! Cargo.lock / `.rwv-owned-digests` treatment: rwv publishes the file at
+//! a stable location; operator policy decides what git sees.
+//!
 //! **(d) Nested-workspace hard error.** Refinement: a repo listed under
 //! `members.<repo>` is exempt from the `declares_workspace()` check on its
 //! **root** (its sub-packages, not its root, are the declared members).
@@ -116,7 +154,7 @@ use crate::integrations::merge::{
     strip_deactivate, toml_array_strings, KeyPath, ManagedDoc, MergeResult, OwnedDigestCheck,
     OwnedValue, Ownership, TomlDoc,
 };
-use crate::manifest::{CargoWorkspaceConfig, MemberSpec, PatchMode};
+use crate::manifest::{CargoWorkspaceConfig, MemberSpec, PatchMode, PatchSurface};
 use anyhow::Context;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
@@ -163,6 +201,70 @@ struct DerivedPatch {
     /// The `path = "<rel>"` value — weave-root-relative path to the
     /// in-weave crate.
     target_path: String,
+}
+
+/// Where `[patch.*]` entries land — a concrete file plus the path prefix
+/// that turns weave-root-relative member paths into paths cargo will
+/// resolve correctly from that file.
+///
+/// This is the small piece of surface-specific state shared by generation,
+/// shadowing scan, and (indirectly) verify. Keeps `activate()` free of
+/// path-arithmetic branches and gives probes P3/P7 (relative resolution
+/// against the config's non-canonicalized location) one place to live.
+///
+/// - **Manifest**: `file = <output_dir>/Cargo.toml`, `path_prefix = ""`.
+///   Member paths are already weave-root-relative and `Cargo.toml` sits
+///   at the weave root, so no rewrite is needed.
+/// - **CargoConfig**: `file = <output_dir>/.cargo/config.toml`,
+///   `path_prefix = ""`. Cargo resolves relative patch paths against the
+///   **directory containing `.cargo/`** (probe P3/P7 clarified by direct
+///   measurement 2026-07-17: the "config's logical location" in cargo's
+///   patch-path resolution is the parent of `.cargo/`, NOT `.cargo/`
+///   itself). Since our `.cargo/` sits directly under the weave root, a
+///   member at `github/acme/lib` written literally as `github/acme/lib`
+///   resolves to `<weave-root>/github/acme/lib` — exactly the same
+///   resolution as the manifest surface would produce. No `../` prefix is
+///   needed. NO canonicalization: this preserves symlinked `.cargo/`
+///   surfacing (probe P1) with zero rebuild churn.
+#[derive(Debug, Clone)]
+struct PatchTarget {
+    /// The file that carries the `[patch.*]` entries.
+    file: std::path::PathBuf,
+    /// String prefix applied to every member-path when written as a patch
+    /// `path = "..."` value. Empty for both current surfaces — cargo
+    /// resolves relative patch paths against the parent of `.cargo/`
+    /// (equivalent to the manifest's own dir for weaves that keep the
+    /// managed manifest at the project root). Kept as a field so a
+    /// future surface (e.g. a nested `.cargo/config.toml` deeper in the
+    /// tree) can plug in without reshaping the writer.
+    path_prefix: &'static str,
+}
+
+impl PatchTarget {
+    /// Rewrite a weave-root-relative member path into the string that
+    /// belongs in the patch entry's `path = "..."` field. Idempotent when
+    /// the prefix is empty.
+    fn rewrite(&self, target_path: &str) -> String {
+        if self.path_prefix.is_empty() {
+            target_path.to_string()
+        } else {
+            format!("{}{}", self.path_prefix, target_path)
+        }
+    }
+}
+
+/// Lift a `(crate_name, target_path)` pair into the `DerivedPatch` shape
+/// used by the multi-registry writer. All lifted entries key into
+/// `[patch.crates-io]` — this is committed-paths mode's tier boundary.
+fn patches_to_derived(patches: &[(String, String)]) -> Vec<DerivedPatch> {
+    patches
+        .iter()
+        .map(|(crate_name, target_path)| DerivedPatch {
+            registry: "crates-io".to_string(),
+            crate_name: crate_name.clone(),
+            target_path: target_path.clone(),
+        })
+        .collect()
 }
 
 /// The source shape of one dep entry, as classified for derived patching.
@@ -456,9 +558,8 @@ impl Integration for CargoWorkspace {
         // Each entry is an inline table `<crate> = { path = "<rel>" }`
         // under `[patch.<registry>]` (`crates-io` for registry deps, the
         // git URL for git-source deps), decorated with the
-        // `# managed by rwv` marker on the leaf key so the strip-deactivate
-        // pass can discriminate rwv-authored entries from user-authored
-        // ones.
+        // `# managed by rwv` marker on the leaf key so the strip pass can
+        // discriminate rwv-authored entries from user-authored ones.
         //
         // Dispatch on the operator's chosen mode:
         //
@@ -467,23 +568,40 @@ impl Integration for CargoWorkspace {
         // - `Derived` matches members' registry (and git) deps by crate
         //   name against the in-weave package-name index, and runs the
         //   `.cargo/config.toml` shadowing precheck before emitting.
+        //
+        // The chosen `PatchSurface` decides *where* the entries land:
+        // - `Manifest`: post-merge into the same `Cargo.toml` we just
+        //   authored.
+        // - `CargoConfig`: post-merge into a generated `.cargo/config.toml`
+        //   alongside `Cargo.toml` in the project dir. Paths are written
+        //   relative to `.cargo/config.toml`'s logical location; because
+        //   `.cargo/` sits one level down from the project dir, an in-weave
+        //   member at `github/acme/lib` becomes `../github/acme/lib` from
+        //   the config's perspective. Cargo resolves relative paths against
+        //   the config's non-canonicalized (symlink-preserving) path per
+        //   probes P3/P7. Two surfaces at once is structurally impossible
+        //   (`PatchSurface` is an enum).
+        let patch_target = Self::patch_target(cfg.patch_surface, ctx);
         match cfg.patch {
             PatchMode::Off => {}
             PatchMode::CommittedPaths => {
                 let patches = Self::compute_patches(ctx, &members)
                     .context("computing cross-repo path-dep patches")?;
                 if !patches.is_empty() {
-                    Self::merge_patch_entries(&path, &patches)
-                        .with_context(|| format!("merge-patch {}", path.display()))?;
+                    let adjusted =
+                        Self::rewrite_patch_paths(&patches_to_derived(&patches), &patch_target);
+                    Self::merge_patch_entries_multi_registry(&patch_target.file, &adjusted)
+                        .with_context(|| format!("merge-patch {}", patch_target.file.display()))?;
                 }
             }
             PatchMode::Derived => {
                 let patches = Self::compute_derived_patches(ctx, &members)
                     .context("computing derived cross-repo patches")?;
-                Self::warn_derived_patch_shadowing(ctx, &members, &patches);
+                Self::warn_derived_patch_shadowing(ctx, &members, &patches, &patch_target);
                 if !patches.is_empty() {
-                    Self::merge_patch_entries_multi_registry(&path, &patches)
-                        .with_context(|| format!("merge-patch {}", path.display()))?;
+                    let adjusted = Self::rewrite_patch_paths(&patches, &patch_target);
+                    Self::merge_patch_entries_multi_registry(&patch_target.file, &adjusted)
+                        .with_context(|| format!("merge-patch {}", patch_target.file.display()))?;
                 }
             }
         }
@@ -519,15 +637,33 @@ impl Integration for CargoWorkspace {
         Self::undecorate_default_only_keys(&path)
             .with_context(|| format!("undecorate-default-only {}", path.display()))?;
 
-        // Third pass: strip rwv-marker-decorated `[patch.crates-io].*`
+        // Third pass: strip rwv-marker-decorated `[patch.<registry>].*`
         // entries. This is independent of the workspace marker — patch
         // entries carry their own per-key marker decor, so they may need
         // stripping even when `strip_deactivate` left the file unchanged
         // (e.g. the user holds the pen on `[workspace]`). The generic
         // strip_deactivate has no static handle on the dynamic
-        // patch.crates-io.<name> key set, so this is handled here.
+        // patch.<registry>.<name> key set, so this is handled here.
+        //
+        // The strip runs against BOTH candidate surfaces unconditionally.
+        // Deactivate has no `IntegrationContext` and thus no `cfg`, so we
+        // can't tell which surface was in use at activate time — but the
+        // strip is marker-gated (only rwv-marker entries are removed) and
+        // idempotent (missing files are a no-op), so running it against
+        // both is safe. This also handles the surface-flip case: the
+        // operator toggles `patch-surface: manifest → cargo-config` (or
+        // vice versa) between activations, and a subsequent deactivate
+        // still cleans the stale surface.
         Self::strip_marked_patch_entries(&path)
             .with_context(|| format!("strip-patch {}", path.display()))?;
+        let cargo_config = root.join(".cargo").join("config.toml");
+        Self::strip_marked_patch_entries(&cargo_config)
+            .with_context(|| format!("strip-patch {}", cargo_config.display()))?;
+        // If the `.cargo/config.toml` becomes empty after the strip, delete
+        // it, then delete an empty `.cargo/` dir. Symmetric with the
+        // `strip_deactivate` file-deletion rule for hybrid files.
+        Self::prune_empty_cargo_config(root)
+            .with_context(|| format!("prune-cargo-config {}", root.display()))?;
 
         Ok(())
     }
@@ -698,6 +834,14 @@ impl Integration for CargoWorkspace {
 
         let mut issues = self.verify_cargo_toml(ctx, &cfg)?;
         issues.extend(self.verify_cargo_lock(ctx));
+        // The `.cargo/config.toml` is hybrid ONLY when the config-surface
+        // option is selected AND the patch mode is non-off — otherwise
+        // rwv never writes it and it's a plain user file. verify skips it
+        // in every other configuration (matching how `managed_files`
+        // scopes surfacing).
+        if cfg.patch_surface.is_cargo_config() && cfg.patch.emits_patches() {
+            issues.extend(self.verify_cargo_config(ctx, &cfg)?);
+        }
         Ok(issues)
     }
 
@@ -706,6 +850,25 @@ impl Integration for CargoWorkspace {
     /// `[patch.*]`, comments, etc.). It MUST NOT appear in
     /// `generated_files()` — that would mark it gitignore-eligible and
     /// whole-deletable, the exact data-loss bug the merge port fixes.
+    ///
+    /// Under `patch-surface: cargo-config` an additional hybrid file
+    /// `.cargo/config.toml` joins the managed set. rwv owns rwv-marker-
+    /// decorated `[patch.<registry>].<crate>` entries there; the user
+    /// owns everything else (linker flags, per-target settings, their own
+    /// unmarked patch entries). Same hybrid ownership model as the manifest
+    /// surface — the marker discriminates rwv-authored from user-authored
+    /// entries and the strip pass at `deactivate` only removes marked ones.
+    ///
+    /// **Housekeeping decision** (fo-t9x0l1.3): both hybrid files live in
+    /// the project dir (surfaced at the weave root via symlink). rwv does
+    /// NOT auto-generate a `.gitignore` for them; they are part of the
+    /// composition and are committable persistent state, matching the
+    /// pre-existing `Cargo.toml` and `Cargo.lock` treatment (and the
+    /// design doc's "the config surface is part of the composition"
+    /// framing). Operators commit them for reproducibility, or add them
+    /// to a hand-authored `.gitignore` if they prefer local regeneration.
+    /// Same policy already applies to the `.rwv-owned-digests` bookkeeping
+    /// file — rwv publishes it, the operator commits or ignores per policy.
     fn managed_files(&self, ctx: &IntegrationContext) -> Vec<String> {
         let mut files = self.generated_files(ctx);
         let Ok(cfg) = ctx.config.settings::<CargoWorkspaceConfig>() else {
@@ -713,6 +876,16 @@ impl Integration for CargoWorkspace {
         };
         if Self::has_active_cargo_work(ctx, &cfg) {
             files.push("Cargo.toml".to_string());
+            // The generated `.cargo/config.toml` is hybrid — surfacing lets
+            // cargo's upward config discovery find the WEAVE-ROOT symlink
+            // (whose `read_link` resolves to the project-dir file). Only
+            // add when the config-surface option is selected AND the patch
+            // mode actually emits entries — the file is not generated in
+            // any other combination, so it must not appear in the surfacing
+            // set (the framework would try to symlink a dangling target).
+            if cfg.patch_surface.is_cargo_config() && cfg.patch.emits_patches() {
+                files.push(".cargo/config.toml".to_string());
+            }
         }
         files
     }
@@ -814,6 +987,172 @@ impl CargoWorkspace {
             "Cut over manually by removing [workspace] from the file \
              or by exercising the intent-mode merge",
             "on-disk [workspace] content differs from rwv.yaml config.",
+        ))
+    }
+
+    /// Verify the hybrid `.cargo/config.toml` when the config-surface
+    /// option is selected. See [`Self::verify`] for the four-state
+    /// semantics; this method is the config-surface analogue of
+    /// [`Self::verify_cargo_toml`].
+    ///
+    /// The owned key set here is **dynamic** (one `[patch.<reg>].<crate>`
+    /// per matched dep — same as the manifest-surface `[patch.*]` entries).
+    /// The state ladder resolves per file:
+    ///
+    /// - **MISSING** (`safe_to_fix = true`): the file is absent AND we
+    ///   expect at least one derived/mirrored patch to be written.
+    ///   `--fix` regenerates.
+    /// - **USER-HELD** (`safe_to_fix = false`): the file is present, at
+    ///   least one expected `[patch.<reg>].<crate>` key is present on
+    ///   disk, and NO rwv marker decorates any of them. The user holds
+    ///   the pen — doctor surfaces the finding but never auto-overwrites.
+    /// - **DRIFT** (`safe_to_fix = true`): the file is present and the
+    ///   rwv marker decorates some entries, but the set of marked keys
+    ///   does not match the expected set (an intended patch is missing,
+    ///   or a stale marked entry lingers from a prior activation).
+    ///   `--fix` regenerates.
+    /// - **CLEAN**: expected set matches on-disk marked set exactly.
+    ///
+    /// **Not verified**: user-authored (unmarked) entries — those are
+    /// operator policy that survives every activate/deactivate cycle.
+    /// Same discrimination the merge model applies uniformly.
+    fn verify_cargo_config(
+        &self,
+        ctx: &IntegrationContext,
+        cfg: &CargoWorkspaceConfig,
+    ) -> anyhow::Result<Vec<Issue>> {
+        use crate::integrations::merge::TOML_MARKER_TEXT;
+
+        let path = ctx.output_dir.join(".cargo").join("config.toml");
+
+        // Compute the expected patch set (same computation activate uses).
+        // Nested-workspace conflicts short-circuit the whole verify — the
+        // check() error already covers them; no misleading DRIFT.
+        let (members, nested_conflicts) = Self::partition(ctx, cfg)?;
+        if !nested_conflicts.is_empty() {
+            return Ok(vec![]);
+        }
+        let expected: Vec<DerivedPatch> = match cfg.patch {
+            PatchMode::Off => Vec::new(),
+            PatchMode::CommittedPaths => {
+                let raw = Self::compute_patches(ctx, &members)?;
+                patches_to_derived(&raw)
+            }
+            PatchMode::Derived => Self::compute_derived_patches(ctx, &members)?,
+        };
+        let target = Self::patch_target(cfg.patch_surface, ctx);
+        let expected: Vec<DerivedPatch> = Self::rewrite_patch_paths(&expected, &target);
+
+        // Expected marked-key set: {(registry, crate_name)}.
+        let mut expected_keys: BTreeSet<(String, String)> = BTreeSet::new();
+        for p in &expected {
+            expected_keys.insert((p.registry.clone(), p.crate_name.clone()));
+        }
+
+        // ── MISSING ───────────────────────────────────────────────────
+        if !path.exists() {
+            if expected_keys.is_empty() {
+                // No entries to write, no file needed — CLEAN.
+                return Ok(vec![]);
+            }
+            return Ok(vec![missing_issue(self.name(), &path)]);
+        }
+
+        // Read + parse. Same as verify_cargo_toml — parse failure bails
+        // loudly (can't assess drift on a malformed file).
+        let text = std::fs::read_to_string(&path)
+            .with_context(|| format!("reading {} for verify", path.display()))?;
+        let doc: toml_edit::DocumentMut = text
+            .parse()
+            .with_context(|| format!("parsing {} for verify (toml_edit)", path.display()))?;
+
+        // Enumerate on-disk patch entries, split by marker presence.
+        let mut on_disk_marked: BTreeSet<(String, String)> = BTreeSet::new();
+        let mut on_disk_unmarked: BTreeSet<(String, String)> = BTreeSet::new();
+        if let Some(patch) = doc.get("patch").and_then(|i| i.as_table()) {
+            for (registry, sub_item) in patch.iter() {
+                let Some(sub) = sub_item.as_table() else {
+                    continue;
+                };
+                for (crate_name, _) in sub.iter() {
+                    let is_marked = sub
+                        .key(crate_name)
+                        .and_then(|k| k.leaf_decor().prefix().and_then(|r| r.as_str()))
+                        .map(|p| p.contains(TOML_MARKER_TEXT))
+                        .unwrap_or(false);
+                    let key = (registry.to_string(), crate_name.to_string());
+                    if is_marked {
+                        on_disk_marked.insert(key);
+                    } else {
+                        on_disk_unmarked.insert(key);
+                    }
+                }
+            }
+        }
+
+        // ── USER-HELD ────────────────────────────────────────────────
+        // User holds the pen when an expected key is on disk but WITHOUT
+        // the marker AND no rwv-marker entries exist at all. If rwv has
+        // any marker on the file we're in DRIFT territory (marker is the
+        // ownership signal); if the file has no marked entries but has
+        // matching unmarked keys the user overwrote or hand-authored our
+        // territory — verify-and-warn.
+        if on_disk_marked.is_empty() {
+            let user_shadows_expected = expected_keys.iter().any(|k| on_disk_unmarked.contains(k));
+            if user_shadows_expected {
+                return Ok(drift_issues(
+                    self.name(),
+                    &path,
+                    /* marker_present */ false,
+                    /* owned_key_present */ true,
+                    None,
+                    &[],
+                    "Cut over manually by removing the conflicting \
+                     `[patch.<registry>].<crate>` key from the file or by \
+                     exercising the intent-mode merge",
+                    "",
+                ));
+            }
+            // No marker, no shadowing. If nothing is expected either, CLEAN.
+            // If entries ARE expected but the file has none, DRIFT (below).
+        }
+
+        // ── DRIFT / CLEAN ────────────────────────────────────────────
+        let matches = on_disk_marked == expected_keys;
+        // Marker-present predicate for the drift_issues dispatch — the
+        // per-file semantics we get from any marker on any expected leaf.
+        // At this point either on_disk_marked is non-empty (we saw markers)
+        // or expected_keys is non-empty (we're about to write markers).
+        let marker_present = !on_disk_marked.is_empty();
+        // Sort into stable displayable strings so drift_issues can build
+        // its normalized comparison (order is irrelevant; the set already
+        // matched or didn't).
+        let on_disk_repr: Vec<String> = on_disk_marked
+            .iter()
+            .map(|(r, c)| format!("{r}::{c}"))
+            .collect();
+        let expected_repr: Vec<String> = expected_keys
+            .iter()
+            .map(|(r, c)| format!("{r}::{c}"))
+            .collect();
+        if matches {
+            // CLEAN — includes the case where BOTH sides are empty.
+            return Ok(vec![]);
+        }
+        // owned_key_present == any expected key OR any marked key exists on disk
+        let owned_key_present = marker_present || !expected_keys.is_empty();
+        Ok(drift_issues(
+            self.name(),
+            &path,
+            marker_present,
+            owned_key_present,
+            Some(&on_disk_repr),
+            &expected_repr,
+            "Cut over manually by adding the `# managed by rwv` \
+             marker to the intended `[patch.<registry>].<crate>` keys \
+             or by exercising the intent-mode merge",
+            "on-disk `[patch.*]` entries in .cargo/config.toml differ \
+             from the set derived from rwv.yaml.",
         ))
     }
 
@@ -1280,18 +1619,27 @@ impl CargoWorkspace {
     /// Cargo's mismatch diagnostic actively misleads here (probe P6 — the
     /// error blames crates.io), so beating cargo to the punch is not
     /// optional polish.
+    ///
+    /// The `target` names the file the intended patches will land in (which
+    /// is where the shadowing scan should record their origin). The
+    /// shadowing check itself does not care whether the surface is the
+    /// manifest or the `.cargo/config.toml` — cargo's closest-config-wins
+    /// per-key applies to member-level configs uniformly across both weave-
+    /// level surfaces.
     fn warn_derived_patch_shadowing(
         ctx: &IntegrationContext,
         members: &[String],
         patches: &[DerivedPatch],
+        target: &PatchTarget,
     ) {
         if patches.is_empty() {
             return;
         }
         // Reshape `patches` into the same {registry -> {crate_name ->
         // weave_source_file}} shape `collect_patch_keys` produces. Sourced
-        // "from" the not-yet-written weave-root Cargo.toml.
-        let weave_source = ctx.output_dir.join("Cargo.toml");
+        // "from" the not-yet-written weave-level file (manifest or
+        // `.cargo/config.toml`).
+        let weave_source = target.file.clone();
         let mut intended: BTreeMap<String, BTreeMap<String, std::path::PathBuf>> = BTreeMap::new();
         for p in patches {
             intended
@@ -1315,45 +1663,75 @@ impl CargoWorkspace {
         }
     }
 
-    /// Merge rwv-generated `[patch.crates-io].<crate>` entries into `path`
-    /// (the weave-root `Cargo.toml`). Co-requisite of `strip_marked_patch_entries`.
+    /// Resolve the `PatchTarget` for the operator's chosen surface.
     ///
-    /// Each entry is written as an inline table
-    /// `<crate> = { path = "<rel>" }` with the `# managed by rwv` decor on the
-    /// leaf key — that decor is the per-entry marker the strip pass keys off
-    /// to discriminate rwv-authored entries from user-authored ones.
-    ///
-    /// Verify-and-warn semantics (matching the merge model): if a key is
-    /// already present on disk and is NOT carrying the rwv marker, the user
-    /// holds the pen — rwv leaves that entry alone.
-    ///
-    /// This is the `PatchMode::CommittedPaths` path — every entry lands in
-    /// `[patch.crates-io]`. The `PatchMode::Derived` path uses
-    /// [`Self::merge_patch_entries_multi_registry`] so it can also emit
-    /// `[patch."<git-url>"]` sub-tables for git-source deps.
-    fn merge_patch_entries(path: &Path, patches: &[(String, String)]) -> anyhow::Result<()> {
-        // Lift into the multi-registry shape (registry="crates-io") and
-        // delegate. Keeps the write-and-marker logic in one place.
-        let derived: Vec<DerivedPatch> = patches
+    /// The target's file is anchored at `ctx.output_dir` — the project
+    /// dir, matching where the managed `Cargo.toml` (and thus the whole
+    /// composition's committable state) lives. Cargo's config discovery
+    /// walks upward from cwd and honors symlinks per probe P1, so a
+    /// symlinked weave-root `.cargo/config.toml` sees a config-file logical
+    /// location that (through the symlink) resolves back to the project
+    /// dir; relative paths written here are consistent whether cargo enters
+    /// from the weave root, from `.cargo/config.toml` directly, or from a
+    /// nested-workspace member built via upward discovery.
+    fn patch_target(surface: PatchSurface, ctx: &IntegrationContext) -> PatchTarget {
+        match surface {
+            PatchSurface::Manifest => PatchTarget {
+                file: ctx.output_dir.join("Cargo.toml"),
+                path_prefix: "",
+            },
+            PatchSurface::CargoConfig => PatchTarget {
+                file: ctx.output_dir.join(".cargo").join("config.toml"),
+                // Cargo resolves relative patch paths against the parent
+                // of `.cargo/` (measured directly 2026-07-17; the design
+                // doc's "against the config's logical location" phrase
+                // means the config's OWNING dir, one level UP from the
+                // `.cargo/` sub-dir). Our `.cargo/` sits directly under
+                // the weave root, so a weave-root-relative path like
+                // `github/acme/lib` resolves to the same target as the
+                // manifest surface's `github/acme/lib` — no prefix
+                // rewrite needed. Symlinked `.cargo/` surfacing (P1)
+                // keeps working because the config's logical (non-
+                // canonicalized) location stays at the weave root.
+                path_prefix: "",
+            },
+        }
+    }
+
+    /// Apply the target's path prefix to every patch entry — the pure
+    /// half of the routing step.
+    fn rewrite_patch_paths(patches: &[DerivedPatch], target: &PatchTarget) -> Vec<DerivedPatch> {
+        patches
             .iter()
-            .map(|(crate_name, target_path)| DerivedPatch {
-                registry: "crates-io".to_string(),
-                crate_name: crate_name.clone(),
-                target_path: target_path.clone(),
+            .map(|p| DerivedPatch {
+                registry: p.registry.clone(),
+                crate_name: p.crate_name.clone(),
+                target_path: target.rewrite(&p.target_path),
             })
-            .collect();
-        Self::merge_patch_entries_multi_registry(path, &derived)
+            .collect()
     }
 
     /// Merge rwv-generated `[patch.<registry>].<crate>` entries into `path`,
     /// where `<registry>` is either `crates-io` or a git-source URL string
-    /// (the derived-mode git-tier target).
+    /// (the derived-mode git-tier target). Co-requisite of
+    /// [`Self::strip_marked_patch_entries`].
     ///
-    /// Verify-and-warn semantics are identical to
-    /// [`Self::merge_patch_entries`]: user-authored entries (no rwv marker
-    /// on the leaf key) are left alone; rwv-marker entries are written.
-    /// The marker decor is idempotent — writing the same key twice does
-    /// not double-decorate.
+    /// Each entry is written as an inline table
+    /// `<crate> = { path = "<rel>" }` with the `# managed by rwv` decor on
+    /// the leaf key — that decor is the per-entry marker the strip pass
+    /// keys off to discriminate rwv-authored entries from user-authored
+    /// ones.
+    ///
+    /// Verify-and-warn semantics (matching the merge model): if a key is
+    /// already present on disk and is NOT carrying the rwv marker, the
+    /// user holds the pen — rwv leaves that entry alone. The marker decor
+    /// is idempotent — writing the same key twice does not double-decorate.
+    ///
+    /// Works for both the manifest surface (`path` = `Cargo.toml`) and the
+    /// cargo-config surface (`path` = `.cargo/config.toml`) — the file
+    /// format is TOML in both cases, and cargo's `[patch]` table shape is
+    /// the same in each. The caller supplies patches with the appropriate
+    /// path prefix applied via [`Self::rewrite_patch_paths`].
     fn merge_patch_entries_multi_registry(
         path: &Path,
         patches: &[DerivedPatch],
@@ -1441,6 +1819,15 @@ impl CargoWorkspace {
             }
         }
 
+        // The cargo-config surface writes to `<project>/.cargo/config.toml`;
+        // create the parent `.cargo/` dir if absent. Idempotent (harmless
+        // for the manifest surface — `Cargo.toml`'s parent is the project
+        // dir, which already exists at this point in activation).
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).with_context(|| {
+                format!("creating parent dir {} for patch write", parent.display())
+            })?;
+        }
         std::fs::write(path, doc.to_string())
             .with_context(|| format!("writing {}", path.display()))?;
         Ok(())
@@ -1558,6 +1945,52 @@ impl CargoWorkspace {
         if changed {
             std::fs::write(path, doc.to_string())
                 .with_context(|| format!("writing {}", path.display()))?;
+        }
+        Ok(())
+    }
+
+    /// Delete `<root>/.cargo/config.toml` if it's semantically empty
+    /// (parses and holds no keys), then delete `<root>/.cargo/` if it's
+    /// empty. Called after [`Self::strip_marked_patch_entries`] to keep
+    /// the deactivate story symmetric with hybrid-file `strip_deactivate`:
+    /// remove the file iff the strip left nothing behind.
+    ///
+    /// A `.cargo/config.toml` the user authored keys into (linker flags,
+    /// per-target settings, or their own `[patch]` entries without the
+    /// rwv marker) survives — this method is a no-op unless the doc is
+    /// empty after the strip pass. Missing file / missing dir / present
+    /// dir with siblings all no-op cleanly.
+    fn prune_empty_cargo_config(root: &Path) -> anyhow::Result<()> {
+        let cargo_config = root.join(".cargo").join("config.toml");
+        if cargo_config.exists() {
+            let text = std::fs::read_to_string(&cargo_config)
+                .with_context(|| format!("reading {}", cargo_config.display()))?;
+            // Empty file OR file that parses to an empty document = safe to
+            // delete. A parse failure means the operator has authored
+            // something we don't understand; leave it alone.
+            let is_empty = if text.trim().is_empty() {
+                true
+            } else if let Ok(doc) = text.parse::<toml_edit::DocumentMut>() {
+                doc.as_table().is_empty()
+            } else {
+                false
+            };
+            if is_empty {
+                std::fs::remove_file(&cargo_config)
+                    .with_context(|| format!("removing {}", cargo_config.display()))?;
+            }
+        }
+        let cargo_dir = root.join(".cargo");
+        // Only remove the dir if it exists and is empty. `remove_dir` fails
+        // on a non-empty dir, so a user-authored sibling (`credentials`,
+        // per-target subdirs, ...) survives.
+        if cargo_dir.exists()
+            && cargo_dir
+                .read_dir()
+                .map(|mut it| it.next().is_none())
+                .unwrap_or(false)
+        {
+            let _ = std::fs::remove_dir(&cargo_dir);
         }
         Ok(())
     }

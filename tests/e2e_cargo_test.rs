@@ -437,3 +437,186 @@ fn e2e_cargo_lock_out_of_band_rewrite_surfaces_digest_warning() {
         "re-activation must re-stamp and clear the finding:\n{stdout_restamped}"
     );
 }
+
+/// fo-t9x0l1.3 end-to-end: `patch-surface: cargo-config` reaches a
+/// nested-workspace opt-out via cargo's UPWARD config discovery. The
+/// bead's whole point.
+///
+/// Setup:
+/// - Active weave member `github/chatly/protocol` (a package).
+/// - Active weave member `github/chatly/server` (a package that
+///   consumes `chatly-protocol` as a registry dep — drives the derived
+///   scan to emit a patch keyed by `chatly-protocol`).
+/// - Nested-workspace opt-out `github/xai-org/grok-build` whose root
+///   declares `[workspace]`. It hosts a sub-crate `grok-consumer` that
+///   ALSO uses `chatly-protocol` as a registry dep. Manifest surface
+///   cannot patch this — cargo hard-errors on nested workspace
+///   membership; the workspace's `[patch]` never applies to the opt-out
+///   repo's builds.
+/// - `patch: derived`, `patch-surface: cargo-config`,
+///   `exclude: [github/xai-org/grok-build]`.
+///
+/// Assertions:
+/// 1. Activation writes `.cargo/config.toml` at the weave root with a
+///    `[patch.crates-io].chatly-protocol` entry whose path is
+///    `../github/chatly/protocol` (probe P3/P7 — relative to `.cargo/`'s
+///    logical location; NO canonicalization).
+/// 2. From INSIDE the nested-workspace consumer dir, `cargo metadata`
+///    resolves `chatly-protocol` to the in-weave source (upward
+///    discovery finds the weave-root config — probe P4). This is the
+///    LIVE-cargo half of the test; the same live surface the manifest
+///    surface CANNOT reach.
+///
+/// Skips gracefully if cargo is absent.
+#[test]
+fn e2e_cargo_config_surface_reaches_nested_workspace_opt_out() {
+    if which::which("cargo").is_err() {
+        eprintln!("skipping e2e_cargo_config_surface: cargo not on PATH");
+        return;
+    }
+
+    let tmp = TempDir::new().unwrap();
+    let root = tmp.path();
+
+    // ---- Base weave (two active Rust repos, one project) ----
+    setup_weave(root);
+
+    // Nested-workspace opt-out (grok-build shape). Root declares
+    // `[workspace]`. This is what cargo hard-errors on for weave
+    // membership — and what the manifest-surface `[patch]` cannot reach.
+    std::fs::create_dir_all(root.join("github/xai-org/grok-build/crates/consumer/src")).unwrap();
+    std::fs::write(
+        root.join("github/xai-org/grok-build/Cargo.toml"),
+        "[workspace]\nmembers = [\"crates/consumer\"]\nresolver = \"2\"\n",
+    )
+    .unwrap();
+    std::fs::write(
+        root.join("github/xai-org/grok-build/crates/consumer/Cargo.toml"),
+        "[package]\nname = \"grok-consumer\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n\
+         [dependencies]\nchatly-protocol = \"0.1\"\n",
+    )
+    .unwrap();
+    std::fs::write(
+        root.join("github/xai-org/grok-build/crates/consumer/src/lib.rs"),
+        "pub fn v() -> &'static str { chatly_protocol::version() }\n",
+    )
+    .unwrap();
+    // git init so scan_repos_on_disk sees it.
+    let status = common::git()
+        .args(["init", "-q"])
+        .current_dir(root.join("github/xai-org/grok-build"))
+        .status()
+        .expect("git should be available");
+    assert!(status.success());
+
+    // ---- Extend manifest with grok-build + config-surface opt-in ----
+    let manifest = "\
+repositories:
+  github/chatly/protocol:
+    type: git
+    url: https://github.com/chatly/protocol.git
+    version: main
+    role: owned
+  github/chatly/server:
+    type: git
+    url: https://github.com/chatly/server.git
+    version: main
+    role: owned
+  github/xai-org/grok-build:
+    type: git
+    url: https://github.com/xai-org/grok-build.git
+    version: main
+    role: owned
+integrations:
+  cargo-workspace:
+    patch: derived
+    patch-surface: cargo-config
+    exclude:
+      - github/xai-org/grok-build
+";
+    std::fs::write(root.join("projects/web-app/rwv.yaml"), manifest).unwrap();
+
+    // The base setup_weave writes chatly-server with a committed `path=`
+    // dep on protocol; for this test we need it to be a REGISTRY dep so
+    // derived mode's registry-scan emits the patch. Rewrite server's
+    // Cargo.toml.
+    std::fs::write(
+        root.join("github/chatly/server/Cargo.toml"),
+        "[package]\nname = \"chatly-server\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n\
+         [dependencies]\nchatly-protocol = \"0.1\"\n",
+    )
+    .unwrap();
+
+    // ---- Activate ----
+    repoweave::activate::activate_intent("web-app", root).expect("activate should succeed");
+
+    // ---- Assertion 1: config surface written with the correct relative path ----
+    // The .cargo/config.toml is symlinked from weave root into the
+    // project dir; check the file (via the symlink).
+    let weave_config = root.join(".cargo").join("config.toml");
+    assert!(
+        weave_config.exists(),
+        "weave-root .cargo/config.toml must exist after activation"
+    );
+    let config_text = std::fs::read_to_string(&weave_config).unwrap();
+    assert!(
+        config_text.contains("[patch.crates-io"),
+        "config surface must carry [patch.crates-io]; got:\n{config_text}"
+    );
+    assert!(
+        config_text.contains("chatly-protocol"),
+        "patch must key on `chatly-protocol`; got:\n{config_text}"
+    );
+    // Path stays weave-root-relative: `github/chatly/protocol`. Cargo
+    // resolves relative patch paths against the PARENT of `.cargo/`
+    // (measured directly 2026-07-17 — the design doc's "config's logical
+    // location" means the owning dir of `.cargo/`, not `.cargo/` itself);
+    // our `.cargo/` sits directly under the weave root, so the manifest-
+    // surface path shape (`github/chatly/protocol`) is what resolves
+    // correctly here too. NO canonicalization — probe P1 preserved.
+    assert!(
+        config_text.contains("\"github/chatly/protocol\""),
+        "path must be weave-root-relative `github/chatly/protocol`; got:\n{config_text}"
+    );
+
+    // ---- Assertion 2: cargo metadata from the nested-workspace opt-out
+    // sees the in-weave source via upward config discovery (probe P4) ----
+    //
+    // Use full metadata (WITHOUT `--no-deps`) so the resolver runs and
+    // returns the RESOLVED source per dep — that is where the patch shows
+    // up (as a `path+file://...` source). With `--no-deps`, the output
+    // reports the manifest's as-declared registry req, which is what
+    // caused an earlier false negative.
+    let consumer_dir = root.join("github/xai-org/grok-build/crates/consumer");
+    let output = Command::new("cargo")
+        .args(["metadata", "--format-version=1"])
+        .current_dir(&consumer_dir)
+        .output()
+        .expect("cargo metadata should run");
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+        panic!(
+            "cargo metadata failed in the nested-workspace consumer — the \
+             config-surface patch did not reach via upward discovery.\n\
+             stderr:\n{stderr}"
+        );
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    // The metadata output includes the resolved source path for
+    // `chatly-protocol`. It must point at the in-weave protocol dir via
+    // the config-surface patch. Cargo emits resolved sources as
+    // `path+file:///abs/dir/#name@version`, so we check the substring for
+    // the canonical protocol dir.
+    let expected_source = format!(
+        "path+file://{}/github/chatly/protocol",
+        root.canonicalize().unwrap().display()
+    );
+    let non_canonical = format!("path+file://{}/github/chatly/protocol", root.display());
+    assert!(
+        stdout.contains(&expected_source) || stdout.contains(&non_canonical),
+        "cargo metadata did not resolve chatly-protocol to the in-weave source \
+         via upward config discovery — Finding 2 / probe P4 failure.\n\
+         expected substring one of:\n  {expected_source}\n  {non_canonical}\n\
+         cargo metadata stdout:\n{stdout}"
+    );
+}
