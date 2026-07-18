@@ -728,12 +728,16 @@ fn scan_cargo_ecosystem_silent_when_no_cargo_members() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn scan_members_includes_nested_workspace_repos_grok_build_shape() {
+fn scan_members_auto_enumerates_nested_workspace_sub_crates_grok_build_shape() {
     // The activation-time `partition` hard-errors on a repo that declares
-    // its own [workspace]. The scan-time `scan_members` must not — the
-    // scanner still wants to read the repo's [workspace.dependencies]. The
-    // grok-build fixture is exactly this shape (85 crates under one
-    // nested workspace).
+    // its own [workspace]. The scan-time `scan_members` must not — and now
+    // (fo-8cbhpg.2) it auto-enumerates the nested workspace's own
+    // [workspace].members globs so sub-crates surface in the version-skew
+    // scan without any per-repo operator config.
+    //
+    // The grok-build fixture is exactly this shape (85 crates under one
+    // nested workspace). With this fix, serde 1.0 (via workspace-deps in
+    // grok-build's root) vs serde 2.0 (direct in "other") IS detected.
     let tmp = TempDir::new().unwrap();
     let root = tmp.path();
 
@@ -776,47 +780,62 @@ fn scan_members_includes_nested_workspace_repos_grok_build_shape() {
 
     let cfg = repoweave::manifest::CargoWorkspaceConfig::default();
     let members = CargoWorkspace::scan_members(&ctx, &cfg).unwrap();
-    // The nested-workspace repo must be present in the scan list. Sub-crates
-    // are NOT emitted unless `members.<repo>.include` is configured — the
-    // scanner emits the repo root and the version resolver walks up from
-    // there.
-    assert!(members.contains(&"github/xai/grok-build".to_string()));
-    assert!(members.contains(&"github/acme/other".to_string()));
 
-    // Version skew should be detected: grok-build's workspace-deps serde=1.0
-    // vs other's direct 2.0.
-    let out = CargoWorkspace::scan_version_skew(root, &members);
-    // Since only the grok-build root is emitted (no sub-crates), the direct
-    // `serde` entry in workspace-deps table isn't reached by the "[dependencies]"
-    // scan. This is the intentional v1 scope: version-skew observation
-    // requires either configuring `members.<repo>` to emit sub-crates or the
-    // repo to have direct [dependencies]. Assert the skew is silent here so
-    // the behavior is documented and any future change is caught.
+    // Auto-enumeration: scan_members now expands grok-build's own
+    // [workspace].members = ["crate-1"] so the sub-crate is emitted,
+    // not the repo root. The sibling repo emits its own root as before.
     assert!(
-        out.iter().all(|(name, _)| name != "serde"),
-        "grok-build root without members.<repo> config surfaces no direct \
-         serde skew (its [workspace.dependencies] is read only when sub-crate \
-         members are emitted); got {out:?}"
+        members.contains(&"github/xai/grok-build/crate-1".to_string()),
+        "grok-build/crate-1 must be auto-enumerated; got {members:?}"
+    );
+    assert!(
+        members.contains(&"github/acme/other".to_string()),
+        "other must still be present; got {members:?}"
+    );
+    // The repo root itself is NOT emitted when sub-crates were found —
+    // the sub-crates are the real scan targets.
+    assert!(
+        !members.contains(&"github/xai/grok-build".to_string()),
+        "grok-build root must not be emitted when sub-crates were enumerated; \
+         got {members:?}"
     );
 
-    // But if the operator DOES configure members.<repo> to include the
-    // sub-crate, skew is visible.
-    let members_with_sub = vec![
+    // Version skew IS now detected: crate-1's serde requirement resolves
+    // through github/xai/grok-build/Cargo.toml [workspace.dependencies]
+    // to "1.0"; other's direct requirement is "2.0".
+    let out = CargoWorkspace::scan_version_skew(root, &members);
+    assert_eq!(
+        out.len(),
+        1,
+        "expected exactly one serde skew record; got {out:?}"
+    );
+    assert_eq!(out[0].0, "serde");
+    let versions: Vec<&str> = out[0].1.iter().map(|o| o.requirement.as_str()).collect();
+    assert!(
+        versions.contains(&"1.0"),
+        "expected resolved 1.0 via workspace-deps; got {versions:?}"
+    );
+    assert!(
+        versions.contains(&"2.0"),
+        "expected other's direct 2.0; got {versions:?}"
+    );
+
+    // Regression guard: the with-sub-crates explicit-path half still works.
+    // Even if the operator hand-lists the sub-crate, skew remains visible.
+    let members_explicit = vec![
         "github/xai/grok-build/crate-1".to_string(),
         "github/acme/other".to_string(),
     ];
-    let out_with_sub = CargoWorkspace::scan_version_skew(root, &members_with_sub);
-    assert_eq!(out_with_sub.len(), 1);
-    assert_eq!(out_with_sub[0].0, "serde");
-    // crate-1's serde requirement resolves through
-    // github/xai/grok-build/Cargo.toml [workspace.dependencies] to "1.0".
-    let versions: Vec<&str> = out_with_sub[0]
+    let out_explicit = CargoWorkspace::scan_version_skew(root, &members_explicit);
+    assert_eq!(out_explicit.len(), 1);
+    assert_eq!(out_explicit[0].0, "serde");
+    let versions_explicit: Vec<&str> = out_explicit[0]
         .1
         .iter()
         .map(|o| o.requirement.as_str())
         .collect();
-    assert!(versions.contains(&"1.0"));
-    assert!(versions.contains(&"2.0"));
+    assert!(versions_explicit.contains(&"1.0"));
+    assert!(versions_explicit.contains(&"2.0"));
 }
 
 // ---------------------------------------------------------------------------
@@ -860,5 +879,389 @@ fn patch_shadowing_dedupes_repeated_findings_across_members() {
         records.len(),
         1,
         "one config, one key → one record; got {records:?}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// fo-8cbhpg.2: auto-enumeration of nested workspace sub-crates
+// ---------------------------------------------------------------------------
+
+#[test]
+fn scan_members_glob_expansion_exact_path() {
+    // Exact path (no wildcards) in [workspace].members is treated like any
+    // other member: look for Cargo.toml at that exact sub-path.
+    let tmp = TempDir::new().unwrap();
+    let root = tmp.path();
+
+    write_file(
+        root,
+        "github/xai/big-repo/Cargo.toml",
+        "[workspace]\nmembers = [\"alpha\", \"beta\"]\nresolver = \"2\"\n\
+         [workspace.dependencies]\ntokio = \"1.0\"\n",
+    );
+    write_file(
+        root,
+        "github/xai/big-repo/alpha/Cargo.toml",
+        "[package]\nname = \"alpha\"\nversion = \"0.1\"\nedition = \"2021\"\n\
+         [dependencies]\ntokio = { workspace = true }\n",
+    );
+    write_file(
+        root,
+        "github/xai/big-repo/beta/Cargo.toml",
+        "[package]\nname = \"beta\"\nversion = \"0.1\"\nedition = \"2021\"\n\
+         [dependencies]\ntokio = { workspace = true }\n",
+    );
+    write_file(
+        root,
+        "github/acme/other/Cargo.toml",
+        "[package]\nname = \"other\"\nversion = \"0.1\"\nedition = \"2021\"\n\
+         [dependencies]\ntokio = \"2.0\"\n",
+    );
+
+    let manifest = make_manifest(vec![
+        ("github/xai/big-repo", Role::Owned),
+        ("github/acme/other", Role::Owned),
+    ]);
+    let project = ProjectName::new("test-project");
+    let config = IntegrationConfig::default();
+    let mut cache: HashMap<String, Vec<String>> = HashMap::new();
+    cache.insert(
+        "Cargo.toml".to_string(),
+        vec![
+            "github/acme/other".to_string(),
+            "github/xai/big-repo".to_string(),
+        ],
+    );
+    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+
+    let cfg = repoweave::manifest::CargoWorkspaceConfig::default();
+    let members = CargoWorkspace::scan_members(&ctx, &cfg).unwrap();
+
+    assert!(
+        members.contains(&"github/xai/big-repo/alpha".to_string()),
+        "alpha must be enumerated; got {members:?}"
+    );
+    assert!(
+        members.contains(&"github/xai/big-repo/beta".to_string()),
+        "beta must be enumerated; got {members:?}"
+    );
+    assert!(
+        !members.contains(&"github/xai/big-repo".to_string()),
+        "root must not be emitted when sub-crates found; got {members:?}"
+    );
+
+    // Skew between tokio 1.0 (workspace-inherited) and 2.0 must be detected.
+    let out = CargoWorkspace::scan_version_skew(root, &members);
+    assert_eq!(out.len(), 1, "expected tokio skew; got {out:?}");
+    assert_eq!(out[0].0, "tokio");
+}
+
+#[test]
+fn scan_members_glob_expansion_wildcard() {
+    // Wildcard (`*`) pattern in [workspace].members: expand by filesystem.
+    let tmp = TempDir::new().unwrap();
+    let root = tmp.path();
+
+    write_file(
+        root,
+        "github/xai/big-repo/Cargo.toml",
+        "[workspace]\nmembers = [\"crates/*\"]\nresolver = \"2\"\n\
+         [workspace.dependencies]\nserde = \"1.0\"\n",
+    );
+    // Two sub-crates under crates/
+    write_file(
+        root,
+        "github/xai/big-repo/crates/foo/Cargo.toml",
+        "[package]\nname = \"foo\"\nversion = \"0.1\"\nedition = \"2021\"\n\
+         [dependencies]\nserde = { workspace = true }\n",
+    );
+    write_file(
+        root,
+        "github/xai/big-repo/crates/bar/Cargo.toml",
+        "[package]\nname = \"bar\"\nversion = \"0.1\"\nedition = \"2021\"\n\
+         [dependencies]\nserde = { workspace = true }\n",
+    );
+    write_file(
+        root,
+        "github/acme/other/Cargo.toml",
+        "[package]\nname = \"other\"\nversion = \"0.1\"\nedition = \"2021\"\n\
+         [dependencies]\nserde = \"2.0\"\n",
+    );
+
+    let manifest = make_manifest(vec![
+        ("github/xai/big-repo", Role::Owned),
+        ("github/acme/other", Role::Owned),
+    ]);
+    let project = ProjectName::new("test-project");
+    let config = IntegrationConfig::default();
+    let mut cache: HashMap<String, Vec<String>> = HashMap::new();
+    cache.insert(
+        "Cargo.toml".to_string(),
+        vec![
+            "github/acme/other".to_string(),
+            "github/xai/big-repo".to_string(),
+        ],
+    );
+    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+
+    let cfg = repoweave::manifest::CargoWorkspaceConfig::default();
+    let members = CargoWorkspace::scan_members(&ctx, &cfg).unwrap();
+
+    assert!(
+        members.contains(&"github/xai/big-repo/crates/foo".to_string()),
+        "crates/foo must be enumerated; got {members:?}"
+    );
+    assert!(
+        members.contains(&"github/xai/big-repo/crates/bar".to_string()),
+        "crates/bar must be enumerated; got {members:?}"
+    );
+    assert!(
+        !members.contains(&"github/xai/big-repo".to_string()),
+        "root must not be emitted; got {members:?}"
+    );
+
+    // Skew serde 1.0 (workspace-inherited by both sub-crates) vs 2.0 (other).
+    let out = CargoWorkspace::scan_version_skew(root, &members);
+    assert_eq!(out.len(), 1, "expected serde skew; got {out:?}");
+    assert_eq!(out[0].0, "serde");
+}
+
+#[test]
+fn scan_members_glob_expansion_respects_workspace_exclude() {
+    // [workspace].exclude prevents a matching sub-dir from being enumerated.
+    let tmp = TempDir::new().unwrap();
+    let root = tmp.path();
+
+    write_file(
+        root,
+        "github/xai/big-repo/Cargo.toml",
+        "[workspace]\nmembers = [\"alpha\", \"beta\", \"gamma\"]\n\
+         exclude = [\"gamma\"]\nresolver = \"2\"\n",
+    );
+    write_file(
+        root,
+        "github/xai/big-repo/alpha/Cargo.toml",
+        "[package]\nname = \"alpha\"\nversion = \"0.1\"\nedition = \"2021\"\n",
+    );
+    write_file(
+        root,
+        "github/xai/big-repo/beta/Cargo.toml",
+        "[package]\nname = \"beta\"\nversion = \"0.1\"\nedition = \"2021\"\n",
+    );
+    write_file(
+        root,
+        "github/xai/big-repo/gamma/Cargo.toml",
+        "[package]\nname = \"gamma\"\nversion = \"0.1\"\nedition = \"2021\"\n",
+    );
+
+    let manifest = make_manifest(vec![("github/xai/big-repo", Role::Owned)]);
+    let project = ProjectName::new("test-project");
+    let config = IntegrationConfig::default();
+    let mut cache: HashMap<String, Vec<String>> = HashMap::new();
+    cache.insert(
+        "Cargo.toml".to_string(),
+        vec!["github/xai/big-repo".to_string()],
+    );
+    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+
+    let cfg = repoweave::manifest::CargoWorkspaceConfig::default();
+    let members = CargoWorkspace::scan_members(&ctx, &cfg).unwrap();
+
+    assert!(
+        members.contains(&"github/xai/big-repo/alpha".to_string()),
+        "alpha must be present; got {members:?}"
+    );
+    assert!(
+        members.contains(&"github/xai/big-repo/beta".to_string()),
+        "beta must be present; got {members:?}"
+    );
+    assert!(
+        !members.contains(&"github/xai/big-repo/gamma".to_string()),
+        "gamma is excluded and must not appear; got {members:?}"
+    );
+}
+
+#[test]
+fn scan_members_explicit_config_overrides_auto_enumeration() {
+    // When members.<repo> is configured explicitly, the explicit list wins
+    // over auto-enumeration of [workspace].members globs. The operator can
+    // narrow (or completely override) what scan_members emits.
+    let tmp = TempDir::new().unwrap();
+    let root = tmp.path();
+
+    // Nested-workspace repo with two sub-crates in [workspace].members.
+    write_file(
+        root,
+        "github/xai/big-repo/Cargo.toml",
+        "[workspace]\nmembers = [\"crate-a\", \"crate-b\"]\nresolver = \"2\"\n",
+    );
+    write_file(
+        root,
+        "github/xai/big-repo/crate-a/Cargo.toml",
+        "[package]\nname = \"crate-a\"\nversion = \"0.1\"\nedition = \"2021\"\n",
+    );
+    write_file(
+        root,
+        "github/xai/big-repo/crate-b/Cargo.toml",
+        "[package]\nname = \"crate-b\"\nversion = \"0.1\"\nedition = \"2021\"\n",
+    );
+
+    let manifest = make_manifest(vec![("github/xai/big-repo", Role::Owned)]);
+    let project = ProjectName::new("test-project");
+
+    // Operator explicitly configures only crate-a (not crate-b).
+    // IntegrationConfig::from_yaml takes the settings block for the
+    // integration (the content under `integrations.cargo-workspace:`).
+    let config = repoweave::manifest::IntegrationConfig::from_yaml(
+        "members:\n  github/xai/big-repo:\n    include: [crate-a]\n",
+    );
+    let cache: HashMap<String, Vec<String>> = HashMap::new();
+    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+
+    let cfg: repoweave::manifest::CargoWorkspaceConfig = config.settings().unwrap();
+    let members = CargoWorkspace::scan_members(&ctx, &cfg).unwrap();
+
+    // Explicit config: only crate-a should appear, NOT crate-b.
+    assert!(
+        members.contains(&"github/xai/big-repo/crate-a".to_string()),
+        "explicitly configured crate-a must be present; got {members:?}"
+    );
+    assert!(
+        !members.contains(&"github/xai/big-repo/crate-b".to_string()),
+        "crate-b not in explicit config must be absent; got {members:?}"
+    );
+    assert!(
+        !members.contains(&"github/xai/big-repo".to_string()),
+        "repo root must not appear; got {members:?}"
+    );
+}
+
+#[test]
+fn scan_members_non_workspace_repos_unaffected() {
+    // Plain repos (no [workspace] in root Cargo.toml) must still emit only
+    // their root — the auto-enumeration path must not touch them.
+    let tmp = TempDir::new().unwrap();
+    let root = tmp.path();
+
+    write_file(
+        root,
+        "github/acme/foo/Cargo.toml",
+        "[package]\nname = \"foo\"\nversion = \"0.1\"\nedition = \"2021\"\n\
+         [dependencies]\nserde = \"1.0\"\n",
+    );
+    write_file(
+        root,
+        "github/acme/bar/Cargo.toml",
+        "[package]\nname = \"bar\"\nversion = \"0.1\"\nedition = \"2021\"\n\
+         [dependencies]\nserde = \"1.0\"\n",
+    );
+
+    let manifest = make_manifest(vec![
+        ("github/acme/foo", Role::Owned),
+        ("github/acme/bar", Role::Owned),
+    ]);
+    let project = ProjectName::new("test-project");
+    let config = IntegrationConfig::default();
+    let mut cache: HashMap<String, Vec<String>> = HashMap::new();
+    cache.insert(
+        "Cargo.toml".to_string(),
+        vec!["github/acme/foo".to_string(), "github/acme/bar".to_string()],
+    );
+    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+
+    let cfg = repoweave::manifest::CargoWorkspaceConfig::default();
+    let members = CargoWorkspace::scan_members(&ctx, &cfg).unwrap();
+
+    // Roots only — no sub-paths injected.
+    assert_eq!(
+        members,
+        vec!["github/acme/bar".to_string(), "github/acme/foo".to_string()],
+        "plain repos must only emit their roots; got {members:?}"
+    );
+}
+
+#[test]
+fn nested_workspace_reference_repo_becomes_derived_patch_source() {
+    // fo-8cbhpg.2 scope addition: a reference-role repo that hosts only
+    // sub-package crates (no root [package].name) must contribute its
+    // sub-crates to the derived-patch index so member repos get patched
+    // to the in-weave fork.
+    //
+    // Fixture: ref-lib is a reference repo with grok-build shape:
+    //   ref-lib/Cargo.toml  — [workspace] only, no [package]
+    //   ref-lib/core-crate/Cargo.toml  — has [package].name = "core-crate"
+    //
+    // App (owned) depends on core-crate via registry. Under PatchMode::Derived,
+    // activate() should emit a [patch.crates-io].core-crate entry pointing at
+    // ref-lib/core-crate — the auto-enumerated sub-path.
+    //
+    // Prior to this fix: build_package_index skipped ref-lib (no [package]),
+    // so core-crate never appeared in the index → no patch → silent miss.
+    use repoweave::integration::Integration;
+    use repoweave::integrations::cargo_workspace::CargoWorkspace;
+
+    let tmp = TempDir::new().unwrap();
+    let root = tmp.path();
+
+    // Reference-role nested workspace repo: root has [workspace], no [package].
+    write_file(
+        root,
+        "github/acme/ref-lib/Cargo.toml",
+        "[workspace]\nmembers = [\"core-crate\"]\nresolver = \"2\"\n",
+    );
+    write_file(
+        root,
+        "github/acme/ref-lib/core-crate/Cargo.toml",
+        "[package]\nname = \"core-crate\"\nversion = \"0.3.0\"\nedition = \"2021\"\n",
+    );
+
+    // Member repo that depends on core-crate via registry.
+    write_file(
+        root,
+        "github/acme/app/Cargo.toml",
+        "[package]\nname = \"app\"\nversion = \"0.1\"\nedition = \"2021\"\n\
+         [dependencies]\ncore-crate = \"0.3.0\"\n",
+    );
+
+    let manifest = make_manifest(vec![
+        ("github/acme/ref-lib", Role::Reference),
+        ("github/acme/app", Role::Owned),
+    ]);
+    let project = ProjectName::new("test-project");
+
+    // Enable derived patch mode. IntegrationConfig::from_yaml parses the
+    // cargo-workspace integration settings block directly.
+    let config = repoweave::manifest::IntegrationConfig::from_yaml("patch: derived\n");
+    let mut cache: HashMap<String, Vec<String>> = HashMap::new();
+    // Detection cache for "Cargo.toml": only ACTIVE repos (owned/fork/dep)
+    // appear here — Reference-role repos are excluded from the manifest
+    // detection path (detect_repos_with_manifest filters by role.is_active()).
+    // ref-lib is Reference role; it is NOT in this list.
+    cache.insert(
+        "Cargo.toml".to_string(),
+        vec!["github/acme/app".to_string()],
+    );
+    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+
+    // activate() runs build_package_index which now auto-enumerates
+    // ref-lib's sub-crates (via the repos list, not the detection cache).
+    // core-crate should appear in the patch index and produce a
+    // [patch.crates-io].core-crate entry in Cargo.toml.
+    CargoWorkspace.activate(&ctx).unwrap();
+
+    let generated = std::fs::read_to_string(root.join("Cargo.toml")).unwrap();
+
+    assert!(
+        generated.contains("core-crate"),
+        "core-crate must appear as a derived patch entry (ref-lib/core-crate \
+         auto-enumerated from ref-lib's [workspace].members); got:\n{generated}"
+    );
+    assert!(
+        generated.contains("ref-lib/core-crate"),
+        "patch path must point at ref-lib/core-crate; got:\n{generated}"
+    );
+    assert!(
+        generated.contains("patch.crates-io") || generated.contains("[patch"),
+        "a [patch.*] table must be present; got:\n{generated}"
     );
 }

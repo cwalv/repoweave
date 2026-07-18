@@ -424,9 +424,17 @@ impl CargoWorkspace {
     ///
     /// Returned member paths are weave-relative and sorted. When a repo has
     /// a `members.<repo>` sub-path spec (rvtty-style), its sub-paths are
-    /// emitted; when a repo is a nested workspace, its ROOT is emitted (the
-    /// scanner then reads `<root>/Cargo.toml`'s `[workspace.dependencies]`
-    /// directly). Opt-outs are respected.
+    /// emitted (explicit config wins — see note below). When a repo's root
+    /// declares `[workspace]` and has NO explicit config override, this
+    /// function auto-enumerates its sub-crates by expanding the nested
+    /// workspace's own `[workspace].members` globs (the grok-build fix:
+    /// a repo with 85 crates under one nested workspace surfaces version
+    /// skew without any per-repo config). Opt-outs are respected.
+    ///
+    /// **Explicit config override**: `members.<repo>` in `rwv.yaml` always
+    /// wins over auto-enumeration. This preserves the rvtty-style use case
+    /// (hand-listed sub-paths, no root `[workspace]`) and lets operators
+    /// narrow or override the auto-detected set without touching each crate.
     pub fn scan_members(
         ctx: &IntegrationContext,
         cfg: &CargoWorkspaceConfig,
@@ -450,20 +458,46 @@ impl CargoWorkspace {
             if opt_out.contains(repo.as_str()) {
                 continue;
             }
-            // members-subpath repo: emit each sub-path exactly like
-            // activation. Do NOT skip if the root declares [workspace] —
-            // activation's hard-error is orthogonal to the scan.
+            // Explicit members.<repo> config: use it as-is (override).
+            // Do NOT skip if the root declares [workspace] — activation's
+            // hard-error is orthogonal to the scan.
             if let Some(spec) = cfg.members.get(repo) {
                 for sub in resolve_member_spec(spec) {
                     members.push(format!("{repo}/{sub}"));
                 }
                 continue;
             }
-            // Default: emit the repo root if it has a Cargo.toml. This
-            // includes nested-workspace repos (grok-build shape) for the
-            // scan — activation still bails on them via `partition`, but
-            // the scanner can still read their `[workspace.dependencies]`.
-            if rust_repo_set.contains(repo.as_str()) {
+            if !rust_repo_set.contains(repo.as_str()) {
+                continue;
+            }
+            // Nested-workspace repo (grok-build shape): auto-enumerate its
+            // own [workspace].members globs so sub-crates surface in the
+            // skew scan without any per-repo operator config. This is the
+            // fo-8cbhpg.2 fix: at 85 crates the operator cannot be
+            // expected to hand-configure every sub-path.
+            //
+            // Lazy: only when the root Cargo.toml actually declares
+            // [workspace]. Repos without a [workspace] section emit their
+            // root as before, unchanged.
+            let root_toml = ctx.workspace_root.join(repo.as_str()).join("Cargo.toml");
+            let has_workspace = std::fs::read_to_string(&root_toml)
+                .map(|t| declares_workspace(&t))
+                .unwrap_or(false);
+
+            if has_workspace {
+                // Auto-enumerate nested workspace sub-crates.
+                let sub_crates = expand_nested_workspace_members(ctx.workspace_root, repo.as_str());
+                if sub_crates.is_empty() {
+                    // Fallback: root has [workspace] but no members globs
+                    // resolved to Cargo.tomls (e.g. empty workspace). Emit
+                    // the root so workspace-deps are still readable by the
+                    // version-req resolver.
+                    members.push(repo.clone());
+                } else {
+                    members.extend(sub_crates);
+                }
+            } else {
+                // Plain repo — emit its root as before.
                 members.push(repo.clone());
             }
         }
@@ -1296,16 +1330,51 @@ impl CargoWorkspace {
     /// and the canonicalized absolute path (used for target-of-path-dep
     /// comparison in `compute_patches`).
     ///
-    /// Paths without a valid `<path>/Cargo.toml` with a `[package].name`
-    /// are silently skipped — they contribute nothing to either the
-    /// committed-paths mirror or the derived match. Nested workspace roots
-    /// with only `[workspace]` (no `[package]`) are one such case.
+    /// Paths with a valid `<path>/Cargo.toml` carrying `[package].name` are
+    /// indexed directly. Paths whose root Cargo.toml declares `[workspace]`
+    /// with no `[package]` (nested-workspace / reference-role shape — the
+    /// grok-build shape) are expanded into their sub-crates using the same
+    /// `expand_nested_workspace_members` enumeration used by `scan_members`.
+    /// This feeds the derived-patch index so reference-role repos that host
+    /// only sub-package crates become patch sources (fo-8cbhpg.2 scope
+    /// addition: one enumeration, two consumers).
     fn build_package_index(
         ctx: &IntegrationContext,
         paths: &[String],
     ) -> anyhow::Result<BTreeMap<String, PackageIndexEntry>> {
         let mut out: BTreeMap<String, PackageIndexEntry> = BTreeMap::new();
+        // Work through the input path list, potentially expanding each into
+        // sub-paths when the root declares [workspace] but no [package].
+        let mut to_index: Vec<String> = Vec::new();
         for p in paths {
+            let member_dir = ctx.workspace_root.join(p);
+            let cargo_toml = member_dir.join("Cargo.toml");
+            if !cargo_toml.exists() {
+                continue;
+            }
+            let text = std::fs::read_to_string(&cargo_toml)
+                .with_context(|| format!("reading {}", cargo_toml.display()))?;
+            let doc: toml_edit::DocumentMut = text
+                .parse()
+                .with_context(|| format!("parsing {}", cargo_toml.display()))?;
+
+            if doc.get("package").and_then(|i| i.as_table()).is_some() {
+                // Has [package] — index it directly.
+                to_index.push(p.clone());
+            } else if declares_workspace(&text) {
+                // Nested-workspace root with no [package] (reference-role or
+                // nested-workspace shape): expand sub-crates via the same
+                // enumeration scan_members uses. This lets reference-role
+                // repos that host only sub-package crates contribute to the
+                // derived-patch index without operator config.
+                let sub_crates = expand_nested_workspace_members(ctx.workspace_root, p);
+                to_index.extend(sub_crates);
+            }
+            // Otherwise (no [package], no [workspace]): silently skip —
+            // contributes nothing to either patch mode.
+        }
+
+        for p in &to_index {
             let member_dir = ctx.workspace_root.join(p);
             let cargo_toml = member_dir.join("Cargo.toml");
             if !cargo_toml.exists() {
@@ -1994,6 +2063,220 @@ impl CargoWorkspace {
         }
         Ok(())
     }
+}
+
+/// Expand the `[workspace].members` globs of a nested-workspace repo.
+///
+/// When a repo's root `Cargo.toml` declares `[workspace]` with a `members`
+/// array (the "grok-build shape"), this function expands those patterns
+/// against the filesystem and returns weave-root-relative paths for every
+/// sub-directory that:
+///
+/// 1. Matches a `members` glob (cargo semantics: exact paths or `*` wildcard
+///    within one path component — `globset` `literal_separator(true)` mode
+///    matches this exactly).
+/// 2. Is NOT in the `exclude` list.
+/// 3. Contains a `Cargo.toml` (it is a real crate, not an empty slot).
+///
+/// Paths are returned relative to `workspace_root` in the form
+/// `<repo_path>/<sub_path>` so they slot directly into the scan-member list.
+///
+/// This is deliberately **lazy** (called only when the repo's root Cargo.toml
+/// declares `[workspace]`) and **read-only** — no writes, no caching. At 85
+/// crates the per-call cost is O(globs × directory_entries) = one `read_dir`
+/// per matched pattern, well within the I/O budget of a scan-time read pass.
+///
+/// Returns an empty Vec (not an error) on any I/O / parse failure: the scan
+/// path is best-effort and the caller treats absence as "nothing to enumerate".
+fn expand_nested_workspace_members(workspace_root: &Path, repo_path: &str) -> Vec<String> {
+    let repo_dir = workspace_root.join(repo_path);
+    let cargo_toml_path = repo_dir.join("Cargo.toml");
+
+    // Read and parse the repo root Cargo.toml.
+    let text = match std::fs::read_to_string(&cargo_toml_path) {
+        Ok(t) => t,
+        Err(_) => return Vec::new(),
+    };
+    let doc: toml_edit::DocumentMut = match text.parse() {
+        Ok(d) => d,
+        Err(_) => return Vec::new(),
+    };
+
+    // Only proceed if the root declares [workspace].
+    let ws_table = match doc.get("workspace").and_then(|i| i.as_table()) {
+        Some(t) => t,
+        None => return Vec::new(),
+    };
+
+    // Collect members patterns and excludes from the [workspace] table.
+    let member_globs: Vec<String> = ws_table
+        .get("members")
+        .and_then(|i| i.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(str::to_string))
+                .collect()
+        })
+        .unwrap_or_default();
+
+    if member_globs.is_empty() {
+        return Vec::new();
+    }
+
+    let excludes: BTreeSet<String> = ws_table
+        .get("exclude")
+        .and_then(|i| i.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(str::to_string))
+                .collect()
+        })
+        .unwrap_or_default();
+
+    // Expand each glob pattern by walking the repo directory.
+    // Cargo's member globs are simple path patterns; `*` matches one
+    // path component (no recursive `**`). We use globset with
+    // literal_separator(true) to match cargo's semantics exactly.
+    let mut found: BTreeSet<String> = BTreeSet::new();
+
+    for pattern in &member_globs {
+        // Check if this is an exact path (no wildcards) first — avoids
+        // filesystem scanning when the operator listed explicit paths.
+        if !pattern.contains('*') && !pattern.contains('?') && !pattern.contains('[') {
+            // Exact path: just check existence.
+            let sub_dir = repo_dir.join(pattern);
+            if sub_dir.join("Cargo.toml").is_file() && !excludes.contains(pattern) {
+                found.insert(pattern.clone());
+            }
+            continue;
+        }
+
+        // Wildcard pattern: build a matcher and walk the repo dir.
+        let matcher = match globset::GlobBuilder::new(pattern)
+            .literal_separator(true)
+            .build()
+        {
+            Ok(g) => g.compile_matcher(),
+            Err(_) => continue,
+        };
+
+        // A single-component `*` pattern (e.g. `crate-*`) only needs to
+        // scan one directory level. Detect depth by counting `/` in pattern.
+        let depth = pattern.matches('/').count() + 1;
+        if depth == 1 {
+            // Single-level: scan repo_dir entries.
+            let rd = match std::fs::read_dir(&repo_dir) {
+                Ok(r) => r,
+                Err(_) => continue,
+            };
+            for entry in rd.flatten() {
+                let Ok(ft) = entry.file_type() else {
+                    continue;
+                };
+                if !ft.is_dir() {
+                    continue;
+                }
+                let name = entry.file_name();
+                let name_str = name.to_string_lossy();
+                if !matcher.is_match(name_str.as_ref()) {
+                    continue;
+                }
+                let sub_path = name_str.to_string();
+                if excludes.contains(&sub_path) {
+                    continue;
+                }
+                if entry.path().join("Cargo.toml").is_file() {
+                    found.insert(sub_path);
+                }
+            }
+        } else {
+            // Multi-level pattern (e.g. `crates/*`): walk two levels.
+            // This covers the majority of real-world layouts; deeper
+            // nesting is uncommon in cargo workspaces.
+            let parts: Vec<&str> = pattern.splitn(2, '/').collect();
+            let prefix = parts[0];
+            let sub_pattern = parts.get(1).copied().unwrap_or("*");
+
+            // Collect prefix-level directories (literal or glob).
+            let prefix_dirs: Vec<std::path::PathBuf> =
+                if !prefix.contains('*') && !prefix.contains('?') && !prefix.contains('[') {
+                    // Exact prefix: just check if the directory exists.
+                    let p = repo_dir.join(prefix);
+                    if p.is_dir() {
+                        vec![p]
+                    } else {
+                        vec![]
+                    }
+                } else {
+                    // Wildcard prefix: enumerate one level.
+                    let Ok(prefix_glob) = globset::GlobBuilder::new(prefix)
+                        .literal_separator(true)
+                        .build()
+                    else {
+                        continue;
+                    };
+                    let prefix_matcher = prefix_glob.compile_matcher();
+                    let mut dirs: Vec<std::path::PathBuf> = Vec::new();
+                    if let Ok(rd) = std::fs::read_dir(&repo_dir) {
+                        for entry in rd.flatten() {
+                            if entry.file_type().map(|ft| ft.is_dir()).unwrap_or(false) {
+                                let n = entry.file_name();
+                                if prefix_matcher.is_match(n.to_string_lossy().as_ref()) {
+                                    dirs.push(entry.path());
+                                }
+                            }
+                        }
+                    }
+                    dirs
+                };
+
+            let Ok(sub_glob) = globset::GlobBuilder::new(sub_pattern)
+                .literal_separator(true)
+                .build()
+            else {
+                continue;
+            };
+            let sub_matcher = sub_glob.compile_matcher();
+
+            for prefix_dir in &prefix_dirs {
+                let prefix_rel = prefix_dir
+                    .strip_prefix(&repo_dir)
+                    .unwrap_or(prefix_dir)
+                    .to_string_lossy()
+                    .to_string();
+                let rd = match std::fs::read_dir(prefix_dir) {
+                    Ok(r) => r,
+                    Err(_) => continue,
+                };
+                for entry in rd.flatten() {
+                    let Ok(ft) = entry.file_type() else {
+                        continue;
+                    };
+                    if !ft.is_dir() {
+                        continue;
+                    }
+                    let name = entry.file_name();
+                    let name_str = name.to_string_lossy();
+                    if !sub_matcher.is_match(name_str.as_ref()) {
+                        continue;
+                    }
+                    let sub_path = format!("{prefix_rel}/{name_str}");
+                    if excludes.contains(&sub_path) {
+                        continue;
+                    }
+                    if entry.path().join("Cargo.toml").is_file() {
+                        found.insert(sub_path);
+                    }
+                }
+            }
+        }
+    }
+
+    // Emit weave-root-relative paths.
+    found
+        .into_iter()
+        .map(|sub| format!("{repo_path}/{sub}"))
+        .collect()
 }
 
 /// Resolve a `MemberSpec` to its effective sorted sub-path list.
