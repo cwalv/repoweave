@@ -69,4 +69,4 @@ Then read [hand task to agent](./how-to/hand-task-to-agent.md) for the harness r
 | **Explanation** | The "why" and the model | [explanation/](./explanation/index.md) — motivational lenses plus cross-cutting joints |
 | **Reference** | Lookup-shaped facts | [reference/](./reference/cli.md) — verbs, file formats, roles, glossary, integrations |
 
-To report a bug, request an integration, or ask a design question, open a [GitHub issue](https://github.com/cwalv/repoweave/issues) — see [CONTRIBUTING.md](../CONTRIBUTING.md).
+To report a bug, request an integration, or ask a design question, open a [GitHub issue](https://github.com/cwalv/repoweave/issues).

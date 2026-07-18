@@ -39,6 +39,9 @@
 - [Verb vs vocabulary](./explanation/joints/verb-vs-vocabulary.md)
 - [VCS as seam](./explanation/joints/vcs-as-seam.md)
 - [File ownership](./explanation/joints/file-ownership.md)
+
+# Explanation — Policies
+
 - [Destructive operations](./explanation/destructive-operations.md)
 
 # Reference

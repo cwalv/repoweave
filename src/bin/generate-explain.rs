@@ -695,8 +695,7 @@ fn main() -> anyhow::Result<()> {
         let msg = link_errors.join("\n");
         anyhow::bail!(
             "docs failed link-cleanliness check:\n{msg}\n\n\
-             Fix: remove broken relative links from docs (use plain text or \
-             absolute paths to out-of-repo references) and ensure rustdoc \
+             Fix: remove broken relative links from docs (use plain text for out-of-repo references) and ensure rustdoc \
              intra-doc link syntax is not present in assembled output."
         );
     }
