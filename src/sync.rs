@@ -1905,26 +1905,53 @@ fn run_preconditions_after_acquire(
         check_sync_to_ff_precondition(cwd_project_dir, dest_project_dir, emit_text)?;
     }
 
-    // sync-to preflights (both refuse before any side effects):
-    //   - dirty-source (§1): CWD-side tracked dirt would go stale mid-rebase.
-    //   - dirty-target: the target's uncommitted work advance-target overwrites.
-    // Source before target: the operator's own workspace is the first thing they
-    // can fix, and a dirty source is the state we most want to define away.
-    if matches!(verb, MachineVerb::SyncTo) {
-        let cwd_project_preflight = Project::from_dir(cwd_project_dir)
-            .context("failed to load CWD project for sync-to preflights")?;
-        check_dirty_source_preflight(
-            &cwd_project_preflight,
-            cwd_workspace_dir,
-            cwd_project_dir,
-            cwd,
-        )?;
-        check_dirty_target_preflight(
-            &cwd_project_preflight,
-            dest_workspace_dir,
-            dest_project_dir,
-            cli_path,
-        )?;
+    // Pre-flight dirt scans (fo-oueuv7.1): refuse before any mutation when
+    // the workspaces the op will rebase or fast-forward carry uncommitted
+    // tracked changes. All dirty repos are collected before the first bail so
+    // the operator sees the full list in one message. Acquired op-state is
+    // released by the caller on Err (no trace left on disk).
+    //
+    // Ordering: sync's CWD dirt scan runs here (before the snapshot pin and
+    // lock-freshness gate) so the in-flight-op refusal from `acquire_op`
+    // still dominates all other refusals (Correction-1 ordering). Dirt
+    // refusals never compete with an in-flight refusal — that was emitted
+    // atomically by `acquire_op` above.
+    match verb {
+        MachineVerb::Sync => {
+            // sync (pull): replay rebases or ff-advances the CWD repos onto the
+            // source lock. Scan the CWD workspace — the destination that mutates.
+            // The source workspace is read-only (snapshot read only); dirt there
+            // does not affect the op.
+            let cwd_project_preflight = Project::from_dir(cwd_project_dir)
+                .context("failed to load CWD project for sync dirt scan")?;
+            check_dirty_preflight_sync(
+                &cwd_project_preflight,
+                cwd_workspace_dir,
+                cwd_project_dir,
+                cwd,
+            )?;
+        }
+        MachineVerb::SyncTo => {
+            // sync-to preflights (both refuse before any side effects):
+            //   - dirty-source (§1): CWD-side tracked dirt would go stale mid-rebase.
+            //   - dirty-target: the target's uncommitted work advance-target overwrites.
+            // Source before target: the operator's own workspace is the first thing they
+            // can fix, and a dirty source is the state we most want to define away.
+            let cwd_project_preflight = Project::from_dir(cwd_project_dir)
+                .context("failed to load CWD project for sync-to preflights")?;
+            check_dirty_source_preflight(
+                &cwd_project_preflight,
+                cwd_workspace_dir,
+                cwd_project_dir,
+                cwd,
+            )?;
+            check_dirty_target_preflight(
+                &cwd_project_preflight,
+                dest_workspace_dir,
+                dest_project_dir,
+                cli_path,
+            )?;
+        }
     }
 
     // Pin the source snapshot now so the remaining replay preconditions are
@@ -2773,6 +2800,113 @@ fn check_dirty_target_preflight(
 /// The lock file path relative to a project directory. Its tracked-dirty state
 /// is carved out of the source preflight (it is the auto-relock's own input).
 const RWV_LOCK_FILE: &str = "rwv.lock";
+
+// ---------------------------------------------------------------------------
+// Sync (pull) destination-side dirt scan (fo-oueuv7.1)
+// ---------------------------------------------------------------------------
+
+/// Pre-flight dirt scan for `rwv sync` (pull): refuse before any mutation if
+/// the CWD workspace (the *destination* that replay will rebase or
+/// fast-forward) carries uncommitted **tracked** changes in any manifest repo
+/// or the project repo.
+///
+/// ## Why tracked-only
+///
+/// `git rebase` fails with "cannot rebase: You have unstaged changes" /
+/// "cannot rebase: Your index contains uncommitted changes" when tracked files
+/// are modified (staged or unstaged). Untracked files survive a rebase
+/// untouched — git never touches them during replay. Fast-forward (`ff`) also
+/// leaves untracked files alone. Refusing on untracked-only dirt would block
+/// normal in-progress work (scratch files, build artefacts) without any
+/// corresponding git-layer failure. We therefore refuse only on tracked dirt,
+/// matching git's actual failure conditions.
+///
+/// ## What this replaces
+///
+/// Without this check, `rwv sync` starts the op, acquires op-state, creates
+/// savepoints, and then hits `git rebase` or `git merge --ff-only` which
+/// fails mid-op with a raw git error dump. The operator is left with a live
+/// `.rwv-op` they must `rwv abort` before retrying. This preflight makes the
+/// refusal eager, names every dirty repo in a single message, and leaves no
+/// trace (the acquired op-state is released by the caller on `Err`).
+///
+/// ## No rwv.lock carve-out for sync
+///
+/// Unlike [`check_dirty_source_preflight`] (the sync-to source-side scan),
+/// this function does NOT carve out `rwv.lock`. The distinction:
+///
+/// - **sync-to**: replay rebases the manifest repos; the project repo's lock
+///   is regenerated and committed by Phase 3 (not ff'd). A dirty lock is the
+///   auto-relock's input and never blocks Phase 1' for sync-to.
+/// - **sync (pull)**: Phase 1' fast-forwards or rebases the project repo
+///   itself to the source's project tip. Both `git merge --ff-only` and
+///   `git rebase` fail when tracked files (including `rwv.lock`) are dirty.
+///   There is no downstream phase that commits the dirty lock; the operator
+///   must stash or commit it before syncing.
+///
+/// ## Scope
+///
+/// Covers every CWD manifest repo gated by [`checkout_is_syncable`] (skips
+/// reference symlinks — the shared canonical store is never rebased by sync)
+/// and the project repo.
+fn check_dirty_preflight_sync(
+    cwd_project: &Project,
+    cwd_workspace_dir: &Path,
+    cwd_project_dir: &Path,
+    cwd_path: &Path,
+) -> anyhow::Result<()> {
+    let mut dirty: Vec<String> = Vec::new();
+
+    for repo_path in cwd_project.manifest.iter_repo_paths() {
+        let repo = cwd_workspace_dir.join(repo_path.as_path());
+        // Skip reference symlinks: the shared canonical store is never
+        // rebased or ff'd by sync (checkout_is_syncable guards every mutating
+        // phase). A dirty canonical must not block a sync that never touches it.
+        if checkout_is_syncable(&repo) {
+            let tracked = GitVcs::tracked_dirty_file_names(&repo).unwrap_or_else(|_| {
+                // Unreadable status → fail closed rather than silently rebasing
+                // over an unknown state.
+                vec!["(status unreadable)".to_string()]
+            });
+            if !tracked.is_empty() {
+                dirty.push(repo_path.to_string());
+            }
+        }
+    }
+
+    // Project repo: no rwv.lock carve-out (unlike check_dirty_source_preflight
+    // for sync-to). For sync (pull), Phase 1' ff's or rebases the project repo
+    // directly, and git refuses on any tracked dirty file including rwv.lock.
+    // Name the specific tracked files so the operator sees exactly what refuses.
+    let project_tracked = GitVcs::tracked_dirty_file_names(cwd_project_dir)
+        .unwrap_or_else(|_| vec!["(status unreadable)".to_string()]);
+    if !project_tracked.is_empty() {
+        let files = project_tracked
+            .iter()
+            .map(|p| p.as_str())
+            .collect::<Vec<_>>()
+            .join(", ");
+        dirty.push(format!("(project): {files}"));
+    }
+
+    if !dirty.is_empty() {
+        anyhow::bail!(
+            "sync precondition failed: destination workspace has uncommitted tracked changes in:\n  {}\n\
+             \n\
+             sync rebases or fast-forwards these repos onto the source lock; running with tracked \
+             dirt mid-op would leave a half-rebased state requiring `rwv abort` to clear. \
+             Commit or stash the changes in the destination ({}), then re-run.\n\
+             \n\
+             To commit: git -C <repo> commit\n\
+             To stash:  git stash push -u -C <repo>   # or: cd <repo> && git stash push -u\n\
+             \n\
+             (Untracked files are fine — they survive rebase and fast-forward untouched.)",
+            dirty.join("\n  "),
+            cwd_path.display(),
+        );
+    }
+    Ok(())
+}
 
 /// sync-to source-side cleanliness preflight (`fo-4rpnkm.1` §1, Correction 3).
 ///

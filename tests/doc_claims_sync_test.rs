@@ -603,8 +603,13 @@ fn make_shared_with_stale_destination(parent: &Path) -> (Workspace, Workspace) {
         "fake sha must differ from real"
     );
     write_lock(&ww.project_dir, &[(SERVER_PATH, SERVER_URL, fake_sha)]);
-    // Note: we don't commit the changed lock — the lock file on disk is stale,
-    // but the stale-lock check reads the file directly (not from git history).
+    // Commit the stale lock so it is NOT a tracked-dirty file. The stale-lock
+    // check (`classify_lock_relations`) reads the lock from disk, so a committed
+    // stale lock (pointing at a fake SHA) still triggers the lock-freshness
+    // precondition. Without committing, the new pre-flight dirt scan fires first
+    // and masks the stale-lock error this test is validating.
+    git(&["add", "rwv.lock"], &ww.project_dir);
+    git(&["commit", "-m", "test: plant stale lock"], &ww.project_dir);
 
     (primary, ww)
 }
@@ -636,7 +641,10 @@ fn sync_stale_destination_lock_names_condition_and_flag() {
 /// (ii) --allow-stale-lock bypasses the destination stale-lock precondition.
 ///
 /// With the same stale-destination fixture, passing --allow-stale-lock makes
-/// `rwv sync` succeed.
+/// `rwv sync` succeed. The fixture commits the stale lock so the project repo
+/// is clean for the pre-flight dirt scan; a --strategy=rebase is used because
+/// the stale-lock commit makes ww's project branch 1 commit ahead of primary
+/// (the ff ancestry precondition would fire without it).
 #[test]
 fn sync_allow_stale_lock_bypasses_destination_precondition() {
     let tmp = tempfile::tempdir().unwrap();
@@ -647,6 +655,7 @@ fn sync_allow_stale_lock_bypasses_destination_precondition() {
             "sync",
             &primary.root.to_string_lossy(),
             "--allow-stale-lock",
+            "--strategy=rebase",
         ])
         .current_dir(&ww.root)
         .assert()
