@@ -2,7 +2,7 @@
 
 Integrations translate between the project manifest and ecosystem workspace files. Most run automatically based on what's in the repos (a `package.json` triggers `npm-workspaces`, a `go.mod` triggers `go-work`). Some are opt-in.
 
-For the per-integration generated-file format and details, see [reference/integrations](../reference/integrations/index.md). For writing a brand-new integration in rwv's source tree, see [contributing/writing-integrations](../contributing/writing-integrations.md).
+For the per-integration generated-file format and details, see [reference/integrations](../reference/integrations/index.md). Integrations ship with `rwv`; to request a new one, open a [GitHub issue](https://github.com/cwalv/repoweave/issues).
 
 ## Enable an opt-in integration
 
@@ -91,5 +91,5 @@ Auto-detection means an unused integration is silently a no-op (no `package.json
 ## Related
 
 - [reference/integrations](../reference/integrations/index.md) — full list of built-in integrations
-- [contributing/writing-integrations](../contributing/writing-integrations.md) — implementing a new integration in rwv's source
+- [GitHub issues](https://github.com/cwalv/repoweave/issues) — request a new integration or report a problem
 - [reference/formats](../reference/formats.md) — `rwv.yaml` schema

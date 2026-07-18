@@ -39,6 +39,7 @@
 - [Verb vs vocabulary](./explanation/joints/verb-vs-vocabulary.md)
 - [VCS as seam](./explanation/joints/vcs-as-seam.md)
 - [File ownership](./explanation/joints/file-ownership.md)
+- [Destructive operations](./explanation/destructive-operations.md)
 
 # Reference
 
@@ -60,11 +61,3 @@
 
 - [Adjacent tools](./adjacent-tools.md)
 - [Alternatives](./comparison.md)
-
-# Contributing
-
-- [Developing](./contributing/developing.md)
-- [Code style](./contributing/code-style.md)
-- [Destructive operations](./contributing/destructive-operations.md)
-- [Releasing rwv](./contributing/releasing-rwv.md)
-- [Writing integrations](./contributing/writing-integrations.md)

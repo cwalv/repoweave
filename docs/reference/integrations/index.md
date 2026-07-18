@@ -2,7 +2,7 @@
 
 Integrations translate between repoweave's multi-repo model (repos, projects, roles) and one ecosystem's workspace format (`package.json`, `go.work`, `Cargo.toml`, etc.).
 
-For the conceptual frame, see the [workspace lens](../../explanation/lenses/workspace.md). For enabling/disabling integrations in `rwv.yaml`, see [add an integration](../../how-to/add-an-integration.md). For implementing a brand-new integration in rwv's source, see [contributing/writing-integrations](../../contributing/writing-integrations.md).
+For the conceptual frame, see the [workspace lens](../../explanation/lenses/workspace.md). For enabling/disabling integrations in `rwv.yaml`, see [add an integration](../../how-to/add-an-integration.md). Integrations ship with `rwv`; to request a new one, open a [GitHub issue](https://github.com/cwalv/repoweave/issues).
 
 ## Built-in integrations
 
@@ -79,7 +79,7 @@ Each integration receives an `IntegrationContext` with:
 
 The `active_repos()` method filters out `reference` repos (excluded from build graphs). `detect_repos_with_manifest()` finds active repos containing a given file (e.g., `package.json`), using `workspace_root`.
 
-For the trait shape, see [contributing/writing-integrations](../../contributing/writing-integrations.md).
+To request a new integration or contribute one, open a [GitHub issue](https://github.com/cwalv/repoweave/issues).
 
 ## Build orchestration
 

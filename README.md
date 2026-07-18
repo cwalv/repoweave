@@ -171,7 +171,7 @@ Full docs at **[cwalv.github.io/repoweave](https://cwalv.github.io/repoweave/)**
 - **Task-shaped recipes:** [how-to/](docs/how-to/index.md) — add a repo, create a workweave, push a cross-repo feature, hand off to an agent, release a package
 - **Command & format lookup:** [reference/cli.md](docs/reference/cli.md) — all verbs, flags, file formats, roles, glossary, and integrations
 - **The "why":** [explanation/lenses/](docs/explanation/lenses/workspace.md) — workspace, monorepo, and agent lenses; plus [explanation/](docs/explanation/index.md) for joints and cross-cutting concepts
-- **Contributing:** [contributing/developing.md](docs/contributing/developing.md) — build from source, the dogfood loop, releasing
+- **Contributing:** [CONTRIBUTING.md](CONTRIBUTING.md) — how to report bugs, request integrations, and ask design questions
 - **Adjacent tools:** [adjacent-tools.md](docs/adjacent-tools.md) — mise, direnv, devcontainers, CI multi-repo checkout
 
 ### License

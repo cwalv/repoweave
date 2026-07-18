@@ -1872,7 +1872,7 @@ fn delete_workweave_inner(
     // Runs before the dirty / unmerged checks (and is not bypassable by
     // --force) because the hazard is to OTHER workspaces, not the
     // workweave's own work. See joints/clone-topology.md and
-    // docs/contributing/destructive-operations.md (precondition-or-stop).
+    // docs/explanation/destructive-operations.md (precondition-or-stop).
     if workweave_dir.exists() {
         refuse_if_checkouts_host_foreign_worktrees(&workweave_dir, project, &manifest)?;
     }

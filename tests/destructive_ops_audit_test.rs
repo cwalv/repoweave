@@ -1,6 +1,6 @@
 //! Destructive-operation tripwire.
 //!
-//! Policy lives in `docs/contributing/destructive-operations.md` —
+//! Policy lives in `docs/explanation/destructive-operations.md` —
 //! satisfy-the-precondition-or-stop, informed `--force`, discards stay
 //! recoverable. Read that before editing the allowlist below; this
 //! header carries the enforcement-mechanics summary only.

@@ -147,31 +147,31 @@ The reviewer's checklist mirrors the rules:
 - Is the allowlist entry concrete enough that a future contributor
   reading it can audit the site without re-deriving the policy?
 
-## Why this lives in `contributing/`
+## Policy and enforcement — two halves of one contract
 
 The policy is two things at once:
 
 - An **operator promise**: rwv won't silently destroy your work. Every
   destructive path is gated; every override is informed; every
   discard is recoverable where the mechanism allows it.
-- A **contributor rule**: adding a destructive call site without
+- A **source rule**: adding a destructive call site without
   satisfying the three rules above fails the build, and the
   enforcement is intentionally noisy at the commit that introduces
   the site.
 
-The two halves cannot drift. Stating the policy in `contributing/` and
-having the test header point here keeps one source of truth for both
-audiences. The test header still carries the enforcement mechanics
-(the pattern list, the scan algorithm, the allowlist contract) — the
-shape of the verifier — while this page carries the *why* and the
-*shape of new contributions*.
+The two halves cannot drift. Stating the policy here and having the
+test header point here keeps one source of truth for both audiences.
+The test header still carries the enforcement mechanics (the pattern
+list, the scan algorithm, the allowlist contract) — the shape of the
+verifier — while this page carries the *why* and the *shape of new
+call sites*.
 
 ## Related
 
 - `tests/destructive_ops_audit_test.rs` — the enforcement mechanism
   and the audited allowlist of current call sites.
-- [shared-refs-drift](../explanation/joints/shared-refs-drift.md) —
+- [shared-refs-drift](./joints/shared-refs-drift.md) —
   the safe-class / live-class classifier that gates several of the
   preconditions above.
-- [sync-semantics](../explanation/joints/sync-semantics.md) — the
+- [sync-semantics](./joints/sync-semantics.md) — the
   phase model that the `refs/rwv/pre-op/<op-id>` savepoint protects.
