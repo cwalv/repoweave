@@ -111,8 +111,9 @@
 
 use crate::integration::{Integration, IntegrationContext, Issue, Severity};
 use crate::integrations::merge::{
-    drift_issues, keypath, merge_activate, missing_issue, strip_deactivate, toml_array_strings,
-    KeyPath, ManagedDoc, MergeResult, OwnedValue, Ownership, TomlDoc,
+    drift_issues, fully_owned_parse_fail_issue, keypath, merge_activate, missing_issue,
+    strip_deactivate, toml_array_strings, KeyPath, ManagedDoc, MergeResult, OwnedValue, Ownership,
+    TomlDoc,
 };
 use crate::manifest::{CargoWorkspaceConfig, MemberSpec, PatchMode};
 use anyhow::Context;
@@ -488,11 +489,11 @@ impl Integration for CargoWorkspace {
 
         // `MergeResult.deferred` lists keys the user took the pen on (a
         // hand-written `[workspace]` block with no marker). The trigger-model
-        // story is that context verbs verify-and-warn rather than author;
-        // surfacing deferrals as `Severity::Warning` is a framework concern
-        // tracked by C3 (`generated_files()` split + verify split). For now
-        // the merge silently defers — consistent with the pre-port behavior
-        // of leaving hand-written files alone.
+        // story is that context verbs verify-and-warn rather than author, and
+        // `verify()` DOES surface USER-HELD as `safe_to_fix=false`. The
+        // intent-mode merge here (the write path) silently defers — consistent
+        // with the pre-port behavior of leaving hand-written files alone; the
+        // user-facing signal is on the `verify()` / `rwv doctor` side.
 
         Ok(())
     }
@@ -567,6 +568,31 @@ impl Integration for CargoWorkspace {
             return Ok(());
         }
 
+        // Precheck: `activate` is a context verb (per trigger-model.md and
+        // file-ownership.md §"The trigger model") — it surfaces + verifies but
+        // NEVER authors managed content. If the hybrid `Cargo.toml` was never
+        // generated (typically: a repo acquired its `Cargo.toml` AFTER the
+        // `rwv add` that would have triggered generation), running
+        // `cargo generate-lockfile` would fail with a confusing "no root
+        // Cargo.toml" error and leave the caller with the generic "workspace
+        // may be partially activated" wrap. Bail early with the same repair
+        // verb `verify()` names, so the operator sees ONE actionable message.
+        //
+        // The intent-verb recovery hatch (`rwv doctor --fix`) exercises
+        // `activate_intent`, which DOES author the managed file — the
+        // documented resolution for repos whose ecosystem shape changed after
+        // add. This closes the C3 regeneration gap without pushing authoring
+        // into the context path.
+        let managed = ctx.output_dir.join("Cargo.toml");
+        if !managed.exists() {
+            anyhow::bail!(
+                "cargo-workspace managed file missing: {}; \
+                 activate is a context verb and does not author managed content — \
+                 run `rwv doctor --fix` to regenerate",
+                managed.display()
+            );
+        }
+
         // Run from workspace_root: that's where activation symlinks are
         // in place so cargo sees the workspace the user sees. output_dir
         // (project_dir) is where the canonical Cargo.toml lives, but the
@@ -603,21 +629,39 @@ impl Integration for CargoWorkspace {
         vec!["Cargo.lock".to_string()]
     }
 
-    /// Verify that the on-disk `Cargo.toml` reflects the current intent
-    /// (`rwv.yaml` membership configuration). Called by `rwv doctor` and
+    /// Verify that the on-disk managed and generated files reflect the current
+    /// intent (`rwv.yaml` membership configuration). Called by `rwv doctor` and
     /// context verbs; **read-only** — never authors content.
     ///
-    /// Three findings (see the verify design doc for rationale):
+    /// Two axes:
     ///
-    /// - **MISSING** (`safe_to_fix = true`): file absent; `--fix` regenerates.
-    /// - **DRIFT** (`safe_to_fix = true`): markers present but on-disk values
-    ///   of owned keys differ from config; `--fix` regenerates.
-    /// - **USER-HELD** (`safe_to_fix = false`): file present with
-    ///   `[workspace]` members/resolver but **no** `# managed by rwv` marker
-    ///   on the owned keys — the user holds the pen. Doctor surfaces the
-    ///   finding but never auto-overwrites.
+    /// - **`Cargo.toml` (hybrid, managed)** — see [`Integration::managed_files`].
+    ///   Four states via the shared [`drift_issues`] dispatch:
+    ///   - **MISSING** (`safe_to_fix = true`): file absent; `--fix` regenerates.
+    ///   - **DRIFT** (`safe_to_fix = true`): markers present but on-disk values
+    ///     of owned keys differ from config; `--fix` regenerates.
+    ///   - **USER-HELD** (`safe_to_fix = false`): file present with
+    ///     `[workspace]` members/resolver but **no** `# managed by rwv` marker
+    ///     on the owned keys — the user holds the pen. Doctor surfaces the
+    ///     finding but never auto-overwrites.
+    ///   - **CLEAN**: markers present AND values match config.
     ///
-    /// CLEAN (no issues) when markers present AND values match config.
+    /// - **`Cargo.lock` (fully-owned, generated)** — see
+    ///   [`Integration::generated_files`]. Fully-owned files never enter the
+    ///   USER-HELD state (that's a hybrid-managed-key concept); the two
+    ///   observable states are:
+    ///   - **MISSING** (`safe_to_fix = true`): file absent; `--fix` regenerates
+    ///     via the ecosystem tool (`cargo generate-lockfile`).
+    ///   - **DRIFT** (`safe_to_fix = true`): file present but not parseable as
+    ///     TOML — a common shape for out-of-band mutation to leave behind.
+    ///     `--fix` regenerates.
+    ///   - **CLEAN**: file present and parseable.
+    ///
+    /// Deeper content-drift detection (e.g. detecting that cargo silently
+    /// rewrote pinned versions out-of-band, R34 in scope for future work) would
+    /// require either running `cargo generate-lockfile` (side-effectful +
+    /// network) or persisting a hash. The named repair verb is `rwv doctor
+    /// --fix`, which regenerates via [`Self::activate_hook`].
     fn verify(&self, ctx: &IntegrationContext) -> anyhow::Result<Vec<Issue>> {
         let cfg: CargoWorkspaceConfig = ctx.config.settings()?;
 
@@ -625,6 +669,40 @@ impl Integration for CargoWorkspace {
             return Ok(vec![]);
         }
 
+        let mut issues = self.verify_cargo_toml(ctx, &cfg)?;
+        issues.extend(self.verify_cargo_lock(ctx));
+        Ok(issues)
+    }
+
+    /// `Cargo.toml` is **hybrid** (rwv owns the `[workspace]` region; the
+    /// user owns `[profile.*]`, `[workspace.lints.*]`, `[workspace.dependencies]`,
+    /// `[patch.*]`, comments, etc.). It MUST NOT appear in
+    /// `generated_files()` — that would mark it gitignore-eligible and
+    /// whole-deletable, the exact data-loss bug the merge port fixes.
+    fn managed_files(&self, ctx: &IntegrationContext) -> Vec<String> {
+        let mut files = self.generated_files(ctx);
+        let Ok(cfg) = ctx.config.settings::<CargoWorkspaceConfig>() else {
+            return files;
+        };
+        if Self::has_active_cargo_work(ctx, &cfg) {
+            files.push("Cargo.toml".to_string());
+        }
+        files
+    }
+}
+
+impl CargoWorkspace {
+    /// Verify the hybrid, managed `Cargo.toml`. See [`Self::verify`] for the
+    /// four-state semantics; this method is the split-out per-file half.
+    ///
+    /// Semantics unchanged from before the fully-owned split — this is the
+    /// original `verify()` body, now composed with [`Self::verify_cargo_lock`]
+    /// by the trait-level `verify()`.
+    fn verify_cargo_toml(
+        &self,
+        ctx: &IntegrationContext,
+        cfg: &CargoWorkspaceConfig,
+    ) -> anyhow::Result<Vec<Issue>> {
         let path = ctx.output_dir.join("Cargo.toml");
 
         // ── MISSING ────────────────────────────────────────────────────────
@@ -684,7 +762,7 @@ impl Integration for CargoWorkspace {
         //   - `resolver` is `Ownership::DefaultOnly` → operators may override
         //     it (e.g. `resolver = "1"` for compat); any on-disk value is
         //     CLEAN. Skip the resolver drift check entirely.
-        let (members, nested_conflicts) = Self::partition(ctx, &cfg)?;
+        let (members, nested_conflicts) = Self::partition(ctx, cfg)?;
         if !nested_conflicts.is_empty() {
             // Nested-workspace conflict: activation would fail anyway;
             // don't add a misleading DRIFT finding on top of the check error.
@@ -712,24 +790,64 @@ impl Integration for CargoWorkspace {
         ))
     }
 
-    /// `Cargo.toml` is **hybrid** (rwv owns the `[workspace]` region; the
-    /// user owns `[profile.*]`, `[workspace.lints.*]`, `[workspace.dependencies]`,
-    /// `[patch.*]`, comments, etc.). It MUST NOT appear in
-    /// `generated_files()` — that would mark it gitignore-eligible and
-    /// whole-deletable, the exact data-loss bug the merge port fixes.
-    fn managed_files(&self, ctx: &IntegrationContext) -> Vec<String> {
-        let mut files = self.generated_files(ctx);
-        let Ok(cfg) = ctx.config.settings::<CargoWorkspaceConfig>() else {
-            return files;
-        };
-        if Self::has_active_cargo_work(ctx, &cfg) {
-            files.push("Cargo.toml".to_string());
-        }
-        files
-    }
-}
+    /// Verify the fully-owned `Cargo.lock`. See [`Self::verify`] for the
+    /// two-state semantics (MISSING / DRIFT / CLEAN; USER-HELD does not apply
+    /// to fully-owned files).
+    ///
+    /// This closes the R34 gap: previously `verify()` only inspected the
+    /// hybrid `Cargo.toml`, so a missing or corrupted `Cargo.lock` was
+    /// invisible to `rwv doctor`. Now doctor surfaces both file states with
+    /// the same `# managed by rwv` / `rwv doctor --fix` house pattern.
+    ///
+    /// **Deep content-drift** (cargo silently rewrote pinned versions
+    /// out-of-band) is intentionally not attempted here — it would require
+    /// re-running `cargo generate-lockfile` (side-effectful + network) or
+    /// persisting a hash. The two shapes we DO catch are the ones that
+    /// break the workspace at build time: file missing (cargo can't run
+    /// against the workspace) or file corrupted (cargo refuses to parse).
+    fn verify_cargo_lock(&self, ctx: &IntegrationContext) -> Vec<Issue> {
+        let path = ctx.output_dir.join("Cargo.lock");
 
-impl CargoWorkspace {
+        // ── MISSING ────────────────────────────────────────────────────────
+        // Fully-owned: absent when generation is expected is DRIFT (never
+        // USER-HELD — that state is a hybrid-marker concept). Reuse the shared
+        // missing_issue template so message text stays aligned with the hybrid
+        // MISSING case (name the file, name the repair verb).
+        if !path.exists() {
+            return vec![missing_issue(self.name(), &path)];
+        }
+
+        // ── DRIFT (parse-fail) ────────────────────────────────────────────
+        // A fully-owned file that no longer parses is DRIFT (never USER-HELD).
+        // Read + parse; on failure emit a house-pattern DRIFT finding.
+        // Cargo.lock is TOML; parse via toml_edit for a lightweight structural
+        // check without pulling in a full cargo-lockfile schema.
+        let text = match std::fs::read_to_string(&path) {
+            Ok(t) => t,
+            Err(e) => {
+                // Read failure (permissions, transient I/O). Surface as DRIFT
+                // — safe_to_fix=true so `--fix` regenerates. The file exists
+                // per the branch above, but its contents are unreadable; the
+                // regenerator will overwrite.
+                return vec![fully_owned_parse_fail_issue(
+                    self.name(),
+                    &path,
+                    &format!("read failed: {e}"),
+                )];
+            }
+        };
+        if let Err(e) = text.parse::<toml_edit::DocumentMut>() {
+            return vec![fully_owned_parse_fail_issue(
+                self.name(),
+                &path,
+                &format!("TOML parse failed: {e}"),
+            )];
+        }
+
+        // Present and parseable → CLEAN.
+        vec![]
+    }
+
     /// The owned key paths stripped on `deactivate(root)`. Static because
     /// `Integration::deactivate` has no `IntegrationContext` — see
     /// `integration.rs:154`. Plan §3 / §11 res #15:

@@ -4024,7 +4024,24 @@ acme-lib = { path = "github/acme/lib" }
 
 mod s7_cargo_doctor {
     use super::*;
+    use repoweave::integration::Issue;
     use repoweave::integrations::CargoWorkspace;
+
+    /// Filter verify() output to hybrid-Cargo.toml findings only.
+    ///
+    /// The pre-§7.6 tests in this module were written when `verify()` only
+    /// inspected the hybrid `Cargo.toml`. §7.6 (fo-t9x0l1.4 / R34) extended
+    /// `verify()` to also inspect the fully-owned `Cargo.lock`. To keep those
+    /// pre-existing tests focused on their original semantic axis
+    /// (Cargo.toml states) without seeding an unrelated Cargo.lock in each
+    /// fixture, this helper filters out Cargo.lock findings. The fully-owned
+    /// axis is covered separately in §7.6.
+    fn cargo_toml_issues(issues: Vec<Issue>) -> Vec<Issue> {
+        issues
+            .into_iter()
+            .filter(|i| !i.message.contains("Cargo.lock"))
+            .collect()
+    }
 
     // -----------------------------------------------------------------------
     // §7.1 MISSING: verify() reports MISSING when Cargo.toml is absent
@@ -4047,11 +4064,11 @@ mod s7_cargo_doctor {
         let cache = HashMap::new();
         let ctx = make_ctx(root, &project, &manifest, &config, &cache);
 
-        let issues = CargoWorkspace.verify(&ctx).unwrap();
+        let issues = cargo_toml_issues(CargoWorkspace.verify(&ctx).unwrap());
         assert_eq!(
             issues.len(),
             1,
-            "expected exactly one MISSING issue, got: {issues:?}"
+            "expected exactly one MISSING issue (Cargo.toml axis), got: {issues:?}"
         );
         let issue = &issues[0];
         assert!(issue.safe_to_fix, "MISSING issue must be safe_to_fix");
@@ -4088,7 +4105,7 @@ mod s7_cargo_doctor {
         let ctx = make_ctx(root, &project, &manifest, &config, &cache);
 
         // Pre-condition: MISSING.
-        let pre_issues = CargoWorkspace.verify(&ctx).unwrap();
+        let pre_issues = cargo_toml_issues(CargoWorkspace.verify(&ctx).unwrap());
         assert_eq!(pre_issues.len(), 1, "expected MISSING pre-condition");
         assert!(pre_issues[0].safe_to_fix);
 
@@ -4139,11 +4156,14 @@ mod s7_cargo_doctor {
             "Cargo.toml must set resolver = \"2\": {content}"
         );
 
-        // Post-condition: CLEAN (no verify issues).
-        let post_issues = CargoWorkspace.verify(&ctx).unwrap();
+        // Post-condition: CLEAN (no verify issues on the Cargo.toml axis).
+        // Cargo.lock is still absent (activate() does not run the hook), so
+        // the fully-owned arm would emit MISSING — that's exercised by §7.6
+        // and out of scope for this hybrid-focused test.
+        let post_issues = cargo_toml_issues(CargoWorkspace.verify(&ctx).unwrap());
         assert!(
             post_issues.is_empty(),
-            "verify() must return no issues after activate (CLEAN), got: {post_issues:?}"
+            "verify() must return no Cargo.toml issues after activate (CLEAN), got: {post_issues:?}"
         );
     }
 
@@ -4177,11 +4197,11 @@ mod s7_cargo_doctor {
         let cache = HashMap::new();
         let ctx = make_ctx(root, &project, &manifest, &config, &cache);
 
-        let issues = CargoWorkspace.verify(&ctx).unwrap();
+        let issues = cargo_toml_issues(CargoWorkspace.verify(&ctx).unwrap());
         assert_eq!(
             issues.len(),
             1,
-            "expected exactly one DRIFT issue, got: {issues:?}"
+            "expected exactly one DRIFT issue (Cargo.toml axis), got: {issues:?}"
         );
         let issue = &issues[0];
         assert!(issue.safe_to_fix, "DRIFT issue must be safe_to_fix");
@@ -4216,17 +4236,17 @@ mod s7_cargo_doctor {
         let ctx = make_ctx(root, &project, &manifest, &config, &cache);
 
         // Pre-condition: DRIFT.
-        let pre_issues = CargoWorkspace.verify(&ctx).unwrap();
+        let pre_issues = cargo_toml_issues(CargoWorkspace.verify(&ctx).unwrap());
         assert_eq!(pre_issues.len(), 1, "expected DRIFT pre-condition");
 
         // Simulate fix.
         CargoWorkspace.activate(&ctx).unwrap();
 
-        // Post-condition: CLEAN.
-        let post_issues = CargoWorkspace.verify(&ctx).unwrap();
+        // Post-condition: CLEAN on the Cargo.toml axis.
+        let post_issues = cargo_toml_issues(CargoWorkspace.verify(&ctx).unwrap());
         assert!(
             post_issues.is_empty(),
-            "verify() must return no issues after activate (CLEAN), got: {post_issues:?}"
+            "verify() must return no Cargo.toml issues after activate (CLEAN), got: {post_issues:?}"
         );
 
         // Confirm common is now in the file.
@@ -4263,11 +4283,11 @@ mod s7_cargo_doctor {
         let cache = HashMap::new();
         let ctx = make_ctx(root, &project, &manifest, &config, &cache);
 
-        let issues = CargoWorkspace.verify(&ctx).unwrap();
+        let issues = cargo_toml_issues(CargoWorkspace.verify(&ctx).unwrap());
         assert_eq!(
             issues.len(),
             1,
-            "expected exactly one USER-HELD issue, got: {issues:?}"
+            "expected exactly one USER-HELD issue (Cargo.toml axis), got: {issues:?}"
         );
         let issue = &issues[0];
         assert!(
@@ -4304,7 +4324,7 @@ mod s7_cargo_doctor {
         let ctx = make_ctx(root, &project, &manifest, &config, &cache);
 
         // Verify reports USER-HELD with safe_to_fix=false.
-        let issues = CargoWorkspace.verify(&ctx).unwrap();
+        let issues = cargo_toml_issues(CargoWorkspace.verify(&ctx).unwrap());
         assert_eq!(issues.len(), 1);
         assert!(
             !issues[0].safe_to_fix,
@@ -4350,10 +4370,10 @@ mod s7_cargo_doctor {
 
         CargoWorkspace.activate(&ctx).unwrap();
 
-        let issues = CargoWorkspace.verify(&ctx).unwrap();
+        let issues = cargo_toml_issues(CargoWorkspace.verify(&ctx).unwrap());
         assert!(
             issues.is_empty(),
-            "verify() must return no issues for a freshly-activated Cargo.toml, got: {issues:?}"
+            "verify() must return no Cargo.toml issues for a freshly-activated Cargo.toml, got: {issues:?}"
         );
     }
 
@@ -4495,10 +4515,10 @@ mod s7_cargo_doctor {
         let cache = HashMap::new();
         let ctx = make_ctx(root, &project, &manifest, &config, &cache);
 
-        let issues = CargoWorkspace.verify(&ctx).unwrap();
+        let issues = cargo_toml_issues(CargoWorkspace.verify(&ctx).unwrap());
         assert!(
             issues.is_empty(),
-            "resolver drift (DefaultOnly) must be CLEAN — no issues expected, got: {issues:?}"
+            "resolver drift (DefaultOnly) must be CLEAN on Cargo.toml axis — got: {issues:?}"
         );
     }
 
@@ -4529,17 +4549,362 @@ mod s7_cargo_doctor {
         let cache = HashMap::new();
         let ctx = make_ctx(root, &project, &manifest, &config, &cache);
 
-        let issues = CargoWorkspace.verify(&ctx).unwrap();
+        let issues = cargo_toml_issues(CargoWorkspace.verify(&ctx).unwrap());
         assert_eq!(
             issues.len(),
             1,
-            "members drift must still produce a DRIFT issue, got: {issues:?}"
+            "members drift must still produce a DRIFT issue on Cargo.toml axis, got: {issues:?}"
         );
         assert!(issues[0].safe_to_fix, "DRIFT issue must be safe_to_fix");
         assert!(
             issues[0].message.contains("drift"),
             "DRIFT issue message should contain 'drift': {}",
             issues[0].message
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // §7.6 Fully-owned Cargo.lock verify (fo-t9x0l1.4 / R34)
+    //
+    // The three-state verify() shape (MISSING / DRIFT / USER-HELD) was
+    // originally hybrid-only; USER-HELD requires an owned-key + marker pair
+    // that fully-owned files don't have. This §7.6 battery covers the
+    // fully-owned axis on `Cargo.lock`:
+    //
+    //   - MISSING (file absent when generation expected) → DRIFT, safe_to_fix
+    //   - Parse-fail (garbage bytes / cargo half-write) → DRIFT, safe_to_fix
+    //   - Present + parseable → CLEAN
+    //
+    // Anchors the R34 audit finding: previously `verify()` ignored Cargo.lock
+    // entirely — any mutation was invisible to doctor.
+    // -----------------------------------------------------------------------
+
+    /// Helper: build a fixture where cargo-workspace has active work
+    /// (`Cargo.toml` present, marker+members correct) so verify() reaches the
+    /// Cargo.lock arm without short-circuiting on the hybrid arm.
+    ///
+    /// Returns (tempdir, project, manifest, config, cache) to keep the borrow
+    /// pattern the other tests use.
+    fn s7_6_fixture() -> (
+        TempDir,
+        ProjectName,
+        Manifest,
+        IntegrationConfig,
+        HashMap<String, Vec<String>>,
+    ) {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+
+        // Repo with a Cargo.toml so `has_active_cargo_work` returns true.
+        touch(root, "github/cwalv/mylib/Cargo.toml");
+
+        // Write a clean, marker-decorated root Cargo.toml matching the config
+        // so the hybrid Cargo.toml arm of verify() is CLEAN.
+        write_file(
+            root,
+            "Cargo.toml",
+            "[workspace]\n# managed by rwv\nmembers = [\"github/cwalv/mylib\"]\n\
+             # managed by rwv\nresolver = \"2\"\n",
+        );
+
+        let config = IntegrationConfig::default();
+        let manifest = make_manifest(vec![("github/cwalv/mylib", Role::Owned)]);
+        let project = ProjectName::new("test-project");
+        let cache = HashMap::new();
+
+        (tmp, project, manifest, config, cache)
+    }
+
+    /// Given: Cargo.toml is CLEAN (marker + matching members), Cargo.lock
+    ///        is ABSENT.
+    /// Then:  verify() reports a MISSING finding for Cargo.lock naming the
+    ///        file, the state, and the `rwv doctor --fix` repair verb.
+    ///
+    /// R34 regression: pre-fix, doctor exited 0 with no report even when
+    /// the fully-owned lockfile was gone.
+    #[test]
+    fn s7_6_cargo_lock_missing_reports_drift_naming_doctor_fix() {
+        let (tmp, project, manifest, config, cache) = s7_6_fixture();
+        let root = tmp.path();
+        let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+
+        // Confirm Cargo.lock is absent (fixture doesn't create it).
+        assert!(!root.join("Cargo.lock").exists());
+
+        let issues = CargoWorkspace.verify(&ctx).unwrap();
+        assert_eq!(
+            issues.len(),
+            1,
+            "expected exactly one MISSING finding for Cargo.lock, got: {issues:?}"
+        );
+        let issue = &issues[0];
+        assert!(
+            issue.safe_to_fix,
+            "MISSING Cargo.lock must be safe_to_fix (doctor --fix regenerates)"
+        );
+        // Message must name the file (house pattern: name the file).
+        assert!(
+            issue.message.contains("Cargo.lock"),
+            "MISSING message must name the file: {}",
+            issue.message
+        );
+        // Message must name the state (house pattern: name the state).
+        assert!(
+            issue.message.contains("missing"),
+            "MISSING message must name the state ('missing'): {}",
+            issue.message
+        );
+        // Message must name the repair verb (house pattern: name the repair).
+        assert!(
+            issue.message.contains("rwv doctor --fix"),
+            "MISSING message must name `rwv doctor --fix`: {}",
+            issue.message
+        );
+    }
+
+    /// Given: Cargo.lock present but not valid TOML (out-of-band mutation
+    ///        or interrupted cargo write leaves garbage bytes).
+    /// Then:  verify() reports a DRIFT finding naming Cargo.lock, "drift",
+    ///        and the `rwv doctor --fix` repair verb.
+    #[test]
+    fn s7_6_cargo_lock_corrupt_reports_drift_naming_doctor_fix() {
+        let (tmp, project, manifest, config, cache) = s7_6_fixture();
+        let root = tmp.path();
+
+        // Write garbage bytes — not a valid TOML document.
+        write_file(root, "Cargo.lock", "this is not toml \x00 [[[");
+
+        let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+        let issues = CargoWorkspace.verify(&ctx).unwrap();
+        assert_eq!(
+            issues.len(),
+            1,
+            "expected exactly one DRIFT finding for corrupt Cargo.lock, got: {issues:?}"
+        );
+        let issue = &issues[0];
+        assert!(
+            issue.safe_to_fix,
+            "corrupt Cargo.lock is safe_to_fix (doctor --fix regenerates)"
+        );
+        assert!(
+            issue.message.contains("Cargo.lock"),
+            "DRIFT message must name the file: {}",
+            issue.message
+        );
+        assert!(
+            issue.message.contains("drift"),
+            "DRIFT message must name the state ('drift'): {}",
+            issue.message
+        );
+        assert!(
+            issue.message.contains("rwv doctor --fix"),
+            "DRIFT message must name `rwv doctor --fix`: {}",
+            issue.message
+        );
+    }
+
+    /// Given: Cargo.lock present and parseable as TOML.
+    /// Then:  verify() reports no Cargo.lock finding (CLEAN).
+    ///
+    /// This anchors the intentional scope bound: deep content-drift (cargo
+    /// silently rewrote pinned versions) is NOT detected without running
+    /// cargo. Present-and-parseable is CLEAN.
+    #[test]
+    fn s7_6_cargo_lock_present_and_parseable_is_clean() {
+        let (tmp, project, manifest, config, cache) = s7_6_fixture();
+        let root = tmp.path();
+
+        // Minimal valid Cargo.lock shape (top-level version + empty package
+        // array is enough for the parse-only check).
+        write_file(
+            root,
+            "Cargo.lock",
+            "version = 3\n\n[[package]]\nname = \"mylib\"\nversion = \"0.1.0\"\n",
+        );
+
+        let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+        let issues = CargoWorkspace.verify(&ctx).unwrap();
+        assert!(
+            issues.is_empty(),
+            "present + parseable Cargo.lock must be CLEAN, got: {issues:?}"
+        );
+    }
+
+    /// Regression: fully-owned Cargo.lock MUST NOT be reported as USER-HELD
+    /// even in the pathological case where a file is present without markers.
+    /// USER-HELD is a hybrid-marker concept and does not apply to fully-owned
+    /// files (TL guidance: "never USER-HELD").
+    #[test]
+    fn s7_6_cargo_lock_never_reports_user_held() {
+        let (tmp, project, manifest, config, cache) = s7_6_fixture();
+        let root = tmp.path();
+
+        // A "user-authored" Cargo.lock analog: valid TOML, no rwv marker.
+        // Fully-owned semantics say this is CLEAN, not USER-HELD.
+        write_file(root, "Cargo.lock", "version = 3\n");
+
+        let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+        let issues = CargoWorkspace.verify(&ctx).unwrap();
+
+        // No issue at all. If there were an issue, it must NOT be
+        // safe_to_fix=false (the USER-HELD signature).
+        for issue in &issues {
+            assert!(
+                issue.safe_to_fix,
+                "fully-owned Cargo.lock must never emit a USER-HELD (safe_to_fix=false) issue: {issue:?}"
+            );
+        }
+        assert!(
+            issues.is_empty(),
+            "present+parseable fully-owned file must be CLEAN, got: {issues:?}"
+        );
+    }
+
+    /// Regression: hybrid Cargo.toml USER-HELD detection must survive the
+    /// verify() split (Cargo.toml first, Cargo.lock second). A Cargo.toml
+    /// with unmarked members + present Cargo.lock still emits exactly one
+    /// USER-HELD finding for the hybrid file — the fully-owned arm stays
+    /// CLEAN when Cargo.lock is present-and-parseable.
+    #[test]
+    fn s7_6_hybrid_user_held_unchanged_by_fully_owned_split() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+
+        // No "# managed by rwv" marker — user holds the pen on Cargo.toml.
+        write_file(
+            root,
+            "Cargo.toml",
+            "[workspace]\nmembers = [\"github/cwalv/mylib\"]\nresolver = \"2\"\n",
+        );
+        touch(root, "github/cwalv/mylib/Cargo.toml");
+        // Cargo.lock is present + parseable so the fully-owned arm is CLEAN.
+        write_file(root, "Cargo.lock", "version = 3\n");
+
+        let config =
+            IntegrationConfig::from_yaml("members:\n  github/cwalv/mylib:\n    include: [.]\n");
+        let manifest = make_manifest(vec![("github/cwalv/mylib", Role::Owned)]);
+        let project = ProjectName::new("test-project");
+        let cache = HashMap::new();
+        let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+
+        let issues = CargoWorkspace.verify(&ctx).unwrap();
+        assert_eq!(
+            issues.len(),
+            1,
+            "expected exactly one USER-HELD issue for Cargo.toml, got: {issues:?}"
+        );
+        assert!(
+            !issues[0].safe_to_fix,
+            "USER-HELD hybrid finding must NOT be safe_to_fix, got: {:?}",
+            issues[0]
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // §7.7 C3 regeneration gap: activate_hook refuses cleanly when the
+    //      managed file is missing, naming `rwv doctor --fix`.
+    //
+    // Empirical evidence from the R34 audit: a repo that acquired its
+    // Cargo.toml AFTER `rwv add` never had its managed Cargo.toml generated,
+    // so `activate` blew up in the activate_hook (cargo generate-lockfile
+    // has no root manifest to lock against) with the confusing "workspace
+    // may be partially activated" wrap. This battery pins the FALLBACK
+    // branch of the TL's sanctioned either/or: activate is a context verb
+    // and must not author — activate_hook precheck bails with a clear
+    // message pointing to the intent-mode recovery verb.
+    // -----------------------------------------------------------------------
+
+    /// Given: cargo-workspace has active work but the managed Cargo.toml
+    ///        was never generated (the "acquired manifest after add" gap).
+    /// When:  activate_hook runs.
+    /// Then:  it bails with a clear error naming `rwv doctor --fix`
+    ///        BEFORE running cargo (which would fail with a confusing wrap).
+    #[test]
+    fn s7_7_activate_hook_refuses_when_managed_file_missing() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+
+        // Repo has a Cargo.toml so has_active_cargo_work=true, but the
+        // ROOT (output_dir) Cargo.toml is absent — the C3 gap shape.
+        touch(root, "github/cwalv/mylib/Cargo.toml");
+        assert!(!root.join("Cargo.toml").exists());
+
+        let config = IntegrationConfig::default();
+        let manifest = make_manifest(vec![("github/cwalv/mylib", Role::Owned)]);
+        let project = ProjectName::new("test-project");
+        let cache = HashMap::new();
+        let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+
+        let err = CargoWorkspace
+            .activate_hook(&ctx)
+            .expect_err("activate_hook must refuse when managed file is missing");
+        let msg = format!("{err:#}");
+
+        // Names the file.
+        assert!(
+            msg.contains("Cargo.toml"),
+            "error must name the missing managed file: {msg}"
+        );
+        // Names the recovery verb — the reason we bail early is to give
+        // ONE actionable message instead of the "partially activated" wrap.
+        assert!(
+            msg.contains("rwv doctor --fix"),
+            "error must name the recovery verb `rwv doctor --fix`: {msg}"
+        );
+    }
+
+    /// Given: managed Cargo.toml is missing.
+    /// When:  `activate_intent` (the intent-mode write path that
+    ///        `rwv doctor --fix` invokes) runs.
+    /// Then:  Cargo.toml is authored — the intent path self-heals the C3
+    ///        gap, closing the loop that `verify()` opens.
+    ///
+    /// This is the DOCTOR-FIX-REPAIRS-IT half of the pair — the activate
+    /// (context) path refuses cleanly (previous test), and the doctor
+    /// (intent) path repairs.
+    #[test]
+    fn s7_7_activate_intent_regenerates_missing_managed_file() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+
+        touch(root, "github/cwalv/mylib/Cargo.toml");
+        assert!(!root.join("Cargo.toml").exists());
+
+        let config = IntegrationConfig::default();
+        let manifest = make_manifest(vec![("github/cwalv/mylib", Role::Owned)]);
+        let project = ProjectName::new("test-project");
+        let cache = HashMap::new();
+        let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+
+        // Intent mode (what doctor --fix invokes) DOES author.
+        CargoWorkspace.activate(&ctx).unwrap();
+
+        assert!(
+            root.join("Cargo.toml").exists(),
+            "activate() (intent mode) must regenerate the missing managed file"
+        );
+        let content = std::fs::read_to_string(root.join("Cargo.toml")).unwrap();
+        assert!(
+            content.contains("# managed by rwv"),
+            "regenerated Cargo.toml must carry the rwv marker: {content}"
+        );
+
+        // And verify() must now be CLEAN on the hybrid arm.
+        let post_issues = CargoWorkspace.verify(&ctx).unwrap();
+        // Cargo.lock is still absent (activate() doesn't run the hook), so
+        // exactly ONE MISSING finding for Cargo.lock — but the Cargo.toml
+        // hybrid arm is CLEAN.
+        assert_eq!(
+            post_issues.len(),
+            1,
+            "post-regeneration verify() must have exactly one issue \
+             (fully-owned Cargo.lock still MISSING; hybrid Cargo.toml CLEAN), \
+             got: {post_issues:?}"
+        );
+        assert!(
+            post_issues[0].message.contains("Cargo.lock"),
+            "remaining issue must be for Cargo.lock, got: {}",
+            post_issues[0].message
         );
     }
 }

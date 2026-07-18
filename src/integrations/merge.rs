@@ -1744,6 +1744,34 @@ pub fn missing_issue(name: &str, path: &Path) -> Issue {
     }
 }
 
+/// The canonical DRIFT-state issue for a **fully-owned** generated file whose
+/// on-disk content is unreadable or unparseable.
+///
+/// Fully-owned files (ecosystem lockfiles: `Cargo.lock`, `uv.lock`,
+/// `package-lock.json`, ...) have a simpler verify surface than hybrid managed
+/// files: USER-HELD does not apply (that state is a hybrid-marker concept), so
+/// the observable non-CLEAN states reduce to MISSING (use [`missing_issue`])
+/// and DRIFT. This helper covers the parse-fail / read-fail flavor of DRIFT:
+/// the file exists but is not consumable by the ecosystem tool, and
+/// `rwv doctor --fix` will regenerate.
+///
+/// The `detail` argument names WHAT failed (e.g. `"TOML parse failed: expected
+/// ..."` or `"read failed: permission denied"`) — the message template names
+/// the file, the state, and the repair verb, matching the house pattern used
+/// by [`missing_issue`].
+pub fn fully_owned_parse_fail_issue(name: &str, path: &Path, detail: &str) -> Issue {
+    Issue {
+        integration: name.to_string(),
+        severity: Severity::Warning,
+        message: format!(
+            "{name} generated file has drift: {} ({detail}); \
+             run rwv doctor --fix to regenerate",
+            path.display()
+        ),
+        safe_to_fix: true,
+    }
+}
+
 /// Sort + dedup a string slice into an owned `Vec`. Mirrors
 /// [`OwnedValue::sorted_array`]'s normalization so DRIFT comparison and the
 /// authored on-disk value use the same ordering and deduplication.
