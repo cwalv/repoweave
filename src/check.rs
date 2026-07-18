@@ -334,6 +334,26 @@ pub enum CheckViolation {
         /// Absolute path of the canonical clone directory that is missing.
         canonical_path: PathBuf,
     },
+
+    /// A worktree inside a workweave has a `.gitmodules` file but one or more
+    /// of its listed submodule paths are empty directories (or absent),
+    /// indicating that `git submodule update --init` has never run there.
+    ///
+    /// Warning severity; report-only. The fix is a single git command named in
+    /// the finding message. No network is required for detection — the scanner
+    /// only stats the paths listed in `.gitmodules`.
+    ///
+    /// Emitted by `rwv doctor` when scanning workweave repos. `create_workweave`
+    /// attempts the init automatically and emits this state as a warning when
+    /// the init fails (e.g., network unreachable at create time).
+    UninitializedSubmodule {
+        /// Workweave name.
+        workweave: WorkweaveName,
+        /// Manifest-relative path to the repo that has uninitialized submodules.
+        repo: RepoPath,
+        /// Submodule paths (relative to the repo root) that are empty on disk.
+        empty_paths: Vec<String>,
+    },
 }
 
 /// Classification of an orphaned savepoint, controlling `--fix` policy.
@@ -845,6 +865,18 @@ pub enum ViolationOutput {
         /// Absolute path of the canonical clone directory that is absent.
         canonical_path: String,
     },
+
+    /// See [`CheckViolation::UninitializedSubmodule`].
+    UninitializedSubmodule {
+        /// Absolute path to the repo worktree that has uninitialized submodules.
+        absolute_path: String,
+        /// Manifest-relative path to the repo.
+        path: String,
+        /// Workweave name.
+        workweave: String,
+        /// Submodule paths (relative to the repo root) that are empty on disk.
+        empty_paths: Vec<String>,
+    },
 }
 
 /// Wire representation of [`crate::integrations::cargo_workspace::CargoSkewOccurrence`].
@@ -1108,6 +1140,26 @@ impl ViolationOutput {
                     path: repo.to_string(),
                     workweave: workweave.to_string(),
                     canonical_path: canonical_path.to_string_lossy().into_owned(),
+                }
+            }
+            CheckViolation::UninitializedSubmodule {
+                workweave,
+                repo,
+                empty_paths,
+            } => {
+                let ww_dir = workweave_dirs.get(&workweave);
+                let absolute_path = match ww_dir {
+                    Some(dir) => dir.join(repo.as_path()).to_string_lossy().into_owned(),
+                    None => workspace_dir
+                        .join(repo.as_path())
+                        .to_string_lossy()
+                        .into_owned(),
+                };
+                Self::UninitializedSubmodule {
+                    absolute_path,
+                    path: repo.to_string(),
+                    workweave: workweave.as_str().to_string(),
+                    empty_paths,
                 }
             }
         }
@@ -2360,6 +2412,58 @@ fn scan_canonical_branches(
     }
 }
 
+/// Scan every workweave repo checkout for uninitialized submodules.
+///
+/// For each workweave repo whose worktree has a `.gitmodules` file, this
+/// function checks whether any of the listed submodule paths are empty
+/// directories. An empty submodule directory indicates that
+/// `git submodule update --init` has never run — the commit records the
+/// submodule but the content is absent.
+///
+/// **Cost**: one `Path::exists` call per repo per workweave when `.gitmodules`
+/// is absent (the common case). The `.gitmodules` parse + directory stat only
+/// runs when the file exists. No network I/O.
+///
+/// **Scope**: workweave checkouts only. Primary weave clones are expected to
+/// have submodules initialized at clone time; workweave worktrees are created
+/// by `git worktree add`, which does NOT re-run submodule init.
+pub fn scan_uninitialized_submodules_in_workweaves(
+    ws_root: &Path,
+    projects: &[crate::manifest::Project],
+) -> Vec<CheckViolation> {
+    let mut violations = Vec::new();
+
+    for (workweave_name_str, workweave_dir) in crate::workweave::list_workweave_dirs(ws_root) {
+        let workweave_name = WorkweaveName::new(workweave_name_str);
+        for project in projects {
+            for (repo_path, _entry) in project.manifest.iter_entries() {
+                let worktree = workweave_dir.join(repo_path.as_path());
+                // Skip reference aliases (symlinks): they share the canonical
+                // store which owns submodule init. Only real worktrees get
+                // a fresh worktree that might miss submodule init.
+                if crate::workweave::classify_checkout(&worktree)
+                    == crate::workweave::CheckoutKind::ReferenceAlias
+                {
+                    continue;
+                }
+                if !worktree.is_dir() {
+                    continue;
+                }
+                let empty_paths = crate::workweave::scan_uninitialized_submodules(&worktree);
+                if !empty_paths.is_empty() {
+                    violations.push(CheckViolation::UninitializedSubmodule {
+                        workweave: workweave_name.clone(),
+                        repo: repo_path.clone(),
+                        empty_paths,
+                    });
+                }
+            }
+        }
+    }
+
+    violations
+}
+
 /// Scan branch-discipline (workweave-branch + ephemeral-at-primary +
 /// stale-ephemeral-branches) across the workspace rooted at `ws_root`
 /// (which must be the primary).
@@ -3393,6 +3497,25 @@ pub fn violations_to_issues(violations: Vec<CheckViolation>) -> Vec<Issue> {
                         ),
                     )
                 }
+                CheckViolation::UninitializedSubmodule {
+                    workweave,
+                    repo,
+                    empty_paths,
+                } => {
+                    let fix_cmd = format!(
+                        "git -C <worktree>/{repo} submodule update --init --recursive"
+                    );
+                    (
+                        crate::integration::Severity::Warning,
+                        format!(
+                            "{workweave}/{repo}: submodules not initialized — \
+                             {n} submodule path(s) are empty on disk: {paths}; \
+                             fix: `{fix_cmd}`",
+                            n = empty_paths.len(),
+                            paths = empty_paths.join(", "),
+                        ),
+                    )
+                }
             };
             Issue {
                 integration: "core".into(),
@@ -4221,6 +4344,15 @@ pub fn run_check(
     // Always report-only (no --fix path).
     for v in scan_provenance(&workspace_dir, &input.projects) {
         violations.push(v);
+    }
+
+    // Uninitialized-submodule findings (R23 GAP). Only meaningful from the
+    // primary weave (workweave checkouts are reached via list_workweave_dirs).
+    // Report-only: fix is a single git command named in the message.
+    if matches!(ctx.location, WorkspaceLocation::Weave { .. }) {
+        for v in scan_uninitialized_submodules_in_workweaves(ctx.primary_path(), &input.projects) {
+            violations.push(v);
+        }
     }
 
     // Clone-topology: tier-0 invariants from
@@ -5326,6 +5458,16 @@ fn collect_doctor_violations(
             // Silent skip on Err — the text channel surfaces the failure;
             // JSON stays clean rather than emit a bespoke "scan-failed"
             // pseudo-record. Failure is rare (cfg deser error).
+        }
+    }
+
+    // Uninitialized-submodule findings. Workspace-level, always run.
+    // Only fired for workweave checkouts: `git worktree add` does not init
+    // submodules, so a workweave created from a repo-with-submodules will
+    // have empty submodule dirs if the create-time init failed (e.g. network).
+    if matches!(ctx.location, WorkspaceLocation::Weave { .. }) {
+        for v in scan_uninitialized_submodules_in_workweaves(ctx.primary_path(), &input.projects) {
+            violations.push(v);
         }
     }
 

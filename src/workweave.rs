@@ -6,7 +6,7 @@
 //! `RWV_WORKWEAVE_DIR` if set). Each workweave carries its own `.rwv-workweave` marker
 //! and `.rwv-active` file so it is fully self-describing.
 
-use crate::git::GitVcs;
+use crate::git::{git_command, GitVcs};
 use crate::manifest::{Manifest, ProjectName, Role, WorkweaveName};
 use crate::vcs::{vcs_for, RefName, Vcs};
 use crate::workspace::{
@@ -355,6 +355,91 @@ pub fn preflight_check_heads(
     )
 }
 
+/// Try to initialize submodules in `worktree_path` if the repo contains
+/// `.gitmodules`.
+///
+/// Returns `Ok(())` when there is nothing to do (no `.gitmodules`) or when
+/// submodule init succeeds. Returns `Err` only when submodule init is
+/// attempted and fails (network unreachable, upstream gone, etc.).
+///
+/// Cost: one `Path::exists` call per worktree when `.gitmodules` is absent
+/// (the common case). The full `git submodule update` runs only when
+/// `.gitmodules` exists.
+fn init_submodules_in_worktree(worktree_path: &Path) -> anyhow::Result<()> {
+    if !worktree_path.join(".gitmodules").exists() {
+        return Ok(());
+    }
+    // Allow the `file://` transport so that submodule remotes registered
+    // with local `file://` URLs (common in tests and monorepo setups) work
+    // without requiring a global `git config protocol.file.allow always`.
+    // The env-var form (`GIT_CONFIG_*`) stacks on top of any existing
+    // config without touching disk.
+    let output = git_command()
+        .env("GIT_CONFIG_COUNT", "1")
+        .env("GIT_CONFIG_KEY_0", "protocol.file.allow")
+        .env("GIT_CONFIG_VALUE_0", "always")
+        .args(["submodule", "update", "--init", "--recursive"])
+        .current_dir(worktree_path)
+        .output()
+        .context("failed to spawn git submodule update")?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!("git submodule update --init --recursive failed: {stderr}");
+    }
+    Ok(())
+}
+
+/// Scan `.gitmodules` in `worktree_path` and return the submodule `path =`
+/// values whose on-disk directory is empty (or absent), indicating that
+/// submodules were never initialized.
+///
+/// Returns an empty `Vec` when:
+/// - `.gitmodules` does not exist (no submodules declared), or
+/// - all listed submodule paths are non-empty directories on disk.
+///
+/// This is a **local-only** check (stat the path; no network). A non-empty
+/// submodule directory is assumed to be correctly initialized; this scanner
+/// does not verify the content against any remote.
+pub fn scan_uninitialized_submodules(worktree_path: &Path) -> Vec<String> {
+    let gitmodules = worktree_path.join(".gitmodules");
+    if !gitmodules.exists() {
+        return Vec::new();
+    }
+    let content = match std::fs::read_to_string(&gitmodules) {
+        Ok(c) => c,
+        Err(_) => return Vec::new(),
+    };
+    // Parse `path = <value>` lines from .gitmodules. We don't need a full INI
+    // parser — just extract the `path =` values.
+    let mut empty_paths = Vec::new();
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if let Some(rest) = trimmed.strip_prefix("path") {
+            let rest = rest.trim();
+            if let Some(value) = rest.strip_prefix('=') {
+                let sub_path = value.trim();
+                if sub_path.is_empty() {
+                    continue;
+                }
+                let sub_dir = worktree_path.join(sub_path);
+                // A submodule dir should be a non-empty directory. An absent
+                // dir or an empty dir means submodule init has not run.
+                let is_empty = if sub_dir.is_dir() {
+                    std::fs::read_dir(&sub_dir)
+                        .map(|mut rd| rd.next().is_none())
+                        .unwrap_or(true)
+                } else {
+                    true
+                };
+                if is_empty {
+                    empty_paths.push(sub_path.to_string());
+                }
+            }
+        }
+    }
+    empty_paths
+}
+
 /// Create a workweave: for each repo in the manifest, create a worktree in the
 /// workweave directory on an ephemeral branch `{project}--{workweave_name}/{current_branch}`.
 /// Also creates a worktree for the project repo, processes `workweave:` artifacts,
@@ -599,6 +684,11 @@ pub fn create_workweave(
     let mut rollback = CreateRollbackGuard::new(workweave_dir.clone());
 
     let mut errors: Vec<String> = Vec::new();
+    // Submodule warnings: repos where submodule init was attempted but failed
+    // (network down, upstream unreachable, etc.). Collected separately so a
+    // submodule-init failure does NOT abort the whole create — the worktree
+    // itself is valid and usable; only submodule content is missing.
+    let mut submodule_warnings: Vec<String> = Vec::new();
 
     // Materialize each repo in the manifest. Forks come from source_root so
     // peer workweaves rooted in another workweave's HEADs diverge cleanly from
@@ -667,7 +757,26 @@ pub fn create_workweave(
                 // `prune_orphan_worktrees_for` would wrongly run
                 // `git worktree remove` against the canonical through it.
                 if !materialize_as_alias {
-                    rollback.record_worktree(repo_abs, worktree_dest);
+                    rollback.record_worktree(repo_abs, worktree_dest.clone());
+
+                    // R23 GAP: init submodules in the new worktree. Only runs
+                    // when `.gitmodules` exists (no per-repo overhead otherwise).
+                    // Failure is warn-and-continue: network may be down or
+                    // submodule remotes may be unreachable, but the worktree
+                    // itself is valid.
+                    if let Err(e) = init_submodules_in_worktree(&worktree_dest) {
+                        let fix_cmd = format!(
+                            "git -C {} submodule update --init --recursive",
+                            worktree_dest.display()
+                        );
+                        let msg = format!(
+                            "{repo}: submodules not initialized ({e}); \
+                             fix: `{fix_cmd}`",
+                            repo = repo_path.as_str(),
+                        );
+                        eprintln!("rwv workweave create: warning: {msg}");
+                        submodule_warnings.push(repo_path.as_str().to_string());
+                    }
                 }
             }
             Err(e) => {
@@ -694,6 +803,18 @@ pub fn create_workweave(
         // B7: rollback guard's Drop will clean up the workweave dir AND prune
         // orphan worktree registrations in all repos that succeeded so far.
         bail!("workweave create completed with {failed} failure(s) out of {total} repo(s)");
+    }
+
+    if !submodule_warnings.is_empty() {
+        // Submodule init failed for one or more repos but the workweave itself
+        // was created. Surface a summary so the operator knows the create
+        // completed with partial materialization.
+        eprintln!(
+            "rwv workweave create: warning: submodules not initialized in {} repo(s): {}; \
+             run `git -C <worktree-path> submodule update --init --recursive` per repo above to complete",
+            submodule_warnings.len(),
+            submodule_warnings.join(", ")
+        );
     }
 
     // Create worktree for the project repo (if it is a git repo).

@@ -1222,6 +1222,44 @@ Schema:
               "type": "string"
             }
           }
+        },
+        {
+          "description": "See `CheckViolation::UninitializedSubmodule`.",
+          "type": "object",
+          "required": [
+            "absolute_path",
+            "empty_paths",
+            "kind",
+            "path",
+            "workweave"
+          ],
+          "properties": {
+            "absolute_path": {
+              "description": "Absolute path to the repo worktree that has uninitialized submodules.",
+              "type": "string"
+            },
+            "empty_paths": {
+              "description": "Submodule paths (relative to the repo root) that are empty on disk.",
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "kind": {
+              "type": "string",
+              "enum": [
+                "uninitialized-submodule"
+              ]
+            },
+            "path": {
+              "description": "Manifest-relative path to the repo.",
+              "type": "string"
+            },
+            "workweave": {
+              "description": "Workweave name.",
+              "type": "string"
+            }
+          }
         }
       ]
     },
