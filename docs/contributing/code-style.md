@@ -13,7 +13,7 @@ Where state on disk or in config could be (a) absent/legitimate, (b) present/val
 - `match x { Some(y) => …, None => fallback }` where `None` indicates corruption and `fallback` silently produces wrong output downstream.
 - "Warn and proceed" — emitting a warning that has no enforceable downstream effect, especially when the warning is suppressed in `--json` mode.
 - **In-memory backfill** of missing fields read from disk. The marker file is the authority; if it's incomplete, fix the file (`rwv doctor --fix`), don't fill in defaults at read time.
-- **Tests asserting necessary-but-insufficient conditions** — e.g. asserting a sync moved the manifest tip without asserting the history shape that movement was supposed to produce. The Option A subagent attempt in `fo-pte54.1` shipped semantically-wrong code that satisfied all tests; the tests had a blind spot.
+- **Tests asserting necessary-but-insufficient conditions** — e.g. asserting a sync moved the manifest tip without asserting the history shape that movement was supposed to produce. A prior attempt shipped semantically-wrong code that satisfied all tests; the tests had a blind spot.
 
 ## What to do instead
 

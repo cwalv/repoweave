@@ -4468,7 +4468,7 @@ acme-lib = { path = "../github/acme/lib" }
     /// Structural: `PatchSurface` is an ENUM (not two booleans), so
     /// enabling both surfaces at once is impossible by construction —
     /// a `patch-surface` field can only carry ONE value. This is the
-    /// "double-patch prevention" the TL asked for; it lives at the type
+    /// required "double-patch prevention"; it lives at the type
     /// level and is confirmed here by observing that only one surface
     /// ever gets written.
     #[test]
@@ -5483,7 +5483,7 @@ mod s7_cargo_doctor {
     // so `activate` blew up in the activate_hook (cargo generate-lockfile
     // has no root manifest to lock against) with the confusing "workspace
     // may be partially activated" wrap. This battery pins the FALLBACK
-    // branch of the TL's sanctioned either/or: activate is a context verb
+    // branch of the design's either/or: activate is a context verb
     // and must not author — activate_hook precheck bails with a clear
     // message pointing to the intent-mode recovery verb.
     // -----------------------------------------------------------------------

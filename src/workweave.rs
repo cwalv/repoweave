@@ -1404,9 +1404,9 @@ pub fn collect_dirty_paths(
 /// "this work has landed". The recorded parent (the workspace the workweave
 /// was forked from, and the default sync-to target) comes first when the
 /// marker is readable and the path still exists; the primary weave root is
-/// always included. In nested choreography a child workweave's work lands
-/// in its parent workweave and may reach primary only when the whole epic
-/// ships — checking primary alone would refuse every child retire.
+/// always included. With stacked workweaves a child workweave's work lands
+/// in its parent workweave and may reach primary only after further
+/// sync-to hops — checking primary alone would refuse every child retire.
 fn merge_baselines(workweave_dir: &Path, ws_root: &Path) -> Vec<PathBuf> {
     let mut baselines: Vec<PathBuf> = Vec::new();
     if let Ok(Some(marker)) = WorkweaveMarker::read(workweave_dir) {
@@ -2448,7 +2448,8 @@ struct ClaudeHookInput {
 ///
 /// Priority: branch_name → timestamp+nanos fallback.
 /// Session ID is not used — it's constant within a session, causing
-/// collisions when multiple subagents are spawned.
+/// collisions when multiple workweaves are created concurrently in one
+/// session.
 /// Slashes are replaced with dashes for filesystem safety.
 fn derive_workweave_name(branch_name: Option<&str>, _session_id: Option<&str>) -> String {
     let raw = match branch_name {

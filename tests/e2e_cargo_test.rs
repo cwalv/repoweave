@@ -328,7 +328,7 @@ fn cargo_release_version_pin_workflow() {
 /// is a genuine cargo rewrite (member version bump + direct
 /// `cargo generate-lockfile`, not through rwv).
 ///
-/// Also anchors the TL decision's exit-semantics claim: the finding is
+/// Also anchors the decided exit semantics: the finding is
 /// Warning severity, so doctor's exit status is UNCHANGED by the mutation
 /// (report-not-mandate).
 #[test]

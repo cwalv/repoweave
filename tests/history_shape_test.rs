@@ -7,9 +7,8 @@
 //!
 //! ## Why this is load-bearing
 //!
-//! The silent-fallback epic was triggered by a subagent producing
-//! an Option A implementation that satisfied all *tip-movement* assertions but
-//! reversed the history shape: primary's commits ended up on top of the
+//! This suite exists because an earlier implementation satisfied all
+//! *tip-movement* assertions but reversed the history shape: primary's commits ended up on top of the
 //! workweave's contribution instead of the reverse.
 //!
 //! These tests construct that exact wrong shape in git and confirm the helper
