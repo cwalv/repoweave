@@ -1,6 +1,7 @@
 pub mod activate;
 pub mod add_remove;
 pub mod check;
+pub mod cli;
 pub mod explain;
 pub mod fetch;
 pub mod git;
