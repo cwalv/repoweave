@@ -323,8 +323,9 @@ pub enum CheckViolation {
     /// `classify_working_tree_drift` would misattribute the failure as
     /// `LiveEdits`. This variant surfaces the true root cause instead.
     ///
-    /// Repair: re-clone the canonical (same as [`DanglingReference`]), then
-    /// re-run `rwv doctor` to verify. No auto-fix — the object store is gone.
+    /// Repair: `rwv fetch` (in-place, no SOURCE) re-materializes the canonical
+    /// (same as [`DanglingReference`]), then re-run `rwv doctor` to verify.
+    /// No auto-fix — doctor never clones (network stays behind explicit verbs).
     MissingCanonicalClone {
         /// Workweave name (always `Some`; this finding only fires for
         /// workweave worktrees, never for primary-weave repos).
@@ -3489,9 +3490,8 @@ pub fn violations_to_issues(violations: Vec<CheckViolation>) -> Vec<Issue> {
                         format!(
                             "{workweave}/{repo}: canonical clone for `{repo}` is absent \
                              (expected at {}) — this worktree cannot be classified; \
-                             no rwv verb re-clones a missing member today — \
-                             repair by hand: `git clone <url from rwv.yaml> {repo}` \
-                             from the workspace root, then re-run `rwv doctor` to verify",
+                             run `rwv fetch` from the workspace root to \
+                             re-materialize it, then re-run `rwv doctor` to verify",
                             canonical_path.display()
                         ),
                     )
@@ -4721,9 +4721,8 @@ pub fn run_check(
                     message: format!(
                         "{location}: canonical clone for `{repo_display}` is absent \
                          (expected at {}) — this worktree cannot be classified; \
-                         no rwv verb re-clones a missing member today — \
-                         repair by hand: `git clone <url from rwv.yaml> {repo_display}` \
-                         from the workspace root, then re-run `rwv doctor` to verify",
+                         run `rwv fetch` from the workspace root to \
+                         re-materialize it, then re-run `rwv doctor` to verify",
                         canonical_path.display()
                     ),
                     safe_to_fix: false,
