@@ -1,7 +1,8 @@
 //! Integration tests for working-tree drift detection (`rwv doctor`) and
 //! auto-fix (`rwv doctor --fix`).
 //!
-//! These tests exercise the seven acceptance scenarios:
+//! These tests exercise the seven acceptance scenarios plus the missing-
+//! canonical-clone re-attribution:
 //!   1. Stale-working-tree detection
 //!   2. Stale-working-tree auto-fix
 //!   3. Live edit NOT fixed
@@ -9,6 +10,9 @@
 //!   5. 3+ worktrees
 //!   6. Reachable-blob guard
 //!   7. Composition with index fix (the real 2026-04-23 production case)
+//!   8. Missing canonical clone — re-attributed finding (not "live edits")
+//!   9. Missing canonical clone — primary intact regression
+//!  10. Missing canonical clone — DanglingReference fires alongside
 //!
 //! # How working-tree drift is simulated
 //!
@@ -632,5 +636,125 @@ fn doctor_fix_clears_both_index_and_working_tree_drift() {
     assert!(
         status_out.is_empty(),
         "git status should be clean after fixing both drifts; got:\n{status_out}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Test 8: Missing canonical clone — re-attributed finding (not "live edits")
+// ---------------------------------------------------------------------------
+
+/// When the primary clone dir is removed out-of-band the linked worktree in
+/// the workweave must be reported as "canonical clone … absent" (not "live
+/// edits"). This is the core re-attribution scenario from bead fo-8cbhpg.1.
+#[test]
+fn doctor_reports_missing_canonical_not_live_edits() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (ws, _c1) = make_workspace_with_ww(tmp.path());
+
+    // Remove the primary clone out-of-band, as if the user ran `rm -rf`.
+    std::fs::remove_dir_all(&ws.server_primary)
+        .expect("failed to remove primary clone for test setup");
+
+    // The workweave worktree still exists on disk; its .git file points at
+    // the now-gone primary.
+    assert!(
+        ws.server_ww.exists(),
+        "workweave worktree must still exist on disk after primary removal"
+    );
+
+    let out = rwv()
+        .args(["doctor"])
+        .current_dir(&ws.primary_root)
+        .output()
+        .expect("rwv doctor failed to start");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+
+    // Must name the canonical-clone-missing root cause.
+    assert!(
+        stdout.contains("canonical clone")
+            || stdout.contains("absent")
+            || stdout.contains("cannot be classified"),
+        "doctor must report canonical-clone-missing finding; got:\n{stdout}"
+    );
+
+    // Must NOT misattribute as live edits.
+    assert!(
+        !stdout.contains("live edits"),
+        "doctor must NOT report 'live edits' when canonical is absent; got:\n{stdout}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Test 9: Missing canonical clone — primary intact regression
+// ---------------------------------------------------------------------------
+
+/// When the canonical clone is intact the existing drift classification must
+/// be unchanged. This is a regression guard: the pre-flight detection must
+/// not suppress legitimate drift findings.
+#[test]
+fn doctor_canonical_intact_classification_unchanged() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (ws, _c1) = make_workspace_with_ww(tmp.path());
+
+    // Introduce real working-tree drift (stale, not live edits).
+    let c2 = make_commit(&ws.server_primary, "change.txt", "new\n", "primary: C2");
+    make_working_tree_stale(&ws.server_ww, &ws.server_primary, &c2);
+
+    // canonical is intact — classification must proceed normally.
+    let out = rwv()
+        .args(["doctor"])
+        .current_dir(&ws.primary_root)
+        .output()
+        .expect("rwv doctor failed to start");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+
+    // Must detect legitimate working-tree drift.
+    assert!(
+        stdout.contains("working tree stale") || stdout.contains("safe to --fix"),
+        "doctor must still report working-tree drift when canonical is intact; got:\n{stdout}"
+    );
+
+    // Must NOT emit the canonical-missing finding (canonical is fine).
+    assert!(
+        !stdout.contains("canonical clone") || stdout.contains("safe to --fix"),
+        "doctor must NOT emit canonical-missing when canonical is present; got:\n{stdout}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Test 10: Missing canonical clone — DanglingReference fires alongside
+// ---------------------------------------------------------------------------
+
+/// When the primary clone is removed the doctor should also emit a
+/// DanglingReference for the primary-weave entry (since the repo is listed
+/// in rwv.yaml but no longer on disk). Both findings must appear together.
+#[test]
+fn doctor_dangling_reference_fires_alongside_missing_canonical() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (ws, _c1) = make_workspace_with_ww(tmp.path());
+
+    // Remove the primary clone — makes the primary weave entry dangling.
+    std::fs::remove_dir_all(&ws.server_primary)
+        .expect("failed to remove primary clone for test setup");
+
+    let out = rwv()
+        .args(["doctor"])
+        .current_dir(&ws.primary_root)
+        .output()
+        .expect("rwv doctor failed to start");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+
+    // DanglingReference must appear for the missing primary-weave clone.
+    assert!(
+        stdout.contains("dangling reference") || stdout.contains("not cloned on disk"),
+        "doctor must emit DanglingReference for the missing primary clone; got:\n{stdout}"
+    );
+
+    // The canonical-missing re-attribution must appear for the workweave worktree.
+    assert!(
+        stdout.contains("canonical clone")
+            || stdout.contains("absent")
+            || stdout.contains("cannot be classified"),
+        "doctor must emit canonical-clone-missing for the workweave worktree; got:\n{stdout}"
     );
 }

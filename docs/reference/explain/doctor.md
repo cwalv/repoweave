@@ -1187,6 +1187,41 @@ Schema:
               "type": "string"
             }
           }
+        },
+        {
+          "description": "See `CheckViolation::MissingCanonicalClone`.",
+          "type": "object",
+          "required": [
+            "absolute_path",
+            "canonical_path",
+            "kind",
+            "path",
+            "workweave"
+          ],
+          "properties": {
+            "absolute_path": {
+              "description": "Absolute path of the worktree checkout in the workweave.",
+              "type": "string"
+            },
+            "canonical_path": {
+              "description": "Absolute path of the canonical clone directory that is absent.",
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "enum": [
+                "missing-canonical-clone"
+              ]
+            },
+            "path": {
+              "description": "Manifest-relative path to the affected repo (same value as `CheckViolation::MissingCanonicalClone::repo`).",
+              "type": "string"
+            },
+            "workweave": {
+              "description": "Workweave name.",
+              "type": "string"
+            }
+          }
         }
       ]
     },

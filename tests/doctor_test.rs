@@ -1412,6 +1412,14 @@ mod doctor_json {
                 },
                 "unparseable-project",
             ),
+            (
+                CheckViolation::MissingCanonicalClone {
+                    workweave: WorkweaveName::new("ww1"),
+                    repo: rp(),
+                    canonical_path: std::path::PathBuf::from("/ws/github/a/b"),
+                },
+                "missing-canonical-clone",
+            ),
         ];
 
         for (violation, expected) in cases {
@@ -1528,6 +1536,12 @@ mod doctor_json {
             manifest_path: String,
             message: String,
         },
+        MissingCanonicalClone {
+            path: String,
+            absolute_path: String,
+            workweave: String,
+            canonical_path: String,
+        },
     }
 
     #[test]
@@ -1575,6 +1589,11 @@ mod doctor_json {
                 manifest_path: std::path::PathBuf::from("/ws/projects/p/rwv.yaml"),
                 message: "bad yaml".to_owned(),
             },
+            CheckViolation::MissingCanonicalClone {
+                workweave: WorkweaveName::new("ww1"),
+                repo: RepoPath::new("github/a/i").expect("known-safe literal"),
+                canonical_path: std::path::PathBuf::from("/ws/github/a/i"),
+            },
         ];
         let expected_len = violations.len();
 
@@ -1598,6 +1617,10 @@ mod doctor_json {
         assert!(matches!(
             parsed[8],
             WireViolation::UnparseableProject { .. }
+        ));
+        assert!(matches!(
+            parsed[9],
+            WireViolation::MissingCanonicalClone { .. }
         ));
     }
 

@@ -313,6 +313,27 @@ pub enum CheckViolation {
         /// The specific crate name whose key collides.
         crate_name: String,
     },
+
+    /// A workweave worktree whose canonical clone (the primary-weave clone it
+    /// was linked from via `git worktree add`) no longer exists on disk.
+    ///
+    /// When the canonical clone directory is removed out-of-band, git commands
+    /// in the dependent worktree fail silently or with opaque errors — in
+    /// particular, `git diff-index HEAD` fails and the former catch-all arm in
+    /// `classify_working_tree_drift` would misattribute the failure as
+    /// `LiveEdits`. This variant surfaces the true root cause instead.
+    ///
+    /// Repair: re-clone the canonical (same as [`DanglingReference`]), then
+    /// re-run `rwv doctor` to verify. No auto-fix — the object store is gone.
+    MissingCanonicalClone {
+        /// Workweave name (always `Some`; this finding only fires for
+        /// workweave worktrees, never for primary-weave repos).
+        workweave: WorkweaveName,
+        /// Manifest-relative path to the affected repo.
+        repo: RepoPath,
+        /// Absolute path of the canonical clone directory that is missing.
+        canonical_path: PathBuf,
+    },
 }
 
 /// Classification of an orphaned savepoint, controlling `--fix` policy.
@@ -642,6 +663,7 @@ pub enum BranchDisciplineKind {
 //     IndexDrift          -> "index-drift"      (sub-kind via `IndexDriftKind`)
 //     WorkingTreeDrift    -> "working-tree-drift" (sub-kind via `WorkingTreeDriftKind`)
 //     MissingReplayExclusion -> "missing-replay-exclusion"
+//     MissingCanonicalClone  -> "missing-canonical-clone"
 
 /// One violation as it appears in `rwv doctor --json` output.
 #[derive(Debug, Serialize, JsonSchema)]
@@ -810,6 +832,18 @@ pub enum ViolationOutput {
         registry: String,
         /// The specific crate name whose key collides.
         crate_name: String,
+    },
+    /// See [`CheckViolation::MissingCanonicalClone`].
+    MissingCanonicalClone {
+        /// Manifest-relative path to the affected repo (same value as
+        /// [`CheckViolation::MissingCanonicalClone::repo`]).
+        path: String,
+        /// Absolute path of the worktree checkout in the workweave.
+        absolute_path: String,
+        /// Workweave name.
+        workweave: String,
+        /// Absolute path of the canonical clone directory that is absent.
+        canonical_path: String,
     },
 }
 
@@ -1060,6 +1094,22 @@ impl ViolationOutput {
                 registry,
                 crate_name,
             },
+            CheckViolation::MissingCanonicalClone {
+                workweave,
+                repo,
+                canonical_path,
+            } => {
+                let ww_dir = workweave_dirs
+                    .get(&workweave)
+                    .cloned()
+                    .unwrap_or_else(|| workspace_dir.to_path_buf());
+                Self::MissingCanonicalClone {
+                    absolute_path: ww_dir.join(repo.as_path()).to_string_lossy().into_owned(),
+                    path: repo.to_string(),
+                    workweave: workweave.to_string(),
+                    canonical_path: canonical_path.to_string_lossy().into_owned(),
+                }
+            }
         }
     }
 }
@@ -3321,6 +3371,28 @@ pub fn violations_to_issues(violations: Vec<CheckViolation>) -> Vec<Issue> {
                         ),
                     )
                 }
+                CheckViolation::MissingCanonicalClone {
+                    workweave,
+                    repo,
+                    canonical_path,
+                } => {
+                    // The canonical clone for this repo is gone; the worktree
+                    // cannot be classified. Do NOT advise commit/stash — the
+                    // git layer is broken and commands will fail anyway. Point
+                    // at the same manual re-clone repair as DanglingReference.
+                    safe_to_fix = false;
+                    (
+                        crate::integration::Severity::Warning,
+                        format!(
+                            "{workweave}/{repo}: canonical clone for `{repo}` is absent \
+                             (expected at {}) — this worktree cannot be classified; \
+                             no rwv verb re-clones a missing member today — \
+                             repair by hand: `git clone <url from rwv.yaml> {repo}` \
+                             from the workspace root, then re-run `rwv doctor` to verify",
+                            canonical_path.display()
+                        ),
+                    )
+                }
             };
             Issue {
                 integration: "core".into(),
@@ -3458,6 +3530,73 @@ pub fn reset_index_to_head(repo: &Path) -> anyhow::Result<()> {
 }
 
 // ---------------------------------------------------------------------------
+// Canonical-clone presence detection
+// ---------------------------------------------------------------------------
+
+/// Detect whether a git worktree at `repo` has its canonical clone missing.
+///
+/// In a `git worktree add` checkout, the `.git` entry inside the directory is
+/// a *text file* (not a directory) whose content is a single line of the form:
+/// `gitdir: /abs/path/to/canonical/.git/worktrees/<name>`
+///
+/// The canonical clone directory is the parent of the `.git` directory
+/// referenced in that `gitdir:` line. When a primary clone is removed out-of-
+/// band the `.git` worktrees sub-entry and the entire canonical `.git` tree go
+/// with it — git commands in the linked worktree then fail.
+///
+/// Returns `Some(canonical_dir)` when the worktree is a linked worktree (`.git`
+/// is a file, not a directory) **and** the canonical directory is absent.
+/// Returns `None` when:
+/// - `.git` is a directory (this is the canonical clone itself — not a worktree)
+/// - the `gitdir:` target exists on disk (canonical is present; normal case)
+/// - the `gitdir:` line cannot be parsed (defensive: caller should not skip
+///   drift classification for unknowns)
+pub fn worktree_canonical_clone_missing(repo: &Path) -> Option<PathBuf> {
+    let dot_git = repo.join(".git");
+
+    // If .git is a directory this is the canonical clone, not a linked worktree.
+    // Nothing to detect here.
+    if dot_git.is_dir() {
+        return None;
+    }
+
+    // Read the .git file. If it does not exist or is not readable, fall through
+    // to the normal drift classifiers (defensive: don't suppress findings for
+    // repos we cannot inspect).
+    let content = std::fs::read_to_string(&dot_git).ok()?;
+
+    // Extract the `gitdir:` value (absolute path to the worktrees admin dir
+    // inside the canonical .git).
+    let gitdir_path = content
+        .lines()
+        .find_map(|l| l.strip_prefix("gitdir:"))?
+        .trim();
+    if gitdir_path.is_empty() {
+        return None;
+    }
+
+    // The gitdir path looks like: <canonical>/.git/worktrees/<name>
+    // Walk up two levels to reach the canonical .git dir, then one more to
+    // reach the canonical clone directory.
+    //
+    //   gitdir_path  =  /ws/primary/github/repo/.git/worktrees/ww--name
+    //   git_dir      =  /ws/primary/github/repo/.git/worktrees/ww--name/../..
+    //                =  /ws/primary/github/repo/.git
+    //   canonical    =  /ws/primary/github/repo
+    //
+    // We go up exactly two levels: one to exit the `worktrees/<name>` slot,
+    // one more to exit the `.git` directory.
+    let gitdir = std::path::Path::new(gitdir_path);
+    let canonical = gitdir.parent()?.parent()?;
+
+    if !canonical.exists() {
+        Some(canonical.to_path_buf())
+    } else {
+        None
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Working-tree-drift helpers
 // ---------------------------------------------------------------------------
 
@@ -3500,6 +3639,11 @@ pub fn classify_working_tree_drift(repo: &Path) -> Option<WorkingTreeDriftKind> 
         .output()
     {
         Ok(out) if out.status.success() => out,
+        // Conservative fallback for unknown git failures: return LiveEdits to
+        // prevent accidental auto-fix of content we cannot inspect. The
+        // canonical-clone-missing case is pre-classified upstream (before this
+        // function is called) via `worktree_canonical_clone_missing`, so this
+        // arm should not fire for that root cause in practice.
         _ => return Some(WorkingTreeDriftKind::LiveEdits),
     };
     let mut modified_files: Vec<String> = Vec::new();
@@ -4430,6 +4574,32 @@ pub fn run_check(
             None => repo_display.clone(),
         };
 
+        // Pre-flight: detect a missing canonical clone before attempting any
+        // git classification. When the primary clone directory was removed out-
+        // of-band, all git commands in this linked worktree will fail — the
+        // previous behaviour was to misattribute the failure as `LiveEdits`.
+        // Only linked worktrees (workweave repos) can have a missing canonical;
+        // skip the check for primary-weave entries (ww_label == None) since
+        // those ARE the canonical clones.
+        if ww_label.is_some() {
+            if let Some(canonical_path) = worktree_canonical_clone_missing(repo_abs) {
+                all_issues.push(Issue {
+                    integration: "core".into(),
+                    severity: Severity::Warning,
+                    message: format!(
+                        "{location}: canonical clone for `{repo_display}` is absent \
+                         (expected at {}) — this worktree cannot be classified; \
+                         no rwv verb re-clones a missing member today — \
+                         repair by hand: `git clone <url from rwv.yaml> {repo_display}` \
+                         from the workspace root, then re-run `rwv doctor` to verify",
+                        canonical_path.display()
+                    ),
+                    safe_to_fix: false,
+                });
+                continue; // skip drift classification for this worktree
+            }
+        }
+
         let (idx_drift, wt_drift) = classify_drift(repo_abs);
 
         if let Some(drift_kind) = idx_drift {
@@ -5220,6 +5390,21 @@ fn collect_doctor_violations(
     drop(scan_seen);
 
     for (ww_label, repo_abs, repo_path) in &index_scan {
+        // Pre-flight: detect a missing canonical clone before attempting any
+        // git classification — same logic as the human-facing `run_check`.
+        // Only linked worktrees (workweave repos, ww_label == Some) can have a
+        // missing canonical.
+        if let Some(ww_name) = ww_label {
+            if let Some(canonical_path) = worktree_canonical_clone_missing(repo_abs) {
+                violations.push(CheckViolation::MissingCanonicalClone {
+                    workweave: ww_name.clone(),
+                    repo: repo_path.clone(),
+                    canonical_path,
+                });
+                continue; // skip drift classification for this worktree
+            }
+        }
+
         let (idx_drift, wt_drift) = classify_drift(repo_abs);
         if let Some(drift_kind) = idx_drift {
             violations.push(CheckViolation::IndexDrift {
