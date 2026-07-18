@@ -389,3 +389,65 @@ fn update_union_role_and_repo_selectors() {
         }
     }
 }
+
+// ============================================================================
+// Missing clone: honest repair advice (fo-oueuv7.2 repair-verb audit)
+// ============================================================================
+
+/// A manifest entry whose clone is absent on disk must produce an error that
+/// names the honest manual repair (`git clone <url> <dest>`, then re-run
+/// `rwv update`) and must NOT advise `rwv fetch` — that verb requires a
+/// SOURCE arg and bails "project already exists" for an existing project,
+/// so it cannot perform this repair.
+#[test]
+fn update_missing_clone_names_manual_reclone_not_fetch() {
+    let ws = build_workspace("proj-missing", &[("local/acme/present", "owned")]);
+
+    // Append a manifest entry for a repo that was never cloned locally.
+    // (Constructing the missing state directly — no deletions needed.)
+    let project_dir = ws.workspace.join("projects").join("proj-missing");
+    let bare_url = ws.manifest_bares[0].1.to_str().unwrap().to_string();
+    let mut manifest = std::fs::read_to_string(project_dir.join("rwv.yaml")).unwrap();
+    manifest.push_str(&format!(
+        "  local/acme/absent:\n    type: git\n    url: {bare_url}\n    version: main\n    role: owned\n"
+    ));
+    std::fs::write(project_dir.join("rwv.yaml"), manifest).unwrap();
+
+    let output = rwv()
+        .args(["update", "--dirty"])
+        .current_dir(&ws.workspace)
+        .output()
+        .expect("failed to spawn rwv update");
+
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    assert!(
+        !output.status.success(),
+        "update must fail when a manifest clone is missing on disk; got:\n{combined}"
+    );
+    assert!(
+        combined.contains("clone missing"),
+        "error must name the state (clone missing); got:\n{combined}"
+    );
+    // Honest manual repair, copy-pasteable: actual URL + destination.
+    assert!(
+        combined.contains("git clone") && combined.contains(&bare_url),
+        "error must name the manual `git clone <url> <dest>` repair with the \
+         manifest URL; got:\n{combined}"
+    );
+    assert!(
+        combined.contains("rwv update"),
+        "error must name re-running `rwv update` after the manual clone; \
+         got:\n{combined}"
+    );
+    // The known-bad advice must be gone.
+    assert!(
+        !combined.contains("rwv fetch"),
+        "error must NOT advise `rwv fetch` (dead advice — the verb refuses on \
+         an existing project); got:\n{combined}"
+    );
+}

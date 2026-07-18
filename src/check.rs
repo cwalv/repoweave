@@ -2834,12 +2834,19 @@ pub fn violations_to_issues(violations: Vec<CheckViolation>) -> Vec<Issue> {
                          run `rwv add <url>` to register it, or remove the directory manually"
                     ),
                 ),
+                // No rwv verb re-clones a missing member of an existing
+                // project today (`rwv fetch` requires a SOURCE and bails
+                // "project already exists"). Until such a verb lands, the
+                // honest advice is the manual repair — same "repair
+                // requires ..." pattern as the clone-topology findings.
                 CheckViolation::DanglingReference { project, repo } => (
                     crate::integration::Severity::Error,
                     format!(
                         "dangling reference in {project}: {repo} — \
                          listed in rwv.yaml but not cloned on disk; \
-                         run `rwv fetch` to clone missing repos"
+                         no rwv verb re-clones a missing member today — \
+                         repair by hand: `git clone <url from rwv.yaml> {repo}` \
+                         from the workspace root, then re-run `rwv doctor` to verify"
                     ),
                 ),
                 CheckViolation::MissingRole { project, repo } => (

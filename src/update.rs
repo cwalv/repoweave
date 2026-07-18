@@ -419,9 +419,16 @@ fn advance_one(
     let repo_dir = resolve_repo_dir(repo_path, primary_root, workweave_dir);
 
     if !repo_dir.exists() {
+        // No rwv verb re-clones a missing member of an existing project
+        // today (`rwv fetch` requires a SOURCE and bails "project already
+        // exists" for this workspace). Name the manual repair with the
+        // actual URL and destination so the fix is copy-pasteable.
         return Err(format!(
-            "{}: clone missing on disk; run `rwv fetch` first",
-            repo_path.as_str()
+            "{}: clone missing on disk; no rwv verb re-clones a missing member \
+             today — repair by hand: `git clone {} {}`, then re-run `rwv update`",
+            repo_path.as_str(),
+            entry.url,
+            repo_dir.display(),
         ));
     }
 

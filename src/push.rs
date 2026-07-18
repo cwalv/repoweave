@@ -220,12 +220,20 @@ pub fn run_push(
         };
 
     let mut lock_mismatches: Vec<String> = Vec::new();
-    for (repo_path, _) in &manifest_repos {
+    for (repo_path, entry) in &manifest_repos {
         let repo_dir = primary_root.join(repo_path.as_path());
         if !repo_dir.exists() {
+            // No rwv verb re-clones a missing member of an existing project
+            // today (`rwv fetch` requires a SOURCE and bails "project
+            // already exists"). Name the manual repair with the actual URL
+            // and destination so the fix is copy-pasteable.
             lock_mismatches.push(format!(
-                "{}: clone missing on disk; run `rwv fetch` first",
-                repo_path.as_str()
+                "{}: clone missing on disk; no rwv verb re-clones a missing \
+                 member today — repair by hand: `git clone {} {}`, then \
+                 re-run `rwv push`",
+                repo_path.as_str(),
+                entry.url,
+                repo_dir.display(),
             ));
             continue;
         }

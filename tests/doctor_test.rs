@@ -2300,9 +2300,12 @@ fn orphaned_clone_names_repair_verb() {
     );
 }
 
-/// `dangling reference` message names `rwv fetch` as the repair verb.
+/// `dangling reference` message names the honest manual repair (git clone +
+/// re-run `rwv doctor`) — and must NOT name `rwv fetch`, which cannot perform
+/// this repair: it requires a SOURCE arg and its existing-project path bails
+/// "project already exists" (fetch.rs run_fetch).
 #[test]
-fn dangling_reference_names_fetch_verb() {
+fn dangling_reference_names_manual_reclone_not_fetch() {
     let tmp = tempfile::tempdir().unwrap();
     let root = make_workspace(tmp.path(), "ws");
 
@@ -2335,10 +2338,23 @@ fn dangling_reference_names_fetch_verb() {
         combined.contains("dangling"),
         "must report dangling reference; got:\n{combined}"
     );
+    // Honest manual repair: git clone at the listed path, then verify.
     assert!(
-        combined.contains("rwv fetch"),
-        "dangling-reference message must name `rwv fetch` as the repair verb; \
+        combined.contains("git clone"),
+        "dangling-reference message must name the manual `git clone` repair; \
          got:\n{combined}"
+    );
+    assert!(
+        combined.contains("rwv doctor"),
+        "dangling-reference message must name `rwv doctor` as the verify step; \
+         got:\n{combined}"
+    );
+    // The known-bad advice: `rwv fetch` cannot re-clone a member of an
+    // existing project (requires SOURCE; bails "project already exists").
+    assert!(
+        !combined.contains("rwv fetch"),
+        "dangling-reference message must NOT advise `rwv fetch` (dead advice — \
+         the verb refuses on an existing project); got:\n{combined}"
     );
 }
 
