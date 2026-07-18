@@ -94,12 +94,12 @@ repoweave's sync surface is a direction-explicit verb pair:
 
 Both verbs run the same phase machine: first the manifest repos are advanced to the named workspace's lock targets using the chosen strategy (`ff` / `rebase`); then CWD's unique project commits are replayed onto the named workspace's project tip with `rwv.lock` excluded from each commit's diff (lock-only commits become empty patches and are dropped); then `rwv.lock` is regenerated from the post-replay manifest tips. For `rwv sync-to`, a final step advances the target to CWD's new tip via fast-forward.
 
-`rwv.lock` is never merged. It is recomputed fresh every time, so lock-file conflicts never arise regardless of how many workweaves are in flight. See [sync semantics](../joints/sync-semantics.md) and [lock-as-derived](../joints/lock-as-derived.md).
+`rwv.lock` is never merged. It is recomputed fresh every time. Lock-file conflicts are prevented by a per-project-repo `rwv.lock merge=rwv-ours` invariant in `.gitattributes` that `rwv doctor --fix` installs; sync refuses (with the fix as remediation) rather than conflicting on repos that don't yet carry the committed attribute. See [sync semantics](../joints/sync-semantics.md) and [lock-as-derived](../joints/lock-as-derived.md).
 
 For the common case — work in a feature workweave, bring it home — the one-liner is:
 
 ```bash
-cd .workweaves/web-app--payments
+cd ../.workweaves/web-app--payments
 rwv sync-to --retire
 ```
 

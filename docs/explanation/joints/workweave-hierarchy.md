@@ -107,7 +107,7 @@ the tree up to the primary on its own. From a child of a workweave,
 reaching primary takes two sync-to invocations:
 
 ```bash
-cd .workweaves/web-app--feat-child
+cd ../.workweaves/web-app--feat-child        # from the primary weave root
 rwv sync-to               # → parent workweave (web-app--feat)
 cd ../web-app--feat
 rwv sync-to               # → primary
@@ -116,7 +116,7 @@ rwv sync-to               # → primary
 Or one explicit sync-to that names the target:
 
 ```bash
-cd .workweaves/web-app--feat-child
+cd ../.workweaves/web-app--feat-child
 rwv sync-to primary
 ```
 
@@ -148,25 +148,34 @@ cherry-picks are pure git operations on branches the operator can name.
 
 ## Naming and paths
 
-Workweaves are co-located under `.workweaves/` at the parent workspace
-root, named `<project>--<workweave-name>`:
+Workweaves live under `.workweaves/` in the *parent* of the workspace
+root — i.e. a sibling of the weave directory, not a child. Each
+workweave directory is named `<project>--<workweave-name>`:
 
 ```
-primary/
-├── .workweaves/
-│   ├── web-app--feat/
-│   │   └── .workweaves/
-│   │       └── web-app--feat-child/
-│   └── web-app--review-pr-42/
+work/
+├── primary/                      # the primary weave root
+└── .workweaves/                  # sibling of the weave root
+    ├── web-app--feat/            # a workweave off primary
+    │   └── ../.workweaves/       # (i.e. sibling of web-app--feat)
+    │       └── web-app--feat-child/
+    └── web-app--review-pr-42/
 ```
+
+Concretely, from a workspace root the workweave directory is at
+`../.workweaves/<project>--<name>/`. Placing `.workweaves/` outside
+the workspace root keeps VCS-visible state (`.git/`, sources) inside
+the root and rwv-managed sibling checkouts adjacent to it, so a workspace
+tree ignores its own workweaves and vice versa.
 
 The `<project>` prefix is part of the directory name (not just metadata)
 so multiple projects can host workweaves named identically without
 collision.
 
-A workweave's `.workweaves/` directory is its own children's parent;
-the tree is naturally reflected in the filesystem path. This means
-`find` and editor file pickers see the tree without any special tooling.
+A workweave's own `.workweaves/` directory (again, a sibling of that
+workweave root) hosts its children; the tree is reflected in the
+filesystem path. `find` and editor file pickers see it without any
+special tooling.
 
 ## Ephemeral branch names and the git worktree constraint
 

@@ -23,7 +23,7 @@ primary. To specify a different source:
 
 ```bash
 rwv workweave <project> create <name> --from primary
-rwv workweave <project> create <name> --from .workweaves/<project>--other
+rwv workweave <project> create <name> --from ../.workweaves/<project>--other
 ```
 
 `--from` accepts `primary`, an absolute path, or a relative path resolved
@@ -143,9 +143,11 @@ direction-pair contract.
 The one-liner to land work and close out the workweave:
 
 ```bash
-cd .workweaves/web-app--payments
+cd ../.workweaves/web-app--payments
 rwv sync-to --retire
 ```
+
+Workweaves live at `<parent>/.workweaves/<project>--<name>/` — a sibling of the weave root, so from the weave root the path is `../.workweaves/<project>--<name>/`.
 
 `rwv sync-to --retire` is the centerpiece of the bring-work-home flow. It
 runs the full sync-to machine then deletes the workweave on success. The
@@ -249,7 +251,7 @@ a nested workweave, landing into the grandparent (primary) takes two
 invocations:
 
 ```bash
-cd .workweaves/web-app--feat-child
+cd ../.workweaves/web-app--feat-child
 rwv sync-to --retire               # → parent workweave; deletes child
 
 cd ../web-app--feat
@@ -259,7 +261,7 @@ rwv sync-to --retire               # → primary; deletes parent
 Or one invocation with an explicit target:
 
 ```bash
-cd .workweaves/web-app--feat-child
+cd ../.workweaves/web-app--feat-child
 rwv sync-to primary --retire
 ```
 

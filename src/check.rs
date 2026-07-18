@@ -299,9 +299,10 @@ pub enum CheckViolation {
     /// key that would silently defeat a weave-level entry for the same key
     /// (cargo's closest-config-wins per-key shadowing — probe P5b in the
     /// design doc). Warning severity, report-only. Doubles as the mandatory
-    /// precheck for the future derived-patches bead (fo-t9x0l1.2), because
-    /// cargo's mismatch diagnostic actively misleads (blames crates.io) when
-    /// a patch silently doesn't apply (probe P6).
+    /// precheck for derived-patch generation: cargo's mismatch diagnostic
+    /// actively misleads (blames crates.io) when a patch silently doesn't
+    /// apply (probe P6), so surfacing the shadow at scan time preserves the
+    /// operator's ability to diagnose the actual cause.
     CargoPatchShadowing {
         /// Weave-level file that carries the (would-be) inert patch entry.
         weave_config: PathBuf,
@@ -513,9 +514,8 @@ pub enum ProvenanceKind {
 pub enum CloneTopologyKind {
     /// A full clone (its own canonical store) is hosted under `.workweaves/`
     /// instead of at the manifest's canonical slot. The inverted-primary
-    /// case (fo-a0spgj `tmuxcc-broker`): the canonical store has migrated
-    /// into one workweave and other workweaves' checkouts link into *it*,
-    /// not into `<weave>/<repo_path>`.
+    /// case: the canonical store has migrated into one workweave and other
+    /// workweaves' checkouts link into *it*, not into `<weave>/<repo_path>`.
     ///
     /// Reference-alias carve-out: a symlinked `reference` checkout (a
     /// `CheckoutKind::ReferenceAlias`, i.e. the workweave path is itself a
@@ -1432,7 +1432,7 @@ pub(crate) enum CommitOutcome {
     /// left in the working tree unstaged (or with only `.gitattributes`
     /// staged) so the operator can review before committing. Skipping is
     /// the safe behaviour: never bundle a user's WIP with an rwv-authored
-    /// fix. Bead fo-yk0rlj records this exception explicitly.
+    /// fix.
     SkippedUnrelatedStaged,
     /// The migration produced no diff (e.g. race — the file was already
     /// on the new spelling by the time we tried to commit). Idempotent no-op.
@@ -1440,7 +1440,8 @@ pub(crate) enum CommitOutcome {
 }
 
 /// Stage and commit the `.gitattributes` change written by
-/// [`Vcs::set_replay_exclusion`] during the fo-yk0rlj legacy-name migration.
+/// [`Vcs::set_replay_exclusion`] during the legacy `merge=ours` →
+/// `merge=rwv-ours` migration.
 ///
 /// Refuses to commit when the project repo has any staged change other than
 /// `.gitattributes` — returns [`CommitOutcome::SkippedUnrelatedStaged`] and
@@ -1950,7 +1951,7 @@ pub fn scan_provenance(workspace_dir: &Path, projects: &[Project]) -> Vec<CheckV
 ///    manifest slot.
 /// 2. **`standalone-in-workweave`** — WW_i is a full clone (its canonical
 ///    store sits under itself in `.workweaves/`). Other workweaves' checkouts
-///    are typically linked into it; the fo-a0spgj `tmuxcc-broker` shape.
+///    are typically linked into it — the inverted-primary shape.
 /// 3. **`disconnected-weave-clone`** — CAN sits at `<ws_root>/R` correctly
 ///    (its store is under itself), but at least one workweave's WW_i resolves
 ///    to a different store: the weave clone publishes an object DAG nobody
@@ -2038,8 +2039,8 @@ pub fn scan_clone_topology(ws_root: &Path, repo_paths: &BTreeSet<RepoPath>) -> V
             // `git rev-parse --git-common-dir` follows the symlink and resolves
             // to `<weave>/<repo_path>/.git`, so `ww_self_store_canon` (also
             // resolved through the link) would equal it and fire a false
-            // `StandaloneInWorkweave` (the fo-a0spgj inversion). Excluding the
-            // alias here — and only the alias — leaves genuine standalone
+            // `StandaloneInWorkweave` (the inverted-primary shape). Excluding
+            // the alias here — and only the alias — leaves genuine standalone
             // detection intact: a *real* standalone store inside a workweave is
             // a real directory, not a symlink, so it classifies as
             // [`CheckoutKind::Worktree`] and still flows through the
@@ -2076,7 +2077,7 @@ pub fn scan_clone_topology(ws_root: &Path, repo_paths: &BTreeSet<RepoPath>) -> V
             //
             // The workweave checkout is itself a full clone (its canonical
             // store sits at `<workweave>/<repo>/.git`). This is the
-            // fo-a0spgj inversion: the canonical has migrated into one
+            // inverted-primary shape: the canonical has migrated into one
             // workweave.
             if ww_store_canon == ww_self_store_canon {
                 violations.push(CheckViolation::CloneTopology {
@@ -2150,7 +2151,7 @@ pub fn scan_clone_topology(ws_root: &Path, repo_paths: &BTreeSet<RepoPath>) -> V
 }
 
 // ---------------------------------------------------------------------------
-// Branch-discipline scanning (fo-hycb06.2)
+// Branch-discipline scanning
 // ---------------------------------------------------------------------------
 //
 // Three checks, one symbolic-ref read per checkout plus one branch listing
@@ -2544,7 +2545,7 @@ pub struct StateHygieneOpStateTarget {
 /// findings; none of them depend on the manifest or per-project lock,
 /// so they share a single scanner entry point.
 ///
-/// **Classification policy** (spec fo-hycb06.4):
+/// **Classification policy:**
 ///
 /// - **stale-worktree-registration**: produced by
 ///   [`Vcs::list_stale_worktree_registrations`]. `--fix` (in `run_check`)
@@ -3462,7 +3463,7 @@ pub fn violations_to_issues(violations: Vec<CheckViolation>) -> Vec<Issue> {
                     // weave-level entry. Cargo does not warn; its version-
                     // mismatch diagnostic actively misleads (blames crates.io
                     // — probe P6). This finding is what agents/scripts key on
-                    // before generating derived patches (fo-t9x0l1.2).
+                    // before generating derived patches.
                     (
                         crate::integration::Severity::Warning,
                         format!(
@@ -4362,17 +4363,18 @@ pub fn run_check(
         violations.push(v);
     }
 
-    // Branch-discipline (fo-hycb06.2): (a) workweave-branch, (b)
-    // ephemeral-at-primary, (c) stale-ephemeral-branches. (a) and (b) are
-    // report-only; (c) splits into safe-class (deletable under --fix) and
-    // live-class (never auto-deleted). The --fix path is applied below
-    // before violations are emitted so a successful delete is reported as
-    // `[fixed]` instead of surfacing the corresponding warning.
+    // Branch-discipline: (a) workweave-branch, (b) ephemeral-at-primary,
+    // (c) stale-ephemeral-branches. (a) and (b) are report-only; (c) splits
+    // into safe-class (deletable under --fix) and live-class (never
+    // auto-deleted). The --fix path is applied below before violations are
+    // emitted so a successful delete is reported as `[fixed]` instead of
+    // surfacing the corresponding warning.
     //
     // Scope: when scope_all is false and an active project is set, filter
     // findings to only those belonging to the active project. This mirrors
-    // the legacy_role_primary filter above and fixes the cross-project
-    // stale-ephemeral-branch deletion described in fo-q5pj2e.
+    // the legacy_role_primary filter above and prevents the doctor scoped
+    // to a single active project from touching another project's stale
+    // ephemeral branches.
     let mut branch_discipline_violations = scan_branch_discipline(ctx.primary_path(), &git);
     if !scope_all {
         if let Some(ref active) = active_project_name {
@@ -4520,12 +4522,12 @@ pub fn run_check(
         let integration_issues = run_checks(&integrations, &project.manifest, &ctx_base);
         all_issues.extend(integration_issues);
 
-        // Cargo version-skew observatory + patch-shadowing precheck
-        // (fo-t9x0l1.1). Warning-only findings; feed the same
-        // `violations_to_issues` path the built-in `CheckViolation`s use so
-        // exit-status and formatting stay consistent. Emitted here (not in
-        // `find_violations`) because the scan needs an `IntegrationContext`
-        // — it walks the cargo integration's members-with-config expansion.
+        // Cargo version-skew observatory + patch-shadowing precheck.
+        // Warning-only findings; feed the same `violations_to_issues` path
+        // the built-in `CheckViolation`s use so exit-status and formatting
+        // stay consistent. Emitted here (not in `find_violations`) because
+        // the scan needs an `IntegrationContext` — it walks the cargo
+        // integration's members-with-config expansion.
         {
             let default_cfg = crate::manifest::IntegrationConfig::default();
             let cargo_cfg = project
@@ -4591,7 +4593,7 @@ pub fn run_check(
             all_issues.extend(fixable_issues);
         }
 
-        // Framework-level Axis-1 surfacing check (fo-huwqqc). Distinct from the
+        // Framework-level Axis-1 surfacing check. Distinct from the
         // per-integration `verify()` pass above, which only sees Axis-2 content
         // drift: nothing there asserts that the *symlinks* the surfacing layer
         // should have created actually exist and resolve. This pass is a SECOND
@@ -4603,7 +4605,7 @@ pub fn run_check(
         // checks that workweave's. The recovery hatch is `--fix`, which re-runs
         // the surfacing PRIMITIVE (`surface_symlinks`) bound to this weave
         // directory — NOT `activate_intent`, since project re-selection is a
-        // primary-only step-1 concept that fo-9fnae forbids in a workweave.
+        // primary-only step-1 concept forbidden inside a workweave.
         let in_workweave = matches!(ctx.location, WorkspaceLocation::Workweave { .. });
         let surfacing_issues = crate::activate::verify_surfacing(
             &workspace_dir,
@@ -5009,9 +5011,10 @@ pub fn run_check(
     // Replay-exclusion check: each project repo should carry
     // `rwv.lock merge=rwv-ours` in `.gitattributes` AND the paired
     // `merge.rwv-ours.driver=true` durable config. Older projects
-    // don't have either; the fo-yk0rlj rename also means projects
-    // may carry the LEGACY `rwv.lock merge=ours` line, which
-    // `--fix` migrates in place. `--fix` writes the line in place
+    // don't have either; the legacy spelling `rwv.lock merge=ours`
+    // (from before the rename to a namespaced driver) may still be
+    // present, which `--fix` migrates in place. `--fix` writes the
+    // line in place
     // (idempotent — re-running on a fixed repo is a no-op) and, when
     // the change is a legacy-name migration, commits it (skipping the
     // commit when the repo has unrelated staged work so we never
@@ -5426,10 +5429,10 @@ fn collect_doctor_violations(
         violations.push(v);
     }
 
-    // Cargo version-skew + patch-shadowing scans (fo-t9x0l1.1). Per-project
-    // because they consume the cargo-workspace integration config; findings
-    // are always Warning severity so `--json` reports them but exit-status
-    // stays 0 by default (they are informational, not gates).
+    // Cargo version-skew + patch-shadowing scans. Per-project because they
+    // consume the cargo-workspace integration config; findings are always
+    // Warning severity so `--json` reports them but exit-status stays 0 by
+    // default (they are informational, not gates).
     {
         let session_for_cargo = crate::workspace::WorkspaceSession::new(&workspace_dir);
         for project in &input.projects {
@@ -5474,7 +5477,7 @@ fn collect_doctor_violations(
     for v in scan_clone_topology(ctx.primary_path(), &input.known_repos) {
         violations.push(v);
     }
-    // Branch-discipline findings (fo-hycb06.2).
+    // Branch-discipline findings.
     // JSON channel never auto-fixes; `--fix` is reserved for `run_check`.
     // Scope: filter to active project unless scope_all (mirrors run_check).
     for v in scan_branch_discipline(ctx.primary_path(), &git) {
@@ -5631,10 +5634,10 @@ fn collect_doctor_violations(
 
     // Replay-exclusion check: each project repo should carry
     // `rwv.lock merge=rwv-ours` in `.gitattributes`. A project still on
-    // the legacy `merge=ours` spelling (pre-fo-yk0rlj) reports missing
-    // too — `has_replay_exclusion` matches only the new needle so the
-    // legacy line drives the same `--fix`-migrates code path via the
-    // JSON channel that the text channel already exposes.
+    // the legacy `merge=ours` spelling reports missing too —
+    // `has_replay_exclusion` matches only the new needle so the legacy
+    // line drives the same `--fix`-migrates code path via the JSON
+    // channel that the text channel already exposes.
     for project in &input.projects {
         let project_repo = workspace_dir.join("projects").join(project.name.as_str());
         if !project_repo.is_dir() {

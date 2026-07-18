@@ -61,13 +61,17 @@ rwv add https://github.com/example/some-lib.git --role dependency
 
 `rwv add` notices the directory already exists, skips the clone step, and just updates the manifest. The clone needs to be at the canonical `github/example/some-lib/` path — the manifest is keyed by path, and `rwv fetch` on another machine clones to that exact location.
 
-For a project-wide brownfield migration (you already have many clones and want to create a project that adopts them), use `rwv init --adopt`:
+For a brownfield migration where the *project repo itself* already exists remotely (an existing repo on GitHub / your provider that carries the `rwv.yaml`), use `rwv init --adopt` to clone that project repo instead of `git init`-ing a fresh one:
 
 ```bash
-rwv init my-project --adopt
+rwv init https://github.com/example/my-project.git --adopt
+# or shorthand:
+rwv init example/my-project --adopt
 ```
 
-This scans the working tree, builds an initial `rwv.yaml` from what it finds, and writes the project repo.
+`--adopt` accepts a URL or `owner/repo` shorthand as the argument and clones the named project repo into `projects/<name>/`. Once the project's `rwv.yaml` is materialized, use `rwv fetch` (with the project name / URL) to clone every listed manifest repo, or `rwv add` per repo for finer-grained control.
+
+Note that `--adopt` is a *single-project* clone flag; it does not walk the working tree looking for pre-existing clones to auto-register. To bring pre-existing clones into a project, use `rwv add <url>` per repo (add resolves each URL against the canonical path convention and skips the clone step if the directory is already present).
 
 ## Remove a repo
 

@@ -5,9 +5,11 @@ Land work from a workweave into its parent (typically primary). The one-liner ha
 ## The one-liner
 
 ```bash
-cd .workweaves/web-app--payments
+cd ../.workweaves/web-app--payments
 rwv sync-to --retire
 ```
+
+Workweaves live at `<parent>/.workweaves/<project>--<name>/` — a sibling of the weave root, not a child. From the weave root, that path is `../.workweaves/<project>--<name>/`.
 
 `rwv sync-to` is the landing verb: CWD's committed state lands in the target workspace. Bare `rwv sync-to` auto-targets the recorded parent from `.rwv-workweave` (one hop toward primary). `--retire` adds a post-landing cleanup step so the workweave is deleted on success.
 
@@ -20,6 +22,17 @@ The full orchestration is three steps, not one:
 Then, if all three steps succeed and `--retire` was given: verify no worktree is dirty, then delete the workweave (worktrees + ephemeral branches + directory).
 
 See [sync-semantics](../explanation/joints/sync-semantics.md) for the full phase model and the auto-relock detail.
+
+## Preview what will land
+
+Before running `rwv sync-to`, inspect what the workweave has that its recorded parent does not:
+
+```bash
+rwv workweave <project> log            # commit listing per repo, versus recorded parent
+rwv workweave <project> log --diff     # unique diff versus the recorded parent
+```
+
+Must be run from inside a workweave. Anchored at the common ancestor, so commits the parent gained since the workweave was created are not shown as reversals — the output is what will actually land, not a symmetric diff. Add `--json` for a machine-readable envelope.
 
 ## Preconditions
 
@@ -92,7 +105,7 @@ When `--retire` doesn't fit (you want to keep the workweave for follow-up work, 
 
 ```bash
 # step 1 — land the work (without retire)
-cd .workweaves/web-app--payments
+cd ../.workweaves/web-app--payments
 rwv sync-to
 
 # step 2 — delete manually when satisfied
@@ -117,20 +130,23 @@ inspect op-state, resume with `--continue`, or roll back with `rwv abort`.
 
 When two workweaves both have project commits, land them serially. The first lands with a clean fast-forward (the default `rebase` strategy in `sync-to` step 1 becomes a no-op when CWD is already strictly ahead). The second must first absorb the primary's new state:
 
+Each `cd` here starts from the weave root; workweaves live at `../.workweaves/<project>--<name>/` relative to it.
+
 ```bash
 # ww1 lands first (clean)
-cd .workweaves/web-app--ww1
+cd ../.workweaves/web-app--ww1
 rwv sync-to --retire
 
-# ww2 is now diverged from primary; absorb primary into ww2 first
-cd .workweaves/web-app--ww2
+# back to the weave root (the ww1 dir was retired), then absorb primary into ww2
+cd -
+cd ../.workweaves/web-app--ww2
 rwv sync primary --strategy rebase
 
 # then land ww2
 rwv sync-to --retire
 ```
 
-`rwv.lock` is never merged — it is recomputed in Phase 3 each time, so lock-file conflicts never arise regardless of how many workweaves are in flight. See [sync-semantics — N-way merge](../explanation/joints/sync-semantics.md#n-way-merge-two-workweaves-serial-landing) for the worked example.
+`rwv.lock` is never merged — it is recomputed in Phase 3 each time. Lock-file conflicts are prevented by the `rwv.lock merge=rwv-ours` invariant that `rwv doctor --fix` installs in each project repo's committed `.gitattributes`; sync refuses (with the fix as remediation) rather than conflicting on repos that don't yet carry it. See [sync-semantics — N-way merge](../explanation/joints/sync-semantics.md#n-way-merge-two-workweaves-serial-landing) for the worked example.
 
 ## Choosing a strategy
 
@@ -140,9 +156,8 @@ rwv sync-to --retire
 |---|---|
 | `rebase` (default) | Replay CWD's unique commits onto target's tip; produces linear history |
 | `ff` | Refuse if CWD and target have diverged; only works if CWD is strictly ahead |
-| `merge` | Merge target into CWD with an explicit join commit |
 
-Step 3 (FF-advance the target) is always fast-forward regardless of this flag.
+`merge` is not offered — see [sync semantics](../explanation/joints/sync-semantics.md#why-no-merge-strategy). Step 3 (FF-advance the target) is always fast-forward regardless of this flag.
 
 ## Related
 

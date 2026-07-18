@@ -36,8 +36,10 @@ If the dep diff between projects is large, or you need both projects active simu
 
 ```bash
 rwv workweave mobile-app create dev
-cd .workweaves/mobile-app--dev
+cd ../.workweaves/mobile-app--dev
 ```
+
+Workweaves live at `<parent>/.workweaves/<project>--<name>/` — a sibling of the weave root.
 
 See [create a feature workweave](./create-feature-workweave.md) for the workweave primitive.
 

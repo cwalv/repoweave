@@ -151,14 +151,14 @@ rwv abort   # re-run; op-state was retained
 
 ### If `rwv abort` reports "no operation in progress"
 
-No `.rwv-op` file was found. Either:
+When no `.rwv-op` file is present, `rwv abort` prints `Error: no operation in progress` to stderr and exits with status 0 (the `Error:` prefix is shared with real failures; the zero exit distinguishes the "nothing to do" case). Reasons this can happen:
 
 - No sync or sync-to was started.
 - The operation already completed successfully and cleaned up op-state.
 - Op-state was removed manually.
 - A prior `rwv abort` ran cleanly and cleared it.
 
-Nothing to abort.
+There is nothing to abort — the exit code is the load-bearing signal.
 
 ## What abort does not restore
 

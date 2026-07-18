@@ -12,13 +12,19 @@ Lookup-shaped reference for every `rwv` verb. For conceptual material see the [j
 
 Show current context: weave directory, active project, workweave (if any), repos.
 
-### `rwv fetch <source> [...]`
+### `rwv fetch [<source>] [...]`
 
 Read `rwv.lock` and align clones to it. Bootstrap when lock is absent.
+
+Two modes, keyed on whether `<source>` is given:
+
+- **With `<source>`** — a URL (`https://…`, `git@…`, `owner/repo`, or the project name for a `--provider`-configured registry): the *bootstrap* mode. Clones the project repo from `<source>` into the current directory, reads its committed `rwv.lock`, and clones every listed manifest repo to its canonical slot.
+- **No `<source>`** — the *in-place repair* mode: re-materialize missing manifest members in the current workspace. Uses the existing `rwv.yaml` and `rwv.lock`; clones any repo whose canonical directory is absent (the `MissingCanonicalClone` / `DanglingReference` findings from `rwv doctor` point here); leaves already-materialized repos alone. Run from the workspace root.
 
 | Flag | Effect |
 |---|---|
 | `--frozen` | Error if lock is stale; never advance. Suitable for CI |
+| `--force` | Bypass safety checks; re-clone even if a canonical clone directory is already present |
 | `--role` / `--repo` | Selector filters (see [Selector grammar](#selector-grammar)) |
 | `-j N` | Parallel per-repo workers (default: min(nproc, 8)) |
 | `--json` | Structured output / NDJSON when `-j N` with `N > 1` |
@@ -71,9 +77,13 @@ Set the active project. Updates `.rwv-active`, regenerates ecosystem workspace f
 
 Anchored by `tests/doc_claims_activate_test.rs`.
 
-### `rwv init <name> [--provider <registry>/<owner>] [--adopt]`
+### `rwv init <name-or-source> [--provider <registry>/<owner>] [--adopt]`
 
-Create a new project repo at `projects/<name>/` with empty `rwv.yaml`. With `--provider`, configures the project repo's remote URL. With `--adopt`, scans the working tree and builds an initial `rwv.yaml` from clones already on disk (brownfield migration).
+Create a new project repo at `projects/<name>/` with an empty `rwv.yaml`. With `--provider`, configures the project repo's remote URL.
+
+When invoked in an **empty directory**, `init` bootstraps that directory as a workspace root (no pre-existing `rwv.yaml` required) and creates the project inside it. Running in a non-empty directory without an existing workspace refuses.
+
+With `--adopt`, `<name-or-source>` is a URL or `owner/repo` shorthand: `init` clones the project repo from that source instead of `git init`-ing a new one (brownfield adoption of an existing project repo).
 
 ### `rwv add <url> [--role <role>] [--new]`
 
@@ -85,6 +95,10 @@ Clone a repo (if not present), register it in the *active workspace*'s `rwv.yaml
 | `--new` | Init a new local repo at canonical path; infer URL from path convention |
 
 `rwv add` writes to CWD's workspace's manifest (the active workspace's `rwv.yaml`), not always primary's.
+
+**Canonical path.** For URLs matching the `<host>/<owner>/<repo>` shape (github, gitlab, etc.), the clone lands at `<host>/<owner>/<repo>/`. Other URL shapes (bare `file://` remotes, self-hosted git servers with non-`<owner>/<repo>` paths) land at the URL's tail path segments — the canonical-path convention only applies where the URL exposes an unambiguous owner/repo split.
+
+**Shared-clone warning.** If the target clone directory is already registered by another project in the same weave, `rwv add` proceeds (the manifest entry is added to the active project as usual) and emits a warning to stderr naming the other project(s). Sharing a clone across projects is legal — the same repo can be a `dependency` in one project and `owned` in another — but is worth flagging so accidental double-registration is visible.
 
 ### `rwv remove <path> [--delete] [--force]`
 
@@ -109,6 +123,8 @@ Absorb `<source>`'s committed state into CWD. `<source>` is required: a workspac
 | `--project <name>` | Operate on this project instead of the active project (does not change `.rwv-active`) |
 
 See [sync semantics](../explanation/joints/sync-semantics.md) for the three-phase model and the direction-explicit pair with `rwv sync-to`.
+
+**Destination cleanliness preflight.** Before any repo is touched, `rwv sync` scans the destination workspace for uncommitted tracked changes; a dirty path refuses the operation with the offending files listed. `rwv sync-to` runs the same scan on its source (CWD). Drift attributable to rwv (regenerated ecosystem files, activation-owned symlinks) is excluded. Commit or stash the listed paths and retry.
 
 Anchored by `tests/doc_claims_sync_test.rs`. Flag table drift-gated by `tests/doc_claims_cli_md_test.rs`.
 
@@ -177,16 +193,18 @@ Show per-repo state for the CWD workspace.
 | branch | Current branch name, `-` if detached |
 | tip | Current HEAD SHA (first 12 chars) |
 | lock SHA | SHA from `rwv.lock` (first 12 chars), `-` if no lock |
-| relation | `ok` / `ahead` / `behind` / `diverged` / `no-lock` / `unknown` |
+| relation | `ok` / `ahead` / `behind` / `diverged` / `no-lock` / `unknown` / `missing` / `unreachable` |
 | mid-op | Present if mid-rebase, mid-merge, etc. |
 
 `--json` emits the envelope `{"$schema": "...", "repos": [...]}`. See [JSON envelope convention](#--json-envelope-convention).
+
+A `missing` or `unreachable` relation names a clone that has vanished (missing directory) or whose remote tip cannot be resolved. The repair path is `rwv fetch` with no source — the in-place re-materialize mode — run from the workspace root; see [`rwv fetch`](#rwv-fetch--source--) above and `rwv doctor` for the paired detection (`MissingCanonicalClone`, `DanglingReference`).
 
 Anchored by `tests/doc_claims_status_test.rs`.
 
 ### `rwv doctor [...]`
 
-Convention audit. Reports orphaned clones, dangling references, missing roles, stale locks, workweave drift, index drift, working-tree drift, and integration health.
+Convention audit. Reports orphaned clones, dangling references, missing roles, stale locks, workweave drift, index drift, working-tree drift, dead op-leases, cargo version-skew across workspace members, cargo patch shadowing, missing canonical clones (workweave worktrees whose primary clone has vanished), uninitialized submodules, and integration health.
 
 | Flag | Effect |
 |---|---|
@@ -205,6 +223,11 @@ Convention audit. Reports orphaned clones, dangling references, missing roles, s
 | Working-tree drift | A repo's on-disk files don't match HEAD tree (shared-refs side effect) |
 | Missing replay-exclusion | A project repo's `.gitattributes` lacks `rwv.lock merge=rwv-ours` or still carries the legacy `merge=ours` spelling (`--fix` adds/migrates the line and, on migration, commits it) |
 | Legacy `role: primary` | A project `rwv.yaml` uses the pre-rename spelling; `--fix` rewrites each `role: primary` line to `role: owned`, preserving comments and key order |
+| Dead op-lease | A `.rwv-op-lease` file whose recorded owner has no matching `.rwv-op` for the same op id — structurally impossible to belong to any in-flight operation. `--fix` removes the lease. |
+| Cargo version skew | The same crate is required at different version-req strings across workspace members (post `workspace = true` indirection); warning-severity observatory, report-only |
+| Cargo patch shadowing | A member's `.cargo/config.toml` declares a `[patch.<registry>].<crate>` key that shadows a weave-level entry for the same key (cargo's closest-config-wins per-key). Warning-severity; report-only |
+| Missing canonical clone | A workweave worktree whose canonical clone (the primary-weave clone it was linked from) is no longer on disk. Repair: `rwv fetch` (in-place) to re-materialize |
+| Uninitialized submodule | A repo checkout has a `.gitmodules` entry whose submodule path is absent or empty on disk (submodule init never ran there). Warning-severity; the finding message names the exact `git submodule update` invocation to run |
 | Integration checks | Per-integration check hooks (tool availability, stale config) |
 
 ### `rwv workweave <project> create <name>`

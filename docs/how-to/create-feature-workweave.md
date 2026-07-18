@@ -6,10 +6,10 @@ Spin up an isolated cross-repo branch for a feature that spans multiple repos. T
 
 ```bash
 rwv workweave web-app create payments
-cd .workweaves/web-app--payments
+cd ../.workweaves/web-app--payments
 ```
 
-This forks from CWD's active workspace (primary when invoked from primary, the surrounding workweave when invoked from inside one) and writes `.workweaves/web-app--payments/` containing:
+This forks from CWD's active workspace (primary when invoked from primary, the surrounding workweave when invoked from inside one) and writes `../.workweaves/web-app--payments/` (a sibling of the weave root, not a child) containing:
 
 - a git worktree for each `owned`/`fork`/`dependency` repo on an ephemeral branch
 - a symlink to the canonical weave-root clone for each `role: reference` repo (read-only study material — no working-tree duplication; pass `--worktree-references` to cut worktrees for them instead)
@@ -77,6 +77,16 @@ rwv sync-to --retire
 ```
 
 Bare `rwv sync-to` auto-targets the parent edge recorded in `.rwv-workweave`. `--retire` adds a post-landing cleanup step: if the workweave converges with its parent and no worktree is dirty, the workweave is deleted. See [bring workweave work home](./bring-workweave-work-home.md) for the manual ceremony and conflict recovery.
+
+## Discard an experiment
+
+If the work is a dead end and you want to throw it away without landing anything, delete the workweave directly:
+
+```bash
+rwv workweave web-app delete payments
+```
+
+Default deletion refuses if any worktree is dirty or holds commits not reachable from the recorded parent or primary; pass `--force` to consent to losing that work. See [workweave lifecycle](../explanation/joints/workweave-lifecycle.md#deletion) for the full delete contract.
 
 ## Related
 

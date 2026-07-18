@@ -472,9 +472,10 @@ impl CargoWorkspace {
             }
             // Nested-workspace repo (grok-build shape): auto-enumerate its
             // own [workspace].members globs so sub-crates surface in the
-            // skew scan without any per-repo operator config. This is the
-            // fo-8cbhpg.2 fix: at 85 crates the operator cannot be
-            // expected to hand-configure every sub-path.
+            // skew scan without any per-repo operator config. At the scale
+            // of dozens of crates the operator cannot be expected to
+            // hand-configure every sub-path — the scanner reads the same
+            // members list the root Cargo.toml already commits.
             //
             // Lazy: only when the root Cargo.toml actually declares
             // [workspace]. Repos without a [workspace] section emit their
@@ -893,8 +894,8 @@ impl Integration for CargoWorkspace {
     /// surface — the marker discriminates rwv-authored from user-authored
     /// entries and the strip pass at `deactivate` only removes marked ones.
     ///
-    /// **Housekeeping decision** (fo-t9x0l1.3): both hybrid files live in
-    /// the project dir (surfaced at the weave root via symlink). rwv does
+    /// **Housekeeping decision:** both hybrid files live in the project
+    /// dir (surfaced at the weave root via symlink). rwv does
     /// NOT auto-generate a `.gitignore` for them; they are part of the
     /// composition and are committable persistent state, matching the
     /// pre-existing `Cargo.toml` and `Cargo.lock` treatment (and the
@@ -1336,8 +1337,8 @@ impl CargoWorkspace {
     /// grok-build shape) are expanded into their sub-crates using the same
     /// `expand_nested_workspace_members` enumeration used by `scan_members`.
     /// This feeds the derived-patch index so reference-role repos that host
-    /// only sub-package crates become patch sources (fo-8cbhpg.2 scope
-    /// addition: one enumeration, two consumers).
+    /// only sub-package crates become patch sources — one member-enumeration
+    /// routine, two consumers (skew scan and patch index).
     fn build_package_index(
         ctx: &IntegrationContext,
         paths: &[String],
@@ -1499,8 +1500,7 @@ impl CargoWorkspace {
     /// `PatchMode::Derived` — match each member's *registry* / git-source
     /// deps by crate name against the in-weave package-name index.
     ///
-    /// Approach (Finding 1 of `grok-build-export-findings.md`, sub-bead
-    /// fo-t9x0l1.2):
+    /// Approach (Finding 1 of `grok-build-export-findings.md`):
     ///
     /// 1. Build a package-name index over the entire weave: every active
     ///    workspace member **plus** every `reference`-role repo with a
@@ -2364,7 +2364,7 @@ fn nested_workspace_error(conflicts: &[String]) -> String {
 }
 
 // ===========================================================================
-// Version-skew observatory + same-key patch shadowing scanner (fo-t9x0l1.1)
+// Version-skew observatory + same-key patch shadowing scanner
 // ===========================================================================
 //
 // Read-only scans that feed `rwv doctor` (both the text and `--json` channels)
@@ -2375,7 +2375,7 @@ fn nested_workspace_error(conflicts: &[String]) -> String {
 //
 // Both scans are **warnings** — they never fail doctor's exit status by
 // default. They are informational for the operator (version skew), or a
-// precondition check for the future derived-patches bead (patch shadowing).
+// precondition check for derived-patch generation (patch shadowing).
 
 /// One member's requirement for one crate.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -2975,12 +2975,13 @@ fn extract_dep_fields(dep_item: &toml_edit::Item) -> Option<DepFieldsTuple> {
 ///
 /// This is intentionally *narrower* than cargo's caret semantics: it does
 /// not accept `"0.3.5"` as satisfying requirement `"0.3.0"` even though
-/// cargo would, because a full semver-req implementation is out of scope
-/// for v1 (guidance in the bead: "do NOT add a heavy resolver"). The
-/// consequence is the precheck may skip *some* patches cargo would accept
-/// — but it will never *emit* one cargo rejects, which is the direction
-/// that matters (a broken patch produces cargo's misleading crates.io
-/// error at generate-lockfile time — probe P6).
+/// cargo would, because pulling in a full semver-req resolver here is out
+/// of scope — the precheck must stay lightweight enough to run on every
+/// doctor invocation without adding a heavy dependency for one warning
+/// path. The consequence is the precheck may skip *some* patches cargo
+/// would accept — but it will never *emit* one cargo rejects, which is the
+/// direction that matters (a broken patch produces cargo's misleading
+/// crates.io error at generate-lockfile time — probe P6).
 ///
 /// Empty inputs: an empty requirement is treated as satisfied by anything
 /// (defensive default — a caller that produces `Some("")` is deliberately
