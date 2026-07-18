@@ -33,14 +33,17 @@
 //!    error.
 
 use std::collections::HashMap;
+use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use clap::CommandFactory;
 use regex::Regex;
 use schemars::schema_for;
 use serde::Serialize;
 
 use repoweave::check::ViolationOutput;
+use repoweave::cli::Cli;
 use repoweave::fetch::FetchJsonOutput;
 use repoweave::push::{PushJsonOutput, PUSH_SCHEMA_URL};
 use repoweave::status::StatusJsonOutput;
@@ -543,6 +546,252 @@ fn render_index(verbs: &[Verb]) -> String {
     out
 }
 
+/// Walk the clap command tree and collect every subcommand path as a
+/// space-separated string (e.g. `"workweave log"`, `"setup claude"`).
+///
+/// Top-level commands with no subcommands of their own produce a single-token
+/// path (e.g. `"fetch"`). Commands that exist only as umbrella containers
+/// (they have their own subcommands) are included both as a path and as
+/// prefixes for their children, so the caller can decide whether to require
+/// a cli.md entry for the container itself.
+///
+/// Depth is bounded by the clap tree; the current tree has at most two
+/// levels of nesting (top-level → action).
+fn collect_subcommand_paths(cmd: &clap::Command) -> Vec<String> {
+    let mut paths: Vec<String> = Vec::new();
+    collect_subcommand_paths_inner(cmd, "", &mut paths);
+    paths
+}
+
+fn collect_subcommand_paths_inner(cmd: &clap::Command, prefix: &str, out: &mut Vec<String>) {
+    for sc in cmd.get_subcommands() {
+        let name = sc.get_name();
+        let path = if prefix.is_empty() {
+            name.to_owned()
+        } else {
+            format!("{prefix} {name}")
+        };
+        out.push(path.clone());
+        // Recurse into nested subcommands (e.g. workweave → create/delete/list/log).
+        collect_subcommand_paths_inner(sc, &path, out);
+    }
+}
+
+/// Parse the coverage allowlist at `allowlist_path`.
+///
+/// # File format
+///
+/// One entry per non-blank, non-comment line:
+///
+/// ```text
+/// <check>:<surface-path>  # <reason>
+/// ```
+///
+/// - `<check>` is `cli-md` or `registry`
+/// - `<surface-path>` is the full subcommand path as in the rwv CLI tree
+///   (e.g. `workweave log`, `setup`)
+/// - `# <reason>` is required prose explaining the omission
+///
+/// The format is intentionally machine-readable for the checks below but
+/// grep-friendly for humans reviewing "what did we skip and why."
+///
+/// Returns `(cli_md_allowlist, registry_allowlist)` as sets of surface paths.
+fn load_coverage_allowlist(
+    allowlist_path: &Path,
+) -> anyhow::Result<(HashSet<String>, HashSet<String>)> {
+    let content = fs::read_to_string(allowlist_path).map_err(|e| {
+        anyhow::anyhow!(
+            "cannot read coverage allowlist at {}: {e}",
+            allowlist_path.display()
+        )
+    })?;
+
+    let mut cli_md: HashSet<String> = HashSet::new();
+    let mut registry: HashSet<String> = HashSet::new();
+
+    for (lineno, line) in content.lines().enumerate() {
+        let trimmed = line.trim();
+        // Skip blanks and comment lines.
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+        // Strip inline comment.
+        let entry = trimmed.split('#').next().unwrap_or(trimmed).trim();
+        // Parse `<check>:<surface-path>`.
+        let colon = entry.find(':').ok_or_else(|| {
+            anyhow::anyhow!(
+                "allowlist line {}: expected `<check>:<surface-path>`, got: {:?}",
+                lineno + 1,
+                line
+            )
+        })?;
+        let check = &entry[..colon];
+        let surface = entry[colon + 1..].trim();
+        if surface.is_empty() {
+            anyhow::bail!(
+                "allowlist line {}: surface path is empty in: {:?}",
+                lineno + 1,
+                line
+            );
+        }
+        // Require every entry to have an inline reason (the '#' comment above).
+        // We don't enforce the reason text, only that it is present.
+        let has_reason = trimmed.contains('#');
+        if !has_reason {
+            anyhow::bail!(
+                "allowlist line {}: entry has no reason comment (add `  # <reason>`): {:?}",
+                lineno + 1,
+                line
+            );
+        }
+        match check {
+            "cli-md" => {
+                cli_md.insert(surface.to_owned());
+            }
+            "registry" => {
+                registry.insert(surface.to_owned());
+            }
+            other => {
+                anyhow::bail!(
+                    "allowlist line {}: unknown check type {:?} (expected `cli-md` or `registry`)",
+                    lineno + 1,
+                    other
+                );
+            }
+        }
+    }
+
+    Ok((cli_md, registry))
+}
+
+/// Check that every subcommand path in `paths` appears in `cli_md_content`
+/// as a heading that contains `` `rwv <path>` `` or `` `rwv <path> ``.
+///
+/// # Match rule
+///
+/// A subcommand path is "covered" iff the cli.md content contains at least one
+/// heading line (a line whose first non-whitespace character is `#`) that
+/// includes either:
+///
+/// - `` `rwv <path>` `` — the full invocation is exactly the path (no args), OR
+/// - `` `rwv <path> `` — the path is followed by a space (arguments continue
+///   inside the same backtick span, e.g. `` `rwv fetch <source> [...]` ``).
+///
+/// Both forms start with `` `rwv <path> `` (with a trailing space or closing
+/// backtick), which makes the match unambiguous: `` `rwv workweave log` `` or
+/// `` `rwv workweave log [--diff]` `` match `workweave log` but not
+/// `` `rwv workweave log-extra` `` (which has a different token after `log`).
+///
+/// Entries listed in `allowlist` are silently skipped.
+///
+/// Returns error messages (one per uncovered path); empty means clean.
+fn check_cli_md_coverage(
+    paths: &[String],
+    cli_md_content: &str,
+    allowlist: &HashSet<String>,
+) -> Vec<String> {
+    // Pre-collect heading lines for fast scanning.
+    let heading_lines: Vec<&str> = cli_md_content
+        .lines()
+        .filter(|l| l.trim_start().starts_with('#'))
+        .collect();
+
+    let mut errors: Vec<String> = Vec::new();
+    for path in paths {
+        if allowlist.contains(path.as_str()) {
+            continue;
+        }
+        // A match is: backtick-open, then `rwv <path>`, then either a space
+        // (more args follow) or a closing backtick (no args). This prevents
+        // substring collisions (e.g. `workweave log` vs `workweave log-extra`).
+        let prefix_with_space = format!("`rwv {path} ");
+        let prefix_exact = format!("`rwv {path}`");
+        let found = heading_lines
+            .iter()
+            .any(|line| line.contains(&prefix_with_space) || line.contains(&prefix_exact));
+        if !found {
+            errors.push(format!(
+                "coverage-cli-md: `rwv {path}` is absent from docs/reference/cli.md \
+                 (add a heading containing `{prefix_exact}` or `{prefix_with_space}...`, \
+                 or add `cli-md:{path}` to docs/cli-coverage-allowlist.txt with a reason)"
+            ));
+        }
+    }
+    errors
+}
+
+/// Check that every top-level verb in `cli_top_level` appears in the
+/// `verbs` list (the explain registry).
+///
+/// Entries in `allowlist` are skipped.
+///
+/// Returns error messages (one per unregistered verb); empty means clean.
+fn check_registry_coverage(
+    cli_top_level: &[String],
+    verbs: &[Verb],
+    allowlist: &HashSet<String>,
+) -> Vec<String> {
+    let registered: HashSet<&str> = verbs.iter().map(|v| v.name).collect();
+    let mut errors: Vec<String> = Vec::new();
+    for verb in cli_top_level {
+        if allowlist.contains(verb.as_str()) {
+            continue;
+        }
+        if !registered.contains(verb.as_str()) {
+            errors.push(format!(
+                "coverage-registry: `{verb}` is not registered in verbs() in \
+                 src/bin/generate-explain.rs — add a Verb entry, or add \
+                 `registry:{verb}` to docs/cli-coverage-allowlist.txt with a reason"
+            ));
+        }
+    }
+    errors
+}
+
+/// Run both coverage checks (cli-md + registry) and return all errors.
+///
+/// `root` is the repository root; `verbs` is the already-constructed verb
+/// list so the registry check reflects the same list used for generation.
+///
+/// # Match rules (documented here as the canonical reference)
+///
+/// **cli.md check**: a subcommand path (e.g. `workweave log`) is covered iff
+/// `docs/reference/cli.md` contains a heading line (a line whose first
+/// non-whitespace character is `#`) with the literal text `` `rwv <path>` ``
+/// (backtick-quoted). This avoids false positives from incidental body text.
+///
+/// **Registry check**: a top-level verb is covered iff it appears as a `name`
+/// field in the `verbs()` list in this file. Nested subcommands are not
+/// separately required in the registry — explain pages are per top-level verb.
+fn run_coverage_checks(root: &Path, verbs: &[Verb]) -> anyhow::Result<Vec<String>> {
+    let allowlist_path = root.join("docs/cli-coverage-allowlist.txt");
+    let (cli_md_allow, registry_allow) = load_coverage_allowlist(&allowlist_path)?;
+
+    let cli_cmd = Cli::command();
+    let all_paths = collect_subcommand_paths(&cli_cmd);
+
+    // Top-level verbs: paths without a space (no parent component).
+    let top_level: Vec<String> = all_paths
+        .iter()
+        .filter(|p| !p.contains(' '))
+        .cloned()
+        .collect();
+
+    let cli_md_path = root.join("docs/reference/cli.md");
+    let cli_md_content = fs::read_to_string(&cli_md_path)
+        .map_err(|e| anyhow::anyhow!("cannot read cli.md at {}: {e}", cli_md_path.display()))?;
+
+    let mut errors: Vec<String> = Vec::new();
+    errors.extend(check_cli_md_coverage(
+        &all_paths,
+        &cli_md_content,
+        &cli_md_allow,
+    ));
+    errors.extend(check_registry_coverage(&top_level, verbs, &registry_allow));
+
+    Ok(errors)
+}
+
 fn repo_root() -> PathBuf {
     // CARGO_MANIFEST_DIR points at the crate root, which is the repoweave dir.
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -682,6 +931,23 @@ fn main() -> anyhow::Result<()> {
     let index = render_index(&verbs);
     let index_path = explain_dir.join("index.md");
     write_if_changed(&index_path, &index)?;
+
+    // --- CLI coverage gate -----------------------------------------------
+    // Every subcommand in the rwv CLI tree must appear in docs/reference/cli.md
+    // AND every top-level verb must be registered in verbs() above.
+    // Deliberate omissions are recorded in docs/cli-coverage-allowlist.txt.
+    // See the match-rule documentation on `run_coverage_checks`.
+    let coverage_errors = run_coverage_checks(&root, &verbs)?;
+    if !coverage_errors.is_empty() {
+        let msg = coverage_errors.join("\n");
+        anyhow::bail!(
+            "CLI coverage check failed:\n{msg}\n\n\
+             Fix: add a cli.md heading containing `rwv <path>` for each missing \
+             subcommand, or add a Verb entry to verbs() for each missing registry \
+             entry, or add the surface to docs/cli-coverage-allowlist.txt with a \
+             reason if the omission is deliberate."
+        );
+    }
 
     // --- Link-cleanliness gate -------------------------------------------
     // Every relative markdown link in every .md file under docs/ must resolve
@@ -878,5 +1144,173 @@ mod tests {
             "should not flag bare autolink in non-assembled doc, got:\n{}",
             errors.join("\n")
         );
+    }
+
+    // ── Coverage check unit tests ──────────────────────────────────────────────
+
+    /// A cli.md that covers all paths passes the cli-md check.
+    #[test]
+    fn cli_md_coverage_passes_when_all_present() {
+        let paths = vec!["fetch".to_owned(), "workweave log".to_owned()];
+        let cli_md =
+            "### `rwv fetch [...]`\n\nSome text.\n\n### `rwv workweave log`\n\nMore text.\n";
+        let allow: HashSet<String> = HashSet::new();
+        let errors = check_cli_md_coverage(&paths, cli_md, &allow);
+        assert!(
+            errors.is_empty(),
+            "expected no errors when all paths are covered, got:\n{}",
+            errors.join("\n")
+        );
+    }
+
+    /// Removing a cli.md heading causes the check to fail (seeded-failure proof).
+    ///
+    /// This test exercises the failure arm: a subcommand present in the CLI tree
+    /// but absent from cli.md is reported as an error. Without this test, a
+    /// check that never fires is indistinguishable from a correct check.
+    #[test]
+    fn cli_md_coverage_fails_when_entry_removed() {
+        let paths = vec!["fetch".to_owned(), "workweave log".to_owned()];
+        // cli.md only mentions `fetch` — `workweave log` heading was removed.
+        let cli_md = "### `rwv fetch [...]`\n\nSome text.\n";
+        let allow: HashSet<String> = HashSet::new();
+        let errors = check_cli_md_coverage(&paths, cli_md, &allow);
+        assert!(
+            !errors.is_empty(),
+            "expected error when `rwv workweave log` is absent from cli.md"
+        );
+        let combined = errors.join("\n");
+        assert!(
+            combined.contains("workweave log"),
+            "error should name the missing subcommand, got:\n{combined}"
+        );
+        assert!(
+            combined.contains("docs/reference/cli.md"),
+            "error should name the file to fix, got:\n{combined}"
+        );
+    }
+
+    /// An allowlisted path is not reported even when absent from cli.md.
+    #[test]
+    fn cli_md_coverage_skips_allowlisted_entry() {
+        let paths = vec!["resolve".to_owned()];
+        let cli_md = "# CLI reference\n\nNo resolve heading here.\n";
+        let mut allow: HashSet<String> = HashSet::new();
+        allow.insert("resolve".to_owned());
+        let errors = check_cli_md_coverage(&paths, cli_md, &allow);
+        assert!(
+            errors.is_empty(),
+            "allowlisted path should not be reported, got:\n{}",
+            errors.join("\n")
+        );
+    }
+
+    /// All top-level verbs are registered — passes.
+    #[test]
+    fn registry_coverage_passes_when_all_registered() {
+        let cli_verbs = vec!["fetch".to_owned(), "status".to_owned()];
+        let verbs = vec![
+            Verb {
+                name: "fetch",
+                summary: "clone or fetch",
+                schema: None,
+            },
+            Verb {
+                name: "status",
+                summary: "show status",
+                schema: None,
+            },
+        ];
+        let allow: HashSet<String> = HashSet::new();
+        let errors = check_registry_coverage(&cli_verbs, &verbs, &allow);
+        assert!(
+            errors.is_empty(),
+            "expected no errors when all verbs are registered, got:\n{}",
+            errors.join("\n")
+        );
+    }
+
+    /// Removing a verb from verbs() causes the check to fail (seeded-failure proof).
+    ///
+    /// This test exercises the failure arm: a top-level CLI verb not present in
+    /// the `verbs()` registry is reported as missing. Without this test, a check
+    /// that never fires on the registry side is undetected.
+    #[test]
+    fn registry_coverage_fails_when_verb_unregistered() {
+        let cli_verbs = vec!["fetch".to_owned(), "status".to_owned()];
+        // Only `fetch` is registered; `status` was removed.
+        let verbs = vec![Verb {
+            name: "fetch",
+            summary: "clone or fetch",
+            schema: None,
+        }];
+        let allow: HashSet<String> = HashSet::new();
+        let errors = check_registry_coverage(&cli_verbs, &verbs, &allow);
+        assert!(
+            !errors.is_empty(),
+            "expected error when `status` is absent from verbs()"
+        );
+        let combined = errors.join("\n");
+        assert!(
+            combined.contains("status"),
+            "error should name the missing verb, got:\n{combined}"
+        );
+        assert!(
+            combined.contains("generate-explain.rs"),
+            "error should name the file to fix, got:\n{combined}"
+        );
+    }
+
+    /// An allowlisted verb is not reported even when absent from verbs().
+    #[test]
+    fn registry_coverage_skips_allowlisted_verb() {
+        let cli_verbs = vec!["resolve".to_owned()];
+        let verbs: Vec<Verb> = vec![];
+        let mut allow: HashSet<String> = HashSet::new();
+        allow.insert("resolve".to_owned());
+        let errors = check_registry_coverage(&cli_verbs, &verbs, &allow);
+        assert!(
+            errors.is_empty(),
+            "allowlisted verb should not be reported, got:\n{}",
+            errors.join("\n")
+        );
+    }
+
+    /// Allowlist parsing accepts valid entries with inline reasons.
+    #[test]
+    fn allowlist_parsing_valid_entries() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let path = tmp.path().join("allowlist.txt");
+        fs::write(
+            &path,
+            "# comment\n\ncli-md:workweave log  # needs template\nregistry:resolve  # utility verb\n",
+        )
+        .unwrap();
+        let (cli_md, registry) = load_coverage_allowlist(&path).expect("parse should succeed");
+        assert!(cli_md.contains("workweave log"), "cli-md entry missing");
+        assert!(registry.contains("resolve"), "registry entry missing");
+    }
+
+    /// Allowlist parsing rejects an entry missing an inline reason.
+    #[test]
+    fn allowlist_parsing_rejects_missing_reason() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let path = tmp.path().join("allowlist.txt");
+        fs::write(&path, "registry:resolve\n").unwrap();
+        let result = load_coverage_allowlist(&path);
+        assert!(
+            result.is_err(),
+            "expected error for entry with no reason comment"
+        );
+    }
+
+    /// Allowlist parsing rejects an unknown check type.
+    #[test]
+    fn allowlist_parsing_rejects_unknown_check_type() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let path = tmp.path().join("allowlist.txt");
+        fs::write(&path, "unknown:foo  # reason\n").unwrap();
+        let result = load_coverage_allowlist(&path);
+        assert!(result.is_err(), "expected error for unknown check type");
     }
 }

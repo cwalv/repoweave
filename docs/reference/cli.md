@@ -207,7 +207,7 @@ Convention audit. Reports orphaned clones, dangling references, missing roles, s
 | Legacy `role: primary` | A project `rwv.yaml` uses the pre-rename spelling; `--fix` rewrites each `role: primary` line to `role: owned`, preserving comments and key order |
 | Integration checks | Per-integration check hooks (tool availability, stale config) |
 
-### `rwv workweave <project> create <name>`
+### `rwv workweave create <project> <name>`
 
 Create a workweave: worktrees on ephemeral branches for each `owned`/`fork`/`dependency` repo, symlinks to the canonical weave-root clone for each `role: reference` repo, generated ecosystem files, per-workweave tool state.
 
@@ -220,13 +220,22 @@ Create a workweave: worktrees on ephemeral branches for each `owned`/`fork`/`dep
 
 Workweaves live at `<parent>/.workweaves/<project>--<name>/`.
 
-### `rwv workweave <project> delete <name> [--force]`
+### `rwv workweave delete <project> <name> [--force]`
 
 Delete a workweave. Default refuses if any worktree is dirty, or holds commits contained in neither the workweave's recorded parent nor the primary weave (work in a nested workweave counts as merged once its parent has it); `--force` bypasses both checks.
 
-### `rwv workweave <project> list`
+### `rwv workweave list <project>`
 
 List workweaves for a project.
+
+### `rwv workweave log [--diff] [--json]`
+
+Show this workweave's unique commits versus its recorded parent, per repo. Must be run from inside a workweave.
+
+| Flag | Effect |
+|---|---|
+| `--diff` | Show the unique diff versus the parent instead of the commit listing. Anchored at the common ancestor, so commits the parent gained after the fork are not shown as reversals |
+| `--json` | Emit machine-readable JSON |
 
 ### Scripting helpers
 

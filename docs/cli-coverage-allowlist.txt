@@ -1,0 +1,21 @@
+# CLI coverage allowlist — deliberate omissions from the verb×surface matrix.
+#
+# Format (one entry per line, blank lines and lines starting with '#' ignored):
+#
+#   <check>:<surface-path>  # <reason>
+#
+# <check> is one of:
+#   cli-md    — top-level or nested subcommand absent from docs/reference/cli.md
+#   registry  — top-level subcommand absent from verbs() in generate-explain.rs
+#
+# <surface-path> is the full subcommand path as it appears in the rwv CLI
+# (e.g. "workweave log", "setup claude").
+#
+# Every entry here is a recorded decision; the Tier 2 release review should
+# re-examine any entry whose named surface appears in the release delta.
+# No age-based expiry — entries stay until explicitly removed or promoted
+# to a registered/documented verb.
+
+registry:resolve          # utility verb (print workspace path); no --json output and no behavioral complexity warranting an explain page — one-liner in cli.md is sufficient coverage
+registry:completions      # shell-completion scaffolding; output is shell script, not user-facing prose — no explain page needed
+registry:setup            # umbrella verb; its subcommands (setup claude, setup agents-md) are documented in cli.md — no separate explain page needed
