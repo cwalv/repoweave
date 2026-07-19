@@ -16,6 +16,7 @@
 - [Push a cross-repo feature](./how-to/push-cross-repo-feature.md)
 - [Review a PR with a workweave](./how-to/review-pr-with-workweave.md)
 - [Hand a task to an agent](./how-to/hand-task-to-agent.md)
+- [Cache builds across workweaves](./how-to/cache-builds-across-workweaves.md)
 - [Release a package](./how-to/release-a-package.md)
 - [Add an integration](./how-to/add-an-integration.md)
 

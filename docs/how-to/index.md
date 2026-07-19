@@ -20,6 +20,7 @@ Task-shaped recipes. Each page leads with the command; the conceptual material i
 
 - [Review a PR with a workweave](./review-pr-with-workweave.md) — isolated PR build
 - [Hand a task to an agent](./hand-task-to-agent.md) — the landed agent surface
+- [Cache builds across workweaves](./cache-builds-across-workweaves.md) — sccache, pnpm store, uv cache
 
 ## Release and integration
 
