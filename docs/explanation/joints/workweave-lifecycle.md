@@ -147,7 +147,7 @@ cd ../.workweaves/web-app--payments
 rwv sync-to --retire
 ```
 
-Workweaves live at `<parent>/.workweaves/<project>--<name>/` — a sibling of the weave root, so from the weave root the path is `../.workweaves/<project>--<name>/`.
+Workweaves live at `<parent>/.workweaves/<project>--<name>/` — by default a sibling of the weave root, so from the weave root the path is `../.workweaves/<project>--<name>/`.
 
 `rwv sync-to --retire` is the centerpiece of the bring-work-home flow. It
 runs the full sync-to machine then deletes the workweave on success. The

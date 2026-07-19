@@ -9,7 +9,7 @@ rwv workweave web-app create payments
 cd ../.workweaves/web-app--payments
 ```
 
-This forks from CWD's active workspace (primary when invoked from primary, the surrounding workweave when invoked from inside one) and writes `../.workweaves/web-app--payments/` (a sibling of the weave root, not a child) containing:
+This forks from CWD's active workspace (primary when invoked from primary, the surrounding workweave when invoked from inside one) and writes `../.workweaves/web-app--payments/` (by default a sibling of the weave root, not a child) containing:
 
 - a git worktree for each `owned`/`fork`/`dependency` repo on an ephemeral branch
 - a symlink to the canonical weave-root clone for each `role: reference` repo (read-only study material — no working-tree duplication; pass `--worktree-references` to cut worktrees for them instead)

@@ -149,7 +149,9 @@ cherry-picks are pure git operations on branches the operator can name.
 ## Naming and paths
 
 Workweaves live under `.workweaves/` in the *parent* of the workspace
-root — i.e. a sibling of the weave directory, not a child. Each
+root — i.e. a sibling of the weave directory, not a child. That is the
+default; setting `RWV_WORKWEAVE_DIR` relocates the container to an
+arbitrary directory (every path below reads accordingly). Each
 workweave directory is named `<project>--<workweave-name>`:
 
 ```

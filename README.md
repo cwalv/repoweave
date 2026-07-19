@@ -76,7 +76,7 @@ cd ../.workweaves/web-app--payments
 # independent branches, node_modules, .venv — weave is undisturbed
 ```
 
-(Workweaves live at `<parent>/.workweaves/<project>--<name>/`, a sibling of the weave root — so `../.workweaves/...` from the weave root.)
+(Workweaves live at `<parent>/.workweaves/<project>--<name>/`, a sibling of the weave root by default — so `../.workweaves/...` from the weave root.)
 
 ### Commands
 

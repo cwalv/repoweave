@@ -39,7 +39,7 @@ rwv workweave mobile-app create dev
 cd ../.workweaves/mobile-app--dev
 ```
 
-Workweaves live at `<parent>/.workweaves/<project>--<name>/` — a sibling of the weave root.
+Workweaves live at `<parent>/.workweaves/<project>--<name>/` — by default a sibling of the weave root.
 
 See [create a feature workweave](./create-feature-workweave.md) for the workweave primitive.
 

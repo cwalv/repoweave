@@ -78,7 +78,7 @@ rwv workweave web-app create agent-task-99
 cd ../.workweaves/web-app--agent-task-99
 ```
 
-Workweaves live at `<parent>/.workweaves/<project>--<name>/` — a sibling of the weave root, so from the weave root the path is `../.workweaves/<project>--<name>/`.
+Workweaves live at `<parent>/.workweaves/<project>--<name>/` — by default a sibling of the weave root, so from the weave root the path is `../.workweaves/<project>--<name>/`.
 
 The agent runs in this directory:
 

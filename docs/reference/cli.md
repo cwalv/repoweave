@@ -241,7 +241,7 @@ Create a workweave: worktrees on ephemeral branches for each `owned`/`fork`/`dep
 | `--capture-dirty` | Allow creation when the source project directory has uncommitted changes. The dirty state is captured into the new workweave's project worktree |
 | `--worktree-references` | Cut a real `git worktree` for `role: reference` repos instead of the default symlink to the canonical weave-root clone. Restores the legacy behavior (per-workweave reference refs) at the cost of duplicating each reference repo's working tree into the workweave |
 
-Workweaves live at `<parent>/.workweaves/<project>--<name>/`.
+Workweaves live at `<parent>/.workweaves/<project>--<name>/` by default. Setting `RWV_WORKWEAVE_DIR` relocates the container: workweaves then live at `$RWV_WORKWEAVE_DIR/<project>--<name>/`. All verbs that resolve workweaves (create, delete, list, log, doctor's workweave scans, sync targets by bare name) honor the same resolution.
 
 ### `rwv workweave <project> delete <name> [--force]`
 

@@ -77,7 +77,7 @@ The shape:
 # Human, from the primary weave:
 rwv workweave web-app create agent-refactor
 # Hand the path ../.workweaves/web-app--agent-refactor/ to the agent
-# (workweaves live at <parent>/.workweaves/<project>--<name>/ — a sibling
+# (workweaves live at <parent>/.workweaves/<project>--<name>/ — by default a sibling
 # of the weave root, not a child).
 
 # Agent works in that workweave:
@@ -102,7 +102,7 @@ Three properties make this pattern work:
 
 The pattern generalizes to a *semi-persistent* agent workweave: a workspace that lives across many agent sessions, acting as the gravity well where agent work consolidates before the human decides to bring it all the way home to primary.
 
-The human works in the primary weave. The agent works in a dedicated agent workweave (materialized at `<parent>/.workweaves/web-app--agent/` — a sibling of the weave root). Periodically the human reviews the agent workweave's state and runs `rwv sync-to primary` from inside it to land accumulated work. Less periodically, the agent runs `rwv sync primary --strategy rebase` from inside the agent workweave to absorb upstream changes the human has made.
+The human works in the primary weave. The agent works in a dedicated agent workweave (materialized at `<parent>/.workweaves/web-app--agent/` — by default a sibling of the weave root). Periodically the human reviews the agent workweave's state and runs `rwv sync-to primary` from inside it to land accumulated work. Less periodically, the agent runs `rwv sync primary --strategy rebase` from inside the agent workweave to absorb upstream changes the human has made.
 
 This recommended pattern composes from existing primitives — there is no special "agent weave" type. Parent tracking via `.rwv-workweave` makes bare `rwv sync-to` from feature workweaves target their parent (the agent workweave) by default, which is exactly the discipline you want.
 

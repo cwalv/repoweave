@@ -9,7 +9,7 @@ rwv workweave web-app create review-pr-42
 cd ../.workweaves/web-app--review-pr-42/github/chatly/server
 ```
 
-Workweaves live at `<parent>/.workweaves/<project>--<name>/` — a sibling of the weave root, so from the weave root the path is `../.workweaves/<project>--<name>/`.
+Workweaves live at `<parent>/.workweaves/<project>--<name>/` — by default a sibling of the weave root, so from the weave root the path is `../.workweaves/<project>--<name>/`.
 
 ## Check out the PR
 

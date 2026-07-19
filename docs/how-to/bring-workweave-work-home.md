@@ -9,7 +9,7 @@ cd ../.workweaves/web-app--payments
 rwv sync-to --retire
 ```
 
-Workweaves live at `<parent>/.workweaves/<project>--<name>/` — a sibling of the weave root, not a child. From the weave root, that path is `../.workweaves/<project>--<name>/`.
+Workweaves live at `<parent>/.workweaves/<project>--<name>/` — by default a sibling of the weave root, not a child. From the weave root, that path is `../.workweaves/<project>--<name>/`.
 
 `rwv sync-to` is the landing verb: CWD's committed state lands in the target workspace. Bare `rwv sync-to` auto-targets the recorded parent from `.rwv-workweave` (one hop toward primary). `--retire` adds a post-landing cleanup step so the workweave is deleted on success.
 
