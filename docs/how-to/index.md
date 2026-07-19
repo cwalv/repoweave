@@ -22,6 +22,11 @@ Task-shaped recipes. Each page leads with the command; the conceptual material i
 - [Hand a task to an agent](./hand-task-to-agent.md) — the landed agent surface
 - [Cache builds across workweaves](./cache-builds-across-workweaves.md) — sccache, pnpm store, uv cache
 
+## Recovery
+
+- [Reconcile repos with the lock](./reconcile-repos.md) — `rwv status`, `rwv doctor --locked`, `rwv fetch` in-place repair
+- [Regenerate ecosystem workspace files](./regenerate-ecosystem-files.md) — `rwv activate` after membership changes
+
 ## Release and integration
 
 - [Release a package](./release-a-package.md) — per-ecosystem release recipes

@@ -19,6 +19,8 @@
 - [Cache builds across workweaves](./how-to/cache-builds-across-workweaves.md)
 - [Release a package](./how-to/release-a-package.md)
 - [Add an integration](./how-to/add-an-integration.md)
+- [Reconcile repos with the lock](./how-to/reconcile-repos.md)
+- [Regenerate ecosystem workspace files](./how-to/regenerate-ecosystem-files.md)
 
 # Explanation — Lenses
 
