@@ -55,7 +55,7 @@ Run from the workspace root (where `.rwv-active` lives). `rwv fetch` leaves alre
 rwv doctor --locked
 ```
 
-If the lock SHA is not in the remote's history (the `[unreachable]` case — the upstream was force-pushed or history was rewritten), `rwv fetch` will error on that repo. In that case, update the lock to reflect a reachable state: if the correct revision is on the branch tip, run `rwv lock --commit`; if the project needs to track a specific upstream commit, update the manifest's `version` field and re-run `rwv fetch`.
+`[unreachable]` has two sub-cases, and in-place `rwv fetch` repairs neither (with the clone present it performs a local checkout, no network fetch). If the remote still has the locked revision (the local object store lost it — a prune, a shallow history), plain `git fetch` in the affected repo re-pulls the object; re-run `rwv status` to confirm `ok`. If the lock SHA is not in the remote's history either (the upstream was force-pushed or history was rewritten), `rwv fetch` will error on that repo. In that case, update the lock to reflect a reachable state: if the correct revision is on the branch tip, run `rwv lock --commit`; if the project needs to track a specific upstream commit, update the manifest's `version` field and re-run `rwv fetch`.
 
 ## What `rwv fetch` does not do
 

@@ -198,7 +198,7 @@ Show per-repo state for the CWD workspace.
 
 `--json` emits the envelope `{"$schema": "...", "repos": [...]}`. See [JSON envelope convention](#--json-envelope-convention).
 
-A `missing` or `unreachable` relation names a clone that has vanished (missing directory) or whose remote tip cannot be resolved. The repair path is `rwv fetch` with no source — the in-place re-materialize mode — run from the workspace root; see [`rwv fetch`](#rwv-fetch--source--) above and `rwv doctor` for the paired detection (`MissingCanonicalClone`, `DanglingReference`).
+A `missing` relation names a clone directory that has vanished; the repair is `rwv fetch` with no source — the in-place re-materialize mode — run from the workspace root (see [`rwv fetch`](#rwv-fetch--source--) above and `rwv doctor` for the paired detection: `MissingCanonicalClone`, `DanglingReference`). An `unreachable` relation names a clone that is present but whose object store lacks the locked SHA; in-place `rwv fetch` does not repair it (with the directory present it performs a local checkout without a network fetch). If the remote still has the revision, `git fetch` in the affected repo re-pulls it; if the remote's history was rewritten, re-lock to a reachable state — see [reconcile repos](../how-to/reconcile-repos.md).
 
 Anchored by `tests/doc_claims_status_test.rs`.
 
