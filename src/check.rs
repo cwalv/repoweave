@@ -4569,12 +4569,27 @@ pub fn run_check(
         // USER-HELD findings always surface — we never auto-rewrite them.
         all_issues.extend(user_held_issues);
         if fix && !fixable_issues.is_empty() {
-            // Regenerate by running intent-mode activation against this project,
-            // from the workspace dir. This is the canonical write path; any
+            // Regenerate by running intent-mode activation bound to THIS weave
+            // (primary or workweave). This is the canonical write path; any
             // integration whose verify() flagged safe-to-fix drift will re-author
-            // its content here. The activation also re-runs activate-hooks (install
-            // commands); doctor --fix is meant to fully repair, so that's correct.
-            match crate::activate::activate_intent(project.name.as_str(), &workspace_dir) {
+            // its content here.
+            //
+            // Weave-binding mirrors the surfacing-fix precedent below: the
+            // repair primitive must be pointed at the same weave dir the
+            // detector scanned, never at ctx.primary_path(). The naive
+            // `activate_intent` path resolves cwd → primary and would silently
+            // rewrite the PRIMARY project's managed files from inside a
+            // workweave — breaking the isolation contract that makes
+            // workweave-scoped repair risk-free. `activate_workweave_intent`
+            // is the workweave-bound sibling: it runs the same
+            // `run_activations` pass with `output_dir = workweave/projects/<project>`
+            // and skips install hooks. From primary we use the primary path.
+            let result = if matches!(ctx.location, WorkspaceLocation::Workweave { .. }) {
+                crate::activate::activate_workweave_intent(project.name.as_str(), &workspace_dir)
+            } else {
+                crate::activate::activate_intent(project.name.as_str(), &workspace_dir)
+            };
+            match result {
                 Ok(()) => println!(
                     "[fixed] core: regenerated integration content for project `{}` (drift detected)",
                     project.name
