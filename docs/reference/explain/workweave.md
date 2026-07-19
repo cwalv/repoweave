@@ -118,7 +118,8 @@ List existing workweave names for the project. One name per line.
 ### `rwv workweave <project> log [--diff] [--json]`
 
 Show this workweave's **unique commits vs its recorded parent**, per manifest
-repo. Must be run from inside a workweave.
+repo and the project repo (`projects/<project>`). Must be run from inside a
+workweave.
 
 Parent identity comes from the `.rwv-workweave` marker's `parent:` field — NOT
 the branch name. Workweave branches are stacked (`{project}--wwb/{project}--wwa/main`),
@@ -132,14 +133,21 @@ the parent's — reachable from the workweave's tip but not from the parent's ti
 of the same repo. This stays correct when the parent **advanced** after the
 fork: commits the parent already has are excluded.
 
+The project repo (`projects/<project>`) is included as a first-class
+participant. It carries real per-workweave work — doc commits, lock bumps — and
+appears as `=== (project) ===` in text output and as a top-level `project_repo`
+field in JSON output. This mirrors the representation sync-to uses for
+`project_repo_advance`.
+
 - `--diff` — instead of the commit listing, show the workweave's unique diff vs
   its parent. The diff is anchored at the **common ancestor** of the workweave
   tip and the parent tip, NOT the parent tip directly: anchoring at the common
   ancestor keeps commits the parent gained after the fork from being shown as
   reversals.
 - `--json` — machine-readable output (envelope: `workweave`, `parent`, `diff`,
-  `repos[]`; each repo carries `head`, `parent_tip`, `unique_commits[]`, and —
-  in diff mode — `diff_base` + `diff`).
+  `repos[]`, `project_repo`; each repo entry carries `head`, `parent_tip`,
+  `unique_commits[]`, and — in diff mode — `diff_base` + `diff`; `project_repo`
+  has the same shape with `path` set to `"(project)"`).
 
 This is the surface consumers use to read a workweave's parent-relative history
 instead of hand-rolling branch-name derivation.

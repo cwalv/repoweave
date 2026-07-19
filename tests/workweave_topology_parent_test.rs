@@ -783,3 +783,194 @@ fn workweave_log_refuses_in_primary_weave() {
         "should explain CWD is not a workweave; got:\n{stderr}"
     );
 }
+
+// ===========================================================================
+// 6. workweave log — project repo included
+// ===========================================================================
+
+/// `rwv workweave log --json` includes a `project_repo` field whose commits
+/// reflect real per-workweave project-repo work (e.g. a doc or lock commit).
+#[test]
+fn workweave_log_json_includes_project_repo_unique_commits() {
+    let tmp = tempfile::tempdir().unwrap();
+    let main = make_main_workspace(tmp.path());
+
+    let ww = create_workweave(&main, "feat", None);
+    // Commit something in the workweave's project repo.
+    let ww_project = ww.root.join("projects").join(PROJECT);
+    commit_file(&ww_project, "notes.md", "work notes\n", "docs: add notes");
+
+    let out = rwv()
+        .args(["workweave", PROJECT, "log", "--json"])
+        .env("RWV_WORKWEAVE_DIR", &main.weaveroot)
+        .current_dir(&ww.root)
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "workweave log failed:\n{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+
+    // project_repo field must be present and carry the unique commit.
+    let pr = &v["project_repo"];
+    assert!(
+        !pr.is_null(),
+        "project_repo field must be present in JSON output"
+    );
+    assert_eq!(
+        pr["path"].as_str().unwrap(),
+        "(project)",
+        "project_repo.path must be the '(project)' sentinel"
+    );
+    let commits = pr["unique_commits"].as_array().unwrap();
+    let subjects: Vec<&str> = commits
+        .iter()
+        .map(|c| c["subject"].as_str().unwrap())
+        .collect();
+    assert!(
+        subjects.iter().any(|s| s.contains("docs: add notes")),
+        "project repo unique commit must be listed; got: {subjects:?}"
+    );
+}
+
+/// `rwv workweave log` text output includes an `=== (project) ===` section.
+#[test]
+fn workweave_log_text_includes_project_repo_section() {
+    let tmp = tempfile::tempdir().unwrap();
+    let main = make_main_workspace(tmp.path());
+
+    let ww = create_workweave(&main, "feat2", None);
+    // Commit something in the workweave's project repo.
+    let ww_project = ww.root.join("projects").join(PROJECT);
+    commit_file(
+        &ww_project,
+        "notes.md",
+        "work notes\n",
+        "docs: project notes",
+    );
+
+    let out = rwv()
+        .args(["workweave", PROJECT, "log"])
+        .env("RWV_WORKWEAVE_DIR", &main.weaveroot)
+        .current_dir(&ww.root)
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "workweave log failed:\n{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("=== (project) ==="),
+        "text output must include a (project) section; got:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("docs: project notes"),
+        "text output must list the project repo commit; got:\n{stdout}"
+    );
+}
+
+/// `rwv workweave log --json` has `project_repo` with empty `unique_commits`
+/// when the project repo has NO commits unique vs the parent.
+#[test]
+fn workweave_log_json_project_repo_no_unique_commits_when_clean() {
+    let tmp = tempfile::tempdir().unwrap();
+    let main = make_main_workspace(tmp.path());
+
+    let ww = create_workweave(&main, "clean", None);
+    // No project-repo commits in the workweave.
+
+    let out = rwv()
+        .args(["workweave", PROJECT, "log", "--json"])
+        .env("RWV_WORKWEAVE_DIR", &main.weaveroot)
+        .current_dir(&ww.root)
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "workweave log failed:\n{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+
+    let pr = &v["project_repo"];
+    assert!(!pr.is_null(), "project_repo must always be present");
+    let commits = pr["unique_commits"].as_array().unwrap();
+    assert!(
+        commits.is_empty(),
+        "project_repo unique_commits must be empty when there are no unique commits; got: {commits:?}"
+    );
+}
+
+/// `rwv workweave log` text output shows `(no unique commits vs parent)` for
+/// the `(project)` section when the project repo has no unique commits.
+#[test]
+fn workweave_log_text_project_repo_no_unique_commits_label() {
+    let tmp = tempfile::tempdir().unwrap();
+    let main = make_main_workspace(tmp.path());
+
+    let ww = create_workweave(&main, "clean2", None);
+    // No project-repo commits in the workweave.
+
+    let out = rwv()
+        .args(["workweave", PROJECT, "log"])
+        .env("RWV_WORKWEAVE_DIR", &main.weaveroot)
+        .current_dir(&ww.root)
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "workweave log failed:\n{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    // The (project) section must appear and report "no unique commits".
+    let project_section_pos = stdout
+        .find("=== (project) ===")
+        .expect("(project) section must appear in text output");
+    let after = &stdout[project_section_pos..];
+    assert!(
+        after.contains("no unique commits vs parent"),
+        "project section must say '(no unique commits vs parent)' when clean; got:\n{after}"
+    );
+}
+
+/// `rwv workweave log --diff --json` includes a `project_repo` with diff
+/// content when the project repo has unique work.
+#[test]
+fn workweave_log_diff_json_includes_project_repo() {
+    let tmp = tempfile::tempdir().unwrap();
+    let main = make_main_workspace(tmp.path());
+
+    let ww = create_workweave(&main, "difftest", None);
+    let ww_project = ww.root.join("projects").join(PROJECT);
+    commit_file(
+        &ww_project,
+        "feature.md",
+        "feature description\n",
+        "docs: feature",
+    );
+
+    let out = rwv()
+        .args(["workweave", PROJECT, "log", "--diff", "--json"])
+        .env("RWV_WORKWEAVE_DIR", &main.weaveroot)
+        .current_dir(&ww.root)
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "workweave log --diff failed:\n{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    let pr = &v["project_repo"];
+    assert!(!pr.is_null(), "project_repo must be present in diff output");
+    let diff_text = pr["diff"].as_str().unwrap_or("");
+    assert!(
+        diff_text.contains("feature.md") || diff_text.contains("feature description"),
+        "project_repo diff must include the unique change; got:\n{diff_text}"
+    );
+}

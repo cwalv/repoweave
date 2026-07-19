@@ -2240,6 +2240,13 @@ pub struct WorkweaveLogOutput {
     pub diff: bool,
     /// Per-repo results, one per manifest repo.
     pub repos: Vec<WorkweaveLogRepo>,
+    /// Log result for the project repo (`projects/<project>/.git`). Omitted
+    /// when the project repo's working tree is not found. Uses the
+    /// `"(project)"` sentinel in its `path` field, matching the convention
+    /// sync-to uses for `project_repo_advance`. Separate keyed field (not a
+    /// peer in `repos[]`) to mirror the sync-to JSON representation.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub project_repo: Option<WorkweaveLogRepo>,
 }
 
 /// Print (or JSON-emit) the workweave's UNIQUE commits vs the recorded parent,
@@ -2374,11 +2381,84 @@ pub fn workweave_log(cwd: &Path, diff: bool, json: bool) -> anyhow::Result<()> {
         });
     }
 
+    // Project repo: `projects/<project>/.git`. Always git; uses the
+    // `"(project)"` sentinel for its path field, matching the convention
+    // sync-to uses. Parent tip is read from the parent's project checkout,
+    // exactly as the parent marker recorded it — no branch-name reconstruction.
+    let project_repo = {
+        let ww_project = ww_dir.join("projects").join(project.as_str());
+        let parent_project = parent_path.join("projects").join(project.as_str());
+        let vcs = GitVcs;
+
+        let mut note: Option<String> = None;
+
+        let head = match vcs.head_revision(&ww_project) {
+            Ok(rev) => Some(rev),
+            Err(e) => {
+                note = Some(format!("workweave project checkout HEAD unreadable: {e}"));
+                None
+            }
+        };
+
+        let parent_tip = match vcs.head_revision(&parent_project) {
+            Ok(rev) => Some(rev),
+            Err(e) => {
+                if note.is_none() {
+                    note = Some(format!("parent project checkout HEAD unreadable: {e}"));
+                }
+                None
+            }
+        };
+
+        let mut unique_commits: Vec<WorkweaveLogCommit> = Vec::new();
+        let mut diff_base: Option<String> = None;
+        let mut diff_text: Option<String> = None;
+
+        if let Some(parent_rev) = &parent_tip {
+            if head.is_some() {
+                if diff {
+                    match vcs.unique_diff(&ww_project, parent_rev) {
+                        Ok(ud) => {
+                            diff_base = ud.base;
+                            diff_text = Some(ud.text);
+                        }
+                        Err(e) => note = Some(format!("diff failed: {e}")),
+                    }
+                } else {
+                    match vcs.unique_commits(&ww_project, parent_rev) {
+                        Ok(entries) => {
+                            unique_commits = entries
+                                .into_iter()
+                                .map(|c| WorkweaveLogCommit {
+                                    sha: c.id,
+                                    short: c.short,
+                                    subject: c.subject,
+                                })
+                                .collect();
+                        }
+                        Err(e) => note = Some(format!("log failed: {e}")),
+                    }
+                }
+            }
+        }
+
+        Some(WorkweaveLogRepo {
+            path: "(project)".to_string(),
+            head: head.map(|r| r.as_str().to_string()),
+            parent_tip: parent_tip.map(|r| r.as_str().to_string()),
+            unique_commits,
+            diff_base,
+            diff: diff_text,
+            note,
+        })
+    };
+
     let output = WorkweaveLogOutput {
         workweave: ww_name.as_str().to_string(),
         parent: parent_path.to_string_lossy().to_string(),
         diff,
         repos,
+        project_repo,
     };
 
     if json {
@@ -2399,7 +2479,13 @@ fn print_workweave_log_text(output: &WorkweaveLogOutput) {
         "workweave {} {} vs parent {}",
         output.workweave, verb, output.parent
     );
-    for repo in &output.repos {
+    // Manifest repos first, then the project repo at the end.
+    let all_repos: Vec<&WorkweaveLogRepo> = output
+        .repos
+        .iter()
+        .chain(output.project_repo.iter())
+        .collect();
+    for repo in all_repos {
         println!();
         println!("=== {} ===", repo.path);
         if let Some(note) = &repo.note {

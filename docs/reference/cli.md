@@ -253,12 +253,14 @@ List workweaves for a project.
 
 ### `rwv workweave <project> log [--diff] [--json]`
 
-Show this workweave's unique commits versus its recorded parent, per repo. Must be run from inside a workweave.
+Show this workweave's unique commits versus its recorded parent, per repo, including the project repo (`projects/<project>`). Must be run from inside a workweave.
 
 | Flag | Effect |
 |---|---|
 | `--diff` | Show the unique diff versus the parent instead of the commit listing. Anchored at the common ancestor, so commits the parent gained after the fork are not shown as reversals |
 | `--json` | Emit machine-readable JSON |
+
+Text output includes one `=== <path> ===` section per manifest repo followed by `=== (project) ===` for the project repo. JSON output adds a `project_repo` field at the top level (same shape as each element of `repos[]`, `path` set to `"(project)"`).
 
 ### Scripting helpers
 
