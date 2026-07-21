@@ -104,7 +104,7 @@ fn main() -> anyhow::Result<()> {
         //     workweave literally named `crete`. The genuine bare-name case
         //     (`fo-city`, edit distance >= 6 from every action) is far from any
         //     subcommand and still gets the create-shaped reframe. See rwv-b2z
-        //     review (TL).
+        //     review.
         if raw_args.get(1).map(|s| s.as_str()) == Some("workweave") {
             let project = raw_args.get(2).map(|s| s.as_str());
             let word = raw_args.get(3).map(|s| s.as_str());
@@ -131,7 +131,7 @@ fn main() -> anyhow::Result<()> {
                     eprintln!(
                         "error: '{word}' is not a valid subcommand for 'rwv workweave {project}'\n\
                          Did you mean:  rwv workweave {project} create {word}\n\
-                         Available subcommands: create, delete, list, log"
+                         Available subcommands: create, delete, list, log, set-container"
                     );
                     std::process::exit(2);
                 }
