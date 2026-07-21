@@ -397,7 +397,7 @@
       ]
     },
     "PluginRecord": {
-      "description": "A discovered external command (`rwv-<verb>`) on `PATH`.\n\nRecords are sorted by `(name, path)` for deterministic output. When the same name appears in more than one `PATH` directory, the first occurrence wins at exec time; later occurrences are marked `shadowed = true` and carry `shadowed_by` pointing at the winning binary. The `kind` field is always `\"external-command\"` to allow agents to discriminate inventory records from violation records in the doctor JSON.",
+      "description": "A discovered external command (`rwv-<verb>`) on `PATH`.\n\nRecords are sorted by `(name, path)` for deterministic output. When the same name appears in more than one `PATH` directory, the first occurrence wins at exec time; later occurrences are marked `shadowed = true` and carry `shadowed_by` pointing at the winning binary.",
       "type": "object",
       "required": [
         "name",
