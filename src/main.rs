@@ -15,7 +15,7 @@ use repoweave::sync;
 use repoweave::update;
 
 use anyhow::Context;
-use clap::{CommandFactory, Parser};
+use clap::{CommandFactory, FromArgMatches};
 use repoweave::manifest::{ProjectName, WorkweaveName};
 use repoweave::workspace::{acquire_origin_dir, WorkspaceContext};
 use std::ffi::OsString;
@@ -360,14 +360,28 @@ fn main() -> anyhow::Result<()> {
         }
     }
 
+    // Build the clap command and dynamically append an "External commands"
+    // section when `rwv-*` executables are found on PATH. The section lists
+    // names only (no descriptions) and appears after clap's core usage
+    // summary, keeping the core surface unmodified. An empty PATH scan
+    // produces no section at all. `None::<&OsStr>` passes through to the
+    // process's inherited PATH — the `which` crate owns the OS lookup.
+    let cmd = {
+        let base = Cli::command();
+        match plugins::external_commands_help_section(None::<&std::ffi::OsStr>) {
+            Some(section) => base.after_help(section),
+            None => base,
+        }
+    };
+
     // Suppress the "For more information, try '--help'" footer on clap errors
     // when `--help`/`-h` is already present in the invocation: re-advising the
     // flag the user just typed is noise. We can't hook this cleanly in clap 4
     // (no stable on-error footer override in derive mode), so detect `--help`
     // in the raw args and, on a clap error, re-render it with that one footer
     // line filtered out. Non-help invocations keep clap's default error path.
-    let cli = match Cli::try_parse() {
-        Ok(cli) => cli,
+    let cli = match cmd.try_get_matches() {
+        Ok(matches) => Cli::from_arg_matches(&matches).unwrap_or_else(|e| e.exit()),
         Err(err) => {
             let help_requested = std::env::args().any(|a| a == "--help" || a == "-h");
             if help_requested && err.use_stderr() {

@@ -68,7 +68,8 @@ severity. Under `--json`, output is the envelope:
 ```
 {
   "$schema": "<url>",
-  "violations": [ { "kind": "...", ... }, ... ]
+  "violations": [ { "kind": "...", ... }, ... ],
+  "plugins": [ { "name": "...", "path": "...", "shadowed": false }, ... ]
 }
 ```
 
@@ -87,6 +88,14 @@ Every per-repo variant carries `path` (manifest-relative) and
 (`dangling-parent`, `parent-chain-anomaly`, `unregistered-dir`,
 `foreign-primary`); only `dangling-parent` is auto-fixable via `--fix`.
 
+The `plugins` array is the PATH inventory of `rwv-*` executables found at
+run time. Each record carries `name` (the `<verb>` in `rwv-<verb>`), `path`
+(absolute), and `shadowed` (`true` when an earlier `PATH` entry shadows this
+binary, with `shadowed_by` naming the winner). An empty array means no
+`rwv-*` executables were found. Plugin presence is **never** a failed check —
+the inventory is the audit surface for the PATH trust boundary, not a health
+gate. The exit code is unaffected by this field.
+
 Surfacing violations (missing or mis-resolved symlinks in the active
 project's surfacing set) are reported as `core` integration warnings in
 the text output; they do not have a dedicated `--json` kind because they
@@ -99,15 +108,23 @@ Schema:
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "DoctorEnvelope",
-  "description": "Output envelope for `rwv doctor --json`. By default only the active project is checked and orphan detection is skipped; pass `--all` to scan every project and enable weave-wide orphan detection. The `violations` array contains one entry per finding; an empty array means the checked scope is clean.",
+  "description": "Output envelope for `rwv doctor --json`. By default only the active project is checked and orphan detection is skipped; pass `--all` to scan every project and enable weave-wide orphan detection. The `violations` array contains one entry per finding; an empty array means the checked scope is clean. The `plugins` array is the PATH inventory of `rwv-*` executables (reporting only — plugin presence never fails the doctor check or affects the exit code).",
   "type": "object",
   "required": [
     "$schema",
+    "plugins",
     "violations"
   ],
   "properties": {
     "$schema": {
       "type": "string"
+    },
+    "plugins": {
+      "description": "`rwv-*` executables discovered on `PATH`. Each record carries the verb name, absolute path, and a `shadowed` flag for duplicates: when the same name appears in multiple `PATH` directories, the first copy wins at exec time; later copies are marked `shadowed: true` with `shadowed_by` pointing at the winning binary. Records are sorted by `(name, path)` for deterministic output. An empty array means no `rwv-*` executables were found. Never a failed check — the inventory is the audit surface for the PATH trust boundary.",
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/PluginRecord"
+      }
     },
     "resolution": {
       "description": "Resolved workspace coordinates (workspace root, optional workweave identity, project). Absent when no project is resolved.",
@@ -485,6 +502,36 @@ Schema:
           ]
         }
       ]
+    },
+    "PluginRecord": {
+      "description": "A discovered external command (`rwv-<verb>`) on `PATH`.\n\nRecords are sorted by `(name, path)` for deterministic output. When the same name appears in more than one `PATH` directory, the first occurrence wins at exec time; later occurrences are marked `shadowed = true` and carry `shadowed_by` pointing at the winning binary. The `kind` field is always `\"external-command\"` to allow agents to discriminate inventory records from violation records in the doctor JSON.",
+      "type": "object",
+      "required": [
+        "name",
+        "path",
+        "shadowed"
+      ],
+      "properties": {
+        "name": {
+          "description": "Short verb name — the `<verb>` in `rwv-<verb>` and `rwv <verb>`.",
+          "type": "string"
+        },
+        "path": {
+          "description": "Absolute path of this binary on disk.",
+          "type": "string"
+        },
+        "shadowed": {
+          "description": "`true` when another binary with the same name appears earlier in `PATH` and will be executed instead. This binary is unreachable via `rwv <name>` until the shadowing copy is removed.",
+          "type": "boolean"
+        },
+        "shadowed_by": {
+          "description": "Absolute path of the binary that shadows this one. Present iff `shadowed` is `true`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
     },
     "ProvenanceKind": {
       "description": "Discriminator for `CheckViolation::Provenance` findings.",

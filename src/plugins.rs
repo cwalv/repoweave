@@ -1,5 +1,5 @@
-//! External-subcommand dispatch: `rwv <verb>` where `<verb>` is not a core
-//! verb resolves to `rwv-<verb>` on `$PATH` and execs it, exit/signal
+//! External-subcommand dispatch and discovery: `rwv <verb>` where `<verb>` is
+//! not a core verb resolves to `rwv-<verb>` on `$PATH` and execs it, exit/signal
 //! propagated verbatim.
 //!
 //! # Contract
@@ -31,11 +31,19 @@
 //!
 //! # PATH discovery
 //!
-//! The lookup goes through the `which` crate (its `which::which()`), which
-//! encapsulates the OS executable-discovery surface. This deliberately
-//! avoids an explicit `std::env::var("PATH")` read in this crate's source:
-//! PATH is not an addressing input and the env-input inventory rightly
-//! forbids ambient env reads for addressing.
+//! Single-binary lookup goes through `which::which()`. Bulk discovery
+//! (for `--help` and doctor) goes through `which::which_re_in` (the
+//! `which` crate's regex-based multi-match). Both paths stay behind the
+//! crate boundary — no explicit `std::env::var_os("PATH")` read appears
+//! in this module: the `which` crate owns the OS executable-discovery
+//! surface. The `regex` feature is enabled on the crate so
+//! `which_re_in` is available.
+//!
+//! Duplicate handling: when the same `rwv-<verb>` name appears in
+//! multiple `PATH` directories, first-found wins at exec time (standard
+//! `PATH` semantics). `discover_plugins` returns every copy and marks all
+//! but the first as `shadowed = true` so callers (help section, doctor)
+//! can surface this for audit.
 //!
 //! # Env envelope
 //!
@@ -63,7 +71,7 @@
 //! go through it. Do not construct the child command inline.
 
 use crate::workspace::Resolution;
-use std::ffi::OsString;
+use std::ffi::{OsStr, OsString};
 use std::os::unix::process::ExitStatusExt;
 use std::path::PathBuf;
 use std::process::Command;
@@ -93,6 +101,145 @@ pub fn envelope_vars(resolution: Option<&Resolution>) -> Vec<(&'static str, Stri
         vars.push(("RWV_PROJECT", r.project.clone()));
     }
     vars
+}
+
+/// A discovered external command (`rwv-<verb>`) on `PATH`.
+///
+/// Records are sorted by `(name, path)` for deterministic output. When the
+/// same name appears in more than one `PATH` directory, the first occurrence
+/// wins at exec time; later occurrences are marked `shadowed = true` and carry
+/// `shadowed_by` pointing at the winning binary.
+#[derive(Debug, Clone, serde::Serialize, schemars::JsonSchema)]
+pub struct PluginRecord {
+    /// Short verb name — the `<verb>` in `rwv-<verb>` and `rwv <verb>`.
+    pub name: String,
+    /// Absolute path of this binary on disk.
+    pub path: String,
+    /// `true` when another binary with the same name appears earlier in
+    /// `PATH` and will be executed instead. This binary is unreachable
+    /// via `rwv <name>` until the shadowing copy is removed.
+    pub shadowed: bool,
+    /// Absolute path of the binary that shadows this one. Present iff
+    /// `shadowed` is `true`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub shadowed_by: Option<String>,
+}
+
+/// Discover every `rwv-*` executable on the given path string (a
+/// `:`-separated list of directories, the same format as `$PATH`).
+///
+/// Results are sorted by `(name, path)` for deterministic output. Within the
+/// same name, the first-found copy is the winner; subsequent copies are marked
+/// `shadowed = true`.
+///
+/// Non-existent, non-directory, and permission-denied path entries are silently
+/// skipped — this mirrors the OS PATH-walk behaviour and avoids spurious errors
+/// when a `PATH` entry refers to an absent mount or `sudo`-only directory.
+///
+/// Non-executable files named `rwv-*` in a `PATH` directory are never returned
+/// — the `which` crate enforces the executable bit just as `execve(2)` would.
+///
+/// `paths_override` is `None` to use the process's inherited `PATH` (via the
+/// `which` crate's own PATH read — no explicit `std::env::var_os("PATH")`
+/// appears in this module) or `Some(custom_path)` to search only the given
+/// colon-separated directory list. Pass `Some(...)` in tests to pin the search
+/// to fixture directories so tests are host-PATH-independent.
+pub fn discover_plugins(paths_override: Option<&OsStr>) -> Vec<PluginRecord> {
+    let re = regex::Regex::new(r"^rwv-.+").expect("constant pattern compiles");
+
+    // Collect all matching executables. The `which` crate iterates PATH
+    // directories in order and filters by executable bit — exactly the
+    // exec-time semantics. Errors (no PATH, empty PATH, I/O) fold to an
+    // empty iterator.
+    //
+    // Two dispatch paths:
+    // - `which_re_in(re, Some(path))` when an override is provided (test mode).
+    // - `which_re_in(re, env::var_os("PATH"))` via `which_re` for the production
+    //   path. `which_re` is the crate's own public function that reads PATH
+    //   internally; no explicit `std::env::var_os("PATH")` call appears here.
+    let found: Vec<PathBuf> = match paths_override {
+        Some(p) => match which::which_re_in(re, Some(p)) {
+            Ok(it) => it.collect(),
+            Err(_) => Vec::new(),
+        },
+        None => match which::which_re(re) {
+            Ok(it) => it.collect(),
+            Err(_) => Vec::new(),
+        },
+    };
+
+    // Build name → path pairs in PATH order (the order `which_re_in` / `which_re`
+    // returns them: directory order from $PATH, entries within a dir in readdir
+    // order). The first occurrence of each name in this PATH-order list is the
+    // exec-time winner — that determines the `shadowed` flag.
+    let path_ordered: Vec<(String, PathBuf)> = found
+        .into_iter()
+        .filter_map(|p| {
+            let name = p.file_name()?.to_str()?.strip_prefix("rwv-")?.to_owned();
+            Some((name, p))
+        })
+        .collect();
+
+    // Determine the winner (first occurrence in PATH order) for each name.
+    let mut winner_paths: std::collections::HashMap<String, String> =
+        std::collections::HashMap::new();
+    for (name, path) in &path_ordered {
+        winner_paths
+            .entry(name.clone())
+            .or_insert_with(|| path.to_string_lossy().into_owned());
+    }
+
+    // Build the output records, then sort by (name, path) for deterministic
+    // agent-facing output. Shadowing is determined by the winner_paths map
+    // (PATH order), NOT by the sort order.
+    let mut records: Vec<PluginRecord> = path_ordered
+        .into_iter()
+        .map(|(name, path)| {
+            let path_str = path.to_string_lossy().into_owned();
+            let winner = winner_paths.get(&name).cloned().unwrap_or_default();
+            let shadowed = path_str != winner;
+            PluginRecord {
+                shadowed_by: if shadowed { Some(winner) } else { None },
+                name,
+                path: path_str,
+                shadowed,
+            }
+        })
+        .collect();
+
+    // Stable sort by (name, path) — deterministic across hosts regardless of
+    // readdir order, without disturbing the shadowing decisions made above.
+    records.sort_by(|a, b| a.name.cmp(&b.name).then_with(|| a.path.cmp(&b.path)));
+
+    records
+}
+
+/// Build the text for the "External commands" section appended to `rwv --help`
+/// output via `clap`'s `after_help`.
+///
+/// Returns `None` when no `rwv-*` executables are found on `PATH` — the section
+/// is omitted entirely rather than showing an empty list.
+///
+/// `paths_override` is forwarded to [`discover_plugins`]; pass `None` to use
+/// the process's inherited `PATH`, or `Some(custom_path)` in tests.
+pub fn external_commands_help_section(paths_override: Option<&OsStr>) -> Option<String> {
+    let records = discover_plugins(paths_override);
+    // List only non-shadowed records in the help section — shadowed copies
+    // are audit surface for doctor, not primary navigation for users.
+    let names: Vec<&str> = records
+        .iter()
+        .filter(|r| !r.shadowed)
+        .map(|r| r.name.as_str())
+        .collect();
+    if names.is_empty() {
+        return None;
+    }
+    let mut out = String::from("External commands:\n");
+    for name in names {
+        out.push_str(&format!("  {name}\n"));
+    }
+    out.push_str("\nInvoke as `rwv <name>`. Run `rwv <name> --help` for each command's own usage.");
+    Some(out)
 }
 
 /// Build the `Command` that will spawn `rwv-<verb>` for the given args.
@@ -209,6 +356,8 @@ pub fn dispatch_external(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
+    use std::os::unix::fs::PermissionsExt;
 
     #[test]
     fn build_command_sets_program_and_args() {
@@ -316,5 +465,257 @@ mod tests {
     #[test]
     fn find_plugin_returns_none_for_missing() {
         assert!(find_plugin("this-verb-definitely-does-not-exist-xyz-42").is_none());
+    }
+
+    // -------------------------------------------------------------------------
+    // Test helpers for discovery tests
+    // -------------------------------------------------------------------------
+
+    /// Create an executable file at `dir/name`. Returns the file path.
+    fn make_executable(dir: &std::path::Path, name: &str) -> PathBuf {
+        let p = dir.join(name);
+        fs::write(&p, "#!/bin/sh\necho hi\n").unwrap();
+        fs::set_permissions(&p, fs::Permissions::from_mode(0o755)).unwrap();
+        p
+    }
+
+    /// Create a non-executable file at `dir/name` (mode 0o644).
+    fn make_non_executable(dir: &std::path::Path, name: &str) {
+        let p = dir.join(name);
+        fs::write(&p, "data\n").unwrap();
+        fs::set_permissions(&p, fs::Permissions::from_mode(0o644)).unwrap();
+    }
+
+    /// Build an OsString PATH from a list of directories.
+    fn join_paths(dirs: &[&std::path::Path]) -> OsString {
+        std::env::join_paths(dirs).expect("join paths")
+    }
+
+    // -------------------------------------------------------------------------
+    // discover_plugins tests
+    // -------------------------------------------------------------------------
+
+    /// Empty PATH (no dirs) → empty result, no panic.
+    #[test]
+    fn discover_plugins_empty_path_is_empty() {
+        let result = discover_plugins(Some(OsStr::new("")));
+        assert!(result.is_empty(), "expected empty, got {result:?}");
+    }
+
+    /// A single fixture dir with two executable `rwv-*` files.
+    #[test]
+    fn discover_plugins_finds_executables_in_single_dir() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let dir = tmp.path();
+        make_executable(dir, "rwv-bar");
+        make_executable(dir, "rwv-foo");
+        let path = join_paths(&[dir]);
+        let result = discover_plugins(Some(path.as_os_str()));
+        let names: Vec<&str> = result.iter().map(|r| r.name.as_str()).collect();
+        // sorted by name
+        assert_eq!(names, &["bar", "foo"], "names: {names:?}");
+        for r in &result {
+            assert!(!r.shadowed, "should not be shadowed: {r:?}");
+            assert!(r.shadowed_by.is_none(), "shadowed_by should be None: {r:?}");
+        }
+    }
+
+    /// Non-executable `rwv-*` files must NOT appear in results.
+    #[test]
+    fn discover_plugins_skips_non_executable_files() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let dir = tmp.path();
+        make_non_executable(dir, "rwv-notexec");
+        make_executable(dir, "rwv-isexec");
+        let path = join_paths(&[dir]);
+        let result = discover_plugins(Some(path.as_os_str()));
+        let names: Vec<&str> = result.iter().map(|r| r.name.as_str()).collect();
+        assert_eq!(names, &["isexec"]);
+    }
+
+    /// Non-existent PATH dir is silently skipped.
+    #[test]
+    fn discover_plugins_nonexistent_path_dir_silently_skipped() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let dir = tmp.path();
+        make_executable(dir, "rwv-present");
+        let absent = tmp.path().join("does_not_exist");
+        let path = join_paths(&[dir, &absent]);
+        let result = discover_plugins(Some(path.as_os_str()));
+        let names: Vec<&str> = result.iter().map(|r| r.name.as_str()).collect();
+        assert_eq!(names, &["present"]);
+    }
+
+    /// Files not named `rwv-*` are not returned.
+    #[test]
+    fn discover_plugins_ignores_non_rwv_executables() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let dir = tmp.path();
+        make_executable(dir, "git");
+        make_executable(dir, "cargo");
+        make_executable(dir, "rwv-mine");
+        let path = join_paths(&[dir]);
+        let result = discover_plugins(Some(path.as_os_str()));
+        let names: Vec<&str> = result.iter().map(|r| r.name.as_str()).collect();
+        assert_eq!(names, &["mine"]);
+    }
+
+    /// Same name in two PATH dirs: first dir wins; second is shadowed.
+    ///
+    /// Results are sorted by (name, path) for deterministic output, so the
+    /// position of the winner in the vec depends on path lexicography. We
+    /// key on the `shadowed` flag, not position.
+    #[test]
+    fn discover_plugins_duplicate_shadowed_by_path_order() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let dir1 = tmp.path().join("dir1");
+        let dir2 = tmp.path().join("dir2");
+        fs::create_dir_all(&dir1).unwrap();
+        fs::create_dir_all(&dir2).unwrap();
+        let winner = make_executable(&dir1, "rwv-foo");
+        make_executable(&dir2, "rwv-foo");
+        let path = join_paths(&[dir1.as_path(), dir2.as_path()]);
+        let result = discover_plugins(Some(path.as_os_str()));
+        assert_eq!(result.len(), 2, "expected 2 records, got {result:?}");
+        // Both are named "foo".
+        assert!(result.iter().all(|r| r.name == "foo"), "{result:?}");
+        // Exactly one winner (not shadowed) and one shadowed.
+        let winner_rec = result.iter().find(|r| !r.shadowed).expect("winner");
+        let shadowed_rec = result.iter().find(|r| r.shadowed).expect("shadowed");
+        assert_eq!(
+            winner_rec.path,
+            winner.to_string_lossy().as_ref(),
+            "wrong winner path: {winner_rec:?}"
+        );
+        assert_eq!(
+            shadowed_rec.shadowed_by.as_deref(),
+            Some(winner.to_string_lossy().as_ref()),
+            "shadowed_by should point to winner: {shadowed_rec:?}"
+        );
+    }
+
+    /// Same name in THREE PATH dirs: only the first (PATH-order winner) is
+    /// unshadowed; the other two carry shadowed_by pointing at the winner.
+    #[test]
+    fn discover_plugins_triple_duplicate_all_after_first_shadowed() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let dir1 = tmp.path().join("a");
+        let dir2 = tmp.path().join("b");
+        let dir3 = tmp.path().join("c");
+        for d in &[&dir1, &dir2, &dir3] {
+            fs::create_dir_all(d).unwrap();
+        }
+        let winner = make_executable(&dir1, "rwv-dup");
+        make_executable(&dir2, "rwv-dup");
+        make_executable(&dir3, "rwv-dup");
+        let path = join_paths(&[dir1.as_path(), dir2.as_path(), dir3.as_path()]);
+        let result = discover_plugins(Some(path.as_os_str()));
+        assert_eq!(result.len(), 3, "expected 3 records, got {result:?}");
+        // Exactly one winner.
+        let winners: Vec<&PluginRecord> = result.iter().filter(|r| !r.shadowed).collect();
+        assert_eq!(winners.len(), 1, "exactly one winner: {result:?}");
+        assert_eq!(
+            winners[0].path,
+            winner.to_string_lossy().as_ref(),
+            "wrong winner: {result:?}"
+        );
+        // Two shadowed, both pointing at the winner.
+        let winner_str = winner.to_string_lossy().into_owned();
+        let shadowed: Vec<&PluginRecord> = result.iter().filter(|r| r.shadowed).collect();
+        assert_eq!(shadowed.len(), 2, "two shadowed: {result:?}");
+        for s in &shadowed {
+            assert_eq!(
+                s.shadowed_by.as_deref(),
+                Some(winner_str.as_str()),
+                "shadowed_by should point at winner: {s:?}"
+            );
+        }
+    }
+
+    /// Symlinked executable `rwv-*` is included.
+    #[test]
+    fn discover_plugins_symlinked_plugin_is_found() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let bin_dir = tmp.path().join("real");
+        let link_dir = tmp.path().join("links");
+        fs::create_dir_all(&bin_dir).unwrap();
+        fs::create_dir_all(&link_dir).unwrap();
+        let real_bin = make_executable(&bin_dir, "rwv-sym");
+        std::os::unix::fs::symlink(&real_bin, link_dir.join("rwv-sym")).unwrap();
+        let path = join_paths(&[link_dir.as_path()]);
+        let result = discover_plugins(Some(path.as_os_str()));
+        let names: Vec<&str> = result.iter().map(|r| r.name.as_str()).collect();
+        assert_eq!(
+            names,
+            &["sym"],
+            "symlink should be discoverable: {result:?}"
+        );
+        assert!(!result[0].shadowed);
+    }
+
+    /// Output is sorted by name across multiple dirs.
+    #[test]
+    fn discover_plugins_result_sorted_by_name() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let dir = tmp.path();
+        make_executable(dir, "rwv-zebra");
+        make_executable(dir, "rwv-alpha");
+        make_executable(dir, "rwv-middle");
+        let path = join_paths(&[dir]);
+        let result = discover_plugins(Some(path.as_os_str()));
+        let names: Vec<&str> = result.iter().map(|r| r.name.as_str()).collect();
+        assert_eq!(names, &["alpha", "middle", "zebra"]);
+    }
+
+    // -------------------------------------------------------------------------
+    // external_commands_help_section tests
+    // -------------------------------------------------------------------------
+
+    /// Empty PATH → section absent (`None` returned).
+    #[test]
+    fn help_section_absent_when_no_plugins() {
+        let section = external_commands_help_section(Some(OsStr::new("")));
+        assert!(section.is_none(), "expected None, got {section:?}");
+    }
+
+    /// With a fixture plugin, the help section lists the name.
+    #[test]
+    fn help_section_lists_plugin_name() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let dir = tmp.path();
+        make_executable(dir, "rwv-example");
+        let path = join_paths(&[dir]);
+        let section = external_commands_help_section(Some(path.as_os_str()));
+        let text = section.expect("should produce a section");
+        assert!(
+            text.contains("External commands"),
+            "section header missing: {text}"
+        );
+        assert!(text.contains("example"), "plugin name missing: {text}");
+        assert!(
+            text.contains("rwv <name>") || text.contains("rwv-"),
+            "invocation hint missing: {text}"
+        );
+    }
+
+    /// Shadowed duplicates are NOT listed in the help section (only unique names).
+    #[test]
+    fn help_section_omits_shadowed_duplicates() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let dir1 = tmp.path().join("d1");
+        let dir2 = tmp.path().join("d2");
+        fs::create_dir_all(&dir1).unwrap();
+        fs::create_dir_all(&dir2).unwrap();
+        make_executable(&dir1, "rwv-tool");
+        make_executable(&dir2, "rwv-tool");
+        let path = join_paths(&[dir1.as_path(), dir2.as_path()]);
+        let section =
+            external_commands_help_section(Some(path.as_os_str())).expect("section present");
+        // Count occurrences of "tool" in the section — should appear exactly once
+        let count = section.matches("tool").count();
+        assert_eq!(
+            count, 1,
+            "expected 'tool' exactly once in help, got:\n{section}"
+        );
     }
 }

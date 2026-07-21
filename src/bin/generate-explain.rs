@@ -46,6 +46,7 @@ use serde::Serialize;
 use repoweave::check::ViolationOutput;
 use repoweave::cli::Cli;
 use repoweave::fetch::FetchJsonOutput;
+use repoweave::plugins::PluginRecord;
 use repoweave::push::{PushJsonOutput, PUSH_SCHEMA_URL};
 use repoweave::status::StatusJsonOutput;
 use repoweave::sync::{
@@ -59,13 +60,24 @@ use repoweave::workspace::Resolution;
 /// is checked and orphan detection is skipped; pass `--all` to scan every
 /// project and enable weave-wide orphan detection. The `violations` array
 /// contains one entry per finding; an empty array means the checked scope is
-/// clean.
+/// clean. The `plugins` array is the PATH inventory of `rwv-*` executables
+/// (reporting only — plugin presence never fails the doctor check or affects
+/// the exit code).
 #[derive(Serialize, schemars::JsonSchema)]
 #[allow(dead_code)]
 struct DoctorEnvelope {
     #[serde(rename = "$schema")]
     schema: String,
     violations: Vec<ViolationOutput>,
+    /// `rwv-*` executables discovered on `PATH`. Each record carries the verb
+    /// name, absolute path, and a `shadowed` flag for duplicates: when the
+    /// same name appears in multiple `PATH` directories, the first copy wins
+    /// at exec time; later copies are marked `shadowed: true` with
+    /// `shadowed_by` pointing at the winning binary. Records are sorted by
+    /// `(name, path)` for deterministic output. An empty array means no
+    /// `rwv-*` executables were found. Never a failed check — the inventory
+    /// is the audit surface for the PATH trust boundary.
+    plugins: Vec<PluginRecord>,
     /// Resolved workspace coordinates (workspace root, optional workweave
     /// identity, project). Absent when no project is resolved.
     #[serde(skip_serializing_if = "Option::is_none")]

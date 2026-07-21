@@ -5629,14 +5629,17 @@ pub fn run_check(
 /// [`run_check_json`] so tests can drive the serialization shape without
 /// reaching for a real workspace on disk.
 ///
-/// Returns `{ "$schema": ..., "violations": [...], "resolution"?: {...} }`.
-/// `resolution` is a pure projection of the resolved workspace context;
-/// absent when no project is resolved.
+/// Returns `{ "$schema": ..., "violations": [...], "plugins": [...],
+/// "resolution"?: {...} }`. The `plugins` array carries the PATH inventory of
+/// `rwv-*` executables (reporting only — never a failed check). `resolution`
+/// is a pure projection of the resolved workspace context; absent when no
+/// project is resolved.
 pub fn build_doctor_json(
     violations: Vec<CheckViolation>,
     workspace_dir: &Path,
     workweave_dirs: &std::collections::HashMap<WorkweaveName, std::path::PathBuf>,
     resolution: Option<Resolution>,
+    plugins: Vec<crate::plugins::PluginRecord>,
 ) -> serde_json::Value {
     let outputs: Vec<ViolationOutput> = violations
         .into_iter()
@@ -5645,6 +5648,7 @@ pub fn build_doctor_json(
     let mut doc = serde_json::json!({
         "$schema": DOCTOR_SCHEMA_URL,
         "violations": outputs,
+        "plugins": plugins,
     });
     if let Some(res) = resolution {
         doc["resolution"] = serde_json::to_value(res).unwrap_or(serde_json::Value::Null);
@@ -6101,11 +6105,16 @@ pub fn run_check_json(
 ) -> anyhow::Result<bool> {
     let (violations, workspace_dir, workweave_dirs) = collect_doctor_violations(ctx, scope_all)?;
     let has_violations = !violations.is_empty();
+    // Discover `rwv-*` executables on PATH for the inventory. This is
+    // reporting only — the presence or absence of plugins never affects the
+    // has_violations signal or the doctor exit code.
+    let plugins = crate::plugins::discover_plugins(None::<&std::ffi::OsStr>);
     let payload = build_doctor_json(
         violations,
         &workspace_dir,
         &workweave_dirs,
         ctx.resolution(),
+        plugins,
     );
     let out =
         serde_json::to_string_pretty(&payload).context("failed to serialize doctor output")?;

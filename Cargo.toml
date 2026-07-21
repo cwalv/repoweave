@@ -19,7 +19,7 @@ serde = { version = "1", features = ["derive"] }
 serde_yaml = "0.9"
 anyhow = "1"
 serde_json = { version = "1", features = ["preserve_order"] }
-which = "7"
+which = { version = "7", features = ["regex"] }
 clap_complete = "4"
 schemars = "0.8"
 # Added for fo-9kweo (repo-subset filters). `regex` powers `re:` selectors;
