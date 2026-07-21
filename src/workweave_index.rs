@@ -156,6 +156,12 @@ pub fn write(
             parent.display()
         );
     }
+    // Hygiene at the chokepoint: every index write — create, delete,
+    // set-container, doctor adoption/prune — keeps the machine-local file
+    // out of VCS. Best effort: the design tolerates a committed copy
+    // (doctor's tracked-index finding is the net), and a read-only ignore
+    // surface must not block the write itself.
+    let _ = ensure_ignore_entry(primary_root, project);
     let content =
         serde_json::to_string_pretty(index).context("failed to serialize workweave index")?;
     let tmp_name = format!("{}.tmp.{}", INDEX_FILENAME, std::process::id());
@@ -551,6 +557,28 @@ mod tests {
         // Line count should be unchanged (3 non-empty lines).
         let occurrences = content.matches(INDEX_FILENAME).count();
         assert_eq!(occurrences, 1, "must not duplicate the ignore entry");
+    }
+
+    #[test]
+    fn write_ensures_ignore_entry() {
+        let tmp = tempfile::tempdir().unwrap();
+        let primary = tmp.path().join("ws");
+        let project = make_project(&primary, "web-app");
+
+        let index = WorkweaveIndex {
+            container: PathBuf::from("/container"),
+            workweaves: BTreeMap::new(),
+        };
+        write(&primary, &project, &index).unwrap();
+
+        // The chokepoint owns hygiene: any write path (create, delete,
+        // set-container, doctor adoption/prune) must leave the index
+        // ignored without the caller doing anything.
+        let content = std::fs::read_to_string(primary.join("projects/web-app/.gitignore")).unwrap();
+        assert!(
+            content.contains(INDEX_FILENAME),
+            "index write must ensure the ignore entry"
+        );
     }
 
     #[test]

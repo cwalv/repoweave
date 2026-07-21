@@ -1469,12 +1469,6 @@ pub fn create_workweave(
     workweave_index::record_workweave(primary_root, project, name.as_str(), recorded_dir)
         .context("failed to record workweave in the primary-side registry")?;
 
-    // Hygiene: keep the index dotfile out of the project's tracked tree.
-    // Best effort — the design tolerates a committed copy (reads route to
-    // primary; doctor flags it as a finding). Silently swallow errors so a
-    // read-only project checkout does not block the create.
-    let _ = workweave_index::ensure_ignore_entry(primary_root, project);
-
     // All steps complete — defuse the rollback guard so Drop is a no-op.
     rollback.defuse();
 

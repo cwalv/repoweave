@@ -644,9 +644,6 @@ fn main() -> anyhow::Result<()> {
                             &project,
                             canonical.clone(),
                         )?;
-                        // Best-effort: keep the machine-local index out of VCS.
-                        let _ =
-                            repoweave::workweave_index::ensure_ignore_entry(primary_root, &project);
                         eprintln!(
                             "recorded workweave container for project `{}`: {}",
                             project.as_str(),
