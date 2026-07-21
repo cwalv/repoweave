@@ -39,27 +39,92 @@
 //!
 //! # Env envelope
 //!
-//! This module builds the spawn command through a single seam
-//! ([`build_command`]) that a sibling change will extend to inject the
-//! `RWV_*` context envelope. This module sets no env vars of its own.
+//! Every spawn sets a `RWV_*` context envelope on the child process. The
+//! envelope is a pure projection of the resolved [`Resolution`] value —
+//! the same value the `--json` `resolution` block serializes — so both
+//! surfaces are always consistent.
+//!
+//! | Variable | Value | Unset when |
+//! |---|---|---|
+//! | `RWV_VERSION` | `rwv` semver (from `CARGO_PKG_VERSION`) | never |
+//! | `RWV_WORKSPACE` | primary workspace root (absolute path) | no workspace resolved |
+//! | `RWV_WORKWEAVE` | `<project>--<name>` | not in / not addressing a workweave |
+//! | `RWV_PROJECT` | resolved project name | no project resolved |
+//!
+//! Presence of `RWV_WORKWEAVE` encodes the checkout kind — no separate kind
+//! variable is needed.
+//!
+//! `rwv` never reads any of these variables back. They are outputs set at
+//! spawn for the child; a plugin that needs to address `rwv` explicitly
+//! uses them as arguments:
+//! `rwv -C "$RWV_WORKSPACE" --project "$RWV_PROJECT" status --json`.
+//!
+//! The seam for envelope injection is [`build_command`] — all spawn paths
+//! go through it. Do not construct the child command inline.
 
+use crate::workspace::Resolution;
 use std::ffi::OsString;
 use std::os::unix::process::ExitStatusExt;
 use std::path::PathBuf;
 use std::process::Command;
 
+/// Project a resolved [`Resolution`] into the `RWV_*` env-var envelope.
+///
+/// Returns a list of `(name, value)` pairs to set on the child process.
+/// Variables that should be *unset* when no workspace is resolved are simply
+/// absent from the list — callers set what is present and leave the rest
+/// to the child's inherited env (which won't have them either).
+///
+/// `RWV_VERSION` is always included; workspace vars appear only when
+/// `resolution` is `Some`.
+///
+/// This function is the single source of truth for which names are in the
+/// envelope and how each [`Resolution`] field maps to them. Both the spawn
+/// path ([`build_command`]) and tests use this function so a change to the
+/// variable set is automatically reflected in both.
+pub fn envelope_vars(resolution: Option<&Resolution>) -> Vec<(&'static str, String)> {
+    let mut vars: Vec<(&'static str, String)> = Vec::new();
+    vars.push(("RWV_VERSION", env!("CARGO_PKG_VERSION").to_owned()));
+    if let Some(r) = resolution {
+        vars.push(("RWV_WORKSPACE", r.workspace.to_string_lossy().into_owned()));
+        if let Some(ww) = &r.workweave {
+            vars.push(("RWV_WORKWEAVE", ww.clone()));
+        }
+        vars.push(("RWV_PROJECT", r.project.clone()));
+    }
+    vars
+}
+
 /// Build the `Command` that will spawn `rwv-<verb>` for the given args.
 ///
-/// Single seam: a sibling change injects the `RWV_*` context envelope by
-/// extending this function. Callers must not construct the child command
-/// inline.
+/// Sets the `RWV_*` context envelope on the child before returning:
+/// - `RWV_VERSION` is always set to the `rwv` semver.
+/// - `RWV_WORKSPACE`, `RWV_WORKWEAVE` (when in a workweave), and
+///   `RWV_PROJECT` are set when `resolution` is `Some`; they are absent
+///   from the child's env when no workspace was resolved (soft fallthrough).
+///
+/// The envelope is derived from `resolution` via [`envelope_vars`] — the
+/// same [`Resolution`] value the `--json` output block serializes. The two
+/// surfaces (JSON and env) are projections of one value and are therefore
+/// always consistent by construction.
 ///
 /// The child inherits stdin, stdout, and stderr — [`std::process::Command`]
 /// does that by default when none of `stdin`/`stdout`/`stderr` are set.
-/// This preserves the plugin's terminal control and its own I/O contract.
-pub fn build_command(binary: &std::path::Path, args: &[OsString]) -> Command {
+/// This preserves the external command's terminal control and its own I/O
+/// contract.
+///
+/// All spawn paths must go through this function. Do not construct the child
+/// command inline.
+pub fn build_command(
+    binary: &std::path::Path,
+    args: &[OsString],
+    resolution: Option<&Resolution>,
+) -> Command {
     let mut cmd = Command::new(binary);
     cmd.args(args);
+    for (name, value) in envelope_vars(resolution) {
+        cmd.env(name, value);
+    }
     cmd
 }
 
@@ -95,19 +160,24 @@ fn find_plugin(verb: &str) -> Option<PathBuf> {
 }
 
 /// Dispatch an external subcommand: locate `rwv-<verb>`, spawn it with
-/// `args`, propagate its exit status. Never returns on success — exits the
-/// process with the child's code. Returns an error for the two rwv-side
-/// failure modes documented on the module.
+/// `args` and the context envelope, propagate its exit status. Never returns
+/// on success — exits the process with the child's code. Returns an error
+/// for the two rwv-side failure modes documented on the module.
+///
+/// `resolution` is the resolved workspace context; it is projected into the
+/// `RWV_*` env-var envelope via [`build_command`]. Pass `None` when the cwd
+/// walk found no workspace (soft fallthrough — `RWV_VERSION` is still set).
 ///
 /// Signal death: mirrored to `128 + N` and reported on stderr. Exit
 /// otherwise verbatim.
 pub fn dispatch_external(
     verb: &str,
     args: &[OsString],
+    resolution: Option<&Resolution>,
 ) -> anyhow::Result<std::convert::Infallible> {
     let binary = find_plugin(verb).ok_or_else(|| unknown_verb_error(verb))?;
 
-    let mut cmd = build_command(&binary, args);
+    let mut cmd = build_command(&binary, args, resolution);
     let mut child = cmd
         .spawn()
         .map_err(|e| exec_failure_error(verb, &binary, e))?;
@@ -144,7 +214,7 @@ mod tests {
     fn build_command_sets_program_and_args() {
         let binary = std::path::Path::new("/tmp/rwv-example");
         let args: Vec<OsString> = vec!["--flag".into(), "value".into(), "--".into(), "-x".into()];
-        let cmd = build_command(binary, &args);
+        let cmd = build_command(binary, &args, None);
         assert_eq!(cmd.get_program(), std::ffi::OsStr::new("/tmp/rwv-example"));
         let got_args: Vec<&std::ffi::OsStr> = cmd.get_args().collect();
         assert_eq!(
@@ -156,6 +226,65 @@ mod tests {
                 std::ffi::OsStr::new("-x"),
             ]
         );
+    }
+
+    #[test]
+    fn envelope_vars_always_includes_version() {
+        let vars = envelope_vars(None);
+        let names: Vec<&str> = vars.iter().map(|(n, _)| *n).collect();
+        assert!(
+            names.contains(&"RWV_VERSION"),
+            "RWV_VERSION must always be present; got: {names:?}"
+        );
+        // Without a resolution, workspace vars must not appear.
+        assert!(
+            !names.contains(&"RWV_WORKSPACE"),
+            "unexpected RWV_WORKSPACE"
+        );
+        assert!(
+            !names.contains(&"RWV_WORKWEAVE"),
+            "unexpected RWV_WORKWEAVE"
+        );
+        assert!(!names.contains(&"RWV_PROJECT"), "unexpected RWV_PROJECT");
+    }
+
+    #[test]
+    fn envelope_vars_primary_checkout_no_workweave() {
+        let r = crate::workspace::Resolution {
+            workspace: std::path::PathBuf::from("/ws/primary"),
+            workweave: None,
+            project: "myproj".to_owned(),
+        };
+        let vars = envelope_vars(Some(&r));
+        let map: std::collections::HashMap<_, _> = vars.into_iter().collect();
+        assert_eq!(
+            map.get("RWV_VERSION"),
+            Some(&env!("CARGO_PKG_VERSION").to_owned())
+        );
+        assert_eq!(map.get("RWV_WORKSPACE"), Some(&"/ws/primary".to_owned()));
+        assert!(
+            !map.contains_key("RWV_WORKWEAVE"),
+            "RWV_WORKWEAVE must be absent at primary"
+        );
+        assert_eq!(map.get("RWV_PROJECT"), Some(&"myproj".to_owned()));
+    }
+
+    #[test]
+    fn envelope_vars_workweave_checkout_includes_workweave() {
+        let r = crate::workspace::Resolution {
+            workspace: std::path::PathBuf::from("/ws/primary"),
+            workweave: Some("myproj--fo-123".to_owned()),
+            project: "myproj".to_owned(),
+        };
+        let vars = envelope_vars(Some(&r));
+        let map: std::collections::HashMap<_, _> = vars.into_iter().collect();
+        assert_eq!(
+            map.get("RWV_VERSION"),
+            Some(&env!("CARGO_PKG_VERSION").to_owned())
+        );
+        assert_eq!(map.get("RWV_WORKSPACE"), Some(&"/ws/primary".to_owned()));
+        assert_eq!(map.get("RWV_WORKWEAVE"), Some(&"myproj--fo-123".to_owned()));
+        assert_eq!(map.get("RWV_PROJECT"), Some(&"myproj".to_owned()));
     }
 
     #[test]

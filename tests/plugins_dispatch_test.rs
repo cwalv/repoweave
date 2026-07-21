@@ -479,6 +479,284 @@ fn external_verb_with_multiple_dashes_is_dispatched() {
 }
 
 // ---------------------------------------------------------------------------
+// Context envelope — RWV_* vars set on the spawned child
+// ---------------------------------------------------------------------------
+
+/// Helper: write a plugin that dumps specific env vars to stdout, one per
+/// line as `KEY=VALUE`. Lines for missing vars are omitted.
+fn write_env_dump_plugin(dir: &Path, name: &str, vars: &[&str]) -> PathBuf {
+    // Each var: if set, print KEY=VALUE; if unset, print KEY=UNSET so tests
+    // can distinguish "set to empty" from "not set at all".
+    let body: String = vars
+        .iter()
+        .map(|v| {
+            format!(
+                "if [ -n \"${{{v}+x}}\" ]; then echo \"{v}=${{{v}}}\" ; else echo \"{v}=UNSET\" ; fi\n",
+            )
+        })
+        .collect();
+    write_script(dir, name, &body)
+}
+
+const ENVELOPE_VARS: &[&str] = &[
+    "RWV_VERSION",
+    "RWV_WORKSPACE",
+    "RWV_WORKWEAVE",
+    "RWV_PROJECT",
+];
+
+/// Parse the env-dump output into a key→value map.
+fn parse_env_dump(stdout: &str) -> std::collections::HashMap<String, String> {
+    stdout
+        .lines()
+        .filter_map(|l| {
+            let (k, v) = l.split_once('=')?;
+            Some((k.to_owned(), v.to_owned()))
+        })
+        .collect()
+}
+
+/// `RWV_VERSION` is always set, even outside a workspace.
+#[test]
+fn envelope_rwv_version_always_set_outside_workspace() {
+    let plugin_dir = tempfile::tempdir().unwrap();
+    write_env_dump_plugin(plugin_dir.path(), "rwv-envcheck", ENVELOPE_VARS);
+
+    let assert = rwv()
+        .arg("envcheck")
+        .current_dir(tmp_cwd())
+        .env("PATH", prepend_path(plugin_dir.path()))
+        .assert()
+        .success();
+    let stdout = String::from_utf8_lossy(&assert.get_output().stdout);
+    let env = parse_env_dump(&stdout);
+
+    assert!(
+        env.get("RWV_VERSION")
+            .map(|v| !v.is_empty() && v != "UNSET")
+            .unwrap_or(false),
+        "RWV_VERSION must be set outside a workspace; got: {env:?}"
+    );
+    assert_eq!(
+        env.get("RWV_WORKSPACE").map(|s| s.as_str()),
+        Some("UNSET"),
+        "RWV_WORKSPACE must be unset outside a workspace; got: {env:?}"
+    );
+    assert_eq!(
+        env.get("RWV_WORKWEAVE").map(|s| s.as_str()),
+        Some("UNSET"),
+        "RWV_WORKWEAVE must be unset outside a workspace; got: {env:?}"
+    );
+    assert_eq!(
+        env.get("RWV_PROJECT").map(|s| s.as_str()),
+        Some("UNSET"),
+        "RWV_PROJECT must be unset outside a workspace; got: {env:?}"
+    );
+}
+
+/// At the primary weave (no workweave): workspace and project are set;
+/// workweave is absent.
+#[test]
+fn envelope_primary_workspace_sets_workspace_and_project() {
+    let tmp = tempfile::tempdir().unwrap();
+    let ws = make_minimal_workspace(tmp.path(), "myproj");
+    let plugin_dir = tempfile::tempdir().unwrap();
+    write_env_dump_plugin(plugin_dir.path(), "rwv-envcheck", ENVELOPE_VARS);
+
+    let assert = rwv()
+        .arg("envcheck")
+        .current_dir(&ws)
+        .env("PATH", prepend_path(plugin_dir.path()))
+        .assert()
+        .success();
+    let stdout = String::from_utf8_lossy(&assert.get_output().stdout);
+    let env = parse_env_dump(&stdout);
+
+    // RWV_VERSION is always set.
+    assert!(
+        env.get("RWV_VERSION")
+            .map(|v| v != "UNSET")
+            .unwrap_or(false),
+        "RWV_VERSION must be set; got: {env:?}"
+    );
+    // RWV_WORKSPACE is the canonical workspace root.
+    let ws_val = env.get("RWV_WORKSPACE").expect("RWV_WORKSPACE must be set");
+    assert_ne!(
+        ws_val, "UNSET",
+        "RWV_WORKSPACE must be set at primary; got: {env:?}"
+    );
+    // The canonical path (symlinks resolved) ends with the ws dir name.
+    assert!(
+        ws_val.contains("ws"),
+        "RWV_WORKSPACE should contain workspace path; got: {ws_val}"
+    );
+    // RWV_PROJECT is the active project.
+    assert_eq!(
+        env.get("RWV_PROJECT").map(|s| s.as_str()),
+        Some("myproj"),
+        "RWV_PROJECT must be 'myproj'; got: {env:?}"
+    );
+    // RWV_WORKWEAVE must be absent at the primary.
+    assert_eq!(
+        env.get("RWV_WORKWEAVE").map(|s| s.as_str()),
+        Some("UNSET"),
+        "RWV_WORKWEAVE must be absent at primary; got: {env:?}"
+    );
+}
+
+/// `-w <project>--<name>` addressing: envelope is set from the resolved
+/// workweave context, including RWV_WORKWEAVE.
+#[test]
+fn envelope_via_w_flag_sets_workweave_var() {
+    let tmp = tempfile::tempdir().unwrap();
+    let ws = make_minimal_workspace(tmp.path(), "myproj");
+    let ws_canon = ws.canonicalize().unwrap();
+    let plugin_dir = tempfile::tempdir().unwrap();
+    write_env_dump_plugin(plugin_dir.path(), "rwv-envcheck", ENVELOPE_VARS);
+
+    // Build a workweave (myproj--feat) in the same parent container so
+    // the registry can find it.
+    let ww_dir = ws_canon
+        .parent()
+        .unwrap()
+        .join(".workweaves")
+        .join("myproj--feat");
+    std::fs::create_dir_all(&ww_dir).unwrap();
+    // Write the .rwv-workweave marker.
+    let marker_content = format!(
+        "primary: {}\nproject: myproj\nparent: {}\n",
+        ws_canon.display(),
+        ws_canon.display()
+    );
+    std::fs::write(ww_dir.join(".rwv-workweave"), &marker_content).unwrap();
+    // Replicate workspace structure in the workweave dir.
+    std::fs::create_dir_all(ww_dir.join("github")).unwrap();
+    std::fs::create_dir_all(ww_dir.join("projects").join("myproj")).unwrap();
+    // Register the workweave in the workspace index.
+    let index_dir = ws.join("projects").join("myproj");
+    let ww_canon = ww_dir.canonicalize().unwrap();
+    let index_content = format!(
+        "{{\"container\":\"{}\",\"workweaves\":{{\"feat\":\"{}\"}}}}",
+        ww_canon.parent().unwrap().display(),
+        ww_canon.display(),
+    );
+    std::fs::write(index_dir.join(".rwv-workweave-index"), &index_content).unwrap();
+
+    let assert = rwv()
+        .args(["-w", "myproj--feat", "envcheck"])
+        .current_dir(&ws)
+        .env("PATH", prepend_path(plugin_dir.path()))
+        .assert()
+        .success();
+    let stdout = String::from_utf8_lossy(&assert.get_output().stdout);
+    let env = parse_env_dump(&stdout);
+
+    assert_eq!(
+        env.get("RWV_WORKWEAVE").map(|s| s.as_str()),
+        Some("myproj--feat"),
+        "RWV_WORKWEAVE must be 'myproj--feat'; got: {env:?}"
+    );
+    assert_eq!(
+        env.get("RWV_PROJECT").map(|s| s.as_str()),
+        Some("myproj"),
+        "RWV_PROJECT must be 'myproj'; got: {env:?}"
+    );
+    let ws_val = env.get("RWV_WORKSPACE").expect("RWV_WORKSPACE must be set");
+    assert_ne!(ws_val, "UNSET", "RWV_WORKSPACE must be set; got: {env:?}");
+}
+
+/// Shared-projection test: the `Resolution` that goes into the `--json`
+/// resolution block and the env envelope are projections of the same value.
+/// This test spawns a plugin that dumps its env and independently calls
+/// `status --json` from the same workspace, then compares workspace/project
+/// field-by-field. If someone forks the envelope from the JSON block, this
+/// test catches it.
+#[test]
+fn envelope_and_json_resolution_block_agree() {
+    let tmp = tempfile::tempdir().unwrap();
+    let ws = make_minimal_workspace(tmp.path(), "myproj");
+    let plugin_dir = tempfile::tempdir().unwrap();
+    write_env_dump_plugin(plugin_dir.path(), "rwv-envcheck", ENVELOPE_VARS);
+
+    // Collect the env envelope from the plugin.
+    let assert = rwv()
+        .arg("envcheck")
+        .current_dir(&ws)
+        .env("PATH", prepend_path(plugin_dir.path()))
+        .assert()
+        .success();
+    let stdout = String::from_utf8_lossy(&assert.get_output().stdout);
+    let env = parse_env_dump(&stdout);
+
+    // Collect the JSON resolution block from `rwv status --json`.
+    let status_out = rwv()
+        .args(["status", "--json"])
+        .current_dir(&ws)
+        .assert()
+        .get_output()
+        .stdout
+        .clone();
+    let status_json: serde_json::Value =
+        serde_json::from_slice(&status_out).expect("status --json must produce valid JSON");
+
+    // resolution.workspace must match RWV_WORKSPACE.
+    let json_workspace = status_json
+        .pointer("/resolution/workspace")
+        .and_then(|v| v.as_str())
+        .expect("resolution.workspace must be in status --json");
+    let env_workspace = env
+        .get("RWV_WORKSPACE")
+        .expect("RWV_WORKSPACE must be in env");
+    assert_eq!(
+        json_workspace, env_workspace,
+        "resolution.workspace in JSON must equal RWV_WORKSPACE in env"
+    );
+
+    // resolution.project must match RWV_PROJECT.
+    let json_project = status_json
+        .pointer("/resolution/project")
+        .and_then(|v| v.as_str())
+        .expect("resolution.project must be in status --json");
+    let env_project = env.get("RWV_PROJECT").expect("RWV_PROJECT must be in env");
+    assert_eq!(
+        json_project, env_project,
+        "resolution.project in JSON must equal RWV_PROJECT in env"
+    );
+
+    // resolution.workweave is absent at the primary; RWV_WORKWEAVE must be unset.
+    let json_workweave = status_json.pointer("/resolution/workweave");
+    let env_workweave = env.get("RWV_WORKWEAVE").map(|s| s.as_str());
+    assert!(
+        json_workweave.is_none(),
+        "resolution.workweave should be absent at primary; got: {json_workweave:?}"
+    );
+    assert_eq!(
+        env_workweave,
+        Some("UNSET"),
+        "RWV_WORKWEAVE should be unset at primary; got: {env:?}"
+    );
+}
+
+/// docs/reference/cli.md must document the context envelope variables.
+#[test]
+fn cli_md_documents_context_envelope() {
+    let root = env!("CARGO_MANIFEST_DIR");
+    let cli_md =
+        fs::read_to_string(format!("{root}/docs/reference/cli.md")).expect("cli.md should exist");
+    for var in ENVELOPE_VARS {
+        assert!(
+            cli_md.contains(var),
+            "docs/reference/cli.md must document {var}"
+        );
+    }
+    // The "context envelope" section heading or prose must be present.
+    assert!(
+        cli_md.to_lowercase().contains("context envelope") || cli_md.contains("RWV_VERSION"),
+        "docs/reference/cli.md should have a context envelope section"
+    );
+}
+
+// ---------------------------------------------------------------------------
 // Docs assertion: cli.md external-commands note is present
 // ---------------------------------------------------------------------------
 

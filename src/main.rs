@@ -905,38 +905,47 @@ fn main() -> anyhow::Result<()> {
             })?;
             let plugin_args: Vec<OsString> = iter.collect();
 
-            // Explicit-flag resolution failure errors BEFORE exec.
+            // Resolution: always attempt, but treat failure differently
+            // depending on whether an explicit addressing flag was given.
             //
-            // Direction discipline: the address the operator named must
-            // resolve, or rwv reports the mistake — a plugin cannot
-            // salvage a wrong `-C` path or an unregistered `-w` name.
+            // - Explicit-flag case (`-C` or `-w`): the named target must
+            //   exist. A stale path or unregistered name is an rwv error
+            //   before any exec — a plugin cannot salvage a wrong address.
+            //   (`-w` already errored out above if the registry lookup
+            //   failed; `-C` validated existence but workspace containment
+            //   still needs to succeed.)
+            // - No-flag case: resolution failure is tolerated (soft
+            //   fallthrough). Some plugins legitimately run outside a
+            //   workspace (`--help`, generators). The plugin receives the
+            //   envelope with `RWV_WORKSPACE`/`RWV_PROJECT` unset —
+            //   `RWV_WORKWEAVE` being absent is its signal that no
+            //   workspace was resolved.
             //
-            // - `-w` (workweave_flag_project.is_some()) already resolved
-            //   above; a stale/typo'd name has already errored out.
-            // - `-C` (cli.cwd_override.is_some()) had its path validated
-            //   for existence; workspace containment failing here is the
-            //   named-target-doesn't-exist case and must error.
-            //
-            // No addressing flags → soft fallthrough: skip resolution
-            // entirely and exec the plugin. Some plugins legitimately run
-            // outside a workspace (a `--help` / generator that resolves
-            // its own state, or a repair verb that wants to be told there
-            // is no workspace).
-            if cli.cwd_override.is_some() || workweave_flag_project.is_some() {
-                let _ctx = WorkspaceContext::resolve(&origin_dir, None).with_context(|| {
+            // In both cases we attempt resolution so the envelope is set
+            // on the child. On success, the full envelope is injected;
+            // on soft-fallthrough failure, only `RWV_VERSION` is set.
+            let resolution = if cli.cwd_override.is_some() || workweave_flag_project.is_some() {
+                // Explicit address: failure is an rwv error before exec.
+                let ctx = WorkspaceContext::resolve(&origin_dir, None).with_context(|| {
                     format!(
                         "external verb `{verb}`: could not resolve workspace from {}",
                         origin_dir.display()
                     )
                 })?;
-            }
+                ctx.resolution()
+            } else {
+                // No flags: soft fallthrough — tolerate resolution failure.
+                WorkspaceContext::resolve(&origin_dir, None)
+                    .ok()
+                    .and_then(|ctx| ctx.resolution())
+            };
 
             // Exec. Never returns on success; on error, the two documented
             // rwv-side surfaces (unknown verb, exec failure). Successful
             // dispatch exits the process from within `dispatch_external`,
             // so the Ok arm is `Infallible` — the empty match is how the
             // type-checker proves that arm is unreachable.
-            let never = plugins::dispatch_external(verb, &plugin_args)?;
+            let never = plugins::dispatch_external(verb, &plugin_args, resolution.as_ref())?;
             match never {}
         }
     }

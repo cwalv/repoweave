@@ -511,6 +511,19 @@ Anchored by `tests/doc_claims_sync_test.rs`, `tests/doc_claims_fetch_test.rs`, `
 - **Soft fallthrough.** With no addressing flags, if the cwd walk finds no workspace, the plugin is exec'd anyway — some plugins legitimately run outside a workspace (a `--help` / generator). Explicit-flag resolution failure (`-C <bad>` or `-w <bad>`) errors before any spawn attempt: a plugin cannot salvage a wrong address.
 - **`rwv explain` excludes plugins.** `rwv explain <non-core>` errors with `external command; try \`rwv <verb> --help\`` — explain reflects over `rwv`'s CI-checked surfaces, never over PATH content. A close typo of a core verb still gets the "did you mean" hint.
 
+### Context envelope
+
+`rwv` sets the following variables on every external command spawn. They are outputs — `rwv` never reads them back; a plugin that needs to re-address `rwv` passes them as explicit arguments.
+
+| Variable | Value | Unset when |
+|---|---|---|
+| `RWV_VERSION` | `rwv` semver | never |
+| `RWV_WORKSPACE` | primary workspace root (absolute path) | no workspace resolved |
+| `RWV_WORKWEAVE` | `<project>--<name>` | not in / not addressing a workweave |
+| `RWV_PROJECT` | resolved project name | no workspace or project resolved |
+
+Presence of `RWV_WORKWEAVE` encodes the checkout kind — no separate kind variable is needed. `RWV_WORKSPACE` being unset tells a plugin it ran outside any workspace. `RWV_VERSION` is always present; check it to gate on a minimum `rwv` version if needed (prefer structural field probing over version arithmetic where possible).
+
 ## Related
 
 - [reference/formats](./formats.md) — `rwv.yaml`, `rwv.lock`, `.rwv-active`, `.rwv-workweave`
