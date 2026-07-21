@@ -34,6 +34,7 @@
 
 use std::collections::HashMap;
 use std::collections::HashSet;
+use std::ffi::OsStr;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -856,6 +857,205 @@ fn run_coverage_checks(root: &Path, verbs: &[Verb]) -> anyhow::Result<Vec<String
     Ok(errors)
 }
 
+/// Parse the env-input allowlist at `allowlist_path`.
+///
+/// # File format
+///
+/// One entry per non-blank, non-comment line:
+///
+/// ```text
+/// env-input:<VAR_NAME>  # <reason>
+/// ```
+///
+/// - `<VAR_NAME>` is the literal variable name as passed to `std::env::var`
+/// - `# <reason>` is required prose including a structural trigger for removal
+///
+/// Returns the set of allowlisted variable names.
+fn load_env_input_allowlist(allowlist_path: &Path) -> anyhow::Result<HashSet<String>> {
+    let content = fs::read_to_string(allowlist_path).map_err(|e| {
+        anyhow::anyhow!(
+            "cannot read env-input allowlist at {}: {e}",
+            allowlist_path.display()
+        )
+    })?;
+
+    let mut vars: HashSet<String> = HashSet::new();
+
+    for (lineno, line) in content.lines().enumerate() {
+        let trimmed = line.trim();
+        // Skip blanks and comment lines.
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+        // Require every entry to have an inline reason comment.
+        if !trimmed.contains('#') {
+            anyhow::bail!(
+                "env-input allowlist line {}: entry has no reason comment (add `  # <reason>`): {:?}",
+                lineno + 1,
+                line
+            );
+        }
+        // Strip inline comment.
+        let entry = trimmed.split('#').next().unwrap_or(trimmed).trim();
+        // Parse `env-input:<VAR_NAME>`.
+        let colon = entry.find(':').ok_or_else(|| {
+            anyhow::anyhow!(
+                "env-input allowlist line {}: expected `env-input:<VAR_NAME>`, got: {:?}",
+                lineno + 1,
+                line
+            )
+        })?;
+        let check = &entry[..colon];
+        if check != "env-input" {
+            anyhow::bail!(
+                "env-input allowlist line {}: unknown check type {:?} (expected `env-input`)",
+                lineno + 1,
+                check
+            );
+        }
+        let var_name = entry[colon + 1..].trim();
+        if var_name.is_empty() {
+            anyhow::bail!(
+                "env-input allowlist line {}: variable name is empty in: {:?}",
+                lineno + 1,
+                line
+            );
+        }
+        vars.insert(var_name.to_owned());
+    }
+
+    Ok(vars)
+}
+
+/// Collect all `.rs` files under `src_dir` recursively.
+fn collect_rs_files(src_dir: &Path) -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    collect_rs_files_inner(src_dir, &mut out);
+    out.sort();
+    out
+}
+
+fn collect_rs_files_inner(dir: &Path, out: &mut Vec<PathBuf>) {
+    let rd = match std::fs::read_dir(dir) {
+        Ok(rd) => rd,
+        Err(_) => return,
+    };
+    let mut entries: Vec<_> = rd.filter_map(|e| e.ok()).collect();
+    entries.sort_by_key(|e| e.file_name());
+    for entry in entries {
+        let path = entry.path();
+        if path.is_dir() {
+            collect_rs_files_inner(&path, out);
+        } else if path.extension().and_then(OsStr::to_str) == Some("rs") {
+            out.push(path);
+        }
+    }
+}
+
+/// Strip the `#[cfg(test)]` test module from Rust source content.
+///
+/// Finds the last occurrence of the two-line sequence `#[cfg(test)]\n`
+/// followed by `mod tests` (with optional whitespace) and returns only the
+/// content before that point. This cleanly excludes test-only env reads
+/// (e.g. `std::env::set_var` / `remove_var` scaffolding in tests) without
+/// requiring a full Rust parser.
+///
+/// If no test module marker is found the full content is returned unchanged.
+fn strip_test_module(content: &str) -> &str {
+    // Find `#[cfg(test)]` followed immediately by a newline and then `mod tests`.
+    // We look for the pattern as a substring so we handle any indentation.
+    let marker = "#[cfg(test)]";
+    let mut search = content;
+    let mut last_pos = None;
+    while let Some(pos) = search.find(marker) {
+        let abs_pos = content.len() - search.len() + pos;
+        // After the marker, skip to the next line and check for `mod tests`.
+        let after = &content[abs_pos + marker.len()..];
+        let after_trimmed = after.trim_start_matches([' ', '\t', '\r', '\n']);
+        if after_trimmed.starts_with("mod tests") {
+            last_pos = Some(abs_pos);
+        }
+        // Advance past this occurrence.
+        search = &search[pos + marker.len()..];
+    }
+    match last_pos {
+        Some(p) => &content[..p],
+        None => content,
+    }
+}
+
+/// Scan `src_dir` for `std::env::var` and `std::env::var_os` reads in
+/// non-test production code, and check each against the allowlist.
+///
+/// # Scope
+///
+/// Covers literal string arguments to std::env::var and std::env::var_os.
+/// Reads whose argument is a variable or expression (not a string literal)
+/// are not matched — such a pattern would itself be a policy violation and
+/// would require a separate audit. Test modules (identified by the
+/// `#[cfg(test)]\nmod tests` sentinel) are excluded before scanning.
+/// Comment lines (leading `//`) are excluded to avoid false positives from
+/// doc examples and inline annotations.
+///
+/// Returns error messages (one per unlisted read); empty means clean.
+fn check_env_input_reads(src_dir: &Path, allowlist: &HashSet<String>) -> Vec<String> {
+    // Matches std::env::var("VARNAME") and std::env::var_os("VARNAME") in
+    // non-comment, non-test source lines.
+    let re = Regex::new(r#"std::env::var(?:_os)?\("([^"]+)"\)"#).unwrap();
+
+    let mut errors: Vec<String> = Vec::new();
+
+    for path in collect_rs_files(src_dir) {
+        let content = match std::fs::read_to_string(&path) {
+            Ok(c) => c,
+            Err(e) => {
+                errors.push(format!("env-input: could not read {}: {e}", path.display()));
+                continue;
+            }
+        };
+
+        // Exclude test module content (everything from #[cfg(test)] mod tests
+        // to the end of the file).
+        let production_content = strip_test_module(&content);
+
+        // Scan line by line, skipping comment lines (// and ///) so that doc
+        // examples and annotations don't produce false positives.
+        for line in production_content.lines() {
+            let trimmed = line.trim_start();
+            if trimmed.starts_with("//") {
+                continue;
+            }
+            for cap in re.captures_iter(line) {
+                let var_name = &cap[1];
+                if !allowlist.contains(var_name) {
+                    errors.push(format!(
+                        "env-input: unlisted std::env::var read of {:?} in {} \
+                         (add `env-input:{var_name}` to docs/env-input-allowlist.txt \
+                         with a reason, or remove the env read if it violates the \
+                         policy: argv addresses; env vars are handoff surfaces, not inputs)",
+                        var_name,
+                        path.display()
+                    ));
+                }
+            }
+        }
+    }
+
+    errors
+}
+
+/// Run the env-input inventory check and return all errors.
+///
+/// Reads `docs/env-input-allowlist.txt` relative to `root`, scans `src/`
+/// for `std::env::var`/`var_os` reads in production code, and fails on
+/// any read not recorded in the allowlist.
+fn run_env_input_check(root: &Path) -> anyhow::Result<Vec<String>> {
+    let allowlist_path = root.join("docs/env-input-allowlist.txt");
+    let allowlist = load_env_input_allowlist(&allowlist_path)?;
+    let src_dir = root.join("src");
+    Ok(check_env_input_reads(&src_dir, &allowlist))
+}
+
 fn repo_root() -> PathBuf {
     // CARGO_MANIFEST_DIR points at the crate root, which is the repoweave dir.
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -1027,6 +1227,23 @@ fn main() -> anyhow::Result<()> {
             "docs failed link-cleanliness check:\n{msg}\n\n\
              Fix: remove broken relative links from docs (use plain text for out-of-repo references) and ensure rustdoc \
              intra-doc link syntax is not present in assembled output."
+        );
+    }
+
+    // --- env-input inventory gate ----------------------------------------
+    // Every std::env::var / var_os read in non-test src/ code must be
+    // recorded in docs/env-input-allowlist.txt with a reason. Any unlisted
+    // read is a policy violation: argv addresses; env vars are handoff
+    // surfaces set for child processes, never inputs consulted by rwv.
+    // Deliberate reads are recorded in docs/env-input-allowlist.txt.
+    let env_errors = run_env_input_check(&root)?;
+    if !env_errors.is_empty() {
+        let msg = env_errors.join("\n");
+        anyhow::bail!(
+            "env-input inventory check failed:\n{msg}\n\n\
+             Fix: add `env-input:<VAR_NAME>` to docs/env-input-allowlist.txt \
+             with a reason and a structural trigger for removal, or eliminate \
+             the env read."
         );
     }
 
@@ -1448,5 +1665,183 @@ mod tests {
         fs::write(&path, "unknown:foo  # reason\n").unwrap();
         let result = load_coverage_allowlist(&path);
         assert!(result.is_err(), "expected error for unknown check type");
+    }
+
+    // ── env-input inventory check unit tests ──────────────────────────────────
+
+    /// env-input allowlist parsing accepts valid entries with inline reasons.
+    #[test]
+    fn env_input_allowlist_parsing_valid_entries() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let path = tmp.path().join("env-input-allowlist.txt");
+        fs::write(
+            &path,
+            "# comment\n\nenv-input:MY_VAR  # transitional; drop when bead lands\n",
+        )
+        .unwrap();
+        let vars = load_env_input_allowlist(&path).expect("parse should succeed");
+        assert!(vars.contains("MY_VAR"), "MY_VAR entry missing");
+    }
+
+    /// env-input allowlist parsing rejects an entry with no reason comment.
+    #[test]
+    fn env_input_allowlist_parsing_rejects_missing_reason() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let path = tmp.path().join("env-input-allowlist.txt");
+        fs::write(&path, "env-input:MY_VAR\n").unwrap();
+        let result = load_env_input_allowlist(&path);
+        assert!(
+            result.is_err(),
+            "expected error for entry with no reason comment"
+        );
+    }
+
+    /// env-input allowlist parsing rejects an unknown check type.
+    #[test]
+    fn env_input_allowlist_parsing_rejects_unknown_check_type() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let path = tmp.path().join("env-input-allowlist.txt");
+        fs::write(&path, "other:MY_VAR  # reason\n").unwrap();
+        let result = load_env_input_allowlist(&path);
+        assert!(result.is_err(), "expected error for unknown check type");
+    }
+
+    /// A src dir with no env reads passes the check.
+    #[test]
+    fn env_input_check_passes_with_no_reads() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let src = tmp.path().join("src");
+        fs::create_dir_all(&src).unwrap();
+        fs::write(src.join("lib.rs"), "pub fn hello() {}\n").unwrap();
+        let allow: HashSet<String> = HashSet::new();
+        let errors = check_env_input_reads(&src, &allow);
+        assert!(
+            errors.is_empty(),
+            "expected no errors for a file with no env reads, got:\n{}",
+            errors.join("\n")
+        );
+    }
+
+    /// An allowlisted env read does not produce an error.
+    #[test]
+    fn env_input_check_passes_with_allowlisted_read() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let src = tmp.path().join("src");
+        fs::create_dir_all(&src).unwrap();
+        fs::write(
+            src.join("lib.rs"),
+            "pub fn f() { let _ = std::env::var(\"MY_VAR\"); }\n",
+        )
+        .unwrap();
+        let mut allow: HashSet<String> = HashSet::new();
+        allow.insert("MY_VAR".to_owned());
+        let errors = check_env_input_reads(&src, &allow);
+        assert!(
+            errors.is_empty(),
+            "allowlisted env read should not be reported, got:\n{}",
+            errors.join("\n")
+        );
+    }
+
+    /// An unlisted env read fails the check (seeded-failure proof).
+    ///
+    /// This test exercises the failure arm of the env-input inventory check:
+    /// a std::env::var call not in the allowlist must be reported. Without this
+    /// test, a check that never fires is indistinguishable from a correct check.
+    #[test]
+    fn env_input_check_fails_on_unlisted_read() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let src = tmp.path().join("src");
+        fs::create_dir_all(&src).unwrap();
+        fs::write(
+            src.join("lib.rs"),
+            "pub fn f() { let _ = std::env::var(\"UNLISTED_VAR\"); }\n",
+        )
+        .unwrap();
+        let allow: HashSet<String> = HashSet::new();
+        let errors = check_env_input_reads(&src, &allow);
+        assert!(
+            !errors.is_empty(),
+            "expected error for unlisted env read, got none"
+        );
+        let combined = errors.join("\n");
+        assert!(
+            combined.contains("UNLISTED_VAR"),
+            "error should name the unlisted variable, got:\n{combined}"
+        );
+        assert!(
+            combined.contains("env-input-allowlist.txt"),
+            "error should name the allowlist file, got:\n{combined}"
+        );
+    }
+
+    /// env reads inside a `#[cfg(test)] mod tests` block are excluded.
+    #[test]
+    fn env_input_check_excludes_test_module_reads() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let src = tmp.path().join("src");
+        fs::create_dir_all(&src).unwrap();
+        // Production code has no env reads; test module has one.
+        fs::write(
+            src.join("lib.rs"),
+            "pub fn f() {}\n\n\
+             #[cfg(test)]\nmod tests {\n    \
+             fn t() { let _ = std::env::var(\"TEST_ONLY_VAR\"); }\n}\n",
+        )
+        .unwrap();
+        let allow: HashSet<String> = HashSet::new();
+        let errors = check_env_input_reads(&src, &allow);
+        assert!(
+            errors.is_empty(),
+            "env reads inside #[cfg(test)] mod tests should be excluded, got:\n{}",
+            errors.join("\n")
+        );
+    }
+
+    /// env reads on comment lines are excluded.
+    #[test]
+    fn env_input_check_excludes_comment_lines() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let src = tmp.path().join("src");
+        fs::create_dir_all(&src).unwrap();
+        // The env read is on a comment line — must not fire.
+        fs::write(
+            src.join("lib.rs"),
+            "pub fn f() {}\n// let _ = std::env::var(\"COMMENT_VAR\");\n",
+        )
+        .unwrap();
+        let allow: HashSet<String> = HashSet::new();
+        let errors = check_env_input_reads(&src, &allow);
+        assert!(
+            errors.is_empty(),
+            "env reads on comment lines should be excluded, got:\n{}",
+            errors.join("\n")
+        );
+    }
+
+    /// strip_test_module removes content from #[cfg(test)] mod tests onward.
+    #[test]
+    fn strip_test_module_removes_test_content() {
+        let content = "fn prod() {}\n\n#[cfg(test)]\nmod tests {\n    fn t() {}\n}\n";
+        let stripped = strip_test_module(content);
+        assert!(
+            stripped.contains("fn prod()"),
+            "production code must be preserved"
+        );
+        assert!(
+            !stripped.contains("fn t()"),
+            "test content must be stripped"
+        );
+    }
+
+    /// strip_test_module is a no-op when there is no test module.
+    #[test]
+    fn strip_test_module_no_op_without_test_module() {
+        let content = "fn prod() {}\n";
+        let stripped = strip_test_module(content);
+        assert_eq!(
+            stripped, content,
+            "content without test module must be unchanged"
+        );
     }
 }
