@@ -21,6 +21,7 @@
 - [Add an integration](./how-to/add-an-integration.md)
 - [Reconcile repos with the lock](./how-to/reconcile-repos.md)
 - [Regenerate ecosystem workspace files](./how-to/regenerate-ecosystem-files.md)
+- [Write a plugin](./how-to/write-a-plugin.md)
 
 # Explanation — Lenses
 
@@ -42,6 +43,7 @@
 - [Verb vs vocabulary](./explanation/joints/verb-vs-vocabulary.md)
 - [VCS as seam](./explanation/joints/vcs-as-seam.md)
 - [File ownership](./explanation/joints/file-ownership.md)
+- [Plugin boundary](./explanation/joints/plugin-boundary.md)
 
 # Explanation — Policies
 

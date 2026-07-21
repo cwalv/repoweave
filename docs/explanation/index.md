@@ -26,3 +26,4 @@ If you are new, start with the lens that matches your situation (linked below); 
 - [Verb vs vocabulary](./joints/verb-vs-vocabulary.md)
 - [VCS as seam](./joints/vcs-as-seam.md)
 - [File ownership](./joints/file-ownership.md)
+- [Plugin boundary](./joints/plugin-boundary.md)

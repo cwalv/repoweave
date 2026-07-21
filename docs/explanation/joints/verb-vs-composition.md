@@ -226,7 +226,7 @@ collect output.
 
 Three nos. This is exactly the failure mode the principle is built
 to prevent. The composition shape (`rwv status --json | jq -r
-'.repos[].path' | xargs -I{} bash -c '...'`) is well-developed
+'.repos[].absolute_path' | xargs -I{} bash -c '...'`) is well-developed
 elsewhere; `gita super primary <cmd>` is the showcase integration for
 users who want the summary sugar. None of it needs to live in rwv
 core.
@@ -234,6 +234,16 @@ core.
 **Verdict:** firmly fails the gate. Document in the
 "run-a-command-across-repos" how-to and call out `gita` as the
 opt-in summary sugar.
+
+**The third answer.** The gate has always offered two outcomes: core verb, or
+shell composition. The plugin space is now a third answer for this class of
+operation. A `rwv-each` executable on `$PATH` is invoked as `rwv each <cmd>` and
+receives the resolved workspace context through the environment envelope — so the
+invocation is exactly as ergonomic as a core verb, without the maintenance cost of
+living in core. This is where packaged compositions have a home. The verb-vs-
+composition gate is unchanged; "run a command across repos" still firmly fails it;
+what is new is that the refusal can point somewhere: the plugin space, and the
+how-to at [run-a-command-across-repos](../../how-to/run-a-command-across-repos.md).
 
 ## Composition is not a downgrade
 

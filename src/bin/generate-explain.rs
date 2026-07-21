@@ -46,7 +46,7 @@ use serde::Serialize;
 use repoweave::check::ViolationOutput;
 use repoweave::cli::Cli;
 use repoweave::fetch::FetchJsonOutput;
-use repoweave::plugins::PluginRecord;
+use repoweave::plugins::{envelope_vars, PluginRecord};
 use repoweave::push::{PushJsonOutput, PUSH_SCHEMA_URL};
 use repoweave::status::StatusJsonOutput;
 use repoweave::sync::{
@@ -1073,6 +1073,60 @@ fn run_env_input_check(root: &Path) -> anyhow::Result<Vec<String>> {
     Ok(check_env_input_reads(&src_dir, &allowlist))
 }
 
+/// Check that every variable name emitted by [`repoweave::plugins::envelope_vars`]
+/// is documented in `docs/reference/cli.md`.
+///
+/// The check calls `envelope_vars` with a fully-populated [`Resolution`] so that
+/// every possible variable (including `RWV_WORKWEAVE`, which is only set when a
+/// workweave is resolved) is exercised. The set of emitted names is the single
+/// source of truth; no source-text grepping is involved.
+///
+/// Each name must appear in `cli.md` as a backtick-quoted table cell (`\`VAR_NAME\``).
+/// The envelope table in the "Context envelope" section of the External commands
+/// reference is the canonical documentation surface.
+///
+/// Returns error messages (one per undocumented variable); empty means clean.
+fn check_envelope_output_documented(cli_md_content: &str) -> Vec<String> {
+    // Build a fully-populated Resolution so every conditional branch in
+    // envelope_vars() fires and we get the complete set of variable names.
+    let full_resolution = Resolution {
+        workspace: std::path::PathBuf::from("/sentinel/workspace"),
+        workweave: Some("sentinel-project--sentinel-ww".to_owned()),
+        project: "sentinel-project".to_owned(),
+    };
+
+    let vars = envelope_vars(Some(&full_resolution));
+    let mut errors: Vec<String> = Vec::new();
+
+    for (name, _) in &vars {
+        // The name must appear in cli.md as a backtick-quoted table cell.
+        // The envelope table rows look like: | `RWV_VERSION` | ... |
+        let needle = format!("`{name}`");
+        if !cli_md_content.contains(&needle) {
+            errors.push(format!(
+                "envelope-output: `{name}` is set on every plugin spawn by \
+                 `envelope_vars()` in src/plugins.rs but is not documented in \
+                 docs/reference/cli.md — add a row for `{name}` to the Context \
+                 envelope table in the External commands section of that file"
+            ));
+        }
+    }
+
+    errors
+}
+
+/// Run the envelope-output documentation coverage check.
+///
+/// Calls `envelope_vars` with a fully-populated `Resolution` to obtain the
+/// complete set of emitted variable names, then checks each against
+/// `docs/reference/cli.md`. Fails if any emitted name is undocumented.
+fn run_envelope_output_check(root: &Path) -> anyhow::Result<Vec<String>> {
+    let cli_md_path = root.join("docs/reference/cli.md");
+    let cli_md_content = fs::read_to_string(&cli_md_path)
+        .map_err(|e| anyhow::anyhow!("cannot read cli.md at {}: {e}", cli_md_path.display()))?;
+    Ok(check_envelope_output_documented(&cli_md_content))
+}
+
 fn repo_root() -> PathBuf {
     // CARGO_MANIFEST_DIR points at the crate root, which is the repoweave dir.
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -1261,6 +1315,22 @@ fn main() -> anyhow::Result<()> {
              Fix: add `env-input:<VAR_NAME>` to docs/env-input-allowlist.txt \
              with a reason and a structural trigger for removal, or eliminate \
              the env read."
+        );
+    }
+
+    // --- envelope-output documentation gate ------------------------------
+    // Every RWV_* variable set on plugin spawns by envelope_vars() in
+    // src/plugins.rs must be documented in docs/reference/cli.md. The check
+    // calls envelope_vars() directly (no source grepping) so a new variable
+    // added to the function is caught immediately. Failure tells the author
+    // exactly which variable is undocumented and where to add it.
+    let envelope_errors = run_envelope_output_check(&root)?;
+    if !envelope_errors.is_empty() {
+        let msg = envelope_errors.join("\n");
+        anyhow::bail!(
+            "envelope-output documentation check failed:\n{msg}\n\n\
+             Fix: add a row for the variable to the Context envelope table in \
+             the External commands section of docs/reference/cli.md."
         );
     }
 
@@ -1859,6 +1929,72 @@ mod tests {
         assert_eq!(
             stripped, content,
             "content without test module must be unchanged"
+        );
+    }
+
+    // ── envelope-output coverage check unit tests ─────────────────────────────
+
+    /// A cli.md that documents all envelope vars passes the check.
+    #[test]
+    fn envelope_output_check_passes_when_all_documented() {
+        // Minimal cli.md that contains every var name in backtick-quoted form.
+        let cli_md = "| `RWV_VERSION` | rwv semver | never |\n\
+                      | `RWV_WORKSPACE` | primary workspace root | no workspace resolved |\n\
+                      | `RWV_WORKWEAVE` | workweave identity | not in a workweave |\n\
+                      | `RWV_PROJECT` | resolved project name | no project resolved |\n";
+        let errors = check_envelope_output_documented(cli_md);
+        assert!(
+            errors.is_empty(),
+            "expected no errors when all vars are documented, got:\n{}",
+            errors.join("\n")
+        );
+    }
+
+    /// A cli.md missing one envelope var name produces an error naming that var.
+    ///
+    /// This is the seeded-failure proof: the check must fire when a var is absent.
+    /// Without this test, a check that never fires is indistinguishable from a
+    /// correct one.
+    #[test]
+    fn envelope_output_check_fails_when_var_undocumented() {
+        // cli.md that only documents RWV_VERSION — the workspace vars are absent.
+        let cli_md = "| `RWV_VERSION` | rwv semver | never |\n";
+        let errors = check_envelope_output_documented(cli_md);
+        assert!(
+            !errors.is_empty(),
+            "expected errors for undocumented envelope vars, got none"
+        );
+        let combined = errors.join("\n");
+        // RWV_WORKSPACE must be named in the error.
+        assert!(
+            combined.contains("RWV_WORKSPACE"),
+            "error must name RWV_WORKSPACE, got:\n{combined}"
+        );
+        // The error must tell the author where to add the documentation.
+        assert!(
+            combined.contains("docs/reference/cli.md"),
+            "error must name the file to fix, got:\n{combined}"
+        );
+    }
+
+    /// The check covers RWV_WORKWEAVE even though it is only set when a workweave
+    /// is resolved. The function uses a fully-populated Resolution to exercise all
+    /// branches of envelope_vars(), including the workweave conditional.
+    #[test]
+    fn envelope_output_check_covers_conditional_var() {
+        // cli.md that documents everything except RWV_WORKWEAVE.
+        let cli_md = "| `RWV_VERSION` | rwv semver | never |\n\
+                      | `RWV_WORKSPACE` | primary workspace root | no workspace resolved |\n\
+                      | `RWV_PROJECT` | resolved project name | no project resolved |\n";
+        let errors = check_envelope_output_documented(cli_md);
+        assert!(
+            !errors.is_empty(),
+            "expected error for missing RWV_WORKWEAVE, got none"
+        );
+        let combined = errors.join("\n");
+        assert!(
+            combined.contains("RWV_WORKWEAVE"),
+            "error must name RWV_WORKWEAVE as the missing var, got:\n{combined}"
         );
     }
 }
