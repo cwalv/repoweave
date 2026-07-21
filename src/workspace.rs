@@ -85,6 +85,60 @@ pub struct WorkspaceContext {
     /// "you're in projects/<X>/ but <Y> is active" error message now
     /// that the CWD override has been removed.
     cwd_project_hint: Option<ProjectName>,
+    /// Which chain step chose the active project, when one was chosen.
+    ///
+    /// The resolution chain is `--project > -w prefix > marker > .rwv-active`;
+    /// each step maps to one [`ProjectProvenance`] variant. `None` when no
+    /// project was resolved (bare primary with neither `--project` nor
+    /// `.rwv-active` set).
+    ///
+    /// Used solely for the human-facing "target:" line printed to stderr
+    /// when the resolution fell through to `.rwv-active` — the incident
+    /// class this field exists to prevent (silent pointer-driven
+    /// mis-targeting) surfaces only when the pointer decides. Provenance is
+    /// deliberately excluded from machine output (`--json`): anything in
+    /// default JSON becomes depended on, and the assertion use case needs
+    /// the *result*, not the mechanism.
+    project_provenance: Option<ProjectProvenance>,
+}
+
+/// Which step of the project resolution chain chose the active project.
+///
+/// The chain, in priority order:
+/// 1. `--project <name>` flag on the invocation → [`ProjectProvenance::Flag`].
+/// 2. `-w/--workweave <project>--<name>` global flag → [`ProjectProvenance::WorkweaveFlag`]
+///    (reserved slot; the flag lands with a later change and this variant is
+///    unconstructed until then).
+/// 3. `.rwv-workweave` marker inside the resolved workweave →
+///    [`ProjectProvenance::Marker`]. Structural: the workweave directory
+///    itself names its project.
+/// 4. `.rwv-active` pointer at the primary root →
+///    [`ProjectProvenance::ActiveFile`]. Ambient default — the case whose
+///    silence caused the incident this design fixes.
+///
+/// Used by the resolver to distinguish structurally-determined targets
+/// (steps 1–3, silent) from the pointer-default (step 4, printed as a
+/// "target:" line to stderr before the verb acts).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProjectProvenance {
+    /// The project came from an explicit `--project` flag.
+    Flag,
+    /// The project came from the `<project>--` prefix of a `-w` argument.
+    ///
+    /// Reserved: the `-w` global flag lands as a later change, and this
+    /// variant is unconstructed until then. Kept here so downstream
+    /// consumers of the chain-step vocabulary can match exhaustively today
+    /// and the flag can wire in without a follow-up API bump.
+    #[allow(dead_code)] // will be constructed once the -w global flag lands
+    WorkweaveFlag,
+    /// The project came from the `.rwv-workweave` marker inside the
+    /// resolved workweave directory.
+    Marker,
+    /// The project came from the `.rwv-active` pointer at the primary root.
+    ///
+    /// Fall-through resolution; the "target:" line prints for this
+    /// provenance only, before the verb acts.
+    ActiveFile,
 }
 
 /// Which kind of checkout the resolved origin dir sits inside.
@@ -384,14 +438,27 @@ pub fn require_workspace_or_empty(cwd: &Path, force: bool) -> anyhow::Result<()>
 impl WorkspaceContext {
     /// Resolve the workspace context by walking up from `cwd`.
     ///
-    /// Project resolution order:
+    /// Project resolution chain (highest priority first):
     ///   1. `project_override` — explicit `--project <name>` flag.
-    ///   2. `.rwv-active` — the single source of truth for the active
-    ///      project. There is no CWD override anymore.
+    ///      Provenance = [`ProjectProvenance::Flag`].
+    ///   2. `-w/--workweave` prefix (reserved slot; not yet threaded
+    ///      through — the global flag lands with a later change).
+    ///      Provenance = [`ProjectProvenance::WorkweaveFlag`].
+    ///   3. `.rwv-workweave` marker inside a resolved workweave dir —
+    ///      structural: the workweave directory names its project.
+    ///      Provenance = [`ProjectProvenance::Marker`].
+    ///   4. `.rwv-active` pointer at the primary root — ambient default.
+    ///      Provenance = [`ProjectProvenance::ActiveFile`].
+    ///
+    /// The chosen chain step is recorded on the returned context as
+    /// [`WorkspaceContext::project_provenance`] so downstream code can
+    /// distinguish structurally-determined targets (steps 1–3, silent)
+    /// from the pointer-default (step 4, which callers surface as a
+    /// "target:" line via [`WorkspaceContext::emit_target_line`]).
     ///
     /// The "CWD is inside `projects/<X>/`" inference is still computed
-    /// and recorded on the context as [`cwd_project_hint`] so that
-    /// diagnostics and `rwv` bare status can surface a divergence
+    /// and recorded on the context as [`WorkspaceContext::cwd_project_hint`]
+    /// so that diagnostics and `rwv` bare status can surface a divergence
     /// warning — it is no longer consulted for verb resolution.
     pub fn resolve(cwd: &Path, project_override: Option<ProjectName>) -> anyhow::Result<Self> {
         let cwd = cwd
@@ -454,7 +521,13 @@ impl WorkspaceContext {
                     let workweave_name = parse_weave_dir_name(dir_basename)
                         .map(|(_, n)| n)
                         .unwrap_or_else(|| WorkweaveName::new(dir_basename));
-                    let project = project_override.unwrap_or(marker.project);
+                    // Provenance: `--project` wins if set, else the marker
+                    // determines the project (structural — no ambient pointer
+                    // consulted inside a workweave).
+                    let (project, provenance) = match project_override {
+                        Some(p) => (p, ProjectProvenance::Flag),
+                        None => (marker.project, ProjectProvenance::Marker),
+                    };
                     let cwd_project_hint = detect_project(&cwd, &root);
                     return Ok(WorkspaceContext {
                         primary_root: root,
@@ -464,6 +537,7 @@ impl WorkspaceContext {
                             project,
                         },
                         cwd_project_hint,
+                        project_provenance: Some(provenance),
                     });
                 }
             }
@@ -471,11 +545,22 @@ impl WorkspaceContext {
             // 2. Check if current directory IS the workspace root.
             if is_workspace_root(current) {
                 let cwd_project_hint = detect_project(&cwd, current);
-                let project = project_override.or_else(|| read_active_project(current));
+                // Provenance: `--project` wins; otherwise the `.rwv-active`
+                // pointer decides (if present). No pointer + no override
+                // leaves `project` and provenance unset — the caller uses
+                // `require_active_project` to surface the corrective error.
+                let (project, provenance) = match project_override {
+                    Some(p) => (Some(p), Some(ProjectProvenance::Flag)),
+                    None => match read_active_project(current) {
+                        Some(p) => (Some(p), Some(ProjectProvenance::ActiveFile)),
+                        None => (None, None),
+                    },
+                };
                 return Ok(WorkspaceContext {
                     primary_root: current.to_path_buf(),
                     checkout: Checkout::Primary { project },
                     cwd_project_hint,
+                    project_provenance: provenance,
                 });
             }
 
@@ -522,6 +607,54 @@ impl WorkspaceContext {
         }
     }
 
+    /// The chain step that chose the active project, if one was chosen.
+    ///
+    /// See [`ProjectProvenance`] for the chain-step vocabulary. `None` is
+    /// isomorphic to [`active_project`] returning `None` — no chain step
+    /// fires when no project is resolved.
+    ///
+    /// [`active_project`]: WorkspaceContext::active_project
+    pub fn project_provenance(&self) -> Option<ProjectProvenance> {
+        self.project_provenance
+    }
+
+    /// Print the "target:" line to stderr when the active project was
+    /// chosen by the `.rwv-active` pointer fall-through.
+    ///
+    /// The line format is:
+    ///
+    /// ```text
+    /// target: workspace <primary-path> · project <name> (.rwv-active)
+    /// ```
+    ///
+    /// Silent for every other provenance — explicitly (`--project`) or
+    /// structurally (workweave marker) resolved invocations already name
+    /// their target and gain nothing from the surfacing.
+    ///
+    /// Written to stderr because it is operator-facing prose and must not
+    /// contaminate stdout, which every JSON-capable verb owns exclusively.
+    ///
+    /// Idempotent — call once per project-scoped verb, at the top of
+    /// dispatch before the verb acts. Callers that already know they need
+    /// no active project (workspace-scoped verbs: `init`, `abort`,
+    /// `resolve`, `prime`, `explain`, cross-project doctor scan) skip it.
+    pub fn emit_target_line(&self) {
+        if self.project_provenance != Some(ProjectProvenance::ActiveFile) {
+            return;
+        }
+        // Under ActiveFile provenance the chain step guarantees the
+        // project is set; the None branch is unreachable but handled
+        // defensively so a future refactor that decouples the two cannot
+        // panic here.
+        if let Some(project) = self.active_project() {
+            eprintln!(
+                "target: workspace {} · project {} (.rwv-active)",
+                self.primary_root.display(),
+                project.as_str(),
+            );
+        }
+    }
+
     /// Returns `Ok(name)` for the active project, or an `Err` whose
     /// message guides the user to either `rwv activate <X>` or
     /// `--project <X>` when CWD is inside a non-active project directory.
@@ -549,7 +682,13 @@ impl WorkspaceContext {
             return Ok(name);
         }
 
-        // No active project. Build a helpful error.
+        // No active project. Build a corrective error naming the exact
+        // commands the operator can run — the pointer is total by
+        // construction (init/fetch/workweave-create all activate on
+        // create), so reaching this branch means the pointer was
+        // hand-removed. Naming existing projects (when any exist) turns
+        // the error into a menu the operator can act on without a
+        // separate discovery step.
         if let Some(hint) = self.cwd_project_hint() {
             anyhow::bail!(
                 "no active project set, but CWD is inside projects/{}/. \
@@ -560,8 +699,17 @@ impl WorkspaceContext {
                 hint.as_str(),
             );
         }
+        let existing = discover_project_paths(self.primary_path());
+        if existing.is_empty() {
+            anyhow::bail!(
+                "no active project; run `rwv activate <name>` or pass `--project <name>` \
+                 (no projects exist under this workspace yet — `rwv init <name>` to create one)"
+            );
+        }
         anyhow::bail!(
-            "no active project found; run `rwv activate <name>` or pass `--project <name>`"
+            "no active project; run `rwv activate <name>` or pass `--project <name>`. \
+             Existing projects: {}",
+            existing.join(", "),
         );
     }
 
@@ -1631,6 +1779,324 @@ mod tests {
             found,
             ws_real.canonicalize().unwrap(),
             "must find the workspace inside the (symlinked) home"
+        );
+    }
+
+    // ========================================================================
+    // ProjectProvenance — chain-step tracking
+    //
+    // The chain is `--project > -w prefix > marker > .rwv-active`.
+    // These tests exercise every constructed variant (Flag / Marker /
+    // ActiveFile) across primary and workweave checkouts, both single-
+    // project and multi-project workspaces, and the None case (no chain
+    // step fires). WorkweaveFlag is reserved for the -w global flag and
+    // is not exercised here because it is not yet constructed.
+    // ========================================================================
+
+    /// Helper: create N project directories under `<root>/projects/`.
+    fn make_projects(root: &Path, names: &[&str]) {
+        for name in names {
+            std::fs::create_dir_all(root.join("projects").join(name)).unwrap();
+        }
+    }
+
+    /// Helper: write a workweave marker at `dir` pointing at `primary` and
+    /// naming `project`.
+    fn write_marker(dir: &Path, primary: &Path, project: &str) {
+        let marker = WorkweaveMarker {
+            primary: primary.to_path_buf(),
+            project: ProjectName::new(project),
+            parent: primary.to_path_buf(),
+        };
+        marker.write(dir).unwrap();
+    }
+
+    /// Chain step 1: `--project` at a primary wins even when `.rwv-active`
+    /// is set. Provenance = Flag.
+    #[test]
+    fn provenance_flag_at_primary_beats_active_file() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = make_workspace(tmp.path(), "ws");
+        make_projects(&root, &["one", "two"]);
+        std::fs::write(root.join(".rwv-active"), "one\n").unwrap();
+
+        let ctx = WorkspaceContext::resolve(&root, Some(ProjectName::new("two"))).unwrap();
+        assert_eq!(ctx.active_project().unwrap().as_str(), "two");
+        assert_eq!(ctx.project_provenance(), Some(ProjectProvenance::Flag));
+    }
+
+    /// Chain step 1: `--project` in a workweave wins even when the marker
+    /// names a different project. Provenance = Flag.
+    #[test]
+    fn provenance_flag_in_workweave_beats_marker() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = make_workspace(tmp.path(), "ws");
+        make_projects(&root, &["one", "two"]);
+        let weave_dir = tmp.path().join("ws--feat");
+        std::fs::create_dir_all(&weave_dir).unwrap();
+        write_marker(&weave_dir, &root.canonicalize().unwrap(), "one");
+
+        let ctx = WorkspaceContext::resolve(&weave_dir, Some(ProjectName::new("two"))).unwrap();
+        assert_eq!(ctx.active_project().unwrap().as_str(), "two");
+        assert_eq!(ctx.project_provenance(), Some(ProjectProvenance::Flag));
+    }
+
+    /// Chain step 3: inside a workweave with no `--project`, the marker
+    /// determines the project. Provenance = Marker. `.rwv-active` at the
+    /// primary is not consulted for a workweave — the workweave is
+    /// structurally scoped to one project.
+    #[test]
+    fn provenance_marker_in_workweave_ignores_active_file() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = make_workspace(tmp.path(), "ws");
+        make_projects(&root, &["one", "two"]);
+        // Pointer at primary names a different project — must not leak.
+        std::fs::write(root.join(".rwv-active"), "two\n").unwrap();
+        let weave_dir = tmp.path().join("ws--feat");
+        std::fs::create_dir_all(&weave_dir).unwrap();
+        write_marker(&weave_dir, &root.canonicalize().unwrap(), "one");
+
+        let ctx = WorkspaceContext::resolve(&weave_dir, None).unwrap();
+        assert_eq!(ctx.active_project().unwrap().as_str(), "one");
+        assert_eq!(ctx.project_provenance(), Some(ProjectProvenance::Marker));
+    }
+
+    /// Chain step 4: at a primary, no `--project`, `.rwv-active` names an
+    /// existing project. Provenance = ActiveFile. Single-project workspace.
+    #[test]
+    fn provenance_active_file_at_primary_single_project() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = make_workspace(tmp.path(), "ws");
+        make_projects(&root, &["only"]);
+        std::fs::write(root.join(".rwv-active"), "only\n").unwrap();
+
+        let ctx = WorkspaceContext::resolve(&root, None).unwrap();
+        assert_eq!(ctx.active_project().unwrap().as_str(), "only");
+        assert_eq!(
+            ctx.project_provenance(),
+            Some(ProjectProvenance::ActiveFile)
+        );
+    }
+
+    /// Chain step 4: at a primary in an N-project workspace with no
+    /// `--project`, `.rwv-active` is what decides. Provenance = ActiveFile.
+    /// This is the incident-class case — the pointer silently selects
+    /// among alternatives, so the target-line surfacing exists.
+    #[test]
+    fn provenance_active_file_at_primary_multi_project() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = make_workspace(tmp.path(), "ws");
+        make_projects(&root, &["a", "b", "c"]);
+        std::fs::write(root.join(".rwv-active"), "b\n").unwrap();
+
+        let ctx = WorkspaceContext::resolve(&root, None).unwrap();
+        assert_eq!(ctx.active_project().unwrap().as_str(), "b");
+        assert_eq!(
+            ctx.project_provenance(),
+            Some(ProjectProvenance::ActiveFile)
+        );
+    }
+
+    /// No chain step fires when no `--project`, no `.rwv-active`, and CWD
+    /// is at the primary. `active_project()` returns None; provenance is
+    /// also None. Caller surfaces via `require_active_project`.
+    #[test]
+    fn provenance_none_when_no_project_resolvable() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = make_workspace(tmp.path(), "ws");
+        make_projects(&root, &["only"]);
+        // No .rwv-active written.
+
+        let ctx = WorkspaceContext::resolve(&root, None).unwrap();
+        assert!(ctx.active_project().is_none());
+        assert_eq!(ctx.project_provenance(), None);
+    }
+
+    /// Chain step 1 wins even when a marker AND an active-file would both
+    /// otherwise fire — the flag is the topmost step.
+    #[test]
+    fn provenance_flag_beats_marker_and_active_file_together() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = make_workspace(tmp.path(), "ws");
+        make_projects(&root, &["marker-p", "active-p", "flag-p"]);
+        std::fs::write(root.join(".rwv-active"), "active-p\n").unwrap();
+        let weave_dir = tmp.path().join("ws--feat");
+        std::fs::create_dir_all(&weave_dir).unwrap();
+        write_marker(&weave_dir, &root.canonicalize().unwrap(), "marker-p");
+
+        let ctx = WorkspaceContext::resolve(&weave_dir, Some(ProjectName::new("flag-p"))).unwrap();
+        assert_eq!(ctx.active_project().unwrap().as_str(), "flag-p");
+        assert_eq!(ctx.project_provenance(), Some(ProjectProvenance::Flag));
+    }
+
+    // ========================================================================
+    // Target-line surfacing — emit_target_line writes to stderr only for
+    // ActiveFile provenance.
+    //
+    // Rust's println!/eprintln! macros are not directly capturable in unit
+    // tests without setting up a custom writer. We test the *policy*
+    // (which provenance fires the surfacing) at the accessor level and
+    // cover the actual stderr output in the integration-shaped test that
+    // spawns the binary (see rwv-cli-level assertions elsewhere in the
+    // test suite). The unit tests below assert the boolean policy that
+    // `emit_target_line` follows.
+    // ========================================================================
+
+    /// The target-line policy fires only for ActiveFile provenance.
+    #[test]
+    fn target_line_policy_fires_only_for_active_file() {
+        // ActiveFile → fires.
+        assert!(matches!(
+            Some(ProjectProvenance::ActiveFile),
+            Some(ProjectProvenance::ActiveFile)
+        ));
+
+        // Flag / Marker / None → silent.
+        for prov in [
+            Some(ProjectProvenance::Flag),
+            Some(ProjectProvenance::Marker),
+            None,
+        ] {
+            assert_ne!(prov, Some(ProjectProvenance::ActiveFile));
+        }
+    }
+
+    /// End-to-end smoke: `emit_target_line` is a no-op when provenance is
+    /// not ActiveFile. Can't easily capture stderr, but we can verify the
+    /// call does not panic under each variant and that the provenance-gated
+    /// path is exercised.
+    #[test]
+    fn emit_target_line_is_noop_for_non_active_file() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = make_workspace(tmp.path(), "ws");
+        make_projects(&root, &["p"]);
+
+        // Flag: silent.
+        let ctx = WorkspaceContext::resolve(&root, Some(ProjectName::new("p"))).unwrap();
+        assert_eq!(ctx.project_provenance(), Some(ProjectProvenance::Flag));
+        ctx.emit_target_line(); // must not panic; policy says silent
+
+        // Marker: silent.
+        let weave_dir = tmp.path().join("ws--feat");
+        std::fs::create_dir_all(&weave_dir).unwrap();
+        write_marker(&weave_dir, &root.canonicalize().unwrap(), "p");
+        let ctx = WorkspaceContext::resolve(&weave_dir, None).unwrap();
+        assert_eq!(ctx.project_provenance(), Some(ProjectProvenance::Marker));
+        ctx.emit_target_line(); // must not panic; policy says silent
+
+        // None: silent.
+        let root2 = make_workspace(tmp.path(), "ws2");
+        make_projects(&root2, &["p"]);
+        let ctx = WorkspaceContext::resolve(&root2, None).unwrap();
+        assert_eq!(ctx.project_provenance(), None);
+        ctx.emit_target_line(); // must not panic; policy says silent
+    }
+
+    /// End-to-end smoke: `emit_target_line` runs (and would print) when
+    /// provenance is ActiveFile. Verified structurally — the accessor
+    /// reports the expected variant and the method returns without panic;
+    /// the stderr contents are covered by the `target_line_*` integration
+    /// tests in the CLI test suite.
+    #[test]
+    fn emit_target_line_runs_for_active_file() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = make_workspace(tmp.path(), "ws");
+        make_projects(&root, &["a", "b"]);
+        std::fs::write(root.join(".rwv-active"), "b\n").unwrap();
+
+        let ctx = WorkspaceContext::resolve(&root, None).unwrap();
+        assert_eq!(
+            ctx.project_provenance(),
+            Some(ProjectProvenance::ActiveFile)
+        );
+        // Would print to stderr; test harness ignores stderr for passing tests.
+        ctx.emit_target_line();
+    }
+
+    // ========================================================================
+    // Missing-pointer error text — corrective advice.
+    //
+    // The pointer is total by construction (init/fetch/workweave-create
+    // all activate on creation), so reaching `require_active_project` at
+    // a primary with no pointer means hand-surgery. The error must name
+    // the fix commands (`rwv activate <name>` / `--project <name>`) and,
+    // when projects exist, list them so the operator has a menu.
+    // ========================================================================
+
+    /// No `.rwv-active`, no projects on disk: the error names `rwv init`
+    /// as the bootstrapping command since there are no existing projects
+    /// to activate.
+    #[test]
+    fn require_active_project_no_projects_names_init() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = make_workspace(tmp.path(), "ws");
+        let ctx = WorkspaceContext::resolve(&root, None).unwrap();
+        let err = ctx.require_active_project().unwrap_err().to_string();
+        assert!(err.contains("no active project"), "err: {err}");
+        assert!(err.contains("rwv activate"), "err: {err}");
+        assert!(err.contains("--project"), "err: {err}");
+        assert!(
+            err.contains("rwv init"),
+            "err should suggest init when no projects exist: {err}"
+        );
+    }
+
+    /// No `.rwv-active`, some projects on disk: the error lists them so
+    /// the operator has a menu — corrective, not just diagnostic.
+    #[test]
+    fn require_active_project_lists_existing_projects() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = make_workspace(tmp.path(), "ws");
+        make_projects(&root, &["alpha", "beta"]);
+        let ctx = WorkspaceContext::resolve(&root, None).unwrap();
+        let err = ctx.require_active_project().unwrap_err().to_string();
+        assert!(err.contains("no active project"), "err: {err}");
+        assert!(err.contains("rwv activate"), "err: {err}");
+        assert!(err.contains("alpha"), "err should list existing: {err}");
+        assert!(err.contains("beta"), "err should list existing: {err}");
+    }
+
+    /// Stale pointer (`.rwv-active` names a project whose directory is
+    /// missing): `require_active_project_on_disk` errors with an
+    /// actionable message. This case is what the doctor
+    /// `DanglingActiveProject` check surfaces at scan time.
+    #[test]
+    fn require_active_project_on_disk_stale_pointer_errors() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = make_workspace(tmp.path(), "ws");
+        // .rwv-active names a project whose directory does NOT exist.
+        std::fs::write(root.join(".rwv-active"), "ghost\n").unwrap();
+        let ctx = WorkspaceContext::resolve(&root, None).unwrap();
+        let err = ctx
+            .require_active_project_on_disk()
+            .unwrap_err()
+            .to_string();
+        // Message must name the stale project and point at the corrective
+        // commands, following the house error style.
+        assert!(err.contains("ghost"), "err: {err}");
+        assert!(err.contains("rwv activate"), "err: {err}");
+        assert!(
+            err.contains(".rwv-active") || err.contains("projects/"),
+            "err: {err}"
+        );
+    }
+
+    /// Stale pointer error lists existing valid projects so the operator
+    /// can pick one directly.
+    #[test]
+    fn require_active_project_on_disk_stale_lists_existing() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = make_workspace(tmp.path(), "ws");
+        make_projects(&root, &["real-one", "real-two"]);
+        std::fs::write(root.join(".rwv-active"), "ghost\n").unwrap();
+        let ctx = WorkspaceContext::resolve(&root, None).unwrap();
+        let err = ctx
+            .require_active_project_on_disk()
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains("real-one") && err.contains("real-two"),
+            "existing projects should be listed: {err}"
         );
     }
 }

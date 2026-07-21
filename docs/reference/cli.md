@@ -346,6 +346,55 @@ Generate `AGENTS.md` at the workspace root for Cursor, Copilot, and other AGENTS
 
 Generate shell completions (bash, zsh, fish, etc.). Source the output in your shell rc file.
 
+## Project resolution
+
+Project-scoped verbs (`add`, `remove`, `lock`, `update`, `push`, `sync`, `sync-to`, `status`, `doctor`, `fetch` in-place) pick their target project via a fixed chain, highest priority first:
+
+1. `--project <name>` — the explicit override on the invocation.
+2. `-w/--workweave <project>--<name>` — the `<project>--` prefix of the global workweave-selector flag names the project. *(Reserved: the flag itself lands with a later change; the chain slot exists today.)*
+3. `.rwv-workweave` marker — when CWD resolves inside a workweave, the marker file names the project structurally. No ambient pointer is consulted.
+4. `.rwv-active` pointer — the workspace-root file that `rwv activate` maintains, used when no earlier step decided.
+
+The pointer is total by construction: every path that creates a project also activates it (`rwv init`, `rwv fetch <source>`, and `rwv workweave <project> create <name>` each write `.rwv-active` as part of their normal execution). A missing or stale pointer therefore only arises from hand surgery — and produces a corrective error, not silent structure inference.
+
+### Target line — visibility when the pointer decides
+
+When resolution falls through to step 4, the verb prints a target line to **stderr** before acting:
+
+```
+target: workspace /home/cwa/weaveroot/foundations · project tmuxcc (.rwv-active)
+```
+
+Explicitly (`--project`, `-w`) or structurally (marker) resolved invocations stay silent — the operator already named the target, or the workweave did.
+
+Stderr, not stdout, so the line never contaminates a `--json` verb's output. The line is prose, not a parse surface — no schema, no version, no consumer contract. The `resolution` block in `--json` output *(later change)* carries the resolved coordinate as machine data; provenance stays out of the JSON deliberately so agents assert on results, not on how they were reached.
+
+### Corrective errors
+
+- **No active project** — CWD is at a workspace primary with neither `--project` nor `.rwv-active` set. The error names the fix commands and, if projects exist under `projects/`, lists them as a menu:
+
+  ```
+  Error: no active project; run `rwv activate <name>` or pass `--project <name>`. Existing projects: foundations, tmuxcc
+  ```
+
+  In a workspace with no projects yet, the error suggests `rwv init` instead.
+
+- **Stale pointer** — `.rwv-active` names a project whose `projects/<name>/` directory does not exist:
+
+  ```
+  Error: active project `ghost` is set in `.rwv-active` but `projects/ghost/` does not exist; run `rwv activate <existing-project>` or remove `.rwv-active`.
+  ```
+
+  `rwv doctor` also reports the stale pointer as a `dangling-active-project` finding and, under `--fix`, clears the file.
+
+### Which verbs are project-scoped
+
+| Category | Verbs | Resolution behaviour |
+|---|---|---|
+| Project-scoped | `add`, `remove`, `lock`, `update`, `push`, `sync`, `sync-to`, `status`, `doctor` (project-scoped checks), `fetch` (in-place) | Full chain; target line when the pointer decides |
+| Project named positionally | `activate <project>`, `workweave <project> …` | Explicit already; no chain consulted |
+| Workspace-scoped, no project | `init`, `abort`, `resolve`, `prime`, `explain`, `doctor` (cross-project scan) | No project selection involved |
+
 ## Selector grammar
 
 `rwv fetch`, `rwv update`, and `rwv push` share a selector surface for picking which repos to operate on.

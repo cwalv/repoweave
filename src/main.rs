@@ -17,7 +17,7 @@ use anyhow::Context;
 use clap::{CommandFactory, Parser};
 use repoweave::manifest::WorkweaveName;
 use repoweave::workspace::{acquire_origin_dir, WorkspaceContext};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 /// Validate and canonicalize the `-C <path>` argument.
 ///
@@ -63,6 +63,27 @@ fn looks_like_workweave_name(s: &str) -> bool {
     } else {
         false
     }
+}
+
+/// Resolve the workspace context for a project-scoped verb and surface the
+/// pointer fall-through as a "target:" line to stderr before acting.
+///
+/// The rule: any project-scoped verb whose project came from the
+/// `.rwv-active` pointer (rather than `--project` or a workweave marker)
+/// prints the resolved target before acting, so operators catch a wrong
+/// pointer at invocation time instead of by post-hoc git-status forensics.
+/// Structurally- or explicitly-resolved invocations stay silent.
+///
+/// Wrapping resolve + emit in one call keeps the per-verb dispatch site to
+/// a single line and makes it impossible to forget the surfacing on a new
+/// project-scoped verb.
+fn resolve_project_scoped(
+    origin_dir: &Path,
+    project_override: Option<repoweave::manifest::ProjectName>,
+) -> anyhow::Result<WorkspaceContext> {
+    let ctx = WorkspaceContext::resolve(origin_dir, project_override)?;
+    ctx.emit_target_line();
+    Ok(ctx)
 }
 
 /// Levenshtein edit distance between two strings (two-row dynamic-programming
@@ -274,7 +295,7 @@ fn main() -> anyhow::Result<()> {
             project,
         }) => {
             let project_override = project.map(repoweave::manifest::ProjectName::new);
-            let ctx = WorkspaceContext::resolve(&origin_dir, project_override)?;
+            let ctx = resolve_project_scoped(&origin_dir, project_override)?;
             if new {
                 add_remove::run_add_new(&url, &ctx)?;
             } else {
@@ -331,6 +352,9 @@ fn main() -> anyhow::Result<()> {
                             origin_dir.display(),
                         )
                     })?;
+                    // In-place fetch operates on the active project — surface
+                    // the pointer-decided target before acting.
+                    ctx.emit_target_line();
                     fetch::run_fetch_in_place(&ctx, mode, no_reference, &filter, jobs, json)?;
                 }
             }
@@ -354,7 +378,7 @@ fn main() -> anyhow::Result<()> {
             project,
         }) => {
             let project_override = project.map(repoweave::manifest::ProjectName::new);
-            let ctx = WorkspaceContext::resolve(&origin_dir, project_override)?;
+            let ctx = resolve_project_scoped(&origin_dir, project_override)?;
             add_remove::run_remove(&path, delete, force, &ctx)?;
         }
         Some(Commands::Workweave {
@@ -460,7 +484,7 @@ fn main() -> anyhow::Result<()> {
             project,
         }) => {
             let project_override = project.map(repoweave::manifest::ProjectName::new);
-            let ctx = WorkspaceContext::resolve(&origin_dir, project_override)?;
+            let ctx = resolve_project_scoped(&origin_dir, project_override)?;
             if locked {
                 let has_drift = check::run_check_locked(&ctx)?;
                 if has_drift {
@@ -484,12 +508,12 @@ fn main() -> anyhow::Result<()> {
             project,
         }) => {
             let project_override = project.map(repoweave::manifest::ProjectName::new);
-            let ctx = WorkspaceContext::resolve(&origin_dir, project_override)?;
+            let ctx = resolve_project_scoped(&origin_dir, project_override)?;
             lock::lock(&ctx, dirty, commit)?;
         }
         Some(Commands::Status { json, project }) => {
             let project_override = project.map(repoweave::manifest::ProjectName::new);
-            let ctx = WorkspaceContext::resolve(&origin_dir, project_override)?;
+            let ctx = resolve_project_scoped(&origin_dir, project_override)?;
             status::run_status(&ctx, json)?;
         }
         Some(Commands::Abort) => {
@@ -507,7 +531,7 @@ fn main() -> anyhow::Result<()> {
             do_continue,
         }) => {
             let project_override = project.map(repoweave::manifest::ProjectName::new);
-            let ctx = WorkspaceContext::resolve(&origin_dir, project_override.clone())?;
+            let ctx = resolve_project_scoped(&origin_dir, project_override.clone())?;
             // sync's default is serial (jobs=1). This differs from fetch/update
             // (which auto-resolve to min(nproc, 8)) because sync's `--json`
             // contract pins envelope output under `-j 1` and NDJSON under
@@ -548,7 +572,7 @@ fn main() -> anyhow::Result<()> {
             do_continue,
         }) => {
             let project_override = project.map(repoweave::manifest::ProjectName::new);
-            let ctx = WorkspaceContext::resolve(&origin_dir, project_override.clone())?;
+            let ctx = resolve_project_scoped(&origin_dir, project_override.clone())?;
             let jobs = match jobs {
                 Some(n) => repoweave::parallel::resolve_jobs(Some(n)),
                 None => 1,
@@ -624,7 +648,7 @@ fn main() -> anyhow::Result<()> {
             json,
         }) => {
             let project_override = project.map(repoweave::manifest::ProjectName::new);
-            let ctx = WorkspaceContext::resolve(&origin_dir, project_override)?;
+            let ctx = resolve_project_scoped(&origin_dir, project_override)?;
             let filter = repoweave::selector::RepoFilter::parse(&roles, &repos)?;
             // push's default is serial (jobs=1). This differs from fetch/update
             // (which auto-resolve to min(nproc, 8)) because push's `--json`
@@ -647,7 +671,7 @@ fn main() -> anyhow::Result<()> {
             json,
         }) => {
             let project_override = project.map(repoweave::manifest::ProjectName::new);
-            let ctx = WorkspaceContext::resolve(&origin_dir, project_override)?;
+            let ctx = resolve_project_scoped(&origin_dir, project_override)?;
             let filter = repoweave::selector::RepoFilter::parse(&roles, &repos)?;
             // Update's default is auto-parallel (min(nproc, 8)). The envelope/NDJSON
             // split mirrors sync: -j 1 (or unspecified with --json) emits the
