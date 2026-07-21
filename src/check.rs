@@ -7,6 +7,7 @@ use crate::git::git_command;
 use crate::integration::Issue;
 use crate::manifest::{Project, ProjectName, RepoPath, Role, WorkweaveName};
 use crate::vcs::ResolvedRevisionId;
+use crate::workspace::Resolution;
 use anyhow::Context;
 use schemars::JsonSchema;
 use serde::Serialize;
@@ -5628,20 +5629,27 @@ pub fn run_check(
 /// [`run_check_json`] so tests can drive the serialization shape without
 /// reaching for a real workspace on disk.
 ///
-/// Returns `{ "$schema": ..., "violations": [...] }`.
+/// Returns `{ "$schema": ..., "violations": [...], "resolution"?: {...} }`.
+/// `resolution` is a pure projection of the resolved workspace context;
+/// absent when no project is resolved.
 pub fn build_doctor_json(
     violations: Vec<CheckViolation>,
     workspace_dir: &Path,
     workweave_dirs: &std::collections::HashMap<WorkweaveName, std::path::PathBuf>,
+    resolution: Option<Resolution>,
 ) -> serde_json::Value {
     let outputs: Vec<ViolationOutput> = violations
         .into_iter()
         .map(|v| ViolationOutput::from_violation(v, workspace_dir, workweave_dirs))
         .collect();
-    serde_json::json!({
+    let mut doc = serde_json::json!({
         "$schema": DOCTOR_SCHEMA_URL,
         "violations": outputs,
-    })
+    });
+    if let Some(res) = resolution {
+        doc["resolution"] = serde_json::to_value(res).unwrap_or(serde_json::Value::Null);
+    }
+    doc
 }
 
 /// Collect every `CheckViolation` `rwv doctor` knows how to produce.
@@ -6093,7 +6101,12 @@ pub fn run_check_json(
 ) -> anyhow::Result<bool> {
     let (violations, workspace_dir, workweave_dirs) = collect_doctor_violations(ctx, scope_all)?;
     let has_violations = !violations.is_empty();
-    let payload = build_doctor_json(violations, &workspace_dir, &workweave_dirs);
+    let payload = build_doctor_json(
+        violations,
+        &workspace_dir,
+        &workweave_dirs,
+        ctx.resolution(),
+    );
     let out =
         serde_json::to_string_pretty(&payload).context("failed to serialize doctor output")?;
     println!("{out}");

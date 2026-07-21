@@ -209,6 +209,7 @@ fn update_json_envelope_round_trips() {
                 error: None,
             },
         ],
+        resolution: None,
     };
 
     let json = serde_json::to_string(&envelope).expect("serializes");

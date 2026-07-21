@@ -53,6 +53,7 @@ use repoweave::sync::{
     SYNC_TO_JSON_SCHEMA_URL,
 };
 use repoweave::update::{UpdateJsonOutput, UPDATE_SCHEMA_URL};
+use repoweave::workspace::Resolution;
 
 /// Output envelope for `rwv doctor --json`. By default only the active project
 /// is checked and orphan detection is skipped; pass `--all` to scan every
@@ -65,6 +66,10 @@ struct DoctorEnvelope {
     #[serde(rename = "$schema")]
     schema: String,
     violations: Vec<ViolationOutput>,
+    /// Resolved workspace coordinates (workspace root, optional workweave
+    /// identity, project). Absent when no project is resolved.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    resolution: Option<Resolution>,
 }
 
 /// One explainable verb.

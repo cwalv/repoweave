@@ -16,6 +16,17 @@
       "items": {
         "$ref": "#/definitions/FetchOutcomeOutput"
       }
+    },
+    "resolution": {
+      "description": "Resolved workspace coordinates (workspace root, optional workweave identity, project). Absent when no project is resolved.",
+      "anyOf": [
+        {
+          "$ref": "#/definitions/Resolution"
+        },
+        {
+          "type": "null"
+        }
+      ]
     }
   },
   "definitions": {
@@ -53,6 +64,31 @@
         "skipped",
         "failed"
       ]
+    },
+    "Resolution": {
+      "description": "Resolved workspace coordinates for `--json` output and (future) plugin env-var envelope.\n\nCarries exactly the three result fields — `workspace` (primary root abs path), `workweave` (`<project>--<name>` identity when in a workweave, absent at primary), and `project` (resolved project name). Presence of `workweave` encodes the checkout kind; no separate `kind` or `location` field is needed.\n\nResults only — provenance (which chain step resolved the project, which flag addressed the workspace) is deliberately excluded: anything in default `--json` output becomes depended on, and the assertion use case needs the result, not the mechanism. Provenance appears only in the human-facing \"target:\" line printed to stderr.\n\nIsomorphic to the plugin env-var envelope (`RWV_WORKSPACE`/`RWV_WORKWEAVE`/`RWV_PROJECT`): both surfaces are pure projections of [`WorkspaceContext::resolution`], never independently computed.",
+      "type": "object",
+      "required": [
+        "project",
+        "workspace"
+      ],
+      "properties": {
+        "project": {
+          "description": "Resolved project name.",
+          "type": "string"
+        },
+        "workspace": {
+          "description": "Primary workspace root (absolute path).",
+          "type": "string"
+        },
+        "workweave": {
+          "description": "Workweave identity (`<project>--<name>`).\n\nPresent when the invocation resolved into a workweave; absent at the primary. Presence encodes the checkout kind — no separate `kind` field.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
     }
   }
 }

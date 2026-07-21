@@ -10,7 +10,7 @@ use crate::manifest::{Project, ProjectName, RepoEntry, RepoPath, Role};
 use crate::parallel::{run_in_parallel, Reporter};
 use crate::selector::RepoFilter;
 use crate::vcs::{RawRevisionId, Vcs};
-use crate::workspace::{Checkout, WorkspaceContext};
+use crate::workspace::{Checkout, Resolution, WorkspaceContext};
 use anyhow::Context;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -92,6 +92,10 @@ pub struct PushJsonOutput {
     #[serde(rename = "$schema")]
     pub schema_url: String,
     pub outcomes: Vec<PushOutcomeOutput>,
+    /// Resolved workspace coordinates (workspace root, optional workweave
+    /// identity, project). Absent when no project is resolved.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub resolution: Option<Resolution>,
 }
 
 /// One NDJSON record for `rwv push --json -j N` with `N > 1`.
@@ -527,6 +531,7 @@ pub fn run_push(
             let envelope = PushJsonOutput {
                 schema_url: PUSH_SCHEMA_URL.to_string(),
                 outcomes: json_outcomes,
+                resolution: ctx.resolution(),
             };
             if let Ok(out) = serde_json::to_string_pretty(&envelope) {
                 println!("{out}");
@@ -593,6 +598,7 @@ pub fn run_push(
             let envelope = PushJsonOutput {
                 schema_url: PUSH_SCHEMA_URL.to_string(),
                 outcomes: json_outcomes,
+                resolution: ctx.resolution(),
             };
             if let Ok(out) = serde_json::to_string_pretty(&envelope) {
                 println!("{out}");
@@ -612,6 +618,7 @@ pub fn run_push(
             let envelope = PushJsonOutput {
                 schema_url: PUSH_SCHEMA_URL.to_string(),
                 outcomes: json_outcomes,
+                resolution: ctx.resolution(),
             };
             let out = serde_json::to_string_pretty(&envelope)
                 .context("failed to serialize push outcomes to JSON")?;

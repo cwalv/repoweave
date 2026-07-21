@@ -12,7 +12,7 @@ use crate::status::{compute_relation, LockRelation};
 use crate::vcs::{
     ConflictOp, RefName, ResolvedRevisionId, Vcs, VcsError, VcsErrorOutput, VerifiedRestoreOutcome,
 };
-use crate::workspace::{Checkout, WorkspaceContext};
+use crate::workspace::{Checkout, Resolution, WorkspaceContext};
 use crate::workweave::{classify_checkout, ensure_registered_workweave, CheckoutKind};
 use anyhow::Context;
 use schemars::JsonSchema;
@@ -484,6 +484,10 @@ pub struct SyncJsonOutput {
     #[serde(rename = "$schema")]
     pub schema: String,
     pub outcomes: Vec<SyncOutcomeOutput>,
+    /// Resolved workspace coordinates (workspace root, optional workweave
+    /// identity, project). Absent when no project is resolved.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub resolution: Option<Resolution>,
 }
 
 /// Top-level envelope for `rwv sync-to --json` (serial mode).
@@ -518,6 +522,10 @@ pub struct SyncToJsonOutput {
     /// when the project repo was already at CWD's tip (no-op fast-forward).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub project_repo_advance: Option<Step3AdvanceOutput>,
+    /// Resolved workspace coordinates (workspace root, optional workweave
+    /// identity, project). Absent when no project is resolved.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub resolution: Option<Resolution>,
 }
 
 /// One NDJSON record emitted by `rwv sync --json -j N` with `N > 1`.
@@ -4881,6 +4889,7 @@ pub fn run_sync_json(ctx: &WorkspaceContext, request: SyncRequest) -> anyhow::Re
         SYNC_JSON_SCHEMA_URL,
         project_level_result,
         false,
+        ctx.resolution(),
     )
 }
 
@@ -4928,6 +4937,7 @@ fn run_sync_json_impl(
     schema_url: &str,
     project_level_result: anyhow::Result<()>,
     emit_empty_envelope: bool,
+    resolution: Option<Resolution>,
 ) -> anyhow::Result<()> {
     // If we never reached the per-repo loop (project-level precondition
     // failure), propagate the error so main prints it via anyhow.
@@ -4945,6 +4955,7 @@ fn run_sync_json_impl(
         let payload = SyncJsonOutput {
             schema: schema_url.to_owned(),
             outcomes: records,
+            resolution,
         };
         let out =
             serde_json::to_string_pretty(&payload).context("failed to serialize sync output")?;
@@ -5082,6 +5093,7 @@ pub fn run_sync_to_json(ctx: &WorkspaceContext, request: SyncRequest) -> anyhow:
             retired: actually_retired,
             outcomes,
             project_repo_advance,
+            resolution: ctx.resolution(),
         };
         let out =
             serde_json::to_string_pretty(&payload).context("failed to serialize sync-to output")?;

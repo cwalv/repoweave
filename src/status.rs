@@ -3,7 +3,7 @@
 use crate::git::GitVcs;
 use crate::manifest::Project;
 use crate::vcs::{ResolvedRevisionId, Vcs};
-use crate::workspace::{Checkout, WorkspaceContext};
+use crate::workspace::{Checkout, Resolution, WorkspaceContext};
 use anyhow::Context;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -23,6 +23,10 @@ pub struct StatusJsonOutput {
     #[serde(rename = "$schema")]
     pub schema_url: String,
     pub repos: Vec<RepoStatus>,
+    /// Resolved workspace coordinates (workspace root, optional workweave
+    /// identity, project). Absent when no project is resolved.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub resolution: Option<Resolution>,
 }
 
 /// Relation between the current branch tip and the lock SHA.
@@ -369,6 +373,7 @@ pub fn run_status(ctx: &WorkspaceContext, json: bool) -> anyhow::Result<()> {
         let envelope = StatusJsonOutput {
             schema_url: STATUS_SCHEMA_URL.to_string(),
             repos: entries,
+            resolution: ctx.resolution(),
         };
         let out = serde_json::to_string_pretty(&envelope)
             .context("failed to serialize status to JSON")?;
@@ -464,6 +469,7 @@ mod tests {
                 absolute_path: "/abs/github/org/repo".into(),
                 parent: None,
             }],
+            resolution: None,
         };
 
         let json = serde_json::to_string(&envelope).expect("serializes");
@@ -519,6 +525,7 @@ mod tests {
                     tip: Some("cafef00d".into()),
                 }),
             }],
+            resolution: None,
         };
 
         let json = serde_json::to_string(&envelope).expect("serializes");

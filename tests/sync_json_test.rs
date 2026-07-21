@@ -827,6 +827,7 @@ fn sync_json_envelope_round_trips() {
                 &RepoSyncOutcome::AlreadyAhead { commits_ahead: 2 },
             ),
         ],
+        resolution: None,
     };
     let v = serde_json::to_value(&envelope).unwrap();
     assert_eq!(v["$schema"], SYNC_JSON_SCHEMA_URL);

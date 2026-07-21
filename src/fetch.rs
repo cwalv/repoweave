@@ -10,7 +10,7 @@ use crate::parallel::{run_in_parallel, Reporter};
 use crate::registry;
 use crate::selector::RepoFilter;
 use crate::vcs::Vcs;
-use crate::workspace::WorkspaceContext;
+use crate::workspace::{Resolution, WorkspaceContext};
 use anyhow::{bail, Context};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -60,6 +60,10 @@ pub struct FetchJsonOutput {
     #[serde(rename = "$schema")]
     pub schema: String,
     pub outcomes: Vec<FetchOutcomeOutput>,
+    /// Resolved workspace coordinates (workspace root, optional workweave
+    /// identity, project). Absent when no project is resolved.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub resolution: Option<Resolution>,
 }
 
 /// One NDJSON record emitted by `rwv fetch --json -j N` with `N > 1`.
@@ -228,6 +232,9 @@ pub fn run_fetch(
         jobs,
         json,
         /* auto_activate_on_bootstrap = */ true,
+        // Source-mode fetch runs before any WorkspaceContext is resolved; no
+        // resolution block is available at this point.
+        None,
     )
 }
 
@@ -285,6 +292,7 @@ pub fn run_fetch_in_place(
         jobs,
         json,
         /* auto_activate_on_bootstrap = */ false,
+        ctx.resolution(),
     )
 }
 
@@ -297,6 +305,10 @@ pub fn run_fetch_in_place(
 /// `auto_activate_on_bootstrap` toggles the first-fetch auto-activate step
 /// (only meaningful for SOURCE-mode — the in-place path operates on a
 /// project that is already active).
+///
+/// `resolution` is the resolved workspace coordinate block for the
+/// `--json` envelope. `None` when no `WorkspaceContext` is available (the
+/// SOURCE-mode bootstrap path runs before a context is resolved).
 #[allow(clippy::too_many_arguments)]
 fn fetch_project_repos(
     name: &str,
@@ -308,6 +320,7 @@ fn fetch_project_repos(
     jobs: usize,
     json: bool,
     auto_activate_on_bootstrap: bool,
+    resolution: Option<Resolution>,
 ) -> anyhow::Result<()> {
     let git = GitVcs;
 
@@ -519,6 +532,7 @@ fn fetch_project_repos(
                 let payload = FetchJsonOutput {
                     schema: FETCH_SCHEMA_URL.to_owned(),
                     outcomes: envelope_records,
+                    resolution: resolution.clone(),
                 };
                 if let Ok(out) = serde_json::to_string_pretty(&payload) {
                     println!("{out}");
@@ -549,6 +563,7 @@ fn fetch_project_repos(
             let payload = FetchJsonOutput {
                 schema: FETCH_SCHEMA_URL.to_owned(),
                 outcomes: envelope_records,
+                resolution,
             };
             let out = serde_json::to_string_pretty(&payload)
                 .context("failed to serialize fetch output")?;

@@ -30,6 +30,7 @@ use crate::manifest::{Manifest, ProjectName, RepoPath, WorkweaveName};
 use crate::registry::{builtin_registries, Registry};
 use crate::vcs::Vcs;
 use anyhow::Context;
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
@@ -872,6 +873,74 @@ impl WorkspaceContext {
 
         lines.join("\n")
     }
+
+    /// Project the resolved context into the machine-readable `resolution` block.
+    ///
+    /// Returns `None` when no project is resolved (bare primary with neither
+    /// `--project` nor `.rwv-active` set) — in that case the block is omitted
+    /// from `--json` output entirely.
+    ///
+    /// The returned value is a pure projection: `workspace` is the primary root
+    /// (abs path), `workweave` is the full `<project>--<name>` identity when in
+    /// a workweave (absent at primary — presence IS the checkout kind), and
+    /// `project` is the resolved project name. Results only; resolution
+    /// provenance (which chain step chose the project) is human-surface only
+    /// (stderr target line) and is deliberately excluded from this struct.
+    ///
+    /// A future change will emit an env-var envelope
+    /// (`RWV_WORKSPACE`/`RWV_WORKWEAVE`/`RWV_PROJECT`) as a second
+    /// serialization of this same projection. That path will call this method
+    /// and map fields to env vars; the values must never be independently
+    /// computed. See bead comment on fo-11iipc.6 for the envelope-agreement
+    /// test that lands with that work.
+    pub fn resolution(&self) -> Option<Resolution> {
+        let project = self.active_project()?;
+        let workspace = self.primary_root.clone();
+        let workweave = match &self.checkout {
+            Checkout::Primary { .. } => None,
+            Checkout::Workweave { name, project, .. } => {
+                Some(weave_dir_name(project.as_str(), name))
+            }
+        };
+        Some(Resolution {
+            workspace,
+            workweave,
+            project: project.as_str().to_owned(),
+        })
+    }
+}
+
+/// Resolved workspace coordinates for `--json` output and (future) plugin
+/// env-var envelope.
+///
+/// Carries exactly the three result fields — `workspace` (primary root abs
+/// path), `workweave` (`<project>--<name>` identity when in a workweave,
+/// absent at primary), and `project` (resolved project name). Presence of
+/// `workweave` encodes the checkout kind; no separate `kind` or `location`
+/// field is needed.
+///
+/// Results only — provenance (which chain step resolved the project, which
+/// flag addressed the workspace) is deliberately excluded: anything in
+/// default `--json` output becomes depended on, and the assertion use case
+/// needs the result, not the mechanism. Provenance appears only in the
+/// human-facing "target:" line printed to stderr.
+///
+/// Isomorphic to the plugin env-var envelope
+/// (`RWV_WORKSPACE`/`RWV_WORKWEAVE`/`RWV_PROJECT`): both surfaces are pure
+/// projections of [`WorkspaceContext::resolution`], never independently
+/// computed.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct Resolution {
+    /// Primary workspace root (absolute path).
+    pub workspace: PathBuf,
+    /// Workweave identity (`<project>--<name>`).
+    ///
+    /// Present when the invocation resolved into a workweave; absent at the
+    /// primary. Presence encodes the checkout kind — no separate `kind` field.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub workweave: Option<String>,
+    /// Resolved project name.
+    pub project: String,
 }
 
 /// Build a workweave directory name using the `{project}--{name}` convention.
@@ -2119,6 +2188,157 @@ mod tests {
         assert!(
             err.contains("real-one") && err.contains("real-two"),
             "existing projects should be listed: {err}"
+        );
+    }
+
+    // ========================================================================
+    // Resolution projection tests
+    //
+    // These tests pin the contract that `WorkspaceContext::resolution()` is a
+    // pure projection of the resolved context — one function, never
+    // independently computed. A future change will emit an env-var envelope
+    // (RWV_WORKSPACE / RWV_WORKWEAVE / RWV_PROJECT) as a second serialization
+    // of this same projection; the envelope-agreement half of the test lands
+    // with that work (see bead fo-11iipc.6 comment).
+    // ========================================================================
+
+    /// At primary with an active project: resolution is present, workweave
+    /// absent (no workweave checkout), workspace and project match the context.
+    #[test]
+    fn resolution_at_primary_has_workspace_and_project_no_workweave() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = make_workspace(tmp.path(), "ws");
+        std::fs::write(root.join(".rwv-active"), "myproject\n").unwrap();
+
+        let ctx = WorkspaceContext::resolve(&root, None).unwrap();
+        let res = ctx
+            .resolution()
+            .expect("resolution must be present with an active project");
+
+        assert_eq!(res.workspace, root.canonicalize().unwrap());
+        assert_eq!(res.project, "myproject");
+        assert!(
+            res.workweave.is_none(),
+            "workweave must be absent at primary; got {:?}",
+            res.workweave
+        );
+    }
+
+    /// At primary without an active project: resolution is absent entirely.
+    #[test]
+    fn resolution_at_primary_without_active_project_is_none() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = make_workspace(tmp.path(), "ws");
+        // No .rwv-active file — no project resolved.
+
+        let ctx = WorkspaceContext::resolve(&root, None).unwrap();
+        assert!(
+            ctx.resolution().is_none(),
+            "resolution must be absent when no project is resolved"
+        );
+    }
+
+    /// Inside a workweave: resolution has workweave = "<project>--<name>" and
+    /// the identity matches the context's own checkout exactly.
+    #[test]
+    fn resolution_in_workweave_has_workweave_identity() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = make_workspace(tmp.path(), "ws");
+        let primary_canon = root.canonicalize().unwrap();
+
+        // Create a workweave directory with the marker.
+        let weave_dir = tmp.path().join("ws--fo-abc");
+        std::fs::create_dir_all(&weave_dir).unwrap();
+        let marker = WorkweaveMarker {
+            primary: primary_canon.clone(),
+            project: ProjectName::new("myproject"),
+            parent: primary_canon,
+        };
+        marker.write(&weave_dir).unwrap();
+
+        let ctx = WorkspaceContext::resolve(&weave_dir, None).unwrap();
+        let res = ctx
+            .resolution()
+            .expect("resolution must be present in a workweave");
+
+        // workweave must be present and match the <project>--<name> identity.
+        let ww = res
+            .workweave
+            .as_deref()
+            .expect("workweave must be present in workweave checkout");
+        assert_eq!(
+            ww, "myproject--fo-abc",
+            "workweave identity must be '<project>--<name>', got {ww:?}"
+        );
+        assert_eq!(res.project, "myproject");
+        // workspace is the primary root.
+        assert_eq!(
+            res.workspace,
+            weave_dir
+                .canonicalize()
+                .unwrap()
+                .parent()
+                .unwrap()
+                .join("ws")
+                .canonicalize()
+                .unwrap()
+        );
+    }
+
+    /// Key-set contract: JSON serialization of the resolution block at primary
+    /// has exactly two keys (workspace, project) — workweave omitted, no
+    /// provenance fields. This guards against accidental leakage.
+    #[test]
+    fn resolution_json_key_set_at_primary() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = make_workspace(tmp.path(), "ws");
+        std::fs::write(root.join(".rwv-active"), "myproject\n").unwrap();
+
+        let ctx = WorkspaceContext::resolve(&root, None).unwrap();
+        let res = ctx.resolution().unwrap();
+        let json = serde_json::to_value(&res).expect("serializes");
+        let obj = json.as_object().expect("is a JSON object");
+
+        let keys: std::collections::BTreeSet<&str> = obj.keys().map(String::as_str).collect();
+        let expected: std::collections::BTreeSet<&str> =
+            ["workspace", "project"].iter().copied().collect();
+        assert_eq!(
+            keys, expected,
+            "at primary: exactly {{workspace, project}} — no workweave, no provenance fields"
+        );
+    }
+
+    /// Key-set contract: JSON serialization of the resolution block in a
+    /// workweave has exactly three keys (workspace, workweave, project) —
+    /// no provenance fields.
+    #[test]
+    fn resolution_json_key_set_in_workweave() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = make_workspace(tmp.path(), "ws");
+        let primary_canon = root.canonicalize().unwrap();
+
+        let weave_dir = tmp.path().join("ws--fo-abc");
+        std::fs::create_dir_all(&weave_dir).unwrap();
+        let marker = WorkweaveMarker {
+            primary: primary_canon.clone(),
+            project: ProjectName::new("myproject"),
+            parent: primary_canon,
+        };
+        marker.write(&weave_dir).unwrap();
+
+        let ctx = WorkspaceContext::resolve(&weave_dir, None).unwrap();
+        let res = ctx.resolution().unwrap();
+        let json = serde_json::to_value(&res).expect("serializes");
+        let obj = json.as_object().expect("is a JSON object");
+
+        let keys: std::collections::BTreeSet<&str> = obj.keys().map(String::as_str).collect();
+        let expected: std::collections::BTreeSet<&str> = ["workspace", "workweave", "project"]
+            .iter()
+            .copied()
+            .collect();
+        assert_eq!(
+            keys, expected,
+            "in workweave: exactly {{workspace, workweave, project}} — no provenance fields"
         );
     }
 }

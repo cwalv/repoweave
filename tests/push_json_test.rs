@@ -153,6 +153,7 @@ fn push_json_envelope_round_trips() {
                 project: "my-app".into(),
             },
         ],
+        resolution: None,
     };
 
     let json = serde_json::to_string(&envelope).expect("serializes");

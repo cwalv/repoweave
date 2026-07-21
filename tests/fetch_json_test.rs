@@ -44,6 +44,7 @@ fn fetch_json_envelope_round_trips() {
                 message: Some("skipped github/org/beta".into()),
             },
         ],
+        resolution: None,
     };
 
     let json = serde_json::to_string(&envelope).expect("serializes");

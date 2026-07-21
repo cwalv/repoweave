@@ -12,7 +12,7 @@ use crate::manifest::{Project, ProjectName, RepoEntry, RepoPath};
 use crate::parallel::{run_in_parallel, run_subprocess_with_reporter, Reporter};
 use crate::selector::RepoFilter;
 use crate::vcs::{RefName, Vcs};
-use crate::workspace::{Checkout, WorkspaceContext};
+use crate::workspace::{Checkout, Resolution, WorkspaceContext};
 use anyhow::Context;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -72,6 +72,10 @@ pub struct UpdateJsonOutput {
     #[serde(rename = "$schema")]
     pub schema_url: String,
     pub repos: Vec<RepoUpdateRecord>,
+    /// Resolved workspace coordinates (workspace root, optional workweave
+    /// identity, project). Absent when no project is resolved.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub resolution: Option<Resolution>,
 }
 
 /// One NDJSON record emitted by `rwv update --json -j N` with `N > 1`.
@@ -329,6 +333,7 @@ fn update_for_project(
             let envelope = UpdateJsonOutput {
                 schema_url: UPDATE_SCHEMA_URL.to_string(),
                 repos: json_records,
+                resolution: ctx.resolution(),
             };
             let out = serde_json::to_string_pretty(&envelope)
                 .context("failed to serialize update output")?;
@@ -366,6 +371,7 @@ fn update_for_project(
         let envelope = UpdateJsonOutput {
             schema_url: UPDATE_SCHEMA_URL.to_string(),
             repos: json_records,
+            resolution: ctx.resolution(),
         };
         let out =
             serde_json::to_string_pretty(&envelope).context("failed to serialize update output")?;
