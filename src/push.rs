@@ -10,7 +10,7 @@ use crate::manifest::{Project, ProjectName, RepoEntry, RepoPath, Role};
 use crate::parallel::{run_in_parallel, Reporter};
 use crate::selector::RepoFilter;
 use crate::vcs::{RawRevisionId, Vcs};
-use crate::workspace::{WorkspaceContext, WorkspaceLocation};
+use crate::workspace::{Checkout, WorkspaceContext};
 use anyhow::Context;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -135,18 +135,15 @@ pub struct PushOutcomeNdjsonRecord<'a> {
 /// prefixing per-repo lines with `[<repo-path>]`. The project-repo push always
 /// runs serially as the last step, regardless of `jobs`.
 pub fn run_push(
-    cwd: &Path,
-    project_override: Option<ProjectName>,
+    ctx: &WorkspaceContext,
     dry_run: bool,
     force: bool,
     filter: &RepoFilter,
     jobs: usize,
     json: bool,
 ) -> anyhow::Result<()> {
-    let ctx = WorkspaceContext::resolve(cwd, project_override.clone())?;
-
     // 1. Workspace precondition — refuse from a workweave.
-    if let WorkspaceLocation::Workweave { name, .. } = &ctx.location {
+    if let Checkout::Workweave { name, .. } = &ctx.checkout {
         anyhow::bail!(
             "rwv push: refusing to push from workweave '{}'; \
              workweave branches shouldn't leak to shared remotes. \

@@ -12,7 +12,7 @@ use crate::status::{compute_relation, LockRelation};
 use crate::vcs::{
     ConflictOp, RefName, ResolvedRevisionId, Vcs, VcsError, VcsErrorOutput, VerifiedRestoreOutcome,
 };
-use crate::workspace::{WorkspaceContext, WorkspaceLocation};
+use crate::workspace::{Checkout, WorkspaceContext};
 use crate::workweave::{classify_checkout, workweave_path_for, CheckoutKind};
 use anyhow::Context;
 use schemars::JsonSchema;
@@ -42,9 +42,9 @@ impl Side {
 /// Display name for a workspace: the workweave name when in a workweave,
 /// otherwise the basename of the primary path.
 fn workspace_name(ctx: &WorkspaceContext) -> String {
-    match &ctx.location {
-        WorkspaceLocation::Workweave { name, .. } => name.as_str().to_owned(),
-        WorkspaceLocation::Weave { .. } => ctx
+    match &ctx.checkout {
+        Checkout::Workweave { name, .. } => name.as_str().to_owned(),
+        Checkout::Primary { .. } => ctx
             .primary_path()
             .file_name()
             .and_then(|n| n.to_str())
@@ -152,9 +152,9 @@ impl SyncSource {
                 // as the workspace we're syncing INTO (sync is per-project).
                 // When CWD is the primary weave, require an active project
                 // rather than silently falling back to an empty string.
-                let project = match &ctx.location {
-                    WorkspaceLocation::Workweave { project, .. } => project.clone(),
-                    WorkspaceLocation::Weave { .. } => ctx.require_active_project()?.clone(),
+                let project = match &ctx.checkout {
+                    Checkout::Workweave { project, .. } => project.clone(),
+                    Checkout::Primary { .. } => ctx.require_active_project()?.clone(),
                 };
                 Ok(workweave_path_for(ctx.primary_path(), &project, name))
             }
@@ -1126,15 +1126,15 @@ fn verify_replay_exclusion_invariant(cwd_project_dir: &Path) -> anyhow::Result<(
 }
 
 fn find_project_name(ctx: &WorkspaceContext) -> anyhow::Result<ProjectName> {
-    match &ctx.location {
-        WorkspaceLocation::Weave { project: Some(_) } => {
+    match &ctx.checkout {
+        Checkout::Primary { project: Some(_) } => {
             // Delegate to require_active_project_on_disk so a dangling
             // .rwv-active fails early with a clear message rather than
             // producing confusing downstream git errors.
             ctx.require_active_project_on_disk().cloned()
         }
-        WorkspaceLocation::Workweave { project, .. } => Ok(project.clone()),
-        WorkspaceLocation::Weave { project: None } => {
+        Checkout::Workweave { project, .. } => Ok(project.clone()),
+        Checkout::Primary { project: None } => {
             // require_active_project produces the same helpful error
             // mentioning --project / rwv activate; defer to it.
             ctx.require_active_project().cloned()
@@ -1223,8 +1223,8 @@ fn materialize_missing_repo(
             .with_context(|| format!("failed to create {}", parent.display()))?;
     }
 
-    match &ctx.location {
-        WorkspaceLocation::Workweave { name, .. } => {
+    match &ctx.checkout {
+        Checkout::Workweave { name, .. } => {
             // Canonical clone lives at primary.
             let canonical = ctx.primary_path().join(repo_path.as_path());
             if !canonical.exists() {
@@ -1251,7 +1251,7 @@ fn materialize_missing_repo(
                 .create_worktree(&canonical, &dest, &branch, &head_rev)
                 .with_context(|| format!("worktree add for {repo_path} failed"))?;
         }
-        WorkspaceLocation::Weave { .. } => {
+        Checkout::Primary { .. } => {
             GitVcs
                 .clone_repo(&entry.url.to_string(), &dest)
                 .with_context(|| format!("clone of {repo_path} from {} failed", entry.url))?;
@@ -1276,8 +1276,8 @@ fn prune_dropped_repo(ctx: &WorkspaceContext, repo_path: &RepoPath) -> anyhow::R
         );
     }
 
-    match &ctx.location {
-        WorkspaceLocation::Workweave { .. } => {
+    match &ctx.checkout {
+        Checkout::Workweave { .. } => {
             // Diverged-from-canonical check: refuse if local commits would be lost.
             let canonical = ctx.primary_path().join(repo_path.as_path());
             if canonical.exists() {
@@ -1305,7 +1305,7 @@ fn prune_dropped_repo(ctx: &WorkspaceContext, repo_path: &RepoPath) -> anyhow::R
                     .with_context(|| format!("failed to remove {}", dest.display()))?;
             }
         }
-        WorkspaceLocation::Weave { .. } => {
+        Checkout::Primary { .. } => {
             // Primary: refuse if local-only branches with unique commits exist.
             // Conservative — any branch with commits not on origin is grounds.
             // We don't know the manifest role of this dropped repo at prune
@@ -1567,6 +1567,12 @@ impl OutputHandler for JsonEnvelopeSyncToHandler<'_> {
 /// everything the phase functions need that isn't on disk in the owner record.
 struct OpContext<'a> {
     /// CWD workspace context (the workspace invocation was made from).
+    ///
+    /// Owned by the op context — a `Clone` of the invocation context passed
+    /// in by the top-of-`main` resolution (or a re-rooted owner context on
+    /// `--continue` from a leased target). The phase engine never re-resolves
+    /// the invocation context via `current_dir()`; it may resolve *other*
+    /// workspaces (source/target) as needed.
     cwd_ctx: WorkspaceContext,
     /// CWD workspace root (== owner workspace for fresh invocations from the
     /// owner side; == lease workspace when --continue is invoked from target).
@@ -1715,12 +1721,12 @@ impl Default for SyncRequest {
     }
 }
 
-pub fn run_sync(cwd: &Path, request: SyncRequest) -> anyhow::Result<()> {
+pub fn run_sync(ctx: &WorkspaceContext, request: SyncRequest) -> anyhow::Result<()> {
     let stdout_lock: Mutex<()> = Mutex::new(());
     let handler = TextHandler {
         stdout_lock: &stdout_lock,
     };
-    run_machine(MachineVerb::Sync, cwd, &request, &handler)
+    run_machine(MachineVerb::Sync, ctx, &request, &handler)
 }
 
 // ---------------------------------------------------------------------------
@@ -1735,16 +1741,21 @@ pub fn run_sync(cwd: &Path, request: SyncRequest) -> anyhow::Result<()> {
 /// `None` under `--continue` (read from op-state). `do_continue = true` means
 /// "resolve op-state from CWD (following a lease pointer if invoked from a
 /// non-owner workspace), enter the driver loop at the recorded phase".
+///
+/// `cwd_ctx` is the already-resolved invocation context (with `--project`
+/// baked in when passed). The driver never re-resolves the invocation
+/// context; it may still resolve *other* workspaces (sync source/target,
+/// lease owner) internally.
 fn run_machine(
     verb: MachineVerb,
-    cwd: &Path,
+    cwd_ctx: &WorkspaceContext,
     request: &SyncRequest,
     handler: &dyn OutputHandler,
 ) -> anyhow::Result<()> {
     let ctx = if request.do_continue {
-        load_continuing_context(verb, cwd, request, handler)?
+        load_continuing_context(verb, cwd_ctx, request, handler)?
     } else {
-        guard_and_mark(verb, cwd, request, handler)?
+        guard_and_mark(verb, cwd_ctx, request, handler)?
     };
 
     drive(&ctx)
@@ -1873,7 +1884,6 @@ struct PreconditionOutcome {
 #[allow(clippy::too_many_arguments)]
 fn run_preconditions_after_acquire(
     verb: MachineVerb,
-    cwd: &Path,
     strategy: SyncStrategy,
     allow_stale_lock: bool,
     discard_local_commits: bool,
@@ -1924,12 +1934,7 @@ fn run_preconditions_after_acquire(
             // does not affect the op.
             let cwd_project_preflight = Project::from_dir(cwd_project_dir)
                 .context("failed to load CWD project for sync dirt scan")?;
-            check_dirty_preflight_sync(
-                &cwd_project_preflight,
-                cwd_workspace_dir,
-                cwd_project_dir,
-                cwd,
-            )?;
+            check_dirty_preflight_sync(&cwd_project_preflight, cwd_workspace_dir, cwd_project_dir)?;
         }
         MachineVerb::SyncTo => {
             // sync-to preflights (both refuse before any side effects):
@@ -1943,7 +1948,6 @@ fn run_preconditions_after_acquire(
                 &cwd_project_preflight,
                 cwd_workspace_dir,
                 cwd_project_dir,
-                cwd,
             )?;
             check_dirty_target_preflight(
                 &cwd_project_preflight,
@@ -2170,7 +2174,7 @@ fn run_preconditions_after_acquire(
 /// loop. Refusals here leave no trace.
 fn guard_and_mark<'a>(
     verb: MachineVerb,
-    cwd: &Path,
+    cwd_ctx: &WorkspaceContext,
     request: &SyncRequest,
     handler: &'a dyn OutputHandler,
 ) -> anyhow::Result<OpContext<'a>> {
@@ -2183,16 +2187,15 @@ fn guard_and_mark<'a>(
     let jobs = request.jobs;
 
     let emit_text = handler.emit_text();
-    let cwd_ctx = WorkspaceContext::resolve(cwd, project_override.clone())?;
     let cwd_workspace_dir = cwd_ctx.active_path().to_path_buf();
 
     // Resolve the SyncSource the operator passed. For sync, this is the
     // source workspace; for sync-to, this is the target workspace.
     let resolved_arg = match source {
         Some(s) => s.clone(),
-        None => match (verb, &cwd_ctx.location) {
+        None => match (verb, &cwd_ctx.checkout) {
             // Bare `rwv sync` inside a workweave: read parent from the marker.
-            (MachineVerb::Sync, WorkspaceLocation::Workweave { dir, .. }) => {
+            (MachineVerb::Sync, Checkout::Workweave { dir, .. }) => {
                 let marker = crate::workspace::WorkweaveMarker::read(dir)?.ok_or_else(|| {
                     anyhow::anyhow!(
                         "bare `rwv sync` requires a `.rwv-workweave` marker in the \
@@ -2208,11 +2211,11 @@ fn guard_and_mark<'a>(
                 check_parent_not_dangling(&marker.parent, cwd_ctx.primary_path())?;
                 SyncSource::Path(marker.parent)
             }
-            (MachineVerb::Sync, WorkspaceLocation::Weave { .. }) => {
+            (MachineVerb::Sync, Checkout::Primary { .. }) => {
                 anyhow::bail!(
                     "bare `rwv sync` syncs to the workweave's recorded parent, but CWD \
                      ({}) is in the primary weave, not a workweave; pass an explicit source",
-                    cwd.display()
+                    cwd_ctx.active_path().display()
                 );
             }
             (MachineVerb::SyncTo, _) => {
@@ -2222,7 +2225,7 @@ fn guard_and_mark<'a>(
             }
         },
     };
-    let cli_path = resolved_arg.resolve(&cwd_ctx)?;
+    let cli_path = resolved_arg.resolve(cwd_ctx)?;
 
     // For plain `sync <src>`: replay rebases CWD onto src, then relocks; no advance-target.
     //     source = src (replay pulls from here), dest = CWD (relock writes here).
@@ -2238,12 +2241,12 @@ fn guard_and_mark<'a>(
     // authoritative; pass it through so the *other* workspace resolves the
     // same project regardless of its `.rwv-active`. Otherwise propagate the
     // caller's explicit `--project`.
-    let other_project_override = match &cwd_ctx.location {
-        WorkspaceLocation::Workweave { project, .. } => Some(project.clone()),
-        WorkspaceLocation::Weave { .. } => project_override.clone(),
+    let other_project_override = match &cwd_ctx.checkout {
+        Checkout::Workweave { project, .. } => Some(project.clone()),
+        Checkout::Primary { .. } => project_override.clone(),
     };
 
-    let cwd_project_name = find_project_name(&cwd_ctx)?;
+    let cwd_project_name = find_project_name(cwd_ctx)?;
     let cwd_project_dir = cwd_workspace_dir.join("projects").join(&cwd_project_name);
 
     // source_workspace_dir is the operator's arg for both verbs (sync's <src>
@@ -2261,7 +2264,7 @@ fn guard_and_mark<'a>(
         let source_ctx = WorkspaceContext::resolve(&source_workspace_dir, override_arg)?;
         let pname = find_project_name(&source_ctx)?;
         let dir = source_ctx.active_path().join("projects").join(&pname);
-        let is_workweave = matches!(source_ctx.location, WorkspaceLocation::Workweave { .. });
+        let is_workweave = matches!(source_ctx.checkout, Checkout::Workweave { .. });
         (dir, workspace_name(&source_ctx), pname, is_workweave)
     };
 
@@ -2275,7 +2278,7 @@ fn guard_and_mark<'a>(
 
     // Sibling-sync warning: only meaningful for plain sync.
     if matches!(verb, MachineVerb::Sync) {
-        warn_on_sibling_sync(&cwd_ctx, &source_workspace_dir, emit_text);
+        warn_on_sibling_sync(cwd_ctx, &source_workspace_dir, emit_text);
     }
 
     // === Acquire op-state (atomic claim) ===
@@ -2335,14 +2338,13 @@ fn guard_and_mark<'a>(
     // routes through the release path.
     let precondition_result = run_preconditions_after_acquire(
         verb,
-        cwd,
         strategy,
         allow_stale_lock,
         discard_local_commits,
         source_is_workweave,
         &cwd_project_dir,
         &cwd_workspace_dir,
-        &cwd_ctx,
+        cwd_ctx,
         &source_project_dir,
         &source_workspace_dir,
         &source_workspace_name,
@@ -2489,7 +2491,7 @@ fn guard_and_mark<'a>(
             }
         }
         if let Err(e) = regenerate_lock_phase3(
-            &cwd_ctx,
+            cwd_ctx,
             &cwd_project_dir,
             &cwd_project,
             &source_workspace_name,
@@ -2504,7 +2506,7 @@ fn guard_and_mark<'a>(
     }
 
     Ok(OpContext {
-        cwd_ctx,
+        cwd_ctx: cwd_ctx.clone(),
         cwd_workspace_dir,
         owner_workspace_dir,
         source_workspace_name,
@@ -2527,9 +2529,14 @@ fn guard_and_mark<'a>(
 /// Load context for `--continue`: read the owner record (following a lease
 /// pointer if invoked from a non-owner workspace), derive all op parameters
 /// from it, and rebuild the [`OpContext`].
+///
+/// `invocation_ctx` is the already-resolved invocation context (the CWD the
+/// operator ran from — potentially the leased target, not the owner). This
+/// function may re-root at the owner workspace by resolving that separately,
+/// but never re-resolves the invocation context itself.
 fn load_continuing_context<'a>(
     verb: MachineVerb,
-    cwd: &Path,
+    invocation_ctx: &'a WorkspaceContext,
     request: &SyncRequest,
     handler: &'a dyn OutputHandler,
 ) -> anyhow::Result<OpContext<'a>> {
@@ -2538,13 +2545,12 @@ fn load_continuing_context<'a>(
 
     let emit_text = handler.emit_text();
 
-    // The literal invocation CWD is only used to locate op-state; resolving it
-    // as a WorkspaceContext here lets `op_state::resume` follow a lease pointer
-    // (when `--continue` was invoked from the leased target). Everything the
-    // engine consumes is rooted at the OWNER below — design §3: "`--continue`
-    // / `abort` invoked from a leased workspace follow the pointer to the
-    // owner record and operate identically to owner-side invocation."
-    let invocation_ctx = WorkspaceContext::resolve(cwd, project_override.clone())?;
+    // The literal invocation context is only used to locate op-state; it lets
+    // `op_state::resume` follow a lease pointer (when `--continue` was invoked
+    // from the leased target). Everything the engine consumes is rooted at the
+    // OWNER below — design §3: "`--continue` / `abort` invoked from a leased
+    // workspace follow the pointer to the owner record and operate identically
+    // to owner-side invocation."
     let invocation_workspace_dir = invocation_ctx.active_path().to_path_buf();
 
     let (record, owner_workspace_dir) = op_state::resume(&invocation_workspace_dir)?;
@@ -2588,9 +2594,13 @@ fn load_continuing_context<'a>(
     // target — but every phase (replay's per-repo enumeration, materialize,
     // record_converged_tips, cleanup's savepoint drop, retire's workweave
     // identity check) must operate on the owner's workspace, not the target's.
-    // When CWD == owner, `cwd_ctx == invocation_ctx` and this is a no-op.
+    // When CWD == owner, `cwd_ctx` is a clone of `invocation_ctx`. When they
+    // differ, we resolve the owner workspace directly — this is not a
+    // re-resolution of the invocation origin (which would violate the single-
+    // resolution rule) but the resolution of a different, computed workspace
+    // (the owner path recovered from op-state).
     let cwd_ctx = if owner_workspace_dir == invocation_workspace_dir {
-        invocation_ctx
+        invocation_ctx.clone()
     } else {
         WorkspaceContext::resolve(&owner_workspace_dir, project_override.clone())?
     };
@@ -2619,11 +2629,11 @@ fn load_continuing_context<'a>(
         ),
     };
 
-    let other_project_override = match (recorded_verb, &cwd_ctx.location) {
+    let other_project_override = match (recorded_verb, &cwd_ctx.checkout) {
         // sync-to: target must resolve to CWD's (== owner's) project.
         (MachineVerb::SyncTo, _) => Some(cwd_project_name.clone()),
-        (_, WorkspaceLocation::Workweave { project, .. }) => Some(project.clone()),
-        (_, WorkspaceLocation::Weave { .. }) => project_override.clone(),
+        (_, Checkout::Workweave { project, .. }) => Some(project.clone()),
+        (_, Checkout::Primary { .. }) => project_override.clone(),
     };
 
     let (source_project_dir, source_workspace_name) = {
@@ -2691,13 +2701,13 @@ fn verbs_match(invoked: MachineVerb, recorded: MachineVerb) -> bool {
 /// and source is another workweave that is NOT CWD's parent → crosses tree
 /// branches; warn (don't refuse — the operator may have a reason).
 fn warn_on_sibling_sync(cwd_ctx: &WorkspaceContext, source_workspace_dir: &Path, emit_text: bool) {
-    if let WorkspaceLocation::Workweave { dir: cwd_ww, .. } = &cwd_ctx.location {
+    if let Checkout::Workweave { dir: cwd_ww, .. } = &cwd_ctx.checkout {
         // Resolve the source workspace's location to compare. Best-effort.
         let source_ctx = match WorkspaceContext::resolve(source_workspace_dir, None) {
             Ok(c) => c,
             Err(_) => return,
         };
-        if let WorkspaceLocation::Workweave { dir: source_ww, .. } = &source_ctx.location {
+        if let Checkout::Workweave { dir: source_ww, .. } = &source_ctx.checkout {
             let cwd_canonical = cwd_ww
                 .canonicalize()
                 .unwrap_or_else(|_| cwd_ww.to_path_buf());
@@ -2907,7 +2917,6 @@ fn check_dirty_preflight_sync(
     cwd_project: &Project,
     cwd_workspace_dir: &Path,
     cwd_project_dir: &Path,
-    cwd_path: &Path,
 ) -> anyhow::Result<()> {
     let mut user_dirt: Vec<String> = Vec::new();
     let mut unreadable: Vec<String> = Vec::new();
@@ -2976,7 +2985,7 @@ fn check_dirty_preflight_sync(
              To commit: git -C <repo> commit\n\
              To stash:  git stash push -u -C <repo>   # or: cd <repo> && git stash push -u\n",
             user_dirt.join("\n  "),
-            cwd_path.display(),
+            cwd_workspace_dir.display(),
         ));
     }
     if !unreadable.is_empty() {
@@ -3021,7 +3030,6 @@ fn check_dirty_source_preflight(
     cwd_project: &Project,
     cwd_workspace_dir: &Path,
     cwd_project_dir: &Path,
-    cwd_path: &Path,
 ) -> anyhow::Result<()> {
     let mut dirty: Vec<String> = Vec::new();
 
@@ -3069,7 +3077,7 @@ fn check_dirty_source_preflight(
              changes in the source ({}), then re-run. (Untracked files are fine; a dirty rwv.lock \
              alone is committed by the op.)",
             dirty.join("\n  "),
-            cwd_path.display(),
+            cwd_workspace_dir.display(),
         );
     }
     Ok(())
@@ -3972,8 +3980,8 @@ fn run_advance_target(ctx: &OpContext<'_>) -> anyhow::Result<()> {
 fn run_retire(ctx: &OpContext<'_>) -> anyhow::Result<()> {
     let emit_text = ctx.handler.emit_text();
 
-    match &ctx.cwd_ctx.location {
-        WorkspaceLocation::Workweave { dir, name, project } => retire_workweave_after_sync_to(
+    match &ctx.cwd_ctx.checkout {
+        Checkout::Workweave { dir, name, project } => retire_workweave_after_sync_to(
             &ctx.cwd_ctx,
             dir,
             name,
@@ -3981,7 +3989,7 @@ fn run_retire(ctx: &OpContext<'_>) -> anyhow::Result<()> {
             &ctx.cwd_project_dir,
             &ctx.dest_workspace_dir,
         ),
-        WorkspaceLocation::Weave { .. } => {
+        Checkout::Primary { .. } => {
             if emit_text {
                 eprintln!("warning: --retire is only meaningful inside a workweave; ignoring");
             }
@@ -4299,9 +4307,9 @@ fn regenerate_lock_phase3(
     cwd_project: &Project,
     source_workspace_name: &str,
 ) -> anyhow::Result<()> {
-    let workweave_pair = match &ctx.location {
-        WorkspaceLocation::Workweave { name, dir, .. } => Some((name, dir.as_path())),
-        WorkspaceLocation::Weave { .. } => None,
+    let workweave_pair = match &ctx.checkout {
+        Checkout::Workweave { name, dir, .. } => Some((name, dir.as_path())),
+        Checkout::Primary { .. } => None,
     };
 
     let new_lock = generate_lock(
@@ -4360,8 +4368,7 @@ fn same_workspace(a: &Path, b: &Path) -> bool {
 ///    violation and recovery hints, and the repo's tip is left untouched.
 ///    The op-state is RETAINED on a foreign-tip refusal so the operator
 ///    can re-run `rwv abort` after manually reconciling.
-pub fn run_abort(cwd: &Path) -> anyhow::Result<()> {
-    let ctx = WorkspaceContext::resolve(cwd, None)?;
+pub fn run_abort(ctx: &WorkspaceContext) -> anyhow::Result<()> {
     let workspace_dir = ctx.active_path().to_path_buf();
 
     // resolve_to_owner follows a lease pointer if the workspace holds a lease,
@@ -4434,7 +4441,7 @@ pub fn run_abort(cwd: &Path) -> anyhow::Result<()> {
     };
     let cwd_restore_id = restore_id_for(&workspace_dir);
 
-    let cwd_project_name = find_project_name(&ctx)?;
+    let cwd_project_name = find_project_name(ctx)?;
     let cwd_project_dir = workspace_dir.join("projects").join(&cwd_project_name);
     // Use the lockless loader: abort's contract is "the state is bad, get me
     // out". rwv.lock may contain git conflict markers from the half-completed
@@ -4848,7 +4855,7 @@ fn print_abort_noise_summary(summary: &AbortNoiseSummary) {
 /// can't even reach the per-repo loop, there are no per-repo outcomes to
 /// emit, so the structured channel has nothing to say.
 #[allow(clippy::too_many_arguments)]
-pub fn run_sync_json(cwd: &Path, request: SyncRequest) -> anyhow::Result<()> {
+pub fn run_sync_json(ctx: &WorkspaceContext, request: SyncRequest) -> anyhow::Result<()> {
     let records: Mutex<Vec<SyncOutcomeOutput>> = Mutex::new(Vec::new());
     let stdout_lock: Mutex<()> = Mutex::new(());
     let ndjson = request.jobs > 1;
@@ -4858,10 +4865,10 @@ pub fn run_sync_json(cwd: &Path, request: SyncRequest) -> anyhow::Result<()> {
             records: &records,
             schema_url: SYNC_JSON_SCHEMA_URL,
         };
-        run_machine(MachineVerb::Sync, cwd, &request, &handler)
+        run_machine(MachineVerb::Sync, ctx, &request, &handler)
     } else {
         let handler = JsonEnvelopeHandler { records: &records };
-        run_machine(MachineVerb::Sync, cwd, &request, &handler)
+        run_machine(MachineVerb::Sync, ctx, &request, &handler)
     };
 
     let records = records.into_inner().unwrap_or_else(|e| e.into_inner());
@@ -4970,12 +4977,12 @@ fn run_sync_json_impl(
 /// expressed as phases in the data-driven machine; `--continue` resumes at
 /// the recorded phase from either workspace.
 #[allow(clippy::too_many_arguments)]
-pub fn run_sync_to(cwd: &Path, request: SyncRequest) -> anyhow::Result<()> {
+pub fn run_sync_to(ctx: &WorkspaceContext, request: SyncRequest) -> anyhow::Result<()> {
     let stdout_lock: Mutex<()> = Mutex::new(());
     let handler = TextHandler {
         stdout_lock: &stdout_lock,
     };
-    run_machine(MachineVerb::SyncTo, cwd, &request, &handler)
+    run_machine(MachineVerb::SyncTo, ctx, &request, &handler)
 }
 
 /// Execute `rwv sync-to <target> --json`.
@@ -4984,36 +4991,23 @@ pub fn run_sync_to(cwd: &Path, request: SyncRequest) -> anyhow::Result<()> {
 /// `source_workweave`, `target`, `retired`, per-outcome `step3_advance`, and
 /// `project_repo_advance`. These fields are absent from the plain
 /// `rwv sync --json` envelope ([`SyncJsonOutput`]).
-pub fn run_sync_to_json(cwd: &Path, request: SyncRequest) -> anyhow::Result<()> {
+pub fn run_sync_to_json(ctx: &WorkspaceContext, request: SyncRequest) -> anyhow::Result<()> {
     // Derive source_workweave from the CWD context before running the machine.
     // This mirrors what guard_and_mark computes internally.
-    let source_workweave: Option<String> = {
-        match WorkspaceContext::resolve(cwd, request.project_override.clone()) {
-            Ok(ctx) => match &ctx.location {
-                WorkspaceLocation::Workweave { name, .. } => Some(name.as_str().to_owned()),
-                WorkspaceLocation::Weave { .. } => None,
-            },
-            Err(_) => None,
-        }
+    let source_workweave: Option<String> = match &ctx.checkout {
+        Checkout::Workweave { name, .. } => Some(name.as_str().to_owned()),
+        Checkout::Primary { .. } => None,
     };
 
     // Derive the target path: the resolved destination workspace directory.
     // For sync-to the operator-supplied arg is the target; resolve it the same
     // way guard_and_mark does (SyncSource::resolve against the CWD context).
-    // When CWD is not inside any workspace, leave target_path empty; the
-    // machine (run_machine below) will surface the real no-workspace error
-    // rather than panicking here.
-    let target_path: String = {
-        match WorkspaceContext::resolve(cwd, request.project_override.clone()) {
-            Ok(cwd_ctx) => match &request.source {
-                Some(src) => src
-                    .resolve(&cwd_ctx)
-                    .map(|p| p.to_string_lossy().into_owned())
-                    .unwrap_or_default(),
-                None => String::new(),
-            },
-            Err(_) => String::new(),
-        }
+    let target_path: String = match &request.source {
+        Some(src) => src
+            .resolve(ctx)
+            .map(|p| p.to_string_lossy().into_owned())
+            .unwrap_or_default(),
+        None => String::new(),
     };
 
     let records: Mutex<Vec<SyncOutcomeOutput>> = Mutex::new(Vec::new());
@@ -5030,13 +5024,13 @@ pub fn run_sync_to_json(cwd: &Path, request: SyncRequest) -> anyhow::Result<()> 
             records: &records,
             schema_url: SYNC_TO_JSON_SCHEMA_URL,
         };
-        run_machine(MachineVerb::SyncTo, cwd, &request, &handler)
+        run_machine(MachineVerb::SyncTo, ctx, &request, &handler)
     } else {
         let handler = JsonEnvelopeSyncToHandler {
             records: &records,
             step3_advances: &step3_advances,
         };
-        run_machine(MachineVerb::SyncTo, cwd, &request, &handler)
+        run_machine(MachineVerb::SyncTo, ctx, &request, &handler)
     };
 
     let records = records.into_inner().unwrap_or_else(|e| e.into_inner());
@@ -5662,7 +5656,7 @@ mod tests {
         // Resolve context from the weave root — no .rwv-active, no override.
         let ctx = crate::workspace::WorkspaceContext::resolve(&root, None).unwrap();
         assert!(
-            matches!(ctx.location, WorkspaceLocation::Weave { project: None }),
+            matches!(ctx.checkout, Checkout::Primary { project: None }),
             "expected Weave with no project, got something else"
         );
 

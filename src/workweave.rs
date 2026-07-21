@@ -2271,19 +2271,20 @@ pub struct WorkweaveLogOutput {
 ///
 /// `cwd` must be inside a workweave. `diff` selects diff mode; `json` selects
 /// machine output.
-pub fn workweave_log(cwd: &Path, diff: bool, json: bool) -> anyhow::Result<()> {
-    use crate::workspace::{WorkspaceContext, WorkspaceLocation};
+pub fn workweave_log(
+    ctx: &crate::workspace::WorkspaceContext,
+    diff: bool,
+    json: bool,
+) -> anyhow::Result<()> {
+    use crate::workspace::Checkout;
 
-    let ctx = WorkspaceContext::resolve(cwd, None)?;
-    let (ww_name, ww_dir, project) = match &ctx.location {
-        WorkspaceLocation::Workweave { name, dir, project } => {
-            (name.clone(), dir.clone(), project.clone())
-        }
-        WorkspaceLocation::Weave { .. } => {
+    let (ww_name, ww_dir, project) = match &ctx.checkout {
+        Checkout::Workweave { name, dir, project } => (name.clone(), dir.clone(), project.clone()),
+        Checkout::Primary { .. } => {
             bail!(
                 "`rwv workweave log` reports a workweave's history relative to its \
                  recorded parent, but CWD ({}) is in the primary weave, not a workweave.",
-                cwd.display()
+                ctx.active_path().display()
             );
         }
     };
@@ -2575,8 +2576,8 @@ pub fn handle_claude_hook() -> anyhow::Result<()> {
             // the primary weave's .rwv-active. This matters when a sub-agent
             // spawns from a workweave for a different project than the weave's
             // active project.
-            let project = match &ws_ctx.location {
-                crate::workspace::WorkspaceLocation::Workweave { project, .. } => project.clone(),
+            let project = match &ws_ctx.checkout {
+                crate::workspace::Checkout::Workweave { project, .. } => project.clone(),
                 _ => read_active_project(primary_root)
                     .ok_or_else(|| anyhow!("no .rwv-active found in {}", primary_root.display()))?,
             };

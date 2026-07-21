@@ -148,7 +148,10 @@ console.log(types.greeting);
     // -------------------------------------------------------------------------
     // Step 1: activate("web-app") to generate root package.json with workspaces
     // -------------------------------------------------------------------------
-    repoweave::activate::activate_intent("web-app", ws).expect("activate should succeed");
+    {
+        let ctx = repoweave::workspace::WorkspaceContext::resolve(ws, None).unwrap();
+        repoweave::activate::activate_intent("web-app", &ctx).expect("activate should succeed");
+    }
 
     // -------------------------------------------------------------------------
     // Step 2: verify root package.json exists and contains both repos
@@ -317,7 +320,10 @@ console.log(types.greeting);
     // -------------------------------------------------------------------------
     // Step 1: activate("web-app") to generate root package.json with workspaces
     // -------------------------------------------------------------------------
-    repoweave::activate::activate_intent("web-app", ws).expect("activate should succeed");
+    {
+        let ctx = repoweave::workspace::WorkspaceContext::resolve(ws, None).unwrap();
+        repoweave::activate::activate_intent("web-app", &ctx).expect("activate should succeed");
+    }
 
     let root_pkg = ws.join("package.json");
     assert!(

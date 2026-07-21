@@ -3,7 +3,7 @@
 use crate::git::GitVcs;
 use crate::manifest::Project;
 use crate::vcs::{ResolvedRevisionId, Vcs};
-use crate::workspace::{WorkspaceContext, WorkspaceLocation};
+use crate::workspace::{Checkout, WorkspaceContext};
 use anyhow::Context;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -152,26 +152,20 @@ pub(crate) fn compute_relation(
 }
 
 fn project_names_for_ctx(ctx: &WorkspaceContext) -> Vec<String> {
-    match &ctx.location {
-        WorkspaceLocation::Weave { project: Some(p) } => vec![p.as_str().to_owned()],
-        WorkspaceLocation::Workweave { project, .. } => vec![project.as_str().to_owned()],
-        WorkspaceLocation::Weave { project: None } => {
+    match &ctx.checkout {
+        Checkout::Primary { project: Some(p) } => vec![p.as_str().to_owned()],
+        Checkout::Workweave { project, .. } => vec![project.as_str().to_owned()],
+        Checkout::Primary { project: None } => {
             crate::workspace::discover_project_paths(ctx.active_path())
         }
     }
 }
 
-/// Run `rwv status` for the CWD workspace.
+/// Run `rwv status` for the resolved invocation context.
 ///
-/// When `project_override` is `Some`, status is shown for that project
-/// (does not change `.rwv-active`).
-pub fn run_status(
-    cwd: &Path,
-    json: bool,
-    project_override: Option<crate::manifest::ProjectName>,
-) -> anyhow::Result<()> {
-    let ctx = WorkspaceContext::resolve(cwd, project_override)?;
-
+/// `ctx` is the already-resolved invocation context (with `--project` baked
+/// in when passed). Handlers must not re-resolve.
+pub fn run_status(ctx: &WorkspaceContext, json: bool) -> anyhow::Result<()> {
     // When a specific project is named (via .rwv-active or --project), verify
     // it exists on disk before proceeding. When no project is active, the
     // no-active-project path in project_names_for_ctx falls back to listing
@@ -196,7 +190,7 @@ pub fn run_status(
 
     let mut entries: Vec<RepoStatus> = Vec::new();
 
-    for pname in project_names_for_ctx(&ctx) {
+    for pname in project_names_for_ctx(ctx) {
         let project_dir = workspace_dir.join("projects").join(&pname);
         let project = match Project::from_dir(&project_dir) {
             Ok(p) => p,

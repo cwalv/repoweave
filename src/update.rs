@@ -12,7 +12,7 @@ use crate::manifest::{Project, ProjectName, RepoEntry, RepoPath};
 use crate::parallel::{run_in_parallel, run_subprocess_with_reporter, Reporter};
 use crate::selector::RepoFilter;
 use crate::vcs::{RefName, Vcs};
-use crate::workspace::{WorkspaceContext, WorkspaceLocation};
+use crate::workspace::{Checkout, WorkspaceContext};
 use anyhow::Context;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -110,16 +110,13 @@ struct UpdateNdjsonRecord<'a> {
 /// loop on a bounded worker pool, prefixing stdout/stderr lines with the
 /// repo path. The lock write happens serially after all workers join.
 pub fn run_update(
-    cwd: &Path,
+    ctx: &WorkspaceContext,
     dirty: bool,
     commit: bool,
     json: bool,
-    project_override: Option<ProjectName>,
     filter: &RepoFilter,
     jobs: usize,
 ) -> anyhow::Result<()> {
-    let ctx = WorkspaceContext::resolve(cwd, project_override.clone())?;
-
     // Cross-verb mutex (Correction 1, COVERAGE). `update` advances tips and
     // re-snapshots the lock in the active workspace; if an in-flight
     // `sync`/`sync-to` op involves that workspace (owner record or lease), its
@@ -127,25 +124,23 @@ pub fn run_update(
     // exits, via the SAME guard the sync engine uses — no new lease machinery.
     crate::op_state::check_no_op_in_progress(&[ctx.active_path()])?;
 
-    let (project_name, workweave_name, workweave_dir) = match &ctx.location {
-        WorkspaceLocation::Weave { .. } => {
+    let (project_name, workweave_name, workweave_dir) = match &ctx.checkout {
+        Checkout::Primary { .. } => {
             let name = ctx.require_active_project_on_disk()?.clone();
             (name, None, None)
         }
-        WorkspaceLocation::Workweave { name, dir, project } => {
+        Checkout::Workweave { name, dir, project } => {
             (project.clone(), Some(name.clone()), Some(dir.clone()))
         }
     };
 
     update_for_project(
-        ctx.active_path(),
-        ctx.primary_path(),
+        ctx,
         &project_name,
         workweave_name.as_ref().zip(workweave_dir.as_deref()),
         dirty,
         commit,
         json,
-        project_override,
         filter,
         jobs,
     )
@@ -169,20 +164,20 @@ struct WorkItem {
     old_sha: Option<String>,
 }
 
-/// Internal: do the update for a specific project under `active_root`.
+/// Internal: do the update for a specific project under `ctx.active_path()`.
 #[allow(clippy::too_many_arguments)]
 fn update_for_project(
-    active_root: &Path,
-    primary_root: &Path,
+    ctx: &WorkspaceContext,
     project_name: &ProjectName,
     workweave: Option<(&crate::manifest::WorkweaveName, &Path)>,
     dirty: bool,
     commit: bool,
     json: bool,
-    project_override: Option<ProjectName>,
     filter: &RepoFilter,
     jobs: usize,
 ) -> anyhow::Result<()> {
+    let active_root = ctx.active_path();
+    let primary_root = ctx.primary_path();
     let project_dir = active_root.join("projects").join(project_name.as_str());
     let project = Project::from_dir(&project_dir)
         .with_context(|| format!("failed to load project '{}'", project_name))?;
@@ -363,8 +358,7 @@ fn update_for_project(
     // always describes the whole manifest. The filter narrows the loop,
     // not the lock-shape — same decision as push in `src/push.rs`.
     let _ = workweave; // suppress unused warning if generate_lock signature changes
-    lock::lock(active_root, dirty, commit, project_override)
-        .context("failed to write lock after update")?;
+    lock::lock(ctx, dirty, commit).context("failed to write lock after update")?;
 
     // Emit JSON envelope after lock write (so the lock is coherent before
     // consumers read the envelope). NDJSON was already streamed above.

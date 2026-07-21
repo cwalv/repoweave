@@ -1654,7 +1654,7 @@ fn cell_j_advance_target_sync_to_foreign_tip_abort_refuses() {
 // ===========================================================================
 
 /// Workweave + primary fixture that resolves the workweave as a real
-/// `WorkspaceLocation::Workweave` (needs the `.rwv-workweave` marker).
+/// `Checkout::Workweave` (needs the `.rwv-workweave` marker).
 struct RetireFixture {
     primary: Workspace,
     ww: Workspace,

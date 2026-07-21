@@ -4,7 +4,7 @@ use crate::manifest::{
     LockFile, Manifest, Project, ResolvedLockEntry, ResolvedLockFile, WorkweaveName,
 };
 use crate::vcs::vcs_for;
-use crate::workspace::{WorkspaceContext, WorkspaceLocation};
+use crate::workspace::{Checkout, WorkspaceContext};
 use anyhow::Context;
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -252,21 +252,14 @@ fn commit_lock_file(
 ///
 /// When `dirty` is true, the uncommitted-changes check is skipped.
 /// When `commit` is true, the lock file is staged and committed after writing.
-/// When `project_override` is `Some`, that project is operated on instead
-/// of `.rwv-active` (one-shot; does not change `.rwv-active`).
+/// `ctx` is the already-resolved invocation context (with `--project` baked
+/// in when passed). Handlers must not re-resolve.
 ///
 /// Pure git SHA snapshot — no integration hooks fire here. Install/build
 /// hooks are part of activation (`rwv activate`), since the trigger for
 /// ecosystem-lockfile refresh is workspace membership change, not
 /// cross-repo snapshot.
-pub fn lock(
-    cwd: &Path,
-    dirty: bool,
-    commit: bool,
-    project_override: Option<crate::manifest::ProjectName>,
-) -> anyhow::Result<()> {
-    let ctx = WorkspaceContext::resolve(cwd, project_override)?;
-
+pub fn lock(ctx: &WorkspaceContext, dirty: bool, commit: bool) -> anyhow::Result<()> {
     // Cross-verb mutex (Correction 1, COVERAGE), scoped to `--commit`. Writing
     // the working-tree `rwv.lock` (plain `rwv lock`) is benign — it is the
     // auto-relock's own input and the carve-out in Correction 3 treats a dirty
@@ -277,12 +270,12 @@ pub fn lock(
         crate::op_state::check_no_op_in_progress(&[ctx.active_path()])?;
     }
 
-    let (project_name, workweave_name, workweave_dir) = match &ctx.location {
-        WorkspaceLocation::Weave { .. } => {
+    let (project_name, workweave_name, workweave_dir) = match &ctx.checkout {
+        Checkout::Primary { .. } => {
             let name = ctx.require_active_project_on_disk()?.clone();
             (name, None, None)
         }
-        WorkspaceLocation::Workweave { name, dir, project } => {
+        Checkout::Workweave { name, dir, project } => {
             (project.clone(), Some(name.clone()), Some(dir.clone()))
         }
     };

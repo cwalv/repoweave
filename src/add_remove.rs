@@ -6,7 +6,7 @@ use crate::git::GitVcs;
 use crate::manifest::{Manifest, ProjectName, RepoEntry, RepoPath, RepoUrl, Role, VcsType};
 use crate::registry::{builtin_registries, Registry};
 use crate::vcs::{RefName, Vcs};
-use crate::workspace::{WorkspaceContext, WorkspaceLocation};
+use crate::workspace::{Checkout, WorkspaceContext};
 use anyhow::{bail, Context};
 use std::path::{Path, PathBuf};
 
@@ -108,7 +108,7 @@ fn create_worktree_in_workweave(
     Ok(())
 }
 
-/// Run the appropriate activation pass for the current workspace location.
+/// Run the appropriate activation pass for the current checkout kind.
 ///
 /// `rwv add`/`rwv remove` are **intent verbs** (see
 /// [`trigger-model.md`](../../../../projects/foundations/docs/repoweave/integration-ownership/trigger-model.md)):
@@ -117,29 +117,19 @@ fn create_worktree_in_workweave(
 /// In a workweave we still regenerate (the workweave is a view onto the
 /// project repo — symlinks write through to it) but skip install hooks; in
 /// primary we run the full intent-mode activation.
-fn activate_for_workspace(
-    ctx: &WorkspaceContext,
-    project_name: &str,
-    cwd: &Path,
-) -> anyhow::Result<()> {
-    match &ctx.location {
-        WorkspaceLocation::Workweave { dir, .. } => activate_workweave_intent(project_name, dir),
-        WorkspaceLocation::Weave { .. } => activate_intent(project_name, cwd),
+fn activate_for_workspace(ctx: &WorkspaceContext, project_name: &str) -> anyhow::Result<()> {
+    match &ctx.checkout {
+        Checkout::Workweave { dir, .. } => activate_workweave_intent(project_name, dir),
+        Checkout::Primary { .. } => activate_intent(project_name, ctx),
     }
 }
 
 /// Execute `rwv add URL [--role=ROLE]`.
 ///
-/// When `project_override` is `Some`, operate on that project rather than
-/// the active one (one-shot; does not change `.rwv-active`).
-pub fn run_add(
-    url: &str,
-    role: Role,
-    cwd: &Path,
-    project_override: Option<ProjectName>,
-) -> anyhow::Result<()> {
-    let ctx = WorkspaceContext::resolve(cwd, project_override)?;
-    let project_dir = find_project_dir(&ctx)?;
+/// `ctx` is the already-resolved invocation context (with `--project`
+/// baked in when passed). Handlers must not re-resolve.
+pub fn run_add(url: &str, role: Role, ctx: &WorkspaceContext) -> anyhow::Result<()> {
+    let project_dir = find_project_dir(ctx)?;
     let manifest_path = project_dir.join("rwv.yaml");
 
     // Check if the argument is a local path (no URL scheme and directory exists
@@ -173,14 +163,14 @@ pub fn run_add(
             // Local-path add doesn't clone, but if we are in a workweave the
             // operator may still expect the workweave to see the repo as a
             // worktree. Mirror the URL path's worktree-creation step.
-            if let WorkspaceLocation::Workweave { name, dir, project } = &ctx.location {
+            if let Checkout::Workweave { name, dir, project } = &ctx.checkout {
                 let repo_path = RepoPath::new(url)?;
                 let canonical = ctx.primary_path().join(repo_path.as_path());
                 if canonical.exists() {
                     create_worktree_in_workweave(&canonical, dir, &repo_path, project, name)?;
                 }
             }
-            return activate_for_workspace(&ctx, project_name, cwd);
+            return activate_for_workspace(ctx, project_name);
         }
     }
 
@@ -266,7 +256,7 @@ pub fn run_add(
 
     // In a workweave, also create a worktree at the workweave so the new
     // repo is materialized there.
-    if let WorkspaceLocation::Workweave { name, dir, project } = &ctx.location {
+    if let Checkout::Workweave { name, dir, project } = &ctx.checkout {
         create_worktree_in_workweave(&dest, dir, &repo_path, project, name)?;
     }
 
@@ -275,7 +265,7 @@ pub fn run_add(
         .file_name()
         .and_then(|n| n.to_str())
         .ok_or_else(|| anyhow::anyhow!("could not determine project name from path"))?;
-    activate_for_workspace(&ctx, project_name, cwd)?;
+    activate_for_workspace(ctx, project_name)?;
 
     Ok(())
 }
@@ -356,17 +346,15 @@ fn run_add_from_local_path(
 
 /// Execute `rwv remove PATH [--delete] [--force]`.
 ///
-/// When `project_override` is `Some`, operate on that project rather than
-/// the active one (one-shot; does not change `.rwv-active`).
+/// `ctx` is the already-resolved invocation context. Handlers must not
+/// re-resolve.
 pub fn run_remove(
     path: &str,
     delete: bool,
     force: bool,
-    cwd: &Path,
-    project_override: Option<ProjectName>,
+    ctx: &WorkspaceContext,
 ) -> anyhow::Result<()> {
-    let ctx = WorkspaceContext::resolve(cwd, project_override)?;
-    let project_dir = find_project_dir(&ctx)?;
+    let project_dir = find_project_dir(ctx)?;
     let manifest_path = project_dir.join("rwv.yaml");
 
     let repo_path = RepoPath::new(path)?;
@@ -424,7 +412,7 @@ pub fn run_remove(
         .file_name()
         .and_then(|n| n.to_str())
         .ok_or_else(|| anyhow::anyhow!("could not determine project name from path"))?;
-    activate_for_workspace(&ctx, project_name, cwd)?;
+    activate_for_workspace(ctx, project_name)?;
 
     // Optionally delete the clone directory. Always targets primary's
     // canonical path — `--delete` semantics mean "remove the shared clone",
@@ -451,15 +439,10 @@ pub fn run_remove(
 /// via registries (e.g., `github/owner/repo` → `https://github.com/owner/repo.git`).
 /// The repo is added to the manifest with role `primary`.
 ///
-/// When `project_override` is `Some`, operate on that project rather than
-/// the active one (one-shot; does not change `.rwv-active`).
-pub fn run_add_new(
-    path_arg: &str,
-    cwd: &Path,
-    project_override: Option<ProjectName>,
-) -> anyhow::Result<()> {
-    let ctx = WorkspaceContext::resolve(cwd, project_override)?;
-    let project_dir = find_project_dir(&ctx)?;
+/// `ctx` is the already-resolved invocation context. Handlers must not
+/// re-resolve.
+pub fn run_add_new(path_arg: &str, ctx: &WorkspaceContext) -> anyhow::Result<()> {
+    let project_dir = find_project_dir(ctx)?;
     let manifest_path = project_dir.join("rwv.yaml");
 
     // Validate that the argument looks like a path (registry/owner/repo).
@@ -552,7 +535,7 @@ pub fn run_add_new(
     // new repo is materialized there. `git init` produces an unborn HEAD,
     // so create_worktree_in_workweave silently skips until the first commit
     // lands upstream (operator can then `rwv sync`).
-    if let WorkspaceLocation::Workweave { name, dir, project } = &ctx.location {
+    if let Checkout::Workweave { name, dir, project } = &ctx.checkout {
         create_worktree_in_workweave(&dest, dir, &repo_path, project, name)?;
     }
 
@@ -561,7 +544,7 @@ pub fn run_add_new(
         .file_name()
         .and_then(|n| n.to_str())
         .ok_or_else(|| anyhow::anyhow!("could not determine project name from path"))?;
-    activate_for_workspace(&ctx, project_name, cwd)?;
+    activate_for_workspace(ctx, project_name)?;
 
     Ok(())
 }

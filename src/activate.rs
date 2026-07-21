@@ -36,7 +36,7 @@ use crate::integration_runner::{
 use crate::integrations::builtin_integrations;
 use crate::manifest::{IntegrationConfig, Manifest, ProjectName};
 use crate::registry::builtin_registries;
-use crate::workspace::{set_active_project, WorkspaceContext, WorkspaceLocation, WorkspaceSession};
+use crate::workspace::{set_active_project, Checkout, WorkspaceContext, WorkspaceSession};
 
 /// Which class of verb is driving activation.
 ///
@@ -88,14 +88,14 @@ fn report_and_check_activation_issues(issues: &[crate::integration::Issue]) -> a
     Ok(())
 }
 
-/// Run `rwv activate PROJECT` from the given working directory.
+/// Run `rwv activate PROJECT` against an already-resolved context.
 ///
 /// `rwv activate` is a **context verb** (per `trigger-model.md`): it surfaces
 /// the existing on-disk artifacts and verifies them, **never authoring**.
 /// Runs integration activate hooks (`npm install`, `uv sync`, etc.) by
 /// default. See [`activate_with_options`] to suppress them.
-pub fn activate(project: &str, cwd: &Path) -> anyhow::Result<()> {
-    activate_with_options(project, cwd, ActivateOptions::default())
+pub fn activate(project: &str, ctx: &WorkspaceContext) -> anyhow::Result<()> {
+    activate_with_options(project, ctx, ActivateOptions::default())
 }
 
 /// Run `rwv activate PROJECT` in **intent mode** — used by `rwv add`,
@@ -104,8 +104,8 @@ pub fn activate(project: &str, cwd: &Path) -> anyhow::Result<()> {
 /// the `rwv.yaml` / `rwv.lock` change that motivated the verb.
 ///
 /// See [`trigger-model.md`](../docs/repoweave/integration-ownership/trigger-model.md).
-pub fn activate_intent(project: &str, cwd: &Path) -> anyhow::Result<()> {
-    activate_intent_with_options(project, cwd, ActivateOptions::default())
+pub fn activate_intent(project: &str, ctx: &WorkspaceContext) -> anyhow::Result<()> {
+    activate_intent_with_options(project, ctx, ActivateOptions::default())
 }
 
 /// Run intent-mode activation with explicit options. Used by tests that need
@@ -113,10 +113,9 @@ pub fn activate_intent(project: &str, cwd: &Path) -> anyhow::Result<()> {
 /// equivalent of `rwv add --no-install` if that existed).
 pub fn activate_intent_with_options(
     project: &str,
-    cwd: &Path,
+    ctx: &WorkspaceContext,
     opts: ActivateOptions,
 ) -> anyhow::Result<()> {
-    let ctx = WorkspaceContext::resolve(cwd, None)?;
     activate_at(
         ctx.primary_path(),
         project,
@@ -138,18 +137,16 @@ pub struct ActivateOptions {
 /// Run activate with options. Public so the CLI can pass `--no-install`.
 pub fn activate_with_options(
     project: &str,
-    cwd: &Path,
+    ctx: &WorkspaceContext,
     opts: ActivateOptions,
 ) -> anyhow::Result<()> {
-    let ctx = WorkspaceContext::resolve(cwd, None)?;
-
     // Guard: activate has no meaning inside a workweave. The project is fixed
     // at creation time (`rwv workweave <project> create <name>`), so there is
     // no project switch to make. Silently operating on primary from inside a
     // workweave (the status-quo before this fix) was surprising and unsafe —
     // it mutated primary's .rwv-active and weave-root symlinks as a side
     // effect of a command run from an unrelated workweave.
-    if let WorkspaceLocation::Workweave { .. } = &ctx.location {
+    if let Checkout::Workweave { .. } = &ctx.checkout {
         anyhow::bail!(
             "rwv activate has no effect in a workweave (project is fixed at creation). \
              cd to primary ({}) and rerun.",
@@ -491,8 +488,7 @@ pub fn activate_workweave_intent(project: &str, workweave_dir: &Path) -> anyhow:
 /// integration set. Symlinks the framework doesn't own (e.g. user-created
 /// workweave links to source-root paths) are preserved.
 #[allow(dead_code)]
-pub fn deactivate(cwd: &Path) -> anyhow::Result<()> {
-    let ctx = WorkspaceContext::resolve(cwd, None)?;
+pub fn deactivate(ctx: &WorkspaceContext) -> anyhow::Result<()> {
     let root = ctx.primary_path();
 
     let owned = compute_active_owned_set(root)?;

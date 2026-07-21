@@ -147,7 +147,10 @@ repositories:\n  \
     // ------------------------------------------------------------------
     // 4. Activate the primary weave — generates go.work, verify go build
     // ------------------------------------------------------------------
-    repoweave::activate::activate_intent("web-app", &ws).expect("activate should succeed");
+    {
+        let ctx = repoweave::workspace::WorkspaceContext::resolve(&ws, None).unwrap();
+        repoweave::activate::activate_intent("web-app", &ctx).expect("activate should succeed");
+    }
 
     let go_work_path = ws.join("go.work");
     assert!(

@@ -554,7 +554,7 @@ fn sync_to_continue_from_lease_workspace_drives_owner_to_clean_state() {
 // ---------------------------------------------------------------------------
 // Retire test helpers
 //
-// For retire tests the CWD workspace must resolve as `WorkspaceLocation::Workweave`
+// For retire tests the CWD workspace must resolve as `Checkout::Workweave`
 // (retire is only meaningful inside a workweave). We build on make_shared_workspaces
 // but add a `.rwv-workweave` marker so WorkspaceContext::resolve identifies the
 // workweave directory as a workweave rather than a plain weave.
@@ -574,7 +574,7 @@ fn write_workweave_marker(workweave_dir: &Path, primary_root: &Path) {
 }
 
 /// Create a workweave + primary pair where the workweave has a proper
-/// `.rwv-workweave` marker, making it resolve as `WorkspaceLocation::Workweave`.
+/// `.rwv-workweave` marker, making it resolve as `Checkout::Workweave`.
 ///
 /// The workweave is placed under `<parent>/.workweaves/web-app--ww` so
 /// `workweave_path_for` can locate it by `(project="web-app", name="ww")`.

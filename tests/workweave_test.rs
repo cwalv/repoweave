@@ -964,9 +964,10 @@ fn make_workspace_with_cargo_repo(tmp: &Path, project: &str) -> std::path::PathB
     // in the primary workspace so workweave-create (a context verb)
     // surfaces it via symlinks. Real-world equivalent: an intent verb
     // (rwv add) ran earlier and committed both rwv.yaml and Cargo.toml.
+    let ctx = repoweave::workspace::WorkspaceContext::resolve(&ws, None).unwrap();
     repoweave::activate::activate_intent_with_options(
         project,
-        &ws,
+        &ctx,
         repoweave::activate::ActivateOptions { no_install: true },
     )
     .expect("intent-mode activation should pre-author Cargo.toml in project dir");

@@ -3876,25 +3876,21 @@ pub fn restore_working_tree_to_head(repo: &Path) -> anyhow::Result<()> {
 /// status to stdout. Returns `Ok(true)` if any repo's tip differs from its lock
 /// entry (exit 1), `Ok(false)` if all match (exit 0).
 ///
-/// When `project_override` is `Some`, only that project is checked
-/// (does not change `.rwv-active`).
-pub fn run_check_locked(
-    cwd: &std::path::Path,
-    project_override: Option<crate::manifest::ProjectName>,
-) -> anyhow::Result<bool> {
+/// `ctx` is the already-resolved invocation context (with `--project` baked
+/// in when passed). Handlers must not re-resolve.
+pub fn run_check_locked(ctx: &crate::workspace::WorkspaceContext) -> anyhow::Result<bool> {
     use crate::git::GitVcs;
     use crate::manifest::Project;
     use crate::vcs::Vcs;
-    use crate::workspace::{WorkspaceContext, WorkspaceLocation};
+    use crate::workspace::Checkout;
 
-    let ctx = WorkspaceContext::resolve(cwd, project_override)?;
     let git = GitVcs;
     let workspace_dir = ctx.active_path().to_path_buf();
 
-    let project_names: Vec<String> = match &ctx.location {
-        WorkspaceLocation::Weave { project: Some(p) } => vec![p.as_str().to_owned()],
-        WorkspaceLocation::Workweave { project, .. } => vec![project.as_str().to_owned()],
-        WorkspaceLocation::Weave { project: None } => {
+    let project_names: Vec<String> = match &ctx.checkout {
+        Checkout::Primary { project: Some(p) } => vec![p.as_str().to_owned()],
+        Checkout::Workweave { project, .. } => vec![project.as_str().to_owned()],
+        Checkout::Primary { project: None } => {
             crate::workspace::discover_project_paths(&workspace_dir)
         }
     };
@@ -3990,13 +3986,12 @@ pub fn run_check_locked(
 /// including orphan detection across every project.
 ///
 /// Returns `Ok(true)` if there are errors (exit 1), `Ok(false)` if clean.
-/// When `project_override` is `Some`, the context resolves to that
-/// project for the purposes of activation/check scoping (does not
-/// change `.rwv-active`).
+///
+/// `ctx` is the already-resolved invocation context (with `--project` baked
+/// in when passed). Handlers must not re-resolve.
 pub fn run_check(
-    cwd: &std::path::Path,
+    ctx: &crate::workspace::WorkspaceContext,
     fix: bool,
-    project_override: Option<crate::manifest::ProjectName>,
     scope_all: bool,
 ) -> anyhow::Result<bool> {
     use crate::git::GitVcs;
@@ -4004,9 +3999,8 @@ pub fn run_check(
     use crate::integration_runner::run_checks;
     use crate::manifest::Project;
     use crate::vcs::Vcs;
-    use crate::workspace::{WorkspaceContext, WorkspaceLocation, WorkspaceSession};
+    use crate::workspace::{Checkout, WorkspaceSession};
 
-    let ctx = WorkspaceContext::resolve(cwd, project_override)?;
     let workspace_dir = ctx.active_path().to_path_buf();
 
     // Dangling active-project check: if `.rwv-active` names a project whose
@@ -4349,7 +4343,7 @@ pub fn run_check(
     // Uninitialized-submodule findings (R23 GAP). Only meaningful from the
     // primary weave (workweave checkouts are reached via list_workweave_dirs).
     // Report-only: fix is a single git command named in the message.
-    if matches!(ctx.location, WorkspaceLocation::Weave { .. }) {
+    if matches!(ctx.checkout, Checkout::Primary { .. }) {
         for v in scan_uninitialized_submodules_in_workweaves(ctx.primary_path(), &input.projects) {
             violations.push(v);
         }
@@ -4576,18 +4570,19 @@ pub fn run_check(
             //
             // Weave-binding mirrors the surfacing-fix precedent below: the
             // repair primitive must be pointed at the same weave dir the
-            // detector scanned, never at ctx.primary_path(). The naive
-            // `activate_intent` path resolves cwd → primary and would silently
-            // rewrite the PRIMARY project's managed files from inside a
-            // workweave — breaking the isolation contract that makes
-            // workweave-scoped repair risk-free. `activate_workweave_intent`
-            // is the workweave-bound sibling: it runs the same
-            // `run_activations` pass with `output_dir = workweave/projects/<project>`
-            // and skips install hooks. From primary we use the primary path.
-            let result = if matches!(ctx.location, WorkspaceLocation::Workweave { .. }) {
+            // detector scanned, never at ctx.primary_path() unconditionally.
+            // From a workweave-checkout context, the naive `activate_intent`
+            // path targets primary and would silently rewrite the PRIMARY
+            // project's managed files from inside a workweave — breaking the
+            // isolation contract that makes workweave-scoped repair risk-free.
+            // `activate_workweave_intent` is the workweave-bound sibling: it
+            // runs the same `run_activations` pass with
+            // `output_dir = workweave/projects/<project>` and skips install
+            // hooks. From primary we use the primary path.
+            let result = if matches!(ctx.checkout, Checkout::Workweave { .. }) {
                 crate::activate::activate_workweave_intent(project.name.as_str(), &workspace_dir)
             } else {
-                crate::activate::activate_intent(project.name.as_str(), &workspace_dir)
+                crate::activate::activate_intent(project.name.as_str(), ctx)
             };
             match result {
                 Ok(()) => println!(
@@ -4621,7 +4616,7 @@ pub fn run_check(
         // the surfacing PRIMITIVE (`surface_symlinks`) bound to this weave
         // directory — NOT `activate_intent`, since project re-selection is a
         // primary-only step-1 concept forbidden inside a workweave.
-        let in_workweave = matches!(ctx.location, WorkspaceLocation::Workweave { .. });
+        let in_workweave = matches!(ctx.checkout, Checkout::Workweave { .. });
         let surfacing_issues = crate::activate::verify_surfacing(
             &workspace_dir,
             &project.name,
@@ -4688,7 +4683,7 @@ pub fn run_check(
     }
 
     // From the primary weave: also scan every known workweave.
-    if matches!(ctx.location, WorkspaceLocation::Weave { .. }) {
+    if matches!(ctx.checkout, Checkout::Primary { .. }) {
         for (ww_name, ww_dir) in crate::workweave::list_workweave_dirs(ctx.primary_path()) {
             for project in &input.projects {
                 for repo_path in project.manifest.iter_repo_paths() {
@@ -4841,7 +4836,7 @@ pub fn run_check(
             }
         }
     }
-    if matches!(ctx.location, WorkspaceLocation::Weave { .. }) {
+    if matches!(ctx.checkout, Checkout::Primary { .. }) {
         for (ww_name, ww_dir) in crate::workweave::list_workweave_dirs(ctx.primary_path()) {
             for project in &input.projects {
                 for repo_path in project.manifest.iter_repo_paths() {
@@ -4876,7 +4871,7 @@ pub fn run_check(
                 repo: project_repo_path.clone(),
             });
         }
-        if matches!(ctx.location, WorkspaceLocation::Weave { .. }) {
+        if matches!(ctx.checkout, Checkout::Primary { .. }) {
             for (ww_name, ww_dir) in crate::workweave::list_workweave_dirs(ctx.primary_path()) {
                 let ww_project_abs = ww_dir.join(&project_rel);
                 if ww_project_abs.is_dir()
@@ -4898,7 +4893,7 @@ pub fn run_check(
     hygiene_op_state_targets.push(StateHygieneOpStateTarget {
         workspace_dir: workspace_dir.clone(),
     });
-    if matches!(ctx.location, WorkspaceLocation::Weave { .. }) {
+    if matches!(ctx.checkout, Checkout::Primary { .. }) {
         for (_ww_name, ww_dir) in crate::workweave::list_workweave_dirs(ctx.primary_path()) {
             // Dedupe against the active workspace dir (operator may run
             // from inside a workweave, in which case it's already added).
@@ -5254,8 +5249,7 @@ pub fn build_doctor_json(
 /// Returns `(violations, workweave_dirs)` so the caller can resolve
 /// workweave-scoped `absolute_path` fields.
 fn collect_doctor_violations(
-    cwd: &Path,
-    project_override: Option<crate::manifest::ProjectName>,
+    ctx: &crate::workspace::WorkspaceContext,
     scope_all: bool,
 ) -> anyhow::Result<(
     Vec<CheckViolation>,
@@ -5264,9 +5258,8 @@ fn collect_doctor_violations(
 )> {
     use crate::git::GitVcs;
     use crate::vcs::Vcs;
-    use crate::workspace::{WorkspaceContext, WorkspaceLocation, WorkspaceSession};
+    use crate::workspace::{Checkout, WorkspaceSession};
 
-    let ctx = WorkspaceContext::resolve(cwd, project_override)?;
     let workspace_dir = ctx.active_path().to_path_buf();
 
     let session = WorkspaceSession::new(&workspace_dir);
@@ -5481,7 +5474,7 @@ fn collect_doctor_violations(
     // Only fired for workweave checkouts: `git worktree add` does not init
     // submodules, so a workweave created from a repo-with-submodules will
     // have empty submodule dirs if the create-time init failed (e.g. network).
-    if matches!(ctx.location, WorkspaceLocation::Weave { .. }) {
+    if matches!(ctx.checkout, Checkout::Primary { .. }) {
         for v in scan_uninitialized_submodules_in_workweaves(ctx.primary_path(), &input.projects) {
             violations.push(v);
         }
@@ -5532,7 +5525,7 @@ fn collect_doctor_violations(
         }
     }
 
-    if matches!(ctx.location, WorkspaceLocation::Weave { .. }) {
+    if matches!(ctx.checkout, Checkout::Primary { .. }) {
         for (ww_name_str, ww_dir) in crate::workweave::list_workweave_dirs(ctx.primary_path()) {
             let ww_name = WorkweaveName::new(ww_name_str);
             workweave_dirs.insert(ww_name.clone(), ww_dir.clone());
@@ -5684,12 +5677,10 @@ fn collect_doctor_violations(
 /// checked and orphan detection is skipped. Pass `scope_all = true` (`--all`)
 /// to reproduce the weave-wide scan.
 pub fn run_check_json(
-    cwd: &std::path::Path,
-    project_override: Option<crate::manifest::ProjectName>,
+    ctx: &crate::workspace::WorkspaceContext,
     scope_all: bool,
 ) -> anyhow::Result<bool> {
-    let (violations, workspace_dir, workweave_dirs) =
-        collect_doctor_violations(cwd, project_override, scope_all)?;
+    let (violations, workspace_dir, workweave_dirs) = collect_doctor_violations(ctx, scope_all)?;
     let has_violations = !violations.is_empty();
     let payload = build_doctor_json(violations, &workspace_dir, &workweave_dirs);
     let out =

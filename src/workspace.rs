@@ -1,8 +1,28 @@
 //! Workspace: the resolved state of a repoweave directory tree.
 //!
 //! A workspace is the top-level directory containing registry dirs, projects,
-//! and ecosystem files. This module resolves the workspace from CWD and
-//! provides the context that commands operate on.
+//! and ecosystem files. This module resolves the workspace from an *origin
+//! directory* (the input to resolution) and provides the context that
+//! commands operate on.
+//!
+//! ## Single resolution point
+//!
+//! rwv acquires the origin dir exactly once per invocation — the top of
+//! `main` calls [`acquire_origin_dir`], and every downstream handler
+//! receives an already-resolved [`WorkspaceContext`]. There must be no
+//! other `std::env::current_dir()` calls anywhere in the CLI code path:
+//! resolution is a pure function of `(argv, origin_dir)`, and any handler
+//! that consulted process-wide ambient state independently would break
+//! that contract (silently retargeting under agent harnesses that reset
+//! cwd, or leaking the address into spawned subprocesses if we ever
+//! `chdir`'d — which we don't). See
+//! `docs/repoweave/workspace-addressing-design.md` §2.
+//!
+//! The two steps — *acquire origin dir* and *resolve context from origin
+//! dir* — are kept separate so a future `-C <path>` or `-w <name>` flag
+//! can supply a different origin without restructuring: the CLI would
+//! feed a flag-derived path to [`WorkspaceContext::resolve`] instead of
+//! [`acquire_origin_dir`], and everything downstream would still work.
 
 use crate::git::GitVcs;
 use crate::integration_runner::IntegrationContextBase;
@@ -13,35 +33,52 @@ use anyhow::Context;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
+/// Acquire the origin directory for the invocation.
+///
+/// **This is the single sanctioned `std::env::current_dir()` call site in
+/// the rwv CLI.** All resolution flows through here and then
+/// [`WorkspaceContext::resolve`]; handlers must receive an already-resolved
+/// context and must not consult the process cwd on their own.
+///
+/// The distinction between *acquire* and *resolve* is load-bearing: a
+/// future `-C <path>` / `-w <name>` flag will inject a different origin
+/// dir into the same resolver, and the rest of the code path must not
+/// need to change to accommodate that.
+pub fn acquire_origin_dir() -> anyhow::Result<PathBuf> {
+    std::env::current_dir().context("failed to read current directory")
+}
+
 // ---------------------------------------------------------------------------
 // Context — where are we?
 // ---------------------------------------------------------------------------
 
-/// The resolved workspace context, inferred from CWD.
+/// The resolved workspace context, inferred from an origin directory.
 ///
 /// Every `rwv` command starts by resolving this. It answers:
 /// - Where is the primary weave?
-/// - Are we currently in the primary weave or in a workweave?
+/// - Which kind of checkout are we in — the primary, or a workweave?
 /// - Which project is active?
 ///
 /// Two distinct paths are exposed; choose deliberately:
 /// - [`primary_path`] — the primary weave directory. Use for state owned by
 ///   the workspace as a whole (`.rwv-active`, `projects/` enumeration,
 ///   `.workweaves/` listing, AGENTS.md).
-/// - [`active_path`] — the directory CWD is actually in: the primary path
-///   when in a weave, the workweave directory when in a workweave. Use for
-///   per-workspace state (project worktrees and their `rwv.lock` /
+/// - [`active_path`] — the directory the checkout points to: the primary
+///   path when in a primary, the workweave directory when in a workweave.
+///   Use for per-workspace state (project worktrees and their `rwv.lock` /
 ///   `rwv.yaml`, repo worktrees the operator is working in).
 ///
 /// [`primary_path`]: WorkspaceContext::primary_path
 /// [`active_path`]: WorkspaceContext::active_path
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct WorkspaceContext {
     primary_root: PathBuf,
-    /// The current working location: weave or a specific workweave.
-    pub location: WorkspaceLocation,
-    /// The project name inferred from CWD (when CWD is inside
-    /// `{root}/projects/{name}/...`), independent of the active project.
+    /// Which kind of checkout the origin dir resolved into: the primary,
+    /// or a specific workweave.
+    pub checkout: Checkout,
+    /// The project name inferred from the origin dir (when the origin is
+    /// inside `{root}/projects/{name}/...`), independent of the active
+    /// project.
     ///
     /// Recorded for diagnostics — `rwv` bare status surfaces the
     /// divergence, and command implementations use it to build the
@@ -50,13 +87,18 @@ pub struct WorkspaceContext {
     cwd_project_hint: Option<ProjectName>,
 }
 
-/// Whether we're in the weave directory or inside a workweave.
-#[derive(Debug)]
-pub enum WorkspaceLocation {
-    /// Working in the weave directory (regular clones).
-    /// The active project is inferred from CWD or `--project`.
-    Weave { project: Option<ProjectName> },
-    /// Working in a workweave (worktrees on ephemeral branches).
+/// Which kind of checkout the resolved origin dir sits inside.
+///
+/// A workspace has two kinds of checkouts: the primary (regular clones),
+/// and any number of workweaves (worktrees on ephemeral branches). The
+/// design vocabulary is `checkout ∈ {primary, workweave}`; this enum
+/// answers "which of the two".
+#[derive(Debug, Clone)]
+pub enum Checkout {
+    /// The origin dir resolved into the primary weave directory.
+    /// The active project is drawn from `.rwv-active` or `--project`.
+    Primary { project: Option<ProjectName> },
+    /// The origin dir resolved into a workweave (worktrees on ephemeral branches).
     Workweave {
         name: WorkweaveName,
         /// The workweave directory path (e.g., `.workweaves/feat/` or `root/../ws--feat/`).
@@ -416,7 +458,7 @@ impl WorkspaceContext {
                     let cwd_project_hint = detect_project(&cwd, &root);
                     return Ok(WorkspaceContext {
                         primary_root: root,
-                        location: WorkspaceLocation::Workweave {
+                        checkout: Checkout::Workweave {
                             name: workweave_name,
                             dir: current.to_path_buf(),
                             project,
@@ -432,7 +474,7 @@ impl WorkspaceContext {
                 let project = project_override.or_else(|| read_active_project(current));
                 return Ok(WorkspaceContext {
                     primary_root: current.to_path_buf(),
-                    location: WorkspaceLocation::Weave { project },
+                    checkout: Checkout::Primary { project },
                     cwd_project_hint,
                 });
             }
@@ -474,9 +516,9 @@ impl WorkspaceContext {
     /// The active project from the resolved context, or `None` when no
     /// project is active (no `.rwv-active`, no `--project`).
     pub fn active_project(&self) -> Option<&ProjectName> {
-        match &self.location {
-            WorkspaceLocation::Weave { project } => project.as_ref(),
-            WorkspaceLocation::Workweave { project, .. } => Some(project),
+        match &self.checkout {
+            Checkout::Primary { project } => project.as_ref(),
+            Checkout::Workweave { project, .. } => Some(project),
         }
     }
 
@@ -583,9 +625,9 @@ impl WorkspaceContext {
     /// itself a workspace; reading or writing through the primary from
     /// inside a workweave clobbers the workweave's view of the world.
     pub fn active_path(&self) -> &Path {
-        match &self.location {
-            WorkspaceLocation::Weave { .. } => &self.primary_root,
-            WorkspaceLocation::Workweave { dir, .. } => dir,
+        match &self.checkout {
+            Checkout::Primary { .. } => &self.primary_root,
+            Checkout::Workweave { dir, .. } => dir,
         }
     }
 
@@ -600,8 +642,8 @@ impl WorkspaceContext {
         let mut lines = Vec::new();
 
         let active = self.active_project().cloned();
-        match &self.location {
-            WorkspaceLocation::Weave { .. } => {
+        match &self.checkout {
+            Checkout::Primary { .. } => {
                 lines.push(format!("Weave: {}", self.primary_root.display()));
                 if let Some(p) = &active {
                     lines.push(format!("Project: {}", p.as_str()));
@@ -615,7 +657,7 @@ impl WorkspaceContext {
                     }
                 }
             }
-            WorkspaceLocation::Workweave { name: _, dir, .. } => {
+            Checkout::Workweave { name: _, dir, .. } => {
                 lines.push(format!("Workweave: {}", dir.display()));
                 lines.push(format!("Weave: {}", self.primary_root.display()));
                 if let Some(p) = &active {
@@ -782,11 +824,11 @@ mod tests {
 
         let ctx = WorkspaceContext::resolve(&deep, None).unwrap();
         assert_eq!(ctx.primary_path(), root.canonicalize().unwrap());
-        match &ctx.location {
-            WorkspaceLocation::Weave { project } => {
+        match &ctx.checkout {
+            Checkout::Primary { project } => {
                 assert!(project.is_none());
             }
-            WorkspaceLocation::Workweave { .. } => panic!("expected Weave"),
+            Checkout::Workweave { .. } => panic!("expected Primary"),
         }
     }
 
@@ -807,14 +849,14 @@ mod tests {
 
         let ctx = WorkspaceContext::resolve(&project_dir, None).unwrap();
         assert_eq!(ctx.primary_path(), root.canonicalize().unwrap());
-        match &ctx.location {
-            WorkspaceLocation::Weave { project } => {
+        match &ctx.checkout {
+            Checkout::Primary { project } => {
                 assert!(
                     project.is_none(),
                     "without .rwv-active or --project, location.project is None"
                 );
             }
-            WorkspaceLocation::Workweave { .. } => panic!("expected Weave"),
+            Checkout::Workweave { .. } => panic!("expected Primary"),
         }
         // The CWD hint must still be populated for diagnostics.
         let hint = ctx.cwd_project_hint().expect("CWD hint should be set");
@@ -868,8 +910,8 @@ mod tests {
         // No marker in ws--feat-login. The walk-up finds `github/` inside
         // ws--feat-login and treats it as a workspace root.
         let ctx = WorkspaceContext::resolve(&repo_dir, None).unwrap();
-        match &ctx.location {
-            WorkspaceLocation::Weave { .. } => {
+        match &ctx.checkout {
+            Checkout::Primary { .. } => {
                 // Correct: treated as an anonymous workspace root, not a workweave.
                 assert_eq!(
                     ctx.primary_path(),
@@ -877,7 +919,7 @@ mod tests {
                     "should resolve to the marker-less dir as workspace root"
                 );
             }
-            WorkspaceLocation::Workweave { .. } => {
+            Checkout::Workweave { .. } => {
                 panic!("should NOT be resolved as a workweave without a marker");
             }
         }
@@ -911,12 +953,12 @@ mod tests {
 
         let ctx =
             WorkspaceContext::resolve(&root, Some(ProjectName::new("overridden-project"))).unwrap();
-        match &ctx.location {
-            WorkspaceLocation::Weave { project } => {
+        match &ctx.checkout {
+            Checkout::Primary { project } => {
                 let p = project.as_ref().expect("project should be set");
                 assert_eq!(p.as_str(), "overridden-project");
             }
-            WorkspaceLocation::Workweave { .. } => panic!("expected Weave"),
+            Checkout::Workweave { .. } => panic!("expected Primary"),
         }
     }
 
@@ -938,11 +980,11 @@ mod tests {
 
         let ctx =
             WorkspaceContext::resolve(&weave_dir, Some(ProjectName::new("custom-proj"))).unwrap();
-        match &ctx.location {
-            WorkspaceLocation::Workweave { project, .. } => {
+        match &ctx.checkout {
+            Checkout::Workweave { project, .. } => {
                 assert_eq!(project.as_str(), "custom-proj");
             }
-            WorkspaceLocation::Weave { .. } => panic!("expected Workweave"),
+            Checkout::Primary { .. } => panic!("expected Workweave"),
         }
     }
 
@@ -957,11 +999,11 @@ mod tests {
 
         let ctx = WorkspaceContext::resolve(&root, None).unwrap();
         assert_eq!(ctx.primary_path(), root.canonicalize().unwrap());
-        match &ctx.location {
-            WorkspaceLocation::Weave { project } => {
+        match &ctx.checkout {
+            Checkout::Primary { project } => {
                 assert!(project.is_none());
             }
-            WorkspaceLocation::Workweave { .. } => panic!("expected Weave"),
+            Checkout::Workweave { .. } => panic!("expected Primary"),
         }
     }
 
@@ -1060,14 +1102,14 @@ mod tests {
         std::fs::write(root.join(".rwv-active"), "web-app\n").unwrap();
 
         let ctx = WorkspaceContext::resolve(&root, None).unwrap();
-        match &ctx.location {
-            WorkspaceLocation::Weave { project } => {
+        match &ctx.checkout {
+            Checkout::Primary { project } => {
                 let p = project
                     .as_ref()
                     .expect("project should come from .rwv-active");
                 assert_eq!(p.as_str(), "web-app");
             }
-            WorkspaceLocation::Workweave { .. } => panic!("expected Weave"),
+            Checkout::Workweave { .. } => panic!("expected Primary"),
         }
     }
 
@@ -1084,14 +1126,14 @@ mod tests {
 
         // CWD is inside projects/from-cwd, but `.rwv-active` should still win.
         let ctx = WorkspaceContext::resolve(&project_dir, None).unwrap();
-        match &ctx.location {
-            WorkspaceLocation::Weave { project } => {
+        match &ctx.checkout {
+            Checkout::Primary { project } => {
                 let p = project
                     .as_ref()
                     .expect("project should come from .rwv-active");
                 assert_eq!(p.as_str(), "from-file");
             }
-            WorkspaceLocation::Workweave { .. } => panic!("expected Weave"),
+            Checkout::Workweave { .. } => panic!("expected Primary"),
         }
         // The hint should still record the CWD directory for diagnostics.
         let hint = ctx
@@ -1108,12 +1150,12 @@ mod tests {
 
         let ctx =
             WorkspaceContext::resolve(&root, Some(ProjectName::new("explicit-override"))).unwrap();
-        match &ctx.location {
-            WorkspaceLocation::Weave { project } => {
+        match &ctx.checkout {
+            Checkout::Primary { project } => {
                 let p = project.as_ref().expect("project should be set");
                 assert_eq!(p.as_str(), "explicit-override");
             }
-            WorkspaceLocation::Workweave { .. } => panic!("expected Weave"),
+            Checkout::Workweave { .. } => panic!("expected Primary"),
         }
     }
 
@@ -1277,13 +1319,13 @@ mod tests {
 
         let ctx = WorkspaceContext::resolve(&weave_dir, None).unwrap();
         assert_eq!(ctx.primary_path(), primary_canon);
-        match &ctx.location {
-            WorkspaceLocation::Workweave { name, dir, project } => {
+        match &ctx.checkout {
+            Checkout::Workweave { name, dir, project } => {
                 assert_eq!(name.as_str(), "feat");
                 assert_eq!(*dir, weave_dir.canonicalize().unwrap());
                 assert_eq!(project.as_str(), "web-app");
             }
-            WorkspaceLocation::Weave { .. } => panic!("expected Workweave"),
+            Checkout::Primary { .. } => panic!("expected Workweave"),
         }
     }
 
@@ -1307,13 +1349,13 @@ mod tests {
 
         let ctx = WorkspaceContext::resolve(&repo_dir, None).unwrap();
         assert_eq!(ctx.primary_path(), root.canonicalize().unwrap());
-        match &ctx.location {
-            WorkspaceLocation::Workweave { name, dir, project } => {
+        match &ctx.checkout {
+            Checkout::Workweave { name, dir, project } => {
                 assert_eq!(name.as_str(), "feat");
                 assert_eq!(*dir, weave_dir.canonicalize().unwrap());
                 assert_eq!(project.as_str(), "web-app");
             }
-            WorkspaceLocation::Weave { .. } => panic!("expected Workweave"),
+            Checkout::Primary { .. } => panic!("expected Workweave"),
         }
     }
 
@@ -1342,12 +1384,12 @@ mod tests {
         // right-hand side of `<project>--<name>` so downstream lookups
         // (workweave_path_for, delete_workweave) can reconstruct the on-disk
         // directory: `<workweave_parent>/<project-from-marker>--<name>`.
-        match &ctx.location {
-            WorkspaceLocation::Workweave { name, project, .. } => {
+        match &ctx.checkout {
+            Checkout::Workweave { name, project, .. } => {
                 assert_eq!(name.as_str(), "dash-name");
                 assert_eq!(project.as_str(), "marker-project");
             }
-            WorkspaceLocation::Weave { .. } => panic!("expected Workweave"),
+            Checkout::Primary { .. } => panic!("expected Workweave"),
         }
     }
 

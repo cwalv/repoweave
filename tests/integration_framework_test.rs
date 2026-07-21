@@ -1285,7 +1285,8 @@ mod fo_cnpjy_3 {
         // Bare context-mode activate via the public API. This exercises the
         // same Mode::Context code path that `rwv activate` and
         // `rwv fetch` take.
-        activate("p", &ws).expect("context-mode activate should succeed");
+        let ctx = repoweave::workspace::WorkspaceContext::resolve(&ws, None).unwrap();
+        activate("p", &ctx).expect("context-mode activate should succeed");
 
         // The hand-edited file's bytes must be unchanged — context verbs
         // never author.
@@ -1322,7 +1323,8 @@ mod fo_cnpjy_3 {
         // Bootstrap: ensure .rwv-active is set so subsequent activate has
         // a coherent previously-active project's owned set to combine in
         // the removal candidate union.
-        activate_intent_with_options("p", &ws, ActivateOptions { no_install: true })
+        let ctx = repoweave::workspace::WorkspaceContext::resolve(&ws, None).unwrap();
+        activate_intent_with_options("p", &ctx, ActivateOptions { no_install: true })
             .expect("intent-mode bootstrap should succeed");
 
         // Plant a user-owned symlink at a name no built-in integration
@@ -1338,7 +1340,9 @@ mod fo_cnpjy_3 {
         // Re-activate (context mode). The owner-scoped removal predicate
         // must NOT touch user-config.json — it is not in any active
         // integration's managed/generated set.
-        activate("p", &ws).expect("re-activate should succeed");
+        // Rebuild the context after any workspace mutations above.
+        let ctx = repoweave::workspace::WorkspaceContext::resolve(&ws, None).unwrap();
+        activate("p", &ctx).expect("re-activate should succeed");
 
         assert!(
             user_link.symlink_metadata().is_ok(),

@@ -144,7 +144,10 @@ fn e2e_cargo_workspace_wiring() {
     setup_weave(root);
 
     // ---- Step 1: activate("web-app", root) generates root Cargo.toml ----
-    repoweave::activate::activate_intent("web-app", root).expect("activate should succeed");
+    {
+        let ctx = repoweave::workspace::WorkspaceContext::resolve(root, None).unwrap();
+        repoweave::activate::activate_intent("web-app", &ctx).expect("activate should succeed");
+    }
 
     // ---- Step 2: verify root Cargo.toml exists and is a symlink ----
     let root_cargo = root.join("Cargo.toml");
@@ -220,7 +223,10 @@ fn cargo_release_version_pin_workflow() {
     }
 
     // Activate to generate the root Cargo.toml workspace symlink.
-    repoweave::activate::activate_intent("web-app", root).expect("activate should succeed");
+    {
+        let ctx = repoweave::workspace::WorkspaceContext::resolve(root, None).unwrap();
+        repoweave::activate::activate_intent("web-app", &ctx).expect("activate should succeed");
+    }
 
     // ---- Step 2: verify cargo check --workspace works (baseline) ----
     let check_status = Command::new("cargo")
@@ -344,7 +350,10 @@ fn e2e_cargo_lock_out_of_band_rewrite_surfaces_digest_warning() {
     setup_weave(root);
 
     // ---- Step 1: activation runs the hook: generate-lockfile + stamp ----
-    repoweave::activate::activate_intent("web-app", root).expect("activate should succeed");
+    {
+        let ctx = repoweave::workspace::WorkspaceContext::resolve(root, None).unwrap();
+        repoweave::activate::activate_intent("web-app", &ctx).expect("activate should succeed");
+    }
 
     let project_lock = root.join("projects/web-app/Cargo.lock");
     assert!(
@@ -425,7 +434,10 @@ fn e2e_cargo_lock_out_of_band_rewrite_surfaces_digest_warning() {
     );
 
     // ---- Step 5: the ACCEPT exit — re-activation re-stamps → clean ----
-    repoweave::activate::activate_intent("web-app", root).expect("re-activate should succeed");
+    {
+        let ctx = repoweave::workspace::WorkspaceContext::resolve(root, None).unwrap();
+        repoweave::activate::activate_intent("web-app", &ctx).expect("re-activate should succeed");
+    }
     let out_restamped = common::rwv()
         .arg("doctor")
         .current_dir(root)
@@ -548,7 +560,10 @@ integrations:
     .unwrap();
 
     // ---- Activate ----
-    repoweave::activate::activate_intent("web-app", root).expect("activate should succeed");
+    {
+        let ctx = repoweave::workspace::WorkspaceContext::resolve(root, None).unwrap();
+        repoweave::activate::activate_intent("web-app", &ctx).expect("activate should succeed");
+    }
 
     // ---- Assertion 1: config surface written with the correct relative path ----
     // The .cargo/config.toml is symlinked from weave root into the

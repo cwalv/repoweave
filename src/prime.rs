@@ -1,32 +1,32 @@
 //! `rwv prime` — emit structured workspace context for agent system prompts.
 //!
 //! Prints markdown describing the current repoweave workspace: root path,
-//! active project, workspace location (weave/workweave), repository table with roles,
-//! enabled integrations, key commands, and directory layout.
+//! active project, checkout kind (primary/workweave), repository table with
+//! roles, enabled integrations, key commands, and directory layout.
 //!
 //! Silent (exit 0, no output) when not inside a repoweave workspace.
 
 use crate::manifest::{Manifest, ProjectName, RepoPath};
-use crate::workspace::{WorkspaceContext, WorkspaceLocation};
-use std::path::Path;
+use crate::workspace::{Checkout, WorkspaceContext};
 
-/// Run `rwv prime` from the given working directory.
+/// Run `rwv prime` against an already-resolved workspace context.
 ///
-/// Returns `Ok(())` unconditionally. Prints nothing if not in a workspace,
-/// unless `no_suppress` is true — in which case an orientation overview is
-/// emitted instead so agents can orient themselves without per-workspace details.
-pub fn prime(cwd: &Path, no_suppress: bool) -> anyhow::Result<()> {
-    let ctx = match WorkspaceContext::resolve(cwd, None) {
-        Ok(ctx) => ctx,
-        Err(_) => {
-            if no_suppress {
-                print!("{}", render_overview());
-            }
-            return Ok(());
+/// Returns `Ok(())` unconditionally. When `ctx` is `None` (the origin dir
+/// resolved to no workspace), prints nothing unless `no_suppress` is true —
+/// in which case an orientation overview is emitted so agents can orient
+/// themselves without per-workspace details.
+///
+/// Resolution happens in `main`; this handler never touches the process
+/// cwd on its own.
+pub fn prime(ctx: Option<&WorkspaceContext>, no_suppress: bool) -> anyhow::Result<()> {
+    let Some(ctx) = ctx else {
+        if no_suppress {
+            print!("{}", render_overview());
         }
+        return Ok(());
     };
 
-    let output = render_context(&ctx);
+    let output = render_context(ctx);
     print!("{output}");
     Ok(())
 }
@@ -54,15 +54,15 @@ pub fn render_context(ctx: &WorkspaceContext) -> String {
     out.push_str("# repoweave workspace\n\n");
 
     // -- Location ---------------------------------------------------------------
-    let project: Option<&ProjectName> = match &ctx.location {
-        WorkspaceLocation::Weave { project } => {
+    let project: Option<&ProjectName> = match &ctx.checkout {
+        Checkout::Primary { project } => {
             out.push_str(&format!(
                 "- **Weave**: `{}`\n",
                 ctx.primary_path().display()
             ));
             project.as_ref()
         }
-        WorkspaceLocation::Workweave {
+        Checkout::Workweave {
             name: _,
             dir,
             project,
@@ -216,7 +216,7 @@ fn render_directory_layout(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
 
     fn make_test_workspace(parent: &Path, name: &str) -> PathBuf {
         let root = parent.join(name);
@@ -235,8 +235,9 @@ mod tests {
 
     #[test]
     fn prime_silent_outside_workspace() {
-        let tmp = tempfile::tempdir().unwrap();
-        prime(tmp.path(), false).unwrap();
+        // Simulate the dispatch-time behaviour: origin dir has no workspace,
+        // so main passes None to prime; the handler stays quiet.
+        prime(None, false).unwrap();
         // No panic, no error — just silent
     }
 

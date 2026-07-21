@@ -83,9 +83,15 @@ fn bootstrap_workspace_if_empty(cwd: &Path) -> anyhow::Result<()> {
 /// - Writes an empty `rwv.yaml` (`repositories: {}`).
 /// - If `provider` is given (e.g., `"github/owner"`), configures a git remote.
 /// - Activates the project (writes `.rwv-active` and generates ecosystem files).
-pub fn init(name: &str, provider: Option<&str>, cwd: &Path) -> anyhow::Result<()> {
-    bootstrap_workspace_if_empty(cwd)?;
-    let ctx = WorkspaceContext::resolve(cwd, None)?;
+pub fn init(name: &str, provider: Option<&str>, origin_dir: &Path) -> anyhow::Result<()> {
+    // Bootstrap here rather than at dispatch — the origin dir may be empty
+    // (no workspace to resolve yet), and `bootstrap_workspace_if_empty`
+    // creates the minimal skeleton so the follow-on `resolve` succeeds. This
+    // resolve is a first-resolution of the freshly-bootstrapped workspace,
+    // not a re-resolution of the invocation context (which dispatch could
+    // not compute pre-bootstrap).
+    bootstrap_workspace_if_empty(origin_dir)?;
+    let ctx = WorkspaceContext::resolve(origin_dir, None)?;
     let project_dir = ctx.primary_path().join("projects").join(name);
 
     // Collision check
@@ -190,7 +196,7 @@ pub fn init(name: &str, provider: Option<&str>, cwd: &Path) -> anyhow::Result<()
     );
 
     // Auto-activate the newly created project.
-    crate::activate::activate(name, cwd)?;
+    crate::activate::activate(name, &ctx)?;
 
     Ok(())
 }
@@ -205,9 +211,10 @@ pub fn init(name: &str, provider: Option<&str>, cwd: &Path) -> anyhow::Result<()
 /// 4. Clones the repo to `projects/{name}/` (skips if already exists).
 /// 5. Writes an empty `rwv.yaml` if the clone does not already contain one.
 /// 6. Activates the project.
-pub fn init_adopt(source: &str, cwd: &Path) -> anyhow::Result<()> {
-    bootstrap_workspace_if_empty(cwd)?;
-    let ctx = WorkspaceContext::resolve(cwd, None)?;
+pub fn init_adopt(source: &str, origin_dir: &Path) -> anyhow::Result<()> {
+    // Same bootstrap-then-first-resolve pattern as `init` above.
+    bootstrap_workspace_if_empty(origin_dir)?;
+    let ctx = WorkspaceContext::resolve(origin_dir, None)?;
     let root = ctx.primary_path();
 
     // Resolve the source to a clone URL and project name.
@@ -259,7 +266,7 @@ pub fn init_adopt(source: &str, cwd: &Path) -> anyhow::Result<()> {
     );
 
     // Activate the project
-    crate::activate::activate(&project_name, cwd)?;
+    crate::activate::activate(&project_name, &ctx)?;
 
     Ok(())
 }

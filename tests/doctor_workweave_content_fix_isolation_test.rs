@@ -249,7 +249,8 @@ repositories:\n  \
     // 2. Activate the primary — authors go.work at projects/web-app/go.work
     //    and surfaces the top-level symlink at ws/go.work.
     // ------------------------------------------------------------------
-    repoweave::activate::activate_intent("web-app", &ws)
+    let ctx = repoweave::workspace::WorkspaceContext::resolve(&ws, None).unwrap();
+    repoweave::activate::activate_intent("web-app", &ctx)
         .expect("primary activate_intent should succeed");
     assert!(
         project_dir.join("go.work").exists(),

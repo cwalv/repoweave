@@ -255,19 +255,13 @@ pub fn run_fetch(
 /// runs are additive and skip the lock-write step (same rule as bootstrap).
 #[allow(clippy::too_many_arguments)]
 pub fn run_fetch_in_place(
-    cwd: &Path,
+    ctx: &WorkspaceContext,
     mode: FetchMode,
     no_reference: bool,
     filter: &RepoFilter,
     jobs: usize,
     json: bool,
 ) -> anyhow::Result<()> {
-    let ctx = WorkspaceContext::resolve(cwd, None).with_context(|| {
-        format!(
-            "rwv fetch: no SOURCE and no repoweave workspace found above {}",
-            cwd.display(),
-        )
-    })?;
     let name = ctx.require_active_project_on_disk()?.clone();
 
     // Per-workspace state (rwv.yaml, rwv.lock) lives under active_path — the
@@ -644,7 +638,12 @@ fn fetch_project_repos(
                     println!("{msg}");
                 }
             } else {
-                crate::activate::activate(name, workspace_root)?;
+                // Resolve the freshly-bootstrapped workspace to build the
+                // context activate now takes. This is a first-resolution of
+                // the newly-created workspace, not a re-resolution of the
+                // invocation context.
+                let ctx = crate::workspace::WorkspaceContext::resolve(workspace_root, None)?;
+                crate::activate::activate(name, &ctx)?;
             }
         }
     }
