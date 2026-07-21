@@ -24,3 +24,4 @@ pub mod update;
 pub mod vcs;
 pub mod workspace;
 pub mod workweave;
+pub mod workweave_index;

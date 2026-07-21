@@ -338,6 +338,7 @@ fn create_no_submodule_invocation_for_repo_without_gitmodules() {
         false,
         false,
         false,
+        None,
     );
 
     assert!(
@@ -493,6 +494,7 @@ fn doctor_scan_reports_uninitialized_submodule_in_workweave() {
         false,
         false,
         false,
+        None,
     )
     .expect("create should succeed");
 
@@ -547,6 +549,7 @@ fn doctor_scan_silent_for_repo_without_gitmodules() {
         false,
         false,
         false,
+        None,
     )
     .expect("create should succeed");
 

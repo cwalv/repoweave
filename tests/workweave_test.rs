@@ -1703,21 +1703,22 @@ fn list_workweaves_is_scoped_by_project() {
     );
 }
 
-/// Old-form workweaves (legacy `<primary>--<name>`, marker recorded) are
-/// resolved by `workweave_path_for` via the marker scan, not the directory
-/// name. Verified through `rwv workweave list`, which is one of the surfaces
-/// that must work for legacy on-disk layouts.
+/// Old-form on-disk workweaves without a registry entry are NOT visible in
+/// `rwv workweave list` (list is registry-backed since the addressing
+/// redesign). Doctor's `unregistered-workweave` finding + `--fix` adoption
+/// is the migration surface — silent auto-adoption in read paths is
+/// deliberately not provided.
 #[test]
-fn list_workweaves_includes_legacy_form_via_marker() {
+fn list_omits_unregistered_workweave_and_doctor_can_adopt_it() {
     let tmp = tempfile::tempdir().unwrap();
     let ws = make_workspace(tmp.path(), "web-app");
     let weaveroot = tmp.path().join(".workweaves");
     std::fs::create_dir_all(&weaveroot).unwrap();
 
-    // Hand-craft an old-form workweave dir with a fully-migrated marker
-    // (primary + project + parent). No worktrees needed — `list_workweaves`
-    // only scans markers.
-    let legacy = weaveroot.join("ws--from-old");
+    // Hand-craft an on-disk workweave with a valid marker but no registry
+    // entry (the pre-registry / bootstrap case).
+    // The directory name must be `<project>--<name>` for parse to succeed.
+    let legacy = weaveroot.join("web-app--from-old");
     std::fs::create_dir_all(&legacy).unwrap();
     let ws_canon = ws.canonicalize().unwrap().display().to_string();
     let marker = format!(
@@ -1726,19 +1727,48 @@ fn list_workweaves_includes_legacy_form_via_marker() {
     );
     std::fs::write(legacy.join(".rwv-workweave"), marker).unwrap();
 
-    let out = rwv()
-        .args(["workweave", "web-app", "list"])
+    // List omits it: no registry entry → not visible.
+    let stdout = String::from_utf8(
+        rwv()
+            .args(["workweave", "web-app", "list"])
+            .env("RWV_WORKWEAVE_DIR", &weaveroot)
+            .current_dir(&ws)
+            .assert()
+            .success()
+            .get_output()
+            .stdout
+            .clone(),
+    )
+    .unwrap();
+    assert!(
+        !stdout.contains("from-old"),
+        "list must NOT silently surface unregistered workweaves; got:\n{stdout}"
+    );
+
+    // Doctor --fix adopts it into the registry.
+    rwv()
+        .args(["doctor", "--fix"])
         .env("RWV_WORKWEAVE_DIR", &weaveroot)
         .current_dir(&ws)
         .assert()
-        .success()
-        .get_output()
-        .stdout
-        .clone();
-    let stdout = String::from_utf8(out).unwrap();
+        .stdout(predicates::str::contains("adopted workweave `from-old`"));
+
+    // After adoption, list surfaces the workweave.
+    let stdout2 = String::from_utf8(
+        rwv()
+            .args(["workweave", "web-app", "list"])
+            .env("RWV_WORKWEAVE_DIR", &weaveroot)
+            .current_dir(&ws)
+            .assert()
+            .success()
+            .get_output()
+            .stdout
+            .clone(),
+    )
+    .unwrap();
     assert!(
-        stdout.contains("from-old"),
-        "list should include legacy-form workweave via marker, got:\n{stdout}"
+        stdout2.contains("from-old"),
+        "post-adopt list should surface the workweave; got:\n{stdout2}"
     );
 }
 
@@ -3158,7 +3188,7 @@ fn cleanup_failure_preserves_original_error_with_manual_note() {
     // ephemeral branch name that rollback will try to delete: `locked-branch--stuck/main`.
     let project = ProjectName::new("locked-branch".to_string());
     let ww_name = WorkweaveName::new("stuck".to_string());
-    let err1 = create_workweave(&ws, &ws, &project, &ww_name, false, false, false);
+    let err1 = create_workweave(&ws, &ws, &project, &ww_name, false, false, false, None);
     assert!(
         err1.is_err(),
         "first create should fail (repo2 missing): {:?}",
@@ -3191,7 +3221,7 @@ fn cleanup_failure_preserves_original_error_with_manual_note() {
     //   a) Return an error (not panic).
     //   b) The primary error text starts with "workweave create completed with".
     //   c) The error includes a manual-cleanup note with "git" and "branch -D".
-    let err2 = create_workweave(&ws, &ws, &project, &ww_name, false, false, false);
+    let err2 = create_workweave(&ws, &ws, &project, &ww_name, false, false, false, None);
 
     // Restore permissions so tempdir cleanup doesn't fail.
     let _ = std::fs::set_permissions(&branch_ref, std::fs::Permissions::from_mode(0o644));

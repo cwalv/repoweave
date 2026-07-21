@@ -153,6 +153,7 @@ fn create_materializes_reference_as_symlink_and_owned_as_worktree() {
         false,
         false,
         false, // default: symlink references
+        None,
     )
     .expect("create_workweave should succeed");
 
@@ -242,6 +243,7 @@ fn worktree_references_flag_cuts_a_worktree_for_reference_repos() {
         false,
         false,
         true, // escape hatch: worktree references
+        None,
     )
     .expect("create_workweave should succeed");
 
@@ -289,6 +291,7 @@ fn delete_unlinks_symlink_and_leaves_canonical_byte_for_byte_unchanged() {
         false,
         false,
         false,
+        None,
     )
     .expect("create should succeed");
     assert!(ww.join(REF_REPO).is_symlink());
@@ -334,6 +337,7 @@ fn delete_succeeds_with_a_dirty_canonical_and_leaves_it_untouched() {
         false,
         false,
         false,
+        None,
     )
     .expect("create should succeed");
     assert!(ww.join(REF_REPO).is_symlink());
@@ -385,6 +389,7 @@ fn nested_workweave_reference_symlink_targets_primary_canonical() {
         false,
         false,
         false,
+        None,
     )
     .expect("parent create should succeed");
     assert!(parent.join(REF_REPO).is_symlink());
@@ -399,6 +404,7 @@ fn nested_workweave_reference_symlink_targets_primary_canonical() {
         false,
         false,
         false,
+        None,
     )
     .expect("child create should succeed");
 
@@ -439,6 +445,7 @@ fn two_workweaves_share_one_canonical_and_deleting_one_keeps_the_other_valid() {
         false,
         false,
         false,
+        None,
     )
     .expect("create wa");
     let wb = create_workweave(
@@ -449,6 +456,7 @@ fn two_workweaves_share_one_canonical_and_deleting_one_keeps_the_other_valid() {
         false,
         false,
         false,
+        None,
     )
     .expect("create wb");
 
@@ -545,6 +553,7 @@ fn workweave_created_after_add_reference_symlinks_the_new_repo() {
         false,
         false,
         false,
+        None,
     )
     .expect("create after add should succeed");
 
@@ -578,6 +587,7 @@ fn idempotent_reuse_with_symlinked_reference_returns_clean() {
         false,
         false,
         false,
+        None,
     )
     .expect("first create");
     assert!(first.join(REF_REPO).is_symlink());
@@ -596,6 +606,7 @@ fn idempotent_reuse_with_symlinked_reference_returns_clean() {
         false, // not force
         false,
         false,
+        None,
     )
     .expect("idempotent reuse must return clean even with a dirty canonical reference");
 

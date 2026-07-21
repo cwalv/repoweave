@@ -1,10 +1,30 @@
 //! Workweave operations: create, delete, list, and sync workweaves.
 //!
 //! A workweave is a parallel working directory containing worktrees for each
-//! repo in a project, including the project repo itself. The workweave directory
-//! lives under `.workweaves/` in the parent of the workspace root (or under
-//! `RWV_WORKWEAVE_DIR` if set). Each workweave carries its own `.rwv-workweave` marker
-//! and `.rwv-active` file so it is fully self-describing.
+//! repo in a project, including the project repo itself. Placement and
+//! discovery are **recorded**, not computed: each `(primary, project)` carries
+//! a `.rwv-workweave-index` (see [`crate::workweave_index`]) that names the
+//! container directory `workweave create` places new workweaves under and the
+//! `name → absolute path` inverted index every `find`-direction verb consults.
+//! Each workweave still carries its own `.rwv-workweave` marker and
+//! `.rwv-active` file so it is fully self-describing.
+//!
+//! ## Correctness vs hygiene split
+//!
+//! The registry is an **advisory** index. Correctness never depends on the
+//! index being uncommitted, up-to-date, or even present:
+//!
+//! - Every consumed entry is validated against the workweave's `.rwv-workweave`
+//!   marker (round-trip: `marker.primary` canonicalizes to this primary and
+//!   `marker.project` matches the queried project). A foreign or stale entry
+//!   degrades to `None` — doctor prunes it as a finding.
+//! - Destructive ops ([`delete_workweave`], retire) hard-require the round-trip
+//!   before touching the directory. A committed / hand-edited registry cannot
+//!   direct a deletion at the wrong tree.
+//! - Missing index at the primary is not fatal: read paths treat it as empty,
+//!   doctor's container-scoped scan reports on-disk workweaves as adoptable
+//!   orphans. Silent auto-adoption in read paths is deliberately not done —
+//!   adoption is a doctor act with the operator's consent.
 
 use crate::git::{git_command, GitVcs};
 use crate::manifest::{Manifest, ProjectName, Role, WorkweaveName};
@@ -12,8 +32,10 @@ use crate::vcs::{vcs_for, RefName, Vcs};
 use crate::workspace::{
     parse_weave_dir_name, read_active_project, set_active_project, weave_dir_name, WorkweaveMarker,
 };
+use crate::workweave_index;
 use anyhow::{anyhow, bail, Context};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 
 /// How a repo is materialized inside a workweave.
 ///
@@ -71,42 +93,215 @@ pub fn classify_checkout(path: &Path) -> CheckoutKind {
     }
 }
 
-/// Determine where workweave directories live.
+/// Print the `RWV_WORKWEAVE_DIR` deprecation warning at most once per process.
 ///
-/// If `RWV_WORKWEAVE_DIR` is set, workweaves go under that directory.
-/// Otherwise they live under `.workweaves/` in the parent of the workspace root.
-fn workweave_parent(ws_root: &Path) -> PathBuf {
-    if let Ok(wr) = std::env::var("RWV_WORKWEAVE_DIR") {
-        PathBuf::from(wr)
-    } else {
-        ws_root
-            .parent()
-            .expect("workspace root should have a parent")
-            .join(".workweaves")
+/// The env var is being retired: consumption for addressing / discovery is
+/// replaced by the recorded [`crate::workweave_index`]. During the transition
+/// window the var still acts as the initial-container fallback when no index
+/// exists, so users' existing shell setups keep working — but every rwv
+/// invocation with the var set fires this warning so operators migrate to the
+/// container-setting verb.
+///
+/// Final deletion of the fallback is a separate follow-up bead (needs a
+/// release boundary). Until then, this warning is the deprecation signal.
+static DEPRECATION_WARNED: AtomicBool = AtomicBool::new(false);
+
+pub(crate) fn warn_rwv_workweave_dir_deprecated_if_set() {
+    if std::env::var("RWV_WORKWEAVE_DIR").is_err() {
+        return;
     }
+    if DEPRECATION_WARNED
+        .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+        .is_err()
+    {
+        return;
+    }
+    eprintln!(
+        "warning: RWV_WORKWEAVE_DIR is deprecated and will be removed in a future release; \
+         the workweave container is now recorded per-project in \
+         `projects/<project>/.rwv-workweave-index`. Run \
+         `rwv workweave <project> set-container <path>` to record the container \
+         explicitly. See `rwv explain workweave`."
+    );
 }
 
-/// Public accessor for the workweave parent directory.
+/// Determine the workweave container for `(primary_root, project)`.
 ///
-/// Exposed for `check.rs` (workweave-tree integrity scanning). Callers outside
-/// this module should treat the returned path as the container for all
-/// workweave directories belonging to `ws_root`.
-pub fn workweave_parent_pub(ws_root: &Path) -> PathBuf {
-    workweave_parent(ws_root)
+/// The container is the directory `workweave create` places new workweaves
+/// under when no per-workweave `--dir` override is passed. Resolution
+/// priority:
+///
+///   1. The `container` field of the recorded `.rwv-workweave-index`.
+///   2. `RWV_WORKWEAVE_DIR` (transitional fallback; fires the deprecation
+///      warning).
+///   3. `<parent-of-primary>/.workweaves` (compiled-in default).
+///
+/// Prefer using this in the `create` direction only. The `find` direction
+/// (list, delete, sync targets, etc.) resolves via the recorded name → path
+/// entries, so it does not consult this at all.
+pub fn workweave_container(primary_root: &Path, project: &ProjectName) -> anyhow::Result<PathBuf> {
+    warn_rwv_workweave_dir_deprecated_if_set();
+    workweave_index::resolve_container(primary_root, project)
 }
 
-/// Compute the on-disk directory for a workweave by `(project, name)`, given
-/// the primary workspace root.
+/// Result of validating a registry entry against its on-disk marker.
 ///
-/// Returns `<workweave_parent>/<project>--<name>`. If the path does not exist
-/// the caller may create it or report it as missing.
-pub fn workweave_path_for(
+/// The validated variants are the only ones a destructive op or a `list`
+/// entry ever consumes. The stale variants degrade to `None` at the API
+/// boundary (see [`resolve_registered_workweave`]) — a foreign or stale
+/// index cannot direct action; doctor is the one channel that surfaces
+/// these as findings.
+#[derive(Debug)]
+pub enum RegistryEntryValidation {
+    /// The recorded path has a `.rwv-workweave` marker whose `primary`
+    /// canonicalizes to the queried primary AND whose `project` matches the
+    /// queried project. Safe to act on.
+    Valid,
+    /// The recorded path does not exist on disk.
+    MissingDirectory,
+    /// The recorded path exists but has no `.rwv-workweave` marker.
+    MissingMarker,
+    /// The marker's `primary` does not canonicalize to the queried primary.
+    ForeignPrimary,
+    /// The marker's `project` differs from the queried project.
+    ProjectMismatch { actual: ProjectName },
+    /// Reading or parsing the marker failed. Retained separately from
+    /// `MissingMarker` so callers can distinguish "file absent" from
+    /// "file present but broken".
+    MarkerUnreadable { detail: String },
+}
+
+/// Validate a registry entry against its on-disk `.rwv-workweave` marker.
+///
+/// This is the single chokepoint every consumer routes through before acting
+/// on a registered path. Correctness against a stale/foreign index depends on
+/// this check running.
+pub fn validate_registry_entry(
+    primary_root: &Path,
+    project: &ProjectName,
+    path: &Path,
+) -> RegistryEntryValidation {
+    if !path.exists() {
+        return RegistryEntryValidation::MissingDirectory;
+    }
+    let marker = match WorkweaveMarker::read(path) {
+        Ok(Some(m)) => m,
+        Ok(None) => return RegistryEntryValidation::MissingMarker,
+        Err(e) => {
+            return RegistryEntryValidation::MarkerUnreadable {
+                detail: e.to_string(),
+            }
+        }
+    };
+    let primary_canonical = primary_root
+        .canonicalize()
+        .unwrap_or_else(|_| primary_root.to_path_buf());
+    let marker_primary_canonical = marker
+        .primary
+        .canonicalize()
+        .unwrap_or_else(|_| marker.primary.clone());
+    if marker_primary_canonical != primary_canonical {
+        return RegistryEntryValidation::ForeignPrimary;
+    }
+    if &marker.project != project {
+        return RegistryEntryValidation::ProjectMismatch {
+            actual: marker.project,
+        };
+    }
+    RegistryEntryValidation::Valid
+}
+
+/// Look up a workweave by `(project, name)` via the recorded registry,
+/// validating the marker round-trip before returning the path.
+///
+/// Returns `Ok(Some(path))` only when the entry exists AND its marker
+/// round-trips. Any failure mode — missing index, missing entry, stale entry,
+/// foreign primary, project mismatch — returns `Ok(None)`. Callers wanting a
+/// destructive-op guardrail should also call [`ensure_registered_workweave`],
+/// which surfaces the failure mode as an actionable error instead of silently
+/// treating it as "not found".
+pub fn resolve_registered_workweave(
     primary_root: &Path,
     project: &ProjectName,
     name: &WorkweaveName,
-) -> PathBuf {
-    let parent = workweave_parent(primary_root);
-    parent.join(weave_dir_name(project.as_str(), name))
+) -> anyhow::Result<Option<PathBuf>> {
+    let raw = match workweave_index::lookup_raw(primary_root, project, name.as_str())? {
+        Some(p) => p,
+        None => return Ok(None),
+    };
+    match validate_registry_entry(primary_root, project, &raw) {
+        RegistryEntryValidation::Valid => Ok(Some(raw)),
+        _ => Ok(None),
+    }
+}
+
+/// Return the registered path for a workweave AND require the marker
+/// round-trip to succeed. Used by destructive ops (`delete`, retire).
+///
+/// A missing entry surfaces as an actionable "no such workweave" error
+/// rather than falling back to any computed path — the reconstruction
+/// code path is intentionally deleted from this module, so an unknown name
+/// simply has no on-disk address rwv is willing to invent.
+///
+/// A stale-or-foreign entry (found in the index but round-trip fails)
+/// surfaces as a *distinct* error naming the specific validation failure,
+/// so the operator sees the right remediation ("run `rwv doctor --fix`,
+/// then retry", not "did you make a typo in the name").
+pub fn ensure_registered_workweave(
+    primary_root: &Path,
+    project: &ProjectName,
+    name: &WorkweaveName,
+) -> anyhow::Result<PathBuf> {
+    let raw = match workweave_index::lookup_raw(primary_root, project, name.as_str())? {
+        Some(p) => p,
+        None => bail!(
+            "no workweave named `{}` is recorded for project `{}` — either it \
+             was never created, was already deleted, or exists on disk without \
+             a registry entry (run `rwv doctor` to detect and adopt orphans)",
+            name.as_str(),
+            project.as_str()
+        ),
+    };
+    match validate_registry_entry(primary_root, project, &raw) {
+        RegistryEntryValidation::Valid => Ok(raw),
+        RegistryEntryValidation::MissingDirectory => bail!(
+            "workweave `{}` is recorded at {} but that directory no longer \
+             exists; run `rwv doctor --fix` to prune the stale entry",
+            name.as_str(),
+            raw.display()
+        ),
+        RegistryEntryValidation::MissingMarker => bail!(
+            "workweave `{}` is recorded at {} but the directory has no \
+             `.rwv-workweave` marker — refusing to touch it; run `rwv doctor` \
+             for guidance",
+            name.as_str(),
+            raw.display()
+        ),
+        RegistryEntryValidation::ForeignPrimary => bail!(
+            "workweave `{}` is recorded at {} but the marker's `primary` \
+             does not match this workspace — refusing to touch a foreign \
+             workweave. This can arise from a committed / hand-edited \
+             registry; run `rwv doctor` to investigate.",
+            name.as_str(),
+            raw.display()
+        ),
+        RegistryEntryValidation::ProjectMismatch { actual } => bail!(
+            "workweave `{}` is recorded at {} but the marker records project \
+             `{}`, not `{}` — refusing to touch it; run `rwv doctor` to \
+             investigate the registry / marker disagreement",
+            name.as_str(),
+            raw.display(),
+            actual.as_str(),
+            project.as_str()
+        ),
+        RegistryEntryValidation::MarkerUnreadable { detail } => bail!(
+            "workweave `{}` is recorded at {} but its marker could not be \
+             read ({detail}); refusing to touch it. Run `rwv doctor` for \
+             remediation.",
+            name.as_str(),
+            raw.display()
+        ),
+    }
 }
 
 /// Build the ephemeral branch name used by workweave worktrees.
@@ -687,7 +882,16 @@ pub fn scan_uninitialized_submodules(worktree_path: &Path) -> Vec<String> {
 ///   reference repos too (the legacy behavior). Such a repo is a
 ///   [`CheckoutKind::Worktree`] and flows through every normal code path.
 ///
+/// `dir_override` is the optional per-invocation placement override. When
+/// `Some(p)`, the workweave lands at `p` verbatim (canonicalized against the
+/// primary root if relative); when `None`, it lands at
+/// `<container>/<project>--<name>` where `container` comes from
+/// [`workweave_container`]. Either way the resulting absolute path is
+/// recorded in the registry so per-workweave overrides are as visible to
+/// later `list` / `delete` / doctor as default-container placements.
+///
 /// Returns the absolute path of the created workweave directory.
+#[allow(clippy::too_many_arguments)]
 pub fn create_workweave(
     primary_root: &Path,
     source_root: &Path,
@@ -696,9 +900,21 @@ pub fn create_workweave(
     force: bool,
     capture_dirty: bool,
     worktree_references: bool,
+    dir_override: Option<&Path>,
 ) -> anyhow::Result<PathBuf> {
     let manifest = load_manifest(source_root, project)?;
-    let workweave_dir = workweave_path_for(primary_root, project, name);
+    // Placement is authoritative here (create direction): either the caller
+    // named an explicit path (recorded verbatim) or the recorded container
+    // provides the default. The registry entry is written after the marker
+    // and .rwv-active land — see the bottom of this function.
+    let workweave_dir = match dir_override {
+        Some(p) if p.is_absolute() => p.to_path_buf(),
+        Some(p) => primary_root.join(p),
+        None => {
+            let container = workweave_container(primary_root, project)?;
+            container.join(weave_dir_name(project.as_str(), name))
+        }
+    };
 
     if workweave_dir.exists() {
         if force {
@@ -1239,6 +1455,25 @@ pub fn create_workweave(
 
     // Run activate in the workweave context.
     crate::activate::activate_workweave(project.as_str(), &workweave_dir)?;
+
+    // Record the workweave in the primary-side registry so `list`, `delete`,
+    // and doctor find it without re-scanning. Absolute path so per-workweave
+    // `--dir` overrides are as first-class as default-container placements.
+    // Failure to record is surfaced (not swallowed): a workweave without a
+    // registry entry becomes an on-disk orphan that consumers cannot address
+    // by name, and silent auto-adoption in read paths is deliberately not
+    // provided (see module docs).
+    let recorded_dir = workweave_dir
+        .canonicalize()
+        .unwrap_or_else(|_| workweave_dir.clone());
+    workweave_index::record_workweave(primary_root, project, name.as_str(), recorded_dir)
+        .context("failed to record workweave in the primary-side registry")?;
+
+    // Hygiene: keep the index dotfile out of the project's tracked tree.
+    // Best effort — the design tolerates a committed copy (reads route to
+    // primary; doctor flags it as a finding). Silently swallow errors so a
+    // read-only project checkout does not block the create.
+    let _ = workweave_index::ensure_ignore_entry(primary_root, project);
 
     // All steps complete — defuse the rollback guard so Drop is a no-op.
     rollback.defuse();
@@ -1846,17 +2081,35 @@ pub fn delete_workweave(
 /// record is cleared in the later `cleanup` phase), so the guard would
 /// otherwise refuse the op's own retire. Only the sync engine's retire phase
 /// calls this — never a standalone verb.
+///
+/// `workweave_dir` is the on-disk path resolved by the sync engine at op
+/// start; this path is authoritative here and bypasses the primary-side
+/// registry lookup. Retire runs from inside the workweave and has already
+/// validated its marker; a missing registry entry (mid-crash resume, or
+/// bootstrap workspace that never wrote its index) must not prevent retire
+/// from cleaning up. The marker round-trip is still enforced inside
+/// `delete_workweave_inner_at`.
 pub(crate) fn delete_workweave_for_retire(
     ws_root: &Path,
     project: &ProjectName,
     name: &WorkweaveName,
+    workweave_dir: &Path,
     force: bool,
 ) -> anyhow::Result<()> {
-    delete_workweave_inner(ws_root, project, name, force, true)
+    delete_workweave_inner_at(ws_root, project, name, workweave_dir, force, true)
 }
 
 /// Shared delete implementation. `skip_op_guard` is `true` only for the
 /// op-owned retire path (see [`delete_workweave_for_retire`]).
+///
+/// Registry-backed with a **hard** marker round-trip: the workweave path
+/// comes from the recorded registry, and destructive action only proceeds
+/// when the marker at that path canonicalizes to this primary and names
+/// this project. A missing / stale / foreign entry surfaces as an
+/// actionable error (see [`ensure_registered_workweave`]) — not as a
+/// silent no-op or, worse, a computed guess at where the directory might
+/// live. `workweave_path_for` (the pre-registry reconstruction) has been
+/// deleted; there is no fallback address rwv is willing to invent.
 fn delete_workweave_inner(
     ws_root: &Path,
     project: &ProjectName,
@@ -1864,8 +2117,35 @@ fn delete_workweave_inner(
     force: bool,
     skip_op_guard: bool,
 ) -> anyhow::Result<()> {
+    // Registry lookup + hard round-trip. Consulted for every destructive path
+    // (create --force also gets here indirectly via `can_use_structured_delete`
+    // in create_workweave).
+    let workweave_dir = ensure_registered_workweave(ws_root, project, name)?;
+    delete_workweave_inner_at(ws_root, project, name, &workweave_dir, force, skip_op_guard)
+}
+
+/// Delete a workweave whose on-disk path is already known.
+///
+/// The path is validated by the caller (retire has already round-tripped
+/// the marker via `WorkspaceContext::resolve`). This bypasses the
+/// registry lookup so an unrecorded workweave (crash-matrix scaffolding,
+/// bootstrap workspace) is still delete-able by callers that already hold
+/// the resolved path. Callers arriving through name-only entry points
+/// ([`delete_workweave`], `create --force`) route through
+/// [`delete_workweave_inner`] which enforces the registry lookup first.
+///
+/// The registry entry is still removed at the end (best effort), so a
+/// mid-crash resume that finds a pre-crash entry keeps the index in sync.
+fn delete_workweave_inner_at(
+    ws_root: &Path,
+    project: &ProjectName,
+    name: &WorkweaveName,
+    workweave_dir: &Path,
+    force: bool,
+    skip_op_guard: bool,
+) -> anyhow::Result<()> {
     let manifest = load_manifest(ws_root, project)?;
-    let workweave_dir = workweave_path_for(ws_root, project, name);
+    let workweave_dir = workweave_dir.to_path_buf();
 
     // Tier-0 topology precondition: refuse when a per-repo checkout inside
     // the workweave is itself a canonical store with foreign dependents.
@@ -2064,6 +2344,21 @@ fn delete_workweave_inner(
         std::fs::remove_dir_all(&workweave_dir)?;
     }
 
+    // Retire the registry entry. Best-effort: a delete that removes the
+    // on-disk directory but fails to update the index leaves a stale entry
+    // that doctor will prune on the next round; that is strictly worse than
+    // silently succeeding on a locked / read-only registry but strictly
+    // better than the disk-and-registry drifting silently. We warn but do
+    // not bail because the primary destructive act already succeeded.
+    if let Err(e) = workweave_index::forget_workweave(ws_root, project, name.as_str()) {
+        eprintln!(
+            "rwv workweave delete: warning: workweave directory removed but registry \
+             entry for `{}` could not be updated ({e}); run `rwv doctor --fix` to \
+             prune the stale entry",
+            name.as_str()
+        );
+    }
+
     if errors.is_empty() {
         Ok(())
     } else {
@@ -2075,10 +2370,18 @@ fn delete_workweave_inner(
 
 /// List workweaves for `project` under `ws_root`'s primary.
 ///
-/// A workweave belongs to `(primary, project)` when its `.rwv-workweave`
-/// marker records both. Directories without a marker are not included.
+/// Registry-backed: reads the recorded `name → path` entries and returns
+/// those whose marker round-trips (`marker.primary` == this primary AND
+/// `marker.project` == this project). Stale / foreign entries are silently
+/// omitted here; doctor is the channel that flags them.
+///
+/// **Missing index is not fatal.** A workspace that predates the registry
+/// (or that has never been touched by `workweave create` since the index
+/// landed) has no `.rwv-workweave-index`. List returns an empty vector in
+/// that case; `rwv doctor --fix` scans the container and adopts on-disk
+/// workweaves into the registry with the operator's consent.
 pub fn list_workweaves(ws_root: &Path, project: &ProjectName) -> anyhow::Result<Vec<String>> {
-    let mut names: Vec<String> = list_workweave_dirs_for_project(ws_root, project)
+    let mut names: Vec<String> = list_workweave_dirs_for_project(ws_root, project)?
         .into_iter()
         .map(|(n, _)| n)
         .collect();
@@ -2087,90 +2390,133 @@ pub fn list_workweaves(ws_root: &Path, project: &ProjectName) -> anyhow::Result<
 }
 
 /// Return `(name, path)` pairs for workweaves of `project` under `ws_root`'s
-/// primary. Only directories with a valid `.rwv-workweave` marker matching
-/// `(primary, project)` are included.
+/// primary. Registry-backed with marker round-trip validation.
+///
+/// An entry that fails validation (missing dir, missing / foreign marker,
+/// project mismatch) is silently omitted so a stale registry does not
+/// pollute the operator-facing list. Doctor surfaces those cases separately
+/// as [`crate::check::WorkweaveTreeIntegrityKind`] findings.
 fn list_workweave_dirs_for_project(
     ws_root: &Path,
     project: &ProjectName,
-) -> Vec<(String, PathBuf)> {
-    let parent = workweave_parent(ws_root);
-    let primary_canonical = ws_root
-        .canonicalize()
-        .unwrap_or_else(|_| ws_root.to_path_buf());
-    let mut result = Vec::new();
+) -> anyhow::Result<Vec<(String, PathBuf)>> {
+    let index = match workweave_index::read(ws_root, project)? {
+        Some(idx) => idx,
+        None => return Ok(Vec::new()),
+    };
+    let mut result: Vec<(String, PathBuf)> = index
+        .workweaves
+        .into_iter()
+        .filter(|(_, path)| {
+            matches!(
+                validate_registry_entry(ws_root, project, path),
+                RegistryEntryValidation::Valid
+            )
+        })
+        .collect();
+    result.sort_by(|a, b| a.0.cmp(&b.0));
+    Ok(result)
+}
 
-    if let Ok(entries) = std::fs::read_dir(&parent) {
-        for entry in entries.flatten() {
-            let dir = entry.path();
-            if !dir.is_dir() {
-                continue;
-            }
-            let dir_name = entry.file_name().to_string_lossy().into_owned();
-            let parsed = parse_weave_dir_name(&dir_name);
-            if parsed.is_none() {
-                continue;
-            }
-            let (_, parsed_name) = parsed.unwrap();
-
-            if let Ok(Some(marker)) = WorkweaveMarker::read(&dir) {
-                if &marker.project != project {
-                    continue;
-                }
-                let m_primary = marker
-                    .primary
-                    .canonicalize()
-                    .unwrap_or_else(|_| marker.primary.clone());
-                if m_primary != primary_canonical {
-                    continue;
-                }
-                result.push((parsed_name.as_str().to_string(), dir));
-            }
-            // Directories without a valid marker are skipped.
+/// Return `(name, path)` pairs for every marker-bearing workweave directory
+/// under `ws_root`'s primary, across every workweave container.
+///
+/// **Scanning-based, not registry-backed.** Consumers that need to see every
+/// workweave regardless of registry state — doctor's per-workweave drift
+/// scans, [`adopt_children_of`] (child re-pointing by parent path) — use this.
+/// The user-facing `rwv workweave list` uses [`list_workweaves`] instead so
+/// unregistered on-disk directories are not silently visible in `list` output;
+/// doctor's `unregistered-workweave` finding is the one channel that surfaces
+/// them.
+///
+/// Enumerates every unique container (default `<parent-of-primary>/.workweaves`
+/// plus every recorded per-project container, plus the `RWV_WORKWEAVE_DIR`
+/// fallback during the deprecation window) and returns marker-bearing
+/// directories whose `.rwv-workweave` `primary` canonicalizes to `ws_root`.
+pub fn list_workweave_dirs(ws_root: &Path) -> Vec<(String, PathBuf)> {
+    let mut containers: Vec<PathBuf> = Vec::new();
+    let push_unique = |p: PathBuf, containers: &mut Vec<PathBuf>| {
+        let canonical = p.canonicalize().unwrap_or(p);
+        if !containers.contains(&canonical) {
+            containers.push(canonical);
+        }
+    };
+    push_unique(workweave_index::default_container(ws_root), &mut containers);
+    for project in workweave_index::projects_on_disk(ws_root) {
+        if let Ok(Some(idx)) = workweave_index::read(ws_root, &project) {
+            push_unique(idx.container, &mut containers);
+        }
+    }
+    if let Ok(v) = std::env::var("RWV_WORKWEAVE_DIR") {
+        if !v.is_empty() {
+            push_unique(PathBuf::from(v), &mut containers);
         }
     }
 
+    let mut seen: std::collections::HashSet<PathBuf> = std::collections::HashSet::new();
+    let mut result: Vec<(String, PathBuf)> = Vec::new();
+    for container in &containers {
+        for (_project, name, dir) in doctor_scan_container(ws_root, container) {
+            let canonical = dir.canonicalize().unwrap_or_else(|_| dir.clone());
+            if seen.insert(canonical) {
+                result.push((name, dir));
+            }
+        }
+    }
     result.sort_by(|a, b| a.0.cmp(&b.0));
     result
 }
 
-/// Return `(name, path)` pairs for all workweave directories belonging to
-/// `ws_root`'s primary, across every project. Used by `rwv doctor` to scan
-/// all workweaves for drift. Only directories with a valid `.rwv-workweave`
-/// marker whose `primary:` resolves to `ws_root` are included.
-pub fn list_workweave_dirs(ws_root: &Path) -> Vec<(String, PathBuf)> {
-    let parent = workweave_parent(ws_root);
+/// Container-scoped scan used ONLY by doctor for reconciliation.
+///
+/// Enumerates directories on disk under `container` that carry a valid
+/// `.rwv-workweave` marker whose `primary` resolves to `ws_root`. Returns
+/// `(project, name, path)` triples so doctor can tell which project a
+/// discovered workweave belongs to (for orphan / stale reporting).
+///
+/// This is the ONLY surviving on-disk scan (the pre-registry list/delete
+/// scan was deleted). Every other code path resolves via the registry.
+pub fn doctor_scan_container(
+    ws_root: &Path,
+    container: &Path,
+) -> Vec<(ProjectName, String, PathBuf)> {
     let primary_canonical = ws_root
         .canonicalize()
         .unwrap_or_else(|_| ws_root.to_path_buf());
     let mut result = Vec::new();
-
-    if let Ok(entries) = std::fs::read_dir(&parent) {
-        for entry in entries.flatten() {
-            let dir = entry.path();
-            if !dir.is_dir() {
-                continue;
-            }
-            let dir_name = entry.file_name().to_string_lossy().into_owned();
-            let parsed = parse_weave_dir_name(&dir_name);
-            if parsed.is_none() {
-                continue;
-            }
-            let (_, parsed_name) = parsed.unwrap();
-
-            if let Ok(Some(marker)) = WorkweaveMarker::read(&dir) {
-                let m_primary = marker
-                    .primary
-                    .canonicalize()
-                    .unwrap_or_else(|_| marker.primary.clone());
-                if m_primary == primary_canonical {
-                    result.push((parsed_name.as_str().to_string(), dir));
-                }
-            }
-            // Directories without a valid marker are skipped.
+    let entries = match std::fs::read_dir(container) {
+        Ok(e) => e,
+        Err(_) => return result,
+    };
+    for entry in entries.flatten() {
+        let dir = entry.path();
+        if !dir.is_dir() {
+            continue;
         }
+        let dir_name = entry.file_name().to_string_lossy().into_owned();
+        let parsed = parse_weave_dir_name(&dir_name);
+        if parsed.is_none() {
+            continue;
+        }
+        let (project_str, parsed_name) = parsed.unwrap();
+        let marker = match WorkweaveMarker::read(&dir) {
+            Ok(Some(m)) => m,
+            _ => continue,
+        };
+        let m_primary = marker
+            .primary
+            .canonicalize()
+            .unwrap_or_else(|_| marker.primary.clone());
+        if m_primary != primary_canonical {
+            continue;
+        }
+        result.push((
+            ProjectName::new(project_str),
+            parsed_name.as_str().to_string(),
+            dir,
+        ));
     }
-
-    result.sort_by(|a, b| a.0.cmp(&b.0));
+    result.sort_by(|a, b| (a.0.as_str().cmp(b.0.as_str())).then(a.1.cmp(&b.1)));
     result
 }
 
@@ -2593,6 +2939,7 @@ pub fn handle_claude_hook() -> anyhow::Result<()> {
                 false,
                 false,
                 false,
+                None,
             )?;
             println!("{}", path.display());
         }

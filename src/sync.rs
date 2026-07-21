@@ -13,7 +13,7 @@ use crate::vcs::{
     ConflictOp, RefName, ResolvedRevisionId, Vcs, VcsError, VcsErrorOutput, VerifiedRestoreOutcome,
 };
 use crate::workspace::{Checkout, WorkspaceContext};
-use crate::workweave::{classify_checkout, workweave_path_for, CheckoutKind};
+use crate::workweave::{classify_checkout, ensure_registered_workweave, CheckoutKind};
 use anyhow::Context;
 use schemars::JsonSchema;
 use serde::Serialize;
@@ -121,7 +121,8 @@ impl FromStr for SyncStrategy {
 /// The boundary parser ([`FromStr`]) disambiguates by shape:
 /// - `Primary` — the literal string `"primary"` (the primary workspace root).
 /// - `Workweave(name)` — a bare identifier with no path separators or leading
-///   dot. Resolves to `<workweave_parent>/<primary>--<name>`.
+///   dot. Resolves via the primary-side registry
+///   ([`crate::workweave_index`]) with marker round-trip validation.
 /// - `Path(p)` — anything else: an absolute path is used as-is, a relative
 ///   path is joined against the primary workspace root.
 ///
@@ -156,7 +157,7 @@ impl SyncSource {
                     Checkout::Workweave { project, .. } => project.clone(),
                     Checkout::Primary { .. } => ctx.require_active_project()?.clone(),
                 };
-                Ok(workweave_path_for(ctx.primary_path(), &project, name))
+                ensure_registered_workweave(ctx.primary_path(), &project, name)
             }
             Self::Path(p) => {
                 if p.is_absolute() {
@@ -4194,6 +4195,7 @@ fn retire_workweave_after_sync_to(
         ctx.primary_path(),
         project,
         workweave_name,
+        workweave_dir,
         false,
     )
     .context("--retire: workweave delete failed")?;

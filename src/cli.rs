@@ -389,6 +389,15 @@ pub enum WorkweaveAction {
         /// working-tree duplication, byte-identical across workweaves.
         #[arg(long)]
         worktree_references: bool,
+        /// Explicit per-workweave placement override.
+        ///
+        /// Places the workweave at exactly this path (recorded in the
+        /// registry). Overrides the default container for this
+        /// invocation only. Useful for big-disk workweaves, tmpfs
+        /// experiments, or one-off placements. Absolute paths are used
+        /// as-is; relative paths resolve against the primary root.
+        #[arg(long)]
+        dir: Option<String>,
     },
     /// Delete a workweave
     Delete {
@@ -402,6 +411,19 @@ pub enum WorkweaveAction {
     },
     /// List existing workweaves
     List,
+    /// Record the workweave container for this project.
+    ///
+    /// Sets the `container` field in `projects/<project>/.rwv-workweave-index`
+    /// — the directory `workweave create` places new workweaves under by
+    /// default. Per-workweave `--dir` overrides on `create` are unaffected.
+    /// The recorded container is an explicit act (visible in the checked-in
+    /// tree via `.gitignore`; audit-visible via the file itself), replacing
+    /// the deprecated `RWV_WORKWEAVE_DIR` environment variable.
+    SetContainer {
+        /// Absolute path to record. Relative paths resolve against the
+        /// primary workspace root.
+        path: String,
+    },
     /// Show this workweave's UNIQUE commits vs its recorded parent, per repo.
     ///
     /// Parent identity comes from the `.rwv-workweave` marker (not the branch

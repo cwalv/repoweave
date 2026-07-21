@@ -576,8 +576,9 @@ fn write_workweave_marker(workweave_dir: &Path, primary_root: &Path) {
 /// Create a workweave + primary pair where the workweave has a proper
 /// `.rwv-workweave` marker, making it resolve as `Checkout::Workweave`.
 ///
-/// The workweave is placed under `<parent>/.workweaves/web-app--ww` so
-/// `workweave_path_for` can locate it by `(project="web-app", name="ww")`.
+/// The workweave is placed under `<parent>/.workweaves/web-app--ww` and
+/// recorded in the registry so lookups find it by `(project="web-app",
+/// name="ww")`.
 /// Returns `(primary, workweave, initial_sha)`.
 fn make_retire_workspaces(parent: &Path) -> (Workspace, Workspace, String) {
     let (primary, initial_sha) = make_locked_workspace(parent, "primary");

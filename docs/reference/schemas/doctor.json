@@ -1259,6 +1259,97 @@
             }
           },
           "additionalProperties": false
+        },
+        {
+          "description": "A registered workweave entry whose recorded path is not a valid workweave (missing directory, missing marker, or marker validation fails). Auto-fixable: `rwv doctor --fix` prunes the stale entry.\n\nThis surfaces both \"workweave was deleted out-of-band with the registry left behind\" and \"index committed to VCS carries paths that are wrong on this machine\" — the design's advisory-index doctrine depends on doctor catching both.\n\n`project` is a plain `String` on the wire because `ProjectName` does not (yet) derive `JsonSchema`; every other sub-kind uses `String` for names on the wire for the same reason.",
+          "type": "object",
+          "required": [
+            "stale-registry-entry"
+          ],
+          "properties": {
+            "stale-registry-entry": {
+              "type": "object",
+              "required": [
+                "project",
+                "reason",
+                "recorded_path",
+                "workweave_name"
+              ],
+              "properties": {
+                "project": {
+                  "description": "Project the stale entry belongs to.",
+                  "type": "string"
+                },
+                "reason": {
+                  "description": "Human-readable reason the entry failed validation.",
+                  "type": "string"
+                },
+                "recorded_path": {
+                  "description": "The recorded absolute path (which no longer round-trips).",
+                  "type": "string"
+                },
+                "workweave_name": {
+                  "description": "The recorded name of the workweave.",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "description": "A marker-bearing directory in a workweave container whose `(project, name)` are NOT recorded in that project's `.rwv-workweave-index`. The workweave exists on disk but the primary-side registry does not know about it. Auto-fixable via `rwv doctor --fix` (adopts the entry into the registry) — the design requires operator-consented adoption, so read paths (`list`, `delete`) deliberately do NOT auto-adopt on the fly.",
+          "type": "object",
+          "required": [
+            "unregistered-workweave"
+          ],
+          "properties": {
+            "unregistered-workweave": {
+              "type": "object",
+              "required": [
+                "project",
+                "workweave_name"
+              ],
+              "properties": {
+                "project": {
+                  "description": "Project this orphan workweave records in its marker.",
+                  "type": "string"
+                },
+                "workweave_name": {
+                  "description": "Workweave name parsed from the directory basename.",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "description": "The `.rwv-workweave-index` file at `projects/<project>/` is tracked by the project repo's VCS. The index is machine-local state and should not be committed; a checked-in copy propagates absolute paths to every clone and every workweave checkout. Report-only — `--fix` cannot un-track without touching commit history; the operator runs `git rm --cached projects/<project>/.rwv-workweave-index` and updates `.gitignore`.",
+          "type": "object",
+          "required": [
+            "tracked-index"
+          ],
+          "properties": {
+            "tracked-index": {
+              "type": "object",
+              "required": [
+                "index_path",
+                "project"
+              ],
+              "properties": {
+                "index_path": {
+                  "description": "Path to the tracked index file.",
+                  "type": "string"
+                },
+                "project": {
+                  "description": "Project whose index is committed.",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "additionalProperties": false
         }
       ]
     }

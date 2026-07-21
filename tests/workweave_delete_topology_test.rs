@@ -109,6 +109,23 @@ fn write_marker(ww_dir: &Path, primary: &Path, project: &str) {
         primary.display(),
     );
     std::fs::write(ww_dir.join(".rwv-workweave"), marker).unwrap();
+    // Register in the primary-side `.rwv-workweave-index` so the
+    // registry-backed delete path can find this hand-crafted fixture.
+    // Real `rwv workweave create` writes both the marker AND the index
+    // entry; the fixtures here don't go through that entry point.
+    let name = ww_dir
+        .file_name()
+        .and_then(|n| n.to_str())
+        .and_then(|n| n.rsplit_once("--"))
+        .map(|(_, n)| n.to_string())
+        .expect("workweave dir name must be `<project>--<name>`");
+    repoweave::workweave_index::record_workweave(
+        primary,
+        &repoweave::manifest::ProjectName::new(project),
+        &name,
+        ww_dir.to_path_buf(),
+    )
+    .expect("record_workweave should succeed for test fixture");
 }
 
 /// Sanity test: under correct topology, `resolve_canonical_store`
@@ -189,8 +206,8 @@ fn delete_uses_resolved_parent_under_inverted_topology() {
         "web-app--ww/proj",
     );
     write_marker(&ww_dir, &ws, "web-app");
-    // Active project marker (delete_workweave indirectly relies on
-    // workweave_path_for finding the dir).
+    // Active project marker (delete_workweave resolves the dir through
+    // the primary-side registry).
     std::fs::write(ww_dir.join(".rwv-active"), "web-app\n").unwrap();
 
     // Confirm the inverted topology: the worktree in the workweave is

@@ -240,8 +240,15 @@ Create a workweave: worktrees on ephemeral branches for each `owned`/`fork`/`dep
 | `--force` | Destroy an existing workweave at this path before recreating. Without this flag, re-invoking `create` against an existing workweave is the idempotent path. Refuses if the existing workweave has uncommitted changes |
 | `--capture-dirty` | Allow creation when the source project directory has uncommitted changes. The dirty state is captured into the new workweave's project worktree |
 | `--worktree-references` | Cut a real `git worktree` for `role: reference` repos instead of the default symlink to the canonical weave-root clone. Restores the legacy behavior (per-workweave reference refs) at the cost of duplicating each reference repo's working tree into the workweave |
+| `--dir <path>` | Per-invocation placement override. Places the workweave at exactly this path (recorded verbatim in the index). Absolute paths are used as-is; relative paths resolve against the primary root. Overrides the recorded container for this invocation only |
 
-Workweaves live at `<parent>/.workweaves/<project>--<name>/` by default. Setting `RWV_WORKWEAVE_DIR` relocates the container: workweaves then live at `$RWV_WORKWEAVE_DIR/<project>--<name>/`. All verbs that resolve workweaves (create, delete, list, log, doctor's workweave scans, sync targets by bare name) honor the same resolution.
+Workweaves live at `<container>/<project>--<name>/` where `<container>` is recorded per-project in `projects/<project>/.rwv-workweave-index` (machine-local JSON, one line in the project's `.gitignore`). The default container is `<parent-of-primary>/.workweaves`. Set the container explicitly with `rwv workweave <project> set-container <path>`; `create` records new entries into the index; every `find`-direction verb (list, delete, sync targets by bare name) resolves via the recorded `name → absolute path` entries with `.rwv-workweave` marker round-trip validation. Doctor reconciles the index against on-disk state — stale entries are pruned, orphan workweaves are adopted, a tracked index is flagged as a hygiene finding.
+
+`RWV_WORKWEAVE_DIR` is deprecated: when set, `create` still seeds the initial container from it and fires a loud deprecation warning; use the `set-container` verb to record the container explicitly. Removal of the env-var fallback ships in a follow-up release.
+
+### `rwv workweave <project> set-container <path>`
+
+Record the workweave container for `project`. Writes the `container` field of `projects/<project>/.rwv-workweave-index`. Absolute paths are used as-is; relative paths resolve against the primary root. Existing registry entries are preserved. This is the replacement for `RWV_WORKWEAVE_DIR`: an explicit, recorded, audit-visible act, not ambient process state.
 
 ### `rwv workweave <project> delete <name> [--force]`
 

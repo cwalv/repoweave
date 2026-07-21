@@ -29,7 +29,7 @@ Create a new workweave. Forks from CWD's active workspace by default; use
 `--from` to specify a different source.
 
 ```
-rwv workweave <project> create <name> [--from <source>] [--force] [--capture-dirty] [--worktree-references]
+rwv workweave <project> create <name> [--from <source>] [--force] [--capture-dirty] [--worktree-references] [--dir <path>]
 ```
 
 - `--from <source>` — workspace to fork from. Accepts `primary`, an absolute
@@ -54,6 +54,19 @@ rwv workweave <project> create <name> [--from <source>] [--force] [--capture-dir
   This flag affects only this `create`; it records nothing, so every
   downstream command keys on the resulting on-disk shape (a worktree'd
   reference flows through every normal worktree path).
+- `--dir <path>` — per-invocation placement override. Places the workweave at
+  exactly `<path>` (absolute; relative paths resolve against the primary
+  root). The absolute path is recorded in `.rwv-workweave-index`, so every
+  `find`-direction verb (list, delete, sync targets by bare name) resolves
+  it via the registry — the workweave does not have to live under the
+  default container to be addressable. Useful for big-disk workweaves and
+  tmpfs experiments.
+
+**Placement.** Workweaves live at `<container>/<project>--<name>/` by default,
+where `<container>` is recorded per-project in `projects/<project>/.rwv-workweave-index`.
+The default container is `<parent-of-primary>/.workweaves`; set it explicitly
+with `rwv workweave <project> set-container <path>`. `--dir <path>` overrides
+the container for one invocation.
 
 **Re-invocation without `--force`** (idempotent path): if the workweave already
 exists and is clean, `create` validates the `.rwv-workweave` marker (same
@@ -74,6 +87,24 @@ is the Gas City rig's standard "ensure workweave exists" path.
    sync-to target for bare `rwv sync-to` from inside the workweave.
 4. `.rwv-active` set to `project`.
 5. Integration activation (context verb: surfaces symlinks, skips install hooks).
+6. An entry in `projects/<project>/.rwv-workweave-index` recording the
+   workweave's absolute path. Best-effort adds `.rwv-workweave-index` to the
+   project repo's `.gitignore` so the machine-local index stays untracked.
+
+### `rwv workweave <project> set-container <path>`
+
+Record the workweave container for `project` — the directory `create` places
+new workweaves under by default. Writes the `container` field of
+`projects/<project>/.rwv-workweave-index`. Absolute paths are used as-is;
+relative paths resolve against the primary root. Existing entries in the
+registry are preserved. Per-workweave `--dir` overrides on `create` are
+unaffected.
+
+This is the replacement for the deprecated `RWV_WORKWEAVE_DIR` environment
+variable: an explicit, recorded, audit-visible act — not ambient process
+state. When `RWV_WORKWEAVE_DIR` is set, `create` still seeds the initial
+container from it and fires a loud deprecation warning; removal of the
+env-var fallback ships in a follow-up release.
 
 ### `rwv workweave <project> delete <name> [--force]`
 
@@ -155,10 +186,11 @@ instead of hand-rolling branch-name derivation.
 ## Invocation
 
 ```
-rwv workweave <project> create <name> [--from <source>] [--force] [--capture-dirty] [--worktree-references]
+rwv workweave <project> create <name> [--from <source>] [--force] [--capture-dirty] [--worktree-references] [--dir <path>]
 rwv workweave <project> delete <name> [--force]
 rwv workweave <project> list
 rwv workweave <project> log [--diff] [--json]
+rwv workweave <project> set-container <path>
 ```
 
 Run `rwv --help workweave` for the full clap surface.

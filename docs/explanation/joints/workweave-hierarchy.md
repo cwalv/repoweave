@@ -150,9 +150,16 @@ cherry-picks are pure git operations on branches the operator can name.
 
 Workweaves live under `.workweaves/` in the *parent* of the workspace
 root — i.e. a sibling of the weave directory, not a child. That is the
-default; setting `RWV_WORKWEAVE_DIR` relocates the container to an
-arbitrary directory (every path below reads accordingly). Each
-workweave directory is named `<project>--<workweave-name>`:
+default. The container is recorded per-project in
+`projects/<project>/.rwv-workweave-index` (machine-local JSON); relocate
+it explicitly with `rwv workweave <project> set-container <path>` or
+override it per-workweave with `rwv workweave create --dir <path>`.
+Every `find`-direction verb consults the recorded `name → absolute path`
+entries rather than reconstructing from convention, so a per-workweave
+override is as first-class as a default-container placement.
+`RWV_WORKWEAVE_DIR` is a deprecated fallback (loud warning on read);
+removal ships in a follow-up release. Each workweave directory is named
+`<project>--<workweave-name>`:
 
 ```
 work/

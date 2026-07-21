@@ -110,11 +110,13 @@ fn main() -> anyhow::Result<()> {
             let word = raw_args.get(3).map(|s| s.as_str());
             let is_flag = |s: &str| s.starts_with('-');
             if let (Some(project), Some(word)) = (project, word) {
-                const KNOWN_SUBCOMMANDS: &[&str] = &["create", "delete", "list", "log", "help"];
+                const KNOWN_SUBCOMMANDS: &[&str] =
+                    &["create", "delete", "list", "log", "set-container", "help"];
                 // WorkweaveAction names a typo could be aiming at. `help` is a
                 // clap builtin, not a typo target worth fuzzy-matching, so it's
                 // excluded here (an exact `help` is already handled above).
-                const SUBCOMMAND_ACTIONS: &[&str] = &["create", "delete", "list", "log"];
+                const SUBCOMMAND_ACTIONS: &[&str] =
+                    &["create", "delete", "list", "log", "set-container"];
                 // Edit-distance threshold below which WORD is treated as a
                 // subcommand typo and deferred to clap's native suggestion.
                 const SUBCOMMAND_TYPO_THRESHOLD: usize = 2;
@@ -338,6 +340,7 @@ fn main() -> anyhow::Result<()> {
                         from,
                         capture_dirty,
                         worktree_references,
+                        dir,
                     }) => {
                         let source_root = match from.as_deref() {
                             None => ctx.active_path().to_path_buf(),
@@ -351,6 +354,7 @@ fn main() -> anyhow::Result<()> {
                                 }
                             }
                         };
+                        let dir_override = dir.as_deref().map(std::path::Path::new);
                         let workweave_path = repoweave::workweave::create_workweave(
                             primary_root,
                             &source_root,
@@ -359,6 +363,7 @@ fn main() -> anyhow::Result<()> {
                             force,
                             capture_dirty,
                             worktree_references,
+                            dir_override,
                         )?;
                         if hook_mode {
                             println!("{}", workweave_path.display());
@@ -366,6 +371,28 @@ fn main() -> anyhow::Result<()> {
                     }
                     Some(WorkweaveAction::Log { diff, json }) => {
                         repoweave::workweave::workweave_log(&ctx, diff, json)?;
+                    }
+                    Some(WorkweaveAction::SetContainer { path }) => {
+                        let raw = std::path::PathBuf::from(&path);
+                        let abs = if raw.is_absolute() {
+                            raw
+                        } else {
+                            primary_root.join(&raw)
+                        };
+                        let canonical = abs.canonicalize().unwrap_or(abs);
+                        repoweave::workweave_index::set_container(
+                            primary_root,
+                            &project,
+                            canonical.clone(),
+                        )?;
+                        // Best-effort: keep the machine-local index out of VCS.
+                        let _ =
+                            repoweave::workweave_index::ensure_ignore_entry(primary_root, &project);
+                        eprintln!(
+                            "recorded workweave container for project `{}`: {}",
+                            project.as_str(),
+                            canonical.display()
+                        );
                     }
                 }
             }

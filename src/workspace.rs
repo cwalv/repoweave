@@ -447,7 +447,7 @@ impl WorkspaceContext {
                         .unwrap_or("unknown");
                     // Workweave directories follow `<project>--<name>`. Strip
                     // the `<project>--` prefix so the workweave name can be
-                    // round-tripped through `workweave_path_for` for delete /
+                    // resolved via the primary-side registry for delete /
                     // retire flows. parse_weave_dir_name returns the
                     // right-hand side; fall back to the full basename for
                     // exotic shapes that don't parse.
@@ -1382,8 +1382,8 @@ mod tests {
         // Marker takes precedence for project (from marker, not from the
         // directory's left component). Workweave name comes from the
         // right-hand side of `<project>--<name>` so downstream lookups
-        // (workweave_path_for, delete_workweave) can reconstruct the on-disk
-        // directory: `<workweave_parent>/<project-from-marker>--<name>`.
+        // (list, delete) can find the on-disk directory through the
+        // primary-side `.rwv-workweave-index` registry.
         match &ctx.checkout {
             Checkout::Workweave { name, project, .. } => {
                 assert_eq!(name.as_str(), "dash-name");
