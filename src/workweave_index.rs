@@ -304,15 +304,20 @@ pub fn ensure_ignore_entry(primary_root: &Path, project: &ProjectName) -> anyhow
     ensure_ignored_in_dir(&project_dir, INDEX_FILENAME)
 }
 
-/// Ensure `filename` appears in the ignore surface of the git repo containing
-/// `dir` (or, if `dir` is not inside a git repo, in a `.gitignore` next to it
-/// as a best-effort fallback).
+/// Ensure `filename` appears in the ignore surface of the git repo rooted at
+/// `dir` (or, if `dir` is not a repo root, in a `.gitignore` next to it as a
+/// best-effort fallback).
+///
+/// `dir` is checked for `.git` directly — there is no upward walk to an
+/// enclosing repo. Every caller writes its machine-local file next to a
+/// canonical file whose directory is either a checkout root or a plain
+/// directory, so the two branches below cover the real cases.
 ///
 /// Two candidate targets, prioritised for zero shared-repo footprint:
 ///
 /// 1. `.git/info/exclude` — per-clone, invisible, never touches the
 ///    working tree, so it does not perturb any dirty-tree check running
-///    concurrently. Preferred when `dir` is inside a git repo.
+///    concurrently. Preferred when `dir` is a repo root.
 /// 2. `.gitignore` — fallback for non-git directories. Committed
 ///    alongside the project, at the cost of adding an rwv-specific entry.
 ///
@@ -325,7 +330,7 @@ pub(crate) fn ensure_ignored_in_dir(dir: &Path, filename: &str) -> anyhow::Resul
         // elsewhere; here we just stay quiet.
         return Ok(());
     }
-    // Prefer `.git/info/exclude` when the directory is inside a git repo.
+    // Prefer `.git/info/exclude` when the directory is a repo root.
     if let Some(info_dir) = git_info_dir(dir) {
         let exclude = info_dir.join("exclude");
         return append_ignore_line(&exclude, filename);
@@ -335,13 +340,14 @@ pub(crate) fn ensure_ignored_in_dir(dir: &Path, filename: &str) -> anyhow::Resul
     append_ignore_line(&gitignore, filename)
 }
 
-/// Resolve the `.git/info/` directory for a repo rooted at or above `dir`.
+/// Resolve the `.git/info/` directory for the repo rooted at `dir`.
 ///
 /// Handles a plain-`.git`-dir repo, a linked worktree (`.git` file pointing
 /// at the actual gitdir), and follows `commondir` so the per-repo (not
 /// per-worktree) exclude file is used.
 ///
-/// Returns `None` when `dir` is not inside a git-managed repo.
+/// Returns `None` when `dir` itself is not the root of a git-managed
+/// checkout — no upward walk is attempted.
 fn git_info_dir(dir: &Path) -> Option<PathBuf> {
     let git_entry = dir.join(".git");
     if git_entry.is_dir() {
