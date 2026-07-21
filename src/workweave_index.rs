@@ -296,49 +296,54 @@ pub fn lookup_raw(
 /// Hygiene, not correctness: the design tolerates a committed copy (reads
 /// route to the primary; doctor flags a tracked index as a finding).
 ///
-/// Two candidate targets, prioritised for zero shared-repo footprint:
-///
-/// 1. `.git/info/exclude` — per-clone, invisible, never touches the
-///    working tree, so it does not perturb any dirty-tree check running
-///    concurrently. This is what we write when the project is a git repo.
-/// 2. `.gitignore` — VCS-equivalent for non-git project repos (recorded
-///    fallback). Committed alongside the project, at the cost of adding
-///    an rwv-specific entry the operator has to accept.
-///
-/// The design mentions both options as acceptable. We pick option 1 by
-/// default (git-managed projects) so that a freshly-created workweave
-/// never turns the primary project into a dirty tree — sync-to and the
-/// dirty-check-then-refuse precondition matter more than the `.gitignore`
-/// entry being self-documenting.
-///
 /// Best effort: silently succeeds on any I/O error. Doctor's
 /// `tracked-index` finding is the correctness net if a committed copy
 /// slips through.
 pub fn ensure_ignore_entry(primary_root: &Path, project: &ProjectName) -> anyhow::Result<()> {
     let project_dir = primary_root.join("projects").join(project.as_str());
-    if !project_dir.exists() {
-        // Not our failure — creation flows precede us.
-        return Ok(());
-    }
-    // Prefer `.git/info/exclude` when the project is a git repo (works for
-    // both a plain repo `.git/` directory and a submodule `.git` file that
-    // points to a gitdir elsewhere).
-    if let Some(git_info_dir) = git_info_dir(&project_dir) {
-        let exclude = git_info_dir.join("exclude");
-        return append_ignore_line(&exclude);
-    }
-    // Fall back to a committed `.gitignore` for non-git project repos.
-    let gitignore = project_dir.join(".gitignore");
-    append_ignore_line(&gitignore)
+    ensure_ignored_in_dir(&project_dir, INDEX_FILENAME)
 }
 
-/// Resolve `<project_dir>/.git/info/` for a project that is either a
-/// plain-`.git`-dir clone or a linked worktree (`.git` file pointing at
-/// the actual gitdir).
+/// Ensure `filename` appears in the ignore surface of the git repo containing
+/// `dir` (or, if `dir` is not inside a git repo, in a `.gitignore` next to it
+/// as a best-effort fallback).
 ///
-/// Returns `None` when the project is not a git-managed repo.
-fn git_info_dir(project_dir: &Path) -> Option<PathBuf> {
-    let git_entry = project_dir.join(".git");
+/// Two candidate targets, prioritised for zero shared-repo footprint:
+///
+/// 1. `.git/info/exclude` — per-clone, invisible, never touches the
+///    working tree, so it does not perturb any dirty-tree check running
+///    concurrently. Preferred when `dir` is inside a git repo.
+/// 2. `.gitignore` — fallback for non-git directories. Committed
+///    alongside the project, at the cost of adding an rwv-specific entry.
+///
+/// Silent no-op when `dir` does not exist.
+/// Best effort throughout: an I/O error on the ignore surface must never
+/// fail the caller's write.
+pub(crate) fn ensure_ignored_in_dir(dir: &Path, filename: &str) -> anyhow::Result<()> {
+    if !dir.exists() {
+        // Not our failure — caller writes into non-existent dirs are caught
+        // elsewhere; here we just stay quiet.
+        return Ok(());
+    }
+    // Prefer `.git/info/exclude` when the directory is inside a git repo.
+    if let Some(info_dir) = git_info_dir(dir) {
+        let exclude = info_dir.join("exclude");
+        return append_ignore_line(&exclude, filename);
+    }
+    // Fall back to a `.gitignore` next to the file.
+    let gitignore = dir.join(".gitignore");
+    append_ignore_line(&gitignore, filename)
+}
+
+/// Resolve the `.git/info/` directory for a repo rooted at or above `dir`.
+///
+/// Handles a plain-`.git`-dir repo, a linked worktree (`.git` file pointing
+/// at the actual gitdir), and follows `commondir` so the per-repo (not
+/// per-worktree) exclude file is used.
+///
+/// Returns `None` when `dir` is not inside a git-managed repo.
+fn git_info_dir(dir: &Path) -> Option<PathBuf> {
+    let git_entry = dir.join(".git");
     if git_entry.is_dir() {
         let info = git_entry.join("info");
         std::fs::create_dir_all(&info).ok()?;
@@ -352,7 +357,7 @@ fn git_info_dir(project_dir: &Path) -> Option<PathBuf> {
         let gitdir = if gitdir.is_absolute() {
             gitdir
         } else {
-            project_dir.join(gitdir)
+            dir.join(gitdir)
         };
         // For linked worktrees the `info/` we want to touch is the
         // COMMON info dir, not the worktree-specific one.
@@ -375,10 +380,10 @@ fn git_info_dir(project_dir: &Path) -> Option<PathBuf> {
     None
 }
 
-/// Append `INDEX_FILENAME` to `target` if it is not already present.
-fn append_ignore_line(target: &Path) -> anyhow::Result<()> {
+/// Append `filename` to the ignore file at `target` if it is not already present.
+fn append_ignore_line(target: &Path, filename: &str) -> anyhow::Result<()> {
     let existing = std::fs::read_to_string(target).unwrap_or_default();
-    let needle = INDEX_FILENAME;
+    let needle = filename;
     let already_present = existing
         .lines()
         .map(str::trim)
@@ -393,8 +398,7 @@ fn append_ignore_line(target: &Path) -> anyhow::Result<()> {
     new_content.push_str(needle);
     new_content.push('\n');
     // Ensure parent (for `.git/info/`) exists — best-effort; append_ignore_line
-    // may be called with a `.gitignore` in `projects/<name>/` which always
-    // has its parent present.
+    // may be called with a `.gitignore` whose parent always exists.
     if let Some(parent) = target.parent() {
         let _ = std::fs::create_dir_all(parent);
     }

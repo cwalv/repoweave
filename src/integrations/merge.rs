@@ -49,6 +49,7 @@
 //! the whole value. Leaf variants (`Bool`, `String`, `Array`) replace.
 
 use crate::integration::{Issue, Severity};
+use crate::workweave_index;
 use anyhow::{Context, Result};
 use std::collections::BTreeMap;
 use std::marker::PhantomData;
@@ -1895,6 +1896,9 @@ pub fn stamp_owned_digest(file_path: &Path, content: &[u8]) -> anyhow::Result<()
         .with_context(|| format!("serializing owned-digest state for {}", path.display()))?;
     std::fs::write(&path, json)
         .with_context(|| format!("writing owned-digest state {}", path.display()))?;
+    // Hygiene at the write chokepoint: keep the machine-local state file out
+    // of VCS. Best effort — an ignore failure must never fail the stamp itself.
+    let _ = workweave_index::ensure_ignored_in_dir(&state_dir, OWNED_DIGESTS_FILE);
     Ok(())
 }
 
@@ -3085,6 +3089,45 @@ replace example.com/legacy => ./vendor/legacy
                 check_owned_digest(&canonical, b"version = 4\n"),
                 OwnedDigestCheck::Matches,
                 "symlink-side stamp must update the canonical record"
+            );
+        }
+
+        #[test]
+        fn stamp_ensures_digests_file_ignored() {
+            // Non-git directory: stamp must write a .gitignore fallback so the
+            // state file never appears as an untracked file in a dirty-tree
+            // check. This mirrors the workweave_index::write chokepoint for
+            // .rwv-workweave-index (fo-nqgtwo).
+            let tmp = TempDir::new().unwrap();
+            let lock = tmp.path().join("Cargo.lock");
+            stamp_owned_digest(&lock, b"version = 3\n").unwrap();
+
+            let gitignore = tmp.path().join(".gitignore");
+            assert!(
+                gitignore.exists(),
+                "stamp must create .gitignore when dir is not a git repo"
+            );
+            let content = std::fs::read_to_string(&gitignore).unwrap();
+            assert!(
+                content.contains(OWNED_DIGESTS_FILE),
+                "stamp must ensure {OWNED_DIGESTS_FILE} is ignored: {content:?}"
+            );
+        }
+
+        #[test]
+        fn stamp_ignore_is_idempotent() {
+            // A second stamp must not duplicate the ignore entry.
+            let tmp = TempDir::new().unwrap();
+            let lock = tmp.path().join("Cargo.lock");
+            stamp_owned_digest(&lock, b"v1").unwrap();
+            stamp_owned_digest(&lock, b"v2").unwrap();
+
+            let gitignore = tmp.path().join(".gitignore");
+            let content = std::fs::read_to_string(&gitignore).unwrap();
+            let occurrences = content.matches(OWNED_DIGESTS_FILE).count();
+            assert_eq!(
+                occurrences, 1,
+                "ignore entry must not be duplicated on re-stamp"
             );
         }
 
