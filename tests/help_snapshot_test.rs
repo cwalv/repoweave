@@ -15,7 +15,7 @@ fn rwv_help_matches_snapshot() {
     let expected = "\
 A cross-repo workspace manager
 
-Usage: rwv [COMMAND]
+Usage: rwv [OPTIONS] [COMMAND]
 
 Commands:
   activate     Activate a project (generate ecosystem files, create symlinks, then run integration install hooks like `npm install` / `uv sync` / `cargo generate-lockfile`)
@@ -42,6 +42,9 @@ Commands:
 Options:
   -h, --help     Print help
   -V, --version  Print version
+
+Global options:
+  -C, --cwd <PATH>  Resolve workspace as if invoked from <path>. Any path inside a checkout works; the normal containment walk (marker, root, $HOME ceiling) runs from there. Relative path arguments elsewhere on the command line resolve against this directory. Repeating this flag is an error. If you meant to address a workweave by name, use -w/--workweave instead
 ";
 
     common::rwv()

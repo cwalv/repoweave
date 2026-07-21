@@ -6,6 +6,38 @@ Lookup-shaped reference for every `rwv` verb. For conceptual material see the [j
 
 > **Flag table drift gate.** The `--flag` names in each verb's flag table below are drift-gated by `tests/doc_claims_cli_md_test.rs`: every flag listed here must exist in `rwv <verb> --help`. CI fails if a removed flag is not also removed from the table. Effect descriptions are intentionally hand-maintained and not drift-checked.
 
+## Global options
+
+These flags precede the subcommand and apply to all verbs.
+
+### `-C <path>` / `--cwd <path>` — path addressing
+
+Resolve the workspace as if `rwv` were invoked from `<path>`. Any path
+*inside* a checkout works; the normal containment walk (marker, root, `$HOME`
+ceiling) runs from there. Relative path arguments elsewhere on the command line
+resolve against this directory.
+
+Prior art for the semantics: `make -C`, `tar -C` (Unix-wide), `git -C`,
+`hg`/`sl --cwd` — resolve as if invoked from the given directory. The long
+spelling `--cwd` follows `hg`/`sl` (names the semantics precisely: "resolve
+as if cwd were this").
+
+```
+rwv -C /path/to/weave status
+rwv -C /path/to/workweave resolve
+rwv -C /tmp/empty-dir init my-project
+```
+
+**Repetition is an error.** Passing `-C` twice (or mixing `-C` and `--cwd`)
+is rejected: a command line carrying two addresses is a confused invocation
+and `rwv` refuses rather than picking one.
+
+**Workweave-name shaped arguments.** If the argument matches the
+`<project>--<name>` workweave-name shape and no path exists at that location,
+`rwv` emits a corrective error pointing at `-w/--workweave` (the flag for
+name-based workweave addressing, available in a future release). To address a
+workweave by path, pass the full path to the workweave directory.
+
 ## Verbs
 
 ### `rwv` (bare)

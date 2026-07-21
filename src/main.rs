@@ -17,6 +17,53 @@ use anyhow::Context;
 use clap::{CommandFactory, Parser};
 use repoweave::manifest::WorkweaveName;
 use repoweave::workspace::{acquire_origin_dir, WorkspaceContext};
+use std::path::PathBuf;
+
+/// Validate and canonicalize the `-C <path>` argument.
+///
+/// The argument must be an existing path on disk (canonicalize will error
+/// otherwise). A bare `<project>--<name>` string that matches the workweave
+/// name shape but does not exist as a path gets a corrective error pointing
+/// at `-w/--workweave`.
+fn resolve_cwd_override(raw: &str) -> anyhow::Result<PathBuf> {
+    let p = std::path::Path::new(raw);
+
+    // Before trying to canonicalize, check whether this looks like a
+    // workweave name (<project>--<name>) that does not exist on disk.
+    // That is the most common mistake: passing a workweave identity to
+    // -C instead of -w/--workweave.
+    if !p.exists() && looks_like_workweave_name(raw) {
+        anyhow::bail!(
+            "'-C {raw}' looks like a workweave name rather than a path, \
+             and no path exists at '{raw}'.\n\
+             \n\
+             To address a workweave by name, use -w/--workweave:\n\
+             \n  rwv -w {raw} <verb>\n\
+             \n\
+             To address by path, pass the full path to the workweave directory."
+        );
+    }
+
+    p.canonicalize()
+        .with_context(|| format!("'-C {raw}': path does not exist or cannot be accessed"))
+}
+
+/// Returns true when `s` matches the `<project>--<name>` workweave name
+/// shape: at least one character on each side of a `--` separator, with no
+/// path separators (so it is clearly a bare name, not a path that happens to
+/// contain `--`).
+fn looks_like_workweave_name(s: &str) -> bool {
+    // Must not contain any path separator — a bare name, not a path.
+    if s.contains('/') || s.contains('\\') {
+        return false;
+    }
+    // Must contain `--` with at least one character on each side.
+    if let Some(idx) = s.find("--") {
+        idx > 0 && idx + 2 < s.len()
+    } else {
+        false
+    }
+}
 
 /// Levenshtein edit distance between two strings (two-row dynamic-programming
 /// variant). Kept self-contained here so the early-dispatch interceptor can
@@ -173,6 +220,11 @@ fn main() -> anyhow::Result<()> {
     // `project_override` is baked in per verb before `resolve` runs, and
     // the resolved context is threaded to the handler as `&WorkspaceContext`.
     //
+    // When `-C <path>` is given, that path (canonicalized, must exist)
+    // substitutes as the origin dir; `acquire_origin_dir` is not called.
+    // No `chdir` occurs — the address is threaded through the resolver
+    // as a pure argument, just as process cwd would be otherwise.
+    //
     // Exemptions from the pre-resolve step:
     //   - `init` / `init --adopt`: may run in an empty directory that has
     //     no workspace yet, so bootstrap-then-first-resolve happens
@@ -183,7 +235,10 @@ fn main() -> anyhow::Result<()> {
     //     case with a graceful `--no-suppress` fallback (Option<&ctx>).
     //   - `completions`, `explain`, `setup claude*`: no workspace involved.
     // ------------------------------------------------------------------
-    let origin_dir = acquire_origin_dir()?;
+    let origin_dir = match cli.cwd_override.as_deref() {
+        None => acquire_origin_dir()?,
+        Some(raw) => resolve_cwd_override(raw)?,
+    };
 
     match cli.command {
         None => {

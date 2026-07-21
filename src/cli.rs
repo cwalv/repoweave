@@ -14,6 +14,21 @@ use crate::sync::{SyncSource, SyncStrategy};
 #[derive(Parser)]
 #[command(name = "rwv", version = option_env!("RWV_VERSION").unwrap_or(env!("CARGO_PKG_VERSION")), about = "A cross-repo workspace manager")]
 pub struct Cli {
+    /// Resolve workspace as if invoked from <path>. Any path inside a
+    /// checkout works; the normal containment walk (marker, root, $HOME
+    /// ceiling) runs from there. Relative path arguments elsewhere on the
+    /// command line resolve against this directory. Repeating this flag is
+    /// an error. If you meant to address a workweave by name, use
+    /// -w/--workweave instead.
+    #[arg(
+        short = 'C',
+        long = "cwd",
+        value_name = "PATH",
+        global = true,
+        help_heading = "Global options"
+    )]
+    pub cwd_override: Option<String>,
+
     #[command(subcommand)]
     pub command: Option<Commands>,
 }
