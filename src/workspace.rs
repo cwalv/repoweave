@@ -125,11 +125,10 @@ pub enum ProjectProvenance {
     Flag,
     /// The project came from the `<project>--` prefix of a `-w` argument.
     ///
-    /// Reserved: the `-w` global flag lands as a later change, and this
-    /// variant is unconstructed until then. Kept here so downstream
-    /// consumers of the chain-step vocabulary can match exhaustively today
-    /// and the flag can wire in without a follow-up API bump.
-    #[allow(dead_code)] // will be constructed once the -w global flag lands
+    /// The `-w/--workweave` global flag takes a `<project>--<name>` argument;
+    /// the project is inferred from the `<project>--` prefix. This provenance
+    /// sits between `Flag` (explicit `--project`) and `Marker` (workweave
+    /// marker file) in the resolution chain.
     WorkweaveFlag,
     /// The project came from the `.rwv-workweave` marker inside the
     /// resolved workweave directory.
@@ -441,8 +440,10 @@ impl WorkspaceContext {
     /// Project resolution chain (highest priority first):
     ///   1. `project_override` — explicit `--project <name>` flag.
     ///      Provenance = [`ProjectProvenance::Flag`].
-    ///   2. `-w/--workweave` prefix (reserved slot; not yet threaded
-    ///      through — the global flag lands with a later change).
+    ///   2. `-w/--workweave` prefix — handled in main.rs dispatch by looking
+    ///      up the workweave path and re-resolving from it; the dispatch path
+    ///      then calls [`WorkspaceContext::with_workweave_flag_provenance`] to
+    ///      correct `Marker` → `WorkweaveFlag`.
     ///      Provenance = [`ProjectProvenance::WorkweaveFlag`].
     ///   3. `.rwv-workweave` marker inside a resolved workweave dir —
     ///      structural: the workweave directory names its project.
@@ -616,6 +617,26 @@ impl WorkspaceContext {
     /// [`active_project`]: WorkspaceContext::active_project
     pub fn project_provenance(&self) -> Option<ProjectProvenance> {
         self.project_provenance
+    }
+
+    /// Re-mark the project provenance as [`ProjectProvenance::WorkweaveFlag`].
+    ///
+    /// Called by the `-w/--workweave` dispatch path after resolving a context
+    /// from a registry-looked-up workweave directory: the context's internal
+    /// provenance reflects the containment walk (which sees the
+    /// `.rwv-workweave` marker → `Marker`), but the chain step that actually
+    /// decided is the `-w` flag. Correcting the provenance here ensures that
+    /// `emit_target_line` stays silent (as intended for all explicit addressing
+    /// forms) without requiring changes to the resolver's marker-walk logic.
+    ///
+    /// Only applies when the current provenance is `Marker` — if `--project`
+    /// is also present it sets `Flag` provenance, which outranks `-w` in the
+    /// chain and must not be overwritten.
+    pub fn with_workweave_flag_provenance(mut self) -> Self {
+        if self.project_provenance == Some(ProjectProvenance::Marker) {
+            self.project_provenance = Some(ProjectProvenance::WorkweaveFlag);
+        }
+        self
     }
 
     /// Print the "target:" line to stderr when the active project was
@@ -1787,10 +1808,11 @@ mod tests {
     //
     // The chain is `--project > -w prefix > marker > .rwv-active`.
     // These tests exercise every constructed variant (Flag / Marker /
-    // ActiveFile) across primary and workweave checkouts, both single-
-    // project and multi-project workspaces, and the None case (no chain
-    // step fires). WorkweaveFlag is reserved for the -w global flag and
-    // is not exercised here because it is not yet constructed.
+    // ActiveFile / WorkweaveFlag) across primary and workweave checkouts,
+    // both single-project and multi-project workspaces, and the None case
+    // (no chain step fires). The WorkweaveFlag variant is constructed via
+    // `with_workweave_flag_provenance` — see `tests/workweave_flag_test.rs`
+    // for the end-to-end -w flag tests.
     // ========================================================================
 
     /// Helper: create N project directories under `<root>/projects/`.

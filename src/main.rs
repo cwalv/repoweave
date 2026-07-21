@@ -15,7 +15,7 @@ use repoweave::update;
 
 use anyhow::Context;
 use clap::{CommandFactory, Parser};
-use repoweave::manifest::WorkweaveName;
+use repoweave::manifest::{ProjectName, WorkweaveName};
 use repoweave::workspace::{acquire_origin_dir, WorkspaceContext};
 use std::path::{Path, PathBuf};
 
@@ -65,6 +65,144 @@ fn looks_like_workweave_name(s: &str) -> bool {
     }
 }
 
+/// Resolve the workweave directory for a `-w <project>--<name>` argument.
+///
+/// ## Validation
+///
+/// The argument must be in strict `<project>--<name>` form: exactly one `--`
+/// separator (split at the FIRST `--`, matching the directory-name convention
+/// used elsewhere in workweave.rs), non-empty project and name on both sides,
+/// and no path separators. A path-shaped argument (contains `/` or `\`, or
+/// exists on disk as a path) gets a corrective error pointing at `-C`.
+///
+/// ## Resolution
+///
+/// Workspace is located from `workspace_origin` (already resolved from `-C` or
+/// process cwd). The workweave path is resolved via the registry for the named
+/// project, with `.rwv-workweave` marker round-trip validation.
+///
+/// ## Return value
+///
+/// Returns `(workweave_path, project)` — the path to feed to the resolver as
+/// origin, and the project name parsed from the `-w` prefix.
+fn resolve_workweave_flag(
+    raw: &str,
+    workspace_origin: &Path,
+) -> anyhow::Result<(PathBuf, ProjectName)> {
+    // A path-shaped argument (contains a separator) is a mistake: -C handles
+    // path addressing. Give a corrective error rather than a confusing
+    // "not found" message.
+    if raw.contains('/') || raw.contains('\\') {
+        anyhow::bail!(
+            "'-w {raw}' contains a path separator — it looks like a path, not a workweave name.\n\
+             \n\
+             To address a workweave by path, use -C:\n\
+             \n  rwv -C {raw} <verb>\n\
+             \n\
+             To address by name, pass <project>--<name> with no separators."
+        );
+    }
+    // If the argument exists on disk as a path, the operator probably meant -C.
+    if Path::new(raw).exists() {
+        anyhow::bail!(
+            "'-w {raw}' exists on disk as a path.\n\
+             \n\
+             To address a workweave by path, use -C:\n\
+             \n  rwv -C {raw} <verb>\n\
+             \n\
+             To address by name, pass <project>--<name> (bare name, no path separators)."
+        );
+    }
+
+    // Parse the argument at the FIRST `--` — consistent with parse_weave_dir_name
+    // (workweave.rs), which uses split_once("--"). This means a project name
+    // cannot contain `--`; names are identifiers, not paths, so this is safe.
+    let (project_str, name_str) = raw.split_once("--").ok_or_else(|| {
+        anyhow::anyhow!(
+            "'-w {raw}' is not in the required <project>--<name> form.\n\
+             \n\
+             Provide both the project and the workweave name separated by `--`:\n\
+             \n  rwv -w <project>--<name> <verb>\n\
+             \n\
+             Example:  rwv -w foundations--fo-x7 sync-to"
+        )
+    })?;
+
+    if project_str.is_empty() || name_str.is_empty() {
+        anyhow::bail!(
+            "'-w {raw}' is not in the required <project>--<name> form: \
+             both the project and name must be non-empty.\n\
+             \n\
+             Example:  rwv -w foundations--fo-x7 sync-to"
+        );
+    }
+
+    let project = ProjectName::new(project_str);
+    let name = WorkweaveName::new(name_str);
+
+    // Find the primary workspace root from the workspace_origin path (from -C
+    // or process cwd). The registry lives on the primary; look up from there.
+    let primary_ctx = WorkspaceContext::resolve(workspace_origin, None).with_context(|| {
+        format!(
+            "'-w {raw}': could not locate a workspace from {}",
+            workspace_origin.display()
+        )
+    })?;
+    let primary_root = primary_ctx.primary_path().to_path_buf();
+
+    // Registry lookup with marker round-trip validation.
+    let workweave_path =
+        repoweave::workweave::resolve_registered_workweave(&primary_root, &project, &name)
+            .with_context(|| {
+                format!(
+                    "'-w {raw}': registry lookup failed for project `{}`, name `{}`",
+                    project.as_str(),
+                    name.as_str()
+                )
+            })?;
+
+    match workweave_path {
+        Some(path) => Ok((path, project)),
+        None => {
+            // Registry has no valid entry for this name. Build an actionable
+            // error: list the known names for the project so the operator can
+            // spot a typo or learn what workweaves exist.
+            let known = repoweave::workweave_index::read(&primary_root, &project)
+                .ok()
+                .flatten()
+                .map(|idx| {
+                    let mut names: Vec<String> = idx.workweaves.into_keys().collect();
+                    names.sort();
+                    names
+                })
+                .unwrap_or_default();
+
+            if known.is_empty() {
+                anyhow::bail!(
+                    "no workweave named `{}` is registered for project `{}` \
+                     (the registry has no entries; create one with \
+                     `rwv workweave {} create <name>`)",
+                    name.as_str(),
+                    project.as_str(),
+                    project.as_str(),
+                )
+            } else {
+                anyhow::bail!(
+                    "no workweave named `{}` is registered for project `{}`.\n\
+                     \n\
+                     Known workweaves for `{}`:\n  {}\n\
+                     \n\
+                     Run `rwv doctor` if a workweave exists on disk but is missing from the registry.",
+                    name.as_str(),
+                    project.as_str(),
+                    project.as_str(),
+                    known.join("\n  "),
+                )
+            }
+        }
+    }
+}
+
 /// Resolve the workspace context for a project-scoped verb and surface the
 /// pointer fall-through as a "target:" line to stderr before acting.
 ///
@@ -74,14 +212,27 @@ fn looks_like_workweave_name(s: &str) -> bool {
 /// pointer at invocation time instead of by post-hoc git-status forensics.
 /// Structurally- or explicitly-resolved invocations stay silent.
 ///
+/// When `use_workweave_flag` is true (the `-w` global flag was given),
+/// the resolved context's provenance is re-branded from `Marker` to
+/// `WorkweaveFlag` before the target-line check runs, so the explicit
+/// `-w` addressing form is correctly recorded in the chain-step field
+/// and the target line is suppressed (it only fires for `.rwv-active`
+/// fall-throughs, never for explicit addressing).
+///
 /// Wrapping resolve + emit in one call keeps the per-verb dispatch site to
 /// a single line and makes it impossible to forget the surfacing on a new
 /// project-scoped verb.
 fn resolve_project_scoped(
     origin_dir: &Path,
     project_override: Option<repoweave::manifest::ProjectName>,
+    use_workweave_flag: bool,
 ) -> anyhow::Result<WorkspaceContext> {
     let ctx = WorkspaceContext::resolve(origin_dir, project_override)?;
+    let ctx = if use_workweave_flag {
+        ctx.with_workweave_flag_provenance()
+    } else {
+        ctx
+    };
     ctx.emit_target_line();
     Ok(ctx)
 }
@@ -246,6 +397,17 @@ fn main() -> anyhow::Result<()> {
     // No `chdir` occurs — the address is threaded through the resolver
     // as a pure argument, just as process cwd would be otherwise.
     //
+    // When `-w <project>--<name>` is given, the workspace origin is first
+    // located (from `-C` or process cwd), then the registry is consulted to
+    // find the workweave path for the named project+name.  That workweave
+    // path becomes the origin dir for all downstream resolution.  The flags
+    // compose: `-C establishes the workspace, `-w` selects the checkout within
+    // it.  The resolved context's provenance is re-branded from `Marker` to
+    // `WorkweaveFlag` (via `WorkspaceContext::with_workweave_flag_provenance`)
+    // because the explicit `-w` flag, not the containment walk, addressed the
+    // workweave — the distinction matters for `emit_target_line` (silent for
+    // all explicit forms) and for the chain-step record kept on the context.
+    //
     // Exemptions from the pre-resolve step:
     //   - `init` / `init --adopt`: may run in an empty directory that has
     //     no workspace yet, so bootstrap-then-first-resolve happens
@@ -256,10 +418,28 @@ fn main() -> anyhow::Result<()> {
     //     case with a graceful `--no-suppress` fallback (Option<&ctx>).
     //   - `completions`, `explain`, `setup claude*`: no workspace involved.
     // ------------------------------------------------------------------
-    let origin_dir = match cli.cwd_override.as_deref() {
+
+    // Step 1: workspace origin — cwd or -C path.
+    let workspace_origin = match cli.cwd_override.as_deref() {
         None => acquire_origin_dir()?,
         Some(raw) => resolve_cwd_override(raw)?,
     };
+
+    // Step 2: workweave selection — registry lookup when -w is given.
+    // `workweave_flag_project` carries the project parsed from `-w <proj>--<name>`.
+    // When absent, dispatch uses `workspace_origin` directly.
+    let (origin_dir, workweave_flag_project): (PathBuf, Option<ProjectName>) =
+        match cli.workweave_flag.as_deref() {
+            None => (workspace_origin, None),
+            Some(raw) => {
+                let (ww_path, project) = resolve_workweave_flag(raw, &workspace_origin)?;
+                (ww_path, Some(project))
+            }
+        };
+    // `use_workweave_flag` is true when `-w` was given; downstream resolver
+    // calls apply `with_workweave_flag_provenance()` to stamp the correct
+    // chain-step provenance on the resolved context.
+    let use_workweave_flag = workweave_flag_project.is_some();
 
     match cli.command {
         None => {
@@ -295,7 +475,7 @@ fn main() -> anyhow::Result<()> {
             project,
         }) => {
             let project_override = project.map(repoweave::manifest::ProjectName::new);
-            let ctx = resolve_project_scoped(&origin_dir, project_override)?;
+            let ctx = resolve_project_scoped(&origin_dir, project_override, use_workweave_flag)?;
             if new {
                 add_remove::run_add_new(&url, &ctx)?;
             } else {
@@ -378,7 +558,7 @@ fn main() -> anyhow::Result<()> {
             project,
         }) => {
             let project_override = project.map(repoweave::manifest::ProjectName::new);
-            let ctx = resolve_project_scoped(&origin_dir, project_override)?;
+            let ctx = resolve_project_scoped(&origin_dir, project_override, use_workweave_flag)?;
             add_remove::run_remove(&path, delete, force, &ctx)?;
         }
         Some(Commands::Workweave {
@@ -484,7 +664,7 @@ fn main() -> anyhow::Result<()> {
             project,
         }) => {
             let project_override = project.map(repoweave::manifest::ProjectName::new);
-            let ctx = resolve_project_scoped(&origin_dir, project_override)?;
+            let ctx = resolve_project_scoped(&origin_dir, project_override, use_workweave_flag)?;
             if locked {
                 let has_drift = check::run_check_locked(&ctx)?;
                 if has_drift {
@@ -508,12 +688,12 @@ fn main() -> anyhow::Result<()> {
             project,
         }) => {
             let project_override = project.map(repoweave::manifest::ProjectName::new);
-            let ctx = resolve_project_scoped(&origin_dir, project_override)?;
+            let ctx = resolve_project_scoped(&origin_dir, project_override, use_workweave_flag)?;
             lock::lock(&ctx, dirty, commit)?;
         }
         Some(Commands::Status { json, project }) => {
             let project_override = project.map(repoweave::manifest::ProjectName::new);
-            let ctx = resolve_project_scoped(&origin_dir, project_override)?;
+            let ctx = resolve_project_scoped(&origin_dir, project_override, use_workweave_flag)?;
             status::run_status(&ctx, json)?;
         }
         Some(Commands::Abort) => {
@@ -531,7 +711,8 @@ fn main() -> anyhow::Result<()> {
             do_continue,
         }) => {
             let project_override = project.map(repoweave::manifest::ProjectName::new);
-            let ctx = resolve_project_scoped(&origin_dir, project_override.clone())?;
+            let ctx =
+                resolve_project_scoped(&origin_dir, project_override.clone(), use_workweave_flag)?;
             // sync's default is serial (jobs=1). This differs from fetch/update
             // (which auto-resolve to min(nproc, 8)) because sync's `--json`
             // contract pins envelope output under `-j 1` and NDJSON under
@@ -572,7 +753,8 @@ fn main() -> anyhow::Result<()> {
             do_continue,
         }) => {
             let project_override = project.map(repoweave::manifest::ProjectName::new);
-            let ctx = resolve_project_scoped(&origin_dir, project_override.clone())?;
+            let ctx =
+                resolve_project_scoped(&origin_dir, project_override.clone(), use_workweave_flag)?;
             let jobs = match jobs {
                 Some(n) => repoweave::parallel::resolve_jobs(Some(n)),
                 None => 1,
@@ -648,7 +830,7 @@ fn main() -> anyhow::Result<()> {
             json,
         }) => {
             let project_override = project.map(repoweave::manifest::ProjectName::new);
-            let ctx = resolve_project_scoped(&origin_dir, project_override)?;
+            let ctx = resolve_project_scoped(&origin_dir, project_override, use_workweave_flag)?;
             let filter = repoweave::selector::RepoFilter::parse(&roles, &repos)?;
             // push's default is serial (jobs=1). This differs from fetch/update
             // (which auto-resolve to min(nproc, 8)) because push's `--json`
@@ -671,7 +853,7 @@ fn main() -> anyhow::Result<()> {
             json,
         }) => {
             let project_override = project.map(repoweave::manifest::ProjectName::new);
-            let ctx = resolve_project_scoped(&origin_dir, project_override)?;
+            let ctx = resolve_project_scoped(&origin_dir, project_override, use_workweave_flag)?;
             let filter = repoweave::selector::RepoFilter::parse(&roles, &repos)?;
             // Update's default is auto-parallel (min(nproc, 8)). The envelope/NDJSON
             // split mirrors sync: -j 1 (or unspecified with --json) emits the

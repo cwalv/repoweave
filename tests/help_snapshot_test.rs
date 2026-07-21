@@ -44,7 +44,8 @@ Options:
   -V, --version  Print version
 
 Global options:
-  -C, --cwd <PATH>  Resolve workspace as if invoked from <path>. Any path inside a checkout works; the normal containment walk (marker, root, $HOME ceiling) runs from there. Relative path arguments elsewhere on the command line resolve against this directory. Repeating this flag is an error. If you meant to address a workweave by name, use -w/--workweave instead
+  -C, --cwd <PATH>                 Resolve workspace as if invoked from <path>. Any path inside a checkout works; the normal containment walk (marker, root, $HOME ceiling) runs from there. Relative path arguments elsewhere on the command line resolve against this directory. Repeating this flag is an error. If you meant to address a workweave by name, use -w/--workweave instead
+  -w, --workweave <PROJECT--NAME>  Address a workweave by identity (<project>--<name>). The workspace is found via -C or process cwd; the workweave is then selected from the registry for the named project. Container-location-independent: the name survives placement changes that would break a path-based address. Use -C <path> when outside the ecosystem entirely; compose with -w to select a specific workweave within the located workspace. Repeating this flag is an error. If you meant to address by path, use -C instead
 ";
 
     common::rwv()

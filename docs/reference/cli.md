@@ -34,9 +34,40 @@ and `rwv` refuses rather than picking one.
 
 **Workweave-name shaped arguments.** If the argument matches the
 `<project>--<name>` workweave-name shape and no path exists at that location,
-`rwv` emits a corrective error pointing at `-w/--workweave` (the flag for
-name-based workweave addressing, available in a future release). To address a
+`rwv` emits a corrective error pointing at `-w/--workweave`. To address a
 workweave by path, pass the full path to the workweave directory.
+
+### `-w <project>--<name>` / `--workweave <project>--<name>` — name addressing
+
+The agent-native addressing form. A workweave's identity is the
+`<project>--<name>` string that appears in every path, branch name, and
+tooling artifact an agent touches. The CLI already addresses workweaves by
+name inside the `workweave` verb family; this flag makes that addressing
+global:
+
+```
+rwv -w foundations--fo-x7 sync-to --retire   # from anywhere inside the ecosystem
+rwv -w foundations--fo-x7 status
+```
+
+- **Container-location-independent.** The name survives placement changes
+  (`--dir` overrides, container migration) that would break a path-based
+  address. The registry records the actual path; `-w` resolves through it.
+- **Composes with `-C`.** `-C` establishes the workspace (locates the
+  primary); `-w` selects the checkout within it. Use `-C` when your process
+  is outside the ecosystem entirely.
+- **Full form only.** The argument must be `<project>--<name>`. Both
+  components must be non-empty; no path separators. The split follows the
+  first `--` (consistent with the directory-name convention).
+- **Repetition is an error.** Passing `-w` twice is rejected for the same
+  reason as `-C`: two addresses is a confused invocation.
+- **Path-shaped argument.** If the argument contains a path separator or
+  exists on disk as a path, `rwv` emits a corrective error pointing at `-C`.
+
+Resolution: find the workspace root (from `-C` or cwd walk), then look up
+`<name>` in the registry for `<project>` with `.rwv-workweave` marker
+round-trip validation. A stale or unregistered name produces an actionable
+error listing the project's known workweaves.
 
 ## Verbs
 
@@ -351,7 +382,7 @@ Generate shell completions (bash, zsh, fish, etc.). Source the output in your sh
 Project-scoped verbs (`add`, `remove`, `lock`, `update`, `push`, `sync`, `sync-to`, `status`, `doctor`, `fetch` in-place) pick their target project via a fixed chain, highest priority first:
 
 1. `--project <name>` — the explicit override on the invocation.
-2. `-w/--workweave <project>--<name>` — the `<project>--` prefix of the global workweave-selector flag names the project. *(Reserved: the flag itself lands with a later change; the chain slot exists today.)*
+2. `-w/--workweave <project>--<name>` — the `<project>--` prefix of the global workweave-selector flag names the project.
 3. `.rwv-workweave` marker — when CWD resolves inside a workweave, the marker file names the project structurally. No ambient pointer is consulted.
 4. `.rwv-active` pointer — the workspace-root file that `rwv activate` maintains, used when no earlier step decided.
 
@@ -365,7 +396,7 @@ When resolution falls through to step 4, the verb prints a target line to **stde
 target: workspace /home/cwa/weaveroot/foundations · project tmuxcc (.rwv-active)
 ```
 
-Explicitly (`--project`, `-w`) or structurally (marker) resolved invocations stay silent — the operator already named the target, or the workweave did.
+Explicitly (`--project` or `-w`) or structurally (workweave marker) resolved invocations stay silent — the operator already named the target, or the workweave did.
 
 Stderr, not stdout, so the line never contaminates a `--json` verb's output. The line is prose, not a parse surface — no schema, no version, no consumer contract. The `resolution` block in `--json` output *(later change)* carries the resolved coordinate as machine data; provenance stays out of the JSON deliberately so agents assert on results, not on how they were reached.
 
