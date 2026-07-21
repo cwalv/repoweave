@@ -15,8 +15,8 @@
 //! that consulted process-wide ambient state independently would break
 //! that contract (silently retargeting under agent harnesses that reset
 //! cwd, or leaking the address into spawned subprocesses if we ever
-//! `chdir`'d — which we don't). See
-//! `docs/repoweave/workspace-addressing-design.md` §2.
+//! `chdir`'d — which we don't). The rule in one line: argv addresses;
+//! cwd and env are never consulted past this point.
 //!
 //! The two steps — *acquire origin dir* and *resolve context from origin
 //! dir* — are kept separate so a future `-C <path>` or `-w <name>` flag

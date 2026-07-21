@@ -162,7 +162,7 @@ fn main() -> anyhow::Result<()> {
     };
 
     // ------------------------------------------------------------------
-    // Single resolution point (workspace-addressing-design §2 corollary).
+    // Single resolution point.
     //
     // Every workspace-scoped verb below reads its context from THIS
     // one call to `acquire_origin_dir`. No downstream handler calls
@@ -171,7 +171,7 @@ fn main() -> anyhow::Result<()> {
     // `project_override` is baked in per verb before `resolve` runs, and
     // the resolved context is threaded to the handler as `&WorkspaceContext`.
     //
-    // Two verbs are exempt from the pre-resolve step:
+    // Exemptions from the pre-resolve step:
     //   - `init` / `init --adopt`: may run in an empty directory that has
     //     no workspace yet, so bootstrap-then-first-resolve happens
     //     inside the handler with the origin dir passed through.
