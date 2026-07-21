@@ -96,17 +96,30 @@ fn setup_invalid_subcommand_with_help_has_no_footer() {
         );
 }
 
-/// `rwv unknown-verb --help` — top-level InvalidSubcommand. Same footer
-/// suppression contract.
+/// `rwv unknown-verb --help` — top-level unknown verb. With external-
+/// subcommand fallthrough (fo-681vre.1) an unknown verb at the top level
+/// resolves through the plugin path: rwv looks for `rwv-unknown-verb` on
+/// `$PATH`, and when not found emits the rwv-side unknown-verb error.
+/// `--help` is captured as an argument to the (would-be) plugin, so the
+/// help footer contract does not apply here — this is now the plugin-
+/// dispatch surface, not the clap error surface. We still assert the
+/// error path is stable (nonzero exit, verb + PATH mentioned) so a
+/// regression in the plugin dispatch surface is caught.
 #[test]
 fn unknown_verb_with_help_has_no_footer() {
+    // Use a PATH that intentionally does NOT contain a real `rwv-unknown-verb`.
+    // A tempdir-only PATH prevents an unrelated PATH plugin from silently
+    // handling the invocation.
+    let plugin_dir = tempfile::tempdir().expect("tempdir");
     rwv()
         .args(["unknown-verb", "--help"])
+        .env("PATH", plugin_dir.path().to_string_lossy().to_string())
         .assert()
         .failure()
         .stderr(
-            predicate::str::contains("unrecognized subcommand")
-                .and(predicate::str::contains("try '--help'").not()),
+            predicate::str::contains("unknown verb")
+                .and(predicate::str::contains("rwv-unknown-verb"))
+                .and(predicate::str::contains("PATH")),
         );
 }
 

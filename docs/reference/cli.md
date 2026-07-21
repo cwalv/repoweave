@@ -499,6 +499,18 @@ Exit semantics under `--json` are the same in both modes: non-zero iff at least 
 
 Anchored by `tests/doc_claims_sync_test.rs`, `tests/doc_claims_fetch_test.rs`, `tests/doc_claims_update_test.rs`, `tests/doc_claims_push_test.rs`, and the per-verb `*_json_test.rs` families (`sync`, `sync_to`, `fetch`, `update`, `push`).
 
+## External commands
+
+`rwv <verb>` where `<verb>` is not a core verb resolves to a `rwv-<verb>` executable on `$PATH` and execs it. This is the same convention `git` and `cargo` use for their external commands.
+
+- **Core always wins.** clap matches core verbs before external fallthrough runs, so a `rwv-status` on `$PATH` can never shadow the builtin. If you name a plugin the same as a future core verb, the plugin becomes unreachable when that core verb ships.
+- **Addressing flags are consumed by `rwv`.** Global `-C` / `-w` and per-verb `--project` are the addressing surface for the workspace coordinate; the external verb never sees them in its argv. This lets a plugin inherit the addressing surface for free — `rwv -w foundations--fo-x7 foo` addresses once, in `rwv`, and hands the resolved coordinate to `rwv-foo`.
+- **Exit propagation is verbatim.** A normal exit propagates the child's status code; signal death maps to the conventional `128 + N` exit and is reported on stderr as `rwv-<verb> terminated by signal N`.
+- **No output wrapping.** The child owns stdout and stderr entirely — plugins that emit JSON, drive a terminal, or stream progress work without translation.
+- **Two error surfaces.** Everything `rwv`-side can go wrong on collapses to exactly one of: `unknown verb` (no core verb and no `rwv-<verb>` on `$PATH`, with a pointer to `rwv --help`) or `exec failure` (found on `$PATH` but not spawnable, with the OS error).
+- **Soft fallthrough.** With no addressing flags, if the cwd walk finds no workspace, the plugin is exec'd anyway — some plugins legitimately run outside a workspace (a `--help` / generator). Explicit-flag resolution failure (`-C <bad>` or `-w <bad>`) errors before any spawn attempt: a plugin cannot salvage a wrong address.
+- **`rwv explain` excludes plugins.** `rwv explain <non-core>` errors with `external command; try \`rwv <verb> --help\`` — explain reflects over `rwv`'s CI-checked surfaces, never over PATH content. A close typo of a core verb still gets the "did you mean" hint.
+
 ## Related
 
 - [reference/formats](./formats.md) — `rwv.yaml`, `rwv.lock`, `.rwv-active`, `.rwv-workweave`

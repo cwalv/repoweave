@@ -6,6 +6,7 @@ use repoweave::explain;
 use repoweave::fetch;
 use repoweave::init;
 use repoweave::lock;
+use repoweave::plugins;
 use repoweave::prime;
 use repoweave::push;
 use repoweave::setup;
@@ -17,6 +18,7 @@ use anyhow::Context;
 use clap::{CommandFactory, Parser};
 use repoweave::manifest::{ProjectName, WorkweaveName};
 use repoweave::workspace::{acquire_origin_dir, WorkspaceContext};
+use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
 /// Validate and canonicalize the `-C <path>` argument.
@@ -881,6 +883,62 @@ fn main() -> anyhow::Result<()> {
                 }
             }
         },
+        Some(Commands::External(argv)) => {
+            // clap routes any subcommand it does not recognise here. The
+            // "builtin first" invariant is enforced by clap's match order:
+            // a plugin named `rwv-status` cannot shadow the core `status`
+            // verb because clap already matched `status` to `Commands::Status`
+            // before this arm is reached. See plugins.rs.
+            //
+            // `argv` is guaranteed non-empty by clap when an external
+            // subcommand is captured (element 0 is the verb, remainder are
+            // its args). Verb must be UTF-8 because clap's external-
+            // subcommand support requires a nameable subcommand and we
+            // format it into the "unknown verb" and "rwv-<verb>" messages.
+            let mut iter = argv.into_iter();
+            let verb_os: OsString = iter.next().expect(
+                "clap's external_subcommand invariant: argv is non-empty when \
+                 the External variant is constructed",
+            );
+            let verb = verb_os.to_str().ok_or_else(|| {
+                anyhow::anyhow!("external verb name is not valid UTF-8: {:?}", verb_os)
+            })?;
+            let plugin_args: Vec<OsString> = iter.collect();
+
+            // Explicit-flag resolution failure errors BEFORE exec.
+            //
+            // Direction discipline: the address the operator named must
+            // resolve, or rwv reports the mistake — a plugin cannot
+            // salvage a wrong `-C` path or an unregistered `-w` name.
+            //
+            // - `-w` (workweave_flag_project.is_some()) already resolved
+            //   above; a stale/typo'd name has already errored out.
+            // - `-C` (cli.cwd_override.is_some()) had its path validated
+            //   for existence; workspace containment failing here is the
+            //   named-target-doesn't-exist case and must error.
+            //
+            // No addressing flags → soft fallthrough: skip resolution
+            // entirely and exec the plugin. Some plugins legitimately run
+            // outside a workspace (a `--help` / generator that resolves
+            // its own state, or a repair verb that wants to be told there
+            // is no workspace).
+            if cli.cwd_override.is_some() || workweave_flag_project.is_some() {
+                let _ctx = WorkspaceContext::resolve(&origin_dir, None).with_context(|| {
+                    format!(
+                        "external verb `{verb}`: could not resolve workspace from {}",
+                        origin_dir.display()
+                    )
+                })?;
+            }
+
+            // Exec. Never returns on success; on error, the two documented
+            // rwv-side surfaces (unknown verb, exec failure). Successful
+            // dispatch exits the process from within `dispatch_external`,
+            // so the Ok arm is `Infallible` — the empty match is how the
+            // type-checker proves that arm is unreachable.
+            let never = plugins::dispatch_external(verb, &plugin_args)?;
+            match never {}
+        }
     }
 
     Ok(())

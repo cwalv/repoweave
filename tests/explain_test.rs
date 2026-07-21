@@ -147,13 +147,17 @@ fn explain_self_referential_entry() {
 
 #[test]
 fn explain_unknown_verb_exits_nonzero_with_friendly_pointer() {
+    // With external-subcommand fallthrough (fo-681vre.1), `rwv explain <foo>`
+    // for a non-core `foo` that is NOT a close typo of a core verb redirects
+    // the operator to `rwv foo --help`. explain deliberately never execs PATH
+    // content — plugins own their own `--help`.
     rwv()
         .args(["explain", "no-such-verb"])
         .assert()
         .failure()
         .stderr(
-            predicate::str::contains("no explain entry for 'no-such-verb'")
-                .and(predicate::str::contains("rwv explain")),
+            predicate::str::contains("external command")
+                .and(predicate::str::contains("rwv no-such-verb --help")),
         );
 }
 
@@ -179,14 +183,17 @@ fn explain_close_typo_suggests_sync_to() {
 
 #[test]
 fn explain_far_typo_no_spurious_suggestion() {
-    // "frobnicate" is unrelated to any known verb — no did-you-mean should appear.
+    // "frobnicate" is unrelated to any known verb — the "did you mean" hint
+    // must not fire spuriously. With external-subcommand fallthrough
+    // (fo-681vre.1) the message redirects to the plugin's own `--help` for
+    // any non-close input; the "did you mean" absence guarantee stays.
     rwv()
         .args(["explain", "frobnicate"])
         .assert()
         .failure()
         .stderr(
-            predicate::str::contains("no explain entry for 'frobnicate'")
-                .and(predicate::str::contains("rwv explain"))
+            predicate::str::contains("external command")
+                .and(predicate::str::contains("rwv frobnicate --help"))
                 .and(predicate::str::contains("did you mean").not()),
         );
 }

@@ -5,6 +5,8 @@
 //! `generate-explain`) via `repoweave::cli::Cli`.  `main.rs` imports these
 //! types and contains only dispatch logic.
 
+use std::ffi::OsString;
+
 use clap::{Parser, Subcommand};
 use clap_complete::Shell;
 
@@ -380,6 +382,15 @@ pub enum Commands {
         #[command(subcommand)]
         action: SetupAction,
     },
+
+    // External subcommand fallthrough — see plugins.rs. clap routes any
+    // subcommand this enum does NOT match into `External`, so core verbs
+    // above always win (the "builtin first" invariant): the plugin path is
+    // unreachable for a name clap already knows. The captured vec holds the
+    // verb (element 0) and its remaining args in order, preserving `--`,
+    // repeated flags, and anything else the plugin needs verbatim.
+    #[command(external_subcommand)]
+    External(Vec<OsString>),
 }
 
 #[derive(Subcommand)]

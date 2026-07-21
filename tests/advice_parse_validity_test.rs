@@ -73,7 +73,7 @@
 use std::path::{Path, PathBuf};
 
 use clap::Parser;
-use repoweave::cli::Cli;
+use repoweave::cli::{Cli, Commands};
 
 // ---------------------------------------------------------------------------
 // Source-file walker (mirrors the pattern in destructive_ops_audit_test.rs)
@@ -294,6 +294,13 @@ fn check_parse(cmd: &str) -> ParseVerdict {
     use clap::error::ErrorKind;
     let args: Vec<&str> = cmd.split_whitespace().collect();
     match Cli::try_parse_from(&args) {
+        // External-subcommand fallthrough (fo-681vre.1) makes clap accept any
+        // token as a verb — it lands on `Commands::External`. But an advice
+        // string that mentions e.g. `` `rwv frobnicate` `` is still meant as a
+        // core-verb suggestion (advice strings are inside rwv's own source and
+        // point at core surfaces), so an External match is treated as
+        // BadVerb — same failure class the test has always caught.
+        Ok(cli) if matches!(cli.command, Some(Commands::External(_))) => ParseVerdict::BadVerb,
         Ok(_) => ParseVerdict::Valid,
         Err(e)
             if matches!(
@@ -305,6 +312,13 @@ fn check_parse(cmd: &str) -> ParseVerdict {
                 // constraint (e.g. `--role dummy` when the role flag expects
                 // `owned` | `reference` | …).  The flag itself exists.
                     | ErrorKind::InvalidValue
+                // A bare `rwv --help` / `rwv --version` reaches clap's help
+                // / version display exit path. Advice strings routinely
+                // point operators at `rwv --help` (that IS the canonical
+                // orientation surface), so both count as valid invocations.
+                    | ErrorKind::DisplayHelp
+                    | ErrorKind::DisplayHelpOnMissingArgumentOrSubcommand
+                    | ErrorKind::DisplayVersion
             ) =>
         {
             ParseVerdict::PartialInvocation

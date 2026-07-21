@@ -123,13 +123,22 @@ pub fn explain(cmd: Option<&str>) -> anyhow::Result<()> {
         Some("activate") => print!("{ACTIVATE_EXPLAIN}"),
         Some("init") => print!("{INIT_EXPLAIN}"),
         Some(unknown) => {
+            // Non-core verb: explain is reflection over core's committed,
+            // CI-checked surfaces. Extending it to exec third-party binaries
+            // would make rwv's reflection surface only as trustworthy as the
+            // least trustworthy thing on `$PATH`, so explain never touches
+            // PATH content. A close-typo hint still fires when the input is
+            // within edit distance of a core verb — that's an operator help,
+            // not a plugin dispatch. Any other name is redirected to the
+            // plugin's own `--help`, which is the plugin's responsibility to
+            // document.
             if let Some(candidate) = suggest(unknown) {
                 anyhow::bail!(
                     "no explain entry for '{unknown}'; did you mean: {candidate}? \
                      Try `rwv explain` for the full index."
                 );
             } else {
-                anyhow::bail!("no explain entry for '{unknown}'; try `rwv explain` for the index");
+                anyhow::bail!("external command; try `rwv {unknown} --help`");
             }
         }
     }

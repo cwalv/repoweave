@@ -769,14 +769,24 @@ fn lock_does_not_run_integration_hooks() {
 
 #[test]
 fn lock_all_is_removed_cli_error() {
-    // `rwv lock-all` should be rejected as an unrecognized subcommand
-    // (or produce a helpful error telling users to use `rwv lock` instead).
-    rwv_cmd().arg("lock-all").assert().failure().stderr(
-        predicate::str::contains("unrecognized")
-            .or(predicate::str::contains("removed"))
-            .or(predicate::str::contains("no longer"))
-            .or(predicate::str::contains("not a valid")),
-    );
+    // `rwv lock-all` should be rejected: `unknown verb` (external-subcommand
+    // dispatch, fo-681vre.1, when no `rwv-lock-all` binary is on PATH) or
+    // one of the historical clap wordings. The PATH is pinned to an empty
+    // dir so a stray plugin installed on the test host cannot hide the
+    // regression.
+    let plugin_dir = tempfile::tempdir().expect("tempdir");
+    rwv_cmd()
+        .arg("lock-all")
+        .env("PATH", plugin_dir.path().to_string_lossy().to_string())
+        .assert()
+        .failure()
+        .stderr(
+            predicate::str::contains("unknown verb")
+                .or(predicate::str::contains("unrecognized"))
+                .or(predicate::str::contains("removed"))
+                .or(predicate::str::contains("no longer"))
+                .or(predicate::str::contains("not a valid")),
+        );
 }
 
 // ---------------------------------------------------------------------------

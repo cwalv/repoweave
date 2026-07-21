@@ -66,5 +66,11 @@ cat docs/reference/schemas/doctor.json
 
 ## Common errors
 
-- *no explain entry for '<verb>'* — the verb isn't recognized. Run `rwv
-  explain` (no args) for the index.
+- *no explain entry for '<verb>'; did you mean: <candidate>?* — the verb
+  isn't in the explain registry, but its spelling is within edit distance
+  of a known core verb. Try the suggestion, or run `rwv explain` (no args)
+  for the full index.
+- *external command; try `rwv <verb> --help`* — the verb isn't a core
+  verb. `explain` reflects over `rwv`'s CI-checked surfaces only and never
+  execs PATH content, so third-party `rwv-<verb>` executables document
+  themselves through their own `--help`.
