@@ -36,3 +36,20 @@ jobs:
         # locally, in CI, and as release.yml's pre-tag gate.
         shell: bash
         run: ./scripts/ci-local.sh
+
+  windows-check:
+    # Release artifacts include windows-msvc, but the test suite is
+    # Unix-only (symlinks, permission bits, signals). Compile the
+    # production surface on Windows so a cfg gap surfaces here instead
+    # of at release-tag time.
+    name: Windows production-surface check
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Rust (pinned by rust-toolchain.toml)
+        run: rustup show
+
+      - name: Check lib and bins compile on Windows
+        run: cargo check --locked --lib --bins

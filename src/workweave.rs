@@ -1141,11 +1141,12 @@ pub fn create_workweave(
                 // nested workweave forked from another workweave must point at
                 // the one canonical store, never at the parent workweave's own
                 // symlink (which would form a symlink→symlink chain that breaks
-                // if the parent is deleted). See
-                // docs/repoweave/reference-symlink-materialization.md §1.
-                let canonical = primary_root.join(repo_path.as_path());
+                // if the parent is deleted).
                 #[cfg(unix)]
-                std::os::unix::fs::symlink(&canonical, &worktree_dest)?;
+                {
+                    let canonical = primary_root.join(repo_path.as_path());
+                    std::os::unix::fs::symlink(&canonical, &worktree_dest)?;
+                }
                 return Ok(());
             }
 

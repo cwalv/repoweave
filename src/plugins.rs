@@ -11,8 +11,8 @@
 //!   per-verb `--project` are the addressing surface for the workspace
 //!   coordinate; the external verb never sees them in its argv.
 //! - **Exit propagation is verbatim.** A normal exit propagates the child's
-//!   status code; signal death maps to the conventional `128 + N` exit and
-//!   is reported on stderr as `rwv-<verb> terminated by signal N`.
+//!   status code; signal death (Unix) maps to the conventional `128 + N`
+//!   exit and is reported on stderr as `rwv-<verb> terminated by signal N`.
 //! - **Two error surfaces, no more.** Everything the dispatcher can go wrong
 //!   on collapses to exactly one of: `unknown verb` (no core verb and no
 //!   `rwv-<verb>` on `$PATH`) or `exec failure` (found but not spawnable,
@@ -72,7 +72,6 @@
 
 use crate::workspace::Resolution;
 use std::ffi::{OsStr, OsString};
-use std::os::unix::process::ExitStatusExt;
 use std::path::PathBuf;
 use std::process::Command;
 
@@ -315,7 +314,7 @@ fn find_plugin(verb: &str) -> Option<PathBuf> {
 /// `RWV_*` env-var envelope via [`build_command`]. Pass `None` when the cwd
 /// walk found no workspace (soft fallthrough — `RWV_VERSION` is still set).
 ///
-/// Signal death: mirrored to `128 + N` and reported on stderr. Exit
+/// Signal death (Unix): mirrored to `128 + N` and reported on stderr. Exit
 /// otherwise verbatim.
 pub fn dispatch_external(
     verb: &str,
@@ -339,15 +338,21 @@ pub fn dispatch_external(
         std::process::exit(code);
     }
 
-    // No exit code → the child was terminated by a signal. Report and
-    // mirror the conventional 128 + N mapping so downstream consumers
-    // (shells, CI runners) see the standard indication.
-    if let Some(sig) = status.signal() {
-        eprintln!("rwv-{verb} terminated by signal {sig}");
-        std::process::exit(128 + sig);
+    // No exit code → on Unix this means the child was terminated by a
+    // signal. Report and mirror the conventional 128 + N mapping so
+    // downstream consumers (shells, CI runners) see the standard
+    // indication. Signals do not exist on Windows, so the branch is
+    // Unix-only — release builds target windows-msvc too.
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::ExitStatusExt;
+        if let Some(sig) = status.signal() {
+            eprintln!("rwv-{verb} terminated by signal {sig}");
+            std::process::exit(128 + sig);
+        }
     }
 
-    // Neither an exit code nor a signal — should be impossible on Unix.
+    // Neither an exit code nor a signal — should be impossible.
     // Emit a defensive 1 rather than looping forever.
     eprintln!("rwv-{verb} exited abnormally with no status");
     std::process::exit(1);
