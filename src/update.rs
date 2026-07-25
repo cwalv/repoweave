@@ -488,10 +488,11 @@ fn advance_one(
         Ok(r) => r,
         Err(_) => {
             return Err(format!(
-                "{repo}: branch '{branch}' no longer exists on the remote \
-                 — deleted or renamed upstream. \
-                 To fix: either update rwv.yaml's `version:` field to the \
-                 new branch name, or pin `version:` to a SHA or tag.",
+                "{repo}: branch '{branch}' does not resolve on the remote \
+                 — renamed or deleted upstream, or `version:` was never a \
+                 branch (it tracks a branch only; it cannot pin a tag or \
+                 SHA). To fix: update rwv.yaml's `version:` field to the \
+                 current branch name.",
                 repo = repo_path.as_str(),
             ));
         }

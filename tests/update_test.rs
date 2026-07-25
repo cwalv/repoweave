@@ -497,8 +497,10 @@ fn rename_branch_on_bare(bare: &Path, old_name: &str, new_name: &str) {
 /// subsequent resolution fails with a house-pattern error naming:
 /// - the repo path,
 /// - the branch name that is gone,
-/// - the state ("no longer exists on the remote — deleted or renamed upstream"),
-/// - both exits (update rwv.yaml version, or pin to SHA/tag).
+/// - the state ("does not resolve on the remote — renamed or deleted upstream"),
+/// - the one exit (update rwv.yaml's `version:` to the current branch name);
+///   the message must not recommend pinning `version:` to a SHA or tag,
+///   since `version:` is branch-only and that pin can never resolve.
 #[test]
 fn update_prune_detects_deleted_branch_with_actionable_message() {
     let ws = build_workspace("r18-test", &[("local/org/renamed", "owned")]);
@@ -539,18 +541,20 @@ fn update_prune_detects_deleted_branch_with_actionable_message() {
         "error must name the branch that is gone; got:\n{combined}"
     );
     assert!(
-        combined.contains("no longer exists on the remote")
-            || combined.contains("deleted or renamed upstream"),
+        combined.contains("does not resolve on the remote")
+            || combined.contains("renamed or deleted upstream"),
         "error must state the upstream-deletion/rename condition; got:\n{combined}"
     );
-    // Must name both exits.
+    // Must name the one supported exit.
     assert!(
-        combined.contains("version:") || combined.contains("new branch name"),
+        combined.contains("version:") || combined.contains("current branch name"),
         "error must name the rwv.yaml version update exit; got:\n{combined}"
     );
+    // Must not steer the operator toward pinning `version:` to a SHA/tag —
+    // that pin is unsupported and can never resolve.
     assert!(
-        combined.contains("SHA") || combined.contains("tag") || combined.contains("pin"),
-        "error must name the SHA/tag pin exit; got:\n{combined}"
+        !combined.contains("pin `version:`"),
+        "error must not recommend the unsupported version: pin; got:\n{combined}"
     );
 }
 

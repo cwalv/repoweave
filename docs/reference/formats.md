@@ -44,8 +44,10 @@ Keyed by canonical local path (`<registry>/<owner>/<repo>`). Each entry:
 |---|---|---|
 | `type` | yes | VCS type. Currently `git`. |
 | `url` | yes | Clone URL. Used by `rwv fetch` on other machines. |
-| `version` | yes | Branch or tag (manifest); revision SHA (lock). |
+| `version` | yes | Branch (manifest); revision SHA or tag (lock). |
 | `role` | yes | One of `owned`, `fork`, `dependency`, `reference`. |
+
+`version` is branch-only by design: the manifest declares what to *track*, the lock records where you *are*. A tag or SHA in `version:` would conflate the two layers — `rwv update` means "advance to branch HEAD," which is meaningless for a fixed point. Pinning would need a differently-named field, not an overload of `version:`.
 
 Manifests must use `role: owned`. The pre-rename `role: primary` spelling no longer parses; running `rwv doctor --fix` migrates affected manifests in place. See [reference/roles — Migrating from `role: primary`](./roles.md#migrating-from-role-primary) for the migration path.
 
