@@ -152,6 +152,31 @@ whole.
 file. The committed file is always consistent with committed `rwv.yaml` + `rwv.lock` by
 construction, because regeneration is tied to the intent verb that changed them.
 
+### Install hooks at context verbs: lockfiles may be rewritten
+
+"Never author" is a claim about the **authoring path** — the managed regions and rwv-computed
+artifacts that intent verbs regenerate. It is not a claim that a context verb leaves every byte on
+disk untouched. The context verbs that run activation (`activate`, `init`, `init --adopt`, and
+`fetch`'s first-fetch auto-activate — not workweave-create, which suppresses hooks, and not `lock`,
+which runs no activation) still fire the integration **install hooks**, and the ecosystem tools
+those hooks invoke rewrite the lockfiles they own: `Cargo.lock`, `package-lock.json`,
+`pnpm-lock.yaml`, `uv.lock`.
+
+This holds at `init --adopt` even when the adopted repo **commits** its lock. A generated lock is
+fully rwv-owned derived state with no user author (§"Lockfiles are fully owned",
+[lock-as-derived](./lock-as-derived.md)); committing one does not transfer the pen, so an adopt
+regenerating it is a refresh of derived state, not re-authoring of committed content. (For
+`Cargo.lock` the refresh is also a re-resolve: `cargo generate-lockfile` rebuilds an existing lock
+with the latest compatible version of every package.) The adopt-time no-clobber guarantee is
+exactly the authoring-path guarantee: managed regions, rwv-computed generated artifacts (a
+`.code-workspace`, gita CSVs — written only by intent-mode `activate()`), and static-files entries
+(surfaced, never written) all survive an adopt byte-for-byte.
+
+The license is keyed on **ownership**, not on `generated_files()` membership: static-files entries
+ride `generated_files()` for Axis-1 surfacing while remaining fully user-owned, and no verb —
+context or intent — may write them. Conversely `go.sum` is hook-owned in principle, but rwv runs
+no go install hook today, so nothing rewrites it at a context verb.
+
 ## The shared helper API
 
 The hybrid-merge invariants live once, in `src/integrations/merge.rs`, rather than duplicated
