@@ -103,12 +103,24 @@ const ALLOWLIST: &[Allowed] = &[
     Allowed {
         file: "git.rs",
         pattern: "\"-D\"",
-        count: 2,
+        count: 3,
         justification: "(1) create_worktree retry: deletes a stale \
             ephemeral branch (project--workweave/branch namespace) left by \
             a previous failed create. (2) delete_branch: only called with \
             ephemeral-prefix branch names from delete_workweave, behind \
-            its refusals.",
+            its refusals. (3) destroy_local_ref: the branch-model DESTROY \
+            primitive (branch-model.md §3.2, §4.3). Reachable only through \
+            Vcs::delete_owned_ref, which takes a persisted receipt \
+            (OwnedRef — R2, ownership by record, never by name shape) AND a \
+            DeletionWarrant (R3), which is an opaque struct over a private \
+            enum whose only constructors RUN the check they certify: \
+            unmoved (tip still equals the recorded tip), merged (tip is an \
+            ancestor of a named baseline), operator_discarded \
+            (--discard-unmerged-commits). The receipt carries the store, so \
+            it cannot authorise a delete in a different refdb. Force \
+            semantics are correct here: the warrant already established the \
+            safety `-d` would re-derive, and `-d` would additionally refuse \
+            the operator_discarded case the flag exists to permit.",
     },
     Allowed {
         file: "git.rs",
@@ -126,15 +138,20 @@ const ALLOWLIST: &[Allowed] = &[
     Allowed {
         file: "git.rs",
         pattern: "push(\"--force\")",
-        count: 1,
-        justification: "push_with_role: force only when the operator \
+        count: 2,
+        justification: "(1) push_with_role: force only when the operator \
             passed rwv push --force; lock-freshness and branch \
-            preconditions run first.",
+            preconditions run first. (2) push_ref: same flag, same \
+            preconditions; the branch-model form takes the ref to publish \
+            as a parameter (PublishRef) instead of reading whatever branch \
+            the checkout happens to be on, so the choice is made at one \
+            site in push.rs rather than inside the VCS impl \
+            (branch-model.md §4.3; Q6 decides what that site passes).",
     },
     Allowed {
         file: "git.rs",
         pattern: "\"checkout\"",
-        count: 2,
+        count: 4,
         justification: "(1) checkout(): no -f flag, so git itself refuses \
             when the switch would overwrite a modified path; callers check \
             out lock-pinned revisions or fresh clones, and fetch's \
@@ -145,7 +162,22 @@ const ALLOWLIST: &[Allowed] = &[
             (2) refresh_working_tree_to_head_if_safe: \
             restores files from HEAD only after verifying every on-disk \
             blob is reachable from recent history — live edits are never \
-            clobbered (relocated from sync.rs).",
+            clobbered (relocated from sync.rs). \
+            (3) set_detached_head: the branch-model ATTACH/MOVE primitive \
+            for a HEAD that names no branch. No -f, so git's own refusal to \
+            overwrite modified paths still applies. Reachable only through \
+            detach_head, which requires a DetachConsent minted from \
+            --detach-checkouts and re-verifies the attachment witness \
+            first, or through advance_detached_head, which is a MOVE of an \
+            already-detached HEAD and refuses when the repo is mid-op \
+            (branch-model.md §3.6 — including mid-bisect). \
+            (4) attach_head_to: reattaches to an EXISTING local branch; no \
+            -b, so git refuses when the branch is absent (creating one \
+            would be a birth, a different operation with a different \
+            consent shape), and no -f. Reachable only through \
+            reattach_head, which requires a ReattachConsent minted from \
+            --reattach-checkouts and refuses when the observed HEAD state \
+            differs from the one the caller planned against.",
     },
     Allowed {
         file: "git.rs",
@@ -292,7 +324,38 @@ fn rust_files(dir: &Path, out: &mut Vec<PathBuf>) {
     }
 }
 
-/// Count pattern hits per (relative file, pattern), skipping comment lines.
+/// Whether the next item in `rest` (skipping blank and comment lines) is a
+/// module declaration — i.e. whether the `#[cfg(test)]` just seen opens a
+/// test module rather than gating a single test-only item.
+fn next_item_is_a_module(rest: &[&str]) -> bool {
+    for line in rest {
+        let t = line.trim_start();
+        if t.is_empty() || t.starts_with("//") || t.starts_with("#[") {
+            continue;
+        }
+        return t.starts_with("mod ")
+            || t.starts_with("pub mod ")
+            || t.starts_with("pub(crate) mod ");
+    }
+    false
+}
+
+/// Count pattern hits per (relative file, pattern), skipping comment lines
+/// and in-file test modules.
+///
+/// **Test modules are not call sites.** A `#[cfg(test)] mod` inside `src/`
+/// is test code that happens to live next to what it tests, and its
+/// fixtures legitimately run `git checkout` / `git branch -D` to build the
+/// states the product code is asserted against. Counting them would force
+/// every fixture into the allowlist alongside the sites it exists to test,
+/// which is noise in exactly the place this file is trying to keep sharp.
+///
+/// The exclusion relies on the convention this crate follows everywhere: a
+/// `#[cfg(test)] mod` is the last item in its file, so scanning stops at
+/// the first one. `#[cfg(test)]` on anything that is *not* a module (the
+/// test hooks in `integrations/go_work.rs`, for instance) does not stop the
+/// scan. Product code placed *after* a test module would go unscanned —
+/// don't do that.
 fn scan() -> BTreeMap<(String, &'static str), usize> {
     let src = src_dir();
     let mut files = Vec::new();
@@ -306,8 +369,12 @@ fn scan() -> BTreeMap<(String, &'static str), usize> {
             .to_string_lossy()
             .replace('\\', "/");
         let text = std::fs::read_to_string(&file).expect("read source file");
-        for line in text.lines() {
+        let lines: Vec<&str> = text.lines().collect();
+        for (i, line) in lines.iter().enumerate() {
             let trimmed = line.trim_start();
+            if trimmed.starts_with("#[cfg(test)]") && next_item_is_a_module(&lines[i + 1..]) {
+                break;
+            }
             if trimmed.starts_with("//") {
                 continue;
             }

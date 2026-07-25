@@ -2,7 +2,8 @@
 
 use crate::manifest::Role;
 use crate::vcs::{
-    CommitSummary, ConflictOp, PreAbortRef, RefName, ResolvedRevisionId, UniqueDiff, Vcs, VcsError,
+    CommitSummary, ConflictOp, HeadObservation, LocalRefName, PreAbortRef, PublishRef, RawRefName,
+    RefName, RemoteDefaultBranch, ResolvedRevisionId, UniqueDiff, Vcs, VcsError,
     VerifiedRestoreOutcome,
 };
 use std::path::{Path, PathBuf};
@@ -444,7 +445,31 @@ impl GitVcs {
         Self::run(&["diff", &range], repo)
     }
 
+    /// The directory to run ref-level git commands in for a canonical
+    /// store path.
+    ///
+    /// A receipt is keyed by canonical store, and `resolve_canonical_store`
+    /// reports the store itself (`<clone>/.git`), not the working
+    /// directory. git will accept a `.git` directory as its cwd, but the
+    /// behaviour differs subtly between porcelain commands, so normalise to
+    /// the clone root and leave anything else alone.
+    fn work_dir_for_store(store: &Path) -> PathBuf {
+        match store.file_name() {
+            Some(name) if name == ".git" => store
+                .parent()
+                .map(Path::to_path_buf)
+                .unwrap_or_else(|| store.to_path_buf()),
+            _ => store.to_path_buf(),
+        }
+    }
+
     /// Detect if a repo is in a mid-operation VCS state (mid-rebase, mid-merge, etc.).
+    ///
+    /// A bisect counts. It has no conflict-resume path, so it never
+    /// appears in [`Vcs::mid_op`] — but it is operator state living in
+    /// HEAD's *position*, and repositioning HEAD out from under it loses
+    /// the bisect with nothing to resume from. That is the state the
+    /// detached-MOVE precondition (§3.6) exists to see.
     pub fn mid_op_state(repo: &Path) -> Option<String> {
         let git_dir = match Self::run(&["rev-parse", "--git-dir"], repo) {
             Ok(s) => {
@@ -465,6 +490,9 @@ impl GitVcs {
         }
         if git_dir.join("CHERRY_PICK_HEAD").exists() {
             return Some("mid-cherry-pick".to_owned());
+        }
+        if git_dir.join("BISECT_LOG").exists() {
+            return Some("mid-bisect".to_owned());
         }
         None
     }
@@ -675,19 +703,14 @@ fn is_transient_tag(tag: &str) -> bool {
 /// True for release-shape tags (e.g., `v1.2.3`, `v0.3.4-rc1`). Used as a
 /// tiebreaker when multiple non-transient tags point at HEAD so a release
 /// tag wins over an arbitrary lightweight tag.
+///
+/// The rule itself lives at the seam
+/// ([`crate::vcs::is_release_shape_name`]) because `TrackingRef::parse`
+/// asks the same question for the opposite purpose — rejecting a
+/// `version:` that names a release rather than a channel. One definition,
+/// two callers.
 fn is_release_shape_tag(tag: &str) -> bool {
-    let rest = match tag.strip_prefix('v') {
-        Some(r) => r,
-        None => return false,
-    };
-    // Require at least "N.N" (e.g., "1.0") to count as release-shape.
-    let mut parts = rest.split(['.', '-', '+']);
-    let first = parts.next().unwrap_or("");
-    let second = parts.next().unwrap_or("");
-    !first.is_empty()
-        && first.chars().all(|c| c.is_ascii_digit())
-        && !second.is_empty()
-        && second.chars().next().is_some_and(|c| c.is_ascii_digit())
+    crate::vcs::is_release_shape_name(tag)
 }
 
 impl Vcs for GitVcs {
@@ -1372,9 +1395,8 @@ impl Vcs for GitVcs {
 
     fn resolve_savepoint(&self, repo: &Path, op_id: &str) -> Option<ResolvedRevisionId> {
         let ref_name = savepoint_ref(op_id);
-        Self::run(&["rev-parse", &ref_name], repo)
-            .ok()
-            .map(ResolvedRevisionId::from_canonical_unchecked)
+        let out = Self::run(&["rev-parse", &ref_name], repo).ok()?;
+        ResolvedRevisionId::from_rev_parse_output(&out)
     }
 
     fn restore_savepoint(&self, repo: &Path, op_id: &str) -> Result<bool, VcsError> {
@@ -1414,7 +1436,7 @@ impl Vcs for GitVcs {
         let label = pre_abort_ref(op_id);
         let canonical = Self::run(&["rev-parse", &label], repo).ok()?;
         Some(PreAbortRef {
-            revision: ResolvedRevisionId::from_canonical_unchecked(canonical),
+            revision: ResolvedRevisionId::from_rev_parse_output(&canonical)?,
             label,
         })
     }
@@ -1929,6 +1951,203 @@ impl Vcs for GitVcs {
             text,
         })
     }
+
+    // =======================================================================
+    // The branch model (branch-model.md §4.3)
+    // =======================================================================
+
+    fn observe_head(&self, repo: &Path) -> Result<HeadObservation, VcsError> {
+        // "Not a repo" is an error, not a state. The shipped `current_ref`
+        // folded it into the same `Ok(None)` as "detached", which is how
+        // `rwv push` came to report a detached HEAD for a directory with no
+        // git in it at all.
+        if !self.is_repo(repo) {
+            return Err(VcsError::NotARepo(repo.to_path_buf()));
+        }
+        match Self::run(&["symbolic-ref", "--short", "HEAD"], repo) {
+            Ok(name) => {
+                // HEAD is symbolic. Whether the branch has commits is a
+                // second question: `symbolic-ref` succeeds on an unborn
+                // branch, and `rev-parse HEAD` is what tells the two apart.
+                // (This is the check `head_revision` had to grow inline; it
+                // belongs here, where the question is actually asked.)
+                match Self::run(&["rev-parse", "--verify", "HEAD^{commit}"], repo) {
+                    Ok(_) => Ok(HeadObservation::Attached {
+                        name: RawRefName::new(name),
+                    }),
+                    Err(_) => Ok(HeadObservation::Unborn {
+                        name: RawRefName::new(name),
+                    }),
+                }
+            }
+            Err(symbolic_err) => {
+                // HEAD is not symbolic — or the ref database is unreadable.
+                // Resolving HEAD tells us which: a detached HEAD resolves,
+                // a broken refdb does not, and the latter is an error.
+                match Self::run(&["rev-parse", "--verify", "HEAD^{commit}"], repo) {
+                    Ok(sha) => match ResolvedRevisionId::from_rev_parse_output(&sha) {
+                        Some(at) => Ok(HeadObservation::Detached { at }),
+                        None => Err(VcsError::CommandFailed {
+                            args: vec!["rev-parse".to_owned(), "HEAD^{commit}".to_owned()],
+                            repo: repo.to_path_buf(),
+                            stderr: format!("HEAD resolved to a non-canonical value: {sha:?}"),
+                        }),
+                    },
+                    Err(_) => Err(symbolic_err),
+                }
+            }
+        }
+    }
+
+    fn resolve_local_branch_tip(
+        &self,
+        repo: &Path,
+        name: &RawRefName,
+    ) -> Result<Option<ResolvedRevisionId>, VcsError> {
+        let repo = Self::work_dir_for_store(repo);
+        // Fully qualified: `refs/heads/<name>` cannot be answered by a tag
+        // or a remote-tracking ref of the same name.
+        let qualified = format!("refs/heads/{}^{{commit}}", name.as_str());
+        match Self::run(&["rev-parse", "--verify", "--quiet", &qualified], &repo) {
+            Ok(sha) => Ok(ResolvedRevisionId::from_rev_parse_output(&sha)),
+            // `--quiet` makes "no such ref" an exit code with no stderr,
+            // which is the absence this method reports rather than an error.
+            Err(VcsError::CommandFailed { .. }) => Ok(None),
+            Err(e) => Err(e),
+        }
+    }
+
+    fn mid_operation(&self, repo: &Path) -> Option<String> {
+        Self::mid_op_state(repo)
+    }
+
+    fn materialize_worktree_on_ref(
+        &self,
+        store: &Path,
+        dest: &Path,
+        name: &RawRefName,
+        start_point: &ResolvedRevisionId,
+    ) -> Result<bool, VcsError> {
+        let store = Self::work_dir_for_store(store);
+        let dest_str = dest.to_str().ok_or_else(|| VcsError::Io {
+            ctx: format!("worktree path {} is not valid UTF-8", dest.display()),
+            source: std::io::Error::new(std::io::ErrorKind::InvalidInput, "non-utf8 worktree path"),
+        })?;
+        let start = start_point.as_str();
+        let branch = name.as_str();
+
+        // Classify BEFORE acting, by asking whether the ref is there. Two
+        // reasons it cannot be done by matching stderr afterwards: git says
+        // "already exists" for a taken destination path as well as for a
+        // taken branch name, and `worktree add -b` creates the branch
+        // before it fails on the destination, so a post-hoc look sees a ref
+        // this very call just made.
+        if self.resolve_local_branch_tip(&store, name)?.is_some() {
+            // ADOPT. The shipped path force-deleted the branch here and
+            // retried with -b, destroying a ref on nothing but a name match
+            // — a DESTROY needs a receipt and a warrant (R2, R3), and this
+            // call holds neither, so it cannot be reached from here.
+            Self::run(&["worktree", "add", dest_str, branch], &store)?;
+            return Ok(false);
+        }
+        // AUTHOR. If this fails after git has already written the ref (a
+        // taken destination is the usual way), the ref is left in place
+        // rather than cleaned up: the receipt was persisted before this
+        // call, so what remains is a recorded ref with no worktree, which
+        // doctor can reconcile. Deleting it here would be an unwarranted
+        // DESTROY, which is the failure mode this path exists to remove.
+        Self::run(&["worktree", "add", "-b", branch, dest_str, start], &store)?;
+        Ok(true)
+    }
+
+    fn set_detached_head(&self, repo: &Path, to: &ResolvedRevisionId) -> Result<(), VcsError> {
+        Self::run(&["checkout", "--detach", to.as_str()], repo)?;
+        Ok(())
+    }
+
+    fn attach_head_to(&self, repo: &Path, name: &LocalRefName) -> Result<(), VcsError> {
+        // No `-b`: attaching to a branch that does not exist would be a
+        // birth, which is a different operation with a different consent
+        // shape. git refuses, and the refusal is the point.
+        Self::run(&["checkout", name.as_str()], repo)?;
+        Ok(())
+    }
+
+    fn destroy_local_ref(&self, store: &Path, name: &RawRefName) -> Result<(), VcsError> {
+        let store = Self::work_dir_for_store(store);
+        Self::run(&["branch", "-D", name.as_str()], &store)?;
+        Ok(())
+    }
+
+    fn push_ref(
+        &self,
+        repo: &Path,
+        role: Role,
+        r: &PublishRef,
+        force: bool,
+    ) -> Result<(), VcsError> {
+        let _ = role; // all remotes use `origin`
+        let mut args: Vec<&str> = vec!["push"];
+        if force {
+            args.push("--force");
+        }
+        args.push("origin");
+        args.push(r.name().as_str());
+        Self::run(&args, repo)?;
+        Ok(())
+    }
+
+    fn remote_default_branch(&self, repo: &Path) -> Result<Option<RemoteDefaultBranch>, VcsError> {
+        // A non-repo is an error; an unset symref is an absence. Keeping
+        // those apart is the same move `observe_head` makes, applied to the
+        // other side of the L1 publish gate.
+        if !self.is_repo(repo) {
+            return Err(VcsError::NotARepo(repo.to_path_buf()));
+        }
+        const NAMESPACE: &str = "refs/remotes/origin/";
+        match Self::run(&["symbolic-ref", "refs/remotes/origin/HEAD"], repo) {
+            // No fallback. The shipped `default_branch` invented "main"
+            // here, so the publish gate compared an observation against a
+            // guess; `None` makes the gate refuse and say what is missing.
+            Ok(target) => Ok(RemoteDefaultBranch::from_symref_target(&target, NAMESPACE)),
+            Err(_) => Ok(None),
+        }
+    }
+
+    fn list_branch_names_with_prefix(
+        &self,
+        repo: &Path,
+        prefix: &str,
+    ) -> Result<Vec<RawRefName>, VcsError> {
+        let pattern = format!("{prefix}*");
+        let output = Self::run(
+            &[
+                "for-each-ref",
+                "--format=%(refname:short)",
+                &format!("refs/heads/{pattern}"),
+            ],
+            repo,
+        )?;
+        Ok(output
+            .lines()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(RawRefName::new)
+            .collect())
+    }
+
+    fn list_local_branch_names(&self, repo: &Path) -> Result<Vec<RawRefName>, VcsError> {
+        let output = Self::run(
+            &["for-each-ref", "--format=%(refname:short)", "refs/heads/"],
+            repo,
+        )?;
+        Ok(output
+            .lines()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(RawRefName::new)
+            .collect())
+    }
 }
 
 /// Build the savepoint ref path for `op_id` under the rwv pre-op namespace.
@@ -2025,5 +2244,486 @@ impl GitVcs {
             })
             .collect();
         Ok(names)
+    }
+}
+
+#[cfg(test)]
+mod branch_model_tests {
+    //! Receipts, warrants, and consent-gated attachment changes.
+    //!
+    //! These live in-crate because the types they exercise are minted by
+    //! crate-internal producers: a receipt comes from the registry, a
+    //! consent token from the flag module. That is the point — an
+    //! integration test *cannot* forge them, which is the invariant.
+    //!
+    //! Everything reachable from outside the crate is in
+    //! `tests/branch_model_test.rs`.
+
+    use super::*;
+    use crate::vcs::{
+        DeletionWarrant, DetachConsent, DiscardLocalCommitsConsent, DiscardUnmergedConsent,
+        DiscardWarrant, HeadAttachment, LocalRefName, OwnedRef, RawRefName, ReattachConsent,
+        TrackingRef,
+    };
+
+    /// A local branch name, obtained the only way one can be: through the
+    /// named projection off a declared tracking ref.
+    fn local(name: &str) -> LocalRefName {
+        TrackingRef::parse(RawRefName::new(name))
+            .expect("test fixture names are valid tracking refs")
+            .local_counterpart()
+    }
+
+    /// Run git in `dir`, panicking on failure.
+    fn git(dir: &Path, args: &[&str]) -> String {
+        let out = git_command()
+            .args(args)
+            .current_dir(dir)
+            .output()
+            .expect("run git");
+        assert!(
+            out.status.success(),
+            "git {:?} failed in {}: {}",
+            args,
+            dir.display(),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        String::from_utf8(out.stdout).unwrap().trim().to_owned()
+    }
+
+    /// A repo on `main` with one commit.
+    fn repo() -> tempfile::TempDir {
+        let tmp = tempfile::tempdir().unwrap();
+        let p = tmp.path();
+        git(p, &["init", "-b", "main"]);
+        git(p, &["config", "user.email", "t@t"]);
+        git(p, &["config", "user.name", "T"]);
+        std::fs::write(p.join("f"), "1").unwrap();
+        git(p, &["add", "."]);
+        git(p, &["commit", "-m", "one"]);
+        tmp
+    }
+
+    /// Commit a new file and return the resulting tip.
+    fn commit(p: &Path, name: &str) -> ResolvedRevisionId {
+        std::fs::write(p.join(name), name).unwrap();
+        git(p, &["add", "."]);
+        git(p, &["commit", "-m", name]);
+        GitVcs.head_revision(p).unwrap()
+    }
+
+    /// A receipt as the registry would persist one: store, name, and the
+    /// tip the ref was recorded at.
+    fn receipt(store: &Path, name: &str, at: &ResolvedRevisionId) -> OwnedRef {
+        OwnedRef::from_receipt(store.to_path_buf(), RawRefName::new(name), at.clone())
+    }
+
+    /// A worktree destination that does not exist yet, inside its own temp
+    /// directory so parallel tests cannot collide on it.
+    fn worktree_dest() -> (tempfile::TempDir, PathBuf) {
+        let tmp = tempfile::tempdir().unwrap();
+        let dest = tmp.path().join("wt");
+        (tmp, dest)
+    }
+
+    // -----------------------------------------------------------------------
+    // Birth: authored vs adopted
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn create_worktree_on_authors_the_ref_and_says_so() {
+        let store = repo();
+        let start = GitVcs.head_revision(store.path()).unwrap();
+        let (_dest_home, dest) = worktree_dest();
+
+        let born = GitVcs
+            .create_worktree_on(&receipt(store.path(), "p--ww", &start), &dest)
+            .unwrap()
+            .expect("this call created the ref");
+
+        assert_eq!(born.name().as_str(), "p--ww");
+        assert_eq!(born.at(), &start);
+        // Which ref is this checkout on?
+        assert_eq!(
+            GitVcs.head_attachment(&dest).unwrap().to_string(),
+            "on branch 'p--ww'"
+        );
+    }
+
+    #[test]
+    fn create_worktree_on_adopts_a_pre_existing_ref_without_destroying_it() {
+        // The shipped retry force-deleted the branch and re-created it,
+        // which destroyed a ref on nothing but a name match. A DESTROY
+        // needs a receipt and a warrant; this path has neither, so it must
+        // adopt.
+        let store = repo();
+        let start = GitVcs.head_revision(store.path()).unwrap();
+        git(store.path(), &["branch", "p--ww"]);
+        git(store.path(), &["checkout", "p--ww"]);
+        let unique = commit(store.path(), "unique-work");
+        git(store.path(), &["checkout", "main"]);
+
+        let (_dest_home, dest) = worktree_dest();
+        let born = GitVcs
+            .create_worktree_on(&receipt(store.path(), "p--ww", &start), &dest)
+            .unwrap();
+
+        assert!(born.is_none(), "adopted, not authored");
+        assert_eq!(
+            GitVcs.head_attachment(&dest).unwrap().to_string(),
+            "on branch 'p--ww'"
+        );
+        assert_eq!(
+            GitVcs.head_revision(&dest).unwrap(),
+            unique,
+            "the commit that was already on the adopted branch survives"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // DESTROY: receipt + warrant
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn unmoved_holds_only_while_the_ref_is_where_the_receipt_recorded_it() {
+        let store = repo();
+        let recorded = GitVcs.head_revision(store.path()).unwrap();
+        git(store.path(), &["branch", "p--ww"]);
+        let r = receipt(store.path(), "p--ww", &recorded);
+
+        assert!(
+            DeletionWarrant::unmoved(&GitVcs, &r).is_some(),
+            "tip still equals the recorded tip"
+        );
+
+        // Someone commits on it. The branch is no longer stale, and the
+        // warrant that licensed deleting a stale branch evaporates.
+        git(store.path(), &["checkout", "p--ww"]);
+        commit(store.path(), "work");
+        git(store.path(), &["checkout", "main"]);
+        assert!(DeletionWarrant::unmoved(&GitVcs, &r).is_none());
+    }
+
+    #[test]
+    fn unmoved_is_none_for_a_receipt_whose_ref_does_not_exist() {
+        let store = repo();
+        let recorded = GitVcs.head_revision(store.path()).unwrap();
+        let r = receipt(store.path(), "never-created", &recorded);
+        assert!(DeletionWarrant::unmoved(&GitVcs, &r).is_none());
+    }
+
+    #[test]
+    fn merged_holds_exactly_when_the_tip_is_reachable_from_the_baseline() {
+        let store = repo();
+        let base = GitVcs.head_revision(store.path()).unwrap();
+        git(store.path(), &["branch", "p--ww"]);
+        let r = receipt(store.path(), "p--ww", &base);
+
+        // main advances past the branch: the branch's tip is an ancestor.
+        let advanced = commit(store.path(), "later");
+        assert!(DeletionWarrant::merged(&GitVcs, &r, &advanced).is_some());
+
+        // The branch gains a commit the baseline does not have.
+        git(store.path(), &["checkout", "p--ww"]);
+        commit(store.path(), "branch-only");
+        git(store.path(), &["checkout", "main"]);
+        assert!(DeletionWarrant::merged(&GitVcs, &r, &advanced).is_none());
+    }
+
+    #[test]
+    fn delete_owned_ref_destroys_the_ref_the_receipt_names() {
+        let store = repo();
+        let recorded = GitVcs.head_revision(store.path()).unwrap();
+        git(store.path(), &["branch", "p--ww"]);
+        let r = receipt(store.path(), "p--ww", &recorded);
+
+        let warrant = DeletionWarrant::unmoved(&GitVcs, &r).expect("unmoved");
+        GitVcs.delete_owned_ref(&r, warrant).unwrap();
+
+        assert!(GitVcs
+            .resolve_local_branch_tip(store.path(), &RawRefName::new("p--ww"))
+            .unwrap()
+            .is_none());
+        assert!(
+            GitVcs
+                .resolve_local_branch_tip(store.path(), &RawRefName::new("main"))
+                .unwrap()
+                .is_some(),
+            "nothing else was touched"
+        );
+    }
+
+    #[test]
+    fn a_receipt_keyed_to_a_git_dir_still_names_a_workable_repo() {
+        // Receipts are keyed by canonical store, which `resolve_canonical_store`
+        // reports as `<clone>/.git` — not the working directory.
+        let store = repo();
+        let recorded = GitVcs.head_revision(store.path()).unwrap();
+        git(store.path(), &["branch", "p--ww"]);
+        let r = receipt(&store.path().join(".git"), "p--ww", &recorded);
+
+        let warrant = DeletionWarrant::unmoved(&GitVcs, &r).expect("unmoved via .git path");
+        GitVcs.delete_owned_ref(&r, warrant).unwrap();
+        assert!(GitVcs
+            .resolve_local_branch_tip(store.path(), &RawRefName::new("p--ww"))
+            .unwrap()
+            .is_none());
+    }
+
+    #[test]
+    fn an_unmerged_ref_is_destroyed_only_on_the_operator_s_say_so() {
+        let store = repo();
+        let base = GitVcs.head_revision(store.path()).unwrap();
+        git(store.path(), &["branch", "p--ww"]);
+        git(store.path(), &["checkout", "p--ww"]);
+        commit(store.path(), "unmerged-work");
+        git(store.path(), &["checkout", "main"]);
+        let r = receipt(store.path(), "p--ww", &base);
+
+        // Neither structural warrant holds: the ref moved, and its tip is
+        // not reachable from the baseline.
+        assert!(DeletionWarrant::unmoved(&GitVcs, &r).is_none());
+        assert!(DeletionWarrant::merged(&GitVcs, &r, &base).is_none());
+
+        // The named override is the only remaining route, and it is a
+        // token the operator has to have produced.
+        let warrant = DeletionWarrant::operator_discarded(DiscardUnmergedConsent::granted());
+        GitVcs.delete_owned_ref(&r, warrant).unwrap();
+        assert!(GitVcs
+            .resolve_local_branch_tip(store.path(), &RawRefName::new("p--ww"))
+            .unwrap()
+            .is_none());
+    }
+
+    #[test]
+    fn a_taken_destination_path_is_not_mistaken_for_a_taken_ref() {
+        // git says "already exists" for both, and reading that string as
+        // "the branch is already there" would send a filesystem collision
+        // down the adopt path.
+        let store = repo();
+        let start = GitVcs.head_revision(store.path()).unwrap();
+        let (_dest_home, dest) = worktree_dest();
+        std::fs::create_dir_all(&dest).unwrap();
+        std::fs::write(dest.join("in-the-way"), "x").unwrap();
+
+        let err = GitVcs
+            .create_worktree_on(&receipt(store.path(), "p--ww", &start), &dest)
+            .unwrap_err();
+        assert!(
+            format!("{err}").contains("already exists"),
+            "the real failure is surfaced, not swallowed: {err}"
+        );
+        assert!(
+            dest.join("in-the-way").exists(),
+            "the destination is intact"
+        );
+        // git writes the ref before it checks the destination, so a residual
+        // `p--ww` at the start point is expected. What matters is that it is
+        // at the start point and NOT destroyed on the way out: the receipt
+        // for it was persisted before this call, so a recorded ref with no
+        // worktree is reconcilable, while an unwarranted delete is not
+        // recoverable at all.
+        if let Some(tip) = GitVcs
+            .resolve_local_branch_tip(store.path(), &RawRefName::new("p--ww"))
+            .unwrap()
+        {
+            assert_eq!(tip, start, "the residual ref is exactly what was asked for");
+        }
+    }
+
+    #[test]
+    fn resolve_local_branch_tip_will_not_answer_with_a_tag() {
+        let store = repo();
+        let head = GitVcs.head_revision(store.path()).unwrap();
+        git(store.path(), &["tag", "decoy"]);
+        assert!(GitVcs
+            .resolve_local_branch_tip(store.path(), &RawRefName::new("decoy"))
+            .unwrap()
+            .is_none());
+        assert_eq!(
+            GitVcs
+                .resolve_local_branch_tip(store.path(), &RawRefName::new("main"))
+                .unwrap(),
+            Some(head)
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // ATTACH: post-birth attachment changes need consent
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn detach_head_leaves_the_checkout_on_no_branch() {
+        let p = repo();
+        let target = GitVcs.head_revision(p.path()).unwrap();
+        let HeadAttachment::Attached(w) = GitVcs.head_attachment(p.path()).unwrap() else {
+            panic!("fixture should be attached");
+        };
+
+        GitVcs
+            .detach_head(&w, &target, DetachConsent::granted())
+            .unwrap();
+
+        match GitVcs.head_attachment(p.path()).unwrap() {
+            HeadAttachment::Detached(d) => assert_eq!(d.at(), &target),
+            other => panic!("expected Detached, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn detach_head_refuses_a_stale_witness() {
+        let p = repo();
+        let target = GitVcs.head_revision(p.path()).unwrap();
+        let HeadAttachment::Attached(w) = GitVcs.head_attachment(p.path()).unwrap() else {
+            panic!("fixture should be attached");
+        };
+        git(p.path(), &["checkout", "-b", "elsewhere"]);
+
+        let err = GitVcs
+            .detach_head(&w, &target, DetachConsent::granted())
+            .unwrap_err();
+        assert_eq!(err.kind(), "stale-ref-witness");
+        assert_eq!(
+            GitVcs.head_attachment(p.path()).unwrap().to_string(),
+            "on branch 'elsewhere'",
+            "the refusal left the attachment alone"
+        );
+    }
+
+    #[test]
+    fn reattach_head_moves_the_checkout_onto_an_existing_branch() {
+        let p = repo();
+        let tip = GitVcs.head_revision(p.path()).unwrap();
+        git(p.path(), &["branch", "target"]);
+        git(p.path(), &["checkout", "--detach", tip.as_str()]);
+
+        let from = GitVcs.head_attachment(p.path()).unwrap();
+        GitVcs
+            .reattach_head(from, &local("target"), ReattachConsent::granted())
+            .unwrap();
+
+        assert_eq!(
+            GitVcs.head_attachment(p.path()).unwrap().to_string(),
+            "on branch 'target'"
+        );
+    }
+
+    #[test]
+    fn reattach_head_refuses_when_the_planned_state_no_longer_holds() {
+        let p = repo();
+        let tip = GitVcs.head_revision(p.path()).unwrap();
+        git(p.path(), &["branch", "target"]);
+        git(p.path(), &["checkout", "--detach", tip.as_str()]);
+
+        let from = GitVcs.head_attachment(p.path()).unwrap();
+        // The operator reattaches by hand first.
+        git(p.path(), &["checkout", "main"]);
+
+        let err = GitVcs
+            .reattach_head(from, &local("target"), ReattachConsent::granted())
+            .unwrap_err();
+        assert_eq!(err.kind(), "stale-ref-witness");
+        assert_eq!(
+            GitVcs.head_attachment(p.path()).unwrap().to_string(),
+            "on branch 'main'"
+        );
+    }
+
+    #[test]
+    fn reattach_head_will_not_create_the_branch_it_attaches_to() {
+        // Attaching to a branch that does not exist would be a birth, which
+        // has a different consent shape. git refuses, and the refusal is
+        // the point.
+        let p = repo();
+        let tip = GitVcs.head_revision(p.path()).unwrap();
+        git(p.path(), &["checkout", "--detach", tip.as_str()]);
+        let from = GitVcs.head_attachment(p.path()).unwrap();
+
+        assert!(GitVcs
+            .reattach_head(from, &local("does-not-exist"), ReattachConsent::granted(),)
+            .is_err());
+    }
+
+    // -----------------------------------------------------------------------
+    // Rewinding MOVE: the warrant must belong to the repo being rewound
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn reset_attached_ref_rewinds_behind_a_savepoint_taken_in_the_same_repo() {
+        let p = repo();
+        let base = GitVcs.head_revision(p.path()).unwrap();
+        let _ = commit(p.path(), "to-discard");
+
+        let savepoint = GitVcs.create_savepoint_ref(p.path(), "op-1").unwrap();
+        let warrant = DiscardWarrant::new(savepoint, DiscardLocalCommitsConsent::granted());
+        let HeadAttachment::Attached(w) = GitVcs.head_attachment(p.path()).unwrap() else {
+            panic!("fixture should be attached");
+        };
+
+        GitVcs.reset_attached_ref(&w, &base, warrant).unwrap();
+
+        assert_eq!(GitVcs.head_revision(p.path()).unwrap(), base);
+        assert_eq!(
+            GitVcs.head_attachment(p.path()).unwrap().to_string(),
+            "on branch 'main'",
+            "a rewind is still a MOVE: the attachment is unchanged"
+        );
+    }
+
+    #[test]
+    fn reset_attached_ref_refuses_a_savepoint_taken_in_another_repo() {
+        let a = repo();
+        let b = repo();
+        let a_base = GitVcs.head_revision(a.path()).unwrap();
+        let a_tip = commit(a.path(), "to-discard");
+
+        // A savepoint for B cannot license rewinding A: it captured a tip
+        // that has nothing to do with A's history.
+        let elsewhere = GitVcs.create_savepoint_ref(b.path(), "op-1").unwrap();
+        let warrant = DiscardWarrant::new(elsewhere, DiscardLocalCommitsConsent::granted());
+        let HeadAttachment::Attached(w) = GitVcs.head_attachment(a.path()).unwrap() else {
+            panic!("fixture should be attached");
+        };
+
+        let err = GitVcs.reset_attached_ref(&w, &a_base, warrant).unwrap_err();
+        assert_eq!(err.kind(), "stale-ref-witness");
+        assert_eq!(
+            GitVcs.head_revision(a.path()).unwrap(),
+            a_tip,
+            "the refusal is a refusal: nothing was discarded"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Unborn HEAD: a state, and not one a MOVE can reach
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn an_unborn_head_yields_no_witness_to_move() {
+        let tmp = tempfile::tempdir().unwrap();
+        git(tmp.path(), &["init", "-b", "main"]);
+
+        let observed = GitVcs.head_attachment(tmp.path()).unwrap();
+        assert!(
+            matches!(observed, HeadAttachment::Unborn(_)),
+            "expected Unborn, got {observed:?}"
+        );
+        assert!(
+            observed.attached().is_none(),
+            "an UnbornRef is not an AttachedRef, so there is nothing to pass \
+             to advance_attached_ref — MOVE semantics on an unborn HEAD are \
+             undefined, so the call is unrepresentable rather than wrong"
+        );
+        assert_eq!(
+            observed.to_string(),
+            "on unborn branch 'main' (no commits yet)"
+        );
+    }
+
+    #[test]
+    fn work_dir_for_store_normalises_a_git_dir_and_leaves_anything_else_alone() {
+        let clone = Path::new("/w/github/acme/server");
+        assert_eq!(GitVcs::work_dir_for_store(&clone.join(".git")), clone);
+        assert_eq!(GitVcs::work_dir_for_store(clone), clone);
     }
 }

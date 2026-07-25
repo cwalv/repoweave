@@ -3,7 +3,7 @@
 //! repoweave operates on repos and worktrees. The VCS layer abstracts over
 //! the specific tool (git, jj, sl, hg) so core logic doesn't hardcode git.
 
-use crate::manifest::Role;
+use crate::manifest::{ProjectName, Role, WorkweaveName};
 use schemars::JsonSchema;
 use serde::Serialize;
 use std::fmt;
@@ -19,10 +19,12 @@ use std::path::{Path, PathBuf};
 ///
 /// Construction is path-rooted: the only public constructors are
 /// [`Vcs::resolve_revision`] / [`Vcs::head_revision`] (which resolve
-/// against a real repo) and [`ResolvedRevisionId::from_canonical`]
-/// (mint with a known SHA, e.g. directly from `head_revision` output).
-/// There is no public way to mint a `ResolvedRevisionId` from a free
-/// string — the parse boundary lives in [`RawRevisionId`].
+/// against a real repo), [`ResolvedRevisionId::from_canonical`] (mint with
+/// a known SHA, e.g. directly from `head_revision` output), and
+/// [`ResolvedRevisionId::from_rev_parse_output`] (mint from raw
+/// ref-resolution output, verifying the canonical form). There is no
+/// public way to mint a `ResolvedRevisionId` from a free string — the
+/// parse boundary lives in [`RawRevisionId`].
 ///
 /// Serde: only `Serialize`. Writes the display form when present, else
 /// the canonical SHA. Deserialization deliberately is not implemented;
@@ -47,21 +49,27 @@ impl ResolvedRevisionId {
         Self { canonical, display }
     }
 
-    /// Construct a `ResolvedRevisionId` from a string that the caller
-    /// asserts is already a canonical commit SHA, bypassing the usual
-    /// path-rooted resolution. `pub(crate)` to keep this assertion
-    /// crate-internal — there is no public way to mint a resolved value
-    /// from a free string.
+    /// Mint from the raw output of a ref-resolution command, **verifying**
+    /// the canonical form this type exists to guarantee.
     ///
-    /// Legitimate only for a value read back from `git rev-parse` on a
-    /// fully-qualified ref, which always emits the canonical 40-hex SHA.
-    /// Re-resolving such a value via `Vcs::resolve_revision` would cost an
-    /// extra git invocation without strengthening the invariant.
-    pub(crate) fn from_canonical_unchecked(s: impl Into<String>) -> Self {
-        Self {
-            canonical: s.into(),
+    /// Returns `None` when `s` is not a canonical commit id, so a value
+    /// obtained this way is canonical by construction rather than by
+    /// assertion. Callers resolving a fully-qualified ref (a savepoint, a
+    /// pre-abort reference) use this instead of re-running the value
+    /// through [`Vcs::resolve_revision`]: it costs no extra VCS
+    /// invocation and, unlike the assertion it replaces, it actually runs
+    /// the check.
+    ///
+    /// No display form is preserved: the input is a ref name that resolved
+    /// to this commit, not a name that identifies the commit anywhere else
+    /// (`refs/rwv/pre-op/<op-id>` is meaningless outside the repo that
+    /// holds it), so serializing it would produce an unresolvable scalar.
+    pub fn from_rev_parse_output(s: &str) -> Option<Self> {
+        let s = s.trim();
+        is_canonical_commit_id(s).then(|| Self {
+            canonical: s.to_owned(),
             display: None,
-        }
+        })
     }
 
     /// The canonical SHA (after resolution) or the raw input (before).
@@ -73,6 +81,21 @@ impl ResolvedRevisionId {
     pub fn display_str(&self) -> &str {
         self.display.as_deref().unwrap_or(&self.canonical)
     }
+}
+
+/// True for a canonical commit id: a lowercase-hex object name of the
+/// full width the repository's hash function produces (40 for SHA-1, 64
+/// for SHA-256 repos — `extensions.objectFormat = sha256`).
+///
+/// Abbreviated ids are deliberately rejected: they are ambiguous by
+/// construction, and the whole point of the canonical form is that two
+/// values naming the same commit compare equal. Uppercase is rejected
+/// because no VCS emits it for a resolved object name, so its appearance
+/// means the string came from somewhere other than a resolution.
+fn is_canonical_commit_id(s: &str) -> bool {
+    matches!(s.len(), 40 | 64)
+        && s.bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
 }
 
 impl PartialEq for ResolvedRevisionId {
@@ -134,7 +157,7 @@ impl serde::Serialize for ResolvedRevisionId {
 ///     "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 ///     Some("v1.0.0".to_string()),
 /// );
-/// let _ = raw == resolved; // E0277: PartialEq not implemented across types
+/// let _ = raw == resolved; // E0308: expected RawRevisionId, found ResolvedRevisionId
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct RawRevisionId(String);
@@ -286,6 +309,33 @@ pub enum VcsError {
     /// "edit conflicted files; `git add <files>`; `git rebase --continue`"
     /// message. The matching `op` tells the caller which hint to fetch.
     RebaseConflict { repo: PathBuf, op: ConflictOp },
+    /// A ref witness no longer describes the repo it was taken from.
+    ///
+    /// An [`AttachedRef`] / [`DetachedHead`] proves what HEAD was at the
+    /// moment it was produced; the repo can move underneath it. Every
+    /// consumer re-observes before acting and returns this rather than
+    /// applying the operation to a state nobody authorized. (How wide a
+    /// witness's validity window *should* be is Q15, still open — this
+    /// variant is what makes the narrow answer observable.)
+    StaleRefWitness {
+        repo: PathBuf,
+        /// What the witness asserted, rendered.
+        expected: String,
+        /// What the repo actually reports now, rendered.
+        observed: String,
+    },
+    /// The repo is mid-operation and the requested ref write would yank
+    /// operator state out from under it.
+    ///
+    /// A MOVE of an already-detached HEAD refuses here (§3.6): "rwv
+    /// detached this HEAD at a lock SHA" and "the operator is mid-bisect /
+    /// stopped at a `rebase -i` edit" are different situations, and only
+    /// the first is rwv's to move.
+    MidOperation {
+        repo: PathBuf,
+        /// Short label naming the in-flight operation.
+        operation: String,
+    },
     /// I/O failure spawning or reading process output.
     Io { ctx: String, source: io::Error },
     /// Underlying VCS command failed for a reason not modeled above.
@@ -307,6 +357,8 @@ impl VcsError {
             Self::WorktreeExists(_) => "worktree-exists",
             Self::UncommittedChanges(_) => "uncommitted-changes",
             Self::RebaseConflict { .. } => "rebase-conflict",
+            Self::StaleRefWitness { .. } => "stale-ref-witness",
+            Self::MidOperation { .. } => "mid-operation",
             Self::Io { .. } => "io",
             Self::CommandFailed { .. } => "command-failed",
         }
@@ -344,6 +396,15 @@ pub enum VcsErrorOutput {
         repo: PathBuf,
         op: ConflictOp,
     },
+    StaleRefWitness {
+        repo: PathBuf,
+        expected: String,
+        observed: String,
+    },
+    MidOperation {
+        repo: PathBuf,
+        operation: String,
+    },
     Io {
         ctx: String,
         /// Display form of the underlying `io::Error`. The native source is
@@ -376,6 +437,19 @@ impl From<&VcsError> for VcsErrorOutput {
             VcsError::RebaseConflict { repo, op } => Self::RebaseConflict {
                 repo: repo.clone(),
                 op: *op,
+            },
+            VcsError::StaleRefWitness {
+                repo,
+                expected,
+                observed,
+            } => Self::StaleRefWitness {
+                repo: repo.clone(),
+                expected: expected.clone(),
+                observed: observed.clone(),
+            },
+            VcsError::MidOperation { repo, operation } => Self::MidOperation {
+                repo: repo.clone(),
+                operation: operation.clone(),
             },
             VcsError::Io { ctx, source } => Self::Io {
                 ctx: ctx.clone(),
@@ -411,6 +485,20 @@ impl fmt::Display for VcsError {
                     repo.display()
                 )
             }
+            Self::StaleRefWitness {
+                repo,
+                expected,
+                observed,
+            } => write!(
+                f,
+                "{} moved since it was observed: expected {expected}, found {observed}",
+                repo.display()
+            ),
+            Self::MidOperation { repo, operation } => write!(
+                f,
+                "{} is {operation}; finish or cancel it before rwv moves HEAD",
+                repo.display()
+            ),
             Self::Io { ctx, source } => write!(f, "{ctx}: {source}"),
             Self::CommandFailed { args, repo, stderr } => write!(
                 f,
@@ -499,6 +587,1052 @@ pub enum VerifiedRestoreOutcome {
         /// is later determined safe to keep.
         pre_abort_ref: PreAbortRef,
     },
+}
+
+// ===========================================================================
+// The branch model (branch-model.md §4)
+// ===========================================================================
+//
+// `RefName` above is one type standing in for four different notions: the
+// branch a manifest entry DECLARES it tracks, the ephemeral name a create
+// REQUESTS, the ref rwv holds a RECEIPT for, and the ref a checkout is
+// actually ON. Comparing any two of them is a legal line that is usually
+// wrong, and the tree contains such lines today.
+//
+// The split below is the same move `ResolvedRevisionId` / `RawRevisionId`
+// already made in this file: one parse boundary, one refined value per
+// notion, no cross-type comparison, and a `compile_fail` doctest per
+// invariant so a later "make it easier" `PartialEq`/`From` impl fails CI
+// rather than passing review. See §4.1 for the precedent and §4.2 for the
+// table these types implement.
+//
+// `RefName` and the trait methods that take it are NOT removed here: the
+// old and new surfaces run side by side until every call site has been
+// restated in terms of the new one.
+
+/// A ref name as observed or as written: the parse boundary of the branch
+/// model.
+///
+/// `RawRefName` is to ref names what [`RawRevisionId`] is to revisions. It
+/// wraps a string verbatim and, at the type level, we do not know whether
+/// it names a branch a manifest declared, a branch rwv minted, a branch a
+/// checkout is on, or a branch a human made by hand. Everything that
+/// enters the model from outside — a manifest scalar, a porcelain listing,
+/// a flag argument — arrives as one of these, and the named conversions in
+/// this section are the only ways out.
+///
+/// It deliberately keeps [`RawRefName::as_str`]: raw VCS output has to stay
+/// inspectable. The types that must *not* be inspected as strings
+/// ([`TrackingRef`], [`OwnedRef`], [`AttachedRef`]) are exactly the ones
+/// carrying a claim that a string comparison would silently discard.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, serde::Deserialize)]
+#[serde(transparent)]
+pub struct RawRefName(String);
+
+impl RawRefName {
+    /// Construct from any string. Public because deserialization, VCS
+    /// listings, and tests all need to mint raw values; the string is
+    /// treated as opaque.
+    pub fn new(s: impl Into<String>) -> Self {
+        Self(s.into())
+    }
+
+    /// Borrow the underlying string.
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl fmt::Display for RawRefName {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+/// Why a [`RawRefName`] could not be parsed into a [`TrackingRef`].
+///
+/// Each variant is a distinct rejection rule so callers can report which
+/// one fired instead of re-deriving it from message text.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RefNameError {
+    /// The name is empty.
+    Empty,
+    /// The name is commit-id shaped. `version:` declares what to TRACK;
+    /// the lock records where you ARE (§8.8) — a pin needs a different
+    /// field, not an overloaded one.
+    ShaShaped(String),
+    /// The name is release-tag shaped. Same reason as [`Self::ShaShaped`]:
+    /// a tag is a pin, and a tracking declaration cannot be one.
+    TagShaped(String),
+    /// The name is not usable as a ref name at all.
+    Malformed {
+        /// The rejected name.
+        name: String,
+        /// Which rule it broke, as a short noun phrase.
+        reason: &'static str,
+    },
+}
+
+impl fmt::Display for RefNameError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Empty => f.write_str("ref name is empty"),
+            Self::ShaShaped(s) => write!(
+                f,
+                "'{s}' is commit-id shaped; `version:` declares a branch to \
+                 track, not a revision to pin"
+            ),
+            Self::TagShaped(s) => write!(
+                f,
+                "'{s}' is tag shaped; `version:` declares a branch to track, \
+                 not a revision to pin"
+            ),
+            Self::Malformed { name, reason } => {
+                write!(f, "'{name}' is not a valid ref name: {reason}")
+            }
+        }
+    }
+}
+
+impl std::error::Error for RefNameError {}
+
+/// Width at which an all-hex name stops reading as a branch name and
+/// starts reading as an abbreviated commit id.
+///
+/// git's default `core.abbrev` floor is 7, so a 7-hex `version:` is
+/// overwhelmingly a pin someone tried to smuggle through the tracking
+/// field. Below that, hex-looking names (`cafe`, `beef`, `dad`) are
+/// ordinary words and are accepted.
+const SHA_SHAPED_MIN_LEN: usize = 7;
+
+/// True when `s` reads as a commit id rather than a branch name.
+fn is_sha_shaped(s: &str) -> bool {
+    s.len() >= SHA_SHAPED_MIN_LEN && s.bytes().all(|b| b.is_ascii_hexdigit())
+}
+
+/// True for release-shape names (e.g. `v1.2.3`, `v0.3.4-rc1`).
+///
+/// Two callers, deliberately sharing one definition: [`TrackingRef::parse`]
+/// rejects names of this shape (§8.8 — `version:` is a declaration, not a
+/// pin), and [`crate::git::GitVcs::tag_at_head`] uses it as a tiebreaker so
+/// a release tag wins over an arbitrary lightweight tag. Both are asking
+/// "does this read as a release tag"; one answer.
+pub(crate) fn is_release_shape_name(s: &str) -> bool {
+    let rest = match s.strip_prefix('v') {
+        Some(r) => r,
+        None => return false,
+    };
+    // Require at least "N.N" (e.g., "1.0") to count as release-shape.
+    let mut parts = rest.split(['.', '-', '+']);
+    let first = parts.next().unwrap_or("");
+    let second = parts.next().unwrap_or("");
+    !first.is_empty()
+        && first.chars().all(|c| c.is_ascii_digit())
+        && !second.is_empty()
+        && second.chars().next().is_some_and(|c| c.is_ascii_digit())
+}
+
+/// Reject strings that cannot name a ref.
+///
+/// These rules are the conservative intersection of what VCSes accept as a
+/// ref name; git's `check-ref-format` is the strictest of the ones rwv
+/// targets and is what this mirrors. Validating at the seam rather than in
+/// the git impl means a manifest carrying `feat/../../etc` is refused once,
+/// at parse time, instead of once per VCS.
+fn validate_ref_name(s: &str) -> Result<(), RefNameError> {
+    let malformed = |reason: &'static str| {
+        Err(RefNameError::Malformed {
+            name: s.to_owned(),
+            reason,
+        })
+    };
+    if s.is_empty() {
+        return Err(RefNameError::Empty);
+    }
+    if s == "@" {
+        return malformed("`@` alone is not a ref name");
+    }
+    if s.contains("..") {
+        return malformed("contains `..`");
+    }
+    if s.contains("@{") {
+        return malformed("contains `@{`");
+    }
+    if s.contains("//") {
+        return malformed("contains an empty path component");
+    }
+    if s.starts_with('/') || s.ends_with('/') {
+        return malformed("starts or ends with `/`");
+    }
+    if s.ends_with('.') {
+        return malformed("ends with `.`");
+    }
+    if let Some(bad) = s
+        .chars()
+        .find(|c| c.is_ascii_control() || " ~^:?*[\\\u{7f}".contains(*c))
+    {
+        return match bad {
+            ' ' => malformed("contains a space"),
+            c if c.is_control() => malformed("contains a control character"),
+            _ => malformed("contains one of `~^:?*[\\`"),
+        };
+    }
+    for component in s.split('/') {
+        if component.starts_with('.') {
+            return malformed("has a path component starting with `.`");
+        }
+        if component.ends_with(".lock") {
+            return malformed("has a path component ending in `.lock`");
+        }
+    }
+    Ok(())
+}
+
+/// Notion (1): the branch a manifest entry **declares** it tracks
+/// (`version:`).
+///
+/// A `TrackingRef` is a statement of intent about a *remote* channel. It is
+/// not a claim that any local ref of that name exists, and it is not a
+/// revision — [`TrackingRef::parse`] refuses commit-id-shaped and
+/// tag-shaped input for exactly that reason (§8.8).
+///
+/// # Display only, deliberately
+///
+/// There is no `as_str()`. Both shipped comparison sites in `push.rs` are
+/// written with `.as_str()` on *both* sides, so a `TrackingRef` carrying
+/// one would let them compile verbatim after the split and the whole
+/// exercise would report nothing. To compare a declaration against an
+/// observation an author must first pick a projection —
+/// [`TrackingRef::local_counterpart`] or [`TrackingRef::on_remote`] — and
+/// the pick is the decision the comparison was hiding.
+///
+/// # Compile-time invariant
+///
+/// A `TrackingRef` cannot be compared against an [`AttachedRef`]: a
+/// declared channel and an observed attachment are different notions, and
+/// the shipped bugs came from treating them as one.
+///
+/// ```compile_fail
+/// use repoweave::vcs::{AttachedRef, RawRefName, TrackingRef};
+/// fn compare(attached: AttachedRef) {
+///     let declared = TrackingRef::parse(RawRefName::new("main")).unwrap();
+///     let _ = attached == declared; // E0308: expected AttachedRef, found TrackingRef
+/// }
+/// ```
+///
+/// Nor can the comparison be laundered back through the parse boundary:
+/// neither side has `as_str()`.
+///
+/// ```compile_fail
+/// use repoweave::vcs::{AttachedRef, RawRefName, TrackingRef};
+/// fn compare(attached: AttachedRef) {
+///     let declared = TrackingRef::parse(RawRefName::new("main")).unwrap();
+///     let _ = attached.as_str() != declared.as_str(); // E0599: no such method
+/// }
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct TrackingRef(String);
+
+impl TrackingRef {
+    /// Parse a manifest-declared `version:` scalar.
+    ///
+    /// Rejects commit-id-shaped and release-tag-shaped values, and anything
+    /// that is not a usable ref name. This is the *only* way to obtain a
+    /// `TrackingRef`; there is no `Deserialize` impl, mirroring
+    /// [`ResolvedRevisionId`]'s refusal to deserialize.
+    pub fn parse(raw: RawRefName) -> Result<Self, RefNameError> {
+        let s = raw.as_str();
+        validate_ref_name(s)?;
+        if is_sha_shaped(s) {
+            return Err(RefNameError::ShaShaped(s.to_owned()));
+        }
+        if is_release_shape_name(s) {
+            return Err(RefNameError::TagShaped(s.to_owned()));
+        }
+        Ok(Self(raw.0))
+    }
+
+    /// The remote branch this declaration names, under `role`.
+    ///
+    /// Which *remote* a role selects is a VCS convention (git today maps
+    /// every role to `origin`), so the projection stops at the (role,
+    /// branch) pair and the VCS impl resolves the remote name. That keeps
+    /// `origin` out of the seam.
+    pub fn on_remote(&self, role: Role) -> RemoteRef {
+        RemoteRef {
+            role,
+            branch: self.0.clone(),
+        }
+    }
+
+    /// "The local branch of the same name."
+    ///
+    /// **This is not an identity.** It is a projection across namespaces,
+    /// and the assumption is stated here rather than at the dozens of sites
+    /// that would otherwise make it silently: rwv assumes a local branch
+    /// named the same as the declared tracking branch is that branch's
+    /// local counterpart. Nothing verifies it — a local `main` may have
+    /// been created from anywhere.
+    pub fn local_counterpart(&self) -> LocalRefName {
+        LocalRefName(self.0.clone())
+    }
+}
+
+impl fmt::Display for TrackingRef {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+/// A branch on a remote, named by role rather than by remote name.
+///
+/// Produced by [`TrackingRef::on_remote`]. The VCS impl maps `role` to its
+/// own remote-naming convention.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RemoteRef {
+    role: Role,
+    branch: String,
+}
+
+impl RemoteRef {
+    /// The role whose remote convention selects the remote.
+    pub fn role(&self) -> Role {
+        self.role
+    }
+
+    /// The branch name on that remote.
+    pub fn branch(&self) -> &str {
+        &self.branch
+    }
+}
+
+impl fmt::Display for RemoteRef {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{} on the {} remote", self.branch, self.role.as_str())
+    }
+}
+
+/// A local branch name arrived at through a *named* projection.
+///
+/// The only producers are [`TrackingRef::local_counterpart`] and
+/// [`RemoteDefaultBranch::local_counterpart`] — each a function whose doc
+/// comment is where the assumption behind the projection lives. Keeping
+/// `as_str()` here is safe: a `LocalRefName` is already the output of a
+/// stated assumption, so reading it as a string launders nothing.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct LocalRefName(String);
+
+impl LocalRefName {
+    /// Borrow the underlying string.
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl fmt::Display for LocalRefName {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+/// Notion (2a): the ephemeral branch name a create **requests**.
+///
+/// [`EphemeralRefName::mint`] is total and takes exactly two inputs — a
+/// project and a workweave. There is no third component: the three
+/// derivation sites in the tree disagreed about what it should be, no
+/// consumer read it, and §3.5 deletes it rather than picking a winner.
+/// Nothing observed can be fed in, so a name can never be derived from the
+/// branch a checkout happens to be on.
+///
+/// Requesting a name is not owning one. Only a persisted receipt makes a
+/// ref rwv's to destroy ([`OwnedRef`], R2), which is why this type has no
+/// path to one that does not go through the registry.
+///
+/// **Q12 stays open.** The legal grammar for project and workweave names is
+/// undecided (a project `p` with workweave `x--y` and a project `p--x` with
+/// workweave `y` mint the same name), so `mint` deliberately does not
+/// validate its components. Under R2 that collision is a legibility
+/// problem, not a correctness one — ownership comes from the receipt, not
+/// from parsing the name back apart.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct EphemeralRefName(String);
+
+impl EphemeralRefName {
+    /// Mint the ephemeral name for `project`'s `workweave`.
+    ///
+    /// Total: no third input, no failure, no read of the current ref.
+    pub fn mint(project: &ProjectName, workweave: &WorkweaveName) -> Self {
+        Self(format!("{}--{}", project.as_str(), workweave.as_str()))
+    }
+
+    /// The requested name at the parse boundary, for the receipt store to
+    /// key on and for the VCS impl to spell.
+    ///
+    /// Deliberately not `as_str()`: the only legitimate question about a
+    /// requested name is "does rwv hold a receipt for it", which is
+    /// `RefRegistry::lookup`, not a string comparison. Handing back a
+    /// [`RawRefName`] grants nothing `RawRefName::new` did not already
+    /// grant — a raw name owns nothing and can destroy nothing.
+    pub fn to_raw(&self) -> RawRefName {
+        RawRefName(self.0.clone())
+    }
+}
+
+impl fmt::Display for EphemeralRefName {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+/// Notion (2b): an ephemeral ref rwv holds a persisted **receipt** for.
+///
+/// R2: a ref is rwv's to delete iff rwv holds a receipt for that exact name
+/// in that exact store. A ref that merely *looks* like rwv's is not rwv's,
+/// which is why an [`EphemeralRefName`] cannot become one of these and a
+/// [`RawRefName`] from a listing cannot either.
+///
+/// Carries the store it was recorded against, so [`Vcs::delete_owned_ref`]
+/// and [`Vcs::create_worktree_on`] derive their target from the receipt
+/// rather than from an independent path argument — the same
+/// carry-your-provenance rule [`AttachedRef`] follows, for the same reason.
+///
+/// # Display only, deliberately
+///
+/// No `as_str()`. The question "is this the ref that checkout is on" is
+/// [`OwnedRef::is_attached_by`], a named predicate that yields a `bool` and
+/// no witness; the question "may I delete this" is a
+/// [`DeletionWarrant`]. Neither is a string comparison.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OwnedRef {
+    store: PathBuf,
+    name: RawRefName,
+    created_at: ResolvedRevisionId,
+}
+
+impl OwnedRef {
+    /// Mint from a receipt the registry has already **persisted**.
+    ///
+    /// `pub(crate)` because the receipt store is the producer (§4.2:
+    /// `RefRegistry::record_created` / `RefRegistry::lookup`), and receipts
+    /// are written before the ref they describe so a crash leaves a
+    /// dangling receipt (benign) rather than an unreceipted ref
+    /// (permanently disowned under R2).
+    // No caller yet: the receipt store that produces these is a separate
+    // change. The type surface lands first because every consumer of the
+    // branch model needs it to compile against.
+    #[allow(dead_code)]
+    pub(crate) fn from_receipt(
+        store: PathBuf,
+        name: RawRefName,
+        created_at: ResolvedRevisionId,
+    ) -> Self {
+        Self {
+            store,
+            name,
+            created_at,
+        }
+    }
+
+    /// The canonical store the receipt is keyed to.
+    pub fn store(&self) -> &Path {
+        &self.store
+    }
+
+    /// The tip the ref had when rwv recorded creating it. This is what
+    /// [`DeletionWarrant::unmoved`] compares against.
+    pub fn created_at(&self) -> &ResolvedRevisionId {
+        &self.created_at
+    }
+
+    /// The recorded name, for the receipt store and the VCS impl to spell.
+    pub(crate) fn name(&self) -> &RawRefName {
+        &self.name
+    }
+
+    /// Whether `a` is a checkout sitting on this exact ref.
+    ///
+    /// A named predicate, not an operator: it answers `bool` and yields no
+    /// witness, so "the receipt and the attachment agree" can never be
+    /// mistaken for "I now hold proof of attachment".
+    ///
+    /// Compares names only. The store correspondence is the caller's: it
+    /// looked this receipt up *by* store, and `a`'s repo is a checkout of
+    /// that store.
+    pub fn is_attached_by(&self, a: &AttachedRef) -> bool {
+        self.name == a.name
+    }
+}
+
+impl fmt::Display for OwnedRef {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.name.as_str())
+    }
+}
+
+/// Notion (3): the ref a checkout is on — a **witness**.
+///
+/// Unlike [`ResolvedRevisionId`], which refines an immutable value, an
+/// `AttachedRef` observes mutable per-repo state. The proposition it
+/// carries — "at the moment this was produced, *that repo's* HEAD was
+/// symbolic and pointed here" — is bound to a place and can expire. So it
+/// carries its provenance, and every operation that consumes it derives
+/// the target repo *from the witness*: there is no independent `&Path`
+/// parameter to point a MOVE somewhere else. Without that binding a
+/// witness taken from the cwd repo (always attached inside a workweave)
+/// could authorize a MOVE on a detached target, which is the shipped
+/// cross-repo pass at `sync.rs`'s `ff_advance_repo`.
+///
+/// What is guaranteed: the MOVE lands on the repo whose attachment was
+/// actually observed. What is *not* guaranteed: that the attachment still
+/// holds at consumption time — each consumer re-observes and refuses a
+/// stale witness. The wider validity-window question is Q15 and stays
+/// open.
+///
+/// # No string access at all
+///
+/// Not even `pub(crate)`. Every consumer in this crate is a place the
+/// laundered comparison could reappear, so the impls that act on a witness
+/// re-observe the repo and compare `AttachedRef` to `AttachedRef` — a
+/// same-type comparison, which is exactly the staleness check they need
+/// anyway. [`Display`](fmt::Display) exists for messages and for the
+/// "which ref is this checkout on" assertion shape the suite was missing.
+///
+/// # Compile-time invariant
+///
+/// A witness cannot be forged: the fields are private and the only
+/// producer is [`Vcs::head_attachment`].
+///
+/// ```compile_fail
+/// use repoweave::vcs::{AttachedRef, RawRefName};
+/// use std::path::PathBuf;
+/// let forged = AttachedRef {
+///     repo: PathBuf::from("/tmp/repo"),
+///     name: RawRefName::new("main"),
+/// }; // E0451: fields `repo` and `name` are private
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AttachedRef {
+    repo: PathBuf,
+    name: RawRefName,
+}
+
+impl AttachedRef {
+    /// The repo this attachment was observed in. Consumers derive their
+    /// target from here.
+    pub fn repo(&self) -> &Path {
+        &self.repo
+    }
+}
+
+impl fmt::Display for AttachedRef {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.name.as_str())
+    }
+}
+
+/// HEAD is symbolic but the branch has no commits yet.
+///
+/// A distinct payload type from [`AttachedRef`], deliberately: MOVE
+/// semantics on an unborn HEAD are undefined (a fast-forward merge fails
+/// while a reset would stamp the branch into existence), so the model makes
+/// the call unrepresentable rather than picking one — an `UnbornRef` cannot
+/// be passed to [`Vcs::advance_attached_ref`]. This is the Q9 lesson
+/// applied inside the Q9 fix.
+///
+/// Carries the branch name because `git symbolic-ref --short HEAD` succeeds
+/// here, so the state is reportable ("on branch `main`, no commits yet")
+/// rather than merely diagnosable.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UnbornRef {
+    repo: PathBuf,
+    name: RawRefName,
+}
+
+impl UnbornRef {
+    /// The repo this observation came from.
+    pub fn repo(&self) -> &Path {
+        &self.repo
+    }
+
+    /// The branch HEAD points at, which has no commits yet.
+    pub fn name(&self) -> &RawRefName {
+        &self.name
+    }
+}
+
+impl fmt::Display for UnbornRef {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.name.as_str())
+    }
+}
+
+/// HEAD is not symbolic. Carries the commit, so a caller that wants to
+/// MOVE a detached HEAD has its witness, and carries its repo for the same
+/// reason [`AttachedRef`] does.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DetachedHead {
+    repo: PathBuf,
+    at: ResolvedRevisionId,
+}
+
+impl DetachedHead {
+    /// The repo this observation came from.
+    pub fn repo(&self) -> &Path {
+        &self.repo
+    }
+
+    /// The commit HEAD names directly.
+    pub fn at(&self) -> &ResolvedRevisionId {
+        &self.at
+    }
+}
+
+impl fmt::Display for DetachedHead {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "detached at {}", self.at.display_str())
+    }
+}
+
+/// Proof that *this call* created a ref, as opposed to adopting a
+/// pre-existing one.
+///
+/// Returned by [`Vcs::create_worktree_on`] only on the authoring path. Its
+/// consumer is rollback: a failed create deletes only refs it holds a
+/// `BornRef` for, so it can no longer destroy a branch the create merely
+/// adopted — which is how a create's cleanup used to take a unique commit
+/// with it.
+///
+/// Carries no registry duty. The receipt was written *before* the birth by
+/// the registry; this type separates "authored" from "adopted", nothing
+/// more.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BornRef {
+    store: PathBuf,
+    name: RawRefName,
+    at: ResolvedRevisionId,
+}
+
+impl BornRef {
+    /// The canonical store the ref was authored in.
+    pub fn store(&self) -> &Path {
+        &self.store
+    }
+
+    /// The authored ref's name.
+    pub fn name(&self) -> &RawRefName {
+        &self.name
+    }
+
+    /// The revision the ref was authored at.
+    pub fn at(&self) -> &ResolvedRevisionId {
+        &self.at
+    }
+}
+
+impl fmt::Display for BornRef {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.name.as_str())
+    }
+}
+
+/// The remote's own declaration of its primary branch.
+///
+/// This is none of the four notions and it is not a fifth kind: rwv never
+/// writes it, so it sits outside the MOVE/ATTACH/DESTROY classification
+/// entirely. It is a read-only *input* to the L1 publish gate. It gets its
+/// own type rather than reusing [`RemoteRef`] because provenance differs —
+/// a `RemoteRef` is the projection of a *declared* [`TrackingRef`], a
+/// `RemoteDefaultBranch` is *observed* remote state.
+///
+/// Its sole producer is [`Vcs::remote_default_branch`], which returns
+/// `None` when the remote's HEAD is unset or malformed. **There is no
+/// fallback.** The shipped implementation fabricated `"main"` on any
+/// failure, so the publish gate compared an observation against an
+/// invention; with `None`, the gate has to refuse and say the remote's HEAD
+/// is unset. Q6 — *which* ref publishes, and where a non-default channel's
+/// identity is recorded — is policy and stays open.
+///
+/// Display only, like the other types the publish gate touches: the gate
+/// compares through [`RemoteDefaultBranch::local_counterpart`], the same
+/// assumption-stating move [`TrackingRef::local_counterpart`] makes.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RemoteDefaultBranch(String);
+
+impl RemoteDefaultBranch {
+    /// Parse the target of the remote's HEAD symbolic ref.
+    ///
+    /// `target` is the raw symref target (git: the contents of
+    /// `refs/remotes/origin/HEAD`, e.g.
+    /// `refs/remotes/origin/main`); `namespace` is the prefix that target
+    /// must sit under. `None` when the target does not sit under
+    /// `namespace` or names nothing after it — a malformed symref is an
+    /// absence, never a default.
+    ///
+    /// The rule lives here rather than in the VCS impl so "malformed means
+    /// absent" is stated once and testable without a repo.
+    pub(crate) fn from_symref_target(target: &str, namespace: &str) -> Option<Self> {
+        let branch = target.trim().strip_prefix(namespace)?;
+        if branch.is_empty() || validate_ref_name(branch).is_err() {
+            return None;
+        }
+        Some(Self(branch.to_owned()))
+    }
+
+    /// "The local branch of the same name." Not an identity — the same
+    /// cross-namespace projection [`TrackingRef::local_counterpart`] makes,
+    /// stated in one place so the publish gate cannot make it silently.
+    pub fn local_counterpart(&self) -> LocalRefName {
+        LocalRefName(self.0.clone())
+    }
+}
+
+impl fmt::Display for RemoteDefaultBranch {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+/// The ref a publish targets.
+///
+/// An opaque wrapper whose constructors are visible only inside this crate
+/// and whose *use* is meant to be confined to one decision site in
+/// `push.rs`. Q6 — is a member's publish ref the attached ref or the
+/// manifest's declared tracking branch; is `version:` a constraint or a
+/// default — is **open**, and this type is where the deferral is visible: a
+/// deferred decision with a producer, rather than a placeholder without
+/// one. The single constructor call site is built when the publish gate is
+/// rewired; nothing here decides the policy.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PublishRef(RawRefName);
+
+impl PublishRef {
+    // Neither has a caller yet: the single decision site in `push.rs` is a
+    // separate change, and which of the two it calls is Q6. Defining both
+    // and calling neither is what the deferral looks like in code.
+    /// Publish the ref the checkout is actually on.
+    #[allow(dead_code)]
+    pub(crate) fn from_attached(a: &AttachedRef) -> Self {
+        Self(a.name.clone())
+    }
+
+    /// Publish the local counterpart of a declared tracking branch.
+    #[allow(dead_code)]
+    pub(crate) fn from_local(l: &LocalRefName) -> Self {
+        Self(RawRefName(l.0.clone()))
+    }
+
+    /// The name to hand the VCS.
+    pub(crate) fn name(&self) -> &RawRefName {
+        &self.0
+    }
+}
+
+impl fmt::Display for PublishRef {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.0.as_str())
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Q9: "no current branch" is not one state (§4.5)
+// ---------------------------------------------------------------------------
+
+/// What a VCS reports about HEAD, before the model interprets it.
+///
+/// The VCS-specific half of [`Vcs::head_attachment`]. Splitting it this way
+/// is what makes the witnesses unforgeable: an impl reports an observation,
+/// and the *only* code that turns an observation into an [`AttachedRef`] /
+/// [`UnbornRef`] / [`DetachedHead`] is `head_attachment`'s body in this
+/// module, where those types' private fields are visible.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum HeadObservation {
+    /// HEAD is symbolic and the branch it names has at least one commit.
+    Attached {
+        /// The branch HEAD points at.
+        name: RawRefName,
+    },
+    /// HEAD is symbolic and the branch it names has no commits yet.
+    Unborn {
+        /// The branch HEAD points at.
+        name: RawRefName,
+    },
+    /// HEAD names a commit directly.
+    Detached {
+        /// The commit HEAD names.
+        at: ResolvedRevisionId,
+    },
+}
+
+/// What HEAD is, in a workspace that is **known to be a repo**.
+///
+/// The shipped `current_ref` collapsed four distinct conditions into a
+/// single `Ok(None)` — on a branch, unborn, detached, and not-a-repo-at-all
+/// — which is how `rwv push` came to report "is on a detached HEAD" for a
+/// directory that was not a repo. Two of the four are errors rather than
+/// states ([`VcsError::NotARepo`], [`VcsError::CommandFailed`]), so
+/// [`Vcs::head_attachment`] is total over the remaining three and every
+/// caller's `match` is exhaustive. The value that meant all four does not
+/// exist.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum HeadAttachment {
+    /// HEAD is symbolic and the branch has at least one commit.
+    Attached(AttachedRef),
+    /// HEAD is symbolic but the branch has no commits yet.
+    Unborn(UnbornRef),
+    /// HEAD is not symbolic.
+    Detached(DetachedHead),
+}
+
+impl HeadAttachment {
+    /// The repo this observation came from, whichever state it found.
+    pub fn repo(&self) -> &Path {
+        match self {
+            Self::Attached(a) => a.repo(),
+            Self::Unborn(u) => u.repo(),
+            Self::Detached(d) => d.repo(),
+        }
+    }
+
+    /// The witness, when HEAD is attached. `None` for the other two states
+    /// — which is *not* the collapsed `Ok(None)`: the caller still has the
+    /// full value and can say which of unborn / detached it saw.
+    pub fn attached(&self) -> Option<&AttachedRef> {
+        match self {
+            Self::Attached(a) => Some(a),
+            _ => None,
+        }
+    }
+}
+
+impl fmt::Display for HeadAttachment {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Attached(a) => write!(f, "on branch '{a}'"),
+            Self::Unborn(u) => write!(f, "on unborn branch '{u}' (no commits yet)"),
+            Self::Detached(d) => write!(f, "{d}"),
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Consent and warrant tokens (§4.4)
+// ---------------------------------------------------------------------------
+//
+// House rule: escape hatches are named for the precondition they waive,
+// never a bare `--force`. `--detach-checkouts` and `--reattach-checkouts`
+// name two categorically different consequences — losing the name your
+// commits hang off, versus moving which name they hang off — so they are
+// two tokens, not one `ChangeAttachmentConsent`.
+//
+// HOME: §4.4 requires each consent token to live in the module that mints
+// it, because within one crate a `pub fn` constructor is callable from
+// anywhere: "defined in vcs.rs but minted only by the CLI" does not
+// compile into an invariant. They are defined here so this bead can state
+// the signatures, with crate-visible constructors; homing them in the CLI
+// flag module is the change that makes the minting story real, and these
+// definitions go away with it. Until then nothing outside this crate can
+// mint one, so the consent-gated verbs are unreachable from outside —
+// which is the correct state for a surface with no call sites yet.
+
+/// Proof that the operator consented to leaving a checkout on no branch.
+/// Minted from `--detach-checkouts`.
+#[derive(Debug)]
+pub struct DetachConsent(());
+
+impl DetachConsent {
+    /// Mint from the operator's `--detach-checkouts`.
+    // No caller yet: the flag module that mints this is a separate change.
+    #[allow(dead_code)]
+    pub(crate) fn granted() -> Self {
+        Self(())
+    }
+}
+
+/// Proof that the operator consented to moving a checkout from one branch
+/// to another. Minted from `--reattach-checkouts`.
+#[derive(Debug)]
+pub struct ReattachConsent(());
+
+impl ReattachConsent {
+    /// Mint from the operator's `--reattach-checkouts`.
+    // No caller yet: the flag module that mints this is a separate change.
+    #[allow(dead_code)]
+    pub(crate) fn granted() -> Self {
+        Self(())
+    }
+}
+
+/// Proof that the operator consented to discarding commits that are not
+/// merged into the baseline. Minted from `--discard-unmerged-commits`.
+#[derive(Debug)]
+pub struct DiscardUnmergedConsent(());
+
+impl DiscardUnmergedConsent {
+    /// Mint from the operator's `--discard-unmerged-commits`.
+    // No caller yet: the flag module that mints this is a separate change.
+    #[allow(dead_code)]
+    pub(crate) fn granted() -> Self {
+        Self(())
+    }
+}
+
+/// Proof that the operator consented to discarding local commits during a
+/// rewinding MOVE. Minted from `--discard-local-commits`.
+#[derive(Debug)]
+pub struct DiscardLocalCommitsConsent(());
+
+impl DiscardLocalCommitsConsent {
+    /// Mint from the operator's `--discard-local-commits`.
+    // No caller yet: the flag module that mints this is a separate change.
+    #[allow(dead_code)]
+    pub(crate) fn granted() -> Self {
+        Self(())
+    }
+}
+
+/// A savepoint that has actually been written.
+///
+/// Minted only by [`Vcs::create_savepoint_ref`], whose body is in this
+/// module — so a value of this type is proof the ref exists on disk, not a
+/// claim that one will be written. Carries its repo so a
+/// [`DiscardWarrant`] cannot authorize rewinding a *different* repo than
+/// the one whose state it captured.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SavepointRef {
+    repo: PathBuf,
+    op_id: String,
+    at: ResolvedRevisionId,
+}
+
+impl SavepointRef {
+    /// The repo whose tip was captured.
+    pub fn repo(&self) -> &Path {
+        &self.repo
+    }
+
+    /// The opaque op id the savepoint is filed under.
+    pub fn op_id(&self) -> &str {
+        &self.op_id
+    }
+
+    /// The captured tip — the revision `rwv abort` restores to.
+    pub fn at(&self) -> &ResolvedRevisionId {
+        &self.at
+    }
+}
+
+/// Proof that a rewinding MOVE (a non-fast-forward) may proceed.
+///
+/// Two things must both hold, and the type is constructed from both: a
+/// savepoint under the recovery namespace has been **written** (not
+/// planned), and the operator passed the verb's named override. A rewind
+/// without a savepoint is therefore unrepresentable rather than
+/// discouraged, which closes the asymmetry where deleting a fully-merged
+/// empty branch needed a receipt and a warrant while resetting a branch to
+/// an older revision needed nothing.
+#[derive(Debug)]
+pub struct DiscardWarrant {
+    savepoint: SavepointRef,
+}
+
+impl DiscardWarrant {
+    /// Pair a written savepoint with the operator's consent.
+    pub fn new(savepoint: SavepointRef, consent: DiscardLocalCommitsConsent) -> Self {
+        let DiscardLocalCommitsConsent(()) = consent;
+        Self { savepoint }
+    }
+
+    /// The savepoint this warrant rests on. Consumers check it captured
+    /// the repo they are about to rewind.
+    pub fn savepoint(&self) -> &SavepointRef {
+        &self.savepoint
+    }
+}
+
+/// Why this ref is safe to destroy now (R3).
+///
+/// The receipt ([`OwnedRef`]) says "this is mine"; the warrant says "and it
+/// is safe to lose now". Three warrants, and no others.
+///
+/// An opaque struct over a **private** enum, not a `pub enum`: Rust cannot
+/// make a public enum's variant constructors private, so a public enum
+/// would let any code in the crate write the "unmoved" variant while
+/// filling `recorded_tip` from a fresh read of the very ref it claims is
+/// unmoved — vacuously true, and exactly today's unguarded force-delete
+/// with extra ceremony. The `pub fn` checkers below **run** the check they
+/// certify.
+///
+/// Direction matters: unlike [`VerifiedRestoreOutcome`], which reports what
+/// a check inside a primitive decided, a `DeletionWarrant` is caller-supplied
+/// proof, because the destroy site ([`Vcs::delete_owned_ref`]) and the check
+/// sites (the registry, the merged-check) are different code. That
+/// inversion is why constructibility is load-bearing here.
+#[derive(Debug)]
+pub struct DeletionWarrant(WarrantKind);
+
+/// Private: see [`DeletionWarrant`]'s docs for why this is not `pub`.
+#[derive(Debug)]
+enum WarrantKind {
+    /// The ref's tip is exactly the tip rwv recorded creating it at.
+    Unmoved { recorded_tip: ResolvedRevisionId },
+    /// The ref's tip is an ancestor of a named baseline.
+    Merged { baseline: ResolvedRevisionId },
+    /// The operator passed the named override that consents to this loss.
+    OperatorDiscarded,
+}
+
+impl DeletionWarrant {
+    /// `Some` iff the ref's current tip equals the receipt's recorded tip
+    /// — nothing has happened to it since rwv created it. This is the
+    /// warrant a create's retry can hold, and it is what makes the retry's
+    /// shipped justification ("deletes a *stale* branch") true rather than
+    /// aspirational.
+    ///
+    /// `None` when the ref is gone, unreadable, or has moved.
+    pub fn unmoved(vcs: &dyn Vcs, r: &OwnedRef) -> Option<Self> {
+        let tip = vcs.resolve_local_branch_tip(r.store(), r.name()).ok()??;
+        (tip == *r.created_at()).then_some(Self(WarrantKind::Unmoved { recorded_tip: tip }))
+    }
+
+    /// `Some` iff the ref's tip is an ancestor of `baseline` — every commit
+    /// on it is reachable from a name that outlives it.
+    ///
+    /// `None` when the ref is gone, unreadable, or carries commits the
+    /// baseline does not.
+    pub fn merged(vcs: &dyn Vcs, r: &OwnedRef, baseline: &ResolvedRevisionId) -> Option<Self> {
+        let tip = vcs.resolve_local_branch_tip(r.store(), r.name()).ok()??;
+        vcs.is_ancestor(r.store(), &tip, baseline)
+            .ok()?
+            .then_some(Self(WarrantKind::Merged {
+                baseline: baseline.clone(),
+            }))
+    }
+
+    /// The operator passed `--discard-unmerged-commits`. No check to run —
+    /// the consent *is* the warrant, and the token proves it was given.
+    pub fn operator_discarded(consent: DiscardUnmergedConsent) -> Self {
+        let DiscardUnmergedConsent(()) = consent;
+        Self(WarrantKind::OperatorDiscarded)
+    }
+
+    /// One line naming which warrant this is and what it rests on, for
+    /// reports that have to say why a ref was destroyed.
+    pub fn describe(&self) -> String {
+        match &self.0 {
+            WarrantKind::Unmoved { recorded_tip } => {
+                format!(
+                    "unmoved since rwv created it at {}",
+                    recorded_tip.display_str()
+                )
+            }
+            WarrantKind::Merged { baseline } => {
+                format!("merged into {}", baseline.display_str())
+            }
+            WarrantKind::OperatorDiscarded => {
+                "operator passed --discard-unmerged-commits".to_owned()
+            }
+        }
+    }
 }
 
 /// Operations repoweave needs from a version control system.
@@ -1268,4 +2402,465 @@ pub trait Vcs {
         repo: &Path,
         parent_tip: &ResolvedRevisionId,
     ) -> Result<UniqueDiff, VcsError>;
+
+    // =======================================================================
+    // The branch model (branch-model.md §4.3)
+    // =======================================================================
+    //
+    // Every ref write rwv performs is exactly one of four kinds — MOVE,
+    // ATTACH, DESTROY, DESTROY-STORE — and the kind decides what consent is
+    // required (§3.2). The methods below are grouped by kind, and each
+    // takes the proof its kind needs: a witness for a MOVE, a consent token
+    // for an ATTACH that is not a birth, a receipt plus a warrant for a
+    // DESTROY. Store-level destroys (R4) are not ref operations and have no
+    // method here.
+    //
+    // These land ALONGSIDE `checkout` / `delete_branch` / `current_ref`
+    // above; the old surface is removed once every call site has been
+    // restated in terms of this one, and that restatement is the audit.
+
+    // ---- observation (§4.5) -----------------------------------------------
+
+    /// Report what `repo`'s HEAD is, without interpreting it.
+    ///
+    /// The VCS-specific half of [`head_attachment`]. Implementations must
+    /// distinguish "not a repo" ([`VcsError::NotARepo`]) from "the ref
+    /// database is unreadable" ([`VcsError::CommandFailed`]) — collapsing
+    /// either into a state is the defect this split exists to remove.
+    ///
+    /// [`head_attachment`]: Vcs::head_attachment
+    fn observe_head(&self, repo: &Path) -> Result<HeadObservation, VcsError>;
+
+    /// What HEAD is in `repo`. Total over the three states, with the two
+    /// non-states as typed errors.
+    ///
+    /// Provided, not implementable per-VCS: this body is the only place
+    /// [`AttachedRef`], [`UnbornRef`], and [`DetachedHead`] are ever
+    /// constructed, which is what makes a witness proof of an observation
+    /// rather than a struct anyone can fill in.
+    fn head_attachment(&self, repo: &Path) -> Result<HeadAttachment, VcsError> {
+        Ok(match self.observe_head(repo)? {
+            HeadObservation::Attached { name } => HeadAttachment::Attached(AttachedRef {
+                repo: repo.to_path_buf(),
+                name,
+            }),
+            HeadObservation::Unborn { name } => HeadAttachment::Unborn(UnbornRef {
+                repo: repo.to_path_buf(),
+                name,
+            }),
+            HeadObservation::Detached { at } => HeadAttachment::Detached(DetachedHead {
+                repo: repo.to_path_buf(),
+                at,
+            }),
+        })
+    }
+
+    /// Re-observe a witness's repo and confirm the attachment still holds.
+    ///
+    /// Returns [`VcsError::StaleRefWitness`] when the repo has moved on —
+    /// switched branches, been detached, or become unborn — since the
+    /// witness was produced. Every MOVE and post-birth ATTACH runs this
+    /// first, so "the attachment I planned against is the attachment I am
+    /// acting on" is checked rather than assumed.
+    fn verify_attachment(&self, witness: &AttachedRef) -> Result<(), VcsError> {
+        let observed = self.head_attachment(witness.repo())?;
+        match &observed {
+            HeadAttachment::Attached(now) if now == witness => Ok(()),
+            _ => Err(VcsError::StaleRefWitness {
+                repo: witness.repo().to_path_buf(),
+                expected: format!("on branch '{witness}'"),
+                observed: observed.to_string(),
+            }),
+        }
+    }
+
+    /// Resolve the tip of a **local branch** by name, or `None` when no
+    /// such branch exists.
+    ///
+    /// Resolves in the local-branch namespace specifically, so a tag of
+    /// the same name cannot answer instead. Used by
+    /// [`DeletionWarrant::unmoved`] and [`DeletionWarrant::merged`], which
+    /// have to compare a receipt against the ref it describes.
+    fn resolve_local_branch_tip(
+        &self,
+        repo: &Path,
+        name: &RawRefName,
+    ) -> Result<Option<ResolvedRevisionId>, VcsError>;
+
+    /// A short label naming the in-flight operation `repo` is mid-way
+    /// through, or `None` when it is in a clean state.
+    ///
+    /// Broader than [`mid_op`]: that one reports only the operations with a
+    /// conflict-resume path, and returns `None` for a bisect, which is
+    /// exactly the state §3.6's precondition has to see.
+    ///
+    /// [`mid_op`]: Vcs::mid_op
+    fn mid_operation(&self, repo: &Path) -> Option<String>;
+
+    // ---- MOVE (§3.2) ------------------------------------------------------
+
+    /// Fast-forward the ref `on` witnesses, refusing rather than clobbering
+    /// when a fast-forward is not possible.
+    ///
+    /// The target repo is derived **from the witness**. There is no
+    /// independent path parameter, so a witness obtained from one repo
+    /// cannot be used to move another — the cross-repo pass is not a check
+    /// that can be forgotten, it is a signature that cannot be written.
+    fn advance_attached_ref(
+        &self,
+        on: &AttachedRef,
+        to: &ResolvedRevisionId,
+    ) -> Result<(), VcsError> {
+        self.verify_attachment(on)?;
+        self.advance_if_fast_forward(on.repo(), to)
+    }
+
+    /// Rewind the ref `on` witnesses to `to`, discarding divergent commits.
+    ///
+    /// A rewinding MOVE needs a [`DiscardWarrant`], which cannot exist
+    /// without a savepoint having been written; the warrant is checked to
+    /// belong to *this* repo, so a savepoint taken elsewhere cannot
+    /// authorize this reset.
+    fn reset_attached_ref(
+        &self,
+        on: &AttachedRef,
+        to: &ResolvedRevisionId,
+        warrant: DiscardWarrant,
+    ) -> Result<(), VcsError> {
+        if warrant.savepoint().repo() != on.repo() {
+            return Err(VcsError::StaleRefWitness {
+                repo: on.repo().to_path_buf(),
+                expected: format!("a savepoint taken in {}", on.repo().display()),
+                observed: format!(
+                    "a savepoint taken in {}",
+                    warrant.savepoint().repo().display()
+                ),
+            });
+        }
+        self.verify_attachment(on)?;
+        self.hard_reset(on.repo(), to)
+    }
+
+    /// Move an already-detached HEAD to `to`.
+    ///
+    /// This is a MOVE, not an ATTACH: HEAD's symbolic-ness does not change.
+    /// It is subject to the mid-operation precondition (§3.6) — a repo
+    /// stopped mid-bisect or mid-rebase is carrying operator state that a
+    /// silent reposition would destroy, and `Detached` alone cannot tell
+    /// that apart from "rwv detached this at a lock SHA".
+    fn advance_detached_head(
+        &self,
+        was: &DetachedHead,
+        to: &ResolvedRevisionId,
+    ) -> Result<(), VcsError> {
+        if let Some(operation) = self.mid_operation(was.repo()) {
+            return Err(VcsError::MidOperation {
+                repo: was.repo().to_path_buf(),
+                operation,
+            });
+        }
+        let observed = self.head_attachment(was.repo())?;
+        match &observed {
+            HeadAttachment::Detached(now) if now == was => {}
+            _ => {
+                return Err(VcsError::StaleRefWitness {
+                    repo: was.repo().to_path_buf(),
+                    expected: was.to_string(),
+                    observed: observed.to_string(),
+                })
+            }
+        }
+        self.set_detached_head(was.repo(), to)
+    }
+
+    // ---- ATTACH (§3.2) ----------------------------------------------------
+
+    /// Materialize a worktree at `dest` on the ref a receipt describes.
+    ///
+    /// This is a **birth**: no consent token, because there was no prior
+    /// attachment to lose. The store, the name, and the start point all
+    /// come from the receipt, which the registry persisted *before* this
+    /// call — so a crash here leaves a dangling receipt (benign) rather
+    /// than an unreceipted ref (permanently disowned under R2).
+    ///
+    /// Returns `Some(BornRef)` iff this call **authored** the ref, `None`
+    /// when it adopted a pre-existing one. Rollback keys on that: a create
+    /// that adopted a branch must not delete it on the way out.
+    fn create_worktree_on(
+        &self,
+        owned: &OwnedRef,
+        dest: &Path,
+    ) -> Result<Option<BornRef>, VcsError> {
+        let authored = self.materialize_worktree_on_ref(
+            owned.store(),
+            dest,
+            owned.name(),
+            owned.created_at(),
+        )?;
+        Ok(authored.then(|| BornRef {
+            store: owned.store().to_path_buf(),
+            name: owned.name().clone(),
+            at: owned.created_at().clone(),
+        }))
+    }
+
+    /// VCS-specific half of [`create_worktree_on`]: create a worktree at
+    /// `dest` on branch `name`, starting at `start_point`.
+    ///
+    /// Returns `true` when the branch was created by this call and `false`
+    /// when a branch of that name already existed and was adopted.
+    /// Implementations must **not** delete a pre-existing branch to force
+    /// the authoring path: destroying a ref needs a receipt and a warrant,
+    /// and this call has neither.
+    ///
+    /// [`create_worktree_on`]: Vcs::create_worktree_on
+    fn materialize_worktree_on_ref(
+        &self,
+        store: &Path,
+        dest: &Path,
+        name: &RawRefName,
+        start_point: &ResolvedRevisionId,
+    ) -> Result<bool, VcsError>;
+
+    /// Leave the checkout `from` witnesses on no branch, at `to`.
+    ///
+    /// Post-birth attachment change: requires the operator's consent,
+    /// because what is lost is the name their commits hang off.
+    fn detach_head(
+        &self,
+        from: &AttachedRef,
+        to: &ResolvedRevisionId,
+        consent: DetachConsent,
+    ) -> Result<(), VcsError> {
+        let DetachConsent(()) = consent;
+        self.verify_attachment(from)?;
+        self.set_detached_head(from.repo(), to)
+    }
+
+    /// Point the checkout `from` describes at the local branch `to`.
+    ///
+    /// Takes the whole [`HeadAttachment`] rather than a witness: reattach
+    /// is reachable from all three states (including `Unborn`, where the
+    /// operator wants off a branch that never got a commit), and the state
+    /// it planned against must still hold.
+    fn reattach_head(
+        &self,
+        from: HeadAttachment,
+        to: &LocalRefName,
+        consent: ReattachConsent,
+    ) -> Result<(), VcsError> {
+        let ReattachConsent(()) = consent;
+        let repo = from.repo().to_path_buf();
+        let observed = self.head_attachment(&repo)?;
+        if observed != from {
+            return Err(VcsError::StaleRefWitness {
+                repo,
+                expected: from.to_string(),
+                observed: observed.to_string(),
+            });
+        }
+        self.attach_head_to(&repo, to)
+    }
+
+    /// VCS-specific half of the detaching ATTACH: put `repo`'s HEAD on
+    /// `to` directly, naming no branch. Never forced — the VCS's own
+    /// refusal to overwrite modified paths is a precondition, not an
+    /// obstacle.
+    fn set_detached_head(&self, repo: &Path, to: &ResolvedRevisionId) -> Result<(), VcsError>;
+
+    /// VCS-specific half of [`reattach_head`]: put `repo`'s HEAD on the
+    /// existing local branch `name`. Fails when no such branch exists —
+    /// creating one would be a birth, which is a different operation with
+    /// a different consent shape.
+    ///
+    /// [`reattach_head`]: Vcs::reattach_head
+    fn attach_head_to(&self, repo: &Path, name: &LocalRefName) -> Result<(), VcsError>;
+
+    // ---- DESTROY (§3.2) ---------------------------------------------------
+
+    /// Destroy a ref rwv holds a receipt for.
+    ///
+    /// Receipt **and** warrant, and no overload takes a name: there is no
+    /// way to spell "delete this branch I recognised". The store comes from
+    /// the receipt, so a receipt cannot authorize a delete in a different
+    /// store.
+    fn delete_owned_ref(
+        &self,
+        branch: &OwnedRef,
+        warrant: DeletionWarrant,
+    ) -> Result<(), VcsError> {
+        let _ = warrant.describe();
+        self.destroy_local_ref(branch.store(), branch.name())
+    }
+
+    /// VCS-specific half of [`delete_owned_ref`]. Not to be called
+    /// directly: it takes a raw name and no warrant, which is precisely
+    /// the shape R2 and R3 exist to forbid at the call sites above it.
+    ///
+    /// [`delete_owned_ref`]: Vcs::delete_owned_ref
+    fn destroy_local_ref(&self, store: &Path, name: &RawRefName) -> Result<(), VcsError>;
+
+    // ---- publish ----------------------------------------------------------
+
+    /// Push `r` to the remote `role` selects.
+    ///
+    /// The ref is a **parameter**, so the choice of what to publish is made
+    /// at one site in `push.rs` instead of being implicit inside the VCS
+    /// impl. Q6 decides what that site passes; this signature only makes
+    /// the decision visible.
+    fn push_ref(
+        &self,
+        repo: &Path,
+        role: Role,
+        r: &PublishRef,
+        force: bool,
+    ) -> Result<(), VcsError>;
+
+    /// The remote's declared primary branch, or `None` when it is unset or
+    /// malformed. **No fallback** — see [`RemoteDefaultBranch`].
+    fn remote_default_branch(&self, repo: &Path) -> Result<Option<RemoteDefaultBranch>, VcsError>;
+
+    // ---- listing ----------------------------------------------------------
+
+    /// Local branch names starting with `prefix`, as observed.
+    ///
+    /// Report-only by type: a [`RawRefName`] is not an [`OwnedRef`], so
+    /// nothing in the result can be deleted without a registry lookup. That
+    /// is the difference between "destroy this prefix-scoped set" and
+    /// "report what is left over".
+    fn list_branch_names_with_prefix(
+        &self,
+        repo: &Path,
+        prefix: &str,
+    ) -> Result<Vec<RawRefName>, VcsError>;
+
+    /// Every local branch name in `repo`, as observed. Report-only, for
+    /// the same reason as [`list_branch_names_with_prefix`].
+    ///
+    /// [`list_branch_names_with_prefix`]: Vcs::list_branch_names_with_prefix
+    fn list_local_branch_names(&self, repo: &Path) -> Result<Vec<RawRefName>, VcsError>;
+
+    // ---- savepoints as proof ----------------------------------------------
+
+    /// Write a savepoint and return **proof it exists**.
+    ///
+    /// Provided: this body is the only place a [`SavepointRef`] is
+    /// constructed, so the type cannot be minted for a savepoint that was
+    /// only planned. [`DiscardWarrant::new`] takes one, which is what makes
+    /// a rewind without a savepoint unrepresentable.
+    fn create_savepoint_ref(&self, repo: &Path, op_id: &str) -> Result<SavepointRef, VcsError> {
+        let at = self.create_savepoint(repo, op_id)?;
+        Ok(SavepointRef {
+            repo: repo.to_path_buf(),
+            op_id: op_id.to_owned(),
+            at,
+        })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // -----------------------------------------------------------------------
+    // The rules that live in the types rather than in a VCS impl. Each is
+    // exercised here because "malformed means absent" and "canonical means
+    // checked" have to hold without a repo to consult.
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn canonical_commit_ids_are_full_width_lowercase_hex() {
+        assert!(is_canonical_commit_id(&"a".repeat(40)));
+        assert!(is_canonical_commit_id(&"0123456789abcdef".repeat(4)[..64]));
+        // Abbreviated ids are ambiguous by construction; uppercase means the
+        // string did not come from a resolution.
+        assert!(!is_canonical_commit_id(&"a".repeat(7)));
+        assert!(!is_canonical_commit_id(&"a".repeat(39)));
+        assert!(!is_canonical_commit_id(&"a".repeat(41)));
+        assert!(!is_canonical_commit_id(&"A".repeat(40)));
+        assert!(!is_canonical_commit_id(&"g".repeat(40)));
+        assert!(!is_canonical_commit_id(""));
+    }
+
+    #[test]
+    fn a_malformed_remote_head_symref_names_no_default() {
+        const NS: &str = "refs/remotes/origin/";
+        // Outside the namespace entirely.
+        assert!(RemoteDefaultBranch::from_symref_target("refs/heads/main", NS).is_none());
+        // Inside the namespace but naming nothing.
+        assert!(RemoteDefaultBranch::from_symref_target(NS, NS).is_none());
+        // Empty output — git printed nothing.
+        assert!(RemoteDefaultBranch::from_symref_target("", NS).is_none());
+        // Inside the namespace but not a usable ref name.
+        assert!(RemoteDefaultBranch::from_symref_target(&format!("{NS}bad..name"), NS).is_none());
+        // The one shape that yields a value.
+        let ok = RemoteDefaultBranch::from_symref_target(&format!("{NS}main\n"), NS)
+            .expect("well-formed symref");
+        assert_eq!(ok.to_string(), "main");
+        assert_eq!(ok.local_counterpart().as_str(), "main");
+    }
+
+    #[test]
+    fn sha_shape_has_a_stated_floor() {
+        assert!(is_sha_shaped(&"a".repeat(40)));
+        assert!(is_sha_shaped("0123456"));
+        assert!(!is_sha_shaped("012345"), "below git's abbreviation floor");
+        assert!(!is_sha_shaped("main"));
+        assert!(!is_sha_shaped("deadbeefs"), "s is not hex");
+    }
+
+    #[test]
+    fn release_shape_is_one_definition_for_two_questions() {
+        for yes in ["v1.0", "v1.2.3", "v0.3.4-rc1", "v10.0+build"] {
+            assert!(is_release_shape_name(yes), "{yes}");
+        }
+        for no in ["main", "v1", "vnext", "1.2.3", "release/1.x", "v"] {
+            assert!(!is_release_shape_name(no), "{no}");
+        }
+    }
+
+    #[test]
+    fn ref_name_validation_mirrors_the_strictest_rules_rwv_targets() {
+        assert!(validate_ref_name("main").is_ok());
+        assert!(validate_ref_name("release/1.x").is_ok());
+        assert!(validate_ref_name("p--ww").is_ok());
+        assert_eq!(validate_ref_name(""), Err(RefNameError::Empty));
+        for bad in [
+            "a..b", "a@{0}", "@", "a//b", "/a", "a/", "a.", ".a", "a/.b", "a.lock", "a/b.lock",
+            "a b", "a~1", "a^", "a:b", "a?", "a*", "a[", "a\\b", "a\tb",
+        ] {
+            assert!(
+                matches!(validate_ref_name(bad), Err(RefNameError::Malformed { .. })),
+                "{bad:?} should be Malformed"
+            );
+        }
+    }
+
+    #[test]
+    fn a_receipt_and_an_attachment_are_compared_by_a_named_predicate() {
+        // `is_attached_by` is the only bridge between notion (2b) and notion
+        // (3), it answers `bool`, and it yields no witness — so "the receipt
+        // matches" can never be mistaken for "I hold proof of attachment".
+        let owned = OwnedRef::from_receipt(
+            PathBuf::from("/tmp/store/.git"),
+            RawRefName::new("p--ww"),
+            ResolvedRevisionId::from_canonical("a".repeat(40), None),
+        );
+        let same = AttachedRef {
+            repo: PathBuf::from("/tmp/checkout"),
+            name: RawRefName::new("p--ww"),
+        };
+        let other = AttachedRef {
+            repo: PathBuf::from("/tmp/checkout"),
+            name: RawRefName::new("main"),
+        };
+        assert!(owned.is_attached_by(&same));
+        assert!(!owned.is_attached_by(&other));
+    }
+
+    #[test]
+    fn a_warrant_says_which_check_licensed_the_destroy() {
+        let w = DeletionWarrant::operator_discarded(DiscardUnmergedConsent::granted());
+        assert_eq!(w.describe(), "operator passed --discard-unmerged-commits");
+    }
 }

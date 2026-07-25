@@ -573,6 +573,54 @@ Schema:
         {
           "type": "object",
           "required": [
+            "expected",
+            "kind",
+            "observed",
+            "repo"
+          ],
+          "properties": {
+            "expected": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "enum": [
+                "stale-ref-witness"
+              ]
+            },
+            "observed": {
+              "type": "string"
+            },
+            "repo": {
+              "type": "string"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "kind",
+            "operation",
+            "repo"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "mid-operation"
+              ]
+            },
+            "operation": {
+              "type": "string"
+            },
+            "repo": {
+              "type": "string"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
             "ctx",
             "kind",
             "message"
