@@ -51,7 +51,7 @@ Place `.envrc` in the project directory and use the `static-files` integration t
 
 ## Devcontainers / Codespaces
 
-`rwv fetch` replaces a wall of `git clone` commands in `postCreateCommand`:
+`rwv fetch` replaces a wall of `git clone` commands in `postCreateCommand`. Mounting the repo at its default location leaves the container's working directory as the project repo itself — not a workspace, and not empty — so `rwv fetch <source>` refuses it. Mount under `projects/<name>/` instead (`workspaceMount` + `workspaceFolder`), then `cd` up to the parent before activating and fetching in place:
 
 ```jsonc
 // .devcontainer/devcontainer.json
@@ -61,18 +61,23 @@ Place `.envrc` in the project directory and use the `static-files` integration t
     "ghcr.io/devcontainers/features/go:1": {},
     "ghcr.io/devcontainers/features/rust:1": {}
   },
-  "postCreateCommand": "cargo install repoweave && rwv fetch chatly/web-app",
+  "workspaceMount": "source=${localWorkspaceFolder},target=/workspaces/ws/projects/web-app,type=bind,consistency=cached",
+  "workspaceFolder": "/workspaces/ws/projects/web-app",
+  "postCreateCommand": "cd /workspaces/ws && cargo install repoweave && rwv activate web-app --no-install && rwv fetch --frozen",
   "forwardPorts": [5432]
 }
 ```
 
 ## CI multi-repo checkout
 
-`rwv.yaml` can drive a reusable checkout action — same pattern as `rwv fetch` but in CI:
+`rwv.yaml` can drive a reusable checkout action — same pattern as `rwv fetch` but in CI. A checkout with no `path:` has the same problem as the devcontainer's default mount: the runner directory ends up non-empty and not a workspace. Nest the checkout under `projects/<name>/`, activate to set the active project, then fetch in place at the revisions the lock pins:
 
 ```yaml
 # .github/workflows/ci.yml
-- uses: actions/checkout@v4          # this repo (projects/web-app)
-- run: rwv fetch chatly/web-app      # clones all repos listed in rwv.yaml
+- uses: actions/checkout@v4
+  with:
+    path: projects/web-app
+- run: rwv activate web-app --no-install
+- run: rwv fetch --frozen            # clones the repos listed in rwv.yaml, pinned to rwv.lock
 - run: npm install && npm test
 ```
