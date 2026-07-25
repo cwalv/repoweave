@@ -1323,6 +1323,45 @@ mod tests {
         GoWork.member_incompatibility(&ctx).unwrap()
     }
 
+    /// Build a workspace whose go.work carries `go_work_version` and whose
+    /// members — one go.mod per `(repo path, go version)` — declare the given
+    /// requirements. The multi-member counterpart of [`seed_go_workspace`]:
+    /// with a single member, `max`, `min` and first-found are the same value,
+    /// so aggregation only becomes observable here.
+    fn seed_multi_member_workspace(root: &Path, go_work_version: &str, members: &[(&str, &str)]) {
+        let uses: String = members.iter().map(|(p, _)| format!("\t./{p}\n")).collect();
+        write_file(
+            root,
+            "go.work",
+            &format!("go {go_work_version}\n\n// managed by repoweave\nuse (\n{uses})\n"),
+        );
+        for (path, version) in members {
+            let name = path.split('/').next_back().unwrap();
+            write_file(
+                root,
+                &format!("{path}/go.mod"),
+                &format!("module example.com/{name}\n\ngo {version}\n"),
+            );
+        }
+    }
+
+    /// Run the predicate over a multi-member workspace and return the finding.
+    fn probe_members(
+        go_work_version: &str,
+        members: &[(&str, &str)],
+    ) -> Option<MemberIncompatibility> {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        seed_multi_member_workspace(root, go_work_version, members);
+
+        let manifest =
+            make_manifest_local(members.iter().map(|(p, _)| (*p, Role::Owned)).collect());
+        let project = ProjectName::new("test-project");
+        let config = IntegrationConfig::default();
+        let cache = HashMap::new();
+        member_incompatibility_for(root, &manifest, &project, &config, &cache)
+    }
+
     /// Run the predicate over a one-member workspace and return the finding.
     fn probe(go_work_version: Option<&str>, member_version: &str) -> Option<MemberIncompatibility> {
         let tmp = TempDir::new().unwrap();
@@ -1426,6 +1465,65 @@ mod tests {
         assert!(
             probe(Some("1.26"), "1.26.1").is_some(),
             "go 1.26 under a member's go 1.26.1 is a breach"
+        );
+    }
+
+    /// The requirement is the STRONGEST member's, not any member's. Three
+    /// members straddle the pin, and the detection list is sorted by path, so
+    /// the one that decides (`member-b`) is neither first nor last: min and
+    /// first-found land on `member-a`'s 1.20, which the pin satisfies, and
+    /// report nothing; last-found lands on `member-c`'s 1.22 and names the
+    /// wrong member with the wrong version.
+    #[test]
+    fn member_incompatibility_takes_the_maximum_member_requirement() {
+        let found = probe_members(
+            "1.21",
+            &[
+                ("github/test/member-a", "1.20"),
+                ("github/test/member-b", "1.26"),
+                ("github/test/member-c", "1.22"),
+            ],
+        )
+        .expect("go 1.21 is below member-b's 1.26 — the strongest requirement decides");
+        let issue = found.into_issue();
+
+        assert!(
+            issue.message.contains("github/test/member-b/go.mod"),
+            "message must name the member carrying the strongest requirement; got: {}",
+            issue.message
+        );
+        assert!(
+            issue.message.contains("1.26"),
+            "message must report the strongest requirement, not a weaker one; got: {}",
+            issue.message
+        );
+        // Naming a member the pin already satisfies would send the operator to
+        // a file that needs no change.
+        assert!(
+            !issue.message.contains("1.20") && !issue.message.contains("member-a"),
+            "message must not name a member the pin already satisfies; got: {}",
+            issue.message
+        );
+        assert!(
+            !issue.message.contains("1.22") && !issue.message.contains("member-c"),
+            "message must not name a member the pin already satisfies; got: {}",
+            issue.message
+        );
+    }
+
+    #[test]
+    fn member_incompatibility_silent_when_every_member_is_below_the_pin() {
+        assert!(
+            probe_members(
+                "1.26",
+                &[
+                    ("github/test/member-a", "1.20"),
+                    ("github/test/member-b", "1.21"),
+                    ("github/test/member-c", "1.22"),
+                ],
+            )
+            .is_none(),
+            "a pin above every member's requirement is compatible, however many members there are"
         );
     }
 
