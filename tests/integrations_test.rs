@@ -6241,11 +6241,14 @@ mod vscode_workspace {
         let tmp = TempDir::new().unwrap();
         let root = tmp.path();
 
-        // Pre-existing workspace file with user customizations
+        // Pre-existing rwv-managed workspace file with user customizations.
+        // The marker is what makes this a re-activation rather than a seizure
+        // of a hand-authored file.
         write_file(
             root,
             "test-project.code-workspace",
             r#"{
+  "rwv.generated": true,
   "folders": [{ "path": ".", "name": "old-name" }],
   "settings": {
     "git.autoRepositoryDetection": "subFolders",
@@ -7415,6 +7418,107 @@ mod vscode_workspace_scenarios {
         );
         assert!(parsed.get("folders").is_none());
         assert!(parsed.get("rwv.generated").is_none());
+    }
+
+    // -------------------------------------------------------------------------
+    // Scenario 8 — Activate is marker-gated too: a hand-authored workspace is
+    // left byte-for-byte alone, not converted to an rwv-owned file.
+    //
+    // This is the take-the-pen escape hatch: delete rwv's marker and the file
+    // is yours. Without this, `rwv doctor` reports the file USER-HELD and the
+    // next intent verb silently seizes it.
+    // -------------------------------------------------------------------------
+    #[test]
+    fn scenario8_activate_leaves_hand_authored_workspace_untouched() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+
+        // A workspace a user wrote by hand: no rwv.generated marker, a folder
+        // layout and excludes that are entirely their own.
+        write_file(
+            root,
+            "foundations.code-workspace",
+            r#"{
+  "folders": [
+    {"path": "github/acme/server", "name": "server"},
+    {"path": ".", "name": "my own name for the root"}
+  ],
+  "settings": {
+    "git.repositoryScanMaxDepth": 7,
+    "files.exclude": {"**/target": true},
+    "editor.tabSize": 2
+  }
+}"#,
+        );
+
+        let manifest = make_manifest(vec![("github/acme/server", Role::Owned)]);
+        let project = ProjectName::new("foundations");
+        let config = IntegrationConfig::default();
+        let cache = HashMap::new();
+        let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+
+        contract::assert_activate_leaves_user_held_untouched(
+            &root.join("foundations.code-workspace"),
+            || VscodeWorkspace.activate(&ctx).unwrap(),
+        );
+
+        // Specifically: no marker was stamped, so the file does not become
+        // rwv-owned on the run after next.
+        let parsed: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(root.join("foundations.code-workspace")).unwrap(),
+        )
+        .unwrap();
+        assert!(
+            parsed.get("rwv.generated").is_none(),
+            "activate must not stamp the marker on a user-held file; got: {parsed}"
+        );
+    }
+
+    // -------------------------------------------------------------------------
+    // Scenario 9 — The gate is the owned region, not the file. A file with no
+    // `folders` has nothing rwv could be taking, so rwv creates the key and
+    // manages from that point forward — preserving the blocks already there.
+    // -------------------------------------------------------------------------
+    #[test]
+    fn scenario9_activate_adopts_unmarked_file_without_the_owned_region() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+
+        write_file(
+            root,
+            "foundations.code-workspace",
+            r#"{
+  "extensions": {"recommendations": ["rust-lang.rust-analyzer"]},
+  "settings": {"editor.tabSize": 2}
+}"#,
+        );
+
+        let manifest = make_manifest(vec![("github/acme/server", Role::Owned)]);
+        let project = ProjectName::new("foundations");
+        let config = IntegrationConfig::default();
+        let cache = HashMap::new();
+        let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+
+        VscodeWorkspace.activate(&ctx).unwrap();
+
+        let parsed: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(root.join("foundations.code-workspace")).unwrap(),
+        )
+        .unwrap();
+
+        assert_eq!(
+            parsed["rwv.generated"]["managed"], true,
+            "an absent owned region is rwv's to create; got: {parsed}"
+        );
+        assert_eq!(parsed["folders"][0]["path"], ".");
+        assert_eq!(parsed["folders"][0]["name"], "foundations (primary)");
+
+        // The user's existing blocks are merged around, not replaced.
+        assert_eq!(parsed["settings"]["editor.tabSize"], 2);
+        assert_eq!(
+            parsed["extensions"]["recommendations"][0],
+            "rust-lang.rust-analyzer"
+        );
     }
 }
 
@@ -10230,8 +10334,9 @@ mod s7_vscode_doctor {
     }
 
     /// Given: USER-HELD .code-workspace.
-    /// When:  activate() runs (merge's guard).
-    /// Then:  The user's folders content is NOT clobbered.
+    /// When:  activate() runs.
+    /// Then:  The file is byte-identical and still USER-HELD — activate never
+    ///        takes the pen from a file it does not already hold.
     #[test]
     fn s7_vscode_doctor_user_held_file_unchanged_after_activate() {
         let tmp = TempDir::new().unwrap();
@@ -10254,22 +10359,21 @@ mod s7_vscode_doctor {
         assert_eq!(issues.len(), 1);
         assert!(!issues[0].safe_to_fix, "must be USER-HELD");
 
-        // activate() writes rwv-owned keys but the merge merges (not clobbers).
-        // The key invariant: activate() DOES write rwv.generated, so after activate
-        // the file will have the marker. But the USER-HELD check in verify() is
-        // "no marker at all", so post-activate it will be CLEAN or DRIFT.
-        // The check here verifies activate() does NOT destroy the user's folders[0]
-        // path entry:
         VscodeWorkspace.activate(&ctx).unwrap();
 
         let after = std::fs::read_to_string(root.join("test-project.code-workspace")).unwrap();
-        // After activate, the file has the rwv.generated marker (activate always writes it),
-        // and folders[0] is updated to the primary. The user's original folder name
-        // (if path="." is the rwv-owned primary slot) gets replaced — which is correct,
-        // since vscode always owns the "path":"." slot.
+        assert_eq!(
+            after, original,
+            "activate must leave a USER-HELD file byte-identical"
+        );
+
+        // Still USER-HELD: activate did not convert doctor's finding by
+        // stamping the marker.
+        let post = VscodeWorkspace.verify(&ctx).unwrap();
+        assert_eq!(post.len(), 1, "expected the USER-HELD finding to persist");
         assert!(
-            after.contains("test-project (primary)"),
-            "primary folder name must be set by activate: {after}"
+            !post[0].safe_to_fix,
+            "post-activate finding must still be USER-HELD, got: {post:?}"
         );
     }
 

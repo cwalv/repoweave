@@ -31,6 +31,12 @@ The file is named after the project (e.g., `web-app.code-workspace`), making the
 - **`git.repositoryScanMaxDepth: 3`** ensures VS Code discovers repos at the `registry/owner/repo` depth.
 - **Merge on activate** — rwv writes the `"."` folder entry and its own `files.exclude` keys, and seeds the `git.*` settings once. Extra folder entries, user-added `files.exclude` keys, and other blocks (extensions, launch configs, other settings) are preserved, so user customizations survive re-activation.
 
+## Ownership
+
+`folders` is rwv's owned region. A `.code-workspace` that has a `folders` array but no `rwv.generated` marker was authored by hand: rwv leaves it byte-for-byte alone on activate, and `rwv doctor` reports it as user-held (not auto-fixable). A file with no `folders` has no owned region to take over, so rwv creates the key and the marker and manages it from that point on, merging around whatever blocks are already there.
+
+**Taking the pen** — delete the `rwv.generated` key. rwv stops writing the file and only reports on it. Changing rwv's *values* while leaving the marker in place does not take the pen; the next intent verb rewrites them.
+
 ## Deactivation
 
 Strips rwv's keys from each `.code-workspace` file carrying the `rwv.generated` marker: the `"."` folder entry, the `files.exclude` keys the marker records, and the marker itself. Everything else stays and the file is rewritten as a hand-owned workspace — including the `git.*` settings, which rwv seeds but never removes. Files without the marker are not touched.

@@ -214,6 +214,15 @@ fn merge_folders(
     serde_json::Value::Array(folders)
 }
 
+/// Is rwv's owned region present in this document?
+///
+/// `folders` is where rwv writes the primary entry, so its presence is what
+/// makes an unmarked file user-held — the probe `activate` defers on and
+/// `verify` reports USER-HELD on.
+fn owned_region_present(obj: &serde_json::Map<String, serde_json::Value>) -> bool {
+    obj.contains_key("folders")
+}
+
 /// Drop the rwv-owned primary entry (`"path": "."`) from the `folders` array,
 /// keeping every user-added entry. Removes the key when nothing is left.
 fn remove_primary_folder(obj: &mut serde_json::Map<String, serde_json::Value>) {
@@ -294,36 +303,39 @@ impl Integration for VscodeWorkspace {
         let filepath = ctx.output_dir.join(&filename);
 
         // Parse the existing file, bailing loudly on malformed content (fix #4).
-        // An empty or missing file starts as an empty map.
-        let mut obj: serde_json::Map<String, serde_json::Value> = if filepath.exists() {
+        // An empty or missing file starts as an empty document.
+        let mut doc = if filepath.exists() {
             let content = std::fs::read_to_string(&filepath)
                 .with_context(|| format!("reading {}", filepath.display()))?;
-            let text = content.trim();
-            if text.is_empty() {
-                serde_json::Map::new()
-            } else {
-                let v: serde_json::Value = serde_json::from_str(&content).with_context(|| {
-                    format!(
-                        "malformed JSON in {}: fix or delete the file and re-run `rwv activate`",
-                        filepath.display()
-                    )
-                })?;
-                match v {
-                    serde_json::Value::Object(m) => m,
-                    _ => anyhow::bail!("{} must be a JSON object", filepath.display()),
-                }
-            }
+            JsonDoc::<RwvGeneratedMarker>::parse(&content).with_context(|| {
+                format!(
+                    "malformed JSON in {}: fix or delete the file and re-run `rwv activate`",
+                    filepath.display()
+                )
+            })?
         } else {
-            serde_json::Map::new()
+            JsonDoc::empty()
         };
+
+        // The user holds the pen on an unmarked file that already has the
+        // owned region: leave it byte-for-byte alone and let verify() report
+        // it. The marker is one top-level key spanning the whole managed
+        // region, so ownership cannot be split per key — authoring any part of
+        // an unmarked file would stamp the marker and hand rwv the rest on the
+        // next run.
+        if !doc.has_marker(&[]) && owned_region_present(doc.root()) {
+            return Ok(());
+        }
+
+        let obj = doc.root_mut();
 
         // Read back the previously-recorded rwv-owned exclude keys so we can
         // remove stale entries on this run (set-subtract-old-owned-set).
-        let prev_rwv_excludes = read_prev_rwv_excludes(&obj);
+        let prev_rwv_excludes = read_prev_rwv_excludes(obj);
 
         // Merge the `folders` array (fix #2): primary at [0], user folders
         // preserved in their original order.
-        let folders_value = merge_folders(&obj, ctx.project.as_str());
+        let folders_value = merge_folders(obj, ctx.project.as_str());
         obj.insert("folders".to_string(), folders_value);
 
         // Compute rwv-derived files.exclude keys.
@@ -366,7 +378,7 @@ impl Integration for VscodeWorkspace {
 
         // Compute the merged files.exclude map before mutating `obj` (Rust
         // borrow rules: shared borrow for read, then exclusive for write).
-        let merged_exclude = merge_files_exclude(&obj, &rwv_exclude_keys, &prev_rwv_excludes);
+        let merged_exclude = merge_files_exclude(obj, &rwv_exclude_keys, &prev_rwv_excludes);
 
         // Update the `rwv.generated` marker to record the new owned exclude
         // key list.  This enables accurate stale-key removal on the next run.
@@ -399,7 +411,7 @@ impl Integration for VscodeWorkspace {
             );
         }
 
-        let content = serde_json::to_string_pretty(&serde_json::Value::Object(obj))? + "\n";
+        let content = doc.serialize()?;
         std::fs::write(&filepath, content)?;
         Ok(())
     }
@@ -439,8 +451,9 @@ impl Integration for VscodeWorkspace {
     ///
     /// - **MISSING** (`safe_to_fix=true`): file absent.
     /// - **Parse-error** (Error): malformed JSON — bail, can't assess drift.
-    /// - **USER-HELD** (`safe_to_fix=false`): file present but NO `rwv.generated`
-    ///   marker — user created the workspace file; don't auto-clobber.
+    /// - **USER-HELD** (`safe_to_fix=false`): `folders` present but NO
+    ///   `rwv.generated` marker — user authored the workspace file; don't
+    ///   auto-clobber. `activate` defers on the same condition.
     /// - **DRIFT** (`safe_to_fix=true`): marker present but `folders[0]` (the rwv
     ///   primary folder entry) doesn't match the expected primary for this project.
     /// - **CLEAN**: marker present and primary folder entry matches.
@@ -461,16 +474,12 @@ impl Integration for VscodeWorkspace {
             .with_context(|| format!("reading {} for verify", filepath.display()))?;
         let doc = JsonDoc::<RwvGeneratedMarker>::parse(&text)
             .with_context(|| format!("parsing {} for verify", filepath.display()))?;
-        let parsed: serde_json::Value = serde_json::from_str(&text)
-            .with_context(|| format!("parsing {} for verify (serde_json)", filepath.display()))?;
 
         let marker_present = doc.has_marker(&[]);
 
-        // vscode's USER-HELD is marker-absence alone (file present but no
-        // `rwv.generated` marker → user created it). The shared helper treats
-        // USER-HELD as `!marker_present && owned_key_present`, so we pass
-        // `owned_key_present = true` unconditionally: the file's mere presence
-        // is the "owned region" here.
+        // USER-HELD is `folders` present without the marker — the same pair
+        // `activate` defers on, so doctor never calls a file user-held that the
+        // next intent verb would take over.
         //
         // DRIFT is the `folders[0]` primary-entry compare (NOT an array of
         // members like the other five). We serialize the on-disk and expected
@@ -479,7 +488,8 @@ impl Integration for VscodeWorkspace {
         // is intentionally NOT checked — its content depends on runtime
         // all_repos_on_disk / all_project_paths sets and is not reproducible
         // from the manifest alone.
-        let on_disk_primary = parsed
+        let on_disk_primary = doc
+            .root()
             .get("folders")
             .and_then(|v| v.as_array())
             .and_then(|arr| arr.first())
@@ -501,7 +511,7 @@ impl Integration for VscodeWorkspace {
             self.name(),
             &filepath,
             marker_present,
-            /* owned_key_present = */ true,
+            owned_region_present(doc.root()),
             Some(&on_disk),
             &expected,
             "Cut over manually or add the rwv.generated marker",

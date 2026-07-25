@@ -20,6 +20,10 @@
 //!    - marker + owned only (no foreign content) → file deleted.
 //!    - marker + owned + foreign content → file rewritten without the marker
 //!      or owned keys; foreign content survives byte-stable.
+//! 4. **activate leaves a user-held file alone.** Seed a file carrying the
+//!    owned region but NO marker → run activate → the bytes are unchanged.
+//!    The mirror of shape 3's marker gate: without the marker the user holds
+//!    the pen, so neither verb may write.
 //!
 //! # API shape (the spec asked us to pick one and document)
 //!
@@ -243,6 +247,26 @@ where
         !path.exists(),
         "deactivate must DELETE a file with no user-authored content; still present: {}",
         path.display()
+    );
+}
+
+/// Shape 4: activate leaves a user-held file alone.
+///
+/// Caller seeds the file at `path` with the owned region but no ownership
+/// marker. `activate` is run twice — a refusal that only holds for one run is
+/// not a refusal — and the bytes must be identical to what was seeded.
+pub fn assert_activate_leaves_user_held_untouched<A>(path: &Path, activate: A)
+where
+    A: Fn(),
+{
+    let before = fs::read_to_string(path).expect("caller must seed the file before calling");
+    activate();
+    activate();
+    let after = fs::read_to_string(path).expect("activate must not delete a user-held file");
+    assert_eq!(
+        before, after,
+        "activate must not write a file carrying the owned region without the \
+         ownership marker; diff:\nBEFORE:\n{before}\nAFTER:\n{after}"
     );
 }
 
