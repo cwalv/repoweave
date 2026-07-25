@@ -1063,7 +1063,7 @@ fn per_conflict_bail_message(
 ///    durable — it won't be present after a `git reset --hard` or fresh clone.
 ///
 /// If the committed `.gitattributes` still carries the LEGACY `merge=ours`
-/// spelling (pre-fo-yk0rlj), the invariant bails with a migration-specific
+/// spelling, the invariant bails with a migration-specific
 /// message directing the operator at `rwv doctor --fix` — which rewrites
 /// AND commits the .gitattributes migration. If neither the new nor the
 /// legacy line is present, the invariant bails with the classic
@@ -1102,7 +1102,7 @@ fn verify_replay_exclusion_invariant(cwd_project_dir: &Path) -> anyhow::Result<(
             "sync --strategy=rebase requires `rwv.lock merge=rwv-ours` \
              in the project repo's committed .gitattributes, but {ga} still \
              carries the legacy `rwv.lock merge=ours` spelling. The rename \
-             (fo-yk0rlj) closes an accidental-collision hazard where an \
+             closes an accidental-collision hazard where an \
              unrelated `merge.ours.driver` in the operator's global git \
              config would silently activate on rwv.lock during a bare \
              `git rebase --continue`.\n\
@@ -5334,8 +5334,8 @@ mod tests {
 
     #[test]
     fn sync_source_parses_workweave_name() {
-        let parsed: SyncSource = "fo-city".parse().unwrap();
-        assert_eq!(parsed, SyncSource::Workweave(WorkweaveName::new("fo-city")));
+        let parsed: SyncSource = "hotfix".parse().unwrap();
+        assert_eq!(parsed, SyncSource::Workweave(WorkweaveName::new("hotfix")));
     }
 
     #[test]

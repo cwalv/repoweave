@@ -249,7 +249,6 @@ pub fn run_fetch(
 /// This is the settled repair verb for a dangling reference: no SOURCE
 /// argument, resolves the workspace from CWD, iterates the active project's
 /// manifest, and clones any repo whose canonical clone directory is missing.
-/// Present repos are untouched.
 ///
 /// Clone-topology (I1): the canonical clone always lives at primary's
 /// `<weave>/<repo_path>`, even when this verb is invoked from inside a

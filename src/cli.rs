@@ -414,7 +414,7 @@ pub enum WorkweaveAction {
         /// active workspace (the workweave when invoked from inside one,
         /// otherwise primary). Relative paths resolve against primary, so
         /// peer workweaves can be referenced by directory name (e.g.
-        /// `--from .workweaves/foundations--fo-city`).
+        /// `--from .workweaves/myproj--hotfix`).
         #[arg(long)]
         from: Option<String>,
         /// Allow creation even when the source project directory has

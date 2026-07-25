@@ -74,7 +74,7 @@ workweave already
 exists and is clean, `create` validates the `.rwv-workweave` marker (same
 primary and project) and returns immediately. Non-git state written by agents
 between invocations (`.runtime/`, `.claude/`, etc.) is preserved. Re-invocation
-is the Gas City rig's standard "ensure workweave exists" path.
+is the standard "ensure workweave exists" path.
 
 **What `create` writes:**
 1. One `git worktree` per `owned`/`fork`/`dependency` manifest repo (plus the

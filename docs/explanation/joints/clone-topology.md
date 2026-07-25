@@ -147,9 +147,9 @@ The pattern in all three is the same: every higher-tier check is sound
 manifest repo turn every higher-tier check into a coin toss whose outcome
 depends on which DAG the check happened to consult.
 
-## Case study: `fo-a0spgj`
+## Case study: a canonical store held inside a workweave
 
-`fo-a0spgj` exposed exactly this failure mode. A repo's canonical store
+A real workspace exposed exactly this failure mode. A repo's canonical store
 lived inside a workweave; the slot at `<weave>/<repo_path>` held a
 disconnected clone — same URL, separate object DAG; and 20+ worktrees
 across the weave tree had been linked into the workweave-held store.
@@ -244,8 +244,8 @@ The invariants are about clone topology, not about repo-internal state:
 
 The topology check that enforces I1–I3 is wired into
 `rwv doctor`; see the doctor reference for the violation `kind` and the
-`--fix` semantics (where remediation is possible). The `fo-a0spgj`
-case study above is the regression scenario the check is gated on.
+`--fix` semantics (where remediation is possible). The case study
+above is the regression scenario the check is gated on.
 
 ## Related joints
 

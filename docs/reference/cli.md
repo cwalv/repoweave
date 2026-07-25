@@ -46,8 +46,8 @@ name inside the `workweave` verb family; this flag makes that addressing
 global:
 
 ```
-rwv -w foundations--fo-x7 sync-to --retire   # from anywhere inside the ecosystem
-rwv -w foundations--fo-x7 status
+rwv -w myproj--hotfix sync-to --retire   # from anywhere inside the ecosystem
+rwv -w myproj--hotfix status
 ```
 
 - **Container-location-independent.** The name survives placement changes
@@ -504,7 +504,7 @@ Anchored by `tests/doc_claims_sync_test.rs`, `tests/doc_claims_fetch_test.rs`, `
 `rwv <verb>` where `<verb>` is not a core verb resolves to a `rwv-<verb>` executable on `$PATH` and execs it. This is the same convention `git` and `cargo` use for their external commands.
 
 - **Core always wins.** clap matches core verbs before external fallthrough runs, so a `rwv-status` on `$PATH` can never shadow the builtin. If you name a plugin the same as a future core verb, the plugin becomes unreachable when that core verb ships.
-- **Addressing flags are consumed by `rwv`.** Global `-C` / `-w` and per-verb `--project` are the addressing surface for the workspace coordinate; the external verb never sees them in its argv. This lets a plugin inherit the addressing surface for free — `rwv -w foundations--fo-x7 foo` addresses once, in `rwv`, and hands the resolved coordinate to `rwv-foo`.
+- **Addressing flags are consumed by `rwv`.** Global `-C` / `-w` and per-verb `--project` are the addressing surface for the workspace coordinate; the external verb never sees them in its argv. This lets a plugin inherit the addressing surface for free — `rwv -w myproj--hotfix foo` addresses once, in `rwv`, and hands the resolved coordinate to `rwv-foo`.
 - **Exit propagation is verbatim.** A normal exit propagates the child's status code; signal death maps to the conventional `128 + N` exit and is reported on stderr as `rwv-<verb> terminated by signal N`.
 - **No output wrapping.** The child owns stdout and stderr entirely — plugins that emit JSON, drive a terminal, or stream progress work without translation.
 - **Two error surfaces.** Everything `rwv`-side can go wrong on collapses to exactly one of: `unknown verb` (no core verb and no `rwv-<verb>` on `$PATH`, with a pointer to `rwv --help`) or `exec failure` (found on `$PATH` but not spawnable, with the OS error).

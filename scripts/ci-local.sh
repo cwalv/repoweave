@@ -29,7 +29,7 @@ cargo fmt --all -- --check
 header "explain artifacts up to date (no drift after regeneration)"
 # Regenerate explain markdown + JSON Schema artifacts from templates + Rust
 # types. If anyone changed a `--json`-backing type or a template without
-# committing the regenerated output, this fails. See fo-tn9uk.2.
+# committing the regenerated output, this fails.
 # Also regenerates docs/reference/prime/overview.md from its template.
 cargo run --quiet --bin generate-explain
 git diff --exit-code -- docs/reference/explain/ docs/reference/schemas/ docs/reference/prime/

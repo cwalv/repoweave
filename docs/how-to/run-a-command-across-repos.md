@@ -75,7 +75,7 @@ Install it anywhere on `$PATH` (e.g. `~/.local/bin/rwv-each`, then `chmod +x`).
 After that, `rwv each git status` does what you expect, and `rwv --help` lists it
 under "External commands."
 
-The plugin inherits `rwv`'s addressing flags: `rwv -w foundations--fo-x7 each git status`
+The plugin inherits `rwv`'s addressing flags: `rwv -w myproj--hotfix each git status`
 addresses the workweave once, in `rwv`, and the plugin receives the resolved
 coordinates through `$RWV_WORKSPACE` and `$RWV_PROJECT`.
 

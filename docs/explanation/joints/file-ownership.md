@@ -188,7 +188,7 @@ A new integration declares its content ownership regime. For **fully-rwv-owned**
 - Never whole-write or whole-delete a user file.
 - Implement `activate` as read-merge-write (idempotent).
 - Implement `deactivate` as strip-and-delete-if-empty; never delete if user content remains.
-- Add the three-regression-test shape from fo-qkp9i: activate-preserves, deactivate-strips-keeps,
+- Add the three-regression-test shape: activate-preserves, deactivate-strips-keeps,
   deactivate-deletes-if-empty.
 
 Both halves (merge-activate and strip-not-delete-deactivate) must land **in the same change**;

@@ -189,7 +189,7 @@ special tooling.
 ## Ephemeral branch names and the git worktree constraint
 
 Each workweave runs on a per-workweave ephemeral branch name — e.g.
-`foundations--fo-pte54.5/main` rather than `main`. This is what lets
+`myproj--hotfix/main` rather than `main`. This is what lets
 `rwv sync-to` work cleanly as a local-to-local primitive.
 
 Git imposes a constraint: only one worktree can have a given branch
@@ -201,7 +201,7 @@ worktree owns. The analogous single-repo operation — `git push
 checked out at the destination.
 
 rwv sidesteps this entirely. Because primary's `main` and a workweave's
-`foundations--fo-pte54.5/main` are different branch names, no two
+`myproj--hotfix/main` are different branch names, no two
 workweaves compete for the same named branch. `rwv sync-to` can push
 directly into primary's `main` without any detach-or-stash dance. The
 ephemeral naming scheme is not just bookkeeping — it is what makes

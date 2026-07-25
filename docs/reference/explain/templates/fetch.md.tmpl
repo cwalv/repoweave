@@ -17,10 +17,10 @@ entries are never moved.
 
 With no `source` argument, `fetch` runs *in-place*: it resolves the workspace
 from CWD, iterates the active project's manifest, and clones any repo whose
-canonical clone directory is missing. Repos already present on disk are
-untouched. This is the settled repair verb for a dangling reference (a
-manifest entry pointing at a missing clone — reported by `rwv doctor`, or
-surfaced by `rwv update` / `rwv push` when they hit the missing directory).
+canonical clone directory is missing. This is the settled repair verb for a
+dangling reference (a manifest entry pointing at a missing clone — reported
+by `rwv doctor`, or surfaced by `rwv update` / `rwv push` when they hit the
+missing directory).
 `doctor --fix` intentionally does not auto-clone; network side effects stay
 behind this explicit verb.
 

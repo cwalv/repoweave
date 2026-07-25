@@ -138,8 +138,8 @@ rwv doctor --fix
 
 - *missing-replay-exclusion* on a project repo — the project repo lacks
   `rwv.lock merge=rwv-ours` in `.gitattributes`, or still carries the
-  legacy `rwv.lock merge=ours` spelling (pre-fo-yk0rlj rename; renamed to
-  close an accidental-collision hazard with an unrelated global
+  legacy `rwv.lock merge=ours` spelling (renamed to close an
+  accidental-collision hazard with an unrelated global
   `merge.ours.driver` during bare `git rebase --continue`). Run
   `rwv doctor --fix` to add or migrate the line — the migration path also
   commits the change (skipping the commit when the repo has other staged

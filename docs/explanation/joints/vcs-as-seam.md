@@ -224,8 +224,8 @@ any unrelated global `merge.ours.driver` config or third-party
 Rebase replays each commit as a 3-way merge, which is why the driver
 is still needed even though the `merge` sync strategy was removed.
 
-**Anchor:** commit `d29bb2f` (initial refactor); fo-yk0rlj (driver
-rename + durable config plant).
+**Anchor:** commit `d29bb2f` (initial refactor); the driver rename +
+durable config plant landed later.
 
 **Trait surface** (`Vcs::set_replay_exclusion` and the companion
 `Vcs::has_replay_exclusion` in `src/vcs.rs`):

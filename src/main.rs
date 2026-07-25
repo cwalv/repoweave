@@ -126,7 +126,7 @@ fn resolve_workweave_flag(
              Provide both the project and the workweave name separated by `--`:\n\
              \n  rwv -w <project>--<name> <verb>\n\
              \n\
-             Example:  rwv -w foundations--fo-x7 sync-to"
+             Example:  rwv -w myproj--hotfix sync-to"
         )
     })?;
 
@@ -135,7 +135,7 @@ fn resolve_workweave_flag(
             "'-w {raw}' is not in the required <project>--<name> form: \
              both the project and name must be non-empty.\n\
              \n\
-             Example:  rwv -w foundations--fo-x7 sync-to"
+             Example:  rwv -w myproj--hotfix sync-to"
         );
     }
 
@@ -364,9 +364,8 @@ fn main() -> anyhow::Result<()> {
         //     lets its native "tip: a similar subcommand exists" message fire,
         //     which is strictly more helpful than suggesting we create a
         //     workweave literally named `crete`. The genuine bare-name case
-        //     (`fo-city`, edit distance >= 6 from every action) is far from any
-        //     subcommand and still gets the create-shaped reframe. See rwv-b2z
-        //     review.
+        //     (`hotfix`, edit distance 6 from every action) is far from any
+        //     subcommand and still gets the create-shaped reframe.
         if raw_args.get(1).map(|s| s.as_str()) == Some("workweave") {
             let project = raw_args.get(2).map(|s| s.as_str());
             let word = raw_args.get(3).map(|s| s.as_str());

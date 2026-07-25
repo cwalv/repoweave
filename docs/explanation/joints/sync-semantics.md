@@ -162,7 +162,7 @@ check on every workspace the op will touch, replay-exclusion invariant
 Phase 1' ancestor check (`--strategy=ff`), and the dirty-target
 preflight (`rwv sync-to`). Refusals here leave no trace.
 
-**Acquisition atomicity (fo-u57y0b).** The no-op-in-progress check is not
+**Acquisition atomicity.** The no-op-in-progress check is not
 a plain read followed by a later write. `sync` / `sync-to` acquire the
 owner record and every touched-workspace lease **atomically at guard
 time** via `O_CREAT|O_EXCL`: the OS refuses the second creator, so two
