@@ -78,6 +78,29 @@ pub fn build_detection_cache<'a>(
     cache
 }
 
+/// Active repos the manifest declares whose directory is not on disk under
+/// `workspace_root`, sorted.
+///
+/// The counterpart to [`build_detection_cache`]'s presence gate, one level
+/// up: an active repo with no directory is not *pending* for the
+/// integrations, it is invisible — absent from every detection list and so
+/// from every managed member list authored off one. A caller about to author
+/// over a non-empty result would not write a smaller-but-honest file, it
+/// would drop those repos from the file it overwrites.
+pub fn missing_active_members<'a>(
+    workspace_root: &Path,
+    repos: impl IntoIterator<Item = (&'a RepoPath, &'a RepoEntry)>,
+) -> Vec<String> {
+    let mut missing: Vec<String> = repos
+        .into_iter()
+        .filter(|(_, e)| e.role.is_active())
+        .filter(|(rp, _)| !workspace_root.join(rp.as_str()).exists())
+        .map(|(rp, _)| rp.as_str().to_string())
+        .collect();
+    missing.sort();
+    missing
+}
+
 impl<'a> IntegrationContextBase<'a> {
     /// Build an `IntegrationContext` from this base and per-integration config.
     pub fn build_context(

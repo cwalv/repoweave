@@ -3,6 +3,7 @@
 use crate::activate::{activate_intent, activate_workweave_intent};
 use crate::git::git_command;
 use crate::git::GitVcs;
+use crate::integration_runner::missing_active_members;
 use crate::manifest::{Manifest, ProjectName, RepoEntry, RepoPath, RepoUrl, Role, VcsType};
 use crate::registry::{builtin_registries, Registry};
 use crate::vcs::{RefName, Vcs};
@@ -117,7 +118,31 @@ fn create_worktree_in_workweave(
 /// In a workweave we still regenerate (the workweave is a view onto the
 /// project repo — symlinks write through to it) but skip install hooks; in
 /// primary we run the full intent-mode activation.
+///
+/// Regeneration is withheld when an active repo the manifest declares is not
+/// on disk: the managed files are authored from the repos the run can see, so
+/// over a partial member set they would be rewritten without the rest. The
+/// manifest change still lands, and `rwv doctor --fix` regenerates once the
+/// member set is whole.
 fn activate_for_workspace(ctx: &WorkspaceContext, project_name: &str) -> anyhow::Result<()> {
+    let root = ctx.active_path();
+    let manifest_path = root.join("projects").join(project_name).join("rwv.yaml");
+    let manifest = Manifest::from_path(&manifest_path)
+        .with_context(|| format!("failed to load manifest at {}", manifest_path.display()))?;
+
+    let missing = missing_active_members(root, manifest.iter_entries());
+    if !missing.is_empty() {
+        eprintln!(
+            "warning: {} manifest repo(s) not on disk; managed files left unchanged:",
+            missing.len()
+        );
+        for path in &missing {
+            eprintln!("  - {path}");
+        }
+        eprintln!("run `rwv fetch` to materialize them, then `rwv doctor --fix` to regenerate.");
+        return Ok(());
+    }
+
     match &ctx.checkout {
         Checkout::Workweave { dir, .. } => activate_workweave_intent(project_name, dir),
         Checkout::Primary { .. } => activate_intent(project_name, ctx),

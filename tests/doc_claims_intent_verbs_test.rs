@@ -6,6 +6,9 @@
 //! Doc claims pinned here, checked behaviourally against a content-derived
 //! generated file rather than by grepping comments:
 //!   - `rwv add` / `rwv remove` author (intent mode)
+//!   - `rwv add` / `rwv remove` author only when every active repo the
+//!     manifest declares is on disk; over a partial member set they record
+//!     the membership change and leave the managed files alone
 //!   - `rwv fetch`, `rwv activate`, workweave-create, `rwv init`, and
 //!     `rwv init --adopt` do not author (context mode)
 //!   - `rwv init --adopt` additionally must not clobber content the
@@ -75,6 +78,32 @@ fn init_bare_repo_with_commit(path: &Path) {
     git_run(&["push", "origin", "main"], &work);
 }
 
+/// A bare repo whose single commit carries a `go.mod`, so a clone of it is
+/// detected as a `go-work` member and appears in the generated `use` block.
+fn init_bare_go_module(path: &Path, module: &str) {
+    init_bare_repo(path);
+    let tmp = tempfile::tempdir().expect("tempdir for working clone");
+    let work = tmp.path().join("work");
+    git_run(
+        &["clone", &path.to_string_lossy(), &work.to_string_lossy()],
+        tmp.path(),
+    );
+    std::fs::write(work.join("go.mod"), format!("module {module}\n\ngo 1.21\n")).unwrap();
+    git_run(&["add", "."], &work);
+    git_run(&["commit", "-m", "initial"], &work);
+    git_run(&["push", "origin", "main"], &work);
+}
+
+/// Clone `bare` to `repo_path` under the workspace, the way `rwv fetch` would.
+fn clone_member(bare: &Path, ws: &Path, repo_path: &str) {
+    let dest = ws.join(repo_path);
+    std::fs::create_dir_all(dest.parent().unwrap()).unwrap();
+    git_run(
+        &["clone", &bare.to_string_lossy(), &dest.to_string_lossy()],
+        ws,
+    );
+}
+
 /// A bare "project" repo whose HEAD carries `rwv.yaml` (only) declaring
 /// `repos`. Used as an `rwv fetch` / `rwv init --adopt` source.
 fn make_project_bare(tmp: &Path, name: &str, repos: &[(&str, &str)]) -> PathBuf {
@@ -135,6 +164,12 @@ fn write_manifest(dir: &Path, repos: &[(&str, &str)]) {
 /// runs is proof that intent-mode activation ran.
 fn code_workspace(project_dir: &Path, project: &str) -> PathBuf {
     project_dir.join(format!("{project}.code-workspace"))
+}
+
+/// The `go-work` integration's file. Unlike the vscode workspace it lists the
+/// members themselves, so it shows *which* repos an authoring pass saw.
+fn go_work(project_dir: &Path) -> PathBuf {
+    project_dir.join("go.work")
 }
 
 // ===========================================================================
@@ -201,6 +236,111 @@ fn remove_authors_managed_content() {
     assert!(
         code_workspace(&project_dir, "myapp").exists(),
         "`rwv remove` is an intent verb; it must author the vscode-workspace file"
+    );
+}
+
+// ===========================================================================
+// Intent verbs author only over a whole member set
+// ===========================================================================
+
+/// A repo declared in `rwv.yaml` but not cloned is not *pending* for the
+/// integrations, it is invisible — so `rwv add` over a partially-fetched
+/// workspace must record the membership change without authoring.
+#[test]
+fn add_does_not_author_from_a_partial_member_set() {
+    let tmp = tempfile::tempdir().unwrap();
+
+    let absent_bare = tmp.path().join("org/absent.git");
+    init_bare_go_module(&absent_bare, "example.com/absent");
+    let absent_url = format!("file://{}", absent_bare.display());
+
+    // `org/absent` is declared and never cloned: the partially-fetched shape
+    // an `rwv init --adopt` (or a failed clone) leaves behind.
+    let (ws, project_dir) = setup_git_project(tmp.path(), "myapp", &[("org/absent", &absent_url)]);
+
+    let new_bare = tmp.path().join("org/newdep.git");
+    init_bare_go_module(&new_bare, "example.com/newdep");
+    let new_url = format!("file://{}", new_bare.display());
+
+    rwv()
+        .args(["add", &new_url])
+        .current_dir(&ws)
+        .assert()
+        .success();
+
+    let manifest = std::fs::read_to_string(project_dir.join("rwv.yaml")).unwrap();
+    assert!(
+        manifest.contains("org/newdep"),
+        "`rwv add` must still record the membership change, got:\n{manifest}"
+    );
+    assert!(
+        !code_workspace(&project_dir, "myapp").exists(),
+        "`rwv add` must not author while a declared repo is missing from disk"
+    );
+    assert!(
+        !go_work(&project_dir).exists(),
+        "`rwv add` must not author a member list that omits the missing repo"
+    );
+}
+
+/// The sharp end: an already-committed managed file listing every member,
+/// and a `rwv remove` run after one of the others left the disk. Authoring
+/// there would rewrite the file from what remains and drop the rest.
+#[test]
+fn remove_does_not_overwrite_managed_content_from_a_partial_member_set() {
+    let tmp = tempfile::tempdir().unwrap();
+
+    let keep_bare = tmp.path().join("org/keep.git");
+    init_bare_go_module(&keep_bare, "example.com/keep");
+    let gone_bare = tmp.path().join("org/gone.git");
+    init_bare_go_module(&gone_bare, "example.com/gone");
+    let keep_url = format!("file://{}", keep_bare.display());
+    let gone_url = format!("file://{}", gone_bare.display());
+
+    let (ws, project_dir) = setup_git_project(
+        tmp.path(),
+        "myapp",
+        &[("org/keep", &keep_url), ("org/gone", &gone_url)],
+    );
+    clone_member(&keep_bare, &ws, "org/keep");
+    clone_member(&gone_bare, &ws, "org/gone");
+
+    // Author once over the whole member set, via an intent verb.
+    let drop_bare = tmp.path().join("org/drop.git");
+    init_bare_go_module(&drop_bare, "example.com/drop");
+    let drop_url = format!("file://{}", drop_bare.display());
+    rwv()
+        .args(["add", &drop_url])
+        .current_dir(&ws)
+        .assert()
+        .success();
+
+    let authored = std::fs::read_to_string(go_work(&project_dir))
+        .expect("`rwv add` over a whole member set authors go.work");
+    for member in ["org/keep", "org/gone", "org/drop"] {
+        assert!(
+            authored.contains(member),
+            "go.work should list {member}, got:\n{authored}"
+        );
+    }
+
+    std::fs::remove_dir_all(ws.join("org/gone")).unwrap();
+
+    rwv()
+        .args(["remove", "org/drop"])
+        .current_dir(&ws)
+        .assert()
+        .success();
+
+    let manifest = std::fs::read_to_string(project_dir.join("rwv.yaml")).unwrap();
+    assert!(
+        !manifest.contains("org/drop"),
+        "`rwv remove` must still record the membership change, got:\n{manifest}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(go_work(&project_dir)).unwrap(),
+        authored,
+        "`rwv remove` must leave go.work alone while a declared repo is missing from disk"
     );
 }
 
