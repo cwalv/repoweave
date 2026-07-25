@@ -270,15 +270,17 @@ pub fn has_working_tree_legacy_replay_exclusion(
 /// Build the two `KEY=VALUE` argument strings that inline-define the
 /// `rwv-ours` merge driver for a single git invocation.
 ///
-/// Every git command that needs the driver defined (currently: [`GitVcs::rebase`]
-/// and [`GitVcs::rebase_continue`]) prepends `-c <name>=<desc>` and
-/// `-c <config-key>=true` from these strings. Extracted so the two callers
-/// share a single spelling of the flag pair — the driver name / description /
-/// value spread across [`RWV_MERGE_DRIVER_NAME_KEY`],
-/// [`RWV_MERGE_DRIVER_NAME_DESC`], and [`RWV_MERGE_DRIVER_CONFIG_KEY`] must
-/// stay in lockstep across every rwv-spawned rebase step, otherwise a
-/// `rwv sync --continue` mid-rebase resume could reach a different resolution
-/// than the fresh-start rebase phase that stopped there.
+/// The one caller is [`derived_content_git_args`], which prepends
+/// `-c <name>=<desc>` and `-c <config-key>=true` from these strings when a
+/// [`DerivedContentPolicy`] asks for the target-side pick. That single caller
+/// is what now guarantees the property this pair has always needed: the
+/// driver name / description / value spread across
+/// [`RWV_MERGE_DRIVER_NAME_KEY`], [`RWV_MERGE_DRIVER_NAME_DESC`], and
+/// [`RWV_MERGE_DRIVER_CONFIG_KEY`] stay in lockstep across every rwv-spawned
+/// replay step, so a `rwv sync --continue` mid-rebase resume cannot reach a
+/// different resolution than the phase that stopped there. It used to be a
+/// discipline shared by two hand-written call sites; the policy made it
+/// structural.
 ///
 /// Returns `(name_arg, driver_arg)` where each is a single `KEY=VALUE`
 /// string suitable as the argument after a `-c` flag.
@@ -968,202 +970,6 @@ impl Vcs for GitVcs {
         repo: &Path,
         onto: &ResolvedRevisionId,
         upstream: &ResolvedRevisionId,
-    ) -> Result<(), VcsError> {
-        // Wire up the `rwv-ours` merge driver inline (no persistent
-        // `.git/config` change) so the `merge=rwv-ours` lines written by
-        // [`set_replay_exclusion`] resolve to "keep the rebase-target's
-        // version" — `driver = true` is the shell command `true`, which
-        // succeeds without modifying the merged file. Doing this per
-        // invocation (rather than only via durable config) means the
-        // driver is available even when someone runs rwv against a repo
-        // whose local config hasn't been planted yet (fresh clone before
-        // doctor --fix, or before verify_replay_exclusion_invariant's
-        // self-heal has run for the first time). The durable plant in
-        // `plant_rwv_merge_driver_config` is what keeps the driver defined
-        // across a bare `git rebase --continue` — see that function for
-        // the rationale.
-        //
-        // [`set_replay_exclusion`]: Vcs::set_replay_exclusion
-        // `git rebase --onto <onto> <upstream>` replays commits in
-        // <upstream>..HEAD onto <onto>. On conflict, git leaves the repo
-        // mid-rebase (rebase-merge/ + conflict markers in WT). We detect
-        // that state and surface VcsError::RebaseConflict so the caller can
-        // pair with conflict_resolution_hint(ConflictOp::Rebase).
-        // `--empty=drop`: drop commits that become empty after rebase. This
-        // is what makes lock-only commits silently disappear when the
-        // `merge=rwv-ours` driver on rwv.lock (configured via
-        // [`set_replay_exclusion`]) leaves nothing for the commit to record.
-        //
-        // `--no-keep-empty`: also drop commits that were originally empty
-        // (e.g. `git commit --allow-empty`). The old custom cherry-pick loop
-        // skipped these via empty-patch detection; preserve that behaviour
-        // so a relock-noise commit doesn't survive a rebase.
-        //
-        // `--force-rebase`: force a replay even when `upstream` is already
-        // an ancestor of HEAD. Without it, git short-circuits to "up to
-        // date" — and lock-only commits that should be dropped survive.
-        // sync's invariant is "the project repo's history past the source
-        // tip is a replayable subset"; forcing the replay makes that
-        // invariant true after every rebase regardless of which side moved.
-        //
-        // [`set_replay_exclusion`]: Vcs::set_replay_exclusion
-        let (driver_name_flag, driver_flag) = rwv_ours_driver_flag_args();
-        let output = git_command()
-            .args([
-                "-c",
-                driver_name_flag.as_str(),
-                "-c",
-                driver_flag.as_str(),
-                "rebase",
-                "--force-rebase",
-                "--no-keep-empty",
-                "--empty=drop",
-                "--onto",
-                onto.as_str(),
-                upstream.as_str(),
-            ])
-            .current_dir(repo)
-            .output()
-            .map_err(|e| VcsError::Io {
-                ctx: format!(
-                    "failed to spawn git rebase --onto {} {}",
-                    onto.as_str(),
-                    upstream.as_str()
-                ),
-                source: e,
-            })?;
-
-        if output.status.success() {
-            return Ok(());
-        }
-
-        // Non-zero exit. If the repo is in mid-rebase, this is a conflict;
-        // otherwise it's some other rebase error (bad refs, etc.).
-        if matches!(Self::mid_op_state(repo).as_deref(), Some("mid-rebase")) {
-            return Err(VcsError::RebaseConflict {
-                repo: repo.to_path_buf(),
-                op: ConflictOp::Rebase,
-            });
-        }
-
-        let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
-        Err(VcsError::CommandFailed {
-            args: vec![
-                "rebase".to_owned(),
-                "--force-rebase".to_owned(),
-                "--no-keep-empty".to_owned(),
-                "--empty=drop".to_owned(),
-                "--onto".to_owned(),
-                onto.as_str().to_owned(),
-                upstream.as_str().to_owned(),
-            ],
-            repo: repo.to_path_buf(),
-            stderr,
-        })
-    }
-
-    fn rebase_continue(&self, repo: &Path) -> Result<(), VcsError> {
-        // Caller contract: `repo` must be mid-rebase. Enforce it here — the
-        // call site (sync's replay re-entry) already inspects `mid_op` to
-        // route between `rebase` and this method, so reaching this function
-        // on a clean repo is a bug, not an in-band condition. Silent no-op
-        // would hide it; instead surface a `CommandFailed` naming the wrong
-        // state, matching how `rebase` itself falls through to
-        // `CommandFailed` when a non-conflict rebase failure isn't
-        // classifiable further.
-        if !matches!(Self::mid_op_state(repo).as_deref(), Some("mid-rebase")) {
-            return Err(VcsError::CommandFailed {
-                args: vec!["rebase".to_owned(), "--continue".to_owned()],
-                repo: repo.to_path_buf(),
-                stderr: format!(
-                    "rebase_continue called on {} which is not mid-rebase",
-                    repo.display()
-                ),
-            });
-        }
-
-        // Re-supply the `rwv-ours` merge-driver flags inline. The durable
-        // config plant is what makes bare `git rebase --continue` safe for
-        // the operator, but rwv-driven rebase steps must not depend on
-        // config state (they can run against a fresh clone that has not had
-        // the plant self-heal yet, so keep the driver definition inline for
-        // every rwv-spawned git subprocess). Same flag pair as
-        // [`GitVcs::rebase`] via `rwv_ours_driver_flag_args`.
-        let (driver_name_flag, driver_flag) = rwv_ours_driver_flag_args();
-
-        // `git rebase --continue` invokes `$EDITOR` on the stopped commit's
-        // message before recording it. rwv is a non-interactive tool driven
-        // from CI and shell scripts, so an editor spawn here would hang the
-        // process. Pin both `GIT_EDITOR` and `GIT_SEQUENCE_EDITOR` to the
-        // `true` command — the same convention the test harness uses (see
-        // `tests/common/mod.rs`). Env is scoped to this single subprocess;
-        // the operator's own `git rebase --continue` outside rwv is
-        // unaffected.
-        let output = git_command()
-            .args([
-                "-c",
-                driver_name_flag.as_str(),
-                "-c",
-                driver_flag.as_str(),
-                "rebase",
-                "--continue",
-            ])
-            .env("GIT_EDITOR", "true")
-            .env("GIT_SEQUENCE_EDITOR", "true")
-            .current_dir(repo)
-            .output()
-            .map_err(|e| VcsError::Io {
-                ctx: format!(
-                    "failed to spawn git rebase --continue in {}",
-                    repo.display()
-                ),
-                source: e,
-            })?;
-
-        if output.status.success() {
-            return Ok(());
-        }
-
-        // Non-zero exit. If the repo is STILL mid-rebase, git either
-        // stopped on a further genuine conflict OR the operator's
-        // resolution left conflict markers unstaged ("needs merge" / "must
-        // edit all merge conflicts"). Both surface as the same operator
-        // signal: resolve → stage → rerun `--continue`. If the repo is no
-        // longer mid-rebase, this is some other rebase error we don't have
-        // a specific class for; fall through to `CommandFailed`.
-        if matches!(Self::mid_op_state(repo).as_deref(), Some("mid-rebase")) {
-            return Err(VcsError::RebaseConflict {
-                repo: repo.to_path_buf(),
-                op: ConflictOp::Rebase,
-            });
-        }
-
-        let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
-        Err(VcsError::CommandFailed {
-            args: vec!["rebase".to_owned(), "--continue".to_owned()],
-            repo: repo.to_path_buf(),
-            stderr,
-        })
-    }
-
-    // The two policy-carrying replays. They stand beside `rebase` /
-    // `rebase_continue` above rather than replacing them: the pre-policy pair
-    // is still what every call site calls, and it keeps the driver wiring it
-    // has always had until those call sites are restated. The duplication is
-    // the transition, and it ends when they are.
-    //
-    // The only difference in either body is where the leading `-c` arguments
-    // come from — a stated policy here, an unconditional
-    // `rwv_ours_driver_flag_args()` there. Both spell the definition through
-    // that one function, so a `rebase_with_policy` that stops on a conflict
-    // and a `rebase_continue` that resumes it cannot disagree about what the
-    // driver is.
-
-    fn rebase_with_policy(
-        &self,
-        repo: &Path,
-        onto: &ResolvedRevisionId,
-        upstream: &ResolvedRevisionId,
         derived: DerivedContentPolicy,
     ) -> Result<(), VcsError> {
         // `git rebase --onto <onto> <upstream>` replays commits in
@@ -1232,11 +1038,7 @@ impl Vcs for GitVcs {
         })
     }
 
-    fn rebase_continue_with_policy(
-        &self,
-        repo: &Path,
-        derived: DerivedContentPolicy,
-    ) -> Result<(), VcsError> {
+    fn rebase_continue(&self, repo: &Path, derived: DerivedContentPolicy) -> Result<(), VcsError> {
         // Caller contract: `repo` must be mid-rebase. Enforce it here — the
         // call site already inspects `mid_op` to route between a fresh
         // rebase and this method, so reaching this function on a clean repo
@@ -1246,7 +1048,7 @@ impl Vcs for GitVcs {
                 args: vec!["rebase".to_owned(), "--continue".to_owned()],
                 repo: repo.to_path_buf(),
                 stderr: format!(
-                    "rebase_continue_with_policy called on {} which is not mid-rebase",
+                    "rebase_continue called on {} which is not mid-rebase",
                     repo.display()
                 ),
             });

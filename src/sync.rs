@@ -10,8 +10,8 @@ use crate::op_state::{self, OpVerb, OwnerRecord};
 use crate::parallel::run_in_parallel;
 use crate::status::{compute_relation, LockRelation};
 use crate::vcs::{
-    AttachedRef, ConflictOp, DiscardLocalCommitsConsent, DiscardWarrant, EphemeralRefName,
-    HeadAttachment, RefName, ResolvedRevisionId, Vcs, VcsError, VcsErrorOutput,
+    AttachedRef, ConflictOp, DerivedContentPolicy, DiscardLocalCommitsConsent, DiscardWarrant,
+    EphemeralRefName, HeadAttachment, RefName, ResolvedRevisionId, Vcs, VcsError, VcsErrorOutput,
     VerifiedRestoreOutcome,
 };
 use crate::workspace::{Checkout, Resolution, WorkspaceContext};
@@ -745,19 +745,30 @@ fn apply_strategy(
             // progress"). Route through `Vcs::rebase_continue` instead so
             // the operator's resolve+stage-then-`rwv sync --continue` loop
             // actually drives the rebase forward through remaining picks
-            // (including lock-only picks that must merge to ours via the
-            // inline driver flags). A mid-op state that is NOT rebase
+            // (including derived-content picks the policy resolves rather
+            // than stopping on). A mid-op state that is NOT rebase
             // (mid-merge, mid-cherry-pick) is not rwv-initiated for this
             // path; fall through to `Vcs::rebase` and let it fail loudly.
+            //
+            // Both arms state the same derived-content resolution, and they
+            // have to: a resume finishes the picks the interrupted replay
+            // never reached, so a resume under a different policy than the
+            // replay it resumes would resolve the tail of one operation by
+            // different rules than its head.
             match GitVcs.mid_op(repo) {
                 Some(ConflictOp::Rebase) => {
                     GitVcs
-                        .rebase_continue(repo)
+                        .rebase_continue(repo, DerivedContentPolicy::keep_target_side())
                         .map_err(StrategyError::from_vcs)?;
                 }
                 _ => {
                     GitVcs
-                        .rebase(repo, target, target)
+                        .rebase(
+                            repo,
+                            target,
+                            target,
+                            DerivedContentPolicy::keep_target_side(),
+                        )
                         .map_err(StrategyError::from_vcs)?;
                 }
             }
@@ -4571,28 +4582,34 @@ fn apply_project_strategy(
             GitVcs.advance_if_fast_forward(cwd_project_dir, source_tip)?;
         }
         SyncStrategy::Rebase => {
-            // `Vcs::rebase` wires the `merge=rwv-ours` driver inline; lock-only
+            // The replay states `keep_target_side`, which is what the repo's
+            // committed `rwv.lock merge=rwv-ours` declaration names: lock-only
             // commits become empty patches and git drops them by default
             // (`--empty=drop`), so source's version of `rwv.lock` survives
             // the replay untouched. Phase 3 then regenerates the lock from
-            // manifest tips.
+            // manifest tips — the resolution only has to be mechanical,
+            // because regeneration is what makes the result correct.
             //
             // Replay re-entry (`rwv sync --continue`): if the project repo
             // is already mid-rebase from a previous phase that stopped on a
             // conflict, `Vcs::rebase` would fail immediately ("another
             // rebase is in progress"). Route through `Vcs::rebase_continue`
             // so `resolve → git add → rwv sync --continue` iterates per
-            // conflicted pick. `rebase_continue` re-supplies the same
-            // inline driver flags, so any remaining lock-only picks merge
-            // to ours the same way a fresh `Vcs::rebase` would. A mid-op
-            // that is NOT rebase (mid-merge, mid-cherry-pick) is not
-            // rwv-initiated for this path — preserve today's behavior of
-            // calling `Vcs::rebase`, which will fail loudly rather than
-            // silently adopting foreign state.
+            // conflicted pick. It states the same policy, so any remaining
+            // lock-only picks resolve the same way a fresh `Vcs::rebase`
+            // would. A mid-op that is NOT rebase (mid-merge,
+            // mid-cherry-pick) is not rwv-initiated for this path —
+            // preserve today's behavior of calling `Vcs::rebase`, which will
+            // fail loudly rather than silently adopting foreign state.
             let outcome = if mid_rebase {
-                GitVcs.rebase_continue(cwd_project_dir)
+                GitVcs.rebase_continue(cwd_project_dir, DerivedContentPolicy::keep_target_side())
             } else {
-                GitVcs.rebase(cwd_project_dir, source_tip, source_tip)
+                GitVcs.rebase(
+                    cwd_project_dir,
+                    source_tip,
+                    source_tip,
+                    DerivedContentPolicy::keep_target_side(),
+                )
             };
             match outcome {
                 Ok(()) => {}
@@ -6774,6 +6791,144 @@ mod tests {
         assert!(
             !handler.emit_text(),
             "CountingHandler should not emit text (it has no text output)"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // `apply_strategy` states a derived-content policy
+    // (regenerable-regions.md D3)
+    //
+    // These drive `apply_strategy` directly, and the fixture asserts the repo
+    // carries NO durable `merge.rwv-ours` definition. Both are load-bearing,
+    // for the same reason.
+    //
+    // The definition half of the primitive can reach a replay by two routes:
+    // the policy the call site states, and the durable config
+    // `plant_rwv_merge_driver_config` writes. `apply_strategy` runs on
+    // MANIFEST repos, which never receive that plant —
+    // `verify_replay_exclusion_invariant` plants in the project repo only —
+    // so here the stated policy is the only route, and a test can tell a
+    // stated policy from an ignored one. Through the CLI it could not: sync
+    // plants before every rebase-strategy phase, so the project-repo call
+    // sites in `apply_project_strategy` resolve declared paths whatever they
+    // state. That is deliberate belt-and-braces, not a gap in the policy, but
+    // it does mean this is the layer where the threading is falsifiable.
+    // -----------------------------------------------------------------------
+
+    /// A repo whose committed `.gitattributes` declares `generated.txt`
+    /// derived, with `main` and the checked-out `feat` each having
+    /// regenerated it. Returns the tip of `main` — the side a replay onto it
+    /// must keep.
+    fn diverged_on_a_declared_derived_path(dir: &Path) -> ResolvedRevisionId {
+        init_repo(dir);
+        std::fs::write(dir.join(".gitattributes"), "generated.txt merge=rwv-ours\n").unwrap();
+        std::fs::write(dir.join("generated.txt"), "base\n").unwrap();
+        std::fs::write(dir.join("shared.txt"), "base\n").unwrap();
+        git(dir, &["add", "."]);
+        git(dir, &["commit", "-m", "declare generated.txt derived"]);
+        let base = git(dir, &["rev-parse", "HEAD"]);
+
+        std::fs::write(dir.join("generated.txt"), "regenerated on main\n").unwrap();
+        std::fs::write(dir.join("shared.txt"), "main version\n").unwrap();
+        git(dir, &["add", "."]);
+        git(dir, &["commit", "-m", "main: regenerate"]);
+        let main_tip = GitVcs.head_revision(dir).unwrap();
+
+        git(dir, &["checkout", "-b", "feat", &base]);
+        main_tip
+    }
+
+    /// Fixture precondition: no durable definition of the driver is reachable
+    /// from this repo's config. Without this, a replay resolves the declared
+    /// path whatever policy the call site states, and the assertions below
+    /// would pass for a call site that stated nothing at all.
+    fn assert_no_durable_driver_definition(dir: &Path) {
+        let out = std::process::Command::new("git")
+            .args(["config", "--get", crate::git::RWV_MERGE_DRIVER_CONFIG_KEY])
+            .current_dir(dir)
+            .output()
+            .expect("run git config");
+        assert!(
+            !out.status.success(),
+            "fixture precondition: {} must be undefined in {}, else the durable \
+             plant resolves the declared path and the stated policy is untestable",
+            crate::git::RWV_MERGE_DRIVER_CONFIG_KEY,
+            dir.display()
+        );
+    }
+
+    #[test]
+    fn the_rebase_strategy_resolves_a_declared_derived_path_without_stopping() {
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = tmp.path().join("manifest");
+        let main_tip = diverged_on_a_declared_derived_path(&repo);
+        assert_no_durable_driver_definition(&repo);
+
+        std::fs::write(repo.join("generated.txt"), "regenerated on feat\n").unwrap();
+        git(&repo, &["add", "."]);
+        git(&repo, &["commit", "-m", "feat: regenerate"]);
+
+        apply_strategy(&repo, &main_tip, SyncStrategy::Rebase)
+            .map_err(|e| e.message)
+            .expect("a declared derived path must not stop a manifest-repo replay");
+
+        assert_eq!(
+            std::fs::read_to_string(repo.join("generated.txt")).unwrap(),
+            "regenerated on main\n",
+            "the replay target's version of a declared path is what survives"
+        );
+    }
+
+    #[test]
+    fn a_resumed_rebase_strategy_resolves_the_declared_path_it_reaches() {
+        // The resume arm states the policy separately from the arm that
+        // started the replay, and it is the arm that reaches the picks the
+        // interrupted replay never got to. A resume that stated nothing would
+        // stop again on the declared path — after the operator had already
+        // resolved the real conflict.
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = tmp.path().join("manifest");
+        let main_tip = diverged_on_a_declared_derived_path(&repo);
+        assert_no_durable_driver_definition(&repo);
+
+        // F1 collides with main on an UNDECLARED path: a genuine conflict, and
+        // no policy may resolve it.
+        std::fs::write(repo.join("shared.txt"), "feat version\n").unwrap();
+        git(&repo, &["add", "."]);
+        git(&repo, &["commit", "-m", "feat: edit shared"]);
+        // F2 regenerates the declared path — the pick the resume must reach.
+        std::fs::write(repo.join("generated.txt"), "regenerated on feat\n").unwrap();
+        git(&repo, &["add", "."]);
+        git(&repo, &["commit", "-m", "feat: regenerate"]);
+
+        let stopped = apply_strategy(&repo, &main_tip, SyncStrategy::Rebase);
+        assert!(
+            stopped.is_err(),
+            "an authored conflict must stop the replay whatever the policy"
+        );
+        assert_eq!(
+            GitVcs.mid_op(&repo),
+            Some(ConflictOp::Rebase),
+            "the replay must be left resumable"
+        );
+
+        // Operator resolves and stages, then re-enters — the `rwv sync
+        // --continue` loop.
+        std::fs::write(repo.join("shared.txt"), "merged\n").unwrap();
+        git(&repo, &["add", "shared.txt"]);
+
+        apply_strategy(&repo, &main_tip, SyncStrategy::Rebase)
+            .map_err(|e| e.message)
+            .expect("the resumed replay must carry through the declared path");
+
+        assert!(
+            GitVcs.mid_op(&repo).is_none(),
+            "the replay must be complete after a successful resume"
+        );
+        assert_eq!(
+            std::fs::read_to_string(repo.join("generated.txt")).unwrap(),
+            "regenerated on main\n",
+            "the resumed picks resolve the declared path the same way"
         );
     }
 }

@@ -1993,7 +1993,7 @@ pub trait Vcs {
     fn conflict_resolution_hint(&self, op: ConflictOp) -> String;
 
     /// Rebase commits in the range `upstream..` of `repo`'s current branch
-    /// onto `onto`.
+    /// onto `onto`, resolving declared derived content per `derived`.
     ///
     /// For [`GitVcs`](crate::git::GitVcs): runs `git rebase --onto <onto>
     /// <upstream>`. On conflict, leaves the repo in the VCS-native in-flight
@@ -2003,12 +2003,24 @@ pub trait Vcs {
     /// caller can pair with [`Vcs::conflict_resolution_hint`] to assemble the
     /// user-facing resolution text.
     ///
-    /// Lock-file exclusion happens via [`set_replay_exclusion`] — set it once
-    /// on the repo (e.g. at `rwv init` time) and every rebase silently keeps
-    /// the rebase target's version of the configured path. For git this is a
-    /// per-path merge driver (`merge=rwv-ours` in `.gitattributes` paired
-    /// with `merge.rwv-ours.driver=true` in config); the trait hides the
-    /// spelling so other VCS impls can use their own mechanism.
+    /// # Derived content
+    ///
+    /// WHICH paths are derived is the repo's own declaration, made once via
+    /// [`set_replay_exclusion`] and carried in tracked metadata (for git:
+    /// `merge=rwv-ours` in `.gitattributes`). HOW they resolve is `derived`,
+    /// stated per call: [`DerivedContentPolicy::keep_target_side`] resolves a
+    /// declared path to the version at `onto` without stopping the replay,
+    /// and [`DerivedContentPolicy::vcs_default`] lets it conflict like any
+    /// other content. A repo that declares nothing derived is unaffected by
+    /// either value.
+    ///
+    /// The parameter is not a convenience: it is what makes the resolution a
+    /// caller's stated choice rather than a property of whichever impl runs.
+    /// For [`GitVcs`](crate::git::GitVcs) it becomes the inline merge-driver
+    /// definition (`-c merge.<name>.driver=…`) for that single invocation, so
+    /// it is in force for exactly this operation and leaves no configuration
+    /// behind; the trait hides that spelling so other VCS impls can use their
+    /// own mechanism.
     ///
     /// [`set_replay_exclusion`]: Vcs::set_replay_exclusion
     fn rebase(
@@ -2016,11 +2028,13 @@ pub trait Vcs {
         repo: &Path,
         onto: &ResolvedRevisionId,
         upstream: &ResolvedRevisionId,
+        derived: DerivedContentPolicy,
     ) -> Result<(), VcsError>;
 
     /// Resume an in-flight rebase in `repo` after the operator has resolved
     /// (and staged) the conflicting paths that stopped the previous
-    /// [`rebase`] or [`rebase_continue`] call.
+    /// [`rebase`] or [`rebase_continue`] call, resolving declared derived
+    /// content per `derived`.
     ///
     /// Contract:
     /// - Caller MUST ensure `repo` is mid-rebase before calling. The mid-op
@@ -2032,99 +2046,33 @@ pub trait Vcs {
     ///   cleanly, or drop as empty via `--empty=drop` set by [`rebase`]):
     ///   `Ok(())`.
     /// - When the resumed rebase stops again on a further genuine
-    ///   non-lock conflict, or when the operator's resolution was
-    ///   incomplete (unstaged conflict markers): repo is left in the same
-    ///   mid-rebase state git leaves it, and returns
+    ///   conflict, or when the operator's resolution was incomplete
+    ///   (unstaged conflict markers): repo is left in the same mid-rebase
+    ///   state git leaves it, and returns
     ///   [`VcsError::RebaseConflict { repo, op: ConflictOp::Rebase }`] so
     ///   the operator loop stays: resolve → `git add` → `rwv sync
     ///   --continue`, iterating per conflicted pick.
     ///
-    /// For [`GitVcs`](crate::git::GitVcs): runs `git rebase --continue` with
-    /// the `rwv-ours` merge-driver flags supplied inline (same flags as
-    /// [`rebase`] so any remaining lock-only picks resolve to the target's
-    /// version — the durable config plant makes bare `git rebase --continue`
-    /// safe too, but the inline flags are the source-of-truth path). The
-    /// invocation runs non-interactively — git's editor spawn for the
-    /// stopped commit's message is suppressed so a `--continue` never hangs
-    /// waiting for `$EDITOR` in an automated pipeline.
+    /// A resumed replay reaches picks the interrupted one never got to, so
+    /// `derived` is the policy that governs them. Handing this method a
+    /// different policy than the [`rebase`] call it resumes is legal and
+    /// means what it says — the remaining picks resolve differently from the
+    /// ones already replayed — which is a decision a caller has to make
+    /// deliberately, not a detail it can leave to whichever value happened to
+    /// be in scope.
+    ///
+    /// For [`GitVcs`](crate::git::GitVcs): runs `git rebase --continue`,
+    /// spelling `derived` the same way [`rebase`] does, so a replay that
+    /// stopped on a conflict and the resume that finishes it cannot disagree
+    /// about how a declared path resolves. The invocation runs
+    /// non-interactively — git's editor spawn for the stopped commit's
+    /// message is suppressed so a `--continue` never hangs waiting for
+    /// `$EDITOR` in an automated pipeline.
     ///
     /// [`rebase`]: Vcs::rebase
     /// [`rebase_continue`]: Vcs::rebase_continue
     /// [`mid_op`]: Vcs::mid_op
-    fn rebase_continue(&self, repo: &Path) -> Result<(), VcsError>;
-
-    // -----------------------------------------------------------------------
-    // Replay under a stated derived-content policy
-    // -----------------------------------------------------------------------
-    //
-    // The two methods below are [`rebase`] and [`rebase_continue`] with the
-    // policy in the signature instead of wired in silently by the impl. They
-    // run beside the pre-policy pair until every call site has been restated
-    // in terms of them — the same side-by-side transition the branch-model
-    // types are in above — at which point the pre-policy pair and the
-    // unconditional driver wiring inside it go, and these keep the plain
-    // names.
-    //
-    // [`rebase`]: Vcs::rebase
-    // [`rebase_continue`]: Vcs::rebase_continue
-
-    /// Rebase commits in the range `upstream..` of `repo`'s current branch
-    /// onto `onto`, resolving declared derived content per `derived`.
-    ///
-    /// Identical to [`rebase`] in every other respect — same range semantics,
-    /// same [`VcsError::RebaseConflict`] on a genuine conflict, same
-    /// mid-operation state left behind for the resume path — so read that
-    /// method's contract for those. What this one adds is that the derived
-    /// content resolution is the caller's stated choice rather than a
-    /// property of the impl: passing [`DerivedContentPolicy::vcs_default`]
-    /// means declared paths conflict like any other, and passing
-    /// [`DerivedContentPolicy::keep_target_side`] means they resolve to the
-    /// version at `onto` without stopping the replay.
-    ///
-    /// The declaration itself still comes from the repo
-    /// ([`set_replay_exclusion`]); the policy supplies only the resolution
-    /// that declaration names. A repo that declares nothing derived is
-    /// unaffected by either value.
-    ///
-    /// For [`GitVcs`](crate::git::GitVcs): the policy becomes the inline
-    /// merge-driver definition (`-c merge.<name>.driver=…`) for that single
-    /// git invocation, so it is in force for exactly this operation and
-    /// leaves no configuration behind.
-    ///
-    /// [`rebase`]: Vcs::rebase
-    /// [`set_replay_exclusion`]: Vcs::set_replay_exclusion
-    fn rebase_with_policy(
-        &self,
-        repo: &Path,
-        onto: &ResolvedRevisionId,
-        upstream: &ResolvedRevisionId,
-        derived: DerivedContentPolicy,
-    ) -> Result<(), VcsError>;
-
-    /// Resume an in-flight rebase in `repo`, resolving declared derived
-    /// content per `derived`.
-    ///
-    /// [`rebase_continue`] with the policy stated, and its contract in every
-    /// other respect — including that the caller MUST have established the
-    /// repo is mid-rebase, and that a further genuine conflict comes back as
-    /// [`VcsError::RebaseConflict`] rather than an error the operator loop
-    /// cannot act on.
-    ///
-    /// A resumed replay reaches picks the interrupted one never got to, so
-    /// the policy passed here is the one that governs them. Handing this
-    /// method a different policy than the [`rebase_with_policy`] call it
-    /// resumes is legal and means what it says — the remaining picks resolve
-    /// differently from the ones already replayed — which is a decision a
-    /// caller has to make deliberately, not a detail it can leave to
-    /// whichever value happened to be in scope.
-    ///
-    /// [`rebase_continue`]: Vcs::rebase_continue
-    /// [`rebase_with_policy`]: Vcs::rebase_with_policy
-    fn rebase_continue_with_policy(
-        &self,
-        repo: &Path,
-        derived: DerivedContentPolicy,
-    ) -> Result<(), VcsError>;
+    fn rebase_continue(&self, repo: &Path, derived: DerivedContentPolicy) -> Result<(), VcsError>;
 
     /// Configure `repo` so that during replay (rebase, merge) any changes to
     /// `path` are silently overridden — the replay target's version of `path`

@@ -1,6 +1,8 @@
 use repoweave::git::GitVcs;
 use repoweave::manifest::Role;
-use repoweave::vcs::{ConflictOp, RefName, ResolvedRevisionId, Vcs, VcsError};
+use repoweave::vcs::{
+    ConflictOp, DerivedContentPolicy, RefName, ResolvedRevisionId, Vcs, VcsError,
+};
 use std::fs;
 use tempfile::TempDir;
 
@@ -1112,7 +1114,14 @@ fn rebase_clean_advances_head_onto_target() {
     let main_tip = ResolvedRevisionId::from_canonical(git(p, &["rev-parse", "main"]), None);
 
     // feat is checked out — rebase it onto main.
-    GitVcs.rebase(p, &main_tip, &main_tip).unwrap();
+    GitVcs
+        .rebase(
+            p,
+            &main_tip,
+            &main_tip,
+            DerivedContentPolicy::keep_target_side(),
+        )
+        .unwrap();
 
     // feat's tip is now descended from main; both files exist.
     assert!(p.join("main.txt").exists());
@@ -1150,7 +1159,12 @@ fn rebase_conflict_on_non_lock_file_returns_rebase_conflict_and_leaves_mid_op() 
 
     let main_tip = ResolvedRevisionId::from_canonical(git(p, &["rev-parse", "main"]), None);
 
-    let result = GitVcs.rebase(p, &main_tip, &main_tip);
+    let result = GitVcs.rebase(
+        p,
+        &main_tip,
+        &main_tip,
+        DerivedContentPolicy::keep_target_side(),
+    );
 
     let err = result.expect_err("rebase with conflicting paths must surface an error");
     assert!(
@@ -1195,7 +1209,12 @@ fn rebase_auto_resolves_lock_collision_when_replay_exclusion_set() {
     let main_tip = ResolvedRevisionId::from_canonical(git(p, &["rev-parse", "main"]), None);
 
     GitVcs
-        .rebase(p, &main_tip, &main_tip)
+        .rebase(
+            p,
+            &main_tip,
+            &main_tip,
+            DerivedContentPolicy::keep_target_side(),
+        )
         .expect("rebase should succeed thanks to replay-exclusion auto-resolve");
 
     // Working tree should hold MAIN's lock content — replay-exclusion keeps
@@ -1250,7 +1269,12 @@ fn rebase_stopped_commit_detail_returns_sha_and_subject() {
     let feature_sha = git(p, &["rev-parse", "HEAD"]);
 
     // Rebase feature onto main — will conflict on shared.txt.
-    let result = GitVcs.rebase(p, &main_tip, &main_tip);
+    let result = GitVcs.rebase(
+        p,
+        &main_tip,
+        &main_tip,
+        DerivedContentPolicy::keep_target_side(),
+    );
     assert!(result.is_err(), "expected conflict on rebase");
     assert_eq!(
         GitVcs::mid_op_state(p).as_deref(),
@@ -1320,7 +1344,7 @@ fn rebase_continue_on_clean_repo_returns_error_not_silent_noop() {
     );
 
     let err = GitVcs
-        .rebase_continue(p)
+        .rebase_continue(p, DerivedContentPolicy::keep_target_side())
         .expect_err("rebase_continue on a clean repo must return an error");
 
     // The exact variant matters: it must be a structured error the sync layer
@@ -1371,7 +1395,12 @@ fn rebase_continue_with_unstaged_conflicts_bails_and_leaves_mid_rebase() {
     let main_tip = ResolvedRevisionId::from_canonical(git(p, &["rev-parse", "main"]), None);
 
     // First rebase stops on the conflict.
-    let first = GitVcs.rebase(p, &main_tip, &main_tip);
+    let first = GitVcs.rebase(
+        p,
+        &main_tip,
+        &main_tip,
+        DerivedContentPolicy::keep_target_side(),
+    );
     assert!(
         matches!(first, Err(VcsError::RebaseConflict { .. })),
         "first rebase must conflict; got {first:?}"
@@ -1388,7 +1417,7 @@ fn rebase_continue_with_unstaged_conflicts_bails_and_leaves_mid_rebase() {
     fs::write(p.join("shared"), "merged\n").unwrap();
     // Deliberately no `git add`.
 
-    let cont = GitVcs.rebase_continue(p);
+    let cont = GitVcs.rebase_continue(p, DerivedContentPolicy::keep_target_side());
 
     assert!(
         matches!(cont, Err(VcsError::RebaseConflict { ref op, .. }) if *op == ConflictOp::Rebase),
@@ -1460,7 +1489,12 @@ fn rebase_continue_after_staging_completes_and_resolves_lock_pick_via_inline_fla
     );
 
     // Step 1: `Vcs::rebase` stops on F1's shared conflict.
-    let first = GitVcs.rebase(p, &main_tip, &main_tip);
+    let first = GitVcs.rebase(
+        p,
+        &main_tip,
+        &main_tip,
+        DerivedContentPolicy::keep_target_side(),
+    );
     assert!(
         matches!(first, Err(VcsError::RebaseConflict { .. })),
         "expected first rebase to conflict on shared; got {first:?}"
@@ -1479,7 +1513,7 @@ fn rebase_continue_after_staging_completes_and_resolves_lock_pick_via_inline_fla
     // apply F2 (the lock-only pick) via the inline merge-driver flag — no
     // second conflict on rwv.lock.
     GitVcs
-        .rebase_continue(p)
+        .rebase_continue(p, DerivedContentPolicy::keep_target_side())
         .expect("rebase_continue must complete after staging");
 
     // Repo is no longer mid-rebase.

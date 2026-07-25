@@ -122,7 +122,7 @@ fn keeping_the_target_side_resolves_a_declared_path_without_stopping() {
     let main_tip = diverge_on(p, DERIVED);
 
     GitVcs
-        .rebase_with_policy(
+        .rebase(
             p,
             &main_tip,
             &main_tip,
@@ -158,7 +158,7 @@ fn the_same_replay_without_the_policy_stops_on_the_same_path() {
     // differs. This is what makes the parameter load-bearing rather than
     // decorative: the declaration on its own resolves nothing.
     let err = GitVcs
-        .rebase_with_policy(p, &main_tip, &main_tip, DerivedContentPolicy::vcs_default())
+        .rebase(p, &main_tip, &main_tip, DerivedContentPolicy::vcs_default())
         .expect_err("with no resolver supplied, a declared path conflicts like any other");
 
     assert!(
@@ -182,7 +182,7 @@ fn no_policy_resolves_a_path_the_repo_never_declared() {
     // The resolution applies to what the repo declared and nothing else.
     // A policy that swallowed authored conflicts would be losing work.
     let err = GitVcs
-        .rebase_with_policy(
+        .rebase(
             p,
             &main_tip,
             &main_tip,
@@ -226,7 +226,7 @@ fn diverge_with_a_conflict_ahead_of_the_declared_one(p: &Path) -> ResolvedRevisi
 /// operator would, leaving the declared-path pick still to come.
 fn replay_until_the_authored_conflict(p: &Path, main_tip: &ResolvedRevisionId) {
     let err = GitVcs
-        .rebase_with_policy(
+        .rebase(
             p,
             main_tip,
             main_tip,
@@ -250,7 +250,7 @@ fn a_resumed_replay_resolves_the_declared_path_it_reaches() {
     replay_until_the_authored_conflict(p, &main_tip);
 
     GitVcs
-        .rebase_continue_with_policy(p, DerivedContentPolicy::keep_target_side())
+        .rebase_continue(p, DerivedContentPolicy::keep_target_side())
         .expect("the pick behind the resolved conflict must not stop the replay in turn");
 
     assert_eq!(
@@ -280,7 +280,7 @@ fn a_resumed_replay_without_the_policy_stops_on_the_declared_path() {
     // none leaves the picks it reaches to resolve textually — including the
     // declared one the interrupted replay never got to.
     let err = GitVcs
-        .rebase_continue_with_policy(p, DerivedContentPolicy::vcs_default())
+        .rebase_continue(p, DerivedContentPolicy::vcs_default())
         .expect_err("with no resolver supplied, the declared path conflicts in its turn");
 
     assert!(
