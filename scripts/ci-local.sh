@@ -32,6 +32,10 @@ header "explain artifacts up to date (no drift after regeneration)"
 # committing the regenerated output, this fails.
 # Also regenerates docs/reference/prime/overview.md from its template.
 cargo run --quiet --bin generate-explain
-git diff --exit-code -- docs/reference/explain/ docs/reference/schemas/ docs/reference/prime/
+git diff --exit-code -- docs/reference/explain/ docs/reference/schemas/ docs/reference/prime/ || {
+    status=$?
+    printf 'explain artifacts changed by regeneration — commit them (this check diffs the working tree against the index; it cannot pass with uncommitted regen)\n' >&2
+    exit "$status"
+}
 
 printf '\nAll checks passed.\n'
