@@ -44,6 +44,16 @@ pub enum CheckViolation {
         actual: ResolvedRevisionId,
     },
 
+    /// An `rwv.yaml` entry with no corresponding `rwv.lock` entry. This is a
+    /// coverage gap, not a freshness one — the lock is missing the repo
+    /// entirely rather than pinning it to a stale revision. Only checked
+    /// when the project has a lock file at all; a project with no lock yet
+    /// is a separate, unlocked state.
+    IncompleteLock {
+        project: ProjectName,
+        repo: RepoPath,
+    },
+
     /// A worktree missing from a workweave, or an extra worktree not in the manifest.
     WorkweaveDrift {
         workweave: WorkweaveName,
@@ -729,6 +739,7 @@ pub enum BranchDisciplineKind {
 //     DanglingReference   -> "dangling-reference"
 //     MissingRole         -> "missing-role"
 //     StaleLock           -> "stale-lock"
+//     IncompleteLock      -> "incomplete-lock"
 //     WorkweaveDrift      -> "workweave-drift"  (sub-kind via `DriftKind`)
 //     IndexDrift          -> "index-drift"      (sub-kind via `IndexDriftKind`)
 //     WorkingTreeDrift    -> "working-tree-drift" (sub-kind via `WorkingTreeDriftKind`)
@@ -759,6 +770,11 @@ pub enum ViolationOutput {
         project: String,
         locked: String,
         actual: String,
+    },
+    IncompleteLock {
+        path: String,
+        absolute_path: String,
+        project: String,
     },
     WorkweaveDrift {
         path: String,
@@ -1004,6 +1020,11 @@ impl ViolationOutput {
                 project: project.to_string(),
                 locked: locked.display_str().to_owned(),
                 actual: actual.display_str().to_owned(),
+            },
+            CheckViolation::IncompleteLock { project, repo } => Self::IncompleteLock {
+                absolute_path: abs(workspace_dir, &repo),
+                path: repo.to_string(),
+                project: project.to_string(),
             },
             CheckViolation::WorkweaveDrift {
                 workweave,
@@ -3265,6 +3286,19 @@ pub fn find_violations(input: &CheckInput) -> Vec<CheckViolation> {
                     }
                 }
             }
+
+            // Coverage: every manifest repo should have a lock entry.
+            // Distinct from the freshness comparison above — a repo absent
+            // from the lock is invisible to it (`lock.iter_entries()` never
+            // produces it).
+            for repo_path in project.manifest.iter_repo_paths() {
+                if !lock.contains_repo(repo_path) {
+                    violations.push(CheckViolation::IncompleteLock {
+                        project: project.name.clone(),
+                        repo: repo_path.clone(),
+                    });
+                }
+            }
         }
     }
 
@@ -3320,6 +3354,13 @@ pub fn violations_to_issues(violations: Vec<CheckViolation>) -> Vec<Issue> {
                     format!(
                         "stale lock in {project}: {repo} locked={locked} actual={actual}; \
                          run `rwv lock` to re-snapshot current HEAD SHAs"
+                    ),
+                ),
+                CheckViolation::IncompleteLock { project, repo } => (
+                    crate::integration::Severity::Error,
+                    format!(
+                        "incomplete lock in {project}: {repo} has no rwv.lock entry; \
+                         run `rwv lock` to add it"
                     ),
                 ),
                 CheckViolation::WorkweaveDrift {

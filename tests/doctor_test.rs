@@ -218,6 +218,37 @@ fn check_stale_lock_reported() {
 }
 
 // ===========================================================================
+// 4b. Incomplete lock — rwv.lock exists but has no entry for a manifest repo
+// ===========================================================================
+
+#[test]
+
+fn check_incomplete_lock_reported() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = make_workspace(tmp.path(), "ws");
+
+    let repo_path = "github/acme/server";
+    init_git_repo(&root.join(repo_path));
+
+    let project_dir = root.join("projects").join("my-app");
+    write_manifest(
+        &project_dir,
+        &[(repo_path, "https://github.com/acme/server.git")],
+    );
+
+    // Lock file exists but covers no repos — the manifest entry has no
+    // corresponding lock entry.
+    write_lock(&project_dir, &[]);
+
+    rwv_cmd()
+        .arg("doctor")
+        .current_dir(&root)
+        .assert()
+        .failure()
+        .stdout(predicate::str::contains("incomplete").or(predicate::str::contains("lock")));
+}
+
+// ===========================================================================
 // 5. Multi-project awareness — repo in project A is not orphan even if not
 //    in project B
 // ===========================================================================
@@ -1164,6 +1195,41 @@ mod doctor_json {
     }
 
     #[test]
+    fn json_incomplete_lock_variant() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = make_workspace(tmp.path(), "ws");
+
+        let repo_path = "github/acme/server";
+        init_git_repo(&root.join(repo_path));
+
+        let project_dir = root.join("projects").join("my-app");
+        write_manifest(
+            &project_dir,
+            &[(repo_path, "https://github.com/acme/server.git")],
+        );
+        std::fs::write(
+            project_dir.join(".gitattributes"),
+            "rwv.lock merge=rwv-ours\n",
+        )
+        .unwrap();
+
+        // Lock file exists but covers no repos.
+        write_lock(&project_dir, &[]);
+
+        let (parsed, _) = run_doctor_json(&root);
+        let entry = entries(&parsed)
+            .iter()
+            .find(|v| v.get("kind").and_then(|k| k.as_str()) == Some("incomplete-lock"))
+            .unwrap_or_else(|| panic!("no incomplete-lock entry in {parsed}"));
+        assert_eq!(entry.get("path").and_then(|s| s.as_str()), Some(repo_path));
+        assert_eq!(
+            entry.get("project").and_then(|s| s.as_str()),
+            Some("my-app")
+        );
+        assert!(entry.get("absolute_path").is_some());
+    }
+
+    #[test]
     fn json_missing_replay_exclusion_variant() {
         let tmp = tempfile::tempdir().unwrap();
         let root = make_workspace(tmp.path(), "ws");
@@ -1377,6 +1443,13 @@ mod doctor_json {
                 "stale-lock",
             ),
             (
+                CheckViolation::IncompleteLock {
+                    project: pn(),
+                    repo: rp(),
+                },
+                "incomplete-lock",
+            ),
+            (
                 CheckViolation::WorkweaveDrift {
                     workweave: WorkweaveName::new("ww"),
                     kind: DriftKind::Missing,
@@ -1510,6 +1583,11 @@ mod doctor_json {
             locked: String,
             actual: String,
         },
+        IncompleteLock {
+            path: String,
+            absolute_path: String,
+            project: String,
+        },
         WorkweaveDrift {
             path: String,
             absolute_path: String,
@@ -1566,6 +1644,10 @@ mod doctor_json {
                 locked: ResolvedRevisionId::from_canonical("aaa", None),
                 actual: ResolvedRevisionId::from_canonical("bbb", None),
             },
+            CheckViolation::IncompleteLock {
+                project: ProjectName::new("p"),
+                repo: RepoPath::new("github/a/j").expect("known-safe literal"),
+            },
             CheckViolation::WorkweaveDrift {
                 workweave: WorkweaveName::new("ww1"),
                 kind: DriftKind::Missing,
@@ -1607,19 +1689,20 @@ mod doctor_json {
         assert!(matches!(parsed[1], WireViolation::DanglingReference { .. }));
         assert!(matches!(parsed[2], WireViolation::MissingRole { .. }));
         assert!(matches!(parsed[3], WireViolation::StaleLock { .. }));
-        assert!(matches!(parsed[4], WireViolation::WorkweaveDrift { .. }));
-        assert!(matches!(parsed[5], WireViolation::IndexDrift { .. }));
-        assert!(matches!(parsed[6], WireViolation::WorkingTreeDrift { .. }));
+        assert!(matches!(parsed[4], WireViolation::IncompleteLock { .. }));
+        assert!(matches!(parsed[5], WireViolation::WorkweaveDrift { .. }));
+        assert!(matches!(parsed[6], WireViolation::IndexDrift { .. }));
+        assert!(matches!(parsed[7], WireViolation::WorkingTreeDrift { .. }));
         assert!(matches!(
-            parsed[7],
+            parsed[8],
             WireViolation::MissingReplayExclusion { .. }
         ));
         assert!(matches!(
-            parsed[8],
+            parsed[9],
             WireViolation::UnparseableProject { .. }
         ));
         assert!(matches!(
-            parsed[9],
+            parsed[10],
             WireViolation::MissingCanonicalClone { .. }
         ));
     }

@@ -734,6 +734,32 @@ Schema:
             "absolute_path",
             "kind",
             "path",
+            "project"
+          ],
+          "properties": {
+            "absolute_path": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "enum": [
+                "incomplete-lock"
+              ]
+            },
+            "path": {
+              "type": "string"
+            },
+            "project": {
+              "type": "string"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "absolute_path",
+            "kind",
+            "path",
             "sub_kind",
             "workweave"
           ],
