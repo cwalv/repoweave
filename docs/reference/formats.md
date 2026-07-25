@@ -117,7 +117,9 @@ Updated by `rwv activate <project>`. Action verbs (`rwv lock`, `rwv add`, `rwv s
 
 ## `.rwv-workweave` — workweave marker
 
-Lives at every workweave directory root. Records the workweave's identity and parent.
+Lives at every workweave directory root, and is a workweave root's *only* identity file — a workweave never carries `.rwv-active` beside it, and `rwv doctor` reports a root holding both. Records the workweave's identity and parent.
+
+Written by `rwv workweave <project> create <name>`, which is also the verb that duplicates an existing workweave (`--from <source>`); removed with the workweave by `rwv workweave <project> delete <name>` or `rwv sync-to --retire`.
 
 ```yaml
 primary: /home/user/work
@@ -142,53 +144,15 @@ See [workweave hierarchy](../explanation/joints/workweave-hierarchy.md) for one-
 
 ## `.rwv-op` — owner op-state record
 
-Written at the **initiating workspace** (the owner) when a `rwv sync` or `rwv sync-to` operation starts. Holds all op parameters plus the current phase. It is the sole copy of mutable op state. Cleared on success, precondition refusal, and after `rwv abort`; preserved on phase failure so `--continue` and `rwv abort` can resume.
+Written at the **initiating workspace** (the owner) when a `rwv sync` or `rwv sync-to` operation starts, and cleared by the same verbs on success or precondition refusal. It is the sole copy of mutable op state: it records the op's parameters and which phase it reached, so a run that stopped mid-way can be finished with `rwv sync --continue` / `rwv sync-to --continue` or undone with `rwv abort`. Preserved on phase failure for exactly that reason.
 
-Schema v2 (no back-compat with v1; in-flight v1 ops must be resolved with `rwv abort` before upgrading).
-
-```yaml
-id: "1779769917405921588"       # op id, shared with savepoint refs
-verb: sync                       # "sync" | "sync-to"
-strategy: rebase                 # "ff" | "rebase"
-source: /abs/path/src
-target: /abs/path/tgt
-retire: false
-phase: replay                    # replay | relock | advance-target | retire
-converged_tips: {}               # written at relock completion; empty before
-overrides: []                    # named overrides supplied at invocation
-started_at: 2026-06-10T21:14:03Z
-```
-
-| Field | Description |
-|---|---|
-| `id` | Unique operation identifier (nanosecond wall-clock string). Shared with savepoint refs and lease files |
-| `verb` | Which top-level verb started this op: `sync` or `sync-to` |
-| `strategy` | Strategy supplied to the op: `ff` or `rebase` |
-| `source` | Absolute path of the source workspace |
-| `target` | Absolute path of the target workspace. For `sync`: same as the owner workspace. For `sync-to`: the named target workspace |
-| `retire` | Whether `--retire` was passed |
-| `phase` | Current phase in execution order: `replay` → `relock` → `advance-target` (sync-to only) → `retire` (`--retire` only). Persisted before entering each phase so a crash re-enters the same phase on resume |
-| `converged_tips` | Per-repo converged tips written at relock completion. Key: repo path relative to workspace root. Value: SHA string. Consumed by advance-target and abort's HEAD check |
-| `overrides` | Named overrides supplied at invocation (e.g. `allow-stale-lock`, `discard-local-commits`). Recorded for audit fidelity on `--continue` — resume re-applies the same consents |
-| `started_at` | RFC3339 UTC timestamp when the op started |
-
-Lives at the workspace root (same directory as `.rwv-active`). Source: `src/op_state.rs`.
+Its presence is what those two verbs mean by "an operation is in progress" — `rwv abort` with no `.rwv-op` present reports `no operation in progress`. See [resume or abort a mid-op sync](../how-to/resume-or-abort-mid-op-sync.md) for the operator path.
 
 ## `.rwv-op-lease` — thin lease pointer
 
-Written at every **other workspace the op mutates** (never at the owner workspace). Immutable once written. Provides mutex semantics (prevents concurrent ops on the same workspace) and a pointer back to the owner record for `--continue` and `rwv abort`. Cleared after the owning op completes or is aborted.
+Written at every **other workspace the op mutates** (never at the owner workspace), and cleared when the owning op completes or is aborted. It gives mutex semantics — a second op against the same workspace is refused while the lease is held — and points back at the owner's `.rwv-op` so `--continue` and `rwv abort` can find the full record from either end.
 
-```yaml
-id: "1779769917405921588"
-owner: /abs/path/to/owner/workspace
-```
-
-| Field | Description |
-|---|---|
-| `id` | Unique operation identifier. Same as the owner record's `id` |
-| `owner` | Absolute path to the owner workspace. Follow this pointer to load the full op state |
-
-Lives at the workspace root of the non-owner mutated workspace. Source: `src/op_state.rs`.
+Both files are written and removed only by the verbs above. Nothing else should parse or edit them: to learn whether an operation is in flight, read `rwv status --json` rather than the files. Their field-level schemas are an implementation detail of rwv's resume logic and are documented with the rest of the internals, out of this reference.
 
 ## Directory layout
 
@@ -233,13 +197,14 @@ repoweave uses a flat, provenance-based layout for repos: `{registry}/{owner}/{r
         ├── github/other/reference-lib -> ~/work/github/other/reference-lib/
         │                                     # symlink (role: reference)
         ├── projects/web-app/                 # worktree
-        ├── .rwv-active                       # "web-app"
         └── .rwv-workweave                    # parent: ~/work
 ```
 
+The `.workweaves/` subtree is created and destroyed by `rwv workweave <project> create` and `rwv workweave <project> delete` (or `rwv sync-to --retire`, which lands the work and deletes in one step); `create --from <source>` is how an existing workweave is duplicated. The layout is shown so the paths in error messages and `rwv status` output are legible — not as a structure to assemble, relocate, or copy by hand.
+
 The first path segment is a **registry** — a short name for where the repo lives. Built-in registries: `github` → `github.com`, `gitlab` → `gitlab.com`, `bitbucket` → `bitbucket.org`. Custom registries are configured in `rwv`'s own config (domain-based for hosted hosts, directory-based for local paths).
 
-- **Repos are regular clones.** `cd github/chatly/server && git status` works. No bare repos, no `.git` file indirection.
+- **Repos are regular clones** at the weave root. `cd github/chatly/server && git status` works; no bare repos. (A workweave's checkouts are a different kind of thing — see the `.workweaves/` note above.)
 - **Ecosystem files are symlinked** at the weave directory to the active project's directory. Real files live in `projects/<name>/`.
 - **Ecosystem lock files are committable** alongside `rwv.yaml` in the project directory.
 - **Project repos** have `rwv.yaml` and `rwv.lock`. They don't contain importable code — build tools never look at `projects/`.

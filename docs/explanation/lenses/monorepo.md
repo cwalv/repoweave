@@ -72,7 +72,7 @@ This is the [pyramid of stability](../joints/pyramid-of-stability.md): canonical
 
 Traditional isolation means cloning a repo into a temp folder — but then you lose the rest of the project context. The `git worktree` primitive solves this for one repo; repoweave extends the pattern across the project.
 
-A **workweave** is a worktree-derived copy of an entire workspace. Each worktree-materialized repo (roles `owned`, `fork`, `dependency`) gets a git worktree on an ephemeral branch; `role: reference` repos are materialized as a symlink to the canonical weave-root clone instead (read-only study material shared across all workweaves). Ecosystem files are symlinked from the project directory (managed keys are merged, preserving user-authored content); `node_modules/`, `.venv/`, and `target/` are per-workweave. The primary weave stays undisturbed.
+A **workweave** is a worktree-derived copy of an entire workspace, made and unmade with `rwv workweave <project> create` and `rwv workweave <project> delete`. Each worktree-materialized repo (roles `owned`, `fork`, `dependency`) gets a git worktree on an ephemeral branch; `role: reference` repos are materialized as a symlink to the canonical weave-root clone instead (read-only study material shared across all workweaves). Ecosystem files are symlinked from the project directory (managed keys are merged, preserving user-authored content); `node_modules/`, `.venv/`, and `target/` are per-workweave. The primary weave stays undisturbed.
 
 The hero moments:
 
@@ -81,7 +81,7 @@ The hero moments:
 - **Agent sandbox.** Give an agent a workweave so its experimental refactors are quarantined from the human's in-progress edits. See the [agent lens](./agent.md).
 - **Parallel projects.** Work on two projects without `rwv activate` churn. A workweave on `mobile-app` lives alongside the primary weave on `web-app`.
 
-Workweaves can be nested — a workweave can be created from inside another workweave. The result is a tree: primary → workweave → child workweave. Workweaves are not required to be ephemeral. A long-lived workweave (e.g., a "stable channel" workweave or an "agent gravity well" workweave) is a fine pattern. The model is a tree of workspaces with a flow direction, not a strict ephemeral-only discipline. See [workweave hierarchy](../joints/workweave-hierarchy.md) for the tree model.
+Workweaves can be nested — `rwv workweave <project> create` run from inside a workweave forks from it, and `create --from <source>` names any other workspace to fork from, which is also how an existing workweave is duplicated. The result is a tree: primary → workweave → child workweave. Workweaves are not required to be ephemeral. A long-lived workweave (e.g., a "stable channel" workweave or an "agent gravity well" workweave) is a fine pattern. The model is a tree of workspaces with a flow direction, not a strict ephemeral-only discipline. See [workweave hierarchy](../joints/workweave-hierarchy.md) for the tree model.
 
 ## `rwv sync` and `rwv sync-to`: bringing the work home
 

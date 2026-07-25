@@ -309,7 +309,7 @@ Create a workweave: worktrees on ephemeral branches for each `owned`/`fork`/`dep
 
 | Flag | Effect |
 |---|---|
-| `--from <source>` | Fork from a specific source (default: CWD's active workspace). Accepts `primary`, an absolute or relative path, or omitted to fork from CWD's active workspace |
+| `--from <source>` | Fork from a specific source (default: CWD's active workspace). Accepts `primary`, an absolute or relative path, or omitted to fork from CWD's active workspace. Forking from an existing workweave is how you **duplicate** one; copying a workweave with `cp` aliases the original's git state rather than duplicating it |
 | `--replace-existing` | Destroy an existing workweave at this path before recreating. Without this flag, re-invoking `create` against an existing workweave is the idempotent path. Refuses if the existing workweave has uncommitted or unmerged work |
 | `--capture-dirty` | Allow creation when the source project directory has uncommitted changes. The dirty state is captured into the new workweave's project worktree |
 | `--worktree-references` | Cut a real `git worktree` for `role: reference` repos instead of the default symlink to the canonical weave-root clone. Restores the legacy behavior (per-workweave reference refs) at the cost of duplicating each reference repo's working tree into the workweave |

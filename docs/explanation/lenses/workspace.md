@@ -69,7 +69,7 @@ This is the antidote to manual wiring hell:
 
 - **No `npm link`.** You don't have to manually link packages every time you open a terminal. `rwv activate` ensures `package.json` workspaces (or `go.work`, or `Cargo.toml`) are always correctly aligned with the project's intent.
 - **Deterministic paths.** Build tools see a consistent view. Two projects that use different versions of a shared library can't accidentally cross-contaminate.
-- **Low overhead.** Symlinks are cheap and ephemeral. They can be deleted and regenerated at any time. The source of truth always remains in the project repo.
+- **Low overhead.** Symlinks are cheap and ephemeral — losing one costs nothing, because the source of truth always remains in the project repo. `rwv activate` re-creates them at the weave root; inside a workweave, where `activate` is refused, `rwv doctor --fix` re-surfaces them.
 
 `.rwv-active` is the single source of truth for what's active in a workspace. There is no CWD-based override: cd-ing into `projects/<name>/` does not switch the active project. (This used to be a CWD special case; it's been removed.) Action verbs read `.rwv-active`; if you want to operate on a non-active project, use `--project <name>` for a one-shot or `rwv activate <name>` to switch.
 

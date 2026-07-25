@@ -74,7 +74,7 @@ rwv abort
 
 For `rwv sync-to`, `rwv abort` rolls back savepoints in **both** CWD and the target — the target's state is restored to its pre-op tip as well.
 
-After abort, both workspaces are in their exact pre-op state. Discarded commits remain reachable from the savepoint until git's normal unreferenced-object collection runs — you can recover by hand even after abort.
+After abort, both workspaces are in their exact pre-op state. Abort removes the savepoint refs along with the marker, so the commits it discarded survive only as unreferenced objects until git's normal collection runs. Retrieving them is ordinary per-repo git recovery, outside rwv's verbs — no rwv verb undoes an abort. If you may want that work, land it with `rwv sync-to` or push the branch before aborting.
 
 ## Common cases
 

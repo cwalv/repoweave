@@ -128,8 +128,10 @@ workspace** — run it from either side of the pair; it reads the lease to find
 the other workspace.
 
 Savepoints live at `refs/rwv/pre-op/<op-id>`. After a clean abort, both
-workspaces are at their exact pre-op tips. Discarded commits remain reachable
-from the savepoint until git's unreferenced-object collection runs.
+workspaces are at their exact pre-op tips and the savepoint refs are gone —
+abort removes them along with the op-state. Commits it discarded survive only
+as unreferenced objects until git's collection runs, and retrieving them is
+ordinary per-repo git work: no rwv verb undoes an abort.
 
 ### If `rwv abort` reports a foreign-tip violation
 

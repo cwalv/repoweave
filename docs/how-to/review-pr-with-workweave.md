@@ -50,7 +50,9 @@ cd ~/work
 rwv workweave web-app delete review-pr-42
 ```
 
-If you committed locally and want to bail out without losing the commits, push the branches first or copy the worktrees aside. To bypass the dirty-tree safety:
+If you committed locally and want to bail out without losing the commits, land them first: `rwv sync-to` brings the workweave's commits into its recorded parent, and `rwv sync-to --retire` lands them and deletes the workweave in one step. Pushing the branches works too. Copying the workweave's directories aside is not a third option — `cp` aliases the original's git state rather than preserving it.
+
+To bypass the dirty-tree safety:
 
 ```bash
 rwv workweave web-app delete review-pr-42 --discard-uncommitted

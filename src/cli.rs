@@ -441,6 +441,11 @@ pub enum WorkweaveAction {
         /// otherwise primary). Relative paths resolve against primary, so
         /// peer workweaves can be referenced by directory name (e.g.
         /// `--from .workweaves/myproj--hotfix`).
+        ///
+        /// Forking from an existing workweave is how you DUPLICATE one — for
+        /// a scratch variant, an experiment, or a throwaway baseline. Do not
+        /// copy a workweave with `cp`: the result aliases the original's git
+        /// state rather than duplicating it.
         #[arg(long)]
         from: Option<String>,
         /// Allow creation even when the source project directory has

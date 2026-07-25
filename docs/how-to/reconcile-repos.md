@@ -39,7 +39,7 @@ rwv doctor --locked && echo "lock clean"
 For repos that are `ahead` (local commits exist beyond the lock), the correct response depends on intent:
 
 - **The local commits are deliberate and the lock should catch up:** run `rwv lock --commit` to re-derive the lock from current tips. See [lock-as-derived](../explanation/joints/lock-as-derived.md) for why this is always safe.
-- **The local commits are unintended:** restore the clone to the locked revision manually (`git reset --hard <lock-sha>`) and re-run `rwv doctor --locked` to confirm.
+- **The local commits are unintended:** `rwv fetch --detach-checkouts` puts the checkout on the locked revision without moving or discarding the branch — enough to build and test against the lock. Plain `rwv fetch` refuses, and no verb rewinds the branch itself: that would destroy commits held nowhere else, so it stays a deliberate act of yours (`git reset --hard <lock-sha>` in the affected repo). Re-run `rwv doctor --locked` afterwards to confirm.
 
 ## Repair — re-materialize missing or deleted clones
 
