@@ -210,9 +210,12 @@ fn workweave_create_worktrees_on_ephemeral_branches() {
         .expect("valid UTF-8")
         .trim()
         .to_string();
+    // Flat (branch-model.md §3.5): `{project}--{workweave}`, no third
+    // component. The name is minted from two inputs and nothing observed
+    // feeds in, so the source repo's current branch cannot appear here.
     assert_eq!(
-        branch, "web-app--hotfix/main",
-        "worktree should be on ephemeral branch web-app--hotfix/main, got: {branch}"
+        branch, "web-app--hotfix",
+        "worktree should be on ephemeral branch web-app--hotfix, got: {branch}"
     );
 }
 
@@ -1169,6 +1172,24 @@ fn delete_nonexistent_workweave_errors_gracefully() {
 // Ephemeral branch cleanup (rwv-9mp)
 // ============================================================================
 
+/// Helper: list every local branch name in a git repo.
+fn branch_names(repo: &Path) -> Vec<String> {
+    let output = common::git()
+        .args([
+            "for-each-ref",
+            "--format=%(refname:lstrip=2)",
+            "refs/heads/",
+        ])
+        .current_dir(repo)
+        .output()
+        .expect("git for-each-ref should work");
+    String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .map(|l| l.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect()
+}
+
 /// Helper: list local branches in a git repo whose names start with `prefix/`.
 fn branches_with_prefix(repo: &Path, prefix: &str) -> Vec<String> {
     let output = common::git()
@@ -1201,11 +1222,12 @@ fn delete_workweave_cleans_up_ephemeral_branches() {
 
     let primary_repo = ws.join("github/org/repo");
 
-    // Confirm the ephemeral branch exists before deletion.
-    let before = branches_with_prefix(&primary_repo, "web-app--cleanup");
+    // Confirm the ephemeral branch exists before deletion. Flat (§3.5), so it
+    // is the exact name — not a `web-app--cleanup/*` sub-namespace.
+    let before = branch_names(&primary_repo);
     assert!(
-        !before.is_empty(),
-        "ephemeral branch web-app--cleanup/main should exist before delete, got: {before:?}"
+        before.iter().any(|b| b == "web-app--cleanup"),
+        "ephemeral branch web-app--cleanup should exist before delete, got: {before:?}"
     );
 
     // Delete the workweave.
@@ -1216,67 +1238,150 @@ fn delete_workweave_cleans_up_ephemeral_branches() {
         .assert()
         .success();
 
-    // The ephemeral branch should be gone.
-    let after = branches_with_prefix(&primary_repo, "web-app--cleanup");
+    // The ephemeral branch should be gone — destroyed over the RECORDED set,
+    // with a Merged warrant against primary's tip (R2 + R3).
+    let after = branch_names(&primary_repo);
     assert!(
-        after.is_empty(),
-        "delete_workweave should remove ephemeral branches with prefix 'web-app--cleanup/', remaining: {after:?}"
+        !after.iter().any(|b| b == "web-app--cleanup"),
+        "delete_workweave should destroy the recorded ephemeral branch \
+         'web-app--cleanup', remaining: {after:?}"
     );
 }
 
+/// R2 inverted: a branch that merely *looks* like rwv's is not rwv's.
+///
+/// This is the §2.1 `[S]` scenario the shipped code got backwards. It ran
+/// `git branch -D` on "already exists" and retried, so a `web-app--stale-test/main`
+/// standing in the way was destroyed with no `--force` and nothing printed —
+/// even when it carried a commit reachable from nowhere else. Ownership is by
+/// **record**: rwv holds no receipt for a branch it did not create, so the
+/// create refuses and the branch survives with its commit intact.
+///
+/// Break the guard and this fails: restore the force-delete retry and the
+/// unique commit is gone.
 #[test]
-fn create_workweave_handles_stale_branches() {
+fn create_refuses_and_preserves_a_branch_it_does_not_own() {
     let tmp = tempfile::tempdir().unwrap();
     let ws = make_workspace(tmp.path(), "web-app");
 
     let weaveroot = tmp.path().join(".workweaves");
     std::fs::create_dir_all(&weaveroot).unwrap();
 
-    // Create a workweave, then delete it normally (branches cleaned up).
-    rwv()
+    // A branch in the workweave's namespace that rwv never created, carrying a
+    // commit that exists nowhere else.
+    let primary_repo = ws.join("github/org/repo");
+    git(&["branch", "web-app--stale-test/main"], &primary_repo);
+    git(&["checkout", "web-app--stale-test/main"], &primary_repo);
+    std::fs::write(primary_repo.join("hand-made.txt"), "operator work").unwrap();
+    git(&["add", "-A"], &primary_repo);
+    git(
+        &["commit", "-m", "work only this branch can reach"],
+        &primary_repo,
+    );
+    let unique_sha = {
+        let out = common::git()
+            .args(["rev-parse", "web-app--stale-test/main"])
+            .current_dir(&primary_repo)
+            .output()
+            .expect("git rev-parse");
+        String::from_utf8_lossy(&out.stdout).trim().to_string()
+    };
+    git(&["checkout", "main"], &primary_repo);
+
+    // The create must refuse rather than clear the name.
+    let assert = rwv()
         .args(["workweave", "web-app", "create", "stale-test"])
         .env("RWV_WORKWEAVE_DIR", &weaveroot)
         .current_dir(&ws)
         .assert()
-        .success();
+        .failure();
+    let stderr = String::from_utf8_lossy(&assert.get_output().stderr).to_string();
+    assert!(
+        stderr.contains("web-app--stale-test/main"),
+        "the refusal must name the branch that is in the way; got:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("rwv doctor --fix"),
+        "the refusal must name the command that migrates rwv's own legacy refs; \
+         got:\n{stderr}"
+    );
 
-    rwv()
-        .args(["workweave", "web-app", "delete", "stale-test"])
-        .env("RWV_WORKWEAVE_DIR", &weaveroot)
-        .current_dir(&ws)
-        .assert()
-        .success();
-
-    // Manually re-create the stale ephemeral branch to simulate a failed cleanup.
-    let primary_repo = ws.join("github/org/repo");
-    let head = common::git()
-        .args(["rev-parse", "HEAD"])
+    // The branch and its unique commit survive untouched.
+    let branches = branch_names(&primary_repo);
+    assert!(
+        branches.iter().any(|b| b == "web-app--stale-test/main"),
+        "a branch rwv holds no receipt for must survive the create, got: {branches:?}"
+    );
+    let after = common::git()
+        .args(["rev-parse", "web-app--stale-test/main"])
         .current_dir(&primary_repo)
         .output()
-        .expect("git rev-parse HEAD");
-    let head_sha = String::from_utf8_lossy(&head.stdout).trim().to_string();
+        .expect("git rev-parse");
+    assert_eq!(
+        String::from_utf8_lossy(&after.stdout).trim(),
+        unique_sha,
+        "the branch must still point at the operator's commit"
+    );
+}
 
-    let status = common::git()
-        .args(["branch", "web-app--stale-test/main", &head_sha])
-        .current_dir(&primary_repo)
-        .status()
-        .expect("git branch web-app--stale-test/main");
-    assert!(status.success(), "should be able to create stale branch");
+/// The stale-leftover case the shipped justification only *claimed*: a ref rwv
+/// recorded creating, still at exactly the recorded tip, left behind by a
+/// create that did not finish. That one is destroyed and recreated, because
+/// `DeletionWarrant::unmoved` runs the comparison rather than asserting it.
+#[test]
+fn create_reuses_its_own_unmoved_leftover() {
+    let tmp = tempfile::tempdir().unwrap();
+    let ws = make_workspace(tmp.path(), "web-app");
 
-    // Creating the workweave again with the same name should succeed despite
-    // the stale ephemeral branch.
+    let weaveroot = tmp.path().join(".workweaves");
+    std::fs::create_dir_all(&weaveroot).unwrap();
+
     rwv()
-        .args(["workweave", "web-app", "create", "stale-test"])
+        .args(["workweave", "web-app", "create", "leftover"])
         .env("RWV_WORKWEAVE_DIR", &weaveroot)
         .current_dir(&ws)
         .assert()
         .success();
 
-    // Verify the workweave was actually created.
-    let ww_dir = weaveroot.join("web-app--stale-test");
+    // Simulate a create that died after the ref write: drop the directory and
+    // the placement entry by hand, leaving the ref AND its receipt standing.
+    let ww_dir = weaveroot.join("web-app--leftover");
+    let primary_repo = ws.join("github/org/repo");
+    git(
+        &[
+            "worktree",
+            "remove",
+            "--force",
+            ww_dir.join("github/org/repo").to_str().unwrap(),
+        ],
+        &primary_repo,
+    );
+    std::fs::remove_dir_all(&ww_dir).unwrap();
+    let index = ws.join("projects/web-app/.rwv-workweave-index");
+    let mut idx: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&index).unwrap()).unwrap();
+    idx["workweaves"]
+        .as_object_mut()
+        .unwrap()
+        .remove("leftover");
+    std::fs::write(&index, serde_json::to_string_pretty(&idx).unwrap()).unwrap();
+    assert!(
+        branch_names(&primary_repo)
+            .iter()
+            .any(|b| b == "web-app--leftover"),
+        "precondition: the recorded ref must still be standing"
+    );
+
+    // Recreating the same workweave proceeds: receipt present, tip unmoved.
+    rwv()
+        .args(["workweave", "web-app", "create", "leftover"])
+        .env("RWV_WORKWEAVE_DIR", &weaveroot)
+        .current_dir(&ws)
+        .assert()
+        .success();
     assert!(
         ww_dir.join("github/org/repo").exists(),
-        "workweave should be created successfully even with pre-existing stale branch"
+        "the workweave should be created over its own unmoved leftover"
     );
 }
 
@@ -1785,14 +1890,15 @@ fn list_omits_unregistered_workweave_and_doctor_can_adopt_it() {
 }
 
 // ============================================================================
-// Pattern A4 — detached HEAD does not produce an ephemeral branch named "HEAD"
+// §3.5 — nothing observed feeds the ephemeral name
 // ============================================================================
 
-/// When the source repo is in detached-HEAD state, the workweave's ephemeral
-/// branch must not be `proj--ww/HEAD` (which masquerades as a real ref).
-/// Audit finding A4: emit `detached-<shortsha>` instead.
+/// A detached source repo produces the same flat ephemeral name an attached
+/// one does. This is the successor to audit finding A4 (`proj--ww/HEAD`
+/// masquerading as a real ref) and its `detached-<shortsha>` workaround: the
+/// name has no third component to fill in, so neither shape is representable.
 #[test]
-fn create_workweave_detached_head_uses_detached_branch_name() {
+fn create_over_a_detached_source_still_mints_the_flat_name() {
     let tmp = tempfile::tempdir().unwrap();
     let ws = make_workspace(tmp.path(), "web-app");
     let weaveroot = tmp.path().join(".workweaves");
@@ -1810,21 +1916,19 @@ fn create_workweave_detached_head_uses_detached_branch_name() {
         .assert()
         .success();
 
-    // List branches on the source repo and confirm we have a
-    // `web-app--det/detached-<shortsha>` branch — not `web-app--det/HEAD`.
-    let branches = common::git()
-        .args(["branch", "--list"])
-        .current_dir(&repo)
-        .output()
-        .expect("git branch --list");
-    let listing = String::from_utf8_lossy(&branches.stdout).to_string();
+    // §3.5: the name is minted from (project, workweave) and nothing observed
+    // feeds into it, so a detached source produces exactly the same flat name
+    // an attached one would. The old derivation read the source's `current_ref`
+    // and fell back to a `detached-<shortsha>` segment; both are gone. Break
+    // that and this fails — the listing grows a `web-app--det/...` entry.
+    let branches = branch_names(&repo);
     assert!(
-        !listing.contains("web-app--det/HEAD"),
-        "detached HEAD must not be encoded as a branch named '/HEAD': {listing}"
+        branches.iter().any(|b| b == "web-app--det"),
+        "expected the flat ephemeral branch 'web-app--det', got:\n{branches:?}"
     );
     assert!(
-        listing.contains("web-app--det/detached-"),
-        "expected a 'web-app--det/detached-<sha>' ephemeral branch, got:\n{listing}"
+        !branches.iter().any(|b| b.starts_with("web-app--det/")),
+        "a detached source must not add a segment to the ephemeral name, got:\n{branches:?}"
     );
 }
 
@@ -2226,7 +2330,10 @@ fn create_workweave_replace_existing_prunes_orphan_worktree_registrations() {
 
     // Run `git worktree add` in the primary repo, pointing into the workweave
     // dir.  This writes a `.git/worktrees/<name>` registration in the primary
-    // repo.  Use a fresh branch name so it does not conflict with main.
+    // repo.  The branch name is incidental to what this test measures and is
+    // deliberately OUTSIDE the workweave's `web-app--stale-ww` namespace:
+    // a name inside it would make the create refuse on the namespace
+    // collision, which is a different test's subject.
     let primary_repo = ws.join("github/org/repo");
     git(
         &[
@@ -2235,7 +2342,7 @@ fn create_workweave_replace_existing_prunes_orphan_worktree_registrations() {
             "--force",
             wt_dest.to_str().unwrap(),
             "-b",
-            "web-app--stale-ww/main",
+            "fixture/orphan-registration",
         ],
         &primary_repo,
     );
@@ -3162,18 +3269,18 @@ fn partial_create_failure_rolls_back_branches_of_earlier_repos() {
     assert_no_branches_with_prefix(&repo2, "multi-hook--partial-hook");
 }
 
-/// When rollback branch-deletion fails (the branch ref is stuck), the error
-/// returned from `create_workweave` must:
+/// When the rollback's ref DESTROY fails, the error returned from
+/// `create_workweave` must:
 /// 1. Preserve the original root-cause error as the primary message.
 /// 2. Append a "manual cleanup" note with the exact `git branch -D` command.
 ///
-/// We exercise this via the library API: create a workspace where repo2 is
-/// missing (the partial-create trigger), but first do a clean successful
-/// create+delete cycle so that the ephemeral branch for the workweave name
-/// exists and is then artificially made unremovable by locking the branch ref
-/// file (`chmod 000`). When rollback fires and `git branch -D` fails, the
-/// manual-cleanup note must appear in the returned error — not replace the
-/// primary "workweave create completed with 1 failure(s)" message.
+/// The obstruction is arranged by a `post-checkout` hook in repo1 that makes
+/// the shared store's `refs/heads` read-only and then exits 0: `git worktree
+/// add` has already written the ephemeral ref by the time the hook runs, so
+/// the birth succeeds and the branch exists at exactly the revision the
+/// receipt records — the rollback's `DeletionWarrant::unmoved` is satisfied
+/// and it is `git branch -D` itself that then fails on EACCES. repo2 is
+/// missing, which is what triggers the rollback in the first place.
 ///
 /// NOTE: `CreateRollbackGuard` is private; the test drives `create_workweave`
 /// via the public API and inspects the returned error string.
@@ -3213,50 +3320,30 @@ fn cleanup_failure_preserves_original_error_with_manual_note() {
     let weaveroot = tmp.path().join(".workweaves");
     std::fs::create_dir_all(&weaveroot).unwrap();
 
-    // First pass: run create_workweave (fails on repo2). This establishes the
-    // ephemeral branch name that rollback will try to delete: `locked-branch--stuck/main`.
+    // Post-checkout hook: seal `refs/heads` AFTER the branch is written.
+    let hooks_dir = repo1.join(".git/hooks");
+    std::fs::create_dir_all(&hooks_dir).unwrap();
+    let hook_path = hooks_dir.join("post-checkout");
+    std::fs::write(
+        &hook_path,
+        "#!/bin/sh\n\
+         common=$(git rev-parse --path-format=absolute --git-common-dir)\n\
+         chmod 500 \"$common/refs/heads\"\n\
+         exit 0\n",
+    )
+    .unwrap();
+    std::fs::set_permissions(&hook_path, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+    let refs_heads = repo1.join(".git/refs/heads");
     let project = ProjectName::new("locked-branch".to_string());
     let ww_name = WorkweaveName::new("stuck".to_string());
-    let err1 = create_workweave(&ws, &ws, &project, &ww_name, false, false, false, None);
-    assert!(
-        err1.is_err(),
-        "first create should fail (repo2 missing): {:?}",
-        err1
-    );
-
-    // After the first rollback, the ephemeral branch in repo1 should be gone.
-    // Now: artificially recreate the ephemeral branch ref file in repo1 and lock
-    // it so the next rollback cannot delete it.
-    //
-    // The branch name is `locked-branch--stuck/main` — the refs path is
-    // `.git/refs/heads/locked-branch--stuck/main`.
-    let branch_dir = repo1.join(".git/refs/heads/locked-branch--stuck");
-    std::fs::create_dir_all(&branch_dir).unwrap();
-    let branch_ref = branch_dir.join("main");
-    // Write the HEAD SHA as the branch ref content (needed for git to recognise it).
-    let head_sha = common::git()
-        .args(["rev-parse", "HEAD"])
-        .current_dir(&repo1)
-        .output()
-        .expect("git rev-parse HEAD");
-    let sha = String::from_utf8(head_sha.stdout).unwrap();
-    std::fs::write(&branch_ref, sha.trim()).unwrap();
-    // Lock the branch ref file: chmod 000 so delete_branch fails.
-    std::fs::set_permissions(&branch_ref, std::fs::Permissions::from_mode(0o000)).unwrap();
-
-    // Second pass: create_workweave again with the same name. Rollback fires
-    // (repo2 still missing), tries to delete the branch in repo1, finds the
-    // ref file is mode 000, and should:
-    //   a) Return an error (not panic).
-    //   b) The primary error text starts with "workweave create completed with".
-    //   c) The error includes a manual-cleanup note with "git" and "branch -D".
-    let err2 = create_workweave(&ws, &ws, &project, &ww_name, false, false, false, None);
+    let err = create_workweave(&ws, &ws, &project, &ww_name, false, false, false, None);
 
     // Restore permissions so tempdir cleanup doesn't fail.
-    let _ = std::fs::set_permissions(&branch_ref, std::fs::Permissions::from_mode(0o644));
+    let _ = std::fs::set_permissions(&refs_heads, std::fs::Permissions::from_mode(0o755));
 
-    let err_msg = err2
-        .expect_err("second create must fail (repo2 missing + branch stuck)")
+    let err_msg = err
+        .expect_err("create must fail (repo2 missing + branch undeletable)")
         .to_string();
 
     // Primary error is the root cause, not the cleanup failure.
@@ -3272,7 +3359,7 @@ fn cleanup_failure_preserves_original_error_with_manual_note() {
         "error must include a manual-cleanup note; got:\n{err_msg}"
     );
     assert!(
-        err_msg.contains("branch -D") || err_msg.contains("branch"),
+        err_msg.contains("branch -D"),
         "manual-cleanup note must name the git branch -D command; got:\n{err_msg}"
     );
 }

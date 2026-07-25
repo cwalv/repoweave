@@ -1140,13 +1140,16 @@ fn add_url_arm_from_workweave_git_common_dir_points_to_primary_clone() {
         canonical_git.display()
     );
 
-    // 3. Ephemeral branch must follow the {project}--{weave}/{branch} pattern.
-    // Workweave name is "feat", project is "test-project", branch from bare is "main".
+    // 3. Ephemeral branch must be the FLAT {project}--{weave} name
+    // (branch-model.md §3.5). `rwv add` used to derive its own third
+    // component from the canonical's current_ref with a private truncation;
+    // both are gone, and the canonical here is on `main`, so a segmented
+    // name would still be observable if the derivation had survived.
     let branch =
         current_branch(&workweave_repo).expect("worktree should have a branch (not detached HEAD)");
     assert_eq!(
-        branch, "test-project--feat/main",
-        "worktree in workweave must be on ephemeral branch test-project--feat/main, got: {branch}"
+        branch, "test-project--feat",
+        "worktree in workweave must be on ephemeral branch test-project--feat, got: {branch}"
     );
 
     // 4. No repo was cloned under the workweave directory.
@@ -1251,11 +1254,11 @@ fn add_local_path_arm_from_workweave_git_common_dir_points_to_primary_clone() {
         canonical_git.display()
     );
 
-    // Ephemeral branch: {project}--{weave}/{branch}.
+    // Ephemeral branch: the flat {project}--{weave} (branch-model.md §3.5).
     let branch = current_branch(&workweave_repo).expect("worktree should have a branch");
     assert_eq!(
-        branch, "test-project--feat/main",
-        "worktree (local-path arm) must be on ephemeral branch test-project--feat/main, got: {branch}"
+        branch, "test-project--feat",
+        "worktree (local-path arm) must be on ephemeral branch test-project--feat, got: {branch}"
     );
 
     // No independent clone materialized under .workweaves/ (the workweave

@@ -25,10 +25,12 @@ network clone and registers the existing directory.
 
 When `rwv add` is invoked from inside a workweave, it also creates a
 `git worktree` for the new repo inside the workweave directory. The
-ephemeral branch follows the standard `{project}--{workweave}/{source-branch}`
-naming convention (matching `rwv workweave create`). If the canonical clone
-has no commits yet (from `--new`), the worktree creation is skipped; run
-`rwv sync` after the first commit to materialize it.
+ephemeral branch follows the standard `{project}--{workweave}` naming
+convention (matching `rwv workweave create`) — flat, with no third component
+derived from the source branch. `add` records an ownership receipt for it, so
+`rwv workweave delete` destroys it along with the rest of the workweave's
+refs. If the canonical clone has no commits yet (from `--new`), the worktree
+creation is skipped; run `rwv sync` after the first commit to materialize it.
 
 ### Local-path form
 

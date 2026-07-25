@@ -630,11 +630,12 @@ fn worktree_references_reference_syncs_normally() {
         ww.ref_checkout.join(".git").is_file(),
         "worktree'd reference .git must be a worktree gitlink FILE"
     );
-    // It is on its OWN ephemeral branch in the workweave (legacy behavior).
+    // It is on its OWN ephemeral branch in the workweave (legacy behavior),
+    // flat per branch-model.md §3.5.
     let ww_ref_branch = git_out(&["symbolic-ref", "--short", "HEAD"], &ww.ref_checkout);
     assert_eq!(
         ww_ref_branch,
-        format!("{PROJECT}--feat/main"),
+        format!("{PROJECT}--feat"),
         "worktree'd reference must be on its own ephemeral branch in the workweave"
     );
 

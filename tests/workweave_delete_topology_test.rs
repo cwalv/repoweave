@@ -232,7 +232,7 @@ fn delete_uses_resolved_parent_under_inverted_topology() {
         &ProjectName::new("web-app"),
         &WorkweaveName::new("ww"),
         true, // discard_uncommitted: we're testing topology, not the dirty gate
-        true, // discard_unmerged_commits
+        repoweave::cli::consent::DiscardUnmergedConsent::from_flag(true), // the unmerged waiver, as the CLI mints it
     );
     assert!(
         result.is_ok(),
@@ -314,7 +314,7 @@ fn delete_refuses_when_checkout_hosts_foreign_worktrees_even_with_waivers() {
         &ProjectName::new("web-app"),
         &WorkweaveName::new("bad"),
         true,
-        true,
+        repoweave::cli::consent::DiscardUnmergedConsent::from_flag(true),
     );
     let err = result.expect_err("delete should refuse when a checkout hosts foreign worktrees");
     let msg = format!("{err:#}");
@@ -382,7 +382,7 @@ fn delete_proceeds_when_canonical_checkout_has_no_foreign_dependents() {
         &ProjectName::new("web-app"),
         &WorkweaveName::new("lone"),
         true,
-        true,
+        repoweave::cli::consent::DiscardUnmergedConsent::from_flag(true),
     );
     assert!(
         result.is_ok(),
@@ -469,8 +469,8 @@ fn merged_check_refuses_vouch_across_distinct_canonical_stores() {
         &ws,
         &ProjectName::new("web-app"),
         &WorkweaveName::new("diverged"),
-        true,  // uncommitted changes are irrelevant here
-        false, // exercise the merged-check
+        true, // uncommitted changes are irrelevant here
+        None, // exercise the merged-check
     );
     let err = result.expect_err("delete should refuse when workweave carries unmerged work");
     let msg = format!("{err:#}");

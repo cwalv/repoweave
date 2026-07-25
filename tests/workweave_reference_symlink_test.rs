@@ -214,8 +214,8 @@ fn create_materializes_reference_as_symlink_and_owned_as_worktree() {
     let branch = git_stdout(&["symbolic-ref", "--short", "HEAD"], &owned_checkout);
     assert_eq!(
         branch.trim(),
-        "proj--feat/main",
-        "owned worktree should be on the ephemeral branch"
+        "proj--feat",
+        "owned worktree should be on the flat ephemeral branch (§3.5)"
     );
 
     // The canonical reference clone gained NO ephemeral branch.
@@ -266,8 +266,8 @@ fn worktree_references_flag_cuts_a_worktree_for_reference_repos() {
     let branch = git_stdout(&["symbolic-ref", "--short", "HEAD"], &ref_checkout);
     assert_eq!(
         branch.trim(),
-        "proj--feat/main",
-        "worktree'd reference should be on the ephemeral branch"
+        "proj--feat",
+        "worktree'd reference should be on the flat ephemeral branch (§3.5)"
     );
 }
 
@@ -301,7 +301,7 @@ fn delete_unlinks_symlink_and_leaves_canonical_byte_for_byte_unchanged() {
         &ProjectName::new("proj"),
         &WorkweaveName::new("feat"),
         false,
-        false,
+        None,
     )
     .expect("delete should succeed");
 
@@ -360,7 +360,7 @@ fn delete_succeeds_with_a_dirty_canonical_and_leaves_it_untouched() {
         &ProjectName::new("proj"),
         &WorkweaveName::new("feat"),
         false, // no waiver: alias dirty state must not be attributed here
-        false,
+        None,
     )
     .expect("delete must succeed even with a dirty canonical");
 
@@ -480,7 +480,7 @@ fn two_workweaves_share_one_canonical_and_deleting_one_keeps_the_other_valid() {
         &ProjectName::new("proj"),
         &WorkweaveName::new("wa"),
         false,
-        false,
+        None,
     )
     .expect("delete wa");
 

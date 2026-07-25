@@ -690,12 +690,12 @@ fn main() -> anyhow::Result<()> {
                         discard_uncommitted,
                         discard_unmerged_commits,
                     }) => {
-                        // Minted here so the token exists at the CLI
-                        // boundary; a later change wires it into
-                        // workweave.rs's DeletionWarrant (branch-model.md
-                        // §4.4, §4.6). No consumer yet — delete_workweave
-                        // still takes the raw bool below.
-                        let _discard_unmerged_commits =
+                        // The token IS the warrant an unmerged ref's DESTROY
+                        // needs (branch-model.md §3.3 R3, §4.4):
+                        // `delete_workweave` waives the verb-level
+                        // precondition on it AND hands it to
+                        // `DeletionWarrant::operator_discarded` per ref.
+                        let discard_unmerged =
                             repoweave::cli::consent::DiscardUnmergedConsent::from_flag(
                                 discard_unmerged_commits,
                             );
@@ -704,7 +704,7 @@ fn main() -> anyhow::Result<()> {
                             &project,
                             &WorkweaveName::new(name),
                             discard_uncommitted,
-                            discard_unmerged_commits,
+                            discard_unmerged,
                         )?;
                     }
                     Some(WorkweaveAction::Create {

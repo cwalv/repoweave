@@ -90,8 +90,13 @@ const ALLOWLIST: &[Allowed] = &[
             can be appended to the returned error; defuses Drop to prevent \
             double-rollback. (3) create --replace-existing raw replace: \
             behind the dirty-scan refusal. (4) delete_workweave: behind the \
-            dirty + unmerged-commits refusals unless --discard-uncommitted / \
-            --discard-unmerged-commits, which list what is lost first.",
+            dirty refusal unless --discard-uncommitted, and behind the \
+            unmerged-commits refusal unless the caller holds a \
+            DiscardUnmergedConsent — the token minted only from \
+            --discard-unmerged-commits at CLI dispatch (branch-model.md \
+            §4.4). Both list what is lost first. The per-ref DESTROYs inside \
+            the same verb each additionally hold their own warrant (R3); \
+            this entry covers the directory removal only.",
     },
     Allowed {
         file: "workweave.rs",
@@ -109,23 +114,46 @@ const ALLOWLIST: &[Allowed] = &[
         file: "add_remove.rs",
         pattern: "remove_dir_all",
         count: 1,
-        justification: "rwv remove --delete on the canonical clone; \
-            refuses while other projects reference the repo unless \
-            --delete-shared-clone.",
+        justification: "rwv remove --delete on the canonical clone. A \
+            DESTROY-STORE (branch-model.md §3.2): it removes an entire ref \
+            store and object database at once, so no ref-level rule can gate \
+            it and none is read as permitting it. Gated by \
+            refuse_claimed_store, which is R4 — refuses while any live \
+            worktree is registered against the store (git worktree list \
+            reporting anything beyond the store itself) or while any \
+            ownership receipt keyed to it still stands, checked across every \
+            project on disk because a clone is shared by path. On top of \
+            that: refuses while other projects reference the repo unless \
+            --delete-shared-clone. A repo whose worktree registrations \
+            cannot be read refuses rather than being assumed unclaimed. The \
+            verb-level dirty/unpushed preconditions are Q11, narrowed and \
+            still open.",
     },
     Allowed {
         file: "git.rs",
         pattern: "\"-D\"",
         count: 3,
-        justification: "(1) create_worktree retry: deletes a stale \
-            ephemeral branch (project--workweave/branch namespace) left by \
-            a previous failed create. (2) delete_branch: called only from \
-            workweave.rs — delete_workweave, behind its refusals, and the \
-            create-rollback guard, which deletes only branches the failed \
-            create itself recorded creating. doctor no longer reaches it: \
-            its stale-ephemeral --fix now destroys through \
-            delete_owned_ref (3) instead, so `doctor --fix` cannot delete a \
-            ref rwv holds no receipt for. (3) destroy_local_ref: the branch-model DESTROY \
+        justification: "(1) create_worktree retry: the shipped \
+            pre-branch-model path — it force-deletes on \"already exists\" \
+            and retries. Its long-standing justification (\"deletes a STALE \
+            ephemeral branch left by a previous failed create\") was measured \
+            FALSE by fo-opmmoz.7 — nothing checks staleness — and is \
+            deliberately not repeated. As of fo-opmmoz.7 and .8 landing \
+            together this site has NO production caller at all: the \
+            workweave-create and add paths moved to \
+            materialize_worktree_on_ref, which classifies before acting and \
+            adopts rather than deleting. Unguarded, unreachable, and \
+            scheduled for removal with the rest of the old Vcs surface in \
+            fo-opmmoz.10: this entry keeps the count honest, it does not \
+            vouch for the site. (2) delete_branch: NO callers remain. \
+            delete_workweave stopped reaching it in fo-opmmoz.7 (it destroys \
+            over the RECORDED receipt set via delete_owned_ref and only \
+            reports everything else under the prefix) and doctor --fix \
+            stopped reaching it in fo-opmmoz.8 (its stale-ephemeral pass \
+            destroys through delete_owned_ref, so it cannot delete a ref rwv \
+            holds no receipt for). Each bead removed the other\'s named \
+            caller; neither could observe that alone, and the merged answer \
+            is zero. Also .10\'s to delete. (3) destroy_local_ref: the branch-model DESTROY \
             primitive (branch-model.md §3.2, §4.3). Reachable only through \
             Vcs::delete_owned_ref, which takes a persisted receipt \
             (OwnedRef — R2, ownership by record, never by name shape) AND a \

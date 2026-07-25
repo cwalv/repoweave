@@ -6,8 +6,9 @@ use crate::git::GitVcs;
 use crate::integration_runner::missing_active_members;
 use crate::manifest::{Manifest, ProjectName, RepoEntry, RepoPath, RepoUrl, Role, VcsType};
 use crate::registry::{builtin_registries, Registry};
-use crate::vcs::{RefName, Vcs};
+use crate::vcs::{EphemeralRefName, Vcs};
 use crate::workspace::{Checkout, WorkspaceContext};
+use crate::workweave_index::RefRegistry;
 use anyhow::{bail, Context};
 use std::path::{Path, PathBuf};
 
@@ -39,15 +40,24 @@ fn find_project_dir(ctx: &WorkspaceContext) -> anyhow::Result<std::path::PathBuf
 ///
 /// Used by `rwv add` from a workweave so the workweave gets the new repo's
 /// worktree as part of the add (mirrors the pattern in
-/// `sync::materialize_missing_repo`). The ephemeral branch
-/// name follows the same `{project}--{workweave_name}/{branch}` convention
-/// used by `create_workweave`.
+/// `sync::materialize_missing_repo`). This is a **birth** (§3.3 R1) and it
+/// goes through the same [`EphemeralRefName::mint`] as `workweave create`:
+/// the inlined derivation that used to live here — the canonical's
+/// `current_ref` plus a private 12-char truncation, one of the three
+/// disagreeing copies §3.5 deletes — is gone, along with the third component
+/// it derived.
+///
+/// It also **emits an ownership receipt**, which is what makes a later
+/// `workweave delete` visit this ref at all: under R2 delete destroys the
+/// recorded set, and a ref added this way used to be reachable only by the
+/// prefix glob that no longer authorizes anything.
 ///
 /// If the canonical clone has no HEAD (e.g. `rwv add --new` produced an
 /// empty `git init`), the worktree creation is skipped — `git worktree add`
 /// against an unborn HEAD would fail, and the user can materialize the
 /// worktree after the first commit via `rwv sync`.
 fn create_worktree_in_workweave(
+    primary_root: &Path,
     canonical_clone: &Path,
     workweave_dir: &Path,
     repo_path: &RepoPath,
@@ -62,49 +72,50 @@ fn create_worktree_in_workweave(
     }
 
     // Skip if the canonical has no HEAD (empty `git init` from --new).
-    let head = match GitVcs.head_revision(canonical_clone) {
-        Ok(h) => h,
-        Err(_) => {
-            eprintln!(
-                "rwv add: canonical clone at {} has no commits yet; \
-                 skipping worktree creation in workweave \
-                 (commit upstream and run `rwv sync` to materialize)",
-                canonical_clone.display()
-            );
-            return Ok(());
-        }
-    };
-
-    // Mirror create_workweave's branch-naming convention so a later
-    // `rwv workweave delete` cleans this branch up via the prefix scan.
-    let branch_segment = match GitVcs.current_ref(canonical_clone)? {
-        Some(r) => r,
-        None => RefName::new(format!(
-            "detached-{}",
-            &head.as_str()[..head.as_str().len().min(12)]
-        )),
-    };
-    let ephemeral_branch = RefName::new(format!(
-        "{}--{}/{}",
-        project.as_str(),
-        workweave_name.as_str(),
-        branch_segment.as_str()
-    ));
+    if GitVcs.head_revision(canonical_clone).is_err() {
+        eprintln!(
+            "rwv add: canonical clone at {} has no commits yet; \
+             skipping worktree creation in workweave \
+             (commit upstream and run `rwv sync` to materialize)",
+            canonical_clone.display()
+        );
+        return Ok(());
+    }
 
     if let Some(parent) = dest.parent() {
         std::fs::create_dir_all(parent)
             .with_context(|| format!("failed to create directory {}", parent.display()))?;
     }
 
-    GitVcs
-        .create_worktree(canonical_clone, &dest, &ephemeral_branch, &head)
-        .with_context(|| {
+    let mut registry = RefRegistry::for_project(primary_root, project);
+    let ephemeral = EphemeralRefName::mint(project, workweave_name);
+    let outcome = crate::workweave::birth_ephemeral_worktree(
+        &GitVcs,
+        &mut registry,
+        canonical_clone,
+        &dest,
+        &ephemeral,
+    )
+    .with_context(|| {
+        format!(
+            "failed to create worktree at {} from canonical clone {}",
+            dest.display(),
+            canonical_clone.display()
+        )
+    })?;
+
+    if let Some(e) = outcome.failure {
+        // The receipt stands and names the ref, so a later delete or doctor
+        // pass can reconcile whatever git left behind. Nothing is deleted
+        // here: a DESTROY needs a warrant this path does not hold.
+        return Err(e).with_context(|| {
             format!(
                 "failed to create worktree at {} from canonical clone {}",
                 dest.display(),
                 canonical_clone.display()
             )
-        })?;
+        });
+    }
 
     Ok(())
 }
@@ -192,7 +203,14 @@ pub fn run_add(url: &str, role: Role, ctx: &WorkspaceContext) -> anyhow::Result<
                 let repo_path = RepoPath::new(url)?;
                 let canonical = ctx.primary_path().join(repo_path.as_path());
                 if canonical.exists() {
-                    create_worktree_in_workweave(&canonical, dir, &repo_path, project, name)?;
+                    create_worktree_in_workweave(
+                        ctx.primary_path(),
+                        &canonical,
+                        dir,
+                        &repo_path,
+                        project,
+                        name,
+                    )?;
                 }
             }
             return activate_for_workspace(ctx, project_name);
@@ -282,7 +300,7 @@ pub fn run_add(url: &str, role: Role, ctx: &WorkspaceContext) -> anyhow::Result<
     // In a workweave, also create a worktree at the workweave so the new
     // repo is materialized there.
     if let Checkout::Workweave { name, dir, project } = &ctx.checkout {
-        create_worktree_in_workweave(&dest, dir, &repo_path, project, name)?;
+        create_worktree_in_workweave(ctx.primary_path(), &dest, dir, &repo_path, project, name)?;
     }
 
     // Re-run activation so ecosystem files (Cargo.toml, package.json, etc.) are updated.
@@ -425,6 +443,13 @@ pub fn run_remove(
                     );
                 }
             }
+
+            // R4, checked in the same pre-flight and for the same reason:
+            // a refused DESTROY-STORE must leave the manifest as it found it,
+            // so `rwv remove --delete` is retryable after the operator clears
+            // the claims rather than leaving them holding a store the manifest
+            // no longer declares.
+            refuse_claimed_store(ctx.primary_path(), &repo_dir)?;
         }
     }
 
@@ -456,6 +481,89 @@ pub fn run_remove(
     }
 
     Ok(())
+}
+
+/// R4: refuse a DESTROY-STORE while the store is still claimed.
+///
+/// `remove --delete` deletes an entire ref store and its object database
+/// (branch-model.md §3.2), which destroys every ref and every object at once
+/// — so no ref-level rule can gate it, and none is allowed to be read as
+/// permitting it. R4 names the two claims that must be gone first:
+///
+/// - **no live worktree registered against the store.** Every workweave
+///   checkout of this repo is a linked worktree of this store, so deleting it
+///   guts live workweaves — their `.git` files point into the directory being
+///   removed. `git worktree list` reports the store itself plus one line per
+///   linked worktree; anything beyond the first is a live claim.
+/// - **every receipt keyed to the store retracted.** A standing receipt says
+///   rwv created a ref here and has not destroyed it, which is exactly the
+///   per-ref DESTROY discipline not having run dry yet. Receipts are checked
+///   across *all* projects in the weave, not just the active one: a clone is
+///   shared by path, so another project's workweave can hold a ref in this
+///   same store.
+///
+/// The verb's own named preconditions (dirty state, unpushed work) sit on top
+/// of this and are separate work — **Q11, narrowed**, still open.
+fn refuse_claimed_store(primary_root: &Path, repo_dir: &Path) -> anyhow::Result<()> {
+    let mut claims: Vec<String> = Vec::new();
+
+    match GitVcs.list_worktrees(repo_dir) {
+        Ok(worktrees) => {
+            let store = repo_dir
+                .canonicalize()
+                .unwrap_or_else(|_| repo_dir.to_path_buf());
+            for wt in worktrees {
+                let wt_canonical = wt.canonicalize().unwrap_or_else(|_| wt.clone());
+                if wt_canonical != store {
+                    claims.push(format!("live worktree registered at {}", wt.display()));
+                }
+            }
+        }
+        // Not a repo, or git could not answer. A directory that is not a ref
+        // store is not a DESTROY-STORE, and a store that cannot be
+        // interrogated is not one this verb may assume is unclaimed.
+        Err(e) => {
+            if GitVcs.is_repo(repo_dir) {
+                anyhow::bail!(
+                    "refusing to delete '{}': it is a repo whose worktree registrations \
+                     could not be read ({e}), so rwv cannot establish that no live \
+                     worktree is using it.",
+                    repo_dir.display()
+                );
+            }
+        }
+    }
+
+    for project in crate::workweave_index::projects_on_disk(primary_root) {
+        let registry = RefRegistry::for_project(primary_root, &project);
+        match registry.list_for_store(repo_dir) {
+            Ok(receipts) => claims.extend(receipts.into_iter().map(|r| {
+                format!(
+                    "ownership receipt for branch {r} (project {})",
+                    project.as_str()
+                )
+            })),
+            Err(e) => anyhow::bail!(
+                "refusing to delete '{}': the ownership receipts for project `{}` could \
+                 not be read ({e}), so rwv cannot establish that no ref it created still \
+                 lives in this store.",
+                repo_dir.display(),
+                project.as_str()
+            ),
+        }
+    }
+
+    if claims.is_empty() {
+        return Ok(());
+    }
+    anyhow::bail!(
+        "refusing to delete '{}': the store is still claimed:\n  {}\n\n\
+         Deleting it would take every ref and object with it at once. Delete the \
+         workweaves that hold these first (`rwv workweave <project> delete <name>`), \
+         which removes their worktrees and retracts their receipts, then re-run.",
+        repo_dir.display(),
+        claims.join("\n  "),
+    )
 }
 
 /// Execute `rwv add PATH --new`.
@@ -562,7 +670,7 @@ pub fn run_add_new(path_arg: &str, ctx: &WorkspaceContext) -> anyhow::Result<()>
     // so create_worktree_in_workweave silently skips until the first commit
     // lands upstream (operator can then `rwv sync`).
     if let Checkout::Workweave { name, dir, project } = &ctx.checkout {
-        create_worktree_in_workweave(&dest, dir, &repo_path, project, name)?;
+        create_worktree_in_workweave(ctx.primary_path(), &dest, dir, &repo_path, project, name)?;
     }
 
     // Re-run activation so ecosystem files (Cargo.toml, package.json, etc.) are updated.
