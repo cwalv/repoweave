@@ -2118,15 +2118,21 @@ impl Vcs for GitVcs {
         if self.resolve_local_branch_tip(repo, &branch)?.is_none() {
             // Reported as the query that refused, not as a switch that
             // failed: no switch is attempted. These are the arguments
-            // `resolve_local_branch_tip` ran, so the operator can reproduce
-            // the answer the refusal rests on.
+            // `resolve_local_branch_tip` ran, verbatim, and the directory it
+            // ran them in, so the operator can reproduce the answer the
+            // refusal rests on. `--quiet` is part of the command, not noise:
+            // without it the same rev-parse exits 128 "Needed a single
+            // revision" instead of the silent exit 1 that the absence branch
+            // reads as "no such ref", so a reported form omitting it would
+            // not reproduce the answer it claims to explain.
             return Err(VcsError::CommandFailed {
                 args: vec![
                     "rev-parse".to_owned(),
                     "--verify".to_owned(),
+                    "--quiet".to_owned(),
                     format!("refs/heads/{name}^{{commit}}"),
                 ],
-                repo: repo.to_path_buf(),
+                repo: Self::work_dir_for_store(repo),
                 stderr: format!(
                     "no local branch named '{name}': attaching to a branch that \
                      does not exist would create it, and a birth needs a receipt \
@@ -2766,6 +2772,65 @@ mod branch_model_tests {
                 "{name}: the refusal must not touch the working tree"
             );
         }
+    }
+
+    #[test]
+    fn the_attach_refusal_reports_a_command_that_reproduces_its_answer() {
+        // The refusal explains itself by naming the query it rests on, which
+        // is only worth anything if running that query verbatim gives the
+        // same answer. `--quiet` is the load-bearing part: without it the
+        // same rev-parse exits 128 "Needed a single revision" instead of the
+        // silent exit 1 the absence branch reads as "no such ref", so a
+        // reported form that dropped it would send the operator to a
+        // different failure than the one being explained.
+        let (_home, work) = clone_of(repo().path());
+
+        let from = GitVcs.head_attachment(&work).unwrap();
+        let err = GitVcs
+            .reattach_head(from, &local("absent"), ReattachConsent::granted())
+            .unwrap_err();
+
+        let VcsError::CommandFailed { args, repo, .. } = err else {
+            panic!("expected the refusal to report the query that refused");
+        };
+
+        assert_eq!(
+            args,
+            vec![
+                "rev-parse".to_owned(),
+                "--verify".to_owned(),
+                "--quiet".to_owned(),
+                "refs/heads/absent^{commit}".to_owned(),
+            ],
+            "the reported argv must be the one resolve_local_branch_tip ran"
+        );
+        assert_eq!(
+            repo,
+            GitVcs::work_dir_for_store(&work),
+            "the reported directory must be the one the query ran in"
+        );
+
+        // Run exactly what was reported and confirm it reproduces "absent":
+        // no stdout, and a failure that is NOT the 128 the un-quiet form gives.
+        let borrowed: Vec<&str> = args.iter().map(String::as_str).collect();
+        assert!(
+            matches!(
+                GitVcs::run(&borrowed, &repo),
+                Err(VcsError::CommandFailed { .. })
+            ),
+            "the reported command must reproduce the absence the refusal rests on"
+        );
+        let out = std::process::Command::new("git")
+            .args(&borrowed)
+            .current_dir(&repo)
+            .output()
+            .unwrap();
+        assert_eq!(out.status.code(), Some(1), "--quiet makes absence exit 1");
+        assert!(
+            out.stderr.is_empty(),
+            "--quiet makes absence silent; got {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
     }
 
     #[test]
