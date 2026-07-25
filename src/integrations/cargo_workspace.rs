@@ -37,7 +37,7 @@
 //! otherwise be empty. Hand-written `Cargo.toml` files (no marker) are
 //! left strictly alone — the strip is a no-op.
 //!
-//! ## Design decisions — locked in plan §7.2
+//! ## Design decisions
 //!
 //! **(a) Members sub-path config.** `CargoWorkspaceConfig::members` maps a
 //! repo path string to a `MemberSpec{include, exclude}`. When a repo appears
@@ -46,7 +46,7 @@
 //! Repos absent from the map keep the current root-as-member auto-behavior.
 //! This is what lets rvtty (no root `Cargo.toml`, sub-packages `daemon/`,
 //! `client/`, `common/`) contribute its packages to the weave workspace
-//! instead of being excluded. See `cargo-workspace-vs-repo.md` §179–212.
+//! instead of being excluded.
 //!
 //! **(b) Merge-preserve scope.** Owns ONLY `[workspace].members`,
 //! `[workspace].resolver`, and (behind `workspace_package: true`)
@@ -72,16 +72,12 @@
 //!   fork without committing anything weave-relative. Version-incompatible
 //!   in-weave crates are skipped (with warning to stderr); a member's own
 //!   `.cargo/config.toml` shadowing the same key is surfaced at generation
-//!   time (probe P5b — cargo silently voids the weave entry).
+//!   time (cargo silently voids the weave entry).
 //!
 //! In both patch modes, each generated entry is decorated with the
 //! `# managed by rwv` marker. User-authored `[patch.crates-io]` entries
 //! are preserved (verify-and-warn at the entry level); `deactivate` strips
 //! only the marked entries, then prunes the table if empty.
-//!
-//! See Finding 1 of `docs/repoweave/grok-build-export-findings.md` for the
-//! derivation of the derived-mode design (and probes P2 / P6 / P8 for the
-//! tier-boundary / diagnostic / reference-role facts it depends on).
 //!
 //! **Patch surface** (orthogonal to mode; `PatchSurface` enum in the config):
 //!
@@ -94,13 +90,11 @@
 //!   alongside `Cargo.toml` (project dir, symlinked to the weave root).
 //!   Config-level `[patch]` is discovered upward from cwd, so nested-
 //!   workspace opt-outs (rvtty, mcp_agent_mail_rust) built from *inside*
-//!   the member dir see the weave's patches. This is Finding 2 of the
-//!   design doc — the nesting-immune lens. Fully validated by probes P1
-//!   (symlinked `.cargo/` dirs work with zero rebuild churn), P3/P7
-//!   (relative paths resolve against the config's logical, non-
-//!   canonicalized location), P4 (upward discovery through nested
-//!   workspaces), and P5b (closest-config-wins per-key shadowing; the
-//!   observatory scan is the detection).
+//!   the member dir see the weave's patches — the nesting-immune surface.
+//!   Symlinked `.cargo/` dirs work with zero rebuild churn; relative paths
+//!   resolve against the config's logical, non-canonicalized location;
+//!   upward discovery traverses nested workspaces; and a member's own
+//!   closest config wins per key, which the observatory scan detects.
 //!
 //! Both surfaces at once is structurally impossible (`PatchSurface` is an
 //! enum, not two booleans). Emitting the same `[patch.<reg>].<crate>` key
@@ -217,15 +211,15 @@ struct DerivedPatch {
 ///   at the weave root, so no rewrite is needed.
 /// - **CargoConfig**: `file = <output_dir>/.cargo/config.toml`,
 ///   `path_prefix = ""`. Cargo resolves relative patch paths against the
-///   **directory containing `.cargo/`** (probe P3/P7 clarified by direct
-///   measurement 2026-07-17: the "config's logical location" in cargo's
+///   **directory containing `.cargo/`** (measured directly against cargo:
+///   the "config's logical location" in cargo's
 ///   patch-path resolution is the parent of `.cargo/`, NOT `.cargo/`
 ///   itself). Since our `.cargo/` sits directly under the weave root, a
 ///   member at `github/acme/lib` written literally as `github/acme/lib`
 ///   resolves to `<weave-root>/github/acme/lib` — exactly the same
 ///   resolution as the manifest surface would produce. No `../` prefix is
 ///   needed. NO canonicalization: this preserves symlinked `.cargo/`
-///   surfacing (probe P1) with zero rebuild churn.
+///   surfacing with zero rebuild churn.
 #[derive(Debug, Clone)]
 struct PatchTarget {
     /// The file that carries the `[patch.*]` entries.
@@ -428,7 +422,7 @@ impl CargoWorkspace {
 
             if let Some(spec) = cfg.members.get(repo) {
                 // members.<repo> sub-path mode.
-                // Refinement (plan §7.2-d): if the repo root itself declares
+                // If the repo root itself declares
                 // [workspace] this is STILL a hard error — sub-packages can't
                 // dodge an ancestor workspace declaration via member
                 // configuration.
@@ -565,13 +559,11 @@ impl CargoWorkspace {
         ));
 
         if cfg.workspace_package {
-            // The cargo-workspace-vs-repo.md design surfaces `rwv.yaml`
+            // The intended behaviour is to surface `rwv.yaml`
             // `project.{license, authors, description, repository, ...}` into
             // `[workspace.package]`. The Manifest type does not yet carry a
-            // `project` section (cargo-workspace-vs-repo.md §324-376 is the
-            // forward-looking design; the manifest extension is a separate
-            // work item). Until that lands, the opt-in writes an empty
-            // `[workspace.package]` table.
+            // `project` section, so until that lands the opt-in writes an
+            // empty `[workspace.package]` table.
             //
             // The wiring is correct: when the project metadata field lands,
             // populate the BTreeMap below from it; the TomlDoc merge-into-
@@ -614,7 +606,7 @@ impl Integration for CargoWorkspace {
             anyhow::bail!("{}", nested_workspace_error(&nested_conflicts));
         }
 
-        // `output_dir = project_dir` (plan §4.1) — the committed `Cargo.toml`
+        // `output_dir = project_dir` — the committed `Cargo.toml`
         // lives in the project directory and the weave-root symlink surfaces
         // it. Writing through `output_dir` writes into the committed file.
         let path = ctx.output_dir.join("Cargo.toml");
@@ -993,9 +985,9 @@ impl Integration for CargoWorkspace {
     /// dir (surfaced at the weave root via symlink). rwv does
     /// NOT auto-generate a `.gitignore` for them; they are part of the
     /// composition and are committable persistent state, matching the
-    /// pre-existing `Cargo.toml` and `Cargo.lock` treatment (and the
-    /// design doc's "the config surface is part of the composition"
-    /// framing). Operators commit them for reproducibility, or add them
+    /// pre-existing `Cargo.toml` and `Cargo.lock` treatment. The config
+    /// surface is part of the composition, not a build artifact.
+    /// Operators commit them for reproducibility, or add them
     /// to a hand-authored `.gitignore` if they prefer local regeneration.
     /// Same policy already applies to the `.rwv-owned-digests` bookkeeping
     /// file — rwv publishes it, the operator commits or ignores per policy.
@@ -1515,7 +1507,7 @@ impl CargoWorkspace {
     /// `PatchMode::CommittedPaths` — mirror each member's committed
     /// cross-member `path = "<rel>"` deps into `[patch.crates-io]`.
     ///
-    /// Approach (plan §5a-c, opt-in `[patch]` for publishable crates):
+    /// Approach:
     ///
     /// 1. Build an index of every member: `member_path -> crate_name` by
     ///    reading each `<member>/Cargo.toml`'s `[package].name`.
@@ -1602,14 +1594,13 @@ impl CargoWorkspace {
     /// `PatchMode::Derived` — match each member's *registry* / git-source
     /// deps by crate name against the in-weave package-name index.
     ///
-    /// Approach (Finding 1 of `grok-build-export-findings.md`):
+    /// Approach:
     ///
     /// 1. Build a package-name index over the entire weave: every active
     ///    workspace member **plus** every `reference`-role repo with a
     ///    `Cargo.toml`. Reference-role repos are symlinked read-only study
-    ///    material in workweaves; probe P8 confirms symlinked directories
-    ///    keep logical paths, so they are safe patch sources with zero
-    ///    rebuild churn.
+    ///    material in workweaves; symlinked directories keep logical paths,
+    ///    so they are safe patch sources with zero rebuild churn.
     /// 2. For each workspace member (not reference — reference repos are
     ///    only patch *sources*, not scan targets), walk `[dependencies]`,
     ///    `[dev-dependencies]`, and `[build-dependencies]`. For every dep
@@ -1626,9 +1617,8 @@ impl CargoWorkspace {
     /// 3. Precondition check: if the in-weave crate's `[package].version`
     ///    does not satisfy the member's requirement string, skip the patch
     ///    and warn to stderr. Cargo would otherwise hard-error at
-    ///    generate-lockfile time with a diagnostic that *blames crates.io*
-    ///    (probe P6) — surfacing the mismatch here beats cargo on both
-    ///    timing and clarity.
+    ///    generate-lockfile time with a diagnostic that *blames crates.io* —
+    ///    surfacing the mismatch here beats cargo on both timing and clarity.
     ///
     /// Returns a sorted `Vec<DerivedPatch>` — one entry per emitted
     /// `[patch.<registry>].<crate>` key. Order is (registry, crate_name)
@@ -1638,10 +1628,9 @@ impl CargoWorkspace {
         members: &[String],
     ) -> anyhow::Result<Vec<DerivedPatch>> {
         // Reference-role repos are excluded from `partition()` /
-        // `scan_members` (they're not part of the build graph), but
-        // Finding 1 says they should be included in the patch *index*.
-        // Enumerate them here and merge with the members list before
-        // building the index.
+        // `scan_members` (they're not part of the build graph), but they
+        // still belong in the patch *index*. Enumerate them here and merge
+        // with the members list before building the index.
         let reference_repos: Vec<String> = ctx
             .repos
             .iter()
@@ -1787,9 +1776,8 @@ impl CargoWorkspace {
     /// about to emit. Called *before* the patches land on disk.
     ///
     /// Reuses [`Self::scan_patch_shadowing_against_keys`] under the hood.
-    /// Cargo's mismatch diagnostic actively misleads here (probe P6 — the
-    /// error blames crates.io), so beating cargo to the punch is not
-    /// optional polish.
+    /// Cargo's mismatch diagnostic actively misleads here (the error blames
+    /// crates.io), so beating cargo to the punch is not optional polish.
     ///
     /// The `target` names the file the intended patches will land in (which
     /// is where the shadowing scan should record their origin). The
@@ -1839,7 +1827,7 @@ impl CargoWorkspace {
     /// The target's file is anchored at `ctx.output_dir` — the project
     /// dir, matching where the managed `Cargo.toml` (and thus the whole
     /// composition's committable state) lives. Cargo's config discovery
-    /// walks upward from cwd and honors symlinks per probe P1, so a
+    /// walks upward from cwd and honors symlinks, so a
     /// symlinked weave-root `.cargo/config.toml` sees a config-file logical
     /// location that (through the symlink) resolves back to the project
     /// dir; relative paths written here are consistent whether cargo enters
@@ -2471,9 +2459,8 @@ fn nested_workspace_error(conflicts: &[String]) -> String {
 //
 // Read-only scans that feed `rwv doctor` (both the text and `--json` channels)
 // without going through the Integration trait — Integration::check returns
-// `Issue`s which do not surface in `--json`, but the design (Finding 3 in
-// grok-build-export-findings.md) requires structured records for agent/script
-// consumers.
+// `Issue`s which do not surface in `--json`, and agent/script consumers need
+// structured records.
 //
 // Both scans are **warnings** — they never fail doctor's exit status by
 // default. They are informational for the operator (version skew), or a
@@ -2496,8 +2483,8 @@ pub struct CargoSkewOccurrence {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PatchShadowingRecord {
     /// The weave-level file that declares the (would-be) inert patch key.
-    /// Today this is the weave-root `Cargo.toml`; when Finding 2's
-    /// `.cargo/config.toml` surface lands, this may also point there.
+    /// Today this is the weave-root `Cargo.toml`; it may also point at the
+    /// `.cargo/config.toml` surface.
     pub weave_config: std::path::PathBuf,
     /// The member-level `.cargo/config.toml` that shadows the weave key
     /// (per cargo's closest-config-wins per key).
@@ -2619,8 +2606,7 @@ impl CargoWorkspace {
     ///
     /// 1. `<workspace_root>/Cargo.toml`'s `[patch.<reg>]` sub-tables (the
     ///    surface today — see `compute_patches`).
-    /// 2. `<workspace_root>/.cargo/config.toml`'s `[patch.<reg>]` sub-tables
-    ///    (the surface Finding 2 will add; already-supported today).
+    /// 2. `<workspace_root>/.cargo/config.toml`'s `[patch.<reg>]` sub-tables.
     ///
     /// Member-level configs are discovered by walking upward from each
     /// member directory to `workspace_root` (exclusive), reading any
@@ -2633,8 +2619,8 @@ impl CargoWorkspace {
     /// [`Self::scan_patch_shadowing_against_keys`] with its intended
     /// (not-yet-written) keys and surfaces the same findings at
     /// generation time (cargo's mismatch diagnostic actively misleads —
-    /// probe P6, "location searched: crates.io index" — so beating cargo
-    /// to the punch is not optional polish).
+    /// "location searched: crates.io index" — so beating cargo to the punch
+    /// is not optional polish).
     pub fn scan_patch_shadowing(
         workspace_root: &Path,
         members: &[String],
@@ -3064,8 +3050,7 @@ fn extract_dep_fields(dep_item: &toml_edit::Item) -> Option<DepFieldsTuple> {
 /// precheck.
 ///
 /// v1 fidelity — matches the version-skew scanner's "string-first, don't
-/// pull in a semver resolver" bar (Finding 3 comment: `noisy is safer than
-/// silent`). Rules:
+/// pull in a semver resolver" bar: noisy is safer than silent. Rules:
 ///
 /// 1. Exact byte-equal (after trimming whitespace and stripping a leading
 ///    caret/tilde/`=`) is satisfied.
@@ -3083,7 +3068,7 @@ fn extract_dep_fields(dep_item: &toml_edit::Item) -> Option<DepFieldsTuple> {
 /// path. The consequence is the precheck may skip *some* patches cargo
 /// would accept — but it will never *emit* one cargo rejects, which is the
 /// direction that matters (a broken patch produces cargo's misleading
-/// crates.io error at generate-lockfile time — probe P6).
+/// crates.io error at generate-lockfile time).
 ///
 /// Empty inputs: an empty requirement is treated as satisfied by anything
 /// (defensive default — a caller that produces `Some("")` is deliberately

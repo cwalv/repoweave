@@ -44,8 +44,8 @@
 //! ## The ownership-receipt registry
 //!
 //! `receipts` is the [`RefRegistry`] — the store behind R2 of the branch
-//! model (`docs/repoweave/branch-model.md` §3.3, §4.2): *rwv may only
-//! destroy a ref it recorded creating*. It is homed here, in the primary's
+//! model: *rwv may only destroy a ref it recorded creating*. It is homed
+//! here, in the primary's
 //! project checkout, and **not** in the workweave's `.rwv-workweave`
 //! marker, because the refs outlive the workweave directory: `workweave
 //! delete` runs `remove_dir_all` over the directory, so a marker-homed

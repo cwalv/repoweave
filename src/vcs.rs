@@ -32,10 +32,7 @@ use std::path::{Path, PathBuf};
 /// Serde: only `Serialize`. Writes the display form when present, else
 /// the canonical SHA. Deserialization deliberately is not implemented;
 /// lock-file parsing yields [`RawRevisionId`] which must then be
-/// resolved against the on-disk repo. See
-/// `docs/agent-persona/fp-principles-in-rust.md` ("make illegal states
-/// unrepresentable") and `docs/agent-persona/ousterhout-philosophy-of-software-design.md`
-/// ("define errors out of existence by changing the data structure").
+/// resolved against the on-disk repo.
 #[derive(Debug, Clone)]
 pub struct ResolvedRevisionId {
     canonical: String,
@@ -142,10 +139,6 @@ impl serde::Serialize for ResolvedRevisionId {
 /// ("same name"). Useful for "did this lock entry change name between two
 /// reads"; not useful (and not provided) for "do these point at the same
 /// commit".
-///
-/// See `docs/agent-persona/fp-principles-in-rust.md` ("make illegal states
-/// unrepresentable") and `docs/agent-persona/ousterhout-philosophy-of-software-design.md`
-/// ("define errors out of existence by changing the data structure").
 ///
 /// # Compile-time invariant
 ///

@@ -1685,9 +1685,9 @@ pub fn create_workweave(
         copy_dir_recursive(&project_dir, &project_wt_dest)?;
     }
 
-    // rwv-c7h fix: the project worktree above was checked out from a ref, so
-    // its `rwv.yaml` is the last committed version — any uncommitted edits
-    // in source_root's working tree were dropped. Overlay the source's
+    // The project worktree above was checked out from a ref, so its `rwv.yaml`
+    // is the last committed version — any uncommitted edits in source_root's
+    // working tree were dropped. Overlay the source's
     // working-tree `rwv.yaml` (and `rwv.lock` for completeness) so the
     // workweave captures the operator's in-flight state. Warn loudly when
     // we're doing this so dirty creates don't surprise.

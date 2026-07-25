@@ -452,7 +452,7 @@ impl WorkspaceSession {
     /// `rwv.yaml` (typically `manifest.workweave.as_ref()`). It is threaded
     /// through to integrations so they can detect cross-section collisions
     /// such as a name claimed by both `static-files.files` and
-    /// `workweave.link` (see rwv-c5h / plan §5h).
+    /// `workweave.link`.
     pub fn context_base<'a>(
         &'a self,
         project: &'a ProjectName,
@@ -1131,9 +1131,9 @@ impl WorkweaveMarker {
 /// [`WorkweaveMarker::read`]: does `(primary_root, project)`'s workweave
 /// index predate ref-ownership receipts?
 ///
-/// Two legacy shapes migrate in the same `rwv doctor --fix` pass
-/// (`docs/repoweave/branch-model.md` §7.1 arm 7) and each is detected where
-/// it lives — the marker's missing `parent:` field above, the index's
+/// Two legacy shapes migrate in the same `rwv doctor --fix` pass and each is
+/// detected where it lives — the marker's missing `parent:` field above, the
+/// index's
 /// missing `receipts` field here. `Some(path)` is the file to migrate, and
 /// [`crate::workweave_index::RefRegistry::migrate_legacy_index`] is what
 /// migrates it; the pass then records a receipt per ref it adopts or

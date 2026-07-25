@@ -411,9 +411,9 @@ pub fn run() -> anyhow::Result<()> {
         // for the outer `workweave` command (it never reaches the subcommand
         // recognition path), so its generic message is "unexpected argument" and
         // it can't offer a "did you mean". Reframe it as a missing-subcommand
-        // error with a create-shaped suggestion. See rwv-b2z / the CLI UX audit.
+        // error with a create-shaped suggestion.
         //
-        // Guards (audit §5 design note):
+        // Guards:
         //   - Only fire when a 4th token (argv[3]) is present and non-flag, so
         //     `rwv workweave foundations` (list default) and
         //     `rwv workweave foundations --help` (help) are untouched.

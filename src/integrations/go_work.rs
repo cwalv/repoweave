@@ -315,7 +315,7 @@ impl Integration for GoWork {
     }
 
     /// go.work is HYBRID — it lives in managed_files(), not generated_files().
-    /// Per plan §7.12 / C3: `generated_files()` is for fully-rwv-owned files
+    /// `generated_files()` is for fully-rwv-owned files
     /// (whole-deletable, gitignore-ok); `managed_files()` is for hybrid files
     /// that are symlinked but never gitignored or whole-deleted.
     fn generated_files(&self, _ctx: &IntegrationContext) -> Vec<String> {
@@ -706,7 +706,7 @@ fn max_go_version(paths: &[impl AsRef<str>], workspace_root: &Path) -> Option<St
 }
 
 // ---------------------------------------------------------------------------
-// Tests — plan §6 go-work scenarios 1-4
+// Tests
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]

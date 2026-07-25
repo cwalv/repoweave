@@ -67,9 +67,9 @@ pub struct IntegrationContext<'a> {
     ///
     /// Made visible so integrations can detect cross-section collisions
     /// (e.g. a name claimed by both `static-files.files` and
-    /// `workweave.link` — see rwv-c5h / plan §5h). Defaults to `None` for
-    /// projects with no `workweave:` section. Integrations that don't care
-    /// about workweave config should leave this untouched.
+    /// `workweave.link`). Defaults to `None` for projects with no
+    /// `workweave:` section. Integrations that don't care about workweave
+    /// config should leave this untouched.
     pub workweave: Option<&'a WorkweaveConfig>,
 }
 
@@ -265,9 +265,6 @@ pub trait Integration {
     ///
     /// Per-integration ports override this when the
     /// integration starts owning hybrid content.
-    ///
-    /// See [`trigger-model.md`](../docs/repoweave/integration-ownership/trigger-model.md)
-    /// for the full intent-vs-context-verb split.
     fn verify(&self, _ctx: &IntegrationContext) -> anyhow::Result<Vec<Issue>> {
         Ok(Vec::new())
     }

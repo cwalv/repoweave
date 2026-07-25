@@ -122,10 +122,9 @@ fn create_worktree_in_workweave(
 
 /// Run the appropriate activation pass for the current checkout kind.
 ///
-/// `rwv add`/`rwv remove` are **intent verbs** (see
-/// [`trigger-model.md`](../../../../projects/foundations/docs/repoweave/integration-ownership/trigger-model.md)):
-/// they mutate `rwv.yaml`, then regenerate the integrations' managed/generated
-/// files so the new content can be committed alongside the manifest change.
+/// `rwv add`/`rwv remove` are **intent verbs**: they mutate `rwv.yaml`, then
+/// regenerate the integrations' managed/generated files so the new content can
+/// be committed alongside the manifest change.
 /// In a workweave we still regenerate (the workweave is a view onto the
 /// project repo — symlinks write through to it) but skip install hooks; in
 /// primary we run the full intent-mode activation.

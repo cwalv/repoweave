@@ -398,8 +398,7 @@ pub enum CheckViolation {
     /// required at different version-req strings by two or more members
     /// (post `workspace = true` indirection). Always **warning** severity
     /// and report-only — the observatory is informational; rwv cannot
-    /// mandate versions across sovereign repos. See Finding 3 of
-    /// `docs/repoweave/grok-build-export-findings.md`.
+    /// mandate versions across sovereign repos.
     CargoVersionSkew {
         /// The registry crate name (e.g. `serde`, `tokio`).
         crate_name: String,
@@ -409,12 +408,12 @@ pub enum CheckViolation {
 
     /// A member's `.cargo/config.toml` declares a `[patch.<registry>].<crate>`
     /// key that would silently defeat a weave-level entry for the same key
-    /// (cargo's closest-config-wins per-key shadowing — probe P5b in the
-    /// design doc). Warning severity, report-only. Doubles as the mandatory
-    /// precheck for derived-patch generation: cargo's mismatch diagnostic
-    /// actively misleads (blames crates.io) when a patch silently doesn't
-    /// apply (probe P6), so surfacing the shadow at scan time preserves the
-    /// operator's ability to diagnose the actual cause.
+    /// (cargo's closest-config-wins per-key shadowing). Warning severity,
+    /// report-only. Doubles as the mandatory precheck for derived-patch
+    /// generation: cargo's mismatch diagnostic actively misleads (blames
+    /// crates.io) when a patch silently doesn't apply, so surfacing the
+    /// shadow at scan time preserves the operator's ability to diagnose the
+    /// actual cause.
     CargoPatchShadowing {
         /// Weave-level file that carries the (would-be) inert patch entry.
         weave_config: PathBuf,
@@ -470,8 +469,7 @@ pub enum CheckViolation {
     },
 
     /// A `.gitattributes` line in a managed repo assigns an `rwv-`-prefixed
-    /// merge driver that rwv does not define
-    /// (`docs/repoweave/regenerable-regions.md` D4).
+    /// merge driver that rwv does not define.
     ///
     /// The line reads like a working derived-content declaration and does
     /// nothing: git resolves `merge=<name>` through `merge.<name>.driver`
@@ -2862,15 +2860,14 @@ fn rwv_defines_merge_driver(name: &str) -> bool {
 }
 
 /// Scan managed repos for `.gitattributes` lines that assign an
-/// `rwv-`-prefixed merge driver rwv does not define
-/// (`docs/repoweave/regenerable-regions.md` D4).
+/// `rwv-`-prefixed merge driver rwv does not define.
 ///
 /// A `<path> merge=<driver>` line is inert unless some config git can see
 /// defines `merge.<driver>.driver`; git falls back to an ordinary textual
 /// 3-way merge and says nothing about it. Under the `rwv-` prefix that
 /// fallback is permanent (see [`RWV_MERGE_DRIVER_PREFIX`]), so the line is a
-/// declaration that reads as working and never will. Naming it is the loud
-/// direction D4 asks for.
+/// declaration that reads as working and never will. Naming it is the point
+/// of this scan.
 ///
 /// **Only that direction.** A derived path carrying no attribute is NOT a
 /// finding: which paths a repo declares derived is the repo's own business
@@ -6262,7 +6259,7 @@ pub fn violations_to_issues(violations: Vec<CheckViolation>) -> Vec<Issue> {
                     crate_name,
                     occurrences,
                 } => {
-                    // Report-not-mandate (Finding 3): skew is informational.
+                    // Report-not-mandate: skew is informational.
                     // Warning severity so doctor's exit stays 0 by default;
                     // safe_to_fix is true only in the trivial sense that
                     // there's nothing for --fix to do (rwv cannot mandate
@@ -6287,8 +6284,8 @@ pub fn violations_to_issues(violations: Vec<CheckViolation>) -> Vec<Issue> {
                     // Report-only precheck: cargo's closest-config-wins per-key
                     // shadowing means the member config silently defeats the
                     // weave-level entry. Cargo does not warn; its version-
-                    // mismatch diagnostic actively misleads (blames crates.io
-                    // — probe P6). This finding is what agents/scripts key on
+                    // mismatch diagnostic actively misleads (blames
+                    // crates.io). This finding is what agents/scripts key on
                     // before generating derived patches.
                     (
                         crate::integration::Severity::Warning,

@@ -13,7 +13,7 @@
 //!     files: [turbo.json, .eslintrc.json, .prettierrc]
 //! ```
 //!
-//! # Collision with `workweave.link` (rwv-c5h)
+//! # Collision with `workweave.link`
 //!
 //! A name that appears in BOTH `integrations.static-files.files` AND
 //! `workweave.link` is rejected as a hard `Severity::Error`. The two
@@ -25,13 +25,12 @@
 //! - `static-files.files` creates a **relative** symlink into the workweave's
 //!   own project checkout (surfacing project content for ecosystem tools).
 //!
-//! Silently picking one of the two is a footgun (rwv-c5h originally went
-//! the wrong way). The fix has two layers: the framework's owner-scoped
-//! removal predicate preserves the `workweave.link` symlink at activation
-//! time (defensive), and this integration raises a loud
+//! Silently picking one of the two is a footgun. The fix has two layers: the
+//! framework's owner-scoped removal predicate preserves the `workweave.link`
+//! symlink at activation time (defensive), and this integration raises a loud
 //! Severity::Error pre-activate so an operator who wrote the conflicting
 //! config sees a clear message rather than relying on the framework's
-//! tie-breaking (defense in depth — plan §7 res #9).
+//! tie-breaking (defense in depth).
 
 use crate::integration::{Integration, IntegrationContext, Issue, Severity};
 use serde::Deserialize;
@@ -105,7 +104,7 @@ impl Integration for StaticFiles {
         // rwv.yaml mid-session or a future call site that skips checks would
         // silently fall through to the framework predicate. A loud bail here
         // keeps the contract explicit: static-files refuses to author symlinks
-        // for a name owned by workweave.link. See rwv-c5h.
+        // for a name owned by workweave.link.
         let collisions = collision_names(&cfg, ctx);
         if !collisions.is_empty() {
             // bail with the first collision's message — operators almost
@@ -141,7 +140,7 @@ impl Integration for StaticFiles {
         let cfg: StaticFilesConfig = ctx.config.settings()?;
         let mut issues = Vec::new();
 
-        // Collision with workweave.link (rwv-c5h): hard Severity::Error so
+        // Collision with workweave.link: hard Severity::Error so
         // `rwv doctor` surfaces it pre-activation. The same predicate is
         // re-run in `activate()` as a defense-in-depth bail.
         for name in collision_names(&cfg, ctx) {

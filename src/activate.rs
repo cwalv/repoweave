@@ -374,10 +374,9 @@ fn report_and_check_activate_hook_issues(
 ///
 /// This replaces the previous blanket "target has a `projects` component"
 /// check, which swept up unrelated symlinks (e.g. workweave links whose
-/// resolved source-root path happens to live under a `projects/` ancestor —
-/// the rwv-c5h surfacing-layer concern at the framework level). Directories
-/// that were created solely to hold nested symlinks are cleaned up if they
-/// become empty.
+/// resolved source-root path happens to live under a `projects/` ancestor).
+/// Directories that were created solely to hold nested symlinks are cleaned
+/// up if they become empty.
 fn remove_activation_symlinks(root: &Path, owned_files: &BTreeSet<String>) -> anyhow::Result<()> {
     remove_activation_symlinks_in(root, root, owned_files)
 }

@@ -1813,7 +1813,7 @@ struct OpContext<'a> {
 /// The source's project tip is read once and everything derived from it —
 /// manifest, lock — is read AT that revision via `Vcs::read_file_at_revision`.
 /// A concurrent mutation of the source after T0 changes refs but cannot touch
-/// anything we've read (§6 of the design doc).
+/// anything we've read.
 struct SourceSnapshot {
     /// Source project tip at T0.
     source_project_tip: ResolvedRevisionId,

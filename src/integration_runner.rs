@@ -33,7 +33,7 @@ pub struct IntegrationContextBase<'a> {
     pub detection_cache: &'a HashMap<String, Vec<String>>,
     /// The project's `workweave:` config, if any. Threaded through so
     /// integrations can detect cross-section collisions (e.g.
-    /// static-files.files vs workweave.link — see rwv-c5h / plan §5h).
+    /// static-files.files vs workweave.link).
     /// `None` when the project's `rwv.yaml` has no `workweave:` section.
     pub workweave: Option<&'a crate::manifest::WorkweaveConfig>,
 }

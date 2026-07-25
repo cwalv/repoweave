@@ -20,8 +20,8 @@
 //! - `[tool.uv].package` = `false` — **`DefaultOnly`**: written only when the
 //!   key is absent from the file. Required so `uv sync` accepts a non-package
 //!   root on fresh files. Never overwrites a user-set value (e.g. `true`).
-//!   Not stripped on deactivate — it is user-adjustable; per plan §5b and
-//!   §7.4 and the `Ownership::DefaultOnly` semantics in `merge.rs`.
+//!   Not stripped on deactivate — it is user-adjustable, per the
+//!   `Ownership::DefaultOnly` semantics in `merge.rs`.
 //!
 //! **Never authored:** `[project]`, `[build-system]`, `[tool.ruff]`,
 //! `[tool.black]`, `[tool.rooster]`, or any other section — those are user

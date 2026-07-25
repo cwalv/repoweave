@@ -251,7 +251,7 @@ fn read_prev_rwv_excludes(obj: &serde_json::Map<String, serde_json::Value>) -> H
 
 /// Merge the `settings.files.exclude` map for a vscode .code-workspace file.
 ///
-/// Rule (plan §5f): rwv owns only the *derived* exclude keys (dotfiles sentinel,
+/// rwv owns only the *derived* exclude keys (dotfiles sentinel,
 /// collapsed repo paths, other-project paths). User-added keys survive
 /// unchanged across re-activations.
 ///

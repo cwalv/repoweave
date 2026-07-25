@@ -499,16 +499,16 @@ impl IntegrationConfig {
 /// Sub-path specification for a single repo's contribution to the
 /// weave-level Cargo workspace.
 ///
-/// Resolves plan §5a design resolution (a): repos listed in
-/// `CargoWorkspaceConfig::members` skip the root-as-member auto-behavior and
-/// instead emit one member path per entry in `include` minus `exclude`.
+/// Repos listed in `CargoWorkspaceConfig::members` skip the root-as-member
+/// auto-behavior and instead emit one member path per entry in `include` minus
+/// `exclude`.
 ///
 /// ## `include` default
 ///
 /// An empty `include` means **no members from this repo** — the repo's root is
 /// skipped and no sub-paths are added. This is the conservative default.
 /// Operators must list every contributing sub-package explicitly. This matches
-/// the rvtty scenario (plan §6 scenario 4) where the desired member list is
+/// the rvtty scenario where the desired member list is
 /// `[daemon, client, common]` — an absent include should never silently emit
 /// an unintended root member.
 ///
@@ -538,13 +538,12 @@ pub struct MemberSpec {
 /// Deserialized from the `integrations.cargo-workspace:` block in `rwv.yaml`
 /// via `IntegrationConfig::settings::<CargoWorkspaceConfig>()`.
 ///
-/// ## Design decisions locked in this type (plan §7.2)
+/// ## Design decisions locked in this type
 ///
 /// **(a) Members sub-path config** — a repo listed in `members` contributes
 /// the sub-paths from its `MemberSpec::include` list (minus `exclude`) instead
 /// of its root.  Repos not in `members` keep the current root-as-member auto
-/// behavior.  Implemented in C7 (cargo merge port) + C8 (members sub-path).
-/// See `cargo-workspace-vs-repo.md` §179–212 for the shape contract.
+/// behavior.
 ///
 /// **(b) Merge-preserve scope** — rwv owns only `[workspace].members`,
 /// `[workspace].resolver`, and (behind `workspace_package: true`)
@@ -564,16 +563,12 @@ pub struct MemberSpec {
 ///   entries directly. Sovereign members (publishable repos, `dependency`
 ///   / `fork` roles) get live in-weave sources without committing anything
 ///   weave-relative. Includes `reference`-role repos in the patchable
-///   index (their symlinked directories keep logical paths; see probe P8
-///   in `docs/repoweave/grok-build-export-findings.md`). Git-source deps
+///   index (their symlinked directories keep logical paths). Git-source deps
 ///   emit `[patch."<url>"]` entries keyed by the dep's git URL rather than
 ///   by crates-io.
 ///
 /// There is **no per-crate auto-detection**: rwv never reads or infers
-/// `[package].publish` from member manifests (plan §12.3).
-///
-/// See Finding 1 of `docs/repoweave/grok-build-export-findings.md` for the
-/// design derivation.
+/// `[package].publish` from member manifests.
 ///
 /// **(d) Nested-workspace hard error** — repos with a `[workspace]` at their
 /// root remain a hard activation error unless opted out via `exclude` or
@@ -609,9 +604,6 @@ pub struct CargoWorkspaceConfig {
     ///         include: [daemon, client, common]
     ///         exclude: [fuzz]
     /// ```
-    ///
-    /// Corresponds to plan §5a resolution (a) and `cargo-workspace-vs-repo.md`
-    /// §179–212.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub members: BTreeMap<String, MemberSpec>,
 
@@ -635,7 +627,7 @@ pub struct CargoWorkspaceConfig {
     ///   time (see `CargoWorkspace::scan_patch_shadowing`).
     ///
     /// This is an **operator-selected** flag — rwv never auto-detects
-    /// publishability from member `[package].publish` fields (plan §12.3).
+    /// publishability from member `[package].publish` fields.
     /// The mode applies to the *entire weave*; there is no per-crate
     /// granularity.
     ///
@@ -643,11 +635,8 @@ pub struct CargoWorkspaceConfig {
     /// member depending on an *unpublished* crate name resolves only inside
     /// the weave — standalone the member fails with "no matching package".
     /// This is the tier boundary between fully-sovereign members and
-    /// weave-native ones (see probe P2). Not a bug; document it where
-    /// operators pick the mode.
-    ///
-    /// Corresponds to plan §7.2 resolution (c) and Finding 1 of
-    /// `docs/repoweave/grok-build-export-findings.md`.
+    /// weave-native ones. Not a bug; document it where operators pick the
+    /// mode.
     #[serde(default, skip_serializing_if = "PatchMode::is_off")]
     pub patch: PatchMode,
 
@@ -668,8 +657,7 @@ pub struct CargoWorkspaceConfig {
     ///   (rvtty, mcp_agent_mail_rust — repos with their own `[workspace]`
     ///   root that cargo refuses to nest) *do* see the weave's patches
     ///   when built from inside their directory. This is the
-    ///   nesting-immune surface (Finding 2 of
-    ///   `docs/repoweave/grok-build-export-findings.md`).
+    ///   nesting-immune surface.
     ///
     /// Enforced structurally as an enum — not two booleans — because
     /// emitting the same `[patch.<reg>].<crate>` key on *both* surfaces
@@ -706,9 +694,6 @@ pub struct CargoWorkspaceConfig {
     /// share project identity.  Not useful for multi-product weaves
     /// (cargo's `[workspace.package]` is workspace-wide with no per-member
     /// override) or for weaves of internal-only `publish = false` crates.
-    ///
-    /// Corresponds to plan §5a resolution (b) and `cargo-workspace-vs-repo.md`
-    /// §325–370.
     #[serde(
         default,
         rename = "workspace-package",
@@ -750,8 +735,7 @@ pub enum PatchMode {
     CommittedPaths,
     /// Match each member's registry/git deps by name against the in-weave
     /// package-name index and emit `[patch.crates-io].<name>` (registry) or
-    /// `[patch."<git-url>"].<name>` (git-source) entries. See Finding 1 of
-    /// `docs/repoweave/grok-build-export-findings.md`.
+    /// `[patch."<git-url>"].<name>` (git-source) entries.
     Derived,
 }
 
@@ -828,8 +812,7 @@ impl<'de> Deserialize<'de> for PatchMode {
 ///   Pre-2026 behavior; default.
 /// - `CargoConfig`: `[patch.*]` lands in a generated
 ///   `.cargo/config.toml` alongside `Cargo.toml`. Reaches nested-workspace
-///   opt-outs via cargo's upward config discovery (Finding 2 of
-///   `docs/repoweave/grok-build-export-findings.md`).
+///   opt-outs via cargo's upward config discovery.
 ///
 /// Two surfaces at once is structurally impossible (enum, not two booleans)
 /// because emitting the same patch key on both surfaces would be a

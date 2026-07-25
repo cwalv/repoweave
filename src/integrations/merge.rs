@@ -1807,10 +1807,6 @@ pub fn fully_owned_parse_fail_issue(name: &str, path: &Path, detail: &str) -> Is
 // rule 5 is untouched, `verify()` still reports `DefaultOnly` divergence as
 // CLEAN, and the two coexist on the same file. Nothing gates on it — `doctor`
 // and `update` report; neither refuses.
-//
-// Canonical writeup:
-// `docs/repoweave/integration-ownership/member-incompatibility.md`
-// (DECIDED 2026-07-25).
 
 /// Stable kebab-case kind tag for the member-incompatibility category.
 ///
