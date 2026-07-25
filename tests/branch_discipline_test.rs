@@ -224,6 +224,29 @@ fn record_dangling_receipt(primary: &Path, project: &str, workweave: &str, store
         .expect("receipt should record");
 }
 
+/// Whether `project`'s registry holds a receipt named `ref_name`.
+///
+/// Reads the `receipts` array specifically rather than substring-matching
+/// the index file: the index also records each workweave's absolute
+/// **path**, which ends in `<project>--<workweave>` — so a substring test
+/// for a receipt name passes on the placement entry alone, and an assertion
+/// that a receipt survived would hold with every receipt retracted.
+fn receipt_recorded(primary: &Path, project: &str, ref_name: &str) -> bool {
+    let path = primary
+        .join("projects")
+        .join(project)
+        .join(".rwv-workweave-index");
+    let Ok(raw) = std::fs::read_to_string(&path) else {
+        return false;
+    };
+    let index: serde_json::Value = serde_json::from_str(&raw)
+        .unwrap_or_else(|e| panic!("index at {} is not JSON: {e}", path.display()));
+    index["receipts"]
+        .as_array()
+        .map(|rs| rs.iter().any(|r| r["name"] == ref_name))
+        .unwrap_or(false)
+}
+
 /// Whether a local branch exists in `repo`.
 fn branch_exists(repo: &Path, name: &str) -> bool {
     !String::from_utf8_lossy(
@@ -729,6 +752,61 @@ fn dangling_receipt_is_reported_and_retracted() {
     );
 }
 
+/// Dangling-receipt findings obey the same project scoping as every other
+/// doctor finding: project-a active must not see — or retract — project-b's.
+#[test]
+fn dangling_receipt_is_scoped_to_active_project() {
+    let tmp = tempfile::tempdir().unwrap();
+    let ws = make_primary(tmp.path());
+    let repo_a = ws.join("github").join("acme").join("repo-a");
+    let repo_b = ws.join("github").join("acme").join("repo-b");
+    init_repo_with_commit(&repo_a);
+    init_repo_with_commit(&repo_b);
+    write_project_manifest(&ws, "project-a", "github/acme/repo-a");
+    write_project_manifest(&ws, "project-b", "github/acme/repo-b");
+    set_active_project(&ws, "project-a");
+
+    record_dangling_receipt(&ws, "project-b", "ghost", &repo_b);
+
+    let scoped = rwv().args(["doctor"]).current_dir(&ws).output().unwrap();
+    let scoped_stdout = String::from_utf8_lossy(&scoped.stdout);
+    assert!(
+        !scoped_stdout.contains("project-b--ghost"),
+        "project-a scope must not report project-b's dangling receipt; got:\n{scoped_stdout}"
+    );
+
+    // --fix under project-a scope must leave it recorded.
+    let _ = rwv()
+        .args(["doctor", "--fix"])
+        .current_dir(&ws)
+        .output()
+        .unwrap();
+    assert!(
+        receipt_recorded(&ws, "project-b", "project-b--ghost"),
+        "project-a-scoped --fix must not retract project-b's receipt"
+    );
+
+    // --all sees it, and --all --fix retracts it.
+    let all = rwv()
+        .args(["doctor", "--all"])
+        .current_dir(&ws)
+        .output()
+        .unwrap();
+    assert!(
+        String::from_utf8_lossy(&all.stdout).contains("project-b--ghost"),
+        "--all must report project-b's dangling receipt"
+    );
+    let _ = rwv()
+        .args(["doctor", "--all", "--fix"])
+        .current_dir(&ws)
+        .output()
+        .unwrap();
+    assert!(
+        !receipt_recorded(&ws, "project-b", "project-b--ghost"),
+        "--all --fix must retract it"
+    );
+}
+
 /// The receipt of a ref that **does** exist must not be retracted — the
 /// negative half of the test above, so a `fix_dangling_receipts` that
 /// retracted everything cannot pass both.
@@ -758,15 +836,9 @@ fn live_receipt_is_not_retracted() {
         .output()
         .unwrap();
 
-    let index = std::fs::read_to_string(
-        ws.join("projects")
-            .join("myproj")
-            .join(".rwv-workweave-index"),
-    )
-    .unwrap();
     assert!(
-        index.contains("myproj--feat-a"),
-        "a receipt whose ref exists must survive --fix; index is:\n{index}"
+        receipt_recorded(&ws, "myproj", "myproj--feat-a"),
+        "a receipt whose ref exists must survive --fix"
     );
 }
 

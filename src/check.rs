@@ -2743,6 +2743,11 @@ impl RecordedRefs {
         use crate::workweave_index::RefRegistry;
 
         let mut projects = Vec::new();
+        // The container walk is hoisted: it is the expensive part, and it
+        // does not vary by project. It is also skipped entirely on a weave
+        // with no receipts, which is every weave until §7.1's migration
+        // runs.
+        let mut workweave_dirs: Option<Vec<(String, PathBuf)>> = None;
         for name in crate::workweave_index::projects_on_disk(ws_root) {
             let registry = RefRegistry::for_project(ws_root, &name);
             // A legacy index reads as "no receipts", which is the
@@ -2753,8 +2758,10 @@ impl RecordedRefs {
                 Ok(_) => {}
                 Err(_) => continue,
             }
+            let dirs = workweave_dirs
+                .get_or_insert_with(|| crate::workweave::list_workweave_dirs(ws_root));
             let mut live_ref_names = std::collections::HashMap::new();
-            for workweave in live_workweave_names(ws_root, &name) {
+            for workweave in live_workweave_names(ws_root, &name, dirs) {
                 let minted =
                     EphemeralRefName::mint(&name, &crate::manifest::WorkweaveName::new(&workweave));
                 live_ref_names.insert(minted.to_raw(), workweave);
@@ -2775,6 +2782,15 @@ impl RecordedRefs {
     /// Goes through [`RefRegistry::list_for_store`] rather than matching
     /// paths here, so the store-key normalisation the registry recorded
     /// under is the one the query uses.
+    ///
+    /// **Re-reads the index on every call, deliberately.** That is one small
+    /// file read per (project-with-receipts, store), and the alternative is a
+    /// snapshot: the `--fix` paths call this again immediately before a
+    /// DESTROY, and answering that call from a cache would authorize a delete
+    /// against a receipt a sibling workweave had already retracted. The
+    /// registry's own doc comment makes the same call for the same reason.
+    /// Projects with no receipts were dropped at construction, so a weave
+    /// that has never recorded one pays nothing here.
     ///
     /// [`RefRegistry::list_for_store`]: crate::workweave_index::RefRegistry::list_for_store
     fn for_store(&self, store: &Path) -> Vec<RecordedRef> {
@@ -2813,19 +2829,24 @@ impl RecordedRefs {
 /// under-reporting liveness is the direction that turns a live workweave's
 /// ref into a "leak":
 ///
-/// - the container scan ([`crate::workweave::list_workweave_dirs`]), which
-///   sees marker-carrying directories under every recorded container but
-///   **not** a `--dir` placement outside them (Q10, `branch-model.md` §8);
+/// - `workweave_dirs`, the container scan
+///   ([`crate::workweave::list_workweave_dirs`]), which sees marker-carrying
+///   directories under every recorded container but **not** a `--dir`
+///   placement outside them (Q10, `branch-model.md` §8);
 /// - the workweave index, which records `--dir` placements by absolute path
 ///   — consulted only for entries whose recorded directory actually exists,
 ///   so a stale index entry does not resurrect a deleted workweave.
-fn live_workweave_names(ws_root: &Path, project: &ProjectName) -> Vec<String> {
+fn live_workweave_names(
+    ws_root: &Path,
+    project: &ProjectName,
+    workweave_dirs: &[(String, PathBuf)],
+) -> Vec<String> {
     let mut names: BTreeSet<String> = BTreeSet::new();
 
-    for (name, dir) in crate::workweave::list_workweave_dirs(ws_root) {
-        if let Ok(Some(marker)) = crate::workspace::WorkweaveMarker::read(&dir) {
+    for (name, dir) in workweave_dirs {
+        if let Ok(Some(marker)) = crate::workspace::WorkweaveMarker::read(dir) {
             if marker.project.as_str() == project.as_str() {
-                names.insert(name);
+                names.insert(name.clone());
             }
         }
     }
@@ -3288,25 +3309,25 @@ fn scan_canonical_stores(
                 });
                 continue;
             };
-            let sub_kind = if crate::vcs::DeletionWarrant::merged(vcs, &rec.owned, primary).is_some()
-            {
-                BranchDisciplineKind::StaleEphemeralBranchSafe {
-                    branch: bare.clone(),
-                    workweave_name: workweave_name.to_string(),
-                }
-            } else {
-                let tip_sha = vcs
-                    .resolve_local_branch_tip(abs, &name)
-                    .ok()
-                    .flatten()
-                    .map(|t| t.as_str().to_string())
-                    .unwrap_or_default();
-                BranchDisciplineKind::StaleEphemeralBranchLive {
-                    branch: bare.clone(),
-                    workweave_name: workweave_name.to_string(),
-                    tip_sha,
-                }
-            };
+            let sub_kind =
+                if crate::vcs::DeletionWarrant::merged(vcs, &rec.owned, primary).is_some() {
+                    BranchDisciplineKind::StaleEphemeralBranchSafe {
+                        branch: bare.clone(),
+                        workweave_name: workweave_name.to_string(),
+                    }
+                } else {
+                    let tip_sha = vcs
+                        .resolve_local_branch_tip(abs, &name)
+                        .ok()
+                        .flatten()
+                        .map(|t| t.as_str().to_string())
+                        .unwrap_or_default();
+                    BranchDisciplineKind::StaleEphemeralBranchLive {
+                        branch: bare.clone(),
+                        workweave_name: workweave_name.to_string(),
+                        tip_sha,
+                    }
+                };
             out.push(CheckViolation::BranchDiscipline {
                 repo_path: abs.clone(),
                 sub_kind,
@@ -3322,14 +3343,26 @@ fn scan_canonical_stores(
 /// store has gone is R4/Q14 territory (whether receipts are reclaimed in bulk
 /// under a store-destroy is open), and retracting one here would answer that
 /// by implementation.
+///
+/// `active_project` scopes the walk the way every other doctor scan is
+/// scoped: `Some(name)` visits only that project's registry, `None` (the
+/// `--all` path) visits every one. A receipt lives in exactly one project's
+/// registry, so the scoping is a filter on which registries are opened
+/// rather than a filter on findings.
 fn scan_dangling_receipts(
     vcs: &dyn crate::vcs::Vcs,
     ws_root: &Path,
+    active_project: Option<&str>,
     out: &mut Vec<CheckViolation>,
 ) {
     use crate::workweave_index::RefRegistry;
 
     for project in crate::workweave_index::projects_on_disk(ws_root) {
+        if let Some(active) = active_project {
+            if project.as_str() != active {
+                continue;
+            }
+        }
         let registry = RefRegistry::for_project(ws_root, &project);
         let Ok(owned_refs) = registry.list_all() else {
             continue;
@@ -3909,7 +3942,8 @@ pub fn fix_detached_canonicals(
 
         // Re-observe. Anything but Detached means the state the fix was
         // planned against no longer holds.
-        let Ok(observed @ crate::vcs::HeadAttachment::Detached(_)) = vcs.head_attachment(&store.path)
+        let Ok(observed @ crate::vcs::HeadAttachment::Detached(_)) =
+            vcs.head_attachment(&store.path)
         else {
             continue;
         };
@@ -3949,14 +3983,20 @@ pub fn fix_detached_canonicals(
 /// Apply the `rwv doctor --fix` retraction for dangling ownership receipts
 /// (`branch-model.md` §4.2).
 ///
-/// Re-checks the absence immediately before retracting, so a ref created
-/// between the scan and the fix keeps its receipt. Safe by construction: a
-/// receipt naming a ref that does not exist authorizes nothing — no warrant
-/// can be built against an absent ref — so dropping it destroys no
-/// capability and no work.
+/// Safe by construction: a receipt naming a ref that does not exist
+/// authorizes nothing — no warrant can be built against an absent ref — so
+/// dropping it destroys no capability and no work.
+///
+/// The absence check lives in [`scan_dangling_receipts`] and nowhere else,
+/// which is why this runs it here rather than reusing an earlier scan's
+/// output. A second copy of the check in this function would be a safety
+/// property no test can reach: the scan runs microseconds earlier in the
+/// same call, so no fixture can open a window between them, and an
+/// unreachable guard is one that silently stops holding.
 pub fn fix_dangling_receipts(
     ws_root: &Path,
     vcs: &dyn crate::vcs::Vcs,
+    active_project: Option<&str>,
 ) -> (Vec<(PathBuf, String)>, Vec<String>) {
     use crate::workweave_index::RefRegistry;
 
@@ -3964,7 +4004,7 @@ pub fn fix_dangling_receipts(
     let mut errors = Vec::new();
 
     let mut violations = Vec::new();
-    scan_dangling_receipts(vcs, ws_root, &mut violations);
+    scan_dangling_receipts(vcs, ws_root, active_project, &mut violations);
     for violation in violations {
         let CheckViolation::DanglingRefReceipt {
             project,
@@ -3975,13 +4015,6 @@ pub fn fix_dangling_receipts(
             continue;
         };
         let name = crate::vcs::RawRefName::new(ref_name.clone());
-        // Re-observe: only retract a receipt whose ref is still absent.
-        if !matches!(
-            vcs.resolve_local_branch_tip(&store_path, &name),
-            Ok(None)
-        ) {
-            continue;
-        }
         match RefRegistry::for_project(ws_root, &project).retract(&store_path, &name) {
             Ok(true) => retracted.push((store_path, ref_name)),
             Ok(false) => {}
@@ -5798,8 +5831,14 @@ pub fn run_check(
     // ref never appeared. `--fix` retracts them; the retraction runs before
     // the branch-discipline scan below so the scan sees the cleaned
     // registry.
+    let receipt_scope = if scope_all {
+        None
+    } else {
+        active_project_name.as_ref().map(|n| n.as_str())
+    };
     if fix {
-        let (retracted, retract_errs) = fix_dangling_receipts(ctx.primary_path(), &git);
+        let (retracted, retract_errs) =
+            fix_dangling_receipts(ctx.primary_path(), &git, receipt_scope);
         for (store_path, ref_name) in &retracted {
             println!(
                 "[fixed] core: retracted dangling ownership receipt for `{}` in {}",
@@ -5811,7 +5850,7 @@ pub fn run_check(
             all_issues_branch_discipline_errors.push(msg);
         }
     } else {
-        scan_dangling_receipts(&git, ctx.primary_path(), &mut violations);
+        scan_dangling_receipts(&git, ctx.primary_path(), receipt_scope, &mut violations);
     }
 
     // Branch-discipline: (a) workweave-branch, (b) the §7.2 canonical-store
@@ -6995,8 +7034,17 @@ fn collect_doctor_violations(
         violations.push(v);
     }
     // Dangling ownership receipts. Report-only here; the JSON channel never
-    // auto-fixes.
-    scan_dangling_receipts(&git, ctx.primary_path(), &mut violations);
+    // auto-fixes. Scoped like the text channel.
+    scan_dangling_receipts(
+        &git,
+        ctx.primary_path(),
+        if scope_all {
+            None
+        } else {
+            active_project_name.as_ref().map(|n| n.as_str())
+        },
+        &mut violations,
+    );
 
     // Branch-discipline findings.
     // JSON channel never auto-fixes; `--fix` is reserved for `run_check`.
