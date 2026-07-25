@@ -22,11 +22,11 @@ CWD, and target is only ever advanced via fast-forward.
    `lock: auto-relock after sync from <source>`. This keeps the lock consistent without requiring
    a separate `rwv lock` invocation.
 
-3. **Step 3 — FF-advance target.** Fast-forward each manifest repo and the
-   project repo in target to CWD's converged tips. This step is always FF
-   regardless of `--strategy` — all rewriting happened in CWD during step 1.
-   If FF is not possible (e.g. concurrent modification), the operation bails
-   with an actionable error.
+3. **Step 3 — FF-advance target.** Fast-forward the branch each manifest repo
+   and the project repo in target is on to CWD's converged tips. This step is
+   always FF regardless of `--strategy` — all rewriting happened in CWD during
+   step 1. If FF is not possible (e.g. concurrent modification), the operation
+   bails with an actionable error.
 
 ### End-state semantics
 
@@ -66,6 +66,16 @@ Untracked files are fine. A project repo that is dirty only in `rwv.lock` is
 also fine — the op commits that file itself. If tracked dirt is found, sync-to
 refuses up front, naming the offending paths, so you can commit or stash before
 running again.
+
+### Target-side preflights
+
+Step 3 lands by fast-forwarding the branch each target repo is on, so the
+target must be in a state to receive it. Before step 1 begins, `sync-to`
+refuses when any target repo (manifest or project) has uncommitted tracked
+changes step 3 would fast-forward over, or is on a **detached HEAD** — there
+is no branch there to advance, so the landing would be recorded nowhere.
+Reference symlinks are excluded from both checks. `rwv fetch` and `rwv update`
+leave repos detached; check out the receiving branch in the target and re-run.
 
 ### Op-start auto-relock
 
@@ -763,6 +773,9 @@ rwv abort
 - *uncommitted tracked changes in source* — CWD has tracked dirt in a manifest
   repo or project repo (outside `rwv.lock`). Commit or stash the changes, then
   retry.
+- *target is on a detached HEAD* — a target repo has no branch for step 3 to
+  advance. Check out the branch that should receive the work in the target,
+  then retry.
 - *op in progress* — CWD or target is already involved in a sync-to (or other
   mutating) op. Resume with `rwv sync-to --continue` from the owner workspace,
   or roll back with `rwv abort`.

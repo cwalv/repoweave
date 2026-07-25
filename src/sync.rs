@@ -1946,9 +1946,10 @@ fn run_preconditions_after_acquire(
             check_dirty_preflight_sync(&cwd_project_preflight, cwd_workspace_dir, cwd_project_dir)?;
         }
         MachineVerb::SyncTo => {
-            // sync-to preflights (both refuse before any side effects):
+            // sync-to preflights (all refuse before any side effects):
             //   - dirty-source (§1): CWD-side tracked dirt would go stale mid-rebase.
             //   - dirty-target: the target's uncommitted work advance-target overwrites.
+            //   - detached-target: advance-target would have no branch to land on.
             // Source before target: the operator's own workspace is the first thing they
             // can fix, and a dirty source is the state we most want to define away.
             let cwd_project_preflight = Project::from_dir(cwd_project_dir)
@@ -1959,6 +1960,12 @@ fn run_preconditions_after_acquire(
                 cwd_project_dir,
             )?;
             check_dirty_target_preflight(
+                &cwd_project_preflight,
+                dest_workspace_dir,
+                dest_project_dir,
+                cli_path,
+            )?;
+            check_detached_target_preflight(
                 &cwd_project_preflight,
                 dest_workspace_dir,
                 dest_project_dir,
@@ -2810,6 +2817,48 @@ fn check_dirty_target_preflight(
              advance-target fast-forwards the target's worktrees over this work. Commit or \
              stash in the target ({}), then re-run.",
             dirty.join("\n  "),
+            target_path.display(),
+        );
+    }
+    Ok(())
+}
+
+/// sync-to detached-target preflight: refuse if any target repo is not on a
+/// branch. Landing fast-forwards the branch the target is attached to; a
+/// detached HEAD gives it nothing to advance, and `--retire` then deletes the
+/// source branch that was holding the work.
+fn check_detached_target_preflight(
+    cwd_project: &Project,
+    target_workspace_dir: &Path,
+    target_project_dir: &Path,
+    target_path: &Path,
+) -> anyhow::Result<()> {
+    let mut detached: Vec<String> = Vec::new();
+    for repo_path in cwd_project.manifest.iter_repo_paths() {
+        let target_repo = target_workspace_dir.join(repo_path.as_path());
+        // Skip reference symlinks: advance-target excludes them, so their
+        // attachment is not this op's business.
+        if checkout_is_syncable(&target_repo)
+            && GitVcs.current_ref(&target_repo).unwrap_or(None).is_none()
+        {
+            detached.push(repo_path.to_string());
+        }
+    }
+    if GitVcs
+        .current_ref(target_project_dir)
+        .unwrap_or(None)
+        .is_none()
+    {
+        detached.push("(project)".to_string());
+    }
+    if !detached.is_empty() {
+        anyhow::bail!(
+            "sync-to precondition failed: target workweave is on a detached HEAD in:\n  {}\n\
+             \n\
+             sync-to lands by fast-forwarding the branch each target repo is on; a detached \
+             HEAD has none, so the work would be recorded nowhere. Check out the receiving \
+             branch in the target ({}), then re-run.",
+            detached.join("\n  "),
             target_path.display(),
         );
     }
@@ -3888,12 +3937,12 @@ fn run_advance_target(ctx: &OpContext<'_>) -> anyhow::Result<()> {
         // Read target tip BEFORE the advance so we can report from_sha.
         let target_tip_before = GitVcs.head_revision(&target_repo).ok();
         match ff_advance_repo(&target_repo, &cwd_repo, &cwd_tip) {
-            Ok(()) => {
+            Ok(advanced) => {
                 if emit_text {
                     println!(
-                        "  {}: ff-advanced to {}",
+                        "  {}: {}",
                         repo_path,
-                        &cwd_tip.as_str()[..8.min(cwd_tip.as_str().len())]
+                        ff_advance_line(advanced.as_ref(), &cwd_tip)
                     );
                 }
                 // Record step-3 advance iff the branch pointer actually moved.
@@ -3927,11 +3976,11 @@ fn run_advance_target(ctx: &OpContext<'_>) -> anyhow::Result<()> {
         &ctx.cwd_project_dir,
         &cwd_project_tip,
     ) {
-        Ok(()) => {
+        Ok(advanced) => {
             if emit_text {
                 println!(
-                    "  (project): ff-advanced to {}",
-                    &cwd_project_tip.as_str()[..8.min(cwd_project_tip.as_str().len())]
+                    "  (project): {}",
+                    ff_advance_line(advanced.as_ref(), &cwd_project_tip)
                 );
             }
             // Record step-3 advance for the project repo iff it actually moved.
@@ -5103,7 +5152,17 @@ pub fn run_sync_to_json(ctx: &WorkspaceContext, request: SyncRequest) -> anyhow:
     json_exit_tail(any_failure, project_level_result)
 }
 
-/// Fast-forward `target_repo` to `cwd_tip`.
+/// Per-repo advance-target line, naming the branch that received the landing.
+fn ff_advance_line(advanced: Option<&RefName>, tip: &ResolvedRevisionId) -> String {
+    let short = &tip.as_str()[..8.min(tip.as_str().len())];
+    match advanced {
+        Some(branch) => format!("ff-advanced {branch} to {short}"),
+        None => format!("already at {short}"),
+    }
+}
+
+/// Fast-forward the branch `target_repo` is on to `cwd_tip`, returning that
+/// branch. `None` means the target was already at `cwd_tip` and nothing moved.
 ///
 /// We need the objects to be reachable in `target_repo`. For a worktree
 /// pair (workweave + primary), they share the same object store, so any
@@ -5121,7 +5180,7 @@ fn ff_advance_repo(
     target_repo: &Path,
     cwd_repo: &Path,
     cwd_tip: &ResolvedRevisionId,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<Option<RefName>> {
     // Verify that target_repo's HEAD is an ancestor of (or equal to) cwd_tip.
     // If not, this is a concurrent-modification scenario — bail.
     let target_tip = GitVcs
@@ -5129,8 +5188,28 @@ fn ff_advance_repo(
         .context("failed to read target HEAD")?;
 
     if target_tip == *cwd_tip {
-        return Ok(()); // already at the right tip
+        return Ok(None); // already at the right tip
     }
+
+    // Landing must name the ref it lands on. `merge --ff-only` against a
+    // detached HEAD moves HEAD alone and reports success, leaving the work on
+    // no branch — and the source's branch, the only other ref holding it, is
+    // force-deleted by `--retire`. Checked after the equal-tip return, like
+    // the dirty gate below: a checkout we won't move needs no destination.
+    let target_branch = GitVcs
+        .current_ref(target_repo)
+        .context("failed to read target HEAD ref")?
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "target repo at {} is not on a branch (detached HEAD at {}); refusing to \
+                 land onto it. Nothing would record the advance to {}. Check out the branch \
+                 that should receive this work (`git switch <branch>` in the target), then \
+                 re-run.",
+                target_repo.display(),
+                target_tip,
+                cwd_tip,
+            )
+        })?;
 
     // Fast-forwarding a dirty target worktree risks its uncommitted changes.
     // The sync-to preflight already refused on a dirty target; this catches
@@ -5173,7 +5252,7 @@ fn ff_advance_repo(
         .advance_if_fast_forward(target_repo, cwd_tip)
         .context("fast-forward advance failed in target")?;
 
-    Ok(())
+    Ok(Some(target_branch))
 }
 
 #[cfg(test)]

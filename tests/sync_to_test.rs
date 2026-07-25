@@ -764,6 +764,163 @@ fn sync_to_refuses_when_target_has_uncommitted_changes() {
 }
 
 // ---------------------------------------------------------------------------
+// Test: landing moves a NAMED branch, not just HEAD
+//
+// `merge --ff-only` on a detached HEAD moves HEAD and reports success, so
+// "target's HEAD is at CWD's tip" is not evidence that anything durable
+// recorded the landing. Assert the branch ref itself, and that the target is
+// still attached to it afterwards.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn sync_to_advances_the_target_branch_not_just_head() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (primary, ww, _initial_sha) = make_shared_workspaces(tmp.path());
+
+    let c2 = make_commit(&ww.server_dir, "ww.txt", "workweave\n", "ww: advance");
+    write_lock(&ww.project_dir, &[(SERVER_PATH, SERVER_URL, &c2)]);
+    git(&["add", "rwv.lock"], &ww.project_dir);
+    git(&["commit", "-m", "lock: ww advance"], &ww.project_dir);
+    let ww_project_tip = git_out(&["rev-parse", "HEAD"], &ww.project_dir);
+
+    let output = rwv()
+        .args(["sync-to", &primary.root.to_string_lossy(), "--strategy=ff"])
+        .current_dir(&ww.root)
+        .assert()
+        .success()
+        .get_output()
+        .clone();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    assert_eq!(
+        git_out(&["rev-parse", "refs/heads/main"], &primary.server_dir),
+        c2,
+        "the target server repo's `main` must carry the landing, not just its HEAD"
+    );
+    assert_eq!(
+        git_out(&["rev-parse", "refs/heads/main"], &primary.project_dir),
+        ww_project_tip,
+        "the target project repo's `main` must carry the landing, not just its HEAD"
+    );
+    assert_eq!(
+        git_out(&["rev-parse", "--abbrev-ref", "HEAD"], &primary.server_dir),
+        "main",
+        "the target server repo must still be attached to `main`"
+    );
+    assert_eq!(
+        git_out(&["rev-parse", "--abbrev-ref", "HEAD"], &primary.project_dir),
+        "main",
+        "the target project repo must still be attached to `main`"
+    );
+    assert!(
+        stdout.contains("ff-advanced main to"),
+        "advance-target must name the branch it landed on; got:\n{stdout}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Test: detached-target refusal
+//
+// A detached target has no branch for the landing to advance. Left to run,
+// `merge --ff-only` moves the target's HEAD, every step reports success, and
+// `--retire`/`workweave delete` then force-deletes the source's ephemeral
+// branch — the only remaining ref to the work. sync-to must refuse up front,
+// naming the detached repos, and leave both sides exactly as they were.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn sync_to_refuses_when_target_member_repo_is_detached() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (primary, ww, initial_sha) = make_shared_workspaces(tmp.path());
+
+    let c2 = make_commit(&ww.server_dir, "ww.txt", "workweave\n", "ww: advance");
+    write_lock(&ww.project_dir, &[(SERVER_PATH, SERVER_URL, &c2)]);
+    git(&["add", "rwv.lock"], &ww.project_dir);
+    git(&["commit", "-m", "lock: ww advance"], &ww.project_dir);
+
+    // The state `rwv fetch` and `rwv update` leave every member repo in.
+    git(&["checkout", "--detach", "HEAD"], &primary.server_dir);
+
+    let err_output = rwv()
+        .args(["sync-to", &primary.root.to_string_lossy(), "--strategy=ff"])
+        .current_dir(&ww.root)
+        .assert()
+        .failure()
+        .get_output()
+        .clone();
+    let stderr = String::from_utf8_lossy(&err_output.stderr);
+    assert!(
+        stderr.contains("detached HEAD"),
+        "refusal must name the detached-target precondition; got:\n{stderr}"
+    );
+    assert!(
+        stderr.contains(SERVER_PATH),
+        "refusal must list the detached repo; got:\n{stderr}"
+    );
+
+    assert_eq!(
+        git_out(&["rev-parse", "refs/heads/main"], &primary.server_dir),
+        initial_sha,
+        "target `main` must be untouched by a refused sync-to"
+    );
+    assert_eq!(
+        git_out(&["rev-parse", "HEAD"], &primary.server_dir),
+        initial_sha,
+        "target HEAD must be untouched by a refused sync-to"
+    );
+    assert!(
+        !ww.root.join(".rwv-op").exists(),
+        "a preflight refusal must leave no op-state behind"
+    );
+
+    // Re-attach and re-run: the work lands on the named branch.
+    git(&["checkout", "main"], &primary.server_dir);
+    rwv()
+        .args(["sync-to", &primary.root.to_string_lossy(), "--strategy=ff"])
+        .current_dir(&ww.root)
+        .assert()
+        .success();
+    assert_eq!(
+        git_out(&["rev-parse", "refs/heads/main"], &primary.server_dir),
+        c2,
+        "after re-attaching the target, sync-to must advance `main`"
+    );
+}
+
+#[test]
+fn sync_to_refuses_when_target_project_repo_is_detached() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (primary, ww, _initial_sha) = make_shared_workspaces(tmp.path());
+
+    let c2 = make_commit(&ww.server_dir, "ww.txt", "workweave\n", "ww: advance");
+    write_lock(&ww.project_dir, &[(SERVER_PATH, SERVER_URL, &c2)]);
+    git(&["add", "rwv.lock"], &ww.project_dir);
+    git(&["commit", "-m", "lock: ww advance"], &ww.project_dir);
+
+    let project_main_before = git_out(&["rev-parse", "refs/heads/main"], &primary.project_dir);
+    git(&["checkout", "--detach", "HEAD"], &primary.project_dir);
+
+    let err_output = rwv()
+        .args(["sync-to", &primary.root.to_string_lossy(), "--strategy=ff"])
+        .current_dir(&ww.root)
+        .assert()
+        .failure()
+        .get_output()
+        .clone();
+    let stderr = String::from_utf8_lossy(&err_output.stderr);
+    assert!(
+        stderr.contains("detached HEAD") && stderr.contains("(project)"),
+        "refusal must name the detached project repo; got:\n{stderr}"
+    );
+
+    assert_eq!(
+        git_out(&["rev-parse", "refs/heads/main"], &primary.project_dir),
+        project_main_before,
+        "target project `main` must be untouched by a refused sync-to"
+    );
+}
+
+// ---------------------------------------------------------------------------
 // Test 9: sync-to with mismatched primary `.rwv-active`
 //
 // A workweave whose project is `web-app` should succeed with `rwv sync-to`

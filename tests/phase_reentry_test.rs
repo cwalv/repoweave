@@ -356,6 +356,68 @@ fn advance_target_reentry_on_equal_tips_is_a_noop_success() {
 }
 
 // ---------------------------------------------------------------------------
+// AdvanceTarget refuses to land on a detached target.
+//
+// `--continue` rebuilds the op context and re-enters the recorded phase
+// without re-running the preflights, so the landing primitive itself has to
+// hold the line: a detached target has no branch to advance, and `merge
+// --ff-only` would move HEAD alone while reporting success.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn advance_target_reentry_refuses_to_land_on_a_detached_target() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (primary, ww, sha) = make_shared_workspaces(tmp.path());
+
+    // Give the landing something to move.
+    std::fs::write(ww.server_dir.join("ww.txt"), "ww work\n").unwrap();
+    git(&["add", "ww.txt"], &ww.server_dir);
+    git(&["commit", "-m", "ww: advance"], &ww.server_dir);
+    let ww_server_tip = git_out(&["rev-parse", "HEAD"], &ww.server_dir);
+
+    let op_id = "reentry-test-advance";
+    write_sync_to_owner_record_at_advance_target(&ww.root, &primary.root);
+    write_lease(&primary.root, &ww.root);
+    create_savepoint(&ww.project_dir, op_id);
+    create_savepoint(&ww.server_dir, op_id);
+
+    git(&["checkout", "--detach", "HEAD"], &primary.server_dir);
+
+    let err_output = rwv()
+        .args(["sync-to", "--continue"])
+        .current_dir(&ww.root)
+        .assert()
+        .failure()
+        .get_output()
+        .clone();
+    let stderr = String::from_utf8_lossy(&err_output.stderr);
+    assert!(
+        stderr.contains("not on a branch"),
+        "the landing primitive must refuse a detached target by name; got:\n{stderr}"
+    );
+
+    assert_eq!(
+        git_out(&["rev-parse", "refs/heads/main"], &primary.server_dir),
+        sha,
+        "target `main` must not have moved"
+    );
+    assert_eq!(
+        git_out(&["rev-parse", "HEAD"], &primary.server_dir),
+        sha,
+        "the refused landing must not have moved the detached HEAD either"
+    );
+    assert_eq!(
+        git_out(&["rev-parse", "refs/heads/ww/main"], &ww.server_dir),
+        ww_server_tip,
+        "the source branch must still hold the work"
+    );
+    assert!(
+        ww.root.join(".rwv-op").exists(),
+        "op-state must survive so the operator can re-attach and --continue"
+    );
+}
+
+// ---------------------------------------------------------------------------
 // Lease-side --continue: end-state parity with owner-side --continue.
 //
 // Plant an owner record at the SOURCE workweave (ww), a thin lease at the
