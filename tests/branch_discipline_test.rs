@@ -2176,6 +2176,130 @@ fn migration_skips_a_workweave_with_an_operation_in_flight() {
     );
 }
 
+/// A pass rule, not an arm (§7.1): the migration does not run over a
+/// (workweave, store) pair whose namespace holds two or more refs.
+///
+/// git holds `refs/heads/p--w` and `refs/heads/p--w/x` as a file and a
+/// directory of the same name, so no arm can produce the flat one here. The
+/// point of catching it *before* an arm runs is the receipt: every arm
+/// records ownership before it writes the ref, so a rename that then fails
+/// leaves a receipt for the pre-flat name — and §7.2 resolves the owning
+/// workweave by parsing the ref name, which under flat naming yields no
+/// workweave on disk. Receipted plus stale is the auto-deletable class, so
+/// that receipt is a DESTROY warrant against a live workweave's branch.
+/// This fixture is the shape found in the operator's weave.
+///
+/// The byte-identical assertion is the second half: a receipt written and
+/// then dangling is retracted by the next run's earlier arm and re-created
+/// by this one, so the index churns on every `--fix` forever without ever
+/// converging. Writing nothing is what stops that.
+#[test]
+fn migration_skips_a_workweave_namespace_holding_two_refs() {
+    let tmp = tempfile::tempdir().unwrap();
+    let ws = make_primary(tmp.path());
+    let canonical = ws.join("github").join("acme").join("repo");
+    init_repo_with_commit(&canonical);
+
+    let ww_dir = workweaves_dir(&ws).join("myproj--feat-a");
+    write_marker(&ww_dir, &ws, "myproj", &ws);
+    record_placement(&ws, "myproj", "feat-a", &ww_dir);
+    let ww_checkout = ww_dir.join("github").join("acme").join("repo");
+    std::fs::create_dir_all(ww_checkout.parent().unwrap()).unwrap();
+    worktree_add(&canonical, &ww_checkout, "myproj--feat-a/main");
+    // The sibling that puts the flat name out of reach, holding a commit of
+    // its own — the operator's shape: real work, not disposable residue.
+    add_commit(&ww_checkout, "work.txt", "sibling work");
+    let sibling_tip = rev(&ww_checkout, "HEAD");
+    create_branch(&canonical, "myproj--feat-a/master", &sibling_tip);
+    // `/main` back at the store tip, so it carries no unique commits. That
+    // is what would put it in the *auto-deletable* class the moment a
+    // receipt lifted it out of Unowned — the fixture's whole point.
+    git_in(&ww_checkout, &["reset", "--hard", "main"]);
+    let tip = rev(&ww_checkout, "HEAD");
+    let index_path = ws
+        .join("projects")
+        .join("myproj")
+        .join(".rwv-workweave-index");
+    let before = std::fs::read(&index_path).expect("the fixture's index exists");
+
+    let fix = rwv()
+        .args(["doctor", "--fix"])
+        .current_dir(&ws)
+        .output()
+        .unwrap();
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&fix.stdout),
+        String::from_utf8_lossy(&fix.stderr)
+    );
+
+    assert!(
+        combined.contains("myproj--feat-a/main") && combined.contains("myproj--feat-a/master"),
+        "the skip must name both blocking refs — collapsing the namespace is \
+         the operator's call, and they cannot make it unseen; got:\n{combined}"
+    );
+    assert!(
+        !receipt_recorded(&ws, "myproj", "myproj--feat-a"),
+        "no receipt may claim the flat name: the rename cannot happen, and a \
+         receipt for a ref that is not there is what `--fix` churns on; got:\n{combined}"
+    );
+    assert!(
+        !receipt_recorded(&ws, "myproj", "myproj--feat-a/main")
+            && !receipt_recorded(&ws, "myproj", "myproj--feat-a/master"),
+        "and no receipt may claim a pre-flat name — §7.2 reads one as a live \
+         workweave's branch gone stale, which is the deletable class; got:\n{combined}"
+    );
+    assert_eq!(
+        std::fs::read(&index_path).expect("the index survives the run"),
+        before,
+        "the index must not be written at all for a pair the pass skipped"
+    );
+    assert!(
+        branch_exists(&canonical, "myproj--feat-a/main")
+            && branch_exists(&canonical, "myproj--feat-a/master"),
+        "both refs must survive untouched"
+    );
+    assert!(
+        !branch_exists(&canonical, "myproj--feat-a"),
+        "and the flat name must not have been minted"
+    );
+
+    // The advice the skip gives, taken: one ref out of the namespace, and
+    // the migration proceeds on the next run.
+    git_in(
+        &canonical,
+        &["branch", "-m", "myproj--feat-a/master", "feat-a-master"],
+    );
+    let again = rwv()
+        .args(["doctor", "--fix"])
+        .current_dir(&ws)
+        .output()
+        .unwrap();
+    let again_combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&again.stdout),
+        String::from_utf8_lossy(&again.stderr)
+    );
+    assert!(
+        branch_exists(&canonical, "myproj--feat-a"),
+        "once the namespace holds one ref the migration proceeds; got:\n{again_combined}"
+    );
+    assert_eq!(
+        rev(&canonical, "myproj--feat-a"),
+        tip,
+        "and it is still a rename — the tip is preserved"
+    );
+    assert!(
+        receipt_recorded(&ws, "myproj", "myproj--feat-a"),
+        "with the receipt written only for the rename that did happen"
+    );
+    assert_eq!(
+        rev(&canonical, "feat-a-master"),
+        sibling_tip,
+        "and the sibling's commit is untouched throughout"
+    );
+}
+
 /// §7.3: the migration touches nothing it cannot associate with a **live**
 /// workweave directory.
 ///

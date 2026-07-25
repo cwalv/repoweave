@@ -4150,12 +4150,22 @@ pub fn fix_stale_ephemeral_branches(
 /// cannot be recorded into a legacy index at all, so the field migration is
 /// this pass's precondition rather than one of its arms.
 ///
-/// # The two pass rules that are not arms
+/// # The three pass rules that are not arms
 ///
 /// **No in-flight operation state.** §7.1: an operator who upgrades while a
 /// sync is stopped mid-rebase resolves or aborts it first, without being told
 /// to migrate. A workweave with op state is skipped with a message naming
 /// `rwv abort`; the rest of the weave still migrates.
+///
+/// **The flat name must be reachable.** §7.1 assumes at most one ref per
+/// (workweave, store); git holds `refs/heads/p--w` and `refs/heads/p--w/x`
+/// as a file and a directory of the same name, so where two or more refs
+/// share a namespace no arm can produce the flat one. That pair is skipped
+/// before any arm runs — a receipt written for a rename that then fails
+/// claims a pre-flat name, which §7.2 resolves to no workweave on disk and
+/// so reads as stale and deletable. Collapsing the namespace is an
+/// operator's call about which ref is the workweave's, so the skip names
+/// the blocking refs and stops.
 ///
 /// **Receipt before ref, durably, per repo.** Every arm records through
 /// [`RefRegistry`], which fsyncs the file and its directory before returning,
@@ -4212,6 +4222,45 @@ pub fn fix_branch_model_migration(
         for abs in workweave_checkouts(vcs, &workweave_dir, marker.project.as_str()) {
             let store = crate::workweave::receipt_store_for(&abs);
             let (flat_present, legacy_refs) = refs_in_workweave_namespace(vcs, &store, &flat);
+
+            // Pass rule: the migration runs only where the flat name is
+            // reachable. Two or more refs under one workweave's namespace put
+            // it out of reach — git will not create `refs/heads/{flat}` as a
+            // ref while `refs/heads/{flat}/` exists as a directory, so the
+            // rename cannot succeed however the arms are ordered, and the
+            // consented detached arms would delete one sibling and *then*
+            // fail to mint the flat name.
+            //
+            // Checked before any arm because every arm records its receipt
+            // BEFORE it writes the ref (§7.1's receipt-before-ref rule), so acting here
+            // persists an ownership claim for a rename that did not happen —
+            // and a receipt for a pre-flat name is worse than no receipt at
+            // all: §7.2 derives the owning workweave by parsing the ref name,
+            // and under flat naming a name with a segment resolves to no
+            // workweave on disk. The branch is then judged stale, and being
+            // receipted is exactly what lifts it out of Unowned into the
+            // classes `--fix` deletes from.
+            if legacy_refs.len() > 1 {
+                let blocking = legacy_refs
+                    .iter()
+                    .map(|r| format!("`{r}`"))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                errors.push(format!(
+                    "{}: skipped the branch-model migration for `{flat}` — {} refs share \
+                     that namespace ({blocking}), and git cannot create the ref `{flat}` \
+                     while any ref exists under `{flat}/`. rwv recorded no ownership \
+                     receipt for `{flat}` and renamed nothing here; the rest of the \
+                     migration is unaffected. Which of those refs is this workweave's \
+                     branch, and where the others belong, is not rwv's call to make — \
+                     leave at most one ref under `{flat}/`, then re-run `rwv doctor --fix` \
+                     to migrate it",
+                    store.display(),
+                    legacy_refs.len()
+                ));
+                continue;
+            }
+
             let flat_raw = flat.to_raw();
             let flat_recorded = matches!(registry.lookup(&store, &flat_raw), Ok(Some(_)));
 
