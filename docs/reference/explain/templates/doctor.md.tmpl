@@ -74,14 +74,10 @@ severity. Under `--json`, output is the envelope:
 ```
 
 The `$schema` URL points to the committed schema artifact. Variants are
-discriminated by the `kind` tag — `orphaned-clone`, `dangling-reference`,
-`missing-role`, `stale-lock`, `workweave-drift`, `index-drift`,
-`working-tree-drift`, `missing-replay-exclusion`, `legacy-role-primary`,
-`workweave-tree-integrity`.
+discriminated by the `kind` tag — {{MSG:doctor_kinds}}.
 Every per-repo variant carries `path` (manifest-relative) and
 `absolute_path` (fully resolved). Variants with subkinds
-(`workweave-drift`, `index-drift`, `working-tree-drift`,
-`workweave-tree-integrity`) carry an additional `sub_kind` field.
+({{MSG:doctor_subkind_variants}}) carry an additional `sub_kind` field.
 `legacy-role-primary` carries `project` and
 `manifest_path` so the caller can locate the file `--fix` will rewrite.
 `workweave-tree-integrity` carries `workweave_dir` and a `sub_kind`

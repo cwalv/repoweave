@@ -74,14 +74,10 @@ severity. Under `--json`, output is the envelope:
 ```
 
 The `$schema` URL points to the committed schema artifact. Variants are
-discriminated by the `kind` tag — `orphaned-clone`, `dangling-reference`,
-`missing-role`, `stale-lock`, `workweave-drift`, `index-drift`,
-`working-tree-drift`, `missing-replay-exclusion`, `legacy-role-primary`,
-`workweave-tree-integrity`.
+discriminated by the `kind` tag — `branch-discipline`, `cargo-patch-shadowing`, `cargo-version-skew`, `clone-topology`, `dangling-active-project`, `dangling-reference`, `dead-op-lease`, `incomplete-lock`, `index-drift`, `legacy-role-primary`, `legacy-workweave-marker`, `missing-canonical-clone`, `missing-replay-exclusion`, `missing-role`, `orphaned-clone`, `orphaned-savepoint`, `provenance`, `stale-lock`, `stale-op-state`, `stale-worktree-registration`, `uninitialized-submodule`, `unparseable-project`, `working-tree-drift`, `workweave-drift`, `workweave-tree-integrity`.
 Every per-repo variant carries `path` (manifest-relative) and
 `absolute_path` (fully resolved). Variants with subkinds
-(`workweave-drift`, `index-drift`, `working-tree-drift`,
-`workweave-tree-integrity`) carry an additional `sub_kind` field.
+(`branch-discipline`, `clone-topology`, `dead-op-lease`, `index-drift`, `orphaned-savepoint`, `provenance`, `working-tree-drift`, `workweave-drift`, `workweave-tree-integrity`) carry an additional `sub_kind` field.
 `legacy-role-primary` carries `project` and
 `manifest_path` so the caller can locate the file `--fix` will rewrite.
 `workweave-tree-integrity` carries `workweave_dir` and a `sub_kind`

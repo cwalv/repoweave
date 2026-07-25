@@ -105,6 +105,57 @@ fn schema_doctor() -> String {
     serde_json::to_string_pretty(&schema).expect("doctor schema serializes")
 }
 
+/// Every `ViolationOutput` variant's `kind` tag, paired with its full variant
+/// schema, walked from the schemars-derived doctor JSON Schema rather than a
+/// hand-typed list — so it cannot drift out of sync with the enum.
+fn doctor_violation_variants() -> Vec<(String, serde_json::Value)> {
+    let schema = schema_for!(DoctorEnvelope);
+    let json = serde_json::to_value(&schema).expect("doctor schema serializes");
+    json["definitions"]["ViolationOutput"]["oneOf"]
+        .as_array()
+        .expect("ViolationOutput schema is a oneOf")
+        .iter()
+        .map(|variant| {
+            let kind = variant["properties"]["kind"]["enum"][0]
+                .as_str()
+                .expect("each ViolationOutput variant has a kind enum const")
+                .to_owned();
+            (kind, variant.clone())
+        })
+        .collect()
+}
+
+/// Comma-separated, backtick-quoted, alphabetized list of every
+/// `ViolationOutput` `kind` tag.
+fn doctor_kind_list_md() -> String {
+    let mut kinds: Vec<String> = doctor_violation_variants()
+        .into_iter()
+        .map(|(kind, _)| kind)
+        .collect();
+    kinds.sort();
+    kinds
+        .iter()
+        .map(|k| format!("`{k}`"))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// Same as [`doctor_kind_list_md`], filtered to variants that carry an
+/// additional `sub_kind` field.
+fn doctor_subkind_variant_list_md() -> String {
+    let mut kinds: Vec<String> = doctor_violation_variants()
+        .into_iter()
+        .filter(|(_, variant)| variant["properties"].get("sub_kind").is_some())
+        .map(|(kind, _)| kind)
+        .collect();
+    kinds.sort();
+    kinds
+        .iter()
+        .map(|k| format!("`{k}`"))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
 fn schema_sync() -> String {
     let schema = schema_for!(SyncJsonOutput);
     serde_json::to_string_pretty(&schema).expect("sync schema serializes")
@@ -488,6 +539,13 @@ fn build_msg_registry() -> MsgRegistry {
     // Single-source: `repoweave::sync::auto_relock_commit_message` is the ONE
     // place this string lives — both the runtime and the doc derive from it.
     m.insert("auto_relock", auto_relock_commit_message("<source>"));
+
+    // "doctor_kinds"/"doctor_subkind_variants": the `ViolationOutput` `kind`
+    // tag enumeration, walked from the schemars-derived doctor JSON Schema
+    // (the same schema spliced into doctor.md via `{{SCHEMA}}`) rather than
+    // hand-typed, so both stay in sync with the enum.
+    m.insert("doctor_kinds", doctor_kind_list_md());
+    m.insert("doctor_subkind_variants", doctor_subkind_variant_list_md());
 
     m
 }
