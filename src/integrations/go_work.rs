@@ -215,6 +215,13 @@ impl Integration for GoWork {
         let marker_present = doc.has_marker(&owned_keys);
         let owned_key_present = doc.key_present(&keypath(["use"]));
 
+        // Only `use` (Ownership::Author) is checked for drift here. `go` is
+        // Ownership::DefaultOnly: once present, any on-disk value is CLEAN by
+        // contract — activate() never overwrites an existing go-line, so
+        // flagging its value as drift would report a finding `--fix` cannot
+        // actually resolve. Same exclusion cargo-workspace applies to its
+        // DefaultOnly `resolver` key.
+        //
         // Compare on-disk `use` entries against what activate() would write
         // (`./<repo-path>` entries). The shared helper sorts + dedups both
         // sides before comparing and dispatches USER-HELD → DRIFT → CLEAN.
@@ -1072,6 +1079,46 @@ mod tests {
         assert!(
             text.contains("go 1.23"),
             "go 1.23 must be written into missing go-line slot (DefaultOnly): {text}"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Guard: go-line drift (DefaultOnly) is CLEAN, mirroring cargo's
+    //   resolver_default_only_drift_is_clean. The on-disk go-line is far
+    //   below what the member go.mod requires; verify() must not report
+    //   that as drift.
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn go_directive_default_only_drift_is_clean() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+
+        let seed = concat!(
+            "go 1.21\n\n",
+            "// managed by repoweave\n",
+            "use (\n",
+            "\t./github/test/repoweave\n",
+            ")\n"
+        );
+        write_file(root, "go.work", seed);
+
+        write_file(
+            root,
+            "github/test/repoweave/go.mod",
+            "module example.com/repoweave\n\ngo 1.26\n",
+        );
+
+        let manifest = make_manifest_local(vec![("github/test/repoweave", Role::Owned)]);
+        let project = ProjectName::new("test-project");
+        let config = IntegrationConfig::default();
+        let cache = HashMap::new();
+        let ctx = make_ctx_local(root, &project, &manifest, &config, &cache);
+
+        let issues = GoWork.verify(&ctx).unwrap();
+        assert!(
+            issues.is_empty(),
+            "go-line drift (DefaultOnly) must be CLEAN — got: {issues:?}"
         );
     }
 
