@@ -34,7 +34,10 @@ rwv workweave <project> create <name> [--from <source>] [--replace-existing] [--
 
 - `--from <source>` — workspace to fork from. Accepts `primary`, an absolute
   path, or a relative path resolved against primary (e.g., a sibling workweave
-  name). Defaults to CWD's active workspace.
+  name). Defaults to CWD's active workspace. Forking from an existing
+  workweave is how you DUPLICATE one — for a scratch variant, an experiment,
+  or a throwaway baseline. Do not copy a workweave with `cp`: the result
+  aliases the original's git state rather than duplicating it.
 - `--replace-existing` — if a workweave with this name already exists and is
   clean, destroy it and recreate from scratch. Refuses if the existing workweave
   holds uncommitted changes or unmerged commits (work visible only in the
