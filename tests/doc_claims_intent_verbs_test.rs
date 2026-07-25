@@ -15,6 +15,10 @@
 //!     adopted repo already committed: it clones only the one repo, so
 //!     re-authoring there would recompute owned content from a tree
 //!     missing every other manifest member
+//!   - the same claim carried by `cargo-workspace`, on both halves of the
+//!     merge model: a marked `[workspace].members` is not truncated, and a
+//!     user-held (unmarked) `Cargo.toml` gets no `DefaultOnly` key written
+//!     into it
 //!
 //! `rwv update` authoring and `rwv lock`'s exemption are pinned elsewhere
 //! (`verb_shape_test.rs`, plus `lock_test.rs` / `doc_claims_lock_test.rs`
@@ -519,5 +523,209 @@ fn init_adopt_does_not_clobber_committed_generated_content() {
         "`rwv init --adopt` must not re-author the adopted repo's committed \
          .code-workspace file; it clones only the project repo, so re-authoring \
          here would clobber committed content with a recompute from a partial tree"
+    );
+}
+
+// ===========================================================================
+// The same no-clobber claim, carried by `cargo-workspace`
+//
+// The claim above is proven through vscode-workspace because that integration
+// writes unconditionally. cargo-workspace is the more consequential case —
+// re-authoring `[workspace].members` silently truncates a cargo workspace —
+// but it is gated behind `CargoWorkspace::has_active_cargo_work`, which is
+// disk-driven: its first arm looks for repos with a root `Cargo.toml` on
+// disk, and `init --adopt` clones only the project repo, so that arm is
+// always empty at adopt time. A fixture that relies on it produces a no-op in
+// BOTH activation modes — a test that passes whether or not the behaviour
+// under test is correct (bead fo-qecw1w).
+//
+// The gate's second arm is the way in: a repo named by
+// `integrations.cargo-workspace.members.<repo>` counts as active cargo work
+// from `rwv.yaml` alone, no clone required. That is the rvtty shape (a repo
+// with no root `Cargo.toml` whose sub-packages are the members), and it is
+// what makes the integration live during an adopt.
+//
+// Two constraints shape the fixtures below.
+//
+// 1. Every member path named by the *committed* `Cargo.toml` must exist on
+//    disk. `init --adopt` runs activate hooks, and cargo-workspace's hook
+//    runs `cargo generate-lockfile` against the surfaced manifest; a member
+//    that is not on disk makes cargo exit 101 and takes the whole adopt down
+//    with it. So the adopting workspace already carries the member repo (an
+//    adopt into an existing weave), and the truncation is driven by the
+//    config naming fewer members than the committed file lists.
+// 2. The committed file must carry the `# managed by rwv` marker for the
+//    members axis to bite: `merge_activate` defers an `Author` key when the
+//    marker is absent. A committed marked file is the documented shape —
+//    operators commit the managed `Cargo.toml` so the composition is
+//    reproducible from the repo.
+//
+// The second test covers the unmarked half, where the members axis is silent
+// by construction and the `DefaultOnly` `resolver` key is the discriminator:
+// `merge_activate` defers `members` but still injects a missing `resolver`
+// and writes the file back.
+// ===========================================================================
+
+/// Return early (skip) if `cargo` is not on PATH. `init --adopt` runs
+/// cargo-workspace's activate hook, which shells out to
+/// `cargo generate-lockfile`; without cargo the adopt cannot complete, so
+/// there is no successful run to assert the no-clobber claim against.
+macro_rules! require_cargo {
+    () => {
+        if which::which("cargo").is_err() {
+            eprintln!("skipping test: `cargo` not found on PATH");
+            return;
+        }
+    };
+}
+
+/// The sub-packages the fixture's `org/lib` repo contributes. `legacy` exists
+/// on disk and is listed by the committed manifest, but is deliberately absent
+/// from the `include:` list in `rwv.yaml` — it is the member an authoring pass
+/// would drop.
+const LIB_SUBCRATES: &[&str] = &["core", "cli", "legacy"];
+
+/// `rwv.yaml` for a project whose single repo contributes sub-path members.
+///
+/// `org/lib` is declared but has no root `Cargo.toml`, so it is invisible to
+/// `detect_repos_with_manifest` — the `members:` block is the only reason
+/// cargo-workspace considers this project to have active cargo work.
+const CARGO_MEMBERS_MANIFEST: &str = "\
+repositories:
+  org/lib:
+    type: git
+    url: https://example.com/lib.git
+    version: main
+    role: owned
+integrations:
+  cargo-workspace:
+    members:
+      org/lib:
+        include:
+          - crates/core
+          - crates/cli
+";
+
+/// A bare project repo carrying [`CARGO_MEMBERS_MANIFEST`] and a committed
+/// root `Cargo.toml`, ready to be adopted.
+fn make_cargo_adoptee_bare(tmp: &Path, name: &str, cargo_toml: &str) -> PathBuf {
+    let bare = tmp.join(format!("{name}.git"));
+    init_bare_repo(&bare);
+    let work = tmp.join(format!("{name}-work"));
+    git_run(
+        &["clone", &bare.to_string_lossy(), &work.to_string_lossy()],
+        tmp,
+    );
+    std::fs::write(work.join("rwv.yaml"), CARGO_MEMBERS_MANIFEST).unwrap();
+    std::fs::write(work.join("Cargo.toml"), cargo_toml).unwrap();
+    git_run(&["add", "."], &work);
+    git_run(&["commit", "-m", "manifest + managed Cargo.toml"], &work);
+    git_run(&["push", "origin", "main"], &work);
+    bare
+}
+
+/// Materialize `org/lib` in the adopting workspace: no root `Cargo.toml`,
+/// one package per entry in `subcrates` under `crates/`.
+fn materialize_lib_subcrates(ws: &Path, subcrates: &[&str]) {
+    for name in subcrates {
+        let dir = ws.join("org/lib/crates").join(name);
+        std::fs::create_dir_all(dir.join("src")).unwrap();
+        std::fs::write(
+            dir.join("Cargo.toml"),
+            format!("[package]\nname = \"lib-{name}\"\nversion = \"0.1.0\"\nedition = \"2021\"\n"),
+        )
+        .unwrap();
+        std::fs::write(dir.join("src/lib.rs"), "").unwrap();
+    }
+}
+
+/// The consequential form of the adopt-clobber bug: an authoring pass at
+/// adopt time rewrites `[workspace].members` from the config, dropping the
+/// member the committed file names.
+#[test]
+fn init_adopt_does_not_truncate_committed_cargo_members() {
+    require_cargo!();
+    let tmp = tempfile::tempdir().unwrap();
+
+    // Marked, committed manifest listing three members. `rwv.yaml`'s
+    // `include:` names only two, so authoring computes a strictly smaller
+    // set — the truncation. `[profile.release]` is user policy that must
+    // survive either way, so it cannot mask the members difference.
+    let committed_cargo_toml = "\
+[workspace]
+# managed by rwv
+members = [\"org/lib/crates/cli\", \"org/lib/crates/core\", \"org/lib/crates/legacy\"]
+resolver = \"2\"
+
+[profile.release]
+lto = true
+";
+    let bare = make_cargo_adoptee_bare(tmp.path(), "myapp", committed_cargo_toml);
+
+    let adopt_ws = make_workspace(tmp.path());
+    materialize_lib_subcrates(&adopt_ws, LIB_SUBCRATES);
+    let source = format!("file://{}", bare.display());
+
+    rwv()
+        .args(["init", "--adopt", &source])
+        .current_dir(&adopt_ws)
+        .assert()
+        .success();
+
+    let adopted = std::fs::read_to_string(adopt_ws.join("projects/myapp/Cargo.toml"))
+        .expect("adopted project should still carry the committed Cargo.toml");
+    assert!(
+        adopted.contains("org/lib/crates/legacy"),
+        "`rwv init --adopt` must not drop a committed workspace member; \
+         authoring at adopt time truncates [workspace].members to what the \
+         config yields, which silently shrinks the workspace. Got:\n{adopted}"
+    );
+    assert_eq!(
+        adopted, committed_cargo_toml,
+        "`rwv init --adopt` is a context verb: it must leave the adopted \
+         repo's committed Cargo.toml byte-for-byte alone"
+    );
+}
+
+/// The unmarked half. `merge_activate` defers the `Author` key `members` when
+/// the marker is absent, so the members axis cannot see an authoring pass
+/// here — but it still sets the `DefaultOnly` key `resolver` (absent → write)
+/// and serializes the file back. A context verb writes neither.
+#[test]
+fn init_adopt_does_not_write_into_a_user_held_cargo_manifest() {
+    require_cargo!();
+    let tmp = tempfile::tempdir().unwrap();
+
+    // No marker, and members that already agree with the config — so the
+    // only thing an authoring pass changes is the injected `resolver`.
+    let committed_cargo_toml = "\
+[workspace]
+members = [\"org/lib/crates/cli\", \"org/lib/crates/core\"]
+
+[profile.release]
+lto = true
+";
+    let bare = make_cargo_adoptee_bare(tmp.path(), "myapp", committed_cargo_toml);
+
+    let adopt_ws = make_workspace(tmp.path());
+    materialize_lib_subcrates(&adopt_ws, &["core", "cli"]);
+    let source = format!("file://{}", bare.display());
+
+    rwv()
+        .args(["init", "--adopt", &source])
+        .current_dir(&adopt_ws)
+        .assert()
+        .success();
+
+    let adopted = std::fs::read_to_string(adopt_ws.join("projects/myapp/Cargo.toml"))
+        .expect("adopted project should still carry the committed Cargo.toml");
+    assert!(
+        !adopted.contains("resolver"),
+        "`rwv init --adopt` must not inject the DefaultOnly `resolver` key \
+         into a Cargo.toml the user holds the pen on. Got:\n{adopted}"
+    );
+    assert_eq!(
+        adopted, committed_cargo_toml,
+        "`rwv init --adopt` must leave a user-held Cargo.toml byte-for-byte alone"
     );
 }
