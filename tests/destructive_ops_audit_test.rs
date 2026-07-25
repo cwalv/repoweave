@@ -412,16 +412,13 @@ const ALLOWLIST: &[Allowed] = &[
             emptied parent tables, and deletes pyproject.toml only when the \
             document is left with nothing at all. It writes the stripped \
             document back otherwise, so anything else in the file survives. \
-            This entry does NOT vouch for the gating. The function's own doc \
-            comment says it skips the marker check because \"the caller \
-            gated on it\"; fo-opmmoz.10 measured that the caller does not — \
-            deactivate calls strip_deactivate (which IS marker-gated and \
-            no-ops without it) and then calls this unconditionally, without \
-            observing that the first call no-opped. So an unmarked, \
-            hand-authored pyproject.toml whose only content is a \
-            workspace-true source is emptied and deleted. Filed as \
-            fo-ekvtxm; npm_workspaces.rs:178-194 already has the fix shape \
-            (capture has_our_marker BEFORE the strip, gate on it).",
+            Marker-gated by its caller: deactivate reads has_our_marker \
+            BEFORE strip_deactivate (which removes the marker) and calls this \
+            only when we owned the file, so an unmarked, hand-authored \
+            pyproject.toml keeps its workspace-true sources and is never \
+            emptied or deleted. fo-ekvtxm added that gate — before it the \
+            call was unconditional; the guard is mutation-verified by the \
+            deactivate_leaves_unmarked_* tests in uv_workspace.rs.",
     },
     Allowed {
         file: "integrations/npm_workspaces.rs",

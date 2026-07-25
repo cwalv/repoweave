@@ -36,10 +36,13 @@
 //! `merge_activate`) → write. If the file is missing it is created with only
 //! the managed region (plus `package = false` via `DefaultOnly`).
 //!
-//! **Deactivate** = gate on marker → strip `members` (via `strip_deactivate`) →
-//! strip only `{workspace=true}` source entries (custom adapter) → prune empty
+//! **Deactivate** = capture the marker → strip `members` (via
+//! `strip_deactivate`) → strip only `{workspace=true}` source entries (custom
+//! adapter) → prune empty
 //! `[tool.uv.workspace]`/`[tool.uv.sources]`/`[tool.uv]`/`[tool]` → delete
-//! the file iff it would otherwise be empty.
+//! the file iff it would otherwise be empty. Both strips are gated on the
+//! marker, and the marker is read *before* the first one, because
+//! `strip_deactivate` removes it — see `deactivate`.
 //!
 //! ## Strip-by-predicate decision (the deactivate design choice)
 //!
@@ -214,8 +217,12 @@ impl UvWorkspace {
     ///    Else → write the stripped document back.
     ///
     /// Runs **after** `strip_deactivate` has already removed `members` and
-    /// pruned `[tool.uv.workspace]`. The marker is gone at this point, so
-    /// this function does NOT re-check the marker (the caller gated on it).
+    /// pruned `[tool.uv.workspace]`. `strip_deactivate` removes the marker as
+    /// part of that strip, so this function *cannot* re-check it — by the time
+    /// it runs the ownership proof is gone. The caller captures the marker
+    /// BEFORE the strip and only calls this when we owned the file; calling it
+    /// unconditionally would strip workspace-true sources out of a
+    /// hand-authored `pyproject.toml` rwv never marked.
     fn strip_workspace_sources(path: &Path) -> anyhow::Result<()> {
         if !path.exists() {
             return Ok(());
@@ -300,6 +307,24 @@ fn is_workspace_true_source(item: &toml_edit::Item) -> bool {
         .and_then(|v| v.as_value())
         .and_then(|v| v.as_bool())
         .unwrap_or(false)
+}
+
+/// Return true if the `pyproject.toml` at `path` carries the `# managed by rwv`
+/// marker on one of `owned_keys`.
+///
+/// The TOML marker is per-key decor, so unlike npm's top-level JSON marker this
+/// needs the same key set `strip_deactivate` gates on.
+fn has_our_marker(path: &Path, owned_keys: &[KeyPath]) -> bool {
+    if !path.exists() {
+        return false;
+    }
+    let Ok(text) = std::fs::read_to_string(path) else {
+        return false;
+    };
+    let Ok(doc) = TomlDoc::parse(&text) else {
+        return false;
+    };
+    doc.has_marker(owned_keys)
 }
 
 /// Remove a nested key at `path` if it exists and is an empty table.
@@ -397,18 +422,28 @@ impl Integration for UvWorkspace {
             return Ok(());
         }
 
-        // strip_deactivate removes `members` (and prunes empty
-        // [tool.uv.workspace]) gated on the per-key marker. Then the bespoke
-        // adapter strips workspace-true sources.
         let owned_keys = Self::deactivate_owned_keys();
+
+        // Probe the marker BEFORE stripping so we can gate the sources pass on
+        // it. strip_deactivate removes the marker as part of the strip, so
+        // afterwards there is no ownership proof left to re-check — and it
+        // no-ops silently when the marker was absent, without telling us. Same
+        // shape as npm_workspaces::deactivate.
+        let we_owned = has_our_marker(&path, &owned_keys);
+
+        // strip_deactivate removes `members` (and prunes empty
+        // [tool.uv.workspace]) gated on the per-key marker.
         strip_deactivate::<TomlDoc>(&path, &owned_keys)
             .with_context(|| format!("strip-deactivate {}", path.display()))?;
 
-        // After strip_deactivate, the marker is gone and [tool.uv.workspace]
-        // is pruned. Now strip only {workspace=true} entries from
-        // [tool.uv.sources] (bespoke adapter — see module doc).
-        Self::strip_workspace_sources(&path)
-            .with_context(|| format!("strip-workspace-sources {}", path.display()))?;
+        // Now strip only {workspace=true} entries from [tool.uv.sources]
+        // (bespoke adapter — see module doc). Only when we owned the file: an
+        // unmarked, hand-authored pyproject.toml keeps its workspace-true
+        // sources, and is never emptied and deleted.
+        if we_owned {
+            Self::strip_workspace_sources(&path)
+                .with_context(|| format!("strip-workspace-sources {}", path.display()))?;
+        }
 
         Ok(())
     }
@@ -628,6 +663,132 @@ some-private-lib = { git = "https://example.com/foo.git" }
         UvWorkspace::strip_workspace_sources(&path).unwrap();
         let after = std::fs::read_to_string(&path).unwrap();
         assert_eq!(after, content, "noop: content must be unchanged");
+    }
+
+    /// A hand-authored `pyproject.toml` rwv never marked keeps its
+    /// `{workspace = true}` sources through `deactivate`, byte-for-byte.
+    ///
+    /// The sources pass is not marker-gated on its own (the marker is gone by
+    /// the time it runs); `deactivate` captures ownership before the strip and
+    /// gates on that. Without the gate this file comes back with the
+    /// `server`/`web` entries removed.
+    #[test]
+    fn deactivate_leaves_unmarked_workspace_sources_untouched() {
+        let tmp = TempDir::new().unwrap();
+        let content = r#"[project]
+name = "acme"
+version = "0.1.0"
+
+# I maintain this workspace by hand, thanks.
+[tool.uv.workspace]
+members = ["services/server", "services/web"]
+
+[tool.uv.sources]
+server = { workspace = true }
+web = { workspace = true }
+some-private-lib = { git = "https://example.com/foo.git" }
+"#;
+        write_file(&tmp, "pyproject.toml", content);
+
+        UvWorkspace.deactivate(tmp.path()).unwrap();
+
+        let after = std::fs::read_to_string(tmp.path().join("pyproject.toml")).unwrap();
+        assert_eq!(
+            after, content,
+            "unmarked pyproject.toml must survive deactivate byte-for-byte"
+        );
+    }
+
+    /// The deletion path specifically: an unmarked file whose ONLY
+    /// content is workspace-true sources. Ungated, the sources pass strips both
+    /// entries, prunes `[tool.uv.sources]`/`[tool.uv]`/`[tool]`, finds the
+    /// document empty, and `remove_file`s user-authored content.
+    #[test]
+    fn deactivate_does_not_delete_unmarked_file_of_only_workspace_sources() {
+        let tmp = TempDir::new().unwrap();
+        let content = "[tool.uv.sources]\nserver = { workspace = true }\n";
+        let path = write_file(&tmp, "pyproject.toml", content);
+
+        UvWorkspace.deactivate(tmp.path()).unwrap();
+
+        assert!(
+            path.exists(),
+            "unmarked pyproject.toml must NOT be deleted by deactivate"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            content,
+            "unmarked content must survive byte-for-byte"
+        );
+    }
+
+    /// Regression guard — the legitimate path still strips. A marked
+    /// file loses `members`, the marker, and its workspace-true sources; user
+    /// sources and user sections survive.
+    #[test]
+    fn deactivate_still_strips_when_marked() {
+        let tmp = TempDir::new().unwrap();
+        let path = write_file(
+            &tmp,
+            "pyproject.toml",
+            r#"[project]
+name = "acme"
+
+[tool.uv.workspace]
+# managed by rwv
+members = ["services/server"]
+
+[tool.uv.sources]
+server = { workspace = true }
+some-private-lib = { git = "https://example.com/foo.git" }
+"#,
+        );
+
+        UvWorkspace.deactivate(tmp.path()).unwrap();
+
+        let after = std::fs::read_to_string(&path).unwrap();
+        assert!(
+            !after.contains("workspace = true"),
+            "marked file: workspace-true sources must be stripped; got:\n{after}"
+        );
+        assert!(
+            !after.contains("managed by rwv"),
+            "marked file: marker must be removed; got:\n{after}"
+        );
+        assert!(
+            !after.contains("[tool.uv.workspace]"),
+            "marked file: emptied [tool.uv.workspace] must be pruned; got:\n{after}"
+        );
+        assert!(
+            after.contains("some-private-lib") && after.contains("[project]"),
+            "user content must survive; got:\n{after}"
+        );
+    }
+
+    /// The marked file-deletion path still deletes. A file whose
+    /// only content is rwv's own managed region goes away on deactivate; the
+    /// gate must not turn that into a leftover empty file.
+    #[test]
+    fn deactivate_still_deletes_marked_file_with_nothing_else_in_it() {
+        let tmp = TempDir::new().unwrap();
+        let path = write_file(
+            &tmp,
+            "pyproject.toml",
+            r#"[tool.uv.workspace]
+# managed by rwv
+members = ["services/server"]
+
+[tool.uv.sources]
+server = { workspace = true }
+"#,
+        );
+
+        UvWorkspace.deactivate(tmp.path()).unwrap();
+
+        assert!(
+            !path.exists(),
+            "marked file with only rwv's region must still be deleted"
+        );
     }
 
     #[test]
