@@ -102,6 +102,11 @@ struct UpdateNdjsonRecord<'a> {
 /// and write it. The lock-write reuses `lock::generate_lock`, which carries
 /// the dirty check; `dirty` here controls whether to bypass it.
 ///
+/// The enabled integrations then re-author their managed/generated content
+/// against the advanced tree, so it can be committed alongside the lock. This
+/// step is skipped when `filter` is non-empty — see the guard at the call
+/// site.
+///
 /// When `commit` is true, the resulting lock is staged and committed in
 /// the project repo (same semantics as `rwv lock --commit`).
 /// When `project_override` is `Some`, that project is updated instead of
@@ -362,8 +367,23 @@ fn update_for_project(
     // they were already on. This preserves the invariant that the lock
     // always describes the whole manifest. The filter narrows the loop,
     // not the lock-shape — same decision as push in `src/push.rs`.
-    let _ = workweave; // suppress unused warning if generate_lock signature changes
     lock::lock(ctx, dirty, commit).context("failed to write lock after update")?;
+
+    // Regeneration reads EVERY manifest member (member presence is gated on
+    // `.exists()`, and content-derived fields read member working trees), so it
+    // is only sound over a tree the run actually covered. An unfiltered update
+    // bails above if any member is missing or failed to advance; a filtered one
+    // proves nothing about the repos it skipped, so it leaves the managed files
+    // alone and `rwv doctor --fix` remains the repair path.
+    if filter.is_empty() {
+        match workweave {
+            Some((_, dir)) => {
+                crate::activate::activate_workweave_intent(project_name.as_str(), dir)
+            }
+            None => crate::activate::activate_intent(project_name.as_str(), ctx),
+        }
+        .context("failed to regenerate integration content after update")?;
+    }
 
     // Emit JSON envelope after lock write (so the lock is coherent before
     // consumers read the envelope). NDJSON was already streamed above.

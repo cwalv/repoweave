@@ -164,6 +164,64 @@ fn update_advances_dep_to_branch_head_and_relocks() {
 }
 
 // ---------------------------------------------------------------------------
+// `rwv update` re-authors managed content; a filtered run does not
+// ---------------------------------------------------------------------------
+
+/// The generated file used to observe authoring: `vscode-workspace` is
+/// default-enabled and declares `<project>.code-workspace` unconditionally, so
+/// its presence in the project dir means the content pass ran.
+fn code_workspace(project_dir: &Path) -> PathBuf {
+    project_dir.join("project.code-workspace")
+}
+
+#[test]
+fn update_authors_managed_content() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (workspace, project_dir, _dep_bare, _initial_sha) = bootstrap_via_fetch(tmp.path());
+
+    // `rwv fetch` is a context verb, so nothing has authored yet.
+    assert!(
+        !code_workspace(&project_dir).exists(),
+        "bootstrap via `rwv fetch` must not author managed content"
+    );
+
+    rwv()
+        .args(["update"])
+        .current_dir(&workspace)
+        .assert()
+        .success();
+
+    assert!(
+        code_workspace(&project_dir).exists(),
+        "`rwv update` must re-author the integrations' managed content"
+    );
+}
+
+#[test]
+fn filtered_update_does_not_author_managed_content() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (workspace, project_dir, _dep_bare, _initial_sha) = bootstrap_via_fetch(tmp.path());
+
+    // Selects the workspace's only repo, so the advance and the lock write do
+    // exactly the same work as the unfiltered run above — the filter's
+    // emptiness is the only difference.
+    rwv()
+        .args(["update", "--repo", "local/team/dep"])
+        .current_dir(&workspace)
+        .assert()
+        .success();
+
+    assert!(
+        project_dir.join("rwv.lock").exists(),
+        "a filtered `rwv update` still writes the lock"
+    );
+    assert!(
+        !code_workspace(&project_dir).exists(),
+        "a filtered `rwv update` must not author from a tree it only partly covered"
+    );
+}
+
+// ---------------------------------------------------------------------------
 // `rwv lock` does not produce ecosystem files (no hooks)
 // ---------------------------------------------------------------------------
 
