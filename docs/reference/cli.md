@@ -514,31 +514,13 @@ Anchored by `tests/doc_claims_sync_test.rs`, `tests/doc_claims_fetch_test.rs`, `
 
 ## External commands
 
-`rwv <verb>` where `<verb>` is not a core verb resolves to a `rwv-<verb>` executable on `$PATH` and execs it. This is the same convention `git` and `cargo` use for their external commands.
+`rwv <verb>` where `<verb>` is not a core verb resolves to a `rwv-<verb>` executable on `$PATH` and execs it. This is the same convention `git` and `cargo` use for their external commands. Core verbs always win: clap matches them before external fallthrough runs, so a `rwv-status` on `$PATH` can never shadow the builtin, and naming a plugin after a future core verb makes it unreachable once that verb ships.
 
-- **Core always wins.** clap matches core verbs before external fallthrough runs, so a `rwv-status` on `$PATH` can never shadow the builtin. If you name a plugin the same as a future core verb, the plugin becomes unreachable when that core verb ships.
-- **Addressing flags are consumed by `rwv`.** Global `-C` / `-w` and per-verb `--project` are the addressing surface for the workspace coordinate; the external verb never sees them in its argv. This lets a plugin inherit the addressing surface for free — `rwv -w myproj--hotfix foo` addresses once, in `rwv`, and hands the resolved coordinate to `rwv-foo`.
-- **Exit propagation is verbatim.** A normal exit propagates the child's status code; signal death maps to the conventional `128 + N` exit and is reported on stderr as `rwv-<verb> terminated by signal N`.
-- **No output wrapping.** The child owns stdout and stderr entirely — plugins that emit JSON, drive a terminal, or stream progress work without translation.
-- **Two error surfaces.** Everything `rwv`-side can go wrong on collapses to exactly one of: `unknown verb` (no core verb and no `rwv-<verb>` on `$PATH`, with a pointer to `rwv --help`) or `exec failure` (found on `$PATH` but not spawnable, with the OS error).
-- **Soft fallthrough.** With no addressing flags, if the cwd walk finds no workspace, the plugin is exec'd anyway — some plugins legitimately run outside a workspace (a `--help` / generator). Explicit-flag resolution failure (`-C <bad>` or `-w <bad>`) errors before any spawn attempt: a plugin cannot salvage a wrong address.
-- **`rwv explain` excludes plugins.** `rwv explain <non-core>` errors with `external command; try \`rwv <verb> --help\`` — explain reflects over `rwv`'s CI-checked surfaces, never over PATH content. A close typo of a core verb still gets the "did you mean" hint.
-
-### Context envelope
-
-`rwv` sets the following variables on every external command spawn. They are outputs — `rwv` never reads them back; a plugin that needs to re-address `rwv` passes them as explicit arguments.
-
-| Variable | Value | Unset when |
-|---|---|---|
-| `RWV_VERSION` | `rwv` semver | never |
-| `RWV_WORKSPACE` | primary workspace root (absolute path) | no workspace resolved |
-| `RWV_WORKWEAVE` | `<project>--<name>` | not in / not addressing a workweave |
-| `RWV_PROJECT` | resolved project name | no workspace or project resolved |
-
-Presence of `RWV_WORKWEAVE` encodes the checkout kind — no separate kind variable is needed. `RWV_WORKSPACE` being unset tells a plugin it ran outside any workspace. `RWV_VERSION` is always present; check it to gate on a minimum `rwv` version if needed (prefer structural field probing over version arithmetic where possible).
+`rwv` projects the resolved workspace context into an environment envelope on every spawn — `RWV_VERSION`, `RWV_WORKSPACE`, `RWV_WORKWEAVE`, `RWV_PROJECT` — and propagates the child's exit status back verbatim. For the full contract — the envelope table (value and unset-condition for each variable), addressing back into `rwv`, exit-code semantics, discovery and naming, the write prohibition, and the `--json` compatibility guarantee — see the [plugin-protocol](./plugin-protocol.md) reference.
 
 ## Related
 
+- [reference/plugin-protocol](./plugin-protocol.md) — the external-command wire contract in full
 - [reference/formats](./formats.md) — `rwv.yaml`, `rwv.lock`, `.rwv-active`, `.rwv-workweave`
 - [reference/roles](./roles.md) — role definitions and change-resistance semantics
 - [reference/glossary](./glossary.md) — terminology lookup

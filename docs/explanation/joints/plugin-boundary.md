@@ -1,9 +1,12 @@
 # The plugin boundary
 
 A plugin is an external `rwv-<verb>` executable on `$PATH` that `rwv` discovers
-and dispatches when a verb is not built into `rwv` itself. This joint defines the
-boundary between what belongs in core and what belongs in a plugin, what a plugin
-may and may not do, and how `rwv` and plugins exchange context.
+and dispatches when a verb is not built into `rwv` itself. This joint is the
+rationale: why the boundary sits where it does, and why `rwv` doesn't sandbox
+plugins. For the wire contract a plugin author codes against — discovery,
+the environment envelope, addressing, exit codes, the write prohibition, the
+compatibility guarantee — see the
+[plugin-protocol](../../reference/plugin-protocol.md) reference.
 
 The sibling joint [verb-vs-composition](./verb-vs-composition.md) covers whether a
 proposed operation earns a core verb at all. This joint covers what happens once
@@ -13,10 +16,12 @@ the answer is "it belongs outside core."
 
 A verb belongs in `rwv` core when it needs **write access to composition state** —
 `rwv.yaml`, `rwv.lock`, `.rwv-active`, `.rwv-workweave`, ecosystem workspace files,
-or savepoint refs. Everything `rwv` owns is listed in the
-[file-ownership](./file-ownership.md) joint. An operation that does not read or
-write those files is not composition-aware in any way that requires core ownership;
-it is a candidate for a plugin.
+or the `refs/rwv/*` savepoint-ref namespace. The concrete list a plugin must not
+write is in the [plugin-protocol](../../reference/plugin-protocol.md#write-prohibition)
+reference; the [file-ownership](./file-ownership.md) joint covers the surfacing and
+content-ownership *mechanics* behind those files, not a flat inventory. An operation
+that does not read or write those files is not composition-aware in any way that
+requires core ownership; it is a candidate for a plugin.
 
 The negative form is equally load-bearing: "needs to run across all repos" is not a
 criterion for core. Parallel fan-out, output collection, and per-repo command
@@ -25,17 +30,13 @@ the addressing surface and hands it off.
 
 ## Write prohibition
 
-A plugin must not write rwv-owned files:
-
-- `rwv.yaml`, `rwv.lock`
-- `.rwv-active`, `.rwv-workweave`, `.rwv-workweave-index`
-- Ecosystem workspace files (`Cargo.toml`, `go.work`, `package.json`, … when
-  managed by an integration)
-- Savepoint refs (`.rwv-savepoint-*`)
-
-A plugin that writes these files corrupts `rwv`'s composition state. `rwv doctor`
-can notice that rwv-owned files changed outside a core-verb write — that audit
-surface is where the violation surfaces, not a dispatch-time check.
+A plugin must not write rwv-owned files — the full list, and why each one is
+rwv's to write, is in the [plugin-protocol](../../reference/plugin-protocol.md#write-prohibition)
+reference. The rule exists because a plugin that writes these files corrupts
+`rwv`'s composition state, and `rwv` has no dispatch-time way to stop it —
+`rwv doctor` is the audit surface: it can notice that an rwv-owned file changed
+outside a core-verb write, after the fact. That after-the-fact posture is a
+deliberate consequence of the security posture below, not an oversight.
 
 A plugin may maintain its **own** state anywhere else — its own dotfiles, a
 side-database, per-repo metadata files it owns. That is the plugin's own concern
@@ -61,59 +62,6 @@ is correct at invocation time.
 The inventory is machine-readable (`rwv doctor --json`) and is the right place to
 script periodic audits of what plugins are on a machine.
 
-## Context envelope
-
-`rwv` projects the resolved workspace context into a set of environment variables
-set on every plugin spawn. The canonical table is in the CLI reference at
-[`docs/reference/cli.md` — Context envelope](../../reference/cli.md#context-envelope).
-
-Key properties, stated here for reasoning about the boundary:
-
-- **Outputs only.** `rwv` sets these variables; it never reads them back. The
-  direction discipline is intentional: these are handoff values for the child, not
-  ambient state consulted by `rwv`.
-- **Unset encodes absence.** `RWV_WORKSPACE` being absent means no workspace
-  resolved. `RWV_WORKWEAVE` being absent means the checkout is a primary weave, not
-  a workweave. No separate kind variable is needed — presence is the signal.
-- **`RWV_VERSION` is always set.** Use it to gate on a minimum `rwv` version if
-  needed. Prefer structural field probing over version arithmetic: testing whether
-  a JSON field exists is more precise than testing a version floor.
-- **Consistent with `--json` output.** The envelope and the `resolution` block in
-  `--json` output are projections of the same resolved value. A plugin that reads
-  both gets the same coordinates.
-
-## Addressing back into `rwv`
-
-A plugin that needs to invoke `rwv` (to read status, consume `--json` output, or
-trigger a core verb) addresses it explicitly using the envelope values:
-
-```sh
-rwv -C "$RWV_WORKSPACE" --project "$RWV_PROJECT" status --json
-```
-
-The global flags `-C` and `--project` are the addressing surface; `$RWV_WORKSPACE`
-and `$RWV_PROJECT` carry exactly the right values. When the plugin runs inside a
-workweave (indicated by `$RWV_WORKWEAVE` being set), the `-C` path already
-addresses the workweave directory — no extra flag is needed.
-
-## Additive-schema guarantee
-
-Within a major version, `rwv`'s committed `--json` schemas only gain fields; they
-never remove or re-type existing fields. This is the promotion of current practice
-to a stated guarantee, **hardening at 1.0**. Pre-1.0 the standard pre-V1 rules
-apply: schema breaks are permitted with changelog notice, and plugin authors
-targeting 0.x accept that.
-
-The practical consequence: a plugin that reads `rwv status --json` and checks for
-`repos[].absolute_path` does not need to gate on a version ceiling. It fails only
-if `rwv` removes the field in a major-version break, which would be called out in
-the migration guide for that major version.
-
-Schema probing is the right forward-compat technique: test for the field you depend
-on (`if (.repos[0] | has("absolute_path"))`), not a version ceiling. A plugin that
-probes structurally degrades gracefully when fields are added, upgraded, or not yet
-present on an older install.
-
 ## What `rwv doctor` does not do for plugins
 
 Plugins do not register doctor checks. Check registration is the integrations axis
@@ -124,9 +72,12 @@ health report. Doctor's only plugin surface is the inventory described above:
 
 ## Related joints
 
+- [plugin-protocol](../../reference/plugin-protocol.md) — the wire contract: discovery,
+  the environment envelope, addressing, exit codes, the write prohibition, the
+  compatibility guarantee.
 - [verb-vs-composition](./verb-vs-composition.md) — whether a proposed operation
   earns a core verb at all; the plugin space is the home for operations that don't.
-- [file-ownership](./file-ownership.md) — the canonical list of rwv-owned files
-  that plugins must not write.
+- [file-ownership](./file-ownership.md) — the surfacing and content-ownership
+  mechanics behind the files plugins must not write.
 - [verb-vs-vocabulary](./verb-vs-vocabulary.md) — naming discipline for verbs that
   do earn a place in core.

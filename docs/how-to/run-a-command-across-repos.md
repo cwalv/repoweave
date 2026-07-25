@@ -66,9 +66,12 @@ if [ -z "${RWV_WORKSPACE:-}" ]; then
 fi
 
 cmd=("$@")
-rwv -C "$RWV_WORKSPACE" --project "$RWV_PROJECT" status --json \
-  | jq -r '.repos[].absolute_path' \
-  | xargs -I {} bash -c '"${cmd[@]}"' _ {}
+if [ -n "${RWV_WORKWEAVE:-}" ]; then
+  paths=$(rwv -C "$RWV_WORKSPACE" -w "$RWV_WORKWEAVE" status --json | jq -r '.repos[].absolute_path')
+else
+  paths=$(rwv -C "$RWV_WORKSPACE" --project "$RWV_PROJECT" status --json | jq -r '.repos[].absolute_path')
+fi
+echo "$paths" | xargs -I {} bash -c '"${cmd[@]}"' _ {}
 ```
 
 Install it anywhere on `$PATH` (e.g. `~/.local/bin/rwv-each`, then `chmod +x`).
@@ -77,10 +80,16 @@ under "External commands."
 
 The plugin inherits `rwv`'s addressing flags: `rwv -w myproj--hotfix each git status`
 addresses the workweave once, in `rwv`, and the plugin receives the resolved
-coordinates through `$RWV_WORKSPACE` and `$RWV_PROJECT`.
+coordinates through the envelope — `$RWV_WORKSPACE` (always the primary root),
+`$RWV_WORKWEAVE` (`myproj--hotfix` here), and `$RWV_PROJECT`. Re-addressing that
+*same* workweave from inside the plugin needs `-w "$RWV_WORKWEAVE"`, not just
+`-C "$RWV_WORKSPACE"` — the branch above is what makes `rwv-each` operate on the
+workweave's repos rather than silently falling back to primary's.
 
-See [write-a-plugin](./write-a-plugin.md) for the full plugin-author guide, including
-the envelope table, back-addressing conventions, and schema probing.
+See [plugin-protocol](../reference/plugin-protocol.md) for the full wire contract
+(the envelope table, addressing, schema probing, exit codes) and
+[write-a-plugin](./write-a-plugin.md) for a step-by-step walkthrough building a
+plugin from scratch.
 
 ## Tier 3 — gita integration (lifecycle-managed CSV)
 

@@ -1,150 +1,124 @@
 # How-to: Write a plugin
 
-A plugin is an executable named `rwv-<verb>` on `$PATH`. When `rwv <verb>` is
-invoked and `<verb>` is not a built-in command, `rwv` locates the first matching
-executable in `$PATH` and execs it. This page covers how to read the context
-`rwv` hands your plugin, how to call back into `rwv`, and how to stay compatible
-as `rwv` evolves.
+This walks through building `rwv-check-mid-op`, a small plugin that exits
+non-zero and lists any repo with an operation in progress — useful as a
+preflight guard before scripting a `sync` or `sync-to`. It touches every part
+of the plugin contract along the way: reading the envelope, addressing back
+into `rwv`, probing the JSON shape, and exit codes.
 
-The conceptual framing — what belongs in a plugin versus core, what a plugin may
-and may not write — is in the [plugin-boundary](../explanation/joints/plugin-boundary.md)
-joint.
+For the full contract behind each step — the exact envelope variables,
+what "addressing" resolves to and why, exit-code semantics, the write
+prohibition, the compatibility guarantee — see the
+[plugin-protocol](../reference/plugin-protocol.md) reference. This page only
+walks the happy path of using it.
 
-## What `rwv` provides at exec time
+## 1. Scaffold the executable
 
-`rwv` sets a context envelope on every plugin spawn before `exec`. The variables
-and their semantics:
+A plugin is any executable named `rwv-<verb>` on `$PATH`; `rwv <verb>` dispatches
+to it whenever `<verb>` isn't a core verb. Start the script and make it
+executable — it doesn't need to be on `$PATH` yet, that's the last step:
 
-| Variable | Value | Unset when |
-|---|---|---|
-| `RWV_VERSION` | `rwv` semver | never |
-| `RWV_WORKSPACE` | primary workspace root (absolute path) | no workspace resolved |
-| `RWV_WORKWEAVE` | `<project>--<name>` | not in / not addressing a workweave |
-| `RWV_PROJECT` | resolved project name | no workspace or project resolved |
+```sh
+#!/usr/bin/env bash
+# rwv-check-mid-op: exit non-zero if any repo has an operation in progress.
+set -euo pipefail
+```
 
-(This is the same table as in the [CLI reference](../reference/cli.md#context-envelope);
-it is reproduced here for writing-plugin context. If the two ever diverge, the
-reference table is authoritative.)
+```sh
+chmod +x rwv-check-mid-op
+```
 
-`rwv` never reads any of these variables itself. They are outputs set at spawn for
-the child; direction is one way.
+## 2. Guard on being inside a workspace
 
-### Checking whether you are inside a workspace
-
-Test `$RWV_WORKSPACE`:
+`rwv` sets `$RWV_WORKSPACE` only when it resolved a workspace. Some plugins
+legitimately run without one (`--help`, generators); `rwv-check-mid-op` isn't
+one of them, so it checks and fails with an actionable message rather than
+proceeding against absent context:
 
 ```sh
 if [ -z "${RWV_WORKSPACE:-}" ]; then
-  echo "rwv-myverb: not inside a workspace (use rwv -C <path> myverb to address one)" >&2
+  echo "rwv-check-mid-op: not inside a workspace" >&2
   exit 1
 fi
 ```
 
-### Checking whether you are inside a workweave
+## 3. Call back into `rwv` for data
 
-Test `$RWV_WORKWEAVE`. Its presence is the signal; there is no separate kind
-variable.
+The repo list already exists via `rwv status --json` — re-invoke `rwv` rather
+than re-implementing project resolution. Address it explicitly with the
+envelope values instead of relying on the plugin's own `cwd`, which may not
+match where `rwv` itself was invoked from.
+
+`$RWV_WORKSPACE` is always the **primary** workspace root, even when the
+plugin is running inside a workweave — so on its own, `-C "$RWV_WORKSPACE"`
+reaches primary, not "wherever this plugin happens to be." To stay inside the
+*same* workweave the plugin was dispatched from, add `-w`:
 
 ```sh
 if [ -n "${RWV_WORKWEAVE:-}" ]; then
-  echo "operating in workweave: $RWV_WORKWEAVE"
+  data=$(rwv -C "$RWV_WORKSPACE" -w "$RWV_WORKWEAVE" status --json)
+else
+  data=$(rwv -C "$RWV_WORKSPACE" --project "$RWV_PROJECT" status --json)
 fi
 ```
 
-### Running outside a workspace
+`rwv-check-mid-op` wants to check wherever it was dispatched, so it branches
+on `$RWV_WORKWEAVE` rather than always addressing primary.
 
-Some plugins legitimately run outside any workspace — `--help`, generators, or
-commands that set up a workspace from scratch. `rwv` execs the plugin even when no
-workspace was resolved (the envelope variables are simply absent). Your plugin
-decides whether it requires a workspace.
+## 4. Probe the shape, not the version
 
-## Addressing back into `rwv`
-
-Use the envelope values as explicit addressing flags when calling back into `rwv`:
-
-```sh
-rwv -C "$RWV_WORKSPACE" --project "$RWV_PROJECT" status --json
-```
-
-Do not rely on `rwv` re-discovering the workspace from the cwd of your plugin
-process. The `-C` flag is the robust form: the plugin may change directory, may be
-invoked with an unusual cwd, or may need to address a specific workspace explicitly.
-
-When you are inside a workweave (`$RWV_WORKWEAVE` is set), `-C "$RWV_WORKSPACE"`
-already addresses the workweave directory. No extra flag is needed; `rwv` resolves
-through the `.rwv-workweave` marker inside that directory.
-
-If you need to address the primary weave from inside a workweave plugin, you cannot
-derive the primary path from the envelope directly. Address it explicitly or use
-`rwv resolve --primary` to discover it.
-
-## Consuming `rwv` JSON output
-
-`rwv status --json`, `rwv doctor --json`, and other `--json`-capable verbs emit a
-self-describing envelope with a `$schema` field. Schemas are committed at
-`docs/reference/schemas/<verb>.json` inside the `rwv` repo and are embedded in
-`rwv explain <verb>` bundles.
-
-### Schema probing over version arithmetic
-
-Do not test `$RWV_VERSION` to gate on the presence of a field. Test the field
-directly:
+Before depending on a field, check it's actually there instead of assuming
+based on `$RWV_VERSION` — a structural probe degrades gracefully on an older
+`rwv`, where a version-number check produces false negatives on every newer
+compatible release you didn't explicitly account for:
 
 ```sh
-# Probe: does this rwv version expose the field we need?
-has_lock_summary=$(rwv status --json | jq 'has("lock_summary")')
-if [ "$has_lock_summary" = "false" ]; then
-  echo "rwv-myverb: requires rwv with lock_summary in status --json output" >&2
+if [ "$(echo "$data" | jq '[.repos[] | has("mid_op")] | all')" != "true" ]; then
+  echo "rwv-check-mid-op: requires an rwv with repos[].mid_op in status --json" >&2
   exit 1
 fi
 ```
 
-Structural probing degrades gracefully when fields are added (the check keeps
-passing), and gives an actionable error when the field is absent. A version ceiling
-fails silently when a field is backported to an older branch and triggers a false
-negative on every compatible version above the ceiling.
+See [additive-schema guarantee](../reference/plugin-protocol.md#additive-schema-guarantee)
+for why this is the preferred technique.
 
-Use `$RWV_VERSION` only when you need a floor for a behavioral change that has no
-structural signal — for example, a change to how `rwv` handles a flag. Those cases
-are rare; most plugin needs are field-shaped.
+## 5. Do the work and set the exit code
 
-### Additive-schema guarantee
+```sh
+stuck=$(echo "$data" | jq -r '.repos[] | select(.mid_op != null) | .absolute_path')
+if [ -n "$stuck" ]; then
+  echo "rwv-check-mid-op: repo(s) with an operation in progress:" >&2
+  echo "$stuck" >&2
+  exit 1
+fi
 
-Within a major `rwv` version, `--json` schemas only gain fields; they never remove
-or re-type existing fields. A plugin that reads `repos[].absolute_path` from
-`rwv status --json` will keep working across patch and minor releases. Major-version
-breaks are flagged in the migration guide.
+exit 0
+```
 
-Pre-1.0 (`0.x`): the standard pre-V1 rules apply — schema breaks are permitted
-with changelog notice. Plugin authors targeting `0.x` accept that.
+`rwv` propagates this exit code verbatim as its own, so `rwv check-mid-op &&
+rwv sync-to` composes normally in a script.
 
-## Naming and visibility
+## 6. Install and verify
 
-- Name your executable `rwv-<verb>` where `<verb>` describes the operation.
-  One-word verbs are conventional; hyphens are allowed (`rwv-check-deps`).
-- Do not name it after an existing `rwv` core verb — core always wins at dispatch
-  time, making the plugin unreachable.
-- `rwv --help` lists plugins it discovers on `$PATH` under an "External commands"
-  section, names only. Shadowed duplicates (a later `$PATH` entry with the same
-  name) are excluded from this list — they appear in `rwv doctor --json` for audit.
+Put the finished script anywhere on `$PATH` (`~/.local/bin/rwv-check-mid-op`,
+for example) and confirm it's discoverable:
 
-## What your plugin must not write
+```sh
+rwv --help            # lists it under "External commands"
+rwv check-mid-op      # runs it
+```
 
-Do not write rwv-owned files:
+If two copies of the same name end up on `$PATH`, the first one found wins at
+exec time and the rest are shadowed for audit in `rwv doctor --json` — see
+[discovery and naming](../reference/plugin-protocol.md#discovery-and-naming)
+in the reference.
 
-- `rwv.yaml`, `rwv.lock`
-- `.rwv-active`, `.rwv-workweave`, `.rwv-workweave-index`
-- Ecosystem workspace files managed by an integration (`Cargo.toml`, `go.work`,
-  `package.json`, and so on)
-- Savepoint refs
+## Next steps
 
-The full list is in the [plugin-boundary](../explanation/joints/plugin-boundary.md)
-joint. Writes to these files corrupt `rwv`'s composition state; `rwv doctor` will
-surface the violation after the fact.
-
-## Exit codes and output
-
-`rwv` propagates your exit code verbatim. Signal death is mapped to `128 + N` with
-a note on stderr. `rwv` does not wrap or capture your stdout or stderr; your plugin
-owns its I/O entirely. This means JSON output, terminal-control sequences, and
-streaming progress all work without translation.
+- [plugin-protocol](../reference/plugin-protocol.md) — the full contract: every
+  envelope variable, the two dispatch-failure shapes, the write prohibition,
+  and the compatibility guarantee for `--json` output.
+- [plugin-boundary](../explanation/joints/plugin-boundary.md) — the rationale for
+  where the plugin/core line sits, and why `rwv` doesn't sandbox plugins.
+- [run a command across repos](./run-a-command-across-repos.md) — packaging a
+  plugin specifically for fanning a command out across every repo in a project.

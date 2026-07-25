@@ -52,6 +52,7 @@
 # Reference
 
 - [CLI](./reference/cli.md)
+- [Plugin protocol](./reference/plugin-protocol.md)
 - [Formats](./reference/formats.md)
 - [Roles](./reference/roles.md)
 - [Glossary](./reference/glossary.md)
