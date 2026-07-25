@@ -27,14 +27,18 @@ fn rwv() -> Command {
 
 /// `rwv` with `go` removed from `PATH`.
 ///
-/// The go-work integration has two activate paths and only one of them leaves
-/// a below-members pin in place: the hand-edit fallback honours the
-/// `Ownership::DefaultOnly` contract, while `go work use` on the tool path
-/// raises the go directive itself as a side effect. The fallback is the path
-/// the integration documents as mandatory ("`go` is not on PATH in CI /
-/// typical test environments"), and it is the only one where the state this
-/// category exists to report can survive an intent verb — so the `update` arm
-/// is exercised there. `doctor` authors nothing and needs no such pinning.
+/// The go-work integration has two activate paths, and this pins the `update`
+/// arm on the hand-edit fallback — the path the integration documents as
+/// mandatory ("`go` is not on PATH in CI / typical test environments"), and the
+/// one that runs on any machine. `update_reports_breach_on_the_go_tool_path`
+/// pins the same arm on the tool path.
+///
+/// Both are needed because the two paths reach a below-members pin by different
+/// code: the fallback defers to `merge_activate`'s DefaultOnly rule, while the
+/// tool path has to actively undo the raise `go work use` performs. Until
+/// fo-2r5yxh that undo did not exist and the tool path could not hold a pin at
+/// all, which is why this helper was the *only* way to exercise the arm.
+/// `doctor` authors nothing and needs no such pinning.
 fn rwv_without_go() -> Command {
     let mut cmd = common::rwv();
     let filtered: Vec<PathBuf> = std::env::var_os("PATH")
@@ -49,6 +53,20 @@ fn rwv_without_go() -> Command {
         std::env::join_paths(&filtered).expect("PATH entries should rejoin"),
     );
     cmd
+}
+
+/// Whether the real `go` binary is on `PATH`.
+///
+/// A test gated on this pins the go-tool activate path, which *is* the `go`
+/// binary — there is nothing to exercise without it, and a stub would pin the
+/// stub. A machine without `go` runs the fallback path, which the
+/// `rwv_without_go()` tests cover on every machine including that one.
+fn go_is_installed() -> bool {
+    std::process::Command::new("which")
+        .arg("go")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
 }
 
 /// Surface `<ws>/<file>` the way rwv does: a symlink with a **relative**
@@ -453,6 +471,63 @@ fn update_reports_breach_it_newly_created() {
     assert!(
         go_work.contains("go 1.21"),
         "update must not rewrite the DefaultOnly go-line; got:\n{go_work}"
+    );
+}
+
+/// The same arm on the **go-tool** activate path, i.e. on most machines.
+///
+/// `update` regenerates `go.work` through `activate()`, and with `go` on PATH
+/// that runs `go work use`, which raises the go directive to the members'
+/// strongest requirement. rwv restores the operator's pin afterwards
+/// (fo-2r5yxh); if it stopped doing so, the breach would be silently *repaired*
+/// into a raise and there would be nothing left to report — so this test fails
+/// on the finding, not just on the pin.
+///
+/// Versions are one minor apart at 1.20/1.21 rather than the 1.21/1.26 used
+/// above: `go work` downloads a toolchain whenever a version above the
+/// installed one is demanded, and 1.21 is the oldest release that can do that,
+/// so `installed >= 1.21` holds for every `go` this test can run under. The
+/// PATH-filtered tests are free of that constraint because they never invoke
+/// the tool.
+#[test]
+fn update_reports_breach_on_the_go_tool_path() {
+    if !go_is_installed() {
+        eprintln!(
+            "skipping test: `go` is not on PATH, so the go-tool activate path is unreachable"
+        );
+        return;
+    }
+
+    let fx = build_update_fixture("go-update-tool-project", "1.20", "1.20");
+
+    advance_member_go_version(&fx.member_bare, "1.21");
+
+    let output = rwv()
+        .args(["update", "--dirty"])
+        .current_dir(&fx.workspace)
+        .output()
+        .expect("rwv update should run");
+
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    assert!(
+        output.status.success(),
+        "update must not refuse on a member incompatibility; got:\n{combined}"
+    );
+
+    let line = the_finding(&combined);
+    assert_finding_shape(&line, "1.20", "1.21");
+
+    // The report is only meaningful because the pin survived the regeneration
+    // that produced it. `go work use` would have raised it to 1.21.
+    let go_work = std::fs::read_to_string(fx.project_dir.join("go.work")).unwrap();
+    assert!(
+        go_work.contains("go 1.20"),
+        "the go-tool path must not rewrite the DefaultOnly go-line; got:\n{go_work}"
     );
 }
 

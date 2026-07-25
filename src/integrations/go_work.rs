@@ -9,6 +9,14 @@
 //! The `go` tool round-trips `replace`/`toolchain`/`godebug` and all comments
 //! via x/mod/modfile.
 //!
+//! Guarding rwv's own `-go=` call is not sufficient to honour DefaultOnly on
+//! this path: `go work use` raises the go directive to the strongest `go`
+//! requirement across the modules it adds, whatever the file said. So the
+//! directive is snapshotted before the `use` loop and restored after it by
+//! [`restore_go_directive`] — otherwise the same `rwv add` would rewrite an
+//! operator's pin on a machine with `go` installed and preserve it on one
+//! without.
+//!
 //! **FALLBACK** (no `go` on PATH, or forced in tests): use
 //! [`GoWorkDoc::merge_activate`] / [`strip_deactivate`].  Edits the `use (…)`
 //! region (Author) and the leading `go <version>` line (DefaultOnly — sets the
@@ -387,6 +395,14 @@ fn activate_via_go_tool(
         }
     }
 
+    // Ownership::DefaultOnly for the go-line, part 2. `go work use` raises the
+    // go directive to the strongest requirement across the modules it adds —
+    // it rewrites the value the guard above was careful not to touch. Snapshot
+    // the settled directive here, after the guarded `-go=` write and before the
+    // first `use`, so one restore covers both cases: the operator's
+    // pre-existing value, and a default just written into an absent slot.
+    let settled_go = read_go_directive_from_file(&work_tmp);
+
     // Read the current `use` entries so we can dropuse stale ones.
     let current_uses = read_current_uses_from_file(&work_tmp);
 
@@ -420,6 +436,11 @@ fn activate_via_go_tool(
                 eprintln!("warning: go work edit -dropuse={old} failed (non-fatal)");
             }
         }
+    }
+
+    // Put the settled go directive back if a `go work use` raised it.
+    if let Some(want) = &settled_go {
+        restore_go_directive(&work_tmp, want)?;
     }
 
     // Inject the ownership marker above the use block in work_tmp.
@@ -483,6 +504,33 @@ fn read_current_uses_from_file(path: &Path) -> Vec<String> {
         }
     }
     uses
+}
+
+/// Put `want` back as the go directive of `path`, undoing the raise that
+/// `go work use` performs as a side effect of adding a module.
+///
+/// No-op when the on-disk value already matches, which is the common case —
+/// the tool only ever raises, and only when a member declares more than the
+/// file does.
+///
+/// Written through [`GoWorkDoc`] rather than a third `go work edit -go=<v>`
+/// call for two reasons: the tool would re-render the whole file, and on a pin
+/// above the installed toolchain any `go work` invocation tries to download
+/// that toolchain. This shares the writer the FALLBACK path uses, so a given
+/// go-line lands identically whichever path produced it.
+fn restore_go_directive(path: &Path, want: &str) -> anyhow::Result<()> {
+    if read_go_directive_from_file(path).as_deref() == Some(want) {
+        return Ok(());
+    }
+    let text = std::fs::read_to_string(path)
+        .with_context(|| format!("reading {} to restore its go directive", path.display()))?;
+    let mut doc = GoWorkDoc::parse(&text)
+        .with_context(|| format!("parsing {} to restore its go directive", path.display()))?;
+    doc.set_owned(&keypath(["go"]), &OwnedValue::String(want.to_string()));
+    let out = doc.serialize()?;
+    std::fs::write(path, out)
+        .with_context(|| format!("writing {} to restore its go directive", path.display()))?;
+    Ok(())
 }
 
 /// Ensure the `// managed by repoweave` marker line is present immediately
@@ -1127,6 +1175,148 @@ mod tests {
         assert!(
             !text.contains("go 1.21"),
             "must not downgrade to 1.21: {text}"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // PRIMARY-path tests.
+    //
+    // The tests above force the FALLBACK. These deliberately do not, so they
+    // run `go work` for real — the only way to reach the code under test.
+    // -----------------------------------------------------------------------
+
+    /// Whether the real `go` binary is available, printing a skip reason when
+    /// it is not.
+    ///
+    /// The PRIMARY path *is* `go work`; there is nothing to exercise without
+    /// the tool, and a stub `go` on PATH would pin the stub's behaviour rather
+    /// than the side effect these tests exist to catch. A machine without `go`
+    /// takes the FALLBACK path, which the tests above pin in full — what goes
+    /// unproven there is not rwv's logic but the premise that the tool clobbers
+    /// the go-line, which is exactly the part that cannot be observed without
+    /// it.
+    fn require_go() -> bool {
+        // Reads the same `go_on_path()` the integration dispatches on, so a
+        // test that skips here is exactly a test whose activate would have
+        // taken the fallback anyway.
+        if go_on_path() {
+            return true;
+        }
+        eprintln!("skipping test: `go` is not on PATH, so the PRIMARY path is unreachable");
+        false
+    }
+
+    /// A go.work pin and a member requirement above it, chosen so that no
+    /// invocation in these tests can reach the network.
+    ///
+    /// `go work` consults GOTOOLCHAIN and downloads a toolchain whenever a
+    /// version above the installed one is demanded. Both constants sit at or
+    /// below every `go` that could do that: 1.21 is the oldest release with the
+    /// toolchain machinery at all, so `installed >= 1.21 >= MEMBER_GO` holds
+    /// for anything able to switch, and anything older has no switch to make.
+    /// Deliberately not derived from `go env GOVERSION` — the pair must not
+    /// move from machine to machine, or a failure reads differently everywhere.
+    const PINNED_GO: &str = "1.20";
+    const MEMBER_GO: &str = "1.21";
+
+    /// Fixture shared by the primary-path tests: an existing managed go.work
+    /// pinned at `PINNED_GO`, one member declaring the higher `MEMBER_GO`.
+    /// `go work use` raises the pin to the member's requirement unless rwv puts
+    /// it back.
+    fn seed_pin_below_member(root: &Path) {
+        write_file(
+            root,
+            "go.work",
+            &format!(
+                "go {PINNED_GO}\n\n// managed by repoweave\nuse (\n\t./github/test/repoweave\n)\n"
+            ),
+        );
+        write_file(
+            root,
+            "github/test/repoweave/go.mod",
+            &format!("module example.com/repoweave\n\ngo {MEMBER_GO}\n"),
+        );
+    }
+
+    fn activate_in(root: &Path) {
+        let manifest = make_manifest_local(vec![("github/test/repoweave", Role::Owned)]);
+        let project = ProjectName::new("test-project");
+        let config = IntegrationConfig::default(); // go_version = None
+        let cache = HashMap::new();
+        let ctx = make_ctx_local(root, &project, &manifest, &config, &cache);
+        GoWork.activate(&ctx).unwrap();
+    }
+
+    // -----------------------------------------------------------------------
+    // Twin of regression_no_downgrade_defaultonly_preserves_existing_go_line,
+    // on the tool path: `go work use` raises the go directive to the member's
+    // requirement as a side effect of adding the module. DefaultOnly says an
+    // existing go-line is preserved unconditionally — on BOTH paths.
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn regression_go_tool_path_preserves_existing_go_line() {
+        if !require_go() {
+            return;
+        }
+
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        seed_pin_below_member(root);
+
+        activate_in(root);
+
+        let text = std::fs::read_to_string(root.join("go.work")).unwrap();
+        assert!(
+            text.contains(&format!("go {PINNED_GO}")),
+            "go {PINNED_GO} must survive `go work use` (DefaultOnly): {text}"
+        );
+        assert!(
+            !text.contains(&format!("go {MEMBER_GO}")),
+            "the member's requirement must not be promoted into the go-line: {text}"
+        );
+        // The member is still in the workspace — the restore must not have
+        // undone the `use` edit the tool was called for.
+        assert!(
+            text.contains("./github/test/repoweave"),
+            "use entry must be present: {text}"
+        );
+        assert!(
+            text.contains("// managed by repoweave"),
+            "marker must be present: {text}"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // The property the twin above is an instance of: which path ran is not
+    // observable in the output. Least-surprise is a global property, so the
+    // same inputs must produce the same file whether or not `go` is installed.
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn primary_and_fallback_agree_byte_for_byte() {
+        if !require_go() {
+            return;
+        }
+
+        // Order is load-bearing: `force_fallback()` latches a thread-local for
+        // the rest of the test, so the tool run has to come first.
+        let primary = TempDir::new().unwrap();
+        seed_pin_below_member(primary.path());
+        activate_in(primary.path());
+
+        let fallback = TempDir::new().unwrap();
+        seed_pin_below_member(fallback.path());
+        force_fallback();
+        activate_in(fallback.path());
+
+        let via_tool = std::fs::read_to_string(primary.path().join("go.work")).unwrap();
+        let via_hand = std::fs::read_to_string(fallback.path().join("go.work")).unwrap();
+        assert_eq!(
+            via_tool, via_hand,
+            "activate must not depend on whether `go` is installed\n\
+             --- primary (go work) ---\n{via_tool}\n\
+             --- fallback (hand-edit) ---\n{via_hand}"
         );
     }
 

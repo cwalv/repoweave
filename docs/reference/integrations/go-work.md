@@ -20,9 +20,15 @@ use (
 )
 ```
 
-The `go` line reflects the maximum Go version declared across the member repos'
-`go.mod` files (`max_go_version()`). The value above is illustrative; your
+The `go` line is seeded from the maximum Go version declared across the member
+repos' `go.mod` files (`max_go_version()`), or from the integration's
+`go-version` setting when you set one. The value above is illustrative; your
 workspace will show whatever version your repos declare.
+
+The seed applies only when `go.work` has no `go` line yet. A version already in
+the file is yours: repoweave neither raises nor lowers it, whether or not `go`
+is on PATH. If your pin sits below what a member's `go.mod` requires, `rwv
+doctor` reports the incompatibility instead of rewriting the pin.
 
 Generated in the project directory, symlinked to the weave directory. Committable. The corresponding `go.sum` is produced by the Go toolchain and is also committable persistent state.
 
