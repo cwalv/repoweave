@@ -468,6 +468,27 @@ pub enum CheckViolation {
         /// Submodule paths (relative to the repo root) that are empty on disk.
         empty_paths: Vec<String>,
     },
+
+    /// A `.gitattributes` line in a managed repo assigns an `rwv-`-prefixed
+    /// merge driver that rwv does not define
+    /// (`docs/repoweave/regenerable-regions.md` D4).
+    ///
+    /// The line reads like a working derived-content declaration and does
+    /// nothing: git resolves `merge=<name>` through `merge.<name>.driver`
+    /// config, and falls back to a textual 3-way merge — silently — when no
+    /// config defines the name. The `rwv-` prefix is what makes this
+    /// diagnosable rather than presumptuous: that namespace is rwv's, so a
+    /// name inside it that rwv does not define is one nothing will ever
+    /// define. Warning severity, report-only.
+    PhantomMergeDriver {
+        /// Manifest-relative path to the repo whose `.gitattributes` carries
+        /// the line (a member repo, or `projects/<name>` for a project repo).
+        repo: RepoPath,
+        /// The path pattern the line assigns the driver to.
+        pattern: String,
+        /// The `rwv-`-prefixed driver name that resolves to nothing.
+        driver: String,
+    },
 }
 
 /// Classification of an orphaned savepoint, controlling `--fix` policy.
@@ -1321,6 +1342,18 @@ pub enum ViolationOutput {
         /// Submodule paths (relative to the repo root) that are empty on disk.
         empty_paths: Vec<String>,
     },
+
+    /// See [`CheckViolation::PhantomMergeDriver`].
+    PhantomMergeDriver {
+        /// Manifest-relative path to the repo carrying the `.gitattributes`.
+        path: String,
+        /// Absolute path to that repo on disk.
+        absolute_path: String,
+        /// The path pattern the offending line assigns the driver to.
+        pattern: String,
+        /// The `rwv-`-prefixed driver name that resolves to nothing.
+        driver: String,
+    },
 }
 
 /// Wire representation of [`crate::integrations::cargo_workspace::CargoSkewOccurrence`].
@@ -1645,6 +1678,16 @@ impl ViolationOutput {
                     empty_paths,
                 }
             }
+            CheckViolation::PhantomMergeDriver {
+                repo,
+                pattern,
+                driver,
+            } => Self::PhantomMergeDriver {
+                absolute_path: abs(workspace_dir, &repo),
+                path: repo.to_string(),
+                pattern,
+                driver,
+            },
         }
     }
 }
@@ -2787,6 +2830,147 @@ pub fn scan_provenance(workspace_dir: &Path, projects: &[Project]) -> Vec<CheckV
     }
 
     violations
+}
+
+// ---------------------------------------------------------------------------
+// Phantom merge-driver scanning
+// ---------------------------------------------------------------------------
+
+/// The namespace prefix that makes a merge-driver name rwv's to account for.
+///
+/// Only rwv writes `merge=rwv-…` and only rwv defines `merge.rwv-….driver`
+/// (the pairing argued for in `git.rs`'s replay-exclusion preamble), so a name
+/// inside this prefix that rwv does not define is one nothing else will define
+/// either. Names outside it belong to the repo and are none of doctor's
+/// business.
+const RWV_MERGE_DRIVER_PREFIX: &str = "rwv-";
+
+/// `true` when `name` is a merge driver rwv can define.
+///
+/// Answered against rwv's own vocabulary — the names this code knows how to
+/// define — and deliberately NOT against `merge.<name>.driver` in the repo's
+/// config. rwv supplies that definition two ways: durably, via
+/// [`crate::git::plant_rwv_merge_driver_config`], and per-invocation, via the
+/// `-c` flags a stated derived-content policy contributes to a single git
+/// command. The second leaves nothing on disk to detect, so a config probe
+/// would answer "no such driver" for a name rwv defines every time it replays,
+/// and the verdict would turn on which commands happened to run last in that
+/// repo. The static answer holds in every repo at every moment, which is what
+/// a check the operator is meant to act on needs.
+fn rwv_defines_merge_driver(name: &str) -> bool {
+    name == crate::git::RWV_MERGE_DRIVER_NAME
+}
+
+/// Scan managed repos for `.gitattributes` lines that assign an
+/// `rwv-`-prefixed merge driver rwv does not define
+/// (`docs/repoweave/regenerable-regions.md` D4).
+///
+/// A `<path> merge=<driver>` line is inert unless some config git can see
+/// defines `merge.<driver>.driver`; git falls back to an ordinary textual
+/// 3-way merge and says nothing about it. Under the `rwv-` prefix that
+/// fallback is permanent (see [`RWV_MERGE_DRIVER_PREFIX`]), so the line is a
+/// declaration that reads as working and never will. Naming it is the loud
+/// direction D4 asks for.
+///
+/// **Only that direction.** A derived path carrying no attribute is NOT a
+/// finding: which paths a repo declares derived is the repo's own business
+/// (D1 — declaration is per-repo, opt-in). The single standing exception
+/// predates this scan and stays exactly where it is: `rwv.lock`, which
+/// `rwv init` writes and `rwv doctor --fix` repairs.
+///
+/// Reads the working-tree `.gitattributes`, like
+/// [`Vcs::has_replay_exclusion`](crate::vcs::Vcs::has_replay_exclusion): the
+/// operator's next commit is the one worth catching, and a file read costs no
+/// subprocess. Report-only — repairing a phantom means guessing whether the
+/// operator meant `rwv-ours` or meant nothing at all.
+///
+/// Each repo is scanned once even when several projects list it.
+pub fn scan_phantom_merge_drivers(
+    workspace_dir: &Path,
+    projects: &[Project],
+) -> Vec<CheckViolation> {
+    let mut violations = Vec::new();
+    let mut scanned: BTreeSet<RepoPath> = BTreeSet::new();
+
+    for project in projects {
+        // The project repo carries `.gitattributes` too — it is where the
+        // lock's own declaration lives — and is not a manifest entry.
+        let project_repo = RepoPath::new(format!("projects/{}", project.name)).ok();
+        for repo in project_repo
+            .iter()
+            .chain(project.manifest.iter_repo_paths())
+        {
+            if !scanned.insert(repo.clone()) {
+                continue;
+            }
+            let attrs = workspace_dir.join(repo.as_path()).join(".gitattributes");
+            // Absent (the common case) or unreadable: nothing is declared
+            // here, which this check has no opinion about.
+            let Ok(contents) = std::fs::read_to_string(&attrs) else {
+                continue;
+            };
+            for (pattern, driver) in phantom_merge_drivers_in(&contents) {
+                violations.push(CheckViolation::PhantomMergeDriver {
+                    repo: repo.clone(),
+                    pattern,
+                    driver,
+                });
+            }
+        }
+    }
+
+    violations
+}
+
+/// Extract `(pattern, driver)` for every `.gitattributes` line assigning an
+/// `rwv-`-prefixed merge driver rwv does not define.
+///
+/// At most one finding per line: git resolves repeated assignments of one
+/// attribute on a single line last-wins, so the last `merge=` token is what
+/// the line means. Across lines it does not resolve pattern overlap — each
+/// line is a declaration the operator wrote, and a phantom on any of them is
+/// a mistake worth naming even if a later line would win for some path.
+fn phantom_merge_drivers_in(contents: &str) -> Vec<(String, String)> {
+    let mut found = Vec::new();
+    for line in contents.lines() {
+        let line = line.trim();
+        // Blank, comment, or a macro definition (`[attr]name …`), which
+        // declares an attribute rather than assigning one to a path.
+        if line.is_empty() || line.starts_with('#') || line.starts_with('[') {
+            continue;
+        }
+        let Some((pattern, attrs)) = split_attribute_line(line) else {
+            continue;
+        };
+        let effective_driver = attrs
+            .split_whitespace()
+            .filter_map(|token| token.strip_prefix("merge="))
+            .next_back();
+        if let Some(driver) = effective_driver {
+            if driver.starts_with(RWV_MERGE_DRIVER_PREFIX) && !rwv_defines_merge_driver(driver) {
+                found.push((pattern.to_owned(), driver.to_owned()));
+            }
+        }
+    }
+    found
+}
+
+/// Split a `.gitattributes` line into its path pattern and the attribute
+/// tokens that follow, honouring the double-quoted form gitattributes(5)
+/// allows for patterns containing spaces (`"a path/*" merge=rwv-ours`).
+///
+/// Escapes inside a quoted pattern are not interpreted: the pattern is
+/// reported back to the operator, not matched against paths, so the raw text
+/// between the quotes is the useful thing to show.
+fn split_attribute_line(line: &str) -> Option<(&str, &str)> {
+    if let Some(rest) = line.strip_prefix('"') {
+        let end = rest.find('"')?;
+        Some((&rest[..end], rest[end + 1..].trim_start()))
+    } else {
+        let mut parts = line.splitn(2, char::is_whitespace);
+        let pattern = parts.next()?;
+        Some((pattern, parts.next().unwrap_or("").trim_start()))
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -6158,6 +6342,27 @@ pub fn violations_to_issues(violations: Vec<CheckViolation>) -> Vec<Issue> {
                         ),
                     )
                 }
+                CheckViolation::PhantomMergeDriver {
+                    repo,
+                    pattern,
+                    driver,
+                } => {
+                    // No fix: `rwv-ours` is a guess at what the operator meant,
+                    // and deleting the line is a guess that they meant nothing.
+                    safe_to_fix = false;
+                    (
+                        crate::integration::Severity::Warning,
+                        format!(
+                            "{repo}: .gitattributes assigns merge driver `{driver}` to \
+                             `{pattern}`, but rwv defines no driver by that name — the \
+                             `rwv-` prefix is rwv's, so nothing else defines it either \
+                             and the line silently does nothing (git falls back to a \
+                             textual merge). Use `merge={defined}` for a derived path \
+                             whose target-side copy should win, or drop the line",
+                            defined = crate::git::RWV_MERGE_DRIVER_NAME,
+                        ),
+                    )
+                }
             };
             Issue {
                 integration: "core".into(),
@@ -7094,6 +7299,12 @@ pub fn run_check(
     // Provenance checks: origin-url-mismatch and lock-sha-unreachable.
     // Always report-only (no --fix path).
     for v in scan_provenance(&workspace_dir, &input.projects) {
+        violations.push(v);
+    }
+
+    // Phantom `merge=rwv-*` attributes (regenerable-regions.md D4): a
+    // declaration naming a driver rwv does not define. Report-only.
+    for v in scan_phantom_merge_drivers(&workspace_dir, &input.projects) {
         violations.push(v);
     }
 
@@ -8432,6 +8643,12 @@ fn collect_doctor_violations(
     // Provenance checks: origin-url-mismatch and lock-sha-unreachable.
     // Always report-only (no --fix path).
     for v in scan_provenance(&workspace_dir, &input.projects) {
+        violations.push(v);
+    }
+
+    // Phantom `merge=rwv-*` attributes (regenerable-regions.md D4). Same
+    // scan, same scoping as the text channel; report-only there and here.
+    for v in scan_phantom_merge_drivers(&workspace_dir, &input.projects) {
         violations.push(v);
     }
 

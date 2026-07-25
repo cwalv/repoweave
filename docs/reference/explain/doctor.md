@@ -205,7 +205,7 @@ severity. Under `--json`, output is the envelope:
 ```
 
 The `$schema` URL points to the committed schema artifact. Variants are
-discriminated by the `kind` tag — `branch-discipline`, `cargo-patch-shadowing`, `cargo-version-skew`, `clone-topology`, `dangling-active-project`, `dangling-ref-receipt`, `dangling-reference`, `dead-op-lease`, `incomplete-lock`, `index-drift`, `legacy-role-primary`, `legacy-workweave-index`, `legacy-workweave-marker`, `missing-canonical-clone`, `missing-replay-exclusion`, `missing-role`, `orphaned-clone`, `orphaned-savepoint`, `pre-flat-ref-receipt`, `provenance`, `stale-lock`, `stale-op-state`, `stale-worktree-registration`, `uninitialized-submodule`, `unparseable-project`, `weave-root-identity-conflict`, `working-tree-drift`, `workweave-drift`, `workweave-tree-integrity`.
+discriminated by the `kind` tag — `branch-discipline`, `cargo-patch-shadowing`, `cargo-version-skew`, `clone-topology`, `dangling-active-project`, `dangling-ref-receipt`, `dangling-reference`, `dead-op-lease`, `incomplete-lock`, `index-drift`, `legacy-role-primary`, `legacy-workweave-index`, `legacy-workweave-marker`, `missing-canonical-clone`, `missing-replay-exclusion`, `missing-role`, `orphaned-clone`, `orphaned-savepoint`, `phantom-merge-driver`, `pre-flat-ref-receipt`, `provenance`, `stale-lock`, `stale-op-state`, `stale-worktree-registration`, `uninitialized-submodule`, `unparseable-project`, `weave-root-identity-conflict`, `working-tree-drift`, `workweave-drift`, `workweave-tree-integrity`.
 Every per-repo variant carries `path` (manifest-relative) and
 `absolute_path` (fully resolved). Variants with subkinds
 (`branch-discipline`, `clone-topology`, `dead-op-lease`, `index-drift`, `orphaned-savepoint`, `provenance`, `weave-root-identity-conflict`, `working-tree-drift`, `workweave-drift`, `workweave-tree-integrity`) carry an additional `sub_kind` field.
@@ -1847,6 +1847,41 @@ Schema:
               "type": "string"
             }
           }
+        },
+        {
+          "description": "See `CheckViolation::PhantomMergeDriver`.",
+          "type": "object",
+          "required": [
+            "absolute_path",
+            "driver",
+            "kind",
+            "path",
+            "pattern"
+          ],
+          "properties": {
+            "absolute_path": {
+              "description": "Absolute path to that repo on disk.",
+              "type": "string"
+            },
+            "driver": {
+              "description": "The `rwv-`-prefixed driver name that resolves to nothing.",
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "enum": [
+                "phantom-merge-driver"
+              ]
+            },
+            "path": {
+              "description": "Manifest-relative path to the repo carrying the `.gitattributes`.",
+              "type": "string"
+            },
+            "pattern": {
+              "description": "The path pattern the offending line assigns the driver to.",
+              "type": "string"
+            }
+          }
         }
       ]
     },
@@ -2139,6 +2174,15 @@ rwv doctor --fix
   `rwv doctor --fix` to add or migrate the line — the migration path also
   commits the change (skipping the commit when the repo has other staged
   work).
+- *phantom-merge-driver* — a `.gitattributes` line in a managed repo assigns
+  an `rwv-`-prefixed merge driver rwv does not define. Git resolves
+  `merge=<name>` through `merge.<name>.driver` config and falls back to a
+  textual merge, silently, when nothing defines the name — and only rwv
+  writes or defines names under the `rwv-` prefix, so the line will never do
+  anything. Report-only: use `merge=rwv-ours` for a derived path whose
+  target-side copy should win during replay, or drop the line. The inverse is
+  deliberately not reported — declaring a path derived is each repo's own
+  choice.
 - *legacy-role-primary* — a project `rwv.yaml` still uses `role: primary`
   (renamed to `role: owned`; the back-compat alias has since been dropped).
   Run `rwv doctor --fix` to migrate every affected manifest in place;

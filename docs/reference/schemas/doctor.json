@@ -1607,6 +1607,41 @@
               "type": "string"
             }
           }
+        },
+        {
+          "description": "See [`CheckViolation::PhantomMergeDriver`].",
+          "type": "object",
+          "required": [
+            "absolute_path",
+            "driver",
+            "kind",
+            "path",
+            "pattern"
+          ],
+          "properties": {
+            "absolute_path": {
+              "description": "Absolute path to that repo on disk.",
+              "type": "string"
+            },
+            "driver": {
+              "description": "The `rwv-`-prefixed driver name that resolves to nothing.",
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "enum": [
+                "phantom-merge-driver"
+              ]
+            },
+            "path": {
+              "description": "Manifest-relative path to the repo carrying the `.gitattributes`.",
+              "type": "string"
+            },
+            "pattern": {
+              "description": "The path pattern the offending line assigns the driver to.",
+              "type": "string"
+            }
+          }
         }
       ]
     },

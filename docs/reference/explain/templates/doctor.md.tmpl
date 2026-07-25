@@ -282,6 +282,15 @@ rwv doctor --fix
   `rwv doctor --fix` to add or migrate the line — the migration path also
   commits the change (skipping the commit when the repo has other staged
   work).
+- *phantom-merge-driver* — a `.gitattributes` line in a managed repo assigns
+  an `rwv-`-prefixed merge driver rwv does not define. Git resolves
+  `merge=<name>` through `merge.<name>.driver` config and falls back to a
+  textual merge, silently, when nothing defines the name — and only rwv
+  writes or defines names under the `rwv-` prefix, so the line will never do
+  anything. Report-only: use `merge=rwv-ours` for a derived path whose
+  target-side copy should win during replay, or drop the line. The inverse is
+  deliberately not reported — declaring a path derived is each repo's own
+  choice.
 - *legacy-role-primary* — a project `rwv.yaml` still uses `role: primary`
   (renamed to `role: owned`; the back-compat alias has since been dropped).
   Run `rwv doctor --fix` to migrate every affected manifest in place;
