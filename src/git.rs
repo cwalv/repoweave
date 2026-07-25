@@ -2,9 +2,9 @@
 
 use crate::manifest::Role;
 use crate::vcs::{
-    CommitSummary, ConflictOp, HeadObservation, LocalRefName, PreAbortRef, PublishRef, RawRefName,
-    RefName, RemoteDefaultBranch, ResolvedRevisionId, UniqueDiff, Vcs, VcsError,
-    VerifiedRestoreOutcome,
+    CommitSummary, ConflictOp, HeadAttachment, HeadObservation, LocalRefName, PreAbortRef,
+    PublishRef, RawRefName, RefName, RemoteDefaultBranch, ResolvedRevisionId, UniqueDiff, Vcs,
+    VcsError, VerifiedRestoreOutcome,
 };
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -797,12 +797,16 @@ impl Vcs for GitVcs {
             Err(VcsError::CommandFailed { stderr, .. })
                 if stderr.contains("ambiguous argument") =>
             {
-                // Unborn HEAD: git cannot resolve HEAD because the repo has no
-                // commits yet. `git symbolic-ref --short HEAD` succeeds (returns
-                // the branch name) even with no commits, so we use it to
-                // distinguish this state from a detached or corrupted HEAD.
-                let branch_hint = Self::run(&["symbolic-ref", "--short", "HEAD"], repo)
-                    .unwrap_or_else(|_| "(unknown)".to_string());
+                // git cannot resolve HEAD. Whether that is because the repo
+                // has no commits yet is a question about HEAD's state, so it
+                // is asked where such questions are answered — this arm only
+                // renders the result. (`head_attachment` distinguishes unborn
+                // from detached from broken; anything other than unborn
+                // leaves the hint unnamed, exactly as before.)
+                let branch_hint = match self.head_attachment(repo) {
+                    Ok(HeadAttachment::Unborn(u)) => u.name().to_string(),
+                    _ => "(unknown)".to_owned(),
+                };
                 Err(VcsError::CommandFailed {
                     args: vec!["rev-parse".to_owned(), "HEAD".to_owned()],
                     repo: repo.to_path_buf(),
@@ -2262,8 +2266,7 @@ mod branch_model_tests {
     use super::*;
     use crate::vcs::{
         DeletionWarrant, DetachConsent, DiscardLocalCommitsConsent, DiscardUnmergedConsent,
-        DiscardWarrant, HeadAttachment, LocalRefName, OwnedRef, RawRefName, ReattachConsent,
-        TrackingRef,
+        DiscardWarrant, OwnedRef, RawRefName, ReattachConsent, TrackingRef,
     };
 
     /// A local branch name, obtained the only way one can be: through the

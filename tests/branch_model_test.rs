@@ -186,6 +186,22 @@ fn head_attachment_kinds_are_distinguishable_in_json_output() {
     assert_eq!(err.kind(), "not-a-repo");
 }
 
+#[test]
+fn head_revision_still_names_the_unborn_branch_it_no_longer_detects_itself() {
+    // The unborn detection moved to `head_attachment`, where the question
+    // about HEAD's state is asked. `head_revision` asks a different question
+    // ("what commit is HEAD") and renders the classification rather than
+    // re-deriving it, so the operator-facing message is unchanged.
+    let repo = empty_repo();
+
+    let err = GitVcs.head_revision(repo.path()).unwrap_err();
+    let text = err.to_string();
+    assert!(
+        text.contains("unborn HEAD") && text.contains("on branch 'main'"),
+        "expected the unborn message to name the branch, got: {text}"
+    );
+}
+
 // ---------------------------------------------------------------------------
 // §4.3 — MOVE takes a witness, and the witness carries its repo
 // ---------------------------------------------------------------------------
