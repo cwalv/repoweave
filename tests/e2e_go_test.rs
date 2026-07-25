@@ -183,6 +183,74 @@ repositories:\n  \
     );
 }
 
+/// Regression: on the primary path (real `go` on PATH), activate() must not
+/// touch an existing go-line via `go work edit -go=<v>`. Before the fix,
+/// `go_version_override` (here: max_go_version across members) was passed to
+/// `go work edit -go=<v>` unconditionally, silently downgrading a go.work
+/// whose go-line is higher than every member's go.mod.
+#[test]
+fn go_primary_path_preserves_existing_go_line_no_downgrade() {
+    require_go!();
+
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+
+    std::fs::create_dir_all(root.join("github")).unwrap();
+    std::fs::create_dir_all(root.join("projects")).unwrap();
+
+    // A single Go module whose go.mod pins a lower version than the
+    // pre-existing go.work below.
+    let protocol_dir = root.join("github/chatly/protocol");
+    std::fs::create_dir_all(&protocol_dir).unwrap();
+    common::git()
+        .args(["init", "-q"])
+        .current_dir(&protocol_dir)
+        .status()
+        .expect("git init protocol");
+    std::fs::write(
+        protocol_dir.join("go.mod"),
+        "module github.com/chatly/protocol\n\ngo 1.21\n",
+    )
+    .unwrap();
+
+    let project_dir = root.join("projects/web-app");
+    std::fs::create_dir_all(&project_dir).unwrap();
+
+    let rwv_yaml = "\
+repositories:\n  \
+  github/chatly/protocol:\n    \
+    type: git\n    \
+    url: https://github.com/chatly/protocol.git\n    \
+    version: main\n    \
+    role: owned\n";
+    std::fs::write(project_dir.join("rwv.yaml"), rwv_yaml).unwrap();
+
+    // Pre-seed go.work with a go-line ABOVE the max across members
+    // (1.24 > 1.21), already carrying the ownership marker so activate()
+    // takes the normal (non-user-held) path.
+    std::fs::write(
+        project_dir.join("go.work"),
+        "go 1.24\n\n// managed by repoweave\nuse (\n\t./github/chatly/protocol\n)\n",
+    )
+    .unwrap();
+
+    std::fs::write(root.join(".rwv-active"), "web-app\n").unwrap();
+    {
+        let ctx = repoweave::workspace::WorkspaceContext::resolve(root, None).unwrap();
+        repoweave::activate::activate_intent("web-app", &ctx).expect("activate should succeed");
+    }
+
+    let go_work_content = std::fs::read_to_string(root.join("go.work")).unwrap();
+    assert!(
+        go_work_content.contains("go 1.24"),
+        "existing go-line must survive on the primary path, got:\n{go_work_content}"
+    );
+    assert!(
+        !go_work_content.contains("go 1.21"),
+        "must not downgrade the go-line to the member max, got:\n{go_work_content}"
+    );
+}
+
 // ---------------------------------------------------------------------------
 // Helper: run a git command and assert success, returning stdout.
 // ---------------------------------------------------------------------------

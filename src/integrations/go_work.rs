@@ -3,9 +3,11 @@
 //! # Strategy
 //!
 //! **PRIMARY** (when `go` is on PATH and `FORCE_GOWORK_FALLBACK` thread-local
-//! is not set in tests): call `go work edit -go=<v>`, `go work use ./<dir>`,
-//! and `go work edit -dropuse=./<old>`.  The `go` tool round-trips
-//! `replace`/`toolchain`/`godebug` and all comments via x/mod/modfile.
+//! is not set in tests): `go work use ./<dir>` and `go work edit
+//! -dropuse=./<old>` always run; `go work edit -go=<v>` runs only when the
+//! pre-edit file has no go-line yet (DefaultOnly, mirroring FALLBACK below).
+//! The `go` tool round-trips `replace`/`toolchain`/`godebug` and all comments
+//! via x/mod/modfile.
 //!
 //! **FALLBACK** (no `go` on PATH, or forced in tests): use
 //! [`GoWorkDoc::merge_activate`] / [`strip_deactivate`].  Edits the `use (…)`
@@ -19,12 +21,11 @@
 //!
 //! # max_go_version
 //!
-//! Used for both the `go work edit -go=<v>` primary path and as the DefaultOnly
-//! go-version default on the fallback path when config does not supply one.
-//! The `["go"]` entry is `Ownership::DefaultOnly`, so if a go-line is already
-//! present in the file it is preserved unconditionally — `max_go_version` only
-//! takes effect on a fresh (greenfield) or go-line-absent file.  This replaces
-//! the old `config.go_version.is_some()` guard that blocked the downgrade.
+//! Used on both paths as the DefaultOnly go-version default when config does
+//! not supply one. The `["go"]` entry is `Ownership::DefaultOnly` on PRIMARY
+//! and FALLBACK alike: if a go-line is already present in the file it is
+//! preserved unconditionally — `max_go_version` only takes effect on a fresh
+//! (greenfield) or go-line-absent file.
 //!
 //! # Deactivate
 //!
@@ -129,11 +130,10 @@ impl Integration for GoWork {
         // Parse per-integration config (tolerates absent block).
         let cfg: GoWorkConfig = ctx.config.settings().unwrap_or_default();
 
-        // Determine the go-version to write, if any.
-        // When config sets go_version, use that (validated/pinned by operator).
-        // Otherwise fall back to max_go_version across members (PRIMARY path
-        // passes this to `go work edit -go=<v>`; FALLBACK only writes it when
-        // config explicitly set it — fixing the "hardcoded 1.21" downgrade bug).
+        // Determine the go-version default, if any: explicit config wins,
+        // else the max across member go.mod files. Both paths apply this as
+        // Ownership::DefaultOnly — only when the target file's go-line is
+        // currently absent; an existing go-line is never overwritten.
         let go_version_override: Option<String> = cfg
             .go_version
             .clone()
@@ -288,6 +288,14 @@ fn activate_via_go_tool(
     }
     // If neither exists, `go work init` (below) will create work_tmp.
 
+    // Ownership::DefaultOnly for the go-line: `go_version` is written only
+    // when absent here, checked before `go work init` seeds its own
+    // (toolchain-version) go-line into a fresh file.
+    let go_line_absent = !std::fs::read_to_string(&work_tmp)
+        .ok()
+        .and_then(|text| GoWorkDoc::parse(&text).ok())
+        .is_some_and(|doc| doc.key_present(&keypath(["go"])));
+
     // Initialize go.work at workspace_root if needed.
     if !work_tmp.exists() {
         let status = Command::new("go")
@@ -299,8 +307,7 @@ fn activate_via_go_tool(
         }
     }
 
-    // Set the go version if we have one.
-    if let Some(ver) = go_version {
+    if let (Some(ver), true) = (go_version, go_line_absent) {
         let status = Command::new("go")
             .args(["work", "edit", &format!("-go={ver}")])
             .current_dir(workspace_root)
