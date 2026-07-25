@@ -82,13 +82,18 @@ Read `rwv.lock` and align clones to it. Bootstrap when lock is absent.
 Two modes, keyed on whether `<source>` is given:
 
 - **With `<source>`** — a URL (`https://…`, `git@…`, `owner/repo`, or the project name for a `--provider`-configured registry): the *bootstrap* mode. Clones the project repo from `<source>` into the current directory, reads its committed `rwv.lock`, and clones every listed manifest repo to its canonical slot.
-- **No `<source>`** — the *in-place repair* mode: re-materialize missing manifest members in the current workspace. Uses the existing `rwv.yaml` and `rwv.lock`; clones any repo whose canonical directory is absent (the `MissingCanonicalClone` / `DanglingReference` findings from `rwv doctor` point here); leaves already-materialized repos alone. Run from the workspace root.
+- **No `<source>`** — the *in-place repair* mode: re-materialize missing manifest members in the current workspace. Uses the existing `rwv.yaml` and `rwv.lock`; clones any repo whose canonical directory is absent (the `MissingCanonicalClone` / `DanglingReference` findings from `rwv doctor` point here). Run from the workspace root.
+
+An already-present clone is **realigned, not skipped**: when the lock covers the repo, `fetch` checks out the locked revision from that clone's own object store, which leaves it on a detached HEAD (the branch ref is not moved). No network fetch happens for a present clone, so a locked revision missing from the local object store is an error, not a re-fetch. When the lock has no entry for the repo, or there is no lock at all, the clone is left as it is and the lock records its current HEAD. Because `rwv sync-to` refuses to land onto a detached target, `git checkout <branch>` in the member is what puts it back on its branch.
+
+Realignment refuses when it would detach a branch carrying uncommitted changes or unpushed commits; `--detach-working-branch` waives that refusal (it discards nothing — the changes come along and the branch ref keeps its commits).
 
 | Flag | Effect |
 |---|---|
 | `--frozen` | Error if lock is incomplete; never advance. Suitable for CI |
 | `--allow-non-empty-dir` | Bootstrap into a non-empty directory that is not a workspace |
-| `--role` / `--repo` | Selector filters (see [Selector grammar](#selector-grammar)) |
+| `--detach-working-branch` | Realign a present clone even when that detaches a branch with work in flight |
+| `--role` / `--repo` | Selector filters (see [Selector grammar](#selector-grammar)). A filtered run skips the lock write |
 | `-j N` | Parallel per-repo workers (default: min(nproc, 8)) |
 | `--json` | Structured output / NDJSON when `-j N` with `N > 1` |
 

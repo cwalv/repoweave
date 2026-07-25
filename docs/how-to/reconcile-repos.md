@@ -49,7 +49,7 @@ When `rwv status` shows `[missing]` and `rwv doctor` reports a `dangling referen
 rwv fetch
 ```
 
-Run from the workspace root (where `.rwv-active` lives). `rwv fetch` leaves already-present clones untouched and only acts on absent ones. After it completes, verify:
+Run from the workspace root (where `.rwv-active` lives). It does not act only on the absent ones: a present clone the lock covers is realigned too, which detaches its HEAD — see [What `rwv fetch` does not do](#what-rwv-fetch-does-not-do) below. After it completes, verify:
 
 ```bash
 rwv doctor --locked
@@ -62,7 +62,8 @@ rwv doctor --locked
 `rwv fetch` with no source is the in-place repair mode. It:
 
 - Clones repos whose canonical directory is absent, pinning to the lock revision.
-- Checks out the lock revision in repos that already exist, if their current HEAD differs.
+- Checks out the lock revision in repos that already exist — by revision, so the clone ends up on a detached HEAD even when it was already at that commit. The branch ref is not moved; `git checkout <branch>` puts the repo back on it.
+- Refuses that checkout for a repo whose branch holds uncommitted changes or unpushed commits, unless `--detach-working-branch` is passed.
 - Does **not** fetch from the network when the lock SHA is already in the local object store.
 - Does **not** advance lock entries — the lock is read-only during fetch; see [lock-as-derived](../explanation/joints/lock-as-derived.md).
 

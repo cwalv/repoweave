@@ -9,7 +9,7 @@ use crate::manifest::{LockFile, Manifest, RepoEntry, RepoPath, Role};
 use crate::parallel::{run_in_parallel, Reporter};
 use crate::registry;
 use crate::selector::RepoFilter;
-use crate::vcs::Vcs;
+use crate::vcs::{ResolvedRevisionId, Vcs, VcsError};
 use crate::workspace::{Resolution, WorkspaceContext};
 use anyhow::{bail, Context};
 use schemars::JsonSchema;
@@ -94,8 +94,8 @@ pub enum FetchMode {
     /// Read rwv.lock, align clones, bootstrap or add missing entries
     /// additively. Auto-activates the project on first fetch.
     Default,
-    /// Like Default, but error if the lock would change at all
-    /// (including missing entries). No bootstrap.
+    /// Like Default, but error when the lock is absent or incomplete
+    /// rather than writing it. Clones are aligned the same way.
     Frozen,
 }
 
@@ -186,11 +186,13 @@ enum FetchOutcome {
 ///   [...] }` envelope to stdout after all repos complete.
 /// - `jobs > 1`: streams one self-describing NDJSON line per repo to stdout
 ///   as each worker finishes, then emits no envelope wrapper.
+#[allow(clippy::too_many_arguments)]
 pub fn run_fetch(
     source: &str,
     workspace_root: &Path,
     mode: FetchMode,
     no_reference: bool,
+    detach_working_branch: bool,
     filter: &RepoFilter,
     jobs: usize,
     json: bool,
@@ -232,6 +234,7 @@ pub fn run_fetch(
         workspace_root,
         mode,
         no_reference,
+        detach_working_branch,
         filter,
         jobs,
         json,
@@ -249,6 +252,14 @@ pub fn run_fetch(
 /// This is the settled repair verb for a dangling reference: no SOURCE
 /// argument, resolves the workspace from CWD, iterates the active project's
 /// manifest, and clones any repo whose canonical clone directory is missing.
+///
+/// A clone that is already present is realigned rather than skipped: when the
+/// lock covers it, [`fetch_one`] resolves the locked revision in that clone's
+/// own object store and checks it out, which detaches HEAD. Realignment is
+/// gated by [`refuse_if_realign_detaches_unpublished_work`] unless
+/// `detach_working_branch` is set. When the lock has no entry for the repo,
+/// or there is no lock, the clone is left alone and the lock records its
+/// current HEAD.
 ///
 /// Clone-topology (I1): the canonical clone always lives at primary's
 /// `<weave>/<repo_path>`, even when this verb is invoked from inside a
@@ -268,6 +279,7 @@ pub fn run_fetch_in_place(
     ctx: &WorkspaceContext,
     mode: FetchMode,
     no_reference: bool,
+    detach_working_branch: bool,
     filter: &RepoFilter,
     jobs: usize,
     json: bool,
@@ -291,6 +303,7 @@ pub fn run_fetch_in_place(
         workspace_root,
         mode,
         no_reference,
+        detach_working_branch,
         filter,
         jobs,
         json,
@@ -319,6 +332,7 @@ fn fetch_project_repos(
     workspace_root: &Path,
     mode: FetchMode,
     no_reference: bool,
+    detach_working_branch: bool,
     filter: &RepoFilter,
     jobs: usize,
     json: bool,
@@ -422,6 +436,7 @@ fn fetch_project_repos(
             workspace_root,
             existing_lock.as_ref(),
             no_reference,
+            detach_working_branch,
             &reporter,
             json,
         );
@@ -669,6 +684,75 @@ fn fetch_project_repos(
     Ok(())
 }
 
+/// Precondition for realigning a clone that is already on disk: the
+/// checkout must not move HEAD off a branch holding work that exists
+/// nowhere else.
+///
+/// Realignment is `git checkout <sha>`, so it always detaches. Detaching is
+/// harmless when the branch is published — the branch ref keeps pointing at
+/// the same commits and `git checkout <branch>` restores the position. It is
+/// not harmless when the branch carries uncommitted changes (which the
+/// checkout drags onto the detached HEAD, where `rwv sync-to` refuses to
+/// land them) or commits the remote has never seen.
+///
+/// Returns the refusal message when the operation must stop. `Ok(())` when
+/// the checkout is a no-op, when HEAD is already detached, or when the
+/// branch is published and clean.
+fn refuse_if_realign_detaches_unpublished_work(
+    git: &GitVcs,
+    repo_path: &RepoPath,
+    dest: &Path,
+    role: Role,
+    target: &ResolvedRevisionId,
+) -> Result<(), String> {
+    let describe = |e: VcsError| format!("{}: {e}", repo_path.as_str());
+
+    let head = git.head_revision(dest).map_err(describe)?;
+    if head.as_str() == target.as_str() {
+        return Ok(());
+    }
+    let Some(branch) = git.current_ref(dest).map_err(describe)? else {
+        return Ok(());
+    };
+
+    let mut unpublished: Vec<String> = Vec::new();
+    if git.has_uncommitted_changes(dest).map_err(describe)? {
+        unpublished.push("uncommitted changes in the working tree".to_owned());
+    }
+    if git
+        .branch_has_remote_counterpart(dest, &branch, role)
+        .map_err(describe)?
+    {
+        let ahead = git
+            .count_commits_ahead_of_remote(dest, &branch, role)
+            .map_err(describe)?;
+        if ahead > 0 {
+            unpublished.push(format!(
+                "{ahead} commit(s) on {} that origin does not have",
+                branch.as_str()
+            ));
+        }
+    } else {
+        unpublished.push(format!(
+            "branch {} has no counterpart on origin — none of its commits are published",
+            branch.as_str()
+        ));
+    }
+
+    if unpublished.is_empty() {
+        return Ok(());
+    }
+    Err(format!(
+        "{}: aligning to {} would detach {} and leave this behind:\n    - {}\n  \
+         commit, push, or stash it — or re-run with --detach-working-branch to \
+         align anyway (the branch ref is not moved)",
+        repo_path.as_str(),
+        target.display_str(),
+        branch.as_str(),
+        unpublished.join("\n    - "),
+    ))
+}
+
 /// Per-repo worker for `rwv fetch`. Encapsulates one iteration of the
 /// previous serial loop body.
 ///
@@ -686,6 +770,7 @@ fn fetch_one(
     workspace_root: &Path,
     existing_lock: Option<&LockFile>,
     no_reference: bool,
+    detach_working_branch: bool,
     reporter: &Reporter<'_>,
     json: bool,
 ) -> FetchOutcome {
@@ -729,6 +814,13 @@ fn fetch_one(
                     };
                 }
             };
+            if !detach_working_branch {
+                if let Err(msg) = refuse_if_realign_detaches_unpublished_work(
+                    git, repo_path, &dest, entry.role, &resolved,
+                ) {
+                    return FetchOutcome::Failed { msg };
+                }
+            }
             if let Err(e) = git.checkout(&dest, &resolved) {
                 return FetchOutcome::Failed {
                     msg: format!(

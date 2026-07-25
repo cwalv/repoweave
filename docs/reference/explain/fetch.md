@@ -24,15 +24,71 @@ missing directory).
 `doctor --fix` intentionally does not auto-clone; network side effects stay
 behind this explicit verb.
 
+### What happens to a clone that is already present
+
+A present clone is not skipped. What `fetch` does to it depends on whether
+the lock covers it:
+
+- **The lock has an entry for the repo.** `fetch` realigns the clone: it
+  resolves the locked revision *in that clone's own object store* and checks
+  it out. The checkout is by revision, so it leaves the clone on a **detached
+  HEAD** — including when the clone was already sitting on that commit, and
+  including when the clone was on a branch. The branch ref is not moved: its
+  commits are still there, just no longer checked out.
+- **The lock exists but has no entry for the repo** (an *incomplete* lock).
+  The clone is left exactly as it is; the repo is recorded in the lock at
+  whatever the clone's HEAD is now. Coverage is additive — pinned entries are
+  never moved.
+- **There is no lock at all** (first-time bootstrap). The clone is left
+  exactly as it is, and the lock is written from the on-disk HEADs.
+
+Realignment is a *local* operation: nothing is fetched over the network for a
+clone that is already present. If the locked revision is not in that clone's
+object store, the repo fails with `revision ... not found` rather than being
+re-fetched — run `git fetch` in that repo and re-run, or re-lock to a
+reachable revision (see the reconcile-repos how-to).
+
+Since realignment detaches, a workspace that has been fetched sits on
+detached HEADs, and `rwv sync-to` refuses to land onto a detached target. Put
+a member back on its branch with `git checkout <branch>` in that repo; use
+`rwv update` when the intent is to move the *lock* forward to branch HEAD
+instead.
+
+### Realignment refuses to detach work in flight
+
+Realigning a present clone is gated: `fetch` refuses when the checkout would
+move HEAD off a branch holding work that exists nowhere else — uncommitted
+changes in the working tree, commits the branch's `origin` counterpart does
+not have, or a branch with no `origin` counterpart at all. The refusal names
+the repo and lists what would be left behind, and that repo is reported as a
+failure while the rest of the run continues.
+
+The gate is deliberately narrow. It does not fire when the clone is clean and
+its branch is published, when HEAD is already detached, or when the clone is
+already at the locked revision — so the ordinary case, including a CI runner
+with a warm clone cache, realigns exactly as before.
+
+`--detach-working-branch` waives it and realigns anyway. Nothing is discarded
+by the waiver: uncommitted changes come along to the detached HEAD, and
+unpushed commits stay reachable from the branch ref.
+
 `--frozen` is the CI mode: if the lock is absent or does not cover every
-manifest repo, the command errors instead of writing. Reference repos that
-fail to clone are skipped without failing the overall run.
+manifest repo (an *incomplete* lock), the command errors instead of writing.
+It changes lock validation only — present clones are realigned exactly as
+they are without it, and the realignment gate still applies. Reference repos
+that fail to clone are skipped without failing the overall run.
+
+A `--role` / `--repo` filter narrows which repos are fetched; the selected
+ones are cloned and realigned as usual, but the whole lock-write step is
+skipped, so neither the bootstrap write nor the additive coverage write
+happens under a filter.
 
 ## Invocation
 
 ```
 rwv fetch [<source>] [--frozen] [--allow-non-empty-dir] [--no-reference]
-          [--role <role>...] [--repo <selector>...] [-j <N>] [--json]
+          [--detach-working-branch] [--role <role>...] [--repo <selector>...]
+          [-j <N>] [--json]
 ```
 
 - `<source>` — optional. Full clone URL or `owner/repo` /
@@ -48,6 +104,9 @@ rwv fetch [<source>] [--frozen] [--allow-non-empty-dir] [--no-reference]
   rejected when `<source>` is absent.
 - `--no-reference` — skip repos with `role: reference` (useful when mirrors
   are offline).
+- `--detach-working-branch` — realign a present clone even when that detaches
+  a branch carrying uncommitted changes or unpushed commits. Without it,
+  those repos refuse.
 - `--role <role>` / `--repo <selector>` — limit the repo fetch to a subset of
   the manifest. Repeat for union. Bare strings match exactly; `re:<pat>` is
   regex; `glob:<pat>` is glob. A filtered fetch does not write the lock.
@@ -193,8 +252,10 @@ Schema:
   errors). Under `--json`, exit `0` means every outcome has `"status": "ok"`
   or `"skipped"`.
 - non-zero — the project repo failed to clone, at least one non-reference
-  repo failed, `--frozen` detected a missing or incomplete lock, or the current
-  directory is not a workspace and `--allow-non-empty-dir` was not passed.
+  repo failed (including a repo whose realignment was refused because it
+  would detach work in flight), `--frozen` detected a missing or incomplete
+  lock, or the current directory is not a workspace and
+  `--allow-non-empty-dir` was not passed.
   Under `--json`,
   the envelope (or NDJSON stream) is emitted before exit even on failure, so
   consumers always get parseable output.
@@ -256,6 +317,13 @@ for `rwv doctor`'s `DanglingReference` finding — no `<source>`):
 rwv fetch
 ```
 
+Realign every present clone to the lock even where that detaches a branch
+with work in flight:
+
+```
+rwv fetch --detach-working-branch
+```
+
 ## Common errors
 
 - *project 'X' already exists at projects/X/* — run `rwv fetch` from a
@@ -272,6 +340,13 @@ rwv fetch
   `rwv.lock`; run without `--frozen` to bootstrap it.
 - *lock file is incomplete* (with `--frozen`) — the lock does not cover all
   manifest repos; update the lock with `rwv update` first.
+- *aligning to … would detach … and leave this behind* — the repo is on a
+  branch holding uncommitted changes or unpushed commits. Commit, push, or
+  stash them, or pass `--detach-working-branch` to realign anyway.
+- *revision … not found in …* — the clone is present but its object store
+  does not have the locked revision, and a present clone is realigned without
+  a network fetch. `git fetch` in that repo, or re-lock to a reachable
+  revision.
 - *repository not found* — the source URL is wrong or the remote is private
   and credentials aren't configured.
 - *network-error* — connectivity issue; retry.

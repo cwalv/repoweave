@@ -135,9 +135,14 @@ const ALLOWLIST: &[Allowed] = &[
         file: "git.rs",
         pattern: "\"checkout\"",
         count: 2,
-        justification: "(1) checkout(): no -f flag, so git itself refuses to \
-            overwrite dirty trees; callers check out lock-pinned revisions \
-            or fresh clones. (2) refresh_working_tree_to_head_if_safe: \
+        justification: "(1) checkout(): no -f flag, so git itself refuses \
+            when the switch would overwrite a modified path; callers check \
+            out lock-pinned revisions or fresh clones, and fetch's \
+            realignment of a present clone additionally refuses up front \
+            when the checkout would detach a branch holding uncommitted \
+            changes or unpushed commits (waived by \
+            --detach-working-branch, which discards nothing). \
+            (2) refresh_working_tree_to_head_if_safe: \
             restores files from HEAD only after verifying every on-disk \
             blob is reachable from recent history — live edits are never \
             clobbered (relocated from sync.rs).",

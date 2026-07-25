@@ -308,8 +308,11 @@ fn main() -> anyhow::Result<()> {
                 Some("fetch") => Some(
                     "`--force` has been renamed on `rwv fetch`.\n\
                      \n\
-                     Use `--allow-non-empty-dir` to bootstrap into a non-empty directory \
-                     that is not a workspace.",
+                     Use the specific override you need:\n\
+                       --allow-non-empty-dir     bootstrap into a non-empty directory \
+                     that is not a workspace\n\
+                       --detach-working-branch   realign a present clone even where that \
+                     detaches a branch holding uncommitted changes or unpushed commits",
                 ),
                 Some("remove") => Some(
                     "`--force` has been renamed on `rwv remove`.\n\
@@ -543,6 +546,7 @@ fn main() -> anyhow::Result<()> {
             frozen,
             allow_non_empty_dir,
             no_reference,
+            detach_working_branch,
             roles,
             repos,
             jobs,
@@ -571,7 +575,16 @@ fn main() -> anyhow::Result<()> {
                         &origin_dir,
                         allow_non_empty_dir,
                     )?;
-                    fetch::run_fetch(&src, &origin_dir, mode, no_reference, &filter, jobs, json)?;
+                    fetch::run_fetch(
+                        &src,
+                        &origin_dir,
+                        mode,
+                        no_reference,
+                        detach_working_branch,
+                        &filter,
+                        jobs,
+                        json,
+                    )?;
                 }
                 None => {
                     // In-place mode: no SOURCE (in-place requires a
@@ -597,7 +610,15 @@ fn main() -> anyhow::Result<()> {
                     // In-place fetch operates on the active project — surface
                     // the pointer-decided target before acting.
                     ctx.emit_target_line();
-                    fetch::run_fetch_in_place(&ctx, mode, no_reference, &filter, jobs, json)?;
+                    fetch::run_fetch_in_place(
+                        &ctx,
+                        mode,
+                        no_reference,
+                        detach_working_branch,
+                        &filter,
+                        jobs,
+                        json,
+                    )?;
                 }
             }
         }

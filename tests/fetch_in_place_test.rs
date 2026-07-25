@@ -7,7 +7,10 @@
 //!
 //! Adversarial coverage per the bead's high test bar:
 //! - missing member re-clone lands at the LOCKED SHA (not branch HEAD)
-//! - present member untouched (mtime/HEAD unchanged)
+//! - present member ALREADY at the locked SHA is not moved (mtime/HEAD
+//!   unchanged) — which is not the same as "present members are untouched":
+//!   a present member whose HEAD differs from the pin IS realigned, and the
+//!   realignment detaches its branch
 //! - missing repo with no lock entry → default branch + additive lock write
 //! - `--repo` filter limits materialization
 //! - end-to-end DanglingReference: doctor reports → fetch → doctor clean
@@ -167,6 +170,43 @@ fn materialize_repo_at(workspace: &Path, repo_path: &str, bare: &Path, sha: &str
     git_run(&["checkout", sha], &dest);
 }
 
+/// Materialize a manifest repo and leave it ON its default branch, at branch
+/// HEAD — the state an operator's clone is normally in, and the one where the
+/// lock pin (an older SHA) and the checked-out commit disagree.
+fn materialize_repo_on_branch(
+    workspace: &Path,
+    repo_path: &str,
+    bare: &Path,
+) -> std::path::PathBuf {
+    let dest = workspace.join(repo_path);
+    if let Some(parent) = dest.parent() {
+        std::fs::create_dir_all(parent).unwrap();
+    }
+    git_run(
+        &["clone", &bare.to_string_lossy(), &dest.to_string_lossy()],
+        workspace.parent().unwrap_or(workspace),
+    );
+    git_run(&["config", "user.email", "test@test.com"], &dest);
+    git_run(&["config", "user.name", "Test"], &dest);
+    dest
+}
+
+/// `git symbolic-ref --short HEAD`, or `None` when HEAD is detached.
+fn current_branch(repo: &Path) -> Option<String> {
+    let out = common::git()
+        .args(["symbolic-ref", "--short", "HEAD"])
+        .current_dir(repo)
+        .stdout(process::Stdio::piped())
+        .stderr(process::Stdio::null())
+        .output()
+        .expect("git symbolic-ref failed to spawn");
+    if out.status.success() {
+        Some(String::from_utf8(out.stdout).unwrap().trim().to_string())
+    } else {
+        None
+    }
+}
+
 // ============================================================================
 // In-place mode: missing member re-cloned at the LOCKED SHA
 // ============================================================================
@@ -205,11 +245,14 @@ fn in_place_fetch_materializes_missing_member_at_locked_sha() {
 }
 
 // ============================================================================
-// Present member is untouched (no HEAD churn, no re-clone)
+// Present member ALREADY at the locked SHA is not moved (no HEAD churn, no
+// re-clone). Scope note: the fixture leaves the member detached at the pin,
+// so this pins the no-op case only. The realignment cases below cover a
+// present member whose HEAD differs from the pin.
 // ============================================================================
 
 #[test]
-fn in_place_fetch_leaves_present_member_untouched() {
+fn in_place_fetch_leaves_present_member_at_locked_sha_unmoved() {
     let s = setup_workspace_with_locked_project(&["github/acme/a", "github/acme/b"]);
     let (repo_a, bare_a, first_a, _) = &s.repos[0];
     let (_repo_b, _bare_b, _, _) = &s.repos[1];
@@ -245,6 +288,183 @@ fn in_place_fetch_leaves_present_member_untouched() {
         git_config_before, git_config_after,
         "present member's .git/config must not be touched by in-place fetch"
     );
+}
+
+// ============================================================================
+// Present member whose HEAD differs from the pin IS realigned — and the
+// realignment detaches the branch it was on.
+// ============================================================================
+
+#[test]
+fn in_place_fetch_realigns_a_present_member_and_detaches_its_branch() {
+    let s = setup_workspace_with_locked_project(&["github/acme/a"]);
+    let (repo_a, bare_a, first_a, second_a) = &s.repos[0];
+
+    // Present, clean, on main at the SECOND commit; the lock pins the FIRST.
+    let dest_a = materialize_repo_on_branch(&s.workspace, repo_a, bare_a);
+    assert_eq!(current_branch(&dest_a).as_deref(), Some("main"));
+    assert_eq!(git_capture(&["rev-parse", "HEAD"], &dest_a), *second_a);
+
+    rwv()
+        .arg("fetch")
+        .current_dir(&s.workspace)
+        .assert()
+        .success();
+
+    assert_eq!(
+        git_capture(&["rev-parse", "HEAD"], &dest_a),
+        *first_a,
+        "present member must be realigned to the locked SHA"
+    );
+    assert_eq!(
+        current_branch(&dest_a),
+        None,
+        "realigning a present member detaches HEAD off the branch it was on"
+    );
+    assert_eq!(
+        git_capture(&["rev-parse", "main"], &dest_a),
+        *second_a,
+        "the branch ref itself is not moved by the realignment"
+    );
+}
+
+// ============================================================================
+// Precondition: realignment refuses when it would detach a branch carrying
+// work that exists nowhere else, unless --detach-working-branch is passed.
+// ============================================================================
+
+#[test]
+fn in_place_fetch_refuses_to_detach_a_branch_with_uncommitted_changes() {
+    let s = setup_workspace_with_locked_project(&["github/acme/a"]);
+    let (repo_a, bare_a, first_a, second_a) = &s.repos[0];
+
+    let dest_a = materialize_repo_on_branch(&s.workspace, repo_a, bare_a);
+    // Dirt in a path the checkout does NOT touch, so git itself would happily
+    // carry it onto the detached HEAD. The refusal has to be rwv's.
+    std::fs::write(dest_a.join("scratch.txt"), "work in progress\n").unwrap();
+
+    rwv()
+        .arg("fetch")
+        .current_dir(&s.workspace)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("would detach main"))
+        .stderr(predicate::str::contains("uncommitted changes"))
+        .stderr(predicate::str::contains("--detach-working-branch"));
+
+    assert_eq!(
+        current_branch(&dest_a).as_deref(),
+        Some("main"),
+        "the refusal must leave the member on its branch"
+    );
+    assert_eq!(git_capture(&["rev-parse", "HEAD"], &dest_a), *second_a);
+    assert_ne!(git_capture(&["rev-parse", "HEAD"], &dest_a), *first_a);
+}
+
+#[test]
+fn in_place_fetch_refuses_to_detach_a_branch_with_unpushed_commits() {
+    let s = setup_workspace_with_locked_project(&["github/acme/a"]);
+    let (repo_a, bare_a, _first_a, _second_a) = &s.repos[0];
+
+    let dest_a = materialize_repo_on_branch(&s.workspace, repo_a, bare_a);
+    std::fs::write(dest_a.join("README"), "third\n").unwrap();
+    git_run(&["commit", "-am", "third"], &dest_a);
+    let unpushed = git_capture(&["rev-parse", "HEAD"], &dest_a);
+
+    rwv()
+        .arg("fetch")
+        .current_dir(&s.workspace)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "1 commit(s) on main that origin does not have",
+        ));
+
+    assert_eq!(current_branch(&dest_a).as_deref(), Some("main"));
+    assert_eq!(git_capture(&["rev-parse", "HEAD"], &dest_a), unpushed);
+}
+
+#[test]
+fn in_place_fetch_refuses_to_detach_a_branch_with_no_remote_counterpart() {
+    let s = setup_workspace_with_locked_project(&["github/acme/a"]);
+    let (repo_a, bare_a, _first_a, _second_a) = &s.repos[0];
+
+    let dest_a = materialize_repo_on_branch(&s.workspace, repo_a, bare_a);
+    git_run(&["checkout", "-b", "feature"], &dest_a);
+
+    rwv()
+        .arg("fetch")
+        .current_dir(&s.workspace)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "branch feature has no counterpart on origin",
+        ));
+
+    assert_eq!(current_branch(&dest_a).as_deref(), Some("feature"));
+}
+
+#[test]
+fn in_place_fetch_detach_working_branch_waives_the_refusal() {
+    let s = setup_workspace_with_locked_project(&["github/acme/a"]);
+    let (repo_a, bare_a, first_a, _second_a) = &s.repos[0];
+
+    let dest_a = materialize_repo_on_branch(&s.workspace, repo_a, bare_a);
+    std::fs::write(dest_a.join("README"), "third\n").unwrap();
+    git_run(&["commit", "-am", "third"], &dest_a);
+    let unpushed = git_capture(&["rev-parse", "HEAD"], &dest_a);
+    std::fs::write(dest_a.join("scratch.txt"), "work in progress\n").unwrap();
+
+    rwv()
+        .args(["fetch", "--detach-working-branch"])
+        .current_dir(&s.workspace)
+        .assert()
+        .success();
+
+    assert_eq!(git_capture(&["rev-parse", "HEAD"], &dest_a), *first_a);
+    assert_eq!(current_branch(&dest_a), None);
+    // The waiver is not a discard: the unpushed commits are still on the
+    // branch ref, and the uncommitted file came along.
+    assert_eq!(git_capture(&["rev-parse", "main"], &dest_a), unpushed);
+    assert!(dest_a.join("scratch.txt").exists());
+}
+
+#[test]
+fn in_place_fetch_frozen_does_not_waive_the_refusal() {
+    let s = setup_workspace_with_locked_project(&["github/acme/a"]);
+    let (repo_a, bare_a, _first_a, second_a) = &s.repos[0];
+
+    let dest_a = materialize_repo_on_branch(&s.workspace, repo_a, bare_a);
+    std::fs::write(dest_a.join("scratch.txt"), "work in progress\n").unwrap();
+
+    // --frozen is a lock-validation mode, not a waiver.
+    rwv()
+        .args(["fetch", "--frozen"])
+        .current_dir(&s.workspace)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("would detach main"));
+
+    assert_eq!(git_capture(&["rev-parse", "HEAD"], &dest_a), *second_a);
+}
+
+#[test]
+fn in_place_fetch_does_not_refuse_when_the_member_is_clean() {
+    let s = setup_workspace_with_locked_project(&["github/acme/a"]);
+    let (repo_a, bare_a, first_a, _second_a) = &s.repos[0];
+
+    // Clean and on a published branch: the operator has nothing in flight, so
+    // realignment proceeds. This is the warm-cache CI shape — the precondition
+    // must not fire here.
+    let dest_a = materialize_repo_on_branch(&s.workspace, repo_a, bare_a);
+
+    rwv()
+        .args(["fetch", "--frozen"])
+        .current_dir(&s.workspace)
+        .assert()
+        .success();
+
+    assert_eq!(git_capture(&["rev-parse", "HEAD"], &dest_a), *first_a);
 }
 
 // ============================================================================

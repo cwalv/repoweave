@@ -102,6 +102,9 @@ pub enum Commands {
         /// Skip cloning/fetching repositories with role: reference
         #[arg(long)]
         no_reference: bool,
+        /// Align a present repo even when that detaches a branch holding uncommitted changes or unpushed commits
+        #[arg(long)]
+        detach_working_branch: bool,
         /// Limit the operation to repos with this role. Repeat to union multiple roles. Combined as a union with --repo.
         #[arg(long = "role")]
         roles: Vec<String>,
