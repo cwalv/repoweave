@@ -132,35 +132,48 @@ fn hand_made_branch_with_unique_commit(repo: &Path, name: &str, file: &str) -> S
 // R2 — a ref that merely LOOKS like rwv's is not rwv's
 // ---------------------------------------------------------------------------
 
-/// The §2.1 `[S]` scenario, inverted.
+/// The §2.1 `[S]` scenario, inverted: `workweave delete` destroys exactly the
+/// ref it recorded creating, and nothing that merely resembles it.
 ///
-/// `parse_ephemeral_branch_name` claimed any `<a>--<b>/<c>` name, so a plain
-/// `rwv doctor --fix` deleted hand-made `my--feature/wip` and
-/// `notes--todo/scratch`, and `workweave delete` globbed the whole prefix.
-/// Ownership is now by **record**: rwv holds a persisted receipt for the refs
-/// it created and for no others, and neither verb can spell the deletion of a
-/// branch it does not hold one for.
+/// The shipped delete globbed the prefix `{project}--{workweave}` and
+/// force-deleted everything it returned. A prefix is not a namespace: for
+/// workweave `real`, the glob also claims `web-app--really-mine`, an
+/// unrelated branch of the operator's. That is the case with teeth here —
+/// restore the glob-and-destroy and this test fails on it, with the commit
+/// only that branch reached left dangling.
 ///
-/// Break the guard and this fails: point delete back at the prefix glob (or
-/// let doctor's fix key on name shape) and `my--feature/wip` goes with it,
-/// stranding the commit only that branch reaches.
+/// `my--feature/wip` and `dependabot--npm/lodash` are the two names §2.1
+/// records by hand. They sit outside this workweave's prefix, so delete never
+/// had a route to them; they are here because the `<a>--<b>/<c>` shape is what
+/// the *doctor* side reads as ownership, and this is the fixture that pass
+/// will be extended over.
+///
+/// **What this does NOT yet pin.** `rwv doctor --fix` runs in the middle of
+/// this flow and leaves all three standing — but for its own reason, not this
+/// bead's: `check.rs` still decides ownership by parsing the name, and spares
+/// these only because each carries a commit that is not an ancestor of
+/// primary, which makes them live-class. §4.6(4) says that parser can be
+/// deleted outright once deletion goes through the registry; doing so is the
+/// check.rs cutover (fo-opmmoz.9). Until then a *safe-class* lookalike — same
+/// shape, no unique commit — is still deleted by `doctor --fix`, and adding
+/// that case here belongs with the change that fixes it.
 #[test]
-fn hand_made_lookalike_branches_survive_delete_and_doctor_fix() {
+fn delete_destroys_only_the_ref_it_recorded() {
     let tmp = tempfile::tempdir().unwrap();
     let ws = make_workspace(tmp.path());
     let weaveroot = tmp.path().join(".workweaves");
     std::fs::create_dir_all(&weaveroot).unwrap();
     let repo = ws.join("github/org/repo");
 
-    // Two branches nobody but the operator made. Both carry the `<a>--<b>/<c>`
-    // shape the shipped parser read as proof of rwv's ownership; `my--feature`
-    // is additionally the exact prefix shape a workweave named `feature` in a
-    // project named `my` would mint.
+    // Inside the shipped prefix glob for workweave `real`, and not rwv's.
+    let sibling_sha =
+        hand_made_branch_with_unique_commit(&repo, "web-app--really-mine", "sibling.txt");
+    // The two names §2.1 records.
     let feature_sha = hand_made_branch_with_unique_commit(&repo, "my--feature/wip", "wip.txt");
     let bot_sha = hand_made_branch_with_unique_commit(&repo, "dependabot--npm/lodash", "bump.txt");
 
-    // A real workweave, so there IS a recorded ref for the same verbs to find
-    // and destroy — otherwise "nothing was deleted" would prove nothing.
+    // A real workweave, so there IS a recorded ref for the verbs to find and
+    // destroy — otherwise "nothing was deleted" would prove nothing.
     rwv()
         .args(["workweave", "web-app", "create", "real"])
         .env("RWV_WORKWEAVE_DIR", &weaveroot)
@@ -187,20 +200,21 @@ fn hand_made_lookalike_branches_survive_delete_and_doctor_fix() {
 
     let after = branch_names(&repo);
 
-    // The recorded ref is gone — the verbs did run and did destroy.
+    // The recorded ref is gone — the verb did run and did destroy.
     assert!(
         !after.iter().any(|b| b == "web-app--real"),
         "the RECORDED ref should have been destroyed; branches: {after:?}"
     );
 
-    // The hand-made ones are untouched, tips included.
+    // Everything else is untouched, tips included.
     for (name, sha) in [
+        ("web-app--really-mine", &sibling_sha),
         ("my--feature/wip", &feature_sha),
         ("dependabot--npm/lodash", &bot_sha),
     ] {
         assert!(
             after.iter().any(|b| b == name),
-            "hand-made branch {name} must survive delete + doctor --fix; branches: {after:?}"
+            "branch {name} is not rwv's and must survive; branches: {after:?}"
         );
         assert_eq!(
             &git_out(&["rev-parse", name], &repo),
