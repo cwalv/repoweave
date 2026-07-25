@@ -6834,15 +6834,18 @@ pub fn run_check(
             // path targets primary and would silently rewrite the PRIMARY
             // project's managed files from inside a workweave — breaking the
             // isolation contract that makes workweave-scoped repair risk-free.
-            // `activate_workweave_intent` is the workweave-bound sibling: it
-            // runs the same `run_activations` pass with
-            // `output_dir = workweave/projects/<project>` and skips install
-            // hooks. From primary we use the primary path.
-            let result = if matches!(ctx.checkout, Checkout::Workweave { .. }) {
-                crate::activate::activate_workweave_intent(project.name.as_str(), &workspace_dir)
-            } else {
-                crate::activate::activate_intent(project.name.as_str(), ctx)
-            };
+            // `activate_intent_at` takes the weave dir as its parameter, so
+            // one call covers both: `workspace_dir` is `ctx.active_path()`,
+            // which IS `ctx.primary_path()` at primary and the workweave dir
+            // inside a workweave.
+            //
+            // The weave the repair binds to is the ONLY thing that varies.
+            // The workweave arm used to run a hook-suppressed variant, so a
+            // missing `Cargo.lock` (a `generated_files()` entry only
+            // `cargo generate-lockfile` can author) was reported as
+            // safe-to-fix and then left missing by the fix that named itself
+            // in the report.
+            let result = crate::activate::activate_intent_at(project.name.as_str(), &workspace_dir);
             match result {
                 Ok(()) => println!(
                     "[fixed] core: regenerated integration content for project `{}` (drift detected)",

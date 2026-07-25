@@ -104,6 +104,40 @@ pub fn activate_intent(project: &str, ctx: &WorkspaceContext) -> anyhow::Result<
     activate_intent_with_options(project, ctx, ActivateOptions::default())
 }
 
+/// Run **intent-mode** activation bound to an explicit weave directory.
+///
+/// [`activate_intent`]'s weave-parameterized form: identical in every respect
+/// except which weave root it targets, so `rwv doctor --fix` performs the same
+/// repair inside a workweave that it performs at primary. Callers pass the
+/// weave the detector scanned (`ctx.active_path()`), which is the primary root
+/// at primary and the workweave directory inside a workweave — the isolation
+/// contract pinned by `doctor_workweave_content_fix_isolation_test`.
+///
+/// Both non-default knobs of the workweave-flavoured
+/// [`activate_workweave_intent`] are deliberately absent here, because a
+/// generated lockfile needs both to exist at all:
+///
+/// - **Install hooks run.** A `generated_files()` lockfile has no other
+///   author — only `cargo generate-lockfile` / `npm install` / `uv sync`
+///   produce one, so a hook-suppressed `--fix` reports the lock as
+///   regenerable and then leaves it missing. Hooks only fire when doctor
+///   already found safe-to-fix drift, so a clean weave still pays nothing.
+/// - **Dangling symlinks are created** (`skip_missing_sources = false`).
+///   That is the mechanism by which a lock the ecosystem tool writes at the
+///   weave root lands in `projects/<project>/`: the surfacing step precedes
+///   the hooks, and the tool writes *through* the link into the canonical
+///   file. Skip it and the tool drops a real file at the weave root that no
+///   repo tracks and no later verify pass can see.
+pub fn activate_intent_at(project: &str, weave_dir: &Path) -> anyhow::Result<()> {
+    activate_at(
+        weave_dir,
+        project,
+        false,
+        ActivateOptions::default(),
+        ActivationMode::Intent,
+    )
+}
+
 /// Run intent-mode activation with explicit options. Used by tests that need
 /// to drive the write path without running install hooks (the test
 /// equivalent of `rwv add --no-install` if that existed).
@@ -463,6 +497,11 @@ pub fn activate_workweave(project: &str, workweave_dir: &Path) -> anyhow::Result
 /// workweave is a view onto an existing project, so dangling symlinks are
 /// not useful). Install hooks remain suppressed in the workweave (mirroring
 /// [`activate_workweave`]).
+///
+/// Used by the intent verbs (`add`, `remove`, `update`) when they run inside
+/// a workweave. `rwv doctor --fix` deliberately does NOT come through here —
+/// it uses [`activate_intent_at`], which runs the hooks; see that function
+/// for why a repair verb cannot suppress them.
 pub fn activate_workweave_intent(project: &str, workweave_dir: &Path) -> anyhow::Result<()> {
     activate_at(
         workweave_dir,

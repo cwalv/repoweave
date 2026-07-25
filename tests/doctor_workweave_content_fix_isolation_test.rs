@@ -10,10 +10,12 @@
 //!
 //! The surfacing-fix path already special-cased the workweave by re-running
 //! the surfacing primitive against the workweave dir directly. The content-fix
-//! path now follows the same principle: when doctor runs inside a workweave,
-//! it dispatches to `activate_workweave_intent` (which authors into the
-//! workweave's own `projects/<project>/` and skips install hooks) instead of
-//! `activate_intent`.
+//! path now follows the same principle: it calls `activate::activate_intent_at`
+//! with the weave dir doctor scanned, so authoring lands in that weave's own
+//! `projects/<project>/`. Which weave the repair binds to is the only thing
+//! that varies between the primary and workweave cases — see
+//! `doctor_workweave_cargo_lock_fix_test` for why the repair cannot otherwise
+//! narrow what it does.
 //!
 //! The test:
 //!   1. Builds a scratch primary weave with the `go-work` integration active

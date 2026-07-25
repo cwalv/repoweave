@@ -797,10 +797,35 @@ impl Integration for CargoWorkspace {
         // output_dir (the surfacing step precedes hooks and intentionally
         // creates dangling lockfile symlinks so generated content flows
         // back into the project directory). The helper resolves symlinks
-        // and anchors the state file next to the CANONICAL file, so
-        // doctor's verify (which sees the weave-root symlink view)
-        // converges on the same record.
+        // and anchors the state file next to the CANONICAL file, so stamp
+        // and check converge on one record no matter which view of the
+        // weave a caller holds.
         let lock_path = ctx.output_dir.join("Cargo.lock");
+
+        // "cargo wrote through the symlink" is the happy path, not a
+        // guarantee: a bare `cargo build` run in a weave whose lock has
+        // never been generated leaves a REAL `Cargo.lock` sitting on the
+        // surfacing path, and rwv never clobbers a real file there (the
+        // same rule `verify_surfacing` applies). The generation above then
+        // rewrote that orphan and the canonical file is still absent, so
+        // name the orphan and the one-line repair rather than reporting a
+        // bare "no such file" for the path this hook was meant to produce.
+        let surfaced = ctx.workspace_root.join("Cargo.lock");
+        let surfaced_is_real_file = std::fs::symlink_metadata(&surfaced)
+            .map(|m| m.file_type().is_file())
+            .unwrap_or(false);
+        if !lock_path.exists() && surfaced_is_real_file {
+            anyhow::bail!(
+                "cargo generate-lockfile wrote {} but the canonical {} is still missing: \
+                 a real file occupies the surfacing path, so the generation could not \
+                 flow back into the project directory. rwv does not overwrite a real \
+                 file at a surfacing path — remove {} and re-run `rwv doctor --fix`",
+                surfaced.display(),
+                lock_path.display(),
+                surfaced.display()
+            );
+        }
+
         let lock_bytes = std::fs::read(&lock_path).with_context(|| {
             format!(
                 "reading {} to record the accepted-generation digest",
@@ -1213,8 +1238,14 @@ impl CargoWorkspace {
     ///    between the two exits (re-run activation to accept + re-stamp, or
     ///    restore the file). Workspaces with no digest state (pre-upgrade)
     ///    skip this axis silently.
+    ///
+    /// All three axes are asked of the **canonical** file
+    /// ([`canonical_lock_path`]), not of the caller's view of it, so every
+    /// verb names one path for one finding. That also keeps this pass on its
+    /// own axis: whether the weave root carries the surfacing symlink is an
+    /// Axis-1 question, answered separately by `activate::verify_surfacing`.
     fn verify_cargo_lock(&self, ctx: &IntegrationContext) -> Vec<Issue> {
-        let path = ctx.output_dir.join("Cargo.lock");
+        let path = canonical_lock_path(ctx);
 
         // ── MISSING ────────────────────────────────────────────────────────
         // Fully-owned: absent when generation is expected is DRIFT (never
@@ -2361,6 +2392,41 @@ fn nested_workspace_error(conflicts: &[String]) -> String {
          with an `include:` list to contribute the sub-paths instead\n",
     );
     msg
+}
+
+/// The path of the generated `Cargo.lock` in the **canonical** (committed)
+/// location, whichever view of the weave the caller holds.
+///
+/// Callers bind `output_dir` two different ways for the same tree. Activation
+/// binds it to `projects/<project>/`, where the generated files actually live;
+/// `rwv doctor` binds it to the weave root, where the same files appear as
+/// surfacing symlinks. For a file that exists, both views name the same inode
+/// and the digest helpers canonicalize, so the split is invisible. For a file
+/// that is **missing** it is not: the root view names a path that, in a
+/// workweave, does not exist even as a link — a workweave omits the surfacing
+/// symlink for a file whose source is absent — so the same finding was
+/// reported under two different paths depending on which verb ran it.
+///
+/// Collapse the views by resolving the managed `Cargo.toml` one symlink level:
+/// the lock is generated next to the workspace manifest, so wherever that
+/// manifest really lives is where `--fix` writes and where the operator looks.
+/// Deliberately not `fs::canonicalize` — that also resolves symlinked
+/// *ancestors*, which would re-spell a path the caller already holds. When
+/// the manifest is a real file (activation's view, and the flat layout unit
+/// tests use) `read_link` fails and `output_dir` is already canonical.
+fn canonical_lock_path(ctx: &IntegrationContext) -> std::path::PathBuf {
+    let manifest = ctx.output_dir.join("Cargo.toml");
+    let dir = match std::fs::read_link(&manifest) {
+        // A relative target is relative to the link's own directory.
+        Ok(target) => ctx
+            .output_dir
+            .join(target)
+            .parent()
+            .map(Path::to_path_buf)
+            .unwrap_or_else(|| ctx.output_dir.to_path_buf()),
+        Err(_) => ctx.output_dir.to_path_buf(),
+    };
+    dir.join("Cargo.lock")
 }
 
 // ===========================================================================
