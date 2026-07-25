@@ -377,6 +377,16 @@ fn delete_proceeds_when_canonical_checkout_has_no_foreign_dependents() {
     // detached the canonical clone whose worktree it was pruning — and a
     // detached canonical is the state §2.1's chain needs in order to turn the
     // next landing into a data loss.
+    //
+    // The two lines are NOT equally strong, and the difference is worth
+    // knowing before trusting them. Mutation-tested: detaching `project_store`
+    // in delete's project-repo arm fails the first line and only it. The
+    // second line is weaker — this fixture's `github/org/repo` inside the
+    // workweave is a plain CLONE, not a worktree, so delete's manifest-repo
+    // arm never calls `remove_worktree` for it and a detach injected there
+    // goes unobserved. It pins "delete did not wander into an unrelated
+    // canonical", not "delete's worktree pruning preserves attachment". A
+    // fixture whose manifest repo is a real worktree is what would close that.
     common::assert_on_branch(&project_dir, "main");
     common::assert_on_branch(&primary_slot, "main");
 }
