@@ -4994,12 +4994,11 @@ pub fn run_check(
             }
         }
 
-        // Trigger-model drift check (see `trigger-model.md`): the integrations'
-        // `verify()` pass reports drift between on-disk managed/generated content
-        // and what `activate()` would produce. Under `--fix`, doctor invokes the
-        // intent-mode write path to regenerate safe-to-fix drift. Without `--fix`,
-        // all drift findings surface as warnings — `doctor` is the detector and
-        // the fixer.
+        // Content drift check: the integrations' `verify()` pass reports drift
+        // between on-disk managed/generated content and what `activate()` would
+        // produce. Under `--fix`, doctor invokes the intent-mode write path to
+        // regenerate safe-to-fix drift. Without `--fix`, all drift findings
+        // surface as warnings — `doctor` is the detector and the fixer.
         //
         // USER-HELD findings (`safe_to_fix = false`) are always surfaced as-is,
         // even under `--fix` — these are cases where the user holds the pen on a
@@ -5067,8 +5066,8 @@ pub fn run_check(
         // run at primary it checks primary's surfacing and run in a workweave it
         // checks that workweave's. The recovery hatch is `--fix`, which re-runs
         // the surfacing PRIMITIVE (`surface_symlinks`) bound to this weave
-        // directory — NOT `activate_intent`, since project re-selection is a
-        // primary-only step-1 concept forbidden inside a workweave.
+        // directory — NOT `activate_intent`, which targets primary and would
+        // author content this gap does not call for.
         let in_workweave = matches!(ctx.checkout, Checkout::Workweave { .. });
         let surfacing_issues = crate::activate::verify_surfacing(
             &workspace_dir,
@@ -5083,10 +5082,9 @@ pub fn run_check(
         all_issues.extend(surf_user_held);
         if fix && !surf_fixable.is_empty() {
             // Re-surface by re-running the step-2 surfacing primitive against
-            // this weave directory. Unlike `activate_intent`, this writes no
-            // `.rwv-active` and authors no content — it only (re)creates the
-            // owner-scoped symlinks, which is valid in any weave (it is exactly
-            // what workweave-create runs at creation).
+            // this weave directory. It authors no content — it only (re)creates
+            // the owner-scoped symlinks, which is valid in any weave (it is
+            // exactly what workweave-create runs at creation).
             match crate::activate::surface_symlinks(
                 &workspace_dir,
                 &project.name,

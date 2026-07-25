@@ -138,9 +138,15 @@ is *when* it authors them. In brief:
 
 | Verb class | Verbs | Action on managed region |
 |---|---|---|
-| **Intent** | `add`, `remove`, `update`, `lock` | Regenerate and commit |
-| **Context** | `activate`, `fetch`, workweave-create | Surface (symlink, always) + verify-and-warn; never author |
+| **Intent** | `add`, `remove`, `update` | Regenerate, for the operator to commit alongside the `rwv.yaml`/`rwv.lock` change |
+| **Context** | `activate`, `fetch`, workweave-create, `lock`, `init`, `init --adopt` | Surface (symlink, always) + verify-and-warn; never author |
 | **Recovery** | `rwv doctor` / `rwv doctor --fix` | Report Axis-2 content drift **and** Axis-1 surfacing gaps; `--fix` regenerates content and re-surfaces symlinks |
+
+rwv writes the regenerated files into the project directory; it never commits them. An intent verb
+also **withholds** regeneration when a repo the manifest declares active has no directory on disk —
+authoring from a partial member set would drop the absent repos from every managed file. The
+manifest change still lands; `rwv fetch` then `rwv doctor --fix` regenerates once the member set is
+whole.
 
 `activate` creates the symlink unconditionally (Axis-1 surfacing). It never authors the committed
 file. The committed file is always consistent with committed `rwv.yaml` + `rwv.lock` by

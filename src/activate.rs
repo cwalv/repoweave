@@ -1,7 +1,7 @@
 //! Activate and deactivate projects.
 //!
-//! Project **selection** — `rwv activate PROJECT`, a context verb — makes the
-//! weave root present a project:
+//! Project **selection** — `rwv activate PROJECT` — makes the weave root
+//! present a project by:
 //! 1. Collecting the union of `generated_files()` and `managed_files()`
 //!    from each enabled integration. This union is the **owner-scoped**
 //!    surfacing set used both for symlink creation and for the removal
@@ -17,17 +17,12 @@
 //!    files in the project directory.
 //! 4. Writing `.rwv-active`.
 //!
-//! **Regeneration** — intent mode, driven by `rwv add` / `rwv remove` /
-//! `rwv update` — is a different operation on a different scope: integrations
-//! author their managed/generated files into the target project's own
-//! directory and `.rwv-active` is left alone, so `--project` acts on a project
-//! without switching to it. Steps 1–3 re-run only when the target is already
-//! the selected project, whose owned-file union the regeneration may have
-//! changed.
-//!
-//! See [`trigger-model.md`](../docs/repoweave/integration-ownership/trigger-model.md)
-//! for the intent-vs-context-verb split (Mode::Intent regenerates and
-//! commits content; Mode::Context surfaces+verifies only).
+//! **Regeneration** — intent mode — is a different operation on a different
+//! scope: integrations author their managed/generated files into the target
+//! project's own directory and `.rwv-active` is left alone, so `--project`
+//! acts on a project without switching to it. Steps 1–3 re-run only when the
+//! target is already the selected project, whose owned-file union the
+//! regeneration may have changed.
 //!
 //! `deactivate` removes the symlinks and `.rwv-active`.
 
@@ -46,22 +41,13 @@ use crate::workspace::{
 };
 
 /// Which class of verb is driving activation.
-///
-/// See [`trigger-model.md`](../docs/repoweave/integration-ownership/trigger-model.md):
-/// regeneration is a function of *committed intent*, performed by — and
-/// committed with — the verb that changes that intent. It is never a side
-/// effect of switching context.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ActivationMode {
-    /// Intent verbs (`rwv add`, `rwv remove`, `rwv update`, `rwv lock`,
-    /// and the `rwv doctor --fix` recovery hatch). The target project's
-    /// integrations regenerate their managed/generated content into that
-    /// project's own directory; the resulting files are expected to be
-    /// committed alongside the `rwv.yaml` / `rwv.lock` change that motivated
-    /// the verb. Regeneration is not selection: `.rwv-active` is never
-    /// written, so `--project` targets a project without switching to it.
+    /// The target project's integrations author their managed/generated
+    /// content into that project's own directory. Regeneration is not
+    /// selection: `.rwv-active` is never written, so `--project` targets a
+    /// project without switching to it.
     Intent,
-    /// Context verbs (`rwv activate`, `rwv fetch`, workweave-create).
     /// Surfacing (symlink creation/repair) runs unconditionally; the
     /// integrations' `verify()` pass reports drift between on-disk
     /// content and what `activate()` would produce — but **never
@@ -99,26 +85,21 @@ fn report_and_check_activation_issues(issues: &[crate::integration::Issue]) -> a
 
 /// Run `rwv activate PROJECT` against an already-resolved context.
 ///
-/// `rwv activate` is a **context verb** (per `trigger-model.md`): it surfaces
-/// the existing on-disk artifacts and verifies them, **never authoring**.
-/// Runs integration activate hooks (`npm install`, `uv sync`, etc.) by
-/// default. See [`activate_with_options`] to suppress them.
+/// Surfaces the existing on-disk artifacts and verifies them, **never
+/// authoring**. Runs integration activate hooks (`npm install`, `uv sync`,
+/// etc.) by default. See [`activate_with_options`] to suppress them.
 pub fn activate(project: &str, ctx: &WorkspaceContext) -> anyhow::Result<()> {
     activate_with_options(project, ctx, ActivateOptions::default())
 }
 
-/// Regenerate `project`'s integration content in **intent mode** — used by
-/// `rwv add`, `rwv remove`, `rwv update` after they mutate the manifest.
-/// Integration content is (re)authored into `projects/<project>/` so the
-/// resulting files can be committed alongside the `rwv.yaml` / `rwv.lock`
-/// change that motivated the verb.
+/// Regenerate `project`'s integration content in **intent mode**: it is
+/// (re)authored into `projects/<project>/`, for the operator to commit
+/// alongside the `rwv.yaml` / `rwv.lock` change that motivated the verb.
 ///
 /// This does **not** select `project`: `.rwv-active` is left untouched, and
 /// the root's surfacing is refreshed only when `project` is already the
 /// selected one. That is what makes `--project` a one-shot target rather
 /// than a project switch.
-///
-/// See [`trigger-model.md`](../docs/repoweave/integration-ownership/trigger-model.md).
 pub fn activate_intent(project: &str, ctx: &WorkspaceContext) -> anyhow::Result<()> {
     activate_intent_with_options(project, ctx, ActivateOptions::default())
 }
@@ -209,13 +190,6 @@ fn activate_at(
     let integrations: Vec<&dyn Integration> = builtin.iter().map(|b| b.as_ref()).collect();
 
     // Integration content step.
-    //    Intent verbs (`add`/`remove`/`update`/`lock` paths) author/regenerate
-    //    integration content; the generated files are expected to be
-    //    committed alongside the rwv.yaml / rwv.lock change that caused the
-    //    verb. Context verbs (`activate`/`fetch`/workweave-create) skip
-    //    authoring and run the integrations' `verify()` pass instead — they
-    //    surface and report drift, but never write content. See
-    //    `trigger-model.md`.
     let detection_cache = build_detection_cache(root, manifest.iter_entries());
     let ctx_base = session.context_base(
         &project_dir,
@@ -261,8 +235,8 @@ fn activate_at(
     }
 
     // Everything below acts on the weave ROOT, and `.rwv-active` names which
-    // project the root presents. Intent verbs regenerate a project's content
-    // without choosing it, so they touch the root only when the target is
+    // project the root presents. Intent mode regenerates a project's content
+    // without choosing it, so it touches the root only when the target is
     // already the selected project — whose owned-file union the regeneration
     // it just ran may have changed.
     if mode == ActivationMode::Intent && read_active_project(root).as_ref() != Some(&project_name) {
@@ -471,11 +445,6 @@ fn remove_activation_symlinks_in(
 /// primary, so install state is typically inherited rather than
 /// regenerated. The user can run `rwv activate --reinstall`-style
 /// commands inside the workweave when they actually need a refresh.
-///
-/// Workweave-create is a **context verb** (per `trigger-model.md`): the
-/// generated files were already authored in the project repo by an earlier
-/// intent verb, so the workweave only needs to surface them via symlinks
-/// and verify drift — not re-author.
 pub fn activate_workweave(project: &str, workweave_dir: &Path) -> anyhow::Result<()> {
     activate_at(
         workweave_dir,
@@ -486,10 +455,9 @@ pub fn activate_workweave(project: &str, workweave_dir: &Path) -> anyhow::Result
     )
 }
 
-/// Run **intent-mode** activation inside a workweave. Called by
-/// [`crate::add_remove::run_add`] / `run_remove` and by `rwv update` when
-/// CWD is a workweave: the manifest change just landed and the integrations
-/// must regenerate their managed content so it can be committed alongside.
+/// Run **intent-mode** activation inside a workweave: content is authored
+/// into the workweave's project directory, which writes through to the
+/// project repo the workweave is a view onto.
 ///
 /// Symlinks for files that do not yet exist on disk are skipped (the
 /// workweave is a view onto an existing project, so dangling symlinks are
@@ -760,8 +728,8 @@ fn relative_symlink_target(project: &str, file: &str) -> std::path::PathBuf {
 ///
 /// Emits one `Severity::Warning`, `safe_to_fix=true` `Issue` per missing or
 /// mis-resolved symlink. The recovery hatch is `rwv doctor --fix`, which calls
-/// [`surface_symlinks`] (NOT `activate_intent` — re-surfacing is valid in any
-/// weave, project re-selection is not).
+/// [`surface_symlinks`] bound to the weave that was scanned — an Axis-1 gap
+/// needs no authoring, and [`activate_intent`] would target primary.
 ///
 /// `skip_missing_sources` mirrors the create path: when `true` (workweave
 /// surfacing), a file whose source does not yet exist on disk is NOT expected

@@ -6,9 +6,12 @@ Create a new project in the workspace, or adopt an existing repo as a project.
 `init` is the day-0 verb: it bootstraps the workspace (if needed), creates
 `projects/<name>/`, writes a skeletal `rwv.yaml`, and auto-activates the project.
 
-`init` is an **intent verb**: it authors the manifest and project directory
-on disk so subsequent intent verbs (`rwv add`, `rwv lock`) have a workspace to
-operate on.
+`init` writes the manifest and the project directory, but **never authors
+integration content**. A new project has an empty manifest with nothing to
+generate from, and `init --adopt` clones only the project repo — its members
+are not on disk until `rwv fetch`, so generating at that point would overwrite
+the adopted project's committed workspace files from an empty member set. To
+regenerate an adopted project, run `rwv fetch`, then `rwv doctor --fix`.
 
 ### Empty-directory bootstrap
 

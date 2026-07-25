@@ -2,14 +2,14 @@
 
 ## Purpose
 
-Set the active project, regenerate ecosystem workspace files in the project
-directory, symlink them to the weave root, and run integration install hooks
-(`npm install`, `uv sync`, `cargo generate-lockfile`, etc.).
+Set the active project, symlink its ecosystem workspace files to the weave
+root, and run integration install hooks (`npm install`, `uv sync`,
+`cargo generate-lockfile`, etc.).
 
-`activate` is a **context verb**: it surfaces the existing on-disk artifacts
-authored by prior intent verbs (`rwv add`, `rwv remove`, `rwv update`) and
-wires up the workspace for use. It does **not** regenerate integration content
-— the source of truth for generated files is the last intent verb that ran.
+`activate` **never authors integration content**: it surfaces the files
+already committed in the project directory and wires up the workspace for
+use. Regeneration belongs to the verbs that change what those files are
+generated from; see [file-ownership](../../explanation/joints/file-ownership.md).
 
 ### `.rwv-active`
 
@@ -27,9 +27,9 @@ previous state.
 `activate` does not regenerate integration files — it surfaces them. The flow:
 
 1. **Verification pass:** the integrations' `verify()` is called to detect
-   drift between on-disk generated content and what the intent verb produced
+   drift between on-disk generated content and what they would produce now
    (Axis-2 content drift). Drift is reported as a warning
-   (`warning (drift): ...`), not an error — context verbs never author
+   (`warning (drift): ...`), not an error — `activate` never authors
    content; the recovery hatch is `rwv doctor --fix`.
 2. **Symlink removal:** any root-level symlinks from the previous activation
    that are owned by the integrations are removed (owner-scoped predicate:
