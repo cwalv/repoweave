@@ -2,9 +2,9 @@
 
 use crate::manifest::Role;
 use crate::vcs::{
-    CommitSummary, ConflictOp, HeadAttachment, HeadObservation, LocalRefName, PreAbortRef,
-    PublishRef, RawRefName, RawRevisionId, RefName, RemoteDefaultBranch, ResolvedRevisionId,
-    UniqueDiff, Vcs, VcsError, VerifiedRestoreOutcome,
+    CommitSummary, ConflictOp, DerivedContentPolicy, DerivedContentResolution, HeadAttachment,
+    HeadObservation, LocalRefName, PreAbortRef, PublishRef, RawRefName, RawRevisionId, RefName,
+    RemoteDefaultBranch, ResolvedRevisionId, UniqueDiff, Vcs, VcsError, VerifiedRestoreOutcome,
 };
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -287,6 +287,44 @@ pub(crate) fn rwv_ours_driver_flag_args() -> (String, String) {
         format!("{RWV_MERGE_DRIVER_NAME_KEY}={RWV_MERGE_DRIVER_NAME_DESC}"),
         format!("{RWV_MERGE_DRIVER_CONFIG_KEY}=true"),
     )
+}
+
+/// Translate a [`DerivedContentPolicy`] into the leading `git` arguments
+/// that put it in force for a single invocation.
+///
+/// Git's half of the derived-content primitive: a `.gitattributes` line
+/// assigns a merge driver to a path *by name*, and the name resolves to
+/// nothing unless some config git can see defines `merge.<name>.driver`. The
+/// definition does not travel with the repo, so whoever runs the command
+/// carries it — which is precisely what the policy parameter makes explicit
+/// at the seam.
+///
+/// [`DerivedContentResolution::KeepTargetSide`] becomes the `rwv-ours`
+/// definition, `driver = true`: the shell command `true`, which exits 0
+/// without touching the file, leaving git holding the target-side version it
+/// already had. That is the whole resolution — a side-pick. No generator is
+/// invoked and nothing about the running machine is consulted, so two
+/// replays of the same histories produce the same tree.
+///
+/// [`DerivedContentResolution::VcsDefault`] contributes no arguments. Note
+/// what that does and does not mean: this invocation defines no driver, so a
+/// declared path resolves textually *unless* the repo already carries a
+/// durable definition of its own (see [`plant_rwv_merge_driver_config`],
+/// which exists so a bare `git rebase --continue` stays safe). Config rwv
+/// planted earlier is not something a later invocation can un-supply.
+fn derived_content_git_args(policy: DerivedContentPolicy) -> Vec<String> {
+    match policy.resolution() {
+        DerivedContentResolution::KeepTargetSide => {
+            let (driver_name_flag, driver_flag) = rwv_ours_driver_flag_args();
+            vec![
+                "-c".to_owned(),
+                driver_name_flag,
+                "-c".to_owned(),
+                driver_flag,
+            ]
+        }
+        DerivedContentResolution::VcsDefault => Vec::new(),
+    }
 }
 
 /// `true` when `merge.rwv-ours.driver` is set (to anything) in any config
@@ -1093,6 +1131,158 @@ impl Vcs for GitVcs {
         // signal: resolve → stage → rerun `--continue`. If the repo is no
         // longer mid-rebase, this is some other rebase error we don't have
         // a specific class for; fall through to `CommandFailed`.
+        if matches!(Self::mid_op_state(repo).as_deref(), Some("mid-rebase")) {
+            return Err(VcsError::RebaseConflict {
+                repo: repo.to_path_buf(),
+                op: ConflictOp::Rebase,
+            });
+        }
+
+        let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+        Err(VcsError::CommandFailed {
+            args: vec!["rebase".to_owned(), "--continue".to_owned()],
+            repo: repo.to_path_buf(),
+            stderr,
+        })
+    }
+
+    // The two policy-carrying replays. They stand beside `rebase` /
+    // `rebase_continue` above rather than replacing them: the pre-policy pair
+    // is still what every call site calls, and it keeps the driver wiring it
+    // has always had until those call sites are restated. The duplication is
+    // the transition, and it ends when they are.
+    //
+    // The only difference in either body is where the leading `-c` arguments
+    // come from — a stated policy here, an unconditional
+    // `rwv_ours_driver_flag_args()` there. Both spell the definition through
+    // that one function, so a `rebase_with_policy` that stops on a conflict
+    // and a `rebase_continue` that resumes it cannot disagree about what the
+    // driver is.
+
+    fn rebase_with_policy(
+        &self,
+        repo: &Path,
+        onto: &ResolvedRevisionId,
+        upstream: &ResolvedRevisionId,
+        derived: DerivedContentPolicy,
+    ) -> Result<(), VcsError> {
+        // `git rebase --onto <onto> <upstream>` replays commits in
+        // <upstream>..HEAD onto <onto>. On conflict, git leaves the repo
+        // mid-rebase (rebase-merge/ + conflict markers in WT). We detect that
+        // state and surface VcsError::RebaseConflict so the caller can pair
+        // with conflict_resolution_hint(ConflictOp::Rebase).
+        //
+        // `--empty=drop`: drop commits that become empty after rebase. This
+        // is what turns a derived-content-only commit into a silent no-op
+        // when the policy resolved its paths to the target side, leaving
+        // nothing for the commit to record.
+        //
+        // `--no-keep-empty`: also drop commits that were originally empty
+        // (e.g. `git commit --allow-empty`), so regeneration noise does not
+        // survive a replay.
+        //
+        // `--force-rebase`: force a replay even when `upstream` is already an
+        // ancestor of HEAD. Without it, git short-circuits to "up to date" —
+        // and the commits that should have been dropped survive.
+        let rebase_args = [
+            "rebase",
+            "--force-rebase",
+            "--no-keep-empty",
+            "--empty=drop",
+            "--onto",
+            onto.as_str(),
+            upstream.as_str(),
+        ];
+        let mut args = derived_content_git_args(derived);
+        args.extend(rebase_args.iter().map(|a| (*a).to_owned()));
+
+        let output = git_command()
+            .args(&args)
+            .current_dir(repo)
+            .output()
+            .map_err(|e| VcsError::Io {
+                ctx: format!(
+                    "failed to spawn git rebase --onto {} {}",
+                    onto.as_str(),
+                    upstream.as_str()
+                ),
+                source: e,
+            })?;
+
+        if output.status.success() {
+            return Ok(());
+        }
+
+        // Non-zero exit. If the repo is in mid-rebase, this is a conflict;
+        // otherwise it's some other rebase error (bad refs, etc.).
+        if matches!(Self::mid_op_state(repo).as_deref(), Some("mid-rebase")) {
+            return Err(VcsError::RebaseConflict {
+                repo: repo.to_path_buf(),
+                op: ConflictOp::Rebase,
+            });
+        }
+
+        // Report the operation, not the policy: the `-c` pairs are how the
+        // policy is spelled to git, not something the operator asked for.
+        let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+        Err(VcsError::CommandFailed {
+            args: rebase_args.iter().map(|a| (*a).to_owned()).collect(),
+            repo: repo.to_path_buf(),
+            stderr,
+        })
+    }
+
+    fn rebase_continue_with_policy(
+        &self,
+        repo: &Path,
+        derived: DerivedContentPolicy,
+    ) -> Result<(), VcsError> {
+        // Caller contract: `repo` must be mid-rebase. Enforce it here — the
+        // call site already inspects `mid_op` to route between a fresh
+        // rebase and this method, so reaching this function on a clean repo
+        // is a bug, not an in-band condition.
+        if !matches!(Self::mid_op_state(repo).as_deref(), Some("mid-rebase")) {
+            return Err(VcsError::CommandFailed {
+                args: vec!["rebase".to_owned(), "--continue".to_owned()],
+                repo: repo.to_path_buf(),
+                stderr: format!(
+                    "rebase_continue_with_policy called on {} which is not mid-rebase",
+                    repo.display()
+                ),
+            });
+        }
+
+        let mut args = derived_content_git_args(derived);
+        args.push("rebase".to_owned());
+        args.push("--continue".to_owned());
+
+        // `git rebase --continue` invokes `$EDITOR` on the stopped commit's
+        // message before recording it. rwv is non-interactive, so pin both
+        // editor hooks to the `true` command. Env is scoped to this single
+        // subprocess; the operator's own `git rebase --continue` outside rwv
+        // is unaffected.
+        let output = git_command()
+            .args(&args)
+            .env("GIT_EDITOR", "true")
+            .env("GIT_SEQUENCE_EDITOR", "true")
+            .current_dir(repo)
+            .output()
+            .map_err(|e| VcsError::Io {
+                ctx: format!(
+                    "failed to spawn git rebase --continue in {}",
+                    repo.display()
+                ),
+                source: e,
+            })?;
+
+        if output.status.success() {
+            return Ok(());
+        }
+
+        // Non-zero exit. If the repo is STILL mid-rebase, git either stopped
+        // on a further genuine conflict OR the operator's resolution left
+        // conflict markers unstaged. Both surface as the same operator
+        // signal: resolve → stage → resume.
         if matches!(Self::mid_op_state(repo).as_deref(), Some("mid-rebase")) {
             return Err(VcsError::RebaseConflict {
                 repo: repo.to_path_buf(),
@@ -3084,5 +3274,91 @@ mod branch_model_tests {
         let clone = Path::new("/w/github/acme/server");
         assert_eq!(GitVcs::work_dir_for_store(&clone.join(".git")), clone);
         assert_eq!(GitVcs::work_dir_for_store(clone), clone);
+    }
+}
+
+#[cfg(test)]
+mod derived_content_tests {
+    //! Git's translation of a stated derived-content policy.
+    //!
+    //! In-crate because the resolution vocabulary is crate-internal: the
+    //! translation is a match on it, and only code inside the crate can name
+    //! the arms it has to cover. The behaviour the translated arguments buy —
+    //! a declared path resolving mechanically through a real replay — is in
+    //! `tests/derived_content_policy_test.rs`.
+
+    use super::*;
+
+    #[test]
+    fn keeping_the_target_side_supplies_the_driver_definition_inline() {
+        let args = derived_content_git_args(DerivedContentPolicy::keep_target_side());
+
+        // Two `-c KEY=VALUE` pairs, in that shape: git only accepts the
+        // value as a separate argument after the flag.
+        assert_eq!(
+            args.len(),
+            4,
+            "expected two `-c KEY=VALUE` pairs; got {args:?}"
+        );
+        assert_eq!(args[0], "-c", "flag must precede its value; got {args:?}");
+        assert_eq!(args[2], "-c", "flag must precede its value; got {args:?}");
+
+        // The pair git needs is the *definition*: the assignment side lives
+        // in the repo's .gitattributes, and a name with no definition
+        // resolves to an ordinary textual merge.
+        assert_eq!(
+            args[3],
+            format!("{RWV_MERGE_DRIVER_CONFIG_KEY}=true"),
+            "the definition git acts on must be present; got {args:?}"
+        );
+        assert!(
+            args[1].starts_with(&format!("{RWV_MERGE_DRIVER_NAME_KEY}=")),
+            "the human-readable description is paired with it; got {args:?}"
+        );
+    }
+
+    #[test]
+    fn the_supplied_definition_is_a_side_pick_and_not_an_exec() {
+        let args = derived_content_git_args(DerivedContentPolicy::keep_target_side());
+        let definition = args
+            .iter()
+            .find_map(|a| a.strip_prefix(&format!("{RWV_MERGE_DRIVER_CONFIG_KEY}=")))
+            .unwrap_or_else(|| panic!("no driver definition in {args:?}"));
+
+        // `true` exits 0 without touching the file, which is what leaves the
+        // target-side version standing. Anything else here would be a
+        // command running mid-replay, with whatever the machine's
+        // environment happens to give it (regenerable-regions.md D2).
+        assert_eq!(
+            definition, "true",
+            "the driver must be the no-op side-pick, not a command that regenerates content"
+        );
+    }
+
+    #[test]
+    fn the_vcs_default_supplies_nothing() {
+        let args = derived_content_git_args(DerivedContentPolicy::vcs_default());
+        assert!(
+            args.is_empty(),
+            "no resolver may be defined by an invocation that was told not to; got {args:?}"
+        );
+    }
+
+    #[test]
+    fn the_translation_is_the_only_thing_that_differs_between_the_policies() {
+        // Both policies produce arguments that are *prefixes* — they say what
+        // is in force, never what the operation is. A resolution that
+        // smuggled a rebase flag in would silently change the replay.
+        for policy in [
+            DerivedContentPolicy::keep_target_side(),
+            DerivedContentPolicy::vcs_default(),
+        ] {
+            for arg in derived_content_git_args(policy) {
+                assert!(
+                    arg == "-c" || arg.contains('='),
+                    "policy {policy:?} contributed a non-configuration argument: {arg:?}"
+                );
+            }
+        }
     }
 }

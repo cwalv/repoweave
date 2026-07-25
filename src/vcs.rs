@@ -1751,6 +1751,119 @@ impl DeletionWarrant {
     }
 }
 
+// ===========================================================================
+// Derived content (regenerable-regions.md D1–D3)
+// ===========================================================================
+//
+// Some tracked paths are not authored, they are *derived*: regenerated from
+// a source of record rather than edited by hand. `rwv.lock` is derived from
+// the manifest tips; a repo's generated reference material is derived from
+// its own sources. Carrying one side's edit to such a path across a replay
+// is noise — the content that ships is whatever the generator next produces,
+// and the repo's own blocking gates are what force it to run.
+//
+// The mechanism has two halves, and they live in different places on
+// purpose:
+//
+//   - WHICH paths are derived is the repo's own declaration, recorded in
+//     tracked metadata so it travels with a clone (for git: `.gitattributes`
+//     — see [`Vcs::set_replay_exclusion`]). Per-repo, opt-in, self-contained.
+//   - HOW a derived path resolves is a definition the declaration only names
+//     and cannot carry. rwv is the carrier, supplying it per operation.
+//
+// `DerivedContentPolicy` is that supply, named and typed. It is a parameter
+// on every seam operation that can honor it, so which operations do is
+// visible in the signature rather than buried in an impl — and a call site
+// picks a resolution by name instead of spelling one VCS's flags.
+//
+// The resolution is a deterministic side-pick and nothing else: no generator
+// runs while an operation is in flight, no clock or environment is read. A
+// resolver that regenerated mid-replay would make the resolved content
+// depend on the machine that happened to run it.
+
+/// How an operation that replays or merges content resolves the paths a repo
+/// has declared **derived**.
+///
+/// Values name a resolution; they do not describe a mechanism. A VCS impl
+/// translates the one it is handed into whatever its own merge machinery
+/// takes ([`GitVcs`](crate::git::GitVcs): an inline merge-driver
+/// definition), which is what keeps the choice spellable by callers that
+/// know nothing about git.
+///
+/// # Minted here, spelled nowhere else
+///
+/// The field is private and the resolution vocabulary is crate-internal:
+/// the only values that exist are the ones the constructors below name.
+/// A caller states which resolution it wants; it cannot assemble one, and
+/// it cannot reach past the seam to the flags that implement one.
+///
+/// ```compile_fail
+/// use repoweave::vcs::DerivedContentPolicy;
+/// // E0603/E0616: the resolution vocabulary is private to `vcs`.
+/// let _ = DerivedContentPolicy(repoweave::vcs::DerivedContentResolution::KeepTargetSide);
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DerivedContentPolicy(DerivedContentResolution);
+
+/// The closed set of resolutions rwv defines for derived content.
+///
+/// Crate-internal: a VCS impl matches on it to translate, and the match is
+/// exhaustive, so adding a resolution is a compile error in every impl until
+/// that impl says what the new one means.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum DerivedContentResolution {
+    /// rwv supplies nothing. A declaration that names a resolver finds none
+    /// defined *by this operation*, and the VCS resolves the path the way it
+    /// resolves any other content — for git, a textual three-way merge that
+    /// can conflict.
+    VcsDefault,
+    /// rwv supplies its deterministic side-pick: a declared path keeps the
+    /// version already on the side being replayed onto (rebase) or merged
+    /// into (merge), and the incoming edit is discarded.
+    KeepTargetSide,
+}
+
+impl DerivedContentPolicy {
+    /// Declared derived paths keep the **target-side** version.
+    ///
+    /// The policy rwv operations carry: a replayed edit to derived content
+    /// is dropped in favour of the version at the destination, so a
+    /// derived-only commit lands as an empty patch instead of a conflict.
+    /// What makes the result correct is not this resolution — it is the
+    /// regeneration the repo's gates force afterwards. The resolution only
+    /// has to be *mechanical*, so that two machines replaying the same
+    /// histories reach the same tree.
+    pub fn keep_target_side() -> Self {
+        Self(DerivedContentResolution::KeepTargetSide)
+    }
+
+    /// rwv supplies no resolver to this operation.
+    ///
+    /// The shape of an operation rwv did not make — a hand-run VCS command
+    /// resolves declared paths textually, because the definition a
+    /// declaration names does not travel with the repo. Available as a value
+    /// so a call site that wants that behaviour *states* it rather than
+    /// omitting an argument.
+    ///
+    /// Not a promise that no resolver is defined: a definition the repo
+    /// already carries durably in its own configuration still applies (for
+    /// git, the `merge.rwv-ours.*` plant that keeps a bare `git rebase
+    /// --continue` safe). This value governs what the operation supplies,
+    /// which is the only half rwv owns per invocation.
+    pub fn vcs_default() -> Self {
+        Self(DerivedContentResolution::VcsDefault)
+    }
+
+    /// Which resolution this policy names, for a [`Vcs`] impl to translate.
+    ///
+    /// `pub(crate)`: the vocabulary belongs to the seam and its impls. A
+    /// caller chooses a policy, hands it to an operation, and never asks
+    /// what is inside it.
+    pub(crate) fn resolution(self) -> DerivedContentResolution {
+        self.0
+    }
+}
+
 /// Operations repoweave needs from a version control system.
 ///
 /// Implementations exist for git (and eventually jj, sl, hg). Each method
@@ -1939,6 +2052,79 @@ pub trait Vcs {
     /// [`rebase_continue`]: Vcs::rebase_continue
     /// [`mid_op`]: Vcs::mid_op
     fn rebase_continue(&self, repo: &Path) -> Result<(), VcsError>;
+
+    // -----------------------------------------------------------------------
+    // Replay under a stated derived-content policy
+    // -----------------------------------------------------------------------
+    //
+    // The two methods below are [`rebase`] and [`rebase_continue`] with the
+    // policy in the signature instead of wired in silently by the impl. They
+    // run beside the pre-policy pair until every call site has been restated
+    // in terms of them — the same side-by-side transition the branch-model
+    // types are in above — at which point the pre-policy pair and the
+    // unconditional driver wiring inside it go, and these keep the plain
+    // names.
+    //
+    // [`rebase`]: Vcs::rebase
+    // [`rebase_continue`]: Vcs::rebase_continue
+
+    /// Rebase commits in the range `upstream..` of `repo`'s current branch
+    /// onto `onto`, resolving declared derived content per `derived`.
+    ///
+    /// Identical to [`rebase`] in every other respect — same range semantics,
+    /// same [`VcsError::RebaseConflict`] on a genuine conflict, same
+    /// mid-operation state left behind for the resume path — so read that
+    /// method's contract for those. What this one adds is that the derived
+    /// content resolution is the caller's stated choice rather than a
+    /// property of the impl: passing [`DerivedContentPolicy::vcs_default`]
+    /// means declared paths conflict like any other, and passing
+    /// [`DerivedContentPolicy::keep_target_side`] means they resolve to the
+    /// version at `onto` without stopping the replay.
+    ///
+    /// The declaration itself still comes from the repo
+    /// ([`set_replay_exclusion`]); the policy supplies only the resolution
+    /// that declaration names. A repo that declares nothing derived is
+    /// unaffected by either value.
+    ///
+    /// For [`GitVcs`](crate::git::GitVcs): the policy becomes the inline
+    /// merge-driver definition (`-c merge.<name>.driver=…`) for that single
+    /// git invocation, so it is in force for exactly this operation and
+    /// leaves no configuration behind.
+    ///
+    /// [`rebase`]: Vcs::rebase
+    /// [`set_replay_exclusion`]: Vcs::set_replay_exclusion
+    fn rebase_with_policy(
+        &self,
+        repo: &Path,
+        onto: &ResolvedRevisionId,
+        upstream: &ResolvedRevisionId,
+        derived: DerivedContentPolicy,
+    ) -> Result<(), VcsError>;
+
+    /// Resume an in-flight rebase in `repo`, resolving declared derived
+    /// content per `derived`.
+    ///
+    /// [`rebase_continue`] with the policy stated, and its contract in every
+    /// other respect — including that the caller MUST have established the
+    /// repo is mid-rebase, and that a further genuine conflict comes back as
+    /// [`VcsError::RebaseConflict`] rather than an error the operator loop
+    /// cannot act on.
+    ///
+    /// A resumed replay reaches picks the interrupted one never got to, so
+    /// the policy passed here is the one that governs them. Handing this
+    /// method a different policy than the [`rebase_with_policy`] call it
+    /// resumes is legal and means what it says — the remaining picks resolve
+    /// differently from the ones already replayed — which is a decision a
+    /// caller has to make deliberately, not a detail it can leave to
+    /// whichever value happened to be in scope.
+    ///
+    /// [`rebase_continue`]: Vcs::rebase_continue
+    /// [`rebase_with_policy`]: Vcs::rebase_with_policy
+    fn rebase_continue_with_policy(
+        &self,
+        repo: &Path,
+        derived: DerivedContentPolicy,
+    ) -> Result<(), VcsError>;
 
     /// Configure `repo` so that during replay (rebase, merge) any changes to
     /// `path` are silently overridden — the replay target's version of `path`
@@ -3083,5 +3269,35 @@ mod tests {
     fn a_warrant_says_which_check_licensed_the_destroy() {
         let w = DeletionWarrant::operator_discarded(DiscardUnmergedConsent::granted());
         assert_eq!(w.describe(), "operator passed --discard-unmerged-commits");
+    }
+
+    // -----------------------------------------------------------------------
+    // Derived-content policy (regenerable-regions.md D3)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn each_constructor_names_the_resolution_it_is_named_for() {
+        // The constructors are the entire public vocabulary, so a swapped
+        // body would hand every rwv replay the opposite resolution while
+        // every call site still read correctly.
+        assert_eq!(
+            DerivedContentPolicy::keep_target_side().resolution(),
+            DerivedContentResolution::KeepTargetSide
+        );
+        assert_eq!(
+            DerivedContentPolicy::vcs_default().resolution(),
+            DerivedContentResolution::VcsDefault
+        );
+    }
+
+    #[test]
+    fn the_policies_are_distinguishable() {
+        // A parameter with one inhabitant is a token, not a policy: the
+        // operations that take one would be free to ignore it and no caller
+        // could tell.
+        assert_ne!(
+            DerivedContentPolicy::keep_target_side(),
+            DerivedContentPolicy::vcs_default()
+        );
     }
 }
