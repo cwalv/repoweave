@@ -12,9 +12,9 @@
 //! All fixtures here are SYNTHETIC — the verb is destructive and we
 //! never exercise it against the live weave.
 
+use repoweave::cli::dispatch::workweave_delete;
 use repoweave::manifest::{ProjectName, WorkweaveName};
 use repoweave::vcs::Vcs;
-use repoweave::workweave::delete_workweave;
 use std::path::{Path, PathBuf};
 
 mod common;
@@ -217,12 +217,13 @@ fn delete_uses_resolved_parent_under_inverted_topology() {
     // would run `worktree remove` in `primary_slot` (the wrong DAG) and
     // leave a stale registration in `real_canonical`. Under the fix it
     // resolves to `real_canonical` and the registration is cleaned up.
-    let result = delete_workweave(
+    let result = workweave_delete(
         &ws,
         &ProjectName::new("web-app"),
         &WorkweaveName::new("ww"),
         true, // discard_uncommitted: we're testing topology, not the dirty gate
-        repoweave::cli::consent::DiscardUnmergedConsent::from_flag(true), // the unmerged waiver, as the CLI mints it
+        true, // --discard-unmerged-commits, minted into a token by the same
+              // dispatch path the CLI takes
     );
     assert!(
         result.is_ok(),
@@ -294,12 +295,12 @@ fn delete_refuses_when_checkout_hosts_foreign_worktrees_even_with_waivers() {
     std::fs::write(ww_dir.join(".rwv-active"), "web-app\n").unwrap();
 
     // Even with both waivers, delete must refuse.
-    let result = delete_workweave(
+    let result = workweave_delete(
         &ws,
         &ProjectName::new("web-app"),
         &WorkweaveName::new("bad"),
         true,
-        repoweave::cli::consent::DiscardUnmergedConsent::from_flag(true),
+        true,
     );
     let err = result.expect_err("delete should refuse when a checkout hosts foreign worktrees");
     let msg = format!("{err:#}");
@@ -357,12 +358,12 @@ fn delete_proceeds_when_canonical_checkout_has_no_foreign_dependents() {
     write_marker(&ww_dir, &ws, "web-app");
     std::fs::write(ww_dir.join(".rwv-active"), "web-app\n").unwrap();
 
-    let result = delete_workweave(
+    let result = workweave_delete(
         &ws,
         &ProjectName::new("web-app"),
         &WorkweaveName::new("lone"),
         true,
-        repoweave::cli::consent::DiscardUnmergedConsent::from_flag(true),
+        true,
     );
     assert!(
         result.is_ok(),
@@ -465,12 +466,12 @@ fn merged_check_refuses_vouch_across_distinct_canonical_stores() {
     // The post-fix code reaches the same conclusion via the cleaner
     // canonical-store-equality path: real_canonical != primary_slot, so
     // the baseline cannot vouch.
-    let result = delete_workweave(
+    let result = workweave_delete(
         &ws,
         &ProjectName::new("web-app"),
         &WorkweaveName::new("diverged"),
-        true, // uncommitted changes are irrelevant here
-        None, // exercise the merged-check
+        true,  // uncommitted changes are irrelevant here
+        false, // no waiver: exercise the merged-check
     );
     let err = result.expect_err("delete should refuse when workweave carries unmerged work");
     let msg = format!("{err:#}");

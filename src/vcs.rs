@@ -1529,11 +1529,15 @@ impl fmt::Display for HeadAttachment {
 // Consent and warrant tokens (§4.4)
 // ---------------------------------------------------------------------------
 //
-// `DetachConsent`, `ReattachConsent`, and `DiscardUnmergedConsent` live in
-// `crate::cli::consent` — the CLI layer's flag module, which is the only
-// place that can construct them (private-field idiom). This module takes
-// each as an opaque parameter and never constructs one; see that module's
-// doc comment for why the home has to be there rather than here.
+// `DetachConsent`, `ReattachConsent`, `DiscardUnmergedConsent` and
+// `AdoptDetachedConsent` live in `crate::cli::consent` — the CLI layer's
+// flag module, which is the only place that can construct them. This module
+// takes each as an opaque parameter and never constructs one, and that is
+// not a promise a reviewer has to keep: both of their construction routes
+// are sealed against this module by the compiler (private field, and a mint
+// visible only within `crate::cli`), so a mint written here does not build.
+// See that module's doc comment.
+//
 // `DiscardLocalCommitsConsent` and the warrant types below stay in this
 // module: they are minted from checks this module runs
 // (`DeletionWarrant::unmoved`/`merged`) or paired with a savepoint this
@@ -1555,9 +1559,21 @@ impl fmt::Display for HeadAttachment {
 /// flags on the command line at all. A `from_flag` mint at dispatch would
 /// therefore cover only the fresh path and leave the resumed one — the
 /// path that actually crashes and gets re-run — unable to prove the same
-/// consent. `granted()` is `pub(crate)`, so the crate-internal call sites
-/// are the whole minting surface, and they are pinned by
-/// `tests/consent_minting_audit_test.rs`.
+/// consent. So the layer that holds *both* spellings mints it, and that
+/// layer is `sync.rs`.
+///
+/// **What that costs, stated rather than assumed.** The other four tokens
+/// are sealed to their declaring module tree, so a mint elsewhere is a
+/// compile error. This one cannot be: `sync.rs` is a sibling of this
+/// module, not a descendant, and Rust has no visibility tier that names one
+/// sibling — `pub(in path)` requires an ancestor. `pub(crate)` is therefore
+/// the tightest seal available, and it admits every module of this crate.
+/// The single production call site is `sync::rewind_project_repo`, which
+/// documents where its knowledge of the operator's intent comes from; the
+/// rest are in-crate test fixtures. **If you need this consent somewhere else, take the token
+/// as a parameter and thread it down from there** — a second mint would be
+/// a second layer claiming to know what the operator asked for, which is
+/// the thing §4.4 exists to prevent.
 #[derive(Debug)]
 pub struct DiscardLocalCommitsConsent(());
 

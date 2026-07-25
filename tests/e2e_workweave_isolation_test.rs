@@ -306,14 +306,10 @@ func Greeting() string {
     // files in the workweave's protocol repo (step 8) to verify isolation from
     // primary. The safety check correctly identifies those as
     // uncommitted changes; the test wants to delete anyway.
-    repoweave::workweave::delete_workweave(
-        &ws,
-        &ww_project,
-        &ww_name,
-        true,
-        repoweave::cli::consent::DiscardUnmergedConsent::from_flag(true),
-    )
-    .expect("delete_workweave should succeed");
+    // Both waivers are passed as the flags they are; the dispatch entry point
+    // mints the consent token, because nothing outside `cli` can.
+    repoweave::cli::dispatch::workweave_delete(&ws, &ww_project, &ww_name, true, true)
+        .expect("workweave delete should succeed");
 
     // ------------------------------------------------------------------
     // 12. Verify workweave directory is gone

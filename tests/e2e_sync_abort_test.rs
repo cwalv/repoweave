@@ -1686,7 +1686,7 @@ fn sync_ff_reports_failed_for_diverged_repo() {
 // ---------------------------------------------------------------------------
 
 /// `--force` is rejected on `rwv sync` with a migration hint naming both
-/// replacement flags (early-dispatch in main.rs).
+/// replacement flags (early-dispatch in `cli::dispatch`).
 #[test]
 fn sync_force_flag_rejected_with_migration_hint() {
     let tmp = tempfile::tempdir().unwrap();

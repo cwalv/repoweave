@@ -518,7 +518,8 @@ fn continue_with_strategy_flag_is_rejected() {
 }
 
 /// --force is removed from sync/sync-to; passing it must produce an actionable
-/// error (from the early-dispatch did-you-mean hint in main.rs) per spec fo-jsbr3i.6.
+/// error (from the early-dispatch did-you-mean hint in `cli::dispatch`) per spec
+/// fo-jsbr3i.6.
 #[test]
 fn sync_force_flag_is_removed_and_produces_friendly_error() {
     let tmp = tempfile::tempdir().unwrap();

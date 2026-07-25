@@ -2,8 +2,12 @@
 //!
 //! The [`Cli`] struct and every [`clap::Subcommand`]-derived enum live here so
 //! they are reachable from integration tests and other binaries (e.g.
-//! `generate-explain`) via `repoweave::cli::Cli`.  `main.rs` imports these
-//! types and contains only dispatch logic.
+//! `generate-explain`) via `repoweave::cli::Cli`.  The argument dispatch that
+//! consumes them is [`dispatch`], also in this module tree — `main.rs` is a
+//! shim over [`dispatch::run`] and contains no logic. See [`dispatch`]'s and
+//! [`consent`]'s doc comments for why the split falls there.
+
+pub mod dispatch;
 
 use std::ffi::OsString;
 
@@ -530,34 +534,39 @@ pub enum SetupAction {
 // ---------------------------------------------------------------------------
 //
 // This is the CLI layer's flag module, and it is the *only* place that can
-// construct `DetachConsent`, `ReattachConsent`, and `DiscardUnmergedConsent`.
-// Within one crate a `pub fn` constructor is callable from anywhere — so
-// "defined elsewhere but minted only by the CLI" does not compile into an
-// invariant. What actually seals a token is the private-field idiom applied
-// to the module that owns the type: each struct's tuple field is unnamed
-// and unmarked (private), and Rust resolves that against the *declaring
-// module*, not the call site — so no other module, in this crate or any
-// other, can write `DetachConsent(())` by hand. `vcs.rs` takes each token
-// as an opaque parameter and never constructs one.
+// construct `DetachConsent`, `ReattachConsent`, `DiscardUnmergedConsent` and
+// `AdoptDetachedConsent`. Not by convention — there is no route a reviewer
+// has to watch for. Two compiler-checked seals, one per construction route a
+// token has:
 //
-// `from_flag` is `pub`, not `pub(crate)`: the `rwv` binary (`main.rs`) is
-// its real caller, and a `[[bin]]` target is a *separate* crate from this
-// `[lib]` — `pub(crate)` items are invisible to it, the same as to any
-// other downstream crate.
+//  1. The tuple literal. Each struct's field is unnamed and unmarked
+//     (private), and Rust resolves field privacy against the *declaring
+//     module*, not the call site — so `DetachConsent(())` cannot be written
+//     from any other module, in this crate or any other. Pinned per token by
+//     `tests/branch_model_compile_fail_test.rs`, by error code.
 //
-// Be honest about what that costs. A `pub fn` returning the token IS a
-// second construction route, and it is reachable from every module of this
-// crate — `vcs.rs` can write `DetachConsent::from_flag(true).expect(..)`
-// and it compiles (measured, not assumed). So the seal this module claims
-// is real against the tuple literal and NOT real against `from_flag`, and
-// the `compile_fail` probes cover only the former. The gap is guarded
-// instead by `tests/consent_minting_audit_test.rs`, a static call-site
-// allowlist that fails when any module outside CLI dispatch mints one.
+//  2. The minting function. `from_flag` is `pub(in crate::cli)`: visible to
+//     this module tree and nowhere else. The only other member of the tree
+//     is `cli::dispatch`, which is where a parsed flag exists to mint from.
+//     `vcs.rs` — the module §4.4 names as the one that must only ever
+//     *receive* a token — cannot call it: `DetachConsent::from_flag(true)`
+//     there is E0624, `associated function is private`.
 //
-// That guard is interim. The real fix is to stop having a separate binary
-// crate mint tokens at all: move dispatch into the lib so `main.rs` is a
-// thin shim, at which point `pub(crate)` suffices and the compiler enforces
-// what the allowlist currently asserts.
+// Seal 2 is why dispatch lives in `cli::dispatch` rather than in `main.rs`.
+// A `[[bin]]` target is a *separate crate* from this `[lib]`, so a minting
+// caller out there can only reach a `pub` constructor — and a `pub fn`
+// returning the token is a second construction route reachable from every
+// module of this crate, which is exactly what §4.4 forbids. The narrowest
+// visibility that admits an out-of-crate caller is `pub`; the narrowest that
+// admits `cli::dispatch` is `pub(in crate::cli)`. Moving the caller in is
+// what let the visibility come down.
+//
+// `granted()` — the unconditional mint, which checks nothing — is
+// `#[cfg(test)]`, and exists only on the tokens some in-crate fixture
+// actually needs one for. It is absent from the build of the library that
+// the binary and the integration tests link against, so in-crate fixtures
+// can still build a token while product code has no unconditional mint to
+// reach for at all.
 //
 // House rule: escape hatches are named for the precondition they waive,
 // never a bare `--force`. `--detach-checkouts` and `--reattach-checkouts`
@@ -576,10 +585,12 @@ pub mod consent {
     pub struct DetachConsent(());
 
     impl DetachConsent {
-        /// Mint unconditionally. `pub(crate)`: usable by in-crate tests
-        /// (e.g. `git.rs`'s `Vcs` impl tests) that need a token without
-        /// exercising CLI parsing; invisible to the `rwv` binary crate and
-        /// to any other downstream crate.
+        /// Mint unconditionally, for in-crate test fixtures that need a
+        /// token without exercising CLI parsing (e.g. `git.rs`'s `Vcs` impl
+        /// tests). `#[cfg(test)]`: absent from the library that the binary
+        /// and the integration tests link against, so no product code — in
+        /// this module or any other — has an unconditional mint to reach for.
+        #[cfg(test)]
         pub(crate) fn granted() -> Self {
             Self(())
         }
@@ -587,8 +598,13 @@ pub mod consent {
         /// Mint from the parsed `--detach-checkouts` value: `Some` iff the
         /// operator passed it. Every verb's dispatch mints through here,
         /// so the flag-to-token mapping lives in exactly one place.
-        pub fn from_flag(detach_checkouts: bool) -> Option<Self> {
-            detach_checkouts.then(Self::granted)
+        ///
+        /// `pub(in crate::cli)`: a parsed flag exists only in
+        /// [`crate::cli::dispatch`], and confining the mint to this module
+        /// tree is what turns §4.4's "only the flag module can construct
+        /// one" into a compile error everywhere else.
+        pub(in crate::cli) fn from_flag(detach_checkouts: bool) -> Option<Self> {
+            detach_checkouts.then_some(Self(()))
         }
     }
 
@@ -600,16 +616,18 @@ pub mod consent {
     pub struct ReattachConsent(());
 
     impl ReattachConsent {
-        /// Mint unconditionally. `pub(crate)`: see
+        /// Mint unconditionally. `#[cfg(test)]`: see
         /// [`DetachConsent::granted`]'s doc comment.
+        #[cfg(test)]
         pub(crate) fn granted() -> Self {
             Self(())
         }
 
         /// Mint from the parsed `--reattach-checkouts` value: `Some` iff
-        /// the operator passed it.
-        pub fn from_flag(reattach_checkouts: bool) -> Option<Self> {
-            reattach_checkouts.then(Self::granted)
+        /// the operator passed it. `pub(in crate::cli)`: see
+        /// [`DetachConsent::from_flag`]'s doc comment.
+        pub(in crate::cli) fn from_flag(reattach_checkouts: bool) -> Option<Self> {
+            reattach_checkouts.then_some(Self(()))
         }
     }
 
@@ -622,16 +640,21 @@ pub mod consent {
     pub struct DiscardUnmergedConsent(());
 
     impl DiscardUnmergedConsent {
-        /// Mint unconditionally. `pub(crate)`: see
+        /// Mint unconditionally. `#[cfg(test)]`: see
         /// [`DetachConsent::granted`]'s doc comment.
+        #[cfg(test)]
         pub(crate) fn granted() -> Self {
             Self(())
         }
 
         /// Mint from the parsed `--discard-unmerged-commits` value: `Some`
-        /// iff the operator passed it.
-        pub fn from_flag(discard_unmerged_commits: bool) -> Option<Self> {
-            discard_unmerged_commits.then(Self::granted)
+        /// iff the operator passed it. `pub(in crate::cli)`: see
+        /// [`DetachConsent::from_flag`]'s doc comment. Integration tests
+        /// that need the post-waiver behaviour of `workweave delete` enter
+        /// through [`crate::cli::dispatch::workweave_delete`], which is this
+        /// mint's only caller.
+        pub(in crate::cli) fn from_flag(discard_unmerged_commits: bool) -> Option<Self> {
+            discard_unmerged_commits.then_some(Self(()))
         }
     }
 
@@ -652,16 +675,14 @@ pub mod consent {
     pub struct AdoptDetachedConsent(());
 
     impl AdoptDetachedConsent {
-        /// Mint unconditionally. `pub(crate)`: see
-        /// [`DetachConsent::granted`]'s doc comment.
-        pub(crate) fn granted() -> Self {
-            Self(())
-        }
+        // No `granted()`: no in-crate fixture needs one yet, and an unused
+        // unconditional mint is dead code the linter would reject anyway.
 
         /// Mint from the parsed `--adopt-detached-checkouts` value: `Some`
-        /// iff the operator passed it.
-        pub fn from_flag(adopt_detached_checkouts: bool) -> Option<Self> {
-            adopt_detached_checkouts.then(Self::granted)
+        /// iff the operator passed it. `pub(in crate::cli)`: see
+        /// [`DetachConsent::from_flag`]'s doc comment.
+        pub(in crate::cli) fn from_flag(adopt_detached_checkouts: bool) -> Option<Self> {
+            adopt_detached_checkouts.then_some(Self(()))
         }
     }
 }

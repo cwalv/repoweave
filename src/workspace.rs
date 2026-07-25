@@ -440,7 +440,7 @@ impl WorkspaceContext {
     /// Project resolution chain (highest priority first):
     ///   1. `project_override` — explicit `--project <name>` flag.
     ///      Provenance = [`ProjectProvenance::Flag`].
-    ///   2. `-w/--workweave` prefix — handled in main.rs dispatch by looking
+    ///   2. `-w/--workweave` prefix — handled in `cli::dispatch` by looking
     ///      up the workweave path and re-resolving from it; the dispatch path
     ///      then calls [`WorkspaceContext::with_workweave_flag_provenance`] to
     ///      correct `Marker` → `WorkweaveFlag`.

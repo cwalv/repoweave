@@ -413,9 +413,14 @@ fn an_ephemeral_name_cannot_be_derived_from_an_observed_attachment() {
 
 #[test]
 fn detaching_a_checkout_requires_a_consent_token_nobody_else_can_mint() {
+    // `granted()` is the unconditional mint — it checks nothing, so holding
+    // its result is the whole proof. It is `#[cfg(test)]`, which means it is
+    // absent from the library that this probe (and the `rwv` binary, and
+    // every integration test) links against: not merely private, not there.
+    // Hence E0599 rather than a privacy error.
     assert_fails_with(
-        "E0624",
-        "consent is minted from a named flag, not conjured at the call site",
+        "E0599",
+        "the unconditional mint does not exist outside a test build of the crate",
         r#"
         use repoweave::cli::consent::DetachConsent;
         use repoweave::vcs::{AttachedRef, ResolvedRevisionId, Vcs};
@@ -426,20 +431,42 @@ fn detaching_a_checkout_requires_a_consent_token_nobody_else_can_mint() {
     );
 }
 
+#[test]
+fn the_flag_mint_is_not_reachable_from_outside_the_cli_module() {
+    // The other minting route. `from_flag` is `pub(in crate::cli)`, so this
+    // probe pins only half of what that buys: that it is not `pub`. The
+    // other half — that `vcs.rs`, inside the crate, cannot call it either —
+    // is not observable from an external crate, because every visibility
+    // narrower than `pub` looks identical from out here. It is instead a
+    // property of where dispatch lives: `cli::dispatch` is the only module
+    // in the `cli` tree that mints, and a mint appearing in `vcs.rs` fails
+    // `cargo build` with this same E0624.
+    assert_fails_with(
+        "E0624",
+        "consent is minted from a named flag, at dispatch, and nowhere else",
+        r#"
+        use repoweave::cli::consent::DetachConsent;
+        pub fn mint() -> Option<DetachConsent> {
+            DetachConsent::from_flag(true)
+        }
+        "#,
+    );
+}
+
 // ---------------------------------------------------------------------------
-// fo-opmmoz.3 — a consent token cannot be forged outside the flag module
+// A consent token cannot be forged outside the flag module
 // ---------------------------------------------------------------------------
 //
-// The above pins that `granted()` (the crate-internal test convenience) is
-// invisible from outside the crate. These pin the stronger claim §4.4
-// actually requires: even the tuple-struct literal — bypassing any
-// constructor function entirely — cannot be written, because the field is
-// private to `cli::consent`. That privacy rule does not distinguish "a
-// different crate" from "a different module of this same crate" (there is
-// no visibility tier between plain-private and `pub(crate)` that would), so
-// an external probe demonstrating this also demonstrates the in-crate claim:
-// no module of `repoweave` other than `cli::consent` — not `vcs.rs`, not
-// `fetch.rs` — can write `DetachConsent(())` by hand either.
+// The two above pin the *functions*: one does not exist outside a test build,
+// the other is not `pub`. These pin the claim §4.4 actually requires: even
+// the tuple-struct literal — bypassing any constructor function entirely —
+// cannot be written, because the field is private to `cli::consent`. That
+// privacy rule does not distinguish "a different crate" from "a different
+// module of this same crate" (there is no visibility tier between
+// plain-private and `pub(crate)` that would), so an external probe
+// demonstrating this also demonstrates the in-crate claim: no module of
+// `repoweave` other than `cli::consent` — not `vcs.rs`, not `fetch.rs` — can
+// write `DetachConsent(())` by hand either.
 
 #[test]
 fn a_detach_consent_cannot_be_forged_by_tuple_literal() {

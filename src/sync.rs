@@ -4426,7 +4426,10 @@ fn short_sha(sha: &str) -> &str {
 /// spellings of it — `ctx.discard_local_commits` is the flag on a fresh run
 /// and the recorded override on a resumed one. Minting here rather than
 /// threading a token from dispatch is what makes the resumed path carry the
-/// same proof as the fresh one instead of a weaker one.
+/// same proof as the fresh one instead of a weaker one. This is the *only*
+/// production mint of `DiscardLocalCommitsConsent`; see that type's doc
+/// comment for why the compiler cannot make that count-of-one a rule, and
+/// what to do instead of adding a second.
 fn rewind_project_repo(ctx: &OpContext<'_>, to: &ResolvedRevisionId) -> anyhow::Result<()> {
     let savepoint = GitVcs
         .resolve_savepoint_ref(&ctx.cwd_project_dir, ctx.op_id.as_str())

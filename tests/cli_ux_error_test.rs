@@ -1,6 +1,6 @@
 //! CLI error/help UX regressions (rwv-b2z, epic fo-gyt1tq).
 //!
-//! Two problem classes, fixed uniformly in `src/main.rs` via pre-parse
+//! Two problem classes, fixed uniformly in `src/cli/dispatch.rs` via pre-parse
 //! raw-arg interception (see the rwv CLI UX audit,
 //! `projects/foundations/docs/repoweave/rwv-cli-ux-audit.md`):
 //!
