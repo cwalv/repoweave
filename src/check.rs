@@ -4261,23 +4261,28 @@ pub fn fix_branch_model_migration(
 
 /// §7.1 arm 1: adopt a pre-flat ref into a receipt, then rename it flat.
 ///
-/// The order is the pass rule, not a preference. Both receipts are on disk —
-/// fsynced — before the ref write, so the crash windows are: after the first,
-/// a receipt for a ref that exists and has not moved (re-run renames it);
-/// after the second, an extra receipt for a ref that does not exist yet
-/// (benign, and `record_created`'s no-op-on-existing rule makes the re-run
-/// reach the same end state); after the rename, a receipt for a name that is
-/// gone, retracted below and by `fix_dangling_receipts` if this process dies
-/// between the two.
-///
 /// §3.4 derives a rename as a DESTROY of the old name plus a birth of the
-/// new, so the DESTROY takes the old name's receipt and a warrant.
-/// [`DeletionWarrant::unmoved`] is the one the doc names, and it is not
-/// vacuous here even though the tip was observed a moment ago: the check
-/// re-reads the ref and compares against the *persisted* receipt, so a
-/// concurrent commit between the two reads makes it refuse.
+/// new, so the DESTROY takes the old name's receipt and a warrant, and the
+/// birth's receipt is on disk — fsynced — before the ref write, because an
+/// [`OwnedRef`] exists only after the registry has persisted one.
+///
+/// # The three crash windows, and what a re-run finds
+///
+/// **After the legacy receipt, before the flat one.** The ref still exists at
+/// the recorded tip; the re-run renames it. Unless the operator committed on
+/// it in between, which is the case the retraction below exists for.
+///
+/// **After both receipts, before the rename.** An extra receipt for a ref
+/// that does not exist yet. `fix_dangling_receipts` runs earlier in the same
+/// `--fix` and retracts it, and this arm then records it afresh at the tip it
+/// observes now — which is the right tip, not the crashed run's.
+///
+/// **After the rename, before the retraction.** A receipt for a name that is
+/// gone. Retracted below; if the process dies between the two,
+/// `fix_dangling_receipts` clears it on the next run.
 ///
 /// [`DeletionWarrant::unmoved`]: crate::vcs::DeletionWarrant::unmoved
+/// [`OwnedRef`]: crate::vcs::OwnedRef
 fn migrate_legacy_ref(
     vcs: &dyn crate::vcs::Vcs,
     registry: &mut crate::workweave_index::RefRegistry,
@@ -4300,6 +4305,23 @@ fn migrate_legacy_ref(
         .resolve_local_branch_tip(store, &raw)?
         .ok_or_else(|| anyhow::anyhow!("branch `{label}` vanished before it could be migrated"))?;
 
+    // A receipt for the pre-flat name can only have come from a previous,
+    // crashed run of this arm — nothing else in the tree adopts an observed
+    // name. If the operator committed on the branch in between, that receipt
+    // records a tip the ref will never return to, and the `Unmoved` warrant
+    // below would refuse it forever: the migration would be permanently
+    // wedged on the one workweave someone is actually working in.
+    //
+    // So retract the stale one and adopt at the tip observed now. This is the
+    // "caller that genuinely re-creates a ref retracts the old receipt, then
+    // records anew" path `record_created`'s contract names, and it is safe
+    // for the reason the whole arm is safe: the receipt authorizes a rename,
+    // and a rename preserves the tip. It cannot authorize a loss.
+    if let Some(stale) = registry.lookup(store, &raw)? {
+        if stale.created_at() != &tip {
+            registry.retract(store, &raw)?;
+        }
+    }
     let owned_legacy = registry.adopt_legacy(store, legacy, tip)?;
     let owned_flat =
         registry.record_created(store, flat.clone(), owned_legacy.created_at().clone())?;

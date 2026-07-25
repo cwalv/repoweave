@@ -1008,6 +1008,14 @@ fn handmade_lookalike_branch_survives_doctor_fix() {
     let canonical = ws.join("github").join("acme").join("repo");
     init_repo_with_commit(&canonical);
 
+    // The project directory has to exist, or the registry cannot be written
+    // to at all and the fixture would prove nothing: a `--fix` that tried to
+    // forge a receipt for this branch would fail on the missing directory
+    // rather than on the rule under test. (Measured — without this line a
+    // mutation that forges receipts and deletes the unowned class leaves this
+    // test green.)
+    std::fs::create_dir_all(ws.join("projects").join("myproj")).unwrap();
+
     // The operator's own branch. It happens to be spelled the way rwv spells
     // its ephemeral refs; nothing recorded it.
     create_branch(&canonical, "myproj--dead/main", "main");
@@ -1051,6 +1059,12 @@ fn flat_lookalike_branch_survives_doctor_fix() {
     let ws = make_primary(tmp.path());
     let canonical = ws.join("github").join("acme").join("repo");
     init_repo_with_commit(&canonical);
+
+    // `record_receipt` creates this as a side effect; the safe-class fixture
+    // therefore has it and this one must too, or the two stop being
+    // byte-for-byte and a receipt-forging `--fix` would fail here for the
+    // wrong reason. See the note in `handmade_lookalike_branch_survives_doctor_fix`.
+    std::fs::create_dir_all(ws.join("projects").join("myproj")).unwrap();
 
     // Identical to the safe-class fixture, with `record_receipt` removed.
     create_branch(&canonical, "myproj--dead", "main");
@@ -1675,12 +1689,10 @@ fn migration_replays_a_crash_between_the_receipt_and_the_rename() {
     let ww_checkout = ww_dir.join("github").join("acme").join("repo");
     std::fs::create_dir_all(ww_checkout.parent().unwrap()).unwrap();
     worktree_add(&canonical, &ww_checkout, "myproj--feat-a/main");
-    add_commit(&ww_checkout, "work.txt", "operator work");
-    let tip = rev(&ww_checkout, "HEAD");
 
     // The crash residue: a receipt for the flat name, whose ref does not
-    // exist yet. Recorded at the pre-flat ref's tip, which is what the
-    // migration would have written.
+    // exist yet — written at the tip the crashing run observed.
+    let crashed_at = rev(&ww_checkout, "HEAD");
     {
         let project = ProjectName::new("myproj");
         let mut registry = RefRegistry::for_project(&ws, &project);
@@ -1703,6 +1715,15 @@ fn migration_replays_a_crash_between_the_receipt_and_the_rename() {
         receipt_recorded(&ws, "myproj", "myproj--feat-a"),
         "fixture: the dangling receipt must be in place"
     );
+
+    // The operator commits between the crash and the re-run. This is what
+    // makes the idempotency rule observable rather than asserted: the replay
+    // calls `record_created` on a key that already exists, and a version that
+    // re-stamped `created_at` would certify the ref as untouched since W —
+    // an Unmoved warrant over the operator's commit.
+    add_commit(&ww_checkout, "work.txt", "operator work");
+    let tip = rev(&ww_checkout, "HEAD");
+    assert_ne!(crashed_at, tip, "fixture: the branch must have moved");
 
     let fix = rwv()
         .args(["doctor", "--fix"])
@@ -1731,8 +1752,70 @@ fn migration_replays_a_crash_between_the_receipt_and_the_rename() {
     assert_eq!(
         receipt_created_at(&ws, "myproj", "myproj--feat-a").as_deref(),
         Some(tip.as_str()),
-        "re-recording must be a no-op that keeps the FIRST receipt — a \
-         re-stamped created_at would forge an Unmoved warrant"
+        "the crashed run's receipt named a ref that never appeared, so the \
+         dangling-receipt pass retracts it and this arm records the tip it \
+         observes now — the receipt must describe the ref that exists, not the \
+         one a dead process planned"
+    );
+}
+
+/// The other crash window in arm 1: the receipt for the **pre-flat** name is
+/// on disk, the rename never ran, and the operator committed on the branch
+/// before re-running.
+///
+/// The receipt now records a tip the ref will never return to. An `Unmoved`
+/// warrant taken against it can never hold again, so a version that kept the
+/// stale receipt would refuse this workweave forever — and it would be the
+/// one workweave someone is actually working in. The migration must retract
+/// and re-adopt at the tip it observes.
+#[test]
+fn migration_replays_a_crash_after_adopting_a_branch_that_then_moved() {
+    let tmp = tempfile::tempdir().unwrap();
+    let ws = make_primary(tmp.path());
+    let canonical = ws.join("github").join("acme").join("repo");
+    init_repo_with_commit(&canonical);
+
+    let ww_dir = workweaves_dir(&ws).join("myproj--feat-a");
+    write_marker(&ww_dir, &ws, "myproj", &ws);
+    record_placement(&ws, "myproj", "feat-a", &ww_dir);
+    let ww_checkout = ww_dir.join("github").join("acme").join("repo");
+    std::fs::create_dir_all(ww_checkout.parent().unwrap()).unwrap();
+    worktree_add(&canonical, &ww_checkout, "myproj--feat-a/main");
+
+    // The crash residue: the pre-flat name adopted, the rename not run.
+    record_receipt(&ws, "myproj", "feat-a/main", &canonical);
+    let crashed_at = rev(&ww_checkout, "HEAD");
+
+    // The operator commits before re-running.
+    add_commit(&ww_checkout, "W.txt", "operator commit W");
+    let tip = rev(&ww_checkout, "HEAD");
+    assert_ne!(crashed_at, tip, "fixture: the branch must have moved");
+
+    let fix = rwv()
+        .args(["doctor", "--fix"])
+        .current_dir(&ws)
+        .output()
+        .unwrap();
+    let fix_stdout = String::from_utf8_lossy(&fix.stdout);
+
+    assert!(
+        branch_exists(&canonical, "myproj--feat-a"),
+        "the replay must complete the migration, not wedge on a stale receipt; \
+         doctor said:\n{fix_stdout}"
+    );
+    assert_eq!(
+        rev(&canonical, "myproj--feat-a"),
+        tip,
+        "commit W must ride the rename across"
+    );
+    assert!(
+        !receipt_recorded(&ws, "myproj", "myproj--feat-a/main"),
+        "the stale pre-flat receipt must not be left behind"
+    );
+    assert_eq!(
+        receipt_created_at(&ws, "myproj", "myproj--feat-a").as_deref(),
+        Some(tip.as_str()),
+        "the surviving receipt must record the tip the ref actually has"
     );
 }
 

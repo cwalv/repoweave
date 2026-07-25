@@ -299,6 +299,72 @@ fn delete_reports_the_branches_it_will_not_touch() {
 /// last-writer-wins, so two workweaves of one project could take the same
 /// name — and under flat ephemeral names they would then mint the *same*
 /// branch in the same store.
+/// The **flat** leftover: the workweave's own ephemeral name standing in a
+/// store with no receipt behind it — the §7.1 arm 2 population, before the
+/// migration adopts it.
+///
+/// `is_this_workweaves_namespace` has to claim the flat name itself, not just
+/// what sits under it. Drop the `==` half and this branch stops being
+/// reported at all: delete says nothing, and the operator is left with a ref
+/// no rwv verb will ever mention again. Nothing else in the suite reaches
+/// that half — every other leftover fixture is spelled `{flat}/<segment>`,
+/// which the prefix half claims on its own.
+#[test]
+fn delete_reports_a_flat_leftover_it_holds_no_receipt_for() {
+    let tmp = tempfile::tempdir().unwrap();
+    let ws = make_workspace(tmp.path());
+    let weaveroot = tmp.path().join(".workweaves");
+    std::fs::create_dir_all(&weaveroot).unwrap();
+
+    rwv()
+        .args(["workweave", "web-app", "create", "unowned"])
+        .env("RWV_WORKWEAVE_DIR", &weaveroot)
+        .current_dir(&ws)
+        .assert()
+        .success();
+
+    // Same shape as `delete_reports_the_branches_it_will_not_touch`: a second
+    // repo declared after the create, so the store is in the workweave's
+    // scope with no ref of rwv's in it. Here the leftover carries the flat
+    // name the workweave itself mints.
+    let repo2 = ws.join("github/org/other");
+    init_repo_with_commit(&repo2);
+    let manifest = ws.join("projects/web-app/rwv.yaml");
+    let mut text = std::fs::read_to_string(&manifest).unwrap();
+    text.push_str(&format!(
+        "  github/org/other:\n    \
+         type: git\n    \
+         url: file://{repo}\n    \
+         version: main\n    \
+         role: owned\n",
+        repo = repo2.display()
+    ));
+    std::fs::write(&manifest, text).unwrap();
+    let leftover_sha = hand_made_branch_with_unique_commit(&repo2, "web-app--unowned", "mine.txt");
+
+    let assert = rwv()
+        .args(["workweave", "web-app", "delete", "unowned"])
+        .env("RWV_WORKWEAVE_DIR", &weaveroot)
+        .current_dir(&ws)
+        .assert()
+        .success();
+    let stderr = String::from_utf8_lossy(&assert.get_output().stderr).to_string();
+
+    assert!(
+        stderr.contains("web-app--unowned") && stderr.contains("not recorded as rwv's"),
+        "delete must report the flat leftover it is not allowed to touch; got:\n{stderr}"
+    );
+    assert!(
+        branch_names(&repo2).iter().any(|b| b == "web-app--unowned"),
+        "the flat leftover must still exist"
+    );
+    assert_eq!(
+        git_out(&["rev-parse", "web-app--unowned"], &repo2),
+        leftover_sha,
+        "and it must still point at the operator's commit"
+    );
+}
+
 #[test]
 fn create_refuses_a_name_the_index_already_records() {
     let tmp = tempfile::tempdir().unwrap();

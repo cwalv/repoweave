@@ -48,12 +48,20 @@ const TRACKED: &[&str] = &[
 /// Patterns that must not appear at all. Each introduces a destruction
 /// vector this codebase has no audited use for. If you need one, add it to
 /// TRACKED with an allowlist entry instead.
+///
+/// `-M` is here because the branch model has one rename
+/// ([`Vcs::rename_local_ref`], `branch-model.md` §7.1 arm 1) and the
+/// uppercase form would let it rename *over* an existing branch — destroying
+/// that branch's ref with neither receipt nor warrant, and doing it silently,
+/// since git stops refusing. The lowercase `-m` refuses, which is what makes
+/// a leftover in the way a reported obstacle instead of a casualty.
 const FORBIDDEN: &[&str] = &[
     "\"clean\"",            // git clean: deletes untracked files
     "\"stash\"",            // stash drop/clear loses work; stash flows hide it
     "\"filter-branch\"",    // history rewrite
     "\"checkout\", \"-f\"", // force-checkout bypasses git's dirty refusal
     "\"reflog\"",           // expire/delete cuts the last recovery path
+    "\"-M\"",               // git branch -M: renames OVER an existing branch
 ];
 
 const ALLOWLIST: &[Allowed] = &[
