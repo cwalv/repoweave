@@ -84,15 +84,15 @@ Two modes, keyed on whether `<source>` is given:
 - **With `<source>`** — a URL (`https://…`, `git@…`, `owner/repo`, or the project name for a `--provider`-configured registry): the *bootstrap* mode. Clones the project repo from `<source>` into the current directory, reads its committed `rwv.lock`, and clones every listed manifest repo to its canonical slot.
 - **No `<source>`** — the *in-place repair* mode: re-materialize missing manifest members in the current workspace. Uses the existing `rwv.yaml` and `rwv.lock`; clones any repo whose canonical directory is absent (the `MissingCanonicalClone` / `DanglingReference` findings from `rwv doctor` point here). Run from the workspace root.
 
-An already-present clone is **realigned, not skipped**: when the lock covers the repo, `fetch` checks out the locked revision from that clone's own object store, which leaves it on a detached HEAD (the branch ref is not moved). No network fetch happens for a present clone, so a locked revision missing from the local object store is an error, not a re-fetch. When the lock has no entry for the repo, or there is no lock at all, the clone is left as it is and the lock records its current HEAD. Because `rwv sync-to` refuses to land onto a detached target, `git checkout <branch>` in the member is what puts it back on its branch.
+An already-present clone is **realigned, not skipped**: when the lock covers the repo, `fetch` resolves the locked revision in that clone's own object store and moves the checkout onto it *without changing what HEAD is attached to* — fast-forwarding the local counterpart of the branch `version:` declares, and leaving the checkout on it. No network fetch happens for a present clone, so a locked revision missing from the local object store is an error, not a re-fetch. When the lock has no entry for the repo, or there is no lock at all, the clone is left as it is and the lock records its current HEAD. A clone that is materialized by this run is *born* attached at the lock revision, not at the remote tip.
 
-Realignment refuses when it would detach a branch carrying uncommitted changes or unpushed commits; `--detach-checkouts` waives that refusal (it discards nothing — the changes come along and the branch ref keeps its commits).
+Realignment refuses when it cannot do that: when the pin is not a fast-forward of the branch (an older lock, or a branch carrying commits `origin` has not seen), and when the checkout is on a branch the manifest does not declare. `--detach-checkouts` waives both by materializing the pin on a detached HEAD — it discards nothing and moves no branch. Because `rwv sync-to` refuses to land onto a detached target, `git checkout <branch>` in the member is what puts it back on its branch.
 
 | Flag | Effect |
 |---|---|
 | `--frozen` | Error if lock is incomplete; never advance. Suitable for CI |
 | `--allow-non-empty-dir` | Bootstrap into a non-empty directory that is not a workspace |
-| `--detach-checkouts` | Realign a present clone even when that detaches a branch with work in flight |
+| `--detach-checkouts` | Realign a present clone even where that changes what HEAD is attached to: materialize the pin on a detached HEAD instead of refusing |
 | `--role` / `--repo` | Selector filters (see [Selector grammar](#selector-grammar)). A filtered run skips the lock write |
 | `-j N` | Parallel per-repo workers (default: min(nproc, 8)) |
 | `--json` | Structured output / NDJSON when `-j N` with `N > 1` |
@@ -110,8 +110,13 @@ Anchored by `tests/doc_claims_fetch_test.rs`.
 
 **The verb that gets the latest.** Advance each manifest repo to its branch HEAD on the remote, then re-snapshot `rwv.lock`. Maps semantically to `cargo update` / `npm update`.
 
+The advance is a **fast-forward of the branch the checkout is on**, not a checkout of the tip: on the canonical, that branch must be the local counterpart of the one `version:` declares, and `update` refuses when the checkout is on any other branch. It also refuses when the tip is not a fast-forward — reconcile the branch with its tracking tip yourself (ordinary `git rebase` / `git merge`) and re-run, or pass `--detach-checkouts` to materialize the tip on a detached HEAD without moving your branch. Inside a workweave the same fast-forward rule applies to the workweave's own branch, and a divergence points at `rwv sync` rather than at a flag. An already-detached member stays detached, unless the repo is stopped mid-rebase / mid-merge / mid-bisect, which refuses.
+
+`advanced N repo(s)` counts repos whose SHA actually changed.
+
 | Flag | Effect |
 |---|---|
+| `--detach-checkouts` | Advance a repo even where that changes what HEAD is attached to: materialize the tip on a detached HEAD instead of refusing |
 | `--role` / `--repo` | Selector filters |
 | `-j N` | Parallel per-repo workers (default: min(nproc, 8)) |
 | `--json` | Structured output: envelope under `-j 1`, NDJSON under `-j > 1` |

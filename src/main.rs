@@ -312,7 +312,7 @@ fn main() -> anyhow::Result<()> {
                        --allow-non-empty-dir  bootstrap into a non-empty directory \
                      that is not a workspace\n\
                        --detach-checkouts     realign a present clone even where that \
-                     detaches a branch holding uncommitted changes or unpushed commits",
+                     changes what HEAD is attached to",
                 ),
                 Some("remove") => Some(
                     "`--force` has been renamed on `rwv remove`.\n\
@@ -972,10 +972,9 @@ fn main() -> anyhow::Result<()> {
         }) => {
             let project_override = project.map(repoweave::manifest::ProjectName::new);
             let ctx = resolve_project_scoped(&origin_dir, project_override, use_workweave_flag)?;
-            // Minted here so the token exists at the CLI boundary; a later
-            // change wires it into update.rs's FF-or-refuse guard
-            // (branch-model.md §5.3). No consumer yet.
-            let _detach_checkouts =
+            // Mint once from the parsed flag; the token threads down to
+            // advance_checkout, where it gates the ff-or-refuse guard (§5.3).
+            let detach_checkouts =
                 repoweave::cli::consent::DetachConsent::from_flag(detach_checkouts);
             let filter = repoweave::selector::RepoFilter::parse(&roles, &repos)?;
             // Update's default is auto-parallel (min(nproc, 8)). The envelope/NDJSON
@@ -985,7 +984,7 @@ fn main() -> anyhow::Result<()> {
             // to multi-worker NDJSON on multi-core machines. Callers that want the
             // envelope must pass `-j 1` explicitly alongside --json.
             let jobs = repoweave::parallel::resolve_jobs(jobs);
-            update::run_update(&ctx, dirty, commit, json, &filter, jobs)?;
+            update::run_update(&ctx, dirty, commit, json, &filter, jobs, detach_checkouts)?;
         }
         Some(Commands::Completions { shell }) => {
             let mut cmd = Cli::command();

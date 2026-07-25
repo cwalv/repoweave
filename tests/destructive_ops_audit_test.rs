@@ -164,14 +164,13 @@ const ALLOWLIST: &[Allowed] = &[
     Allowed {
         file: "git.rs",
         pattern: "\"checkout\"",
-        count: 4,
+        count: 5,
         justification: "(1) checkout(): no -f flag, so git itself refuses \
-            when the switch would overwrite a modified path; callers check \
-            out lock-pinned revisions or fresh clones, and fetch's \
-            realignment of a present clone additionally refuses up front \
-            when the checkout would detach a branch holding uncommitted \
-            changes or unpushed commits (waived by \
-            --detach-checkouts, which discards nothing). \
+            when the switch would overwrite a modified path. The verbs that \
+            realign a checkout no longer reach it — fetch and update route \
+            through the branch-model primitives below, which classify what \
+            HEAD is before writing anything (branch-model.md §5) — so its \
+            remaining callers are the ones .10 sweeps. \
             (2) refresh_working_tree_to_head_if_safe: \
             restores files from HEAD only after verifying every on-disk \
             blob is reachable from recent history — live edits are never \
@@ -197,7 +196,18 @@ const ALLOWLIST: &[Allowed] = &[
             Reachable only through reattach_head, which requires a \
             ReattachConsent minted from --reattach-checkouts and refuses \
             when the observed HEAD state differs from the one the caller \
-            planned against.",
+            planned against. \
+            (5) clone_attached_at: the second half of a birth, and it can \
+            only ever run against a repo the first half of the same call \
+            just created — there is no signature that points it at an \
+            existing one. `-B` therefore repositions a ref git minted \
+            moments earlier with no working tree hanging off it and no \
+            observer, which is what makes it a birth rather than a MOVE \
+            (branch-model.md §5, `fetch` (absent clone)). With an explicit \
+            start point there is no checkout.guess and no tag lookup, and \
+            the -- terminator keeps a path-shaped name out of the pathspec \
+            list; the clone runs --no-checkout, so no working tree is ever \
+            materialized at the remote tip for this to overwrite.",
     },
     Allowed {
         file: "git.rs",

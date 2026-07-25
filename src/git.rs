@@ -3,8 +3,8 @@
 use crate::manifest::Role;
 use crate::vcs::{
     CommitSummary, ConflictOp, HeadAttachment, HeadObservation, LocalRefName, PreAbortRef,
-    PublishRef, RawRefName, RefName, RemoteDefaultBranch, ResolvedRevisionId, UniqueDiff, Vcs,
-    VcsError, VerifiedRestoreOutcome,
+    PublishRef, RawRefName, RawRevisionId, RefName, RemoteDefaultBranch, ResolvedRevisionId,
+    UniqueDiff, Vcs, VcsError, VerifiedRestoreOutcome,
 };
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -2085,6 +2085,52 @@ impl Vcs for GitVcs {
         // DESTROY, which is the failure mode this path exists to remove.
         Self::run(&["worktree", "add", "-b", branch, dest_str, start], &store)?;
         Ok(true)
+    }
+
+    fn clone_attached_at(
+        &self,
+        url: &str,
+        dest: &Path,
+        role: Role,
+        name: &LocalRefName,
+        at: &RawRevisionId,
+    ) -> Result<ResolvedRevisionId, VcsError> {
+        let _ = role; // role label kept for signal value; all clones use `origin`
+        let dest_str = dest.to_str().ok_or_else(|| VcsError::Io {
+            ctx: format!("destination path {} is not valid UTF-8", dest.display()),
+            source: std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "non-utf8 destination path",
+            ),
+        })?;
+        // `--no-checkout`: the working tree is never materialized at the
+        // remote tip. Cloning still writes the remote's default branch as a
+        // local ref — git offers no way to decline that — but no working
+        // tree hangs off it, nothing has observed it, and rwv issues no
+        // MOVE against it. That last part is the property §5 needs:
+        // bootstrapping from a lock behind origin must not require a
+        // rewind's consent.
+        Self::run(
+            &[
+                "clone",
+                "--origin",
+                "origin",
+                "--no-checkout",
+                url,
+                dest_str,
+            ],
+            Path::new("."),
+        )?;
+        // Resolved in the new clone's own object store, so a pin origin has
+        // but this clone does not is a resolution failure rather than a
+        // silent network fetch — the same locality the present-clone arm has.
+        let at = self.resolve_revision(dest, at.as_str())?;
+        // `-B` names the ref the clone just minted; with an explicit start
+        // point there is no `checkout.guess` and no tag lookup, and the `--`
+        // terminator keeps a path-shaped `name` from being read as a
+        // pathspec — the three misreads `attach_head_to` documents.
+        Self::run(&["checkout", "-B", name.as_str(), at.as_str(), "--"], dest)?;
+        Ok(at)
     }
 
     fn set_detached_head(&self, repo: &Path, to: &ResolvedRevisionId) -> Result<(), VcsError> {

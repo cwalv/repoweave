@@ -9,17 +9,44 @@ pulling fresh tips from the network.
 
 The key distinction from `fetch`: `rwv fetch` aligns local clones to the
 *existing* lock without advancing it; `rwv update` fetches from the remote,
-checks out the new branch tip, and writes a new lock. Run `update` when you
-want to consume upstream commits; run `fetch` (or `sync`) when you want to
-converge to an already-recorded state.
+advances each checkout onto the new branch tip, and writes a new lock. Run
+`update` when you want to consume upstream commits; run `fetch` (or `sync`)
+when you want to converge to an already-recorded state.
+
+### What "advance" does to the checkout's branch
+
+`update` **fast-forwards the branch the checkout is on**; it does not check
+out the tip by revision. Which branch it is willing to move depends on where
+you are:
+
+- **In the canonical clone**, it moves only the local counterpart of the
+  branch `version:` declares. On any other branch — an operator's personal
+  branch — it names both refs and refuses, rather than relocating a bookmark
+  it cannot relate to the tracking declaration.
+- **Inside a workweave**, it moves that workweave's own branch. When the tip
+  is not a fast-forward of it, `update` points at `rwv sync` — the verb that
+  reconciles a workweave with its parent — rather than at a flag.
+
+A tip that is not a fast-forward refuses in the canonical too, naming two
+exits: reconcile the branch with its tracking tip yourself (ordinary
+`git rebase` / `git merge`) and re-run, or pass `--detach-checkouts` to
+materialize the tip on a detached HEAD without moving your branch.
+
+A repo whose HEAD is already detached stays detached at the new tip; no
+consent is needed, because there is no branch to abandon. It refuses while
+the repo is stopped mid-rebase, mid-merge or mid-bisect — a detached HEAD
+cannot say which of those it is, and only one of them is rwv's to move.
 
 ## Invocation
 
 ```
-rwv update [--dirty] [--commit] [--project <name>] [--json]
-           [--role <role>]... [--repo <selector>]... [-j <n>]
+rwv update [--dirty] [--commit] [--detach-checkouts] [--project <name>]
+           [--json] [--role <role>]... [--repo <selector>]... [-j <n>]
 ```
 
+- `--detach-checkouts` — advance a repo even where that changes what HEAD is
+  attached to: materialize the tip on a detached HEAD instead of refusing.
+  The branch it leaves behind is not moved.
 - `--json` emits machine-readable output (see Output below).
 - `-j N` runs per-repo advances in parallel. Under `--json -j N` with `N > 1`,
   output switches to NDJSON (one JSON record per repo, streamed as repos finish).
@@ -30,7 +57,8 @@ Run `rwv --help update` for the full clap surface.
 
 Default text output: a fetch-progress line per repo (prefixed with
 `[<repo>]` under `-j > 1`), followed by a summary line of the form
-`rwv update: advanced N repo(s)`. The subsequent lock re-snapshot emits
+`rwv update: advanced N repo(s)` — `N` counts the repos whose SHA actually
+changed, not the repos the run visited. The subsequent lock re-snapshot emits
 `Wrote <path>` on stderr. Unchanged entries are not individually reported.
 
 Under `--json -j 1` (or `--json` with a single-repo project), output is
@@ -54,7 +82,7 @@ Each record carries:
 - `kind` — `updated` (old_sha ≠ new_sha), `up-to-date` (already at HEAD),
   or `failed`.
 - `old_sha` — SHA before the advance (omitted if unreadable).
-- `new_sha` — SHA after checkout (omitted when `kind = failed`).
+- `new_sha` — SHA after the advance (omitted when `kind = failed`).
 - `error` — human-readable failure message (only when `kind = failed`).
 
 Schema:

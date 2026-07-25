@@ -6,12 +6,15 @@
 //! `rwv fetch` (default) reads the lock; `rwv lock` snapshots local tips;
 //! `rwv update` advances and re-snapshots.
 
+use crate::cli::consent::DetachConsent;
 use crate::git::{git_command, GitVcs};
 use crate::lock;
 use crate::manifest::{Project, ProjectName, RepoEntry, RepoPath};
 use crate::parallel::{run_in_parallel, run_subprocess_with_reporter, Reporter};
 use crate::selector::RepoFilter;
-use crate::vcs::{RefName, Vcs};
+use crate::vcs::{
+    HeadAttachment, RawRefName, RefName, ResolvedRevisionId, TrackingRef, Vcs, VcsError,
+};
 use crate::workspace::{Checkout, Resolution, WorkspaceContext};
 use anyhow::Context;
 use schemars::JsonSchema;
@@ -127,6 +130,7 @@ pub fn run_update(
     json: bool,
     filter: &RepoFilter,
     jobs: usize,
+    detach_checkouts: Option<DetachConsent>,
 ) -> anyhow::Result<()> {
     // Cross-verb mutex (Correction 1, COVERAGE). `update` advances tips and
     // re-snapshots the lock in the active workspace; if an in-flight
@@ -154,6 +158,7 @@ pub fn run_update(
         json,
         filter,
         jobs,
+        detach_checkouts,
     )
 }
 
@@ -186,6 +191,7 @@ fn update_for_project(
     json: bool,
     filter: &RepoFilter,
     jobs: usize,
+    detach_checkouts: Option<DetachConsent>,
 ) -> anyhow::Result<()> {
     let active_root = ctx.active_path();
     let primary_root = ctx.primary_path();
@@ -246,6 +252,7 @@ fn update_for_project(
             &item.entry,
             primary_root,
             workweave_dir,
+            detach_checkouts,
             &reporter,
             use_reporter,
         )
@@ -267,10 +274,15 @@ fn update_for_project(
 
         let record = match outcome {
             Ok(new_sha) => {
-                updated += 1;
+                // "advanced N repo(s)" counts SHA deltas, not non-`Err`
+                // outcomes (§6.2). The old count reported every repo it
+                // visited as advanced, so a fully up-to-date weave claimed
+                // to have advanced all of them — and the `--json` records
+                // right here already knew better.
                 let kind = if item.old_sha.as_deref() == Some(new_sha.as_str()) {
                     UpdateKind::UpToDate
                 } else {
+                    updated += 1;
                     UpdateKind::Updated
                 };
                 RepoUpdateRecord {
@@ -432,7 +444,7 @@ fn resolve_repo_dir(
 }
 
 /// Per-repo worker: `git fetch --all --tags`, resolve the role-conventional
-/// remote branch, then check out the resolved revision.
+/// remote branch, then advance the checkout onto it ([`advance_checkout`]).
 ///
 /// Returns `Ok(new_sha)` on success (the SHA the repo is now at) or
 /// `Err(msg)` on failure. `use_reporter` suppresses progress lines under
@@ -441,16 +453,24 @@ fn resolve_repo_dir(
 /// All user-facing text output is routed through `reporter`, which prefixes
 /// `[<repo>]` and serialises writes under `-j > 1`; under `-j 1` the
 /// reporter is a no-prefix passthrough.
+#[allow(clippy::too_many_arguments)]
 fn advance_one(
     git: &GitVcs,
     repo_path: &RepoPath,
     entry: &RepoEntry,
     primary_root: &Path,
     workweave_dir: Option<&Path>,
+    detach_checkouts: Option<DetachConsent>,
     reporter: &Reporter<'_>,
     use_reporter: bool,
 ) -> RepoOutcome {
     let repo_dir = resolve_repo_dir(repo_path, primary_root, workweave_dir);
+    // Which checkout this run is advancing decides which ref is the legal
+    // object of the MOVE — the canonical's tracking counterpart, or the
+    // workweave's ephemeral ref (§5's two `update` rows). `resolve_repo_dir`
+    // prefers the workweave's slot only when the member is materialized
+    // there, so the answer is per repo, not per invocation.
+    let in_workweave = workweave_dir.is_some_and(|wd| repo_dir.starts_with(wd));
 
     if !repo_dir.exists() {
         // `rwv fetch` (no SOURCE) re-clones missing members of the active
@@ -532,13 +552,15 @@ fn advance_one(
         }
     };
 
-    if let Err(e) = git.checkout(&repo_dir, &resolved) {
-        return Err(format!(
-            "{}: failed to checkout {}: {e}",
-            repo_path.as_str(),
-            resolved
-        ));
-    }
+    advance_checkout(
+        git,
+        repo_path,
+        entry,
+        &repo_dir,
+        in_workweave,
+        &resolved,
+        detach_checkouts,
+    )?;
 
     // Capture the new SHA after checkout for JSON reporting.
     let new_sha = git
@@ -548,4 +570,146 @@ fn advance_one(
         .unwrap_or_else(|| resolved.to_string());
 
     Ok(new_sha)
+}
+
+/// Advance one checkout onto `target`, the tracking branch's tip on the
+/// role-conventional remote (§5's two `update` rows).
+///
+/// Which ref is the legal object of the move depends on the checkout:
+///
+/// - **Canonical, attached to the tracking declaration's local counterpart**
+///   — fast-forward that branch. A non-fast-forward refuses, naming the two
+///   exits §5 states: reconcile the branch with its tracking tip yourself
+///   (ordinary `git rebase` / `git merge`, per §8.7) and re-run, or
+///   `--detach-checkouts` to materialize the tip without moving your branch.
+/// - **Canonical, attached to anything else** — refuses naming both refs
+///   (§5.3). `update`'s justification comes from the tracking declaration, so
+///   its object must too; it does not relocate an operator's personal branch,
+///   not even by a fast-forward, because attachment is operator state (§8.3).
+/// - **Inside a workweave** — advances the ephemeral ref the checkout is on
+///   when `target` is a fast-forward, and otherwise points at `rwv sync`
+///   (Q8, answered as a consequence in §5's row). Where the canonical arm
+///   offers `--detach-checkouts`, this one does not: `rwv sync` is the verb
+///   that reconciles a workweave with its parent, and detaching the ephemeral
+///   ref is what made this path report "advanced 1 repo(s)" while detaching
+///   at the identical SHA. The relatedness guard is deliberately *not*
+///   applied here — asking whether an operator-created branch inside a
+///   workweave is legal is Q7, which is open.
+/// - **Detached** — a MOVE of HEAD itself, which stays detached; the
+///   mid-operation precondition inside [`Vcs::advance_detached_head`] (§3.6)
+///   refuses when the repo is stopped mid-rebase, mid-merge or mid-bisect.
+///   This is the state most weaves are in today, because it is what every
+///   `rwv fetch` / `rwv update` before this change left behind (§6 item 2).
+/// - **Unborn** — refuses. As in `fetch`, both exits are unrepresentable
+///   rather than undecided: an `UnbornRef` cannot be passed to
+///   `advance_attached_ref`, and `detach_head` takes an `AttachedRef`.
+fn advance_checkout(
+    git: &GitVcs,
+    repo_path: &RepoPath,
+    entry: &RepoEntry,
+    repo_dir: &Path,
+    in_workweave: bool,
+    target: &ResolvedRevisionId,
+    detach_checkouts: Option<DetachConsent>,
+) -> Result<(), String> {
+    let describe = |e: VcsError| format!("{}: {e}", repo_path.as_str());
+
+    let attached = match git.head_attachment(repo_dir).map_err(describe)? {
+        HeadAttachment::Detached(was) => {
+            if was.at() == target {
+                return Ok(());
+            }
+            return git.advance_detached_head(&was, target).map_err(describe);
+        }
+        HeadAttachment::Unborn(u) => {
+            return Err(format!(
+                "{}: branch '{u}' has no commits yet — rwv update has no way to \
+                 advance it to {}. Make an initial commit, or check out a branch \
+                 that has one, then re-run.",
+                repo_path.as_str(),
+                target.display_str(),
+            ));
+        }
+        HeadAttachment::Attached(a) => a,
+    };
+
+    let head = git.head_revision(repo_dir).map_err(describe)?;
+    let is_fast_forward =
+        &head == target || git.is_ancestor(repo_dir, &head, target).map_err(describe)?;
+
+    if in_workweave {
+        if &head == target {
+            return Ok(());
+        }
+        if is_fast_forward {
+            return git
+                .advance_attached_ref(&attached, target)
+                .map_err(describe);
+        }
+        return Err(format!(
+            "{}: advancing '{attached}' to {} is not a fast-forward — this \
+             workweave's checkout has diverged from the tip origin is on.\n  \
+             Run `rwv sync` to reconcile the workweave with its parent, then \
+             re-run `rwv update`.",
+            repo_path.as_str(),
+            target.display_str(),
+        ));
+    }
+
+    // `entry.version` is the manifest's declared tracking branch, still typed
+    // `RefName` (manifest.rs's migration to `TrackingRef` is separate work).
+    // Route it through `TrackingRef::parse` so the comparison below goes
+    // through `local_counterpart()` — the same named projection `rwv push`'s
+    // gates use — instead of a raw string compare.
+    let declared = TrackingRef::parse(RawRefName::new(entry.version.as_str())).map_err(|e| {
+        format!(
+            "{}: manifest declares an invalid tracking branch '{}': {e}",
+            repo_path.as_str(),
+            entry.version,
+        )
+    })?;
+    let counterpart = declared.local_counterpart();
+
+    if !attached.is_named(&counterpart) {
+        let Some(consent) = detach_checkouts else {
+            return Err(format!(
+                "{}: is on branch '{attached}', not the local counterpart \
+                 ('{counterpart}') of the branch the manifest declares — rwv \
+                 update moves only that branch, so it will not relocate one it \
+                 cannot relate to the tracking declaration.\n  \
+                 Switch to '{counterpart}' and re-run, or re-run with \
+                 --detach-checkouts to materialize {} on a detached HEAD \
+                 (your branch is not moved).",
+                repo_path.as_str(),
+                target.display_str(),
+            ));
+        };
+        return git
+            .detach_head(&attached, target, consent)
+            .map_err(describe);
+    }
+
+    if &head == target {
+        return Ok(());
+    }
+    if is_fast_forward {
+        return git
+            .advance_attached_ref(&attached, target)
+            .map_err(describe);
+    }
+    let Some(consent) = detach_checkouts else {
+        return Err(format!(
+            "{}: advancing '{attached}' to {} is not a fast-forward — the branch \
+             carries commits '{declared}' on the remote does not have.\n  \
+             Reconcile '{attached}' with its tracking tip yourself (ordinary \
+             `git rebase` / `git merge`) and re-run, or re-run with \
+             --detach-checkouts to materialize {} on a detached HEAD (the branch \
+             ref is not moved).",
+            repo_path.as_str(),
+            target.display_str(),
+            target.display_str(),
+        ));
+    };
+    git.detach_head(&attached, target, consent)
+        .map_err(describe)
 }

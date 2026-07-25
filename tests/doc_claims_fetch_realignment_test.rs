@@ -6,8 +6,9 @@
 //! states, "present clones are realigned" in the third.
 //!
 //! `tests/fetch_in_place_test.rs` pins the lock-HAS-an-entry arm — the
-//! realignment itself, the detach it causes, the refusal when the branch
-//! carries unpublished work, and the no-op when HEAD is already at the pin.
+//! realignment itself (a fast-forward of the tracking branch's local
+//! counterpart), the refusals when it would not be one, and the no-op when
+//! HEAD is already at the pin.
 //! This file pins the other two lock states, the locality of the resolve,
 //! `--frozen`'s coverage-not-freshness semantics, default/frozen equivalence,
 //! and the lock-write step a `--repo` filter skips.
@@ -265,7 +266,10 @@ fn present_clone_absent_from_the_lock_is_untouched_and_added_at_its_own_head() {
     };
     fx.write_lock(&[("github/acme/a", &a_first)]);
 
-    fx.clone_on_branch("github/acme/a");
+    // `a` is the covered repo and is left exactly at its pin, so its arm is a
+    // no-op and the only thing this test observes is what happens to `b`.
+    let dest_a = fx.clone_on_branch("github/acme/a");
+    git_run(&["reset", "--hard", &a_first], &dest_a);
     let dest_b = fx.clone_on_branch("github/acme/b");
     // Behind origin, so the on-disk HEAD and the branch tip disagree.
     git_run(&["reset", "--hard", &b_first], &dest_b);
@@ -412,10 +416,14 @@ fn frozen_checks_coverage_not_freshness_and_realigns_identically_to_default() {
         let a = fx.repo("github/acme/a");
         (a.first.clone(), a.second.clone())
     };
-    // Complete coverage, STALE freshness: the lock pins the first commit
-    // while the clone sits on main at the second.
-    fx.write_lock(&[("github/acme/a", &a_first)]);
+    // Complete coverage, STALE freshness: the clone sits on main at the first
+    // commit while the lock pins the second. Freshness disagreement is what
+    // this test is about; the direction is chosen so realignment is the legal
+    // fast-forward of the tracking counterpart rather than the rewind the
+    // branch model refuses (§5, `fetch` (present clone)).
+    fx.write_lock(&[("github/acme/a", &a_second)]);
     let dest = fx.clone_on_branch("github/acme/a");
+    git_run(&["reset", "--hard", &a_first], &dest);
     let lock_before = fx.lock_text().unwrap();
 
     let observe = || {
@@ -434,9 +442,10 @@ fn frozen_checks_coverage_not_freshness_and_realigns_identically_to_default() {
         .success();
     let after_default = observe();
 
-    // Back to the start state: the realignment left the branch ref alone.
-    git_run(&["checkout", "main"], &dest);
-    assert_eq!(git_capture(&["rev-parse", "HEAD"], &dest), a_second);
+    // Back to the start state. The realignment moved the branch — it is a
+    // MOVE of the counterpart, not a detach — so rewinding the branch is what
+    // undoes it.
+    git_run(&["reset", "--hard", &a_first], &dest);
 
     rwv()
         .args(["fetch", "--frozen"])
@@ -450,7 +459,13 @@ fn frozen_checks_coverage_not_freshness_and_realigns_identically_to_default() {
         "--frozen changes lock validation only; the realignment it performs \
          is indistinguishable from the default mode's"
     );
-    assert_eq!(after_default.0, a_first, "both modes land on the pin");
+    assert_eq!(after_default.0, a_second, "both modes land on the pin");
+    assert_eq!(
+        after_default.1.as_deref(),
+        Some("main"),
+        "and both leave the checkout attached to the counterpart they moved"
+    );
+    assert_eq!(after_default.2, a_second, "the branch ref is what advanced");
     assert_eq!(
         after_default.3, lock_before,
         "a complete lock needs neither a bootstrap nor an additive write, so \
@@ -486,12 +501,16 @@ fn filtered_fetch_skips_the_bootstrap_lock_write() {
 #[test]
 fn filtered_fetch_skips_the_additive_coverage_write_but_still_realigns() {
     let fx = setup(&["github/acme/a", "github/acme/b"]);
-    let (a_first, b_second) = (
+    let (a_first, a_second, b_second) = (
         fx.repo("github/acme/a").first.clone(),
+        fx.repo("github/acme/a").second.clone(),
         fx.repo("github/acme/b").second.clone(),
     );
-    fx.write_lock(&[("github/acme/a", &a_first)]);
+    fx.write_lock(&[("github/acme/a", &a_second)]);
     let dest_a = fx.clone_on_branch("github/acme/a");
+    // Behind its pin, so the covered repo really is realigned rather than
+    // being a no-op — and realigning it is a fast-forward of `main`.
+    git_run(&["reset", "--hard", &a_first], &dest_a);
     let dest_b = fx.clone_on_branch("github/acme/b");
     let lock_before = fx.lock_text().unwrap();
 
@@ -511,7 +530,7 @@ fn filtered_fetch_skips_the_additive_coverage_write_but_still_realigns() {
 
     assert_eq!(
         git_capture(&["rev-parse", "HEAD"], &dest_a),
-        a_first,
+        a_second,
         "the filter narrows which repos are visited, not what happens to them"
     );
     assert_eq!(git_capture(&["rev-parse", "HEAD"], &dest_b), b_second);

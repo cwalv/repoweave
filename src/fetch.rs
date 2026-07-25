@@ -10,7 +10,7 @@ use crate::manifest::{LockFile, Manifest, RepoEntry, RepoPath, Role};
 use crate::parallel::{run_in_parallel, Reporter};
 use crate::registry;
 use crate::selector::RepoFilter;
-use crate::vcs::{ResolvedRevisionId, Vcs, VcsError};
+use crate::vcs::{HeadAttachment, RawRefName, ResolvedRevisionId, TrackingRef, Vcs, VcsError};
 use crate::workspace::{Resolution, WorkspaceContext};
 use anyhow::{bail, Context};
 use schemars::JsonSchema;
@@ -256,10 +256,10 @@ pub fn run_fetch(
 ///
 /// A clone that is already present is realigned rather than skipped: when the
 /// lock covers it, [`fetch_one`] resolves the locked revision in that clone's
-/// own object store and checks it out, which detaches HEAD. Realignment is
-/// gated by [`refuse_if_realign_detaches_unpublished_work`] unless
-/// `detach_checkouts` carries a consent. When the lock has no entry for the
-/// repo, or there is no lock, the clone is left alone and the lock records
+/// own object store and [`realign_present_clone`] advances the checkout to it
+/// — fast-forwarding the tracking branch's local counterpart, or refusing
+/// unless `detach_checkouts` carries a consent. When the lock has no entry for
+/// the repo, or there is no lock, the clone is left alone and the lock records
 /// its current HEAD.
 ///
 /// Clone-topology (I1): the canonical clone always lives at primary's
@@ -685,73 +685,129 @@ fn fetch_project_repos(
     Ok(())
 }
 
-/// Precondition for realigning a clone that is already on disk: the
-/// checkout must not move HEAD off a branch holding work that exists
-/// nowhere else.
+/// Realign a clone that is already on disk to `target` (§5's `fetch`
+/// (present clone) row).
 ///
-/// Realignment is `git checkout <sha>`, so it always detaches. Detaching is
-/// harmless when the branch is published — the branch ref keeps pointing at
-/// the same commits and `git checkout <branch>` restores the position. It is
-/// not harmless when the branch carries uncommitted changes (which the
-/// checkout drags onto the detached HEAD, where `rwv sync-to` refuses to
-/// land them) or commits the remote has never seen.
+/// The kind of ref write this performs is decided by what HEAD is, and each
+/// kind carries its own precondition:
 ///
-/// Returns the refusal message when the operation must stop. `Ok(())` when
-/// the checkout is a no-op, when HEAD is already detached, or when the
-/// branch is published and clean.
-fn refuse_if_realign_detaches_unpublished_work(
+/// - **Attached to the tracking declaration's local counterpart** — a MOVE
+///   of that branch, legal when `target` is a fast-forward. A non-fast-forward
+///   (materializing an older lock, or a branch carrying commits origin has
+///   not seen) refuses, naming `--detach-checkouts`.
+/// - **Attached to anything else** — an operator's personal branch. Refuses
+///   naming both refs rather than relocating a ref it cannot relate to the
+///   layer that justifies the move (§5.3). It refuses even when `target`
+///   *would* be a fast-forward: attachment is operator state (§8.3), and a
+///   fast-forward of a personal bookmark still silently changes what it means.
+/// - **Detached** — a MOVE of HEAD itself, which stays detached. Subject to
+///   the mid-operation precondition inside [`Vcs::advance_detached_head`]
+///   (§3.6): `Detached` alone cannot tell "rwv left this at a lock SHA" apart
+///   from "the operator is stopped mid-bisect".
+/// - **Unborn** — refuses. Both exits are unrepresentable rather than
+///   undecided: MOVE semantics on an unborn HEAD are undefined (an
+///   `UnbornRef` cannot be passed to `advance_attached_ref`), and
+///   `detach_head` takes an `AttachedRef`, so no consent token opens the
+///   detaching route either.
+///
+/// A `detach_checkouts` consent converts both refusals into the detach they
+/// name; it never turns a refused MOVE into a performed one, so the branch
+/// ref is left where it is in every case.
+///
+/// Returns the refusal or failure message when the operation must stop.
+fn realign_present_clone(
     git: &GitVcs,
     repo_path: &RepoPath,
+    entry: &RepoEntry,
     dest: &Path,
-    role: Role,
     target: &ResolvedRevisionId,
+    detach_checkouts: Option<DetachConsent>,
 ) -> Result<(), String> {
     let describe = |e: VcsError| format!("{}: {e}", repo_path.as_str());
 
-    let head = git.head_revision(dest).map_err(describe)?;
-    if head.as_str() == target.as_str() {
-        return Ok(());
-    }
-    let Some(branch) = git.current_ref(dest).map_err(describe)? else {
-        return Ok(());
-    };
-
-    let mut unpublished: Vec<String> = Vec::new();
-    if git.has_uncommitted_changes(dest).map_err(describe)? {
-        unpublished.push("uncommitted changes in the working tree".to_owned());
-    }
-    if git
-        .branch_has_remote_counterpart(dest, &branch, role)
-        .map_err(describe)?
-    {
-        let ahead = git
-            .count_commits_ahead_of_remote(dest, &branch, role)
-            .map_err(describe)?;
-        if ahead > 0 {
-            unpublished.push(format!(
-                "{ahead} commit(s) on {} that origin does not have",
-                branch.as_str()
+    let attached = match git.head_attachment(dest).map_err(describe)? {
+        HeadAttachment::Detached(was) => {
+            if was.at() == target {
+                // The absorbed no-op: a clone already at the pin is not
+                // realigned at all, so nothing is asked of the operator and
+                // nothing is written.
+                return Ok(());
+            }
+            return git.advance_detached_head(&was, target).map_err(describe);
+        }
+        HeadAttachment::Unborn(u) => {
+            return Err(format!(
+                "{}: branch '{u}' has no commits yet — rwv fetch has no way to \
+                 place {} on an unborn branch. Make an initial commit, or check \
+                 out a branch that has one, then re-run.",
+                repo_path.as_str(),
+                target.display_str(),
             ));
         }
-    } else {
-        unpublished.push(format!(
-            "branch {} has no counterpart on origin — none of its commits are published",
-            branch.as_str()
-        ));
+        HeadAttachment::Attached(a) => a,
+    };
+
+    // `entry.version` is the manifest's declared tracking branch, still typed
+    // `RefName` (manifest.rs's migration to `TrackingRef` is separate work).
+    // Route it through `TrackingRef::parse` so the comparison below goes
+    // through `local_counterpart()` — the same named projection `rwv push`'s
+    // gates use — instead of a raw string compare.
+    let declared = TrackingRef::parse(RawRefName::new(entry.version.as_str())).map_err(|e| {
+        format!(
+            "{}: manifest declares an invalid tracking branch '{}': {e}",
+            repo_path.as_str(),
+            entry.version,
+        )
+    })?;
+    let counterpart = declared.local_counterpart();
+
+    if !attached.is_named(&counterpart) {
+        let Some(consent) = detach_checkouts else {
+            return Err(format!(
+                "{}: is on branch '{attached}', not the local counterpart \
+                 ('{counterpart}') of the branch the manifest declares — rwv \
+                 fetch moves only that branch, so it will not relocate one it \
+                 cannot relate to the lock.\n  \
+                 Switch to '{counterpart}' and re-run, or re-run with \
+                 --detach-checkouts to materialize {} on a detached HEAD \
+                 (your branch is not moved).",
+                repo_path.as_str(),
+                target.display_str(),
+            ));
+        };
+        return git
+            .detach_head(&attached, target, consent)
+            .map_err(describe);
     }
 
-    if unpublished.is_empty() {
+    let head = git.head_revision(dest).map_err(describe)?;
+    if &head == target {
         return Ok(());
     }
-    Err(format!(
-        "{}: aligning to {} would detach {} and leave this behind:\n    - {}\n  \
-         commit, push, or stash it — or re-run with --detach-checkouts to \
-         align anyway (the branch ref is not moved)",
-        repo_path.as_str(),
-        target.display_str(),
-        branch.as_str(),
-        unpublished.join("\n    - "),
-    ))
+    // Classify before acting rather than reading a failure back out of git:
+    // `merge --ff-only` also fails on a dirty tree, and the two need
+    // different messages.
+    if git.is_ancestor(dest, &head, target).map_err(describe)? {
+        return git
+            .advance_attached_ref(&attached, target)
+            .map_err(describe);
+    }
+    let Some(consent) = detach_checkouts else {
+        return Err(format!(
+            "{}: aligning '{attached}' to {} is not a fast-forward — the pin is \
+             not a descendant of the branch tip, which is what materializing an \
+             older lock, or a branch carrying commits origin has not seen, looks \
+             like.\n  \
+             Reconcile '{attached}' with the pin yourself (ordinary `git rebase` \
+             / `git merge`) and re-run, or re-run with --detach-checkouts to \
+             materialize {} on a detached HEAD (the branch ref is not moved).",
+            repo_path.as_str(),
+            target.display_str(),
+            target.display_str(),
+        ));
+    };
+    git.detach_head(&attached, target, consent)
+        .map_err(describe)
 }
 
 /// Per-repo worker for `rwv fetch`. Encapsulates one iteration of the
@@ -799,7 +855,7 @@ fn fetch_one(
     if dest.exists() {
         if let Some(lock_entry) = lock_entry {
             emit(&format!(
-                "rwv fetch: checking out {} at {}",
+                "rwv fetch: aligning {} to {}",
                 repo_path.as_str(),
                 lock_entry.version,
             ));
@@ -815,21 +871,10 @@ fn fetch_one(
                     };
                 }
             };
-            if detach_checkouts.is_none() {
-                if let Err(msg) = refuse_if_realign_detaches_unpublished_work(
-                    git, repo_path, &dest, entry.role, &resolved,
-                ) {
-                    return FetchOutcome::Failed { msg };
-                }
-            }
-            if let Err(e) = git.checkout(&dest, &resolved) {
-                return FetchOutcome::Failed {
-                    msg: format!(
-                        "{}: failed to check out {}: {e}",
-                        repo_path.as_str(),
-                        lock_entry.version,
-                    ),
-                };
+            if let Err(msg) =
+                realign_present_clone(git, repo_path, entry, &dest, &resolved, detach_checkouts)
+            {
+                return FetchOutcome::Failed { msg };
             }
             return FetchOutcome::Ok { add_to_lock: None };
         } else if existing_lock.is_some() {
@@ -874,6 +919,51 @@ fn fetch_one(
         entry.url,
         entry.role.as_str()
     ));
+
+    let mut add_to_lock: Option<RepoPath> = None;
+    // A lock-pinned clone is born ATTACHED AT THE PIN — one operation, not a
+    // clone followed by an align (§5's `fetch` (absent clone) row). The
+    // sequence it replaces landed on the remote tip and then detached, which
+    // is why the ordinary post-fetch state of a weave was "every member
+    // detached" (§6 item 2).
+    if let Some(lock_entry) = lock_entry {
+        let declared = match TrackingRef::parse(RawRefName::new(entry.version.as_str())) {
+            Ok(t) => t,
+            Err(e) => {
+                return FetchOutcome::Failed {
+                    msg: format!(
+                        "{}: manifest declares an invalid tracking branch '{}': {e}",
+                        repo_path.as_str(),
+                        entry.version,
+                    ),
+                };
+            }
+        };
+        emit(&format!(
+            "rwv fetch: cloning {} onto {} at {}",
+            repo_path.as_str(),
+            declared.local_counterpart(),
+            lock_entry.version,
+        ));
+        if let Err(e) = git.clone_attached_at(
+            &entry.url.to_string(),
+            &dest,
+            entry.role,
+            &declared.local_counterpart(),
+            &lock_entry.version,
+        ) {
+            return FetchOutcome::Failed {
+                msg: format!(
+                    "{}: failed to materialize {} at {}: {e}",
+                    repo_path.as_str(),
+                    entry.url,
+                    lock_entry.version,
+                ),
+            };
+        }
+        return FetchOutcome::Ok { add_to_lock };
+    }
+
     if let Err(e) = git.clone_with_role(&entry.url.to_string(), &dest, entry.role) {
         return FetchOutcome::Failed {
             msg: format!(
@@ -885,36 +975,7 @@ fn fetch_one(
         };
     }
 
-    let mut add_to_lock: Option<RepoPath> = None;
-    // After clone, check out the lock-pinned revision when one exists.
-    if let Some(lock_entry) = lock_entry {
-        emit(&format!(
-            "rwv fetch: checking out {} at {}",
-            repo_path.as_str(),
-            lock_entry.version,
-        ));
-        let resolved = match git.resolve_revision(&dest, lock_entry.version.as_str()) {
-            Ok(r) => r,
-            Err(e) => {
-                return FetchOutcome::Failed {
-                    msg: format!(
-                        "{}: failed to resolve {}: {e}",
-                        repo_path.as_str(),
-                        lock_entry.version,
-                    ),
-                };
-            }
-        };
-        if let Err(e) = git.checkout(&dest, &resolved) {
-            return FetchOutcome::Failed {
-                msg: format!(
-                    "{}: failed to check out {}: {e}",
-                    repo_path.as_str(),
-                    lock_entry.version,
-                ),
-            };
-        }
-    } else if existing_lock.is_some() {
+    if existing_lock.is_some() {
         // Lock exists but doesn't cover this repo — leave at branch HEAD
         // (where the clone landed) and mark for additive lock entry. Emit
         // a message so the additive path is observable to the operator —

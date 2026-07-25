@@ -2630,6 +2630,31 @@ pub trait Vcs {
         start_point: &ResolvedRevisionId,
     ) -> Result<bool, VcsError>;
 
+    /// Materialize `url` at `dest` with the checkout attached to `name` and
+    /// positioned at the lock scalar `at`, which is resolved *inside* the
+    /// new clone and returned.
+    ///
+    /// The **birth** arm of `rwv fetch` (§5's `fetch` (absent clone) row):
+    /// no consent token, because there was no prior attachment to lose.
+    /// The birth target is the lock revision, not the remote tip. Cloning
+    /// onto the tip and then aligning would make bootstrapping a weave from
+    /// a lock that is behind origin a *rewind*, and a rewinding MOVE needs a
+    /// `DiscardWarrant` — so that sequence would refuse on every repo and
+    /// mass-produce the fully-detached weave §6 item 2 calls a problem.
+    ///
+    /// One call rather than a clone plus an align so there is no way to
+    /// point the positioning half at a repo this call did not just create:
+    /// a checkout that relocates a branch it does not own is a MOVE, and
+    /// the caller holds no witness for one.
+    fn clone_attached_at(
+        &self,
+        url: &str,
+        dest: &Path,
+        role: Role,
+        name: &LocalRefName,
+        at: &RawRevisionId,
+    ) -> Result<ResolvedRevisionId, VcsError>;
+
     /// Leave the checkout `from` witnesses on no branch, at `to`.
     ///
     /// Post-birth attachment change: requires the operator's consent,

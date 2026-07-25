@@ -9,7 +9,7 @@ not discover a new one.
 
 Given a `source` (full URL or `owner/repo` shorthand), `fetch` clones the
 project repo into `projects/<name>/`, reads its `rwv.lock`, and then clones
-or checks out every manifest repo at the revision the lock records. When the
+or attaches every manifest repo at the revision the lock records. When the
 lock is absent (first-time bootstrap), `fetch` clones repos at branch HEAD
 and writes a new lock from those HEAD SHAs. When a manifest entry is missing
 from an existing lock, it is added additively at branch HEAD — already-pinned
@@ -30,11 +30,14 @@ A present clone is not skipped. What `fetch` does to it depends on whether
 the lock covers it:
 
 - **The lock has an entry for the repo.** `fetch` realigns the clone: it
-  resolves the locked revision *in that clone's own object store* and checks
-  it out. The checkout is by revision, so it leaves the clone on a **detached
-  HEAD** — including when the clone was already sitting on that commit, and
-  including when the clone was on a branch. The branch ref is not moved: its
-  commits are still there, just no longer checked out.
+  resolves the locked revision *in that clone's own object store* and moves
+  the checkout onto it, **without changing what HEAD is attached to**. When
+  the clone is on the local counterpart of the branch `version:` declares,
+  that branch is fast-forwarded to the pin and the clone stays on it. When
+  the pin is not a fast-forward of that branch, or the clone is on some
+  other branch, `fetch` refuses — see below. A clone already at the pin is
+  untouched; a clone whose HEAD is already detached stays detached, now at
+  the pin.
 - **The lock exists but has no entry for the repo** (an *incomplete* lock).
   The clone is left exactly as it is; the repo is recorded in the lock at
   whatever the clone's HEAD is now. Coverage is additive — pinned entries are
@@ -48,29 +51,39 @@ object store, the repo fails with `revision ... not found` rather than being
 re-fetched — run `git fetch` in that repo and re-run, or re-lock to a
 reachable revision (see the reconcile-repos how-to).
 
-Since realignment detaches, a workspace that has been fetched sits on
-detached HEADs, and `rwv sync-to` refuses to land onto a detached target. Put
-a member back on its branch with `git checkout <branch>` in that repo; use
-`rwv update` when the intent is to move the *lock* forward to branch HEAD
-instead.
+A newly cloned repo is *born* on that same branch, positioned at the lock
+revision rather than at the remote tip — so bootstrapping a weave from a
+lock that is behind `origin` leaves every member attached, not detached.
 
-### Realignment refuses to detach work in flight
+### Realignment refuses to change what HEAD is attached to
 
-Realigning a present clone is gated: `fetch` refuses when the checkout would
-move HEAD off a branch holding work that exists nowhere else — uncommitted
-changes in the working tree, commits the branch's `origin` counterpart does
-not have, or a branch with no `origin` counterpart at all. The refusal names
-the repo and lists what would be left behind, and that repo is reported as a
-failure while the rest of the run continues.
+Realigning a present clone is gated. `fetch` moves a branch only when it can
+relate that branch to the lock, and only in the direction the lock justifies:
 
-The gate is deliberately narrow. It does not fire when the clone is clean and
-its branch is published, when HEAD is already detached, or when the clone is
-already at the locked revision — so the ordinary case, including a CI runner
-with a warm clone cache, realigns exactly as before.
+- **Not a fast-forward.** The pin is not a descendant of the branch tip —
+  materializing an older lock does this, and so does a branch carrying
+  commits `origin` has never seen. Taking the pin would either rewind the
+  branch or abandon it, so `fetch` refuses.
+- **On some other branch.** The checkout is on a branch that is not the local
+  counterpart of `version:` — an operator's personal branch. `fetch` names
+  both refs and refuses; it does not relocate a branch it cannot relate to
+  the lock, even when doing so would be a fast-forward. Your bookmark is
+  yours.
 
-`--detach-checkouts` waives it and realigns anyway. Nothing is discarded
-by the waiver: uncommitted changes come along to the detached HEAD, and
-unpushed commits stay reachable from the branch ref.
+The refusal names the repo, and that repo is reported as a failure while the
+rest of the run continues. It does not fire when the pin is a fast-forward,
+when HEAD is already detached, or when the clone is already at the locked
+revision — so the ordinary case, including a CI runner with a warm clone
+cache, realigns without a flag.
+
+`--detach-checkouts` waives both refusals by materializing the pin on a
+**detached HEAD**. Nothing is discarded and no branch is moved: uncommitted
+changes come along, and the branch ref keeps every commit it had.
+
+A workspace whose members were detached this way sits on detached HEADs, and
+`rwv sync-to` refuses to land onto a detached target. Put a member back on
+its branch with `git checkout <branch>` in that repo; use `rwv update` when
+the intent is to move the *lock* forward to branch HEAD instead.
 
 `--frozen` is the CI mode: if the lock is absent or does not cover every
 manifest repo (an *incomplete* lock), the command errors instead of writing.
@@ -104,9 +117,9 @@ rwv fetch [<source>] [--frozen] [--allow-non-empty-dir] [--no-reference]
   rejected when `<source>` is absent.
 - `--no-reference` — skip repos with `role: reference` (useful when mirrors
   are offline).
-- `--detach-checkouts` — realign a present clone even when that detaches
-  a branch carrying uncommitted changes or unpushed commits. Without it,
-  those repos refuse.
+- `--detach-checkouts` — realign a present clone even where that changes
+  what HEAD is attached to: materialize the pin on a detached HEAD instead
+  of refusing. Without it, those repos refuse.
 - `--role <role>` / `--repo <selector>` — limit the repo fetch to a subset of
   the manifest. Repeat for union. Bare strings match exactly; `re:<pat>` is
   regex; `glob:<pat>` is glob. A filtered fetch does not write the lock.
@@ -118,8 +131,8 @@ Run `rwv --help fetch` for the full clap surface.
 ## Output
 
 Default text output is one line per repo on the standard text channel. Lines
-report whether each repo was cloned fresh, checked out at a lock-pinned
-revision, or skipped. Errors (including per-repo failures) are printed to
+report whether each repo was cloned fresh, aligned to a lock-pinned revision,
+or skipped. Errors (including per-repo failures) are printed to
 stderr. A final summary line reports how many repos are ready.
 
 Under `--json`, output switches to machine-readable format:
@@ -158,7 +171,8 @@ Schema:
   or `"skipped"`.
 - non-zero — the project repo failed to clone, at least one non-reference
   repo failed (including a repo whose realignment was refused because it
-  would detach work in flight), `--frozen` detected a missing or incomplete
+  would change what HEAD is attached to), `--frozen` detected a missing or
+  incomplete
   lock, or the current directory is not a workspace and
   `--allow-non-empty-dir` was not passed.
   Under `--json`,
@@ -222,8 +236,8 @@ for `rwv doctor`'s `DanglingReference` finding — no `<source>`):
 rwv fetch
 ```
 
-Realign every present clone to the lock even where that detaches a branch
-with work in flight:
+Realign every present clone to the lock even where that means detaching it
+from the branch it is on:
 
 ```
 rwv fetch --detach-checkouts
@@ -245,9 +259,16 @@ rwv fetch --detach-checkouts
   `rwv.lock`; run without `--frozen` to bootstrap it.
 - *lock file is incomplete* (with `--frozen`) — the lock does not cover all
   manifest repos; update the lock with `rwv update` first.
-- *aligning to … would detach … and leave this behind* — the repo is on a
-  branch holding uncommitted changes or unpushed commits. Commit, push, or
-  stash them, or pass `--detach-checkouts` to realign anyway.
+- *aligning … is not a fast-forward* — the pin is not a descendant of the
+  branch tip (an older lock, or a branch carrying commits `origin` does not
+  have). Reconcile the branch with the pin yourself and re-run, or pass
+  `--detach-checkouts` to materialize the pin on a detached HEAD.
+- *is on branch 'X', which is not the local counterpart of …* — the checkout
+  is on a branch the manifest does not declare. Switch to the declared
+  branch and re-run, or pass `--detach-checkouts`.
+- *repo is mid-…* — an already-detached repo is stopped mid-rebase, mid-merge
+  or mid-bisect. Finish or abort that operation and re-run; rwv will not move
+  a HEAD that is carrying an in-flight operation's state.
 - *revision … not found in …* — the clone is present but its object store
   does not have the locked revision, and a present clone is realigned without
   a network fetch. `git fetch` in that repo, or re-lock to a reachable

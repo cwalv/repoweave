@@ -102,7 +102,7 @@ pub enum Commands {
         /// Skip cloning/fetching repositories with role: reference
         #[arg(long)]
         no_reference: bool,
-        /// Align a present repo even when that detaches a branch holding uncommitted changes or unpushed commits
+        /// Align a present repo even where that changes what HEAD is attached to: materialize the pin on a detached HEAD instead of refusing
         #[arg(long)]
         detach_checkouts: bool,
         /// Limit the operation to repos with this role. Repeat to union multiple roles. Combined as a union with --repo.
