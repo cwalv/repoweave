@@ -1376,6 +1376,14 @@ fn check_store_unclaimed(
 /// or local-only commits (branch tip differs from canonical HEAD in workweave;
 /// any commits at all in primary).
 ///
+/// Whether the second of those questions can be asked at all depends on what
+/// is being removed, so the arms below establish that first rather than
+/// inferring it from where the workspace happens to be. A workweave checkout
+/// is removable as a working tree only once it is known to be a workspace
+/// linked into a store elsewhere; a checkout that IS the store is refused,
+/// because the divergence comparison that would say whether its objects exist
+/// anywhere else has nothing to run against.
+///
 /// The local-only refusal in the primary arm stays exactly as it is: it is
 /// incidentally the only thing that has been keeping `remove_dir_all` off a
 /// live workweave's object store, so excluding recorded rwv refs from its
@@ -1423,11 +1431,43 @@ fn prune_dropped_repo(
                     .with_context(|| format!("worktree remove for {repo_path} failed"))?;
                 let _ = GitVcs.worktree_prune(&canonical);
             } else {
-                // No canonical to compare to; remove the directory as a best
-                // effort. Not a DESTROY-STORE: `dest` here is a workweave
-                // checkout, whose refdb and objects live in the canonical
-                // store — the one this arm has just established is gone.
-                // There is no store under this path for R4 to gate.
+                // No canonical at the primary-side slot. That is a fact about
+                // the PRIMARY and says nothing about what `dest` is: under
+                // inverted topology (joints/clone-topology.md, I1) a workweave
+                // checkout can itself be the standalone clone holding the
+                // repo's only object database, and `remove_dir_all` on that is
+                // a DESTROY-STORE (§3.2), not a checkout removal. It is also
+                // one this arm could not discharge if it wanted to — with no
+                // canonical to compare against, the divergence refusal above
+                // is not merely skipped here, it is unavailable, so nothing
+                // has established that the objects exist anywhere else.
+                //
+                // So resolve what `dest` actually is before deleting it, the
+                // same way `delete_workweave`'s `is_lone_canonical` does:
+                // compare the checkout against the store its refs live in.
+                // The fallback is `dest` itself, which makes an unresolvable
+                // store refuse rather than be assumed linked.
+                let store = crate::workweave::resolved_worktree_parent(&dest, &dest);
+                let dest_canonical = dest.canonicalize().unwrap_or_else(|_| dest.clone());
+                if store == dest_canonical {
+                    anyhow::bail!(
+                        "{repo_path}: dropped from lock, but the checkout at {} is itself a \
+                         canonical store rather than a workspace linked into one — inverted \
+                         clone topology (precondition: a workweave checkout is a linked \
+                         workspace). There is no canonical clone at {} either, so removing \
+                         this directory would destroy the only object database the weave \
+                         has for this repo, with nothing having checked what is in it.\n\
+                         \n\
+                         Run `rwv doctor` for a topology audit and remediation guidance, or \
+                         remove the directory manually once you are certain nothing needs \
+                         its objects.",
+                        dest.display(),
+                        canonical.display(),
+                    );
+                }
+                // `dest` is a linked workspace: its refdb and objects live in
+                // `store`, which this delete does not touch. Removing the
+                // directory removes a working tree only.
                 std::fs::remove_dir_all(&dest)
                     .with_context(|| format!("failed to remove {}", dest.display()))?;
             }
@@ -1455,9 +1495,22 @@ fn prune_dropped_repo(
                             any = true;
                             break;
                         }
+                        // A count git could not produce is "we could not
+                        // tell", never "nothing unpushed" — the reading the
+                        // old `unwrap_or(0)` gave it, which let a git failure
+                        // clear the branch and hand the store to the delete.
+                        // Refuse on the same terms as an unreadable branch
+                        // list below, and say which of the two happened.
                         let count = GitVcs
                             .count_commits_ahead_of_remote(&dest, &short, Role::Owned)
-                            .unwrap_or(0);
+                            .with_context(|| {
+                                format!(
+                                    "{repo_path}: dropped from lock, but counting {short}'s \
+                                     commits against its remote counterpart failed; refusing \
+                                     to remove a clone whose unpushed work could not be \
+                                     ruled out — push and re-run, or remove manually"
+                                )
+                            })?;
                         if count > 0 {
                             any = true;
                             break;
@@ -5933,6 +5986,166 @@ mod tests {
             git(&live, &["rev-parse", "HEAD"]),
             unique.as_str(),
             "the unique commit must survive the refused prune"
+        );
+    }
+
+    #[test]
+    fn prune_dropped_repo_refuses_when_the_ahead_count_cannot_be_taken() {
+        // The remote-tracking ref is present, so the counterpart probe passes
+        // and the branch reaches the ahead-count; it points at an object the
+        // clone does not have, which is the shape that makes `rev-list`
+        // FAIL rather than answer. That failure is "we could not tell" and
+        // has to refuse — read as "nothing unpushed" it clears the branch and
+        // hands the store to the delete.
+        let tmp = tempfile::tempdir().unwrap();
+        let (ctx, store, project) = primary_with_cloned_store(tmp.path());
+
+        // A loose ref file wins over the packed-refs entry the clone wrote.
+        let dangling = store.join(".git/refs/remotes/origin/main");
+        std::fs::create_dir_all(dangling.parent().unwrap()).unwrap();
+        std::fs::write(&dangling, "1111111111111111111111111111111111111111\n").unwrap();
+        assert!(
+            GitVcs
+                .branch_has_remote_counterpart(
+                    &store,
+                    &RefName::new("main".to_owned()),
+                    Role::Owned
+                )
+                .unwrap(),
+            "the fixture must still pass the counterpart probe, or the refusal \
+             under test is never reached"
+        );
+
+        let err = prune_dropped_repo(&ctx, &dropped(), &project)
+            .expect_err("a count git could not take is not evidence that nothing is unpushed");
+        let msg = format!("{err:#}");
+        assert!(
+            msg.contains("could not be ruled out"),
+            "the unreadable count must be what refused, and must say so rather \
+             than claim commits it never saw; got:\n{msg}"
+        );
+        assert!(
+            store.exists(),
+            "a refused prune must leave the clone on disk"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // prune_dropped_repo — the workweave arm, where the absence of a
+    // primary-side canonical decides nothing about what the checkout IS
+    // -----------------------------------------------------------------------
+
+    /// A workweave context whose primary-side `github/example/server` slot is
+    /// ABSENT — the shape that routes prune into the arm with no canonical to
+    /// compare against. What the workweave's own checkout is left unbuilt on
+    /// purpose: that is the thing under test, so each case materializes it.
+    /// Returns the context, the checkout path to build, and the project.
+    fn workweave_without_primary_canonical(tmp: &Path) -> (WorkspaceContext, PathBuf, ProjectName) {
+        let primary = tmp.join("weave");
+        std::fs::create_dir_all(primary.join("projects").join("web-app")).unwrap();
+        // Deliberately no `primary/github/example/server`.
+
+        let ww = primary.join(".workweaves").join("web-app--feat");
+        std::fs::create_dir_all(ww.join("github/example")).unwrap();
+        let primary_canon = primary.canonicalize().unwrap();
+        crate::workspace::WorkweaveMarker {
+            primary: primary_canon.clone(),
+            project: ProjectName::new("web-app"),
+            parent: primary_canon,
+        }
+        .write(&ww)
+        .unwrap();
+
+        let ctx = WorkspaceContext::resolve(&ww, None).expect("the marker names the primary weave");
+        assert!(
+            matches!(ctx.checkout, Checkout::Workweave { .. }),
+            "the fixture must resolve as a workweave, or the arm under test is not the one that runs"
+        );
+        assert!(
+            !ctx.primary_path().join("github/example/server").exists(),
+            "the absent primary-side canonical is the precondition of this arm"
+        );
+        (
+            ctx,
+            ww.join("github/example/server"),
+            ProjectName::new("web-app"),
+        )
+    }
+
+    #[test]
+    fn prune_dropped_repo_refuses_a_workweave_checkout_that_is_itself_the_store() {
+        // Inverted topology (joints/clone-topology.md I1): the workweave holds
+        // a standalone clone. The absent primary-side slot used to be read as
+        // "the store is gone, so this must be a linked worktree, delete it" —
+        // but the objects under this path exist nowhere else in the weave, and
+        // with no canonical to compare against, nothing has looked at them.
+        let tmp = tempfile::tempdir().unwrap();
+        let origin = tmp.path().join("origin");
+        init_repo(&origin);
+        let (ctx, checkout, project) = workweave_without_primary_canonical(tmp.path());
+        git(
+            tmp.path(),
+            &[
+                "clone",
+                origin.to_str().unwrap(),
+                checkout.to_str().unwrap(),
+            ],
+        );
+        assert!(
+            checkout.join(".git").is_dir(),
+            "the fixture must be a standalone clone, not a linked workspace"
+        );
+        let tip = GitVcs.head_revision(&checkout).unwrap();
+
+        let err = prune_dropped_repo(&ctx, &dropped(), &project)
+            .expect_err("a checkout that IS the store is not a working tree to delete");
+        let msg = format!("{err:#}");
+        assert!(
+            msg.contains("inverted clone topology"),
+            "the refusal must name what it found, not blame uncommitted changes \
+             or divergence; got:\n{msg}"
+        );
+        assert!(
+            checkout.exists(),
+            "a refused prune must leave the store on disk"
+        );
+        assert_eq!(
+            GitVcs.head_revision(&checkout).unwrap(),
+            tip,
+            "the object database must survive the refused prune intact"
+        );
+    }
+
+    #[test]
+    fn prune_dropped_repo_removes_a_workweave_checkout_linked_into_a_store_elsewhere() {
+        // The control for the refusal above. Same absent primary-side slot,
+        // but the checkout is a real linked workspace whose refdb and objects
+        // live in a store this delete never touches — so removing the
+        // directory removes a working tree and nothing else. Without this,
+        // the refusal above could be reporting an arm that never removes
+        // anything.
+        let tmp = tempfile::tempdir().unwrap();
+        let store = tmp.path().join("elsewhere/server");
+        init_repo(&store);
+        let (ctx, checkout, project) = workweave_without_primary_canonical(tmp.path());
+        git(
+            &store,
+            &["worktree", "add", "--detach", checkout.to_str().unwrap()],
+        );
+        assert!(
+            checkout.join(".git").is_file(),
+            "the fixture must be a linked workspace, not a standalone clone"
+        );
+
+        prune_dropped_repo(&ctx, &dropped(), &project)
+            .expect("a linked workspace is a working tree, and pruning it is what this arm is for");
+        assert!(
+            !checkout.exists(),
+            "the dropped repo's working tree must actually be removed"
+        );
+        assert!(
+            GitVcs.head_revision(&store).is_ok(),
+            "the store the checkout linked into must be left intact"
         );
     }
 

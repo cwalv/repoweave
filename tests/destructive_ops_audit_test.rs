@@ -72,6 +72,10 @@ const ALLOWLIST: &[Allowed] = &[
         justification: "prune_dropped_repo, both arms behind the \
             uncommitted-changes refusal at the top of the function (fails \
             safe: unwrap_or(true) refuses when git cannot be asked). \
+            Each arm additionally establishes WHAT it is about to delete \
+            before deleting it, because the two removals are different \
+            operations and the preconditions that gate them do not \
+            transfer. \
             (1) PRIMARY arm — a DESTROY-STORE (branch-model.md §3.2): \
             `dest` there IS the canonical store, so the delete would take \
             the object database and the worktree administration of every \
@@ -82,27 +86,32 @@ const ALLOWLIST: &[Allowed] = &[
             local-only refusal is NOT relaxed in exchange: it is \
             incidentally what has been keeping this call off a live \
             workweave's store, so recorded rwv refs stay inside its \
-            predicate (§5, prune_dropped_repo row). \
-            (2) WORKWEAVE arm — this entry does NOT vouch for it, and the \
-            previous text's claim that both arms sit behind a \
-            unique-commits refusal was measured FALSE by fo-opmmoz.10. The \
-            divergence check lives inside `if canonical.exists()`, whose \
-            branch ends at remove_worktree; the remove_dir_all is in the \
-            `else`, i.e. on precisely the path where there is no canonical \
-            to compare against and the check is skipped. The arm's own \
-            comment then ASSERTS, without checking, that `dest` is a linked \
-            worktree rather than a store — it calls neither \
-            classify_checkout nor resolved_worktree_parent, unlike \
-            workweave.rs's equivalent code, which handles the lone-canonical \
-            topology explicitly. A lone-canonical checkout whose \
-            primary-side path is absent is therefore deleted with no R4 \
-            gate. Filed as fo-b3ju26; not fixed here because the fix is \
-            sync.rs behaviour, not this bead's sweep. \
-            Two further fail-OPEN spots on the primary arm, recorded so \
-            they are not rediscovered as news: count_commits_ahead_of_remote \
-            unwrap_or(0) reads a git error as \"nothing unpushed\". \
-            (branch_has_remote_counterpart's unwrap_or(false) does refuse, \
-            and an unreadable branch list refuses.)",
+            predicate (§5, prune_dropped_repo row). That scan is now \
+            fail-CLOSED throughout: an unreadable branch list refuses, an \
+            absent remote counterpart refuses, and a count git could not \
+            take refuses with its own message instead of being read as \
+            \"nothing unpushed\" (the previous unwrap_or(0), recorded here \
+            as a measured fail-open and since fixed; mutation-verified by \
+            prune_dropped_repo_refuses_when_the_ahead_count_cannot_be_taken). \
+            (2) WORKWEAVE arm — a checkout removal, and it is one because \
+            the arm proves it rather than inferring it. The divergence \
+            refusal covers only the `canonical.exists()` branch, which ends \
+            at remove_worktree; the remove_dir_all is in the `else`, where \
+            there is no canonical to compare against and that check is not \
+            available. So before deleting, the else branch resolves the \
+            checkout's actual store (workweave::resolved_worktree_parent, \
+            the same helper delete_workweave's is_lone_canonical uses) and \
+            compares it against the checkout: a linked workspace has its \
+            refdb and objects in a store this delete never touches, and is \
+            removable as a working tree. A checkout that IS its own store — \
+            inverted topology, joints/clone-topology.md I1, which the \
+            absence of a primary-side clone does NOT rule out — is refused \
+            with a message naming the path and pointing at `rwv doctor`. \
+            An unresolvable store falls back to the checkout path and so \
+            refuses too. Mutation-verified by \
+            prune_dropped_repo_refuses_a_workweave_checkout_that_is_itself_the_store, \
+            with prune_dropped_repo_removes_a_workweave_checkout_linked_into_a_store_elsewhere \
+            as the control that the arm still removes what it should.",
     },
     Allowed {
         file: "workweave.rs",

@@ -2120,7 +2120,10 @@ fn collect_dirty_repos_by_walk(dir: &Path) -> Vec<String> {
 }
 
 /// Resolve the canonical store path that owns a workweave checkout, for the
-/// `worktree remove` / `worktree prune` calls below.
+/// `worktree remove` / `worktree prune` calls below — and for any caller that
+/// needs to tell a linked workspace apart from a store that merely sits where
+/// one was expected (sync's prune of a dropped repo asks exactly that before
+/// it deletes a directory).
 ///
 /// Under the clone-topology invariants (see
 /// `docs/explanation/joints/clone-topology.md`) every workweave checkout is a
@@ -2142,7 +2145,7 @@ fn collect_dirty_repos_by_walk(dir: &Path) -> Vec<String> {
 /// used unconditionally — preserving behavior for the (now-explicit)
 /// "checkout is gone" branch while making the canonical resolution
 /// authoritative for the live case.
-fn resolved_worktree_parent(checkout: &Path, fallback: &Path) -> PathBuf {
+pub(crate) fn resolved_worktree_parent(checkout: &Path, fallback: &Path) -> PathBuf {
     if !checkout.exists() {
         return fallback.to_path_buf();
     }
