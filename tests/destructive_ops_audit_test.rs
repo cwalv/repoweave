@@ -158,7 +158,7 @@ const ALLOWLIST: &[Allowed] = &[
             realignment of a present clone additionally refuses up front \
             when the checkout would detach a branch holding uncommitted \
             changes or unpushed commits (waived by \
-            --detach-working-branch, which discards nothing). \
+            --detach-checkouts, which discards nothing). \
             (2) refresh_working_tree_to_head_if_safe: \
             restores files from HEAD only after verifying every on-disk \
             blob is reachable from recent history — live edits are never \

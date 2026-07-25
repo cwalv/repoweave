@@ -330,7 +330,7 @@ fn in_place_fetch_realigns_a_present_member_and_detaches_its_branch() {
 
 // ============================================================================
 // Precondition: realignment refuses when it would detach a branch carrying
-// work that exists nowhere else, unless --detach-working-branch is passed.
+// work that exists nowhere else, unless --detach-checkouts is passed.
 // ============================================================================
 
 #[test]
@@ -350,7 +350,7 @@ fn in_place_fetch_refuses_to_detach_a_branch_with_uncommitted_changes() {
         .failure()
         .stderr(predicate::str::contains("would detach main"))
         .stderr(predicate::str::contains("uncommitted changes"))
-        .stderr(predicate::str::contains("--detach-working-branch"));
+        .stderr(predicate::str::contains("--detach-checkouts"));
 
     assert_eq!(
         current_branch(&dest_a).as_deref(),
@@ -405,7 +405,7 @@ fn in_place_fetch_refuses_to_detach_a_branch_with_no_remote_counterpart() {
 }
 
 #[test]
-fn in_place_fetch_detach_working_branch_waives_the_refusal() {
+fn in_place_fetch_detach_checkouts_waives_the_refusal() {
     let s = setup_workspace_with_locked_project(&["github/acme/a"]);
     let (repo_a, bare_a, first_a, _second_a) = &s.repos[0];
 
@@ -416,7 +416,7 @@ fn in_place_fetch_detach_working_branch_waives_the_refusal() {
     std::fs::write(dest_a.join("scratch.txt"), "work in progress\n").unwrap();
 
     rwv()
-        .args(["fetch", "--detach-working-branch"])
+        .args(["fetch", "--detach-checkouts"])
         .current_dir(&s.workspace)
         .assert()
         .success();

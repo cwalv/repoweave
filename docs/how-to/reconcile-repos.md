@@ -63,7 +63,7 @@ rwv doctor --locked
 
 - Clones repos whose canonical directory is absent, pinning to the lock revision.
 - Checks out the lock revision in repos that already exist — by revision, so the clone ends up on a detached HEAD even when it was already at that commit. The branch ref is not moved; `git checkout <branch>` puts the repo back on it.
-- Refuses that checkout for a repo whose branch holds uncommitted changes or unpushed commits, unless `--detach-working-branch` is passed.
+- Refuses that checkout for a repo whose branch holds uncommitted changes or unpushed commits, unless `--detach-checkouts` is passed.
 - Does **not** fetch from the network when the lock SHA is already in the local object store.
 - Does **not** advance lock entries — the lock is read-only during fetch; see [lock-as-derived](../explanation/joints/lock-as-derived.md).
 

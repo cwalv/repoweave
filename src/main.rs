@@ -309,9 +309,9 @@ fn main() -> anyhow::Result<()> {
                     "`--force` has been renamed on `rwv fetch`.\n\
                      \n\
                      Use the specific override you need:\n\
-                       --allow-non-empty-dir     bootstrap into a non-empty directory \
+                       --allow-non-empty-dir  bootstrap into a non-empty directory \
                      that is not a workspace\n\
-                       --detach-working-branch   realign a present clone even where that \
+                       --detach-checkouts     realign a present clone even where that \
                      detaches a branch holding uncommitted changes or unpushed commits",
                 ),
                 Some("remove") => Some(
@@ -343,6 +343,19 @@ fn main() -> anyhow::Result<()> {
                 eprintln!("error: {msg}");
                 std::process::exit(2);
             }
+        }
+        // Detect: `--detach-working-branch` on `rwv fetch` — an interim
+        // override that shipped ahead of the full branch model. The model
+        // renames it to `--detach-checkouts`, which also covers `rwv
+        // update` — rename, no alias (alpha, no back-compat shims).
+        if raw_args.get(1).map(|s| s.as_str()) == Some("fetch")
+            && raw_args.iter().any(|a| a == "--detach-working-branch")
+        {
+            eprintln!(
+                "error: `--detach-working-branch` has been renamed to `--detach-checkouts` \
+                 on `rwv fetch`."
+            );
+            std::process::exit(2);
         }
         // Detect: rwv workweave <PROJECT> <WORD> where WORD is a bare token that
         // is neither a known subcommand nor a flag. clap consumes <PROJECT> as
@@ -546,7 +559,7 @@ fn main() -> anyhow::Result<()> {
             frozen,
             allow_non_empty_dir,
             no_reference,
-            detach_working_branch,
+            detach_checkouts,
             roles,
             repos,
             jobs,
@@ -557,6 +570,10 @@ fn main() -> anyhow::Result<()> {
             } else {
                 fetch::FetchMode::Default
             };
+            // Mint once from the parsed flag; the token threads down to
+            // fetch_one, where it gates the realign-detach refusal (§5.3).
+            let detach_checkouts =
+                repoweave::cli::consent::DetachConsent::from_flag(detach_checkouts);
             let filter = repoweave::selector::RepoFilter::parse(&roles, &repos)?;
             // fetch's default is auto-resolve (min(nproc, 8)), unlike sync which
             // defaults to serial to preserve envelope vs NDJSON contract. fetch's
@@ -580,7 +597,7 @@ fn main() -> anyhow::Result<()> {
                         &origin_dir,
                         mode,
                         no_reference,
-                        detach_working_branch,
+                        detach_checkouts,
                         &filter,
                         jobs,
                         json,
@@ -614,7 +631,7 @@ fn main() -> anyhow::Result<()> {
                         &ctx,
                         mode,
                         no_reference,
-                        detach_working_branch,
+                        detach_checkouts,
                         &filter,
                         jobs,
                         json,
@@ -673,6 +690,15 @@ fn main() -> anyhow::Result<()> {
                         discard_uncommitted,
                         discard_unmerged_commits,
                     }) => {
+                        // Minted here so the token exists at the CLI
+                        // boundary; a later change wires it into
+                        // workweave.rs's DeletionWarrant (branch-model.md
+                        // §4.4, §4.6). No consumer yet — delete_workweave
+                        // still takes the raw bool below.
+                        let _discard_unmerged_commits =
+                            repoweave::cli::consent::DiscardUnmergedConsent::from_flag(
+                                discard_unmerged_commits,
+                            );
                         repoweave::workweave::delete_workweave(
                             primary_root,
                             &project,
@@ -746,10 +772,16 @@ fn main() -> anyhow::Result<()> {
             fix,
             json,
             all,
+            reattach_checkouts,
             project,
         }) => {
             let project_override = project.map(repoweave::manifest::ProjectName::new);
             let ctx = resolve_project_scoped(&origin_dir, project_override, use_workweave_flag)?;
+            // Minted here so the token exists at the CLI boundary; a later
+            // change wires it into check.rs's Detached-arm `--fix`
+            // (branch-model.md §7.2). No consumer yet.
+            let _reattach_checkouts =
+                repoweave::cli::consent::ReattachConsent::from_flag(reattach_checkouts);
             if locked {
                 let has_drift = check::run_check_locked(&ctx)?;
                 if has_drift {
@@ -931,6 +963,7 @@ fn main() -> anyhow::Result<()> {
         Some(Commands::Update {
             dirty,
             commit,
+            detach_checkouts,
             project,
             roles,
             repos,
@@ -939,6 +972,11 @@ fn main() -> anyhow::Result<()> {
         }) => {
             let project_override = project.map(repoweave::manifest::ProjectName::new);
             let ctx = resolve_project_scoped(&origin_dir, project_override, use_workweave_flag)?;
+            // Minted here so the token exists at the CLI boundary; a later
+            // change wires it into update.rs's FF-or-refuse guard
+            // (branch-model.md §5.3). No consumer yet.
+            let _detach_checkouts =
+                repoweave::cli::consent::DetachConsent::from_flag(detach_checkouts);
             let filter = repoweave::selector::RepoFilter::parse(&roles, &repos)?;
             // Update's default is auto-parallel (min(nproc, 8)). The envelope/NDJSON
             // split mirrors sync: -j 1 (or unspecified with --json) emits the

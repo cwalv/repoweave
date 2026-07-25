@@ -75,3 +75,18 @@ fn push_force_is_not_migrated() {
         "push --force must survive the rename pass; got: {stderr}"
     );
 }
+
+#[test]
+fn fetch_detach_working_branch_names_detach_checkouts() {
+    // Not a `--force` alias: `--detach-working-branch` was itself a shipped
+    // flag name (fo-r8ahsp.5) that the branch model renames directly.
+    let stderr = stderr_of(&[
+        "fetch",
+        "https://example.com/x.git",
+        "--detach-working-branch",
+    ]);
+    assert!(
+        stderr.contains("--detach-checkouts"),
+        "expected the replacement flag; got: {stderr}"
+    );
+}

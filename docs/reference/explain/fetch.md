@@ -68,7 +68,7 @@ its branch is published, when HEAD is already detached, or when the clone is
 already at the locked revision — so the ordinary case, including a CI runner
 with a warm clone cache, realigns exactly as before.
 
-`--detach-working-branch` waives it and realigns anyway. Nothing is discarded
+`--detach-checkouts` waives it and realigns anyway. Nothing is discarded
 by the waiver: uncommitted changes come along to the detached HEAD, and
 unpushed commits stay reachable from the branch ref.
 
@@ -87,7 +87,7 @@ happens under a filter.
 
 ```
 rwv fetch [<source>] [--frozen] [--allow-non-empty-dir] [--no-reference]
-          [--detach-working-branch] [--role <role>...] [--repo <selector>...]
+          [--detach-checkouts] [--role <role>...] [--repo <selector>...]
           [-j <N>] [--json]
 ```
 
@@ -104,7 +104,7 @@ rwv fetch [<source>] [--frozen] [--allow-non-empty-dir] [--no-reference]
   rejected when `<source>` is absent.
 - `--no-reference` — skip repos with `role: reference` (useful when mirrors
   are offline).
-- `--detach-working-branch` — realign a present clone even when that detaches
+- `--detach-checkouts` — realign a present clone even when that detaches
   a branch carrying uncommitted changes or unpushed commits. Without it,
   those repos refuse.
 - `--role <role>` / `--repo <selector>` — limit the repo fetch to a subset of
@@ -321,7 +321,7 @@ Realign every present clone to the lock even where that detaches a branch
 with work in flight:
 
 ```
-rwv fetch --detach-working-branch
+rwv fetch --detach-checkouts
 ```
 
 ## Common errors
@@ -342,7 +342,7 @@ rwv fetch --detach-working-branch
   manifest repos; update the lock with `rwv update` first.
 - *aligning to … would detach … and leave this behind* — the repo is on a
   branch holding uncommitted changes or unpushed commits. Commit, push, or
-  stash them, or pass `--detach-working-branch` to realign anyway.
+  stash them, or pass `--detach-checkouts` to realign anyway.
 - *revision … not found in …* — the clone is present but its object store
   does not have the locked revision, and a present clone is realigned without
   a network fetch. `git fetch` in that repo, or re-lock to a reachable

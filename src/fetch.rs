@@ -3,6 +3,7 @@
 //! The source must be a URL (full URL or `owner/repo` shorthand resolved via
 //! the registry). Local paths are not accepted; use `rwv activate` instead.
 
+use crate::cli::consent::DetachConsent;
 use crate::git::GitVcs;
 use crate::lock;
 use crate::manifest::{LockFile, Manifest, RepoEntry, RepoPath, Role};
@@ -192,7 +193,7 @@ pub fn run_fetch(
     workspace_root: &Path,
     mode: FetchMode,
     no_reference: bool,
-    detach_working_branch: bool,
+    detach_checkouts: Option<DetachConsent>,
     filter: &RepoFilter,
     jobs: usize,
     json: bool,
@@ -234,7 +235,7 @@ pub fn run_fetch(
         workspace_root,
         mode,
         no_reference,
-        detach_working_branch,
+        detach_checkouts,
         filter,
         jobs,
         json,
@@ -257,9 +258,9 @@ pub fn run_fetch(
 /// lock covers it, [`fetch_one`] resolves the locked revision in that clone's
 /// own object store and checks it out, which detaches HEAD. Realignment is
 /// gated by [`refuse_if_realign_detaches_unpublished_work`] unless
-/// `detach_working_branch` is set. When the lock has no entry for the repo,
-/// or there is no lock, the clone is left alone and the lock records its
-/// current HEAD.
+/// `detach_checkouts` carries a consent. When the lock has no entry for the
+/// repo, or there is no lock, the clone is left alone and the lock records
+/// its current HEAD.
 ///
 /// Clone-topology (I1): the canonical clone always lives at primary's
 /// `<weave>/<repo_path>`, even when this verb is invoked from inside a
@@ -279,7 +280,7 @@ pub fn run_fetch_in_place(
     ctx: &WorkspaceContext,
     mode: FetchMode,
     no_reference: bool,
-    detach_working_branch: bool,
+    detach_checkouts: Option<DetachConsent>,
     filter: &RepoFilter,
     jobs: usize,
     json: bool,
@@ -303,7 +304,7 @@ pub fn run_fetch_in_place(
         workspace_root,
         mode,
         no_reference,
-        detach_working_branch,
+        detach_checkouts,
         filter,
         jobs,
         json,
@@ -332,7 +333,7 @@ fn fetch_project_repos(
     workspace_root: &Path,
     mode: FetchMode,
     no_reference: bool,
-    detach_working_branch: bool,
+    detach_checkouts: Option<DetachConsent>,
     filter: &RepoFilter,
     jobs: usize,
     json: bool,
@@ -436,7 +437,7 @@ fn fetch_project_repos(
             workspace_root,
             existing_lock.as_ref(),
             no_reference,
-            detach_working_branch,
+            detach_checkouts,
             &reporter,
             json,
         );
@@ -744,7 +745,7 @@ fn refuse_if_realign_detaches_unpublished_work(
     }
     Err(format!(
         "{}: aligning to {} would detach {} and leave this behind:\n    - {}\n  \
-         commit, push, or stash it — or re-run with --detach-working-branch to \
+         commit, push, or stash it — or re-run with --detach-checkouts to \
          align anyway (the branch ref is not moved)",
         repo_path.as_str(),
         target.display_str(),
@@ -770,7 +771,7 @@ fn fetch_one(
     workspace_root: &Path,
     existing_lock: Option<&LockFile>,
     no_reference: bool,
-    detach_working_branch: bool,
+    detach_checkouts: Option<DetachConsent>,
     reporter: &Reporter<'_>,
     json: bool,
 ) -> FetchOutcome {
@@ -814,7 +815,7 @@ fn fetch_one(
                     };
                 }
             };
-            if !detach_working_branch {
+            if detach_checkouts.is_none() {
                 if let Err(msg) = refuse_if_realign_detaches_unpublished_work(
                     git, repo_path, &dest, entry.role, &resolved,
                 ) {

@@ -417,9 +417,67 @@ fn detaching_a_checkout_requires_a_consent_token_nobody_else_can_mint() {
         "E0624",
         "consent is minted from a named flag, not conjured at the call site",
         r#"
-        use repoweave::vcs::{AttachedRef, DetachConsent, ResolvedRevisionId, Vcs};
+        use repoweave::cli::consent::DetachConsent;
+        use repoweave::vcs::{AttachedRef, ResolvedRevisionId, Vcs};
         pub fn detach(vcs: &dyn Vcs, a: &AttachedRef, to: &ResolvedRevisionId) {
             let _ = vcs.detach_head(a, to, DetachConsent::granted());
+        }
+        "#,
+    );
+}
+
+// ---------------------------------------------------------------------------
+// fo-opmmoz.3 — a consent token cannot be forged outside the flag module
+// ---------------------------------------------------------------------------
+//
+// The above pins that `granted()` (the crate-internal test convenience) is
+// invisible from outside the crate. These pin the stronger claim §4.4
+// actually requires: even the tuple-struct literal — bypassing any
+// constructor function entirely — cannot be written, because the field is
+// private to `cli::consent`. That privacy rule does not distinguish "a
+// different crate" from "a different module of this same crate" (there is
+// no visibility tier between plain-private and `pub(crate)` that would), so
+// an external probe demonstrating this also demonstrates the in-crate claim:
+// no module of `repoweave` other than `cli::consent` — not `vcs.rs`, not
+// `fetch.rs` — can write `DetachConsent(())` by hand either.
+
+#[test]
+fn a_detach_consent_cannot_be_forged_by_tuple_literal() {
+    assert_fails_with(
+        "E0423",
+        "the field is private to cli::consent; only from_flag/granted can produce one",
+        r#"
+        use repoweave::cli::consent::DetachConsent;
+        pub fn forge() -> DetachConsent {
+            DetachConsent(())
+        }
+        "#,
+    );
+}
+
+#[test]
+fn a_reattach_consent_cannot_be_forged_by_tuple_literal() {
+    assert_fails_with(
+        "E0423",
+        "the field is private to cli::consent; only from_flag/granted can produce one",
+        r#"
+        use repoweave::cli::consent::ReattachConsent;
+        pub fn forge() -> ReattachConsent {
+            ReattachConsent(())
+        }
+        "#,
+    );
+}
+
+#[test]
+fn a_discard_unmerged_consent_cannot_be_forged_by_tuple_literal() {
+    assert_fails_with(
+        "E0423",
+        "the field is private to cli::consent; only from_flag/granted can produce one",
+        r#"
+        use repoweave::cli::consent::DiscardUnmergedConsent;
+        pub fn forge() -> DiscardUnmergedConsent {
+            DiscardUnmergedConsent(())
         }
         "#,
     );

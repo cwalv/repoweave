@@ -2331,9 +2331,10 @@ mod branch_model_tests {
     //! `tests/branch_model_test.rs`.
 
     use super::*;
+    use crate::cli::consent::{DetachConsent, DiscardUnmergedConsent, ReattachConsent};
     use crate::vcs::{
-        DeletionWarrant, DetachConsent, DiscardLocalCommitsConsent, DiscardUnmergedConsent,
-        DiscardWarrant, OwnedRef, RawRefName, ReattachConsent, TrackingRef,
+        DeletionWarrant, DiscardLocalCommitsConsent, DiscardWarrant, OwnedRef, RawRefName,
+        TrackingRef,
     };
 
     /// A local branch name, obtained the only way one can be: through the

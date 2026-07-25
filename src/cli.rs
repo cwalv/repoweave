@@ -104,7 +104,7 @@ pub enum Commands {
         no_reference: bool,
         /// Align a present repo even when that detaches a branch holding uncommitted changes or unpushed commits
         #[arg(long)]
-        detach_working_branch: bool,
+        detach_checkouts: bool,
         /// Limit the operation to repos with this role. Repeat to union multiple roles. Combined as a union with --repo.
         #[arg(long = "role")]
         roles: Vec<String>,
@@ -179,6 +179,12 @@ pub enum Commands {
         /// By default only the active project is checked.
         #[arg(long)]
         all: bool,
+        /// With `--fix`, reattach a canonical store's detached HEAD to its
+        /// tracking counterpart when that counterpart exists and its tip
+        /// equals HEAD. Without this flag, `--fix` only reports a detached
+        /// canonical, naming the `git switch` that would reattach it.
+        #[arg(long)]
+        reattach_checkouts: bool,
         /// Operate on this project instead of the active project (does not change `.rwv-active`)
         #[arg(long)]
         project: Option<String>,
@@ -352,6 +358,11 @@ pub enum Commands {
         /// Commit rwv.lock together with the integration files regenerated against the new tips
         #[arg(long)]
         commit: bool,
+        /// Align a repo even when that detaches a branch attached to
+        /// something other than its tracking counterpart, or moves the
+        /// counterpart in a way that is not a fast-forward
+        #[arg(long)]
+        detach_checkouts: bool,
         /// Operate on this project instead of the active project (does not change `.rwv-active`)
         #[arg(long)]
         project: Option<String>,
@@ -504,4 +515,103 @@ pub enum SetupAction {
         #[arg(long)]
         uninstall: bool,
     },
+}
+
+// ---------------------------------------------------------------------------
+// Consent tokens (branch-model.md §4.4)
+// ---------------------------------------------------------------------------
+//
+// This is the CLI layer's flag module, and it is the *only* place that can
+// construct `DetachConsent`, `ReattachConsent`, and `DiscardUnmergedConsent`.
+// Within one crate a `pub fn` constructor is callable from anywhere — so
+// "defined elsewhere but minted only by the CLI" does not compile into an
+// invariant. What actually seals a token is the private-field idiom applied
+// to the module that owns the type: each struct's tuple field is unnamed
+// and unmarked (private), and Rust resolves that against the *declaring
+// module*, not the call site — so no other module, in this crate or any
+// other, can write `DetachConsent(())` by hand. `vcs.rs` takes each token
+// as an opaque parameter and never constructs one.
+//
+// `from_flag` is `pub`, not `pub(crate)`: the `rwv` binary (`main.rs`) is
+// its real caller, and a `[[bin]]` target is a *separate* crate from this
+// `[lib]` — `pub(crate)` items are invisible to it, the same as to any
+// other downstream crate. What still holds crate-externally is the field
+// privacy above: `from_flag` only ever hands back what its own bool said,
+// it does not open a second way to construct the value.
+//
+// House rule: escape hatches are named for the precondition they waive,
+// never a bare `--force`. `--detach-checkouts` and `--reattach-checkouts`
+// name two categorically different consequences — losing the name your
+// commits hang off, versus moving which name they hang off — so they mint
+// two tokens, not one `ChangeAttachmentConsent`.
+pub mod consent {
+    /// Proof that the operator consented to leaving a checkout on no
+    /// branch. Minted from `--detach-checkouts`.
+    ///
+    /// `Copy`: a zero-sized proof token, not a capability that guards a
+    /// resource — duplicating "the operator consented" is harmless, and
+    /// per-repo callers (parallel fetch/update workers) each need their
+    /// own value from the one token the CLI dispatch minted.
+    #[derive(Debug, Clone, Copy)]
+    pub struct DetachConsent(());
+
+    impl DetachConsent {
+        /// Mint unconditionally. `pub(crate)`: usable by in-crate tests
+        /// (e.g. `git.rs`'s `Vcs` impl tests) that need a token without
+        /// exercising CLI parsing; invisible to the `rwv` binary crate and
+        /// to any other downstream crate.
+        pub(crate) fn granted() -> Self {
+            Self(())
+        }
+
+        /// Mint from the parsed `--detach-checkouts` value: `Some` iff the
+        /// operator passed it. Every verb's dispatch mints through here,
+        /// so the flag-to-token mapping lives in exactly one place.
+        pub fn from_flag(detach_checkouts: bool) -> Option<Self> {
+            detach_checkouts.then(Self::granted)
+        }
+    }
+
+    /// Proof that the operator consented to moving a checkout from one
+    /// branch to another. Minted from `--reattach-checkouts`.
+    ///
+    /// `Copy`: see [`DetachConsent`]'s doc comment.
+    #[derive(Debug, Clone, Copy)]
+    pub struct ReattachConsent(());
+
+    impl ReattachConsent {
+        /// Mint unconditionally. `pub(crate)`: see
+        /// [`DetachConsent::granted`]'s doc comment.
+        pub(crate) fn granted() -> Self {
+            Self(())
+        }
+
+        /// Mint from the parsed `--reattach-checkouts` value: `Some` iff
+        /// the operator passed it.
+        pub fn from_flag(reattach_checkouts: bool) -> Option<Self> {
+            reattach_checkouts.then(Self::granted)
+        }
+    }
+
+    /// Proof that the operator consented to discarding commits that are
+    /// not merged into the baseline. Minted from
+    /// `--discard-unmerged-commits`.
+    ///
+    /// `Copy`: see [`DetachConsent`]'s doc comment.
+    #[derive(Debug, Clone, Copy)]
+    pub struct DiscardUnmergedConsent(());
+
+    impl DiscardUnmergedConsent {
+        /// Mint unconditionally. `pub(crate)`: see
+        /// [`DetachConsent::granted`]'s doc comment.
+        pub(crate) fn granted() -> Self {
+            Self(())
+        }
+
+        /// Mint from the parsed `--discard-unmerged-commits` value: `Some`
+        /// iff the operator passed it.
+        pub fn from_flag(discard_unmerged_commits: bool) -> Option<Self> {
+            discard_unmerged_commits.then(Self::granted)
+        }
+    }
 }

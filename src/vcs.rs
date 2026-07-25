@@ -3,6 +3,7 @@
 //! repoweave operates on repos and worktrees. The VCS layer abstracts over
 //! the specific tool (git, jj, sl, hg) so core logic doesn't hardcode git.
 
+use crate::cli::consent::{DetachConsent, DiscardUnmergedConsent, ReattachConsent};
 use crate::manifest::{ProjectName, Role, WorkweaveName};
 use schemars::JsonSchema;
 use serde::Serialize;
@@ -1452,63 +1453,21 @@ impl fmt::Display for HeadAttachment {
 // Consent and warrant tokens (§4.4)
 // ---------------------------------------------------------------------------
 //
+// `DetachConsent`, `ReattachConsent`, and `DiscardUnmergedConsent` live in
+// `crate::cli::consent` — the CLI layer's flag module, which is the only
+// place that can construct them (private-field idiom). This module takes
+// each as an opaque parameter and never constructs one; see that module's
+// doc comment for why the home has to be there rather than here.
+// `DiscardLocalCommitsConsent` and the warrant types below stay in this
+// module: they are minted from checks this module runs
+// (`DeletionWarrant::unmoved`/`merged`) or paired with a savepoint this
+// module writes (`DiscardWarrant::new`), not from a bare flag.
+//
 // House rule: escape hatches are named for the precondition they waive,
 // never a bare `--force`. `--detach-checkouts` and `--reattach-checkouts`
 // name two categorically different consequences — losing the name your
 // commits hang off, versus moving which name they hang off — so they are
 // two tokens, not one `ChangeAttachmentConsent`.
-//
-// HOME: §4.4 requires each consent token to live in the module that mints
-// it, because within one crate a `pub fn` constructor is callable from
-// anywhere: "defined in vcs.rs but minted only by the CLI" does not
-// compile into an invariant. They are defined here so this bead can state
-// the signatures, with crate-visible constructors; homing them in the CLI
-// flag module is the change that makes the minting story real, and these
-// definitions go away with it. Until then nothing outside this crate can
-// mint one, so the consent-gated verbs are unreachable from outside —
-// which is the correct state for a surface with no call sites yet.
-
-/// Proof that the operator consented to leaving a checkout on no branch.
-/// Minted from `--detach-checkouts`.
-#[derive(Debug)]
-pub struct DetachConsent(());
-
-impl DetachConsent {
-    /// Mint from the operator's `--detach-checkouts`.
-    // No caller yet: the flag module that mints this is a separate change.
-    #[allow(dead_code)]
-    pub(crate) fn granted() -> Self {
-        Self(())
-    }
-}
-
-/// Proof that the operator consented to moving a checkout from one branch
-/// to another. Minted from `--reattach-checkouts`.
-#[derive(Debug)]
-pub struct ReattachConsent(());
-
-impl ReattachConsent {
-    /// Mint from the operator's `--reattach-checkouts`.
-    // No caller yet: the flag module that mints this is a separate change.
-    #[allow(dead_code)]
-    pub(crate) fn granted() -> Self {
-        Self(())
-    }
-}
-
-/// Proof that the operator consented to discarding commits that are not
-/// merged into the baseline. Minted from `--discard-unmerged-commits`.
-#[derive(Debug)]
-pub struct DiscardUnmergedConsent(());
-
-impl DiscardUnmergedConsent {
-    /// Mint from the operator's `--discard-unmerged-commits`.
-    // No caller yet: the flag module that mints this is a separate change.
-    #[allow(dead_code)]
-    pub(crate) fn granted() -> Self {
-        Self(())
-    }
-}
 
 /// Proof that the operator consented to discarding local commits during a
 /// rewinding MOVE. Minted from `--discard-local-commits`.
@@ -1644,8 +1603,12 @@ impl DeletionWarrant {
 
     /// The operator passed `--discard-unmerged-commits`. No check to run —
     /// the consent *is* the warrant, and the token proves it was given.
+    ///
+    /// `consent` is not otherwise inspected: its field is private to
+    /// `cli::consent`, so this module (a different one) cannot even
+    /// destructure it. Holding a value of the type is the whole proof.
     pub fn operator_discarded(consent: DiscardUnmergedConsent) -> Self {
-        let DiscardUnmergedConsent(()) = consent;
+        let _ = consent;
         Self(WarrantKind::OperatorDiscarded)
     }
 
@@ -2659,14 +2622,17 @@ pub trait Vcs {
     /// Leave the checkout `from` witnesses on no branch, at `to`.
     ///
     /// Post-birth attachment change: requires the operator's consent,
-    /// because what is lost is the name their commits hang off.
+    /// because what is lost is the name their commits hang off. `consent`
+    /// is not otherwise inspected: its field is private to `cli::consent`,
+    /// so this module cannot even destructure it. Holding a value of the
+    /// type is the whole proof.
     fn detach_head(
         &self,
         from: &AttachedRef,
         to: &ResolvedRevisionId,
         consent: DetachConsent,
     ) -> Result<(), VcsError> {
-        let DetachConsent(()) = consent;
+        let _ = consent;
         self.verify_attachment(from)?;
         self.set_detached_head(from.repo(), to)
     }
@@ -2676,14 +2642,15 @@ pub trait Vcs {
     /// Takes the whole [`HeadAttachment`] rather than a witness: reattach
     /// is reachable from all three states (including `Unborn`, where the
     /// operator wants off a branch that never got a commit), and the state
-    /// it planned against must still hold.
+    /// it planned against must still hold. `consent` is not otherwise
+    /// inspected — see [`detach_head`](Vcs::detach_head)'s doc comment.
     fn reattach_head(
         &self,
         from: HeadAttachment,
         to: &LocalRefName,
         consent: ReattachConsent,
     ) -> Result<(), VcsError> {
-        let ReattachConsent(()) = consent;
+        let _ = consent;
         let repo = from.repo().to_path_buf();
         let observed = self.head_attachment(&repo)?;
         if observed != from {
