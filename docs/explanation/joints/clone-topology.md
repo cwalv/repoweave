@@ -85,7 +85,7 @@ For **worktree-materialized** repos, a repo's checked-out branch is owned
 by exactly one workspace. The canonical store sits on a non-ephemeral
 branch (the manifest's tracking branch, e.g. `main`). Every worktree
 checkout sits on an **ephemeral branch** named
-`<project>--<workweave>/<segment>` — a branch name visible only to that
+`<project>--<workweave>` — a branch name visible only to that
 workweave.
 
 Operationally: the ephemeral naming scheme is what makes two
@@ -177,7 +177,7 @@ worked example of the general spec; future Vcs impls
 | Canonical store at `<weave>/<repo_path>` (I1) | A directory containing a `.git/` (or a `.git` file resolving into the canonical store, but not into a workweave). |
 | Linked workspace (I2) — worktree-materialized | A `git worktree`-created checkout whose `.git` file resolves into the canonical store's `git-common-dir`. |
 | Linked workspace (I2) — reference symlink | A symlink at `<workweave>/<repo_path>` pointing directly to `<weave>/<repo_path>`. No `git worktree` involvement; the alias satisfies I1 by identity. |
-| Ephemeral branch ownership (I3) — worktree-materialized | A branch named `<project>--<workweave>/<segment>`, present in the canonical store's refs, checked out only in the workweave's worktree. |
+| Ephemeral branch ownership (I3) — worktree-materialized | A branch named `<project>--<workweave>`, present in the canonical store's refs, checked out only in the workweave's worktree. |
 | Ephemeral branch ownership (I3) — reference symlink | Not applicable. A symlinked reference has no per-workweave checkout and no ephemeral branch; see the I3 carve-out above. |
 
 The decisive git query is `git rev-parse --git-common-dir`. Run from
@@ -209,7 +209,7 @@ case (canonical store living inside a workweave) without enumerating
 either by name. Reference symlinks are excluded from this check before
 it runs; they are not false positives and are not violations.
 
-The ephemeral branch convention — `<project>--<workweave>/<segment>` —
+The ephemeral branch convention — `<project>--<workweave>` —
 is the same scheme described in
 [workweave-hierarchy](./workweave-hierarchy.md). I3 is the spec; the
 hierarchy joint is where the operational story lives.

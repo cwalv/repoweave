@@ -216,14 +216,16 @@ pub enum CheckViolation {
     },
     /// Branch-discipline violations enforcing the I3 invariant from the
     /// `clone-topology` joint: every workweave repo checkout sits on a
-    /// `<project>--<workweave>/<segment>` ephemeral branch, every canonical
-    /// clone sits on a non-ephemeral branch, and stale ephemeral branches
-    /// left over from deleted workweaves are surfaced (and, for the safe
-    /// class only, removable via `--fix`).
+    /// `<project>--<workweave>` ephemeral branch, every canonical clone sits
+    /// on a non-ephemeral branch, and stale ephemeral branches left over
+    /// from deleted workweaves are surfaced (and removable via `--fix` only
+    /// when rwv holds an ownership receipt for the ref and it falls in the
+    /// safe class — an unreceipted ref is never removable, regardless of
+    /// class).
     ///
     /// The check catches manual operations the clone-topology scan cannot
     /// see — e.g. `git switch main` inside a workweave, or a `branch -D`
-    /// that left behind an `<project>--<dead>/main` branch in the canonical.
+    /// that left behind an `<project>--<dead>` branch in the canonical.
     ///
     /// See `docs/explanation/joints/clone-topology.md` (I3) and
     /// `docs/explanation/joints/shared-refs-drift.md` (safe/live doctrine).
@@ -2725,16 +2727,16 @@ pub fn scan_clone_topology(ws_root: &Path, repo_paths: &BTreeSet<RepoPath>) -> V
 // Three checks, one symbolic-ref read per checkout plus one branch listing
 // per canonical. Together they enforce the I3 invariant from
 // `docs/explanation/joints/clone-topology.md` — every workweave repo
-// checkout sits on a `<project>--<workweave>/<segment>` ephemeral branch
-// owned by exactly that workweave; canonicals sit on a non-ephemeral
-// branch; and stale ephemeral branches left in canonicals by crashed
-// deletes are surfaced under the safe/live doctrine from
+// checkout sits on a `<project>--<workweave>` ephemeral branch owned by
+// exactly that workweave; canonicals sit on a non-ephemeral branch; and
+// stale ephemeral branches left in canonicals by crashed deletes are
+// surfaced under the safe/live doctrine from
 // `docs/explanation/joints/shared-refs-drift.md`.
 //
-// VCS seam: the scanner consumes the `Vcs` trait — `current_ref`,
-// `list_local_branches`, `head_revision`, `resolve_revision`, and
-// `is_ancestor` — without any git-specific code. See
-// `docs/explanation/joints/vcs-as-seam.md`.
+// VCS seam: the scanner consumes the `Vcs` trait — `observe_head`,
+// `head_attachment`, `list_local_branches`, `head_revision`,
+// `resolve_revision`, and `is_ancestor` — without any git-specific code.
+// See `docs/explanation/joints/vcs-as-seam.md`.
 
 /// Whether `name` is worth **showing** the operator as a possible leftover of
 /// the pre-§3.5 naming scheme.
@@ -3918,8 +3920,8 @@ pub fn scan_state_hygiene(
 ///   the `<project>` prefix extracted from the workweave directory basename
 ///   via [`crate::workspace::parse_weave_dir_name`].
 ///
-/// - **Canonical clone** (sub-kinds b/c: `EphemeralAtPrimary`,
-///   `StaleEphemeralBranchSafe`, `StaleEphemeralBranchLive`): `repo_path`
+/// - **Canonical clone** (sub-kinds b/c: `StaleEphemeralBranchSafe`,
+///   `StaleEphemeralBranchLive`, `StaleEphemeralBranchUnowned`): `repo_path`
 ///   lives directly under `ws_root`.  The manifest-relative path is
 ///   derived by stripping `ws_root`, normalised to forward slashes, and
 ///   looked up in `known_repos`.  When `known_repos` was built from only

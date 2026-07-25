@@ -2,7 +2,7 @@
 //!
 //! Enforces the I3 invariant from `docs/explanation/joints/clone-topology.md`
 //! (every workweave repo checkout sits on its owned
-//! `<project>--<workweave>/<segment>` ephemeral branch; canonicals sit on a
+//! `<project>--<workweave>` ephemeral branch; canonicals sit on a
 //! non-ephemeral branch) plus the safe/live doctrine from
 //! `docs/explanation/joints/shared-refs-drift.md` applied to refs in (c).
 //!
@@ -266,7 +266,7 @@ fn branch_exists(repo: &Path, name: &str) -> bool {
 // ===========================================================================
 
 /// Healthy workweave: each repo checkout sits on its
-/// `<project>--<workweave>/<segment>` ephemeral branch. Doctor should not
+/// `<project>--<workweave>` ephemeral branch. Doctor should not
 /// report any branch-discipline finding for this directory.
 #[test]
 fn healthy_workweave_ephemeral_branch_is_clean() {
