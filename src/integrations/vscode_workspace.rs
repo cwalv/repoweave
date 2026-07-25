@@ -1,7 +1,6 @@
 use crate::integration::{Integration, IntegrationContext, Issue, Severity};
 use crate::integrations::merge::{
-    drift_issues, keypath, missing_issue, strip_deactivate, JsonDoc, KeyPath, ManagedDoc,
-    RwvGeneratedMarker,
+    drift_issues, keypath, missing_issue, JsonDoc, ManagedDoc, RwvGeneratedMarker,
 };
 use anyhow::Context;
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -19,16 +18,20 @@ const GENERATED_MARKER_KEY: &str = "rwv.generated";
 /// set, union new" without any heuristic pattern matching.
 const MARKER_EXCLUDES_KEY: &str = "files.exclude";
 
-/// The owned key paths that vscode-workspace manages.
+/// The `settings` values rwv seeds on a fresh workspace and never overwrites.
 ///
-/// Used by `strip_deactivate` (which has no IntegrationContext) to identify
-/// which keys to remove. Static per §4.5 of the file-ownership contract.
-fn vscode_owned_keys() -> Vec<KeyPath> {
-    vec![
-        keypath(["folders"]),
-        keypath(["settings", "git.autoRepositoryDetection"]),
-        keypath(["settings", "git.repositoryScanMaxDepth"]),
-        keypath(["settings", "files.exclude"]),
+/// A file holding nothing but these at their seeded values carries no user
+/// choice, so it does not keep the file alive through `deactivate`.
+fn seeded_settings() -> [(&'static str, serde_json::Value); 2] {
+    [
+        (
+            "git.autoRepositoryDetection",
+            serde_json::Value::String("subFolders".to_string()),
+        ),
+        (
+            "git.repositoryScanMaxDepth",
+            serde_json::Value::Number(3.into()),
+        ),
     ]
 }
 
@@ -211,6 +214,68 @@ fn merge_folders(
     serde_json::Value::Array(folders)
 }
 
+/// Drop the rwv-owned primary entry (`"path": "."`) from the `folders` array,
+/// keeping every user-added entry. Removes the key when nothing is left.
+fn remove_primary_folder(obj: &mut serde_json::Map<String, serde_json::Value>) {
+    let Some(serde_json::Value::Array(folders)) = obj.get_mut("folders") else {
+        return;
+    };
+    folders.retain(|f| f.get("path").and_then(|v| v.as_str()) != Some("."));
+    if folders.is_empty() {
+        obj.remove("folders");
+    }
+}
+
+/// Does anything the user authored remain in a stripped document?
+///
+/// A `settings` map holding only rwv's seeded values at their seeded values is
+/// rwv's own leftover; a changed value is a choice and keeps the file.
+fn only_seeded_settings_remain(obj: &serde_json::Map<String, serde_json::Value>) -> bool {
+    if obj.is_empty() {
+        return true;
+    }
+    let Some(serde_json::Value::Object(settings)) = obj.get("settings") else {
+        return false;
+    };
+    obj.len() == 1
+        && settings
+            .iter()
+            .all(|(k, v)| seeded_settings().iter().any(|(sk, sv)| sk == k && sv == v))
+}
+
+/// Strip rwv's managed region from one `.code-workspace` file.
+///
+/// That region is not a flat key list: rwv owns the `folders` entry whose path
+/// is `"."` and the `files.exclude` keys the marker records — not the array or
+/// the map holding them. Everything else, including user-added exclude keys
+/// and folder entries, survives. Without the marker the user holds the pen and
+/// the file is left alone; a marker predating the recorded exclude list leaves
+/// the excludes in place rather than guessing which were rwv's.
+fn strip_workspace_file(path: &Path) -> anyhow::Result<()> {
+    let text =
+        std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
+    let mut doc = JsonDoc::<RwvGeneratedMarker>::parse(&text)
+        .with_context(|| format!("parsing {}", path.display()))?;
+
+    if !doc.has_marker(&[]) {
+        return Ok(());
+    }
+
+    for key in read_prev_rwv_excludes(doc.root()) {
+        doc.remove_owned(&keypath(["settings", "files.exclude", &key]));
+    }
+    remove_primary_folder(doc.root_mut());
+    doc.remove_marker(&[]);
+
+    if only_seeded_settings_remain(doc.root()) {
+        std::fs::remove_file(path).with_context(|| format!("removing {}", path.display()))?;
+    } else {
+        let stripped = doc.serialize()?;
+        std::fs::write(path, stripped).with_context(|| format!("writing {}", path.display()))?;
+    }
+    Ok(())
+}
+
 pub struct VscodeWorkspace;
 
 impl Integration for VscodeWorkspace {
@@ -323,17 +388,10 @@ impl Integration for VscodeWorkspace {
         if let Some(settings_map) = settings.as_object_mut() {
             // DefaultOnly: seed sensible git defaults at greenfield but never
             // overwrite a value the user has explicitly set.
-            if !settings_map.contains_key("git.autoRepositoryDetection") {
-                settings_map.insert(
-                    "git.autoRepositoryDetection".to_string(),
-                    serde_json::Value::String("subFolders".to_string()),
-                );
-            }
-            if !settings_map.contains_key("git.repositoryScanMaxDepth") {
-                settings_map.insert(
-                    "git.repositoryScanMaxDepth".to_string(),
-                    serde_json::Value::Number(3.into()),
-                );
+            for (key, value) in seeded_settings() {
+                if !settings_map.contains_key(key) {
+                    settings_map.insert(key.to_string(), value);
+                }
             }
             settings_map.insert(
                 "files.exclude".to_string(),
@@ -347,18 +405,13 @@ impl Integration for VscodeWorkspace {
     }
 
     fn deactivate(&self, root: &Path) -> anyhow::Result<()> {
-        // Strip-not-delete (fix #3): for each .code-workspace file that carries
-        // the rwv.generated marker, remove only the owned keys and the marker.
-        // Delete the file only when nothing user-authored remains; otherwise
-        // rewrite the stripped document as a hand-owned workspace.
         if let Ok(entries) = std::fs::read_dir(root) {
             for entry in entries.flatten() {
                 let path = entry.path();
                 if path.extension().and_then(|e| e.to_str()) != Some("code-workspace") {
                     continue;
                 }
-                let owned_keys = vscode_owned_keys();
-                strip_deactivate::<JsonDoc<RwvGeneratedMarker>>(&path, &owned_keys)?;
+                strip_workspace_file(&path)?;
             }
         }
         Ok(())

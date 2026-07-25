@@ -6675,8 +6675,8 @@ mod vscode_workspace {
         );
 
         // After deactivate: file MUST persist (not be deleted); owned keys
-        // stripped (folders, settings.git.*, settings.files.exclude, marker);
-        // the four user blocks remain.
+        // stripped (the primary folder, the recorded files.exclude keys, the
+        // marker); the four user blocks remain.
         VscodeWorkspace.deactivate(root).unwrap();
         assert!(
             root.join("test-project.code-workspace").exists(),
@@ -6834,23 +6834,18 @@ mod vscode_workspace {
 
     /// §6.vscode.4 — Deactivate of a purely-rwv file deletes it; hand-written
     /// file (no marker) is untouched.
-    ///
-    /// Currently GREEN — the current vscode deactivate already gates on the
-    /// rwv.generated marker and deletes the whole file (which happens to
-    /// satisfy this scenario despite being the bug elsewhere). Keep ungated
-    /// as a regression guard against C5 (when C5 switches to strip-not-delete,
-    /// this scenario must still pass because the post-strip doc is empty).
     #[test]
     fn s6_vscode_4_deactivate_deletes_purely_rwv_preserves_hand_written() {
         let tmp = TempDir::new().unwrap();
         let root = tmp.path();
 
-        // (a) Purely-rwv-owned file: marker + only owned content.
+        // (a) Purely-rwv-owned file: marker + only owned content. The marker
+        // records the exclude keys rwv set, so all of them are its own.
         write_file(
             root,
             "proj.code-workspace",
             r#"{
-  "rwv.generated": true,
+  "rwv.generated": { "managed": true, "files.exclude": [".*"] },
   "folders": [{ "path": ".", "name": "proj (primary)" }],
   "settings": {
     "git.autoRepositoryDetection": "subFolders",
@@ -7216,12 +7211,13 @@ mod vscode_workspace_scenarios {
         let tmp = TempDir::new().unwrap();
         let root = tmp.path();
 
-        // (a) A purely-rwv .code-workspace: marker + owned keys only.
+        // (a) A purely-rwv .code-workspace: marker + owned keys only. The
+        // marker records the exclude keys, so all of them are rwv's own.
         write_file(
             root,
             "proj.code-workspace",
             r#"{
-  "rwv.generated": true,
+  "rwv.generated": {"managed": true, "files.exclude": [".*"]},
   "folders": [{"path": ".", "name": "proj (primary)"}],
   "settings": {
     "git.autoRepositoryDetection": "subFolders",
@@ -7261,6 +7257,164 @@ mod vscode_workspace_scenarios {
             serde_json::Value::Number(2.into()),
             "hand-written file content must be byte-identical"
         );
+    }
+
+    // -------------------------------------------------------------------------
+    // Scenario 5 — Deactivate strips rwv's own keys *within* the managed maps
+    // and leaves everything the user put there.
+    //
+    // rwv owns keys within a managed map, never the whole map: the `folders`
+    // entry whose path is ".", and the files.exclude keys the marker records.
+    // -------------------------------------------------------------------------
+    #[test]
+    fn scenario5_deactivate_preserves_user_excludes_and_folders() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+
+        write_file(
+            root,
+            "foundations.code-workspace",
+            r#"{
+  "rwv.generated": {"managed": true, "files.exclude": [".*", "github/acme"]},
+  "folders": [
+    {"path": ".", "name": "foundations (primary)"},
+    {"path": "../shared-notes", "name": "notes"}
+  ],
+  "settings": {
+    "git.autoRepositoryDetection": "subFolders",
+    "git.repositoryScanMaxDepth": 3,
+    "files.exclude": {
+      ".*": true,
+      "github/acme": true,
+      "**/target": true,
+      "dist": false
+    },
+    "editor.tabSize": 2
+  }
+}"#,
+        );
+
+        VscodeWorkspace.deactivate(root).unwrap();
+
+        let path = root.join("foundations.code-workspace");
+        assert!(path.exists(), "file with user content must not be deleted");
+        let parsed: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+
+        // The two rwv-derived exclude keys go; the two user keys stay, values
+        // intact.
+        let exclude = &parsed["settings"]["files.exclude"];
+        assert!(
+            exclude.get(".*").is_none() && exclude.get("github/acme").is_none(),
+            "rwv-derived exclude keys must be stripped; got: {exclude}"
+        );
+        assert_eq!(
+            exclude["**/target"],
+            serde_json::Value::Bool(true),
+            "user-added **/target must survive deactivate; got: {exclude}"
+        );
+        assert_eq!(
+            exclude["dist"],
+            serde_json::Value::Bool(false),
+            "user-added dist must survive deactivate with its value; got: {exclude}"
+        );
+
+        // The primary folder entry goes; the user's extra root stays.
+        let folders = parsed["folders"].as_array().unwrap();
+        assert_eq!(
+            folders.len(),
+            1,
+            "only the rwv primary entry may be stripped; got: {folders:?}"
+        );
+        assert_eq!(folders[0]["path"], "../shared-notes");
+        assert_eq!(folders[0]["name"], "notes");
+
+        // DefaultOnly git.* settings are never stripped, and unrelated
+        // settings are untouched.
+        assert_eq!(
+            parsed["settings"]["git.autoRepositoryDetection"],
+            "subFolders"
+        );
+        assert_eq!(parsed["settings"]["git.repositoryScanMaxDepth"], 3);
+        assert_eq!(parsed["settings"]["editor.tabSize"], 2);
+
+        assert!(
+            parsed.get("rwv.generated").is_none(),
+            "marker must be stripped; got: {parsed}"
+        );
+    }
+
+    // -------------------------------------------------------------------------
+    // Scenario 6 — A git.* value the user changed is a user choice: it keeps
+    // the file alive where the seeded value would not have.
+    // -------------------------------------------------------------------------
+    #[test]
+    fn scenario6_deactivate_keeps_file_holding_user_changed_git_setting() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+
+        write_file(
+            root,
+            "proj.code-workspace",
+            r#"{
+  "rwv.generated": {"managed": true, "files.exclude": [".*"]},
+  "folders": [{"path": ".", "name": "proj (primary)"}],
+  "settings": {
+    "git.autoRepositoryDetection": "subFolders",
+    "git.repositoryScanMaxDepth": 10,
+    "files.exclude": {".*": true}
+  }
+}"#,
+        );
+
+        VscodeWorkspace.deactivate(root).unwrap();
+
+        let path = root.join("proj.code-workspace");
+        assert!(
+            path.exists(),
+            "a git.* value the user changed must keep the file"
+        );
+        let parsed: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(parsed["settings"]["git.repositoryScanMaxDepth"], 10);
+        assert!(parsed.get("rwv.generated").is_none());
+        assert!(parsed.get("folders").is_none());
+    }
+
+    // -------------------------------------------------------------------------
+    // Scenario 7 — A marker predating the recorded exclude list cannot say
+    // which keys were rwv's, so it leaves all of them.
+    // -------------------------------------------------------------------------
+    #[test]
+    fn scenario7_deactivate_leaves_excludes_when_marker_records_none() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+
+        write_file(
+            root,
+            "proj.code-workspace",
+            r#"{
+  "rwv.generated": true,
+  "folders": [{"path": ".", "name": "proj (primary)"}],
+  "settings": {
+    "files.exclude": {".*": true, "dist": true}
+  }
+}"#,
+        );
+
+        VscodeWorkspace.deactivate(root).unwrap();
+
+        let path = root.join("proj.code-workspace");
+        assert!(path.exists(), "unattributable excludes must keep the file");
+        let parsed: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(
+            parsed["settings"]["files.exclude"],
+            serde_json::json!({".*": true, "dist": true}),
+            "no exclude key may be guessed at; got: {parsed}"
+        );
+        assert!(parsed.get("folders").is_none());
+        assert!(parsed.get("rwv.generated").is_none());
     }
 }
 

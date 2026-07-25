@@ -402,6 +402,18 @@ pub struct JsonDoc<M: JsonMarker = XRepoweaveMarker> {
 }
 
 impl<M: JsonMarker> JsonDoc<M> {
+    /// The parsed object, for ownership rules a flat [`KeyPath`] list cannot
+    /// express — an owned *element* of an array, or an owned key set the file
+    /// records rather than the integration declaring it statically.
+    pub fn root(&self) -> &serde_json::Map<String, serde_json::Value> {
+        &self.root
+    }
+
+    /// Mutable counterpart of [`JsonDoc::root`].
+    pub fn root_mut(&mut self) -> &mut serde_json::Map<String, serde_json::Value> {
+        &mut self.root
+    }
+
     fn marker_value() -> serde_json::Value {
         // The richer object form. has_marker tolerates a plain `true`.
         serde_json::json!({ "managed": true })

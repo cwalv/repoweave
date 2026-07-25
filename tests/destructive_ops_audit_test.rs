@@ -217,6 +217,16 @@ const ALLOWLIST: &[Allowed] = &[
             user-held files (no marker) are never touched.",
     },
     Allowed {
+        file: "integrations/vscode_workspace.rs",
+        pattern: "remove_file",
+        count: 1,
+        justification: "strip_workspace_file: marker-gated; deletes the \
+            .code-workspace only when the strip leaves nothing but rwv's own \
+            seeded git.* settings still at their seeded values. A user-added \
+            folder entry, an exclude key the marker does not claim, any other \
+            block, or a changed git.* value keeps the file.",
+    },
+    Allowed {
         file: "integrations/uv_workspace.rs",
         pattern: "remove_file",
         count: 1,
