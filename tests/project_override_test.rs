@@ -73,7 +73,22 @@ fn make_two_project_workspace(parent: &Path) -> (PathBuf, PathBuf, PathBuf, Stri
 
     let server = ws.join("github/acme/server");
     let sha = init_repo(&server);
-    let url = format!("file://{}", server.display());
+    // Give the member a bare `origin` so `rwv update` can resolve
+    // `origin/main`; without a remote the advance step has nothing to
+    // resolve against.
+    let bare = parent.join("server.git");
+    git(
+        &[
+            "clone",
+            "--bare",
+            server.to_str().unwrap(),
+            bare.to_str().unwrap(),
+        ],
+        parent,
+    );
+    let url = format!("file://{}", bare.display());
+    git(&["remote", "add", "origin", &url], &server);
+    git(&["fetch", "origin"], &server);
 
     let proj_a = ws.join("projects/proj-a");
     init_repo(&proj_a);
@@ -153,6 +168,133 @@ fn project_override_runs_without_changing_active() {
         !ws.join("projects/proj-a/rwv.lock").exists(),
         "lock should not be written for the non-target project"
     );
+}
+
+// ---------------------------------------------------------------------------
+// The intent verbs (add / remove / update) regenerate the --project target
+// without selecting it: `.rwv-active` is untouched and the weave root keeps
+// surfacing the project it already surfaced.
+// ---------------------------------------------------------------------------
+
+/// Select `proj-a` for real (symlinks + `.rwv-active`) so a later
+/// `--project proj-b` run has an established selection to disturb.
+fn select_proj_a(ws: &Path) {
+    rwv()
+        .args(["activate", "proj-a"])
+        .current_dir(ws)
+        .assert()
+        .success();
+    assert_eq!(
+        std::fs::read_link(ws.join("proj-a.code-workspace")).unwrap(),
+        Path::new("projects/proj-a/proj-a.code-workspace"),
+        "activate should surface proj-a at the weave root"
+    );
+}
+
+/// Assert that a `--project proj-b` intent verb regenerated proj-b's content
+/// in proj-b's own directory and left the weave root selecting proj-a.
+fn assert_regenerated_without_selecting(ws: &Path) {
+    let active = std::fs::read_to_string(ws.join(".rwv-active")).unwrap();
+    assert_eq!(
+        active.trim(),
+        "proj-a",
+        "--project must not mutate .rwv-active"
+    );
+    assert!(
+        ws.join("projects/proj-b/proj-b.code-workspace").exists(),
+        "the target project's content must be regenerated in its own directory"
+    );
+    assert!(
+        !ws.join("proj-b.code-workspace").exists(),
+        "the non-selected target must not be surfaced at the weave root"
+    );
+    assert_eq!(
+        std::fs::read_link(ws.join("proj-a.code-workspace")).unwrap(),
+        Path::new("projects/proj-a/proj-a.code-workspace"),
+        "the selected project's surfacing must survive a --project run"
+    );
+}
+
+#[test]
+fn add_with_project_override_regenerates_without_selecting() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (ws, _proj_a, _proj_b, _sha) = make_two_project_workspace(tmp.path());
+    select_proj_a(&ws);
+
+    // A second on-disk repo, added by local path so no clone is needed.
+    // Local-path add reads the repo's `origin` to record a URL.
+    let client = ws.join("github/acme/client");
+    init_repo(&client);
+    git(
+        &["remote", "add", "origin", "file:///nowhere/client.git"],
+        &client,
+    );
+
+    rwv()
+        .args(["add", "github/acme/client", "--project", "proj-b"])
+        .current_dir(&ws)
+        .assert()
+        .success();
+
+    assert!(
+        std::fs::read_to_string(ws.join("projects/proj-b/rwv.yaml"))
+            .unwrap()
+            .contains("github/acme/client"),
+        "add should have landed in the --project target's manifest"
+    );
+    assert_regenerated_without_selecting(&ws);
+}
+
+#[test]
+fn remove_with_project_override_regenerates_without_selecting() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (ws, _proj_a, _proj_b, _sha) = make_two_project_workspace(tmp.path());
+    select_proj_a(&ws);
+
+    rwv()
+        .args(["remove", "github/acme/server", "--project", "proj-b"])
+        .current_dir(&ws)
+        .assert()
+        .success();
+
+    assert!(
+        !std::fs::read_to_string(ws.join("projects/proj-b/rwv.yaml"))
+            .unwrap()
+            .contains("github/acme/server"),
+        "remove should have landed in the --project target's manifest"
+    );
+    assert!(
+        std::fs::read_to_string(ws.join("projects/proj-a/rwv.yaml"))
+            .unwrap()
+            .contains("github/acme/server"),
+        "remove must not touch the active project's manifest"
+    );
+    assert_regenerated_without_selecting(&ws);
+}
+
+#[test]
+fn update_with_project_override_regenerates_without_selecting() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (ws, _proj_a, _proj_b, sha) = make_two_project_workspace(tmp.path());
+    select_proj_a(&ws);
+
+    rwv()
+        .args(["update", "--project", "proj-b"])
+        .current_dir(&ws)
+        .assert()
+        .success();
+
+    assert!(
+        std::fs::read_to_string(ws.join("projects/proj-b/rwv.lock"))
+            .unwrap()
+            .contains(&sha),
+        "update should have re-snapshotted the --project target's lock"
+    );
+    assert!(
+        !ws.join("projects/proj-a/rwv.lock").exists(),
+        "update must not write a lock for the active project"
+    );
+    assert_regenerated_without_selecting(&ws);
 }
 
 // ---------------------------------------------------------------------------

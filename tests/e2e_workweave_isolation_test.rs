@@ -143,6 +143,9 @@ repositories:\n  \
     role: owned\n";
 
     std::fs::write(project_dir.join("rwv.yaml"), rwv_yaml).unwrap();
+    // Select web-app. Intent-mode activation regenerates content but never
+    // selects, so the weave root only surfaces what `.rwv-active` names.
+    std::fs::write(ws.join(".rwv-active"), "web-app\n").unwrap();
 
     // ------------------------------------------------------------------
     // 4. Activate the primary weave — generates go.work, verify go build
