@@ -279,7 +279,7 @@ fn healthy_workweave_ephemeral_branch_is_clean() {
     write_marker(&ww_dir, &ws, "myproj", &ws);
     let ww_checkout = ww_dir.join("github").join("acme").join("repo");
     std::fs::create_dir_all(ww_checkout.parent().unwrap()).unwrap();
-    worktree_add(&canonical, &ww_checkout, "myproj--feat-a/main");
+    worktree_add(&canonical, &ww_checkout, "myproj--feat-a");
 
     let out = rwv().args(["doctor"]).current_dir(&ws).output().unwrap();
     let stdout = String::from_utf8_lossy(&out.stdout);
@@ -327,10 +327,58 @@ fn shared_branch_main_in_workweave_is_reported() {
     );
 }
 
-/// foreign-ephemeral sub-kind: workweave checkout on `<project>--<other>/...`,
-/// naming a different workweave's branch.
+/// foreign-ephemeral sub-kind: workweave checkout on a ref rwv **recorded**
+/// for a different workweave.
+///
+/// The receipt is the fixture's load-bearing part, not decoration. After the
+/// flat-name cutover this sub-kind keys on the registry (R2), so a branch
+/// merely *spelled* like another workweave's is a `shared-branch` finding —
+/// see [`handmade_lookalike_in_workweave_is_shared_not_foreign`], which
+/// asserts exactly that and would pass on a scan that still split the two by
+/// name shape. The pair is what pins the distinction.
 #[test]
 fn foreign_ephemeral_branch_in_workweave_is_reported() {
+    let tmp = tempfile::tempdir().unwrap();
+    let ws = make_primary(tmp.path());
+    let canonical = ws.join("github").join("acme").join("repo");
+    init_repo_with_commit(&canonical);
+
+    // feat-b is a real workweave of this project, with a real receipt.
+    create_branch(&canonical, "myproj--feat-b", "main");
+    record_receipt(&ws, "myproj", "feat-b", &canonical);
+    let other_dir = workweaves_dir(&ws).join("myproj--feat-b");
+    write_marker(&other_dir, &ws, "myproj", &ws);
+
+    let ww_dir = workweaves_dir(&ws).join("myproj--feat-a");
+    write_marker(&ww_dir, &ws, "myproj", &ws);
+    let ww_checkout = ww_dir.join("github").join("acme").join("repo");
+    std::fs::create_dir_all(ww_checkout.parent().unwrap()).unwrap();
+    // Check out on the foreign workweave's recorded ephemeral ref.
+    worktree_add_existing(&canonical, &ww_checkout, "myproj--feat-b");
+
+    let out = rwv().args(["doctor"]).current_dir(&ws).output().unwrap();
+    let stdout = String::from_utf8_lossy(&out.stdout);
+
+    assert!(
+        stdout.contains("a ref rwv recorded for a different workweave"),
+        "doctor should report foreign-ephemeral sub-kind; got:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("myproj--feat-b"),
+        "report should name the offending branch; got:\n{stdout}"
+    );
+}
+
+/// The other half of the R2 split: a branch that *looks* like another
+/// workweave's but that no registry records is the operator's, and lands in
+/// `shared-branch`.
+///
+/// Before the cutover this fixture produced `foreign-ephemeral` purely
+/// because of how the name was spelled. Both findings are report-only, so
+/// what is being pinned is that ownership is answered by the record and never
+/// by the name.
+#[test]
+fn handmade_lookalike_in_workweave_is_shared_not_foreign() {
     let tmp = tempfile::tempdir().unwrap();
     let ws = make_primary(tmp.path());
     let canonical = ws.join("github").join("acme").join("repo");
@@ -340,19 +388,21 @@ fn foreign_ephemeral_branch_in_workweave_is_reported() {
     write_marker(&ww_dir, &ws, "myproj", &ws);
     let ww_checkout = ww_dir.join("github").join("acme").join("repo");
     std::fs::create_dir_all(ww_checkout.parent().unwrap()).unwrap();
-    // Check out on a foreign workweave's ephemeral branch.
-    worktree_add(&canonical, &ww_checkout, "myproj--feat-b/main");
+    // Shaped like an ephemeral ref, recorded by nobody.
+    worktree_add(&canonical, &ww_checkout, "myproj--feat-b");
 
     let out = rwv().args(["doctor"]).current_dir(&ws).output().unwrap();
     let stdout = String::from_utf8_lossy(&out.stdout);
 
     assert!(
-        stdout.contains("foreign-ephemeral") || stdout.contains("names a different workweave"),
-        "doctor should report foreign-ephemeral sub-kind; got:\n{stdout}"
+        stdout.contains("shared-branch `myproj--feat-b`"),
+        "an unrecorded look-alike is the operator's branch, not another \
+         workweave's; got:\n{stdout}"
     );
     assert!(
-        stdout.contains("myproj--feat-b/main"),
-        "report should name the offending branch; got:\n{stdout}"
+        !stdout.contains("a ref rwv recorded for a different workweave"),
+        "no receipt names this ref, so nothing may call it another \
+         workweave's; got:\n{stdout}"
     );
 }
 
@@ -865,8 +915,8 @@ fn stale_ephemeral_branch_safe_is_reported_and_fixable() {
 
     // Stale ephemeral branch pointing at the same commit as `main` — its
     // tip is trivially an ancestor of `main`'s tip.
-    create_branch(&canonical, "myproj--dead/main", "main");
-    record_receipt(&ws, "myproj", "dead/main", &canonical);
+    create_branch(&canonical, "myproj--dead", "main");
+    record_receipt(&ws, "myproj", "dead", &canonical);
 
     // Advance main so it strictly dominates the stale branch (still
     // trivially safe — stale branch tip is_ancestor of main tip).
@@ -879,17 +929,17 @@ fn stale_ephemeral_branch_safe_is_reported_and_fixable() {
     let stdout = String::from_utf8_lossy(&out.stdout);
 
     assert!(
-        stdout.contains("stale ephemeral branch") && stdout.contains("safe class"),
-        "doctor should report safe-class stale ephemeral branch; got:\n{stdout}"
+        stdout.contains("leaked ephemeral branch") && stdout.contains("safe class"),
+        "doctor should report safe-class leaked ephemeral branch; got:\n{stdout}"
     );
     assert!(
-        stdout.contains("myproj--dead/main"),
+        stdout.contains("myproj--dead"),
         "report should name the offending branch; got:\n{stdout}"
     );
 
     // Branch still exists pre-fix.
     let pre_fix = git()
-        .args(["branch", "--list", "myproj--dead/main"])
+        .args(["branch", "--list", "myproj--dead"])
         .current_dir(&canonical)
         .output()
         .unwrap();
@@ -906,13 +956,13 @@ fn stale_ephemeral_branch_safe_is_reported_and_fixable() {
         .unwrap();
     let fix_stdout = String::from_utf8_lossy(&fix_out.stdout);
     assert!(
-        fix_stdout.contains("[fixed]") && fix_stdout.contains("myproj--dead/main"),
+        fix_stdout.contains("[fixed]") && fix_stdout.contains("myproj--dead"),
         "--fix should announce the delete; got:\n{fix_stdout}"
     );
 
     // Branch gone post-fix.
     let post_fix = git()
-        .args(["branch", "--list", "myproj--dead/main"])
+        .args(["branch", "--list", "myproj--dead"])
         .current_dir(&canonical)
         .output()
         .unwrap();
@@ -930,7 +980,7 @@ fn stale_ephemeral_branch_safe_is_reported_and_fixable() {
         .unwrap();
     let again_stdout = String::from_utf8_lossy(&again.stdout);
     assert!(
-        !again_stdout.contains("myproj--dead/main"),
+        !again_stdout.contains("myproj--dead"),
         "second --fix run should be a no-op for the deleted branch; got:\n{again_stdout}"
     );
 }
@@ -986,6 +1036,45 @@ fn handmade_lookalike_branch_survives_doctor_fix() {
     );
 }
 
+/// The byte-for-byte pair of `stale_ephemeral_branch_safe_is_reported_and_fixable`:
+/// the **flat** name rwv actually mints, same store, same ancestry, same
+/// absent workweave directory — minus the receipt.
+///
+/// This is the fixture that pins the leak scan to the registry. The pre-flat
+/// pair above (`handmade_lookalike_branch_survives_doctor_fix`) can be
+/// answered by a name-shape rule; this one cannot, because the safe-class
+/// fixture it differs from has a *character-identical* branch name. Anything
+/// that deletes here deletes the operator's branch.
+#[test]
+fn flat_lookalike_branch_survives_doctor_fix() {
+    let tmp = tempfile::tempdir().unwrap();
+    let ws = make_primary(tmp.path());
+    let canonical = ws.join("github").join("acme").join("repo");
+    init_repo_with_commit(&canonical);
+
+    // Identical to the safe-class fixture, with `record_receipt` removed.
+    create_branch(&canonical, "myproj--dead", "main");
+    add_commit(&canonical, "f2.txt", "second");
+
+    let out = rwv().args(["doctor"]).current_dir(&ws).output().unwrap();
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        !stdout.contains("safe class"),
+        "an unreceipted branch must never be classified safe class; got:\n{stdout}"
+    );
+
+    let fix_out = rwv()
+        .args(["doctor", "--fix", "--all"])
+        .current_dir(&ws)
+        .output()
+        .unwrap();
+    assert!(
+        branch_exists(&canonical, "myproj--dead"),
+        "a flat look-alike with no receipt must survive `doctor --fix`; doctor said:\n{}",
+        String::from_utf8_lossy(&fix_out.stdout)
+    );
+}
+
 // ===========================================================================
 // (c) stale-ephemeral-branches: live class
 // ===========================================================================
@@ -1003,10 +1092,10 @@ fn stale_ephemeral_branch_live_is_reported_and_preserved() {
 
     // Create the stale branch and add a unique commit on it (so it carries
     // work not reachable from main).
-    git_in(&canonical, &["checkout", "-b", "myproj--dead/main", "-q"]);
+    git_in(&canonical, &["checkout", "-b", "myproj--dead", "-q"]);
     add_commit(&canonical, "unique.txt", "live work");
     git_in(&canonical, &["checkout", "main", "-q"]);
-    record_receipt(&ws, "myproj", "dead/main", &canonical);
+    record_receipt(&ws, "myproj", "dead", &canonical);
 
     // Advance main on a divergent path so the live branch's tip is
     // genuinely not an ancestor of main's tip.
@@ -1018,17 +1107,17 @@ fn stale_ephemeral_branch_live_is_reported_and_preserved() {
     let stdout = String::from_utf8_lossy(&out.stdout);
 
     assert!(
-        stdout.contains("stale ephemeral branch") && stdout.contains("live class"),
-        "doctor should report live-class stale ephemeral branch; got:\n{stdout}"
+        stdout.contains("leaked ephemeral branch") && stdout.contains("live class"),
+        "doctor should report live-class leaked ephemeral branch; got:\n{stdout}"
     );
     assert!(
-        stdout.contains("myproj--dead/main"),
+        stdout.contains("myproj--dead"),
         "report should name the offending branch; got:\n{stdout}"
     );
 
     // Branch exists pre-fix.
     let pre_fix = git()
-        .args(["branch", "--list", "myproj--dead/main"])
+        .args(["branch", "--list", "myproj--dead"])
         .current_dir(&canonical)
         .output()
         .unwrap();
@@ -1045,7 +1134,7 @@ fn stale_ephemeral_branch_live_is_reported_and_preserved() {
         .unwrap();
 
     let post_fix = git()
-        .args(["branch", "--list", "myproj--dead/main"])
+        .args(["branch", "--list", "myproj--dead"])
         .current_dir(&canonical)
         .output()
         .unwrap();
@@ -1363,7 +1452,7 @@ fn worktree_reference_on_ephemeral_branch_flows_through_normally() {
     let ww_checkout = ww_dir.join("github").join("acme").join("repo");
     std::fs::create_dir_all(ww_checkout.parent().unwrap()).unwrap();
     // The escape hatch: a real worktree on the workweave's ephemeral branch.
-    worktree_add(&canonical, &ww_checkout, "myproj--wtref/main");
+    worktree_add(&canonical, &ww_checkout, "myproj--wtref");
     assert!(
         !ww_checkout.is_symlink(),
         "a --worktree-references reference must be a real worktree, not a symlink"
@@ -1374,7 +1463,7 @@ fn worktree_reference_on_ephemeral_branch_flows_through_normally() {
     assert!(
         !stdout.contains("workweave checkout is on")
             && !stdout.contains("detached-HEAD")
-            && !stdout.contains("foreign-ephemeral"),
+            && !stdout.contains("pre-flat"),
         "a worktree'd reference on its ephemeral branch should be clean; got:\n{stdout}"
     );
 }
@@ -1409,5 +1498,702 @@ fn worktree_reference_on_shared_branch_still_fires() {
             || stdout.contains("workweave checkout is on shared-branch"),
         "a worktree'd reference on the shared `main` must still fire \
          shared-branch (carve-out keys on alias-ness, not role); got:\n{stdout}"
+    );
+}
+
+// ===========================================================================
+// `branch-model.md` §7.1 — the migration pass and the flat-name cutover
+// ===========================================================================
+//
+// The cutover is atomic by construction: `EphemeralRefName::mint` produces
+// the flat name, the scanner asks `AttachedRef::is_minted` for the healthy
+// case, and the delete path globs `is_this_workweaves_namespace` — all three
+// derive from the same mint. There is no build in which one has moved and
+// another has not, because nothing spells the shape independently any more.
+// `healthy_workweave_ephemeral_branch_is_clean` (flat) and
+// `unmigrated_ephemeral_branch_is_reported_and_renamed` (pre-flat) are the
+// two ends of that: the first fails if the scanner still wants a segment,
+// the second fails if it no longer recognises one.
+
+/// Read the `receipts` array's recorded tip for `ref_name`, if present.
+fn receipt_created_at(primary: &Path, project: &str, ref_name: &str) -> Option<String> {
+    let path = primary
+        .join("projects")
+        .join(project)
+        .join(".rwv-workweave-index");
+    let raw = std::fs::read_to_string(&path).ok()?;
+    let index: serde_json::Value = serde_json::from_str(&raw).ok()?;
+    index["receipts"].as_array()?.iter().find_map(|r| {
+        (r["name"] == ref_name).then(|| r["created_at"].as_str().unwrap_or_default().to_owned())
+    })
+}
+
+/// Strip the `receipts` field from a project's index, reproducing an index
+/// written before ownership receipts existed (§7.1 arm 7's input).
+///
+/// This is the shape the operator's own weave is in — measured, not
+/// hypothetical: `keys == ['container', 'workweaves']`.
+fn make_index_legacy(primary: &Path, project: &str) {
+    let path = primary
+        .join("projects")
+        .join(project)
+        .join(".rwv-workweave-index");
+    let raw = std::fs::read_to_string(&path).expect("index exists");
+    let mut index: serde_json::Value = serde_json::from_str(&raw).unwrap();
+    index.as_object_mut().unwrap().remove("receipts");
+    std::fs::write(&path, serde_json::to_string_pretty(&index).unwrap()).unwrap();
+}
+
+/// Record the primary's index for `project` so a hand-built workweave is
+/// recognised as placed (what `rwv workweave create` writes alongside the
+/// marker).
+fn record_placement(primary: &Path, project: &str, workweave: &str, dir: &Path) {
+    std::fs::create_dir_all(primary.join("projects").join(project)).unwrap();
+    repoweave::workweave_index::record_workweave(
+        primary,
+        &ProjectName::new(project),
+        workweave,
+        dir.to_path_buf(),
+    )
+    .expect("placement recorded");
+}
+
+/// The head SHA of `rev` in `repo`.
+fn rev(repo: &Path, r: &str) -> String {
+    String::from_utf8_lossy(
+        &git()
+            .args(["rev-parse", r])
+            .current_dir(repo)
+            .output()
+            .unwrap()
+            .stdout,
+    )
+    .trim()
+    .to_owned()
+}
+
+/// §7.1 arm 1, the common case. A workweave checkout attached to the pre-flat
+/// `<project>--<workweave>/<segment>` ref is reported, and `--fix` renames it
+/// to the flat name, recording an ownership receipt first.
+///
+/// The tip assertion is the point: a rename preserves it, so the migration
+/// cannot lose a commit even if the operator committed on the branch after
+/// the workweave was created.
+#[test]
+fn unmigrated_ephemeral_branch_is_reported_and_renamed() {
+    let tmp = tempfile::tempdir().unwrap();
+    let ws = make_primary(tmp.path());
+    let canonical = ws.join("github").join("acme").join("repo");
+    init_repo_with_commit(&canonical);
+
+    let ww_dir = workweaves_dir(&ws).join("myproj--feat-a");
+    write_marker(&ww_dir, &ws, "myproj", &ws);
+    record_placement(&ws, "myproj", "feat-a", &ww_dir);
+    let ww_checkout = ww_dir.join("github").join("acme").join("repo");
+    std::fs::create_dir_all(ww_checkout.parent().unwrap()).unwrap();
+    worktree_add(&canonical, &ww_checkout, "myproj--feat-a/main");
+    // Operator work on the pre-flat branch. The migration must carry it.
+    add_commit(&ww_checkout, "work.txt", "operator work");
+    let tip = rev(&ww_checkout, "HEAD");
+
+    let out = rwv().args(["doctor"]).current_dir(&ws).output().unwrap();
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("myproj--feat-a/main") && stdout.contains("pre-flat"),
+        "doctor should report the unmigrated ref; got:\n{stdout}"
+    );
+
+    let fix = rwv()
+        .args(["doctor", "--fix"])
+        .current_dir(&ws)
+        .output()
+        .unwrap();
+    let fix_stdout = String::from_utf8_lossy(&fix.stdout);
+    assert!(
+        fix_stdout.contains("migrated `myproj--feat-a/main` → `myproj--feat-a`"),
+        "--fix should announce the rename; got:\n{fix_stdout}"
+    );
+
+    assert!(
+        branch_exists(&canonical, "myproj--feat-a"),
+        "the flat ref must exist after the migration"
+    );
+    assert!(
+        !branch_exists(&canonical, "myproj--feat-a/main"),
+        "the pre-flat ref must be gone after the migration"
+    );
+    assert_eq!(
+        rev(&canonical, "myproj--feat-a"),
+        tip,
+        "a rename preserves the tip — the operator's commit must survive"
+    );
+    assert_eq!(
+        rev(&ww_checkout, "HEAD"),
+        tip,
+        "the checkout must still be at the same commit"
+    );
+    assert!(
+        receipt_recorded(&ws, "myproj", "myproj--feat-a"),
+        "the migration must record an ownership receipt for the flat ref"
+    );
+    assert!(
+        !receipt_recorded(&ws, "myproj", "myproj--feat-a/main"),
+        "the pre-flat ref's receipt is retracted after its ref is gone"
+    );
+
+    // The workweave is healthy now, and a second run is a no-op.
+    let again = rwv()
+        .args(["doctor", "--fix"])
+        .current_dir(&ws)
+        .output()
+        .unwrap();
+    let again_stdout = String::from_utf8_lossy(&again.stdout);
+    assert!(
+        !again_stdout.contains("pre-flat") && !again_stdout.contains("migrated `"),
+        "the migration must be idempotent; got:\n{again_stdout}"
+    );
+}
+
+/// §7.1's write ordering, replayed: a crash **after** the receipt and
+/// **before** the rename leaves a dangling receipt, and re-running reaches
+/// the same end state.
+///
+/// The crash is reproduced structurally rather than by killing a process:
+/// the receipt for the flat name is recorded by hand while the pre-flat ref
+/// is still the one on disk — exactly the state `record_created` returns
+/// into if the process dies at that line.
+#[test]
+fn migration_replays_a_crash_between_the_receipt_and_the_rename() {
+    let tmp = tempfile::tempdir().unwrap();
+    let ws = make_primary(tmp.path());
+    let canonical = ws.join("github").join("acme").join("repo");
+    init_repo_with_commit(&canonical);
+
+    let ww_dir = workweaves_dir(&ws).join("myproj--feat-a");
+    write_marker(&ww_dir, &ws, "myproj", &ws);
+    record_placement(&ws, "myproj", "feat-a", &ww_dir);
+    let ww_checkout = ww_dir.join("github").join("acme").join("repo");
+    std::fs::create_dir_all(ww_checkout.parent().unwrap()).unwrap();
+    worktree_add(&canonical, &ww_checkout, "myproj--feat-a/main");
+    add_commit(&ww_checkout, "work.txt", "operator work");
+    let tip = rev(&ww_checkout, "HEAD");
+
+    // The crash residue: a receipt for the flat name, whose ref does not
+    // exist yet. Recorded at the pre-flat ref's tip, which is what the
+    // migration would have written.
+    {
+        let project = ProjectName::new("myproj");
+        let mut registry = RefRegistry::for_project(&ws, &project);
+        let at = GitVcs
+            .resolve_local_branch_tip(
+                &canonical,
+                &EphemeralRefName::mint(&project, &WorkweaveName::new("feat-a/main")).to_raw(),
+            )
+            .unwrap()
+            .unwrap();
+        registry
+            .record_created(
+                &canonical,
+                EphemeralRefName::mint(&project, &WorkweaveName::new("feat-a")),
+                at,
+            )
+            .expect("receipt records");
+    }
+    assert!(
+        receipt_recorded(&ws, "myproj", "myproj--feat-a"),
+        "fixture: the dangling receipt must be in place"
+    );
+
+    let fix = rwv()
+        .args(["doctor", "--fix"])
+        .current_dir(&ws)
+        .output()
+        .unwrap();
+    let fix_stdout = String::from_utf8_lossy(&fix.stdout);
+
+    assert!(
+        branch_exists(&canonical, "myproj--feat-a"),
+        "the replay must still produce the flat ref; doctor said:\n{fix_stdout}"
+    );
+    assert!(
+        !branch_exists(&canonical, "myproj--feat-a/main"),
+        "the pre-flat ref must be gone after the replay"
+    );
+    assert_eq!(
+        rev(&canonical, "myproj--feat-a"),
+        tip,
+        "the replay must not move the tip"
+    );
+    assert!(
+        receipt_recorded(&ws, "myproj", "myproj--feat-a"),
+        "the receipt must survive the replay"
+    );
+    assert_eq!(
+        receipt_created_at(&ws, "myproj", "myproj--feat-a").as_deref(),
+        Some(tip.as_str()),
+        "re-recording must be a no-op that keeps the FIRST receipt — a \
+         re-stamped created_at would forge an Unmoved warrant"
+    );
+}
+
+/// §7.1 arm 2: the flat ref exists with no receipt. Reported, and `--fix`
+/// adopts it at its observed tip.
+///
+/// This is the state a build that minted flat names before receipts existed
+/// leaves behind, and — because `record_created` is a no-op on an existing
+/// key — it is also what makes the whole pass re-runnable.
+#[test]
+fn unrecorded_flat_ref_is_reported_and_adopted() {
+    let tmp = tempfile::tempdir().unwrap();
+    let ws = make_primary(tmp.path());
+    let canonical = ws.join("github").join("acme").join("repo");
+    init_repo_with_commit(&canonical);
+
+    let ww_dir = workweaves_dir(&ws).join("myproj--feat-a");
+    write_marker(&ww_dir, &ws, "myproj", &ws);
+    record_placement(&ws, "myproj", "feat-a", &ww_dir);
+    let ww_checkout = ww_dir.join("github").join("acme").join("repo");
+    std::fs::create_dir_all(ww_checkout.parent().unwrap()).unwrap();
+    worktree_add(&canonical, &ww_checkout, "myproj--feat-a");
+    add_commit(&ww_checkout, "work.txt", "operator work");
+    let tip = rev(&ww_checkout, "HEAD");
+
+    let out = rwv().args(["doctor"]).current_dir(&ws).output().unwrap();
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("rwv holds no ownership receipt for it"),
+        "doctor should report the unowned flat ref; got:\n{stdout}"
+    );
+
+    let fix = rwv()
+        .args(["doctor", "--fix"])
+        .current_dir(&ws)
+        .output()
+        .unwrap();
+    let fix_stdout = String::from_utf8_lossy(&fix.stdout);
+    assert!(
+        fix_stdout.contains("adopted `myproj--feat-a`"),
+        "--fix should announce the adoption; got:\n{fix_stdout}"
+    );
+    assert_eq!(
+        receipt_created_at(&ws, "myproj", "myproj--feat-a").as_deref(),
+        Some(tip.as_str()),
+        "the receipt must record the OBSERVED tip"
+    );
+
+    // Idempotent, and the recorded tip does not drift when the branch moves.
+    add_commit(&ww_checkout, "more.txt", "more work");
+    let _ = rwv()
+        .args(["doctor", "--fix"])
+        .current_dir(&ws)
+        .output()
+        .unwrap();
+    assert_eq!(
+        receipt_created_at(&ws, "myproj", "myproj--feat-a").as_deref(),
+        Some(tip.as_str()),
+        "a re-run must not re-stamp created_at onto a moved tip — that would \
+         forge an Unmoved warrant over the operator's commits"
+    );
+}
+
+/// §7.1 arm 3, the S2 scenario: a fetch left the checkout detached at the
+/// lock SHA while the pre-flat branch still carries an operator commit.
+///
+/// Both tips must be reported, reattach must be offered first, and — the
+/// half that matters — `--fix` **without** `--adopt-detached-checkouts` must
+/// change nothing.
+#[test]
+fn detached_checkout_with_commit_bearing_legacy_branch_reports_both_tips() {
+    let tmp = tempfile::tempdir().unwrap();
+    let ws = make_primary(tmp.path());
+    let canonical = ws.join("github").join("acme").join("repo");
+    init_repo_with_commit(&canonical);
+    let lock_sha = rev(&canonical, "HEAD");
+
+    let ww_dir = workweaves_dir(&ws).join("myproj--feat-a");
+    write_marker(&ww_dir, &ws, "myproj", &ws);
+    record_placement(&ws, "myproj", "feat-a", &ww_dir);
+    let ww_checkout = ww_dir.join("github").join("acme").join("repo");
+    std::fs::create_dir_all(ww_checkout.parent().unwrap()).unwrap();
+    worktree_add(&canonical, &ww_checkout, "myproj--feat-a/main");
+    // Commit W: work only the pre-flat branch reaches.
+    add_commit(&ww_checkout, "W.txt", "operator commit W");
+    let w_sha = rev(&ww_checkout, "HEAD");
+    // The fetch: detach the checkout back at the lock SHA.
+    git_in(&ww_checkout, &["checkout", "--detach", &lock_sha, "-q"]);
+
+    let out = rwv().args(["doctor"]).current_dir(&ws).output().unwrap();
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains(&lock_sha) && stdout.contains(&w_sha),
+        "arm 3 must report BOTH tips; got:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("STRANDS the commits on `myproj--feat-a/main`"),
+        "arm 3 must warn that adopting strands the commit-bearing tip; got:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("git switch myproj--feat-a/main"),
+        "reattach must be offered first; got:\n{stdout}"
+    );
+
+    // `--fix` without the flag must not touch anything.
+    let fix = rwv()
+        .args(["doctor", "--fix"])
+        .current_dir(&ws)
+        .output()
+        .unwrap();
+    assert!(
+        branch_exists(&canonical, "myproj--feat-a/main"),
+        "without --adopt-detached-checkouts the legacy branch must survive; \
+         doctor said:\n{}",
+        String::from_utf8_lossy(&fix.stdout)
+    );
+    assert_eq!(
+        rev(&canonical, "myproj--feat-a/main"),
+        w_sha,
+        "commit W must still be reachable by name"
+    );
+    assert!(
+        !branch_exists(&canonical, "myproj--feat-a"),
+        "no flat ref may be minted without consent"
+    );
+
+    // The doc's first remediation, taken: reattach, then re-run. Arm 1 now
+    // applies and commit W ends up on the flat name.
+    git_in(&ww_checkout, &["checkout", "myproj--feat-a/main", "-q"]);
+    let _ = rwv()
+        .args(["doctor", "--fix"])
+        .current_dir(&ws)
+        .output()
+        .unwrap();
+    assert_eq!(
+        rev(&canonical, "myproj--feat-a"),
+        w_sha,
+        "after reattaching, arm 1 carries commit W onto the flat name"
+    );
+}
+
+/// §7.1 arm 3 with the flag: the checkout is adopted at HEAD, the pre-flat
+/// name is given up to make room, and the stranding is announced.
+#[test]
+fn adopt_detached_checkouts_mints_at_head_and_warns_about_stranding() {
+    let tmp = tempfile::tempdir().unwrap();
+    let ws = make_primary(tmp.path());
+    let canonical = ws.join("github").join("acme").join("repo");
+    init_repo_with_commit(&canonical);
+    let lock_sha = rev(&canonical, "HEAD");
+
+    let ww_dir = workweaves_dir(&ws).join("myproj--feat-a");
+    write_marker(&ww_dir, &ws, "myproj", &ws);
+    record_placement(&ws, "myproj", "feat-a", &ww_dir);
+    let ww_checkout = ww_dir.join("github").join("acme").join("repo");
+    std::fs::create_dir_all(ww_checkout.parent().unwrap()).unwrap();
+    worktree_add(&canonical, &ww_checkout, "myproj--feat-a/main");
+    add_commit(&ww_checkout, "W.txt", "operator commit W");
+    let w_sha = rev(&ww_checkout, "HEAD");
+    git_in(&ww_checkout, &["checkout", "--detach", &lock_sha, "-q"]);
+
+    let fix = rwv()
+        .args(["doctor", "--fix", "--adopt-detached-checkouts"])
+        .current_dir(&ws)
+        .output()
+        .unwrap();
+    let fix_stdout = String::from_utf8_lossy(&fix.stdout);
+
+    assert!(
+        fix_stdout.contains("STRANDED"),
+        "arm 3 MUST warn when it strands a commit-bearing tip; got:\n{fix_stdout}"
+    );
+    assert!(
+        fix_stdout.contains(&w_sha),
+        "the warning must name the stranded tip so it can be recovered; \
+         got:\n{fix_stdout}"
+    );
+    assert!(
+        branch_exists(&canonical, "myproj--feat-a"),
+        "the flat ref must be minted; got:\n{fix_stdout}"
+    );
+    assert_eq!(
+        rev(&canonical, "myproj--feat-a"),
+        lock_sha,
+        "arm 3 mints at HEAD — the lock SHA — not at the legacy tip"
+    );
+    assert!(
+        !branch_exists(&canonical, "myproj--feat-a/main"),
+        "the pre-flat name had to be given up: git cannot hold both"
+    );
+    assert!(
+        receipt_recorded(&ws, "myproj", "myproj--feat-a"),
+        "the adopted ref must carry an ownership receipt"
+    );
+    assert!(
+        !receipt_recorded(&ws, "myproj", "myproj--feat-a/main"),
+        "the given-up ref's receipt is retracted after its ref is gone"
+    );
+}
+
+/// §7.1 arm 5: detached with nothing else in the namespace. Same flag, no
+/// warning to give — there is no competing tip.
+#[test]
+fn adopt_detached_checkouts_mints_at_head_with_no_legacy_ref() {
+    let tmp = tempfile::tempdir().unwrap();
+    let ws = make_primary(tmp.path());
+    let canonical = ws.join("github").join("acme").join("repo");
+    init_repo_with_commit(&canonical);
+    let lock_sha = rev(&canonical, "HEAD");
+
+    let ww_dir = workweaves_dir(&ws).join("myproj--feat-a");
+    write_marker(&ww_dir, &ws, "myproj", &ws);
+    record_placement(&ws, "myproj", "feat-a", &ww_dir);
+    let ww_checkout = ww_dir.join("github").join("acme").join("repo");
+    std::fs::create_dir_all(ww_checkout.parent().unwrap()).unwrap();
+    worktree_add_detached(&canonical, &ww_checkout);
+
+    let report = rwv().args(["doctor"]).current_dir(&ws).output().unwrap();
+    assert!(
+        String::from_utf8_lossy(&report.stdout).contains("--adopt-detached-checkouts"),
+        "arm 5 must offer the flag; got:\n{}",
+        String::from_utf8_lossy(&report.stdout)
+    );
+
+    let fix = rwv()
+        .args(["doctor", "--fix", "--adopt-detached-checkouts"])
+        .current_dir(&ws)
+        .output()
+        .unwrap();
+    let fix_stdout = String::from_utf8_lossy(&fix.stdout);
+    assert!(
+        !fix_stdout.contains("STRANDED"),
+        "there is no competing tip, so there is nothing to warn about; \
+         got:\n{fix_stdout}"
+    );
+    assert_eq!(
+        rev(&canonical, "myproj--feat-a"),
+        lock_sha,
+        "the ref is minted at HEAD"
+    );
+    assert!(
+        receipt_recorded(&ws, "myproj", "myproj--feat-a"),
+        "the adopted ref must carry an ownership receipt"
+    );
+}
+
+/// §7.1 arm 7: an index written before receipts existed is reported, and
+/// `--fix` adds the field.
+///
+/// The field migration is the pass's precondition, not one of its arms —
+/// `RefRegistry::record_created` refuses against a legacy index rather than
+/// erasing the only signal that the migration has not run. So this fixture
+/// also proves the two land in the right order: the rename in the same run
+/// can only have succeeded if the field was added first.
+#[test]
+fn legacy_index_is_reported_and_migrated_before_the_refs() {
+    let tmp = tempfile::tempdir().unwrap();
+    let ws = make_primary(tmp.path());
+    let canonical = ws.join("github").join("acme").join("repo");
+    init_repo_with_commit(&canonical);
+
+    let ww_dir = workweaves_dir(&ws).join("myproj--feat-a");
+    write_marker(&ww_dir, &ws, "myproj", &ws);
+    record_placement(&ws, "myproj", "feat-a", &ww_dir);
+    make_index_legacy(&ws, "myproj");
+    let ww_checkout = ww_dir.join("github").join("acme").join("repo");
+    std::fs::create_dir_all(ww_checkout.parent().unwrap()).unwrap();
+    worktree_add(&canonical, &ww_checkout, "myproj--feat-a/main");
+
+    let out = rwv().args(["doctor"]).current_dir(&ws).output().unwrap();
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("legacy workweave index"),
+        "doctor should report the legacy index; got:\n{stdout}"
+    );
+
+    let fix = rwv()
+        .args(["doctor", "--fix"])
+        .current_dir(&ws)
+        .output()
+        .unwrap();
+    let fix_stdout = String::from_utf8_lossy(&fix.stdout);
+    assert!(
+        fix_stdout.contains("added the ref-ownership registry"),
+        "--fix should announce the field migration; got:\n{fix_stdout}"
+    );
+    assert!(
+        branch_exists(&canonical, "myproj--feat-a"),
+        "the ref migration must run in the same pass, which it can only do \
+         once the index takes receipts; got:\n{fix_stdout}"
+    );
+    assert!(
+        receipt_recorded(&ws, "myproj", "myproj--feat-a"),
+        "and the receipt must be in the migrated index"
+    );
+}
+
+/// A pass rule, not an arm (§7.1): the migration does not run over a
+/// workweave with an operation in flight. `rwv abort` and `rwv status` stay
+/// reachable, so the operator resolves the operation first.
+#[test]
+fn migration_skips_a_workweave_with_an_operation_in_flight() {
+    let tmp = tempfile::tempdir().unwrap();
+    let ws = make_primary(tmp.path());
+    let canonical = ws.join("github").join("acme").join("repo");
+    init_repo_with_commit(&canonical);
+
+    let ww_dir = workweaves_dir(&ws).join("myproj--feat-a");
+    write_marker(&ww_dir, &ws, "myproj", &ws);
+    record_placement(&ws, "myproj", "feat-a", &ww_dir);
+    let ww_checkout = ww_dir.join("github").join("acme").join("repo");
+    std::fs::create_dir_all(ww_checkout.parent().unwrap()).unwrap();
+    worktree_add(&canonical, &ww_checkout, "myproj--feat-a/main");
+
+    // An owner record for a stopped op, as `rwv sync` leaves behind.
+    let owner = repoweave::op_state::OwnerRecord::new_sync(
+        &repoweave::sync::OpId::new_now(),
+        repoweave::sync::SyncStrategy::Rebase,
+        ws.clone(),
+        ww_dir.clone(),
+    );
+    repoweave::op_state::write_owner(&ww_dir, &owner).expect("owner record written");
+
+    let fix = rwv()
+        .args(["doctor", "--fix"])
+        .current_dir(&ws)
+        .output()
+        .unwrap();
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&fix.stdout),
+        String::from_utf8_lossy(&fix.stderr)
+    );
+    assert!(
+        branch_exists(&canonical, "myproj--feat-a/main"),
+        "the migration must not run while an operation is in flight; \
+         doctor said:\n{combined}"
+    );
+    assert!(
+        !branch_exists(&canonical, "myproj--feat-a"),
+        "no ref may be minted while an operation is in flight"
+    );
+    assert!(
+        combined.contains("an operation is in flight"),
+        "the skip must say why, and name the recovery verb; got:\n{combined}"
+    );
+
+    // Resolve the operation; the migration then runs.
+    repoweave::op_state::clear_owner(&ww_dir);
+    let _ = rwv()
+        .args(["doctor", "--fix"])
+        .current_dir(&ws)
+        .output()
+        .unwrap();
+    assert!(
+        branch_exists(&canonical, "myproj--feat-a"),
+        "once the operation is resolved the migration proceeds"
+    );
+}
+
+/// §7.3: the migration touches nothing it cannot associate with a **live**
+/// workweave directory.
+///
+/// The fixture is a store holding a pre-flat branch whose workweave is gone,
+/// alongside a live workweave of the same project. The live one migrates;
+/// the stray is reported and left exactly where it is — name, tip, and all.
+/// A migration that reconstructed ownership from `<a>--<b>/<c>` would take it.
+#[test]
+fn migration_leaves_a_stray_pre_flat_branch_alone() {
+    let tmp = tempfile::tempdir().unwrap();
+    let ws = make_primary(tmp.path());
+    let canonical = ws.join("github").join("acme").join("repo");
+    init_repo_with_commit(&canonical);
+
+    // A stray from a workweave that no longer exists.
+    create_branch(&canonical, "myproj--ghost/main", "main");
+    let ghost_tip = rev(&canonical, "myproj--ghost/main");
+
+    // A live workweave, so the pass has something to do.
+    let ww_dir = workweaves_dir(&ws).join("myproj--feat-a");
+    write_marker(&ww_dir, &ws, "myproj", &ws);
+    record_placement(&ws, "myproj", "feat-a", &ww_dir);
+    let ww_checkout = ww_dir.join("github").join("acme").join("repo");
+    std::fs::create_dir_all(ww_checkout.parent().unwrap()).unwrap();
+    worktree_add(&canonical, &ww_checkout, "myproj--feat-a/main");
+
+    let out = rwv().args(["doctor"]).current_dir(&ws).output().unwrap();
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("myproj--ghost/main") && stdout.contains("§7.3 forbids guessing"),
+        "the stray must be reported as unowned; got:\n{stdout}"
+    );
+
+    let fix = rwv()
+        .args(["doctor", "--fix", "--all"])
+        .current_dir(&ws)
+        .output()
+        .unwrap();
+    let fix_stdout = String::from_utf8_lossy(&fix.stdout);
+
+    assert!(
+        branch_exists(&canonical, "myproj--feat-a"),
+        "the live workweave's ref must migrate; got:\n{fix_stdout}"
+    );
+    assert!(
+        branch_exists(&canonical, "myproj--ghost/main"),
+        "the stray must survive: no live workweave claims it, and name shape \
+         is not ownership; got:\n{fix_stdout}"
+    );
+    assert_eq!(
+        rev(&canonical, "myproj--ghost/main"),
+        ghost_tip,
+        "the stray must not have moved either"
+    );
+    assert!(
+        !branch_exists(&canonical, "myproj--ghost"),
+        "and nothing may be minted in its name"
+    );
+    assert!(
+        !receipt_recorded(&ws, "myproj", "myproj--ghost/main"),
+        "no receipt may be forged for a ref the migration cannot place"
+    );
+}
+
+/// §7.1's enumeration rule: the pass covers the **project-repo checkout**,
+/// which the manifest-member walker does not reach.
+///
+/// An implementer who reuses the member walker alone leaks one project-repo
+/// branch per workweave — the branch stays on the pre-flat name, and every
+/// later `rwv workweave delete` refuses to touch it.
+#[test]
+fn migration_reaches_the_project_repo_checkout() {
+    let tmp = tempfile::tempdir().unwrap();
+    let ws = make_primary(tmp.path());
+    let project_repo = ws.join("projects").join("myproj");
+    init_repo_with_commit(&project_repo);
+
+    let ww_dir = workweaves_dir(&ws).join("myproj--feat-a");
+    write_marker(&ww_dir, &ws, "myproj", &ws);
+    record_placement(&ws, "myproj", "feat-a", &ww_dir);
+    let ww_project = ww_dir.join("projects").join("myproj");
+    std::fs::create_dir_all(ww_project.parent().unwrap()).unwrap();
+    worktree_add(&project_repo, &ww_project, "myproj--feat-a/project");
+
+    let fix = rwv()
+        .args(["doctor", "--fix"])
+        .current_dir(&ws)
+        .output()
+        .unwrap();
+    let fix_stdout = String::from_utf8_lossy(&fix.stdout);
+
+    assert!(
+        branch_exists(&project_repo, "myproj--feat-a"),
+        "the project repo's ref must migrate too; got:\n{fix_stdout}"
+    );
+    assert!(
+        !branch_exists(&project_repo, "myproj--feat-a/project"),
+        "the pre-flat project-repo ref must be gone"
+    );
+    assert!(
+        receipt_recorded(&ws, "myproj", "myproj--feat-a"),
+        "and it must carry a receipt keyed to the project repo's store"
     );
 }

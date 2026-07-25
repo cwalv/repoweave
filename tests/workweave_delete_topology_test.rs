@@ -136,7 +136,7 @@ fn canonical_store_resolves_to_linked_clone_under_correct_topology() {
     let tmp = tempfile::tempdir().unwrap();
     let (ws, repo) = make_workspace(tmp.path(), "web-app");
     let ww_root = tmp.path().join(".workweaves").join("web-app--probe");
-    add_workweave_checkout(&repo, &ww_root, "github/org/repo", "web-app--probe/main");
+    add_workweave_checkout(&repo, &ww_root, "github/org/repo", "web-app--probe");
 
     let checkout = ww_root.join("github/org/repo");
     let store_path = repoweave::git::GitVcs
@@ -191,20 +191,10 @@ fn delete_uses_resolved_parent_under_inverted_topology() {
     let ww_dir = weaveroot.join("web-app--ww");
     // Per-repo checkout linked into the REAL canonical store, not the
     // primary slot.
-    add_workweave_checkout(
-        &real_canonical,
-        &ww_dir,
-        "github/org/repo",
-        "web-app--ww/main",
-    );
+    add_workweave_checkout(&real_canonical, &ww_dir, "github/org/repo", "web-app--ww");
     // Project worktree is a normal one — linked into primary's project.
     let project_dir = ws.join("projects/web-app");
-    add_workweave_checkout(
-        &project_dir,
-        &ww_dir,
-        "projects/web-app",
-        "web-app--ww/proj",
-    );
+    add_workweave_checkout(&project_dir, &ww_dir, "projects/web-app", "web-app--ww");
     write_marker(&ww_dir, &ws, "web-app");
     // Active project marker (delete_workweave resolves the dir through
     // the primary-side registry).
@@ -299,12 +289,7 @@ fn delete_refuses_when_checkout_hosts_foreign_worktrees_even_with_waivers() {
 
     // Project worktree: a normal linked workspace under primary.
     let project_dir = ws.join("projects/web-app");
-    add_workweave_checkout(
-        &project_dir,
-        &ww_dir,
-        "projects/web-app",
-        "web-app--bad/proj",
-    );
+    add_workweave_checkout(&project_dir, &ww_dir, "projects/web-app", "web-app--bad");
     write_marker(&ww_dir, &ws, "web-app");
     std::fs::write(ww_dir.join(".rwv-active"), "web-app\n").unwrap();
 
@@ -368,12 +353,7 @@ fn delete_proceeds_when_canonical_checkout_has_no_foreign_dependents() {
     // No foreign worktree.
 
     let project_dir = ws.join("projects/web-app");
-    add_workweave_checkout(
-        &project_dir,
-        &ww_dir,
-        "projects/web-app",
-        "web-app--lone/proj",
-    );
+    add_workweave_checkout(&project_dir, &ww_dir, "projects/web-app", "web-app--lone");
     write_marker(&ww_dir, &ws, "web-app");
     std::fs::write(ww_dir.join(".rwv-active"), "web-app\n").unwrap();
 
@@ -444,14 +424,14 @@ fn merged_check_refuses_vouch_across_distinct_canonical_stores() {
         &real_canonical,
         &ww_dir,
         "github/org/repo",
-        "web-app--diverged/main",
+        "web-app--diverged",
     );
     let project_dir = ws.join("projects/web-app");
     add_workweave_checkout(
         &project_dir,
         &ww_dir,
         "projects/web-app",
-        "web-app--diverged/proj",
+        "web-app--diverged",
     );
     write_marker(&ww_dir, &ws, "web-app");
     std::fs::write(ww_dir.join(".rwv-active"), "web-app\n").unwrap();

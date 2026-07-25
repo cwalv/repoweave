@@ -183,7 +183,7 @@ fn make_workweave_ahead_fixture(
             "add",
             &ww_server.to_string_lossy(),
             "-b",
-            &format!("web-app--{workweave_name}/server"),
+            &format!("web-app--{workweave_name}"),
         ],
         &primary_server,
     );
@@ -195,7 +195,7 @@ fn make_workweave_ahead_fixture(
             "add",
             &ww_project.to_string_lossy(),
             "-b",
-            &format!("web-app--{workweave_name}/project"),
+            &format!("web-app--{workweave_name}"),
         ],
         &primary_project,
     );
@@ -389,7 +389,7 @@ fn sync_to_json_source_workweave_is_null_from_primary() {
             "add",
             &target_server.to_string_lossy(),
             "-b",
-            "web-app--target/server",
+            "web-app--target",
         ],
         &source_server,
     );
@@ -401,7 +401,7 @@ fn sync_to_json_source_workweave_is_null_from_primary() {
             "add",
             &target_project.to_string_lossy(),
             "-b",
-            "web-app--target/project",
+            "web-app--target",
         ],
         &source_project,
     );
@@ -527,7 +527,7 @@ fn sync_to_json_step3_advance_absent_for_noop_repos() {
             "add",
             &ww_server.to_string_lossy(),
             "-b",
-            "web-app--noop-ww/server",
+            "web-app--noop-ww",
         ],
         &primary_server,
     );
@@ -539,7 +539,7 @@ fn sync_to_json_step3_advance_absent_for_noop_repos() {
             "add",
             &ww_project.to_string_lossy(),
             "-b",
-            "web-app--noop-ww/project",
+            "web-app--noop-ww",
         ],
         &primary_project,
     );

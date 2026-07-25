@@ -3,7 +3,9 @@
 //! repoweave operates on repos and worktrees. The VCS layer abstracts over
 //! the specific tool (git, jj, sl, hg) so core logic doesn't hardcode git.
 
-use crate::cli::consent::{DetachConsent, DiscardUnmergedConsent, ReattachConsent};
+use crate::cli::consent::{
+    AdoptDetachedConsent, DetachConsent, DiscardUnmergedConsent, ReattachConsent,
+};
 use crate::manifest::{ProjectName, Role, WorkweaveName};
 use schemars::JsonSchema;
 use serde::Serialize;
@@ -987,6 +989,61 @@ impl fmt::Display for EphemeralRefName {
     }
 }
 
+/// An observed ref that a **live** workweave's own minted namespace claims —
+/// the only observed name `branch-model.md` §7.1's migration may adopt into
+/// a receipt.
+///
+/// Before §3.5 flattened the scheme, rwv minted `{project}--{workweave}/<segment>`.
+/// Those refs predate ownership receipts, so under R2 they are nobody's:
+/// unownable, and therefore undeletable — including by the arm-1 rename,
+/// which §3.4 spells out is a DESTROY of the old name and needs a receipt for
+/// it. This type is the one route from an observation to that receipt, and it
+/// is deliberately narrow.
+///
+/// # What [`claim`](Self::claim) asks, and what it does not
+///
+/// It takes the [`EphemeralRefName`] a live workweave **mints** and asks
+/// whether the observed name sits under it. The observed name is never split
+/// into parts and no part of it is handed on: the answer is this whole name
+/// or nothing. So the migration cannot reconstruct which workweave a stray
+/// `<a>--<b>/<c>` belonged to (§7.3) — it can only recognise a ref inside a
+/// namespace it is standing in.
+///
+/// That is not "ownership by name shape". It authorizes exactly one thing: a
+/// receipt whose immediate and only use is a rename that **preserves the
+/// tip**. No commit can be lost through this type; a mistaken claim costs the
+/// operator a branch name, not work.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LegacyEphemeralRefName(RawRefName);
+
+impl LegacyEphemeralRefName {
+    /// `Some` iff `observed` sits strictly under the namespace `flat` claims
+    /// — i.e. it is `{flat}/<something non-empty>`.
+    ///
+    /// `flat` itself is **not** a legacy name and yields `None`: adopting the
+    /// flat name is §7.1 arm 2, which goes through
+    /// [`RefRegistry::record_created`] on the minted name and needs no
+    /// observation at all.
+    ///
+    /// [`RefRegistry::record_created`]: crate::workweave_index::RefRegistry::record_created
+    pub fn claim(flat: &EphemeralRefName, observed: &RawRefName) -> Option<Self> {
+        let rest = observed.as_str().strip_prefix(&format!("{}/", flat.0))?;
+        (!rest.is_empty()).then(|| Self(observed.clone()))
+    }
+
+    /// The claimed name at the parse boundary, for the receipt store to key
+    /// on and for the VCS impl to spell.
+    pub fn to_raw(&self) -> RawRefName {
+        self.0.clone()
+    }
+}
+
+impl fmt::Display for LegacyEphemeralRefName {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.0.as_str())
+    }
+}
+
 /// Notion (2b): an ephemeral ref rwv holds a persisted **receipt** for.
 ///
 /// R2: a ref is rwv's to delete iff rwv holds a receipt for that exact name
@@ -1148,6 +1205,24 @@ impl AttachedRef {
     /// the member gate against `TrackingRef::local_counterpart`.
     pub fn is_named(&self, name: &LocalRefName) -> bool {
         self.name.as_str() == name.as_str()
+    }
+
+    /// Whether this checkout is on exactly the ref `flat` requests.
+    ///
+    /// The healthy case of the I3 branch-discipline scan, asked through the
+    /// **minted** name so the scan never derives an expectation from what it
+    /// observed.
+    pub fn is_minted(&self, flat: &EphemeralRefName) -> bool {
+        self.name.as_str() == flat.0
+    }
+
+    /// The pre-flat ref this checkout is on, when `flat`'s namespace claims
+    /// it — `branch-model.md` §7.1 arm 1's classifier.
+    ///
+    /// `None` for the flat name itself and for every ref outside the
+    /// namespace, including another workweave's.
+    pub fn legacy_name_under(&self, flat: &EphemeralRefName) -> Option<LegacyEphemeralRefName> {
+        LegacyEphemeralRefName::claim(flat, &self.name)
     }
 }
 
@@ -1619,6 +1694,22 @@ impl DeletionWarrant {
     /// `cli::consent`, so this module (a different one) cannot even
     /// destructure it. Holding a value of the type is the whole proof.
     pub fn operator_discarded(consent: DiscardUnmergedConsent) -> Self {
+        let _ = consent;
+        Self(WarrantKind::OperatorDiscarded)
+    }
+
+    /// The operator passed `--adopt-detached-checkouts`, which
+    /// `branch-model.md` §7.1 arm 3 makes the consent for stranding a legacy
+    /// branch's tip.
+    ///
+    /// A second constructor rather than a widened `operator_discarded`
+    /// because the two flags consent to different losses and the house rule
+    /// (§4.4) is one token per consequence: `--discard-unmerged-commits`
+    /// gives up commits at `workweave delete`, `--adopt-detached-checkouts`
+    /// gives up the *name* a legacy branch holds so the flat one can exist in
+    /// its place. Arm 3 requires the caller to warn when that strands a tip;
+    /// the token records only that the operator asked for it.
+    pub fn adopt_detached(consent: AdoptDetachedConsent) -> Self {
         let _ = consent;
         Self(WarrantKind::OperatorDiscarded)
     }
@@ -2744,6 +2835,111 @@ pub trait Vcs {
     ///
     /// [`delete_owned_ref`]: Vcs::delete_owned_ref
     fn destroy_local_ref(&self, store: &Path, name: &RawRefName) -> Result<(), VcsError>;
+
+    // ---- rename (§3.4: a DESTROY of the old name plus a birth) ------------
+
+    /// Rename `from` to `to` — `branch-model.md` §7.1 arm 1's migration.
+    ///
+    /// Both halves are receipts, because §3.4 derives a rename as a DESTROY
+    /// of the old name plus a birth of the new: the DESTROY needs `from`'s
+    /// receipt and `warrant`, and the birth's receipt (`to`) has to be on
+    /// disk before the ref write, which it is — an [`OwnedRef`] exists only
+    /// after [`RefRegistry::record_created`] has fsynced it.
+    ///
+    /// One VCS operation rather than a delete plus a create because **neither
+    /// half can go first**. git cannot hold `refs/heads/p--w` and
+    /// `refs/heads/p--w/<segment>` at the same time (a ref and a directory of
+    /// the same name), so the birth cannot precede the DESTROY; and git
+    /// refuses to delete the branch a worktree's HEAD is on, which for arm 1
+    /// is exactly the branch being renamed, so the DESTROY cannot precede the
+    /// birth either. The rename resolves both at once, and moves every
+    /// worktree HEAD that pointed at the old name.
+    ///
+    /// The store comes from `from`'s receipt, so a receipt cannot authorize a
+    /// rename in a different refdb; `to`'s store must agree, and this refuses
+    /// when it does not.
+    ///
+    /// [`RefRegistry::record_created`]: crate::workweave_index::RefRegistry::record_created
+    fn rename_owned_ref(
+        &self,
+        from: &OwnedRef,
+        to: &OwnedRef,
+        warrant: DeletionWarrant,
+    ) -> Result<(), VcsError> {
+        let _ = warrant.describe();
+        if from.store != to.store {
+            return Err(VcsError::CommandFailed {
+                args: vec!["rename".to_owned()],
+                repo: from.store.clone(),
+                stderr: format!(
+                    "receipt for `{}` is keyed to {} but the receipt for `{}` is keyed to {}",
+                    from.name,
+                    from.store.display(),
+                    to.name,
+                    to.store.display()
+                ),
+            });
+        }
+        self.rename_local_ref(from.store(), from.name(), to.name())
+    }
+
+    /// VCS-specific half of [`rename_owned_ref`]. Not to be called directly:
+    /// it takes raw names and no warrant.
+    ///
+    /// **Must not force.** Renaming over an existing name would destroy that
+    /// name's ref with neither receipt nor warrant.
+    ///
+    /// [`rename_owned_ref`]: Vcs::rename_owned_ref
+    fn rename_local_ref(
+        &self,
+        store: &Path,
+        from: &RawRefName,
+        to: &RawRefName,
+    ) -> Result<(), VcsError>;
+
+    // ---- adoption of a detached checkout (§7.1 arms 3 and 5) --------------
+
+    /// Birth `to` at the commit `from` is detached on, and attach the
+    /// checkout to it — `branch-model.md` §7.1 arms 3 and 5.
+    ///
+    /// A birth *and* an ATTACH, which is why it takes a consent token: R1
+    /// makes detached → attached an attachment change, and the workweave's
+    /// HEAD is at the lock SHA, not at whatever a legacy branch reached.
+    ///
+    /// No start point is passed to the birth. The ref is created where HEAD
+    /// already is, so the working tree does not move and the call cannot be a
+    /// rewind wearing a birth's clothes — `to`'s recorded tip is the same
+    /// commit by construction (the caller records the receipt from this very
+    /// observation), and re-deriving it from the receipt would only create a
+    /// way for the two to disagree.
+    fn adopt_detached_checkout(
+        &self,
+        from: &DetachedHead,
+        to: &OwnedRef,
+        consent: AdoptDetachedConsent,
+    ) -> Result<(), VcsError> {
+        let _ = consent;
+        let repo = from.repo().to_path_buf();
+        let observed = self.head_attachment(&repo)?;
+        if observed != HeadAttachment::Detached(from.clone()) {
+            return Err(VcsError::StaleRefWitness {
+                repo,
+                expected: HeadAttachment::Detached(from.clone()).to_string(),
+                observed: observed.to_string(),
+            });
+        }
+        self.birth_ref_at_head(&repo, to.name())
+    }
+
+    /// VCS-specific half of [`adopt_detached_checkout`]: create `name` at
+    /// `repo`'s current HEAD and attach HEAD to it.
+    ///
+    /// **The impl must refuse when `name` already exists.** Reusing an
+    /// existing branch here would be an adoption of a ref this call holds no
+    /// receipt for, and moving it to HEAD would be an unwitnessed MOVE.
+    ///
+    /// [`adopt_detached_checkout`]: Vcs::adopt_detached_checkout
+    fn birth_ref_at_head(&self, repo: &Path, name: &RawRefName) -> Result<(), VcsError>;
 
     // ---- publish ----------------------------------------------------------
 

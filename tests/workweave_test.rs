@@ -194,7 +194,7 @@ fn workweave_create_worktrees_on_ephemeral_branches() {
 
     // The worktree in the workweave should be on an ephemeral branch
     // named {project}--{workweave-name}/{original-branch}, i.e.
-    // "web-app--hotfix/main".
+    // "web-app--hotfix".
     let weave_repo = weaveroot.join("web-app--hotfix/github/org/repo");
     assert!(
         weave_repo.exists(),
@@ -1212,7 +1212,7 @@ fn delete_workweave_cleans_up_ephemeral_branches() {
     let weaveroot = tmp.path().join(".workweaves");
     std::fs::create_dir_all(&weaveroot).unwrap();
 
-    // Create a workweave — this creates ephemeral branch "web-app--cleanup/main" in the repo.
+    // Create a workweave — this creates ephemeral branch "web-app--cleanup" in the repo.
     rwv()
         .args(["workweave", "web-app", "create", "cleanup"])
         .env("RWV_WORKWEAVE_DIR", &weaveroot)

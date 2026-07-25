@@ -599,12 +599,17 @@ fn make_multi_repo_workspaces(parent: &Path) -> (Workspace, Workspace, Vec<Strin
     std::fs::create_dir_all(ww_root.join("github/chatly")).unwrap();
     std::fs::create_dir_all(ww_root.join("projects")).unwrap();
 
-    for (i, repo_path) in REPO_PATHS.iter().enumerate() {
+    for repo_path in REPO_PATHS.iter() {
         let dest = ww_root.join(repo_path);
         let canonical = primary_root.join(repo_path);
-        let branch = format!("web-app--ww/main-{i}");
         git(
-            &["worktree", "add", &dest.to_string_lossy(), "-b", &branch],
+            &[
+                "worktree",
+                "add",
+                &dest.to_string_lossy(),
+                "-b",
+                "web-app--ww",
+            ],
             &canonical,
         );
     }

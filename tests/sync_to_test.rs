@@ -953,7 +953,7 @@ fn make_marker_ww(parent: &Path) -> (Workspace, PathBuf, PathBuf, PathBuf, Strin
             "add",
             &ww_server.to_string_lossy(),
             "-b",
-            "primary--feat/server",
+            "primary--feat",
         ],
         &primary.server_dir,
     );
@@ -965,7 +965,7 @@ fn make_marker_ww(parent: &Path) -> (Workspace, PathBuf, PathBuf, PathBuf, Strin
             "add",
             &ww_project.to_string_lossy(),
             "-b",
-            "primary--feat/project",
+            "primary--feat",
         ],
         &primary.project_dir,
     );

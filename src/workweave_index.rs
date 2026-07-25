@@ -83,7 +83,9 @@
 //! doctor's container scan re-adopts it.
 
 use crate::manifest::ProjectName;
-use crate::vcs::{EphemeralRefName, OwnedRef, RawRefName, ResolvedRevisionId};
+use crate::vcs::{
+    EphemeralRefName, LegacyEphemeralRefName, OwnedRef, RawRefName, ResolvedRevisionId,
+};
 use anyhow::Context;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -650,13 +652,54 @@ impl RefRegistry {
         name: EphemeralRefName,
         created_at: ResolvedRevisionId,
     ) -> anyhow::Result<OwnedRef> {
+        self.persist_receipt(store, name.to_raw(), created_at)
+    }
+
+    /// Adopt a pre-flat ref into a receipt — `branch-model.md` §7.1 arm 1.
+    ///
+    /// The migration's only route from an observation to ownership, and the
+    /// narrowness is the point: a [`LegacyEphemeralRefName`] exists only for a
+    /// ref that sits under the namespace a **live** workweave mints, and its
+    /// sole consumer is the rename that gives that ref its flat name. §3.4
+    /// derives a rename as a DESTROY of the old name plus a birth, and a
+    /// DESTROY needs a receipt — this is that receipt, and rwv genuinely did
+    /// create the ref, before receipts existed to say so.
+    ///
+    /// Recording the tip **as observed** is what makes
+    /// [`DeletionWarrant::unmoved`](crate::vcs::DeletionWarrant::unmoved) hold
+    /// for the rename a moment later, and — because
+    /// [`record_created`](Self::record_created)'s no-op-on-existing rule
+    /// applies here too — what keeps a re-run after a crash from re-stamping
+    /// `created_at` over a tip the operator has since moved.
+    pub fn adopt_legacy(
+        &mut self,
+        store: &Path,
+        name: LegacyEphemeralRefName,
+        observed_tip: ResolvedRevisionId,
+    ) -> anyhow::Result<OwnedRef> {
+        self.persist_receipt(store, name.to_raw(), observed_tip)
+    }
+
+    /// The shared body of [`record_created`](Self::record_created) and
+    /// [`adopt_legacy`](Self::adopt_legacy).
+    ///
+    /// Private and taking a [`RawRefName`]: the two public routes differ only
+    /// in *which* names they will accept, and that difference is carried by
+    /// their argument types. Keeping the durability and idempotency rules in
+    /// one body means a second recording route cannot quietly acquire
+    /// different ones.
+    fn persist_receipt(
+        &mut self,
+        store: &Path,
+        raw_name: RawRefName,
+        created_at: ResolvedRevisionId,
+    ) -> anyhow::Result<OwnedRef> {
         let key_store = std::fs::canonicalize(store).with_context(|| {
             format!(
                 "cannot record an ownership receipt for {}: the store does not exist",
                 store.display()
             )
         })?;
-        let raw_name = name.to_raw();
 
         let _guard = index_rmw_guard();
         let mut index = read_or_seed(&self.primary_root, &self.project)?;

@@ -658,7 +658,7 @@ fn make_retire_workspaces(parent: &Path) -> (Workspace, Workspace, String) {
             "add",
             &ww_server.to_string_lossy(),
             "-b",
-            "web-app--ww/main",
+            "web-app--ww",
         ],
         &primary.server_dir,
     );
@@ -670,7 +670,7 @@ fn make_retire_workspaces(parent: &Path) -> (Workspace, Workspace, String) {
             "add",
             &ww_project.to_string_lossy(),
             "-b",
-            "web-app--ww/project",
+            "web-app--ww",
         ],
         &primary.project_dir,
     );

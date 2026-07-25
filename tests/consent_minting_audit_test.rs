@@ -64,16 +64,17 @@ struct Allowed {
 const ALLOWLIST: &[Allowed] = &[
     Allowed {
         file: "cli.rs",
-        count: 3,
-        justification: "The three definitions themselves, one per token, in \
+        count: 4,
+        justification: "The four definitions themselves, one per token, in \
             `cli::consent` — the declaring module. Not call sites.",
     },
     Allowed {
         file: "main.rs",
-        count: 4,
+        count: 5,
         justification: "The dispatch sites: fetch and update mint a \
-            DetachConsent, doctor mints a ReattachConsent, workweave delete \
-            mints a DiscardUnmergedConsent. Each maps one parsed flag to one \
+            DetachConsent, doctor mints a ReattachConsent and an \
+            AdoptDetachedConsent, workweave delete mints a \
+            DiscardUnmergedConsent. Each maps one parsed flag to one \
             token at the boundary where the operator's intent is known, \
             which is the only place that can honestly claim consent.",
     },
@@ -83,8 +84,8 @@ const ALLOWLIST: &[Allowed] = &[
 const GRANTED_ALLOWLIST: &[Allowed] = &[
     Allowed {
         file: "cli.rs",
-        count: 3,
-        justification: "The three definitions themselves, one per token. \
+        count: 4,
+        justification: "The four definitions themselves, one per token. \
             Not call sites.",
     },
     Allowed {

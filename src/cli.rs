@@ -185,6 +185,14 @@ pub enum Commands {
         /// canonical, naming the `git switch` that would reattach it.
         #[arg(long)]
         reattach_checkouts: bool,
+        /// With `--fix`, let the branch-model migration mint a workweave's
+        /// ephemeral branch at a detached checkout's HEAD (the lock SHA).
+        /// When a pre-flat `<project>--<workweave>/<segment>` branch holds
+        /// that name, it is given up to make room — and the migration warns
+        /// when doing so strands commits HEAD does not carry. Without this
+        /// flag, `--fix` reports both tips and leaves the checkout alone.
+        #[arg(long)]
+        adopt_detached_checkouts: bool,
         /// Operate on this project instead of the active project (does not change `.rwv-active`)
         #[arg(long)]
         project: Option<String>,
@@ -624,6 +632,36 @@ pub mod consent {
         /// iff the operator passed it.
         pub fn from_flag(discard_unmerged_commits: bool) -> Option<Self> {
             discard_unmerged_commits.then(Self::granted)
+        }
+    }
+
+    /// Proof that the operator consented to `branch-model.md` §7.1 arms 3
+    /// and 5: minting a workweave's flat ephemeral ref **at a detached
+    /// HEAD**, and — when a pre-flat branch holds the name — giving that
+    /// branch's name up so the flat one can exist in its place. Minted from
+    /// `--adopt-detached-checkouts`.
+    ///
+    /// A third token rather than a reuse of [`ReattachConsent`]: reattaching
+    /// moves a checkout onto a branch that already exists and loses nothing,
+    /// while this births a branch at the lock SHA and can strand a legacy
+    /// branch's tip. Different consequence, different flag, different token —
+    /// the house rule stated at the top of this module.
+    ///
+    /// `Copy`: see [`DetachConsent`]'s doc comment.
+    #[derive(Debug, Clone, Copy)]
+    pub struct AdoptDetachedConsent(());
+
+    impl AdoptDetachedConsent {
+        /// Mint unconditionally. `pub(crate)`: see
+        /// [`DetachConsent::granted`]'s doc comment.
+        pub(crate) fn granted() -> Self {
+            Self(())
+        }
+
+        /// Mint from the parsed `--adopt-detached-checkouts` value: `Some`
+        /// iff the operator passed it.
+        pub fn from_flag(adopt_detached_checkouts: bool) -> Option<Self> {
+            adopt_detached_checkouts.then(Self::granted)
         }
     }
 }

@@ -95,7 +95,7 @@ severity. Under `--json`, output is the envelope:
 ```
 
 The `$schema` URL points to the committed schema artifact. Variants are
-discriminated by the `kind` tag — `branch-discipline`, `cargo-patch-shadowing`, `cargo-version-skew`, `clone-topology`, `dangling-active-project`, `dangling-ref-receipt`, `dangling-reference`, `dead-op-lease`, `incomplete-lock`, `index-drift`, `legacy-role-primary`, `legacy-workweave-marker`, `missing-canonical-clone`, `missing-replay-exclusion`, `missing-role`, `orphaned-clone`, `orphaned-savepoint`, `provenance`, `stale-lock`, `stale-op-state`, `stale-worktree-registration`, `uninitialized-submodule`, `unparseable-project`, `working-tree-drift`, `workweave-drift`, `workweave-tree-integrity`.
+discriminated by the `kind` tag — `branch-discipline`, `cargo-patch-shadowing`, `cargo-version-skew`, `clone-topology`, `dangling-active-project`, `dangling-ref-receipt`, `dangling-reference`, `dead-op-lease`, `incomplete-lock`, `index-drift`, `legacy-role-primary`, `legacy-workweave-index`, `legacy-workweave-marker`, `missing-canonical-clone`, `missing-replay-exclusion`, `missing-role`, `orphaned-clone`, `orphaned-savepoint`, `provenance`, `stale-lock`, `stale-op-state`, `stale-worktree-registration`, `uninitialized-submodule`, `unparseable-project`, `working-tree-drift`, `workweave-drift`, `workweave-tree-integrity`.
 Every per-repo variant carries `path` (manifest-relative) and
 `absolute_path` (fully resolved). Variants with subkinds
 (`branch-discipline`, `clone-topology`, `dead-op-lease`, `index-drift`, `orphaned-savepoint`, `provenance`, `working-tree-drift`, `workweave-drift`, `workweave-tree-integrity`) carry an additional `sub_kind` field.
@@ -175,15 +175,15 @@ Schema:
               "type": "object",
               "required": [
                 "actual_branch",
-                "expected_prefix"
+                "expected_ref"
               ],
               "properties": {
                 "actual_branch": {
                   "description": "The branch currently checked out (e.g. `main`).",
                   "type": "string"
                 },
-                "expected_prefix": {
-                  "description": "The expected ephemeral prefix (`<project>--<workweave>`).",
+                "expected_ref": {
+                  "description": "The ephemeral ref this workweave mints (`<project>--<workweave>`).",
                   "type": "string"
                 },
                 "recorded_ref": {
@@ -199,7 +199,7 @@ Schema:
           "additionalProperties": false
         },
         {
-          "description": "(a) The workweave checkout is on an ephemeral branch named for a *different* workweave (the prefix `<project>--<other>/` differs from the expected `<project>--<workweave>/`). Report-only.",
+          "description": "(a) The workweave checkout is on an ephemeral ref rwv **recorded** for a *different* workweave. Report-only.\n\nKeyed on the receipt, not on the name (R2). Before the flat-name cutover this arm fired on any `<a>--<b>/<c>`-shaped name, which meant a hand-made branch was reported as \"another workweave's\" purely because of how it was spelled; now it fires only when some project's registry says the ref really is one rwv minted for another workweave. A look-alike lands in `SharedBranch` instead — both are report-only, so the distinction costs nothing but accuracy.",
           "type": "object",
           "required": [
             "foreign-ephemeral"
@@ -209,15 +209,15 @@ Schema:
               "type": "object",
               "required": [
                 "actual_branch",
-                "expected_prefix"
+                "expected_ref"
               ],
               "properties": {
                 "actual_branch": {
                   "description": "The branch currently checked out.",
                   "type": "string"
                 },
-                "expected_prefix": {
-                  "description": "The expected ephemeral prefix (`<project>--<workweave>`).",
+                "expected_ref": {
+                  "description": "The ephemeral ref this workweave mints (`<project>--<workweave>`).",
                   "type": "string"
                 },
                 "recorded_ref": {
@@ -233,7 +233,7 @@ Schema:
           "additionalProperties": false
         },
         {
-          "description": "(a) The workweave checkout is in detached-HEAD state — HEAD points directly at a commit instead of a named branch. Detached HEAD breaks the merged-check and ref-namespace invariants in `clone-topology.md`. Report-only.",
+          "description": "(a) The workweave checkout is in detached-HEAD state — HEAD points directly at a commit instead of a named branch. Detached HEAD breaks the merged-check and ref-namespace invariants in `clone-topology.md`.\n\nThis is also `branch-model.md` §7.1's arm 3 (when `legacy_branch` is `Some`) and arm 5 (when it is `None`). `--fix --adopt-detached-checkouts` mints the workweave's flat ref **at HEAD** — i.e. at the lock SHA — and, in the arm-3 case, gives the legacy branch's name up to make room for it.",
           "type": "object",
           "required": [
             "detached"
@@ -242,12 +242,28 @@ Schema:
             "detached": {
               "type": "object",
               "required": [
-                "expected_prefix"
+                "at_sha",
+                "expected_ref"
               ],
               "properties": {
-                "expected_prefix": {
-                  "description": "The expected ephemeral prefix (`<project>--<workweave>`).",
+                "at_sha": {
+                  "description": "The commit HEAD names directly.",
                   "type": "string"
+                },
+                "expected_ref": {
+                  "description": "The ephemeral ref this workweave mints (`<project>--<workweave>`).",
+                  "type": "string"
+                },
+                "legacy_branch": {
+                  "description": "§7.1 arm 3: a pre-flat branch of this workweave's own namespace, with its tip. Arm 3 requires **both** tips be reported, because they are the two things the operator is choosing between.",
+                  "anyOf": [
+                    {
+                      "$ref": "#/definitions/LegacyRefAtTip"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
                 },
                 "recorded_ref": {
                   "description": "See `SharedBranch`'s field of the same name.",
@@ -255,6 +271,77 @@ Schema:
                     "string",
                     "null"
                   ]
+                }
+              }
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "description": "(a) `branch-model.md` §7.1 arm 1: the workweave checkout is attached to a pre-flat `<project>--<workweave>/<segment>` ref of its **own** namespace.\n\nThe common migration case and the fully automatic one: `--fix` records a receipt at the ref's current tip and renames it to the flat name. Nothing is lost — a rename preserves the tip — and the namespace membership is decided against the name this workweave *mints*, never by taking the observed name apart (`LegacyEphemeralRefName`).",
+          "type": "object",
+          "required": [
+            "unmigrated-ephemeral-branch"
+          ],
+          "properties": {
+            "unmigrated-ephemeral-branch": {
+              "type": "object",
+              "required": [
+                "actual_branch",
+                "expected_ref"
+              ],
+              "properties": {
+                "actual_branch": {
+                  "description": "The pre-flat branch currently checked out.",
+                  "type": "string"
+                },
+                "expected_ref": {
+                  "description": "The flat ref it migrates to (`<project>--<workweave>`).",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "description": "(a) `branch-model.md` §7.1 arm 2: the workweave's flat ref exists in the canonical store, but rwv holds no receipt for it.\n\nThe state a build that minted flat names before receipts existed leaves behind, and the state a migration crash between the receipt and the rename would leave if the receipt had not been written first. Under R2 the ref is nobody's until adopted, so `workweave delete` cannot clean it up; `--fix` adopts it at its observed tip.",
+          "type": "object",
+          "required": [
+            "unrecorded-ephemeral-branch"
+          ],
+          "properties": {
+            "unrecorded-ephemeral-branch": {
+              "type": "object",
+              "required": [
+                "branch"
+              ],
+              "properties": {
+                "branch": {
+                  "description": "The flat ref (`<project>--<workweave>`).",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "description": "(a) `branch-model.md` §7.1 arm 6: the workweave checkout is on a branch with no commits.\n\nReport-only, and not because a fix is missing: there is no revision to record a receipt against, so there is nothing the migration could own. `rwv lock` is where an unborn HEAD is actionable (§4.5).",
+          "type": "object",
+          "required": [
+            "unborn-checkout"
+          ],
+          "properties": {
+            "unborn-checkout": {
+              "type": "object",
+              "required": [
+                "branch"
+              ],
+              "properties": {
+                "branch": {
+                  "description": "The branch HEAD points at, which has no commits yet.",
+                  "type": "string"
                 }
               }
             }
@@ -360,15 +447,15 @@ Schema:
               "type": "object",
               "required": [
                 "branch",
-                "workweave_name"
+                "project"
               ],
               "properties": {
                 "branch": {
-                  "description": "The full branch name (e.g. `foundations--feat-a/main`).",
+                  "description": "The full branch name (e.g. `foundations--feat-a`).",
                   "type": "string"
                 },
-                "workweave_name": {
-                  "description": "The workweave name parsed out of the branch (the `<name>` component); the directory `.workweaves/<project>--<name>` is absent on disk.",
+                "project": {
+                  "description": "The project whose registry holds the receipt.\n\nNot the workweave, for the reason `CanonicalHoldsLeakedRef` gives: §7.3 is explicit that rwv does not reconstruct which workweave a ref belonged to, and for this class no workweave on disk would mint the name — that is what makes it stale.",
                   "type": "string"
                 }
               }
@@ -387,20 +474,20 @@ Schema:
               "type": "object",
               "required": [
                 "branch",
-                "tip_sha",
-                "workweave_name"
+                "project",
+                "tip_sha"
               ],
               "properties": {
                 "branch": {
                   "description": "The full branch name.",
                   "type": "string"
                 },
-                "tip_sha": {
-                  "description": "The branch tip SHA, surfaced so the operator can recover the commits before deleting (e.g. `git log <tip_sha>`).",
+                "project": {
+                  "description": "The project whose registry holds the receipt. See `StaleEphemeralBranchSafe`.",
                   "type": "string"
                 },
-                "workweave_name": {
-                  "description": "The workweave name parsed out of the branch.",
+                "tip_sha": {
+                  "description": "The branch tip SHA, surfaced so the operator can recover the commits before deleting (e.g. `git log <tip_sha>`).",
                   "type": "string"
                 }
               }
@@ -409,7 +496,7 @@ Schema:
           "additionalProperties": false
         },
         {
-          "description": "(c) A branch shaped like one of rwv's whose workweave directory is absent, for which **rwv holds no ownership receipt** in this store.\n\nUnder R2 this ref is not rwv's: name shape is not ownership. It is reported so the operator can see it, and it is never deleted — the shipped scanner deleted exactly this class, which is why a hand-made `<a>--<b>/<c>` branch could disappear under `--fix`.\n\nRefs created before receipts existed land here too. `branch-model.md` §7.1's migration is what adopts them (recording a receipt); until it runs, they stay unowned, which is the fail-closed direction.",
+          "description": "(c) A branch shaped like one rwv minted before `branch-model.md` §3.5 flattened the scheme, sitting in a canonical store, which **rwv holds no ownership receipt for** and which no workweave on disk claims.\n\nUnder R2 this ref is not rwv's: name shape is not ownership. It is reported so the operator can see it, and it is never deleted — the shipped scanner deleted exactly this class, which is why a hand-made `<a>--<b>/<c>` branch could disappear under `--fix`.\n\n# Why this one is discovered by shape and nothing else is\n\nEvery other arm asks the registry or asks a live workweave's **minted** name. This arm has neither to ask: there is no receipt, and §7.3 forbids reconstructing which workweave the ref belonged to — so the alternative to a shape heuristic is not a better signal, it is silence, and the refs the operator most needs to see (the pre-receipt population §7.1's migration cannot reach) would simply stop being reported.\n\nWhat keeps that sound is that the heuristic yields a `bool` and nothing else — see `looks_like_a_pre_flat_ref`. No name is taken apart, no workweave is named, and the only route to a DESTROY runs through an `OwnedRef`, which only a persisted receipt produces. A false positive costs one line of output and can cost nothing more.",
           "type": "object",
           "required": [
             "stale-ephemeral-branch-unowned"
@@ -418,16 +505,11 @@ Schema:
             "stale-ephemeral-branch-unowned": {
               "type": "object",
               "required": [
-                "branch",
-                "workweave_name"
+                "branch"
               ],
               "properties": {
                 "branch": {
                   "description": "The full branch name.",
-                  "type": "string"
-                },
-                "workweave_name": {
-                  "description": "The workweave name parsed out of the branch.",
                   "type": "string"
                 }
               }
@@ -628,6 +710,29 @@ Schema:
           ]
         }
       ]
+    },
+    "LegacyRefAtTip": {
+      "description": "A pre-flat branch and the commit it reaches, as `branch-model.md` §7.1 arm 3 requires them to be reported: **both** tips, side by side, because the operator is choosing between them.",
+      "type": "object",
+      "required": [
+        "branch",
+        "strands_commits",
+        "tip_sha"
+      ],
+      "properties": {
+        "branch": {
+          "description": "The pre-flat branch name (`<project>--<workweave>/<segment>`).",
+          "type": "string"
+        },
+        "strands_commits": {
+          "description": "Whether that tip carries commits the detached HEAD does not — i.e. whether adopting the checkout would **strand** work. Arm 3 makes the warning mandatory in exactly this case.",
+          "type": "boolean"
+        },
+        "tip_sha": {
+          "description": "Its tip.",
+          "type": "string"
+        }
+      }
     },
     "OrphanedSavepointKind": {
       "description": "Classification of an orphaned savepoint, controlling `--fix` policy.",
@@ -1075,6 +1180,28 @@ Schema:
               "type": "string"
             },
             "primary": {
+              "type": "string"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "index_path",
+            "kind",
+            "project"
+          ],
+          "properties": {
+            "index_path": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "enum": [
+                "legacy-workweave-index"
+              ]
+            },
+            "project": {
               "type": "string"
             }
           }

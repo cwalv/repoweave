@@ -2196,6 +2196,55 @@ impl Vcs for GitVcs {
         Ok(())
     }
 
+    fn rename_local_ref(
+        &self,
+        store: &Path,
+        from: &RawRefName,
+        to: &RawRefName,
+    ) -> Result<(), VcsError> {
+        let store = Self::work_dir_for_store(store);
+        // `-m`, never `-M`. The uppercase form renames *over* an existing
+        // branch, which destroys that branch's ref with neither receipt nor
+        // warrant; the lowercase form refuses, which is the behaviour the
+        // trait's contract requires. git also refuses the D/F direction on
+        // its own ("cannot lock ref"), so a leftover `p--w/other` blocks the
+        // rename rather than being silently swept up.
+        //
+        // Run from the store's work dir, not from the worktree whose HEAD is
+        // on `from`: `git branch -m` updates the HEAD of every worktree that
+        // pointed at the old name, wherever it is run.
+        Self::run(&["branch", "-m", from.as_str(), to.as_str()], &store)?;
+        Ok(())
+    }
+
+    fn birth_ref_at_head(&self, repo: &Path, name: &RawRefName) -> Result<(), VcsError> {
+        // Classify before acting, like `attach_head_to` above: `switch -c`
+        // on an existing name exits non-zero, but the refusal this contract
+        // owes is "rwv holds no receipt for that ref", not git's "already
+        // exists" — and stating it here keeps the reason on the model's
+        // terms rather than on git's.
+        if self.resolve_local_branch_tip(repo, name)?.is_some() {
+            return Err(VcsError::CommandFailed {
+                args: vec![
+                    "rev-parse".to_owned(),
+                    "--verify".to_owned(),
+                    "--quiet".to_owned(),
+                    format!("refs/heads/{name}^{{commit}}"),
+                ],
+                repo: repo.to_path_buf(),
+                stderr: format!(
+                    "a local branch named '{name}' already exists: birthing it here \
+                     would adopt a ref this call holds no receipt for, and moving it \
+                     to HEAD would be an unwitnessed MOVE"
+                ),
+            });
+        }
+        // No start point: the ref is born where HEAD already is, so the
+        // working tree does not move.
+        Self::run(&["switch", "-c", name.as_str()], repo)?;
+        Ok(())
+    }
+
     fn push_ref(
         &self,
         repo: &Path,

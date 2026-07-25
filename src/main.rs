@@ -773,6 +773,7 @@ fn main() -> anyhow::Result<()> {
             json,
             all,
             reattach_checkouts,
+            adopt_detached_checkouts,
             project,
         }) => {
             let project_override = project.map(repoweave::manifest::ProjectName::new);
@@ -783,6 +784,11 @@ fn main() -> anyhow::Result<()> {
             // `git switch` instead of performing the ATTACH.
             let reattach_checkouts =
                 repoweave::cli::consent::ReattachConsent::from_flag(reattach_checkouts);
+            // §7.1 arms 3 and 5: the consent for minting a workweave's ref at
+            // a detached HEAD, and for giving up a legacy branch's name to
+            // make room for it.
+            let adopt_detached_checkouts =
+                repoweave::cli::consent::AdoptDetachedConsent::from_flag(adopt_detached_checkouts);
             if locked {
                 let has_drift = check::run_check_locked(&ctx)?;
                 if has_drift {
@@ -794,7 +800,8 @@ fn main() -> anyhow::Result<()> {
                     std::process::exit(1);
                 }
             } else {
-                let has_errors = check::run_check(&ctx, fix, all, reattach_checkouts)?;
+                let has_errors =
+                    check::run_check(&ctx, fix, all, reattach_checkouts, adopt_detached_checkouts)?;
                 if has_errors {
                     std::process::exit(1);
                 }

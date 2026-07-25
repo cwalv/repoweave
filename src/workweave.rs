@@ -981,7 +981,7 @@ pub(crate) struct BirthOutcome {
 /// a create wrote is invisible to the delete that has to consume it. Resolving
 /// through git's common-dir is what makes that true — the path each verb
 /// happens to hold is not.
-fn receipt_store_for(checkout: &Path) -> PathBuf {
+pub(crate) fn receipt_store_for(checkout: &Path) -> PathBuf {
     resolved_worktree_parent(checkout, checkout)
 }
 
