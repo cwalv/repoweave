@@ -17,6 +17,75 @@
 //! `doctor_workweave_cargo_lock_fix_test` for why the repair cannot otherwise
 //! narrow what it does.
 //!
+//! # Which contract this pins, and which arms it does NOT cover
+//!
+//! `--fix` has two classes of arm and they are scoped differently on purpose.
+//! This test pins the first class only. Stated by class rather than by
+//! enumerating arms, so a newly added arm inherits a contract instead of
+//! falling into a gap.
+//!
+//! **Weave-scoped arms — the invoking weave sets the scope. Pinned here.**
+//! Repairs of state that exists once *per weave*: integration content,
+//! surfacing symlinks, the `role: primary` manifest rewrite, the
+//! `.gitattributes` replay-exclusion and its merge-driver config, and the
+//! index / working-tree / state-hygiene drift arms. Every one of these is
+//! pointed at `ctx.active_path()` — directly, as `workspace_dir`, or through
+//! a scan list built from it whose cross-weave expansion is gated on
+//! `matches!(ctx.checkout, Checkout::Primary { .. })`. A new arm belongs to
+//! this class iff the state it repairs is READ per-weave, and it must take
+//! `active_path()`; `primary_path()` in such an arm is the bug this test
+//! exists to catch.
+//!
+//! "Read per-weave", not "has a per-weave file on disk" — a workweave root
+//! carries its own `.rwv-active`, but nothing reads it (inside a workweave
+//! the project is structural, fixed by the `.rwv-workweave` marker; see the
+//! "no ambient pointer consulted inside a workweave" branch in
+//! `WorkspaceContext::resolve`). The selector exists in one place, so the
+//! dangling-active-project clear is in the second class despite the file
+//! being present in both.
+//!
+//! **Workspace-rooted arms — the invoking weave is ignored. NOT pinned here,
+//! and correctly so.** Repairs of state the workspace holds in exactly one
+//! place: the ownership receipts and the refs they describe (dangling-receipt
+//! retraction, the ref-registry migration, the canonical-store migration and
+//! reattach arms, safe-class stale-branch deletion), plus the workweave
+//! registry itself (stale-entry prune, unregistered-workweave adopt), the
+//! dangling-parent re-point, and the dangling-active-project clear. These
+//! take `ctx.primary_path()` unconditionally.
+//!
+//! That is not an inconsistency with the class above. There is no per-weave
+//! copy for them to bind to:
+//!
+//!   * A workweave's `projects/<project>/` is a LINKED WORKTREE of primary's
+//!     clone, so `refs/heads/*` is one physical refdb shared by every weave —
+//!     `git rev-parse --git-path refs/heads` inside a workweave resolves into
+//!     primary's `.git`, while `HEAD` and `refs/worktree/*` resolve into the
+//!     per-worktree dir. Only the latter two are per-weave.
+//!   * `.rwv-workweave-index` exists only in primary (untracked, listed in
+//!     `.git/info/exclude`). A workweave has no copy.
+//!
+//! So a workweave-scoped `--fix` retracting a receipt recorded for a
+//! DIFFERENT workweave is expected behaviour, not a leak of the contract
+//! above. Do not "fix" it by pointing those arms at `active_path()` — that
+//! would make them silently no-op against a registry that is not there.
+//!
+//! # The separate question, which is a policy and not a consequence
+//!
+//! Sharing the refdb forces the workspace-rooted arms to SEE every weave's
+//! refs. It does not by itself force `--fix` run in weave A to DESTROY a ref
+//! recorded for weave B. That rwv does so is a choice — the alternative,
+//! acting only on refs the invoking weave minted, would make the reclaimable
+//! population unreachable, since a stale ephemeral branch is by definition
+//! one whose workweave is gone.
+//!
+//! The consequence to keep in view: the invoking weave contributes nothing to
+//! the destroy decision, so it backstops nothing either. What bounds the
+//! destroy is the receipt (R2), the live-workweave test, and the merged
+//! warrant (R3) — all three of which are evaluated against workspace-wide
+//! state. A misclassification in that trio is not caught by having been run
+//! from an unrelated weave. `fix_stale_ephemeral_branches` re-derives all
+//! three immediately before each destroy for exactly this reason.
+//!
 //! The test:
 //!   1. Builds a scratch primary weave with the `go-work` integration active
 //!      (two go modules → managed `go.work`).

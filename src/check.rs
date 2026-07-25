@@ -6529,6 +6529,19 @@ pub fn run_check(
     // ref never appeared. `--fix` retracts them; the retraction runs before
     // the branch-discipline scan below so the scan sees the cleaned
     // registry.
+    //
+    // WORKSPACE-ROOTED ARM — `ctx.primary_path()`, not `ctx.active_path()`,
+    // and that is deliberate. This and every arm below it through the
+    // stale-ephemeral-branch deletion repair state the workspace holds in
+    // exactly one place: the receipts live only in primary's
+    // `.rwv-workweave-index`, and the refs they describe live in one physical
+    // refdb that every workweave's linked worktree shares. There is no
+    // per-weave copy to bind to, so these arms ignore which weave invoked
+    // doctor. The opposite class — arms repairing per-weave state, which MUST
+    // take `active_path()` — is pinned by
+    // `doctor_workweave_content_fix_isolation_test`; its module doc states
+    // both contracts and why acting on another weave's refs is a policy
+    // rather than a consequence of the sharing.
     let receipt_scope = if scope_all {
         None
     } else {

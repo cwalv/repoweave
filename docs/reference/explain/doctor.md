@@ -81,6 +81,69 @@ reported — so you can see it — and never removed.
 
 Run `rwv --help doctor` for the full clap surface.
 
+## Which weave `--fix` repairs
+
+`--fix` arms fall into two classes, scoped differently on purpose. The
+question the classes answer is whether the weave you invoked doctor from
+determines what gets repaired.
+
+**Weave-scoped arms — the invoking weave sets the scope.** Integration
+content regeneration, surfacing symlinks, the `role: primary` manifest
+rewrite, the `rwv.lock` replay-exclusion and its paired merge-driver config,
+and the index / working-tree / state-hygiene drift arms all repair state that
+exists once *per weave*. Run inside a workweave, they repair that workweave
+and nothing else: primary's copy of the same file is left alone, including
+primary's own drift, and the drift scan does not enumerate sibling weaves at
+all. Repairing primary is a separate `rwv doctor --fix` run from primary.
+Run at primary, these arms repair primary's own copy — except the drift and
+state-hygiene arms, which additionally enumerate every workweave primary
+parents, a scope only primary can name.
+
+**Workspace-rooted arms — the invoking weave is ignored.** Dangling-receipt
+retraction, the ref-ownership registry migration, the canonical-store
+migration and reattach arms, safe-class stale-branch deletion, the
+workweave-registry prune and adopt arms, the dangling-parent re-point, and
+the dangling-active-project clear all act on state the workspace holds in
+exactly one place, so they take the primary path unconditionally — from
+primary and from any workweave alike. This is not an oversight in the
+weave-scoping above; there is nothing weave-local for them to bind to:
+
+- A workweave's `projects/<project>/` is a **linked worktree** of primary's
+  clone, so `refs/heads/*` is one physical ref database shared by every
+  weave. git keeps only `HEAD` and `refs/worktree/*` per worktree
+  (`git rev-parse --git-path refs/heads` from inside a workweave resolves
+  into primary's `.git`). A per-weave view of these refs would be a shadow of
+  the shared store, not a separate store.
+- The ownership receipts that describe those refs, and the registry that
+  records which workweaves exist, live only in primary, at
+  `projects/<project>/.rwv-workweave-index` — an untracked, primary-local
+  file. A workweave has no copy to write instead.
+- The active-project pointer is a primary-only selector. A workweave root
+  carries a `.rwv-active` file too, but nothing reads it: inside a workweave
+  the project is structural, fixed by the `.rwv-workweave` marker at creation
+  time, and no ambient pointer is consulted. Clearing a dangling selector
+  therefore has exactly one file to clear.
+
+**Acting on another weave's refs is a policy, not a consequence of the
+above.** Sharing the ref database forces these arms to *see* every weave's
+refs. It does not by itself force `--fix` run in weave A to *destroy* a ref
+recorded for weave B. That it does so is a deliberate choice: the alternative
+— acting only on refs the invoking weave minted — would leave the reclaimable
+population permanently unreachable, because a stale ephemeral branch is by
+definition one whose workweave is gone, so no weave could be the one
+authorized to reclaim it.
+
+What bounds the destroy is therefore not where you ran the command. It is the
+receipt gate (`branch-model.md` R2 — a persisted receipt for that exact ref
+in that exact store), the liveness test (a name some workweave still on disk
+would mint is live-class and is never deleted), and the merged warrant (R3 —
+the tip is an ancestor of the store's tip). The invoking weave contributes
+nothing to that decision, which also means it backstops nothing: run `--fix`
+from a throwaway weave and it will still act on registry entries and refs
+belonging to weaves you are actively using — correctly when the
+classification is right, with nothing about the invocation site to catch it
+when it is not.
+
 ## Output
 
 Default text output is one human-readable line per violation, grouped by
