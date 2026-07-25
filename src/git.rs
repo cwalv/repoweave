@@ -463,6 +463,26 @@ impl GitVcs {
         }
     }
 
+    /// The branch name inside a fully-qualified `refs/heads/<name>`.
+    ///
+    /// The stripping is done here rather than by asking git for a short
+    /// name, because git's "short" name is the shortest *unambiguous* one:
+    /// with `refs/tags/x` present it renders the branch `x` as `heads/x`,
+    /// which is not a branch name and does not round-trip. A symbolic HEAD
+    /// pointing outside `refs/heads/` names no branch at all, and is
+    /// reported as an error rather than folded into one of the three
+    /// attachment states.
+    fn local_branch_name_from_full_ref(full: &str, repo: &Path) -> Result<RawRefName, VcsError> {
+        match full.strip_prefix("refs/heads/") {
+            Some(name) if !name.is_empty() => Ok(RawRefName::new(name)),
+            _ => Err(VcsError::CommandFailed {
+                args: vec!["symbolic-ref".to_owned(), "HEAD".to_owned()],
+                repo: repo.to_path_buf(),
+                stderr: format!("HEAD is symbolic but names no local branch: {full:?}"),
+            }),
+        }
+    }
+
     /// Detect if a repo is in a mid-operation VCS state (mid-rebase, mid-merge, etc.).
     ///
     /// A bisect counts. It has no conflict-resume path, so it never
@@ -1968,20 +1988,23 @@ impl Vcs for GitVcs {
         if !self.is_repo(repo) {
             return Err(VcsError::NotARepo(repo.to_path_buf()));
         }
-        match Self::run(&["symbolic-ref", "--short", "HEAD"], repo) {
-            Ok(name) => {
+        // The full ref, then strip the namespace here. `--short` would ask
+        // git for the shortest *unambiguous* name instead of the branch
+        // name: with a tag of the same name present it answers `heads/main`
+        // for the branch `main`, and that value is not a branch name — it
+        // does not round-trip through `refs/heads/<name>`, so a witness
+        // carrying it would report an existing branch as missing.
+        match Self::run(&["symbolic-ref", "HEAD"], repo) {
+            Ok(full) => {
+                let name = Self::local_branch_name_from_full_ref(full.trim(), repo)?;
                 // HEAD is symbolic. Whether the branch has commits is a
                 // second question: `symbolic-ref` succeeds on an unborn
                 // branch, and `rev-parse HEAD` is what tells the two apart.
                 // (This is the check `head_revision` had to grow inline; it
                 // belongs here, where the question is actually asked.)
                 match Self::run(&["rev-parse", "--verify", "HEAD^{commit}"], repo) {
-                    Ok(_) => Ok(HeadObservation::Attached {
-                        name: RawRefName::new(name),
-                    }),
-                    Err(_) => Ok(HeadObservation::Unborn {
-                        name: RawRefName::new(name),
-                    }),
+                    Ok(_) => Ok(HeadObservation::Attached { name }),
+                    Err(_) => Ok(HeadObservation::Unborn { name }),
                 }
             }
             Err(symbolic_err) => {
@@ -2070,10 +2093,48 @@ impl Vcs for GitVcs {
     }
 
     fn attach_head_to(&self, repo: &Path, name: &LocalRefName) -> Result<(), VcsError> {
-        // No `-b`: attaching to a branch that does not exist would be a
-        // birth, which is a different operation with a different consent
-        // shape. git refuses, and the refusal is the point.
-        Self::run(&["checkout", name.as_str()], repo)?;
+        // Classify before acting, the way `materialize_worktree_on_ref`
+        // does. Omitting `-b` does NOT make git refuse an absent branch —
+        // measured, all three on git 2.43:
+        //
+        //   * `checkout.guess` (on by default) invents a local branch from
+        //     a remote-tracking one of the same name and reports "Switched
+        //     to a new branch". That is a birth with no receipt, so the ref
+        //     is unowned under R2 forever. It is also the ordinary case
+        //     here: a `LocalRefName` is a projection of a *remote* branch
+        //     name, and rwv clones have exactly one remote.
+        //   * a name matching a tag detaches HEAD and exits 0 — the very
+        //     operation this one is separated from, done while holding only
+        //     a ReattachConsent.
+        //   * a name matching a path (`docs`, `src`, `test`) is taken as a
+        //     pathspec: HEAD does not move and the operator's uncommitted
+        //     edits to that path are reverted from the index.
+        //
+        // `--no-guess` closes the first, the `--` terminator closes the
+        // third, and *neither* closes the second. So the existence check is
+        // what makes the refusal real; the flags are defence in depth for
+        // the window between the check and the switch.
+        let branch = RawRefName::new(name.as_str());
+        if self.resolve_local_branch_tip(repo, &branch)?.is_none() {
+            // Reported as the query that refused, not as a switch that
+            // failed: no switch is attempted. These are the arguments
+            // `resolve_local_branch_tip` ran, so the operator can reproduce
+            // the answer the refusal rests on.
+            return Err(VcsError::CommandFailed {
+                args: vec![
+                    "rev-parse".to_owned(),
+                    "--verify".to_owned(),
+                    format!("refs/heads/{name}^{{commit}}"),
+                ],
+                repo: repo.to_path_buf(),
+                stderr: format!(
+                    "no local branch named '{name}': attaching to a branch that \
+                     does not exist would create it, and a birth needs a receipt \
+                     so the ref can be owned"
+                ),
+            });
+        }
+        Self::run(&["checkout", "--no-guess", name.as_str(), "--"], repo)?;
         Ok(())
     }
 
@@ -2123,26 +2184,26 @@ impl Vcs for GitVcs {
         repo: &Path,
         prefix: &str,
     ) -> Result<Vec<RawRefName>, VcsError> {
-        let pattern = format!("{prefix}*");
-        let output = Self::run(
-            &[
-                "for-each-ref",
-                "--format=%(refname:short)",
-                &format!("refs/heads/{pattern}"),
-            ],
-            repo,
-        )?;
-        Ok(output
-            .lines()
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-            .map(RawRefName::new)
+        // Filtered here rather than by a `refs/heads/<prefix>*` pattern:
+        // git matches ref patterns with `*` stopping at `/`, so the glob
+        // silently drops `<prefix>deep/inner` while the contract above says
+        // "starting with `prefix`". A listing that omits a leftover ref
+        // reports it as absent.
+        Ok(self
+            .list_local_branch_names(repo)?
+            .into_iter()
+            .filter(|n| n.as_str().starts_with(prefix))
             .collect())
     }
 
     fn list_local_branch_names(&self, repo: &Path) -> Result<Vec<RawRefName>, VcsError> {
+        // `lstrip=2`, not `short` — see `list_branch_names_with_prefix`.
         let output = Self::run(
-            &["for-each-ref", "--format=%(refname:short)", "refs/heads/"],
+            &[
+                "for-each-ref",
+                "--format=%(refname:lstrip=2)",
+                "refs/heads/",
+            ],
             repo,
         )?;
         Ok(output
@@ -2305,6 +2366,24 @@ mod branch_model_tests {
         git(p, &["add", "."]);
         git(p, &["commit", "-m", "one"]);
         tmp
+    }
+
+    /// A clone of `origin`, with the remote configured.
+    ///
+    /// Needed wherever a refusal is under test: git's `checkout.guess` only
+    /// invents a branch when a *configured* remote maps a tracking ref to
+    /// it, so a fixture that merely writes `refs/remotes/origin/x` by hand
+    /// would let the birth pass unobserved.
+    fn clone_of(origin: &Path) -> (tempfile::TempDir, PathBuf) {
+        let tmp = tempfile::tempdir().unwrap();
+        let dest = tmp.path().join("clone");
+        git(
+            tmp.path(),
+            &["clone", origin.to_str().unwrap(), dest.to_str().unwrap()],
+        );
+        git(&dest, &["config", "user.email", "t@t"]);
+        git(&dest, &["config", "user.name", "T"]);
+        (tmp, dest)
     }
 
     /// Commit a new file and return the resulting tip.
@@ -2635,16 +2714,88 @@ mod branch_model_tests {
     #[test]
     fn reattach_head_will_not_create_the_branch_it_attaches_to() {
         // Attaching to a branch that does not exist would be a birth, which
-        // has a different consent shape. git refuses, and the refusal is
-        // the point.
-        let p = repo();
-        let tip = GitVcs.head_revision(p.path()).unwrap();
-        git(p.path(), &["checkout", "--detach", tip.as_str()]);
-        let from = GitVcs.head_attachment(p.path()).unwrap();
+        // has a different consent shape. A bare repo with no remote, no tag
+        // and no colliding path proves nothing here — those are exactly the
+        // conditions under which git does something other than refuse — so
+        // the fixture has all three, and each name is one a manifest
+        // `version:` could plausibly declare.
+        let origin = repo();
+        git(origin.path(), &["branch", "feature"]);
+        let (_home, work) = clone_of(origin.path());
+        git(&work, &["tag", "tagname"]);
+        std::fs::create_dir(work.join("docs")).unwrap();
+        std::fs::write(work.join("docs/a.md"), "committed").unwrap();
+        git(&work, &["add", "."]);
+        git(&work, &["commit", "-m", "docs"]);
 
-        assert!(GitVcs
-            .reattach_head(from, &local("does-not-exist"), ReattachConsent::granted(),)
-            .is_err());
+        let tip = GitVcs.head_revision(&work).unwrap();
+        git(&work, &["checkout", "--detach", tip.as_str()]);
+        // An uncommitted edit to the colliding path. Pathspec mode reverts
+        // it, which is the data loss, so it is asserted after every case.
+        std::fs::write(work.join("docs/a.md"), "operator edit").unwrap();
+
+        for name in [
+            "feature", // refs/remotes/origin/feature — checkout.guess births
+            "tagname", // refs/tags/tagname — checkout detaches
+            "docs",    // a tracked path — checkout takes it as a pathspec
+            "nothing", // absent outright
+        ] {
+            let from = GitVcs.head_attachment(&work).unwrap();
+            let err = GitVcs
+                .reattach_head(from, &local(name), ReattachConsent::granted())
+                .unwrap_err();
+
+            assert_eq!(err.kind(), "command-failed", "{name}: expected a refusal");
+            assert!(
+                GitVcs
+                    .resolve_local_branch_tip(&work, &RawRefName::new(name))
+                    .unwrap()
+                    .is_none(),
+                "{name}: the refusal must not have created the branch"
+            );
+            assert!(
+                matches!(
+                    GitVcs.head_attachment(&work).unwrap(),
+                    HeadAttachment::Detached(_)
+                ),
+                "{name}: the refusal must leave HEAD where it was"
+            );
+            assert_eq!(
+                std::fs::read_to_string(work.join("docs/a.md")).unwrap(),
+                "operator edit",
+                "{name}: the refusal must not touch the working tree"
+            );
+        }
+    }
+
+    #[test]
+    fn reattach_head_still_attaches_when_a_tag_shares_the_branch_name() {
+        // The refusals above must not be bought by refusing everything: an
+        // existing branch is still attachable when a tag, a remote-tracking
+        // ref and a path all carry the same name.
+        let origin = repo();
+        git(origin.path(), &["branch", "shared"]);
+        let (_home, work) = clone_of(origin.path());
+        git(&work, &["branch", "shared", "origin/shared"]);
+        git(&work, &["tag", "shared"]);
+        std::fs::create_dir(work.join("shared")).unwrap();
+        std::fs::write(work.join("shared/f"), "x").unwrap();
+        git(&work, &["add", "."]);
+        git(&work, &["commit", "-m", "collide"]);
+
+        let tip = GitVcs.head_revision(&work).unwrap();
+        git(&work, &["checkout", "--detach", tip.as_str()]);
+        let from = GitVcs.head_attachment(&work).unwrap();
+
+        GitVcs
+            .reattach_head(from, &local("shared"), ReattachConsent::granted())
+            .unwrap();
+
+        assert_eq!(
+            GitVcs.head_attachment(&work).unwrap().to_string(),
+            "on branch 'shared'",
+            "the branch wins over the tag, the remote ref and the path"
+        );
     }
 
     // -----------------------------------------------------------------------

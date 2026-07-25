@@ -88,6 +88,16 @@ fn compile(snippet: &str) -> (bool, String) {
 /// Assert `snippet` fails to compile with exactly `code`, and say what it
 /// did instead when it does not.
 fn assert_fails_with(code: &str, what: &str, snippet: &str) {
+    assert_fails_n_times(code, 1, what, snippet);
+}
+
+/// As [`assert_fails_with`], but requiring `code` at least `n` times.
+///
+/// A snippet that violates the same invariant on both sides of an operator
+/// emits one error per side, and a `contains` check is satisfied by either
+/// one alone — so such a snippet keeps failing after half the invariant is
+/// gone. Where the count is the point, it is asserted.
+fn assert_fails_n_times(code: &str, n: usize, what: &str, snippet: &str) {
     let (compiled, stderr) = compile(snippet);
     assert!(
         !stderr.contains("error[E0514]"),
@@ -99,9 +109,10 @@ fn assert_fails_with(code: &str, what: &str, snippet: &str) {
         "{what}: expected {code}, but the snippet COMPILED — the invariant \
          is not enforced"
     );
+    let seen = stderr.matches(&format!("error[{code}]")).count();
     assert!(
-        stderr.contains(&format!("error[{code}]")),
-        "{what}: expected {code}, got:\n{stderr}"
+        seen >= n,
+        "{what}: expected {code} at least {n}x, saw it {seen}x in:\n{stderr}"
     );
 }
 
@@ -146,13 +157,51 @@ fn an_attached_ref_cannot_be_compared_with_a_tracking_ref() {
 }
 
 #[test]
+fn an_attached_ref_has_no_as_str() {
+    // One type per probe. The two-sided form below emits an error per side,
+    // and `AttachedRef::as_str()` alone would re-enable `push.rs:367` —
+    // which already holds a single-sided `.as_str()` on the value that
+    // becomes an `AttachedRef` — with the suite still green.
+    assert_fails_with(
+        "E0599",
+        "a witness is compared witness-to-witness, never as a string",
+        r#"
+        use repoweave::vcs::AttachedRef;
+        pub fn spell(attached: &AttachedRef) -> String {
+            attached.as_str().to_owned()
+        }
+        "#,
+    );
+}
+
+#[test]
+fn a_tracking_ref_has_no_as_str() {
+    // The other half. A declaration must be projected
+    // (`local_counterpart` / `on_remote`) before it can be compared, and
+    // the projection is the decision the string comparison was hiding.
+    assert_fails_with(
+        "E0599",
+        "a declaration must be projected, not spelled",
+        r#"
+        use repoweave::vcs::{RawRefName, TrackingRef};
+        pub fn spell() -> String {
+            let declared = TrackingRef::parse(RawRefName::new("main")).unwrap();
+            declared.as_str().to_owned()
+        }
+        "#,
+    );
+}
+
+#[test]
 fn the_comparison_cannot_be_laundered_through_as_str() {
     // This is the shipped spelling. `push.rs` compares with `.as_str()` on
     // both sides at two sites, so if these types carried `as_str()` the
     // lines would compile verbatim after the split and the whole exercise
-    // would report nothing.
-    assert_fails_with(
+    // would report nothing. Both sides must fail: one error left standing
+    // means the other type got its accessor back.
+    assert_fails_n_times(
         "E0599",
+        2,
         "as_str() must not exist on AttachedRef or TrackingRef",
         r#"
         use repoweave::vcs::{AttachedRef, RawRefName, TrackingRef};

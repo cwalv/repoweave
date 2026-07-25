@@ -171,13 +171,20 @@ const ALLOWLIST: &[Allowed] = &[
             first, or through advance_detached_head, which is a MOVE of an \
             already-detached HEAD and refuses when the repo is mid-op \
             (branch-model.md §3.6 — including mid-bisect). \
-            (4) attach_head_to: reattaches to an EXISTING local branch; no \
-            -b, so git refuses when the branch is absent (creating one \
-            would be a birth, a different operation with a different \
-            consent shape), and no -f. Reachable only through \
-            reattach_head, which requires a ReattachConsent minted from \
-            --reattach-checkouts and refuses when the observed HEAD state \
-            differs from the one the caller planned against.",
+            (4) attach_head_to: reattaches to an EXISTING local branch. \
+            Omitting -b does NOT make git refuse an absent branch — it \
+            invents one from a remote-tracking ref (checkout.guess), or \
+            detaches when the name is a tag's, or treats the name as a \
+            pathspec and reverts uncommitted edits to that path, all \
+            exiting 0. So the refusal is rwv's: the branch tip is resolved \
+            through refs/heads/<name> first and an absent branch is an \
+            error before git runs, with --no-guess and the -- terminator as \
+            defence in depth for the window after the check. No -f, so \
+            git's own refusal to overwrite modified paths still applies. \
+            Reachable only through reattach_head, which requires a \
+            ReattachConsent minted from --reattach-checkouts and refuses \
+            when the observed HEAD state differs from the one the caller \
+            planned against.",
     },
     Allowed {
         file: "git.rs",

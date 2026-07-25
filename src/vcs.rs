@@ -820,14 +820,16 @@ fn validate_ref_name(s: &str) -> Result<(), RefNameError> {
 /// }
 /// ```
 ///
-/// Nor can the comparison be laundered back through the parse boundary:
-/// neither side has `as_str()`.
+/// Nor can the comparison be laundered back through the parse boundary.
+/// The probe names **one** type: a two-sided `a.as_str() != b.as_str()`
+/// emits an error per side, so it keeps failing after either type regains
+/// the method and would pin neither.
 ///
 /// ```compile_fail
-/// use repoweave::vcs::{AttachedRef, RawRefName, TrackingRef};
-/// fn compare(attached: AttachedRef) {
+/// use repoweave::vcs::{RawRefName, TrackingRef};
+/// fn spell() -> String {
 ///     let declared = TrackingRef::parse(RawRefName::new("main")).unwrap();
-///     let _ = attached.as_str() != declared.as_str(); // E0599: no such method
+///     declared.as_str().to_owned() // E0599: no such method
 /// }
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -1109,6 +1111,19 @@ impl fmt::Display for OwnedRef {
 ///     repo: PathBuf::from("/tmp/repo"),
 ///     name: RawRefName::new("main"),
 /// }; // E0451: fields `repo` and `name` are private
+/// ```
+///
+/// Nor can it be read out as a string. This probe names only
+/// `AttachedRef`, so it starts passing the moment the method comes back —
+/// `push.rs` holds a one-sided `.as_str()` on the value that becomes one
+/// of these, so a two-sided probe would leave that site re-enabled and
+/// still green.
+///
+/// ```compile_fail
+/// use repoweave::vcs::AttachedRef;
+/// fn spell(attached: &AttachedRef) -> String {
+///     attached.as_str().to_owned() // E0599: no such method
+/// }
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AttachedRef {
@@ -2669,9 +2684,17 @@ pub trait Vcs {
     fn set_detached_head(&self, repo: &Path, to: &ResolvedRevisionId) -> Result<(), VcsError>;
 
     /// VCS-specific half of [`reattach_head`]: put `repo`'s HEAD on the
-    /// existing local branch `name`. Fails when no such branch exists —
-    /// creating one would be a birth, which is a different operation with
-    /// a different consent shape.
+    /// existing local branch `name`.
+    ///
+    /// **The impl must check that the branch exists and refuse when it does
+    /// not.** Creating one would be a birth, which is a different operation
+    /// with a different consent shape — and leaving the refusal to the VCS
+    /// is not enough. Git, asked to switch to a name it cannot find as a
+    /// local branch, will invent the branch from a remote-tracking ref of
+    /// the same name, or detach when the name is a tag's, or read the name
+    /// as a *path* and revert the operator's edits to it. All three exit 0.
+    /// A `LocalRefName` is a projection of a remote branch name, so the
+    /// first of those is the ordinary case, not a corner.
     ///
     /// [`reattach_head`]: Vcs::reattach_head
     fn attach_head_to(&self, repo: &Path, name: &LocalRefName) -> Result<(), VcsError>;

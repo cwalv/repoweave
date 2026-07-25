@@ -165,6 +165,54 @@ fn head_attachment_reports_detached_separately_from_unborn() {
 }
 
 #[test]
+fn head_attachment_names_the_branch_not_the_shortest_unambiguous_ref() {
+    // `git symbolic-ref --short HEAD` answers with the shortest name that
+    // is unambiguous *among all refs*, so a tag of the same name turns
+    // `main` into `heads/main`. Every witness minted in the repo would then
+    // carry a value that is not a branch name and does not round-trip.
+    let repo = repo_with_commit();
+    git(repo.path(), &["tag", "main"]);
+    assert_eq!(
+        git(repo.path(), &["symbolic-ref", "--short", "HEAD"]),
+        "heads/main",
+        "fixture really is ambiguous; without this the test proves nothing"
+    );
+
+    let observed = GitVcs.head_attachment(repo.path()).unwrap();
+
+    assert_eq!(observed.to_string(), "on branch 'main'");
+    let HeadAttachment::Attached(a) = &observed else {
+        panic!("expected Attached, got {observed:?}");
+    };
+    // The round trip is the property that matters: the name a witness
+    // carries has to be resolvable as a branch.
+    assert!(
+        GitVcs
+            .resolve_local_branch_tip(a.repo(), &RawRefName::new("main"))
+            .unwrap()
+            .is_some(),
+        "the observed name must resolve under refs/heads/"
+    );
+}
+
+#[test]
+fn a_symbolic_head_that_names_no_branch_is_an_error_not_an_attachment() {
+    // HEAD can be pointed outside `refs/heads/` by hand. That is none of
+    // the three attachment states, and reporting it as an attachment would
+    // put a non-branch name into a witness — the same corruption the
+    // abbreviation caused, arriving by a different route.
+    let repo = repo_with_commit();
+    git(repo.path(), &["symbolic-ref", "HEAD", "refs/foo/bar"]);
+
+    let err = GitVcs.head_attachment(repo.path()).unwrap_err();
+    assert_eq!(err.kind(), "command-failed");
+    assert!(
+        err.to_string().contains("refs/foo/bar"),
+        "the error should name what it found, got: {err}"
+    );
+}
+
+#[test]
 fn head_attachment_on_a_non_repo_is_not_a_detached_head() {
     // The shipped `current_ref` returned `Ok(None)` here, which is why
     // `rwv push` reported "is on a detached HEAD" for a directory with no
@@ -636,6 +684,13 @@ fn listings_return_observed_names() {
     git(repo.path(), &["branch", "p--ww"]);
     git(repo.path(), &["branch", "p--other"]);
     git(repo.path(), &["branch", "unrelated"]);
+    // A tag sharing a branch name, because `%(refname:short)` renders that
+    // branch as `heads/p--ww` — not a branch name, not matched by the
+    // prefix a caller asks for, and not resolvable under refs/heads/. A
+    // fixture without the collision cannot see the difference.
+    git(repo.path(), &["tag", "p--ww"]);
+    // Nested too: `lstrip=2` must drop exactly `refs/heads/`, no more.
+    git(repo.path(), &["branch", "p--deep/inner"]);
 
     let mut all: Vec<String> = GitVcs
         .list_local_branch_names(repo.path())
@@ -644,7 +699,10 @@ fn listings_return_observed_names() {
         .map(|n| n.as_str().to_owned())
         .collect();
     all.sort();
-    assert_eq!(all, ["main", "p--other", "p--ww", "unrelated"]);
+    assert_eq!(
+        all,
+        ["main", "p--deep/inner", "p--other", "p--ww", "unrelated"]
+    );
 
     let mut prefixed: Vec<String> = GitVcs
         .list_branch_names_with_prefix(repo.path(), "p--")
@@ -655,10 +713,23 @@ fn listings_return_observed_names() {
     prefixed.sort();
     assert_eq!(
         prefixed,
-        ["p--other", "p--ww"],
-        "flat names match a flat prefix; the shipped glob required a slash \
-         and so matched none of them"
+        ["p--deep/inner", "p--other", "p--ww"],
+        "\"starting with the prefix\" means exactly that: the shipped glob \
+         required a slash and matched none of these, and a `<prefix>*` \
+         pattern would still drop the nested one"
     );
+
+    // Every name a listing reports has to be usable as a branch name, or
+    // "what is left over" reads as "these do not exist".
+    for name in &prefixed {
+        assert!(
+            GitVcs
+                .resolve_local_branch_tip(repo.path(), &RawRefName::new(name.clone()))
+                .unwrap()
+                .is_some(),
+            "listed name {name:?} does not resolve under refs/heads/"
+        );
+    }
 }
 
 #[test]
