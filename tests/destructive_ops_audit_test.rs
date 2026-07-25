@@ -350,9 +350,26 @@ const ALLOWLIST: &[Allowed] = &[
     Allowed {
         file: "check.rs",
         pattern: "remove_file",
-        count: 1,
-        justification: "doctor --fix removing a dangling .rwv-active \
-            pointer (rwv-internal state, target project missing).",
+        count: 2,
+        justification: "(1) doctor --fix removing a dangling .rwv-active \
+            pointer (rwv-internal state, target project missing). \
+            (2) fix_weave_root_identity: doctor --fix removing the \
+            .rwv-active pointer from a weave root that also carries a \
+            .rwv-workweave marker (rwv-internal state). The precondition is \
+            established in FRONT of the delete, and by evidence the tree \
+            does not contain: classify_weave_root_identity emits the fixable \
+            RegisteredWorkweave sub-kind only when the marker names THIS \
+            workspace's primary AND that primary's .rwv-workweave-index \
+            records this exact directory as one of its workweaves. Under \
+            that precondition the pointer is provably redundant — the marker \
+            beside it and the registry entry above it each already name the \
+            project, which is the pointer's entire content — so the delete \
+            discards no fact that survives only here. Every other shape \
+            (unreadable marker, foreign primary, unregistered directory) \
+            takes the report-only Unwitnessed arm and --fix touches neither \
+            file: with no external witness, deleting one would be a guess, \
+            and the marker carries primary/parent values that do NOT exist \
+            elsewhere. The marker is never the file deleted.",
     },
     Allowed {
         file: "activate.rs",

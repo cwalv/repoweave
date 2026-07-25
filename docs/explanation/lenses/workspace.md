@@ -55,7 +55,9 @@ See [reference/roles](../../reference/roles.md) for the full definitions and the
 
 ## Activation: making the workspace coherent
 
-A weave can hold multiple projects. Only one is active at a time. The active project is what's named in `.rwv-active` at the weave root.
+A weave can hold multiple projects. Only one is active at a time. The active project is what's named in `.rwv-active` at the primary weave root.
+
+Selection is primary-only. A workweave's project is fixed when the workweave is created and cannot be switched, so a workweave root carries a `.rwv-workweave` marker naming its project *instead of* a pointer — the two files are mutually exclusive, and `rwv doctor` reports a root carrying both as a `weave-root-identity-conflict`.
 
 `rwv activate <project>` does three things:
 

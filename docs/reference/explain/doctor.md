@@ -107,11 +107,12 @@ parents, a scope only primary can name.
 **Workspace-rooted arms — the invoking weave is ignored.** Dangling-receipt
 retraction, the ref-ownership registry migration, the canonical-store
 migration and reattach arms, safe-class stale-branch deletion, the
-workweave-registry prune and adopt arms, the dangling-parent re-point, and
-the dangling-active-project clear all act on state the workspace holds in
-exactly one place, so they take the primary path unconditionally — from
-primary and from any workweave alike. This is not an oversight in the
-weave-scoping above; there is nothing weave-local for them to bind to:
+workweave-registry prune and adopt arms, the dangling-parent re-point, the
+dangling-active-project clear, and the weave-root-identity-conflict clear all
+act on state the workspace holds in exactly one place, so they take the
+primary path unconditionally — from primary and from any workweave alike.
+This is not an oversight in the weave-scoping above; there is nothing
+weave-local for them to bind to:
 
 - A workweave's `projects/<project>/` is a **linked worktree** of primary's
   clone, so `refs/heads/*` is one physical ref database shared by every
@@ -123,11 +124,52 @@ weave-scoping above; there is nothing weave-local for them to bind to:
   records which workweaves exist, live only in primary, at
   `projects/<project>/.rwv-workweave-index` — an untracked, primary-local
   file. A workweave has no copy to write instead.
-- The active-project pointer is a primary-only selector. A workweave root
-  carries a `.rwv-active` file too, but nothing reads it: inside a workweave
-  the project is structural, fixed by the `.rwv-workweave` marker at creation
-  time, and no ambient pointer is consulted. Clearing a dangling selector
-  therefore has exactly one file to clear.
+- The active-project pointer is a primary-only selector, and the only place it
+  exists. `.rwv-active` and `.rwv-workweave` name the same fact — which
+  project a tree belongs to — and are **mutually exclusive**: a primary root
+  carries the pointer, a workweave root carries the marker, never both. So a
+  dangling selector has exactly one file to clear, and no per-weave copy to
+  choose between.
+
+### The exclusivity rule, and the arm that enforces it
+
+Because the two files are mutually exclusive, they are one tier of the
+project-resolution chain rather than two ranked ones:
+
+```
+--project > -w prefix > (.rwv-active | .rwv-workweave)
+```
+
+Nothing about a directory's *shape* distinguishes a primary root from a
+workweave root — both hold `projects/` and registry directories — so the
+identity file is the whole of the distinction, and a tree carrying both has
+two answers with nothing keeping them in agreement. `rwv doctor` reports that
+as `weave-root-identity-conflict`.
+
+`--fix` repairs one of its two sub-kinds, and the split is not symmetric:
+
+- **`registered-workweave`** — the marker names this workspace's primary, and
+  that primary's `.rwv-workweave-index` records this exact directory as one of
+  its workweaves. Evidence held *outside* the tree settles the identity, so
+  the pointer is provably the redundant copy. `--fix` deletes `.rwv-active`
+  and leaves the marker.
+- **`unwitnessed`** — the marker is unreadable, or names a different primary,
+  or names this primary but no registry entry points back at this directory
+  (the usual cause: a workweave copied with `cp -r`, whose registry entry
+  still names the original). Report-only. Deleting either file would be a
+  guess, and the marker in particular carries `primary` and `parent` values
+  that exist nowhere else.
+
+The discriminator is deliberately the registry and not "does this tree contain
+a `.rwv-workweave-index`". That looks like a primary-ness signature and is not
+one: the index is untracked, so whether a workweave inherits a copy depends on
+whether its `projects/<project>/` is a linked worktree or a plain directory
+copy — a topology accident rather than a fact about identity.
+
+Like the other arms in this class, the scan starts from primary
+unconditionally: `--fix` run inside workweave A will clear a stray pointer in
+sibling workweave B, because the registry that classifies both lives only at
+primary.
 
 **Acting on another weave's refs is a policy, not a consequence of the
 above.** Sharing the ref database forces these arms to *see* every weave's
@@ -163,10 +205,10 @@ severity. Under `--json`, output is the envelope:
 ```
 
 The `$schema` URL points to the committed schema artifact. Variants are
-discriminated by the `kind` tag — `branch-discipline`, `cargo-patch-shadowing`, `cargo-version-skew`, `clone-topology`, `dangling-active-project`, `dangling-ref-receipt`, `dangling-reference`, `dead-op-lease`, `incomplete-lock`, `index-drift`, `legacy-role-primary`, `legacy-workweave-index`, `legacy-workweave-marker`, `missing-canonical-clone`, `missing-replay-exclusion`, `missing-role`, `orphaned-clone`, `orphaned-savepoint`, `pre-flat-ref-receipt`, `provenance`, `stale-lock`, `stale-op-state`, `stale-worktree-registration`, `uninitialized-submodule`, `unparseable-project`, `working-tree-drift`, `workweave-drift`, `workweave-tree-integrity`.
+discriminated by the `kind` tag — `branch-discipline`, `cargo-patch-shadowing`, `cargo-version-skew`, `clone-topology`, `dangling-active-project`, `dangling-ref-receipt`, `dangling-reference`, `dead-op-lease`, `incomplete-lock`, `index-drift`, `legacy-role-primary`, `legacy-workweave-index`, `legacy-workweave-marker`, `missing-canonical-clone`, `missing-replay-exclusion`, `missing-role`, `orphaned-clone`, `orphaned-savepoint`, `pre-flat-ref-receipt`, `provenance`, `stale-lock`, `stale-op-state`, `stale-worktree-registration`, `uninitialized-submodule`, `unparseable-project`, `weave-root-identity-conflict`, `working-tree-drift`, `workweave-drift`, `workweave-tree-integrity`.
 Every per-repo variant carries `path` (manifest-relative) and
 `absolute_path` (fully resolved). Variants with subkinds
-(`branch-discipline`, `clone-topology`, `dead-op-lease`, `index-drift`, `orphaned-savepoint`, `provenance`, `working-tree-drift`, `workweave-drift`, `workweave-tree-integrity`) carry an additional `sub_kind` field.
+(`branch-discipline`, `clone-topology`, `dead-op-lease`, `index-drift`, `orphaned-savepoint`, `provenance`, `weave-root-identity-conflict`, `working-tree-drift`, `workweave-drift`, `workweave-tree-integrity`) carry an additional `sub_kind` field.
 `legacy-role-primary` carries `project` and
 `manifest_path` so the caller can locate the file `--fix` will rewrite.
 `workweave-tree-integrity` carries `workweave_dir` and a `sub_kind`
@@ -1241,6 +1283,36 @@ Schema:
           "type": "object",
           "required": [
             "kind",
+            "root",
+            "sub_kind"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "weave-root-identity-conflict"
+              ]
+            },
+            "pointer_project": {
+              "description": "The project named by `.rwv-active`; absent when that file is empty or unreadable.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "root": {
+              "description": "Absolute path of the weave root carrying both identity files.",
+              "type": "string"
+            },
+            "sub_kind": {
+              "$ref": "#/definitions/WeaveRootIdentityConflictKind"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "kind",
             "marker_path",
             "primary"
           ],
@@ -1775,6 +1847,60 @@ Schema:
               "type": "string"
             }
           }
+        }
+      ]
+    },
+    "WeaveRootIdentityConflictKind": {
+      "description": "Discriminator for `CheckViolation::WeaveRootIdentityConflict` findings: whether anything outside the tree settles which of its two identity files is the true one.\n\nThe split is not symmetric, and deliberately so. The naive reading — \"a workweave's stray pointer is safe to delete, a primary's stray marker is not\" — cannot be implemented, because it presumes we already know which kind of root this is, and the marker's presence is the only witness of that. Primary-ness has no independent signature: a primary root and a workweave root both hold `projects/` and registry directories. So the question \"which file is the stray?\" is exactly the question the conflict makes unanswerable from the tree alone, and the discriminator has to come from somewhere else.\n\nThe registry is that somewhere else. It lives at `<primary>/projects/<project>/.rwv-workweave-index`, is written only by `rwv workweave create`, and records the absolute path of every workweave it made. A tree the registry names is a workweave on the authority of a file the tree does not contain and could not have forged by being copied.\n\nNote what is deliberately NOT used as the discriminator: whether the tree itself contains a `.rwv-workweave-index`. That looks like a primary-ness signature and is not one. The index is untracked, so whether a workweave inherits a copy depends on whether its `projects/<project>/` is a linked worktree (it is not copied) or a plain directory copy (it is) — a topology accident, not a fact about identity. Keying on it would classify real workweaves as unwitnessed in the copy topology and leave their stray pointers unfixable.",
+      "oneOf": [
+        {
+          "description": "The marker names THIS workspace's primary, and that primary's registry for the marker's project records THIS exact directory. External evidence settles it: the tree is a workweave, so `.rwv-active` is the redundant copy and deleting it destroys nothing the marker and the registry do not already say. Auto-fixable — `--fix` deletes the pointer and leaves the marker.",
+          "type": "object",
+          "required": [
+            "registered-workweave"
+          ],
+          "properties": {
+            "registered-workweave": {
+              "type": "object",
+              "required": [
+                "project",
+                "workweave_name"
+              ],
+              "properties": {
+                "project": {
+                  "description": "Project the marker names (and under whose registry it is recorded).",
+                  "type": "string"
+                },
+                "workweave_name": {
+                  "description": "Name the registry records this directory under.",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "description": "Nothing outside the tree settles which file is the stray: the marker is unreadable, or names a different primary, or names this primary but no registry entry points back at this directory. Report-only. Deleting either file here would be a guess, and the wrong guess destroys operator state — the marker in particular carries `primary` and `parent` values that exist nowhere else.\n\nThe most likely cause of the last shape is a workweave copied out-of-band (`cp -r`): the copy carries both files, and the registry still names only the original.",
+          "type": "object",
+          "required": [
+            "unwitnessed"
+          ],
+          "properties": {
+            "unwitnessed": {
+              "type": "object",
+              "required": [
+                "detail"
+              ],
+              "properties": {
+                "detail": {
+                  "description": "Why no external evidence was found, in operator-facing terms.",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "additionalProperties": false
         }
       ]
     },

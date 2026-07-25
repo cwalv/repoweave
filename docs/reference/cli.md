@@ -393,10 +393,13 @@ Project-scoped verbs (`add`, `remove`, `lock`, `update`, `push`, `sync`, `sync-t
 
 1. `--project <name>` — the explicit override on the invocation.
 2. `-w/--workweave <project>--<name>` — the `<project>--` prefix of the global workweave-selector flag names the project.
-3. `.rwv-workweave` marker — when CWD resolves inside a workweave, the marker file names the project structurally. No ambient pointer is consulted.
-4. `.rwv-active` pointer — the workspace-root file that `rwv activate` maintains, used when no earlier step decided.
+3. The weave root's own identity file — **one tier**, whose spelling follows the kind of root CWD resolved into:
+   - `.rwv-workweave` marker, when CWD resolves inside a workweave. The marker names the project structurally.
+   - `.rwv-active` pointer at a primary root — the file `rwv activate` maintains.
 
-The pointer is total by construction: every path that creates a project also activates it (`rwv init`, `rwv fetch <source>`, and `rwv workweave <project> create <name>` each write `.rwv-active` as part of their normal execution). A missing or stale pointer therefore only arises from hand surgery — and produces a corrective error, not silent structure inference.
+Step 3 is one tier rather than two ranked ones because the two files are **mutually exclusive**: a primary root carries the pointer, a workweave root carries the marker, never both. No invocation ever sees both answers, so there is no precedence between them to get wrong. `rwv doctor` enforces the exclusivity, reporting a root carrying both as a `weave-root-identity-conflict`.
+
+The pointer is total at primary by construction: every path that creates a project also activates it (`rwv init` and `rwv fetch <source>` each write `.rwv-active` as part of their normal execution). A missing or stale pointer therefore only arises from hand surgery — and produces a corrective error, not silent structure inference. `rwv workweave <project> create <name>` writes only the marker: a workweave's project is fixed at creation and cannot be switched, so there is no selection for a pointer to record.
 
 ### Target line — visibility when the pointer decides
 

@@ -1043,6 +1043,36 @@
           "type": "object",
           "required": [
             "kind",
+            "root",
+            "sub_kind"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "weave-root-identity-conflict"
+              ]
+            },
+            "pointer_project": {
+              "description": "The project named by `.rwv-active`; absent when that file is empty or unreadable.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "root": {
+              "description": "Absolute path of the weave root carrying both identity files.",
+              "type": "string"
+            },
+            "sub_kind": {
+              "$ref": "#/definitions/WeaveRootIdentityConflictKind"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "kind",
             "marker_path",
             "primary"
           ],
@@ -1577,6 +1607,60 @@
               "type": "string"
             }
           }
+        }
+      ]
+    },
+    "WeaveRootIdentityConflictKind": {
+      "description": "Discriminator for [`CheckViolation::WeaveRootIdentityConflict`] findings: whether anything outside the tree settles which of its two identity files is the true one.\n\nThe split is not symmetric, and deliberately so. The naive reading — \"a workweave's stray pointer is safe to delete, a primary's stray marker is not\" — cannot be implemented, because it presumes we already know which kind of root this is, and the marker's presence is the only witness of that. Primary-ness has no independent signature: a primary root and a workweave root both hold `projects/` and registry directories. So the question \"which file is the stray?\" is exactly the question the conflict makes unanswerable from the tree alone, and the discriminator has to come from somewhere else.\n\nThe registry is that somewhere else. It lives at `<primary>/projects/<project>/.rwv-workweave-index`, is written only by `rwv workweave create`, and records the absolute path of every workweave it made. A tree the registry names is a workweave on the authority of a file the tree does not contain and could not have forged by being copied.\n\nNote what is deliberately NOT used as the discriminator: whether the tree itself contains a `.rwv-workweave-index`. That looks like a primary-ness signature and is not one. The index is untracked, so whether a workweave inherits a copy depends on whether its `projects/<project>/` is a linked worktree (it is not copied) or a plain directory copy (it is) — a topology accident, not a fact about identity. Keying on it would classify real workweaves as unwitnessed in the copy topology and leave their stray pointers unfixable.",
+      "oneOf": [
+        {
+          "description": "The marker names THIS workspace's primary, and that primary's registry for the marker's project records THIS exact directory. External evidence settles it: the tree is a workweave, so `.rwv-active` is the redundant copy and deleting it destroys nothing the marker and the registry do not already say. Auto-fixable — `--fix` deletes the pointer and leaves the marker.",
+          "type": "object",
+          "required": [
+            "registered-workweave"
+          ],
+          "properties": {
+            "registered-workweave": {
+              "type": "object",
+              "required": [
+                "project",
+                "workweave_name"
+              ],
+              "properties": {
+                "project": {
+                  "description": "Project the marker names (and under whose registry it is recorded).",
+                  "type": "string"
+                },
+                "workweave_name": {
+                  "description": "Name the registry records this directory under.",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "description": "Nothing outside the tree settles which file is the stray: the marker is unreadable, or names a different primary, or names this primary but no registry entry points back at this directory. Report-only. Deleting either file here would be a guess, and the wrong guess destroys operator state — the marker in particular carries `primary` and `parent` values that exist nowhere else.\n\nThe most likely cause of the last shape is a workweave copied out-of-band (`cp -r`): the copy carries both files, and the registry still names only the original.",
+          "type": "object",
+          "required": [
+            "unwitnessed"
+          ],
+          "properties": {
+            "unwitnessed": {
+              "type": "object",
+              "required": [
+                "detail"
+              ],
+              "properties": {
+                "detail": {
+                  "description": "Why no external evidence was found, in operator-facing terms.",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "additionalProperties": false
         }
       ]
     },

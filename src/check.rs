@@ -114,6 +114,28 @@ pub enum CheckViolation {
         missing_dir: PathBuf,
     },
 
+    /// A weave root carries BOTH `.rwv-active` and `.rwv-workweave`.
+    ///
+    /// The two files name the same fact — which project this tree belongs to
+    /// — and are mutually exclusive by design, occupying one tier of the
+    /// resolution chain rather than two: a primary root carries the pointer,
+    /// a workweave root carries the marker. A tree holding both holds two
+    /// copies of its own identity with nothing keeping them in agreement.
+    ///
+    /// Fixability turns on evidence held OUTSIDE the tree, because the two
+    /// files are themselves the ambiguity — see
+    /// [`WeaveRootIdentityConflictKind`].
+    WeaveRootIdentityConflict {
+        /// The weave root carrying both files.
+        root: PathBuf,
+        /// The project named by `.rwv-active`, when that file is non-empty.
+        /// `None` for an empty or unreadable pointer, which is still a
+        /// present file and still a conflict.
+        pointer_project: Option<ProjectName>,
+        /// Whether anything outside the tree settles its identity.
+        sub_kind: WeaveRootIdentityConflictKind,
+    },
+
     /// A `.rwv-workweave` marker file is missing the required `parent:` field
     /// (written before parent tracking landed). Auto-fixable: append
     /// `parent: <primary value>` to the file on disk.
@@ -517,6 +539,65 @@ pub enum WorkingTreeDriftKind {
     /// At least one modified file has on-disk content not found in any recent
     /// ancestor's tree. The user has active edits; `--fix` must not touch this.
     LiveEdits,
+}
+
+/// Discriminator for [`CheckViolation::WeaveRootIdentityConflict`] findings:
+/// whether anything outside the tree settles which of its two identity files
+/// is the true one.
+///
+/// The split is not symmetric, and deliberately so. The naive reading — "a
+/// workweave's stray pointer is safe to delete, a primary's stray marker is
+/// not" — cannot be implemented, because it presumes we already know which
+/// kind of root this is, and the marker's presence is the only witness of
+/// that. Primary-ness has no independent signature: a primary root and a
+/// workweave root both hold `projects/` and registry directories. So the
+/// question "which file is the stray?" is exactly the question the conflict
+/// makes unanswerable from the tree alone, and the discriminator has to come
+/// from somewhere else.
+///
+/// The registry is that somewhere else. It lives at
+/// `<primary>/projects/<project>/.rwv-workweave-index`, is written only by
+/// `rwv workweave create`, and records the absolute path of every workweave
+/// it made. A tree the registry names is a workweave on the authority of a
+/// file the tree does not contain and could not have forged by being copied.
+///
+/// Note what is deliberately NOT used as the discriminator: whether the tree
+/// itself contains a `.rwv-workweave-index`. That looks like a primary-ness
+/// signature and is not one. The index is untracked, so whether a workweave
+/// inherits a copy depends on whether its `projects/<project>/` is a linked
+/// worktree (it is not copied) or a plain directory copy (it is) — a
+/// topology accident, not a fact about identity. Keying on it would classify
+/// real workweaves as unwitnessed in the copy topology and leave their stray
+/// pointers unfixable.
+#[derive(Debug, Serialize, JsonSchema, Clone)]
+#[serde(rename_all = "kebab-case")]
+pub enum WeaveRootIdentityConflictKind {
+    /// The marker names THIS workspace's primary, and that primary's registry
+    /// for the marker's project records THIS exact directory. External
+    /// evidence settles it: the tree is a workweave, so `.rwv-active` is the
+    /// redundant copy and deleting it destroys nothing the marker and the
+    /// registry do not already say. Auto-fixable — `--fix` deletes the
+    /// pointer and leaves the marker.
+    RegisteredWorkweave {
+        /// Project the marker names (and under whose registry it is recorded).
+        project: String,
+        /// Name the registry records this directory under.
+        workweave_name: String,
+    },
+    /// Nothing outside the tree settles which file is the stray: the marker
+    /// is unreadable, or names a different primary, or names this primary but
+    /// no registry entry points back at this directory. Report-only. Deleting
+    /// either file here would be a guess, and the wrong guess destroys
+    /// operator state — the marker in particular carries `primary` and
+    /// `parent` values that exist nowhere else.
+    ///
+    /// The most likely cause of the last shape is a workweave copied
+    /// out-of-band (`cp -r`): the copy carries both files, and the registry
+    /// still names only the original.
+    Unwitnessed {
+        /// Why no external evidence was found, in operator-facing terms.
+        detail: String,
+    },
 }
 
 /// Discriminator for [`CheckViolation::WorkweaveTreeIntegrity`] findings.
@@ -1077,6 +1158,15 @@ pub enum ViolationOutput {
         project: String,
         missing_dir: String,
     },
+    WeaveRootIdentityConflict {
+        /// Absolute path of the weave root carrying both identity files.
+        root: String,
+        /// The project named by `.rwv-active`; absent when that file is
+        /// empty or unreadable.
+        pointer_project: Option<String>,
+        #[serde(rename = "sub_kind")]
+        sub_kind: WeaveRootIdentityConflictKind,
+    },
     LegacyWorkweaveMarker {
         marker_path: String,
         primary: String,
@@ -1369,6 +1459,15 @@ impl ViolationOutput {
             } => Self::DanglingActiveProject {
                 project: project.to_string(),
                 missing_dir: missing_dir.to_string_lossy().into_owned(),
+            },
+            CheckViolation::WeaveRootIdentityConflict {
+                root,
+                pointer_project,
+                sub_kind,
+            } => Self::WeaveRootIdentityConflict {
+                root: root.to_string_lossy().into_owned(),
+                pointer_project: pointer_project.map(|p| p.to_string()),
+                sub_kind,
             },
             CheckViolation::LegacyWorkweaveMarker {
                 marker_path,
@@ -2175,6 +2274,147 @@ pub fn fix_stale_registry_entry(
 /// Workweave containers are enumerated per project (every recorded
 /// container, plus the compiled-in default), so per-workweave placement
 /// overrides get coverage.
+/// Scan for weave roots carrying BOTH `.rwv-active` and `.rwv-workweave`.
+///
+/// `.rwv-active` and `.rwv-workweave` occupy one tier of the resolution
+/// chain, not two: a primary root carries the pointer, a workweave root
+/// carries the marker, never both. rwv itself no longer writes a pointer into
+/// a workweave root, so a tree holding both got there some other way — a hand
+/// edit, an out-of-band directory copy, or a workweave created by a build
+/// from before the exclusivity rule. This scan is what makes the rule
+/// enforced rather than merely intended.
+///
+/// **Which roots are inspected.** `primary_root` itself, `active_path` (the
+/// weave the invocation resolved into, which is the only way a tree outside
+/// every recorded container gets looked at), and every directory in every
+/// container recorded for this workspace. Deduplicated by canonical path, so
+/// one `rwv doctor` at primary covers the whole workspace in a single pass.
+///
+/// **Which arm class this is.** Workspace-rooted: the scan starts from
+/// `primary_root` unconditionally and repairs whichever tree holds the
+/// conflict, so `--fix` run inside workweave A will clear a stray pointer in
+/// sibling workweave B. That is the same scoping the registry, dangling-parent
+/// and dangling-active-project arms already have, and for the same reason —
+/// the evidence that classifies a tree (the registry) lives only at primary,
+/// so there is no per-weave view of it to bind to.
+fn scan_weave_root_identity(primary_root: &Path, active_path: &Path) -> Vec<CheckViolation> {
+    let mut roots: Vec<PathBuf> = vec![primary_root.to_path_buf(), active_path.to_path_buf()];
+    for container in workweave_containers_for_scan(primary_root) {
+        if let Ok(entries) = std::fs::read_dir(&container) {
+            for e in entries.flatten() {
+                if e.path().is_dir() {
+                    roots.push(e.path());
+                }
+            }
+        }
+    }
+
+    let mut seen: BTreeSet<PathBuf> = BTreeSet::new();
+    let mut violations = Vec::new();
+    for root in roots {
+        let canonical = root.canonicalize().unwrap_or_else(|_| root.clone());
+        if !seen.insert(canonical.clone()) {
+            continue;
+        }
+        if let Some(v) = classify_weave_root_identity(primary_root, &canonical) {
+            violations.push(v);
+        }
+    }
+    violations.sort_by_key(|v| match v {
+        CheckViolation::WeaveRootIdentityConflict { root, .. } => root.clone(),
+        _ => PathBuf::new(),
+    });
+    violations
+}
+
+/// Classify one candidate root: `None` when it does not carry both files.
+///
+/// Existence tests, not parses, decide whether there is a conflict at all —
+/// an empty pointer or a legacy marker is still a present file and still two
+/// copies of one fact. Parsing only decides the sub-kind.
+fn classify_weave_root_identity(primary_root: &Path, root: &Path) -> Option<CheckViolation> {
+    use crate::workspace::{
+        read_active_project, WorkweaveMarker, ACTIVE_PROJECT_FILE, WORKWEAVE_MARKER_FILE,
+    };
+
+    if !root.join(ACTIVE_PROJECT_FILE).exists() || !root.join(WORKWEAVE_MARKER_FILE).exists() {
+        return None;
+    }
+    let pointer_project = read_active_project(root);
+
+    let unwitnessed = |detail: String| CheckViolation::WeaveRootIdentityConflict {
+        root: root.to_path_buf(),
+        pointer_project: pointer_project.clone(),
+        sub_kind: WeaveRootIdentityConflictKind::Unwitnessed { detail },
+    };
+
+    // The marker has to be readable to name the project whose registry could
+    // vouch for this directory. A legacy marker (missing `parent:`) is
+    // refused by `read`, and doctor reports it separately with its own
+    // `--fix`; until that runs there is no project name to look up here.
+    let marker = match WorkweaveMarker::read(root) {
+        Ok(Some(m)) => m,
+        Ok(None) | Err(_) => {
+            return Some(unwitnessed(
+                "The `.rwv-workweave` marker cannot be read, so no registry entry can be \
+                 looked up for it."
+                    .to_string(),
+            ))
+        }
+    };
+
+    let primary_canonical = primary_root
+        .canonicalize()
+        .unwrap_or_else(|_| primary_root.to_path_buf());
+    let marker_primary_canonical = marker
+        .primary
+        .canonicalize()
+        .unwrap_or_else(|_| marker.primary.clone());
+    if marker_primary_canonical != primary_canonical {
+        return Some(unwitnessed(format!(
+            "The marker names primary `{}`, which is not this workspace, so this \
+             workspace's registry has no say over it.",
+            marker.primary.display()
+        )));
+    }
+
+    // The registry entry is the external witness: it lives at
+    // `<primary>/projects/<project>/.rwv-workweave-index`, is written only by
+    // `rwv workweave create`, and names this directory by absolute path.
+    let recorded = crate::workweave_index::read(primary_root, &marker.project)
+        .ok()
+        .flatten()
+        .and_then(|idx| {
+            idx.workweaves
+                .into_iter()
+                .find(|(_, path)| path.canonicalize().unwrap_or_else(|_| path.clone()) == *root)
+        });
+
+    match recorded {
+        Some((workweave_name, _)) => Some(CheckViolation::WeaveRootIdentityConflict {
+            root: root.to_path_buf(),
+            pointer_project,
+            sub_kind: WeaveRootIdentityConflictKind::RegisteredWorkweave {
+                project: marker.project.to_string(),
+                workweave_name,
+            },
+        }),
+        None => Some(unwitnessed(format!(
+            "The marker names project `{}` of this workspace, but that project's registry \
+             does not record this directory — most likely a workweave copied out-of-band \
+             (`cp -r`), whose registry entry still names the original.",
+            marker.project
+        ))),
+    }
+}
+
+/// Delete the redundant `.rwv-active` at a registered workweave root.
+fn fix_weave_root_identity(root: &Path) -> anyhow::Result<()> {
+    let pointer = root.join(crate::workspace::ACTIVE_PROJECT_FILE);
+    std::fs::remove_file(&pointer)
+        .with_context(|| format!("failed to remove {}", pointer.display()))
+}
+
 pub fn scan_workweave_tree_integrity(ws_root: &Path) -> Vec<CheckViolation> {
     let ws_canonical = ws_root
         .canonicalize()
@@ -5271,6 +5511,39 @@ pub fn violations_to_issues(violations: Vec<CheckViolation>) -> Vec<Issue> {
                         missing_dir.display()
                     ),
                 ),
+                CheckViolation::WeaveRootIdentityConflict {
+                    root,
+                    pointer_project,
+                    sub_kind,
+                } => {
+                    let pointer = match &pointer_project {
+                        Some(p) => format!("names `{p}`"),
+                        None => "is empty".to_string(),
+                    };
+                    let msg = match &sub_kind {
+                        WeaveRootIdentityConflictKind::RegisteredWorkweave {
+                            project,
+                            workweave_name,
+                        } => format!(
+                            "{}: carries both `.rwv-active` (which {pointer}) and \
+                             `.rwv-workweave`; the two are mutually exclusive. This directory \
+                             is recorded as workweave `{workweave_name}` of project \
+                             `{project}`, so the marker is authoritative and the pointer is \
+                             an unread duplicate; run `rwv doctor --fix` to delete \
+                             `.rwv-active` here (the marker is left alone)",
+                            root.display()
+                        ),
+                        WeaveRootIdentityConflictKind::Unwitnessed { detail } => format!(
+                            "{}: carries both `.rwv-active` (which {pointer}) and \
+                             `.rwv-workweave`; the two are mutually exclusive. {detail} \
+                             Nothing outside this directory says which file is the stray, so \
+                             `--fix` does not touch either — delete the one you know to be \
+                             wrong by hand",
+                            root.display()
+                        ),
+                    };
+                    (crate::integration::Severity::Error, msg)
+                }
                 CheckViolation::WorkweaveTreeIntegrity {
                     workweave_dir,
                     sub_kind,
@@ -6680,6 +6953,39 @@ pub fn run_check(
         });
     }
 
+    // Weave-root identity: a root carrying BOTH `.rwv-active` and
+    // `.rwv-workweave`. Only the registered-workweave arm is fixable — see
+    // `WeaveRootIdentityConflictKind` for why the split is not symmetric.
+    let mut weave_root_identity_fix_errors: Vec<String> = Vec::new();
+    for v in scan_weave_root_identity(ctx.primary_path(), ctx.active_path()) {
+        match &v {
+            CheckViolation::WeaveRootIdentityConflict {
+                root,
+                sub_kind:
+                    WeaveRootIdentityConflictKind::RegisteredWorkweave {
+                        project,
+                        workweave_name,
+                    },
+                ..
+            } if fix => match fix_weave_root_identity(root) {
+                Ok(()) => println!(
+                    "[fixed] core: deleted `.rwv-active` at {} \
+                     (redundant with the `.rwv-workweave` marker of registered workweave \
+                     `{workweave_name}` in project `{project}`; the marker is unchanged)",
+                    root.display()
+                ),
+                Err(e) => {
+                    weave_root_identity_fix_errors.push(format!(
+                        "weave-root-identity-conflict fix failed for {}: {e}",
+                        root.display()
+                    ));
+                    violations.push(v);
+                }
+            },
+            _ => violations.push(v),
+        }
+    }
+
     // Workweave-tree integrity: dangling parent, chain anomalies, unregistered
     // dirs, foreign-primary markers, plus the registry reconciliation
     // findings (`stale-registry-entry`, `unregistered-workweave`,
@@ -7079,6 +7385,15 @@ pub fn run_check(
             integration: "core".into(),
             severity: Severity::Error,
             message: format!("dangling-parent --fix failed: {msg}"),
+            safe_to_fix: true,
+        });
+    }
+
+    for msg in weave_root_identity_fix_errors {
+        all_issues.push(Issue {
+            integration: "core".into(),
+            severity: Severity::Error,
+            message: msg,
             safe_to_fix: true,
         });
     }
@@ -8035,6 +8350,14 @@ fn collect_doctor_violations(
             }
         }
     }
+
+    // Weave-root identity conflicts: report both arms. The JSON channel
+    // never auto-fixes, so the registered-workweave arm is reported here
+    // rather than repaired; `--fix` is `run_check`'s.
+    violations.extend(scan_weave_root_identity(
+        ctx.primary_path(),
+        ctx.active_path(),
+    ));
 
     // Unparseable manifests: surface as violations in the JSON channel too.
     for (project, manifest_path, message) in unparseable_projects_json {

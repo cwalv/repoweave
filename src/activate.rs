@@ -15,14 +15,18 @@
 //!    paths under a `projects/` ancestor).
 //! 3. Creating new symlinks at the workspace root pointing to the owned
 //!    files in the project directory.
-//! 4. Writing `.rwv-active`.
+//! 4. Writing `.rwv-active` — **at a primary root only**. A workweave root's
+//!    project is structural, fixed by its `.rwv-workweave` marker at
+//!    creation; the two files are mutually exclusive, so step 4 is skipped
+//!    for a workweave root and steps 1–3 (which are weave-agnostic) are the
+//!    whole of what `activate_workweave` does.
 //!
 //! **Regeneration** — intent mode — is a different operation on a different
 //! scope: integrations author their managed/generated files into the target
 //! project's own directory and `.rwv-active` is left alone, so `--project`
 //! acts on a project without switching to it. Steps 1–3 re-run only when the
-//! target is already the selected project, whose owned-file union the
-//! regeneration may have changed.
+//! target is already the project the weave root presents, whose owned-file
+//! union the regeneration may have changed.
 //!
 //! `deactivate` removes the symlinks and `.rwv-active`.
 
@@ -37,7 +41,8 @@ use crate::integrations::builtin_integrations;
 use crate::manifest::{IntegrationConfig, Manifest, ProjectName};
 use crate::registry::builtin_registries;
 use crate::workspace::{
-    read_active_project, set_active_project, Checkout, WorkspaceContext, WorkspaceSession,
+    is_workweave_root, read_weave_root_project, set_active_project, Checkout, WorkspaceContext,
+    WorkspaceSession,
 };
 
 /// Which class of verb is driving activation.
@@ -268,12 +273,21 @@ fn activate_at(
         }
     }
 
-    // Everything below acts on the weave ROOT, and `.rwv-active` names which
-    // project the root presents. Intent mode regenerates a project's content
-    // without choosing it, so it touches the root only when the target is
-    // already the selected project — whose owned-file union the regeneration
-    // it just ran may have changed.
-    if mode == ActivationMode::Intent && read_active_project(root).as_ref() != Some(&project_name) {
+    // Everything below acts on the weave ROOT. Which project the root
+    // presents comes from `read_weave_root_project` — the single tier of the
+    // resolution chain, answering from `.rwv-workweave` in a workweave root
+    // and from `.rwv-active` at primary. Reading the pointer directly here
+    // would be wrong in a workweave, whose root carries no pointer: every
+    // intent verb (`add`, `remove`, `update`) and `doctor --fix` run inside
+    // one would take the early return below and silently skip surfacing.
+    //
+    // Intent mode regenerates a project's content without choosing it, so it
+    // touches the root only when the target is already the project the root
+    // presents — whose owned-file union the regeneration it just ran may have
+    // changed.
+    if mode == ActivationMode::Intent
+        && read_weave_root_project(root).as_ref() != Some(&project_name)
+    {
         return Ok(());
     }
 
@@ -297,7 +311,22 @@ fn activate_at(
         report_and_check_activate_hook_issues(&hook_issues)?;
     }
 
-    if mode == ActivationMode::Context {
+    // Project SELECTION — write the `.rwv-active` pointer. Primary-only, and
+    // this is the sole write path for it in rwv.
+    //
+    // A workweave root must not get one. Its project is structural, fixed by
+    // `.rwv-workweave` at creation, and the two files are mutually exclusive:
+    // one tier of the resolution chain, not two. A pointer here would be a
+    // second copy of the workweave's own identity that nothing reads and
+    // nothing keeps in agreement with the marker — the state `rwv doctor`
+    // reports as `weave-root-identity-conflict`.
+    //
+    // The condition is on the ROOT rather than on the caller because
+    // `activate_workweave` reaches this function in Context mode too: it
+    // wants the surfacing half of Context ("surface + verify, never author"),
+    // not the selection half, and selection is the half that has no meaning
+    // for the root it passes.
+    if mode == ActivationMode::Context && !is_workweave_root(root) {
         set_active_project(root, &project_name)?;
     }
 
@@ -479,6 +508,11 @@ fn remove_activation_symlinks_in(
 /// primary, so install state is typically inherited rather than
 /// regenerated. The user can run `rwv activate --reinstall`-style
 /// commands inside the workweave when they actually need a refresh.
+///
+/// Context mode here buys the surfacing-and-verify half only. The project
+/// SELECTION half — writing `.rwv-active` — is skipped because
+/// `workweave_dir` is a workweave root, whose project the `.rwv-workweave`
+/// marker already names; see the tail of [`activate_at`].
 pub fn activate_workweave(project: &str, workweave_dir: &Path) -> anyhow::Result<()> {
     activate_at(
         workweave_dir,
@@ -609,13 +643,13 @@ pub(crate) fn owned_paths(
         .collect()
 }
 
-/// Compute the owner-scoped surfacing set for the currently-active project,
-/// reading `.rwv-active` from `root`. Returns an empty set if no project is
-/// active (in which case no symlinks are owned by rwv and nothing gets
-/// removed). This is the deactivate-side analogue of step 2 in
-/// [`activate_at`].
+/// Compute the owner-scoped surfacing set for the project `root` currently
+/// presents, per [`read_weave_root_project`] — the pointer at primary, the
+/// marker in a workweave. Returns an empty set if `root` presents no project
+/// (in which case no symlinks are owned by rwv and nothing gets removed).
+/// This is the deactivate-side analogue of step 2 in [`activate_at`].
 fn compute_active_owned_set(root: &Path) -> anyhow::Result<BTreeSet<String>> {
-    let active = match crate::workspace::read_active_project(root) {
+    let active = match read_weave_root_project(root) {
         Some(name) => name,
         None => return Ok(BTreeSet::new()),
     };

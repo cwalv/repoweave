@@ -107,11 +107,12 @@ parents, a scope only primary can name.
 **Workspace-rooted arms — the invoking weave is ignored.** Dangling-receipt
 retraction, the ref-ownership registry migration, the canonical-store
 migration and reattach arms, safe-class stale-branch deletion, the
-workweave-registry prune and adopt arms, the dangling-parent re-point, and
-the dangling-active-project clear all act on state the workspace holds in
-exactly one place, so they take the primary path unconditionally — from
-primary and from any workweave alike. This is not an oversight in the
-weave-scoping above; there is nothing weave-local for them to bind to:
+workweave-registry prune and adopt arms, the dangling-parent re-point, the
+dangling-active-project clear, and the weave-root-identity-conflict clear all
+act on state the workspace holds in exactly one place, so they take the
+primary path unconditionally — from primary and from any workweave alike.
+This is not an oversight in the weave-scoping above; there is nothing
+weave-local for them to bind to:
 
 - A workweave's `projects/<project>/` is a **linked worktree** of primary's
   clone, so `refs/heads/*` is one physical ref database shared by every
@@ -123,11 +124,52 @@ weave-scoping above; there is nothing weave-local for them to bind to:
   records which workweaves exist, live only in primary, at
   `projects/<project>/.rwv-workweave-index` — an untracked, primary-local
   file. A workweave has no copy to write instead.
-- The active-project pointer is a primary-only selector. A workweave root
-  carries a `.rwv-active` file too, but nothing reads it: inside a workweave
-  the project is structural, fixed by the `.rwv-workweave` marker at creation
-  time, and no ambient pointer is consulted. Clearing a dangling selector
-  therefore has exactly one file to clear.
+- The active-project pointer is a primary-only selector, and the only place it
+  exists. `.rwv-active` and `.rwv-workweave` name the same fact — which
+  project a tree belongs to — and are **mutually exclusive**: a primary root
+  carries the pointer, a workweave root carries the marker, never both. So a
+  dangling selector has exactly one file to clear, and no per-weave copy to
+  choose between.
+
+### The exclusivity rule, and the arm that enforces it
+
+Because the two files are mutually exclusive, they are one tier of the
+project-resolution chain rather than two ranked ones:
+
+```
+--project > -w prefix > (.rwv-active | .rwv-workweave)
+```
+
+Nothing about a directory's *shape* distinguishes a primary root from a
+workweave root — both hold `projects/` and registry directories — so the
+identity file is the whole of the distinction, and a tree carrying both has
+two answers with nothing keeping them in agreement. `rwv doctor` reports that
+as `weave-root-identity-conflict`.
+
+`--fix` repairs one of its two sub-kinds, and the split is not symmetric:
+
+- **`registered-workweave`** — the marker names this workspace's primary, and
+  that primary's `.rwv-workweave-index` records this exact directory as one of
+  its workweaves. Evidence held *outside* the tree settles the identity, so
+  the pointer is provably the redundant copy. `--fix` deletes `.rwv-active`
+  and leaves the marker.
+- **`unwitnessed`** — the marker is unreadable, or names a different primary,
+  or names this primary but no registry entry points back at this directory
+  (the usual cause: a workweave copied with `cp -r`, whose registry entry
+  still names the original). Report-only. Deleting either file would be a
+  guess, and the marker in particular carries `primary` and `parent` values
+  that exist nowhere else.
+
+The discriminator is deliberately the registry and not "does this tree contain
+a `.rwv-workweave-index`". That looks like a primary-ness signature and is not
+one: the index is untracked, so whether a workweave inherits a copy depends on
+whether its `projects/<project>/` is a linked worktree or a plain directory
+copy — a topology accident rather than a fact about identity.
+
+Like the other arms in this class, the scan starts from primary
+unconditionally: `--fix` run inside workweave A will clear a stray pointer in
+sibling workweave B, because the registry that classifies both lives only at
+primary.
 
 **Acting on another weave's refs is a policy, not a consequence of the
 above.** Sharing the ref database forces these arms to *see* every weave's

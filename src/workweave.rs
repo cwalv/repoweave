@@ -34,7 +34,7 @@ use crate::vcs::{
     Vcs,
 };
 use crate::workspace::{
-    parse_weave_dir_name, read_active_project, set_active_project, weave_dir_name, WorkweaveMarker,
+    parse_weave_dir_name, read_active_project, weave_dir_name, WorkweaveMarker,
 };
 use crate::workweave_index;
 use crate::workweave_index::RefRegistry;
@@ -1776,12 +1776,15 @@ pub fn create_workweave(
         project: project.clone(),
         parent: parent_path,
     };
+    // The marker is the ONLY identity file a workweave root gets: it and
+    // `.rwv-active` name the same fact and are mutually exclusive, occupying
+    // one tier of the resolution chain rather than two. A pointer beside it
+    // would be a second copy of this workweave's identity that nothing reads
+    // and nothing keeps in agreement with the marker.
     marker.write(&workweave_dir)?;
 
-    // Write .rwv-active.
-    set_active_project(&workweave_dir, project)?;
-
-    // Run activate in the workweave context.
+    // Run activate in the workweave context. Surfacing only — the project
+    // SELECTION step is skipped for a workweave root (see `activate_at`).
     crate::activate::activate_workweave(project.as_str(), &workweave_dir)?;
 
     // Record the workweave in the primary-side registry so `list`, `delete`,

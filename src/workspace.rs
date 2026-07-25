@@ -88,9 +88,11 @@ pub struct WorkspaceContext {
     cwd_project_hint: Option<ProjectName>,
     /// Which chain step chose the active project, when one was chosen.
     ///
-    /// The resolution chain is `--project > -w prefix > marker > .rwv-active`;
-    /// each step maps to one [`ProjectProvenance`] variant. `None` when no
-    /// project was resolved (bare primary with neither `--project` nor
+    /// The resolution chain is
+    /// `--project > -w prefix > (.rwv-active | .rwv-workweave)`; each step
+    /// maps to one [`ProjectProvenance`] variant, with the last tier's two
+    /// files mapping to `ActiveFile` and `Marker` respectively. `None` when
+    /// no project was resolved (bare primary with neither `--project` nor
     /// `.rwv-active` set).
     ///
     /// Used solely for the human-facing "target:" line printed to stderr
@@ -110,16 +112,26 @@ pub struct WorkspaceContext {
 /// 2. `-w/--workweave <project>--<name>` global flag → [`ProjectProvenance::WorkweaveFlag`]
 ///    (reserved slot; the flag lands with a later change and this variant is
 ///    unconstructed until then).
-/// 3. `.rwv-workweave` marker inside the resolved workweave →
-///    [`ProjectProvenance::Marker`]. Structural: the workweave directory
-///    itself names its project.
-/// 4. `.rwv-active` pointer at the primary root →
-///    [`ProjectProvenance::ActiveFile`]. Ambient default — the case whose
-///    silence caused the incident this design fixes.
+/// 3. **The weave root's own identity file** — one tier, two spellings,
+///    selected by which kind of root resolution landed on:
+///    - `.rwv-workweave` marker in a workweave root →
+///      [`ProjectProvenance::Marker`]. Structural: the workweave directory
+///      itself names its project.
+///    - `.rwv-active` pointer at a primary root →
+///      [`ProjectProvenance::ActiveFile`]. Ambient default — the case whose
+///      silence caused the incident this design fixes.
+///
+/// The two files are **mutually exclusive**, so this is one tier rather than
+/// two ranked ones: no root can offer both answers, and there is no
+/// precedence between them to get wrong. `rwv doctor` enforces the
+/// exclusivity ([`CheckViolation::WeaveRootIdentityConflict`]).
 ///
 /// Used by the resolver to distinguish structurally-determined targets
-/// (steps 1–3, silent) from the pointer-default (step 4, printed as a
-/// "target:" line to stderr before the verb acts).
+/// (steps 1–2 and the marker spelling of step 3, silent) from the
+/// pointer-default (the `.rwv-active` spelling, printed as a "target:" line
+/// to stderr before the verb acts).
+///
+/// [`CheckViolation::WeaveRootIdentityConflict`]: crate::check::CheckViolation::WeaveRootIdentityConflict
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ProjectProvenance {
     /// The project came from an explicit `--project` flag.
@@ -228,14 +240,33 @@ pub fn detect_project(cwd: &Path, root: &Path) -> Option<ProjectName> {
 }
 
 // ---------------------------------------------------------------------------
-// Active project tracking via .rwv-active
+// Weave-root identity: `.rwv-active` XOR `.rwv-workweave`
 // ---------------------------------------------------------------------------
 
-const ACTIVE_PROJECT_FILE: &str = ".rwv-active";
+/// The pointer file naming the project a **primary** root presents.
+pub const ACTIVE_PROJECT_FILE: &str = ".rwv-active";
+
+/// The marker file naming the project a **workweave** root belongs to.
+pub const WORKWEAVE_MARKER_FILE: &str = ".rwv-workweave";
+
+/// Whether `root` is a workweave root — i.e. carries the marker file.
+///
+/// A raw existence test, not a parse: a legacy or hand-mangled marker still
+/// makes the directory a workweave root for the purpose of the exclusivity
+/// rule below. Reading the marker's *contents* is [`WorkweaveMarker::read`],
+/// which refuses a legacy shape.
+pub fn is_workweave_root(root: &Path) -> bool {
+    root.join(WORKWEAVE_MARKER_FILE).exists()
+}
 
 /// Read the active project from the `.rwv-active` file in the workspace root.
 ///
 /// Returns `None` if the file does not exist or is empty.
+///
+/// This reads the **pointer specifically**, not "the project this root
+/// presents" — see [`read_weave_root_project`] for that. Reach for this one
+/// only where the pointer file itself is the subject (doctor's stale-pointer
+/// check, `deactivate`'s removal).
 pub fn read_active_project(root: &Path) -> Option<ProjectName> {
     let path = root.join(ACTIVE_PROJECT_FILE);
     let content = std::fs::read_to_string(&path).ok()?;
@@ -246,7 +277,52 @@ pub fn read_active_project(root: &Path) -> Option<ProjectName> {
     Some(ProjectName::new(trimmed))
 }
 
+/// The project a weave root presents, read from whichever file names it.
+///
+/// `.rwv-active` and `.rwv-workweave` are **mutually exclusive** and occupy
+/// one tier of the resolution chain, not two: a primary root carries the
+/// pointer, a workweave root carries the marker, never both. This function is
+/// that tier — ask it "which project does this directory present?" and it
+/// consults the one file that can answer for this kind of root.
+///
+/// The marker is checked first so a tree that has somehow acquired both
+/// answers with the structural fact rather than the ambient one; that
+/// ordering is a tiebreak for a state `rwv doctor` reports as
+/// [`CheckViolation::WeaveRootIdentityConflict`], not a precedence the design
+/// relies on.
+///
+/// A legacy marker (missing `parent:`) still names its project, and this
+/// function returns it: the caller is asking which project the root presents,
+/// which the legacy shape answers perfectly well. `WorkweaveMarker::read`'s
+/// refusal exists to stop *parent-chain* consumers, and re-refusing here would
+/// make surfacing collapse on a workweave that `rwv doctor --fix` can migrate.
+///
+/// [`CheckViolation::WeaveRootIdentityConflict`]: crate::check::CheckViolation::WeaveRootIdentityConflict
+pub fn read_weave_root_project(root: &Path) -> Option<ProjectName> {
+    let marker_path = root.join(WORKWEAVE_MARKER_FILE);
+    if marker_path.exists() {
+        let content = std::fs::read_to_string(&marker_path).ok()?;
+        let raw: serde_yaml::Value = serde_yaml::from_str(&content).ok()?;
+        let project = raw.get("project")?.as_str()?.trim();
+        if project.is_empty() {
+            return None;
+        }
+        return Some(ProjectName::new(project));
+    }
+    read_active_project(root)
+}
+
 /// Write the active project to the `.rwv-active` file in the workspace root.
+///
+/// **`root` must be a primary root.** The pointer is project *selection*, and
+/// selection is primary-only: a workweave's project is fixed at creation by
+/// its `.rwv-workweave` marker and cannot be switched. Writing the pointer
+/// into a workweave root would put a second, unread copy of the workweave's
+/// own identity beside the marker — the state `rwv doctor` reports as
+/// [`CheckViolation::WeaveRootIdentityConflict`]. Callers establish the
+/// precondition before calling; [`is_workweave_root`] is the test.
+///
+/// [`CheckViolation::WeaveRootIdentityConflict`]: crate::check::CheckViolation::WeaveRootIdentityConflict
 pub fn set_active_project(root: &Path, project: &ProjectName) -> anyhow::Result<()> {
     let path = root.join(ACTIVE_PROJECT_FILE);
     std::fs::write(&path, format!("{}\n", project.as_str()))
@@ -445,17 +521,26 @@ impl WorkspaceContext {
     ///      then calls [`WorkspaceContext::with_workweave_flag_provenance`] to
     ///      correct `Marker` → `WorkweaveFlag`.
     ///      Provenance = [`ProjectProvenance::WorkweaveFlag`].
-    ///   3. `.rwv-workweave` marker inside a resolved workweave dir —
-    ///      structural: the workweave directory names its project.
-    ///      Provenance = [`ProjectProvenance::Marker`].
-    ///   4. `.rwv-active` pointer at the primary root — ambient default.
-    ///      Provenance = [`ProjectProvenance::ActiveFile`].
+    ///   3. The weave root's own identity file — **one tier**, whose
+    ///      spelling follows the kind of root the walk landed on:
+    ///      - workweave root → `.rwv-workweave` marker, structural: the
+    ///        workweave directory names its project.
+    ///        Provenance = [`ProjectProvenance::Marker`].
+    ///      - primary root → `.rwv-active` pointer, the ambient default.
+    ///        Provenance = [`ProjectProvenance::ActiveFile`].
+    ///
+    /// Step 3 is one tier and not two because the two files are mutually
+    /// exclusive: the loop below returns from whichever arm matches, so no
+    /// invocation ever consults both, and there is no precedence between them
+    /// to document or to get wrong. `rwv doctor` enforces the exclusivity
+    /// (`weave-root-identity-conflict`).
     ///
     /// The chosen chain step is recorded on the returned context as
     /// [`WorkspaceContext::project_provenance`] so downstream code can
-    /// distinguish structurally-determined targets (steps 1–3, silent)
-    /// from the pointer-default (step 4, which callers surface as a
-    /// "target:" line via [`WorkspaceContext::emit_target_line`]).
+    /// distinguish structurally-determined targets (steps 1–2 and step 3's
+    /// marker spelling, silent) from the pointer-default (step 3's
+    /// `.rwv-active` spelling, which callers surface as a "target:" line via
+    /// [`WorkspaceContext::emit_target_line`]).
     ///
     /// The "CWD is inside `projects/<X>/`" inference is still computed
     /// and recorded on the context as [`WorkspaceContext::cwd_project_hint`]
@@ -523,8 +608,9 @@ impl WorkspaceContext {
                         .map(|(_, n)| n)
                         .unwrap_or_else(|| WorkweaveName::new(dir_basename));
                     // Provenance: `--project` wins if set, else the marker
-                    // determines the project (structural — no ambient pointer
-                    // consulted inside a workweave).
+                    // determines the project (structural — a workweave root
+                    // carries no `.rwv-active`, so there is no ambient
+                    // pointer here to consult or to rank against).
                     let (project, provenance) = match project_override {
                         Some(p) => (p, ProjectProvenance::Flag),
                         None => (marker.project, ProjectProvenance::Marker),

@@ -513,8 +513,18 @@ fn create_workweave_writes_marker() {
     );
 }
 
+/// `create` writes the marker and NOT `.rwv-active`.
+///
+/// This assertion is the inverse of what it used to be. `create` did write a
+/// pointer beside the marker, and both named the same project — two copies of
+/// the workweave's identity with nothing keeping them in agreement. The two
+/// files are now mutually exclusive: a primary root carries the pointer, a
+/// workweave root carries the marker, and they occupy one tier of the
+/// resolution chain rather than two ranked ones. See
+/// `weave_root_identity_test` for the full contract, including the `rwv
+/// doctor` arm that clears a pointer left behind by an older build.
 #[test]
-fn create_workweave_writes_rwv_active() {
+fn create_workweave_writes_the_marker_and_not_rwv_active() {
     let tmp = tempfile::tempdir().unwrap();
     let ws = make_workspace(tmp.path(), "web-app");
 
@@ -529,18 +539,23 @@ fn create_workweave_writes_rwv_active() {
         .success();
 
     let ww_dir = weaveroot.join("web-app--active-test");
-    let active_file = ww_dir.join(".rwv-active");
+
+    let marker = ww_dir.join(".rwv-workweave");
     assert!(
-        active_file.exists(),
-        ".rwv-active should exist in workweave at {}",
-        active_file.display()
+        marker.exists(),
+        ".rwv-workweave should exist in workweave at {}",
+        marker.display()
+    );
+    let content = std::fs::read_to_string(&marker).unwrap();
+    assert!(
+        content.contains("web-app"),
+        ".rwv-workweave should name project 'web-app', got: {content}"
     );
 
-    let content = std::fs::read_to_string(&active_file).unwrap();
-    assert_eq!(
-        content.trim(),
-        "web-app",
-        ".rwv-active should contain project name 'web-app', got: {content}"
+    assert!(
+        !ww_dir.join(".rwv-active").exists(),
+        ".rwv-active must NOT be written into a workweave root: the marker \
+         already names the project, and selection is a primary-only concept"
     );
 }
 
@@ -880,14 +895,16 @@ fn workweave_full_round_trip() {
         "project .git should be a worktree file"
     );
 
-    // Verify marker and .rwv-active.
+    // Verify the marker — and that it is the workweave root's ONLY identity
+    // file. The two are mutually exclusive; see
+    // `create_workweave_writes_the_marker_and_not_rwv_active`.
     assert!(
         ww_dir.join(".rwv-workweave").exists(),
         ".rwv-workweave should exist"
     );
     assert!(
-        ww_dir.join(".rwv-active").exists(),
-        ".rwv-active should exist"
+        !ww_dir.join(".rwv-active").exists(),
+        ".rwv-active should NOT exist in a workweave root"
     );
 
     // --- Delete ---

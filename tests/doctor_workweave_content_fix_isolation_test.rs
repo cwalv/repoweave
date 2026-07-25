@@ -36,13 +36,42 @@
 //! `active_path()`; `primary_path()` in such an arm is the bug this test
 //! exists to catch.
 //!
-//! "Read per-weave", not "has a per-weave file on disk" — a workweave root
-//! carries its own `.rwv-active`, but nothing reads it (inside a workweave
-//! the project is structural, fixed by the `.rwv-workweave` marker; see the
-//! "no ambient pointer consulted inside a workweave" branch in
-//! `WorkspaceContext::resolve`). The selector exists in one place, so the
-//! dangling-active-project clear is in the second class despite the file
-//! being present in both.
+//! "Read per-weave", not "has a per-weave file on disk". The two are not the
+//! same test, and the criterion is deliberately the first one. The worked
+//! example that taught us so is worth keeping even though — because — the
+//! state it described no longer exists:
+//!
+//!   Workweave roots used to carry their own `.rwv-active` beside the
+//!   `.rwv-workweave` marker. `rwv workweave create` wrote one, so the file
+//!   was present per weave. That never made the dangling-active-project clear
+//!   weave-scoped, because the pointer is not what a workweave's project is
+//!   READ from: inside a workweave the project is structural, fixed by the
+//!   marker (see the marker branch in `WorkspaceContext::resolve`, which
+//!   returns without consulting any pointer). A file-presence criterion would
+//!   have mis-classified that arm; the read criterion got it right.
+//!
+//!   The follow-up was not to re-scope the arm but to delete the file. A
+//!   per-weave file that is not per-weave read is a second copy of a fact
+//!   with nothing keeping the copies in agreement, and that is a defect in
+//!   its own right rather than an input to arm classification. `.rwv-active`
+//!   and `.rwv-workweave` are now mutually exclusive — one tier of the
+//!   resolution chain, `--project > -w prefix > (.rwv-active |
+//!   .rwv-workweave)` — and `rwv doctor`'s `weave-root-identity-conflict`
+//!   enforces it. So the selector is now present in one place as well as read
+//!   in one place, and the dangling-active-project clear is in the second
+//!   class for the reason it always was.
+//!
+//! Read the criterion as: when you cannot decide an arm's class, ask what
+//! reads the state, not what stores it. If the two answers disagree, the
+//! storage is what needs changing.
+//!
+//! The `weave-root-identity-conflict` clear is itself in the second class,
+//! and shows the criterion doing work in the other direction: the file it
+//! deletes sits in a workweave root, which by a file-location criterion would
+//! make it weave-scoped. But what decides the repair is the registry at
+//! `<primary>/projects/<project>/.rwv-workweave-index` — read from primary,
+//! and existing only there — so the scan takes `primary_path()` and repairs
+//! whichever tree in the workspace holds the conflict.
 //!
 //! **Workspace-rooted arms — the invoking weave is ignored. NOT pinned here,
 //! and correctly so.** Repairs of state the workspace holds in exactly one
@@ -50,8 +79,9 @@
 //! retraction, the ref-registry migration, the canonical-store migration and
 //! reattach arms, safe-class stale-branch deletion), plus the workweave
 //! registry itself (stale-entry prune, unregistered-workweave adopt), the
-//! dangling-parent re-point, and the dangling-active-project clear. These
-//! take `ctx.primary_path()` unconditionally.
+//! dangling-parent re-point, the dangling-active-project clear, and the
+//! weave-root-identity-conflict clear. These take `ctx.primary_path()`
+//! unconditionally.
 //!
 //! That is not an inconsistency with the class above. There is no per-weave
 //! copy for them to bind to:

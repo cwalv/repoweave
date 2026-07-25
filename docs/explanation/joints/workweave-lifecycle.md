@@ -46,10 +46,16 @@ against the primary weave root. The source must be a workspace whose
    `link:` entries are absolute symlinks into the source root).
 3. A `.rwv-workweave` marker recording `{primary, project, parent}`.
    `parent` is the workspace forked from — it becomes the auto-target for
-   bare `rwv sync-to` from inside the workweave.
-4. `.rwv-active` set to `project`.
-5. Integration activation (context verb: surfaces symlinks, skips install
-   hooks).
+   bare `rwv sync-to` from inside the workweave. This is the workweave
+   root's **only** identity file: no `.rwv-active` is written beside it.
+   The pointer records project *selection*, which is primary-only — a
+   workweave's project is fixed here at creation and cannot be switched —
+   and the two files are mutually exclusive, one tier of the resolution
+   chain rather than two. `rwv doctor` reports a root carrying both as a
+   `weave-root-identity-conflict`.
+4. Integration activation (context verb: surfaces symlinks, skips install
+   hooks). Context mode's project-selection step is skipped for a workweave
+   root, per (3).
 
 The `.rwv-workweave` parent field is anchored at
 `src/workspace.rs::WorkweaveMarker`.
