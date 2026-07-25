@@ -729,8 +729,8 @@ fn relative_symlink_target(project: &str, file: &str) -> std::path::PathBuf {
 /// owner-scoped surfacing union exists at `<root>/<file>` as a symlink that
 /// resolves to `projects/<project>/<file>`.
 ///
-/// This is a SECOND CONSUMER of the same `generated_files() ∪ managed_files()`
-/// union that drives symlink creation ([`compute_owned_set`]) — it lives in the
+/// It reads the same `generated_files() ∪ managed_files()` union that drives
+/// symlink creation ([`compute_owned_set`]) — it lives in the
 /// framework and is byte-identical across all integrations, so it is NOT
 /// duplicated into per-integration `verify()` bodies (those own Axis-2 content
 /// drift). Any divergence between an integration's declared surfacing set and
@@ -893,7 +893,7 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // Repair-verb naming (fo-oueuv7.2)
+    // Repair-verb naming
     // -----------------------------------------------------------------------
 
     #[test]
@@ -935,7 +935,7 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // surface_symlinks + verify_surfacing (Axis-1 surfacing, fo-huwqqc)
+    // surface_symlinks + verify_surfacing (Axis-1 surfacing)
     // -----------------------------------------------------------------------
 
     /// Build a workspace on disk with one project whose static-files
@@ -1120,8 +1120,8 @@ mod tests {
     #[test]
     fn surface_does_not_write_rwv_active() {
         // The factored primitive is step-2 ONLY: it must not perform step-1
-        // project SELECTION (.rwv-active write), which is the primary-only
-        // concept fo-9fnae forbids dragging into a workweave.
+        // project SELECTION (.rwv-active write), which is a primary-only
+        // concept and must not be dragged into a workweave.
         let (tmp, project) = make_surfacing_workspace(&[".claude"]);
         let root = tmp.path();
         let manifest = load_manifest(root, &project);

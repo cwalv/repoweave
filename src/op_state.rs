@@ -140,7 +140,7 @@ impl std::fmt::Display for OpPhase {
 }
 
 // ---------------------------------------------------------------------------
-// PhaseTips — phase-scoped tip table (fo-wbbqof.5)
+// PhaseTips — phase-scoped tip table
 // ---------------------------------------------------------------------------
 
 /// The op's per-repo tip table, scoped to the lifecycle half that owns it.
@@ -699,7 +699,7 @@ fn in_flight_refusal_for(dir: &Path) -> anyhow::Result<Option<anyhow::Error>> {
 ///
 /// The plain "concurrency guard" (`check_no_op_in_progress`) is a check, not a
 /// claim: two ops can both pass it and collide later at the git layer (R7 root
-/// cause, fo-u57y0b). Atomic acquisition writes each file with `O_CREAT|O_EXCL`
+/// cause). Atomic acquisition writes each file with `O_CREAT|O_EXCL`
 /// so the OS refuses the second creator; the handle carries the created set so
 /// the caller can [`release_acquired`] on a downstream precondition refusal
 /// (per the cleanup table's "refusal → cleared everywhere" row).
@@ -910,7 +910,7 @@ fn atomic_write_new(path: &Path, bytes: &[u8]) -> Result<(), AtomicWriteError> {
     // path, and then each sabotage the other's attempt: the create_new loser
     // unlinked the winner's in-flight temp, so the winner's link(2) hit
     // ENOENT and *both* acquisitions failed. Structurally-unique names make
-    // that interleave impossible. fo-8cbhpg.4.)
+    // that interleave impossible.)
     static TMP_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     let seq = TMP_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let tmp_name = format!(".{file_name}.tmp.{pid}.{seq}", pid = std::process::id());
@@ -955,7 +955,7 @@ fn atomic_write_new(path: &Path, bytes: &[u8]) -> Result<(), AtomicWriteError> {
 /// same op id — the structural dead-lease case.
 ///
 /// Structural because it is derived from ancestry-of-state, not from elapsed
-/// time: the operator's precedent (fo-u57y0b, matching the stale-op-state
+/// time: the operator's precedent (matching the stale-op-state
 /// doctor check) is that time may be *surfaced* to the operator, never
 /// consumed as policy. A dead lease arises from:
 ///
@@ -1221,7 +1221,7 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // advanced_tips field round-trip tests (fo-6rysot.1)
+    // advanced_tips field round-trip tests
     // -----------------------------------------------------------------------
 
     #[test]
@@ -1287,7 +1287,7 @@ started_at: 2026-06-01T00:00:00Z
     }
 
     // -----------------------------------------------------------------------
-    // PhaseTips ADT — phase-scoped tip table (fo-wbbqof.5)
+    // PhaseTips ADT — phase-scoped tip table
     // -----------------------------------------------------------------------
 
     #[test]
@@ -1610,7 +1610,7 @@ started_at: 2026-06-01T00:00:00Z
 
     #[test]
     fn check_no_op_owner_refusal_names_verb_and_both_exits() {
-        // The cross-verb mutex refusal (fo-4rpnkm.2, Correction 1) names the
+        // The cross-verb mutex refusal names the
         // op's verb, its age, and BOTH exits: `rwv <verb> --continue` and
         // `rwv abort`.
         let tmp = tempfile::tempdir().unwrap();
@@ -1647,7 +1647,7 @@ started_at: 2026-06-01T00:00:00Z
     fn check_no_op_lease_refusal_follows_pointer_for_rich_message() {
         // A workspace holding only a thin lease still gets the full op / age /
         // owner detail — the guard follows the lease pointer to the owner
-        // record (fo-4rpnkm.2 wired the existing lease into the mutex).
+        // record.
         let tmp = tempfile::tempdir().unwrap();
         let owner_dir = tmp.path().join("owner");
         let lease_dir = tmp.path().join("lease");

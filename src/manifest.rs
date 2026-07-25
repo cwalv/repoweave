@@ -688,7 +688,7 @@ pub struct CargoWorkspaceConfig {
     /// `CargoConfig`, a member's own `.cargo/config.toml` `[patch.*]` key
     /// silently shadows the weave-level entry via cargo's
     /// closest-config-wins-per-key rule. Same shadowing surface as the
-    /// existing `scan_patch_shadowing` observability axis (fo-t9x0l1.1);
+    /// existing `scan_patch_shadowing` observability axis;
     /// under `CargoConfig` the check remains equally load-bearing.
     #[serde(
         default,

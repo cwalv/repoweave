@@ -21,4 +21,4 @@
 # No age-based expiry — use structural triggers (name the removal bead
 # or the condition, not a date).
 
-env-input:RWV_WORKWEAVE_DIR  # transitional container-seed fallback during the deprecation window; seeds the container value when no registry entry exists and fires a loud one-shot deprecation warning; read at workweave.rs (deprecation guard + scan), workweave_index.rs (resolve_container + record_workweave bootstrap), and check.rs (doctor adoption scan); drop this entry when the deprecation fallback is removed (fo-ffq8a1)
+env-input:RWV_WORKWEAVE_DIR  # transitional container-seed fallback during the deprecation window; seeds the container value when no registry entry exists and fires a loud one-shot deprecation warning; read at workweave.rs (deprecation guard + scan), workweave_index.rs (resolve_container + record_workweave bootstrap), and check.rs (doctor adoption scan); drop this entry when the deprecation fallback is removed

@@ -347,7 +347,7 @@ pub(crate) fn write_project_lock(
     // `from_dir` hard-parses `rwv.lock` and errors on conflict markers,
     // which turned the naive recovery sequence (`rwv lock; git add; git
     // rebase --continue`) into a footgun that silently committed the
-    // markers — see fo-yk0rlj bug 2. `lock()` never reads `project.lock`
+    // markers. `lock()` never reads `project.lock`
     // (it regenerates from manifest tips and reads the old lock
     // tolerantly further down via `.ok()`), so skipping the parse
     // costs nothing and closes the recovery gap.

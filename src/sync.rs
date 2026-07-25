@@ -56,9 +56,9 @@ fn workspace_name(ctx: &WorkspaceContext) -> String {
 /// The commit message for the auto-relock the sync engine writes into the CWD
 /// project repo when it regenerates `rwv.lock` from the converged manifest tips.
 ///
-/// This is the ONE home of the literal (`fo-4rpnkm.1` §3): both the op-start
+/// This is the ONE home of the literal: both the op-start
 /// benign-staleness relock and the post-replay Phase-3 relock format their
-/// commit message here, and the explain generator (`fo-m26yws`) splices the
+/// commit message here, and the explain generator splices the
 /// same string into `rwv explain sync-to` via a `{{MSG:auto_relock}}`
 /// placeholder so the docs cannot drift from the code. `<source>` is the
 /// display name of the workspace the sync pulled from. Text is unchanged from
@@ -73,9 +73,9 @@ pub fn auto_relock_commit_message(source: &str) -> String {
 
 /// How `rwv sync` advances each repo to its lock target.
 ///
-/// `merge` is intentionally not offered (state-space shrink). See the
-/// "documented absence" note in `docs/explanation/joints/sync-semantics.md`
-/// for the justification test and the origin-less weave-to-weave escape hatch.
+/// `merge` is intentionally not offered (state-space shrink). See
+/// `docs/explanation/joints/sync-semantics.md` §"Why no `merge` strategy" for
+/// the justification test and the origin-less weave-to-weave escape hatch.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
 #[clap(rename_all = "lowercase")]
 pub enum SyncStrategy {
@@ -787,7 +787,7 @@ fn target_savepoint_id(op_id: &OpId) -> String {
     format!("{}-target", op_id.as_str())
 }
 
-// NOTE (`fo-4rpnkm.1`, §2): the old `check_lock_freshness` / `lock_recovery`
+// NOTE: the old `check_lock_freshness` / `lock_recovery`
 // pair — which refused on ANY lock↔HEAD mismatch — is replaced by the
 // benign-staleness classification (`classify_lock_relations` +
 // `anomalous_relation_refusal` + the tips-as-truth / op-start-relock handling
@@ -908,7 +908,7 @@ fn resume_command(verb: OpVerb) -> String {
 /// (Correction 4). A non-conflict batch of failures (e.g. a fetch error) omits
 /// the VCS block and points straight at the resume command. For
 /// [`ConflictOp::Rebase`] the VCS hint stops at staging — the rwv-native
-/// `{resume}` line IS the continue step (fo-w2ajvn.2); merge/cherry-pick
+/// `{resume}` line IS the continue step; merge/cherry-pick
 /// hints still carry their VCS-native continue since rwv cannot resume those.
 fn manifest_repo_failure_message(verb: OpVerb, live_conflict: Option<ConflictOp>) -> String {
     let resume = resume_command(verb);
@@ -990,8 +990,8 @@ fn phase1_or_phase3_failure_message(
 /// to abort).
 ///
 /// For [`ConflictOp::Rebase`] the VCS hint stops at staging and the appended
-/// `{resume}` line is the continue step (rwv resumes the rebase natively,
-/// fo-w2ajvn.2). For [`ConflictOp::Merge`] / [`ConflictOp::CherryPick`] the
+/// `{resume}` line is the continue step (rwv resumes the rebase
+/// natively). For [`ConflictOp::Merge`] / [`ConflictOp::CherryPick`] the
 /// VCS hint still carries its own `git … --continue` — rwv has no native
 /// resume for those ops; the operator finishes them in git, then `{resume}`
 /// picks the op back up.
@@ -1368,10 +1368,8 @@ fn prune_dropped_repo(ctx: &WorkspaceContext, repo_path: &RepoPath) -> anyhow::R
 
 /// Trait implemented by every output mode.
 ///
-/// The three built-in implementations are [`TextHandler`],
-/// [`JsonEnvelopeHandler`], and [`JsonNdjsonHandler`]. Callers pass
-/// `&dyn OutputHandler` into the orchestration body so new modes can be
-/// added without touching existing orchestration code.
+/// Callers pass `&dyn OutputHandler` into the orchestration body so new modes
+/// can be added without touching existing orchestration code.
 ///
 /// ## Contract
 ///
@@ -1744,7 +1742,8 @@ pub fn run_sync(ctx: &WorkspaceContext, request: SyncRequest) -> anyhow::Result<
 
 /// Build the [`OpContext`] and run the phase-machine driver. Both `rwv sync`
 /// and `rwv sync-to` route through here; the `verb` parameter selects which
-/// phases run (advance-target / retire are sync-to-only and --retire-only).
+/// phases run (advance-target and retire are sync-to-only, and retire runs
+/// under `--retire` only).
 ///
 /// `source` is the explicit source/target the operator passed on the CLI, or
 /// `None` under `--continue` (read from op-state). `do_continue = true` means
@@ -1924,7 +1923,7 @@ fn run_preconditions_after_acquire(
         check_sync_to_ff_precondition(cwd_project_dir, dest_project_dir, emit_text)?;
     }
 
-    // Pre-flight dirt scans (fo-oueuv7.1): refuse before any mutation when
+    // Pre-flight dirt scans: refuse before any mutation when
     // the workspaces the op will rebase or fast-forward carry uncommitted
     // tracked changes. All dirty repos are collected before the first bail so
     // the operator sees the full list in one message. Acquired op-state is
@@ -2299,7 +2298,7 @@ fn guard_and_mark<'a>(
 
     // === Acquire op-state (atomic claim) ===
     //
-    // ATOMICITY (fo-u57y0b): the touched-workspace set is claimed via
+    // ATOMICITY: the touched-workspace set is claimed via
     // `acquire_op`, which writes `.rwv-op` + every lease with
     // `create_new(true)` (`O_CREAT|O_EXCL`). This closes the guard→mark
     // TOCTOU window a bare `check_no_op_in_progress` guard would leave open
@@ -2870,7 +2869,7 @@ fn check_detached_target_preflight(
 const RWV_LOCK_FILE: &str = "rwv.lock";
 
 // ---------------------------------------------------------------------------
-// Sync (pull) destination-side dirt scan (fo-oueuv7.1)
+// Sync (pull) destination-side dirt scan
 // ---------------------------------------------------------------------------
 
 /// Classify one dirty checkout for the sync dirt scan.
@@ -3066,7 +3065,7 @@ fn check_dirty_preflight_sync(
     anyhow::bail!("{msg}");
 }
 
-/// sync-to source-side cleanliness preflight (`fo-4rpnkm.1` §1, Correction 3).
+/// sync-to source-side cleanliness preflight.
 ///
 /// Before writing op-state or touching any repo, refuse if the CWD side (the
 /// operator's own workspace — where replay runs) carries uncommitted **tracked**
@@ -3142,7 +3141,7 @@ fn check_dirty_source_preflight(
 }
 
 // ---------------------------------------------------------------------------
-// Benign-staleness classification (`fo-4rpnkm.1` §2, Correction 2)
+// Benign-staleness classification
 // ---------------------------------------------------------------------------
 //
 // At op start each manifest repo's committed lock SHA is classified against its
@@ -3260,7 +3259,7 @@ fn classify_lock_relations(
 /// Refusal naming the first unresolvable lock entry (a tag/branch the lock pins
 /// that no longer exists on disk). Distinct from a relation — the lock itself is
 /// corrupt. Preserves the old lock-freshness "unknown revision" diagnostic,
-/// including the `--project <p>`-qualified recovery hint (fo-mxw3ew) and the
+/// including the `--project <p>`-qualified recovery hint and the
 /// `--allow-stale-lock` escape hatch.
 fn unresolvable_lock_refusal(
     side: Side,
@@ -3302,7 +3301,7 @@ fn unresolvable_lock_refusal(
 ///
 /// Preserves the documented `lock-freshness precondition` phrase (cli.md §sync
 /// `--allow-stale-lock` row), the "stale lock" wording, the `--project <p>`-
-/// qualified recovery hint (fo-mxw3ew), and the `--allow-stale-lock` escape
+/// qualified recovery hint, and the `--allow-stale-lock` escape
 /// hatch, while additionally NAMING each repo's relation (§2 guardrail). A
 /// `diverged` repo also earns the `rwv lock --commit` bless-HEAD hint.
 fn lock_relation_refusal(
@@ -4076,7 +4075,7 @@ fn cleanup(ctx: &OpContext<'_>) -> anyhow::Result<()> {
     // workweave BEFORE cleanup runs, so `ctx.cwd_project_dir` /
     // `ctx.cwd_workspace_dir` now point at a deleted directory. Dropping
     // savepoints through those paths silently no-ops while the ref survives in
-    // the surviving clone — the leak this code path fixes (fo-i8eq4e).
+    // the surviving clone — the leak this code path fixes.
     //
     // We therefore target the CANONICAL/PRIMARY clone (`primary_path()`), which
     // survives workweave deletion: workweave repos are `git worktree add`ed
@@ -4415,7 +4414,7 @@ fn same_workspace(a: &Path, b: &Path) -> bool {
 /// `sync-to` ops, both CWD and the recorded target workspace are rolled
 /// back.
 ///
-/// Two hardening rails (design § 5, fo-jsbr3i.4):
+/// Two hardening rails:
 ///
 /// 1. **Pre-abort reference**: BEFORE restoring any repo, a durable
 ///    [`Vcs::create_pre_abort_ref`] reference is written at the repo's
@@ -5456,8 +5455,8 @@ mod tests {
     // Site 1 — manifest-repo per-repo sync loop failure summary. With a live
     // rebase conflict the VCS-native staging steps are present; the resume
     // verb is derived from the op verb; and the rebase hint must NOT spell
-    // raw `git rebase --continue` (fo-w2ajvn.2: `rwv <verb> --continue` IS
-    // the continue step — rwv resumes the rebase natively).
+    // raw `git rebase --continue` (`rwv <verb> --continue` IS the continue
+    // step — rwv resumes the rebase natively).
     #[test]
     fn manifest_repo_failure_message_live_conflict_includes_vcs_and_verb_resume() {
         let msg = manifest_repo_failure_message(OpVerb::SyncTo, Some(ConflictOp::Rebase));

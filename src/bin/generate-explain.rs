@@ -1250,6 +1250,123 @@ fn run_envelope_output_check(root: &Path) -> anyhow::Result<Vec<String>> {
     Ok(check_envelope_output_documented(&cli_md_content))
 }
 
+/// Match a tracker ID (`fo-<slug>`, optionally dotted) at a word boundary.
+///
+/// Deliberately hand-rolled rather than regex: the generator has no regex
+/// dependency, and the shape is narrow enough to scan directly.
+fn find_tracker_id(line: &str) -> Option<String> {
+    let bytes = line.as_bytes();
+    let mut i = 0;
+    while let Some(off) = line[i..].find("fo-") {
+        let start = i + off;
+        let prev_ok = start == 0 || !bytes[start - 1].is_ascii_alphanumeric();
+        let mut end = start + 3;
+        while end < bytes.len() && (bytes[end].is_ascii_lowercase() || bytes[end].is_ascii_digit())
+        {
+            end += 1;
+        }
+        let slug_len = end - start - 3;
+        if prev_ok && (4..=8).contains(&slug_len) {
+            // Include a trailing `.N` sub-ID so the reported token matches
+            // what the author wrote.
+            let mut tail = end;
+            if tail < bytes.len() && bytes[tail] == b'.' {
+                let mut d = tail + 1;
+                while d < bytes.len() && bytes[d].is_ascii_digit() {
+                    d += 1;
+                }
+                if d > tail + 1 {
+                    tail = d;
+                }
+            }
+            return Some(line[start..tail].to_owned());
+        }
+        i = start + 3;
+    }
+    None
+}
+
+/// Scan `src/` and `docs/` for tracker IDs in comments, error strings, and
+/// published prose.
+///
+/// Code is ground truth and architecture docs carry rationale; a tracker ID
+/// in either surface points a reader at something they cannot open, and it
+/// reaches users directly through `rwv explain` (whose pages are `include_str!`'d
+/// from `docs/reference/explain/`) and through `anyhow::bail!` text.
+///
+/// `tests/` is deliberately not scanned — its IDs name the regression each
+/// case pins, which is a different question from what this gate enforces.
+fn check_no_tracker_ids(root: &Path) -> Vec<String> {
+    let mut errors = Vec::new();
+    let mut files = collect_rs_files(&root.join("src"));
+    files.extend(collect_md_files(&root.join("docs"), &[]));
+    files.push(root.join("docs/env-input-allowlist.txt"));
+    for path in files {
+        let Ok(content) = fs::read_to_string(&path) else {
+            continue;
+        };
+        let rel = path.strip_prefix(root).unwrap_or(&path).display();
+        for (n, line) in content.lines().enumerate() {
+            if let Some(id) = find_tracker_id(line) {
+                errors.push(format!("{rel}:{}: tracker ID `{id}`", n + 1));
+            }
+        }
+    }
+    errors
+}
+
+/// Vocabulary belonging to a particular deployment of rwv rather than to rwv.
+///
+/// `rig` is matched at word boundaries because `origin`, `right` and `trigger`
+/// all contain it.
+const FOREIGN_VOCABULARY: &[&str] = &[
+    "rig",
+    "gas city",
+    "city (gc)",
+    "city(gc)",
+    "gc agents",
+    "gc session",
+    "gc.city",
+];
+
+/// Scan `docs/` for vocabulary from a specific deployment of rwv.
+///
+/// `src/prime.rs` already asserts `rwv prime` stays free of it, but that test
+/// only sees the prime overview. `rwv explain` prints
+/// `docs/reference/explain/*.md` verbatim via `include_str!`, and one such
+/// page shipped "the Gas City rig's standard …" to every user. Scanning the
+/// whole of `docs/` covers the templates, the assembled pages, and the
+/// published explanation joints in one place.
+fn check_no_foreign_vocabulary(root: &Path) -> Vec<String> {
+    let mut errors = Vec::new();
+    for path in collect_md_files(&root.join("docs"), &[]) {
+        let Ok(content) = fs::read_to_string(&path) else {
+            continue;
+        };
+        let rel = path.strip_prefix(root).unwrap_or(&path).display();
+        // Join wrapped lines: "the Gas\nCity rig's" escaped a line-oriented
+        // grep once already.
+        let flat = content.replace('\n', " ").to_ascii_lowercase();
+        for term in FOREIGN_VOCABULARY {
+            let hit = if *term == "rig" {
+                let b = flat.as_bytes();
+                flat.match_indices("rig").any(|(i, _)| {
+                    let before_ok = i == 0 || !b[i - 1].is_ascii_alphanumeric();
+                    let after = i + 3;
+                    let after_ok = after >= b.len() || !b[after].is_ascii_alphanumeric();
+                    before_ok && after_ok
+                })
+            } else {
+                flat.contains(term)
+            };
+            if hit {
+                errors.push(format!("{rel}: contains `{term}`"));
+            }
+        }
+    }
+    errors
+}
+
 fn repo_root() -> PathBuf {
     // CARGO_MANIFEST_DIR points at the crate root, which is the repoweave dir.
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -1412,7 +1529,7 @@ fn main() -> anyhow::Result<()> {
     // on disk; rustdoc intra-doc syntax must not appear in assembled output
     // (docs/reference/explain/ and docs/reference/prime/). Template
     // directories are excluded. This catches dead cross-doc links across the
-    // entire doc tree, not only in assembled explain pages (fo-nto02q.4).
+    // entire doc tree, not only in assembled explain pages.
     let docs_dir = root.join("docs");
     let link_errors = check_assembled_docs(&docs_dir);
     if !link_errors.is_empty() {
@@ -1454,6 +1571,32 @@ fn main() -> anyhow::Result<()> {
             "envelope-output documentation check failed:\n{msg}\n\n\
              Fix: add a row for the variable to the Context envelope table in \
              the External commands section of docs/reference/cli.md."
+        );
+    }
+
+    // --- tracker-ID gate -------------------------------------------------
+    // No tracker IDs in src/ or docs/. The rule decayed once already after a
+    // manual scrub, so it is enforced here rather than remembered.
+    let tracker_errors = check_no_tracker_ids(&root);
+    if !tracker_errors.is_empty() {
+        let msg = tracker_errors.join("\n");
+        anyhow::bail!(
+            "tracker-ID check failed:\n{msg}\n\n\
+             Fix: state the reason inline instead. A reader cannot open a \
+             tracker ID, and these surfaces reach users through `rwv explain` \
+             and error text. Commit messages are the place for the ID."
+        );
+    }
+
+    // --- foreign-vocabulary gate -----------------------------------------
+    // docs/ describes rwv, not any one deployment of it. `rwv explain` prints
+    // these files verbatim, so a leak here reaches users.
+    let vocab_errors = check_no_foreign_vocabulary(&root);
+    if !vocab_errors.is_empty() {
+        let msg = vocab_errors.join("\n");
+        anyhow::bail!(
+            "foreign-vocabulary check failed:\n{msg}\n\n\
+             Fix: describe the behaviour in rwv's own terms."
         );
     }
 

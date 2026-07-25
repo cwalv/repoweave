@@ -53,12 +53,10 @@ impl ResolvedRevisionId {
     /// crate-internal — there is no public way to mint a resolved value
     /// from a free string.
     ///
-    /// Sole legitimate caller: [`Vcs::resolve_savepoint`]'s `GitVcs`
-    /// implementation, which reads a value produced by `git rev-parse
-    /// refs/rwv/pre-op/<id>` — rev-parse on a fully-qualified ref-or-SHA
-    /// always emits the canonical 40-hex SHA. Re-resolving via
-    /// `Vcs::resolve_revision` would cost an extra git invocation per
-    /// `rwv abort` without strengthening the invariant.
+    /// Legitimate only for a value read back from `git rev-parse` on a
+    /// fully-qualified ref, which always emits the canonical 40-hex SHA.
+    /// Re-resolving such a value via `Vcs::resolve_revision` would cost an
+    /// extra git invocation without strengthening the invariant.
     pub(crate) fn from_canonical_unchecked(s: impl Into<String>) -> Self {
         Self {
             canonical: s.into(),
@@ -749,8 +747,8 @@ pub trait Vcs {
     /// For [`GitVcs`](crate::git::GitVcs): appends a
     /// `<path> merge=rwv-ours` line to `<repo>/.gitattributes` (idempotent
     /// — re-running is a no-op if the line is already present). If the
-    /// file still carries the legacy `<path> merge=ours` line (pre-fo-yk0rlj
-    /// rename), the writer migrates it in place rather than appending a
+    /// file still carries the legacy `<path> merge=ours` line, the writer
+    /// migrates it in place rather than appending a
     /// second, ambiguous assignment. Other VCS impls choose their own
     /// mechanism.
     ///
@@ -803,9 +801,8 @@ pub trait Vcs {
     /// left in the working tree.
     ///
     /// For [`GitVcs`](crate::git::GitVcs): runs `git merge --ff-only <to>`.
-    /// Holds the safe-by-construction property established by the
-    /// fo-5cqa74 fix (no `reset --hard` replacement that could discard
-    /// reachable history).
+    /// Safe by construction: no `reset --hard` replacement that could
+    /// discard reachable history.
     fn advance_if_fast_forward(&self, repo: &Path, to: &ResolvedRevisionId)
         -> Result<(), VcsError>;
 

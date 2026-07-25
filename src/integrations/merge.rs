@@ -2933,7 +2933,7 @@ replace example.com/legacy => ./vendor/legacy
 
     // -----------------------------------------------------------------------
     // Recorded-digest verify: stamp_owned_digest / check_owned_digest /
-    // fully_owned_digest_mismatch_issue (fo-t9x0l1.4 / R34)
+    // fully_owned_digest_mismatch_issue
     // -----------------------------------------------------------------------
 
     mod owned_digests {
@@ -3109,7 +3109,7 @@ replace example.com/legacy => ./vendor/legacy
             // Non-git directory: stamp must write a .gitignore fallback so the
             // state file never appears as an untracked file in a dirty-tree
             // check. This mirrors the workweave_index::write chokepoint for
-            // .rwv-workweave-index (fo-nqgtwo).
+            // .rwv-workweave-index.
             let tmp = TempDir::new().unwrap();
             let lock = tmp.path().join("Cargo.lock");
             stamp_owned_digest(&lock, b"version = 3\n").unwrap();

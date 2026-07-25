@@ -192,9 +192,8 @@ pub trait Integration {
     /// Examples: lockfiles (`Cargo.lock`, `package-lock.json`), gita CSVs,
     /// a fully-owned `.code-workspace`.
     ///
-    /// The only consumer in-tree is the activation symlink set
-    /// ([`crate::activate`]) — every file here is symlinked from the weave
-    /// root into the project directory.
+    /// Every file here is symlinked from the weave root into the project
+    /// directory.
     ///
     /// The default returns an empty list.
     fn generated_files(&self, _ctx: &IntegrationContext) -> Vec<String> {

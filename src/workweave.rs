@@ -845,17 +845,17 @@ pub fn scan_uninitialized_submodules(worktree_path: &Path) -> Vec<String> {
 /// `source_root` is the workspace forked from: the manifest, per-repo HEADs,
 /// `projects/<project>/` worktree, and `workweave:` copy/link sources are
 /// all read from `source_root`. When forking from primary, pass the same path
-/// for both. When forking from another workweave (e.g. a Gas City rig
-/// creating a peer workweave from inside itself), `source_root` is that
-/// workweave's directory while `primary_root` remains the primary weave.
+/// for both. When forking from another workweave (an agent creating a peer
+/// workweave from inside its own), `source_root` is that workweave's
+/// directory while `primary_root` remains the primary weave.
 ///
 /// If the workweave directory already exists, behavior depends on
 /// `replace_existing`:
 /// - `replace_existing == false`: validate that the existing workweave matches this
 ///   `(primary, project)` pair and has no local modifications relative to
 ///   `source_root`, then short-circuit. This preserves non-git state (e.g.
-///   `.runtime/`, `.claude/`) written by agents between invocations — the
-///   contract relied on by Gas City's `gc runtime request-restart` flow.
+///   `.runtime/`, `.claude/`) written by agents between invocations, which
+///   agent runtimes rely on across a restart.
 ///   Returns an error if the marker is missing or for a different project,
 ///   or if any worktree has uncommitted changes or has diverged from the
 ///   source.
@@ -1833,8 +1833,7 @@ fn resolved_worktree_parent(checkout: &Path, fallback: &Path) -> PathBuf {
 
 /// Refuse `rwv workweave delete` when a checkout under `workweave_dir`
 /// holds the canonical store that OTHER worktrees link into — the
-/// catastrophic case the clone-topology joint flags as inverted topology
-/// (e.g. fo-a0spgj hazard 2).
+/// catastrophic case the clone-topology joint flags as inverted topology.
 ///
 /// **Named precondition**: each per-repo workweave checkout MUST be a linked
 /// workspace, not a canonical store with foreign dependents. Deleting a
@@ -2276,7 +2275,7 @@ fn delete_workweave_inner_at(
         // Resolve the worktree's ACTUAL canonical store on disk rather than
         // assuming `ws_root.join(repo_path)` is the parent. Under
         // tier-0-correct topology these match; under inverted topology
-        // (fo-a0spgj) the canonical store lives in another workweave and
+        // the canonical store lives in another workweave and
         // `ws_root.join(repo_path)` is a disconnected clone that doesn't
         // know about this checkout — running `worktree remove` there leaves
         // a stale registration. See joints/clone-topology.md.
@@ -2630,7 +2629,7 @@ pub struct WorkweaveLogOutput {
 /// Print (or JSON-emit) the workweave's UNIQUE commits vs the recorded parent,
 /// per manifest repo.
 ///
-/// Semantics (per fo-eycci9 headline layer A):
+/// Semantics:
 ///   - Parent identity comes from the `.rwv-workweave` marker, NOT the branch
 ///     name (stacked branches like `lab--wwb/lab--wwa/main` make a constructed
 ///     `basename(parent)/main` wrong, and it is also wrong after

@@ -123,7 +123,7 @@ pub struct RepoStatus {
 
 /// Classify a repo's HEAD tip against its lock SHA into a [`LockRelation`].
 ///
-/// The single ancestry gate the sync engine relies on (`fo-4rpnkm.1`). Relations
+/// The single ancestry gate the sync engine relies on. Relations
 /// are named from the TIP's vantage (the opposite of "lock behind HEAD" prose):
 /// `ahead` means the tip is a strict descendant of the lock (new commits since
 /// last lock — the benign in-progress shape), `behind` means the tip is a strict

@@ -205,11 +205,10 @@ fn home_ceiling_blocks(current: &Path, parent: &Path, home: Option<&Path>) -> bo
 
 /// Detect the project name if `cwd` is inside `{root}/projects/{name}/...`.
 ///
-/// This is a *soft hint* only: action verbs no longer use it to override
-/// `.rwv-active`. Two callers remain:
-/// - [`WorkspaceContext::cwd_project_hint`] for divergence warnings and
-///   for the helpful error when CWD ≠ active project.
-/// - `rwv` bare status, to flag the divergence to the user.
+/// This is a *soft hint* only: action verbs must not use it to override
+/// `.rwv-active`. It feeds [`WorkspaceContext::cwd_project_hint`], which is
+/// read only to warn about — never to act on — a CWD ≠ active-project
+/// divergence.
 ///
 /// The previous behaviour — silently substituting this for the active
 /// project on `rwv lock`, `rwv add`, etc. — let symlinks and manifests
@@ -891,8 +890,7 @@ impl WorkspaceContext {
     /// (`RWV_WORKSPACE`/`RWV_WORKWEAVE`/`RWV_PROJECT`) as a second
     /// serialization of this same projection. That path will call this method
     /// and map fields to env vars; the values must never be independently
-    /// computed. See bead comment on fo-11iipc.6 for the envelope-agreement
-    /// test that lands with that work.
+    /// computed.
     pub fn resolution(&self) -> Option<Resolution> {
         let project = self.active_project()?;
         let workspace = self.primary_root.clone();
@@ -1655,7 +1653,7 @@ mod tests {
     // ========================================================================
     // $HOME ceiling — walk-up never escapes above $HOME
     //
-    // fo-eli0oa: when tests run from inside a workweave that is itself under
+    // When tests run from inside a workweave that is itself under
     // $HOME, workspace resolution must not walk above $HOME to find a workspace
     // in an unrelated branch of the filesystem (e.g., a sibling directory that
     // happens to have `github/` or `projects/` subdirs).
@@ -1731,7 +1729,7 @@ mod tests {
     // ========================================================================
     // $HOME ceiling — symlinked home path
     //
-    // fo-wbbqof.3: `resolve()` canonicalizes `cwd` but the original code
+    // `resolve()` canonicalizes `cwd` but the original code
     // bound `home_dir` as the raw (un-canonicalized) value from
     // `dirs::home_dir()`.  On systems where $HOME contains a symlinked
     // component the `starts_with` comparison always returns false (the
@@ -2202,7 +2200,7 @@ mod tests {
     // independently computed. A future change will emit an env-var envelope
     // (RWV_WORKSPACE / RWV_WORKWEAVE / RWV_PROJECT) as a second serialization
     // of this same projection; the envelope-agreement half of the test lands
-    // with that work (see bead fo-11iipc.6 comment).
+    // with that work.
     // ========================================================================
 
     /// At primary with an active project: resolution is present, workweave

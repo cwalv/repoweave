@@ -201,12 +201,11 @@ pub fn run_checks(
 /// Run verify hooks for each enabled integration, collecting issues.
 ///
 /// Called from context verbs (`rwv activate`, `rwv fetch`, workweave-create):
-/// the verb surfaces (always creates/repairs symlinks) and verifies — never
-/// authors. Drift between on-disk content and what `activate()` would
-/// produce is reported as `Issue`s (typically `Severity::Warning`). The
-/// recovery hatch is `rwv doctor --fix`, which calls `run_activations`.
-///
-/// See `trigger-model.md` for the intent-vs-context verb split.
+/// the verb verifies and surfaces (creates/repairs symlinks) — it never
+/// authors integration content. Drift between on-disk content and what
+/// `activate()` would produce is reported as `Issue`s (typically
+/// `Severity::Warning`). The recovery hatch is `rwv doctor --fix`, which
+/// calls `run_activations`.
 pub fn run_verifications(
     integrations: &[&dyn Integration],
     manifest: &Manifest,

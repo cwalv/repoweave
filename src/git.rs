@@ -91,7 +91,7 @@ pub const RWV_MERGE_DRIVER_NAME_KEY: &str = "merge.rwv-ours.name";
 /// Human-readable description written to [`RWV_MERGE_DRIVER_NAME_KEY`].
 pub const RWV_MERGE_DRIVER_NAME_DESC: &str = "keep ours during replay (rwv replay-exclusion)";
 
-/// Legacy driver name from before the fo-yk0rlj rename. Read-only: the
+/// Legacy driver name from before the rename. Read-only: the
 /// migrator in [`GitVcs::set_replay_exclusion`] rewrites `merge=ours` lines
 /// to the new name, and `sync::verify_replay_exclusion_invariant` produces
 /// a targeted "run rwv doctor --fix" bail when it finds the legacy line
@@ -211,7 +211,7 @@ pub fn read_committed_gitattributes(repo: &Path) -> Result<Option<String>, VcsEr
 }
 
 /// `true` when the committed `.gitattributes` at HEAD still carries the
-/// **legacy** `<path> merge=ours` line (the fo-yk0rlj rename replaced it
+/// **legacy** `<path> merge=ours` line (the rename replaced it
 /// with `merge=rwv-ours`). Used by `sync::verify_replay_exclusion_invariant`
 /// so its bail message can direct the operator at `rwv doctor --fix` for
 /// migration rather than the generic "add the line" fix.
@@ -1196,7 +1196,7 @@ impl Vcs for GitVcs {
             }
         };
 
-        // Migration path (fo-yk0rlj): if the file still carries the legacy
+        // Migration path: if the file still carries the legacy
         // `<path> merge=ours` line, rewrite it in place to the namespaced
         // `<path> merge=rwv-ours` name. Rewrite — don't append alongside —
         // because two conflicting `merge=` assignments on the same path in
@@ -1371,13 +1371,6 @@ impl Vcs for GitVcs {
     }
 
     fn resolve_savepoint(&self, repo: &Path, op_id: &str) -> Option<ResolvedRevisionId> {
-        // `git rev-parse <ref>` emits the canonical 40-hex SHA for a
-        // fully-qualified ref, so the result is already in canonical form
-        // and re-resolving via `resolve_revision` would add a git
-        // invocation without strengthening the invariant. This is the
-        // sole legitimate caller of
-        // `ResolvedRevisionId::from_canonical_unchecked`; see that
-        // constructor's doc-comment.
         let ref_name = savepoint_ref(op_id);
         Self::run(&["rev-parse", &ref_name], repo)
             .ok()
@@ -1418,9 +1411,6 @@ impl Vcs for GitVcs {
     }
 
     fn resolve_pre_abort_ref(&self, repo: &Path, op_id: &str) -> Option<PreAbortRef> {
-        // Same canonical-rev-parse contract as `resolve_savepoint`: rev-parse
-        // on a fully-qualified ref emits the canonical 40-hex SHA, so the
-        // result is already in canonical form.
         let label = pre_abort_ref(op_id);
         let canonical = Self::run(&["rev-parse", &label], repo).ok()?;
         Some(PreAbortRef {
@@ -2001,7 +1991,7 @@ impl GitVcs {
     /// unstaged modifications to files git already tracks, with untracked files
     /// excluded (`git status --porcelain --untracked-files=no`).
     ///
-    /// This is the source-side cleanliness signal (`fo-4rpnkm.1` §1): a
+    /// This is the source-side cleanliness signal: a
     /// `sync-to` refuses up-front on tracked dirt (it would go stale mid-rebase)
     /// but leaves untracked scratch files alone (they survive the replay). The
     /// parsing contract matches [`dirty_file_names`]; only the untracked class

@@ -5058,16 +5058,9 @@ pub fn run_check(
         // Framework-level Axis-1 surfacing check. Distinct from the
         // per-integration `verify()` pass above, which only sees Axis-2 content
         // drift: nothing there asserts that the *symlinks* the surfacing layer
-        // should have created actually exist and resolve. This pass is a SECOND
-        // CONSUMER of the same `generated_files() ∪ managed_files()` union that
-        // drives symlink CREATION — it lives in the framework (byte-identical
-        // across all integrations) rather than being duplicated into each
-        // `verify()`. It scopes to `workspace_dir` (= `ctx.active_path()`), so
-        // run at primary it checks primary's surfacing and run in a workweave it
-        // checks that workweave's. The recovery hatch is `--fix`, which re-runs
-        // the surfacing PRIMITIVE (`surface_symlinks`) bound to this weave
-        // directory — NOT `activate_intent`, which targets primary and would
-        // author content this gap does not call for.
+        // should have created actually exist and resolve. It scopes to
+        // `workspace_dir` (= `ctx.active_path()`), so run at primary it checks
+        // primary's surfacing and run in a workweave it checks that workweave's.
         let in_workweave = matches!(ctx.checkout, Checkout::Workweave { .. });
         let surfacing_issues = crate::activate::verify_surfacing(
             &workspace_dir,

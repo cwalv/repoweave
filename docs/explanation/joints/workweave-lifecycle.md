@@ -88,8 +88,8 @@ The dirty-source check is anchored at
 If the workweave already exists and is clean, re-invoking `create` without
 `--replace-existing` validates the `.rwv-workweave` marker (same primary and
 project) and returns immediately. Non-git state written between invocations
-(`.runtime/`, `.claude/`, etc.) is preserved in place. This is the Gas
-City rig's standard "ensure workweave exists" path.
+(`.runtime/`, `.claude/`, etc.) is preserved in place. This is the standard
+"ensure workweave exists" path.
 
 Use `--replace-existing` to tear down and recreate from scratch. It refuses if
 the existing workweave holds uncommitted changes or unmerged commits — the
