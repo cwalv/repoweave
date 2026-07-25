@@ -15,8 +15,11 @@ use crate::manifest::{IntegrationConfig, Manifest, ProjectName, RepoEntry, RepoP
 
 /// Shared base data for constructing `IntegrationContext` per integration.
 pub struct IntegrationContextBase<'a> {
-    /// Directory where generated files should be written.
-    pub output_dir: &'a Path,
+    /// Directory an integration's files live in: `<weave>/projects/<project>`.
+    /// Owned rather than borrowed because
+    /// [`WorkspaceSession::context_base`](crate::workspace::WorkspaceSession::context_base)
+    /// derives it rather than taking it from the caller — see that method for why.
+    pub output_dir: std::path::PathBuf,
     /// Workspace root where repos live on disk.
     pub workspace_root: &'a Path,
     /// Active project name.
@@ -104,12 +107,12 @@ pub fn missing_active_members<'a>(
 impl<'a> IntegrationContextBase<'a> {
     /// Build an `IntegrationContext` from this base and per-integration config.
     pub fn build_context(
-        &self,
+        &'a self,
         config: &'a IntegrationConfig,
         manifest: &'a Manifest,
     ) -> IntegrationContext<'a> {
         IntegrationContext {
-            output_dir: self.output_dir,
+            output_dir: &self.output_dir,
             workspace_root: self.workspace_root,
             project: self.project,
             repos: manifest
@@ -435,7 +438,7 @@ mod tests {
         cache: &'a HashMap<String, Vec<String>>,
     ) -> IntegrationContextBase<'a> {
         IntegrationContextBase {
-            output_dir: Path::new("/workspace"),
+            output_dir: std::path::PathBuf::from("/workspace"),
             workspace_root: Path::new("/workspace"),
             project,
             all_repos_on_disk: &[],

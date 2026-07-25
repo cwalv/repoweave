@@ -7461,7 +7461,6 @@ pub fn run_check(
             project.manifest.iter_entries(),
         );
         let ctx_base = session.context_base(
-            &workspace_dir,
             &project.name,
             &detection_cache,
             project.manifest.workweave.as_ref(),
@@ -8448,7 +8447,6 @@ fn collect_doctor_violations(
                 project.manifest.iter_entries(),
             );
             let ctx_base = session_for_cargo.context_base(
-                &workspace_dir,
                 &project.name,
                 &detection_cache,
                 project.manifest.workweave.as_ref(),

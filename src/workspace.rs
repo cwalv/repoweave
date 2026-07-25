@@ -409,7 +409,7 @@ pub fn discover_project_paths(root: &Path) -> Vec<String> {
 /// Computed-once workspace data: registries, repos on disk, and project paths.
 ///
 /// Call [`WorkspaceSession::new`] once per command invocation to pay the scan
-/// cost a single time, then pass varying data (output_dir, project) to
+/// cost a single time, then pass the varying `project` to
 /// [`WorkspaceSession::context_base`] to build an [`IntegrationContextBase`].
 pub struct WorkspaceSession {
     pub root: PathBuf,
@@ -433,8 +433,20 @@ impl WorkspaceSession {
     }
 
     /// Build an [`IntegrationContextBase`] from this session's shared data
-    /// combined with the per-invocation `output_dir`, `project`, and the
-    /// project's optional `workweave:` config.
+    /// combined with the per-invocation `project` and that project's optional
+    /// `workweave:` config.
+    ///
+    /// `output_dir` is **derived**, not passed: it is always
+    /// `<self.root>/projects/<project>`, the committed location where an
+    /// integration's managed and generated files actually live. It is not a
+    /// caller's choice, because the weave root is the other thing a caller
+    /// could plausibly hand over — and there the same files appear only as
+    /// surfacing symlinks, for the **active** project alone. A context bound
+    /// to the root view reads the active project's inode no matter which
+    /// project it claims to describe, and names a path that does not exist at
+    /// all for a file that is missing. Deriving the directory here is what
+    /// makes that unrepresentable; whether the root carries the symlink is a
+    /// separate axis, answered by [`crate::activate::verify_surfacing`].
     ///
     /// The `workweave` argument is the project's `workweave:` section from
     /// `rwv.yaml` (typically `manifest.workweave.as_ref()`). It is threaded
@@ -443,13 +455,12 @@ impl WorkspaceSession {
     /// `workweave.link` (see rwv-c5h / plan §5h).
     pub fn context_base<'a>(
         &'a self,
-        output_dir: &'a Path,
         project: &'a ProjectName,
         detection_cache: &'a std::collections::HashMap<String, Vec<String>>,
         workweave: Option<&'a crate::manifest::WorkweaveConfig>,
     ) -> IntegrationContextBase<'a> {
         IntegrationContextBase {
-            output_dir,
+            output_dir: self.root.join("projects").join(project.as_str()),
             workspace_root: &self.root,
             project,
             all_repos_on_disk: &self.repos_on_disk,

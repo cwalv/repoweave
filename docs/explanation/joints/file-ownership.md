@@ -21,7 +21,12 @@ keeps them in VCS automatically.
 
 Consequences:
 
-- Hybrid integrations must write to `output_dir = project_dir`, never the weave root.
+- Hybrid integrations must write to `output_dir = project_dir`, never the weave root. Reads obey
+  the same binding: `output_dir` is *derived* as `<weave>/projects/<project>` rather than passed
+  in, so no verb can point an integration's `check()` or `verify()` at the root view. That view
+  answers a different question — it carries symlinks for the *active* project only, and only for
+  files whose source exists — so an integration reading through it inspects another project's file,
+  or names a path that exists in neither view for a file that is simply absent.
 - A root symlink is removed only when its name is in the owning integration's declared file set
   **and** its `read_link` target resolves to `projects/<project>/<file>`. A name claimed by two
   integrations is a hard `Severity::Error` before any symlink mutation.

@@ -17,15 +17,25 @@ use std::path::Path;
 /// Constructed once per activation/check cycle and passed to each integration.
 /// Immutable — integrations read this, then write to the filesystem.
 pub struct IntegrationContext<'a> {
-    /// The directory where generated files should be written
-    /// (primary root or workweave directory).
+    /// The directory an integration's managed and generated files live in:
+    /// `<workspace_root>/projects/<project>`, in every weave and for every
+    /// verb. Write hooks author here and read hooks inspect here, so a finding
+    /// names the same path whichever verb produced it.
+    ///
+    /// This is **not** the weave root. The same files are surfaced there as
+    /// symlinks, but only for the *active* project and only when the source
+    /// exists — a view that answers a different question, and one that
+    /// [`crate::workspace::WorkspaceSession::context_base`] makes impossible
+    /// to bind here. Whether the root carries the symlink is
+    /// [`crate::activate::verify_surfacing`]'s axis, not an integration's.
     pub output_dir: &'a Path,
 
-    /// The workspace root where repos live on disk. Used for detecting
-    /// manifest files (e.g., `Cargo.toml`, `package.json`) inside repos.
-    /// In the primary workspace this equals `output_dir`; in a workweave it
-    /// points to the primary workspace root so that repo detection still
-    /// works even when repo clones are not duplicated into the workweave dir.
+    /// The weave root: the directory holding `projects/` and the registry
+    /// dirs the repos live under. Used for detecting manifest files (e.g.,
+    /// `Cargo.toml`, `package.json`) inside repos, which is why it is distinct
+    /// from `output_dir` — the repos are siblings of `projects/`, not children
+    /// of the project directory. Bound to the weave the verb is acting on:
+    /// the primary root at primary, the workweave directory inside one.
     pub workspace_root: &'a Path,
 
     /// The active project name.

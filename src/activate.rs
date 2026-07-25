@@ -230,12 +230,8 @@ fn activate_at(
 
     // Integration content step.
     let detection_cache = build_detection_cache(root, manifest.iter_entries());
-    let ctx_base = session.context_base(
-        &project_dir,
-        &project_name,
-        &detection_cache,
-        manifest.workweave.as_ref(),
-    );
+    let ctx_base =
+        session.context_base(&project_name, &detection_cache, manifest.workweave.as_ref());
 
     match mode {
         ActivationMode::Intent => {
@@ -817,17 +813,11 @@ pub fn member_incompatibilities(
     project: &ProjectName,
     manifest: &Manifest,
 ) -> Vec<crate::integration::Issue> {
-    let project_dir = root.join("projects").join(project.as_str());
     let session = WorkspaceSession::new(root);
     let detection_cache = build_detection_cache(root, manifest.iter_entries());
     let builtin = builtin_integrations();
     let integrations: Vec<&dyn Integration> = builtin.iter().map(|b| b.as_ref()).collect();
-    let ctx_base = session.context_base(
-        &project_dir,
-        project,
-        &detection_cache,
-        manifest.workweave.as_ref(),
-    );
+    let ctx_base = session.context_base(project, &detection_cache, manifest.workweave.as_ref());
     crate::integration_runner::run_member_incompatibilities(&integrations, manifest, &ctx_base)
 }
 

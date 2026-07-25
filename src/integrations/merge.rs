@@ -1936,13 +1936,13 @@ impl MemberIncompatibility {
 // never worth failing a verify pass over.
 //
 // "Canonical" matters: generated files live in the project dir and are
-// SURFACED at the weave root via symlinks. The intent-side stamp runs with
-// `output_dir = project_dir` while doctor's verify runs against the
-// weave-root view (`output_dir = workspace root`, where the file is a
-// symlink). Both helpers therefore resolve symlinks on the file path and
-// anchor the state file to the resolved file's directory, so stamp and
-// check converge on ONE state file regardless of which view the caller
-// holds.
+// SURFACED at the weave root via symlinks. Every verb now binds
+// `output_dir` to the project dir — `WorkspaceSession::context_base`
+// derives it rather than accepting it — so the stamp and the check already
+// mean the same file. Both helpers still resolve symlinks on the file path
+// and anchor the state file to the resolved file's directory; that is now
+// belt-and-braces, not the load-bearing reconciliation it was while doctor
+// bound the weave-root view.
 //
 // cargo-workspace is the first consumer; uv/npm/pnpm lockfiles have the
 // identical story and can port by calling the same three helpers.
