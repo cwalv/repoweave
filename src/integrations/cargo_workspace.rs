@@ -318,6 +318,44 @@ impl CargoWorkspace {
             .any(|(rp, _)| cfg.members.contains_key(rp.as_str()))
     }
 
+    /// The member paths `manifest_text` names that have no package on disk
+    /// under `workspace_root`.
+    ///
+    /// The complement of [`has_active_cargo_work`](Self::has_active_cargo_work)'s
+    /// second arm: that arm counts a repo as active cargo work from `rwv.yaml`
+    /// alone, no clone required, which is what makes this integration live
+    /// during an `init --adopt` (the adopt clones only the project repo). The
+    /// gate therefore admits workspaces whose members are not on disk, while
+    /// `cargo generate-lockfile` requires every member to resolve. This
+    /// answers, first-hand, the question cargo would answer by exiting 101.
+    ///
+    /// Member paths resolve relative to the manifest cargo reads, which is the
+    /// surfacing symlink at `workspace_root` — cargo does not canonicalize
+    /// through it, so `workspace_root` is the right base even though the
+    /// canonical file lives at `output_dir`.
+    ///
+    /// Two deliberate narrowings, both so the result means exactly "absent":
+    /// - **Glob entries are skipped.** Cargo expands them, and a pattern that
+    ///   matches nothing is not an error, so a glob cannot be "missing".
+    /// - **A parse failure yields nothing.** A malformed manifest is cargo's
+    ///   error to report, not something to reinterpret as absent members.
+    fn unfetched_members(manifest_text: &str, workspace_root: &Path) -> Vec<String> {
+        let Ok(doc) = manifest_text.parse::<toml_edit::DocumentMut>() else {
+            return Vec::new();
+        };
+        let Some(members) = toml_array_strings(&doc, &["workspace", "members"]) else {
+            return Vec::new();
+        };
+        members
+            .into_iter()
+            .filter(|m| !m.contains(['*', '?', '[']))
+            // The precondition cargo actually has is the member's manifest,
+            // not its directory: a member directory present but empty fails
+            // the same way ("failed to read <member>/Cargo.toml").
+            .filter(|m| !workspace_root.join(m).join("Cargo.toml").exists())
+            .collect()
+    }
+
     /// Compute the sorted member-path list and the nested-workspace
     /// conflict list for the active Rust repos.
     ///
@@ -763,6 +801,38 @@ impl Integration for CargoWorkspace {
                  run `rwv doctor --fix` to regenerate",
                 managed.display()
             );
+        }
+
+        // Precheck: a lockfile cannot be generated for members that are not on
+        // disk yet, and `init --adopt` is precisely the moment when none of
+        // them are — it clones only the project repo. Left to cargo this exits
+        // 101, which `report_and_check_activate_hook_issues` turns into an
+        // adopt that exits 1 after having otherwise succeeded, naming
+        // `rwv doctor --fix` as the remedy (it re-runs this same hook against
+        // the same absent members and fails identically).
+        //
+        // Skipping is a DEFERRAL, not a suppression: lockfile refresh is
+        // triggered by workspace-membership change (see `Integration::
+        // activate_hook`), fetching the members IS such a change, and the
+        // activate that follows generates the lock then. The lock first
+        // appears when it first can. Note this is not adopt-specific — the
+        // condition is keyed on the members, so a fetch that half-failed gets
+        // the same treatment at the next `rwv activate`.
+        let managed_text = std::fs::read_to_string(&managed)
+            .with_context(|| format!("reading {}", managed.display()))?;
+        let unfetched = Self::unfetched_members(&managed_text, ctx.workspace_root);
+        if !unfetched.is_empty() {
+            eprintln!(
+                "[warning] cargo-workspace: skipping `cargo generate-lockfile` — {} \
+                 workspace member(s) named by {} are not on disk: {}. This is the \
+                 expected state directly after `rwv init --adopt`, which clones only \
+                 the project repo. Run `rwv fetch` to clone them, then `rwv activate` \
+                 to generate the lockfile.",
+                unfetched.len(),
+                managed.display(),
+                unfetched.join(", "),
+            );
+            return Ok(());
         }
 
         // Run from workspace_root: that's where activation symlinks are
@@ -3152,6 +3222,62 @@ mod tests {
     fn plain_package_file_is_not_a_workspace() {
         let s = "[package]\nname = \"foo\"\nversion = \"0.1.0\"\nedition = \"2021\"\n";
         assert!(!declares_workspace(s));
+    }
+
+    /// A member directory holding a package, as cargo requires one.
+    fn write_member(root: &Path, rel: &str) {
+        let dir = root.join(rel);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("Cargo.toml"), "[package]\nname = \"m\"\n").unwrap();
+    }
+
+    #[test]
+    fn unfetched_members_reports_only_the_absent_paths() {
+        let tmp = tempfile::tempdir().unwrap();
+        write_member(tmp.path(), "org/lib/crates/core");
+        let manifest = "[workspace]\nmembers = [\"org/lib/crates/core\", \"org/lib/crates/cli\"]\n";
+        assert_eq!(
+            CargoWorkspace::unfetched_members(manifest, tmp.path()),
+            vec!["org/lib/crates/cli".to_string()]
+        );
+    }
+
+    #[test]
+    fn unfetched_members_counts_a_dir_without_a_manifest_as_absent() {
+        // cargo's precondition is the member's Cargo.toml, not its directory:
+        // an empty directory fails identically ("failed to read .../Cargo.toml").
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(tmp.path().join("org/lib/crates/core")).unwrap();
+        let manifest = "[workspace]\nmembers = [\"org/lib/crates/core\"]\n";
+        assert_eq!(
+            CargoWorkspace::unfetched_members(manifest, tmp.path()),
+            vec!["org/lib/crates/core".to_string()]
+        );
+    }
+
+    #[test]
+    fn unfetched_members_skips_globs() {
+        // Cargo expands globs and a pattern matching nothing is not an error,
+        // so a glob can never be "missing" — reporting one would defer the
+        // lockfile for a workspace cargo would have resolved fine.
+        let tmp = tempfile::tempdir().unwrap();
+        let manifest = "[workspace]\nmembers = [\"crates/*\"]\n";
+        assert!(CargoWorkspace::unfetched_members(manifest, tmp.path()).is_empty());
+    }
+
+    #[test]
+    fn unfetched_members_defers_to_cargo_on_a_malformed_manifest() {
+        // A parse failure is cargo's error to report, not something to
+        // reinterpret as absent members.
+        let tmp = tempfile::tempdir().unwrap();
+        assert!(CargoWorkspace::unfetched_members("[workspace", tmp.path()).is_empty());
+    }
+
+    #[test]
+    fn unfetched_members_is_empty_without_a_members_key() {
+        let tmp = tempfile::tempdir().unwrap();
+        let manifest = "[package]\nname = \"foo\"\n";
+        assert!(CargoWorkspace::unfetched_members(manifest, tmp.path()).is_empty());
     }
 
     #[test]

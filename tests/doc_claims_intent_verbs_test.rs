@@ -11,14 +11,17 @@
 //!     the membership change and leave the managed files alone
 //!   - `rwv fetch`, `rwv activate`, workweave-create, `rwv init`, and
 //!     `rwv init --adopt` do not author (context mode)
-//!   - `rwv init --adopt` additionally must not clobber content the
-//!     adopted repo already committed: it clones only the one repo, so
-//!     re-authoring there would recompute owned content from a tree
-//!     missing every other manifest member
+//!   - `rwv init --adopt` additionally must not re-author what the
+//!     authoring path owns, even when the adopted repo committed it: it
+//!     clones only the one repo, so re-authoring there would recompute
+//!     owned content from a tree missing every other manifest member
 //!   - the same claim carried by `cargo-workspace`, on both halves of the
 //!     merge model: a marked `[workspace].members` is not truncated, and a
 //!     user-held (unmarked) `Cargo.toml` gets no `DefaultOnly` key written
 //!     into it
+//!   - the boundary of that claim: install hooks run in context mode too, so
+//!     an adopt DOES regenerate a committed `Cargo.lock`, and DEFERS the
+//!     generation entirely when the members are not fetched yet
 //!
 //! `rwv update` authoring and `rwv lock`'s exemption are pinned elsewhere
 //! (`verb_shape_test.rs`, plus `lock_test.rs` / `doc_claims_lock_test.rs`
@@ -468,8 +471,19 @@ fn init_adopt_does_not_author_managed_content() {
 }
 
 // ===========================================================================
-// `rwv init --adopt` must not clobber content the adopted repo already
-// committed
+// `rwv init --adopt` must not re-author what the AUTHORING PATH owns
+//
+// Scope, per docs/explanation/joints/file-ownership.md §"Install hooks at
+// context verbs: lockfiles may be rewritten": "never author" is a claim about
+// the authoring path — managed regions and rwv-computed artifacts, which
+// intent verbs regenerate and context verbs never run. It is NOT the broader
+// claim that an adopt leaves every committed byte alone. Install hooks run in
+// context mode too and rewrite the ecosystem lockfiles their tools own, which
+// `init_adopt_regenerates_a_committed_cargo_lock` below pins as the other half
+// of the same distinction. So this test is named for the artifact it proves it
+// on rather than for "committed generated content" as a class: a
+// `.code-workspace` and a `Cargo.lock` are both committed generated content
+// and their fates differ.
 //
 // `init --adopt` clones only the adopted project's own repo — none of the
 // manifest's other members land on disk. If it ever ran intent-mode
@@ -487,7 +501,7 @@ fn init_adopt_does_not_author_managed_content() {
 // ===========================================================================
 
 #[test]
-fn init_adopt_does_not_clobber_committed_generated_content() {
+fn init_adopt_does_not_reauthor_a_committed_code_workspace() {
     let tmp = tempfile::tempdir().unwrap();
     let bare = tmp.path().join("myapp.git");
     init_bare_repo(&bare);
@@ -608,7 +622,18 @@ integrations:
 
 /// A bare project repo carrying [`CARGO_MEMBERS_MANIFEST`] and a committed
 /// root `Cargo.toml`, ready to be adopted.
-fn make_cargo_adoptee_bare(tmp: &Path, name: &str, cargo_toml: &str) -> PathBuf {
+///
+/// `cargo_lock` commits a `Cargo.lock` alongside it. `None` is the shape the
+/// no-clobber tests want (the lock is absent, so nothing about it can be
+/// asserted); `Some` is for
+/// [`init_adopt_regenerates_a_committed_cargo_lock`], where the committed lock
+/// is the subject.
+fn make_cargo_adoptee_bare(
+    tmp: &Path,
+    name: &str,
+    cargo_toml: &str,
+    cargo_lock: Option<&str>,
+) -> PathBuf {
     let bare = tmp.join(format!("{name}.git"));
     init_bare_repo(&bare);
     let work = tmp.join(format!("{name}-work"));
@@ -618,6 +643,9 @@ fn make_cargo_adoptee_bare(tmp: &Path, name: &str, cargo_toml: &str) -> PathBuf 
     );
     std::fs::write(work.join("rwv.yaml"), CARGO_MEMBERS_MANIFEST).unwrap();
     std::fs::write(work.join("Cargo.toml"), cargo_toml).unwrap();
+    if let Some(lock) = cargo_lock {
+        std::fs::write(work.join("Cargo.lock"), lock).unwrap();
+    }
     git_run(&["add", "."], &work);
     git_run(&["commit", "-m", "manifest + managed Cargo.toml"], &work);
     git_run(&["push", "origin", "main"], &work);
@@ -660,7 +688,7 @@ resolver = \"2\"
 [profile.release]
 lto = true
 ";
-    let bare = make_cargo_adoptee_bare(tmp.path(), "myapp", committed_cargo_toml);
+    let bare = make_cargo_adoptee_bare(tmp.path(), "myapp", committed_cargo_toml, None);
 
     let adopt_ws = make_workspace(tmp.path());
     materialize_lib_subcrates(&adopt_ws, LIB_SUBCRATES);
@@ -705,7 +733,7 @@ members = [\"org/lib/crates/cli\", \"org/lib/crates/core\"]
 [profile.release]
 lto = true
 ";
-    let bare = make_cargo_adoptee_bare(tmp.path(), "myapp", committed_cargo_toml);
+    let bare = make_cargo_adoptee_bare(tmp.path(), "myapp", committed_cargo_toml, None);
 
     let adopt_ws = make_workspace(tmp.path());
     materialize_lib_subcrates(&adopt_ws, &["core", "cli"]);
@@ -727,5 +755,160 @@ lto = true
     assert_eq!(
         adopted, committed_cargo_toml,
         "`rwv init --adopt` must leave a user-held Cargo.toml byte-for-byte alone"
+    );
+}
+
+// ===========================================================================
+// The other half of the ownership distinction: install hooks DO rewrite the
+// lockfiles they own, at context verbs, committed or not
+//
+// The three tests above pin the authoring path. This section pins the hook
+// path, which the same adopt runs and which is NOT subject to "never author"
+// — see docs/explanation/joints/file-ownership.md §"Install hooks at context
+// verbs: lockfiles may be rewritten". Without a test in this direction the
+// behaviour is unexercised both ways, which is the state most likely to
+// change by accident: a future reader who takes "adopt never re-authors
+// committed content" as unscoped would suppress the hook and break nothing
+// visible.
+// ===========================================================================
+
+/// A committed `Cargo.lock` in valid lock format whose `lib-stale-sentinel`
+/// entry regeneration cannot produce — no member is named that and there are
+/// no external deps to pull one in. Its survival is the discriminator: bytes
+/// preserved means the hook did not run.
+const STALE_COMMITTED_CARGO_LOCK: &str = "\
+# This file is automatically @generated by Cargo.
+# It is not intended for manual editing.
+version = 4
+
+[[package]]
+name = \"lib-core\"
+version = \"0.1.0\"
+
+[[package]]
+name = \"lib-stale-sentinel\"
+version = \"0.0.9\"
+";
+
+/// Adopt regenerates a committed `Cargo.lock`. Ruled correct under the shipped
+/// ownership model: a generated lock is fully rwv-owned derived state, and
+/// committing one does not transfer the pen.
+///
+/// This pins the DEFAULT lock policy — the only one that exists in code today.
+/// The opt-in `commit-lock: true` policy, when it ships, adds a SEPARATE
+/// knob-set fixture pinning non-clobber; this test stays as the default-column
+/// pin and must not be weakened to accommodate it.
+///
+/// Every member resolves here on purpose: the members-missing case is the
+/// subject of the next test, and mixing the two would let either one explain a
+/// pass.
+#[test]
+fn init_adopt_regenerates_a_committed_cargo_lock() {
+    require_cargo!();
+    let tmp = tempfile::tempdir().unwrap();
+
+    // Marked, and members that already agree with the config — no truncation
+    // axis in play, so the lock is the only thing under test.
+    let committed_cargo_toml = "\
+[workspace]
+# managed by rwv
+members = [\"org/lib/crates/cli\", \"org/lib/crates/core\"]
+resolver = \"2\"
+";
+    let bare = make_cargo_adoptee_bare(
+        tmp.path(),
+        "myapp",
+        committed_cargo_toml,
+        Some(STALE_COMMITTED_CARGO_LOCK),
+    );
+
+    let adopt_ws = make_workspace(tmp.path());
+    materialize_lib_subcrates(&adopt_ws, &["core", "cli"]);
+    let source = format!("file://{}", bare.display());
+
+    rwv()
+        .args(["init", "--adopt", &source])
+        .current_dir(&adopt_ws)
+        .assert()
+        .success();
+
+    let lock = std::fs::read_to_string(adopt_ws.join("projects/myapp/Cargo.lock"))
+        .expect("adopt should leave a Cargo.lock at the canonical project path");
+    assert!(
+        !lock.contains("lib-stale-sentinel"),
+        "`rwv init --adopt` runs the cargo install hook, which regenerates the \
+         lockfile it owns — the committed bytes must not survive. Got:\n{lock}"
+    );
+    assert!(
+        lock.contains("name = \"lib-cli\""),
+        "the lock must be REPLACED by a real regeneration, not emptied or \
+         deleted: every workspace member should appear in it. Got:\n{lock}"
+    );
+}
+
+/// Adopt of a cargo project whose members are not fetched yet completes.
+///
+/// `init --adopt` clones only the project repo, so a manifest that already
+/// names its members names paths that are not on disk — the normal starting
+/// state for adopting any existing cargo workspace, not an edge case. Left to
+/// cargo this is exit 101, which takes the whole adopt down with it after it
+/// has otherwise succeeded.
+///
+/// Deferring is not suppression: the test above pins that the hook still runs
+/// and still rewrites the lock once the members resolve.
+#[test]
+fn init_adopt_completes_when_workspace_members_are_not_fetched_yet() {
+    require_cargo!();
+    let tmp = tempfile::tempdir().unwrap();
+
+    let committed_cargo_toml = "\
+[workspace]
+# managed by rwv
+members = [\"org/lib/crates/cli\", \"org/lib/crates/core\"]
+resolver = \"2\"
+";
+    let bare = make_cargo_adoptee_bare(tmp.path(), "myapp", committed_cargo_toml, None);
+
+    // The point of the fixture: `materialize_lib_subcrates` is NOT called, so
+    // neither member path exists.
+    let adopt_ws = make_workspace(tmp.path());
+    let source = format!("file://{}", bare.display());
+
+    let out = rwv()
+        .args(["init", "--adopt", &source])
+        .current_dir(&adopt_ws)
+        .assert()
+        .success()
+        .get_output()
+        .clone();
+    let stderr = String::from_utf8_lossy(&out.stderr).to_string();
+
+    // Naming the members and the resolving command is half the acceptance:
+    // cargo's raw exit-101 text is not an acceptable user-facing message.
+    for member in ["org/lib/crates/cli", "org/lib/crates/core"] {
+        assert!(
+            stderr.contains(member),
+            "the skip must name the unfetched member `{member}` so the operator \
+             knows which paths are missing. Got:\n{stderr}"
+        );
+    }
+    assert!(
+        stderr.contains("rwv fetch") && stderr.contains("rwv activate"),
+        "the skip must name the commands that resolve it. `rwv fetch` alone \
+         does not: the adopt wrote `.rwv-active`, so fetch skips its \
+         first-fetch auto-activate and the lock is generated only by the \
+         explicit `rwv activate` that follows. Got:\n{stderr}"
+    );
+
+    // The adopt is otherwise complete — the lock is the only thing deferred.
+    assert!(
+        adopt_ws.join(".rwv-active").exists(),
+        "a completed adopt selects the project it adopted"
+    );
+    let adopted = std::fs::read_to_string(adopt_ws.join("projects/myapp/Cargo.toml"))
+        .expect("adopted project should still carry the committed Cargo.toml");
+    assert_eq!(
+        adopted, committed_cargo_toml,
+        "deferring the lockfile must not disturb the committed Cargo.toml"
     );
 }

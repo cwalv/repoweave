@@ -177,6 +177,16 @@ ride `generated_files()` for Axis-1 surfacing while remaining fully user-owned, 
 context or intent — may write them. Conversely `go.sum` is hook-owned in principle, but rwv runs
 no go install hook today, so nothing rewrites it at a context verb.
 
+A license to rewrite is not an obligation to. A hook whose inputs are not on disk yet **defers**
+rather than failing: `init --adopt` clones only the project repo, so an adopted manifest that
+already names its members names paths that do not exist, and cargo cannot resolve a lockfile
+against them. The cargo hook detects that before shelling out, skips the generation, and names the
+absent members plus the commands that resolve them (`rwv fetch`, then `rwv activate`) — the adopt
+completes, and the lock first appears at the activation that follows the members arriving. Nothing
+is lost by deferring, because membership change is the lockfile-refresh trigger in the first place.
+The deferral is scoped to inputs that are **absent**: a member that is on disk but whose manifest
+is broken is a genuine hook failure and still bails.
+
 ## The shared helper API
 
 The hybrid-merge invariants live once, in `src/integrations/merge.rs`, rather than duplicated
