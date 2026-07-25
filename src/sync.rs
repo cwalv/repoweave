@@ -1444,8 +1444,8 @@ fn prune_dropped_repo(
             } else {
                 // No canonical at the primary-side slot. That is a fact about
                 // the PRIMARY and says nothing about what `dest` is: under
-                // inverted topology (joints/clone-topology.md, I1) a workweave
-                // checkout can itself be the standalone clone holding the
+                // inverted topology (docs/explanation/joints/clone-topology.md,
+                // I1) a workweave checkout can itself be the standalone clone holding the
                 // repo's only object database, and `remove_dir_all` on that is
                 // a DESTROY-STORE (§3.2), not a checkout removal. It is also
                 // one this arm could not discharge if it wanted to — with no

@@ -393,7 +393,7 @@ impl<'de> Deserialize<'de> for RepoUrl {
 /// (manifest YAML, `--role` CLI arguments, `--json` output). The legacy
 /// `primary` spelling — used before the rename — is **not** accepted by
 /// the parser; manifests carrying it must be migrated via `rwv doctor --fix`.
-/// See `reference/roles.md` for the migration path.
+/// See `docs/reference/roles.md` for the migration path.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, clap::ValueEnum)]
 #[serde(rename_all = "lowercase")]
 #[clap(rename_all = "lowercase")]

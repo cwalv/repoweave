@@ -1197,19 +1197,22 @@ fn run_env_input_check(root: &Path) -> anyhow::Result<Vec<String>> {
 }
 
 /// Check that every variable name emitted by [`repoweave::plugins::envelope_vars`]
-/// is documented in `docs/reference/cli.md`.
+/// is documented in `docs/reference/plugin-protocol.md`.
 ///
 /// The check calls `envelope_vars` with a fully-populated [`Resolution`] so that
 /// every possible variable (including `RWV_WORKWEAVE`, which is only set when a
 /// workweave is resolved) is exercised. The set of emitted names is the single
 /// source of truth; no source-text grepping is involved.
 ///
-/// Each name must appear in `cli.md` as a backtick-quoted table cell (`\`VAR_NAME\``).
-/// The envelope table in the "Context envelope" section of the External commands
-/// reference is the canonical documentation surface.
+/// Each name must appear as a backtick-quoted table cell (`\`VAR_NAME\``) in the
+/// envelope table under "Context envelope" in the plugin-protocol reference,
+/// which is the canonical documentation surface for the wire contract. The
+/// External commands section of `docs/reference/cli.md` names the variables in
+/// passing and links here; it is orientation, not the contract, and pointing
+/// this check at it once cost a doc edit a false failure.
 ///
 /// Returns error messages (one per undocumented variable); empty means clean.
-fn check_envelope_output_documented(cli_md_content: &str) -> Vec<String> {
+fn check_envelope_output_documented(protocol_md_content: &str) -> Vec<String> {
     // Build a fully-populated Resolution so every conditional branch in
     // envelope_vars() fires and we get the complete set of variable names.
     let full_resolution = Resolution {
@@ -1222,15 +1225,14 @@ fn check_envelope_output_documented(cli_md_content: &str) -> Vec<String> {
     let mut errors: Vec<String> = Vec::new();
 
     for (name, _) in &vars {
-        // The name must appear in cli.md as a backtick-quoted table cell.
         // The envelope table rows look like: | `RWV_VERSION` | ... |
         let needle = format!("`{name}`");
-        if !cli_md_content.contains(&needle) {
+        if !protocol_md_content.contains(&needle) {
             errors.push(format!(
                 "envelope-output: `{name}` is set on every plugin spawn by \
                  `envelope_vars()` in src/plugins.rs but is not documented in \
-                 docs/reference/cli.md — add a row for `{name}` to the Context \
-                 envelope table in the External commands section of that file"
+                 docs/reference/plugin-protocol.md — add a row for `{name}` to \
+                 the Context envelope table in that file"
             ));
         }
     }
@@ -1242,12 +1244,17 @@ fn check_envelope_output_documented(cli_md_content: &str) -> Vec<String> {
 ///
 /// Calls `envelope_vars` with a fully-populated `Resolution` to obtain the
 /// complete set of emitted variable names, then checks each against
-/// `docs/reference/cli.md`. Fails if any emitted name is undocumented.
+/// `docs/reference/plugin-protocol.md`. Fails if any emitted name is
+/// undocumented.
 fn run_envelope_output_check(root: &Path) -> anyhow::Result<Vec<String>> {
-    let cli_md_path = root.join("docs/reference/cli.md");
-    let cli_md_content = fs::read_to_string(&cli_md_path)
-        .map_err(|e| anyhow::anyhow!("cannot read cli.md at {}: {e}", cli_md_path.display()))?;
-    Ok(check_envelope_output_documented(&cli_md_content))
+    let protocol_md_path = root.join("docs/reference/plugin-protocol.md");
+    let protocol_md_content = fs::read_to_string(&protocol_md_path).map_err(|e| {
+        anyhow::anyhow!(
+            "cannot read plugin-protocol.md at {}: {e}",
+            protocol_md_path.display()
+        )
+    })?;
+    Ok(check_envelope_output_documented(&protocol_md_content))
 }
 
 /// Match a tracker ID (`fo-<slug>`, optionally dotted) at a word boundary.
@@ -1324,6 +1331,291 @@ fn check_no_tracker_ids(root: &Path) -> Vec<String> {
         }
     }
     errors
+}
+
+/// File extensions that make a path token in a comment a *document* citation.
+///
+/// Deliberately excludes `.rs` and `.json`. A comment naming a sibling module
+/// (`integrations/cargo_workspace.rs`) writes a path that is meaningful from
+/// the reader's position but does not resolve from the repo root, and
+/// reporting those would fail this gate on correct code.
+const DOC_PATH_EXTENSIONS: &[&str] = &["md", "txt", "rst", "adoc", "tmpl"];
+
+/// Words that state nothing on their own. A comment built from these and a
+/// path and nothing else is pointing at a document instead of carrying the
+/// invariant itself.
+const POINTER_FILLER: &[&str] = &[
+    "see",
+    "also",
+    "cf",
+    "per",
+    "and",
+    "or",
+    "for",
+    "the",
+    "a",
+    "an",
+    "this",
+    "that",
+    "these",
+    "in",
+    "at",
+    "on",
+    "of",
+    "to",
+    "from",
+    "further",
+    "more",
+    "detail",
+    "details",
+    "doc",
+    "docs",
+    "documented",
+    "documentation",
+    "reference",
+    "references",
+    "ref",
+    "refs",
+    "full",
+    "why",
+];
+
+/// The comment text on `line`, and whether the line is comment-only.
+///
+/// The scan tracks `"` (honouring backslash escapes) so the `//` inside a URL
+/// string literal is not read as a comment start. Leading `/` and `!` are
+/// stripped, so `///` and `//!` yield the same text as `//`.
+fn comment_on_line(line: &str) -> Option<(bool, &str)> {
+    let b = line.as_bytes();
+    let mut in_string = false;
+    let mut i = 0;
+    while i < b.len() {
+        match b[i] {
+            b'\\' if in_string => i += 1,
+            b'"' => in_string = !in_string,
+            b'/' if !in_string && b.get(i + 1) == Some(&b'/') => {
+                let text = line[i + 2..].trim_start_matches(['/', '!']).trim();
+                return Some((line[..i].trim().is_empty(), text));
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    None
+}
+
+/// One run of consecutive comment-only lines, or one trailing comment on a
+/// code line, as `(line number, text)` pairs.
+///
+/// The block, not the line, is what the bare-pointer clause judges: a comment
+/// that states its invariant and then points at a joint document is a legal
+/// trailing pointer, and only the whole block shows that it did state it.
+struct CommentBlock {
+    lines: Vec<(usize, String)>,
+}
+
+impl CommentBlock {
+    fn text(&self) -> String {
+        self.lines
+            .iter()
+            .map(|(_, t)| t.as_str())
+            .collect::<Vec<_>>()
+            .join(" ")
+    }
+}
+
+fn comment_blocks(content: &str) -> Vec<CommentBlock> {
+    let mut blocks = Vec::new();
+    let mut open: Vec<(usize, String)> = Vec::new();
+    let close = |open: &mut Vec<(usize, String)>, blocks: &mut Vec<CommentBlock>| {
+        if !open.is_empty() {
+            blocks.push(CommentBlock {
+                lines: std::mem::take(open),
+            });
+        }
+    };
+    for (n, line) in content.lines().enumerate() {
+        match comment_on_line(line) {
+            Some((true, text)) => open.push((n + 1, text.to_owned())),
+            Some((false, text)) => {
+                close(&mut open, &mut blocks);
+                blocks.push(CommentBlock {
+                    lines: vec![(n + 1, text.to_owned())],
+                });
+            }
+            None => close(&mut open, &mut blocks),
+        }
+    }
+    close(&mut open, &mut blocks);
+    blocks
+}
+
+/// Path-shaped tokens in `text`: a run of path characters holding a `/`, whose
+/// last component ends in a `DOC_PATH_EXTENSIONS` suffix.
+///
+/// Markdown and rustdoc link punctuation is outside the character run, so
+/// ``[clone-topology](../../docs/explanation/joints/clone-topology.md)`` and
+/// ``[`docs/explanation/joints/clone-topology.md`]`` both yield the path
+/// alone. A path wrapped across two comment lines is not seen — the line break
+/// splits the run — which is a miss, not a false report.
+fn doc_path_tokens(text: &str) -> Vec<&str> {
+    text.split(|c: char| !(c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '/' | '-')))
+        .map(|run| run.trim_end_matches('.'))
+        .filter(|tok| {
+            tok.contains('/')
+                && tok
+                    .rsplit('/')
+                    .next()
+                    .and_then(|last| last.rsplit_once('.'))
+                    .is_some_and(|(_, ext)| DOC_PATH_EXTENSIONS.contains(&ext))
+        })
+        .collect()
+}
+
+/// True if `token` names a file present in a clone of this repository.
+///
+/// A leading `../` run is dropped first. A rustdoc link is written relative to
+/// the generated HTML tree, not the repo root, and the question the rule asks
+/// is whether a cloner holds the file — not whether the prefix would resolve
+/// from `root`. Dropping the prefix cannot admit a genuine escape: the
+/// remainder still has to name something that exists here.
+fn resolves_in_repo(root: &Path, token: &str) -> bool {
+    let mut rest = token;
+    while let Some(next) = rest.strip_prefix("../").or_else(|| rest.strip_prefix("./")) {
+        rest = next;
+    }
+    !rest.is_empty() && root.join(rest).exists()
+}
+
+/// True if the comment says nothing beyond its references — every word left
+/// after removing the path tokens is `POINTER_FILLER`.
+fn is_bare_pointer(block_text: &str, tokens: &[&str]) -> bool {
+    let mut residue = block_text.to_ascii_lowercase();
+    for token in tokens {
+        residue = residue.replace(&token.to_ascii_lowercase(), " ");
+    }
+    residue
+        .split(|c: char| !c.is_ascii_alphanumeric())
+        .filter(|w| !w.is_empty())
+        .all(|w| POINTER_FILLER.contains(&w))
+}
+
+/// Content up to the first `#[cfg(test)]` that is followed by a line break and
+/// `mod tests`.
+///
+/// Not `strip_test_module`, which this gate cannot use. That one takes the
+/// *last* marker and accepts `mod tests` on the same line, so a doc comment
+/// mentioning `#[cfg(test)] mod tests` in prose counts as the boundary — this
+/// file has several, and the last of them sits well below its own test module.
+/// Requiring the line break admits only the real attribute; taking the first
+/// admits only the real module.
+fn before_test_module(content: &str) -> &str {
+    let marker = "#[cfg(test)]";
+    let mut from = 0;
+    while let Some(pos) = content[from..].find(marker) {
+        let at = from + pos;
+        let after = content[at + marker.len()..].trim_start_matches([' ', '\t', '\r']);
+        if after.starts_with('\n')
+            && after
+                .trim_start_matches([' ', '\t', '\r', '\n'])
+                .starts_with("mod tests")
+        {
+            return &content[..at];
+        }
+        from = at + marker.len();
+    }
+    content
+}
+
+/// True if `line` is the inline escape-hatch annotation, with a reason.
+fn is_local_ref_hatch(line: &str) -> bool {
+    line.strip_prefix("weave-local-ref:")
+        .is_some_and(|reason| !reason.trim().is_empty())
+}
+
+/// Enforce the **path-resolution clause** of `CLAUDE.md`'s "Comments do not
+/// cite trackers or documents", over comments in `src/`:
+///
+/// - a path in a comment must name a file that exists in this repository. A
+///   path into the workspace this repo is developed in is unfollowable from a
+///   clone, and it rots invisibly, because nothing can check a path that was
+///   never expected to resolve;
+/// - a comment whose *entire* content is the reference is a violation even
+///   when the path resolves — it points instead of stating. A resolving path
+///   is legal as a trailing pointer, after the comment has said the thing.
+///
+/// A site may keep a path that leaves this repository by annotating the line
+/// above it `weave-local-ref: <reason>`. The hatch suppresses the resolution
+/// clause only; it is not a way to keep a comment that is nothing but a
+/// pointer, and there is no allowlist file.
+///
+/// # This gate is not the whole rule
+///
+/// `CLAUDE.md` bans three shapes in comments. The tracker-ID shape is
+/// `check_no_tracker_ids`. The third — a **section pointer** into a design
+/// document (`branch-model.md §3.3`, `plan §7.1 arm 7`) — is **not mechanised
+/// anywhere**, here or elsewhere. Around 290 bare `§` sites stand in `src/`
+/// today, concentrated in `check.rs`, `sync.rs` and `vcs.rs`; a matcher for
+/// them has to follow the sweep that removes them, not precede it. Reading a
+/// green gate as "this tree has no section pointers" is wrong.
+///
+/// Three further limits, all taken deliberately against over-eagerness: only
+/// the extensions in `DOC_PATH_EXTENSIONS` count as a document citation; a
+/// path with no `/` is not a path token, so a bare filename in prose is not
+/// checked; and inline test-module content is dropped (`before_test_module`),
+/// as the env-input gate also drops it. That last one is a scope difference
+/// from `check_no_tracker_ids` and `check_no_consumer_vocabulary`, which scan
+/// whole files: those two ban text that reaches a user wherever it sits, while
+/// this one asks whether a reader can follow a reference, and a test comment
+/// describing the fixture tree it builds in a temp directory is not citing a
+/// document.
+fn check_doc_citations(root: &Path, files: &[PathBuf]) -> Vec<String> {
+    let mut errors = Vec::new();
+    for path in files {
+        let Ok(content) = fs::read_to_string(path) else {
+            continue;
+        };
+        let rel = path.strip_prefix(root).unwrap_or(path).display();
+        for block in comment_blocks(before_test_module(&content)) {
+            let joined = block.text();
+            let block_tokens = doc_path_tokens(&joined);
+            if block_tokens.is_empty() {
+                continue;
+            }
+            for (i, (n, text)) in block.lines.iter().enumerate() {
+                if i > 0 && is_local_ref_hatch(&block.lines[i - 1].1) {
+                    continue;
+                }
+                for token in doc_path_tokens(text) {
+                    if !resolves_in_repo(root, token) {
+                        errors.push(format!(
+                            "{rel}:{n}: `{token}` does not resolve to a file in this repository"
+                        ));
+                    }
+                }
+            }
+            if is_bare_pointer(&joined, &block_tokens) {
+                errors.push(format!(
+                    "{rel}:{}: comment is nothing but a reference — it points instead of stating",
+                    block.lines[0].0
+                ));
+            }
+        }
+    }
+    errors
+}
+
+/// Run the doc-citation gate over the `.rs` half of `src_and_docs_files`.
+///
+/// The rule governs comments under `src/`, so the `.md` files that shared
+/// scope also yields are filtered out; `tests/` is exempt for free, since that
+/// helper never collects it.
+fn run_doc_citation_check(root: &Path) -> Vec<String> {
+    let rs_files: Vec<PathBuf> = src_and_docs_files(root)
+        .into_iter()
+        .filter(|p| p.extension() == Some(OsStr::new("rs")))
+        .collect();
+    check_doc_citations(root, &rs_files)
 }
 
 /// Words that name a specific consumer or workflow rwv happens to be used
@@ -1641,17 +1933,17 @@ fn main() -> anyhow::Result<()> {
 
     // --- envelope-output documentation gate ------------------------------
     // Every RWV_* variable set on plugin spawns by envelope_vars() in
-    // src/plugins.rs must be documented in docs/reference/cli.md. The check
-    // calls envelope_vars() directly (no source grepping) so a new variable
-    // added to the function is caught immediately. Failure tells the author
-    // exactly which variable is undocumented and where to add it.
+    // src/plugins.rs must be documented in docs/reference/plugin-protocol.md.
+    // The check calls envelope_vars() directly (no source grepping) so a new
+    // variable added to the function is caught immediately. Failure tells the
+    // author exactly which variable is undocumented and where to add it.
     let envelope_errors = run_envelope_output_check(&root)?;
     if !envelope_errors.is_empty() {
         let msg = envelope_errors.join("\n");
         anyhow::bail!(
             "envelope-output documentation check failed:\n{msg}\n\n\
              Fix: add a row for the variable to the Context envelope table in \
-             the External commands section of docs/reference/cli.md."
+             docs/reference/plugin-protocol.md."
         );
     }
 
@@ -1666,6 +1958,24 @@ fn main() -> anyhow::Result<()> {
              Fix: state the reason inline instead. A reader cannot open a \
              tracker ID, and these surfaces reach users through `rwv explain` \
              and error text. Commit messages are the place for the ID."
+        );
+    }
+
+    // --- doc-citation gate -------------------------------------------------
+    // A path in a src/ comment must name a file a cloner has, and a comment
+    // must not be nothing but that reference. Enforces the path-resolution
+    // clause only — the section-pointer clause of the same rule has no
+    // matcher; see check_doc_citations.
+    let citation_errors = run_doc_citation_check(&root);
+    if !citation_errors.is_empty() {
+        let msg = citation_errors.join("\n");
+        anyhow::bail!(
+            "doc-citation check failed:\n{msg}\n\n\
+             Fix: state the invariant in the comment. A path that leaves this \
+             repository is unfollowable from a clone; a comment that is only a \
+             pointer should be the sentence it was standing in for. A path out \
+             of the repo that must stay takes `weave-local-ref: <reason>` on \
+             the line above it."
         );
     }
 
@@ -2295,15 +2605,14 @@ mod tests {
 
     // ── envelope-output coverage check unit tests ─────────────────────────────
 
-    /// A cli.md that documents all envelope vars passes the check.
+    /// A plugin-protocol page that documents all envelope vars passes the check.
     #[test]
     fn envelope_output_check_passes_when_all_documented() {
-        // Minimal cli.md that contains every var name in backtick-quoted form.
-        let cli_md = "| `RWV_VERSION` | rwv semver | never |\n\
+        let protocol_md = "| `RWV_VERSION` | rwv semver | never |\n\
                       | `RWV_WORKSPACE` | primary workspace root | no workspace resolved |\n\
                       | `RWV_WORKWEAVE` | workweave identity | not in a workweave |\n\
                       | `RWV_PROJECT` | resolved project name | no project resolved |\n";
-        let errors = check_envelope_output_documented(cli_md);
+        let errors = check_envelope_output_documented(protocol_md);
         assert!(
             errors.is_empty(),
             "expected no errors when all vars are documented, got:\n{}",
@@ -2311,16 +2620,16 @@ mod tests {
         );
     }
 
-    /// A cli.md missing one envelope var name produces an error naming that var.
+    /// A page missing one envelope var name produces an error naming that var.
     ///
     /// This is the seeded-failure proof: the check must fire when a var is absent.
     /// Without this test, a check that never fires is indistinguishable from a
     /// correct one.
     #[test]
     fn envelope_output_check_fails_when_var_undocumented() {
-        // cli.md that only documents RWV_VERSION — the workspace vars are absent.
-        let cli_md = "| `RWV_VERSION` | rwv semver | never |\n";
-        let errors = check_envelope_output_documented(cli_md);
+        // Only RWV_VERSION is documented — the workspace vars are absent.
+        let protocol_md = "| `RWV_VERSION` | rwv semver | never |\n";
+        let errors = check_envelope_output_documented(protocol_md);
         assert!(
             !errors.is_empty(),
             "expected errors for undocumented envelope vars, got none"
@@ -2331,9 +2640,10 @@ mod tests {
             combined.contains("RWV_WORKSPACE"),
             "error must name RWV_WORKSPACE, got:\n{combined}"
         );
-        // The error must tell the author where to add the documentation.
+        // The error must send the author to the page that owns the wire
+        // contract, not to the CLI reference that only links to it.
         assert!(
-            combined.contains("docs/reference/cli.md"),
+            combined.contains("docs/reference/plugin-protocol.md"),
             "error must name the file to fix, got:\n{combined}"
         );
     }
@@ -2343,11 +2653,11 @@ mod tests {
     /// branches of envelope_vars(), including the workweave conditional.
     #[test]
     fn envelope_output_check_covers_conditional_var() {
-        // cli.md that documents everything except RWV_WORKWEAVE.
-        let cli_md = "| `RWV_VERSION` | rwv semver | never |\n\
+        // Everything except RWV_WORKWEAVE is documented.
+        let protocol_md = "| `RWV_VERSION` | rwv semver | never |\n\
                       | `RWV_WORKSPACE` | primary workspace root | no workspace resolved |\n\
                       | `RWV_PROJECT` | resolved project name | no project resolved |\n";
-        let errors = check_envelope_output_documented(cli_md);
+        let errors = check_envelope_output_documented(protocol_md);
         assert!(
             !errors.is_empty(),
             "expected error for missing RWV_WORKWEAVE, got none"
@@ -2356,6 +2666,123 @@ mod tests {
         assert!(
             combined.contains("RWV_WORKWEAVE"),
             "error must name RWV_WORKWEAVE as the missing var, got:\n{combined}"
+        );
+    }
+
+    // ── doc-citation check unit tests ─────────────────────────────────────────
+
+    /// Write `src/lib.rs` with `body` into a temp repo that has a real
+    /// `docs/explanation/joints/clone-topology.md` to resolve against, and
+    /// return the gate's findings.
+    fn citation_errors(body: &str) -> Vec<String> {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let root = tmp.path();
+        let joints = root.join("docs/explanation/joints");
+        fs::create_dir_all(&joints).unwrap();
+        fs::write(joints.join("clone-topology.md"), "# clone topology\n").unwrap();
+        let src = root.join("src");
+        fs::create_dir_all(&src).unwrap();
+        let file = src.join("lib.rs");
+        fs::write(&file, body).unwrap();
+        check_doc_citations(root, &[file])
+    }
+
+    /// A resolving path as a trailing pointer, after the comment has said the
+    /// thing, is the shape CLAUDE.md explicitly permits — the ~20 citations to
+    /// `docs/explanation/joints/` in `src/` all look like this.
+    #[test]
+    fn resolving_trailing_pointer_is_allowed() {
+        let errors = citation_errors(
+            "// Everything below the workweave root belongs to the cloned\n\
+             // workweave. See docs/explanation/joints/clone-topology.md.\n\
+             pub fn f() {}\n",
+        );
+        assert!(
+            errors.is_empty(),
+            "a resolving trailing pointer must not be reported, got:\n{}",
+            errors.join("\n")
+        );
+    }
+
+    /// A path that leaves the repository is unfollowable from a clone.
+    #[test]
+    fn non_resolving_path_is_reported() {
+        let errors = citation_errors(
+            "// A workweave checkout is a full clone, not a linked worktree;\n\
+             // see ../../../../projects/foundations/docs/repoweave/design.md.\n\
+             pub fn f() {}\n",
+        );
+        let combined = errors.join("\n");
+        assert!(
+            combined.contains("does not resolve"),
+            "a path outside the repository must be reported, got:\n{combined}"
+        );
+    }
+
+    /// The bare-pointer clause: a comment whose entire content is the
+    /// reference points instead of stating, and is a violation even though the
+    /// path resolves.
+    #[test]
+    fn bare_pointer_is_reported_even_when_path_resolves() {
+        let errors =
+            citation_errors("// See docs/explanation/joints/clone-topology.md.\npub fn f() {}\n");
+        let combined = errors.join("\n");
+        assert!(
+            combined.contains("points instead of stating"),
+            "a comment that is only a reference must be reported, got:\n{combined}"
+        );
+        assert!(
+            !combined.contains("does not resolve"),
+            "the path resolves; only the bare-pointer clause should fire, got:\n{combined}"
+        );
+    }
+
+    /// The inline hatch suppresses the resolution clause at one site. There is
+    /// no allowlist file.
+    #[test]
+    fn local_ref_hatch_suppresses_the_resolution_clause() {
+        let errors = citation_errors(
+            "// The house comment policy this file follows is argued for in\n\
+             // weave-local-ref: names the source of the policy, which is not vendored here; does not resolve in a standalone clone\n\
+             // ../../../../projects/foundations/docs/agent-persona/philosophy.md.\n\
+             pub fn f() {}\n",
+        );
+        assert!(
+            errors.is_empty(),
+            "an annotated out-of-repo path must not be reported, got:\n{}",
+            errors.join("\n")
+        );
+    }
+
+    /// A path inside a string literal is a program operating on a path, not a
+    /// comment citing a document, and is out of scope — including the `//` of
+    /// a URL, which must not be read as a comment start.
+    #[test]
+    fn string_literals_are_out_of_scope() {
+        let errors = citation_errors(
+            "const S: &str = \"https://example.com/docs/nowhere/missing.md\";\n\
+             fn f() -> &'static str { \"docs/nowhere/missing.md\" }\n",
+        );
+        assert!(
+            errors.is_empty(),
+            "string literals must not be scanned, got:\n{}",
+            errors.join("\n")
+        );
+    }
+
+    /// Section pointers are banned by CLAUDE.md but deliberately not mechanised
+    /// here; this pins that the gate is silent about them, so a future sweep
+    /// does not mistake a green gate for a clean tree.
+    #[test]
+    fn section_pointers_are_not_mechanised() {
+        let errors = citation_errors(
+            "// The refusal is the one branch-model.md §3.3 arm 2 describes.\n\
+             pub fn f() {}\n",
+        );
+        assert!(
+            errors.is_empty(),
+            "the section-pointer clause has no matcher yet, got:\n{}",
+            errors.join("\n")
         );
     }
 }

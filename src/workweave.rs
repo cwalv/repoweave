@@ -2041,7 +2041,8 @@ fn collect_diverged_paths(
             candidates += 1;
             // Refuse to vouch across distinct canonical stores: an
             // is_ancestor query whose operands live in different object
-            // DAGs is silently unsound (see joints/clone-topology.md).
+            // DAGs is silently unsound
+            // (see docs/explanation/joints/clone-topology.md).
             // When the baseline's canonical store differs from the
             // workweave checkout's, treat as not-vouched-by-this-baseline
             // and let the operator run `rwv doctor`.
@@ -2384,8 +2385,8 @@ fn adopt_children_of(retiree_dir: &Path, primary_root: &Path) {
 /// tips, restricted to the ones sharing `store`'s object DAG.
 ///
 /// An `is_ancestor` query whose operands live in different object DAGs is
-/// silently unsound (joints/clone-topology.md), so a baseline whose canonical
-/// store differs is simply not a baseline here — the same refusal-to-vouch
+/// silently unsound (docs/explanation/joints/clone-topology.md), so a baseline
+/// whose canonical store differs is simply not a baseline here — the same refusal-to-vouch
 /// [`collect_diverged_paths`] makes, applied to the warrant that authorizes
 /// the deletion rather than to the precondition that permits the verb.
 fn baseline_tips_in_store(
@@ -2661,7 +2662,7 @@ fn delete_workweave_inner_at(
     // the workweave is itself a canonical store with foreign dependents.
     // Runs before the dirty / unmerged checks (and is not bypassable by any
     // override flag) because the hazard is to OTHER workspaces, not the
-    // workweave's own work. See joints/clone-topology.md and
+    // workweave's own work. See docs/explanation/joints/clone-topology.md and
     // docs/explanation/destructive-operations.md (precondition-or-stop).
     if workweave_dir.exists() {
         refuse_if_checkouts_host_foreign_worktrees(&workweave_dir, project, &manifest)?;
@@ -2763,7 +2764,7 @@ fn delete_workweave_inner_at(
         // the canonical store lives in another workweave and
         // `ws_root.join(repo_path)` is a disconnected clone that doesn't
         // know about this checkout — running `worktree remove` there leaves
-        // a stale registration. See joints/clone-topology.md.
+        // a stale registration. See docs/explanation/joints/clone-topology.md.
         let fallback_repo_abs = ws_root.join(repo_path.as_path());
         let repo_abs = resolved_worktree_parent(&worktree_path, &fallback_repo_abs);
 
