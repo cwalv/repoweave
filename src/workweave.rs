@@ -107,8 +107,8 @@ pub fn classify_checkout(path: &Path) -> CheckoutKind {
 /// invocation with the var set fires this warning so operators migrate to the
 /// container-setting verb.
 ///
-/// Final deletion of the fallback is a separate follow-up bead (needs a
-/// release boundary). Until then, this warning is the deprecation signal.
+/// Final deletion of the fallback ships in a follow-up release. Until then,
+/// this warning is the deprecation signal.
 static DEPRECATION_WARNED: AtomicBool = AtomicBool::new(false);
 
 pub(crate) fn warn_rwv_workweave_dir_deprecated_if_set() {

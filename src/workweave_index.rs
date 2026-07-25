@@ -389,8 +389,8 @@ fn sync_dir(_dir: &Path) -> anyhow::Result<()> {
 ///   3. [`default_container`] (`<parent-of-root>/.workweaves`).
 ///
 /// The env var is a transitional fallback; see [`crate::workweave`] for the
-/// deprecation-warning path. Once the follow-up bead removes env-var handling
-/// entirely, priority (2) drops.
+/// deprecation-warning path. Once a follow-up release removes env-var
+/// handling entirely, priority (2) drops.
 pub fn resolve_container(primary_root: &Path, project: &ProjectName) -> anyhow::Result<PathBuf> {
     if let Some(idx) = read(primary_root, project)? {
         return Ok(idx.container);

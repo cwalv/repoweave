@@ -1286,6 +1286,23 @@ fn find_tracker_id(line: &str) -> Option<String> {
     None
 }
 
+/// Collect every file the src/+docs/ textual gates scan: all of `src/`, all
+/// `.md` under `docs/`, plus `docs/env-input-allowlist.txt` (the one
+/// non-`.md` doc file these gates care about). Shared by `check_no_tracker_ids`
+/// and `check_no_consumer_vocabulary` so the two gates never drift apart on
+/// scope.
+///
+/// `tests/` is deliberately not included — its tracker IDs name the
+/// regression each case pins, and its prose is free to describe the
+/// consumer-specific scenario a test reproduces; both are a different
+/// question from what these gates enforce on shipped `src/`+`docs/`.
+fn src_and_docs_files(root: &Path) -> Vec<PathBuf> {
+    let mut files = collect_rs_files(&root.join("src"));
+    files.extend(collect_md_files(&root.join("docs"), &[]));
+    files.push(root.join("docs/env-input-allowlist.txt"));
+    files
+}
+
 /// Scan `src/` and `docs/` for tracker IDs in comments, error strings, and
 /// published prose.
 ///
@@ -1293,15 +1310,9 @@ fn find_tracker_id(line: &str) -> Option<String> {
 /// in either surface points a reader at something they cannot open, and it
 /// reaches users directly through `rwv explain` (whose pages are `include_str!`'d
 /// from `docs/reference/explain/`) and through `anyhow::bail!` text.
-///
-/// `tests/` is deliberately not scanned — its IDs name the regression each
-/// case pins, which is a different question from what this gate enforces.
 fn check_no_tracker_ids(root: &Path) -> Vec<String> {
     let mut errors = Vec::new();
-    let mut files = collect_rs_files(&root.join("src"));
-    files.extend(collect_md_files(&root.join("docs"), &[]));
-    files.push(root.join("docs/env-input-allowlist.txt"));
-    for path in files {
+    for path in src_and_docs_files(root) {
         let Ok(content) = fs::read_to_string(&path) else {
             continue;
         };
@@ -1309,6 +1320,76 @@ fn check_no_tracker_ids(root: &Path) -> Vec<String> {
         for (n, line) in content.lines().enumerate() {
             if let Some(id) = find_tracker_id(line) {
                 errors.push(format!("{rel}:{}: tracker ID `{id}`", n + 1));
+            }
+        }
+    }
+    errors
+}
+
+/// Words that name a specific consumer or workflow rwv happens to be used
+/// from, with no meaning in rwv's own domain model.
+///
+/// rwv ships standalone (Homebrew/PyPI); its source never references its
+/// consumers — `check_no_tracker_ids` makes that structural for tracker IDs,
+/// and this makes it structural for the words that name the tools around
+/// those IDs. A cloner who has never touched any of these has no referent
+/// for them.
+///
+/// The list is literal, not stemmed: it matches exactly `bead`/`choreograph`/
+/// `subagent`/`sling` at word boundaries, not their plurals or other
+/// inflections. That is deliberate — `beads-core` appears twice in `src/` as
+/// an illustrative example crate name (manifest.rs, integrations/cargo_workspace.rs)
+/// and matching the plural would force rewording a hit that has nothing to
+/// do with the tracker. Add an entry only against a real hit in the tree;
+/// `workweave` is core rwv vocabulary and must never be added here.
+const CONSUMER_VOCABULARY: &[&str] = &["bead", "choreograph", "subagent", "sling"];
+
+/// True if `word` occurs in `haystack` (already lowercased) bounded on both
+/// sides by a non-alphanumeric character or a string edge — i.e. as a whole
+/// word, not as a substring of a longer identifier. Same technique
+/// `check_no_foreign_vocabulary` uses for `"rig"`.
+fn contains_word(haystack: &str, word: &str) -> bool {
+    let b = haystack.as_bytes();
+    haystack.match_indices(word).any(|(i, _)| {
+        let before_ok = i == 0 || !b[i - 1].is_ascii_alphanumeric();
+        let after = i + word.len();
+        let after_ok = after >= b.len() || !b[after].is_ascii_alphanumeric();
+        before_ok && after_ok
+    })
+}
+
+/// Scan `src/` and `docs/` for `CONSUMER_VOCABULARY`, at word boundaries.
+///
+/// Same file scope and `tests/` exemption as `check_no_tracker_ids` (via
+/// the shared `src_and_docs_files`) — this is the words-not-IDs sibling of
+/// that gate, with one further exception: this file
+/// (`src/bin/generate-explain.rs`) is skipped. It defines
+/// `CONSUMER_VOCABULARY` and must spell each word out literally to check
+/// for it, so scanning it here would have the gate flag its own
+/// definition. `check_no_foreign_vocabulary` gets the same exception for
+/// free — `FOREIGN_VOCABULARY` lives in this same file, just outside that
+/// gate's docs-only scope.
+fn check_no_consumer_vocabulary(root: &Path) -> Vec<String> {
+    let self_path = Path::new("src/bin/generate-explain.rs");
+    let mut errors = Vec::new();
+    for path in src_and_docs_files(root) {
+        let rel = path.strip_prefix(root).unwrap_or(&path).to_owned();
+        if rel == self_path {
+            continue;
+        }
+        let Ok(content) = fs::read_to_string(&path) else {
+            continue;
+        };
+        for (n, line) in content.lines().enumerate() {
+            let lower = line.to_ascii_lowercase();
+            for word in CONSUMER_VOCABULARY {
+                if contains_word(&lower, word) {
+                    errors.push(format!(
+                        "{}:{}: consumer vocabulary `{word}`",
+                        rel.display(),
+                        n + 1
+                    ));
+                }
             }
         }
     }
@@ -1585,6 +1666,20 @@ fn main() -> anyhow::Result<()> {
              Fix: state the reason inline instead. A reader cannot open a \
              tracker ID, and these surfaces reach users through `rwv explain` \
              and error text. Commit messages are the place for the ID."
+        );
+    }
+
+    // --- consumer-vocabulary gate ------------------------------------------
+    // No consumer-specific words (the words-not-IDs sibling of the
+    // tracker-ID gate above) in src/ or docs/. A standalone cloner has no
+    // referent for them.
+    let consumer_vocab_errors = check_no_consumer_vocabulary(&root);
+    if !consumer_vocab_errors.is_empty() {
+        let msg = consumer_vocab_errors.join("\n");
+        anyhow::bail!(
+            "consumer-vocabulary check failed:\n{msg}\n\n\
+             Fix: reword in rwv's own terms — these words name a specific \
+             consumer or workflow, and rwv ships standalone."
         );
     }
 
@@ -2029,7 +2124,7 @@ mod tests {
         let path = tmp.path().join("env-input-allowlist.txt");
         fs::write(
             &path,
-            "# comment\n\nenv-input:MY_VAR  # transitional; drop when bead lands\n",
+            "# comment\n\nenv-input:MY_VAR  # transitional; drop when the read is removed\n",
         )
         .unwrap();
         let vars = load_env_input_allowlist(&path).expect("parse should succeed");

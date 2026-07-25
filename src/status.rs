@@ -176,7 +176,7 @@ pub(crate) fn compute_relation(
 ///   this is a report, not a gate: `relation` already carries the health
 ///   signal (`Missing` / `Unreachable`) that tells an operator which repair
 ///   verb to reach for. Distinguishing the two in the *output* would be a
-///   schema change, and is not this bead's to make — but the collapse now
+///   schema change, and is not this change's to make — but the collapse now
 ///   happens in one named place instead of inside an `.ok().flatten()`.
 fn checkout_branch(git: &GitVcs, repo_abs: &Path) -> Option<String> {
     use crate::vcs::HeadAttachment;

@@ -390,7 +390,7 @@ pub fn run_push(
         };
         // `entry.version` is the manifest's declared tracking branch, still
         // typed `RefName` (manifest.rs's migration to `TrackingRef` is
-        // separate work — out of this bead's scope). Route it through
+        // separate work — out of scope here). Route it through
         // `TrackingRef::parse` so the comparison below goes through
         // `local_counterpart()`, the same named projection the project
         // gate above uses, instead of a raw string compare.

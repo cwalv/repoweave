@@ -1744,7 +1744,7 @@ fn workweave_containers_for_scan(ws_root: &Path) -> Vec<PathBuf> {
     }
     // Env-var fallback: for the deprecation window, include it too so a user
     // whose workspace still lives at `$RWV_WORKWEAVE_DIR` gets doctor
-    // coverage. Consumption itself will go away in the follow-up bead.
+    // coverage. Consumption itself will go away in a follow-up release.
     if let Ok(v) = std::env::var("RWV_WORKWEAVE_DIR") {
         if !v.is_empty() {
             push_unique(PathBuf::from(v), &mut containers);
