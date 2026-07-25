@@ -322,6 +322,39 @@ pub enum CheckViolation {
         ref_name: String,
     },
 
+    /// An ownership receipt whose ref name carries a `/` segment — a name
+    /// no live workweave of that project mints, so a record that claims a
+    /// ref rwv cannot have created under the flat scheme (§3.5).
+    ///
+    /// The ref itself usually **does** exist, which is what separates this
+    /// from [`DanglingRefReceipt`](Self::DanglingRefReceipt): the residue is
+    /// in the registry, not in the store. It is written on purpose, mid-flight,
+    /// by §7.1 arm 1 — [`adopt_legacy`] then rename then retract — and it
+    /// survives whenever that rename does not complete.
+    ///
+    /// Left in place it is worse than no receipt at all. §7.2 asks which
+    /// live workweave mints the recorded name; a segmented name is minted by
+    /// none, so the ref reads as a *leak*, and holding a receipt is exactly
+    /// what lifts a ref out of the untouchable Unowned class into the ones
+    /// `--fix` deletes from. Where the ref is also checked out — the shape
+    /// this arm exists for — every `--fix` re-attempts a deletion the VCS
+    /// refuses, and doctor never converges.
+    ///
+    /// `--fix` retracts it through [`RefRegistry::retract`]. Retraction
+    /// disowns; it does not touch the ref, so nothing is at risk, and the
+    /// ref falls back to Unowned — reported, never auto-deleted.
+    ///
+    /// [`adopt_legacy`]: crate::workweave_index::RefRegistry::adopt_legacy
+    /// [`RefRegistry::retract`]: crate::workweave_index::RefRegistry::retract
+    PreFlatRefReceipt {
+        /// The project whose registry holds the receipt.
+        project: ProjectName,
+        /// Absolute path of the canonical store the receipt is keyed to.
+        store_path: PathBuf,
+        /// The recorded ref name that carries a `/` segment.
+        ref_name: String,
+    },
+
     /// A `refs/rwv/pre-op/<op-id>` savepoint whose op-id is not present
     /// in any `.rwv-op` file in this workspace tree. Sub-kind picks the
     /// classification — savepoint tip reachable from current HEAD
@@ -1133,6 +1166,15 @@ pub enum ViolationOutput {
         /// The recorded ref name that does not exist in that store.
         ref_name: String,
     },
+    /// See [`CheckViolation::PreFlatRefReceipt`].
+    PreFlatRefReceipt {
+        /// The project whose registry holds the receipt.
+        project: String,
+        /// Absolute path of the canonical store the receipt is keyed to.
+        store_path: String,
+        /// The recorded ref name that carries a `/` segment.
+        ref_name: String,
+    },
     OrphanedSavepoint {
         path: String,
         absolute_path: String,
@@ -1419,6 +1461,15 @@ impl ViolationOutput {
                 store_path,
                 ref_name,
             } => Self::DanglingRefReceipt {
+                project: project.to_string(),
+                store_path: store_path.to_string_lossy().into_owned(),
+                ref_name,
+            },
+            CheckViolation::PreFlatRefReceipt {
+                project,
+                store_path,
+                ref_name,
+            } => Self::PreFlatRefReceipt {
                 project: project.to_string(),
                 store_path: store_path.to_string_lossy().into_owned(),
                 ref_name,
@@ -2772,6 +2823,32 @@ fn looks_like_a_pre_flat_ref(name: &str) -> bool {
     }
 }
 
+/// Whether a **recorded** name carries a `/` segment, i.e. whether the
+/// registry is holding a receipt for a pre-flat name.
+///
+/// Deliberately not [`looks_like_a_pre_flat_ref`], which is the predicate
+/// for *observed* names — it screens a whole branch listing, so it has to
+/// insist on the `<a>--<b>/<c>` shape to keep an operator's `feature/x` out
+/// of the report. Here the population is already narrow: every name in the
+/// registry arrived through [`EphemeralRefName::mint`] or through
+/// [`LegacyEphemeralRefName::claim`] under a minted name, and after §3.5
+/// both spell the workweave's ref flat. So `contains('/')` is the whole
+/// question, and asking a shape question on top would only add ways for a
+/// false record to slip past.
+///
+/// One caveat this does **not** decide alone: [`mint`] does not validate its
+/// components (Q12 leaves the grammar open), so a workweave *named* `a/b`
+/// mints `p--a/b` — a segmented name that is nonetheless a live workweave's
+/// own ref. Every caller pairs this with the liveness question before
+/// retracting anything; see [`scan_pre_flat_receipts`].
+///
+/// [`EphemeralRefName::mint`]: crate::vcs::EphemeralRefName::mint
+/// [`LegacyEphemeralRefName::claim`]: crate::vcs::LegacyEphemeralRefName::claim
+/// [`mint`]: crate::vcs::EphemeralRefName::mint
+fn receipt_names_a_pre_flat_ref(name: &crate::vcs::RawRefName) -> bool {
+    name.as_str().contains('/')
+}
+
 /// The repos of one workweave that the `branch-model.md` §7.1 pass visits,
 /// each paired with the canonical store its receipts key to.
 ///
@@ -2933,6 +3010,25 @@ impl RecordedRefs {
             ws_root: ws_root.to_path_buf(),
             projects,
         }
+    }
+
+    /// Whether some workweave of `project` that is still on disk mints
+    /// `name`.
+    ///
+    /// The same question [`for_store`](Self::for_store) answers per receipt,
+    /// asked without a store: a retraction pass has a project and a recorded
+    /// name and wants to know whether a live workweave would claim it before
+    /// dropping the record. A project with no receipts was dropped at
+    /// construction and answers `false` — vacuously right, since it holds
+    /// nothing to retract.
+    fn mints_for_a_live_workweave(
+        &self,
+        project: &ProjectName,
+        name: &crate::vcs::RawRefName,
+    ) -> bool {
+        self.projects
+            .iter()
+            .any(|p| &p.name == project && p.live_ref_names.contains_key(name))
     }
 
     /// Every receipt keyed to `store`, across projects.
@@ -3464,6 +3560,18 @@ fn scan_canonical_stores(
             ) {
                 continue;
             }
+            // The receipt may name a pre-flat ref, which
+            // `scan_pre_flat_receipts` owns — same reason, and here the
+            // stakes are the other way round. The guard above has already
+            // established that no live workweave mints this name, so a
+            // segmented one would fall straight through to the safe/live
+            // split below and be reported as a leak whose ownership rwv can
+            // prove. It cannot: the record is the defect. Retracting it is
+            // the repair, and `--fix` has already run that arm by the time
+            // this scan is reached.
+            if receipt_names_a_pre_flat_ref(rec.owned.name()) {
+                continue;
+            }
 
             // Classify by warrant. `merged` runs the ancestry check it
             // certifies, so the classification the report shows and the
@@ -3619,6 +3727,89 @@ fn scan_dangling_receipts(
                 });
             }
         }
+    }
+}
+
+/// Scan every project's receipt registry for receipts naming a pre-flat ref
+/// — a recorded name carrying a `/` segment that no live workweave mints.
+///
+/// The sibling of [`scan_dangling_receipts`] and not a case of it: that one
+/// asks the store whether the ref is there, and here it usually is. The
+/// residue is the *record*. §7.1 arm 1 writes exactly this receipt on its
+/// success path (adopt the pre-flat name, rename it flat, retract) and
+/// leaves it behind whenever the rename does not complete — the two-refs-in-
+/// one-namespace skip being the shape that guarantees it never will until an
+/// operator intervenes.
+///
+/// **Why it may be dropped.** §7.2 asks which live workweave mints a
+/// recorded name; none mints a segmented one, so the ref reads as a leak,
+/// and a leak with a receipt is in the class `--fix` deletes from. The
+/// record is what manufactures that warrant, and it records something rwv
+/// cannot have created: after §3.5 every ref rwv mints is flat.
+///
+/// **The liveness guard is not belt-and-braces.**
+/// [`EphemeralRefName::mint`] does not validate its components (Q12), so a
+/// workweave literally named `a/b` mints `p--a/b`, and that receipt is a
+/// live workweave's own — the one segmented name that is true. Retracting it
+/// would disown a workweave nothing later re-adopts (the migration walks the
+/// container scan, which cannot see such a placement at all), leaving a ref
+/// no verb may ever clean up. So the name test alone is not the finding; it
+/// only selects the candidates the liveness question is then asked about.
+///
+/// **The store is never consulted.** [`scan_dangling_receipts`] visits only
+/// present, readable stores because its question is about a ref *in* one,
+/// and a receipt whose store has gone is R4/Q14 territory it declines to
+/// answer. The question here is about the record alone — a segmented name is
+/// one rwv could not have minted whether or not the store is on disk — so
+/// the same guard would only strand a false receipt behind a repo someone
+/// removed. Nothing is answered about bulk reclamation either way.
+///
+/// Cheap on every weave that has none: the name test runs over the registry
+/// first, and the container walk behind [`RecordedRefs`] is built only if
+/// some candidate survives it.
+///
+/// `active_project` scopes the walk exactly as [`scan_dangling_receipts`]
+/// does — a filter on which registries are opened.
+///
+/// [`EphemeralRefName::mint`]: crate::vcs::EphemeralRefName::mint
+fn scan_pre_flat_receipts(
+    ws_root: &Path,
+    active_project: Option<&str>,
+    out: &mut Vec<CheckViolation>,
+) {
+    use crate::workweave_index::RefRegistry;
+
+    let mut candidates = Vec::new();
+    for project in crate::workweave_index::projects_on_disk(ws_root) {
+        if let Some(active) = active_project {
+            if project.as_str() != active {
+                continue;
+            }
+        }
+        let registry = RefRegistry::for_project(ws_root, &project);
+        let Ok(owned_refs) = registry.list_all() else {
+            continue;
+        };
+        for owned in owned_refs {
+            if receipt_names_a_pre_flat_ref(owned.name()) {
+                candidates.push((project.clone(), owned));
+            }
+        }
+    }
+    if candidates.is_empty() {
+        return;
+    }
+
+    let recorded = RecordedRefs::new(ws_root);
+    for (project, owned) in candidates {
+        if recorded.mints_for_a_live_workweave(&project, owned.name()) {
+            continue;
+        }
+        out.push(CheckViolation::PreFlatRefReceipt {
+            project,
+            store_path: owned.store().to_path_buf(),
+            ref_name: owned.to_string(),
+        });
     }
 }
 
@@ -4371,6 +4562,12 @@ fn migrate_legacy_ref(
     // records anew" path `record_created`'s contract names, and it is safe
     // for the reason the whole arm is safe: the receipt authorizes a rename,
     // and a rename preserves the tip. It cannot authorize a loss.
+    //
+    // `fix_pre_flat_receipts` now clears the same receipt earlier in a
+    // `--fix` run, so on that path this rarely finds anything. It stays
+    // because the pass is callable on its own and its idempotence over its
+    // own crash residue is its property, not something to borrow from
+    // doctor's arm ordering.
     if let Some(stale) = registry.lookup(store, &raw)? {
         if stale.created_at() != &tip {
             registry.retract(store, &raw)?;
@@ -4624,6 +4821,72 @@ pub fn fix_dangling_receipts(
             Ok(false) => {}
             Err(e) => errors.push(format!(
                 "failed to retract dangling ownership receipt for `{}` in {}: {e}",
+                ref_name,
+                store_path.display()
+            )),
+        }
+    }
+
+    (retracted, errors)
+}
+
+/// Apply the `rwv doctor --fix` retraction for ownership receipts naming a
+/// pre-flat ref — the residue [`scan_pre_flat_receipts`] classifies.
+///
+/// Safe by construction, and for a different reason than
+/// [`fix_dangling_receipts`]: there the receipt authorizes nothing because
+/// the ref is absent; here the ref is present and the receipt authorizes
+/// rather too much. Retraction is the only operation involved. It writes to
+/// the registry and never to the store, so no ref moves and no commit is
+/// reachable from one place fewer afterwards. What the weave is left with is
+/// an Unowned ref: reported, and under R2 not rwv's to delete.
+///
+/// **Ordering — this runs *before* [`fix_branch_model_migration`], and that
+/// is the design.** §7.1 arm 1 holds exactly this receipt for the width of
+/// its rename, so an arm that ran after the migration would be reading state
+/// the migration had just written, and its safety would rest on
+/// `migrate_legacy_ref` having retracted every receipt it took — a property
+/// of a function three call levels away, silently load-bearing here.
+/// Running first, this pass can only ever see what was on disk before doctor
+/// touched anything: residue from earlier runs, never a receipt in flight.
+/// The migration then re-adopts, at the tip it observes now, whatever is
+/// still migratable — so one `--fix` both clears the false record and
+/// finishes the migration where it can.
+///
+/// The classification lives in the scan and nowhere else, the way
+/// [`fix_dangling_receipts`] keeps the absence check in
+/// [`scan_dangling_receipts`]: a second copy of the liveness guard here
+/// would be a safety property no fixture could open a window against, and an
+/// unreachable guard is one that silently stops holding.
+///
+/// Returns `(retracted, errors)`: the `(store, ref name)` pairs disowned,
+/// and per-receipt failures for the caller to surface as issues.
+pub fn fix_pre_flat_receipts(
+    ws_root: &Path,
+    active_project: Option<&str>,
+) -> (Vec<(PathBuf, String)>, Vec<String>) {
+    use crate::workweave_index::RefRegistry;
+
+    let mut retracted = Vec::new();
+    let mut errors = Vec::new();
+
+    let mut violations = Vec::new();
+    scan_pre_flat_receipts(ws_root, active_project, &mut violations);
+    for violation in violations {
+        let CheckViolation::PreFlatRefReceipt {
+            project,
+            store_path,
+            ref_name,
+        } = violation
+        else {
+            continue;
+        };
+        let name = crate::vcs::RawRefName::new(ref_name.clone());
+        match RefRegistry::for_project(ws_root, &project).retract(&store_path, &name) {
+            Ok(true) => retracted.push((store_path, ref_name)),
+            Ok(false) => {}
+            Err(e) => errors.push(format!(
+                "failed to retract the ownership receipt for `{}` in {}: {e}",
                 ref_name,
                 store_path.display()
             )),
@@ -5439,6 +5702,26 @@ pub fn violations_to_issues(violations: Vec<CheckViolation>) -> Vec<Issue> {
                          ref is there — the benign residue of a crash between the receipt \
                          write and the ref creation (branch-model.md §4.2). It authorizes \
                          nothing; run `rwv doctor --fix` to retract it",
+                        store_path.display(),
+                        project,
+                        ref_name
+                    ),
+                ),
+                CheckViolation::PreFlatRefReceipt {
+                    project,
+                    store_path,
+                    ref_name,
+                } => (
+                    crate::integration::Severity::Warning,
+                    format!(
+                        "{}: project `{}` holds an ownership receipt for `{}`, whose name \
+                         carries a `/` segment — no workweave on disk mints that name, so \
+                         rwv cannot have created the ref under the flat scheme \
+                         (branch-model.md §3.5). Left recorded, §7.2 reads the branch as a \
+                         leaked one rwv owns and may delete. Run `rwv doctor --fix` to \
+                         retract the receipt: that drops the record only — the branch is \
+                         not touched, and afterwards it is unowned, which `--fix` never \
+                         deletes",
                         store_path.display(),
                         project,
                         ref_name
@@ -6562,6 +6845,37 @@ pub fn run_check(
         }
     } else {
         scan_dangling_receipts(&git, ctx.primary_path(), receipt_scope, &mut violations);
+    }
+
+    // Ownership receipts naming a pre-flat ref: a record no live workweave
+    // mints, which §7.2 then reads as a leak it may delete. `--fix` retracts
+    // them.
+    //
+    // Ordering, deliberate: **before** the migration pass below. §7.1 arm 1
+    // holds exactly this receipt between its rename and its retraction, so
+    // this arm placed after the migration would be inspecting receipts the
+    // same run had just written, and could only stay correct as long as
+    // `migrate_legacy_ref` cleaned up after itself — a distant invariant
+    // holding this one up. Placed here it can see only what predates the
+    // run. The migration then re-adopts anything still migratable at the tip
+    // it observes, so a single `--fix` clears the record and finishes the
+    // migration where the store allows it.
+    if fix {
+        let (retracted, retract_errs) = fix_pre_flat_receipts(ctx.primary_path(), receipt_scope);
+        for (store_path, ref_name) in &retracted {
+            println!(
+                "[fixed] core: retracted the ownership receipt for `{}` in {} — the name \
+                 carries a `/` segment, which no workweave on disk mints; the branch \
+                 itself was left untouched and is now unowned",
+                ref_name,
+                store_path.display()
+            );
+        }
+        for msg in retract_errs {
+            all_issues_branch_discipline_errors.push(msg);
+        }
+    } else {
+        scan_pre_flat_receipts(ctx.primary_path(), receipt_scope, &mut violations);
     }
 
     // Branch-discipline: (a) workweave-branch, (b) the §7.2 canonical-store

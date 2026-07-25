@@ -1370,6 +1370,36 @@
           }
         },
         {
+          "description": "See [`CheckViolation::PreFlatRefReceipt`].",
+          "type": "object",
+          "required": [
+            "kind",
+            "project",
+            "ref_name",
+            "store_path"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "pre-flat-ref-receipt"
+              ]
+            },
+            "project": {
+              "description": "The project whose registry holds the receipt.",
+              "type": "string"
+            },
+            "ref_name": {
+              "description": "The recorded ref name that carries a `/` segment.",
+              "type": "string"
+            },
+            "store_path": {
+              "description": "Absolute path of the canonical store the receipt is keyed to.",
+              "type": "string"
+            }
+          }
+        },
+        {
           "type": "object",
           "required": [
             "absolute_path",

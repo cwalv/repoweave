@@ -1230,8 +1230,11 @@ fn fix_stale_ephemeral_branch_scoped_to_active_project() {
     // Create a stale safe-class ephemeral branch in repo-b for project-b's
     // dead workweave.  Safe-class: rwv holds a receipt for it AND its tip is
     // an ancestor of repo-b's primary tip.
-    create_branch(&repo_b, "project-b--dead/main", "main");
-    record_receipt(&ws, "project-b", "dead/main", &repo_b);
+    // Flat, because a receipt naming a pre-flat ref is retracted rather than
+    // acted on (`fix_pre_flat_receipts`) — that branch would survive `--all
+    // --fix` for a reason that has nothing to do with scope.
+    create_branch(&repo_b, "project-b--dead", "main");
+    record_receipt(&ws, "project-b", "dead", &repo_b);
     add_commit(&repo_b, "advance.txt", "advance main");
     // repo-b's main now strictly dominates the stale branch tip → safe class.
 
@@ -1247,7 +1250,7 @@ fn fix_stale_ephemeral_branch_scoped_to_active_project() {
     let report = rwv().args(["doctor"]).current_dir(&ws).output().unwrap();
     let report_stdout = String::from_utf8_lossy(&report.stdout).into_owned();
     assert!(
-        !report_stdout.contains("project-b--dead/main"),
+        !report_stdout.contains("project-b--dead"),
         "doctor (no --fix) with project-a active must not report project-b's branch; got:\n{report_stdout}"
     );
 
@@ -1259,13 +1262,13 @@ fn fix_stale_ephemeral_branch_scoped_to_active_project() {
         .unwrap();
     let fix_stdout = String::from_utf8_lossy(&fix_out.stdout).into_owned();
     assert!(
-        !fix_stdout.contains("project-b--dead/main"),
+        !fix_stdout.contains("project-b--dead"),
         "--fix with project-a active must not touch project-b's branch; got:\n{fix_stdout}"
     );
 
     // Branch still present after project-scoped --fix.
     let still_there = git()
-        .args(["branch", "--list", "project-b--dead/main"])
+        .args(["branch", "--list", "project-b--dead"])
         .current_dir(&repo_b)
         .output()
         .unwrap();
@@ -1284,13 +1287,13 @@ fn fix_stale_ephemeral_branch_scoped_to_active_project() {
         .unwrap();
     let all_fix_stdout = String::from_utf8_lossy(&all_fix_out.stdout).into_owned();
     assert!(
-        all_fix_stdout.contains("[fixed]") && all_fix_stdout.contains("project-b--dead/main"),
+        all_fix_stdout.contains("[fixed]") && all_fix_stdout.contains("project-b--dead"),
         "--all --fix must delete the branch weave-wide; got:\n{all_fix_stdout}"
     );
 
     // Branch gone after weave-wide --all --fix.
     let gone = git()
-        .args(["branch", "--list", "project-b--dead/main"])
+        .args(["branch", "--list", "project-b--dead"])
         .current_dir(&repo_b)
         .output()
         .unwrap();
@@ -1313,9 +1316,10 @@ fn json_branch_discipline_scoped_to_active_project() {
     init_repo_with_commit(&repo_a);
     init_repo_with_commit(&repo_b);
 
-    // Stale safe-class ephemeral branch in repo-b only.
-    create_branch(&repo_b, "project-b--dead/main", "main");
-    record_receipt(&ws, "project-b", "dead/main", &repo_b);
+    // Stale safe-class ephemeral branch in repo-b only. Flat, for the reason
+    // the text-output twin above spells out.
+    create_branch(&repo_b, "project-b--dead", "main");
+    record_receipt(&ws, "project-b", "dead", &repo_b);
     add_commit(&repo_b, "advance.txt", "advance main");
 
     write_project_manifest(&ws, "project-a", "github/acme/repo-a");
@@ -2297,6 +2301,318 @@ fn migration_skips_a_workweave_namespace_holding_two_refs() {
         rev(&canonical, "feat-a-master"),
         sibling_tip,
         "and the sibling's commit is untouched throughout"
+    );
+}
+
+// ===========================================================================
+// Ownership receipts naming a pre-flat ref: `--fix` retracts the record and
+// leaves the ref alone.
+// ===========================================================================
+
+/// A receipt whose name carries a `/` segment is a record rwv cannot have
+/// produced: after §3.5 every name it mints is flat. §7.2 asks which live
+/// workweave mints a recorded name, none mints a segmented one, and so the
+/// branch reads as a leak rwv owns — which is the class `--fix` deletes
+/// from. **The false record is what manufactures the deletion warrant.**
+///
+/// So it must be retracted, not acted on. This fixture is the deletion the
+/// arm removes: a pre-flat branch at the store's own tip (trivially
+/// `Merged`, i.e. safe class) with a receipt already written. Without the
+/// retraction `--fix` destroys it.
+#[test]
+fn fix_retracts_a_pre_flat_receipt_instead_of_deleting_the_branch() {
+    let tmp = tempfile::tempdir().unwrap();
+    let ws = make_primary(tmp.path());
+    let canonical = ws.join("github").join("acme").join("repo");
+    init_repo_with_commit(&canonical);
+
+    // No workweave `myproj--ghost` on disk: nothing mints this name.
+    create_branch(&canonical, "myproj--ghost/main", "main");
+    let ghost_tip = rev(&canonical, "myproj--ghost/main");
+    record_receipt(&ws, "myproj", "ghost/main", &canonical);
+    add_commit(&canonical, "advance.txt", "advance main");
+
+    let fix = rwv()
+        .args(["doctor", "--fix", "--all"])
+        .current_dir(&ws)
+        .output()
+        .unwrap();
+    let fix_stdout = String::from_utf8_lossy(&fix.stdout).into_owned();
+
+    assert!(
+        !receipt_recorded(&ws, "myproj", "myproj--ghost/main"),
+        "the receipt must be retracted; got:\n{fix_stdout}"
+    );
+    assert!(
+        fix_stdout.contains("[fixed]") && fix_stdout.contains("myproj--ghost/main"),
+        "and the retraction must be announced, naming the receipt; got:\n{fix_stdout}"
+    );
+    assert!(
+        branch_exists(&canonical, "myproj--ghost/main"),
+        "the branch must survive: retraction drops a record, it does not touch \
+         the store; got:\n{fix_stdout}"
+    );
+    assert_eq!(
+        rev(&canonical, "myproj--ghost/main"),
+        ghost_tip,
+        "and it must not have moved either"
+    );
+
+    // What the operator is left holding: an unowned ref. Visible, and under
+    // R2 not rwv's to delete — which is the whole reason retraction is safe.
+    let after = rwv()
+        .args(["doctor", "--all"])
+        .current_dir(&ws)
+        .output()
+        .unwrap();
+    let after_stdout = String::from_utf8_lossy(&after.stdout).into_owned();
+    assert!(
+        after_stdout.contains("myproj--ghost/main")
+            && after_stdout.contains("§7.3 forbids guessing"),
+        "the ref must fall back to the unowned class, not go quiet; got:\n{after_stdout}"
+    );
+
+    let index_path = ws
+        .join("projects")
+        .join("myproj")
+        .join(".rwv-workweave-index");
+    let after_first = std::fs::read(&index_path).expect("the index survives the run");
+    let again = rwv()
+        .args(["doctor", "--fix", "--all"])
+        .current_dir(&ws)
+        .output()
+        .unwrap();
+    let again_stdout = String::from_utf8_lossy(&again.stdout).into_owned();
+    assert_eq!(
+        std::fs::read(&index_path).expect("the index survives the second run"),
+        after_first,
+        "a second `--fix` must not write the index again; got:\n{again_stdout}"
+    );
+    assert!(
+        !again_stdout.contains("[fixed]"),
+        "and it must have nothing left to fix; got:\n{again_stdout}"
+    );
+    assert!(
+        branch_exists(&canonical, "myproj--ghost/main"),
+        "the branch is still not rwv's to delete on the second pass either"
+    );
+}
+
+/// The operator's shape, and the reason this arm exists: the receipt names a
+/// pre-flat ref whose workweave is **live**, and whose namespace holds a
+/// second ref, so §7.1's migration is skipped and the rename that would have
+/// retracted the receipt can never run.
+///
+/// `--fix` then re-attempts a deletion the VCS refuses (the branch is
+/// checked out) on every invocation and never converges. Retracting the
+/// receipt is the only repair that does not require deciding which sibling
+/// is the workweave's branch — which is the operator's call, and stays it.
+#[test]
+fn fix_converges_on_a_pre_flat_receipt_inside_a_blocked_namespace() {
+    let tmp = tempfile::tempdir().unwrap();
+    let ws = make_primary(tmp.path());
+    let canonical = ws.join("github").join("acme").join("repo");
+    init_repo_with_commit(&canonical);
+
+    let ww_dir = workweaves_dir(&ws).join("myproj--feat-a");
+    write_marker(&ww_dir, &ws, "myproj", &ws);
+    record_placement(&ws, "myproj", "feat-a", &ww_dir);
+    let ww_checkout = ww_dir.join("github").join("acme").join("repo");
+    std::fs::create_dir_all(ww_checkout.parent().unwrap()).unwrap();
+    worktree_add(&canonical, &ww_checkout, "myproj--feat-a/main");
+    // The sibling that puts the flat name out of reach.
+    add_commit(&ww_checkout, "work.txt", "sibling work");
+    let sibling_tip = rev(&ww_checkout, "HEAD");
+    create_branch(&canonical, "myproj--feat-a/master", &sibling_tip);
+    // `/main` back at the store tip: safe class the moment a receipt lifts it
+    // out of unowned, and checked out, so the deletion cannot succeed.
+    git_in(&ww_checkout, &["reset", "--hard", "main"]);
+    let tip = rev(&ww_checkout, "HEAD");
+
+    // The residue a run that got as far as adopting the pre-flat name left.
+    record_receipt(&ws, "myproj", "feat-a/main", &canonical);
+
+    let fix = rwv()
+        .args(["doctor", "--fix"])
+        .current_dir(&ws)
+        .output()
+        .unwrap();
+    let fix_combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&fix.stdout),
+        String::from_utf8_lossy(&fix.stderr)
+    );
+
+    assert!(
+        !receipt_recorded(&ws, "myproj", "myproj--feat-a/main"),
+        "the receipt must be retracted; got:\n{fix_combined}"
+    );
+    assert!(
+        !fix_combined.contains("failed to delete"),
+        "and no deletion may be attempted once it is gone — that failing \
+         delete is what kept `--fix` from converging; got:\n{fix_combined}"
+    );
+    assert!(
+        branch_exists(&canonical, "myproj--feat-a/main")
+            && branch_exists(&canonical, "myproj--feat-a/master"),
+        "both refs survive: which one is the workweave's is the operator's \
+         call, and this arm does not make it; got:\n{fix_combined}"
+    );
+    assert_eq!(
+        rev(&canonical, "myproj--feat-a/main"),
+        tip,
+        "and neither has moved"
+    );
+    assert_eq!(rev(&canonical, "myproj--feat-a/master"), sibling_tip);
+    assert!(
+        !receipt_recorded(&ws, "myproj", "myproj--feat-a"),
+        "and nothing may be recorded for the flat name the rename could not mint"
+    );
+
+    // Convergence: the second run writes nothing and says the same thing.
+    // It still exits non-zero — the namespace is still blocked, and the skip
+    // still asks the operator to collapse it.
+    let index_path = ws
+        .join("projects")
+        .join("myproj")
+        .join(".rwv-workweave-index");
+    let after_first = std::fs::read(&index_path).expect("the index survives the run");
+    let again = rwv()
+        .args(["doctor", "--fix"])
+        .current_dir(&ws)
+        .output()
+        .unwrap();
+    let again_combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&again.stdout),
+        String::from_utf8_lossy(&again.stderr)
+    );
+    assert_eq!(
+        std::fs::read(&index_path).expect("the index survives the second run"),
+        after_first,
+        "a second `--fix` must not write the index again; got:\n{again_combined}"
+    );
+    assert!(
+        again_combined.contains("myproj--feat-a/main")
+            && again_combined.contains("myproj--feat-a/master"),
+        "and it must still name both blocking refs — the operator's decision \
+         is still outstanding; got:\n{again_combined}"
+    );
+    assert!(
+        !again_combined.contains("[fixed]") && !again_combined.contains("failed to delete"),
+        "with nothing left to fix and nothing left to fail; got:\n{again_combined}"
+    );
+}
+
+/// The ordering guard, stated as an outcome: §7.1 arm 1 holds a receipt for
+/// the pre-flat name for the width of its rename, so the retraction arm runs
+/// **before** the migration pass and can never see one in flight.
+///
+/// A version that ran it inside that window — or after the migration but
+/// against flat names too — would retract the receipt the migration just
+/// wrote, and the workweave would come out of `--fix` on a ref rwv no longer
+/// owns.
+#[test]
+fn the_retraction_arm_leaves_the_migrations_success_path_intact() {
+    let tmp = tempfile::tempdir().unwrap();
+    let ws = make_primary(tmp.path());
+    let canonical = ws.join("github").join("acme").join("repo");
+    init_repo_with_commit(&canonical);
+
+    let ww_dir = workweaves_dir(&ws).join("myproj--feat-a");
+    write_marker(&ww_dir, &ws, "myproj", &ws);
+    record_placement(&ws, "myproj", "feat-a", &ww_dir);
+    let ww_checkout = ww_dir.join("github").join("acme").join("repo");
+    std::fs::create_dir_all(ww_checkout.parent().unwrap()).unwrap();
+    worktree_add(&canonical, &ww_checkout, "myproj--feat-a/main");
+    add_commit(&ww_checkout, "W.txt", "operator commit W");
+    let tip = rev(&ww_checkout, "HEAD");
+
+    // Residue from an earlier run, so both arms have work to do in this one:
+    // the retraction clears the record, and the migration re-adopts at the
+    // tip it observes now and completes the rename.
+    record_receipt(&ws, "myproj", "feat-a/main", &canonical);
+
+    let fix = rwv()
+        .args(["doctor", "--fix"])
+        .current_dir(&ws)
+        .output()
+        .unwrap();
+    let fix_stdout = String::from_utf8_lossy(&fix.stdout).into_owned();
+
+    assert!(
+        branch_exists(&canonical, "myproj--feat-a"),
+        "the migration must still complete in the same run; got:\n{fix_stdout}"
+    );
+    assert_eq!(
+        rev(&canonical, "myproj--feat-a"),
+        tip,
+        "as a rename — commit W rides across"
+    );
+    assert!(
+        !branch_exists(&canonical, "myproj--feat-a/main"),
+        "and the pre-flat name is gone"
+    );
+    assert!(
+        receipt_recorded(&ws, "myproj", "myproj--feat-a"),
+        "the receipt the migration wrote for the flat name must survive the \
+         run — an arm that fired inside the migration's window would have \
+         taken it, leaving the workweave on a ref rwv does not own; \
+         got:\n{fix_stdout}"
+    );
+    assert_eq!(
+        receipt_created_at(&ws, "myproj", "myproj--feat-a").as_deref(),
+        Some(tip.as_str()),
+        "recorded at the tip the ref actually has"
+    );
+    assert!(
+        !receipt_recorded(&ws, "myproj", "myproj--feat-a/main"),
+        "and the pre-flat receipt is not left behind"
+    );
+}
+
+/// The name test alone is not the finding. [`EphemeralRefName::mint`] does
+/// not validate its components (Q12 leaves the grammar open), so a workweave
+/// *named* `a/b` mints `p--a/b` — the one segmented name that is a live
+/// workweave's own ref.
+///
+/// Retracting it would disown a workweave nothing re-adopts: §7.1's pass
+/// walks the container scan, which cannot see a placement recorded by
+/// absolute path (Q10), so no later run would put the receipt back and no
+/// verb could ever clean the ref up. The liveness question is asked before
+/// the record is dropped, and this pins that it is.
+#[test]
+fn a_live_workweaves_own_segmented_name_keeps_its_receipt() {
+    let tmp = tempfile::tempdir().unwrap();
+    let ws = make_primary(tmp.path());
+    let canonical = ws.join("github").join("acme").join("repo");
+    init_repo_with_commit(&canonical);
+
+    // Placed by absolute path, outside every container — the shape that
+    // makes the name legal and the workweave invisible to the migration.
+    let ww_dir = tmp.path().join("elsewhere").join("nested-ww");
+    write_marker(&ww_dir, &ws, "myproj", &ws);
+    record_placement(&ws, "myproj", "feat-a/nested", &ww_dir);
+    let ww_checkout = ww_dir.join("github").join("acme").join("repo");
+    std::fs::create_dir_all(ww_checkout.parent().unwrap()).unwrap();
+    worktree_add(&canonical, &ww_checkout, "myproj--feat-a/nested");
+    record_receipt(&ws, "myproj", "feat-a/nested", &canonical);
+
+    let fix = rwv()
+        .args(["doctor", "--fix", "--all"])
+        .current_dir(&ws)
+        .output()
+        .unwrap();
+    let fix_stdout = String::from_utf8_lossy(&fix.stdout).into_owned();
+
+    assert!(
+        receipt_recorded(&ws, "myproj", "myproj--feat-a/nested"),
+        "this receipt is true: the workweave is on disk and mints exactly \
+         that name, so the `/` says nothing about it; got:\n{fix_stdout}"
+    );
+    assert!(
+        branch_exists(&canonical, "myproj--feat-a/nested"),
+        "and its ref is untouched"
     );
 }
 

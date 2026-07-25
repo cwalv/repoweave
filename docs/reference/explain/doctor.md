@@ -51,7 +51,12 @@ rwv doctor [--all] [--locked] [--json] [--fix] [--reattach-checkouts]
   scoped to the active project unless `--all`), dangling ownership receipts
   (a receipt naming a ref that is not in the store it names — the residue
   of a crash between the receipt write and the ref creation; it authorizes
-  nothing, so retracting it destroys no work), orphaned savepoints
+  nothing, so retracting it destroys no work), ownership receipts naming a
+  pre-flat ref (a receipt whose name carries a `/` segment that no workweave
+  on disk mints — rwv cannot have created that ref under the flat scheme, and
+  while the record stands the branch reads as a leak rwv owns and may delete;
+  the retraction drops the record only, leaves the branch exactly where it
+  is, and leaves it unowned, which `--fix` never touches), orphaned savepoints
   classified as `Redundant`
   (a `refs/rwv/pre-op/<op-id>` ref whose op-id matches no live `.rwv-op`
   file and whose tip is already reachable from the current branch; dropping
@@ -158,7 +163,7 @@ severity. Under `--json`, output is the envelope:
 ```
 
 The `$schema` URL points to the committed schema artifact. Variants are
-discriminated by the `kind` tag — `branch-discipline`, `cargo-patch-shadowing`, `cargo-version-skew`, `clone-topology`, `dangling-active-project`, `dangling-ref-receipt`, `dangling-reference`, `dead-op-lease`, `incomplete-lock`, `index-drift`, `legacy-role-primary`, `legacy-workweave-index`, `legacy-workweave-marker`, `missing-canonical-clone`, `missing-replay-exclusion`, `missing-role`, `orphaned-clone`, `orphaned-savepoint`, `provenance`, `stale-lock`, `stale-op-state`, `stale-worktree-registration`, `uninitialized-submodule`, `unparseable-project`, `working-tree-drift`, `workweave-drift`, `workweave-tree-integrity`.
+discriminated by the `kind` tag — `branch-discipline`, `cargo-patch-shadowing`, `cargo-version-skew`, `clone-topology`, `dangling-active-project`, `dangling-ref-receipt`, `dangling-reference`, `dead-op-lease`, `incomplete-lock`, `index-drift`, `legacy-role-primary`, `legacy-workweave-index`, `legacy-workweave-marker`, `missing-canonical-clone`, `missing-replay-exclusion`, `missing-role`, `orphaned-clone`, `orphaned-savepoint`, `pre-flat-ref-receipt`, `provenance`, `stale-lock`, `stale-op-state`, `stale-worktree-registration`, `uninitialized-submodule`, `unparseable-project`, `working-tree-drift`, `workweave-drift`, `workweave-tree-integrity`.
 Every per-repo variant carries `path` (manifest-relative) and
 `absolute_path` (fully resolved). Variants with subkinds
 (`branch-discipline`, `clone-topology`, `dead-op-lease`, `index-drift`, `orphaned-savepoint`, `provenance`, `working-tree-drift`, `workweave-drift`, `workweave-tree-integrity`) carry an additional `sub_kind` field.
@@ -1554,6 +1559,36 @@ Schema:
             },
             "ref_name": {
               "description": "The recorded ref name that does not exist in that store.",
+              "type": "string"
+            },
+            "store_path": {
+              "description": "Absolute path of the canonical store the receipt is keyed to.",
+              "type": "string"
+            }
+          }
+        },
+        {
+          "description": "See `CheckViolation::PreFlatRefReceipt`.",
+          "type": "object",
+          "required": [
+            "kind",
+            "project",
+            "ref_name",
+            "store_path"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "pre-flat-ref-receipt"
+              ]
+            },
+            "project": {
+              "description": "The project whose registry holds the receipt.",
+              "type": "string"
+            },
+            "ref_name": {
+              "description": "The recorded ref name that carries a `/` segment.",
               "type": "string"
             },
             "store_path": {
