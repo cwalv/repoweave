@@ -508,10 +508,13 @@ If yes, you cannot rebase and must merge; if no, rebase is strictly
 preferable (linear history, no merge bubbles). In repoweave that question
 is always **no**:
 
-- **Workweave branches are unpublished by construction.** The enforced
-  invariant is that workweave branches are never pushed — `rwv push`
-  refuses from a workweave — so rebasing them rewrites nothing anyone
-  else can have seen.
+- **`rwv` never publishes a workweave branch, but that's policy, not
+  physics.** `rwv push` refuses from a workweave — rwv's only
+  enforcement point. No pre-push hook backs it, and doctor's
+  branch-discipline scan is local-only (ancestry against the primary
+  tip, never a remote), so a plain `git push` bypasses it entirely. As
+  long as workweave branches are published only through `rwv`,
+  rebasing them rewrites nothing anyone else can have seen.
 - **Landing is routed through `sync-to`, which only rebases the
   unpublished side.** The canonical "land my work" path rebases CWD
   (the workweave) against the target and then *fast-forwards* the
