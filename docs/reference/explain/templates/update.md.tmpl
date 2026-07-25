@@ -61,6 +61,18 @@ Default text output: a fetch-progress line per repo (prefixed with
 changed, not the repos the run visited. The subsequent lock re-snapshot emits
 `Wrote <path>` on stderr. Unchanged entries are not individually reported.
 
+An unfiltered update also re-authors the enabled integrations' managed content
+against the advanced tree, and then reports any **member incompatibility** the
+advance exposed — a `[warning] <integration>: member-incompatibility: …` line
+on stderr, naming the value and its two remedies. Advancing members can raise
+what they require above a value rwv seeded once and stepped back from (a
+go.work go directive below the members' `go.mod`), and `update` is where you
+are standing when that happens. It is a report and nothing more: the advance is
+valid, the lock is written, and the exit code is unaffected. `rwv doctor` is
+the standing arm for the same finding; both run the same predicate. Because it
+goes to stderr, `--json` stdout stays purely structured and the envelope below
+is unchanged.
+
 Under `--json -j 1` (or `--json` with a single-repo project), output is
 the envelope:
 

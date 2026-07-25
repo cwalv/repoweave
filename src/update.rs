@@ -400,6 +400,25 @@ fn update_for_project(
         }
         .context("failed to regenerate integration content after update")?;
         authored = crate::activate::owned_paths(active_root, project_name, &project.manifest);
+
+        // Report at the moment of causation. Advancing members can raise what
+        // they require above a go.work go-line (or any other
+        // `Ownership::DefaultOnly` value) the operator pinned — the MOVE is
+        // valid and stays, but this is where the operator is standing when the
+        // breach appears, so the observation is made here as well as in
+        // `rwv doctor`. Same predicate, via the same runner: no policy can
+        // diverge between the two surfacings. Not a refusal and not a gate —
+        // the findings go to stderr so `--json` stdout stays structured, and
+        // the exit status is untouched.
+        //
+        // Sharing the unfiltered branch deliberately: a filtered update leaves
+        // the managed files alone and proves nothing about the members it
+        // skipped, so it has no post-MOVE state worth reporting on either.
+        for issue in
+            crate::activate::member_incompatibilities(active_root, project_name, &project.manifest)
+        {
+            eprintln!("[warning] {}: {}", issue.integration, issue.message);
+        }
     }
 
     // The regenerated content and the lock that records the tips it was

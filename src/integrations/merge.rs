@@ -53,7 +53,7 @@ use crate::workweave_index;
 use anyhow::{Context, Result};
 use std::collections::BTreeMap;
 use std::marker::PhantomData;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -92,6 +92,10 @@ where
 ///   value is preserved. `strip_deactivate` does **not** remove this key (it
 ///   is user-adjustable; stripping it would silently discard a choice the user
 ///   may have made). `verify()` treats `DefaultOnly` drift as CLEAN.
+///
+/// A `DefaultOnly` key that is *incompatible* with what the members require is
+/// still CLEAN here — that is a separate, coexisting fact carried by
+/// [`MemberIncompatibility`], not a reinterpretation of this rule.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Ownership {
     /// rwv always writes and always strips this key.
@@ -1782,6 +1786,131 @@ pub fn fully_owned_parse_fail_issue(name: &str, path: &Path, detail: &str) -> Is
             path.display()
         ),
         safe_to_fix: true,
+    }
+}
+
+// ===========================================================================
+// Member incompatibility
+// ===========================================================================
+//
+// `Ownership::DefaultOnly` (rule 5, [`Ownership`]) conflates two predicates
+// that only coincide at seed time:
+//
+// - PREFERENCE: divergence from *rwv's seeded default*. The user's business —
+//   `verify()` is right to report CLEAN and say nothing.
+// - INCOMPATIBILITY: divergence from *what the members require*. Not a
+//   preference: the ecosystem toolchain rejects the configuration outright.
+//   rwv computed the requirement (that is where the default came from) and can
+//   see the breach.
+//
+// This category carries the second fact and nothing else. It is **not drift**:
+// rule 5 is untouched, `verify()` still reports `DefaultOnly` divergence as
+// CLEAN, and the two coexist on the same file. Nothing gates on it — `doctor`
+// and `update` report; neither refuses.
+//
+// Canonical writeup:
+// `docs/repoweave/integration-ownership/member-incompatibility.md`
+// (DECIDED 2026-07-25).
+
+/// Stable kebab-case kind tag for the member-incompatibility category.
+///
+/// Prefixed onto every message this category emits so the finding is
+/// dispatchable the way `rwv doctor --json`'s `kind` discriminants are —
+/// integration findings travel as [`Issue`] values, which carry no typed
+/// discriminant field, so the tag rides in the message text.
+pub const MEMBER_INCOMPATIBILITY_KIND: &str = "member-incompatibility";
+
+/// An on-disk `Ownership::DefaultOnly` value that is incompatible with what
+/// the workspace members require.
+///
+/// Constructed by an integration's `member_incompatibility` predicate (see
+/// `crate::integration::Integration::member_incompatibility`) and converted to
+/// an [`Issue`] by [`MemberIncompatibility::into_issue`] — the only route from
+/// this type to a reportable finding.
+///
+/// # Why the fields are facts and the prose is not
+///
+/// The struct carries only *observations*; the message template lives here, in
+/// Core. Two properties fall out of that and are not left to each construction
+/// site to remember:
+///
+/// 1. **`safe_to_fix` is always `false`.** There is no field for it. `--fix`
+///    re-runs `activate()`, which by rule-5 contract refuses to overwrite an
+///    existing `DefaultOnly` value, so an automated repair does not exist. A
+///    finding of this kind cannot be constructed claiming otherwise.
+/// 2. **The message never advertises `--fix`.** It names the two remedies that
+///    are actually available, both of which are the operator's: raise the
+///    managed value, or lower the members' requirement.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MemberIncompatibility {
+    /// Integration name (goes into `Issue::integration`).
+    integration: String,
+    /// The managed file holding the incompatible value.
+    path: PathBuf,
+    /// Display form of the `DefaultOnly` key (e.g. `go`).
+    key: String,
+    /// The value currently on disk.
+    on_disk: String,
+    /// The strongest value the members require.
+    required: String,
+    /// Where that requirement comes from — the member file that carries it
+    /// (e.g. `github/org/module-a/go.mod`). Named so the operator can go
+    /// straight to the other end of the remedy.
+    required_by: String,
+}
+
+impl MemberIncompatibility {
+    /// Record an incompatibility between a managed `DefaultOnly` value and the
+    /// members' requirement.
+    ///
+    /// Every argument is an observation the predicate made from member files
+    /// and the managed file. No wall-clock, no environment, no tooling probe —
+    /// the category only carries statements that are true of the files on disk.
+    pub fn new(
+        integration: &str,
+        path: &Path,
+        key: &str,
+        on_disk: &str,
+        required: &str,
+        required_by: &str,
+    ) -> Self {
+        Self {
+            integration: integration.to_string(),
+            path: path.to_path_buf(),
+            key: key.to_string(),
+            on_disk: on_disk.to_string(),
+            required: required.to_string(),
+            required_by: required_by.to_string(),
+        }
+    }
+
+    /// Render this observation as the informational [`Issue`] both `rwv doctor`
+    /// and `rwv update` surface.
+    ///
+    /// `safe_to_fix` is `false` and the message names both operator remedies;
+    /// neither is a per-call-site choice (see the type docs).
+    pub fn into_issue(self) -> Issue {
+        Issue {
+            integration: self.integration,
+            severity: Severity::Warning,
+            message: format!(
+                "{MEMBER_INCOMPATIBILITY_KIND}: {} sets `{}` to `{}`, but the members \
+                 require `{}` (from {}) — the toolchain rejects this configuration. \
+                 rwv seeded this key once and never overwrites it, so this is not drift \
+                 and no automated repair applies: either raise `{}` to `{}` in {}, \
+                 or lower the requirement in {}.",
+                self.path.display(),
+                self.key,
+                self.on_disk,
+                self.required,
+                self.required_by,
+                self.key,
+                self.required,
+                self.path.display(),
+                self.required_by,
+            ),
+            safe_to_fix: false,
+        }
     }
 }
 

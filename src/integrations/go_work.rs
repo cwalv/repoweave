@@ -44,7 +44,7 @@
 use crate::integration::{Integration, IntegrationContext, Issue, Severity};
 use crate::integrations::merge::{
     drift_issues, keypath, merge_activate, missing_issue, strip_deactivate, GoWorkDoc, ManagedDoc,
-    OwnedValue, Ownership,
+    MemberIncompatibility, OwnedValue, Ownership,
 };
 use crate::manifest::GoWorkConfig;
 use anyhow::Context;
@@ -241,6 +241,69 @@ impl Integration for GoWork {
             "Cut over manually or add the '// managed by repoweave' marker",
             "on-disk use entries differ from rwv.yaml config.",
         ))
+    }
+
+    /// The go-work member-incompatibility predicate: the on-disk go directive
+    /// is **below** the strongest `go` requirement across the members' `go.mod`
+    /// files.
+    ///
+    /// A hard predicate in the sense
+    /// [`Integration::member_incompatibility`](crate::integration::Integration::member_incompatibility)
+    /// requires: it reads the members' `go.mod` files and the managed `go.work`
+    /// and nothing else, and the consequence needs no interpretation — the go
+    /// toolchain refuses to build a workspace whose go.work asks for less than
+    /// a member's go.mod declares.
+    ///
+    /// Not the same question as [`Self::verify`]: the go-line is
+    /// `Ownership::DefaultOnly`, so a divergence from rwv's computed default
+    /// stays CLEAN there and always will. This reports the orthogonal fact that
+    /// the value the operator holds does not build.
+    ///
+    /// Silent (returns `None`) when:
+    /// - no member declares a `go.mod` — nothing to require;
+    /// - `go.work` has no go-line — `activate()` seeds one, so there is no
+    ///   operator choice to be incompatible with;
+    /// - either side is unparseable — the category states facts or nothing;
+    /// - the on-disk version is at or above the requirement.
+    ///
+    /// Comparison includes the patch component (absent reads as `0`), so
+    /// `go 1.26` against a member's `go 1.26.1` is a breach and `go 1.9`
+    /// against `go 1.21` is a breach — the latter being the case a string
+    /// compare would get backwards.
+    fn member_incompatibility(
+        &self,
+        ctx: &IntegrationContext,
+    ) -> anyhow::Result<Option<MemberIncompatibility>> {
+        let repo_paths = ctx.detect_repos_with_manifest("go.mod");
+        if repo_paths.is_empty() {
+            return Ok(None);
+        }
+
+        let path = ctx.output_dir.join("go.work");
+        let Some(on_disk_raw) = read_go_directive_from_file(&path) else {
+            return Ok(None);
+        };
+        let Some(on_disk) = parse_go_version(&on_disk_raw) else {
+            return Ok(None);
+        };
+        let Some((required, required_raw, required_member)) =
+            max_member_go_requirement(&repo_paths, ctx.workspace_root)
+        else {
+            return Ok(None);
+        };
+
+        if on_disk >= required {
+            return Ok(None);
+        }
+
+        Ok(Some(MemberIncompatibility::new(
+            self.name(),
+            &path,
+            "go",
+            &on_disk_raw,
+            &required_raw,
+            &format!("{required_member}/go.mod"),
+        )))
     }
 
     /// go.work is HYBRID — it lives in managed_files(), not generated_files().
@@ -496,34 +559,102 @@ fn activate_via_hand_edit(
 }
 
 // ---------------------------------------------------------------------------
+// Go-version reading and comparison
+//
+// One parser feeds three consumers: the DefaultOnly seed value
+// (`max_go_version`), the incompatibility predicate's requirement side
+// (`max_member_go_requirement`), and its on-disk side
+// (`read_go_directive_from_file`). Ordering is on the parsed tuple, never on
+// the string — `1.9` is BELOW `1.21`, which a lexicographic compare gets
+// backwards.
+// ---------------------------------------------------------------------------
+
+/// A go language version as `(major, minor, patch)`, with an absent patch
+/// component read as `0` (`1.26` and `1.26.0` are the same requirement).
+type GoVersion = (u64, u64, u64);
+
+/// Parse a go-directive value (`1.26`, `1.26.3`) into comparable components.
+/// Returns `None` for anything without at least `<major>.<minor>` numerics —
+/// an unparseable directive is simply not a fact this module states anything
+/// about.
+fn parse_go_version(raw: &str) -> Option<GoVersion> {
+    let parts: Vec<&str> = raw.trim().splitn(3, '.').collect();
+    if parts.len() < 2 {
+        return None;
+    }
+    let maj = parts[0].parse::<u64>().ok()?;
+    let min = parts[1].parse::<u64>().ok()?;
+    // Third component is optional and may carry a pre-release suffix
+    // (`1.26.0-rc1`); take the leading digits and ignore the rest.
+    let patch = parts
+        .get(2)
+        .map(|p| {
+            let digits: String = p.chars().take_while(|c| c.is_ascii_digit()).collect();
+            digits.parse::<u64>().unwrap_or(0)
+        })
+        .unwrap_or(0);
+    Some((maj, min, patch))
+}
+
+/// Read the `go <version>` directive value from a go.work / go.mod file's text.
+///
+/// Uses the same line rule as [`GoWorkDoc`]'s go-line locator (`go ` followed
+/// by a digit), so the reader and the writer agree on what the go-line is.
+/// Returns the raw value token, trailing comments stripped.
+fn go_directive_in(text: &str) -> Option<String> {
+    text.lines().find_map(|line| {
+        let trimmed = line.trim();
+        if trimmed.starts_with("go ") && trimmed.chars().nth(3).is_some_and(|c| c.is_ascii_digit())
+        {
+            trimmed[3..].split_whitespace().next().map(str::to_string)
+        } else {
+            None
+        }
+    })
+}
+
+/// Read the go-directive value from `path`. `None` when the file is absent,
+/// unreadable, or carries no go-line.
+fn read_go_directive_from_file(path: &Path) -> Option<String> {
+    let text = std::fs::read_to_string(path).ok()?;
+    go_directive_in(&text)
+}
+
+/// The strongest go version the members require: `(parsed, raw value, member
+/// repo path)`. Ties keep the first member in `paths` order (the detection list
+/// is sorted, so the result is deterministic).
+fn max_member_go_requirement(
+    paths: &[impl AsRef<str>],
+    workspace_root: &Path,
+) -> Option<(GoVersion, String, String)> {
+    let mut max: Option<(GoVersion, String, String)> = None;
+    for p in paths {
+        let go_mod = workspace_root.join(p.as_ref()).join("go.mod");
+        let Ok(content) = std::fs::read_to_string(go_mod) else {
+            continue;
+        };
+        let Some(raw) = go_directive_in(&content) else {
+            continue;
+        };
+        let Some(parsed) = parse_go_version(&raw) else {
+            continue;
+        };
+        if max.as_ref().is_none_or(|(m, _, _)| parsed > *m) {
+            max = Some((parsed, raw, p.as_ref().to_string()));
+        }
+    }
+    max
+}
+
+// ---------------------------------------------------------------------------
 // max_go_version — read go <version> from each go.mod, return the maximum.
 // Used only when config.go_version is None and we need a version for the
 // `go work edit -go=<v>` primary path call.
 // ---------------------------------------------------------------------------
 
 fn max_go_version(paths: &[impl AsRef<str>], workspace_root: &Path) -> Option<String> {
-    let mut max: Option<(u64, u64)> = None;
-    for p in paths {
-        let go_mod = workspace_root.join(p.as_ref()).join("go.mod");
-        if let Ok(content) = std::fs::read_to_string(go_mod) {
-            for line in content.lines() {
-                if let Some(rest) = line.strip_prefix("go ") {
-                    let parts: Vec<&str> = rest.trim().splitn(3, '.').collect();
-                    if parts.len() >= 2 {
-                        if let (Ok(maj), Ok(min)) =
-                            (parts[0].parse::<u64>(), parts[1].parse::<u64>())
-                        {
-                            if max.is_none_or(|m| (maj, min) > m) {
-                                max = Some((maj, min));
-                            }
-                        }
-                    }
-                    break;
-                }
-            }
-        }
-    }
-    max.map(|(maj, min)| format!("{maj}.{min}"))
+    max_member_go_requirement(paths, workspace_root)
+        .map(|((maj, min, _), _, _)| format!("{maj}.{min}"))
 }
 
 // ---------------------------------------------------------------------------
@@ -1154,6 +1285,177 @@ mod tests {
         assert!(
             man.contains(&"go.work".to_string()),
             "go.work must be in managed_files"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // member-incompatibility: the go-line is below what the members require.
+    //   Distinct from drift — rule 5 keeps DefaultOnly divergence CLEAN, and
+    //   this coexists with that.
+    // -----------------------------------------------------------------------
+
+    /// Build a workspace whose go.work carries `go_work_version` (or no
+    /// go-line at all when `None`) and whose single member's go.mod declares
+    /// `member_version`.
+    fn seed_go_workspace(root: &Path, go_work_version: Option<&str>, member_version: &str) {
+        let seed = match go_work_version {
+            Some(v) => {
+                format!("go {v}\n\n// managed by repoweave\nuse (\n\t./github/test/repoweave\n)\n")
+            }
+            None => "// managed by repoweave\nuse (\n\t./github/test/repoweave\n)\n".to_string(),
+        };
+        write_file(root, "go.work", &seed);
+        write_file(
+            root,
+            "github/test/repoweave/go.mod",
+            &format!("module example.com/repoweave\n\ngo {member_version}\n"),
+        );
+    }
+
+    fn member_incompatibility_for(
+        root: &Path,
+        manifest: &Manifest,
+        project: &ProjectName,
+        config: &IntegrationConfig,
+        cache: &HashMap<String, Vec<String>>,
+    ) -> Option<MemberIncompatibility> {
+        let ctx = make_ctx_local(root, project, manifest, config, cache);
+        GoWork.member_incompatibility(&ctx).unwrap()
+    }
+
+    /// Run the predicate over a one-member workspace and return the finding.
+    fn probe(go_work_version: Option<&str>, member_version: &str) -> Option<MemberIncompatibility> {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        seed_go_workspace(root, go_work_version, member_version);
+
+        let manifest = make_manifest_local(vec![("github/test/repoweave", Role::Owned)]);
+        let project = ProjectName::new("test-project");
+        let config = IntegrationConfig::default();
+        let cache = HashMap::new();
+        member_incompatibility_for(root, &manifest, &project, &config, &cache)
+    }
+
+    #[test]
+    fn member_incompatibility_reports_pin_below_max_member() {
+        let found = probe(Some("1.21"), "1.26").expect("go 1.21 under a member's 1.26 is a breach");
+        let issue = found.into_issue();
+
+        assert_eq!(issue.integration, "go-work");
+        assert!(
+            !issue.safe_to_fix,
+            "member-incompatibility is never auto-repairable: {issue:?}"
+        );
+        assert!(
+            issue.message.contains("member-incompatibility"),
+            "message must carry the kind tag; got: {}",
+            issue.message
+        );
+        assert!(
+            issue.message.contains("1.21") && issue.message.contains("1.26"),
+            "message must name both the on-disk value and the requirement; got: {}",
+            issue.message
+        );
+        assert!(
+            issue.message.contains("github/test/repoweave/go.mod"),
+            "message must name the member carrying the requirement; got: {}",
+            issue.message
+        );
+    }
+
+    #[test]
+    fn member_incompatibility_message_names_both_remedies_and_never_fix() {
+        let issue = probe(Some("1.21"), "1.26")
+            .expect("fixture must produce a finding")
+            .into_issue();
+
+        // Both remedies, in both directions — the operator's choice, not rwv's.
+        assert!(
+            issue.message.contains("raise"),
+            "message must offer raising the managed value; got: {}",
+            issue.message
+        );
+        assert!(
+            issue.message.contains("lower the requirement"),
+            "message must offer lowering the member requirement; got: {}",
+            issue.message
+        );
+        // `--fix` re-runs activate(), which refuses to overwrite an existing
+        // DefaultOnly value by design. Advertising it would be a lie.
+        assert!(
+            !issue.message.contains("--fix"),
+            "message must never advertise --fix; got: {}",
+            issue.message
+        );
+    }
+
+    #[test]
+    fn member_incompatibility_silent_when_pin_meets_or_exceeds_members() {
+        assert!(
+            probe(Some("1.26"), "1.26").is_none(),
+            "an on-disk value equal to the requirement is compatible"
+        );
+        assert!(
+            probe(Some("1.27"), "1.26").is_none(),
+            "an on-disk value above the requirement is compatible"
+        );
+        assert!(
+            probe(Some("1.26.1"), "1.26").is_none(),
+            "a patch-level bump above the requirement is compatible"
+        );
+    }
+
+    #[test]
+    fn member_incompatibility_silent_when_go_line_absent() {
+        // activate() seeds the go-line when it is absent, so there is no
+        // operator choice yet to be incompatible with.
+        assert!(
+            probe(None, "1.26").is_none(),
+            "an absent go-line is not a breach — activate() seeds it"
+        );
+    }
+
+    #[test]
+    fn member_incompatibility_compares_numerically_not_lexicographically() {
+        // "1.9" sorts ABOVE "1.21" as a string and BELOW it as a version.
+        // The string answer would silently miss a real broken build.
+        assert!(
+            probe(Some("1.9"), "1.21").is_some(),
+            "go 1.9 under a member's go 1.21 is a breach"
+        );
+        assert!(
+            probe(Some("1.26"), "1.26.1").is_some(),
+            "go 1.26 under a member's go 1.26.1 is a breach"
+        );
+    }
+
+    /// Rule-5 coexistence: on ONE fixture, `verify()` reports CLEAN (the
+    /// DefaultOnly go-line is the operator's, permanently) while the
+    /// member-incompatibility predicate reports the breach. The two facts are
+    /// separate; neither reinterprets the other. `go_directive_default_only_
+    /// drift_is_clean` pins the CLEAN half on its own.
+    #[test]
+    fn member_incompatibility_coexists_with_clean_verify() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        seed_go_workspace(root, Some("1.21"), "1.26");
+
+        let manifest = make_manifest_local(vec![("github/test/repoweave", Role::Owned)]);
+        let project = ProjectName::new("test-project");
+        let config = IntegrationConfig::default();
+        let cache = HashMap::new();
+        let ctx = make_ctx_local(root, &project, &manifest, &config, &cache);
+
+        let drift = GoWork.verify(&ctx).unwrap();
+        assert!(
+            drift.is_empty(),
+            "rule 5: DefaultOnly divergence stays CLEAN in verify() — got: {drift:?}"
+        );
+
+        let found = GoWork.member_incompatibility(&ctx).unwrap();
+        assert!(
+            found.is_some(),
+            "the same fixture must still report the incompatibility"
         );
     }
 }

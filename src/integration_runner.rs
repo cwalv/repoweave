@@ -219,6 +219,30 @@ pub fn run_verifications(
     })
 }
 
+/// Run the member-incompatibility predicate for each enabled integration,
+/// collecting the informational findings.
+///
+/// **The single collection point for the category** — `rwv doctor`'s standing
+/// observation arm and `rwv update`'s post-MOVE report both come through here,
+/// so the two surfacings cannot diverge in policy. Neither gates on the result:
+/// the findings are reports.
+///
+/// Integrations with no predicate return `None` and contribute nothing (see
+/// `Integration::member_incompatibility`).
+pub fn run_member_incompatibilities(
+    integrations: &[&dyn Integration],
+    manifest: &Manifest,
+    ctx_base: &IntegrationContextBase,
+) -> Vec<Issue> {
+    for_each_enabled(integrations, manifest, |integration, config| {
+        let ctx = ctx_base.build_context(config, manifest);
+        let found = integration
+            .member_incompatibility(&ctx)
+            .map_err(|e| anyhow::anyhow!("member-incompatibility check failed: {e}"))?;
+        Ok(found.into_iter().map(|m| m.into_issue()).collect())
+    })
+}
+
 /// Run activate hooks for each enabled integration, collecting issues.
 ///
 /// Called from `rwv activate` after `run_activations` writes the

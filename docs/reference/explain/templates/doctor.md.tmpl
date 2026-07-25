@@ -118,6 +118,13 @@ the text output; they do not have a dedicated `--json` kind because they
 are emitted as `Issue` values through the same integration-issue channel
 as per-integration check results.
 
+`member-incompatibility` findings travel that same integration-issue channel
+and so also have no dedicated `--json` kind; the kebab-case tag is the message
+prefix, which is what a caller keys off. Doctor is the **standing observation
+arm** for the category — `rwv update` reports the same finding at the moment it
+creates one. Neither gates: nothing refuses on this category, and `--fix`
+cannot repair it.
+
 Schema:
 
 {{SCHEMA}}
@@ -188,3 +195,12 @@ rwv doctor --fix
 - *workweave-tree-integrity / parent-chain-anomaly*, *unregistered-dir*,
   *foreign-primary* — other marker tree anomalies; report-only (`--fix` does
   not auto-remediate them).
+- *member-incompatibility* — a value rwv seeded once and then stepped back
+  from (an `Ownership::DefaultOnly` key) is incompatible with what the
+  workspace members require: today, a `go.work` go directive below the
+  highest `go` in the members' `go.mod` files, which the go toolchain
+  refuses to build. **Not drift** — the value is the operator's by contract,
+  so `rwv doctor` still reports the file itself as clean and `--fix` cannot
+  repair this (it re-runs activation, which will not overwrite the value).
+  The two remedies are both yours: raise the directive in `go.work`, or lower
+  the requirement in the member's `go.mod`.

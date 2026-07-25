@@ -764,6 +764,39 @@ fn relative_symlink_target(project: &str, file: &str) -> std::path::PathBuf {
     relative_target
 }
 
+/// Collect the member-incompatibility findings for `project`'s managed files
+/// at weave `root`, against the same project-dir view intent-mode activation
+/// authors into.
+///
+/// A thin binding of
+/// [`run_member_incompatibilities`](crate::integration_runner::run_member_incompatibilities)
+/// to a weave directory, for callers that hold a `root` + manifest rather than
+/// an `IntegrationContextBase` — `rwv update`'s post-MOVE report. `rwv doctor`
+/// calls the runner directly with the context base it already built; both reach
+/// the same per-integration predicate, so the two surfacings cannot diverge.
+///
+/// `root` is the weave the caller operated on (primary or a workweave), matching
+/// [`activate_intent`] / [`activate_workweave_intent`]. Reports only — nothing
+/// here refuses or repairs.
+pub fn member_incompatibilities(
+    root: &Path,
+    project: &ProjectName,
+    manifest: &Manifest,
+) -> Vec<crate::integration::Issue> {
+    let project_dir = root.join("projects").join(project.as_str());
+    let session = WorkspaceSession::new(root);
+    let detection_cache = build_detection_cache(root, manifest.iter_entries());
+    let builtin = builtin_integrations();
+    let integrations: Vec<&dyn Integration> = builtin.iter().map(|b| b.as_ref()).collect();
+    let ctx_base = session.context_base(
+        &project_dir,
+        project,
+        &detection_cache,
+        manifest.workweave.as_ref(),
+    );
+    crate::integration_runner::run_member_incompatibilities(&integrations, manifest, &ctx_base)
+}
+
 /// Framework-level **Axis-1 surfacing** check: assert that every file in the
 /// owner-scoped surfacing union exists at `<root>/<file>` as a symlink that
 /// resolves to `projects/<project>/<file>`.

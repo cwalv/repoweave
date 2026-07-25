@@ -6865,6 +6865,19 @@ pub fn run_check(
             all_issues.extend(fixable_issues);
         }
 
+        // Member-incompatibility observation arm. Informational and never
+        // gated: an `Ownership::DefaultOnly` value the operator holds may be
+        // incompatible with what the members require, which `verify()` does
+        // NOT see — rule 5 keeps DefaultOnly divergence CLEAN, permanently, and
+        // this coexists with that rather than reinterpreting it. The findings
+        // are structurally `safe_to_fix = false` (no automated repair exists),
+        // so they bypass the --fix partition above and always surface as-is.
+        all_issues.extend(crate::integration_runner::run_member_incompatibilities(
+            &integrations,
+            &project.manifest,
+            &ctx_base,
+        ));
+
         // Framework-level Axis-1 surfacing check. Distinct from the
         // per-integration `verify()` pass above, which only sees Axis-2 content
         // drift: nothing there asserts that the *symlinks* the surfacing layer

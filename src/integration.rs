@@ -261,6 +261,43 @@ pub trait Integration {
     fn verify(&self, _ctx: &IntegrationContext) -> anyhow::Result<Vec<Issue>> {
         Ok(Vec::new())
     }
+
+    /// Report an `Ownership::DefaultOnly` value on this integration's managed
+    /// file that is **incompatible with what the members require** — not merely
+    /// different from the value rwv seeded.
+    ///
+    /// This is deliberately not `verify()`: `verify()` answers "does the
+    /// on-disk content match what `activate()` would write", and per rule 5 a
+    /// `DefaultOnly` divergence is CLEAN there — permanently, by contract. This
+    /// hook answers a different question, "would the ecosystem tool accept this
+    /// configuration", and the two coexist on the same file. See
+    /// [`crate::integrations::merge::MemberIncompatibility`] for the category
+    /// and its message discipline.
+    ///
+    /// **Default returns `None`** — an integration whose `DefaultOnly` keys are
+    /// pure preference (cargo's `[workspace].resolver`, uv's `[tool.uv].package`,
+    /// npm's `name`) has no predicate to implement, and never produces this
+    /// finding.
+    ///
+    /// # Implementing one
+    ///
+    /// The predicate must be **hard**: decidable from the member files and the
+    /// managed file alone, with a consequence that does not depend on anything
+    /// rwv cannot see. No wall-clock, no environment probes, no "which tool is
+    /// the operator running".
+    ///
+    /// A known **soft** candidate, recorded and deliberately not implemented:
+    /// npm-workspaces' `private`. `private == false` with a `workspaces` key
+    /// present is a hard error under yarn classic and is tolerated by modern
+    /// npm — the file predicate is decidable, but the *consequence* depends on
+    /// which package manager the operator runs, which this hook cannot observe.
+    /// This category only carries statements that are true, so it stays out.
+    fn member_incompatibility(
+        &self,
+        _ctx: &IntegrationContext,
+    ) -> anyhow::Result<Option<crate::integrations::merge::MemberIncompatibility>> {
+        Ok(None)
+    }
 }
 
 /// Whether an integration should run, considering its default and any override.
