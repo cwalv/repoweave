@@ -544,8 +544,8 @@ impl CreateRollbackGuard {
     /// the workweave directory is removed, clearing any stale `.git/worktrees/`
     /// entry that a hook-failed partial `git worktree add` may have left behind.
     ///
-    /// Call this BEFORE calling `vcs.create_worktree(...)` so that even a
-    /// failed `create_worktree` leaves the repo in the prune list.
+    /// Call this BEFORE the birth call so that even a failed
+    /// `create_worktree_on` leaves the repo in the prune list.
     fn record_attempted_repo(&mut self, repo_abs: PathBuf) {
         self.prune_on_rollback.push(repo_abs);
     }
