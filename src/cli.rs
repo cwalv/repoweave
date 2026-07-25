@@ -535,9 +535,21 @@ pub enum SetupAction {
 // `from_flag` is `pub`, not `pub(crate)`: the `rwv` binary (`main.rs`) is
 // its real caller, and a `[[bin]]` target is a *separate* crate from this
 // `[lib]` — `pub(crate)` items are invisible to it, the same as to any
-// other downstream crate. What still holds crate-externally is the field
-// privacy above: `from_flag` only ever hands back what its own bool said,
-// it does not open a second way to construct the value.
+// other downstream crate.
+//
+// Be honest about what that costs. A `pub fn` returning the token IS a
+// second construction route, and it is reachable from every module of this
+// crate — `vcs.rs` can write `DetachConsent::from_flag(true).expect(..)`
+// and it compiles (measured, not assumed). So the seal this module claims
+// is real against the tuple literal and NOT real against `from_flag`, and
+// the `compile_fail` probes cover only the former. The gap is guarded
+// instead by `tests/consent_minting_audit_test.rs`, a static call-site
+// allowlist that fails when any module outside CLI dispatch mints one.
+//
+// That guard is interim. The real fix is to stop having a separate binary
+// crate mint tokens at all: move dispatch into the lib so `main.rs` is a
+// thin shim, at which point `pub(crate)` suffices and the compiler enforces
+// what the allowlist currently asserts.
 //
 // House rule: escape hatches are named for the precondition they waive,
 // never a bare `--force`. `--detach-checkouts` and `--reattach-checkouts`
