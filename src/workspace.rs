@@ -1030,6 +1030,46 @@ impl WorkweaveMarker {
     }
 }
 
+/// The index-side counterpart of the legacy-marker check in
+/// [`WorkweaveMarker::read`]: does `(primary_root, project)`'s workweave
+/// index predate ref-ownership receipts?
+///
+/// Two legacy shapes migrate in the same `rwv doctor --fix` pass
+/// (`docs/repoweave/branch-model.md` §7.1 arm 7) and each is detected where
+/// it lives — the marker's missing `parent:` field above, the index's
+/// missing `receipts` field here. `Some(path)` is the file to migrate, and
+/// [`crate::workweave_index::RefRegistry::migrate_legacy_index`] is what
+/// migrates it; the pass then records a receipt per ref it adopts or
+/// renames, receipt-first like every other arm.
+///
+/// The two detections differ in one deliberate way. A legacy *marker* is
+/// refused at read: nothing downstream can proceed without knowing the
+/// workweave's parent. A legacy *index* is reported, not refused, because
+/// the migration pass has to be able to read the index it is about to
+/// migrate — and because an unmigrated index fails closed on its own
+/// (no receipts, so nothing is destroyable under R2). The verbs that must
+/// refuse are the ones that write refs, and they refuse at the registry
+/// (`RefRegistry::record_created`), which is the last point before an
+/// unowned ref would be created.
+///
+/// `None` when the index is current, or when there is no index file at all
+/// — an absent file records no workweaves, so there is no field to migrate.
+pub fn pending_index_migration(
+    primary_root: &Path,
+    project: &ProjectName,
+) -> anyhow::Result<Option<PathBuf>> {
+    let Some(index) = crate::workweave_index::read(primary_root, project)? else {
+        return Ok(None);
+    };
+    if index.has_receipt_registry() {
+        return Ok(None);
+    }
+    Ok(Some(crate::workweave_index::index_path(
+        primary_root,
+        project,
+    )))
+}
+
 // ---------------------------------------------------------------------------
 // Unit tests
 // ---------------------------------------------------------------------------
@@ -1532,6 +1572,54 @@ mod tests {
         );
         // And primary remains its own value, not overwritten.
         assert_eq!(marker.primary, PathBuf::from("/home/user/primary"));
+    }
+
+    /// Fixture: a primary with `projects/<name>/`, ready for an index.
+    fn primary_with_project(root: &Path, name: &str) -> ProjectName {
+        std::fs::create_dir_all(root.join("projects").join(name)).unwrap();
+        ProjectName::new(name)
+    }
+
+    #[test]
+    fn pending_index_migration_reports_an_index_without_receipts() {
+        // The index-side legacy shape, next to the marker-side one above:
+        // written before ref-ownership receipts existed.
+        let tmp = tempfile::tempdir().unwrap();
+        let primary = tmp.path().join("ws");
+        let project = primary_with_project(&primary, "web-app");
+        let path = crate::workweave_index::index_path(&primary, &project);
+        std::fs::write(&path, r#"{"container":"/c","workweaves":{}}"#).unwrap();
+
+        assert_eq!(
+            pending_index_migration(&primary, &project).unwrap(),
+            Some(path),
+            "an index with no receipts field needs the §7.1 arm-7 migration"
+        );
+    }
+
+    #[test]
+    fn pending_index_migration_is_quiet_for_current_and_absent_indexes() {
+        let tmp = tempfile::tempdir().unwrap();
+        let primary = tmp.path().join("ws");
+        let project = primary_with_project(&primary, "web-app");
+
+        assert_eq!(
+            pending_index_migration(&primary, &project).unwrap(),
+            None,
+            "no index file records no workweaves, so there is no field to migrate"
+        );
+
+        crate::workweave_index::write(
+            &primary,
+            &project,
+            &crate::workweave_index::WorkweaveIndex::new(PathBuf::from("/c")),
+        )
+        .unwrap();
+        assert_eq!(
+            pending_index_migration(&primary, &project).unwrap(),
+            None,
+            "an index this build wrote is not a legacy one, empty registry or not"
+        );
     }
 
     // ========================================================================

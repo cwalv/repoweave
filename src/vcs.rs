@@ -1020,10 +1020,10 @@ impl OwnedRef {
     /// are written before the ref they describe so a crash leaves a
     /// dangling receipt (benign) rather than an unreceipted ref
     /// (permanently disowned under R2).
-    // No caller yet: the receipt store that produces these is a separate
-    // change. The type surface lands first because every consumer of the
-    // branch model needs it to compile against.
-    #[allow(dead_code)]
+    ///
+    /// Its callers are exactly the two registry producers in
+    /// [`crate::workweave_index`]: the one that persists a new receipt and
+    /// the one that re-derives a stored one.
     pub(crate) fn from_receipt(
         store: PathBuf,
         name: RawRefName,

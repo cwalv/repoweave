@@ -253,6 +253,21 @@ const ALLOWLIST: &[Allowed] = &[
             never user data.",
     },
     Allowed {
+        file: "workweave_index.rs",
+        pattern: "remove_file",
+        count: 2,
+        justification: "write_durably temp-file cleanup, on the two error \
+            paths (content write failed; rename failed). Unlinks only the \
+            sibling temp this call created moments earlier, named \
+            <INDEX_FILENAME>.tmp.<pid>.<serial> with a process-local counter \
+            — the same structural uniqueness op_state::atomic_write_new \
+            uses, so no other writer, thread or process can be holding that \
+            name. Never reached on the success path (the rename consumes \
+            the temp) and never able to name the index itself. No waiver \
+            needed: an orphan temp is scratch, and leaving it behind is the \
+            worse outcome — a later reader trips over it.",
+    },
+    Allowed {
         file: "integrations/merge.rs",
         pattern: "remove_file",
         count: 1,
