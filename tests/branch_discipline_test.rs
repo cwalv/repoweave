@@ -6,19 +6,34 @@
 //! non-ephemeral branch) plus the safe/live doctrine from
 //! `docs/explanation/joints/shared-refs-drift.md` applied to refs in (c).
 //!
-//! Three checks, five sub-kinds:
+//! Three checks:
 //!
 //!   (a) workweave-branch — `shared-branch`, `foreign-ephemeral`, `detached`
-//!   (b) ephemeral-at-primary
-//!   (c) stale-ephemeral-branches — `safe` (auto-fixable) / `live` (never)
+//!   (b) the `branch-model.md` §7.2 canonical-store arms —
+//!       `canonical-holds-live-workweave-ref`, `canonical-holds-leaked-ref`,
+//!       `canonical-detached`
+//!   (c) stale-ephemeral-branches — `safe` (auto-fixable) / `live` (never) /
+//!       `unowned` (never — rwv holds no receipt)
 //!
 //! Healthy fixtures (workweave on its own ephemeral branch, canonical on
 //! `main`, ephemeral branch whose workweave still exists) must stay clean.
+//!
+//! **Ownership is by record.** Everything in (b), and the safe/live half of
+//! (c), keys on an ownership receipt (`branch-model.md` R2), not on the
+//! branch's name. So most fixtures below record a receipt explicitly — see
+//! [`record_receipt`] for why a receipt for `<p>--<a>/<b>` is minted from
+//! the workweave name `<a>/<b>`. A fixture that skips the receipt is
+//! asserting the *other* half: a branch that merely looks like rwv's is the
+//! operator's, and `--fix` must leave it alone.
 //!
 //! Fixture rationale: branch-discipline operates on real git repos, so the
 //! workspaces here include actual git checkouts (not just directory shells
 //! like the tree-integrity tests).
 
+use repoweave::git::GitVcs;
+use repoweave::manifest::{ProjectName, WorkweaveName};
+use repoweave::vcs::{EphemeralRefName, Vcs};
+use repoweave::workweave_index::RefRegistry;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -160,6 +175,69 @@ fn create_branch(repo: &Path, name: &str, start_point: &str) {
     git_in(repo, &["branch", name, start_point]);
 }
 
+/// Record an ownership receipt (`branch-model.md` §4.2) for the branch that
+/// `(project, workweave)` mints, in `store`.
+///
+/// This is how rwv's own create path claims a ref, and after R2 it is the
+/// *only* thing that makes a ref rwv's to destroy — so a fixture that wants
+/// doctor to treat a branch as rwv's has to call this.
+///
+/// **Why the workweave name looks odd in some callers.**
+/// [`EphemeralRefName::mint`] is total on `(project, workweave)` and yields
+/// `<project>--<workweave>`; there is no other route to a recordable name,
+/// because recording an *observed* name would mint the receipt that
+/// authorizes destroying it. So a receipt for a branch spelled
+/// `<project>--<a>/<b>` — the shape the (c) scanner still discovers, until
+/// §7.1's flat-name cutover lands — is minted from the workweave name
+/// `<a>/<b>`. `mint` deliberately does not validate its components (Q12
+/// leaves the legal grammar for names open), so that is a legal name today.
+///
+/// The receipt is recorded at the branch's current tip, and the branch must
+/// already exist: recording against an absent ref would produce the dangling
+/// state, which is a different fixture.
+fn record_receipt(primary: &Path, project: &str, workweave: &str, store: &Path) {
+    std::fs::create_dir_all(primary.join("projects").join(project)).unwrap();
+    let project = ProjectName::new(project);
+    let mut registry = RefRegistry::for_project(primary, &project);
+    let name = EphemeralRefName::mint(&project, &WorkweaveName::new(workweave));
+    let tip = GitVcs
+        .resolve_local_branch_tip(store, &name.to_raw())
+        .expect("store is readable")
+        .unwrap_or_else(|| panic!("branch `{name}` must exist before recording a receipt for it"));
+    registry
+        .record_created(store, name, tip)
+        .expect("receipt should record");
+}
+
+/// Record an ownership receipt for a ref that does **not** exist — the
+/// dangling-receipt state §4.2 calls the benign crash residue.
+fn record_dangling_receipt(primary: &Path, project: &str, workweave: &str, store: &Path) {
+    std::fs::create_dir_all(primary.join("projects").join(project)).unwrap();
+    let project = ProjectName::new(project);
+    let mut registry = RefRegistry::for_project(primary, &project);
+    let name = EphemeralRefName::mint(&project, &WorkweaveName::new(workweave));
+    // Any resolvable revision works as the recorded tip: the receipt names a
+    // ref that is not there, so nothing ever compares against it.
+    let head = GitVcs.head_revision(store).expect("store has a HEAD");
+    registry
+        .record_created(store, name, head)
+        .expect("receipt should record");
+}
+
+/// Whether a local branch exists in `repo`.
+fn branch_exists(repo: &Path, name: &str) -> bool {
+    !String::from_utf8_lossy(
+        &git()
+            .args(["branch", "--list", name])
+            .current_dir(repo)
+            .output()
+            .unwrap()
+            .stdout,
+    )
+    .trim()
+    .is_empty()
+}
+
 // ===========================================================================
 // (a) workweave-branch
 // ===========================================================================
@@ -279,7 +357,7 @@ fn detached_head_in_workweave_is_reported() {
 }
 
 // ===========================================================================
-// (b) ephemeral-at-primary
+// (b) the §7.2 canonical-store arms
 // ===========================================================================
 
 /// Healthy canonical: checked out on a non-ephemeral branch (`main`).
@@ -295,36 +373,400 @@ fn healthy_canonical_on_main_is_clean() {
     let stdout = String::from_utf8_lossy(&out.stdout);
 
     assert!(
-        !stdout.contains("canonical clone is checked out on ephemeral"),
-        "canonical on main should not be flagged as ephemeral-at-primary; got:\n{stdout}"
+        !stdout.contains("canonical store is checked out on"),
+        "canonical on main should not fire a §7.2 attachment arm; got:\n{stdout}"
     );
 }
 
-/// ephemeral-at-primary: canonical checked out on a `<project>--<name>/...`
-/// branch — the inverse of (a).
+/// §7.2 arm 1, and the [S] scenario this bead inverts: a canonical sitting on
+/// a **hand-made** `<a>--<b>/<c>` branch is on an operator branch, not on one
+/// of rwv's. Name shape is not ownership (R2), so doctor leaves it alone.
+///
+/// The shipped scan reported this as `ephemeral-at-primary` purely because
+/// the name parsed. Non-vacuity: the companion test below builds the same
+/// fixture *with* a receipt and asserts the finding does fire, so a scan that
+/// simply stopped looking at canonicals cannot make both pass.
 #[test]
-fn ephemeral_at_primary_is_reported() {
+fn handmade_lookalike_at_canonical_is_not_reported() {
     let tmp = tempfile::tempdir().unwrap();
     let ws = make_primary(tmp.path());
     let canonical = ws.join("github").join("acme").join("repo");
     init_repo_with_commit(&canonical);
 
-    // Switch the canonical onto an ephemeral-named branch. (The workweave
-    // directory may or may not exist; the violation is about the canonical
-    // holding the branch.)
+    // Switch the canonical onto an ephemeral-*shaped* branch. No receipt:
+    // rwv never created this ref.
     git_in(&canonical, &["checkout", "-b", "myproj--feat-a/main", "-q"]);
 
     let out = rwv().args(["doctor"]).current_dir(&ws).output().unwrap();
     let stdout = String::from_utf8_lossy(&out.stdout);
 
     assert!(
-        stdout.contains("canonical clone is checked out on ephemeral")
-            || stdout.contains("ephemeral-at-primary"),
-        "doctor should report ephemeral-at-primary; got:\n{stdout}"
+        !stdout.contains("canonical store is checked out on"),
+        "a hand-made lookalike is operator state (§7.2 arm 1) and must not fire an \
+         attachment finding; got:\n{stdout}"
+    );
+}
+
+/// §7.2 arm 3: the canonical is attached to a ref rwv **recorded** for a
+/// workweave that is gone — a leak.
+///
+/// `--fix` cannot reclaim it while this store's own HEAD is on it (git
+/// refuses to delete a branch a worktree uses), so the finding names the
+/// `git switch` that frees it and the ref survives the run.
+#[test]
+fn canonical_holding_recorded_ref_of_deleted_workweave_is_reported() {
+    let tmp = tempfile::tempdir().unwrap();
+    let ws = make_primary(tmp.path());
+    let canonical = ws.join("github").join("acme").join("repo");
+    init_repo_with_commit(&canonical);
+
+    // A ref rwv created for workweave `feat-a`, recorded, and then left
+    // behind when the workweave directory went away.
+    create_branch(&canonical, "myproj--feat-a", "main");
+    record_receipt(&ws, "myproj", "feat-a", &canonical);
+    git_in(&canonical, &["checkout", "myproj--feat-a", "-q"]);
+
+    let out = rwv().args(["doctor"]).current_dir(&ws).output().unwrap();
+    let stdout = String::from_utf8_lossy(&out.stdout);
+
+    assert!(
+        stdout.contains("canonical store is checked out on `myproj--feat-a`"),
+        "doctor should report the leaked recorded ref; got:\n{stdout}"
     );
     assert!(
-        stdout.contains("myproj--feat-a/main"),
-        "report should name the offending branch; got:\n{stdout}"
+        stdout.contains("whose workweave is gone"),
+        "the report should say the workweave is gone (arm 3, not arm 2); got:\n{stdout}"
+    );
+
+    // `--fix` must not destroy the ref the store is standing on.
+    let _ = rwv()
+        .args(["doctor", "--fix", "--all"])
+        .current_dir(&ws)
+        .output()
+        .unwrap();
+    assert!(
+        branch_exists(&canonical, "myproj--feat-a"),
+        "the leaked ref must survive --fix while the store's HEAD is on it"
+    );
+}
+
+/// §7.2 arm 2: the canonical is attached to a ref recorded for a workweave
+/// that is **still on disk** — an I3 disjointness violation that only a
+/// moved or copied directory can produce. Report-only.
+#[test]
+fn canonical_holding_recorded_ref_of_live_workweave_is_reported() {
+    let tmp = tempfile::tempdir().unwrap();
+    let ws = make_primary(tmp.path());
+    let canonical = ws.join("github").join("acme").join("repo");
+    init_repo_with_commit(&canonical);
+
+    create_branch(&canonical, "myproj--feat-a", "main");
+    record_receipt(&ws, "myproj", "feat-a", &canonical);
+    git_in(&canonical, &["checkout", "myproj--feat-a", "-q"]);
+
+    // The workweave directory is there — git could not have produced this
+    // topology, so a directory was moved or copied.
+    let ww_dir = workweaves_dir(&ws).join("myproj--feat-a");
+    write_marker(&ww_dir, &ws, "myproj", &ws);
+
+    let out = rwv().args(["doctor"]).current_dir(&ws).output().unwrap();
+    let stdout = String::from_utf8_lossy(&out.stdout);
+
+    assert!(
+        stdout.contains("canonical store is checked out on `myproj--feat-a`"),
+        "doctor should report the live-workweave attachment; got:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("which is still on disk"),
+        "the report should distinguish arm 2 from arm 3; got:\n{stdout}"
+    );
+}
+
+// ===========================================================================
+// §7.2's Detached arm — at the canonical, and at the project repo (§5.1)
+// ===========================================================================
+
+/// §7.2 arm 4: a detached canonical store is a finding. The shipped scan
+/// read a collapsed `Option` and produced nothing here.
+///
+/// The fixture detaches at a commit that `main` does not point at, so
+/// §7.2's reattach condition (counterpart tip == HEAD) is **false** and the
+/// report says so — the honest-but-partial half of §6 item 2.
+#[test]
+fn detached_canonical_is_reported() {
+    let tmp = tempfile::tempdir().unwrap();
+    let ws = make_primary(tmp.path());
+    let canonical = ws.join("github").join("acme").join("repo");
+    init_repo_with_commit(&canonical);
+    write_project_manifest(&ws, "myproj", "github/acme/repo");
+    set_active_project(&ws, "myproj");
+
+    let first = String::from_utf8_lossy(
+        &git()
+            .args(["rev-parse", "HEAD"])
+            .current_dir(&canonical)
+            .output()
+            .unwrap()
+            .stdout,
+    )
+    .trim()
+    .to_string();
+    add_commit(&canonical, "second.txt", "second");
+    // Detach at the *older* commit: `main` exists but points elsewhere.
+    git_in(&canonical, &["checkout", "--detach", &first, "-q"]);
+
+    let out = rwv().args(["doctor"]).current_dir(&ws).output().unwrap();
+    let stdout = String::from_utf8_lossy(&out.stdout);
+
+    assert!(
+        stdout.contains("canonical store is in detached-HEAD state"),
+        "doctor should report the detached canonical; got:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("does not exist or points elsewhere"),
+        "the report should say the reattach condition is not met; got:\n{stdout}"
+    );
+
+    // Even with the consent flag, this one must not be reattached: the
+    // counterpart's tip differs from HEAD, so reattaching would move the
+    // operator's working state onto a different commit.
+    let _ = rwv()
+        .args(["doctor", "--fix", "--reattach-checkouts"])
+        .current_dir(&ws)
+        .output()
+        .unwrap();
+    let head_after = String::from_utf8_lossy(
+        &git()
+            .args(["symbolic-ref", "-q", "HEAD"])
+            .current_dir(&canonical)
+            .output()
+            .unwrap()
+            .stdout,
+    )
+    .trim()
+    .to_string();
+    assert!(
+        head_after.is_empty(),
+        "HEAD must still be detached; symbolic-ref reported `{head_after}`"
+    );
+}
+
+/// §7.2 arm 4's `--fix`: when the tracking counterpart exists and its tip
+/// equals HEAD, `--fix --reattach-checkouts` reattaches.
+///
+/// Non-vacuity is pinned by the pair: the same fixture without the flag must
+/// stay detached, so a `--fix` that reattached unconditionally fails the
+/// first assertion and one that never reattached fails the second.
+#[test]
+fn detached_canonical_reattaches_only_with_consent() {
+    let tmp = tempfile::tempdir().unwrap();
+    let ws = make_primary(tmp.path());
+    let canonical = ws.join("github").join("acme").join("repo");
+    init_repo_with_commit(&canonical);
+    write_project_manifest(&ws, "myproj", "github/acme/repo");
+    set_active_project(&ws, "myproj");
+
+    // Detach at exactly `main`'s tip — §7.2's reattach condition holds.
+    git_in(&canonical, &["checkout", "--detach", "main", "-q"]);
+
+    let report = rwv().args(["doctor"]).current_dir(&ws).output().unwrap();
+    let report_stdout = String::from_utf8_lossy(&report.stdout);
+    assert!(
+        report_stdout.contains("--reattach-checkouts` will \nreattach it")
+            || report_stdout.contains("reattach-checkouts"),
+        "the report should name the flag that would repair it; got:\n{report_stdout}"
+    );
+
+    // `--fix` WITHOUT the flag: report only, HEAD stays detached.
+    let _ = rwv()
+        .args(["doctor", "--fix"])
+        .current_dir(&ws)
+        .output()
+        .unwrap();
+    let still_detached = String::from_utf8_lossy(
+        &git()
+            .args(["symbolic-ref", "-q", "HEAD"])
+            .current_dir(&canonical)
+            .output()
+            .unwrap()
+            .stdout,
+    )
+    .trim()
+    .to_string();
+    assert!(
+        still_detached.is_empty(),
+        "`--fix` without --reattach-checkouts must not change attachment; \
+         symbolic-ref reported `{still_detached}`"
+    );
+
+    // WITH the flag: reattached to the counterpart.
+    let fixed = rwv()
+        .args(["doctor", "--fix", "--reattach-checkouts"])
+        .current_dir(&ws)
+        .output()
+        .unwrap();
+    let fixed_stdout = String::from_utf8_lossy(&fixed.stdout);
+    let now = String::from_utf8_lossy(
+        &git()
+            .args(["symbolic-ref", "-q", "HEAD"])
+            .current_dir(&canonical)
+            .output()
+            .unwrap()
+            .stdout,
+    )
+    .trim()
+    .to_string();
+    assert_eq!(
+        now, "refs/heads/main",
+        "`--fix --reattach-checkouts` should reattach to the tracking counterpart; \
+         doctor said:\n{fixed_stdout}"
+    );
+}
+
+/// §5.1: `projects/<project>/` enters the branch-discipline scan.
+///
+/// Before this, `git checkout --detach` there yielded **zero** findings while
+/// the same action on a member was a violation — the scope hole §5.1 closes.
+/// The project repo is not a manifest member, so this also pins that the
+/// project-scope filter does not silently drop it.
+#[test]
+fn detached_project_repo_is_reported() {
+    let tmp = tempfile::tempdir().unwrap();
+    let ws = make_primary(tmp.path());
+    let canonical = ws.join("github").join("acme").join("repo");
+    init_repo_with_commit(&canonical);
+    write_project_manifest(&ws, "myproj", "github/acme/repo");
+    set_active_project(&ws, "myproj");
+
+    // The project repo is a real repo, and it is the thing being detached.
+    let project_repo = ws.join("projects").join("myproj");
+    init_repo_with_commit(&project_repo);
+    git_in(&project_repo, &["add", "rwv.yaml"]);
+    git_in(&project_repo, &["commit", "-q", "-m", "manifest"]);
+    git_in(&project_repo, &["checkout", "--detach", "HEAD", "-q"]);
+
+    let out = rwv().args(["doctor"]).current_dir(&ws).output().unwrap();
+    let stdout = String::from_utf8_lossy(&out.stdout);
+
+    assert!(
+        stdout.contains("canonical store is in detached-HEAD state"),
+        "doctor should report the detached project repo; got:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("projects/myproj"),
+        "the finding should name projects/<project>, not a member; got:\n{stdout}"
+    );
+}
+
+/// An attached project repo produces no finding — the fixture above minus
+/// the detach, so the assertion there cannot be passing on a scan that
+/// reports every project repo unconditionally.
+#[test]
+fn attached_project_repo_is_clean() {
+    let tmp = tempfile::tempdir().unwrap();
+    let ws = make_primary(tmp.path());
+    let canonical = ws.join("github").join("acme").join("repo");
+    init_repo_with_commit(&canonical);
+    write_project_manifest(&ws, "myproj", "github/acme/repo");
+    set_active_project(&ws, "myproj");
+
+    let project_repo = ws.join("projects").join("myproj");
+    init_repo_with_commit(&project_repo);
+    git_in(&project_repo, &["add", "rwv.yaml"]);
+    git_in(&project_repo, &["commit", "-q", "-m", "manifest"]);
+
+    let out = rwv().args(["doctor"]).current_dir(&ws).output().unwrap();
+    let stdout = String::from_utf8_lossy(&out.stdout);
+
+    assert!(
+        !stdout.contains("detached-HEAD state"),
+        "an attached project repo must be clean; got:\n{stdout}"
+    );
+}
+
+// ===========================================================================
+// Dangling ownership receipts (§4.2)
+// ===========================================================================
+
+/// A receipt whose ref never appeared is the benign residue of a crash
+/// between the receipt write and the ref creation. Doctor reports it;
+/// `--fix` retracts it.
+#[test]
+fn dangling_receipt_is_reported_and_retracted() {
+    let tmp = tempfile::tempdir().unwrap();
+    let ws = make_primary(tmp.path());
+    let canonical = ws.join("github").join("acme").join("repo");
+    init_repo_with_commit(&canonical);
+    write_project_manifest(&ws, "myproj", "github/acme/repo");
+    set_active_project(&ws, "myproj");
+
+    record_dangling_receipt(&ws, "myproj", "never-born", &canonical);
+
+    let out = rwv().args(["doctor"]).current_dir(&ws).output().unwrap();
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("ownership receipt for `myproj--never-born`")
+            && stdout.contains("no such ref is there"),
+        "doctor should report the dangling receipt; got:\n{stdout}"
+    );
+
+    let fixed = rwv()
+        .args(["doctor", "--fix"])
+        .current_dir(&ws)
+        .output()
+        .unwrap();
+    let fixed_stdout = String::from_utf8_lossy(&fixed.stdout);
+    assert!(
+        fixed_stdout.contains("[fixed]") && fixed_stdout.contains("myproj--never-born"),
+        "--fix should announce the retraction; got:\n{fixed_stdout}"
+    );
+
+    let again = rwv().args(["doctor"]).current_dir(&ws).output().unwrap();
+    let again_stdout = String::from_utf8_lossy(&again.stdout);
+    assert!(
+        !again_stdout.contains("myproj--never-born"),
+        "the receipt should be gone after --fix; got:\n{again_stdout}"
+    );
+}
+
+/// The receipt of a ref that **does** exist must not be retracted — the
+/// negative half of the test above, so a `fix_dangling_receipts` that
+/// retracted everything cannot pass both.
+#[test]
+fn live_receipt_is_not_retracted() {
+    let tmp = tempfile::tempdir().unwrap();
+    let ws = make_primary(tmp.path());
+    let canonical = ws.join("github").join("acme").join("repo");
+    init_repo_with_commit(&canonical);
+    write_project_manifest(&ws, "myproj", "github/acme/repo");
+    set_active_project(&ws, "myproj");
+
+    create_branch(&canonical, "myproj--feat-a", "main");
+    record_receipt(&ws, "myproj", "feat-a", &canonical);
+    // Keep the workweave alive so the ref is not a stale-branch finding
+    // either — this test is only about receipt retraction.
+    write_marker(
+        &workweaves_dir(&ws).join("myproj--feat-a"),
+        &ws,
+        "myproj",
+        &ws,
+    );
+
+    let _ = rwv()
+        .args(["doctor", "--fix"])
+        .current_dir(&ws)
+        .output()
+        .unwrap();
+
+    let index = std::fs::read_to_string(
+        ws.join("projects")
+            .join("myproj")
+            .join(".rwv-workweave-index"),
+    )
+    .unwrap();
+    assert!(
+        index.contains("myproj--feat-a"),
+        "a receipt whose ref exists must survive --fix; index is:\n{index}"
     );
 }
 
@@ -332,10 +774,16 @@ fn ephemeral_at_primary_is_reported() {
 // (c) stale-ephemeral-branches: safe class
 // ===========================================================================
 
-/// Safe-class fixture: the stale ephemeral branch's tip is an ancestor of
-/// the canonical's primary tip — no unique commits, safe to delete.
+/// Safe-class fixture: rwv holds an ownership receipt for the stale
+/// ephemeral branch **and** its tip is an ancestor of the canonical's tip —
+/// so a `Merged` warrant can be established and no commits are lost.
 /// Doctor should report it; `--fix` should delete it; a follow-up doctor
 /// run should be clean (idempotency).
+///
+/// The receipt is the load-bearing half. `handmade_lookalike_branch_survives_doctor_fix`
+/// below is this fixture with the `record_receipt` line removed and the
+/// opposite assertion, so neither test can pass on a `--fix` that ignores
+/// the registry in either direction.
 #[test]
 fn stale_ephemeral_branch_safe_is_reported_and_fixable() {
     let tmp = tempfile::tempdir().unwrap();
@@ -346,6 +794,7 @@ fn stale_ephemeral_branch_safe_is_reported_and_fixable() {
     // Stale ephemeral branch pointing at the same commit as `main` — its
     // tip is trivially an ancestor of `main`'s tip.
     create_branch(&canonical, "myproj--dead/main", "main");
+    record_receipt(&ws, "myproj", "dead/main", &canonical);
 
     // Advance main so it strictly dominates the stale branch (still
     // trivially safe — stale branch tip is_ancestor of main tip).
@@ -415,12 +864,64 @@ fn stale_ephemeral_branch_safe_is_reported_and_fixable() {
 }
 
 // ===========================================================================
+// (c) stale-ephemeral-branches: unowned class — THE headline change
+// ===========================================================================
+
+/// **A branch that merely looks like rwv's is not rwv's.**
+///
+/// Byte-for-byte the safe-class fixture above minus the receipt: same name,
+/// same store, same ancestry, same absent workweave directory. The shipped
+/// `--fix` deleted it, because the scan classified by name shape and the
+/// deletion trusted that classification. Under R2 the registry is asked
+/// instead, and this branch survives.
+///
+/// This is the assertion to break first when checking the change is real: if
+/// `fix_stale_ephemeral_branches` reverts to deleting by name shape, this
+/// test fails and `stale_ephemeral_branch_safe_is_reported_and_fixable`
+/// still passes — which is exactly the pairing that makes neither vacuous.
+#[test]
+fn handmade_lookalike_branch_survives_doctor_fix() {
+    let tmp = tempfile::tempdir().unwrap();
+    let ws = make_primary(tmp.path());
+    let canonical = ws.join("github").join("acme").join("repo");
+    init_repo_with_commit(&canonical);
+
+    // The operator's own branch. It happens to be spelled the way rwv spells
+    // its ephemeral refs; nothing recorded it.
+    create_branch(&canonical, "myproj--dead/main", "main");
+    add_commit(&canonical, "f2.txt", "second");
+
+    let out = rwv().args(["doctor"]).current_dir(&ws).output().unwrap();
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("rwv holds no ownership receipt for it"),
+        "doctor should report it as unowned, not as safe class; got:\n{stdout}"
+    );
+    assert!(
+        !stdout.contains("safe class"),
+        "an unreceipted branch must never be classified safe class; got:\n{stdout}"
+    );
+
+    let fix_out = rwv()
+        .args(["doctor", "--fix", "--all"])
+        .current_dir(&ws)
+        .output()
+        .unwrap();
+    let fix_stdout = String::from_utf8_lossy(&fix_out.stdout);
+    assert!(
+        branch_exists(&canonical, "myproj--dead/main"),
+        "a hand-made lookalike must survive `doctor --fix`; doctor said:\n{fix_stdout}"
+    );
+}
+
+// ===========================================================================
 // (c) stale-ephemeral-branches: live class
 // ===========================================================================
 
-/// Live-class fixture: the stale ephemeral branch carries commits not
-/// reachable from the canonical's primary tip. Doctor reports it as
-/// live-class; `--fix` must NOT delete it.
+/// Live-class fixture: rwv holds a receipt for the stale ephemeral branch,
+/// but its tip carries commits not reachable from the canonical's tip, so no
+/// `Merged` warrant can be established. Doctor reports it as live-class;
+/// `--fix` must NOT delete it.
 #[test]
 fn stale_ephemeral_branch_live_is_reported_and_preserved() {
     let tmp = tempfile::tempdir().unwrap();
@@ -433,6 +934,7 @@ fn stale_ephemeral_branch_live_is_reported_and_preserved() {
     git_in(&canonical, &["checkout", "-b", "myproj--dead/main", "-q"]);
     add_commit(&canonical, "unique.txt", "live work");
     git_in(&canonical, &["checkout", "main", "-q"]);
+    record_receipt(&ws, "myproj", "dead/main", &canonical);
 
     // Advance main on a divergent path so the live branch's tip is
     // genuinely not an ancestor of main's tip.
@@ -551,8 +1053,10 @@ fn fix_stale_ephemeral_branch_scoped_to_active_project() {
     init_repo_with_commit(&repo_b);
 
     // Create a stale safe-class ephemeral branch in repo-b for project-b's
-    // dead workweave.  Safe-class: tip is an ancestor of repo-b's primary tip.
+    // dead workweave.  Safe-class: rwv holds a receipt for it AND its tip is
+    // an ancestor of repo-b's primary tip.
     create_branch(&repo_b, "project-b--dead/main", "main");
+    record_receipt(&ws, "project-b", "dead/main", &repo_b);
     add_commit(&repo_b, "advance.txt", "advance main");
     // repo-b's main now strictly dominates the stale branch tip → safe class.
 
@@ -636,6 +1140,7 @@ fn json_branch_discipline_scoped_to_active_project() {
 
     // Stale safe-class ephemeral branch in repo-b only.
     create_branch(&repo_b, "project-b--dead/main", "main");
+    record_receipt(&ws, "project-b", "dead/main", &repo_b);
     add_commit(&repo_b, "advance.txt", "advance main");
 
     write_project_manifest(&ws, "project-a", "github/acme/repo-a");
@@ -693,9 +1198,10 @@ fn json_output_includes_branch_discipline_kind() {
     let canonical = ws.join("github").join("acme").join("repo");
     init_repo_with_commit(&canonical);
 
-    // Synthesize the simplest violation (ephemeral-at-primary by switching
-    // the canonical onto an ephemeral-named branch).
-    git_in(&canonical, &["checkout", "-b", "myproj--feat-a/main", "-q"]);
+    // Synthesize the simplest violation: a stale ephemeral-shaped branch
+    // whose workweave is gone. Unowned class — the JSON channel has to carry
+    // a `sub_kind` for it just like any other.
+    create_branch(&canonical, "myproj--feat-a/main", "main");
 
     let out = rwv()
         .args(["doctor", "--json"])

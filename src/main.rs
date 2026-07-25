@@ -777,10 +777,11 @@ fn main() -> anyhow::Result<()> {
         }) => {
             let project_override = project.map(repoweave::manifest::ProjectName::new);
             let ctx = resolve_project_scoped(&origin_dir, project_override, use_workweave_flag)?;
-            // Minted here so the token exists at the CLI boundary; a later
-            // change wires it into check.rs's Detached-arm `--fix`
-            // (branch-model.md §7.2). No consumer yet.
-            let _reattach_checkouts =
+            // Minted here — the CLI boundary is the only place that knows
+            // the operator asked. `run_check` gates §7.2's Detached-arm
+            // reattach on it; without the flag `--fix` reports the
+            // `git switch` instead of performing the ATTACH.
+            let reattach_checkouts =
                 repoweave::cli::consent::ReattachConsent::from_flag(reattach_checkouts);
             if locked {
                 let has_drift = check::run_check_locked(&ctx)?;
@@ -793,7 +794,7 @@ fn main() -> anyhow::Result<()> {
                     std::process::exit(1);
                 }
             } else {
-                let has_errors = check::run_check(&ctx, fix, all)?;
+                let has_errors = check::run_check(&ctx, fix, all, reattach_checkouts)?;
                 if has_errors {
                     std::process::exit(1);
                 }

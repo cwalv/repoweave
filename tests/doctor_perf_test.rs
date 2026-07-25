@@ -134,7 +134,9 @@ fn doctor_large_workspace_completes_under_budget() {
     // Use scope_all=true so the perf test exercises the full weave-wide scan
     // (the same load it was originally benchmarking).
     let ctx = repoweave::workspace::WorkspaceContext::resolve(&root, None).unwrap();
-    let res = check::run_check(&ctx, false, true);
+    // `None`: no --reattach-checkouts. `fix` is false here anyway, so the
+    // consent has nothing to gate.
+    let res = check::run_check(&ctx, false, true, None);
     let elapsed = start.elapsed();
 
     std::env::remove_var("RWV_WORKWEAVE_DIR");

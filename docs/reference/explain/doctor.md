@@ -15,7 +15,7 @@ follow-up actions.
 ## Invocation
 
 ```
-rwv doctor [--all] [--locked] [--json] [--fix]
+rwv doctor [--all] [--locked] [--json] [--fix] [--reattach-checkouts]
 ```
 
 - `--all` runs checks across every project under `projects/` and enables
@@ -45,10 +45,14 @@ rwv doctor [--all] [--locked] [--json] [--fix]
   every file in the active project's `generated_files() ∪ managed_files()`
   union; a real file occupying a surfacing path is user-held and is
   reported but never auto-clobbered), stale safe-class ephemeral branches
-  in canonical clones (branches whose `<project>--<workweave>` workweave
-  no longer exists on disk and whose tip is an ancestor of the primary
-  tracking-branch tip — no unique commits are lost; scoped to the active
-  project unless `--all`), orphaned savepoints classified as `Redundant`
+  in canonical stores (branches rwv holds an **ownership receipt** for
+  whose `<project>--<workweave>` workweave no longer exists on disk and
+  whose tip is an ancestor of the store's tip — no unique commits are lost;
+  scoped to the active project unless `--all`), dangling ownership receipts
+  (a receipt naming a ref that is not in the store it names — the residue
+  of a crash between the receipt write and the ref creation; it authorizes
+  nothing, so retracting it destroys no work), orphaned savepoints
+  classified as `Redundant`
   (a `refs/rwv/pre-op/<op-id>` ref whose op-id matches no live `.rwv-op`
   file and whose tip is already reachable from the current branch; dropping
   the ref loses no objects), stale worktree registrations (git worktree
@@ -57,6 +61,23 @@ rwv doctor [--all] [--locked] [--json] [--fix]
   marker whose `parent:` path no longer exists on disk — re-pointed to
   primary, which always exists; branch names are left untouched). Idempotent.
   Mutually exclusive with `--locked` and `--json`.
+- `--reattach-checkouts` widens `--fix` by exactly one arm
+  (`branch-model.md` §7.2): a canonical store whose HEAD is detached is
+  reattached to its tracking declaration's local counterpart **when that
+  branch exists and its tip equals HEAD**. Without the flag that finding is
+  reported with the `git switch` that would repair it, and nothing moves.
+  The condition is deliberately narrow — it is false for the ordinary
+  post-fetch state (a stale counterpart with HEAD at the lock SHA), so this
+  repairs the minority it can prove safe rather than reattaching a weave.
+  Named for what it changes, per the house rule on override flags: moving
+  which name your commits hang off is a different consequence from losing
+  it (`--detach-checkouts`), so they are two flags.
+
+**A branch that looks like rwv's is not rwv's.** Every deletion `--fix`
+performs is gated on a persisted ownership receipt for that exact ref in
+that exact store (`branch-model.md` R2), and on a warrant proving the loss
+is safe (R3). A hand-made `<project>--<workweave>/<segment>` branch is
+reported — so you can see it — and never removed.
 
 Run `rwv --help doctor` for the full clap surface.
 
@@ -74,7 +95,7 @@ severity. Under `--json`, output is the envelope:
 ```
 
 The `$schema` URL points to the committed schema artifact. Variants are
-discriminated by the `kind` tag — `branch-discipline`, `cargo-patch-shadowing`, `cargo-version-skew`, `clone-topology`, `dangling-active-project`, `dangling-reference`, `dead-op-lease`, `incomplete-lock`, `index-drift`, `legacy-role-primary`, `legacy-workweave-marker`, `missing-canonical-clone`, `missing-replay-exclusion`, `missing-role`, `orphaned-clone`, `orphaned-savepoint`, `provenance`, `stale-lock`, `stale-op-state`, `stale-worktree-registration`, `uninitialized-submodule`, `unparseable-project`, `working-tree-drift`, `workweave-drift`, `workweave-tree-integrity`.
+discriminated by the `kind` tag — `branch-discipline`, `cargo-patch-shadowing`, `cargo-version-skew`, `clone-topology`, `dangling-active-project`, `dangling-ref-receipt`, `dangling-reference`, `dead-op-lease`, `incomplete-lock`, `index-drift`, `legacy-role-primary`, `legacy-workweave-marker`, `missing-canonical-clone`, `missing-replay-exclusion`, `missing-role`, `orphaned-clone`, `orphaned-savepoint`, `provenance`, `stale-lock`, `stale-op-state`, `stale-worktree-registration`, `uninitialized-submodule`, `unparseable-project`, `working-tree-drift`, `workweave-drift`, `workweave-tree-integrity`.
 Every per-repo variant carries `path` (manifest-relative) and
 `absolute_path` (fully resolved). Variants with subkinds
 (`branch-discipline`, `clone-topology`, `dead-op-lease`, `index-drift`, `orphaned-savepoint`, `provenance`, `working-tree-drift`, `workweave-drift`, `workweave-tree-integrity`) carry an additional `sub_kind` field.
@@ -141,7 +162,7 @@ Schema:
   },
   "definitions": {
     "BranchDisciplineKind": {
-      "description": "Discriminator for `CheckViolation::BranchDiscipline` findings.\n\nThree groupings, mirroring the three checks in the spec:\n\n* (a) workweave-branch — a workweave checkout is on the wrong branch: `SharedBranch`, `ForeignEphemeral`, `Detached`. Report-only. * (b) ephemeral-at-primary — the canonical clone is on an ephemeral `<project>--<name>/...` branch: `EphemeralAtPrimary`. Report-only. * (c) stale-ephemeral-branches — a `<project>--<name>/...` branch exists in a canonical clone but workweave `<name>` no longer exists on disk: `StaleEphemeralBranchSafe` (auto-fixable by `--fix`) or `StaleEphemeralBranchLive` (carries unique commits; never auto-deleted). The safe/live split applies the doctrine in `docs/explanation/joints/shared-refs-drift.md` to refs: a tip that is an ancestor of the primary's tracking-branch tip carries no unique work and is safely removable; a tip with commits not reachable from the primary is live work and must be left alone.",
+      "description": "Discriminator for `CheckViolation::BranchDiscipline` findings.\n\nThree groupings, mirroring the three checks in the spec:\n\n* (a) workweave-branch — a workweave checkout is on the wrong branch: `SharedBranch`, `ForeignEphemeral`, `Detached`. Report-only. * (b) canonical-store attachment (`branch-model.md` §7.2) — what the canonical store's HEAD is: `CanonicalHoldsLiveWorkweaveRef`, `CanonicalHoldsLeakedRef`, `CanonicalDetached`. * (c) stale-ephemeral-branches — a `<project>--<name>/...` branch exists in a canonical clone but workweave `<name>` no longer exists on disk: `StaleEphemeralBranchSafe` (auto-fixable by `--fix`), `StaleEphemeralBranchLive` (carries unique commits; never auto-deleted), or `StaleEphemeralBranchUnowned` (rwv holds no receipt for it; never auto-deleted). The safe/live split applies the doctrine in `docs/explanation/joints/shared-refs-drift.md` to refs: a tip that is an ancestor of the primary's tracking-branch tip carries no unique work and is safely removable; a tip with commits not reachable from the primary is live work and must be left alone.\n\n# Ownership is by record, never by name shape (R2)\n\nThe (b) grouping and the safe/live/unowned split in (c) both key on whether rwv holds a persisted ownership receipt (`crate::workweave_index::RefRegistry`) for the exact ref in the exact store. A branch that merely *looks* like one of rwv's — a hand-made `<a>--<b>/<c>` — is an operator branch: §7.2's first arm leaves it alone, and `--fix` never deletes it.",
       "oneOf": [
         {
           "description": "(a) The workweave checkout is on a non-ephemeral branch (e.g. `main`).\n\nCaused by `git switch main` inside a workweave or by a bare clone that was never moved to an ephemeral branch. The fixture for this sub-kind exercises the bare-main-in-workweave case from the spec's acceptance criteria: the violation must flag from creation, before any commit lands. Report-only.\n\nReference-alias carve-out: a symlinked `reference` checkout (a `CheckoutKind::ReferenceAlias`) legitimately shares the canonical store's non-ephemeral branch (e.g. `main`) — it has no per-workweave ephemeral branch by design, because it is the canonical store viewed through a symlink. The I3 branch-discipline scan skips such aliases, so they never fire this finding. A `reference` repo created with `--worktree-references` is a real worktree (`CheckoutKind::Worktree`) on its own ephemeral branch and is checked normally.",
@@ -164,6 +185,13 @@ Schema:
                 "expected_prefix": {
                   "description": "The expected ephemeral prefix (`<project>--<workweave>`).",
                   "type": "string"
+                },
+                "recorded_ref": {
+                  "description": "The ephemeral ref rwv holds a receipt for in this repo's canonical store, when it holds one. Decides the remediation spelling: `git switch <name>` returns to an existing ref, `git switch -c` is only correct when there is none.",
+                  "type": [
+                    "string",
+                    "null"
+                  ]
                 }
               }
             }
@@ -191,6 +219,13 @@ Schema:
                 "expected_prefix": {
                   "description": "The expected ephemeral prefix (`<project>--<workweave>`).",
                   "type": "string"
+                },
+                "recorded_ref": {
+                  "description": "See `SharedBranch`'s field of the same name.",
+                  "type": [
+                    "string",
+                    "null"
+                  ]
                 }
               }
             }
@@ -199,26 +234,53 @@ Schema:
         },
         {
           "description": "(a) The workweave checkout is in detached-HEAD state — HEAD points directly at a commit instead of a named branch. Detached HEAD breaks the merged-check and ref-namespace invariants in `clone-topology.md`. Report-only.",
-          "type": "string",
-          "enum": [
-            "detached"
-          ]
-        },
-        {
-          "description": "(b) The canonical clone is checked out on an ephemeral `<project>--<name>/...` branch — the inverse of (a). Either the canonical was moved onto a workweave branch, or a workweave directory was deleted and the canonical was left holding its ephemeral branch. Report-only.",
           "type": "object",
           "required": [
-            "ephemeral-at-primary"
+            "detached"
           ],
           "properties": {
-            "ephemeral-at-primary": {
+            "detached": {
               "type": "object",
               "required": [
-                "actual_branch"
+                "expected_prefix"
+              ],
+              "properties": {
+                "expected_prefix": {
+                  "description": "The expected ephemeral prefix (`<project>--<workweave>`).",
+                  "type": "string"
+                },
+                "recorded_ref": {
+                  "description": "See `SharedBranch`'s field of the same name.",
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
+              }
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "description": "(b) §7.2 arm 2: the canonical store is attached to a ref rwv recorded as belonging to a workweave that is **still on disk**.\n\nAn I3 disjointness violation. git forbids one branch being checked out in two worktrees of the same store, so reaching this state means a directory was moved or copied. Report-only — there is no fix that does not guess which of the two checkouts is the real one.",
+          "type": "object",
+          "required": [
+            "canonical-holds-live-workweave-ref"
+          ],
+          "properties": {
+            "canonical-holds-live-workweave-ref": {
+              "type": "object",
+              "required": [
+                "actual_branch",
+                "workweave_name"
               ],
               "properties": {
                 "actual_branch": {
-                  "description": "The branch currently checked out on the canonical.",
+                  "description": "The branch the canonical store is attached to.",
+                  "type": "string"
+                },
+                "workweave_name": {
+                  "description": "The live workweave the receipt says that ref belongs to.",
                   "type": "string"
                 }
               }
@@ -227,7 +289,68 @@ Schema:
           "additionalProperties": false
         },
         {
-          "description": "(c) A `<project>--<name>/...` branch in the canonical clone whose workweave `<name>` no longer exists on disk, and whose tip is an ancestor of the primary tracking branch's tip (no unique commits). Safe-class per the shared-refs-drift doctrine — `--fix` may delete the branch with no information loss.",
+          "description": "(b) §7.2 arm 3: the canonical store is attached to a ref rwv recorded as belonging to a workweave that is **gone** — a leak.\n\nReport-only in practice: the DESTROY that would reclaim the ref cannot run while this store's own HEAD is on it (git refuses to delete a branch a worktree uses), so `--fix` names the ref and the `git switch` that frees it rather than attempting a delete that cannot succeed. Once the store is off the ref it is an ordinary (c) finding and `--fix` reclaims it under a warrant.",
+          "type": "object",
+          "required": [
+            "canonical-holds-leaked-ref"
+          ],
+          "properties": {
+            "canonical-holds-leaked-ref": {
+              "type": "object",
+              "required": [
+                "actual_branch",
+                "project"
+              ],
+              "properties": {
+                "actual_branch": {
+                  "description": "The branch the canonical store is attached to.",
+                  "type": "string"
+                },
+                "project": {
+                  "description": "The project whose registry holds the receipt.\n\nNot the workweave: §7.3 is explicit that rwv does not try to reconstruct which workweave a stray ref belonged to. The receipt records `(store, name, created_at)`, and the workweave is recoverable only while one on disk would mint that name — which is exactly the case this variant is *not*.",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "description": "(b) §7.2 arm 4: the canonical store — or the project repo (§5.1) — is in detached-HEAD state.\n\nNew with the branch model: the shipped scan collapsed this into \"no current branch\" and produced nothing, so `git checkout --detach` in a canonical (and in `projects/<project>/`) yielded zero findings while the same action in a workweave was a violation.\n\n`--fix --reattach-checkouts` reattaches when `reattachable` — the tracking declaration's local counterpart exists and its tip equals HEAD. That condition is false for the ordinary post-fetch state (stale counterpart, HEAD at the lock SHA), so the fix repairs the minority; it is not weave-wide reattachment.",
+          "type": "object",
+          "required": [
+            "canonical-detached"
+          ],
+          "properties": {
+            "canonical-detached": {
+              "type": "object",
+              "required": [
+                "at_sha",
+                "reattachable"
+              ],
+              "properties": {
+                "at_sha": {
+                  "description": "The commit HEAD names directly.",
+                  "type": "string"
+                },
+                "counterpart": {
+                  "description": "The local counterpart of the ref this repo tracks — the manifest's `version:` for a member, the remote's declared default branch for the project repo. `None` when no tracking declaration resolves, in which case there is nothing to name as a reattach target.",
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "reattachable": {
+                  "description": "Whether §7.2's reattach condition holds: `counterpart` exists as a local branch **and** its tip equals HEAD.",
+                  "type": "boolean"
+                }
+              }
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "description": "(c) A `<project>--<name>/...` branch in the canonical clone whose workweave `<name>` no longer exists on disk, **which rwv holds an ownership receipt for**, and whose tip is an ancestor of the primary tracking branch's tip (no unique commits). Safe-class per the shared-refs-drift doctrine — `--fix` deletes it under a `Merged` warrant, with no information loss.",
           "type": "object",
           "required": [
             "stale-ephemeral-branch-safe"
@@ -254,7 +377,7 @@ Schema:
           "additionalProperties": false
         },
         {
-          "description": "(c) A `<project>--<name>/...` branch in the canonical clone whose workweave `<name>` no longer exists on disk, but whose tip carries commits not reachable from the primary tracking branch's tip (unique work). Live-class per the shared-refs-drift doctrine — report-only; `--fix` never touches this. The operator decides whether to land the commits, archive the branch, or delete it.",
+          "description": "(c) A `<project>--<name>/...` branch in the canonical clone whose workweave `<name>` no longer exists on disk, which rwv holds a receipt for, but whose tip carries commits not reachable from the primary tracking branch's tip (unique work). Live-class per the shared-refs-drift doctrine — report-only; `--fix` never touches this, because no `Merged` warrant can be established for it. The operator decides whether to land the commits, archive the branch, or delete it.",
           "type": "object",
           "required": [
             "stale-ephemeral-branch-live"
@@ -274,6 +397,33 @@ Schema:
                 },
                 "tip_sha": {
                   "description": "The branch tip SHA, surfaced so the operator can recover the commits before deleting (e.g. `git log <tip_sha>`).",
+                  "type": "string"
+                },
+                "workweave_name": {
+                  "description": "The workweave name parsed out of the branch.",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "description": "(c) A branch shaped like one of rwv's whose workweave directory is absent, for which **rwv holds no ownership receipt** in this store.\n\nUnder R2 this ref is not rwv's: name shape is not ownership. It is reported so the operator can see it, and it is never deleted — the shipped scanner deleted exactly this class, which is why a hand-made `<a>--<b>/<c>` branch could disappear under `--fix`.\n\nRefs created before receipts existed land here too. `branch-model.md` §7.1's migration is what adopts them (recording a receipt); until it runs, they stay unowned, which is the fail-closed direction.",
+          "type": "object",
+          "required": [
+            "stale-ephemeral-branch-unowned"
+          ],
+          "properties": {
+            "stale-ephemeral-branch-unowned": {
+              "type": "object",
+              "required": [
+                "branch",
+                "workweave_name"
+              ],
+              "properties": {
+                "branch": {
+                  "description": "The full branch name.",
                   "type": "string"
                 },
                 "workweave_name": {
@@ -1182,6 +1332,35 @@ Schema:
             },
             "workspace_dir": {
               "description": "Absolute path to the workspace dir holding the dangling lease.",
+              "type": "string"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "kind",
+            "project",
+            "ref_name",
+            "store_path"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "dangling-ref-receipt"
+              ]
+            },
+            "project": {
+              "description": "The project whose registry holds the receipt.",
+              "type": "string"
+            },
+            "ref_name": {
+              "description": "The recorded ref name that does not exist in that store.",
+              "type": "string"
+            },
+            "store_path": {
+              "description": "Absolute path of the canonical store the receipt is keyed to.",
               "type": "string"
             }
           }

@@ -15,7 +15,7 @@ follow-up actions.
 ## Invocation
 
 ```
-rwv doctor [--all] [--locked] [--json] [--fix]
+rwv doctor [--all] [--locked] [--json] [--fix] [--reattach-checkouts]
 ```
 
 - `--all` runs checks across every project under `projects/` and enables
@@ -45,10 +45,14 @@ rwv doctor [--all] [--locked] [--json] [--fix]
   every file in the active project's `generated_files() ∪ managed_files()`
   union; a real file occupying a surfacing path is user-held and is
   reported but never auto-clobbered), stale safe-class ephemeral branches
-  in canonical clones (branches whose `<project>--<workweave>` workweave
-  no longer exists on disk and whose tip is an ancestor of the primary
-  tracking-branch tip — no unique commits are lost; scoped to the active
-  project unless `--all`), orphaned savepoints classified as `Redundant`
+  in canonical stores (branches rwv holds an **ownership receipt** for
+  whose `<project>--<workweave>` workweave no longer exists on disk and
+  whose tip is an ancestor of the store's tip — no unique commits are lost;
+  scoped to the active project unless `--all`), dangling ownership receipts
+  (a receipt naming a ref that is not in the store it names — the residue
+  of a crash between the receipt write and the ref creation; it authorizes
+  nothing, so retracting it destroys no work), orphaned savepoints
+  classified as `Redundant`
   (a `refs/rwv/pre-op/<op-id>` ref whose op-id matches no live `.rwv-op`
   file and whose tip is already reachable from the current branch; dropping
   the ref loses no objects), stale worktree registrations (git worktree
@@ -57,6 +61,23 @@ rwv doctor [--all] [--locked] [--json] [--fix]
   marker whose `parent:` path no longer exists on disk — re-pointed to
   primary, which always exists; branch names are left untouched). Idempotent.
   Mutually exclusive with `--locked` and `--json`.
+- `--reattach-checkouts` widens `--fix` by exactly one arm
+  (`branch-model.md` §7.2): a canonical store whose HEAD is detached is
+  reattached to its tracking declaration's local counterpart **when that
+  branch exists and its tip equals HEAD**. Without the flag that finding is
+  reported with the `git switch` that would repair it, and nothing moves.
+  The condition is deliberately narrow — it is false for the ordinary
+  post-fetch state (a stale counterpart with HEAD at the lock SHA), so this
+  repairs the minority it can prove safe rather than reattaching a weave.
+  Named for what it changes, per the house rule on override flags: moving
+  which name your commits hang off is a different consequence from losing
+  it (`--detach-checkouts`), so they are two flags.
+
+**A branch that looks like rwv's is not rwv's.** Every deletion `--fix`
+performs is gated on a persisted ownership receipt for that exact ref in
+that exact store (`branch-model.md` R2), and on a warrant proving the loss
+is safe (R3). A hand-made `<project>--<workweave>/<segment>` branch is
+reported — so you can see it — and never removed.
 
 Run `rwv --help doctor` for the full clap surface.
 

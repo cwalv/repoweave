@@ -119,9 +119,13 @@ const ALLOWLIST: &[Allowed] = &[
         count: 3,
         justification: "(1) create_worktree retry: deletes a stale \
             ephemeral branch (project--workweave/branch namespace) left by \
-            a previous failed create. (2) delete_branch: only called with \
-            ephemeral-prefix branch names from delete_workweave, behind \
-            its refusals. (3) destroy_local_ref: the branch-model DESTROY \
+            a previous failed create. (2) delete_branch: called only from \
+            workweave.rs — delete_workweave, behind its refusals, and the \
+            create-rollback guard, which deletes only branches the failed \
+            create itself recorded creating. doctor no longer reaches it: \
+            its stale-ephemeral --fix now destroys through \
+            delete_owned_ref (3) instead, so `doctor --fix` cannot delete a \
+            ref rwv holds no receipt for. (3) destroy_local_ref: the branch-model DESTROY \
             primitive (branch-model.md §3.2, §4.3). Reachable only through \
             Vcs::delete_owned_ref, which takes a persisted receipt \
             (OwnedRef — R2, ownership by record, never by name shape) AND a \
