@@ -98,7 +98,7 @@ Schema:
   errors). Under `--json`, exit `0` means every outcome has `"status": "ok"`
   or `"skipped"`.
 - non-zero — the project repo failed to clone, at least one non-reference
-  repo failed, `--frozen` detected a missing or stale lock, or the current
+  repo failed, `--frozen` detected a missing or incomplete lock, or the current
   directory is not a workspace and `--allow-non-empty-dir` was not passed.
   Under `--json`,
   the envelope (or NDJSON stream) is emitted before exit even on failure, so
@@ -118,7 +118,7 @@ Same, with a full URL:
 rwv fetch https://github.com/owner/myproject.git
 ```
 
-CI mode — error if the lock is missing or stale:
+CI mode — error if the lock is missing or incomplete:
 
 ```
 rwv fetch owner/myproject --frozen
@@ -175,7 +175,7 @@ rwv fetch
   place.
 - *lock file does not exist* (with `--frozen`) — the project has no
   `rwv.lock`; run without `--frozen` to bootstrap it.
-- *lock file is stale* (with `--frozen`) — the lock does not cover all
+- *lock file is incomplete* (with `--frozen`) — the lock does not cover all
   manifest repos; update the lock with `rwv update` first.
 - *repository not found* — the source URL is wrong or the remote is private
   and credentials aren't configured.

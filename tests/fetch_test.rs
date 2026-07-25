@@ -433,7 +433,7 @@ fn fetch_garbage_source_errors_clearly() {
 // FetchMode controls how `rwv fetch` resolves repo versions:
 //   - Default: fetch branch HEAD from `rwv.yaml`, update `rwv.lock` with SHAs
 //   - Locked:  check out exact revisions from `rwv.lock`
-//   - Frozen:  like Locked, but error if lock is missing or stale
+//   - Frozen:  like Locked, but error if lock is missing or incomplete
 
 #[test]
 fn fetch_mode_default_updates_lock() {
@@ -688,7 +688,7 @@ fn fetch_default_reads_lock_and_does_not_bump_it() {
 }
 
 // ============================================================================
-// --frozen mode: error on missing or stale lock
+// --frozen mode: error on missing or incomplete lock
 // ============================================================================
 
 #[test]
@@ -750,8 +750,8 @@ fn fetch_frozen_errors_on_missing_lock() {
 }
 
 #[test]
-fn fetch_frozen_errors_on_stale_lock() {
-    // --frozen should error if rwv.lock exists but doesn't match the manifest
+fn fetch_frozen_errors_on_incomplete_lock() {
+    // --frozen should error if rwv.lock exists but doesn't cover the manifest
     // (e.g., manifest has a repo that the lock file doesn't cover).
     let tmp = tempfile::tempdir().unwrap();
     let workspace = tmp.path().join("ws");
@@ -798,7 +798,7 @@ fn fetch_frozen_errors_on_stale_lock() {
         &[("local/team/dep", &dep_url), ("local/team/dep2", &dep2_url)],
     );
 
-    // Lock only covers ONE repo — stale.
+    // Lock only covers ONE repo — incomplete.
     let lock_yaml = format!(
         "repositories:\n  local/team/dep:\n    type: git\n    url: {dep_url}\n    version: {}\n",
         "a".repeat(40)
@@ -806,7 +806,7 @@ fn fetch_frozen_errors_on_stale_lock() {
     std::fs::write(work.join("rwv.lock"), &lock_yaml).unwrap();
 
     run(&["add", "."], &work);
-    run(&["commit", "-m", "stale lock"], &work);
+    run(&["commit", "-m", "incomplete lock"], &work);
     run(&["push", "origin", "main"], &work);
 
     let source = format!("file://{}", project_bare.display());
@@ -815,12 +815,7 @@ fn fetch_frozen_errors_on_stale_lock() {
         .current_dir(&workspace)
         .assert()
         .failure()
-        .stderr(
-            predicate::str::contains("stale")
-                .or(predicate::str::contains("mismatch"))
-                .or(predicate::str::contains("does not match"))
-                .or(predicate::str::contains("out of date")),
-        );
+        .stderr(predicate::str::contains("incomplete").or(predicate::str::contains("not covered")));
 }
 
 #[test]
@@ -1096,7 +1091,7 @@ fn fetch_no_reference_skips_reference_role_repos() {
 
 #[test]
 fn fetch_frozen_no_reference_tolerates_reference_missing_from_lock() {
-    // Regression test for find_stale_repos: with --frozen --no-reference,
+    // Regression test for find_incomplete_repos: with --frozen --no-reference,
     // a reference repo present in the manifest but missing from rwv.lock
     // must NOT cause failure — the user has explicitly opted out of
     // fetching reference repos, so missing lock entries for them are fine.
@@ -1169,8 +1164,8 @@ fn fetch_frozen_no_reference_tolerates_reference_missing_from_lock() {
     );
 
     // Lock file covers ONLY the primary — reference is intentionally absent.
-    // Without --no-reference this would be "stale"; with --no-reference,
-    // find_stale_repos must skip the reference entry.
+    // Without --no-reference this would be incomplete; with --no-reference,
+    // find_incomplete_repos must skip the reference entry.
     let lock_yaml = format!(
         "repositories:\n  local/team/primary:\n    type: git\n    url: {primary_url}\n    version: {primary_sha}\n"
     );
@@ -1200,8 +1195,8 @@ fn fetch_frozen_no_reference_tolerates_reference_missing_from_lock() {
 #[test]
 fn fetch_frozen_without_no_reference_errors_when_reference_missing_from_lock() {
     // Sibling check for the test above: WITHOUT --no-reference, a reference
-    // repo missing from the lock must still trigger the stale-lock error.
-    // This guards against the find_stale_repos fix accidentally exempting
+    // repo missing from the lock must still trigger the incomplete-lock error.
+    // This guards against the find_incomplete_repos fix accidentally exempting
     // reference repos unconditionally.
     let tmp = tempfile::tempdir().unwrap();
     let workspace = tmp.path().join("ws");
@@ -1265,13 +1260,7 @@ fn fetch_frozen_without_no_reference_errors_when_reference_missing_from_lock() {
         .current_dir(&workspace)
         .assert()
         .failure()
-        .stderr(
-            predicate::str::contains("stale")
-                .or(predicate::str::contains("mismatch"))
-                .or(predicate::str::contains("does not match"))
-                .or(predicate::str::contains("out of date"))
-                .or(predicate::str::contains("missing")),
-        );
+        .stderr(predicate::str::contains("incomplete").or(predicate::str::contains("not covered")));
 }
 
 // ============================================================================

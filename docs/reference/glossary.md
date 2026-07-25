@@ -12,6 +12,8 @@ Terminology lookup. For deeper material on each concept, follow the cross-links.
 | **Manifest repo** | A repo listed in a project's `rwv.yaml`. Lives at `<registry>/<owner>/<repo>/` as a regular clone. The work surfaces. |
 | **Manifest** (`rwv.yaml`) | Declares which repos belong to a project, their roles, and integration config. See [formats](./formats.md). |
 | **Lock file** (`rwv.lock`) | Pins repos to exact revisions for reproducibility. Derived state — output of `rwv lock`. See [lock-as-derived](../explanation/joints/lock-as-derived.md). |
+| **Stale lock** | Freshness condition: the lock covers every manifest repo but pins a revision behind current HEAD. Doctor finding kind `stale-lock`; bypassed with `--allow-stale-lock`. Fixed by `rwv lock`. Contrast **Incomplete lock**. |
+| **Incomplete lock** | Coverage condition: the lock has no entry for some manifest repo. Doctor finding kind `incomplete-lock`; also what `rwv fetch --frozen` refuses on. Fixed by `rwv lock` (adds the missing entry). Contrast **Stale lock**. |
 | **Activation** | Generating ecosystem workspace files from a project's manifest and symlinking them to the weave directory. Mutates `.rwv-active`. |
 | **Active project** | The project named in `.rwv-active`. Single source of truth — no CWD override. |
 | **Role** | A repo's relationship to a project: `owned`, `fork`, `dependency`, `reference`. Encodes change resistance. See [roles](./roles.md). |

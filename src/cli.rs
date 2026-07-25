@@ -93,7 +93,7 @@ pub enum Commands {
     Fetch {
         /// Source to fetch from. Omit to re-materialize missing manifest members of the active project in the current workspace.
         source: Option<String>,
-        /// Error if the lock file is missing or stale (CI mode)
+        /// Error if the lock file is missing or incomplete (CI mode)
         #[arg(long)]
         frozen: bool,
         /// Bootstrap into a non-empty directory that is not a workspace

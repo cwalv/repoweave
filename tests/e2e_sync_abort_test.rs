@@ -2027,7 +2027,7 @@ fn sync_bails_hard_when_post_phase1_manifest_reload_fails() {
 // test was removed — it was broken at commit time (asserted `rwv lock`
 // success when a referenced repo had no on-disk clone, which fails at the
 // `git status` step). Core --no-reference logic is now covered by the
-// `find_stale_repos_*_no_reference_*` unit tests in src/fetch.rs. A proper
+// `find_incomplete_repos_*_no_reference_*` unit tests in src/fetch.rs. A proper
 // end-to-end test would set up bare repos for both the project source and
 // each manifest repo (per the fetch_test.rs pattern); follow-up work item
 // captures that work.

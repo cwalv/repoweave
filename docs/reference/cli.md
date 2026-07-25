@@ -86,7 +86,7 @@ Two modes, keyed on whether `<source>` is given:
 
 | Flag | Effect |
 |---|---|
-| `--frozen` | Error if lock is stale; never advance. Suitable for CI |
+| `--frozen` | Error if lock is incomplete; never advance. Suitable for CI |
 | `--allow-non-empty-dir` | Bootstrap into a non-empty directory that is not a workspace |
 | `--role` / `--repo` | Selector filters (see [Selector grammar](#selector-grammar)) |
 | `-j N` | Parallel per-repo workers (default: min(nproc, 8)) |

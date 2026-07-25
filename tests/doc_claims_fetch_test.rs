@@ -16,7 +16,7 @@
 //!   - `rwv update` is the network-bumping verb that re-snapshots the
 //!     lock from each manifest repo's branch HEAD. Anchored in
 //!     `tests/doc_claims_update_test.rs`.
-//!   - `--frozen` errors when the lock is missing or stale (CI gate);
+//!   - `--frozen` errors when the lock is missing or incomplete (CI gate);
 //!     default mode bootstraps missing lock entries additively. There is
 //!     no `--locked` flag on `rwv fetch`.
 //!

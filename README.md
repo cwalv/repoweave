@@ -83,7 +83,7 @@ cd ../.workweaves/web-app--payments
 | Command | Description |
 |---|---|
 | `rwv` | Show current context (weave, project, workweave, repos) |
-| `rwv fetch <source>` | Clone a project and all its repos; align repos to `rwv.lock`; activate and install. `--frozen` errors if the lock is stale (CI) |
+| `rwv fetch <source>` | Clone a project and all its repos; align repos to `rwv.lock`; activate and install. `--frozen` errors if the lock is incomplete (CI) |
 | `rwv init <project>` | Create a new project with empty `rwv.yaml`. Optional `--provider registry/owner` sets up the remote |
 | `rwv activate <project>` | Set the active project — generate ecosystem files, symlink to weave directory, run install |
 | `rwv add <url>` | Clone a repo, add to `rwv.yaml`, re-run integrations. `--role` sets the role, `--new` for `git init` |

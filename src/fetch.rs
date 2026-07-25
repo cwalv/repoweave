@@ -133,7 +133,11 @@ fn resolve_source(source: &str) -> anyhow::Result<(crate::manifest::RepoUrl, Str
 /// When `no_reference` is set, `reference`-role repos are excluded from the
 /// check — the user has opted out of fetching them, so missing lock entries
 /// for them shouldn't fail `--frozen`.
-fn find_stale_repos(manifest: &Manifest, lock: &LockFile, no_reference: bool) -> Vec<RepoPath> {
+fn find_incomplete_repos(
+    manifest: &Manifest,
+    lock: &LockFile,
+    no_reference: bool,
+) -> Vec<RepoPath> {
     manifest
         .repositories
         .iter()
@@ -168,7 +172,7 @@ enum FetchOutcome {
 /// - `Default`: bootstrap the lock from branch HEAD when absent; otherwise
 ///   read existing entries and additively add missing ones at branch HEAD.
 ///   Never advances entries that already exist in the lock.
-/// - `Frozen`: never writes the lock; errors if missing or stale (CI mode).
+/// - `Frozen`: never writes the lock; errors if missing or incomplete (CI mode).
 ///
 /// `jobs` is the resolved worker count (post-[`crate::parallel::resolve_jobs`]).
 /// `jobs == 1` runs serially with no prefix; `jobs > 1` runs the per-repo
@@ -350,11 +354,11 @@ fn fetch_project_repos(
                     lock_path.display()
                 )
             })?;
-            let missing = find_stale_repos(&manifest, lock, no_reference);
+            let missing = find_incomplete_repos(&manifest, lock, no_reference);
             if !missing.is_empty() {
                 let names: Vec<&str> = missing.iter().map(|rp| rp.as_str()).collect();
                 bail!(
-                    "rwv fetch --frozen: lock file is stale; repos not covered by lock: {}",
+                    "rwv fetch --frozen: lock file is incomplete; repos not covered by lock: {}",
                     names.join(", ")
                 );
             }
@@ -935,7 +939,7 @@ mod tests {
         assert!(resolve_source("a/b/c/d").is_err());
     }
 
-    // find_stale_repos: --no-reference should exempt reference repos
+    // find_incomplete_repos: --no-reference should exempt reference repos
 
     fn make_entry(role: Role) -> crate::manifest::RepoEntry {
         crate::manifest::RepoEntry {
@@ -955,7 +959,7 @@ mod tests {
     }
 
     #[test]
-    fn find_stale_repos_flags_reference_when_no_reference_is_false() {
+    fn find_incomplete_repos_flags_reference_when_no_reference_is_false() {
         let mut manifest = Manifest {
             repositories: Default::default(),
             integrations: Default::default(),
@@ -970,19 +974,19 @@ mod tests {
             .repositories
             .insert(reference.clone(), make_entry(Role::Reference));
 
-        // Lock covers only the primary — reference is "stale".
+        // Lock covers only the primary — reference is incomplete.
         let mut lock = LockFile {
             workweave: None,
             repositories: Default::default(),
         };
         lock.repositories.insert(primary, make_lock_entry());
 
-        let stale = find_stale_repos(&manifest, &lock, false);
-        assert_eq!(stale, vec![reference]);
+        let incomplete = find_incomplete_repos(&manifest, &lock, false);
+        assert_eq!(incomplete, vec![reference]);
     }
 
     #[test]
-    fn find_stale_repos_excludes_reference_when_no_reference_is_true() {
+    fn find_incomplete_repos_excludes_reference_when_no_reference_is_true() {
         let mut manifest = Manifest {
             repositories: Default::default(),
             integrations: Default::default(),
@@ -1004,8 +1008,8 @@ mod tests {
         lock.repositories.insert(primary, make_lock_entry());
 
         // With no_reference=true, the missing reference entry is not flagged.
-        let stale = find_stale_repos(&manifest, &lock, true);
-        assert!(stale.is_empty(), "expected empty, got {stale:?}");
+        let incomplete = find_incomplete_repos(&manifest, &lock, true);
+        assert!(incomplete.is_empty(), "expected empty, got {incomplete:?}");
     }
 
     // FetchMode enum tests
