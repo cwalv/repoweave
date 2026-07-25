@@ -522,6 +522,40 @@ fn sync_phase3_materializes_newly_added_repo_in_workweave() {
         "newly-materialized worktree should be at the locked SHA"
     );
 
+    // Which ref is this checkout on? The ephemeral name is
+    // `{project}--{workweave}` and nothing else: the third component this
+    // site used to append (the manifest `version:`) disagreed with what
+    // `workweave create` appends, no consumer read either, and the model
+    // deletes it rather than picking a winner (branch-model.md §3.5).
+    // Asked as the full ref, not `--short`: `--short` answers the shortest
+    // *unambiguous* name, so a tag sharing the branch's name would make this
+    // read `heads/app--ww1` and the assertion would be about the wrong thing.
+    assert_eq!(
+        git_out(&["symbolic-ref", "HEAD"], &ww1_new_repo),
+        format!("refs/heads/{PROJECT}--ww1"),
+        "a sync-materialized worktree must be born on the minted ephemeral name"
+    );
+
+    // And rwv must hold a receipt for it. Ownership is by record, not by
+    // name shape (R2): without this, the ref sync just created would be
+    // one `workweave delete` can never legitimately clean up.
+    let canonical = main.root.join(new_repo_path);
+    let receipt = repoweave::workweave_index::RefRegistry::for_project(
+        &main.root,
+        &repoweave::manifest::ProjectName::new(PROJECT),
+    )
+    .lookup(
+        &canonical,
+        &repoweave::vcs::RawRefName::new(format!("{PROJECT}--ww1")),
+    )
+    .expect("the registry is readable");
+    assert!(
+        receipt.is_some(),
+        "sync's materialize must persist an ownership receipt for the ref it births, \
+         keyed to the canonical store at {}",
+        canonical.display()
+    );
+
     // doctor --locked should now pass cleanly.
     rwv()
         .args(["doctor", "--locked"])

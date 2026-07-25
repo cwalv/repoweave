@@ -64,7 +64,20 @@ const ALLOWLIST: &[Allowed] = &[
         justification: "prune_dropped_repo, both arms behind an \
             uncommitted-changes refusal plus a unique-commits refusal \
             (worktree-divergence check in workweaves, local-only-branch \
-            scan in primary), all failing safe on git errors.",
+            scan in primary), all failing safe on git errors. The primary \
+            arm is a DESTROY-STORE (branch-model.md §3.2): `dest` there IS \
+            the canonical store, so the delete would take the object \
+            database and the worktree administration of every live \
+            workweave checkout of that repo with it. R4 gates it via \
+            check_store_unclaimed — no worktree still registered against \
+            the store, no ownership receipt still keyed to it — in FRONT of \
+            the delete. The local-only refusal is NOT relaxed in exchange: \
+            it is incidentally what has been keeping this call off a live \
+            workweave's store, so recorded rwv refs stay inside its \
+            predicate (§5, prune_dropped_repo row). The workweave arm's \
+            call is not a store destroy: it removes a checkout whose refdb \
+            lives in a canonical store that arm has already established is \
+            gone.",
     },
     Allowed {
         file: "workweave.rs",

@@ -496,3 +496,39 @@ fn a_rewinding_move_requires_a_warrant_argument() {
         "#,
     );
 }
+
+// ---------------------------------------------------------------------------
+// §4.6 (1) — landing onto a detached target
+// ---------------------------------------------------------------------------
+
+#[test]
+fn a_witness_cannot_point_a_move_at_a_different_repo() {
+    // This is the whole type-level content of §4.6(1), and it is what makes
+    // sync-to's detached-target refusal unbypassable rather than merely
+    // present. The runtime check on its own leaves a dodge: take the witness
+    // from the *cwd* repo — a workweave checkout, so always attached — and
+    // keep advancing the target with a path. Every "did you establish there
+    // is a branch" gate is then satisfied by an attachment that belongs to
+    // the wrong repo.
+    //
+    // The MOVE derives its repo from the witness and takes no path, so the
+    // dodge is not a check someone can route around; it is a call with the
+    // wrong arity. Revert `ff_advance_repo` to a path-taking advance and this
+    // is the probe that says so.
+    assert_fails_with(
+        "E0061",
+        "a MOVE takes its repo from the witness, never from a path argument",
+        r#"
+        use repoweave::vcs::{AttachedRef, ResolvedRevisionId, Vcs};
+        use std::path::Path;
+        pub fn land(
+            vcs: &dyn Vcs,
+            cwd_witness: &AttachedRef,
+            target_repo: &Path,
+            to: &ResolvedRevisionId,
+        ) {
+            let _ = vcs.advance_attached_ref(cwd_witness, target_repo, to);
+        }
+        "#,
+    );
+}

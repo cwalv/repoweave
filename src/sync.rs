@@ -10,7 +10,9 @@ use crate::op_state::{self, OpVerb, OwnerRecord};
 use crate::parallel::run_in_parallel;
 use crate::status::{compute_relation, LockRelation};
 use crate::vcs::{
-    ConflictOp, RefName, ResolvedRevisionId, Vcs, VcsError, VcsErrorOutput, VerifiedRestoreOutcome,
+    AttachedRef, ConflictOp, DiscardLocalCommitsConsent, DiscardWarrant, EphemeralRefName,
+    HeadAttachment, RefName, ResolvedRevisionId, Vcs, VcsError, VcsErrorOutput,
+    VerifiedRestoreOutcome,
 };
 use crate::workspace::{Checkout, Resolution, WorkspaceContext};
 use crate::workweave::{classify_checkout, ensure_registered_workweave, CheckoutKind};
@@ -1243,21 +1245,42 @@ fn materialize_missing_repo(
                     canonical.display()
                 );
             }
-            // Use the manifest's tracking branch as the start point. Workweave
-            // ephemeral branches are scoped by (project, workweave_name) to
-            // mirror create_workweave's naming.
+            // Use the manifest's tracking branch as the start point. The
+            // ephemeral ref itself is `{project}--{workweave}` and nothing
+            // else: the third component this site used to append (the
+            // manifest `version:`) disagreed with what `create_workweave`
+            // appends (the branch the canonical happened to be on), no
+            // consumer read either, and §3.5 deletes the component rather
+            // than picking a winner. Names are per-store, so one name per
+            // (project, workweave) collides with nothing.
+            //
+            // The two sites collapse independently: the delete/doctor sweeps
+            // match on `starts_with("{project}--{workweave}")`, which a name
+            // with no third component still satisfies. `create_workweave`'s
+            // mirror (`workweave.rs`'s `ephemeral_branch_name`) is a separate
+            // change and is untouched here.
             let start_ref = entry.version.as_str();
             let head_rev = GitVcs
                 .resolve_revision(&canonical, start_ref)
                 .with_context(|| format!("failed to resolve {start_ref} in canonical clone"))?;
-            let branch = crate::vcs::RefName::new(format!(
-                "{}--{}/{}",
-                project_name.as_str(),
-                name.as_str(),
-                start_ref,
-            ));
+            // Receipt before ref (R2/§4.2): the registry persists the receipt,
+            // and only then does the birth happen. A crash between the two
+            // leaves a dangling receipt, which is retractable; the inverse
+            // order leaves a ref rwv can never own or clean up. This is also
+            // what makes a sync-materialized worktree visible to
+            // `workweave delete`, which ranges over the recorded set.
+            let owned =
+                crate::workweave_index::RefRegistry::for_project(ctx.primary_path(), project_name)
+                    .record_created(
+                        &canonical,
+                        EphemeralRefName::mint(project_name, name),
+                        head_rev,
+                    )
+                    .with_context(|| {
+                        format!("failed to record the ephemeral ref for {repo_path}")
+                    })?;
             GitVcs
-                .create_worktree(&canonical, &dest, &branch, &head_rev)
+                .create_worktree_on(&owned, &dest)
                 .with_context(|| format!("worktree add for {repo_path} failed"))?;
         }
         Checkout::Primary { .. } => {
@@ -1269,11 +1292,103 @@ fn materialize_missing_repo(
     Ok(())
 }
 
+/// R4 (§3.3): refuse to destroy `store` while anything still claims it.
+///
+/// A store-level destroy takes out every ref and every object at once, so
+/// no ref-level rule can gate it (§3.2, DESTROY-STORE). Two things must
+/// both be true first:
+///
+/// - **No live worktree is registered against the store.** `git worktree
+///   add` writes its administration *into* the canonical store
+///   (`.git/worktrees/<name>`), so `remove_dir_all` on the store does not
+///   merely delete a clone — it deletes the object database and the
+///   worktree administration that every live workweave checkout of that
+///   repo depends on. The registration is what makes those checkouts
+///   findable, and it is what this reads.
+/// - **Every receipt keyed to the store has been retracted.** A standing
+///   receipt says rwv still accounts for a ref in there; destroying the
+///   store would strand it with nothing left to retract it against.
+///
+/// Fail-closed on an unreadable store: a claim we could not enumerate is
+/// treated as a claim that stands.
+fn check_store_unclaimed(
+    store: &Path,
+    primary_root: &Path,
+    project: &ProjectName,
+    repo_path: &RepoPath,
+) -> anyhow::Result<()> {
+    let registered = GitVcs.list_worktrees(store).with_context(|| {
+        format!(
+            "{repo_path}: cannot enumerate the worktrees registered against {}; \
+             refusing to destroy a store whose claims could not be read",
+            store.display()
+        )
+    })?;
+    // `worktree list` includes the store's own main worktree. Compare
+    // canonicalized: the registration records a resolved path, and the
+    // store path here is built by joining onto the workspace root, which
+    // may reach it through a symlink.
+    let store_key = std::fs::canonicalize(store).unwrap_or_else(|_| store.to_path_buf());
+    let live: Vec<String> = registered
+        .iter()
+        .filter(|p| std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf()) != store_key)
+        .map(|p| p.display().to_string())
+        .collect();
+    if !live.is_empty() {
+        anyhow::bail!(
+            "{repo_path}: dropped from lock, but {} still has live worktrees registered \
+             against it:\n  {}\n\
+             \n\
+             Removing the store would delete their object database and worktree \
+             administration along with it. Remove those workweaves first \
+             (`rwv workweave delete <name>`), then re-run.",
+            store.display(),
+            live.join("\n  "),
+        );
+    }
+
+    let standing = crate::workweave_index::RefRegistry::for_project(primary_root, project)
+        .list_for_store(store)
+        .with_context(|| {
+            format!(
+                "{repo_path}: cannot read the ownership receipts for {}; \
+                 refusing to destroy a store whose claims could not be read",
+                store.display()
+            )
+        })?;
+    if !standing.is_empty() {
+        let names: Vec<String> = standing.iter().map(|r| r.to_string()).collect();
+        anyhow::bail!(
+            "{repo_path}: dropped from lock, but rwv still holds ownership receipts for \
+             refs in {}:\n  {}\n\
+             \n\
+             Each receipt must be retracted through its own ref delete — with a receipt \
+             and a warrant — before the store itself may be destroyed. Delete the \
+             workweaves that own these refs, then re-run.",
+            store.display(),
+            names.join("\n  "),
+        );
+    }
+    Ok(())
+}
+
 /// Conservatively remove a repo's worktree/clone after it has been dropped
 /// from the lock. Refuses (and warns) if the worktree has uncommitted changes
 /// or local-only commits (branch tip differs from canonical HEAD in workweave;
 /// any commits at all in primary).
-fn prune_dropped_repo(ctx: &WorkspaceContext, repo_path: &RepoPath) -> anyhow::Result<()> {
+///
+/// The local-only refusal in the primary arm stays exactly as it is: it is
+/// incidentally the only thing that has been keeping `remove_dir_all` off a
+/// live workweave's object store, so excluding recorded rwv refs from its
+/// predicate would remove that protection. Unblocking prune is not a payoff
+/// of ownership-by-receipt (§5, `prune_dropped_repo` row). What R2 adds here
+/// is [`check_store_unclaimed`] in *front* of the destroy, not a relaxation
+/// behind it.
+fn prune_dropped_repo(
+    ctx: &WorkspaceContext,
+    repo_path: &RepoPath,
+    project_name: &ProjectName,
+) -> anyhow::Result<()> {
     let dest = ctx.active_path().join(repo_path.as_path());
     if !dest.exists() {
         return Ok(());
@@ -1309,7 +1424,11 @@ fn prune_dropped_repo(ctx: &WorkspaceContext, repo_path: &RepoPath) -> anyhow::R
                     .with_context(|| format!("worktree remove for {repo_path} failed"))?;
                 let _ = GitVcs.worktree_prune(&canonical);
             } else {
-                // No canonical to compare to; remove the directory as a best effort.
+                // No canonical to compare to; remove the directory as a best
+                // effort. Not a DESTROY-STORE: `dest` here is a workweave
+                // checkout, whose refdb and objects live in the canonical
+                // store — the one this arm has just established is gone.
+                // There is no store under this path for R4 to gate.
                 std::fs::remove_dir_all(&dest)
                     .with_context(|| format!("failed to remove {}", dest.display()))?;
             }
@@ -1355,6 +1474,10 @@ fn prune_dropped_repo(ctx: &WorkspaceContext, repo_path: &RepoPath) -> anyhow::R
                      push them and re-run, or remove manually"
                 );
             }
+            // DESTROY-STORE (§3.2): `dest` in the primary IS the canonical
+            // store — the refdb and object database every workweave worktree
+            // of this repo is registered in. R4 gates it.
+            check_store_unclaimed(&dest, ctx.primary_path(), project_name, repo_path)?;
             std::fs::remove_dir_all(&dest)
                 .with_context(|| format!("failed to remove {}", dest.display()))?;
         }
@@ -2826,33 +2949,51 @@ fn check_dirty_target_preflight(
 /// branch. Landing fast-forwards the branch the target is attached to; a
 /// detached HEAD gives it nothing to advance, and `--retire` then deletes the
 /// source branch that was holding the work.
+///
+/// This is the whole-op layer of the refusal, so the operator sees every
+/// unattached repo at once instead of one per re-run. It does **not**
+/// replace the per-repo refusal in [`ff_advance_repo`], which is the layer
+/// that covers `--continue` (a resumed op re-enters at the phase body, not
+/// here).
 fn check_detached_target_preflight(
     cwd_project: &Project,
     target_workspace_dir: &Path,
     target_project_dir: &Path,
     target_path: &Path,
 ) -> anyhow::Result<()> {
+    // Report-only: a preflight that names repos has no MOVE to authorize,
+    // so it observes and keeps no witness. `Unborn` is reported as itself
+    // rather than as a second spelling of detached — the shipped
+    // `current_ref` answered `Some(name)` there (`symbolic-ref` succeeds on
+    // a branch with no commits), so an unborn target read as attached and
+    // fell through to a `merge --ff-only` that cannot work. An unreadable
+    // HEAD keeps the shipped fail-closed direction: it is named, not
+    // skipped.
+    let unattached = |repo: &Path| match GitVcs.head_attachment(repo) {
+        Ok(HeadAttachment::Attached(_)) => None,
+        Ok(HeadAttachment::Detached(d)) => Some(format!("detached HEAD at {}", d.at())),
+        Ok(HeadAttachment::Unborn(u)) => Some(format!("unborn branch '{u}', no commits yet")),
+        Err(e) => Some(format!("HEAD unreadable: {e}")),
+    };
+
     let mut detached: Vec<String> = Vec::new();
     for repo_path in cwd_project.manifest.iter_repo_paths() {
         let target_repo = target_workspace_dir.join(repo_path.as_path());
         // Skip reference symlinks: advance-target excludes them, so their
         // attachment is not this op's business.
-        if checkout_is_syncable(&target_repo)
-            && GitVcs.current_ref(&target_repo).unwrap_or(None).is_none()
-        {
-            detached.push(repo_path.to_string());
+        if !checkout_is_syncable(&target_repo) {
+            continue;
+        }
+        if let Some(state) = unattached(&target_repo) {
+            detached.push(format!("{repo_path} ({state})"));
         }
     }
-    if GitVcs
-        .current_ref(target_project_dir)
-        .unwrap_or(None)
-        .is_none()
-    {
-        detached.push("(project)".to_string());
+    if let Some(state) = unattached(target_project_dir) {
+        detached.push(format!("(project) ({state})"));
     }
     if !detached.is_empty() {
         anyhow::bail!(
-            "sync-to precondition failed: target workweave is on a detached HEAD in:\n  {}\n\
+            "sync-to precondition failed: target workweave is not on a branch in:\n  {}\n\
              \n\
              sync-to lands by fast-forwarding the branch each target repo is on; a detached \
              HEAD has none, so the work would be recorded nowhere. Check out the receiving \
@@ -3458,7 +3599,7 @@ fn run_replay(ctx: &OpContext<'_>) -> anyhow::Result<()> {
             if classify_checkout(&abs) == CheckoutKind::ReferenceAlias {
                 continue;
             }
-            match prune_dropped_repo(&ctx.cwd_ctx, repo_path) {
+            match prune_dropped_repo(&ctx.cwd_ctx, repo_path, &ctx.cwd_project_name) {
                 Ok(()) => {
                     if emit_text {
                         println!("  {repo_path}: pruned (dropped from lock)");
@@ -3667,14 +3808,18 @@ fn run_replay(ctx: &OpContext<'_>) -> anyhow::Result<()> {
     // === Phase 1' (project repo) — strategy on the project repo ===
 
     let phase1_outcome = if ctx.discard_local_commits {
-        // --discard-local-commits: hard-reset CWD's project repo to source's
-        // tip, discarding any project commits not reachable from source.
-        // Guard already refused on uncommitted changes; savepoint was written
-        // before this phase so discarded commits stay recoverable via abort.
-        GitVcs
-            .hard_reset(&ctx.cwd_project_dir, &snapshot.source_project_tip)
-            .map_err(anyhow::Error::from)
-            .context("project repo hard-reset (--discard-local-commits) failed")
+        // --discard-local-commits: rewind CWD's project repo to source's tip,
+        // discarding any project commits not reachable from source. Guard
+        // already refused on uncommitted changes.
+        //
+        // A rewinding MOVE (§3.2) needs a `DiscardWarrant`, and the warrant
+        // needs a savepoint that has actually been written — not one that is
+        // planned. `guard_and_mark` wrote it before this phase, which is what
+        // keeps the discarded commits reachable through `rwv abort`, so this
+        // *resolves* that savepoint rather than creating one: re-creating it
+        // here would move the recovery point to the tip we are about to
+        // discard from, on every `--continue`.
+        rewind_project_repo(ctx, &snapshot.source_project_tip)
     } else {
         apply_project_strategy(
             &ctx.cwd_project_dir,
@@ -4264,6 +4409,64 @@ fn retire_workweave_after_sync_to(
 /// Truncate a SHA to 12 chars for display (matches workweave.rs convention).
 fn short_sha(sha: &str) -> &str {
     &sha[..sha.len().min(12)]
+}
+
+/// Phase 1' under `--discard-local-commits`: rewind the CWD project repo to
+/// `to`, discarding whatever it had that `to` does not reach.
+///
+/// This is the rewinding MOVE of §3.2, so it is constructed rather than
+/// merely intended: the `DiscardWarrant` pairs the savepoint `guard_and_mark`
+/// wrote with the operator's consent, and `reset_attached_ref` will not
+/// accept a savepoint taken in some other repo. Without both, there is no
+/// call to make.
+///
+/// **Where the consent comes from.** `--discard-local-commits` is parsed at
+/// dispatch, but it is also *persisted* into the owner record and read back
+/// on `--continue`, where the operator passes no flags at all. The record is
+/// the durable form of the consent, and this is the layer that holds both
+/// spellings of it — `ctx.discard_local_commits` is the flag on a fresh run
+/// and the recorded override on a resumed one. Minting here rather than
+/// threading a token from dispatch is what makes the resumed path carry the
+/// same proof as the fresh one instead of a weaker one.
+fn rewind_project_repo(ctx: &OpContext<'_>, to: &ResolvedRevisionId) -> anyhow::Result<()> {
+    let savepoint = GitVcs
+        .resolve_savepoint_ref(&ctx.cwd_project_dir, ctx.op_id.as_str())
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "internal: --discard-local-commits reached Phase 1' with no savepoint under \
+                 op {} in {}; refusing to discard commits that `rwv abort` could not restore",
+                ctx.op_id.as_str(),
+                ctx.cwd_project_dir.display(),
+            )
+        })?;
+    let warrant = DiscardWarrant::new(savepoint, DiscardLocalCommitsConsent::granted());
+
+    match GitVcs
+        .head_attachment(&ctx.cwd_project_dir)
+        .context("failed to read project HEAD ref")?
+    {
+        HeadAttachment::Attached(on) => GitVcs
+            .reset_attached_ref(&on, to, warrant)
+            .map_err(anyhow::Error::from)
+            .context("project repo rewind (--discard-local-commits) failed"),
+        // Already detached: repositioning HEAD changes no attachment, so it
+        // is a MOVE too (§3.2) — one subject to the mid-operation
+        // precondition, because a repo parked mid-bisect or mid-rebase is
+        // carrying operator state a silent reposition would destroy. The
+        // savepoint above still stands; `advance_detached_head` takes no
+        // warrant, so the recoverability here rests on the savepoint alone.
+        HeadAttachment::Detached(was) => GitVcs
+            .advance_detached_head(&was, to)
+            .map_err(anyhow::Error::from)
+            .context("project repo rewind (--discard-local-commits) failed"),
+        HeadAttachment::Unborn(u) => anyhow::bail!(
+            "project repo at {} is on unborn branch '{}' (no commits yet); there is nothing \
+             for --discard-local-commits to discard, and a reset here would stamp the branch \
+             into existence rather than move it.",
+            ctx.cwd_project_dir.display(),
+            u,
+        ),
+    }
 }
 
 /// Phase 1': replay CWD's unique project commits onto `source_tip` via
@@ -5153,7 +5356,7 @@ pub fn run_sync_to_json(ctx: &WorkspaceContext, request: SyncRequest) -> anyhow:
 }
 
 /// Per-repo advance-target line, naming the branch that received the landing.
-fn ff_advance_line(advanced: Option<&RefName>, tip: &ResolvedRevisionId) -> String {
+fn ff_advance_line(advanced: Option<&AttachedRef>, tip: &ResolvedRevisionId) -> String {
     let short = &tip.as_str()[..8.min(tip.as_str().len())];
     match advanced {
         Some(branch) => format!("ff-advanced {branch} to {short}"),
@@ -5161,8 +5364,9 @@ fn ff_advance_line(advanced: Option<&RefName>, tip: &ResolvedRevisionId) -> Stri
     }
 }
 
-/// Fast-forward the branch `target_repo` is on to `cwd_tip`, returning that
-/// branch. `None` means the target was already at `cwd_tip` and nothing moved.
+/// Fast-forward the branch `target_repo` is on to `cwd_tip`, returning the
+/// witness for that branch. `None` means the target was already at `cwd_tip`
+/// and nothing moved.
 ///
 /// We need the objects to be reachable in `target_repo`. For a worktree
 /// pair (workweave + primary), they share the same object store, so any
@@ -5176,11 +5380,27 @@ fn ff_advance_line(advanced: Option<&RefName>, tip: &ResolvedRevisionId) -> Stri
 ///
 /// The fetch-then-advance approach works for both worktrees (same object
 /// store, fetch is a no-op) and independent clones (fetch copies objects).
+///
+/// # The landing target is a witness, not a path (§4.6(1))
+///
+/// The refusal below used to be the only thing standing between a detached
+/// target and a landing that referenced nothing. It is now also a *type*:
+/// the MOVE takes an [`AttachedRef`] and derives the repo it moves from
+/// that witness, so there is no signature in which the branch this function
+/// establishes and the repo it advances can come apart. `target_repo` is
+/// where the witness is *obtained*; it is never handed to the MOVE.
+///
+/// That closes the dodge the runtime check alone left open. `cwd_repo` is a
+/// workweave checkout and is therefore always attached, so a witness taken
+/// from it would satisfy any "did you check for a branch" gate while the
+/// advance still landed on the detached target. With the witness carrying
+/// its own repo, using CWD's attachment to move the target is not a check
+/// someone can route around — it is a call that does not typecheck.
 fn ff_advance_repo(
     target_repo: &Path,
     cwd_repo: &Path,
     cwd_tip: &ResolvedRevisionId,
-) -> anyhow::Result<Option<RefName>> {
+) -> anyhow::Result<Option<AttachedRef>> {
     // Verify that target_repo's HEAD is an ancestor of (or equal to) cwd_tip.
     // If not, this is a concurrent-modification scenario — bail.
     let target_tip = GitVcs
@@ -5196,20 +5416,36 @@ fn ff_advance_repo(
     // no branch — and the source's branch, the only other ref holding it, is
     // force-deleted by `--retire`. Checked after the equal-tip return, like
     // the dirty gate below: a checkout we won't move needs no destination.
-    let target_branch = GitVcs
-        .current_ref(target_repo)
+    //
+    // Obtaining the witness IS the refusal: the MOVE below cannot be written
+    // without one, and the only producer is a `head_attachment` read of this
+    // repo. `Unborn` is a third state rather than a second spelling of
+    // detached (§4.5) — unreachable here, because a branch with no commits
+    // fails the `head_revision` read above, but it is answered rather than
+    // folded in so the arm cannot be quietly re-collapsed.
+    let on = match GitVcs
+        .head_attachment(target_repo)
         .context("failed to read target HEAD ref")?
-        .ok_or_else(|| {
-            anyhow::anyhow!(
-                "target repo at {} is not on a branch (detached HEAD at {}); refusing to \
-                 land onto it. Nothing would record the advance to {}. Check out the branch \
-                 that should receive this work (`git switch <branch>` in the target), then \
-                 re-run.",
-                target_repo.display(),
-                target_tip,
-                cwd_tip,
-            )
-        })?;
+    {
+        HeadAttachment::Attached(a) => a,
+        HeadAttachment::Detached(d) => anyhow::bail!(
+            "target repo at {} is not on a branch (detached HEAD at {}); refusing to \
+             land onto it. Nothing would record the advance to {}. Check out the branch \
+             that should receive this work (`git switch <branch>` in the target), then \
+             re-run.",
+            target_repo.display(),
+            d.at(),
+            cwd_tip,
+        ),
+        HeadAttachment::Unborn(u) => anyhow::bail!(
+            "target repo at {} is on unborn branch '{}' (no commits yet); refusing to \
+             land onto it. Nothing would record the advance to {}. Commit in the target, \
+             or check out the branch that should receive this work, then re-run.",
+            target_repo.display(),
+            u,
+            cwd_tip,
+        ),
+    };
 
     // Fast-forwarding a dirty target worktree risks its uncommitted changes.
     // The sync-to preflight already refused on a dirty target; this catches
@@ -5245,19 +5481,458 @@ fn ff_advance_repo(
         );
     }
 
-    // Fast-forward: advance_if_fast_forward refuses (rather than clobbers)
-    // if the update would touch uncommitted changes — VCS-native backstop
-    // behind the two explicit dirty gates above.
+    // Fast-forward. The witness names both the ref that moves and the repo
+    // it moves in; `advance_attached_ref` re-observes before acting, so an
+    // attachment that changed since the read above is a refusal rather than
+    // a landing on whatever HEAD became (how wide that window should be is
+    // Q15, and stays open). Underneath, the ff refuses rather than clobbers
+    // if the update would touch uncommitted changes — the VCS-native
+    // backstop behind the two explicit dirty gates above.
     GitVcs
-        .advance_if_fast_forward(target_repo, cwd_tip)
+        .advance_attached_ref(&on, cwd_tip)
         .context("fast-forward advance failed in target")?;
 
-    Ok(Some(target_branch))
+    Ok(Some(on))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // -----------------------------------------------------------------------
+    // Fixtures for the branch-model tests below (§4.6(1), R4)
+    // -----------------------------------------------------------------------
+
+    /// Run git in `dir`, panicking on failure.
+    fn git(dir: &Path, args: &[&str]) -> String {
+        let out = std::process::Command::new("git")
+            .args(args)
+            .current_dir(dir)
+            .output()
+            .expect("run git");
+        assert!(
+            out.status.success(),
+            "git {:?} failed in {}: {}",
+            args,
+            dir.display(),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        String::from_utf8(out.stdout).unwrap().trim().to_owned()
+    }
+
+    /// A repo on `main` with one commit, at `dir`.
+    fn init_repo(dir: &Path) {
+        std::fs::create_dir_all(dir).unwrap();
+        git(dir, &["init", "-b", "main"]);
+        git(dir, &["config", "user.email", "t@t"]);
+        git(dir, &["config", "user.name", "T"]);
+        std::fs::write(dir.join("f"), "1").unwrap();
+        git(dir, &["add", "."]);
+        git(dir, &["commit", "-m", "one"]);
+    }
+
+    /// Commit a new file and return the resulting tip.
+    fn commit(dir: &Path, name: &str) -> ResolvedRevisionId {
+        std::fs::write(dir.join(name), name).unwrap();
+        git(dir, &["add", "."]);
+        git(dir, &["commit", "-m", name]);
+        GitVcs.head_revision(dir).unwrap()
+    }
+
+    // -----------------------------------------------------------------------
+    // ff_advance_repo — landing takes the target's witness (§4.6(1))
+    //
+    // This is the phase-body layer of the detached-target refusal, and it is
+    // the layer that covers `sync-to --continue`: a resumed op re-enters at
+    // the phase, so the whole-op preflight does not run again. These drive
+    // the function directly for that reason — routing through the CLI would
+    // be answered by the preflight before this code was reached, and the
+    // resume path is exactly where that is not true.
+    // -----------------------------------------------------------------------
+
+    /// A (cwd, target) pair of independent clones of the same history, where
+    /// cwd has one commit the target does not. `target` is on `main`.
+    fn landing_pair(tmp: &Path) -> (PathBuf, PathBuf, ResolvedRevisionId) {
+        let origin = tmp.join("origin");
+        init_repo(&origin);
+
+        let target = tmp.join("target");
+        git(
+            tmp,
+            &["clone", origin.to_str().unwrap(), target.to_str().unwrap()],
+        );
+        let cwd = tmp.join("cwd");
+        git(
+            tmp,
+            &["clone", origin.to_str().unwrap(), cwd.to_str().unwrap()],
+        );
+        git(&cwd, &["config", "user.email", "t@t"]);
+        git(&cwd, &["config", "user.name", "T"]);
+        let cwd_tip = commit(&cwd, "landed");
+        (cwd, target, cwd_tip)
+    }
+
+    #[test]
+    fn ff_advance_repo_lands_on_the_branch_the_target_is_attached_to() {
+        // The control. Without it, the refusal test below could pass because
+        // this fixture cannot advance at all rather than because the refusal
+        // fired.
+        let tmp = tempfile::tempdir().unwrap();
+        let (cwd, target, cwd_tip) = landing_pair(tmp.path());
+
+        let landed = ff_advance_repo(&target, &cwd, &cwd_tip)
+            .expect("an attached target accepts the landing")
+            .expect("the target moved, so a branch received it");
+
+        assert_eq!(
+            landed.to_string(),
+            "main",
+            "the returned witness must name the branch that received the landing"
+        );
+        assert_eq!(
+            git(&target, &["rev-parse", "refs/heads/main"]),
+            cwd_tip.as_str(),
+            "target `main` must hold the landed commit"
+        );
+    }
+
+    #[test]
+    fn ff_advance_repo_refuses_to_land_onto_a_detached_target() {
+        // The §2.1 #1 loss chain: `merge --ff-only` against a detached HEAD
+        // moves HEAD alone and reports success, so the landing ends up
+        // referenced by nothing — and `--retire` then force-deletes the
+        // source's branch, the only other ref that was holding it.
+        let tmp = tempfile::tempdir().unwrap();
+        let (cwd, target, cwd_tip) = landing_pair(tmp.path());
+
+        let main_before = git(&target, &["rev-parse", "refs/heads/main"]);
+        git(&target, &["checkout", "--detach", "HEAD"]);
+        let head_before = git(&target, &["rev-parse", "HEAD"]);
+
+        let err = ff_advance_repo(&target, &cwd, &cwd_tip)
+            .expect_err("a detached target has no branch for the landing to advance");
+        let msg = format!("{err:#}");
+        assert!(
+            msg.contains("is not on a branch (detached HEAD at"),
+            "the refusal must name the detached-target precondition, not some other \
+             failure; got:\n{msg}"
+        );
+
+        assert_eq!(
+            git(&target, &["rev-parse", "refs/heads/main"]),
+            main_before,
+            "a refused landing must leave the target's branch where it was"
+        );
+        assert_eq!(
+            git(&target, &["rev-parse", "HEAD"]),
+            head_before,
+            "a refused landing must leave the target's detached HEAD where it was — \
+             this is the assertion that fails if the MOVE goes back to taking a path \
+             instead of the target's witness"
+        );
+    }
+
+    #[test]
+    fn ff_advance_repo_short_circuits_a_detached_target_that_is_already_there() {
+        // The refusal sits *after* the equal-tip return, deliberately: a
+        // checkout we are not going to move needs no destination. Pinned so
+        // the ordering cannot be "tidied" into refusing on every detached
+        // target, which would make `--continue` unable to finish an op whose
+        // target was already advanced.
+        let tmp = tempfile::tempdir().unwrap();
+        let (cwd, target, cwd_tip) = landing_pair(tmp.path());
+
+        git(&target, &["fetch", cwd.to_str().unwrap(), "HEAD"]);
+        git(&target, &["checkout", "--detach", cwd_tip.as_str()]);
+
+        let landed = ff_advance_repo(&target, &cwd, &cwd_tip)
+            .expect("an already-converged target is a no-op, detached or not");
+        assert!(
+            landed.is_none(),
+            "nothing moved, so no branch received anything"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // check_store_unclaimed — R4, in front of the store destroy
+    // -----------------------------------------------------------------------
+
+    /// A canonical store plus the primary root and project name its receipt
+    /// registry is keyed by.
+    fn store_fixture(tmp: &Path) -> (PathBuf, PathBuf, ProjectName) {
+        let primary = tmp.join("weave");
+        std::fs::create_dir_all(primary.join("projects").join("web-app")).unwrap();
+        let store = primary.join("github/example/server");
+        init_repo(&store);
+        (store, primary, ProjectName::new("web-app"))
+    }
+
+    fn dropped() -> RepoPath {
+        RepoPath::new("github/example/server").unwrap()
+    }
+
+    #[test]
+    fn check_store_unclaimed_passes_on_a_store_nothing_claims() {
+        // The control: without it the two refusals below could be passing on
+        // a fixture that can never be unclaimed.
+        let tmp = tempfile::tempdir().unwrap();
+        let (store, primary, project) = store_fixture(tmp.path());
+
+        check_store_unclaimed(&store, &primary, &project, &dropped())
+            .expect("no worktrees registered and no receipts standing");
+    }
+
+    #[test]
+    fn check_store_unclaimed_refuses_while_a_worktree_is_registered() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (store, primary, project) = store_fixture(tmp.path());
+
+        // `git worktree add` writes its administration into the canonical
+        // store, so `remove_dir_all` on the store takes this checkout's refdb
+        // and objects with it. Detached, so the fixture adds no local-only
+        // branch — the point is that R4 refuses on the registration alone.
+        let live = tmp.path().join("live-workweave");
+        git(
+            &store,
+            &["worktree", "add", "--detach", live.to_str().unwrap()],
+        );
+
+        let err = check_store_unclaimed(&store, &primary, &project, &dropped())
+            .expect_err("a store with a live worktree registered against it is claimed");
+        let msg = format!("{err:#}");
+        assert!(
+            msg.contains("still has live worktrees registered"),
+            "the refusal must name the registration, not the receipts; got:\n{msg}"
+        );
+        assert!(
+            msg.contains("live-workweave"),
+            "the refusal must list the worktree that claims the store; got:\n{msg}"
+        );
+    }
+
+    #[test]
+    fn check_store_unclaimed_refuses_while_a_receipt_stands() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (store, primary, project) = store_fixture(tmp.path());
+        let at = GitVcs.head_revision(&store).unwrap();
+
+        let mut registry = crate::workweave_index::RefRegistry::for_project(&primary, &project);
+        registry
+            .record_created(
+                &store,
+                EphemeralRefName::mint(&project, &WorkweaveName::new("hotfix")),
+                at,
+            )
+            .unwrap();
+
+        let err = check_store_unclaimed(&store, &primary, &project, &dropped())
+            .expect_err("a standing receipt is rwv still accounting for a ref in there");
+        let msg = format!("{err:#}");
+        assert!(
+            msg.contains("still holds ownership receipts"),
+            "the refusal must name the receipts, not the registrations; got:\n{msg}"
+        );
+        assert!(
+            msg.contains("web-app--hotfix"),
+            "the refusal must name the ref whose receipt stands; got:\n{msg}"
+        );
+
+        // R4 is satisfied by retraction, not by ignoring the receipt.
+        registry
+            .retract(&store, &crate::vcs::RawRefName::new("web-app--hotfix"))
+            .unwrap();
+        check_store_unclaimed(&store, &primary, &project, &dropped())
+            .expect("with the receipt retracted the store is unclaimed");
+    }
+
+    #[test]
+    fn check_store_unclaimed_refuses_when_the_claims_cannot_be_read() {
+        // Fail-closed: a claim we could not enumerate is a claim that stands.
+        let tmp = tempfile::tempdir().unwrap();
+        let not_a_repo = tmp.path().join("not-a-repo");
+        std::fs::create_dir_all(&not_a_repo).unwrap();
+
+        let err = check_store_unclaimed(
+            &not_a_repo,
+            tmp.path(),
+            &ProjectName::new("web-app"),
+            &dropped(),
+        )
+        .expect_err("an unreadable store must not be destroyed on the strength of a guess");
+        assert!(
+            format!("{err:#}").contains("cannot enumerate the worktrees registered against"),
+            "the refusal must say the enumeration failed; got:\n{err:#}"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // prune_dropped_repo — R4 in front of the store destroy, and the shipped
+    // local-only refusal behind it, unrelaxed
+    // -----------------------------------------------------------------------
+
+    /// A primary weave whose `github/example/server` is a *clone* of a bare
+    /// origin, so `main` has a remote counterpart and is not ahead of it —
+    /// which is what makes the shipped local-only predicate pass and leaves
+    /// R4 as the thing under test. A fixture without the remote would refuse
+    /// before ever reaching the gate, and every assertion below would be
+    /// about the wrong refusal.
+    fn primary_with_cloned_store(tmp: &Path) -> (WorkspaceContext, PathBuf, ProjectName) {
+        let origin = tmp.join("origin");
+        init_repo(&origin);
+
+        let primary = tmp.join("weave");
+        std::fs::create_dir_all(primary.join("projects").join("web-app")).unwrap();
+        std::fs::create_dir_all(primary.join("github/example")).unwrap();
+        let store = primary.join("github/example/server");
+        git(
+            &primary,
+            &["clone", origin.to_str().unwrap(), store.to_str().unwrap()],
+        );
+        git(&store, &["config", "user.email", "t@t"]);
+        git(&store, &["config", "user.name", "T"]);
+
+        let project = ProjectName::new("web-app");
+        let ctx = WorkspaceContext::resolve(&primary, Some(project.clone()))
+            .expect("the fixture is a workspace root");
+        (ctx, store, project)
+    }
+
+    #[test]
+    fn prune_dropped_repo_removes_a_store_nothing_claims() {
+        // The control. Without it, the two refusals below could be reporting
+        // a fixture that can never be pruned rather than a gate that fired.
+        let tmp = tempfile::tempdir().unwrap();
+        let (ctx, store, project) = primary_with_cloned_store(tmp.path());
+
+        prune_dropped_repo(&ctx, &dropped(), &project).expect("nothing claims this store");
+        assert!(
+            !store.exists(),
+            "an unclaimed store is what prune is for; it must actually be removed"
+        );
+    }
+
+    #[test]
+    fn prune_dropped_repo_refuses_while_a_live_workweave_is_registered() {
+        // `git worktree add` runs in the canonical store, so the worktree's
+        // administration and its objects live *inside* the directory prune is
+        // about to `remove_dir_all`. Detached, so the fixture adds no
+        // local-only branch: the shipped predicate passes and R4 is the only
+        // thing left standing between the live workweave and the delete.
+        let tmp = tempfile::tempdir().unwrap();
+        let (ctx, store, project) = primary_with_cloned_store(tmp.path());
+
+        let live = tmp.path().join("live-workweave");
+        git(
+            &store,
+            &["worktree", "add", "--detach", live.to_str().unwrap()],
+        );
+
+        let err = prune_dropped_repo(&ctx, &dropped(), &project)
+            .expect_err("a store a live workweave is registered against is claimed");
+        let msg = format!("{err:#}");
+        assert!(
+            msg.contains("still has live worktrees registered"),
+            "R4's registration arm must be what refused — not the local-only scan, \
+             which this fixture satisfies; got:\n{msg}"
+        );
+        assert!(
+            store.exists() && live.exists(),
+            "a refused prune must leave both the store and the live checkout on disk"
+        );
+    }
+
+    #[test]
+    fn prune_dropped_repo_refuses_until_the_receipts_are_retracted() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (ctx, store, project) = primary_with_cloned_store(tmp.path());
+        let at = GitVcs.head_revision(&store).unwrap();
+
+        let mut registry =
+            crate::workweave_index::RefRegistry::for_project(ctx.primary_path(), &project);
+        registry
+            .record_created(
+                &store,
+                EphemeralRefName::mint(&project, &WorkweaveName::new("feat")),
+                at,
+            )
+            .unwrap();
+
+        let err = prune_dropped_repo(&ctx, &dropped(), &project)
+            .expect_err("rwv still accounts for a ref in this store");
+        let msg = format!("{err:#}");
+        assert!(
+            msg.contains("still holds ownership receipts"),
+            "R4's receipt arm must be what refused; got:\n{msg}"
+        );
+        assert!(
+            store.exists(),
+            "a refused prune must leave the store on disk"
+        );
+
+        // Retraction is the only thing that clears it — R4 is satisfied by
+        // having run the per-ref discipline dry, not by skipping it.
+        registry
+            .retract(&store, &crate::vcs::RawRefName::new("web-app--feat"))
+            .unwrap();
+        prune_dropped_repo(&ctx, &dropped(), &project)
+            .expect("with every receipt retracted the store is unclaimed");
+        assert!(
+            !store.exists(),
+            "once nothing claims the store, prune removes it"
+        );
+    }
+
+    #[test]
+    fn prune_dropped_repo_does_not_exempt_a_recorded_ref_from_the_local_only_refusal() {
+        // §5's prune row: recorded rwv refs are deliberately NOT excluded
+        // from the local-only predicate. That refusal is incidentally the
+        // only thing that has been keeping `remove_dir_all` off a live
+        // workweave's object store, so ownership-by-receipt buys no
+        // exemption from it — unblocking prune is not a payoff of R2.
+        //
+        // This is the E1 scenario: a workweave holding a commit that exists
+        // nowhere else. It must refuse *because of the unique commit*, with
+        // a receipt on file, not in spite of one.
+        let tmp = tempfile::tempdir().unwrap();
+        let (ctx, store, project) = primary_with_cloned_store(tmp.path());
+        let at = GitVcs.head_revision(&store).unwrap();
+
+        let live = tmp.path().join("live-workweave");
+        git(
+            &store,
+            &[
+                "worktree",
+                "add",
+                "-b",
+                "web-app--feat",
+                live.to_str().unwrap(),
+            ],
+        );
+        git(&live, &["config", "user.email", "t@t"]);
+        git(&live, &["config", "user.name", "T"]);
+        let unique = commit(&live, "only-here");
+
+        crate::workweave_index::RefRegistry::for_project(ctx.primary_path(), &project)
+            .record_created(
+                &store,
+                EphemeralRefName::mint(&project, &WorkweaveName::new("feat")),
+                at,
+            )
+            .unwrap();
+
+        let err = prune_dropped_repo(&ctx, &dropped(), &project)
+            .expect_err("a store holding a commit that exists nowhere else is not prunable");
+        assert!(
+            format!("{err:#}").contains("local-only commits"),
+            "the shipped local-only refusal must still fire on a ref rwv holds a \
+             receipt for; got:\n{err:#}"
+        );
+        assert_eq!(
+            git(&live, &["rev-parse", "HEAD"]),
+            unique.as_str(),
+            "the unique commit must survive the refused prune"
+        );
+    }
 
     // -----------------------------------------------------------------------
     // checkout_is_syncable — the sync reference-exclusion chokepoint predicate

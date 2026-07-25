@@ -39,14 +39,21 @@
 //! becomes sufficient. Until then, this is a checked guard rather than a
 //! prose one, which is the whole point of the exercise it belongs to.
 //!
-//! `granted()` is `pub(crate)` and needs no allowlist here: it is invisible
-//! outside this crate, and every in-crate call site sits inside a
-//! `#[cfg(test)]` region (verified in `src/git.rs` and `src/vcs.rs`).
+//! **`granted()` is the other minting route, and it is pinned below too.**
+//! It is `pub(crate)`, so it is invisible outside this crate — but "outside
+//! this crate" is not the boundary that matters when the module §4.4 says
+//! must only *receive* a token lives inside it. It used to be true that
+//! every non-test call site was absent; `sync.rs` now mints a
+//! `DiscardLocalCommitsConsent` for the rewinding MOVE, deliberately (that
+//! token's flag has a second spelling — the override recorded in the owner
+//! record, which `--continue` reads back with no flags on the command
+//! line). The second test here pins that surface so the next one has to be
+//! argued for rather than noticed.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-/// Where `from_flag` may appear, and why.
+/// Where a minting call may appear, and why.
 struct Allowed {
     /// Path relative to `src/`.
     file: &'static str,
@@ -72,6 +79,36 @@ const ALLOWLIST: &[Allowed] = &[
     },
 ];
 
+/// Where `granted()` may appear outside a test module, and why.
+const GRANTED_ALLOWLIST: &[Allowed] = &[
+    Allowed {
+        file: "cli.rs",
+        count: 3,
+        justification: "The three definitions themselves, one per token. \
+            Not call sites.",
+    },
+    Allowed {
+        file: "vcs.rs",
+        count: 1,
+        justification: "The definition of DiscardLocalCommitsConsent::granted. \
+            Not a call site.",
+    },
+    Allowed {
+        file: "sync.rs",
+        count: 1,
+        justification: "rewind_project_repo: mints the \
+            DiscardLocalCommitsConsent for the --discard-local-commits \
+            rewinding MOVE. NOT dispatch, and that is the point — the flag \
+            is persisted into the owner record's overrides and read back by \
+            `rwv sync --continue`, which parses no flags at all. A mint at \
+            dispatch would give the fresh path a token and leave the resumed \
+            path — the one an operator actually re-runs after a conflict — \
+            with nothing to prove the same consent with. sync.rs is the \
+            layer that holds both spellings. If you are adding a mint \
+            anywhere else, thread the token down instead.",
+    },
+];
+
 fn rust_files(dir: &Path, out: &mut Vec<PathBuf>) {
     for entry in std::fs::read_dir(dir).expect("read src dir").flatten() {
         let path = entry.path();
@@ -83,8 +120,30 @@ fn rust_files(dir: &Path, out: &mut Vec<PathBuf>) {
     }
 }
 
-/// Count non-comment lines mentioning `from_flag`, per file relative to `src/`.
-fn observed_counts() -> BTreeMap<String, usize> {
+/// Whether the next item in `rest` (skipping blank, comment and attribute
+/// lines) is a module declaration — i.e. whether the `#[cfg(test)]` just
+/// seen opens a test module rather than gating a single test-only item.
+///
+/// Same shape as `tests/destructive_ops_audit_test.rs`, for the same
+/// reason: a `#[cfg(test)] mod` in `src/` is test code that happens to live
+/// next to what it tests, and its fixtures legitimately mint tokens to
+/// build the states the product code is asserted against.
+fn next_item_is_a_module(rest: &[&str]) -> bool {
+    for line in rest {
+        let t = line.trim_start();
+        if t.is_empty() || t.starts_with("//") || t.starts_with("#[") {
+            continue;
+        }
+        return t.starts_with("mod ")
+            || t.starts_with("pub mod ")
+            || t.starts_with("pub(crate) mod ");
+    }
+    false
+}
+
+/// Count non-comment lines containing `needle`, per file relative to
+/// `src/`, stopping at the file's `#[cfg(test)] mod`.
+fn observed_counts(needle: &str, skip_test_modules: bool) -> BTreeMap<String, usize> {
     let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
     let mut files = Vec::new();
     rust_files(&src, &mut files);
@@ -92,11 +151,23 @@ fn observed_counts() -> BTreeMap<String, usize> {
     let mut counts = BTreeMap::new();
     for path in files {
         let text = std::fs::read_to_string(&path).expect("read source file");
-        let hits = text
-            .lines()
-            .filter(|line| !line.trim_start().starts_with("//"))
-            .filter(|line| line.contains("from_flag"))
-            .count();
+        let lines: Vec<&str> = text.lines().collect();
+        let mut hits = 0;
+        for (i, line) in lines.iter().enumerate() {
+            let trimmed = line.trim_start();
+            if skip_test_modules
+                && trimmed.starts_with("#[cfg(test)]")
+                && next_item_is_a_module(&lines[i + 1..])
+            {
+                break;
+            }
+            if trimmed.starts_with("//") {
+                continue;
+            }
+            if trimmed.contains(needle) {
+                hits += 1;
+            }
+        }
         if hits > 0 {
             let rel = path
                 .strip_prefix(&src)
@@ -111,7 +182,9 @@ fn observed_counts() -> BTreeMap<String, usize> {
 
 #[test]
 fn consent_tokens_are_minted_only_at_cli_dispatch() {
-    let observed = observed_counts();
+    // `from_flag` is `pub`, so a test module is as capable of calling it as
+    // product code is; this scan does not exclude them.
+    let observed = observed_counts("from_flag", false);
     let allowed: BTreeMap<&str, &Allowed> = ALLOWLIST.iter().map(|a| (a.file, a)).collect();
 
     for (file, count) in &observed {
@@ -146,6 +219,48 @@ fn consent_tokens_are_minted_only_at_cli_dispatch() {
             observed.contains_key(entry.file),
             "allowlist entry for {} is stale: no `from_flag` found there. \
              Remove the entry if the minting moved.",
+            entry.file
+        );
+    }
+}
+
+#[test]
+fn the_unconditional_mint_is_confined_to_its_argued_sites() {
+    let observed = observed_counts("granted()", true);
+    let allowed: BTreeMap<&str, &Allowed> = GRANTED_ALLOWLIST.iter().map(|a| (a.file, a)).collect();
+
+    for (file, count) in &observed {
+        match allowed.get(file.as_str()) {
+            None => panic!(
+                "{file} mints a consent token unconditionally: `granted()` appears \
+                 {count}x there outside any test module.\n\n\
+                 `granted()` takes no argument and checks nothing — holding the token \
+                 is the whole proof, so a call to it is a claim that the operator asked \
+                 for the thing. Only a layer that actually knows they did may make that \
+                 claim (branch-model.md §4.4).\n\n\
+                 It is `pub(crate)`, so the compiler will not stop you: every module of \
+                 this crate can reach it. That is why this test exists.\n\n\
+                 If {file} needs consent, take the token as a parameter and let the \
+                 caller thread it down. If {file} genuinely is a layer that knows the \
+                 operator's intent, add it to GRANTED_ALLOWLIST with a justification \
+                 saying where that knowledge comes from — a parsed flag, or a durable \
+                 record of one."
+            ),
+            Some(entry) => assert_eq!(
+                count, &entry.count,
+                "`granted()` count changed in {file}: allowlist says {}, found {count}.\n\n\
+                 Justification on record:\n  {}\n\n\
+                 Bump the count only with a justification that covers the new site.",
+                entry.count, entry.justification
+            ),
+        }
+    }
+
+    for entry in GRANTED_ALLOWLIST {
+        assert!(
+            observed.contains_key(entry.file),
+            "GRANTED_ALLOWLIST entry for {} is stale: no non-test `granted()` found \
+             there. Remove the entry if the minting moved.",
             entry.file
         );
     }

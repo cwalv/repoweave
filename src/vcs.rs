@@ -1471,13 +1471,24 @@ impl fmt::Display for HeadAttachment {
 
 /// Proof that the operator consented to discarding local commits during a
 /// rewinding MOVE. Minted from `--discard-local-commits`.
+///
+/// The one token whose home is this module rather than `cli::consent`, and
+/// the reason is that its flag has a *second* spelling: sync records
+/// `--discard-local-commits` in the owner record's overrides, and
+/// `rwv sync --continue` resumes a rewinding op from that record with no
+/// flags on the command line at all. A `from_flag` mint at dispatch would
+/// therefore cover only the fresh path and leave the resumed one — the
+/// path that actually crashes and gets re-run — unable to prove the same
+/// consent. `granted()` is `pub(crate)`, so the crate-internal call sites
+/// are the whole minting surface, and they are pinned by
+/// `tests/consent_minting_audit_test.rs`.
 #[derive(Debug)]
 pub struct DiscardLocalCommitsConsent(());
 
 impl DiscardLocalCommitsConsent {
-    /// Mint from the operator's `--discard-local-commits`.
-    // No caller yet: the flag module that mints this is a separate change.
-    #[allow(dead_code)]
+    /// Mint from the operator's `--discard-local-commits`, in whichever of
+    /// its two spellings the caller is holding — the parsed flag, or the
+    /// override recorded from it that `--continue` reads back.
     pub(crate) fn granted() -> Self {
         Self(())
     }
@@ -2760,6 +2771,27 @@ pub trait Vcs {
     fn create_savepoint_ref(&self, repo: &Path, op_id: &str) -> Result<SavepointRef, VcsError> {
         let at = self.create_savepoint(repo, op_id)?;
         Ok(SavepointRef {
+            repo: repo.to_path_buf(),
+            op_id: op_id.to_owned(),
+            at,
+        })
+    }
+
+    /// Proof for a savepoint an *earlier* call wrote. `None` when there is
+    /// none under `op_id`.
+    ///
+    /// The same proposition as [`create_savepoint_ref`] — "this savepoint
+    /// exists on disk, at this revision, in this repo" — reached by reading
+    /// rather than writing, so it is a second producer of the type and not
+    /// a weaker one. It exists because a long-running op writes its
+    /// savepoint once, before the phases, and a `--continue` resumes into a
+    /// phase that still needs the warrant: re-*creating* the savepoint there
+    /// would silently move the recovery point to the post-crash tip, which
+    /// is the one thing the savepoint is for.
+    ///
+    /// [`create_savepoint_ref`]: Vcs::create_savepoint_ref
+    fn resolve_savepoint_ref(&self, repo: &Path, op_id: &str) -> Option<SavepointRef> {
+        self.resolve_savepoint(repo, op_id).map(|at| SavepointRef {
             repo: repo.to_path_buf(),
             op_id: op_id.to_owned(),
             at,

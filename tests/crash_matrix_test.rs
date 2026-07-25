@@ -2021,6 +2021,86 @@ fn cell_override_resume_fidelity_discard_local_commits() {
     );
 }
 
+/// A resumed `--discard-local-commits` rewind must build its warrant from the
+/// savepoint the op **already wrote**, never from a fresh one.
+///
+/// The rewinding MOVE of `branch-model.md` §3.2 needs a `DiscardWarrant`, and
+/// a `DiscardWarrant` needs a `SavepointRef` — proof a savepoint exists on
+/// disk. There are two ways to hold that proof and only one of them is
+/// correct here. Writing a savepoint at the rewind site would satisfy the
+/// type and stamp the ref at whatever HEAD is *then*; on a resume, a previous
+/// replay run has already rewound the project repo, so "then" is the
+/// post-rewind tip. The warrant would be honestly constructed and the
+/// recovery point would be the very state the operator wanted to recover
+/// *from* — `rwv abort` would restore them to the discard, and the commits
+/// the savepoint existed to keep reachable would be reachable from nothing.
+///
+/// So the setup below is the shape that tells the two apart: the savepoint
+/// records the pre-op tip, and the project repo has since moved off it.
+#[test]
+fn cell_resumed_discard_rewind_keeps_the_original_savepoint() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (primary, ww, _sha) = make_shared_workspaces(tmp.path());
+
+    // The pre-op tip: a project commit of the operator's that the discard is
+    // about to throw away.
+    let pre_op_tip = advance_one(
+        &ww.project_dir,
+        "notes.md",
+        "operator's project work\n",
+        "ww: project commit the discard will drop",
+    );
+
+    let op_id = "crash-matrix-discard-savepoint-fidelity";
+    plant_savepoint(&ww.project_dir, op_id);
+    assert_eq!(
+        git_out(
+            &["rev-parse", &format!("refs/rwv/pre-op/{op_id}")],
+            &ww.project_dir
+        ),
+        pre_op_tip,
+        "fixture: the savepoint must start out holding the pre-op tip"
+    );
+
+    // The crash: a previous replay run already performed the rewind, then
+    // died before cleanup. The project repo is off the savepoint.
+    git(&["reset", "--hard", "HEAD~1"], &ww.project_dir);
+    assert_ne!(
+        git_out(&["rev-parse", "HEAD"], &ww.project_dir),
+        pre_op_tip,
+        "fixture: the project repo must have moved off the savepoint, or this test \
+         cannot tell a resolved savepoint from a re-created one"
+    );
+
+    plant_owner_record(
+        &ww.root,
+        &OwnerRecordYaml {
+            id: op_id.to_owned(),
+            verb_str: PlantedVerb::Sync.yaml(),
+            source: primary.root.display().to_string(),
+            target: ww.root.display().to_string(),
+            phase: "replay",
+            overrides: vec!["discard-local-commits"],
+            ..Default::default()
+        },
+    );
+    plant_savepoint(&ww.server_dir, op_id);
+
+    run_continue(Verb::Sync, &ww.root, "discard-rewind/savepoint-fidelity");
+
+    assert_eq!(
+        git_out(
+            &["rev-parse", &format!("refs/rwv/pre-op/{op_id}")],
+            &ww.project_dir
+        ),
+        pre_op_tip,
+        "the resumed rewind must leave the savepoint on the PRE-OP tip. A savepoint \
+         re-written at the rewind site would sit on the post-rewind tip instead, and \
+         `rwv abort` would then restore the operator to the discard rather than to the \
+         work it discarded."
+    );
+}
+
 // ===========================================================================
 // CONTINUE-AFTER-SOURCE-MUTATION (one cell, pins design § 6's re-pin rule)
 // ===========================================================================
