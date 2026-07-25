@@ -16,6 +16,7 @@ use crate::workspace::{Checkout, Resolution, WorkspaceContext};
 use anyhow::Context;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeSet;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
@@ -107,8 +108,9 @@ struct UpdateNdjsonRecord<'a> {
 /// step is skipped when `filter` is non-empty — see the guard at the call
 /// site.
 ///
-/// When `commit` is true, the resulting lock is staged and committed in
-/// the project repo (same semantics as `rwv lock --commit`).
+/// When `commit` is true, the lock and the content authored against the
+/// tips it records are staged and committed together in the project repo —
+/// the derived change is never separated from the change that caused it.
 /// When `project_override` is `Some`, that project is updated instead of
 /// the active one (one-shot; does not change `.rwv-active`).
 /// When `json` is true, structured output is emitted: an envelope under
@@ -367,7 +369,8 @@ fn update_for_project(
     // they were already on. This preserves the invariant that the lock
     // always describes the whole manifest. The filter narrows the loop,
     // not the lock-shape — same decision as push in `src/push.rs`.
-    lock::lock(ctx, dirty, commit).context("failed to write lock after update")?;
+    let pending_commit = lock::write_project_lock(ctx, dirty, commit)
+        .context("failed to write lock after update")?;
 
     // Regeneration reads EVERY manifest member (member presence is gated on
     // `.exists()`, and content-derived fields read member working trees), so it
@@ -375,6 +378,7 @@ fn update_for_project(
     // bails above if any member is missing or failed to advance; a filtered one
     // proves nothing about the repos it skipped, so it leaves the managed files
     // alone and `rwv doctor --fix` remains the repair path.
+    let mut authored = BTreeSet::new();
     if filter.is_empty() {
         match workweave {
             Some((_, dir)) => {
@@ -383,6 +387,16 @@ fn update_for_project(
             None => crate::activate::activate_intent(project_name.as_str(), ctx),
         }
         .context("failed to regenerate integration content after update")?;
+        authored = crate::activate::owned_paths(active_root, project_name, &project.manifest);
+    }
+
+    // The regenerated content and the lock that records the tips it was
+    // derived from are one change: commit them together, after authoring.
+    // When authoring was withheld, `authored` is empty and this is the
+    // lock-only commit `rwv lock --commit` makes.
+    if let Some(pending) = &pending_commit {
+        lock::commit_project_lock(pending, &authored)
+            .context("failed to commit lock after update")?;
     }
 
     // Emit JSON envelope after lock write (so the lock is coherent before

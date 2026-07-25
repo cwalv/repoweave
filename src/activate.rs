@@ -556,6 +556,20 @@ fn compute_owned_set(
     owned
 }
 
+/// The root-relative paths rwv owns for `project`: the
+/// `generated_files() ∪ managed_files()` union, without the declaring
+/// integration each came from. The path set an intent verb authors, and so
+/// the set its commit has to carry.
+pub(crate) fn owned_paths(
+    root: &Path,
+    project: &ProjectName,
+    manifest: &Manifest,
+) -> BTreeSet<String> {
+    compute_owned_set(root, project, manifest)
+        .into_keys()
+        .collect()
+}
+
 /// Compute the owner-scoped surfacing set for the currently-active project,
 /// reading `.rwv-active` from `root`. Returns an empty set if no project is
 /// active (in which case no symlinks are owned by rwv and nothing gets
@@ -571,9 +585,7 @@ fn compute_active_owned_set(root: &Path) -> anyhow::Result<BTreeSet<String>> {
         return Ok(BTreeSet::new());
     }
     let manifest = Manifest::from_path(&manifest_path)?;
-    Ok(compute_owned_set(root, &active, &manifest)
-        .into_keys()
-        .collect())
+    Ok(owned_paths(root, &active, &manifest))
 }
 
 /// Surface the owner-scoped symlink set for `project` into `root` (the

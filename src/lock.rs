@@ -6,8 +6,8 @@ use crate::manifest::{
 use crate::vcs::vcs_for;
 use crate::workspace::{Checkout, WorkspaceContext};
 use anyhow::Context;
-use std::collections::BTreeMap;
-use std::path::Path;
+use std::collections::{BTreeMap, BTreeSet};
+use std::path::{Path, PathBuf};
 
 /// Build a commit message summarising which repos' lock entries changed.
 ///
@@ -162,10 +162,21 @@ pub(crate) fn commit_lock_file_with_message(
     project_dir: &Path,
     message: &str,
 ) -> anyhow::Result<bool> {
+    stage_and_commit(project_dir, &["rwv.lock"], message)
+}
+
+/// Stage `paths` (relative to `project_dir`) and commit from `project_dir`.
+///
+/// Returns `Ok(false)` when nothing ended up staged, `Ok(true)` when a
+/// commit was made. Every path must exist and be committable — callers
+/// derive the list from `git status`, which reports neither absent nor
+/// ignored files.
+fn stage_and_commit(project_dir: &Path, paths: &[&str], message: &str) -> anyhow::Result<bool> {
     use crate::git::git_command;
 
     let add_out = git_command()
-        .args(["add", "rwv.lock"])
+        .args(["add", "--"])
+        .args(paths)
         .current_dir(project_dir)
         .output()
         .context("failed to run git add")?;
@@ -202,14 +213,21 @@ pub(crate) fn commit_lock_file_with_message(
     Ok(true)
 }
 
-/// Commit `rwv.lock` from `project_dir` with a multi-repo summary message.
+/// Commit `rwv.lock` from `project_dir` with a multi-repo summary message,
+/// together with whatever of `authored` the run actually rewrote.
 ///
-/// Refuses if the project repo has uncommitted changes outside the lock
-/// file — the auto-commit must not bundle unrelated work-in-progress.
+/// `authored` is the owned path set of an intent verb that regenerated
+/// managed content against the same tips this lock records; the two changes
+/// are one change and belong in one commit. It is empty for a verb that
+/// authors nothing, which reduces this to a lock-only commit.
+///
+/// Refuses if the project repo has uncommitted changes outside that set —
+/// the auto-commit must not bundle unrelated work-in-progress.
 fn commit_lock_file(
     project_dir: &Path,
     new_lock: &ResolvedLockFile,
     old_lock: Option<&ResolvedLockFile>,
+    authored: &BTreeSet<String>,
 ) -> anyhow::Result<()> {
     use crate::git::git_command;
 
@@ -224,14 +242,25 @@ fn commit_lock_file(
         anyhow::bail!("git status failed: {}", stderr.trim());
     }
     let status_str = String::from_utf8_lossy(&status_out.stdout);
-    let has_other_changes = status_str.lines().any(|line| {
-        if line.starts_with("??") {
-            return false; // untracked files are never committed
-        }
+
+    // One pass over the status answers both questions: which owned paths to
+    // stage, and whether anything unrelated is in the way. Files git omits
+    // here — absent, or ignored by operator policy — are omitted from the
+    // commit for the same reason.
+    let mut authored_paths: Vec<&str> = Vec::new();
+    let mut has_other_changes = false;
+    for line in status_str.lines() {
         // Porcelain format: "XY path" — path starts at byte 3.
         let path = line.get(3..).unwrap_or("").trim();
-        path != "rwv.lock"
-    });
+        if path == "rwv.lock" {
+            continue;
+        }
+        if let Some(owned) = authored.get(path) {
+            authored_paths.push(owned.as_str());
+        } else if !line.starts_with("??") {
+            has_other_changes = true;
+        }
+    }
     if has_other_changes {
         anyhow::bail!(
             "project repo has uncommitted changes outside rwv.lock; \
@@ -239,9 +268,12 @@ fn commit_lock_file(
         );
     }
 
+    let mut paths = vec!["rwv.lock"];
+    paths.extend(authored_paths);
+
     let message = build_commit_message(new_lock, old_lock);
-    if commit_lock_file_with_message(project_dir, &message)? {
-        eprintln!("Committed rwv.lock");
+    if stage_and_commit(project_dir, &paths, &message)? {
+        eprintln!("Committed {}", paths.join(", "));
     } else {
         eprintln!("Lock unchanged, nothing to commit.");
     }
@@ -260,6 +292,32 @@ fn commit_lock_file(
 /// ecosystem-lockfile refresh is workspace membership change, not
 /// cross-repo snapshot.
 pub fn lock(ctx: &WorkspaceContext, dirty: bool, commit: bool) -> anyhow::Result<()> {
+    match write_project_lock(ctx, dirty, commit)? {
+        Some(pending) => commit_project_lock(&pending, &BTreeSet::new()),
+        None => Ok(()),
+    }
+}
+
+/// A written `rwv.lock` and what committing it needs.
+///
+/// [`lock`] is the whole of `rwv lock`; a verb that also authors managed
+/// content splits it, because the authoring pass has to run between the
+/// write and the commit for both changes to land together.
+pub(crate) struct PendingLockCommit {
+    project_dir: PathBuf,
+    new_lock: ResolvedLockFile,
+    old_lock: Option<ResolvedLockFile>,
+}
+
+/// Regenerate and write `rwv.lock` for the current workspace context.
+///
+/// Returns the pending commit when `commit` is set — the caller finishes
+/// with [`commit_project_lock`], after any authoring pass of its own.
+pub(crate) fn write_project_lock(
+    ctx: &WorkspaceContext,
+    dirty: bool,
+    commit: bool,
+) -> anyhow::Result<Option<PendingLockCommit>> {
     // Cross-verb mutex (Correction 1, COVERAGE), scoped to `--commit`. Writing
     // the working-tree `rwv.lock` (plain `rwv lock`) is benign — it is the
     // auto-relock's own input and the carve-out in Correction 3 treats a dirty
@@ -315,9 +373,23 @@ pub fn lock(ctx: &WorkspaceContext, dirty: bool, commit: bool) -> anyhow::Result
 
     eprintln!("Wrote {}", lock_path.display());
 
-    if commit {
-        commit_lock_file(&project_dir, &lock, old_lock.as_ref())?;
-    }
+    Ok(commit.then_some(PendingLockCommit {
+        project_dir,
+        new_lock: lock,
+        old_lock,
+    }))
+}
 
-    Ok(())
+/// Commit a written `rwv.lock`, carrying whatever of `authored` the caller
+/// rewrote against the same tips.
+pub(crate) fn commit_project_lock(
+    pending: &PendingLockCommit,
+    authored: &BTreeSet<String>,
+) -> anyhow::Result<()> {
+    commit_lock_file(
+        &pending.project_dir,
+        &pending.new_lock,
+        pending.old_lock.as_ref(),
+        authored,
+    )
 }

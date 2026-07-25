@@ -12,6 +12,11 @@
 //!     writes a single coherent lock at the end
 //!   - update --json emits an envelope { "$schema": ..., "repos": [...] }
 //!   - update --json -j N (N > 1) streams NDJSON, one record per repo
+//!   - update --commit lands the regenerated integration content in the
+//!     same commit as the lock bump that caused it, and nothing else:
+//!     unrelated work in progress still refuses, a filtered run (which
+//!     authors nothing) commits the lock alone, and a generated file the
+//!     operator gitignored stays out
 //!
 //! Style note: this fixture is the bare-remote-plus-clone-plus-project
 //! shape from `update_test.rs`; we keep it local rather than forking
@@ -565,4 +570,164 @@ fn update_json_emits_ndjson_under_j_gt_1() {
             "expected {rp} in NDJSON stream; got {seen_paths:?}"
         );
     }
+}
+
+// ===========================================================================
+// 7. update --commit lands the regenerated content in the lock commit
+//
+// Doc claim (trigger model): an intent verb authors the new managed region
+// "as part of that operation, so the file change lands *in the same commit*,
+// alongside the rwv.yaml/rwv.lock change that caused it". `update --commit`
+// is the only intent verb that makes the commit itself, so it is the only
+// one that can break the claim by leaving the derived files behind.
+// ===========================================================================
+
+/// Advance `bare`'s main by a commit that adds a `go.mod`, so the member is
+/// only detected as a go-work member *after* the update — a generated file
+/// that changes because of the advance, not because of membership.
+fn advance_bare_main_adding_go_mod(bare: &Path, module: &str) -> String {
+    let parent = bare.parent().unwrap();
+    let stem = bare.file_stem().unwrap().to_string_lossy().into_owned();
+    let work = parent.join(format!("__gomod_{stem}"));
+    git_run(
+        parent,
+        &["clone", bare.to_str().unwrap(), work.to_str().unwrap()],
+    );
+    git_run(&work, &["config", "user.email", "test@test.com"]);
+    git_run(&work, &["config", "user.name", "Test"]);
+    std::fs::write(work.join("go.mod"), format!("module {module}\n\ngo 1.21\n")).unwrap();
+    git_run(&work, &["add", "."]);
+    git_run(&work, &["commit", "-m", "add go.mod"]);
+    git_run(&work, &["push", "origin", "main"]);
+    git_run(&work, &["rev-parse", "HEAD"])
+}
+
+/// Paths touched by the tip commit of the repo at `dir`.
+fn files_in_head_commit(dir: &Path) -> Vec<String> {
+    git_run(
+        dir,
+        &["diff-tree", "--no-commit-id", "--name-only", "-r", "HEAD"],
+    )
+    .lines()
+    .map(str::to_string)
+    .collect()
+}
+
+#[test]
+fn update_commit_lands_generated_files_in_the_lock_commit() {
+    let repos = [("local/org/a", "owned")];
+    let ws = build_workspace("alpha", &repos);
+    let project_dir = ws.workspace.join("projects").join(&ws.project_name);
+
+    let (_, bare) = &ws.manifest_bares[0];
+    advance_bare_main_adding_go_mod(bare, "example.com/a");
+
+    rwv()
+        .args(["update", "--dirty", "--commit"])
+        .current_dir(&ws.workspace)
+        .assert()
+        .success();
+
+    let committed = files_in_head_commit(&project_dir);
+    assert!(
+        committed.contains(&"rwv.lock".to_string()),
+        "the lock bump must be in the commit; got {committed:?}"
+    );
+    assert!(
+        committed.contains(&"go.work".to_string()),
+        "the generated file the lock bump caused must land in the SAME commit; \
+         got {committed:?}"
+    );
+    assert_eq!(
+        git_run(&project_dir, &["status", "--porcelain"]),
+        "",
+        "nothing the intent verb authored may be left uncommitted"
+    );
+}
+
+/// A filtered update proves nothing about the repos it skipped, so it
+/// withholds authoring — and the commit is then legitimately lock-only.
+/// The widened staging set must not force content into that commit.
+#[test]
+fn update_filtered_commit_is_lock_only() {
+    let repos = [("local/org/a", "owned"), ("local/org/b", "owned")];
+    let ws = build_workspace("alpha", &repos);
+    let project_dir = ws.workspace.join("projects").join(&ws.project_name);
+
+    let (_, bare) = ws
+        .manifest_bares
+        .iter()
+        .find(|(p, _)| p == "local/org/a")
+        .unwrap();
+    advance_bare_main_adding_go_mod(bare, "example.com/a");
+
+    rwv()
+        .args(["update", "--dirty", "--commit", "--repo=local/org/a"])
+        .current_dir(&ws.workspace)
+        .assert()
+        .success();
+
+    assert_eq!(
+        files_in_head_commit(&project_dir),
+        vec!["rwv.lock".to_string()],
+        "a filtered update authors nothing, so its commit carries the lock alone"
+    );
+}
+
+/// Staging the authored set must not become `commit -a`: work in progress
+/// the verb did not produce still blocks the auto-commit.
+#[test]
+fn update_commit_still_refuses_unrelated_dirt() {
+    let repos = [("local/org/a", "owned")];
+    let ws = build_workspace("alpha", &repos);
+    let project_dir = ws.workspace.join("projects").join(&ws.project_name);
+
+    std::fs::write(project_dir.join("notes.md"), "draft\n").unwrap();
+    git_run(&project_dir, &["add", "notes.md"]);
+    git_run(&project_dir, &["commit", "-m", "notes"]);
+    std::fs::write(project_dir.join("notes.md"), "draft, edited\n").unwrap();
+
+    let (_, bare) = &ws.manifest_bares[0];
+    advance_bare_main(bare);
+
+    rwv()
+        .args(["update", "--dirty", "--commit"])
+        .current_dir(&ws.workspace)
+        .assert()
+        .failure()
+        .stderr(predicates::str::contains(
+            "uncommitted changes outside rwv.lock",
+        ));
+}
+
+/// A generated file the operator chose to gitignore is not part of the
+/// committed triple, so it is not part of the commit either — and its
+/// absence must not fail the staging step.
+#[test]
+fn update_commit_skips_a_gitignored_generated_file() {
+    let repos = [("local/org/a", "owned")];
+    let ws = build_workspace("alpha", &repos);
+    let project_dir = ws.workspace.join("projects").join(&ws.project_name);
+
+    std::fs::write(project_dir.join(".gitignore"), "go.work\n").unwrap();
+    git_run(&project_dir, &["add", ".gitignore"]);
+    git_run(&project_dir, &["commit", "-m", "ignore go.work"]);
+
+    let (_, bare) = &ws.manifest_bares[0];
+    advance_bare_main_adding_go_mod(bare, "example.com/a");
+
+    rwv()
+        .args(["update", "--dirty", "--commit"])
+        .current_dir(&ws.workspace)
+        .assert()
+        .success();
+
+    assert!(
+        project_dir.join("go.work").exists(),
+        "authoring still writes the file; only the commit skips it"
+    );
+    assert!(
+        !files_in_head_commit(&project_dir).contains(&"go.work".to_string()),
+        "an ignored generated file must stay out of the commit"
+    );
 }

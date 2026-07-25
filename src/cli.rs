@@ -346,7 +346,7 @@ pub enum Commands {
         /// Allow update with uncommitted changes in repos when relocking
         #[arg(long)]
         dirty: bool,
-        /// Commit rwv.lock after writing it
+        /// Commit rwv.lock together with the integration files regenerated against the new tips
         #[arg(long)]
         commit: bool,
         /// Operate on this project instead of the active project (does not change `.rwv-active`)
