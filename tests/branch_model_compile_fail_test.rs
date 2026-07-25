@@ -511,6 +511,23 @@ fn a_discard_unmerged_consent_cannot_be_forged_by_tuple_literal() {
 }
 
 #[test]
+fn an_adopt_detached_consent_cannot_be_forged_by_tuple_literal() {
+    // Unlike the other three, this token has no `granted()` — no in-crate
+    // fixture needs an unconditional mint yet — so `from_flag` is the only
+    // producer.
+    assert_fails_with(
+        "E0423",
+        "the field is private to cli::consent; only from_flag can produce one",
+        r#"
+        use repoweave::cli::consent::AdoptDetachedConsent;
+        pub fn forge() -> AdoptDetachedConsent {
+            AdoptDetachedConsent(())
+        }
+        "#,
+    );
+}
+
+#[test]
 fn a_rewinding_move_requires_a_warrant_argument() {
     assert_fails_with(
         "E0061",
