@@ -98,7 +98,7 @@ pub enum Commands {
         frozen: bool,
         /// Bootstrap into a non-empty directory that is not a workspace
         #[arg(long)]
-        force: bool,
+        allow_non_empty_dir: bool,
         /// Skip cloning/fetching repositories with role: reference
         #[arg(long)]
         no_reference: bool,
@@ -138,7 +138,7 @@ pub enum Commands {
         delete: bool,
         /// With `--delete`, remove the clone even if other projects still reference it
         #[arg(long)]
-        force: bool,
+        delete_shared_clone: bool,
         /// Operate on this project instead of the active project (does not change `.rwv-active`)
         #[arg(long)]
         project: Option<String>,
@@ -403,11 +403,12 @@ pub enum WorkweaveAction {
         ///
         /// Without this flag, re-invoking `create` against an existing
         /// workweave preserves non-git state in place (the idempotent
-        /// path). Use `--force` for explicit rebuild scenarios. Refuses
-        /// if the existing workweave has uncommitted changes — destroy
-        /// those explicitly with `workweave delete --force`.
+        /// path). Use `--replace-existing` for explicit rebuild scenarios.
+        /// Refuses if the existing workweave has uncommitted or unmerged
+        /// work — destroy that explicitly with `workweave delete
+        /// --discard-uncommitted --discard-unmerged-commits`.
         #[arg(long)]
-        force: bool,
+        replace_existing: bool,
         /// Workspace to fork the new workweave from. Accepts `primary`, an
         /// absolute or relative path, or is omitted to fork from CWD's
         /// active workspace (the workweave when invoked from inside one,
@@ -445,12 +446,16 @@ pub enum WorkweaveAction {
     Delete {
         /// Workweave name
         name: String,
-        /// Delete even if the workweave has uncommitted changes or commits
-        /// not yet merged into the parent weave (matches `git branch -D`,
-        /// which discards both). Without this flag, deletion refuses if any
-        /// worktree is dirty or diverged.
+        /// Delete even if a worktree has uncommitted changes. Without this
+        /// flag, deletion refuses and names the dirty paths.
         #[arg(long)]
-        force: bool,
+        discard_uncommitted: bool,
+        /// Delete even if a worktree holds commits not merged into the
+        /// parent weave. Without this flag, deletion refuses and names the
+        /// diverged repos. Together with `--discard-uncommitted` this is the
+        /// `git branch -D` contract, which discards both.
+        #[arg(long)]
+        discard_unmerged_commits: bool,
     },
     /// List existing workweaves
     List,

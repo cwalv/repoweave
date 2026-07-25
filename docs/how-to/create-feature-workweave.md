@@ -84,7 +84,7 @@ If the work is a dead end and you want to throw it away without landing anything
 rwv workweave web-app delete payments
 ```
 
-Default deletion refuses if any worktree is dirty or holds commits not reachable from the recorded parent or primary; pass `--force` to consent to losing that work. See [workweave lifecycle](../explanation/joints/workweave-lifecycle.md#deletion) for the full delete contract.
+Default deletion refuses if any worktree is dirty or holds commits not reachable from the recorded parent or primary; pass `--discard-uncommitted` and/or `--discard-unmerged-commits` to consent to losing that work. See [workweave lifecycle](../explanation/joints/workweave-lifecycle.md#deletion) for the full delete contract.
 
 ## Related
 

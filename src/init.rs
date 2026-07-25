@@ -46,7 +46,7 @@ use std::path::Path;
 fn bootstrap_workspace_if_empty(cwd: &Path) -> anyhow::Result<()> {
     // Reuse the shared gate — don't duplicate emptiness / workspace logic.
     // Map the error to an init-specific message (the generic message mentions
-    // --force, which `init` does not expose).
+    // --allow-non-empty-dir, which `init` does not expose).
     require_workspace_or_empty(cwd, false).map_err(|_| {
         anyhow::anyhow!(
             "`rwv init` requires either an existing workspace or an empty directory; \

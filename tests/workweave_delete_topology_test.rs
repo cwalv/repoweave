@@ -231,7 +231,8 @@ fn delete_uses_resolved_parent_under_inverted_topology() {
         &ws,
         &ProjectName::new("web-app"),
         &WorkweaveName::new("ww"),
-        true, // force: skip dirty/unmerged checks; we're testing topology
+        true, // discard_uncommitted: we're testing topology, not the dirty gate
+        true, // discard_unmerged_commits
     );
     assert!(
         result.is_ok(),
@@ -254,9 +255,10 @@ fn delete_uses_resolved_parent_under_inverted_topology() {
 /// When a workweave checkout is itself a canonical store that OTHER
 /// worktrees link into (the catastrophic case the joint flags as
 /// fo-a0spgj hazard 2), delete must refuse with a named precondition
-/// pointing at `rwv doctor`. The refusal is NOT bypassable with --force.
+/// pointing at `rwv doctor`. The refusal is NOT bypassable with the discard
+/// waivers.
 #[test]
-fn delete_refuses_when_checkout_hosts_foreign_worktrees_even_with_force() {
+fn delete_refuses_when_checkout_hosts_foreign_worktrees_even_with_waivers() {
     let tmp = tempfile::tempdir().unwrap();
     let (ws, primary_slot) = make_workspace(tmp.path(), "web-app");
 
@@ -306,12 +308,13 @@ fn delete_refuses_when_checkout_hosts_foreign_worktrees_even_with_force() {
     write_marker(&ww_dir, &ws, "web-app");
     std::fs::write(ww_dir.join(".rwv-active"), "web-app\n").unwrap();
 
-    // Even with force, delete must refuse.
+    // Even with both waivers, delete must refuse.
     let result = delete_workweave(
         &ws,
         &ProjectName::new("web-app"),
         &WorkweaveName::new("bad"),
-        true, // force
+        true,
+        true,
     );
     let err = result.expect_err("delete should refuse when a checkout hosts foreign worktrees");
     let msg = format!("{err:#}");
@@ -378,6 +381,7 @@ fn delete_proceeds_when_canonical_checkout_has_no_foreign_dependents() {
         &ws,
         &ProjectName::new("web-app"),
         &WorkweaveName::new("lone"),
+        true,
         true,
     );
     assert!(
@@ -452,7 +456,7 @@ fn merged_check_refuses_vouch_across_distinct_canonical_stores() {
     write_marker(&ww_dir, &ws, "web-app");
     std::fs::write(ww_dir.join(".rwv-active"), "web-app\n").unwrap();
 
-    // Without --force, delete should refuse because the workweave carries
+    // Without the unmerged waiver, delete should refuse because the workweave carries
     // commits that the baseline (primary slot, disconnected DAG) cannot
     // reach. The pre-fix code asked `is_ancestor` in the WORKWEAVE
     // checkout (real_canonical DAG, which DOES contain both refs) and
@@ -465,7 +469,8 @@ fn merged_check_refuses_vouch_across_distinct_canonical_stores() {
         &ws,
         &ProjectName::new("web-app"),
         &WorkweaveName::new("diverged"),
-        false, // not force — exercise the merged-check
+        true,  // uncommitted changes are irrelevant here
+        false, // exercise the merged-check
     );
     let err = result.expect_err("delete should refuse when workweave carries unmerged work");
     let msg = format!("{err:#}");

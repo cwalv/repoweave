@@ -31,7 +31,7 @@ fail to clone are skipped without failing the overall run.
 ## Invocation
 
 ```
-rwv fetch [<source>] [--frozen] [--force] [--no-reference]
+rwv fetch [<source>] [--frozen] [--allow-non-empty-dir] [--no-reference]
           [--role <role>...] [--repo <selector>...] [-j <N>] [--json]
 ```
 
@@ -43,8 +43,8 @@ rwv fetch [<source>] [--frozen] [--force] [--no-reference]
   not inside a workspace or no project is active.
 - `--frozen` — CI mode: error if the lock is missing or does not cover all
   manifest repos. Never writes the lock.
-- `--force` — bootstrap into a non-empty directory that is not already a
-  workspace (normally an error). Only meaningful in bootstrap mode;
+- `--allow-non-empty-dir` — bootstrap into a non-empty directory that is not
+  already a workspace (normally an error). Only meaningful in bootstrap mode;
   rejected when `<source>` is absent.
 - `--no-reference` — skip repos with `role: reference` (useful when mirrors
   are offline).
@@ -194,7 +194,8 @@ Schema:
   or `"skipped"`.
 - non-zero — the project repo failed to clone, at least one non-reference
   repo failed, `--frozen` detected a missing or stale lock, or the current
-  directory is not a workspace and `--force` was not passed. Under `--json`,
+  directory is not a workspace and `--allow-non-empty-dir` was not passed.
+  Under `--json`,
   the envelope (or NDJSON stream) is emitted before exit even on failure, so
   consumers always get parseable output.
 
@@ -260,12 +261,13 @@ rwv fetch
 - *project 'X' already exists at projects/X/* — run `rwv fetch` from a
   fresh directory, or use a scoped path hint printed in the error.
 - *no repoweave workspace found and … is not empty* — the current directory
-  is not a workspace; use `--force` to bootstrap here anyway.
+  is not a workspace; use `--allow-non-empty-dir` to bootstrap here anyway.
 - *no SOURCE and no repoweave workspace found above …* — in-place mode
   (no `<source>`) requires an existing workspace; either `cd` into one or
   pass a `<source>` to bootstrap a new project.
-- *--force has no effect without SOURCE* — `--force` is only meaningful in
-  bootstrap mode; drop it to re-materialize missing members in place.
+- *--allow-non-empty-dir has no effect without SOURCE* — the flag is only
+  meaningful in bootstrap mode; drop it to re-materialize missing members in
+  place.
 - *lock file does not exist* (with `--frozen`) — the project has no
   `rwv.lock`; run without `--frozen` to bootstrap it.
 - *lock file is stale* (with `--frozen`) — the lock does not cover all

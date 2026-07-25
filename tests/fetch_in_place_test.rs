@@ -12,7 +12,7 @@
 //! - `--repo` filter limits materialization
 //! - end-to-end DanglingReference: doctor reports → fetch → doctor clean
 //! - usage error when no SOURCE AND no workspace
-//! - `--force` without SOURCE is rejected (bootstrap-only flag)
+//! - `--allow-non-empty-dir` without SOURCE is rejected (bootstrap-only flag)
 
 use assert_cmd::Command;
 use predicates::prelude::*;
@@ -463,21 +463,21 @@ fn in_place_fetch_outside_workspace_names_both_forms() {
 }
 
 // ============================================================================
-// --force is a bootstrap knob; rejected when no SOURCE
+// --allow-non-empty-dir is a bootstrap knob; rejected when no SOURCE
 // ============================================================================
 
 #[test]
-fn in_place_fetch_force_without_source_is_rejected() {
-    // --force is only meaningful in bootstrap mode (allow non-empty non-workspace
-    // dir). Passing it with no SOURCE would silently pretend to matter; keep
-    // the UX honest by rejecting it.
+fn in_place_fetch_allow_non_empty_dir_without_source_is_rejected() {
+    // --allow-non-empty-dir is only meaningful in bootstrap mode. Passing it
+    // with no SOURCE would silently pretend to matter; keep the UX honest by
+    // rejecting it.
     let tmp = tempfile::tempdir().unwrap();
     rwv()
-        .args(["fetch", "--force"])
+        .args(["fetch", "--allow-non-empty-dir"])
         .current_dir(tmp.path())
         .assert()
         .failure()
-        .stderr(predicate::str::contains("--force"));
+        .stderr(predicate::str::contains("--allow-non-empty-dir"));
 }
 
 // ============================================================================

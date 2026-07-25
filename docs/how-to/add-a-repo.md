@@ -85,7 +85,7 @@ Removes the entry from `rwv.yaml` and re-runs integrations. The clone stays on d
 rwv remove github/example/some-lib --delete
 ```
 
-`--delete` checks that no other project's manifest references the path, then removes the directory. Use `--force` to bypass the safety check.
+`--delete` checks that no other project's manifest references the path, then removes the directory. Use `--delete-shared-clone` to remove it even when another project still references it.
 
 ## Related
 

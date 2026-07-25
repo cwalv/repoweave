@@ -22,10 +22,9 @@ manifest. It will refuse (with an error) if another project's `rwv.yaml`
 references the same path — deleting shared infrastructure would break that
 project's fetch/sync operations.
 
-Use `--force` alongside `--delete` to bypass the cross-project safety check
-and remove the clone directory regardless. Use this only when you have verified
-that no other project uses the repo, or when you intend to break those
-references.
+Use `--delete-shared-clone` alongside `--delete` to remove the clone directory
+regardless. Use this only when you have verified that no other project uses the
+repo, or when you intend to break those references.
 
 ### Clone placement
 
@@ -37,15 +36,15 @@ canonical clone, which also invalidates any live worktrees pointing at it.
 ## Invocation
 
 ```
-rwv remove <path> [--delete] [--force] [--project <name>]
+rwv remove <path> [--delete] [--delete-shared-clone] [--project <name>]
 ```
 
 - `<path>` — manifest-relative path of the repo to remove (as listed in
   `rwv.yaml`, e.g. `github/myorg/myrepo`).
 - `--delete` — also remove the clone directory from disk. Errors if another
-  project references the same path; bypass with `--force`.
-- `--force` — skip the cross-project safety check when `--delete` is set.
-  Has no effect without `--delete`.
+  project references the same path; waive with `--delete-shared-clone`.
+- `--delete-shared-clone` — delete the clone even when another project still
+  references it. Has no effect without `--delete`.
 - `--project <name>` — operate on this project rather than the active project.
   Does not change `.rwv-active`.
 
@@ -63,8 +62,8 @@ Progress messages to stderr:
 
 - `0` — repo removed from manifest, activation succeeded.
 - non-zero — path not found in manifest, `--delete` cross-project check
-  failed (without `--force`), directory removal failed, or activation
-  returned an error.
+  failed (without `--delete-shared-clone`), directory removal failed, or
+  activation returned an error.
 
 ## Examples
 
@@ -80,18 +79,18 @@ Remove from manifest and delete the clone:
 rwv remove github/myorg/old-repo --delete
 ```
 
-Remove and force-delete even if another project references the clone:
+Remove and delete the clone even if another project references it:
 
 ```
-rwv remove github/myorg/old-repo --delete --force
+rwv remove github/myorg/old-repo --delete --delete-shared-clone
 ```
 
 ## Common errors
 
 - *path not in manifest* — the given path does not appear in `rwv.yaml`. Check
   the exact manifest path with `rwv status`.
-- *another project references this path; refusing --delete without --force* —
-  the clone is shared. Verify the other project and use `--force` only when
-  safe.
+- *another project references this path; refusing --delete without
+  --delete-shared-clone* — the clone is shared. Verify the other project and
+  use `--delete-shared-clone` only when safe.
 - *manifest parse failure* — `rwv.yaml` could not be loaded; verify the file
   is valid YAML.

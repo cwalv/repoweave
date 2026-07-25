@@ -300,6 +300,47 @@ fn main() -> anyhow::Result<()> {
             );
             std::process::exit(2);
         }
+        // Detect: `--force` on a verb whose precondition waiver was renamed to
+        // name the consequence it consents to. `push --force` is untouched — it
+        // is git's force-push, not a precondition waiver.
+        if raw_args.iter().any(|a| a == "--force") {
+            let migration = match raw_args.get(1).map(|s| s.as_str()) {
+                Some("fetch") => Some(
+                    "`--force` has been renamed on `rwv fetch`.\n\
+                     \n\
+                     Use `--allow-non-empty-dir` to bootstrap into a non-empty directory \
+                     that is not a workspace.",
+                ),
+                Some("remove") => Some(
+                    "`--force` has been renamed on `rwv remove`.\n\
+                     \n\
+                     Use `--delete-shared-clone` to delete a clone that other projects \
+                     still reference.",
+                ),
+                Some("workweave") => match raw_args.get(3).map(|s| s.as_str()) {
+                    Some("create") => Some(
+                        "`--force` has been renamed on `rwv workweave <project> create`.\n\
+                         \n\
+                         Use `--replace-existing` to destroy an existing workweave and \
+                         recreate it from scratch.",
+                    ),
+                    Some("delete") => Some(
+                        "`--force` has been split on `rwv workweave <project> delete`.\n\
+                         \n\
+                         Replace it with the specific override(s) you need:\n\
+                           --discard-uncommitted       delete despite uncommitted changes\n\
+                           --discard-unmerged-commits  delete despite commits not merged \
+                         into the parent weave",
+                    ),
+                    _ => None,
+                },
+                _ => None,
+            };
+            if let Some(msg) = migration {
+                eprintln!("error: {msg}");
+                std::process::exit(2);
+            }
+        }
         // Detect: rwv workweave <PROJECT> <WORD> where WORD is a bare token that
         // is neither a known subcommand nor a flag. clap consumes <PROJECT> as
         // the `[PROJECT]` positional, then sees WORD as an *unexpected argument*
@@ -501,7 +542,7 @@ fn main() -> anyhow::Result<()> {
         Some(Commands::Fetch {
             source,
             frozen,
-            force,
+            allow_non_empty_dir,
             no_reference,
             roles,
             repos,
@@ -524,22 +565,28 @@ fn main() -> anyhow::Result<()> {
             match source {
                 Some(src) => {
                     // SOURCE-mode: bootstrap a project into the workspace (or
-                    // an empty directory under --force). The origin dir is the
-                    // bootstrap target — no invocation-context resolution yet.
-                    repoweave::workspace::require_workspace_or_empty(&origin_dir, force)?;
+                    // an empty directory, or a non-empty one under
+                    // --allow-non-empty-dir). The origin dir is the bootstrap
+                    // target — no invocation-context resolution yet.
+                    repoweave::workspace::require_workspace_or_empty(
+                        &origin_dir,
+                        allow_non_empty_dir,
+                    )?;
                     fetch::run_fetch(&src, &origin_dir, mode, no_reference, &filter, jobs, json)?;
                 }
                 None => {
-                    // In-place mode: no SOURCE, no --force needed (in-place
-                    // requires a workspace). Re-materialize missing manifest
-                    // members of the active project. `--force` is a bootstrap
-                    // knob (non-empty non-workspace directory); it has no
-                    // meaning in-place, so reject it to keep the UX honest.
-                    if force {
+                    // In-place mode: no SOURCE (in-place requires a
+                    // workspace). Re-materialize missing manifest members of
+                    // the active project. `--allow-non-empty-dir` is a
+                    // bootstrap knob (non-empty non-workspace directory); it
+                    // has no meaning in-place, so reject it to keep the UX
+                    // honest.
+                    if allow_non_empty_dir {
                         anyhow::bail!(
-                            "rwv fetch: --force has no effect without SOURCE; \
+                            "rwv fetch: --allow-non-empty-dir has no effect without SOURCE; \
                              pass a SOURCE to bootstrap into a non-empty directory, \
-                             or drop --force to re-materialize missing members in place"
+                             or drop --allow-non-empty-dir to re-materialize missing members \
+                             in place"
                         );
                     }
                     let ctx = WorkspaceContext::resolve(&origin_dir, None).with_context(|| {
@@ -570,12 +617,12 @@ fn main() -> anyhow::Result<()> {
         Some(Commands::Remove {
             path,
             delete,
-            force,
+            delete_shared_clone,
             project,
         }) => {
             let project_override = project.map(repoweave::manifest::ProjectName::new);
             let ctx = resolve_project_scoped(&origin_dir, project_override, use_workweave_flag)?;
-            add_remove::run_remove(&path, delete, force, &ctx)?;
+            add_remove::run_remove(&path, delete, delete_shared_clone, &ctx)?;
         }
         Some(Commands::Workweave {
             project,
@@ -601,17 +648,22 @@ fn main() -> anyhow::Result<()> {
                             println!("{}", n);
                         }
                     }
-                    Some(WorkweaveAction::Delete { name, force }) => {
+                    Some(WorkweaveAction::Delete {
+                        name,
+                        discard_uncommitted,
+                        discard_unmerged_commits,
+                    }) => {
                         repoweave::workweave::delete_workweave(
                             primary_root,
                             &project,
                             &WorkweaveName::new(name),
-                            force,
+                            discard_uncommitted,
+                            discard_unmerged_commits,
                         )?;
                     }
                     Some(WorkweaveAction::Create {
                         name,
-                        force,
+                        replace_existing,
                         from,
                         capture_dirty,
                         worktree_references,
@@ -635,7 +687,7 @@ fn main() -> anyhow::Result<()> {
                             &source_root,
                             &project,
                             &WorkweaveName::new(name),
-                            force,
+                            replace_existing,
                             capture_dirty,
                             worktree_references,
                             dir_override,

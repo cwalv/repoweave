@@ -87,7 +87,7 @@ Two modes, keyed on whether `<source>` is given:
 | Flag | Effect |
 |---|---|
 | `--frozen` | Error if lock is stale; never advance. Suitable for CI |
-| `--force` | Bypass safety checks; re-clone even if a canonical clone directory is already present |
+| `--allow-non-empty-dir` | Bootstrap into a non-empty directory that is not a workspace |
 | `--role` / `--repo` | Selector filters (see [Selector grammar](#selector-grammar)) |
 | `-j N` | Parallel per-repo workers (default: min(nproc, 8)) |
 | `--json` | Structured output / NDJSON when `-j N` with `N > 1` |
@@ -163,14 +163,14 @@ Clone a repo (if not present), register it in the *active workspace*'s `rwv.yaml
 
 **Shared-clone warning.** If the target clone directory is already registered by another project in the same weave, `rwv add` proceeds (the manifest entry is added to the active project as usual) and emits a warning to stderr naming the other project(s). Sharing a clone across projects is legal — the same repo can be a `dependency` in one project and `owned` in another — but is worth flagging so accidental double-registration is visible.
 
-### `rwv remove <path> [--delete] [--force]`
+### `rwv remove <path> [--delete] [--delete-shared-clone]`
 
 Remove from `rwv.yaml`, re-run activation (regenerates ecosystem workspace files).
 
 | Flag | Effect |
 |---|---|
 | `--delete` | Also remove the clone (errors if another project references it) |
-| `--force` | Bypass the cross-project safety check on `--delete` |
+| `--delete-shared-clone` | With `--delete`, remove the clone even if other projects still reference it |
 
 ### `rwv sync <source> [...]`
 
@@ -300,7 +300,7 @@ Create a workweave: worktrees on ephemeral branches for each `owned`/`fork`/`dep
 | Flag | Effect |
 |---|---|
 | `--from <source>` | Fork from a specific source (default: CWD's active workspace). Accepts `primary`, an absolute or relative path, or omitted to fork from CWD's active workspace |
-| `--force` | Destroy an existing workweave at this path before recreating. Without this flag, re-invoking `create` against an existing workweave is the idempotent path. Refuses if the existing workweave has uncommitted changes |
+| `--replace-existing` | Destroy an existing workweave at this path before recreating. Without this flag, re-invoking `create` against an existing workweave is the idempotent path. Refuses if the existing workweave has uncommitted or unmerged work |
 | `--capture-dirty` | Allow creation when the source project directory has uncommitted changes. The dirty state is captured into the new workweave's project worktree |
 | `--worktree-references` | Cut a real `git worktree` for `role: reference` repos instead of the default symlink to the canonical weave-root clone. Restores the legacy behavior (per-workweave reference refs) at the cost of duplicating each reference repo's working tree into the workweave |
 | `--dir <path>` | Per-invocation placement override. Places the workweave at exactly this path (recorded verbatim in the index). Absolute paths are used as-is; relative paths resolve against the primary root. Overrides the recorded container for this invocation only |
@@ -313,9 +313,9 @@ Workweaves live at `<container>/<project>--<name>/` where `<container>` is recor
 
 Record the workweave container for `project`. Writes the `container` field of `projects/<project>/.rwv-workweave-index`. Absolute paths are used as-is; relative paths resolve against the primary root. Existing registry entries are preserved. This is the replacement for `RWV_WORKWEAVE_DIR`: an explicit, recorded, audit-visible act, not ambient process state.
 
-### `rwv workweave <project> delete <name> [--force]`
+### `rwv workweave <project> delete <name> [--discard-uncommitted] [--discard-unmerged-commits]`
 
-Delete a workweave. Default refuses if any worktree is dirty, or holds commits contained in neither the workweave's recorded parent nor the primary weave (work in a nested workweave counts as merged once its parent has it); `--force` bypasses both checks.
+Delete a workweave. Default refuses if any worktree is dirty, or holds commits contained in neither the workweave's recorded parent nor the primary weave (work in a nested workweave counts as merged once its parent has it). `--discard-uncommitted` waives the first refusal, `--discard-unmerged-commits` the second.
 
 ### `rwv workweave <project> list`
 

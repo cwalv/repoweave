@@ -3371,7 +3371,7 @@ pub fn violations_to_issues(violations: Vec<CheckViolation>) -> Vec<Issue> {
                     let (kind_str, hint) = match kind {
                         DriftKind::Missing => (
                             "missing worktree",
-                            "; run `rwv workweave <project> create --force` to \
+                            "; run `rwv workweave <project> create --replace-existing` to \
                              recreate, or remove the repo from rwv.yaml",
                         ),
                         DriftKind::Extra => (

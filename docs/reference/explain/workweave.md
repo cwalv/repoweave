@@ -29,17 +29,18 @@ Create a new workweave. Forks from CWD's active workspace by default; use
 `--from` to specify a different source.
 
 ```
-rwv workweave <project> create <name> [--from <source>] [--force] [--capture-dirty] [--worktree-references] [--dir <path>]
+rwv workweave <project> create <name> [--from <source>] [--replace-existing] [--capture-dirty] [--worktree-references] [--dir <path>]
 ```
 
 - `--from <source>` — workspace to fork from. Accepts `primary`, an absolute
   path, or a relative path resolved against primary (e.g., a sibling workweave
   name). Defaults to CWD's active workspace.
-- `--force` — if a workweave with this name already exists and is clean, destroy
-  it and recreate from scratch. Refuses if the existing workweave holds
-  uncommitted changes or unmerged commits (work visible only in the workweave
-  and not yet reachable from the parent or primary). Use `rwv workweave <project>
-  delete <name> --force` to discard dirty workweaves explicitly.
+- `--replace-existing` — if a workweave with this name already exists and is
+  clean, destroy it and recreate from scratch. Refuses if the existing workweave
+  holds uncommitted changes or unmerged commits (work visible only in the
+  workweave and not yet reachable from the parent or primary). Use `rwv workweave
+  <project> delete <name> --discard-uncommitted --discard-unmerged-commits` to
+  discard dirty workweaves explicitly.
 - `--capture-dirty` — allow creation even when the source project directory
   has uncommitted changes; captures the dirty state into the new workweave's
   project worktree. Without this flag, `create` refuses and names the dirty
@@ -68,7 +69,8 @@ The default container is `<parent-of-primary>/.workweaves`; set it explicitly
 with `rwv workweave <project> set-container <path>`. `--dir <path>` overrides
 the container for one invocation.
 
-**Re-invocation without `--force`** (idempotent path): if the workweave already
+**Re-invocation without `--replace-existing`** (idempotent path): if the
+workweave already
 exists and is clean, `create` validates the `.rwv-workweave` marker (same
 primary and project) and returns immediately. Non-git state written by agents
 between invocations (`.runtime/`, `.claude/`, etc.) is preserved. Re-invocation
@@ -106,9 +108,9 @@ state. When `RWV_WORKWEAVE_DIR` is set, `create` still seeds the initial
 container from it and fires a loud deprecation warning; removal of the
 env-var fallback ships in a follow-up release.
 
-### `rwv workweave <project> delete <name> [--force]`
+### `rwv workweave <project> delete <name> [--discard-uncommitted] [--discard-unmerged-commits]`
 
-Delete a workweave. Without `--force`, refuses if:
+Delete a workweave. Refuses if:
 
 - Any worktree (project repo or manifest repo) has **uncommitted changes**
   (staged, unstaged, or untracked files outside `.gitignore`).
@@ -117,13 +119,13 @@ Delete a workweave. Without `--force`, refuses if:
   destroyed when the ephemeral branches are force-deleted.
 
 The refusal message lists the dirty or diverged paths so the operator can
-decide whether to commit, land with `rwv sync-to`, or discard explicitly with
-`--force`.
+decide whether to commit, land with `rwv sync-to`, or discard explicitly.
 
-**`--force`** bypasses both checks. This matches the `git branch -D` contract:
-it consents to destroying whatever is in the workweave. The operator must have
-reviewed the contents (or not care). After the operator confirms intent,
-`delete --force` removes worktrees, prunes stale `.git/worktrees/` entries,
+**`--discard-uncommitted`** waives the first refusal; **`--discard-unmerged-commits`**
+waives the second. Each names exactly what it destroys; passing both is the
+`git branch -D` contract, which consents to destroying whatever is in the
+workweave. The operator must have reviewed the contents (or not care). Once a
+refusal is waived, `delete` removes worktrees, prunes stale `.git/worktrees/` entries,
 force-deletes all ephemeral branches, and removes the workweave directory.
 Reference symlinks are simply unlinked (never followed), so the shared
 canonical clone they alias is left untouched — delete never mutates it,
@@ -186,8 +188,8 @@ instead of hand-rolling branch-name derivation.
 ## Invocation
 
 ```
-rwv workweave <project> create <name> [--from <source>] [--force] [--capture-dirty] [--worktree-references] [--dir <path>]
-rwv workweave <project> delete <name> [--force]
+rwv workweave <project> create <name> [--from <source>] [--replace-existing] [--capture-dirty] [--worktree-references] [--dir <path>]
+rwv workweave <project> delete <name> [--discard-uncommitted] [--discard-unmerged-commits]
 rwv workweave <project> list
 rwv workweave <project> log [--diff] [--json]
 rwv workweave <project> set-container <path>
@@ -235,10 +237,10 @@ Delete a workweave whose work has already landed:
 rwv workweave foundations delete my-feature
 ```
 
-Force-delete a workweave regardless of state:
+Delete a workweave regardless of state:
 
 ```
-rwv workweave foundations delete my-feature --force
+rwv workweave foundations delete my-feature --discard-uncommitted --discard-unmerged-commits
 ```
 
 List all workweaves for a project:
@@ -249,14 +251,16 @@ rwv workweave foundations list
 
 ## Common errors
 
-- *workweave has uncommitted changes; refusing to delete without --force* —
-  list the named paths; commit or discard the changes, or use `--force` to
-  discard everything.
+- *workweave has uncommitted changes; refusing to delete without
+  --discard-uncommitted* — list the named paths; commit or discard the changes,
+  or pass the flag to discard them.
 - *workweave has commits not merged into ...; refusing to delete without
-  --force* — the workweave HEAD holds commits not reachable from the parent
-  or primary. Land the work via `rwv sync-to`, or discard with `--force`.
+  --discard-unmerged-commits* — the workweave HEAD holds commits not reachable
+  from the parent or primary. Land the work via `rwv sync-to`, or pass the flag
+  to discard them.
 - *workweave directory exists but has no .rwv-workweave marker* — a previous
-  failed `create` left a partial workweave; safe to recreate with `--force`.
+  failed `create` left a partial workweave; safe to recreate with
+  `--replace-existing`.
 - *refusing to create workweave — projects/{project} has uncommitted changes*
   — the source project directory is dirty. Commit, stash, or pass
   `--capture-dirty` to explicitly capture the in-flight state.

@@ -240,7 +240,7 @@ fn fetch_name_collision_behavior() {
 // `rwv remove --delete` checks whether other projects reference the same repo
 // before deleting.  If a reference is found:
 //   - A warning is printed: "warning: repo also referenced by project 'X'"
-//   - The deletion is refused unless `--force` is also passed.
+//   - The deletion is refused unless `--delete-shared-clone` is also passed.
 // ============================================================================
 
 #[test]
@@ -280,7 +280,7 @@ fn remove_delete_does_not_check_other_projects() {
         .expect("git clone failed");
     assert!(clone_status.success());
 
-    // --- Without --force: should fail and print a warning ---
+    // --- Without --delete-shared-clone: should fail and print a warning ---
     let output = rwv()
         .args(["remove", repo_path, "--delete"])
         .current_dir(workspace.join("projects").join("project-a"))
@@ -302,16 +302,17 @@ fn remove_delete_does_not_check_other_projects() {
         "directory should NOT be deleted when another project references the repo"
     );
 
-    // --- With --force: should succeed and delete ---
+    // --- With --delete-shared-clone: should succeed and delete ---
     rwv()
-        .args(["remove", repo_path, "--delete", "--force"])
+        .args(["remove", repo_path, "--delete", "--delete-shared-clone"])
         .current_dir(workspace.join("projects").join("project-a"))
         .assert()
         .success();
 
     assert!(
         !repo_dir.exists(),
-        "rwv remove --delete --force should delete the directory even when shared"
+        "rwv remove --delete --delete-shared-clone should delete the directory even \
+         when shared"
     );
 }
 

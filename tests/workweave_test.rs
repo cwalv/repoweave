@@ -304,13 +304,19 @@ fn delete_workweave_removes_project_worktree() {
     let ww_dir = weaveroot.join("my-project--to-del");
     assert!(ww_dir.exists(), "workweave should exist before deletion");
 
-    // Delete it. Pass --force: activation writes generated files into the
-    // workweave's project worktree (workspace config, ecosystem outputs)
-    // that the dirty check would otherwise treat as untracked changes.
-    // This test is verifying worktree cleanup, not dirty-check
-    // semantics, so the --force is incidental.
+    // Delete it. Pass --discard-uncommitted: activation writes generated files
+    // into the workweave's project worktree (workspace config, ecosystem
+    // outputs) that the dirty check would otherwise treat as untracked
+    // changes. This test is verifying worktree cleanup, not dirty-check
+    // semantics, so the waiver is incidental.
     rwv()
-        .args(["workweave", "my-project", "delete", "to-del", "--force"])
+        .args([
+            "workweave",
+            "my-project",
+            "delete",
+            "to-del",
+            "--discard-uncommitted",
+        ])
         .env("RWV_WORKWEAVE_DIR", &weaveroot)
         .current_dir(&ws)
         .assert()
@@ -882,13 +888,19 @@ fn workweave_full_round_trip() {
     );
 
     // --- Delete ---
-    // Pass --force: activation generates files in the project worktree
-    // (workspace config, ecosystem outputs) that count as untracked changes
-    // under the dirty check. The round-trip test isn't about dirty
-    // semantics; the --force is incidental to making delete work after
+    // Pass --discard-uncommitted: activation generates files in the project
+    // worktree (workspace config, ecosystem outputs) that count as untracked
+    // changes under the dirty check. The round-trip test isn't about dirty
+    // semantics; the waiver is incidental to making delete work after
     // the create-and-activate cycle.
     rwv()
-        .args(["workweave", "round-trip-project", "delete", "rt", "--force"])
+        .args([
+            "workweave",
+            "round-trip-project",
+            "delete",
+            "rt",
+            "--discard-uncommitted",
+        ])
         .env("RWV_WORKWEAVE_DIR", &weaveroot)
         .current_dir(&ws)
         .assert()
@@ -1821,7 +1833,8 @@ fn create_workweave_detached_head_uses_detached_branch_name() {
 // ============================================================================
 
 /// If `create_workweave` fails partway through, it must remove the workweave
-/// directory so a clean retry succeeds without `--force`. Audit finding B7.
+/// directory so a clean retry succeeds without `--replace-existing`. Audit
+/// finding B7.
 #[test]
 fn create_workweave_cleans_up_on_bail() {
     let tmp = tempfile::tempdir().unwrap();
@@ -1849,7 +1862,7 @@ fn create_workweave_cleans_up_on_bail() {
         .failure();
 
     // The workweave directory must not be left on disk; otherwise the next
-    // attempt is forced down the `--force` path.
+    // attempt is forced down the `--replace-existing` path.
     let ww_dir = weaveroot.join("web-app--retryme");
     assert!(
         !ww_dir.exists(),
@@ -2074,7 +2087,7 @@ fn create_workweave_rollback_prunes_all_registered_worktrees_not_just_failed() {
     }
 }
 
-/// A clean retry after a failed create must succeed without --force.
+/// A clean retry after a failed create must succeed without --replace-existing.
 /// This is the end-to-end version of the atomicity contract.
 #[test]
 fn create_workweave_clean_retry_after_failure_succeeds() {
@@ -2129,7 +2142,7 @@ fn create_workweave_clean_retry_after_failure_succeeds() {
     );
     std::fs::write(project_dir.join("rwv.yaml"), &good_manifest).unwrap();
 
-    // Second create (same name, no --force): must succeed because rollback
+    // Second create (same name, no --replace-existing): must succeed because rollback
     // cleaned up all state from the first attempt.
     rwv()
         .args(["workweave", "web-app", "create", "retry-me"])
@@ -2152,7 +2165,7 @@ fn create_workweave_clean_retry_after_failure_succeeds() {
 
 /// When the no-marker detection fires (workweave dir exists, marker absent),
 /// the diagnostic must name the likely cause — partial create — and recommend
-/// --force as the fix. This lets users understand the error without reading
+/// --replace-existing as the fix. This lets users understand the error without reading
 /// source code.
 #[test]
 fn no_marker_diagnostic_names_partial_create_as_likely_cause() {
@@ -2176,14 +2189,14 @@ fn no_marker_diagnostic_names_partial_create_as_likely_cause() {
             predicate::str::contains("partially created")
                 .or(predicate::str::contains("previous failed")),
         )
-        .stderr(predicate::str::contains("--force"));
+        .stderr(predicate::str::contains("--replace-existing"));
 }
 
 // ============================================================================
-// --force prunes orphan worktree refs from prior partial creates
+// --replace-existing prunes orphan worktree refs from prior partial creates
 // ============================================================================
 
-/// `rwv workweave create --force` must succeed even when the primary repo
+/// `rwv workweave create --replace-existing` must succeed even when the primary repo
 /// already has a stale `.git/worktrees/<name>` registration pointing at the
 /// (now-absent) workweave worktree path.
 ///
@@ -2194,12 +2207,12 @@ fn no_marker_diagnostic_names_partial_create_as_likely_cause() {
 ///   3. Primary repo has an orphan `.git/worktrees/<name>` registration pointing
 ///      at a path inside the workweave dir — created by a prior `git worktree add`
 ///      whose directory was subsequently removed.
-///   4. `rwv workweave <proj> create <ww> --force` must:
+///   4. `rwv workweave <proj> create <ww> --replace-existing` must:
 ///      a. Prune the orphan registration before re-creating.
 ///      b. Succeed — exit 0 and produce a valid workweave with marker.
 ///      c. Leave no orphan registrations in the primary repo.
 #[test]
-fn create_workweave_force_prunes_orphan_worktree_registrations() {
+fn create_workweave_replace_existing_prunes_orphan_worktree_registrations() {
     let tmp = tempfile::tempdir().unwrap();
     let ws = make_workspace(tmp.path(), "web-app");
     let weaveroot = tmp.path().join(".workweaves");
@@ -2231,7 +2244,7 @@ fn create_workweave_force_prunes_orphan_worktree_registrations() {
     // the `.git/worktrees/<name>` entry now points at a missing path.
     std::fs::remove_dir_all(&wt_dest).unwrap();
 
-    // Verify that the primary repo sees the stale registration before --force.
+    // Verify that the primary repo sees the stale registration before the replace.
     let before = common::git()
         .args(["worktree", "list", "--porcelain"])
         .current_dir(&primary_repo)
@@ -2240,13 +2253,19 @@ fn create_workweave_force_prunes_orphan_worktree_registrations() {
     let before_listing = String::from_utf8_lossy(&before.stdout);
     assert!(
         before_listing.contains("stale-ww"),
-        "precondition: orphan registration must be present before --force; \
+        "precondition: orphan registration must be present before the replace; \
          got:\n{before_listing}"
     );
 
-    // ── Step 2: --force create must succeed ───────────────────────────────
+    // ── Step 2: --replace-existing create must succeed ────────────────────
     rwv()
-        .args(["workweave", "web-app", "create", "stale-ww", "--force"])
+        .args([
+            "workweave",
+            "web-app",
+            "create",
+            "stale-ww",
+            "--replace-existing",
+        ])
         .env("RWV_WORKWEAVE_DIR", &weaveroot)
         .current_dir(&ws)
         .assert()
@@ -2255,11 +2274,11 @@ fn create_workweave_force_prunes_orphan_worktree_registrations() {
     // Workweave directory must exist with a marker.
     assert!(
         ww_dir.exists(),
-        "workweave dir must exist after --force create"
+        "workweave dir must exist after --replace-existing create"
     );
     assert!(
         ww_dir.join(".rwv-workweave").exists(),
-        "--force create must write the .rwv-workweave marker"
+        "--replace-existing create must write the .rwv-workweave marker"
     );
 
     // ── Step 3: primary repo must have no leftover orphan registrations ───
@@ -2282,7 +2301,7 @@ fn create_workweave_force_prunes_orphan_worktree_registrations() {
         .count();
     assert_eq!(
         stale_count, 0,
-        "--force must prune orphan worktree registrations; \
+        "--replace-existing must prune orphan worktree registrations; \
          git worktree list after:\n{after_listing}"
     );
 }
@@ -2310,7 +2329,7 @@ fn claude_hook_no_project_arg_needed() {
 #[test]
 fn workweave_delete_refuses_dirty_manifest_repo() {
     // Create a workweave, dirty up a manifest-repo worktree, verify that
-    // `rwv workweave delete` (no --force) refuses and names the dirty repo.
+    // `rwv workweave delete` (no waiver) refuses and names the dirty repo.
     let tmp = tempfile::tempdir().unwrap();
     let ws = make_workspace(tmp.path(), "web-app");
 
@@ -2328,7 +2347,7 @@ fn workweave_delete_refuses_dirty_manifest_repo() {
     let repo_wt = weaveroot.join("web-app--dirty/github/org/repo");
     std::fs::write(repo_wt.join("README"), "DIRTY EDIT\n").unwrap();
 
-    // Plain delete: must refuse, must mention --force, must name the dirty repo.
+    // Plain delete: must refuse, must name the waiver and the dirty repo.
     rwv()
         .args(["workweave", "web-app", "delete", "dirty"])
         .env("RWV_WORKWEAVE_DIR", &weaveroot)
@@ -2336,7 +2355,8 @@ fn workweave_delete_refuses_dirty_manifest_repo() {
         .assert()
         .failure()
         .stderr(
-            predicate::str::contains("--force").and(predicate::str::contains("github/org/repo")),
+            predicate::str::contains("--discard-uncommitted")
+                .and(predicate::str::contains("github/org/repo")),
         );
 
     // Workweave directory must still exist after the refused delete.
@@ -2348,7 +2368,7 @@ fn workweave_delete_refuses_dirty_manifest_repo() {
 }
 
 #[test]
-fn workweave_delete_force_proceeds_on_dirty() {
+fn workweave_delete_discard_uncommitted_proceeds_on_dirty() {
     let tmp = tempfile::tempdir().unwrap();
     let ws = make_workspace(tmp.path(), "web-app");
 
@@ -2368,22 +2388,31 @@ fn workweave_delete_force_proceeds_on_dirty() {
     std::fs::write(repo_wt.join("LOCAL_TODO"), "todo\n").unwrap();
 
     rwv()
-        .args(["workweave", "web-app", "delete", "del-force", "--force"])
+        .args([
+            "workweave",
+            "web-app",
+            "delete",
+            "del-force",
+            "--discard-uncommitted",
+        ])
         .env("RWV_WORKWEAVE_DIR", &weaveroot)
         .current_dir(&ws)
         .assert()
         .success();
 
     let ww_dir = weaveroot.join("web-app--del-force");
-    assert!(!ww_dir.exists(), "--force must remove the workweave");
+    assert!(
+        !ww_dir.exists(),
+        "--discard-uncommitted must remove the workweave"
+    );
 }
 
 #[test]
-fn workweave_delete_clean_succeeds_without_force() {
+fn workweave_delete_clean_succeeds_without_waivers() {
     // Make_workspace's project dir is NOT a git repo, so activation can't
     // generate a worktree there. The single manifest repo is clean after a
     // fresh create, so the dirty check should pass and delete should
-    // succeed without --force.
+    // succeed without any waiver.
     let tmp = tempfile::tempdir().unwrap();
     let ws = make_workspace(tmp.path(), "web-app");
 

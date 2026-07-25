@@ -301,6 +301,7 @@ fn delete_unlinks_symlink_and_leaves_canonical_byte_for_byte_unchanged() {
         &ProjectName::new("proj"),
         &WorkweaveName::new("feat"),
         false,
+        false,
     )
     .expect("delete should succeed");
 
@@ -358,7 +359,8 @@ fn delete_succeeds_with_a_dirty_canonical_and_leaves_it_untouched() {
         &ws,
         &ProjectName::new("proj"),
         &WorkweaveName::new("feat"),
-        false, // NOT --force: alias dirty state must not be attributed here
+        false, // no waiver: alias dirty state must not be attributed here
+        false,
     )
     .expect("delete must succeed even with a dirty canonical");
 
@@ -478,6 +480,7 @@ fn two_workweaves_share_one_canonical_and_deleting_one_keeps_the_other_valid() {
         &ProjectName::new("proj"),
         &WorkweaveName::new("wa"),
         false,
+        false,
     )
     .expect("delete wa");
 
@@ -596,14 +599,14 @@ fn idempotent_reuse_with_symlinked_reference_returns_clean() {
     // must NOT make reuse refuse.
     std::fs::write(canonical.join("DIRTY"), "x").unwrap();
 
-    // Re-invoke create without --force: the idempotent reuse path must
+    // Re-invoke create without --replace-existing: the idempotent reuse path must
     // validate the marker and return the existing dir without error.
     let second = create_workweave(
         &ws,
         &ws,
         &ProjectName::new("proj"),
         &WorkweaveName::new("feat"),
-        false, // not force
+        false, // not replace_existing
         false,
         false,
         None,

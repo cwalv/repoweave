@@ -344,14 +344,14 @@ fn run_add_from_local_path(
     Ok(())
 }
 
-/// Execute `rwv remove PATH [--delete] [--force]`.
+/// Execute `rwv remove PATH [--delete] [--delete-shared-clone]`.
 ///
 /// `ctx` is the already-resolved invocation context. Handlers must not
 /// re-resolve.
 pub fn run_remove(
     path: &str,
     delete: bool,
-    force: bool,
+    delete_shared_clone: bool,
     ctx: &WorkspaceContext,
 ) -> anyhow::Result<()> {
     let project_dir = find_project_dir(ctx)?;
@@ -368,8 +368,9 @@ pub fn run_remove(
     }
 
     // Before writing anything, check for cross-project references when --delete
-    // is requested.  If another project references the repo and --force is not
-    // set, bail early so the manifest is left untouched. The cross-project
+    // is requested.  If another project references the repo and
+    // --delete-shared-clone is not set, bail early so the manifest is left
+    // untouched. The cross-project
     // scan walks primary's `projects/` directory — that is the canonical
     // enumeration of project manifests regardless of CWD.
     if delete {
@@ -392,9 +393,9 @@ pub fn run_remove(
                 for proj in &referencing_projects {
                     eprintln!("warning: repo also referenced by project '{proj}'");
                 }
-                if !force {
+                if !delete_shared_clone {
                     anyhow::bail!(
-                        "refusing to delete '{}': referenced by other projects. Remove the entry from those projects first, or use `--force` if you intend to delete the shared clone anyway.",
+                        "refusing to delete '{}': referenced by other projects. Remove the entry from those projects first, or use `--delete-shared-clone` if you intend to delete the shared clone anyway.",
                         repo_path.as_str()
                     );
                 }

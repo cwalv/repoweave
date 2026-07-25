@@ -1,7 +1,7 @@
 //! Destructive-operation tripwire.
 //!
 //! Policy lives in `docs/explanation/destructive-operations.md` —
-//! satisfy-the-precondition-or-stop, informed `--force`, discards stay
+//! satisfy-the-precondition-or-stop, informed override flags, discards stay
 //! recoverable. Read that before editing the allowlist below; this
 //! header carries the enforcement-mechanics summary only.
 //!
@@ -10,7 +10,7 @@
 //! patterns in `FORBIDDEN` outright). Adding, moving, or removing a
 //! tracked site fails the build here until the `ALLOWLIST` below is
 //! updated with the new count and a justification that names which
-//! precondition guards the site, what `--force` consent looks like,
+//! precondition guards the site, what the override consent looks like,
 //! and how discards stay recoverable. That is intentional friction:
 //! the cheapest moment to catch an unguarded `reset --hard` is the
 //! commit that introduces it.
@@ -75,10 +75,10 @@ const ALLOWLIST: &[Allowed] = &[
             (2) CreateRollbackGuard::rollback_and_collect_failures: same \
             intent as (1) but for explicit bail! paths so cleanup failures \
             can be appended to the returned error; defuses Drop to prevent \
-            double-rollback. (3) create --force raw replace: behind the \
-            dirty-scan refusal. (4) delete_workweave: behind the dirty + \
-            unmerged-commits refusals unless --force, which lists what is \
-            lost first.",
+            double-rollback. (3) create --replace-existing raw replace: \
+            behind the dirty-scan refusal. (4) delete_workweave: behind the \
+            dirty + unmerged-commits refusals unless --discard-uncommitted / \
+            --discard-unmerged-commits, which list what is lost first.",
     },
     Allowed {
         file: "workweave.rs",
@@ -90,7 +90,7 @@ const ALLOWLIST: &[Allowed] = &[
             shared canonical store the symlink aliases is never touched — \
             making explicit the safety the old code only got accidentally \
             (is_lone_canonical + remove_dir_all not following symlinks). No \
-            --force needed: removing a read-only alias destroys no work.",
+            waiver needed: removing a read-only alias destroys no work.",
     },
     Allowed {
         file: "add_remove.rs",
@@ -98,7 +98,7 @@ const ALLOWLIST: &[Allowed] = &[
         count: 1,
         justification: "rwv remove --delete on the canonical clone; \
             refuses while other projects reference the repo unless \
-            --force.",
+            --delete-shared-clone.",
     },
     Allowed {
         file: "git.rs",
@@ -121,7 +121,7 @@ const ALLOWLIST: &[Allowed] = &[
             (Vcs::resolve_canonical_store) and refuses on \
             no-canonical-store-with-foreign-dependents — the tier-0 \
             topology precondition (joints/clone-topology.md), not \
-            bypassable by --force.",
+            bypassable by any waiver.",
     },
     Allowed {
         file: "git.rs",
@@ -352,8 +352,8 @@ fn destructive_call_sites_match_audited_allowlist() {
             )),
             None => problems.push(format!(
                 "src/{file}: {pattern} found {count}x but has no allowlist entry — \
-                 audit the new site (named-precondition-or-refuse, or informed \
-                 --force) and add an entry with the justification"
+                 audit the new site (named-precondition-or-refuse, or an informed \
+                 named override) and add an entry with the justification"
             )),
         }
     }

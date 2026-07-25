@@ -353,8 +353,8 @@ fn copy_dir_recursive(src: &Path, dst: &Path) -> anyhow::Result<()> {
 ///
 /// This is the canonical cleanup path used by:
 /// - `create_workweave` rollback — called on any mid-create failure.
-/// - The `create --force` path — call this before recreating to clear
-///   any orphan registrations left by a previous partial create.
+/// - The `create --replace-existing` path — call this before recreating to
+///   clear any orphan registrations left by a previous partial create.
 ///
 /// # API contract for callers
 ///
@@ -703,7 +703,7 @@ impl Drop for CreateRollbackGuard {
 /// Designed to be called BEFORE any disk mutation so that a fresh-project
 /// failure leaves no partial workweave directory on disk.
 ///
-/// Siblings `.2` (rollback) and `.3` (--force prune) may call this same
+/// Siblings `.2` (rollback) and `.3` (replace-existing prune) may call this same
 /// function before their own mutations.
 pub fn preflight_check_heads(
     source_root: &Path,
@@ -849,8 +849,9 @@ pub fn scan_uninitialized_submodules(worktree_path: &Path) -> Vec<String> {
 /// creating a peer workweave from inside itself), `source_root` is that
 /// workweave's directory while `primary_root` remains the primary weave.
 ///
-/// If the workweave directory already exists, behavior depends on `force`:
-/// - `force == false`: validate that the existing workweave matches this
+/// If the workweave directory already exists, behavior depends on
+/// `replace_existing`:
+/// - `replace_existing == false`: validate that the existing workweave matches this
 ///   `(primary, project)` pair and has no local modifications relative to
 ///   `source_root`, then short-circuit. This preserves non-git state (e.g.
 ///   `.runtime/`, `.claude/`) written by agents between invocations — the
@@ -858,8 +859,8 @@ pub fn scan_uninitialized_submodules(worktree_path: &Path) -> Vec<String> {
 ///   Returns an error if the marker is missing or for a different project,
 ///   or if any worktree has uncommitted changes or has diverged from the
 ///   source.
-/// - `force == true`: destroy the existing workweave and recreate from
-///   scratch. Intended for explicit rebuild scenarios (corruption
+/// - `replace_existing == true`: destroy the existing workweave and recreate
+///   from scratch. Intended for explicit rebuild scenarios (corruption
 ///   recovery, or switching a slot to a different project).
 ///
 /// `capture_dirty` controls how uncommitted changes in the source project
@@ -897,7 +898,7 @@ pub fn create_workweave(
     source_root: &Path,
     project: &ProjectName,
     name: &WorkweaveName,
-    force: bool,
+    replace_existing: bool,
     capture_dirty: bool,
     worktree_references: bool,
     dir_override: Option<&Path>,
@@ -917,7 +918,7 @@ pub fn create_workweave(
     };
 
     if workweave_dir.exists() {
-        if force {
+        if replace_existing {
             // Destructive reuse. Prefer delete_workweave (which also
             // prunes worktrees and ephemeral branches) when the marker
             // belongs to this project; fall back to a raw remove
@@ -928,12 +929,13 @@ pub fn create_workweave(
                 Some(m) => &m.project == project,
                 None => false,
             };
-            // Even under --force, refuse to replace a workweave holding
-            // uncommitted work. create's --force consents to replacing
-            // the directory, but the operator never saw what was
-            // inside it — unlike `workweave remove`, which lists the dirty
-            // paths before --force is retried. Explicit destruction of
-            // dirty workweaves stays with `workweave remove --force`.
+            // Even under --replace-existing, refuse to replace a workweave
+            // holding uncommitted work. create's --replace-existing consents
+            // to replacing the directory, but the operator never saw what was
+            // inside it — unlike `workweave delete`, which lists the dirty
+            // paths before a discard flag is retried. Explicit destruction of
+            // dirty workweaves stays with `workweave delete
+            // --discard-uncommitted`.
             let at_risk = if can_use_structured_delete {
                 // Uncommitted changes plus committed-but-unmerged work —
                 // both are destroyed by the replace.
@@ -956,7 +958,8 @@ pub fn create_workweave(
                     "workweave {} already exists and holds unsaved or unmerged work; \
                      refusing to replace it:\n  {}\n\
                      Commit/merge that work, or delete it explicitly with \
-                     `rwv workweave {} delete {} --force`.",
+                     `rwv workweave {} delete {} --discard-uncommitted \
+                     --discard-unmerged-commits`.",
                     name.as_str(),
                     at_risk.join("\n  "),
                     project.as_str(),
@@ -964,11 +967,11 @@ pub fn create_workweave(
                 );
             }
             if can_use_structured_delete {
-                // `force: true` on the internal delete: the dirty check
-                // above just confirmed there is nothing uncommitted to
-                // lose, and the operator's --force already authorised
-                // replacing the (clean) workweave.
-                delete_workweave(primary_root, project, name, true)?;
+                // Both waivers on the internal delete: the at-risk scan
+                // above just confirmed there is nothing uncommitted or
+                // unmerged to lose, and the operator's --replace-existing
+                // already authorised replacing the (clean) workweave.
+                delete_workweave(primary_root, project, name, true, true)?;
             } else {
                 // No valid marker for this project, so delete_workweave
                 // cannot be used (it would load the wrong manifest).
@@ -1480,7 +1483,8 @@ pub fn create_workweave(
 /// and is in a clean state relative to `source_root`, then return its path
 /// without modifying anything.
 ///
-/// Called from [`create_workweave`] on re-invocation without `--force`. Refuses
+/// Called from [`create_workweave`] on re-invocation without
+/// `--replace-existing`. Refuses
 /// if the `.rwv-workweave` marker is missing or for a different primary/project,
 /// or if any per-repo worktree has uncommitted changes or has diverged from the
 /// source's HEAD.
@@ -1496,7 +1500,7 @@ fn reuse_existing_workweave(
         anyhow!(
             "workweave directory {} exists but has no .rwv-workweave marker — \
              likely a partially created workweave from a previous failed attempt; \
-             safe to recreate with --force",
+             safe to recreate with --replace-existing",
             workweave_dir.display()
         )
     })?;
@@ -1504,7 +1508,7 @@ fn reuse_existing_workweave(
     if &marker.project != project {
         bail!(
             "workweave at {} is for project '{}', refusing to recreate for project '{}'; \
-             rerun with --force to overwrite",
+             rerun with --replace-existing to overwrite",
             workweave_dir.display(),
             marker.project.as_str(),
             project
@@ -1521,7 +1525,7 @@ fn reuse_existing_workweave(
     if marker_primary != primary_canonical {
         bail!(
             "workweave at {} is for primary workspace {}, refusing to recreate for {}; \
-             rerun with --force to overwrite",
+             rerun with --replace-existing to overwrite",
             workweave_dir.display(),
             marker.primary.display(),
             primary_root.display()
@@ -1566,7 +1570,8 @@ fn reuse_existing_workweave(
 
     if !modified.is_empty() {
         bail!(
-            "workweave at {} has local modifications; refusing to recreate without --force:\n  {}",
+            "workweave at {} has local modifications; refusing to recreate without \
+             --replace-existing:\n  {}",
             workweave_dir.display(),
             modified.join("\n  ")
         );
@@ -1838,7 +1843,7 @@ fn resolved_worktree_parent(checkout: &Path, fallback: &Path) -> PathBuf {
 ///
 /// Returns `Err` with a named-precondition message pointing the operator at
 /// `rwv doctor` (where the topology check lives, per the joint). This refusal
-/// is NOT bypassable by `--force` — `--force` consents to losing this
+/// is NOT bypassable by the discard flags — they consent to losing this
 /// workweave's work, not to corrupting other workweaves whose object DAG we
 /// happen to be hosting. The operator must repair topology first (operator
 /// work, out of scope for this verb).
@@ -1932,9 +1937,10 @@ fn refuse_if_checkouts_host_foreign_worktrees(
          stores that other worktrees link into; deleting this workweave would orphan \
          those dependents:\n  {}\n\n\
          Run `rwv doctor` for a full topology audit and remediation guidance. \
-         This refusal is NOT bypassable with --force: --force consents to losing \
-         this workweave's work, not to corrupting unrelated worktrees whose object \
-         store we happen to be hosting.",
+         This refusal is NOT bypassable with --discard-uncommitted or \
+         --discard-unmerged-commits: those consent to losing this workweave's work, \
+         not to corrupting unrelated worktrees whose object store we happen to be \
+         hosting.",
         workweave_dir
             .file_name()
             .map(|n| n.to_string_lossy().into_owned())
@@ -2046,11 +2052,13 @@ fn adopt_children_of(retiree_dir: &Path, primary_root: &Path) {
 /// the workweave directory.
 ///
 /// Refuses to delete a workweave with uncommitted changes (in the project
-/// worktree or any manifest-repo worktree) unless `force` is true. The error
-/// lists the dirty paths so the operator knows what would have been lost.
-/// `force` matches the `git branch -D` pattern.
+/// worktree or any manifest-repo worktree) unless `discard_uncommitted` is
+/// true, and one holding commits not merged into its parent weave unless
+/// `discard_unmerged_commits` is true. Each error lists the paths so the
+/// operator knows what would have been lost. Passing both matches the
+/// `git branch -D` pattern.
 ///
-/// Independently of `force`, refuses when any per-repo checkout in the
+/// Independently of both waivers, refuses when any per-repo checkout in the
 /// workweave is itself a canonical store with foreign worktrees linked into
 /// it (named precondition: `no-canonical-store-with-foreign-dependents`).
 /// This is the tier-0 invariant the clone-topology joint defines; delete
@@ -2061,11 +2069,19 @@ pub fn delete_workweave(
     ws_root: &Path,
     project: &ProjectName,
     name: &WorkweaveName,
-    force: bool,
+    discard_uncommitted: bool,
+    discard_unmerged_commits: bool,
 ) -> anyhow::Result<()> {
     // Public `rwv workweave delete`: an INTERRUPTING verb. A mid-op workweave
     // refuses (op guard on).
-    delete_workweave_inner(ws_root, project, name, force, false)
+    delete_workweave_inner(
+        ws_root,
+        project,
+        name,
+        discard_uncommitted,
+        discard_unmerged_commits,
+        false,
+    )
 }
 
 /// Delete a workweave as the terminal step of the OWNING op (`sync-to
@@ -2089,9 +2105,18 @@ pub(crate) fn delete_workweave_for_retire(
     project: &ProjectName,
     name: &WorkweaveName,
     workweave_dir: &Path,
-    force: bool,
+    discard_uncommitted: bool,
+    discard_unmerged_commits: bool,
 ) -> anyhow::Result<()> {
-    delete_workweave_inner_at(ws_root, project, name, workweave_dir, force, true)
+    delete_workweave_inner_at(
+        ws_root,
+        project,
+        name,
+        workweave_dir,
+        discard_uncommitted,
+        discard_unmerged_commits,
+        true,
+    )
 }
 
 /// Shared delete implementation. `skip_op_guard` is `true` only for the
@@ -2109,14 +2134,23 @@ fn delete_workweave_inner(
     ws_root: &Path,
     project: &ProjectName,
     name: &WorkweaveName,
-    force: bool,
+    discard_uncommitted: bool,
+    discard_unmerged_commits: bool,
     skip_op_guard: bool,
 ) -> anyhow::Result<()> {
     // Registry lookup + hard round-trip. Consulted for every destructive path
-    // (create --force also gets here indirectly via `can_use_structured_delete`
-    // in create_workweave).
+    // (create --replace-existing also gets here indirectly via
+    // `can_use_structured_delete` in create_workweave).
     let workweave_dir = ensure_registered_workweave(ws_root, project, name)?;
-    delete_workweave_inner_at(ws_root, project, name, &workweave_dir, force, skip_op_guard)
+    delete_workweave_inner_at(
+        ws_root,
+        project,
+        name,
+        &workweave_dir,
+        discard_uncommitted,
+        discard_unmerged_commits,
+        skip_op_guard,
+    )
 }
 
 /// Delete a workweave whose on-disk path is already known.
@@ -2126,7 +2160,7 @@ fn delete_workweave_inner(
 /// registry lookup so an unrecorded workweave (crash-matrix scaffolding,
 /// bootstrap workspace) is still delete-able by callers that already hold
 /// the resolved path. Callers arriving through name-only entry points
-/// ([`delete_workweave`], `create --force`) route through
+/// ([`delete_workweave`], `create --replace-existing`) route through
 /// [`delete_workweave_inner`] which enforces the registry lookup first.
 ///
 /// The registry entry is still removed at the end (best effort), so a
@@ -2136,7 +2170,8 @@ fn delete_workweave_inner_at(
     project: &ProjectName,
     name: &WorkweaveName,
     workweave_dir: &Path,
-    force: bool,
+    discard_uncommitted: bool,
+    discard_unmerged_commits: bool,
     skip_op_guard: bool,
 ) -> anyhow::Result<()> {
     let manifest = load_manifest(ws_root, project)?;
@@ -2144,8 +2179,8 @@ fn delete_workweave_inner_at(
 
     // Tier-0 topology precondition: refuse when a per-repo checkout inside
     // the workweave is itself a canonical store with foreign dependents.
-    // Runs before the dirty / unmerged checks (and is not bypassable by
-    // --force) because the hazard is to OTHER workspaces, not the
+    // Runs before the dirty / unmerged checks (and is not bypassable by any
+    // override flag) because the hazard is to OTHER workspaces, not the
     // workweave's own work. See joints/clone-topology.md and
     // docs/explanation/destructive-operations.md (precondition-or-stop).
     if workweave_dir.exists() {
@@ -2158,8 +2193,8 @@ fn delete_workweave_inner_at(
     // pointer or destroy the workspace `--continue`/`rwv abort` restore into.
     // Refuse FIRST (before the dirty/unmerged checks) so a mid-op delete reports
     // the in-flight op, not a dirty-tree error, mirroring the sync entry
-    // ordering. `--force` does NOT bypass this: the hazard is to the op's
-    // recovery, and `rwv abort` (not `--force delete`) is the way to clear a
+    // ordering. No override flag bypasses this: the hazard is to the op's
+    // recovery, and `rwv abort` (not a forced delete) is the way to clear a
     // stale record. Runs only when the dir exists (nothing to lose otherwise).
     // The op's OWN terminal retire (`delete_workweave_for_retire`) skips this —
     // its record is present by design and is cleared in the later cleanup phase.
@@ -2167,29 +2202,31 @@ fn delete_workweave_inner_at(
         crate::op_state::check_no_op_in_progress(&[workweave_dir.as_path()])?;
     }
 
-    // Safety check: refuse to delete dirty or diverged workweaves without
-    // --force. Skip the check if the workweave directory doesn't exist
-    // (nothing to lose) or if force was passed.
-    if !force && workweave_dir.exists() {
+    // Safety checks: each refusal has its own waiver. Skipped when the
+    // workweave directory doesn't exist (nothing to lose).
+    if !discard_uncommitted && workweave_dir.exists() {
         let dirty = collect_dirty_paths(&workweave_dir, project, &manifest);
         if !dirty.is_empty() {
             bail!(
-                "workweave {} has uncommitted changes; refusing to delete without --force:\n  {}",
+                "workweave {} has uncommitted changes; refusing to delete without \
+                 --discard-uncommitted:\n  {}",
                 name.as_str(),
                 dirty.join("\n  ")
             );
         }
-        // Committed-but-unmerged work is just as lost as uncommitted work:
-        // the ephemeral-branch cleanup below force-deletes the only ref to
-        // those commits. Work counts as merged when its recorded parent OR
-        // the primary weave contains it (nested workweaves land in their
-        // parent first).
+    }
+    // Committed-but-unmerged work is just as lost as uncommitted work:
+    // the ephemeral-branch cleanup below force-deletes the only ref to
+    // those commits. Work counts as merged when its recorded parent OR
+    // the primary weave contains it (nested workweaves land in their
+    // parent first).
+    if !discard_unmerged_commits && workweave_dir.exists() {
         let baselines = merge_baselines(&workweave_dir, ws_root);
         let diverged = collect_diverged_paths(&workweave_dir, project, &manifest, &baselines);
         if !diverged.is_empty() {
             bail!(
                 "workweave {} has commits not merged into {}; \
-                 refusing to delete without --force:\n  {}",
+                 refusing to delete without --discard-unmerged-commits:\n  {}",
                 name.as_str(),
                 baselines
                     .iter()
@@ -2955,14 +2992,16 @@ pub fn handle_claude_hook() -> anyhow::Result<()> {
                     .unwrap_or(dir_name);
 
                 // Claude's WorktreeRemove is fire-and-forget cleanup of a
-                // worktree Claude has decided to discard. Pass `force: true`
-                // because (a) the operator's intent is already expressed by
-                // the Claude action, and (b) any prompt for dirty state
-                // would land on stderr unseen — Claude has already moved on.
+                // worktree Claude has decided to discard. Waive both
+                // preconditions because (a) the operator's intent is already
+                // expressed by the Claude action, and (b) any refusal over
+                // dirty or unmerged state would land on stderr unseen —
+                // Claude has already moved on.
                 if let Err(e) = delete_workweave(
                     &marker.primary,
                     &marker.project,
                     &WorkweaveName::new(name),
+                    true,
                     true,
                 ) {
                     eprintln!("rwv workweave --claude-hook WorktreeRemove: warning: {e}");

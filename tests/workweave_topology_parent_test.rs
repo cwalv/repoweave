@@ -198,7 +198,7 @@ fn delete_with_zero_children_adopts_nothing() {
     let tmp = tempfile::tempdir().unwrap();
     let main = make_main_workspace(tmp.path());
     let ww = create_workweave(&main, "solo", None);
-    // Ensure clean (no unmerged commits) so delete without --force works.
+    // Ensure clean (no unmerged commits) so delete without a waiver works.
     let out = rwv()
         .args(["workweave", PROJECT, "delete", &ww.name])
         .env("RWV_WORKWEAVE_DIR", &main.weaveroot)
@@ -263,10 +263,11 @@ fn delete_refuses_while_workweave_is_mid_op() {
     );
 }
 
-/// `--force` does NOT bypass the op mutex on delete: the hazard is to the op's
-/// recovery, and force is for dirty/unmerged work, not stale op-state.
+/// The discard waivers do NOT bypass the op mutex on delete: the hazard is to
+/// the op's recovery, and the waivers are for dirty/unmerged work, not stale
+/// op-state.
 #[test]
-fn delete_force_does_not_bypass_op_mutex() {
+fn delete_waivers_do_not_bypass_op_mutex() {
     let tmp = tempfile::tempdir().unwrap();
     let main = make_main_workspace(tmp.path());
     let ww = create_workweave(&main, "busyforce", None);
@@ -281,23 +282,30 @@ fn delete_force_does_not_bypass_op_mutex() {
     std::fs::write(ww.root.join(".rwv-op"), &op_yaml).unwrap();
 
     let out = rwv()
-        .args(["workweave", PROJECT, "delete", &ww.name, "--force"])
+        .args([
+            "workweave",
+            PROJECT,
+            "delete",
+            &ww.name,
+            "--discard-uncommitted",
+            "--discard-unmerged-commits",
+        ])
         .env("RWV_WORKWEAVE_DIR", &main.weaveroot)
         .current_dir(&main.root)
         .output()
         .unwrap();
     assert!(
         !out.status.success(),
-        "delete --force must still refuse while the workweave is mid-op"
+        "delete must still refuse while the workweave is mid-op, waivers or not"
     );
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
         stderr.contains("sync in progress"),
-        "refusal must name the in-flight op even under --force; got:\n{stderr}"
+        "refusal must name the in-flight op even under the waivers; got:\n{stderr}"
     );
     assert!(
         ww.root.exists(),
-        "workweave must survive the refused --force delete"
+        "workweave must survive the refused delete"
     );
 }
 

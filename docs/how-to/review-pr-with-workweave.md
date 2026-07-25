@@ -53,10 +53,10 @@ rwv workweave web-app delete review-pr-42
 If you committed locally and want to bail out without losing the commits, push the branches first or copy the worktrees aside. To bypass the dirty-tree safety:
 
 ```bash
-rwv workweave web-app delete review-pr-42 --force
+rwv workweave web-app delete review-pr-42 --discard-uncommitted
 ```
 
-`--force` is the bypass for the workweave-deletion safety added in the workweave lifecycle work; default deletion refuses if any worktree is dirty.
+`--discard-uncommitted` waives the dirty-tree refusal; default deletion refuses if any worktree is dirty.
 
 ## Related
 

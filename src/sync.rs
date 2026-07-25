@@ -4241,8 +4241,8 @@ fn retire_workweave_after_sync_to(
         );
     }
 
-    // Both invariants hold: delete the workweave. Pass `force: false` —
-    // collect_dirty_paths already returned empty, so the inner check is
+    // Both invariants hold: delete the workweave. Waive nothing —
+    // collect_dirty_paths already returned empty, so the inner checks are
     // belt-and-braces. Use the primary path (delete_workweave needs to
     // locate the workweave under the primary's parent dir). Use the
     // retire-specific entry point, which skips the cross-verb op guard: THIS op
@@ -4253,6 +4253,7 @@ fn retire_workweave_after_sync_to(
         project,
         workweave_name,
         workweave_dir,
+        false,
         false,
     )
     .context("--retire: workweave delete failed")?;

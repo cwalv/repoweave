@@ -403,21 +403,21 @@ impl WorkspaceSession {
 /// - If resolve fails and `cwd` is an empty directory, returns `Ok(())` —
 ///   bootstrapping into a fresh directory is fine.
 /// - If resolve fails and `cwd` is **non-empty**, returns an error advising
-///   the caller to use `--force`.
+///   the caller to use `--allow-non-empty-dir`.
 ///
-/// Pass `force = true` to skip the non-empty check entirely.
+/// Pass `allow_non_empty_dir = true` to skip the non-empty check entirely.
 ///
 /// Callers that expose a different interface (e.g. `init`, which has no
-/// `--force` flag) should map the returned error to a command-specific
-/// message rather than surfacing the raw `--force` hint.
-pub fn require_workspace_or_empty(cwd: &Path, force: bool) -> anyhow::Result<()> {
+/// such flag) should map the returned error to a command-specific
+/// message rather than surfacing the raw `--allow-non-empty-dir` hint.
+pub fn require_workspace_or_empty(cwd: &Path, allow_non_empty_dir: bool) -> anyhow::Result<()> {
     match WorkspaceContext::resolve(cwd, None) {
-        Ok(_) => return Ok(()),           // existing workspace — proceed
-        Err(_) if force => return Ok(()), // user passed --force
+        Ok(_) => return Ok(()), // existing workspace — proceed
+        Err(_) if allow_non_empty_dir => return Ok(()),
         Err(_) => {}
     }
 
-    // resolve failed and no --force — check whether CWD is empty.
+    // resolve failed and the check was not waived — check whether CWD is empty.
     let is_empty = match std::fs::read_dir(cwd) {
         Ok(mut entries) => entries.next().is_none(),
         // If we cannot read the directory, let downstream code handle it.
@@ -429,7 +429,7 @@ pub fn require_workspace_or_empty(cwd: &Path, force: bool) -> anyhow::Result<()>
     } else {
         anyhow::bail!(
             "no repoweave workspace found and {} is not empty; \
-             use --force to bootstrap here anyway",
+             use --allow-non-empty-dir to bootstrap here anyway",
             cwd.display()
         )
     }
@@ -1427,16 +1427,19 @@ mod tests {
         // Non-empty, no workspace — should error.
         let err = require_workspace_or_empty(&dir, false).unwrap_err();
         let msg = format!("{err}");
-        assert!(msg.contains("--force"), "expected --force hint, got: {msg}");
+        assert!(
+            msg.contains("--allow-non-empty-dir"),
+            "expected --allow-non-empty-dir hint, got: {msg}"
+        );
     }
 
     #[test]
-    fn require_workspace_or_empty_force_bypasses_check() {
+    fn require_workspace_or_empty_allow_non_empty_dir_bypasses_check() {
         let tmp = tempfile::tempdir().unwrap();
         let dir = tmp.path().join("messy");
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("random.txt"), "stuff").unwrap();
-        // Non-empty + --force — should succeed.
+        // Non-empty + --allow-non-empty-dir — should succeed.
         assert!(require_workspace_or_empty(&dir, true).is_ok());
     }
 

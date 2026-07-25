@@ -86,15 +86,15 @@ The dirty-source check is anchored at
 ### Re-invocation (idempotent path)
 
 If the workweave already exists and is clean, re-invoking `create` without
-`--force` validates the `.rwv-workweave` marker (same primary and project)
-and returns immediately. Non-git state written between invocations
+`--replace-existing` validates the `.rwv-workweave` marker (same primary and
+project) and returns immediately. Non-git state written between invocations
 (`.runtime/`, `.claude/`, etc.) is preserved in place. This is the Gas
 City rig's standard "ensure workweave exists" path.
 
-Use `--force` to tear down and recreate from scratch. `--force` refuses if
+Use `--replace-existing` to tear down and recreate from scratch. It refuses if
 the existing workweave holds uncommitted changes or unmerged commits — the
 operator must discard those explicitly with `rwv workweave <project> delete
-<name> --force`.
+<name> --discard-uncommitted --discard-unmerged-commits`.
 
 ## Working state
 
@@ -292,7 +292,7 @@ To delete without landing:
 rwv workweave <project> delete <name>
 ```
 
-Without `--force`, refuses if:
+Refuses if:
 
 - Any worktree has **uncommitted changes** (staged, unstaged, or untracked
   files outside `.gitignore`).
@@ -304,12 +304,14 @@ The refusal lists the dirty or diverged paths. Options:
 
 - Commit the work and land it: `rwv sync-to --retire`
 - Stash or discard the uncommitted changes, then delete
-- Consent to losing everything: `rwv workweave <project> delete <name> --force`
+- Consent to losing everything: `rwv workweave <project> delete <name>
+  --discard-uncommitted --discard-unmerged-commits`
 
-**`--force`** matches the `git branch -D` contract: it consents to
+**`--discard-uncommitted`** waives the first refusal, **`--discard-unmerged-commits`**
+the second. Passing both is the `git branch -D` contract: it consents to
 destroying whatever is in the workweave. The same sequence runs as retire's
 delete step (worktrees removed, branches force-deleted, directory removed),
-but without any merged-check or dirty-check.
+but without the waived check.
 
 The diverged-commit check uses **both** the recorded parent and the primary
 weave as baselines: work counts as merged when it is reachable from either.
@@ -327,7 +329,7 @@ create ──→ work ──→ sync-to --retire ──→ (gone)
              │
              └──→ sync-to (without --retire) ──→ work ──→ delete
                                                             │
-                                              (--force if dirty)
+                                        (--discard-* if dirty)
 ```
 
 The tool enforces every transition that involves rwv-owned state or
