@@ -1245,20 +1245,19 @@ fn materialize_missing_repo(
                     canonical.display()
                 );
             }
-            // Use the manifest's tracking branch as the start point. The
-            // ephemeral ref itself is `{project}--{workweave}` and nothing
-            // else: the third component this site used to append (the
-            // manifest `version:`) disagreed with what `create_workweave`
-            // appends (the branch the canonical happened to be on), no
-            // consumer read either, and §3.5 deletes the component rather
-            // than picking a winner. Names are per-store, so one name per
-            // (project, workweave) collides with nothing.
+            // The manifest's tracking branch is the START POINT, and only
+            // that. The NAME comes from `EphemeralRefName::mint` below — the
+            // same call `create_workweave` (`workweave.rs`) and `rwv add`
+            // (`add_remove.rs`) make, from the same two inputs.
             //
-            // The two sites collapse independently: the delete/doctor sweeps
-            // match on `starts_with("{project}--{workweave}")`, which a name
-            // with no third component still satisfies. `create_workweave`'s
-            // mirror (`workweave.rs`'s `ephemeral_branch_name`) is a separate
-            // change and is untouched here.
+            // This comment used to claim it "mirrors create_workweave's
+            // naming" while doing something else entirely, and then claimed
+            // the two sites were still divergent and would collapse
+            // separately. Both readings are now obsolete: §3.5 dropped the
+            // third component, `mint` is total over (project, workweave),
+            // and there is exactly one derivation left, so there is nothing
+            // to mirror — the sites call the same function. (The
+            // `ephemeral_branch_name` this text pointed at no longer exists.)
             let start_ref = entry.version.as_str();
             let head_rev = GitVcs
                 .resolve_revision(&canonical, start_ref)

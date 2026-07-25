@@ -72,22 +72,18 @@ fn make_workspace(tmp: &Path, project: &str) -> std::path::PathBuf {
     ws
 }
 
+/// The ref this checkout is on. Panics when HEAD is detached — every caller
+/// here is asserting an attachment, so a detach is a failure, not a value.
+///
+/// Delegates to the shared §4.7 primitive (`Vcs::head_attachment`) rather
+/// than `git symbolic-ref --short HEAD`; see `tests/common/mod.rs`.
 fn current_branch(dir: &Path) -> String {
-    let output = common::git()
-        .args(["symbolic-ref", "--short", "HEAD"])
-        .current_dir(dir)
-        .output()
-        .expect("git symbolic-ref should run");
-    assert!(
-        output.status.success(),
-        "git symbolic-ref in {} failed: {}",
-        dir.display(),
-        String::from_utf8_lossy(&output.stderr)
-    );
-    String::from_utf8(output.stdout)
-        .expect("branch name should be valid UTF-8")
-        .trim()
-        .to_string()
+    common::checkout_ref(dir).unwrap_or_else(|| {
+        panic!(
+            "{} should be on a branch but HEAD is detached",
+            dir.display()
+        )
+    })
 }
 
 /// Re-invoking `rwv workweave PROJECT create NAME` on an already-created

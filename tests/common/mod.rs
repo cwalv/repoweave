@@ -129,6 +129,76 @@ pub fn assert_log_ordering(repo: &std::path::Path, commit_messages: &[&str]) {
     }
 }
 
+// ---------------------------------------------------------------------------
+// "Which ref is this checkout on" (branch-model.md §4.7)
+// ---------------------------------------------------------------------------
+//
+// §4.7 names this the enforcement primitive the suite was missing: the fetch
+// detach survived because the test that should have caught it asserted only
+// `rev-parse HEAD` equality, against a fixture that had pre-detached the repo.
+// A tip comparison cannot see a detach — HEAD points at the same commit either
+// way. The question has to be asked about the *ref*.
+//
+// Two things make this a primitive rather than another local helper:
+//
+//  1. **It asks the production classifier.** `Vcs::head_attachment` is the
+//     code under test's own answer, so a test cannot pass because the test
+//     and the product disagree about what "on a branch" means.
+//  2. **It does not ask git for a short name.** Every hand-rolled version of
+//     this in the suite ran `git symbolic-ref --short HEAD`, and `--short`
+//     answers the shortest *unambiguous* name: with a tag named `main` in the
+//     repo it returns `heads/main`, which does not round-trip through
+//     `refs/heads/<name>`. `observe_head` avoids `--short` deliberately, and
+//     a test that reintroduces it is asserting against a different function
+//     than the one that ships.
+//
+// The four states `current_ref`'s `Ok(None)` used to collapse (§4.5) stay
+// apart here: `Attached` and `Unborn` answer with a name, `Detached` answers
+// `None`, and a directory that is not a repo — or a ref database that cannot
+// be read — panics rather than quietly reading as "no branch".
+
+/// The name of the ref `repo`'s checkout is on, or `None` when HEAD is
+/// detached.
+///
+/// Panics when `repo` is not a repository or its ref database is unreadable:
+/// in a test those are fixture bugs, and letting them read as "detached" is
+/// exactly the conflation §4.5 removes.
+pub fn checkout_ref(repo: &std::path::Path) -> Option<String> {
+    use repoweave::vcs::{HeadAttachment, Vcs};
+    match repoweave::git::GitVcs.head_attachment(repo) {
+        Ok(HeadAttachment::Attached(a)) => Some(a.to_string()),
+        Ok(HeadAttachment::Unborn(u)) => Some(u.name().as_str().to_owned()),
+        Ok(HeadAttachment::Detached(_)) => None,
+        Err(e) => panic!(
+            "head_attachment failed for {}: {e} — this is a fixture bug, not a \
+             detached HEAD",
+            repo.display()
+        ),
+    }
+}
+
+/// Assert that `repo`'s checkout is on the branch named `branch`.
+pub fn assert_on_branch(repo: &std::path::Path, branch: &str) {
+    match checkout_ref(repo) {
+        Some(actual) => assert_eq!(actual, branch, "{} should be on '{branch}'", repo.display()),
+        None => panic!(
+            "{} should be on '{branch}' but HEAD is detached",
+            repo.display()
+        ),
+    }
+}
+
+/// Assert that `repo`'s HEAD names no branch.
+///
+/// Use where a detach is the *specified* outcome (`--detach-checkouts`, a
+/// lock-pinned materialization). Everywhere else, prefer [`assert_on_branch`]:
+/// asserting the positive is what makes an unintended detach a failure.
+pub fn assert_detached(repo: &std::path::Path) {
+    if let Some(branch) = checkout_ref(repo) {
+        panic!("{} should be detached but is on '{branch}'", repo.display());
+    }
+}
+
 /// Build an `assert_cmd::Command` for the `rwv` binary with inherited
 /// `GIT_*` environment variables stripped.
 ///

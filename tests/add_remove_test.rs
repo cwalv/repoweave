@@ -1058,23 +1058,15 @@ fn git_common_dir(repo: &std::path::Path) -> std::path::PathBuf {
     joined.canonicalize().unwrap_or_else(|_| joined.clone())
 }
 
-/// Read the current branch name of `repo` via `git symbolic-ref --short HEAD`.
-/// Returns `None` when HEAD is detached.
+/// The ref this checkout is on, or `None` when HEAD is detached.
+///
+/// Delegates to the shared §4.7 primitive, which asks `Vcs::head_attachment`
+/// — the production classifier — rather than `git symbolic-ref --short HEAD`.
+/// `--short` returns the shortest *unambiguous* name, so a same-named tag
+/// makes it answer `heads/main`; and its failure exit collapses detached,
+/// unborn, and not-a-repo into one `None` (§4.5).
 fn current_branch(repo: &std::path::Path) -> Option<String> {
-    let out = common::git()
-        .args(["symbolic-ref", "--short", "HEAD"])
-        .current_dir(repo)
-        .output()
-        .expect("git symbolic-ref should run");
-    if !out.status.success() {
-        return None; // detached HEAD
-    }
-    Some(
-        String::from_utf8(out.stdout)
-            .expect("valid UTF-8")
-            .trim()
-            .to_string(),
-    )
+    common::checkout_ref(repo)
 }
 
 #[test]

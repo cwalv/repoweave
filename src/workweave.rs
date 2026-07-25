@@ -322,10 +322,21 @@ pub fn ensure_registered_workweave(
 /// matching here is not ownership — every DESTROY still goes through
 /// [`RefRegistry::lookup`]; this only decides which unowned names are worth
 /// telling the operator about.
+///
+/// The minted side is brought to the parse boundary with
+/// [`EphemeralRefName::to_raw`], not with `to_string()`. Both spell the same
+/// characters, so this is not a bug fix — it is keeping the one legal
+/// conversion distinct from the rendering. `Display` is what an
+/// `EphemeralRefName` offers a human; laundering that rendering into a string
+/// in order to compare it with an observed name is precisely the move §4.2
+/// removes `as_str()` to prevent, and a comparison written that way keeps
+/// compiling if the two notions ever diverge.
 fn is_this_workweaves_namespace(observed: &RawRefName, flat: &EphemeralRefName) -> bool {
-    let flat = flat.to_string();
-    let observed = observed.as_str();
-    observed == flat || observed.starts_with(&format!("{flat}/"))
+    let flat = flat.to_raw();
+    observed == &flat
+        || observed
+            .as_str()
+            .starts_with(&format!("{}/", flat.as_str()))
 }
 
 /// Recursively copy a directory from `src` to `dst`.
@@ -1049,11 +1060,9 @@ pub(crate) fn birth_ephemeral_worktree(
     // ref`. git cannot hold both `refs/heads/p--ww` and `refs/heads/p--ww/x`,
     // so any pre-flat-name branch in this namespace blocks the flat one.
     let occupied: Vec<RawRefName> = vcs
-        .list_branch_names_with_prefix(&store, &ephemeral.to_string())?
+        .list_branch_names_with_prefix(&store, raw.as_str())?
         .into_iter()
-        .filter(|b| {
-            is_this_workweaves_namespace(b, ephemeral) && b.as_str() != ephemeral.to_string()
-        })
+        .filter(|b| is_this_workweaves_namespace(b, ephemeral) && b != &raw)
         .collect();
     if !occupied.is_empty() {
         bail!(
@@ -2472,7 +2481,7 @@ fn retire_recorded_refs(
     // Report-only. Anything still standing in this workweave's namespace is a
     // ref rwv did not record creating, so under R2 it is not rwv's to delete —
     // it is the operator's, and the only useful thing to do with it is say so.
-    match vcs.list_branch_names_with_prefix(store, &ephemeral.to_string()) {
+    match vcs.list_branch_names_with_prefix(store, ephemeral.to_raw().as_str()) {
         Ok(observed) => {
             for branch in observed {
                 if is_this_workweaves_namespace(&branch, ephemeral) {

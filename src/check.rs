@@ -2814,10 +2814,13 @@ fn refs_in_workweave_namespace(
     store: &Path,
     flat: &crate::vcs::EphemeralRefName,
 ) -> (bool, Vec<crate::vcs::LegacyEphemeralRefName>) {
-    let Ok(observed) = vcs.list_branch_names_with_prefix(store, &flat.to_string()) else {
+    // The prefix comes from `to_raw`, the named conversion to the parse
+    // boundary — not from `Display`. A rendering is for a reader; what the
+    // VCS is asked to match on is a name (branch-model.md §4.2).
+    let flat_raw = flat.to_raw();
+    let Ok(observed) = vcs.list_branch_names_with_prefix(store, flat_raw.as_str()) else {
         return (false, Vec::new());
     };
-    let flat_raw = flat.to_raw();
     let mut flat_present = false;
     let mut legacy = Vec::new();
     for name in observed {

@@ -802,16 +802,22 @@ fn sync_to_advances_the_target_branch_not_just_head() {
         ww_project_tip,
         "the target project repo's `main` must carry the landing, not just its HEAD"
     );
-    assert_eq!(
-        git_out(&["rev-parse", "--abbrev-ref", "HEAD"], &primary.server_dir),
-        "main",
-        "the target server repo must still be attached to `main`"
-    );
-    assert_eq!(
-        git_out(&["rev-parse", "--abbrev-ref", "HEAD"], &primary.project_dir),
-        "main",
-        "the target project repo must still be attached to `main`"
-    );
+    // §4.7's assertion primitive, asked of both sides. `--abbrev-ref` used to
+    // stand here; like `--short` it answers the shortest *unambiguous* name,
+    // so this pair asserted against a spelling git picks rather than against
+    // the ref. `assert_on_branch` asks `head_attachment` — the classifier the
+    // product itself uses — and keeps detached, unborn, and not-a-repo apart.
+    common::assert_on_branch(&primary.server_dir, "main");
+    common::assert_on_branch(&primary.project_dir, "main");
+
+    // A landing is a MOVE on the TARGET; nothing about it should reposition
+    // the source's own checkouts. Untested until now, and it is the half of
+    // the §2.1 chain that ends "then delete the only ref": a source that
+    // silently lost its attachment during the landing is a source whose work
+    // the follow-on `--retire` has no branch to find.
+    common::assert_on_branch(&ww.server_dir, "ww/server");
+    common::assert_on_branch(&ww.project_dir, "ww/project");
+
     assert!(
         stdout.contains("ff-advanced main to"),
         "advance-target must name the branch it landed on; got:\n{stdout}"
@@ -872,6 +878,12 @@ fn sync_to_refuses_when_target_member_repo_is_detached() {
         !ww.root.join(".rwv-op").exists(),
         "a preflight refusal must leave no op-state behind"
     );
+    // "Left exactly as they were" includes the attachment, not just the tips
+    // (§4.7): a refusal that helpfully reattached the target would leave every
+    // SHA assertion above green while having performed the ATTACH the operator
+    // never consented to.
+    common::assert_detached(&primary.server_dir);
+    common::assert_on_branch(&ww.server_dir, "ww/server");
 
     // Re-attach and re-run: the work lands on the named branch.
     git(&["checkout", "main"], &primary.server_dir);
@@ -917,6 +929,53 @@ fn sync_to_refuses_when_target_project_repo_is_detached() {
         git_out(&["rev-parse", "refs/heads/main"], &primary.project_dir),
         project_main_before,
         "target project `main` must be untouched by a refused sync-to"
+    );
+    common::assert_detached(&primary.project_dir);
+    common::assert_on_branch(&ww.project_dir, "ww/project");
+}
+
+// ---------------------------------------------------------------------------
+// Test: a refused landing is refused for the SOURCE too
+//
+// The §2.1 chain is two steps: land onto nothing, then delete the only ref.
+// The refusal above closes step one. This closes the seam between them — a
+// refused sync-to must not have moved the source's ephemeral ref either, or
+// `--retire` would be reasoning about a branch the failed landing already
+// advanced.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn a_refused_landing_leaves_the_source_ref_where_it_was() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (primary, ww, _initial_sha) = make_shared_workspaces(tmp.path());
+
+    let c2 = make_commit(&ww.server_dir, "ww.txt", "workweave\n", "ww: advance");
+    write_lock(&ww.project_dir, &[(SERVER_PATH, SERVER_URL, &c2)]);
+    git(&["add", "rwv.lock"], &ww.project_dir);
+    git(&["commit", "-m", "lock: ww advance"], &ww.project_dir);
+
+    let source_server_ref = git_out(&["rev-parse", "refs/heads/ww/server"], &ww.server_dir);
+    let source_project_ref = git_out(&["rev-parse", "refs/heads/ww/project"], &ww.project_dir);
+
+    git(&["checkout", "--detach", "HEAD"], &primary.server_dir);
+
+    rwv()
+        .args(["sync-to", &primary.root.to_string_lossy(), "--strategy=ff"])
+        .current_dir(&ww.root)
+        .assert()
+        .failure();
+
+    common::assert_on_branch(&ww.server_dir, "ww/server");
+    common::assert_on_branch(&ww.project_dir, "ww/project");
+    assert_eq!(
+        git_out(&["rev-parse", "refs/heads/ww/server"], &ww.server_dir),
+        source_server_ref,
+        "a refused landing must not move the source's ref"
+    );
+    assert_eq!(
+        git_out(&["rev-parse", "refs/heads/ww/project"], &ww.project_dir),
+        source_project_ref,
+        "a refused landing must not move the source's project ref"
     );
 }
 
@@ -1075,6 +1134,14 @@ fn sync_succeeds_when_primary_rwv_active_differs_from_workweave_project() {
         "primary_tip ({primary_tip}) should be an ancestor of ww project tip ({ww_after}) \
          after sync; primary's commit was not incorporated"
     );
+
+    // §4.7, applied to `sync`. §5 classifies sync as a MOVE — it advances the
+    // ref the CWD checkout is already on — so "did the work arrive" is only
+    // half the question; "is the checkout still on the ref that received it"
+    // is the other half, and it is the half a tip/ancestry assertion cannot
+    // see. A sync that detached at the merged tip satisfies every assertion
+    // above: HEAD holds the right commit, and the branch was left behind.
+    common::assert_on_branch(&ww_project, "primary--feat");
 
     let _ = initial_sha;
 }

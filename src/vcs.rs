@@ -133,7 +133,7 @@ impl serde::Serialize for ResolvedRevisionId {
 /// *parsing* (the [`serde::Deserialize`] entry point). It is intentionally
 /// not interchangeable with [`ResolvedRevisionId`]: there is no `PartialEq`
 /// between the two, and `RawRevisionId` cannot be fed to commit-id
-/// operations such as `Vcs::checkout`. To turn a raw value into a value
+/// operations such as `Vcs::advance_attached_ref`. To turn a raw value into a value
 /// safe for SHA comparison, run it through
 /// [`crate::manifest::LockFile::resolve_versions`] (which calls
 /// [`Vcs::resolve_revision`] against the on-disk repo).
@@ -1475,10 +1475,11 @@ pub enum HeadObservation {
 
 /// What HEAD is, in a workspace that is **known to be a repo**.
 ///
-/// The shipped `current_ref` collapsed four distinct conditions into a
-/// single `Ok(None)` — on a branch, unborn, detached, and not-a-repo-at-all
-/// — which is how `rwv push` came to report "is on a detached HEAD" for a
-/// directory that was not a repo. Two of the four are errors rather than
+/// The `current_ref` this replaced (now deleted) collapsed four distinct
+/// conditions into a single `Ok(None)` — on a branch, unborn, detached, and
+/// not-a-repo-at-all — which is how `rwv push` came to report "is on a
+/// detached HEAD" for a directory that was not a repo. Two of the four are
+/// errors rather than
 /// states ([`VcsError::NotARepo`], [`VcsError::CommandFailed`]), so
 /// [`Vcs::head_attachment`] is total over the remaining three and every
 /// caller's `match` is exhaustive. The value that meant all four does not
@@ -1790,30 +1791,6 @@ pub trait Vcs {
         branch: &RefName,
     ) -> Result<ResolvedRevisionId, VcsError>;
 
-    /// Push the currently-checked-out branch in `repo` to the remote
-    /// associated with `role`.
-    ///
-    /// For [`GitVcs`](crate::git::GitVcs): resolves the current branch via
-    /// [`current_ref`] (returning [`VcsError::CommandFailed`] with a
-    /// "detached HEAD" stderr when there is no current branch — the
-    /// [`crate::push`] caller is expected to refuse detached HEAD before
-    /// reaching this point), then runs `git push <remote> <branch>` from
-    /// the repo dir. The remote is selected by the same role convention as
-    /// [`clone_with_role`] — `upstream` for `Role::Fork`, `origin`
-    /// otherwise. Other VCS impls choose their own conventions.
-    ///
-    /// Trait-level Fork policy is neutral: `push_with_role(Role::Fork)`
-    /// will push to `upstream` if that is what the role convention selects.
-    /// Caller-side policy ("skip forks with an info line") lives in
-    /// [`crate::push`]; the trait stays a thin shell over the VCS surface.
-    ///
-    /// When `force` is `true`, the push uses force semantics (for git,
-    /// `--force`); when `false`, the push refuses non-fast-forward updates.
-    ///
-    /// [`current_ref`]: Vcs::current_ref
-    /// [`clone_with_role`]: Vcs::clone_with_role
-    fn push_with_role(&self, repo: &Path, role: Role, force: bool) -> Result<(), VcsError>;
-
     /// Resolve the current HEAD to a revision ID.
     ///
     /// The returned `ResolvedRevisionId` carries the canonical commit SHA. When a
@@ -1829,19 +1806,6 @@ pub trait Vcs {
     /// human-readable output. Returns [`VcsError::RevisionNotFound`] if
     /// the revision is unknown in this repo.
     fn resolve_revision(&self, repo: &Path, rev: &str) -> Result<ResolvedRevisionId, VcsError>;
-
-    /// Get the current branch/ref name, if on one.
-    fn current_ref(&self, repo: &Path) -> Result<Option<RefName>, VcsError>;
-
-    /// Create a worktree at `dest` from `repo`, on a new branch `branch_name`
-    /// starting at `start_point`.
-    fn create_worktree(
-        &self,
-        repo: &Path,
-        dest: &Path,
-        branch_name: &RefName,
-        start_point: &ResolvedRevisionId,
-    ) -> Result<(), VcsError>;
 
     /// Remove a worktree previously created at `worktree_path`.
     fn remove_worktree(&self, repo: &Path, worktree_path: &Path) -> Result<(), VcsError>;
@@ -1864,21 +1828,8 @@ pub trait Vcs {
     /// of them. Returns `None` when no tag points at the current HEAD commit.
     fn tag_at_head(&self, repo: &Path) -> Result<Option<RefName>, VcsError>;
 
-    /// Check out a specific revision in a repo.
-    fn checkout(&self, repo: &Path, revision: &ResolvedRevisionId) -> Result<(), VcsError>;
-
-    /// Delete a local branch by name. Uses force-delete semantics.
-    fn delete_branch(&self, repo: &Path, branch: &RefName) -> Result<(), VcsError>;
-
     /// Prune stale worktree administrative files from a repo.
     fn worktree_prune(&self, repo: &Path) -> Result<(), VcsError>;
-
-    /// List local branch names that start with `prefix`.
-    fn list_branches_with_prefix(
-        &self,
-        repo: &Path,
-        prefix: &RefName,
-    ) -> Result<Vec<RefName>, VcsError>;
 
     /// Return the default branch name for `repo`.
     ///
@@ -2100,19 +2051,6 @@ pub trait Vcs {
     /// For [`GitVcs`](crate::git::GitVcs): reads `refs/rwv/pre-op/<op_id>`.
     fn resolve_savepoint(&self, repo: &Path, op_id: &str) -> Option<ResolvedRevisionId>;
 
-    /// Restore `repo` to the savepoint captured under `op_id`, then drop
-    /// the savepoint.
-    ///
-    /// Returns `Ok(true)` when a savepoint existed and was restored;
-    /// `Ok(false)` when no savepoint was present (nothing to do).
-    ///
-    /// For [`GitVcs`](crate::git::GitVcs): when the savepoint exists, runs
-    /// `git reset --hard refs/rwv/pre-op/<op_id>` followed by
-    /// `git update-ref -d refs/rwv/pre-op/<op_id>`. The destructive
-    /// `reset --hard` is the operation's contract — restoring the
-    /// pre-op state is what `rwv abort` consents to.
-    fn restore_savepoint(&self, repo: &Path, op_id: &str) -> Result<bool, VcsError>;
-
     /// Drop the savepoint captured under `op_id` in `repo`. No-op when
     /// no such savepoint exists; ignores ref-update failures (the
     /// savepoint is purely a recovery aid — its absence is benign).
@@ -2182,12 +2120,11 @@ pub trait Vcs {
     /// workspace root, or `"(project)"` for the project repo).
     ///
     /// For [`GitVcs`](crate::git::GitVcs): when restoring, runs
-    /// `git reset --hard refs/rwv/pre-op/<op_id>` and drops the savepoint
-    /// — the same primitive as [`restore_savepoint`], gated by the
-    /// classification above. The destructive `reset --hard` is now
-    /// reachable only for tips the op itself created.
-    ///
-    /// [`restore_savepoint`]: Vcs::restore_savepoint
+    /// `git reset --hard refs/rwv/pre-op/<op_id>` and drops the savepoint,
+    /// gated by the classification above. This is the only remaining way
+    /// to reach that reset: the unverified `restore_savepoint` it
+    /// superseded was deleted with the rest of the old surface, so the
+    /// destructive path is reachable only for tips the op itself created.
     fn verified_restore_savepoint(
         &self,
         repo: &Path,
@@ -2257,10 +2194,10 @@ pub trait Vcs {
     ///
     /// For [`GitVcs`](crate::git::GitVcs): enumerates
     /// `refs/heads/` via `git for-each-ref`. Differs from
-    /// [`list_branches_with_prefix`] in that it returns every branch
+    /// [`list_branch_names_with_prefix`] in that it returns every branch
     /// regardless of name.
     ///
-    /// [`list_branches_with_prefix`]: Vcs::list_branches_with_prefix
+    /// [`list_branch_names_with_prefix`]: Vcs::list_branch_names_with_prefix
     fn list_local_branches(&self, repo: &Path) -> Result<Vec<RefName>, VcsError>;
 
     /// Fetch objects from `src_repo` into `dst_repo` so SHAs reachable in
@@ -2514,9 +2451,15 @@ pub trait Vcs {
     // DESTROY. Store-level destroys (R4) are not ref operations and have no
     // method here.
     //
-    // These land ALONGSIDE `checkout` / `delete_branch` / `current_ref`
-    // above; the old surface is removed once every call site has been
-    // restated in terms of this one, and that restatement is the audit.
+    // These REPLACED `checkout` / `delete_branch` / `current_ref` /
+    // `restore_savepoint`, which no longer exist. They were deleted only once
+    // every call site had been restated in terms of this surface — and that
+    // restatement was the audit: a site that could not say which replacement
+    // it meant was a site nobody had classified. The rest of the pre-model
+    // surface went with them: `create_worktree` (superseded by
+    // `create_worktree_on` / `materialize_worktree_on_ref`), `push_with_role`
+    // (by `push_ref`), and `list_branches_with_prefix` (by
+    // `list_branch_names_with_prefix`).
 
     // ---- observation (§4.5) -----------------------------------------------
 

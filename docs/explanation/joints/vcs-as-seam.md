@@ -269,57 +269,69 @@ The companion `has_replay_exclusion` query exists so `rwv doctor` can
 detect projects initialised before this path landed and offer to add
 the missing entry. The detection logic in core stays VCS-agnostic.
 
-### (d) `Vcs::push_with_role`
+### (d) `Vcs::push_ref`
 
-**Concept:** push the currently-checked-out branch on the remote
-associated with the given role. For git, this resolves the current
-branch via `current_ref` (refusing detached HEAD with a typed
-`CommandFailed`), ignores the role (all roles push to `origin` — see
-example (a)), and runs `git push origin <branch>`.
+**Concept:** push a named ref on the remote associated with the given
+role. For git, this ignores the role (all roles push to `origin` — see
+example (a)) and runs `git push origin <ref>`.
 
-**Anchor:** commit `6066ce1`.
+**Anchor:** commit `6066ce1` for the original `push_with_role`, which
+read the current branch inside the impl. The ref became a parameter when
+the branch model landed, and `push_with_role` was deleted with the rest
+of the pre-model `Vcs` surface.
 
-**Trait surface** (`Vcs::push_with_role` in `src/vcs.rs`):
+**Trait surface** (`Vcs::push_ref` in `src/vcs.rs`):
 
 ```rust
-fn push_with_role(&self, repo: &Path, role: Role, force: bool)
+fn push_ref(&self, repo: &Path, role: Role, r: &PublishRef, force: bool)
     -> Result<(), VcsError>;
 ```
 
-**Git impl** (`GitVcs::push_with_role` in `src/git.rs`): see the file
-for the full body. The relevant detail is that the impl owns:
+**Git impl** (`GitVcs::push_ref` in `src/git.rs`): see the file for the
+full body. The relevant detail is that the impl owns:
 
-- The `current_ref` lookup and the detached-HEAD failure mode.
 - The remote name selection (all roles push to `origin`; the `role`
   parameter is accepted and ignored, kept for signal value and future
   VCS impl flexibility — see example (a)).
 - The `--force` flag spelling.
-- The argument shape `git push <remote> <branch>`.
+- The argument shape `git push <remote> <ref>`.
+
+And what it explicitly does **not** own: the
+choice of which ref to publish. `push_with_role` read the current branch
+inside the impl via `current_ref`, which put a policy decision — *what
+does publishing this repo mean?* — inside the git wrapper, where no
+caller could see it and a detached HEAD turned into a `CommandFailed`
+from three layers down. `push_ref` takes a `PublishRef`, whose only
+constructor is `pub(crate)` to `push.rs`, so the decision is made once
+at the publish gate and the refusal for a detached checkout is stated
+there, in the verb's own voice. `branch-model.md` §4.3 and Q6 carry the
+open question of *what* that gate should choose; the signature only
+makes the choice visible.
 
 `src/push.rs` (the verb-level orchestrator) does the cross-repo work —
 walking the manifest, applying selectors, ordering project-repo last,
 checking the lock-state precondition — but never invokes git directly.
-It calls `vcs.push_with_role(repo, role, force)`.
+It calls `vcs.push_ref(repo, role, &item.publish_ref, force)`.
 
 **Why this is the seam shape.** Before this method existed, the
 push-loop draft constructed `git push` argument strings inline. Per the
 verbs design discussion ("the trait captures the per-role push policy
 — refs come from the manifest, not from `git push` argument
 parsing"), the right shape was a trait method whose contract names the
-*intent* ("push this branch on the role-conventional remote") and
-hides the *mechanism* (`git push origin <branch>` or some entirely
+*intent* ("publish this ref on the role-conventional remote") and
+hides the *mechanism* (`git push origin <ref>` or some entirely
 different command on another VCS).
 
-Note the trait-level Fork policy is *neutral*:
-`push_with_role(Role::Fork)` pushes to `origin` just like any other
-role. The plan-time default scope (owned + fork; dependency and
-reference excluded before the loop) lives in `src/push.rs`. The trait
-stays a thin shell over the VCS surface; the policy of which roles to
-include in the push loop lives where the loop lives. The asymmetry is
-deliberate: it keeps the trait composable (a future verb that wants to
-push only owned repos calls `push_with_role` after filtering out forks)
-and keeps verb-level policy debuggable (the default-scope choice is one
-visible location in `src/push.rs`).
+Note the trait-level Fork policy is *neutral*: `push_ref(Role::Fork)`
+pushes to `origin` just like any other role. The plan-time default
+scope (owned + fork; dependency and reference excluded before the loop)
+lives in `src/push.rs`. The trait stays a thin shell over the VCS
+surface; the policy of which roles to include in the push loop lives
+where the loop lives. The asymmetry is deliberate: it keeps the trait
+composable (a future verb that wants to push only owned repos calls
+`push_ref` after filtering out forks) and keeps verb-level policy
+debuggable (the default-scope choice is one visible location in
+`src/push.rs`).
 
 ## What this means for code review
 

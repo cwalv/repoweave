@@ -369,6 +369,16 @@ fn delete_proceeds_when_canonical_checkout_has_no_foreign_dependents() {
         "delete should succeed when canonical checkout has no foreign dependents; got: {result:?}"
     );
     assert!(!ww_dir.exists(), "workweave dir should be removed");
+
+    // §4.7, applied to `delete`. Delete is a DESTROY over the workweave's own
+    // refs; the checkouts that SURVIVE it are not part of the operation and
+    // must come out attached exactly as they went in. Nothing here asserted
+    // that before: "the directory is gone" is compatible with a delete that
+    // detached the canonical clone whose worktree it was pruning — and a
+    // detached canonical is the state §2.1's chain needs in order to turn the
+    // next landing into a data loss.
+    common::assert_on_branch(&project_dir, "main");
+    common::assert_on_branch(&primary_slot, "main");
 }
 
 /// Under inverted topology, the merged-check that gates delete must run

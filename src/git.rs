@@ -700,11 +700,6 @@ fn is_revision_not_found(stderr: &str) -> bool {
         || stderr.contains("Needed a single revision")
 }
 
-/// True when stderr signals "branch already exists / worktree already exists".
-fn is_already_exists(stderr: &str) -> bool {
-    stderr.contains("already exists") || stderr.contains("already a worktree")
-}
-
 /// True for transient/internal tags that must not be chosen as a lock's
 /// symbolic name. Mirrors the ref-spaces rwv uses for its own bookkeeping —
 /// `savepoint/*` (operator/tool savepoints), `rwv/pre-op/*` (sync abort
@@ -786,32 +781,6 @@ impl Vcs for GitVcs {
         self.resolve_revision(repo, &qualified)
     }
 
-    fn push_with_role(&self, repo: &Path, role: Role, force: bool) -> Result<(), VcsError> {
-        // Resolve the currently-checked-out branch. A detached HEAD has no
-        // branch to push as a ref update; surface a `CommandFailed` with a
-        // stderr that names the condition so callers without an out-of-band
-        // pre-check still see a clear message.
-        let branch = match self.current_ref(repo)? {
-            Some(b) => b,
-            None => {
-                return Err(VcsError::CommandFailed {
-                    args: vec!["push".to_owned()],
-                    repo: repo.to_path_buf(),
-                    stderr: "cannot push: HEAD is detached (no branch)".to_owned(),
-                });
-            }
-        };
-        let _ = role; // all remotes use `origin`
-        let mut args: Vec<&str> = vec!["push"];
-        if force {
-            args.push("--force");
-        }
-        args.push("origin");
-        args.push(branch.as_str());
-        Self::run(&args, repo)?;
-        Ok(())
-    }
-
     fn head_revision(&self, repo: &Path) -> Result<ResolvedRevisionId, VcsError> {
         match Self::run(&["rev-parse", "HEAD"], repo) {
             Err(VcsError::CommandFailed { stderr, .. })
@@ -866,54 +835,6 @@ impl Vcs for GitVcs {
             }
             Err(e) => Err(e),
         }
-    }
-
-    fn current_ref(&self, repo: &Path) -> Result<Option<RefName>, VcsError> {
-        match Self::run(&["symbolic-ref", "--short", "HEAD"], repo) {
-            Ok(name) => Ok(Some(RefName::new(name))),
-            Err(_) => Ok(None), // detached HEAD
-        }
-    }
-
-    fn create_worktree(
-        &self,
-        repo: &Path,
-        dest: &Path,
-        branch_name: &RefName,
-        start_point: &ResolvedRevisionId,
-    ) -> Result<(), VcsError> {
-        let dest_str = dest.to_str().ok_or_else(|| VcsError::Io {
-            ctx: format!("worktree path {} is not valid UTF-8", dest.display()),
-            source: std::io::Error::new(std::io::ErrorKind::InvalidInput, "non-utf8 worktree path"),
-        })?;
-        let start = start_point.as_str();
-        let branch = branch_name.as_str();
-
-        // First try creating a new branch with -b.
-        let result = Self::run(&["worktree", "add", "-b", branch, dest_str, start], repo);
-
-        if let Err(e) = result {
-            // If the branch already exists, try using it as-is (no -b).
-            // This handles the case where a previous delete didn't clean up branches.
-            let already = matches!(
-                &e,
-                VcsError::CommandFailed { stderr, .. } if is_already_exists(stderr)
-            );
-            if already {
-                // Delete the stale branch first, then retry with -b.
-                // If delete fails, fall back to using the existing branch directly.
-                let deleted = Self::run(&["branch", "-D", branch], repo).is_ok();
-                if deleted {
-                    Self::run(&["worktree", "add", "-b", branch, dest_str, start], repo)?;
-                } else {
-                    Self::run(&["worktree", "add", dest_str, branch], repo)?;
-                }
-            } else {
-                return Err(e);
-            }
-        }
-
-        Ok(())
     }
 
     fn remove_worktree(&self, repo: &Path, worktree_path: &Path) -> Result<(), VcsError> {
@@ -979,39 +900,9 @@ impl Vcs for GitVcs {
         Ok(Some(RefName::new(chosen)))
     }
 
-    fn checkout(&self, repo: &Path, revision: &ResolvedRevisionId) -> Result<(), VcsError> {
-        Self::run(&["checkout", revision.as_str()], repo)?;
-        Ok(())
-    }
-
-    fn delete_branch(&self, repo: &Path, branch: &RefName) -> Result<(), VcsError> {
-        Self::run(&["branch", "-D", branch.as_str()], repo)?;
-        Ok(())
-    }
-
     fn worktree_prune(&self, repo: &Path) -> Result<(), VcsError> {
         Self::run(&["worktree", "prune"], repo)?;
         Ok(())
-    }
-
-    fn list_branches_with_prefix(
-        &self,
-        repo: &Path,
-        prefix: &RefName,
-    ) -> Result<Vec<RefName>, VcsError> {
-        // `git branch --list 'prefix/*'` lists all local branches under the prefix.
-        let pattern = format!("{}/*", prefix.as_str());
-        let output = Self::run(&["branch", "--list", &pattern], repo)?;
-        let branches = output
-            .lines()
-            .map(|line| {
-                // Lines from `git branch` are prefixed with "* " (current) or "  ".
-                line.trim_start_matches('*').trim().to_string()
-            })
-            .filter(|s| !s.is_empty())
-            .map(RefName::new)
-            .collect();
-        Ok(branches)
     }
 
     fn default_branch(&self, repo: &Path) -> Result<RefName, VcsError> {
@@ -1421,17 +1312,6 @@ impl Vcs for GitVcs {
         let ref_name = savepoint_ref(op_id);
         let out = Self::run(&["rev-parse", &ref_name], repo).ok()?;
         ResolvedRevisionId::from_rev_parse_output(&out)
-    }
-
-    fn restore_savepoint(&self, repo: &Path, op_id: &str) -> Result<bool, VcsError> {
-        match self.resolve_savepoint(repo, op_id) {
-            Some(sha) => {
-                Self::run(&["reset", "--hard", sha.as_str()], repo)?;
-                self.drop_savepoint(repo, op_id);
-                Ok(true)
-            }
-            None => Ok(false),
-        }
     }
 
     fn drop_savepoint(&self, repo: &Path, op_id: &str) {
@@ -3032,6 +2912,170 @@ mod branch_model_tests {
         assert_eq!(
             observed.to_string(),
             "on unborn branch 'main' (no commits yet)"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Publish: the ref is a parameter (§4.3, §5 `push` (member repo))
+    // -----------------------------------------------------------------------
+    //
+    // These moved here from `tests/vcs_test.rs`, where they exercised
+    // `push_with_role` — deleted with the rest of the old surface. They could
+    // not follow `push_ref` out of the crate: a `PublishRef` is minted only
+    // by `PublishRef::from_attached`, which is `pub(crate)`, so an
+    // integration test cannot construct one. That is the seal working, not an
+    // obstacle to route around by widening the constructor.
+    //
+    // One case did NOT move: `push_with_role_detached_head_errors`. Its
+    // guarantee left the impl when the ref became a parameter — there is no
+    // longer a `current_ref` read inside `push_ref` to fail on a detached
+    // HEAD, because a detached checkout yields no `AttachedRef` and therefore
+    // no `PublishRef`. The refusal is now the publish gate's, and it is
+    // pinned end-to-end at `tests/push_test.rs`
+    // (`push_refuses_detached_head`, and `NotARepo` at :528).
+
+    /// Read a ref out of a BARE repo.
+    ///
+    /// `--git-dir` rather than `current_dir`, because `git_command` does not
+    /// clear `GIT_CONFIG_*` from the environment: under an ambient
+    /// `safe.bareRepository=explicit` (which this repo's own tooling sets),
+    /// git refuses to discover a bare repo from the cwd and only accepts one
+    /// named outright. That is what "explicit" means, so name it.
+    fn git_bare(bare: &Path, args: &[&str]) -> String {
+        let mut all = vec!["--git-dir".to_owned(), bare.to_string_lossy().into_owned()];
+        all.extend(args.iter().map(|a| (*a).to_owned()));
+        let out = git_command().args(&all).output().expect("run git");
+        assert!(
+            out.status.success(),
+            "git {all:?} failed: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        String::from_utf8(out.stdout).unwrap().trim().to_owned()
+    }
+
+    /// A bare origin with `main` at one commit, plus a clone of it.
+    ///
+    /// Bare deliberately: pushing into a non-bare checkout's current branch
+    /// is refused by git itself, which would make a push test pass or fail
+    /// for a reason that has nothing to do with the ref being published.
+    fn clone_of_bare_origin() -> (tempfile::TempDir, PathBuf, PathBuf) {
+        let tmp = tempfile::tempdir().unwrap();
+        let bare = tmp.path().join("origin.git");
+        let seed = tmp.path().join("seed");
+        let clone = tmp.path().join("clone");
+
+        git(tmp.path(), &["init", "--bare", "-b", "main", "origin.git"]);
+        git(
+            tmp.path(),
+            &["clone", bare.to_str().unwrap(), seed.to_str().unwrap()],
+        );
+        git(&seed, &["config", "user.email", "t@t"]);
+        git(&seed, &["config", "user.name", "T"]);
+        std::fs::write(seed.join("f"), "1").unwrap();
+        git(&seed, &["add", "."]);
+        git(&seed, &["commit", "-m", "one"]);
+        git(&seed, &["push", "origin", "main"]);
+
+        git(
+            tmp.path(),
+            &["clone", bare.to_str().unwrap(), clone.to_str().unwrap()],
+        );
+        git(&clone, &["config", "user.email", "t@t"]);
+        git(&clone, &["config", "user.name", "T"]);
+        (tmp, clone, bare)
+    }
+
+    /// The `PublishRef` for whatever `repo` is attached to — the same
+    /// derivation the shipped gate performs (`PublishRef::from_attached`).
+    fn publish_ref_of(repo: &Path) -> PublishRef {
+        let HeadAttachment::Attached(a) = GitVcs.head_attachment(repo).unwrap() else {
+            panic!("fixture should be attached");
+        };
+        PublishRef::from_attached(&a)
+    }
+
+    #[test]
+    fn push_ref_publishes_to_origin_whatever_the_role() {
+        // Every role pushes to `origin`; the parameter is kept for signal
+        // value. Asserted per-role rather than once, so a future impl that
+        // routes one role elsewhere fails here and not in a verb test.
+        for role in [Role::Owned, Role::Fork, Role::Dependency] {
+            let (_tmp, clone, bare) = clone_of_bare_origin();
+            let tip = commit(&clone, &format!("advance-{role:?}"));
+
+            GitVcs
+                .push_ref(&clone, role, &publish_ref_of(&clone), false)
+                .unwrap();
+
+            assert_eq!(
+                git_bare(&bare, &["rev-parse", "main"]),
+                tip.as_str(),
+                "{role:?} should have landed the local tip on origin/main"
+            );
+        }
+    }
+
+    #[test]
+    fn push_ref_refuses_a_non_fast_forward_until_force_is_passed() {
+        let (tmp, clone, bare) = clone_of_bare_origin();
+
+        // Advance origin through a second clone, so the local tip is no
+        // longer a descendant of what origin holds.
+        let other = tmp.path().join("other");
+        git(
+            tmp.path(),
+            &["clone", bare.to_str().unwrap(), other.to_str().unwrap()],
+        );
+        git(&other, &["config", "user.email", "t@t"]);
+        git(&other, &["config", "user.name", "T"]);
+        let foreign = commit(&other, "foreign");
+        git(&other, &["push", "origin", "main"]);
+
+        let local_tip = commit(&clone, "local");
+
+        let err = GitVcs
+            .push_ref(&clone, Role::Owned, &publish_ref_of(&clone), false)
+            .expect_err("a non-fast-forward push must refuse without force");
+        assert_eq!(err.kind(), "command-failed");
+        assert_eq!(
+            git_bare(&bare, &["rev-parse", "main"]),
+            foreign.as_str(),
+            "the refusal is a refusal: origin still holds the foreign tip"
+        );
+
+        GitVcs
+            .push_ref(&clone, Role::Owned, &publish_ref_of(&clone), true)
+            .expect("force should overwrite the divergent remote tip");
+        assert_eq!(git_bare(&bare, &["rev-parse", "main"]), local_tip.as_str());
+    }
+
+    #[test]
+    fn push_ref_publishes_the_ref_it_was_given_not_the_one_head_is_on() {
+        // The whole point of §4.3's publish change: the ref is a parameter,
+        // so the choice is made at one site in push.rs instead of being
+        // whatever branch the checkout happened to be on when the impl ran.
+        // Switching HEAD after the PublishRef is built must not redirect the
+        // push — if the impl still read HEAD, this would publish `sideshow`.
+        let (_tmp, clone, bare) = clone_of_bare_origin();
+        let main_tip = commit(&clone, "on-main");
+        let publish = publish_ref_of(&clone);
+
+        git(&clone, &["checkout", "-b", "sideshow"]);
+        let side_tip = commit(&clone, "on-sideshow");
+        assert_ne!(main_tip, side_tip, "the two branches must differ");
+
+        GitVcs
+            .push_ref(&clone, Role::Owned, &publish, false)
+            .unwrap();
+
+        assert_eq!(
+            git_bare(&bare, &["rev-parse", "main"]),
+            main_tip.as_str(),
+            "push_ref must publish the ref it was handed"
+        );
+        assert!(
+            !git_bare(&bare, &["branch", "--list", "sideshow"]).contains("sideshow"),
+            "the branch HEAD moved to must not have been published"
         );
     }
 

@@ -69,23 +69,40 @@ const ALLOWLIST: &[Allowed] = &[
         file: "sync.rs",
         pattern: "remove_dir_all",
         count: 2,
-        justification: "prune_dropped_repo, both arms behind an \
-            uncommitted-changes refusal plus a unique-commits refusal \
-            (worktree-divergence check in workweaves, local-only-branch \
-            scan in primary), all failing safe on git errors. The primary \
-            arm is a DESTROY-STORE (branch-model.md §3.2): `dest` there IS \
-            the canonical store, so the delete would take the object \
-            database and the worktree administration of every live \
-            workweave checkout of that repo with it. R4 gates it via \
+        justification: "prune_dropped_repo, both arms behind the \
+            uncommitted-changes refusal at the top of the function (fails \
+            safe: unwrap_or(true) refuses when git cannot be asked). \
+            (1) PRIMARY arm — a DESTROY-STORE (branch-model.md §3.2): \
+            `dest` there IS the canonical store, so the delete would take \
+            the object database and the worktree administration of every \
+            live workweave checkout of that repo with it. Behind the \
+            local-only-branch scan AND, in FRONT of the delete, R4 via \
             check_store_unclaimed — no worktree still registered against \
-            the store, no ownership receipt still keyed to it — in FRONT of \
-            the delete. The local-only refusal is NOT relaxed in exchange: \
-            it is incidentally what has been keeping this call off a live \
+            the store, no ownership receipt still keyed to it. The \
+            local-only refusal is NOT relaxed in exchange: it is \
+            incidentally what has been keeping this call off a live \
             workweave's store, so recorded rwv refs stay inside its \
-            predicate (§5, prune_dropped_repo row). The workweave arm's \
-            call is not a store destroy: it removes a checkout whose refdb \
-            lives in a canonical store that arm has already established is \
-            gone.",
+            predicate (§5, prune_dropped_repo row). \
+            (2) WORKWEAVE arm — this entry does NOT vouch for it, and the \
+            previous text's claim that both arms sit behind a \
+            unique-commits refusal was measured FALSE by fo-opmmoz.10. The \
+            divergence check lives inside `if canonical.exists()`, whose \
+            branch ends at remove_worktree; the remove_dir_all is in the \
+            `else`, i.e. on precisely the path where there is no canonical \
+            to compare against and the check is skipped. The arm's own \
+            comment then ASSERTS, without checking, that `dest` is a linked \
+            worktree rather than a store — it calls neither \
+            classify_checkout nor resolved_worktree_parent, unlike \
+            workweave.rs's equivalent code, which handles the lone-canonical \
+            topology explicitly. A lone-canonical checkout whose \
+            primary-side path is absent is therefore deleted with no R4 \
+            gate. Filed as fo-b3ju26; not fixed here because the fix is \
+            sync.rs behaviour, not this bead's sweep. \
+            Two further fail-OPEN spots on the primary arm, recorded so \
+            they are not rediscovered as news: count_commits_ahead_of_remote \
+            unwrap_or(0) reads a git error as \"nothing unpushed\". \
+            (branch_has_remote_counterpart's unwrap_or(false) does refuse, \
+            and an unreadable branch list refuses.)",
     },
     Allowed {
         file: "workweave.rs",
@@ -132,36 +149,30 @@ const ALLOWLIST: &[Allowed] = &[
             ownership receipt keyed to it still stands, checked across every \
             project on disk because a clone is shared by path. On top of \
             that: refuses while other projects reference the repo unless \
-            --delete-shared-clone. A repo whose worktree registrations \
-            cannot be read refuses rather than being assumed unclaimed. The \
+            --delete-shared-clone. Unreadable worktree registrations refuse \
+            rather than being assumed unclaimed — with one measured caveat: \
+            that refusal is itself conditioned on is_repo(), which is \
+            `rev-parse --git-dir` and returns false on ANY git failure, so a \
+            store git cannot be run against at all skips the worktree half. \
+            The receipt half still bails on any Err, so the call as a whole \
+            stays fail-closed. The \
             verb-level dirty/unpushed preconditions are Q11, narrowed and \
             still open.",
     },
     Allowed {
         file: "git.rs",
         pattern: "\"-D\"",
-        count: 3,
-        justification: "(1) create_worktree retry: the shipped \
-            pre-branch-model path — it force-deletes on \"already exists\" \
-            and retries. Its long-standing justification (\"deletes a STALE \
-            ephemeral branch left by a previous failed create\") was measured \
-            FALSE by fo-opmmoz.7 — nothing checks staleness — and is \
-            deliberately not repeated. As of fo-opmmoz.7 and .8 landing \
-            together this site has NO production caller at all: the \
-            workweave-create and add paths moved to \
-            materialize_worktree_on_ref, which classifies before acting and \
-            adopts rather than deleting. Unguarded, unreachable, and \
-            scheduled for removal with the rest of the old Vcs surface in \
-            fo-opmmoz.10: this entry keeps the count honest, it does not \
-            vouch for the site. (2) delete_branch: NO callers remain. \
-            delete_workweave stopped reaching it in fo-opmmoz.7 (it destroys \
-            over the RECORDED receipt set via delete_owned_ref and only \
-            reports everything else under the prefix) and doctor --fix \
-            stopped reaching it in fo-opmmoz.8 (its stale-ephemeral pass \
-            destroys through delete_owned_ref, so it cannot delete a ref rwv \
-            holds no receipt for). Each bead removed the other\'s named \
-            caller; neither could observe that alone, and the merged answer \
-            is zero. Also .10\'s to delete. (3) destroy_local_ref: the branch-model DESTROY \
+        count: 1,
+        justification: "destroy_local_ref, and nothing else — the two \
+            unguarded sites this entry used to cover are gone. \
+            create_worktree's force-delete-and-retry (whose \"deletes a STALE \
+            branch\" claim fo-opmmoz.7 measured FALSE) and delete_branch \
+            (which fo-opmmoz.7 and .8 each independently stopped calling, \
+            leaving it with no caller at all) were both DELETED by \
+            fo-opmmoz.10 along with the rest of the old Vcs surface. The \
+            force-delete of a ref rwv holds no receipt for is now \
+            unreachable because the code that could do it does not exist. \
+            destroy_local_ref: the branch-model DESTROY \
             primitive (branch-model.md §3.2, §4.3). Reachable only through \
             Vcs::delete_owned_ref, which takes a persisted receipt \
             (OwnedRef — R2, ownership by record, never by name shape) AND a \
@@ -179,43 +190,69 @@ const ALLOWLIST: &[Allowed] = &[
         file: "git.rs",
         pattern: "\"worktree\", \"remove\"",
         count: 1,
-        justification: "remove_worktree: every caller (delete_workweave, \
-            prune_dropped_repo, create-rollback pruning) checks for \
-            uncommitted changes and unique commits first. delete_workweave \
-            also resolves each worktree's actual canonical-store parent \
+        justification: "remove_worktree. NOTE the `--force`: git will remove \
+            a DIRTY worktree here, so what protects each caller has to be \
+            named per caller — the previous blanket \"every caller checks \
+            for uncommitted changes and unique commits first\" was measured \
+            false by fo-opmmoz.10 for the rollback callers, which check \
+            neither. \
+            (1) delete_workweave (manifest repos, and the project repo): \
+            behind the dirty refusal unless --discard-uncommitted and the \
+            unmerged refusal unless DiscardUnmergedConsent (see the \
+            workweave.rs/remove_dir_all entry). It also resolves each \
+            worktree's actual canonical-store parent \
             (Vcs::resolve_canonical_store) and refuses on \
             no-canonical-store-with-foreign-dependents — the tier-0 \
             topology precondition (joints/clone-topology.md), not \
-            bypassable by any waiver.",
+            bypassable by any waiver. \
+            (2) prune_dropped_repo: behind the uncommitted-changes refusal, \
+            and on the only arm that reaches remove_worktree also behind the \
+            divergence refusal (that arm is the `canonical.exists()` one). \
+            (3) create rollback — CreateRollbackGuard::drop and \
+            rollback_and_collect_failures: NO dirty check, and none is \
+            wanted. These iterate `self.registered_worktrees`, which holds \
+            exactly the worktrees THIS create registered moments earlier; \
+            nothing an operator could have dirtied is in the set. \
+            (4) create's pre-create orphan prune: the same call, but reached \
+            only on the path where workweave_dir does NOT exist, so the \
+            `worktree_path.exists()` guard inside \
+            prune_orphan_worktrees_for is false for every pair and only \
+            `worktree prune` (admin entries for absent dirs) actually runs. \
+            (5) create --replace-existing's orphan prune: behind that \
+            branch's at_risk dirty-walk refusal.",
     },
     Allowed {
         file: "git.rs",
         pattern: "push(\"--force\")",
-        count: 2,
-        justification: "(1) push_with_role: force only when the operator \
-            passed rwv push --force; lock-freshness and branch \
-            preconditions run first. (2) push_ref: same flag, same \
-            preconditions; the branch-model form takes the ref to publish \
-            as a parameter (PublishRef) instead of reading whatever branch \
-            the checkout happens to be on, so the choice is made at one \
-            site in push.rs rather than inside the VCS impl \
-            (branch-model.md §4.3; Q6 decides what that site passes).",
+        count: 1,
+        justification: "push_ref: force only when the operator passed \
+            rwv push --force; lock-freshness and branch preconditions run \
+            first. The branch-model form takes the ref to publish as a \
+            parameter (PublishRef) instead of reading whatever branch the \
+            checkout happens to be on, so the choice is made at one site in \
+            push.rs rather than inside the VCS impl (branch-model.md §4.3; \
+            Q6 decides what that site passes). Its predecessor \
+            push_with_role — which read `current_ref` inside the impl — was \
+            deleted by fo-opmmoz.10, so there is no longer a publish path \
+            that force-pushes a ref nobody chose.",
     },
     Allowed {
         file: "git.rs",
         pattern: "\"checkout\"",
-        count: 5,
-        justification: "(1) checkout(): no -f flag, so git itself refuses \
-            when the switch would overwrite a modified path. The verbs that \
-            realign a checkout no longer reach it — fetch and update route \
-            through the branch-model primitives below, which classify what \
-            HEAD is before writing anything (branch-model.md §5) — so its \
-            remaining callers are the ones .10 sweeps. \
-            (2) refresh_working_tree_to_head_if_safe: \
+        count: 4,
+        justification: "The bare `checkout()` that used to head this list is \
+            DELETED (fo-opmmoz.10): fetch and update had already moved to \
+            the branch-model primitives below, which classify what HEAD is \
+            before writing anything (branch-model.md §5), and with its last \
+            caller gone the method went with the rest of the old surface. \
+            What remains is four sites, none of which can reposition a \
+            checkout without first saying which kind of ref write it is \
+            performing. \
+            (1) refresh_working_tree_to_head_if_safe: \
             restores files from HEAD only after verifying every on-disk \
             blob is reachable from recent history — live edits are never \
             clobbered (relocated from sync.rs). \
-            (3) set_detached_head: the branch-model ATTACH/MOVE primitive \
+            (2) set_detached_head: the branch-model ATTACH/MOVE primitive \
             for a HEAD that names no branch. No -f, so git's own refusal to \
             overwrite modified paths still applies. Reachable only through \
             detach_head, which requires a DetachConsent minted from \
@@ -223,7 +260,7 @@ const ALLOWLIST: &[Allowed] = &[
             first, or through advance_detached_head, which is a MOVE of an \
             already-detached HEAD and refuses when the repo is mid-op \
             (branch-model.md §3.6 — including mid-bisect). \
-            (4) attach_head_to: reattaches to an EXISTING local branch. \
+            (3) attach_head_to: reattaches to an EXISTING local branch. \
             Omitting -b does NOT make git refuse an absent branch — it \
             invents one from a remote-tracking ref (checkout.guess), or \
             detaches when the name is a tag's, or treats the name as a \
@@ -237,7 +274,7 @@ const ALLOWLIST: &[Allowed] = &[
             ReattachConsent minted from --reattach-checkouts and refuses \
             when the observed HEAD state differs from the one the caller \
             planned against. \
-            (5) clone_attached_at: the second half of a birth, and it can \
+            (4) clone_attached_at: the second half of a birth, and it can \
             only ever run against a repo the first half of the same call \
             just created — there is no signature that points it at an \
             existing one. `-B` therefore repositions a ref git minted \
@@ -252,20 +289,34 @@ const ALLOWLIST: &[Allowed] = &[
     Allowed {
         file: "git.rs",
         pattern: "\"--hard\"",
-        count: 3,
+        count: 2,
         justification: "(1) hard_reset(): the operation's intent is to \
-            discard divergent commits; the sole sync caller (--force Phase \
-            1') gates on a clean-project precondition and creates a \
-            refs/rwv/pre-op savepoint first so discarded commits stay \
-            recoverable via `rwv abort`. (2) restore_savepoint(): restoring \
-            the pre-op state is the operation's contract; any dirt at \
-            abort time is churn from the failed op being rolled back \
-            (relocated from sync.rs). (3) reset_and_drop_savepoint(): \
+            discard divergent commits. It has NO caller outside the trait \
+            any more — the only one is Vcs::reset_attached_ref, so the \
+            rewind is now type-gated rather than gated by a check the author \
+            remembered to write: reset_attached_ref takes an AttachedRef \
+            witness (which a detached or unborn HEAD cannot produce), \
+            re-verifies that witness against the repo, requires a \
+            DiscardWarrant (which cannot be constructed without a \
+            SavepointRef, so a rewind with no recovery path is \
+            unrepresentable), and refuses a savepoint taken in a different \
+            repo. Its sole production entry point is sync's \
+            rewind_project_repo under --discard-local-commits, which \
+            resolves the refs/rwv/pre-op savepoint first and refuses if \
+            there is none — so discarded commits stay recoverable via \
+            `rwv abort`. (The previous text named a \"--force Phase 1'\" \
+            caller and a clean-project precondition; the flag is spelled \
+            --discard-local-commits and the guard is the warrant.) \
+            (2) reset_and_drop_savepoint(): \
             shared helper factored from verified_restore_savepoint(); called \
             only from the mid-op, intent, and converged branches — each \
             gated on their respective attributable-tip precondition before \
             the helper is reached (design § 5; fo-jsbr3i.4, fo-6rysot.3, \
-            fo-wbbqof.9).",
+            fo-wbbqof.9). The unverified restore_savepoint() that used to \
+            sit between these two — a bare `reset --hard` on the public \
+            trait, gated by nothing — was deleted by fo-opmmoz.10, so \
+            verified_restore_savepoint is the only way to reach a \
+            savepoint-driven rewind.",
     },
     Allowed {
         file: "git.rs",
@@ -311,9 +362,13 @@ const ALLOWLIST: &[Allowed] = &[
             (3)+(4) atomic_write_new temp-file cleanup: unlinks the sibling temp file \
             used to publish op-state atomically via link(2) — both on the write-error \
             path and on the always-runs post-link cleanup. The temp file is created by \
-            atomic_write_new itself with a PID+ns-unique name, so nothing else on disk \
-            can be named that. All four sites operate on rwv-internal bookkeeping, \
-            never user data.",
+            atomic_write_new itself as `.<file>.tmp.<pid>.<seq>`, pid keeping processes \
+            apart and a process-local AtomicU64 keeping threads apart, so nothing else \
+            on disk can be named that. Both components are structural: an earlier \
+            revision used a nanosecond timestamp for the intra-process half and two \
+            barrier-synchronized threads collided on it, each unlinking the other's \
+            in-flight temp — so \"unique\" here must NOT be re-derived from a clock. \
+            All four sites operate on rwv-internal bookkeeping, never user data.",
     },
     Allowed {
         file: "workweave_index.rs",
@@ -352,9 +407,21 @@ const ALLOWLIST: &[Allowed] = &[
         file: "integrations/uv_workspace.rs",
         pattern: "remove_file",
         count: 1,
-        justification: "strip_workspace_sources: deletes pyproject.toml \
-            only when nothing user-authored remains after the marker-gated \
-            strip.",
+        justification: "strip_workspace_sources: removes `[tool.uv.sources]` \
+            entries whose value is `{ workspace = true }`, prunes the \
+            emptied parent tables, and deletes pyproject.toml only when the \
+            document is left with nothing at all. It writes the stripped \
+            document back otherwise, so anything else in the file survives. \
+            This entry does NOT vouch for the gating. The function's own doc \
+            comment says it skips the marker check because \"the caller \
+            gated on it\"; fo-opmmoz.10 measured that the caller does not — \
+            deactivate calls strip_deactivate (which IS marker-gated and \
+            no-ops without it) and then calls this unconditionally, without \
+            observing that the first call no-opped. So an unmarked, \
+            hand-authored pyproject.toml whose only content is a \
+            workspace-true source is emptied and deleted. Filed as \
+            fo-ekvtxm; npm_workspaces.rs:178-194 already has the fix shape \
+            (capture has_our_marker BEFORE the strip, gate on it).",
     },
     Allowed {
         file: "integrations/npm_workspaces.rs",
@@ -389,8 +456,16 @@ const ALLOWLIST: &[Allowed] = &[
         file: "integrations/go_work.rs",
         pattern: "remove_file",
         count: 2,
-        justification: "cleanup of rwv's own temporary go.work copy \
-            (error path and post-copy); the canonical file is preserved.",
+        justification: "both sites unlink `<workspace_root>/go.work`, never \
+            the canonical `<output_dir>/go.work`: the post-copy unlink sits \
+            inside `if !same_file`, whose canonicalized comparison exists \
+            precisely to keep a symlink-to-self out of the delete. In the \
+            production layout output_dir != workspace_root, and the \
+            workspace-root path is the framework's activation symlink rather \
+            than a copy — so the error-path unlink (which is NOT behind the \
+            same_file guard) removes a link, not content: unlinking a \
+            symlink does not follow it, and the `go work` commands have \
+            already written through it into the canonical file.",
     },
 ];
 

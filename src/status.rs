@@ -155,6 +155,38 @@ pub(crate) fn compute_relation(
     }
 }
 
+/// The name of the ref `repo_abs`'s checkout is on, for the `branch` column.
+///
+/// This is status's restatement of the deleted `current_ref` in terms of
+/// `branch-model.md` §4.3's observation replacement, [`Vcs::head_attachment`]
+/// — status asks §2's notion (3), "what a checkout is on", and nothing else:
+/// it never writes a ref, so it wants no witness and no receipt.
+///
+/// What each arm means, since `current_ref` answered all four with one
+/// `Option` (§4.5):
+///
+/// - `Attached` / `Unborn` — HEAD is symbolic, so a name is what the column
+///   is for. Unborn keeps reporting its name (it did before, because
+///   `symbolic-ref` succeeds there); a branch with no commits yet is still
+///   the branch the checkout is on, and the empty `tip` column is what says
+///   there is nothing on it.
+/// - `Detached` — no ref names this checkout; the column renders `-`.
+/// - `Err` — `NotARepo` or an unreadable ref database. Still `-`, because
+///   the `branch` field is `Option<String>` in the committed JSON schema and
+///   this is a report, not a gate: `relation` already carries the health
+///   signal (`Missing` / `Unreachable`) that tells an operator which repair
+///   verb to reach for. Distinguishing the two in the *output* would be a
+///   schema change, and is not this bead's to make — but the collapse now
+///   happens in one named place instead of inside an `.ok().flatten()`.
+fn checkout_branch(git: &GitVcs, repo_abs: &Path) -> Option<String> {
+    use crate::vcs::HeadAttachment;
+    match git.head_attachment(repo_abs) {
+        Ok(HeadAttachment::Attached(a)) => Some(a.to_string()),
+        Ok(HeadAttachment::Unborn(u)) => Some(u.name().as_str().to_owned()),
+        Ok(HeadAttachment::Detached(_)) | Err(_) => None,
+    }
+}
+
 fn project_names_for_ctx(ctx: &WorkspaceContext) -> Vec<String> {
     match &ctx.checkout {
         Checkout::Primary { project: Some(p) } => vec![p.as_str().to_owned()],
@@ -283,11 +315,7 @@ pub fn run_status(ctx: &WorkspaceContext, json: bool) -> anyhow::Result<()> {
                     .and_then(|(raw, _)| raw.get_entry(repo_path))
                     .map(|e| e.version.as_str().to_owned());
 
-                let branch = git
-                    .current_ref(&repo_abs)
-                    .ok()
-                    .flatten()
-                    .map(|r| r.as_str().to_owned());
+                let branch = checkout_branch(&git, &repo_abs);
 
                 let tip = git.head_revision(&repo_abs).ok();
 
@@ -321,11 +349,7 @@ pub fn run_status(ctx: &WorkspaceContext, json: bool) -> anyhow::Result<()> {
                 continue;
             }
 
-            let branch = git
-                .current_ref(&repo_abs)
-                .ok()
-                .flatten()
-                .map(|r| r.as_str().to_owned());
+            let branch = checkout_branch(&git, &repo_abs);
 
             let tip = git.head_revision(&repo_abs).ok();
 

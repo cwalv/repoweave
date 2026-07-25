@@ -3,7 +3,7 @@
 use crate::manifest::{
     LockFile, Manifest, Project, ResolvedLockEntry, ResolvedLockFile, WorkweaveName,
 };
-use crate::vcs::vcs_for;
+use crate::vcs::{vcs_for, HeadAttachment};
 use crate::workspace::{Checkout, WorkspaceContext};
 use anyhow::Context;
 use std::collections::{BTreeMap, BTreeSet};
@@ -95,6 +95,35 @@ pub fn generate_lock(
             );
         }
 
+        // Ask what HEAD *is* before asking what it resolves to.
+        //
+        // This is lock's restatement of the deleted `current_ref` in terms of
+        // `branch-model.md` §4.3's observation replacement, `head_attachment`
+        // (§5's `lock` row: "warning text gains the unborn/detached
+        // distinction"). The old line was
+        // `current_ref(..).ok().flatten().is_none()`, which read as "on no
+        // branch" but actually meant *four* things at once (§4.5): detached,
+        // unborn, not-a-repo, and unreadable-ref-database. `.ok()` threw the
+        // last two away, so lock could not tell an operator whose member
+        // directory was not a repo at all from one who had detached on
+        // purpose. `head_attachment` is total over the three that are states
+        // and returns the two that are errors as errors — so the `Err` arm
+        // below is now a refusal that names the repo, not a silent
+        // no-warning.
+        //
+        // Unborn deliberately warns about nothing: an unborn HEAD cannot be
+        // pinned at all, and `head_revision` refuses it by name two lines
+        // down (that refusal is keyed off this same classification). Warning
+        // about the branch first would print advice ahead of the error that
+        // says the commit does not exist.
+        let detached = match vcs
+            .head_attachment(&repo_dir)
+            .map_err(|e| anyhow::anyhow!("{}: {}", repo_path, e))?
+        {
+            HeadAttachment::Attached(_) | HeadAttachment::Unborn(_) => None,
+            HeadAttachment::Detached(d) => Some(d),
+        };
+
         // `head_revision` resolves to the canonical SHA and, when a tag
         // points at HEAD, also fills in the tag display form — so the lock
         // serializes as the tag name when available and the canonical SHA
@@ -110,9 +139,12 @@ pub fn generate_lock(
         // Detached HEAD: warn but do not refuse. Lock runs inside automation
         // (sync auto-relock) so a hard gate would break legitimate flows.
         // Warning text follows the house refusal pattern: name the state,
-        // name the consequence, name the next verb.
-        if vcs.current_ref(&repo_dir).ok().flatten().is_none() {
-            let short = &version.as_str()[..version.as_str().len().min(7)];
+        // name the consequence, name the next verb. The SHA comes from the
+        // witness, which is the value that established the state, rather than
+        // from `version` — which may carry a tag as its display form.
+        if let Some(d) = detached {
+            let at = d.at().as_str();
+            let short = &at[..at.len().min(7)];
             eprintln!(
                 "warning: pinning detached HEAD {short} in {repo_path}: \
                  no branch names this commit; a later fetch will materialize detached. \

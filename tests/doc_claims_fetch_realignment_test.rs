@@ -75,18 +75,15 @@ fn git_ok(args: &[&str], cwd: &Path) -> bool {
         .success()
 }
 
-/// `git symbolic-ref --short HEAD`, or `None` when HEAD is detached.
+/// The ref this checkout is on, or `None` when HEAD is detached.
+///
+/// Delegates to the shared §4.7 primitive, which asks `Vcs::head_attachment`
+/// — the production classifier — rather than `git symbolic-ref --short HEAD`.
+/// `--short` returns the shortest *unambiguous* name, so a same-named tag
+/// makes it answer `heads/main`; and its failure exit collapses detached,
+/// unborn, and not-a-repo into one `None` (§4.5).
 fn current_branch(repo: &Path) -> Option<String> {
-    let out = common::git()
-        .args(["symbolic-ref", "--short", "HEAD"])
-        .current_dir(repo)
-        .stdout(process::Stdio::piped())
-        .stderr(process::Stdio::null())
-        .output()
-        .expect("git symbolic-ref failed to spawn");
-    out.status
-        .success()
-        .then(|| String::from_utf8(out.stdout).unwrap().trim().to_string())
+    common::checkout_ref(repo)
 }
 
 struct Repo {
