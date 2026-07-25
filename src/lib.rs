@@ -1,3 +1,27 @@
+//! repoweave (`rwv`) — a workspace manager for a tree of independently
+//! versioned repositories.
+//!
+//! A *weave* is a directory holding many repository clones plus one or more
+//! *projects*. A project is a manifest (`rwv.yaml`) and a lock (`rwv.lock`),
+//! both committed to a project repo, declaring which repositories it uses and
+//! at which revisions. The verbs converge disk to that committed pair, move it
+//! forward, or fan work out into parallel checkouts (*workweaves*).
+//!
+//! Three properties shape the whole crate:
+//!
+//! - **Single-shot.** Every invocation resolves its context from the
+//!   filesystem and exits. No daemon, no IPC, no state that outlives the
+//!   process.
+//! - **The filesystem is the only persistence layer.** Durable state is a
+//!   handful of marker and record files ([`workspace`], [`op_state`],
+//!   [`workweave_index`]) plus the version control system's own refs.
+//! - **Destructive operations are gated by the type system, not by
+//!   convention.** [`vcs`] admits a ref write only against a witness,
+//!   receipt, warrant or consent token that cannot be forged from a string.
+//!
+//! `ARCHITECTURE.md` at the repo root is the module map, dataflow and seam
+//! description; `docs/explanation/joints/` holds the normative contracts.
+
 pub mod activate;
 pub mod add_remove;
 pub mod check;
