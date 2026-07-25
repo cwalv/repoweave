@@ -136,7 +136,7 @@ pub enum Commands {
         /// Delete the clone directory
         #[arg(long)]
         delete: bool,
-        /// Skip confirmation when deleting
+        /// With `--delete`, remove the clone even if other projects still reference it
         #[arg(long)]
         force: bool,
         /// Operate on this project instead of the active project (does not change `.rwv-active`)
@@ -445,9 +445,10 @@ pub enum WorkweaveAction {
     Delete {
         /// Workweave name
         name: String,
-        /// Delete even if the workweave has uncommitted changes (matches
-        /// `git branch -D`). Without this flag, deletion refuses if the
-        /// project worktree or any manifest-repo worktree is dirty.
+        /// Delete even if the workweave has uncommitted changes or commits
+        /// not yet merged into the parent weave (matches `git branch -D`,
+        /// which discards both). Without this flag, deletion refuses if any
+        /// worktree is dirty or diverged.
         #[arg(long)]
         force: bool,
     },
