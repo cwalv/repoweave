@@ -471,7 +471,7 @@ workweave:
 }
 
 // ============================================================================
-// Workweave create -- marker and .rwv-active (new in rwv-2h1)
+// Workweave create -- the marker, and the absence of .rwv-active
 // ============================================================================
 
 #[test]

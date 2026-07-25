@@ -205,7 +205,10 @@ fn make_shared_workspaces(parent: &Path) -> (Workspace, Workspace, String) {
     );
     // The worktree inherits primary's already-committed rwv.lock (same C1 SHA).
     // No additional commit needed.
-    // Action verbs in this workweave also need `.rwv-active`.
+    // `make_shared_workspaces` builds two PRIMARY-shaped workspaces (see the
+    // marker-based fixtures below) — despite the name, `ww` carries no
+    // `.rwv-workweave` marker, so its project comes from the pointer like
+    // any primary's.
     std::fs::write(ww_root.join(".rwv-active"), "web-app\n").unwrap();
 
     let ww = Workspace {

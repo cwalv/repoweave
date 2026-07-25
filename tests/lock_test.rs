@@ -194,8 +194,10 @@ fn lock_in_workweave_writes_to_workweave_project_dir_not_primary() {
         &[(repo_path, "https://github.com/acme/server.git")],
     );
 
-    // Write the .rwv-workweave marker and .rwv-active so resolve() recognises
-    // this as a workweave (marker-less resolution was removed).
+    // Write the .rwv-workweave marker so resolve() recognises this as a
+    // workweave. The marker alone does it, and is the workweave root's only
+    // identity file — a `.rwv-active` beside it is the state doctor reports
+    // as `weave-root-identity-conflict`.
     let primary_canon = root.canonicalize().unwrap();
     let marker = format!(
         "primary: {}\nproject: ws\nparent: {}\n",
@@ -203,7 +205,6 @@ fn lock_in_workweave_writes_to_workweave_project_dir_not_primary() {
         primary_canon.display()
     );
     std::fs::write(workweave_dir.join(".rwv-workweave"), marker).unwrap();
-    std::fs::write(workweave_dir.join(".rwv-active"), "ws\n").unwrap();
 
     // Repo also exists in the workweave on a different commit so we can
     // observe whose tip ends up in which lock.

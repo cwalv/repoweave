@@ -6,8 +6,10 @@
 //! a `.rwv-workweave-index` (see [`crate::workweave_index`]) that names the
 //! container directory `workweave create` places new workweaves under and the
 //! `name → absolute path` inverted index every `find`-direction verb consults.
-//! Each workweave still carries its own `.rwv-workweave` marker and
-//! `.rwv-active` file so it is fully self-describing.
+//! Each workweave still carries its own `.rwv-workweave` marker, so it is
+//! self-describing without the index. The marker is its ONLY identity file:
+//! `.rwv-active` is the primary root's project-selection pointer, and the two
+//! are mutually exclusive.
 //!
 //! ## Correctness vs hygiene split
 //!
@@ -1148,7 +1150,8 @@ pub(crate) fn birth_ephemeral_worktree(
 /// Create a workweave: for each repo in the manifest, create a worktree in the
 /// workweave directory on an ephemeral branch `{project}--{workweave_name}`.
 /// Also creates a worktree for the project repo, processes `workweave:` artifacts,
-/// writes the marker file, writes `.rwv-active`, and runs activate.
+/// writes the marker file, and runs activate. No `.rwv-active` is written: the
+/// marker names the project, and the two files are mutually exclusive.
 ///
 /// `primary_root` locates the surrounding weave: it determines where new
 /// workweaves live (`<primary_parent>/.workweaves/`) and is recorded in the
@@ -1219,7 +1222,7 @@ pub fn create_workweave(
     // Placement is authoritative here (create direction): either the caller
     // named an explicit path (recorded verbatim) or the recorded container
     // provides the default. The registry entry is written after the marker
-    // and .rwv-active land — see the bottom of this function.
+    // lands — see the bottom of this function.
     let workweave_dir = match dir_override {
         Some(p) if p.is_absolute() => p.to_path_buf(),
         Some(p) => primary_root.join(p),

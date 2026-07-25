@@ -2050,7 +2050,9 @@ mod tests {
     // ========================================================================
     // ProjectProvenance — chain-step tracking
     //
-    // The chain is `--project > -w prefix > marker > .rwv-active`.
+    // The chain is `--project > -w prefix > (.rwv-active | .rwv-workweave)`,
+    // whose last tier is one step with two spellings — the marker in a
+    // workweave root, the pointer at primary.
     // These tests exercise every constructed variant (Flag / Marker /
     // ActiveFile / WorkweaveFlag) across primary and workweave checkouts,
     // both single-project and multi-project workspaces, and the None case

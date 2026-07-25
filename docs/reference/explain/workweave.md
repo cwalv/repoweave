@@ -10,8 +10,10 @@ working directory that materializes every repo in the project's manifest
 material — are instead **symlinked** to the single canonical weave-root clone
 (`<primary_root>/<repo-path>`): zero working-tree duplication, byte-identical
 across workweaves, and no per-workweave branch. Each workweave is fully
-self-describing: it carries `.rwv-workweave` (recording the primary weave,
-project, and parent workspace) and `.rwv-active` (the active project).
+self-describing: it carries `.rwv-workweave`, recording the primary weave,
+project, and parent workspace. That marker is a workweave root's only
+identity file — `.rwv-active` is the primary root's project-selection
+pointer, and the two are mutually exclusive.
 
 Workweaves are the isolation primitive for concurrent work — the human works
 in the primary weave while an agent works in `.workweaves/{project}--{name}/`.
@@ -89,10 +91,11 @@ is the standard "ensure workweave exists" path.
    `link:` entries are absolute symlinks pointing at the source root.
 3. `.rwv-workweave` marker recording `{primary, project, parent}`. `parent`
    is the workspace forked from (= `source_root`), which becomes the default
-   sync-to target for bare `rwv sync-to` from inside the workweave.
-4. `.rwv-active` set to `project`.
-5. Integration activation (context verb: surfaces symlinks, skips install hooks).
-6. An entry in `projects/<project>/.rwv-workweave-index` recording the
+   sync-to target for bare `rwv sync-to` from inside the workweave. No
+   `.rwv-active` is written beside it: selection is primary-only, and a
+   workweave's project is fixed here at creation.
+4. Integration activation (context verb: surfaces symlinks, skips install hooks).
+5. An entry in `projects/<project>/.rwv-workweave-index` recording the
    workweave's absolute path. Best-effort adds `.rwv-workweave-index` to the
    project repo's `.gitignore` so the machine-local index stays untracked.
 

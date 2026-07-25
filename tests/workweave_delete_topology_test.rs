@@ -196,9 +196,6 @@ fn delete_uses_resolved_parent_under_inverted_topology() {
     let project_dir = ws.join("projects/web-app");
     add_workweave_checkout(&project_dir, &ww_dir, "projects/web-app", "web-app--ww");
     write_marker(&ww_dir, &ws, "web-app");
-    // Active project marker (delete_workweave resolves the dir through
-    // the primary-side registry).
-    std::fs::write(ww_dir.join(".rwv-active"), "web-app\n").unwrap();
 
     // Confirm the inverted topology: the worktree in the workweave is
     // registered in `real_canonical`, not in `primary_slot`.
@@ -292,7 +289,6 @@ fn delete_refuses_when_checkout_hosts_foreign_worktrees_even_with_waivers() {
     let project_dir = ws.join("projects/web-app");
     add_workweave_checkout(&project_dir, &ww_dir, "projects/web-app", "web-app--bad");
     write_marker(&ww_dir, &ws, "web-app");
-    std::fs::write(ww_dir.join(".rwv-active"), "web-app\n").unwrap();
 
     // Even with both waivers, delete must refuse.
     let result = workweave_delete(
@@ -356,7 +352,6 @@ fn delete_proceeds_when_canonical_checkout_has_no_foreign_dependents() {
     let project_dir = ws.join("projects/web-app");
     add_workweave_checkout(&project_dir, &ww_dir, "projects/web-app", "web-app--lone");
     write_marker(&ww_dir, &ws, "web-app");
-    std::fs::write(ww_dir.join(".rwv-active"), "web-app\n").unwrap();
 
     let result = workweave_delete(
         &ws,
@@ -455,7 +450,6 @@ fn merged_check_refuses_vouch_across_distinct_canonical_stores() {
         "web-app--diverged",
     );
     write_marker(&ww_dir, &ws, "web-app");
-    std::fs::write(ww_dir.join(".rwv-active"), "web-app\n").unwrap();
 
     // Without the unmerged waiver, delete should refuse because the workweave carries
     // commits that the baseline (primary slot, disconnected DAG) cannot

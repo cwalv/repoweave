@@ -800,7 +800,6 @@ fn setup_workweave_for_add_tests(
         p = primary_canonical.display()
     );
     std::fs::write(workweave_dir.join(".rwv-workweave"), marker).unwrap();
-    std::fs::write(workweave_dir.join(".rwv-active"), "test-project\n").unwrap();
 
     // Workweave's own copy of the project dir (its own git repo to mirror
     // the worktree contract — a worktree of primary's project repo. A plain
@@ -978,8 +977,9 @@ fn add_from_workweave_creates_worktree_at_workweave() {
 fn add_from_workweave_does_not_modify_primary_rwv_active() {
     // Side-effect regression: when running `rwv add` from a workweave, the
     // activation step must not clobber primary's .rwv-active (or its
-    // ecosystem symlinks). The activation pass operates on the workweave's
-    // own .rwv-active when CWD is in a workweave.
+    // ecosystem symlinks). The activation pass binds to the workweave dir,
+    // whose project its `.rwv-workweave` marker names — primary's pointer is
+    // not consulted and not written.
     let tmp = tempfile::tempdir().unwrap();
 
     let bare = tmp.path().join("active-target.git");
@@ -1003,9 +1003,12 @@ fn add_from_workweave_does_not_modify_primary_rwv_active() {
         "primary's .rwv-active must be untouched by `rwv add` from a workweave"
     );
 
-    // Workweave's own .rwv-active still names the right project.
-    let workweave_active = std::fs::read_to_string(workweave_dir.join(".rwv-active")).unwrap();
-    assert_eq!(workweave_active.trim(), "test-project");
+    // And the workweave gains no pointer of its own: selection is
+    // primary-only, and the marker already names the project.
+    assert!(
+        !workweave_dir.join(".rwv-active").exists(),
+        "`rwv add` from a workweave must not write a `.rwv-active` there"
+    );
 }
 
 // ============================================================================
