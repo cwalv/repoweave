@@ -1,0 +1,29 @@
+# Derived content — paths regenerated from a source of record, never authored.
+#
+# `merge=rwv-ours` names the resolution; it does not carry it. The definition
+# does not travel with a clone — rwv supplies it per operation, as a
+# `DerivedContentPolicy` stated at the Vcs seam — so a replay rwv drives keeps
+# the target side of these paths instead of stopping on a conflict that has no
+# right answer to adjudicate.
+#
+# Nothing regenerates during the merge. The side that survives is deliberately
+# stale with respect to the merged sources, and `scripts/ci-local.sh`'s final
+# stage — regenerate, then diff the working tree against the index — is what
+# forces the regeneration commit before anything ships.
+#
+# CAVEAT: git invoked by hand has no definition for this driver. rwv plants a
+# durable `merge.rwv-ours.driver` config in project repos only, and this repo
+# is not one, so a merge or rebase run outside rwv here falls back to an
+# ordinary textual conflict. `rwv.lock` has always carried the same caveat.
+# Resolve such a conflict either way and re-run the generator — the drift gate
+# catches the result on both routes.
+#
+# `templates/` is the source of record for the pages generated beside it, so it
+# is authored content and is deliberately left out of the declaration: a
+# side-pick there would discard someone's edit with nothing to regenerate it
+# from.
+
+docs/reference/explain/**      merge=rwv-ours
+docs/reference/schemas/**      merge=rwv-ours
+docs/reference/prime/**        merge=rwv-ours
+docs/reference/*/templates/**  !merge
