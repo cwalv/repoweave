@@ -1338,8 +1338,9 @@ impl PublishRef {
     /// the single site the type's doc comment promises: it accepts exactly
     /// what today's shipped behaviour publishes — the attached ref — so
     /// wiring the gate through `PublishRef` changes no observable
-    /// behaviour. `from_local` stays defined and uncalled, so Q6's other
-    /// answer keeps a producer even though one branch is now live.
+    /// behaviour. `from_local` stays defined and is called by no gate — only
+    /// by `push.rs`'s `test_publish_ref` helper, to fabricate a value — so
+    /// Q6's other answer keeps a producer even though one branch is now live.
     pub(crate) fn from_attached(a: &AttachedRef) -> Self {
         Self(a.name.clone())
     }
