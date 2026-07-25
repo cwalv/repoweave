@@ -81,8 +81,7 @@ Every per-repo variant carries `path` (manifest-relative) and
 `legacy-role-primary` carries `project` and
 `manifest_path` so the caller can locate the file `--fix` will rewrite.
 `workweave-tree-integrity` carries `workweave_dir` and a `sub_kind`
-(`dangling-parent`, `parent-chain-anomaly`, `unregistered-dir`,
-`foreign-primary`); only `dangling-parent` is auto-fixable via `--fix`.
+({{MSG:doctor_workweave_tree_integrity_subkinds}}).
 
 The `plugins` array is the PATH inventory of `rwv-*` executables found at
 run time. Each record carries `name` (the `<verb>` in `rwv-<verb>`), `path`

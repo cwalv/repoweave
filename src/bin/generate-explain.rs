@@ -156,6 +156,63 @@ fn doctor_subkind_variant_list_md() -> String {
         .join(", ")
 }
 
+/// Resolves a `$ref` (or single-element `allOf: [{$ref}]`, schemars' shape
+/// for a field whose type has its own doc comment) to the referenced
+/// definition's schema.
+fn resolve_ref<'a>(
+    doctor_schema: &'a serde_json::Value,
+    field: &serde_json::Value,
+) -> &'a serde_json::Value {
+    let r = field["$ref"]
+        .as_str()
+        .or_else(|| field["allOf"][0]["$ref"].as_str())
+        .expect("field is a $ref or a single-element allOf $ref");
+    let name = r.rsplit('/').next().expect("$ref has a trailing component");
+    &doctor_schema["definitions"][name]
+}
+
+/// Kebab-case tag of one oneOf entry from an externally-tagged
+/// (`#[serde(rename_all = "kebab-case")]`, no `tag = ...`) enum — the
+/// default serde representation used by sub_kind discriminator enums like
+/// `WorkweaveTreeIntegrityKind`. Unit variants serialize as a bare string
+/// enum; variants carrying fields serialize as a single-key object whose
+/// key is the tag.
+fn externally_tagged_variant_tag(variant: &serde_json::Value) -> String {
+    if let Some(tag) = variant["enum"][0].as_str() {
+        return tag.to_owned();
+    }
+    variant["required"][0]
+        .as_str()
+        .expect("externally-tagged variant is a unit string enum or a single-key object keyed by its tag")
+        .to_owned()
+}
+
+/// Comma-separated, backtick-quoted, alphabetized list of
+/// `workweave-tree-integrity`'s `sub_kind` tags, walked from
+/// `WorkweaveTreeIntegrityKind`'s schema (reached via the `$ref` on
+/// `ViolationOutput::WorkweaveTreeIntegrity::sub_kind`) rather than
+/// hand-typed.
+fn doctor_workweave_tree_integrity_subkind_list_md() -> String {
+    let schema = schema_for!(DoctorEnvelope);
+    let json = serde_json::to_value(&schema).expect("doctor schema serializes");
+    let (_, variant) = doctor_violation_variants()
+        .into_iter()
+        .find(|(kind, _)| kind == "workweave-tree-integrity")
+        .expect("ViolationOutput has a workweave-tree-integrity variant");
+    let sub_kind_schema = resolve_ref(&json, &variant["properties"]["sub_kind"]);
+    let mut tags: Vec<String> = sub_kind_schema["oneOf"]
+        .as_array()
+        .expect("WorkweaveTreeIntegrityKind schema is a oneOf")
+        .iter()
+        .map(externally_tagged_variant_tag)
+        .collect();
+    tags.sort();
+    tags.iter()
+        .map(|t| format!("`{t}`"))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
 fn schema_sync() -> String {
     let schema = schema_for!(SyncJsonOutput);
     serde_json::to_string_pretty(&schema).expect("sync schema serializes")
@@ -546,6 +603,14 @@ fn build_msg_registry() -> MsgRegistry {
     // hand-typed, so both stay in sync with the enum.
     m.insert("doctor_kinds", doctor_kind_list_md());
     m.insert("doctor_subkind_variants", doctor_subkind_variant_list_md());
+
+    // "doctor_workweave_tree_integrity_subkinds": one level down from the
+    // two keys above — `workweave-tree-integrity`'s own `sub_kind` tag
+    // enumeration, walked the same way through `WorkweaveTreeIntegrityKind`.
+    m.insert(
+        "doctor_workweave_tree_integrity_subkinds",
+        doctor_workweave_tree_integrity_subkind_list_md(),
+    );
 
     m
 }
