@@ -316,6 +316,92 @@ fn doctor_fix_clears_a_registered_workweaves_stray_pointer() {
     );
 }
 
+/// Two workspaces sharing one workweave container: `--fix` run at workspace A
+/// must not touch a conflicted root belonging to workspace B.
+///
+/// This is a real on-disk shape, not a hypothetical — a single
+/// `~/weaveroot/.workweaves/` holding the workweaves of several primaries is
+/// the default layout, since the default container is a sibling of the weave
+/// root. The scan enumerates that shared container, so B's roots are in front
+/// of A's `--fix`, and only the marker-names-this-primary test keeps A off
+/// them. B's registry is the authority for B's trees, and A does not read it.
+#[test]
+fn doctor_fix_ignores_a_conflicted_root_of_another_workspace() {
+    let tmp = tempfile::tempdir().unwrap();
+    let ws_a = make_workspace(tmp.path(), "alpha");
+
+    // A second primary whose default container is the same directory.
+    let ws_b = tmp.path().join("ws-b");
+    let repo_b = ws_b.join("github/org/repo");
+    init_repo_with_commit(&repo_b);
+    let proj_b = ws_b.join("projects/beta");
+    std::fs::create_dir_all(&proj_b).unwrap();
+    std::fs::write(
+        proj_b.join("rwv.yaml"),
+        format!(
+            "repositories:\n  github/org/repo:\n    type: git\n    url: file://{}\n    \
+             version: main\n    role: owned\n",
+            repo_b.display()
+        ),
+    )
+    .unwrap();
+    rwv()
+        .args(["workweave", "beta", "create", "b1"])
+        .current_dir(&ws_b)
+        .assert()
+        .success();
+    let ww_b = tmp.path().join(".workweaves/beta--b1");
+    assert!(ww_b.is_dir(), "both workspaces should share the container");
+
+    // B's workweave acquires a stray pointer.
+    std::fs::write(ww_b.join(".rwv-active"), "beta\n").unwrap();
+
+    let out = rwv()
+        .args(["doctor", "--fix"])
+        .current_dir(&ws_a)
+        .output()
+        .unwrap();
+    let report =
+        String::from_utf8_lossy(&out.stdout).into_owned() + &String::from_utf8_lossy(&out.stderr);
+
+    assert!(
+        has_pointer(&ww_b),
+        "`--fix` at workspace A must not clear a pointer in a workweave whose \
+         marker names workspace B: A's registry has no say over B's trees"
+    );
+    assert!(has_marker(&ww_b), "and must not touch B's marker either");
+
+    // A's report must EXPLAIN it correctly. Not touching the tree is the
+    // easy half — the registry lookup would decline it anyway, since A's
+    // index for `beta` does not exist. What the foreign-primary test adds is
+    // the reason the operator is given. Without it the finding falls through
+    // to the unregistered arm and blames `cp -r`, which is a false statement
+    // about a workweave that is simply another workspace's.
+    assert!(
+        report.contains("which is not this workspace"),
+        "A must report B's tree as belonging to another primary; got: {report}"
+    );
+    assert!(
+        !report.contains("copied out-of-band"),
+        "A must NOT blame an out-of-band copy for a tree that is another \
+         workspace's workweave; got: {report}"
+    );
+
+    // Run from B, the same root IS repairable — the classification turns on
+    // whose registry vouches for the tree, not on the tree itself.
+    rwv()
+        .args(["doctor", "--fix"])
+        .current_dir(&ws_b)
+        .output()
+        .unwrap();
+    assert!(
+        !has_pointer(&ww_b),
+        "`--fix` at workspace B must clear it: B's registry records this \
+         directory"
+    );
+    assert!(has_marker(&ww_b), "the marker survives the fix");
+}
+
 /// A tree carrying both files that the registry does not name — what an
 /// out-of-band `cp -r` of a workweave produces — is report-only. Its identity
 /// is disputed, and deleting either file would be a guess.
