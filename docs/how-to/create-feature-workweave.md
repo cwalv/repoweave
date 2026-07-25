@@ -38,16 +38,14 @@ The workweave will then reflect the uncommitted edits. Note that captured dirty 
 
 ## Work across repos
 
-Inside the workweave, edit, test, commit as usual — the workspace wiring makes cross-repo imports resolve to the worktrees:
+Inside the workweave, edit, test, commit as usual — the workspace wiring makes cross-repo imports resolve to the worktrees. Every manifest repo is already on its own ephemeral branch from `create`; commit directly onto it:
 
 ```bash
 cd github/chatly/protocol
-git checkout -b feat/payment-fields
 # edit ...
 git commit -am "protocol: add payment fields"
 
 cd ../server
-git checkout -b feat/payment-endpoint
 # edit ...
 git commit -am "server: add /payments endpoint"
 
@@ -55,7 +53,7 @@ cd ../..
 cargo test --workspace   # or npm test --workspaces, go test ./...
 ```
 
-The branches you push from the workweave are the same refs you'd push from primary — the workweave is just a worktree on an ephemeral branch.
+See [workweave hierarchy](../explanation/joints/workweave-hierarchy.md#ephemeral-branch-names-and-the-git-worktree-constraint) for why each worktree gets its own branch name.
 
 ## Lock the cross-repo state
 
