@@ -485,6 +485,75 @@ fn push_refuses_when_project_repo_off_canonical_branch() {
 }
 
 // ============================================================================
+// Negative: project repo's `origin/HEAD` is unset — no "main" fallback
+// ============================================================================
+
+/// branch-model.md §4.2/§4.6(2): `RemoteDefaultBranch`'s sole producer
+/// returns `None` when `origin/HEAD` is unset, and the gate must refuse
+/// rather than fabricate "main". Proves the refusal by construction: the
+/// project repo here IS on `main` (the real canonical branch `git clone`
+/// would have recorded), so the old fallback-to-"main" behaviour would
+/// have let this push through silently — only the typed `None` path
+/// catches it.
+#[test]
+fn push_refuses_when_project_repo_origin_head_unset() {
+    let ws = build_workspace("alpha", &[("local/org/a", "owned")]);
+    let project_dir = ws.workspace.join("projects").join(&ws.project_name);
+    git_run(
+        &project_dir,
+        &["symbolic-ref", "--delete", "refs/remotes/origin/HEAD"],
+    );
+
+    let output = rwv()
+        .args(["push"])
+        .current_dir(&ws.workspace)
+        .output()
+        .expect("rwv push");
+    assert!(
+        !output.status.success(),
+        "unset origin/HEAD must refuse rather than fall back to a guessed branch"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("origin/HEAD is unset"),
+        "error should name the unset origin/HEAD condition, not a fabricated branch; got: {stderr}"
+    );
+}
+
+// ============================================================================
+// Negative: project repo directory is not a VCS repo at all
+// ============================================================================
+
+/// branch-model.md §4.5/§4.6(2): a non-repo `projects/<name>/` must surface
+/// as `NotARepo`, not be misreported as a detached HEAD (the shipped bug
+/// `current_ref`'s `Ok(None)` collapse produced).
+#[test]
+fn push_refuses_when_project_repo_is_not_a_repo() {
+    let ws = build_workspace("alpha", &[("local/org/a", "owned")]);
+    let project_dir = ws.workspace.join("projects").join(&ws.project_name);
+    std::fs::remove_dir_all(project_dir.join(".git")).unwrap();
+
+    let output = rwv()
+        .args(["push"])
+        .current_dir(&ws.workspace)
+        .output()
+        .expect("rwv push");
+    assert!(
+        !output.status.success(),
+        "a project dir with no .git must refuse"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("not a vcs repository") || stderr.contains("not a repo"),
+        "error should name the not-a-repo condition; got: {stderr}"
+    );
+    assert!(
+        !stderr.contains("detached"),
+        "a non-repo directory must not be misreported as a detached HEAD; got: {stderr}"
+    );
+}
+
+// ============================================================================
 // Branch-mismatch warning is non-fatal
 // ============================================================================
 
@@ -541,6 +610,48 @@ fn push_warns_but_succeeds_when_manifest_repo_on_other_branch() {
         .trim()
         .to_string();
     assert_eq!(bare_feat_sha, feat_sha);
+}
+
+/// branch-model.md §4.6(2): the warning is built from two typed refs — the
+/// checkout's `AttachedRef` witness and the manifest's declared
+/// `TrackingRef` — routed through named projections instead of a raw
+/// string compare. Assert both names appear in the *same* warning line
+/// (not just "either", as the looser check above allows), pinning that the
+/// typed refactor didn't drop or garble either side.
+#[test]
+fn push_branch_mismatch_warning_names_both_observed_and_declared_branch() {
+    let ws = build_workspace("alpha", &[("local/org/a", "owned")]);
+
+    let local = ws.workspace.join("local/org/a");
+    git_run(&local, &["checkout", "-b", "feat-x"]);
+    std::fs::write(local.join("f.txt"), "f").unwrap();
+    git_run(&local, &["add", "."]);
+    git_run(&local, &["commit", "-m", "feat advance"]);
+    let feat_sha = git_run(&local, &["rev-parse", "HEAD"]);
+
+    let (_, bare) = &ws.manifest_bares[0];
+    let bare_url = bare.to_str().unwrap();
+    let lock = format!(
+        "repositories:\n  local/org/a:\n    type: git\n    url: {bare_url}\n    version: {feat_sha}\n"
+    );
+    let project_dir = ws.workspace.join("projects").join(&ws.project_name);
+    std::fs::write(project_dir.join("rwv.lock"), lock).unwrap();
+    git_run(&project_dir, &["add", "."]);
+    git_run(&project_dir, &["commit", "-m", "relock"]);
+
+    let output = rwv()
+        .args(["push"])
+        .current_dir(&ws.workspace)
+        .output()
+        .expect("rwv push");
+    assert!(output.status.success(), "branch-mismatch is non-fatal warn");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let expected = "rwv push: warning: local/org/a is on branch 'feat-x', manifest declares 'main'";
+    assert!(
+        stderr.contains(expected),
+        "expected warning naming both the observed branch ('feat-x') and the \
+         manifest's declared branch ('main') in one line; got stderr: {stderr}"
+    );
 }
 
 // ============================================================================

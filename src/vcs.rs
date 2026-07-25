@@ -1137,6 +1137,17 @@ impl AttachedRef {
     pub fn repo(&self) -> &Path {
         &self.repo
     }
+
+    /// Whether this attachment names the same local branch as `name`.
+    ///
+    /// The comparison the L1 publish gate needs — "is the checkout on the
+    /// branch a projection names" — without ever exposing the witness's
+    /// name as a string. Both `push.rs` call sites (§4.6(2)) go through
+    /// this: the project gate against `RemoteDefaultBranch::local_counterpart`,
+    /// the member gate against `TrackingRef::local_counterpart`.
+    pub fn is_named(&self, name: &LocalRefName) -> bool {
+        self.name.as_str() == name.as_str()
+    }
 }
 
 impl fmt::Display for AttachedRef {
@@ -1310,27 +1321,34 @@ impl fmt::Display for RemoteDefaultBranch {
 /// The ref a publish targets.
 ///
 /// An opaque wrapper whose constructors are visible only inside this crate
-/// and whose *use* is meant to be confined to one decision site in
-/// `push.rs`. Q6 — is a member's publish ref the attached ref or the
-/// manifest's declared tracking branch; is `version:` a constraint or a
-/// default — is **open**, and this type is where the deferral is visible: a
-/// deferred decision with a producer, rather than a placeholder without
-/// one. The single constructor call site is built when the publish gate is
-/// rewired; nothing here decides the policy.
+/// and whose *use* is confined to one decision site in `push.rs`'s publish
+/// gate. Q6 — is a member's publish ref the attached ref or the manifest's
+/// declared tracking branch; is `version:` a constraint or a default — is
+/// **open**, and this type is where the deferral is visible: a deferred
+/// decision with a producer, rather than a placeholder without one. The
+/// gate calls `from_attached`, preserving today's behaviour; nothing here
+/// decides the policy.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PublishRef(RawRefName);
 
 impl PublishRef {
-    // Neither has a caller yet: the single decision site in `push.rs` is a
-    // separate change, and which of the two it calls is Q6. Defining both
-    // and calling neither is what the deferral looks like in code.
     /// Publish the ref the checkout is actually on.
-    #[allow(dead_code)]
+    ///
+    /// This is the constructor `push.rs`'s publish gate calls (§4.6(2)),
+    /// the single site the type's doc comment promises: it accepts exactly
+    /// what today's shipped behaviour publishes — the attached ref — so
+    /// wiring the gate through `PublishRef` changes no observable
+    /// behaviour. `from_local` stays defined and uncalled, so Q6's other
+    /// answer keeps a producer even though one branch is now live.
     pub(crate) fn from_attached(a: &AttachedRef) -> Self {
         Self(a.name.clone())
     }
 
     /// Publish the local counterpart of a declared tracking branch.
+    ///
+    /// Unused by the shipped gate (see `from_attached`). Left in place as
+    /// Q6's other answer: if the decision goes to "publish the manifest's
+    /// declared branch", this is the constructor the call site switches to.
     #[allow(dead_code)]
     pub(crate) fn from_local(l: &LocalRefName) -> Self {
         Self(RawRefName(l.0.clone()))

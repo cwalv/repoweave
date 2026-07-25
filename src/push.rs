@@ -9,7 +9,7 @@ use crate::git::GitVcs;
 use crate::manifest::{Project, ProjectName, RepoEntry, RepoPath, Role};
 use crate::parallel::{run_in_parallel, Reporter};
 use crate::selector::RepoFilter;
-use crate::vcs::{RawRevisionId, Vcs};
+use crate::vcs::{HeadAttachment, PublishRef, RawRefName, RawRevisionId, TrackingRef, Vcs};
 use crate::workspace::{Checkout, Resolution, WorkspaceContext};
 use anyhow::Context;
 use schemars::JsonSchema;
@@ -168,26 +168,52 @@ pub fn run_push(
     // 2. Project repo must be on its canonical branch. Publishing is a
     //    gateway-to-collaboration operation; require a stable primary
     //    context so collaborators see a predictable target branch.
-    let project_canonical = git
-        .default_branch(&project_dir)
+    //
+    //    "Canonical branch" is the remote's own declaration
+    //    (`RemoteDefaultBranch`, branch-model.md §4.2) — not a fabricated
+    //    default. `None` means `origin/HEAD` is unset, and the gate refuses
+    //    rather than guessing "main" (§4.6(2)). A non-repo project dir
+    //    surfaces as `VcsError::NotARepo` here, before HEAD is ever read,
+    //    instead of being misreported as a detached checkout (§4.5).
+    let project_remote_default = git
+        .remote_default_branch(&project_dir)
         .with_context(|| format!("failed to determine canonical branch for {project_name}"))?;
-    let project_current = git
-        .current_ref(&project_dir)
+    let Some(project_remote_default) = project_remote_default else {
+        anyhow::bail!(
+            "rwv push: project repo at projects/{project_name}/: origin/HEAD is unset; \
+             run `git remote set-head origin -a` in the project repo (or push once with \
+             an explicit branch) to record its canonical branch, then re-run `rwv push`"
+        );
+    };
+    let project_canonical = project_remote_default.local_counterpart();
+
+    let project_attachment = git
+        .head_attachment(&project_dir)
         .with_context(|| format!("failed to read current branch for {project_name}"))?;
-    let project_current = match project_current {
-        Some(b) => b,
-        None => anyhow::bail!(
+    let project_attached = match project_attachment {
+        HeadAttachment::Attached(a) => a,
+        HeadAttachment::Unborn(u) => anyhow::bail!(
+            "rwv push: project repo at projects/{project_name}/ is on branch '{u}' with no \
+             commits yet; make an initial commit before pushing"
+        ),
+        HeadAttachment::Detached(_) => anyhow::bail!(
             "rwv push: project repo at projects/{project_name}/ is on a detached HEAD; \
              check out the canonical branch ({project_canonical}) first"
         ),
     };
-    if project_current.as_str() != project_canonical.as_str() {
+    if !project_attached.is_named(&project_canonical) {
         anyhow::bail!(
-            "rwv push: project repo at projects/{project_name}/ is on branch '{project_current}', \
+            "rwv push: project repo at projects/{project_name}/ is on branch '{project_attached}', \
              not the canonical branch '{project_canonical}'. \
              Switch to '{project_canonical}' before pushing — publishing requires a stable primary context."
         );
     }
+    // The single decision site (§4.6(2)): `from_attached` publishes
+    // whatever the checkout is on, matching the shipped behaviour exactly.
+    // Q6 — whether that should instead be the manifest's declared branch —
+    // stays open; see `PublishRef::from_attached`'s doc comment.
+    let project_publish_ref = PublishRef::from_attached(&project_attached);
+    let project_current = project_attached.to_string();
 
     // Snapshot manifest repos into a Vec so we can iterate twice (precondition
     // checks + push loop) without re-walking the BTreeMap.
@@ -335,8 +361,8 @@ pub fn run_push(
     let mut plan: Vec<PushPlanItem> = Vec::with_capacity(filtered_repos.len());
     for (repo_path, entry) in &filtered_repos {
         let repo_dir = primary_root.join(repo_path.as_path());
-        let current = match git.current_ref(&repo_dir) {
-            Ok(c) => c,
+        let attachment = match git.head_attachment(&repo_dir) {
+            Ok(a) => a,
             Err(e) => {
                 branch_errors.push(format!(
                     "{}: failed to read current branch: {e}",
@@ -345,9 +371,16 @@ pub fn run_push(
                 continue;
             }
         };
-        let branch = match current {
-            Some(b) => b,
-            None => {
+        let attached = match &attachment {
+            HeadAttachment::Attached(a) => a,
+            HeadAttachment::Unborn(u) => {
+                branch_errors.push(format!(
+                    "{}: branch '{u}' has no commits yet — make an initial commit before pushing",
+                    repo_path.as_str(),
+                ));
+                continue;
+            }
+            HeadAttachment::Detached(_) => {
                 branch_errors.push(format!(
                     "{}: detached HEAD — checkout a branch before pushing",
                     repo_path.as_str()
@@ -355,18 +388,36 @@ pub fn run_push(
                 continue;
             }
         };
-        if branch.as_str() != entry.version.as_str() {
+        // `entry.version` is the manifest's declared tracking branch, still
+        // typed `RefName` (manifest.rs's migration to `TrackingRef` is
+        // separate work — out of this bead's scope). Route it through
+        // `TrackingRef::parse` so the comparison below goes through
+        // `local_counterpart()`, the same named projection the project
+        // gate above uses, instead of a raw string compare.
+        let declared = match TrackingRef::parse(RawRefName::new(entry.version.as_str())) {
+            Ok(t) => t,
+            Err(e) => {
+                branch_errors.push(format!(
+                    "{}: manifest declares an invalid tracking branch '{}': {e}",
+                    repo_path.as_str(),
+                    entry.version,
+                ));
+                continue;
+            }
+        };
+        if !attached.is_named(&declared.local_counterpart()) {
             eprintln!(
                 "rwv push: warning: {} is on branch '{}', manifest declares '{}'",
                 repo_path.as_str(),
-                branch,
-                entry.version,
+                attached,
+                declared,
             );
         }
         plan.push(PushPlanItem {
             repo_path: repo_path.clone(),
-            branch: branch.as_str().to_string(),
+            branch: attached.to_string(),
             role: entry.role,
+            publish_ref: PublishRef::from_attached(attached),
         });
     }
     if !branch_errors.is_empty() {
@@ -432,6 +483,7 @@ pub fn run_push(
             repo_path: item.repo_path.clone(),
             branch: item.branch.clone(),
             role: item.role,
+            publish_ref: item.publish_ref.clone(),
         })
         .collect();
 
@@ -571,7 +623,7 @@ pub fn run_push(
             project_name, project_current,
         );
     }
-    let project_push_result = git.push_with_role(&project_dir, Role::Owned, force);
+    let project_push_result = git.push_ref(&project_dir, Role::Owned, &project_publish_ref, force);
 
     let project_wire = match &project_push_result {
         Ok(()) => PushOutcomeOutput::ProjectRepoPushed {
@@ -651,10 +703,17 @@ fn emit_ndjson_record(write_lock: &Mutex<()>, outcome: &PushOutcomeOutput) {
 /// One manifest repo's resolved plan entry — what branch it's on and what
 /// role drives the remote selection. Built up-front so the dry-run output
 /// and the actual push loop share the same shape.
+///
+/// `publish_ref` is the typed ref `push_one` hands to `Vcs::push_ref` —
+/// computed once, at plan time, from the same `AttachedRef` witness
+/// `branch` was rendered from. There is no independent re-read at push
+/// time (branch-model.md §9 Q15, the witness validity-window question,
+/// stays open — this plan doesn't add a re-observation policy on its own).
 struct PushPlanItem {
     repo_path: RepoPath,
     branch: String,
     role: Role,
+    publish_ref: PublishRef,
 }
 
 /// Outcome of pushing a single manifest repo.
@@ -676,8 +735,8 @@ enum PushOutcome {
 /// writes under `-j > 1`; under `-j 1` the reporter is a no-prefix
 /// passthrough that matches the pre-`-j` serial output exactly.
 ///
-/// `Vcs::push_with_role` captures stdout/stderr; we don't stream git's
-/// output line-by-line. The user-visible signal under parallel mode is the
+/// `Vcs::push_ref` captures stdout/stderr; we don't stream git's output
+/// line-by-line. The user-visible signal under parallel mode is the
 /// pre/post "rwv push: pushing X" pair (lock-protected via reporter); on
 /// failure the captured stderr is surfaced through the aggregated error
 /// summary post-join.
@@ -695,7 +754,7 @@ fn push_one(
         item.branch,
         remote_label(item.role),
     ));
-    match git.push_with_role(&repo_dir, item.role, force) {
+    match git.push_ref(&repo_dir, item.role, &item.publish_ref, force) {
         Ok(()) => PushOutcome::Pushed,
         Err(e) => PushOutcome::Failed(format!("{}: git push failed: {e}", item.repo_path.as_str())),
     }
@@ -826,6 +885,18 @@ mod tests {
 
     // --- PushPlanItem round-trip ------------------------------------------
 
+    /// Build a `PublishRef` for a test fixture without a real repo.
+    ///
+    /// `PublishRef::from_attached` needs an `AttachedRef` witness, which
+    /// only `Vcs::head_attachment` can produce (its fields are private
+    /// outside `vcs.rs`). `from_local` is the other, still-uncalled-by-the-
+    /// gate constructor (§9 Q6) — reaching for it here to fabricate a test
+    /// value doesn't touch the gate's decision, it just needs *a* value.
+    fn test_publish_ref(name: &str) -> PublishRef {
+        let declared = TrackingRef::parse(RawRefName::new(name)).expect("known-safe literal");
+        PublishRef::from_local(&declared.local_counterpart())
+    }
+
     /// PushPlanItem is the in-memory shape we hand to the parallel push
     /// loop and to dry-run printing. Pin construction-via-fields-and-
     /// readback so an accidental field rename doesn't silently change
@@ -836,6 +907,7 @@ mod tests {
             repo_path: RepoPath::new("github/cwalv/repoweave").expect("known-safe literal"),
             branch: "main".to_string(),
             role: Role::Owned,
+            publish_ref: test_publish_ref("main"),
         };
         assert_eq!(item.repo_path.as_str(), "github/cwalv/repoweave");
         assert_eq!(item.branch, "main");
@@ -852,16 +924,19 @@ mod tests {
                 repo_path: RepoPath::new("a").expect("known-safe literal"),
                 branch: "main".into(),
                 role: Role::Owned,
+                publish_ref: test_publish_ref("main"),
             },
             PushPlanItem {
                 repo_path: RepoPath::new("b").expect("known-safe literal"),
                 branch: "main".into(),
                 role: Role::Fork,
+                publish_ref: test_publish_ref("main"),
             },
             PushPlanItem {
                 repo_path: RepoPath::new("c").expect("known-safe literal"),
                 branch: "main".into(),
                 role: Role::Dependency,
+                publish_ref: test_publish_ref("main"),
             },
         ];
         let labels: Vec<&str> = plan.iter().map(|i| remote_label(i.role)).collect();
