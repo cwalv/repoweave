@@ -546,9 +546,10 @@ that `--force` previously bypassed now has its own named override:
   which is preserved in the savepoint). Recorded as
   `discard-local-commits` in `overrides`.
 
-**The house rule:** a flag's name states what it destroys — consent to
-a consequence, never a category. `--discard-local-commits` names the
-exact loss; the operator reading it knows what they are signing.
+The naming rule behind these flags — and why `push --force` is exempt
+from it — is stated once in
+[destructive-operations](../destructive-operations.md#2-named-overrides-are-narrow-and-informed);
+it is not repeated here.
 
 Named overrides are recorded in the owner record's `overrides` field so
 `--continue` resumes with the same consents without requiring the

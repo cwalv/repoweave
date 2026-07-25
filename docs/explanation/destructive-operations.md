@@ -17,7 +17,7 @@ Every destructive call sits behind a **named precondition that refuses**.
 The precondition is checked, and if it fails, the operation refuses
 loudly — no silent fallback, no degraded mode, no "best effort". The
 operator either resolves the condition themselves or invokes the
-operation again with `--force` (rule 2).
+operation again with the precondition's named override (rule 2).
 
 The precondition is *named* — present in the source as a function or a
 clearly-labelled inline check — so a reviewer auditing the call site can
@@ -52,13 +52,25 @@ what would be lost. "Informed" means:
   refusal output to enumerate the loss, not just signalling that
   something is at risk.
 
-**The house rule:** a flag's name states what it destroys — consent to
-a consequence, never a category. `--discard-local-commits` names the
-exact loss; the operator reading it knows what they are signing.
+**The house rule:** an override flag is named for the precondition it
+waives, so the operator consents to a specific consequence rather than
+a category. For a destructive override the consequence is a loss, so
+the flag states what it destroys — `--discard-local-commits` names the
+exact loss; the operator reading it knows what they are signing. That
+is the destructive instance of the rule, not a separate rule: the same
+naming discipline covers non-destructive gates too (`fetch
+--allow-non-empty-dir` names the bootstrap precondition it waives, not
+a loss), with no exemption class needed to cover them.
 
 Each named override is narrow — it bypasses one named precondition at a
 time. It does not turn into "disable all checks" — each precondition
 that an override bypasses is enumerated at the call site.
+
+`push --force` is the deliberate exception to the naming rule: it is
+not a precondition waiver but a **mode switch** — git's own vocabulary
+for which of two operations `rwv push` is performing. Renaming it would
+break the analogy to `git push --force` rather than sharpen it, so it
+keeps git's name.
 
 ### 3. Discards stay recoverable
 
@@ -95,7 +107,7 @@ destructive patterns:
 
 Each hit must appear in the test's `ALLOWLIST` with an exact count and
 a justification that names which precondition (rule 1) protects it,
-which `--force` flag bypasses it (rule 2), and how discards stay
+which named override bypasses it (rule 2), and how discards stay
 recoverable (rule 3). The test fails the build when:
 
 - A new call site appears without an allowlist entry.
@@ -119,10 +131,10 @@ When a PR introduces a destructive call:
    whose name describes the condition (`refuse_if_dirty`,
    `refuse_if_unmerged_commits`). Inline checks are acceptable when
    the condition is one line; multi-line checks belong in a function.
-2. **Wire `--force` consciously.** If `--force` is allowed to bypass
-   the precondition, the refusal output must list what would be lost,
-   and the verb's clap-derive doc on `--force` must describe what
-   consent is being granted.
+2. **Wire the override consciously.** If a named override flag is
+   allowed to bypass the precondition, the refusal output must list
+   what would be lost, and the verb's clap-derive doc on that flag
+   must describe what consent is being granted.
 3. **Add a savepoint if a roll-back is meaningful.** For ref surgery
    and `git reset --hard` paths, write a `refs/rwv/pre-op/<op-id>`
    ref before the destructive write. Wire the abort path to consume
@@ -130,7 +142,7 @@ When a PR introduces a destructive call:
 4. **Update the allowlist.** Add an entry to `ALLOWLIST` in
    `tests/destructive_ops_audit_test.rs` with the file name, pattern,
    count, and a one-paragraph justification that names the
-   precondition (rule 1), the `--force` behavior (rule 2), and the
+   precondition (rule 1), the override behavior (rule 2), and the
    recovery path (rule 3).
 5. **Update the verb's reference doc.** The verb's
    `docs/reference/explain/<verb>.md` should mention the destructive
@@ -141,7 +153,7 @@ The reviewer's checklist mirrors the rules:
 
 - Is there a precondition that *refuses*, named in source?
 - Does the refusal enumerate what would be lost?
-- If `--force` bypasses the precondition, is the loss-list shown
+- If a named override bypasses the precondition, is the loss-list shown
   unconditionally before the bypass?
 - Is a savepoint written if the operation can be aborted?
 - Is the allowlist entry concrete enough that a future contributor
