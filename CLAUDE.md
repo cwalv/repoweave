@@ -97,3 +97,75 @@ have removed.
 
 Expect to reach for it close to never. The fix for an unfollowable reference is
 almost always to state the invariant and delete the reference.
+
+## Comments do not name symbols that no longer exist
+
+A comment that names a function, method, type or variant as part of this
+codebase is making a checkable claim. Check it against the **code**, not
+against the other comments.
+
+The test is **occurrence outside a comment**. A name that appears in `src/`
+only inside comment text does not exist here: it was deleted, renamed, or never
+written. Prose about its removal is what the commit message is for.
+
+### Do not use a mention count
+
+The obvious check — grep the name, see if anything comes back — is wrong in the
+one situation that matters, and it is worth knowing why before you reach for
+it.
+
+A symbol that was just deleted is a symbol people are actively writing about.
+Its mention count goes *up* at the moment it stops existing. One deleted method
+on the VCS seam kept eleven mentions across seven files, every one of them prose
+about the deletion; a grep returned eleven hits and a sweep read that as proof
+the symbol was live. Sitting among those eleven was a comment listing it as a
+current member of the trait. The count was highest exactly where the rule was
+weakest.
+
+So:
+
+```sh
+# WRONG — a hit count includes the comments discussing the deletion
+git grep -c <name> -- src/
+
+# RIGHT — drop comment lines; what remains is code that uses the name
+git grep -n <name> -- src/ | grep -v '^\S*:[0-9]*: *//'
+```
+
+Read what survives rather than counting it. A string literal quoting the name
+survives the filter too — the gate's own test fixtures quote a deleted method on
+purpose — and a fixture is not a use.
+
+Comment text is the surface making the claim. It cannot also be the evidence
+for it.
+
+### What is mechanised, and what is not
+
+`check_doc_symbol_refs` in `src/bin/generate-explain.rs` enforces this for the
+**qualified** shape only: a comment writing `` `Type::member` ``, where `Type`
+is a name this code uses, requires `member` to occur outside a comment.
+
+A **bare** identifier is not checked, and that is the shape the rule was written
+for. The gate cannot separate a deleted method from a `std` function, a shell
+command, a parameter name, a hypothetical in an example, or an ordinary English
+word in backticks — measured across every backtick-quoted bare identifier in
+`src/`, the predicate reports 28 sites of which 21 are correct. Suppressing
+those would need five different justifications, and an inline annotation has to
+state a reason that is true where it sits; one annotation covering all five is
+an allowlist written inline. See that function's doc comment for the full
+measurement.
+
+**A green gate therefore does not mean the tree has no stale symbol
+references.** When you sweep by hand, apply the occurrence-outside-a-comment
+test to bare identifiers yourself, and expect to adjudicate: most of what it
+turns up will be a legitimate foreign name, and the residue is what you are
+looking for.
+
+### Naming something that is gone
+
+If a comment genuinely needs to say what changed, it is already violating the
+sparseness rule above — that belongs in the commit message. Delete it. If the
+contrast is load-bearing, state the invariant that holds now and leave the dead
+name out; an unqualified mention of a foreign name (`into_boxed_path` rather
+than the qualified form) is out of scope by construction, and is the way past a
+wrong report from the gate.

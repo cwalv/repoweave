@@ -1380,12 +1380,13 @@ const POINTER_FILLER: &[&str] = &[
     "why",
 ];
 
-/// The comment text on `line`, and whether the line is comment-only.
+/// Byte offset of the `//` that opens a comment on `line`.
 ///
 /// The scan tracks `"` (honouring backslash escapes) so the `//` inside a URL
-/// string literal is not read as a comment start. Leading `/` and `!` are
-/// stripped, so `///` and `//!` yield the same text as `//`.
-fn comment_on_line(line: &str) -> Option<(bool, &str)> {
+/// string literal is not read as a comment start. Shared by the two gates that
+/// split a line into code and comment, so neither can drift from the other on
+/// where that boundary sits.
+fn comment_start(line: &str) -> Option<usize> {
     let b = line.as_bytes();
     let mut in_string = false;
     let mut i = 0;
@@ -1393,15 +1394,28 @@ fn comment_on_line(line: &str) -> Option<(bool, &str)> {
         match b[i] {
             b'\\' if in_string => i += 1,
             b'"' => in_string = !in_string,
-            b'/' if !in_string && b.get(i + 1) == Some(&b'/') => {
-                let text = line[i + 2..].trim_start_matches(['/', '!']).trim();
-                return Some((line[..i].trim().is_empty(), text));
-            }
+            b'/' if !in_string && b.get(i + 1) == Some(&b'/') => return Some(i),
             _ => {}
         }
         i += 1;
     }
     None
+}
+
+/// The comment text on `line`, and whether the line is comment-only.
+///
+/// Leading `/` and `!` are stripped, so `///` and `//!` yield the same text as
+/// `//`.
+fn comment_on_line(line: &str) -> Option<(bool, &str)> {
+    let at = comment_start(line)?;
+    let text = line[at + 2..].trim_start_matches(['/', '!']).trim();
+    Some((line[..at].trim().is_empty(), text))
+}
+
+/// The code on `line` — everything before a comment opens, string literals
+/// kept.
+fn code_on_line(line: &str) -> &str {
+    &line[..comment_start(line).unwrap_or(line.len())]
 }
 
 /// One run of consecutive comment-only lines, or one trailing comment on a
@@ -1605,17 +1619,174 @@ fn check_doc_citations(root: &Path, files: &[PathBuf]) -> Vec<String> {
     errors
 }
 
-/// Run the doc-citation gate over the `.rs` half of `src_and_docs_files`.
+/// The `.rs` half of `src_and_docs_files` — the scope of the two gates that
+/// read comments rather than whole files.
 ///
-/// The rule governs comments under `src/`, so the `.md` files that shared
+/// Both rules govern comments under `src/`, so the `.md` files that shared
 /// scope also yields are filtered out; `tests/` is exempt for free, since that
 /// helper never collects it.
-fn run_doc_citation_check(root: &Path) -> Vec<String> {
-    let rs_files: Vec<PathBuf> = src_and_docs_files(root)
+fn src_rs_files(root: &Path) -> Vec<PathBuf> {
+    src_and_docs_files(root)
         .into_iter()
         .filter(|p| p.extension() == Some(OsStr::new("rs")))
-        .collect();
-    check_doc_citations(root, &rs_files)
+        .collect()
+}
+
+fn run_doc_citation_check(root: &Path) -> Vec<String> {
+    check_doc_citations(root, &src_rs_files(root))
+}
+
+/// Every identifier that appears in `src/` outside a comment.
+///
+/// This is what a comment's claims are checked against, and it is deliberately
+/// weaker than "is declared here". It asks only whether a name occurs in code
+/// at all, so a method reached through a derive, a macro expansion or a trait
+/// default counts without this file having to resolve Rust items. Only a name
+/// that appears in no code anywhere is a phantom.
+///
+/// String literals are kept. A name registered as data rather than as an item
+/// — an environment variable, a hook event, a subcommand — is still something
+/// this repository defines and a comment may name it; excluding literals
+/// turned twenty such names into findings when it was measured.
+///
+/// Inline test modules are dropped, and that is load-bearing rather than
+/// tidiness. A `#[cfg(test)]` fixture is free to spell a deleted symbol — the
+/// tests below this gate quote one on purpose — and a fixture that counts as
+/// evidence makes the gate vouch for the very name it is meant to reject. It
+/// passed a live mutation until this line was added.
+fn src_code_identifiers(root: &Path) -> HashSet<String> {
+    let mut idents = HashSet::new();
+    for path in src_rs_files(root) {
+        let Ok(content) = fs::read_to_string(&path) else {
+            continue;
+        };
+        for line in before_test_module(&content).lines() {
+            let mut rest = code_on_line(line);
+            while let Some(start) = rest.find(|c: char| c.is_ascii_alphabetic() || c == '_') {
+                let tail = &rest[start..];
+                let end = tail
+                    .find(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+                    .unwrap_or(tail.len());
+                idents.insert(tail[..end].to_owned());
+                rest = &tail[end..];
+            }
+        }
+    }
+    idents
+}
+
+fn is_ident(s: &str) -> bool {
+    let mut chars = s.chars();
+    chars
+        .next()
+        .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
+        && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
+}
+
+/// Backtick-quoted `Type::member` pairs in `text`.
+///
+/// Exactly two segments, the first starting uppercase. A module path
+/// (`sync::relock`) and a longer path (`crate::git::GitVcs`) are both outside
+/// scope — neither asserts that a type has a member. A trailing `()` is
+/// accepted and dropped.
+///
+/// A rustdoc bracketed link yields the same pair as a plain mention, since
+/// ``[`VcsError::NotARepo`]`` and `` `VcsError::NotARepo` `` hold the same
+/// backtick span.
+fn qualified_doc_refs(text: &str) -> Vec<(&str, &str)> {
+    text.split('`')
+        .skip(1)
+        .step_by(2)
+        .filter_map(|span| {
+            let (ty, member) = span.strip_suffix("()").unwrap_or(span).split_once("::")?;
+            let uppercase_first = ty.starts_with(|c: char| c.is_ascii_uppercase());
+            (uppercase_first && is_ident(ty) && is_ident(member)).then_some((ty, member))
+        })
+        .collect()
+}
+
+/// Enforce **definition-existence** for the symbols a `src/` comment names on
+/// a type of this repository's own: if `Type` occurs in the code here, a
+/// comment writing `` `Type::member` `` asserts that `member` exists, and it
+/// must occur in code here too.
+///
+/// The predicate is occurrence-in-code, not occurrence. A symbol that was just
+/// deleted is a symbol people write comments about, so counting every mention
+/// decouples from the question being asked exactly when a stale reference is
+/// most likely: a method deleted from the VCS seam kept eleven mentions across
+/// seven files, all of them prose about its removal, and a mention count read
+/// that tree as clean. Comment text is the surface making the claim and cannot
+/// also be the evidence for it.
+///
+/// # This gate is narrow, and green does not mean the tree is clean
+///
+/// It covers the **qualified** shape only. A comment naming a deleted symbol
+/// as a bare identifier — the shape that motivated this gate, a live trait
+/// member listed among four surviving ones — is **not** caught, here or
+/// anywhere.
+///
+/// That is a measured limit rather than an oversight. Applied to every
+/// backtick-quoted bare identifier in `src/` comments, the same predicate
+/// reports 28 sites, of which 21 are correct: names from `std` and from
+/// dependencies, shell commands, hex digits in an example, names of test
+/// files, parameters documented but not spelled in the signature, and one
+/// ordinary English word. Suppressing those needs five mutually incompatible
+/// justifications, and an inline annotation has to state a reason that is
+/// literally true at the site it sits on; one annotation covering all five
+/// says only that the gate is wrong here, which is an allowlist written
+/// inline. Restricting the shape does not separate the populations either —
+/// requiring two or more underscores drops the motivating case and still
+/// leaves five wrong reports.
+///
+/// # The one shape it reports wrongly
+///
+/// The qualifier filter asks whether the *name* is used here, not whether the
+/// type is declared here, so it drops a type this repository never touches
+/// (`Decor::set_prefix` is silent) but keeps one it does. Documenting a `std`
+/// or dependency method that this repository never calls, on a type it does
+/// use, is therefore reported: `into_boxed_path` written against `PathBuf`
+/// fails the gate even though it names a real method correctly. Both halves
+/// are pinned by tests below, the wrong one included, because a limit nobody
+/// wrote down is how the rule this gate replaces came to be believed.
+///
+/// No site in this repository hits it — 450 comment occurrences are in scope
+/// and none is reported — and the way out is the one this paragraph just
+/// took: drop the qualifier. An unqualified mention claims no membership here
+/// and is out of scope by construction. That is why there is no escape hatch;
+/// a hatch needs a reason that is literally true wherever it sits, and this
+/// case has a plainer fix than annotating it.
+fn check_doc_symbol_refs(
+    root: &Path,
+    files: &[PathBuf],
+    code_idents: &HashSet<String>,
+) -> Vec<String> {
+    let mut errors = Vec::new();
+    for path in files {
+        let Ok(content) = fs::read_to_string(path) else {
+            continue;
+        };
+        let rel = path.strip_prefix(root).unwrap_or(path).display();
+        for (n, line) in before_test_module(&content).lines().enumerate() {
+            let Some((_, text)) = comment_on_line(line) else {
+                continue;
+            };
+            for (ty, member) in qualified_doc_refs(text) {
+                if code_idents.contains(ty) && !code_idents.contains(member) {
+                    errors.push(format!(
+                        "{}:{}: `{ty}::{member}` — `{ty}` is a type here, but `{member}` \
+                         appears in no code in this repository",
+                        rel,
+                        n + 1
+                    ));
+                }
+            }
+        }
+    }
+    errors
+}
+
+fn run_doc_symbol_check(root: &Path) -> Vec<String> {
+    check_doc_symbol_refs(root, &src_rs_files(root), &src_code_identifiers(root))
 }
 
 /// Words that name a specific consumer or workflow rwv happens to be used
@@ -1976,6 +2147,23 @@ fn main() -> anyhow::Result<()> {
              pointer should be the sentence it was standing in for. A path out \
              of the repo that must stay takes `weave-local-ref: <reason>` on \
              the line above it."
+        );
+    }
+
+    // --- doc-symbol gate ---------------------------------------------------
+    // A comment writing `Type::member`, where Type is a type of this
+    // repository's own, asserts that member exists — so member must appear in
+    // code here, not merely in more comments. Covers the qualified shape only;
+    // see check_doc_symbol_refs for what it does not catch.
+    let symbol_errors = run_doc_symbol_check(&root);
+    if !symbol_errors.is_empty() {
+        let msg = symbol_errors.join("\n");
+        anyhow::bail!(
+            "doc-symbol check failed:\n{msg}\n\n\
+             Fix: name a member that exists, or state the invariant without the \
+             symbol. A name that appears in no code here is one that was deleted \
+             or never existed, and prose about its removal is what the commit \
+             message is for."
         );
     }
 
@@ -2783,6 +2971,201 @@ mod tests {
             errors.is_empty(),
             "the section-pointer clause has no matcher yet, got:\n{}",
             errors.join("\n")
+        );
+    }
+
+    // ── doc-symbol check unit tests ───────────────────────────────────────────
+
+    /// Write `src/lib.rs` with `body` into a temp repo and return the gate's
+    /// findings. The identifier set is built from the same file, so a fixture
+    /// declares the code it wants to be believed about.
+    fn symbol_errors(body: &str) -> Vec<String> {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let root = tmp.path();
+        let src = root.join("src");
+        fs::create_dir_all(&src).unwrap();
+        let file = src.join("lib.rs");
+        fs::write(&file, body).unwrap();
+        check_doc_symbol_refs(root, &[file], &src_code_identifiers(root))
+    }
+
+    /// The case the gate exists for: a member named on a repository type that
+    /// survives only in prose. This is the deleted-VCS-method shape, written
+    /// qualified.
+    #[test]
+    fn member_that_appears_only_in_comments_is_reported() {
+        let errors = symbol_errors(
+            "pub trait Vcs {\n    fn observe_head(&self);\n}\n\
+             /// The `Vcs::current_ref` this replaced collapsed four states into one.\n\
+             pub fn f() {}\n",
+        );
+        let combined = errors.join("\n");
+        assert!(
+            combined.contains("`Vcs::current_ref`"),
+            "a member present only in prose must be reported, got:\n{combined}"
+        );
+    }
+
+    /// Mention-count is the predicate this gate replaces: the deleted method
+    /// keeps a crowd of comments discussing it, and every one of them must
+    /// count as evidence for nothing.
+    #[test]
+    fn many_prose_mentions_do_not_rescue_a_deleted_member() {
+        let errors = symbol_errors(
+            "pub trait Vcs {\n    fn observe_head(&self);\n}\n\
+             /// This restates the deleted `Vcs::current_ref` in terms of the four\n\
+             /// states `Vcs::current_ref` answered with one `None`. The shipped\n\
+             /// `Vcs::current_ref` read a detached HEAD as absent.\n\
+             pub fn f() {}\n",
+        );
+        assert_eq!(
+            errors.len(),
+            3,
+            "each prose mention is a finding, not evidence, got:\n{}",
+            errors.join("\n")
+        );
+    }
+
+    /// A member that exists in code is the ordinary case — 450 comment
+    /// occurrences in this repository look like this and none may be reported.
+    #[test]
+    fn member_present_in_code_is_allowed() {
+        let errors = symbol_errors(
+            "pub trait Vcs {\n    fn observe_head(&self);\n}\n\
+             /// Returns whatever `Vcs::observe_head` last reported.\n\
+             pub fn f() {}\n",
+        );
+        assert!(
+            errors.is_empty(),
+            "a member that exists must not be reported, got:\n{}",
+            errors.join("\n")
+        );
+    }
+
+    /// A type this repository never touches is dropped before its member is
+    /// looked up. Over-eagerness here is the regression that would get the
+    /// gate reverted rather than fixed.
+    #[test]
+    fn members_of_unused_foreign_types_are_out_of_scope() {
+        let errors = symbol_errors(
+            "/// Prefix decoration (`Decor::set_prefix`) and `serde_json::Map`\n\
+             /// are both foreign, as is `OpenOptions::create_new`.\n\
+             pub fn f() {}\n",
+        );
+        assert!(
+            errors.is_empty(),
+            "members of types never used here must not be reported, got:\n{}",
+            errors.join("\n")
+        );
+    }
+
+    /// The gate's one wrong report, pinned deliberately. A `std` type this
+    /// repository *does* use passes the qualifier filter, so a real method of
+    /// it that the repository never calls is reported. Recording the limit as
+    /// a test is the point: the rule this gate replaces was trusted for a case
+    /// it could not cover because nobody had written the case down.
+    #[test]
+    fn foreign_method_on_a_used_type_is_reported_wrongly() {
+        let errors = symbol_errors(
+            "use std::path::PathBuf;\n\
+             pub fn g(p: PathBuf) -> PathBuf { p }\n\
+             /// Converts with `PathBuf::into_boxed_path`, which this crate never calls.\n\
+             pub fn f() {}\n",
+        );
+        let combined = errors.join("\n");
+        assert!(
+            combined.contains("`PathBuf::into_boxed_path`"),
+            "the known false report must stay visible, got:\n{combined}"
+        );
+    }
+
+    /// The way out of the case above, and the reason it needs no escape hatch:
+    /// an unqualified mention asserts no membership here, so it is out of
+    /// scope by construction.
+    #[test]
+    fn dropping_the_qualifier_is_the_way_out() {
+        let errors = symbol_errors(
+            "use std::path::PathBuf;\n\
+             pub fn g(p: PathBuf) -> PathBuf { p }\n\
+             /// Converts with `into_boxed_path`, which this crate never calls.\n\
+             pub fn f() {}\n",
+        );
+        assert!(
+            errors.is_empty(),
+            "an unqualified mention must not be reported, got:\n{}",
+            errors.join("\n")
+        );
+    }
+
+    /// A name registered as data rather than as an item still exists here. The
+    /// identifier set keeps string literals for this reason.
+    #[test]
+    fn name_defined_only_in_a_string_literal_is_allowed() {
+        let errors = symbol_errors(
+            "pub struct Setup;\n\
+             const EVENTS: &[&str] = &[\"WorktreeCreate\"];\n\
+             /// Registers the command for `Setup::WorktreeCreate`.\n\
+             pub fn f() {}\n",
+        );
+        assert!(
+            errors.is_empty(),
+            "a name present as data must not be reported, got:\n{}",
+            errors.join("\n")
+        );
+    }
+
+    /// The bare-identifier shape is the one that motivated this gate and the
+    /// one it cannot cover; this pins the silence so a future sweep does not
+    /// read green as "no stale symbol references". `current_ref` here is named
+    /// exactly as the comment that prompted the work named it.
+    #[test]
+    fn bare_identifiers_are_not_mechanised() {
+        let errors = symbol_errors(
+            "pub trait Vcs {\n    fn observe_head(&self);\n}\n\
+             /// The scanner consumes the `Vcs` trait — `current_ref`,\n\
+             /// `observe_head` — without any git-specific code.\n\
+             pub fn f() {}\n",
+        );
+        assert!(
+            errors.is_empty(),
+            "the bare-identifier shape has no matcher, got:\n{}",
+            errors.join("\n")
+        );
+    }
+
+    /// Test-module content is dropped, matching the doc-citation gate: a
+    /// fixture naming a method it does not define is describing a scenario,
+    /// not claiming an API.
+    #[test]
+    fn test_module_content_is_skipped() {
+        let errors = symbol_errors(
+            "pub struct Repo;\n\
+             #[cfg(test)]\n\
+             mod tests {\n    /// Pins that `Repo::vanished` stays gone.\n    fn t() {}\n}\n",
+        );
+        assert!(
+            errors.is_empty(),
+            "inline test content must not be scanned, got:\n{}",
+            errors.join("\n")
+        );
+    }
+
+    /// Only the two-segment shape asserts membership on a type. A module path
+    /// and a longer path say something else, and a rustdoc bracketed link says
+    /// the same thing as a plain mention.
+    #[test]
+    fn qualified_doc_refs_matches_only_type_member() {
+        assert_eq!(
+            qualified_doc_refs("holds `VcsError::NotARepo` and [`Vcs::observe_head`]"),
+            vec![("VcsError", "NotARepo"), ("Vcs", "observe_head")]
+        );
+        assert_eq!(
+            qualified_doc_refs("`Vcs::observe_head()`"),
+            vec![("Vcs", "observe_head")]
+        );
+        assert!(
+            qualified_doc_refs("`sync::relock` and `crate::git::GitVcs` and `plain`").is_empty(),
+            "module paths, longer paths and bare names are not membership claims"
         );
     }
 }
