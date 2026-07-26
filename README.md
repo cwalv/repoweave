@@ -91,8 +91,8 @@ cd ../.workweaves/web-app--payments
 | `rwv lock` | Snapshot repo HEADs into `rwv.lock`. Errors on uncommitted changes (`--dirty` to bypass) |
 | `rwv doctor` | Convention enforcement: orphans, dangling refs, stale locks, integration checks. `--locked` for scriptable lock-freshness check |
 | `rwv status` | Show per-repo state: branch, tip, lock entry, relation, mid-op state. `--json` for machine-readable output |
-| `rwv sync <source>` | Pull: align CWD to another workspace's committed `rwv.lock`. `--strategy ff\|rebase\|merge` (default `ff`); `--allow-stale-lock` to skip lock-freshness check; `--discard-local-commits` to hard-reset project repo to source tip |
-| `rwv sync-to [<target>]` | Push: land CWD's commits into target (3-step: rebase CWD against target → auto-relock → FF-advance target). `--strategy rebase\|ff\|merge` (default `rebase`); `--retire` deletes the workweave on success. Bare `rwv sync-to` auto-targets the parent recorded in `.rwv-workweave` |
+| `rwv sync <source>` | Pull: align CWD to another workspace's committed `rwv.lock`. `--strategy ff\|rebase` (default `ff`); `--allow-stale-lock` to skip lock-freshness check; `--discard-local-commits` to hard-reset project repo to source tip |
+| `rwv sync-to [<target>]` | Push: land CWD's commits into target (3-step: rebase CWD against target → auto-relock → FF-advance target). `--strategy rebase\|ff` (default `rebase`); `--retire` deletes the workweave on success. Bare `rwv sync-to` auto-targets the parent recorded in `.rwv-workweave` |
 | `rwv abort` | Restore CWD workspace to its pre-sync state using savepoint refs |
 | `rwv push` | Coordinated cross-repo push: manifest repos first, then project repo. `--dry-run` to preview; `--force` for force-push consent; `--role`/`--repo` selectors to limit scope |
 | `rwv update` | Advance each repo to its branch HEAD and re-snapshot `rwv.lock` (network bump; analogous to `cargo update`). `--commit` to commit the lock after writing it |
