@@ -72,15 +72,18 @@ fn create_worktree_in_workweave(
     }
 
     // Skip if the canonical has no HEAD (empty `git init` from --new).
-    if GitVcs.head_revision(canonical_clone).is_err() {
-        eprintln!(
-            "rwv add: canonical clone at {} has no commits yet; \
-             skipping worktree creation in workweave \
-             (commit upstream and run `rwv sync` to materialize)",
-            canonical_clone.display()
-        );
-        return Ok(());
-    }
+    let start = match GitVcs.head_revision(canonical_clone) {
+        Ok(start) => start,
+        Err(_) => {
+            eprintln!(
+                "rwv add: canonical clone at {} has no commits yet; \
+                 skipping worktree creation in workweave \
+                 (commit upstream and run `rwv sync` to materialize)",
+                canonical_clone.display()
+            );
+            return Ok(());
+        }
+    };
 
     if let Some(parent) = dest.parent() {
         std::fs::create_dir_all(parent)
@@ -95,6 +98,7 @@ fn create_worktree_in_workweave(
         canonical_clone,
         &dest,
         &ephemeral,
+        start,
     )
     .with_context(|| {
         format!(

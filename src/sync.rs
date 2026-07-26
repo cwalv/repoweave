@@ -1257,41 +1257,26 @@ fn materialize_missing_repo(
                 );
             }
             // The manifest's tracking branch is the START POINT, and only
-            // that. The NAME comes from `EphemeralRefName::mint` below — the
-            // same call `create_workweave` (`workweave.rs`) and `rwv add`
+            // that. The NAME comes from `EphemeralRefName::mint` — the same
+            // call `create_workweave` (`workweave.rs`) and `rwv add`
             // (`add_remove.rs`) make, from the same two inputs.
-            //
-            // This comment used to claim it "mirrors create_workweave's
-            // naming" while doing something else entirely, and then claimed
-            // the two sites were still divergent and would collapse
-            // separately. Both readings are now obsolete: §3.5 dropped the
-            // third component, `mint` is total over (project, workweave),
-            // and there is exactly one derivation left, so there is nothing
-            // to mirror — the sites call the same function. (The
-            // `ephemeral_branch_name` this text pointed at no longer exists.)
             let start_ref = entry.version.as_str();
-            let head_rev = GitVcs
+            let start = GitVcs
                 .resolve_revision(&canonical, start_ref)
                 .with_context(|| format!("failed to resolve {start_ref} in canonical clone"))?;
-            // Receipt before ref (R2/§4.2): the registry persists the receipt,
-            // and only then does the birth happen. A crash between the two
-            // leaves a dangling receipt, which is retractable; the inverse
-            // order leaves a ref rwv can never own or clean up. This is also
-            // what makes a sync-materialized worktree visible to
-            // `workweave delete`, which ranges over the recorded set.
-            let owned =
-                crate::workweave_index::RefRegistry::for_project(ctx.primary_path(), project_name)
-                    .record_created(
-                        &canonical,
-                        EphemeralRefName::mint(project_name, name),
-                        head_rev,
-                    )
-                    .with_context(|| {
-                        format!("failed to record the ephemeral ref for {repo_path}")
-                    })?;
-            GitVcs
-                .create_worktree_on(&owned, &dest)
-                .with_context(|| format!("worktree add for {repo_path} failed"))?;
+            let mut registry =
+                crate::workweave_index::RefRegistry::for_project(ctx.primary_path(), project_name);
+            crate::workweave::birth_ephemeral_worktree(
+                &GitVcs,
+                &mut registry,
+                &canonical,
+                &dest,
+                &EphemeralRefName::mint(project_name, name),
+                start,
+            )
+            .with_context(|| format!("cannot materialize {repo_path}"))?
+            .into_authored(&mut registry)
+            .with_context(|| format!("worktree add for {repo_path} failed"))?;
         }
         Checkout::Primary { .. } => {
             GitVcs
@@ -6163,6 +6148,145 @@ mod tests {
         assert!(
             GitVcs.head_revision(&store).is_ok(),
             "the store the checkout linked into must be left intact"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // materialize_missing_repo — phase 3 births through the chokepoint, so a
+    // name rwv holds no receipt for is refused rather than claimed (R2)
+    //
+    // Sync is the one production writer that used to re-implement birth as a
+    // bare `record_created` + `create_worktree_on`. That skipped the
+    // (receipt, ref) classification entirely: whatever sat at the minted name
+    // got a receipt minted over it, and ownership-by-record then made the
+    // operator's branch rwv's to destroy on the next workweave delete.
+    // -----------------------------------------------------------------------
+
+    /// A workweave whose primary holds the canonical clone and whose own
+    /// checkout of that repo is ABSENT — the state phase 3 materializes into.
+    /// Returns the context, the canonical store, the project, and the entry
+    /// whose `version` is the start point the ephemeral ref is cut at.
+    fn workweave_missing_one_repo(
+        tmp: &Path,
+    ) -> (
+        WorkspaceContext,
+        PathBuf,
+        ProjectName,
+        crate::manifest::RepoEntry,
+    ) {
+        let origin = tmp.join("origin");
+        init_repo(&origin);
+
+        let primary = tmp.join("weave");
+        std::fs::create_dir_all(primary.join("projects").join("web-app")).unwrap();
+        std::fs::create_dir_all(primary.join("github/example")).unwrap();
+        let canonical = primary.join("github/example/server");
+        git(
+            &primary,
+            &[
+                "clone",
+                origin.to_str().unwrap(),
+                canonical.to_str().unwrap(),
+            ],
+        );
+        git(&canonical, &["config", "user.email", "t@t"]);
+        git(&canonical, &["config", "user.name", "T"]);
+
+        let ww = primary.join(".workweaves").join("web-app--feat");
+        std::fs::create_dir_all(ww.join("github/example")).unwrap();
+        let primary_canon = primary.canonicalize().unwrap();
+        crate::workspace::WorkweaveMarker {
+            primary: primary_canon.clone(),
+            project: ProjectName::new("web-app"),
+            parent: primary_canon,
+        }
+        .write(&ww)
+        .unwrap();
+
+        let ctx = WorkspaceContext::resolve(&ww, None).expect("the marker names the primary weave");
+        assert!(
+            matches!(ctx.checkout, Checkout::Workweave { .. }),
+            "the fixture must resolve as a workweave, or materialize takes the clone arm instead"
+        );
+        let entry = crate::manifest::RepoEntry {
+            vcs_type: crate::manifest::VcsType::Git,
+            url: "https://example.com/server.git".parse().unwrap(),
+            version: crate::vcs::RefName::new("main"),
+            role: Role::Owned,
+        };
+        (ctx, canonical, ProjectName::new("web-app"), entry)
+    }
+
+    /// The receipt phase 3 wrote for this workweave's ephemeral ref, if any.
+    fn materialized_receipt(
+        ctx: &WorkspaceContext,
+        canonical: &Path,
+        project: &ProjectName,
+    ) -> Option<crate::vcs::OwnedRef> {
+        crate::workweave_index::RefRegistry::for_project(ctx.primary_path(), project)
+            .lookup(
+                &crate::workweave::receipt_store_for(canonical),
+                &crate::vcs::RawRefName::new("web-app--feat"),
+            )
+            .expect("the receipt store is readable")
+    }
+
+    #[test]
+    fn materialize_missing_repo_authors_the_ref_and_records_it() {
+        // The control. Without it the refusal below could be passing on a
+        // fixture that can never materialize anything at all.
+        let tmp = tempfile::tempdir().unwrap();
+        let (ctx, canonical, project, entry) = workweave_missing_one_repo(tmp.path());
+
+        materialize_missing_repo(&ctx, &dropped(), &entry, &project)
+            .expect("a name nothing holds is the ordinary create");
+
+        let checkout = ctx.active_path().join(dropped().as_path());
+        assert!(
+            checkout.join(".git").is_file(),
+            "the materialized repo must be a linked workspace on the ephemeral ref"
+        );
+        assert!(
+            materialized_receipt(&ctx, &canonical, &project).is_some(),
+            "the receipt is what makes a sync-materialized worktree visible to \
+             `workweave delete`, which ranges over the recorded set"
+        );
+    }
+
+    #[test]
+    fn materialize_missing_repo_refuses_a_pre_existing_branch_it_holds_no_receipt_for() {
+        // R2's refusal arm: a ref that merely *looks* like rwv's is not rwv's,
+        // so it is neither adopted into a receipt nor destroyed. If this test
+        // ever goes green on a materialize that SUCCEEDS, the operator's
+        // branch has just become rwv's to delete.
+        let tmp = tempfile::tempdir().unwrap();
+        let (ctx, canonical, project, entry) = workweave_missing_one_repo(tmp.path());
+
+        // The operator's own branch, sitting at the name rwv would mint, and
+        // carrying a commit that exists nowhere else.
+        git(&canonical, &["checkout", "-b", "web-app--feat"]);
+        let operator_tip = commit(&canonical, "operators-work");
+        git(&canonical, &["checkout", "main"]);
+
+        let err = materialize_missing_repo(&ctx, &dropped(), &entry, &project)
+            .expect_err("a branch rwv holds no receipt for is not rwv's to reuse");
+        let msg = format!("{err:#}");
+        assert!(
+            msg.contains("rwv holds no ownership receipt for it"),
+            "the unowned-ref arm must be what refused — not a worktree-add failure \
+             downstream of a receipt that was already minted; got:\n{msg}"
+        );
+        assert!(
+            materialized_receipt(&ctx, &canonical, &project).is_none(),
+            "no receipt may be minted over a branch rwv did not create: the receipt \
+             is what a later delete reads as authorization to destroy it"
+        );
+        assert_eq!(
+            GitVcs
+                .resolve_revision(&canonical, "web-app--feat")
+                .unwrap(),
+            operator_tip,
+            "the operator's branch must survive the refusal at its own tip"
         );
     }
 

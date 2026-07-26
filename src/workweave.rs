@@ -985,6 +985,38 @@ pub(crate) struct BirthOutcome {
     pub(crate) failure: Option<anyhow::Error>,
 }
 
+impl BirthOutcome {
+    /// Resolve the outcome here, for a caller with no rollback guard to hand
+    /// it to: a receipt survives only if this call authored the ref it names.
+    ///
+    /// An adopted ref is not this call's to hold a claim on (§6.1), and with
+    /// no guard there is no later pass to notice — so the receipt is retracted
+    /// before the error returns, rather than being left standing over a branch
+    /// rwv did not create. A birth that *failed* keeps its receipt: the ref may
+    /// exist regardless, and under R2 only a receipt can authorize cleaning it
+    /// up later.
+    pub(crate) fn into_authored(self, registry: &mut RefRegistry) -> anyhow::Result<()> {
+        match self.birth {
+            RefBirth::Adopted => {
+                let store = self.owned.store().to_path_buf();
+                registry.retract(&store, self.owned.name())?;
+                bail!(
+                    "branch `{owned}` already existed in {store}, so materializing it \
+                     adopted a ref rwv did not create. The ownership receipt has been \
+                     retracted — rwv does not claim a branch it did not author.\n\n\
+                     Rename or delete that branch yourself, then re-run.",
+                    owned = self.owned,
+                    store = store.display(),
+                )
+            }
+            RefBirth::Authored(_) | RefBirth::AuthoredOrAbsent => match self.failure {
+                Some(e) => Err(e),
+                None => Ok(()),
+            },
+        }
+    }
+}
+
 /// The canonical store a checkout's refs actually live in — the key every
 /// ownership receipt for that repo is recorded and looked up under.
 ///
@@ -1004,6 +1036,12 @@ pub(crate) fn receipt_store_for(checkout: &Path) -> PathBuf {
 /// This is §5's `workweave create` row and §4.6(3)'s retry in one place. The
 /// name is minted flat ([`EphemeralRefName::mint`]) and nothing observed feeds
 /// into it, so there is no third component to disagree about (§3.5).
+///
+/// The ref begins at `start`, which is also what the receipt records:
+/// [`Vcs::create_worktree_on`] takes the start point from the receipt, so the
+/// two cannot disagree. It is the caller's because callers differ on it — a
+/// create forks the source checkout's HEAD, while a sync materializing a repo
+/// new to the workweave starts it at the manifest's tracking branch.
 ///
 /// # The four states of `(receipt, ref)`, and why none of them force-deletes
 ///
@@ -1031,10 +1069,10 @@ pub(crate) fn birth_ephemeral_worktree(
     source_repo: &Path,
     dest: &Path,
     ephemeral: &EphemeralRefName,
+    start: ResolvedRevisionId,
 ) -> anyhow::Result<BirthOutcome> {
     let store = receipt_store_for(source_repo);
     let raw = ephemeral.to_raw();
-    let start = vcs.head_revision(source_repo)?;
 
     // Classify the D/F collision before asking git, so it surfaces as a
     // migration error naming a command rather than as `fatal: cannot lock
@@ -1495,13 +1533,19 @@ pub fn create_workweave(
             // any more. `birth_ephemeral_worktree` hands back what it claimed
             // even when the birth call failed, which is the hook-failure case
             // the old pre-recording existed for.
-            match birth_ephemeral_worktree(
-                vcs.as_ref(),
-                &mut registry,
-                &repo_abs,
-                &worktree_dest,
-                &ephemeral,
-            ) {
+            match vcs
+                .head_revision(&repo_abs)
+                .map_err(anyhow::Error::from)
+                .and_then(|start| {
+                    birth_ephemeral_worktree(
+                        vcs.as_ref(),
+                        &mut registry,
+                        &repo_abs,
+                        &worktree_dest,
+                        &ephemeral,
+                        start,
+                    )
+                }) {
                 Ok(outcome) => {
                     rollback.record_ref_attempt(outcome.owned, outcome.birth);
                     if let Some(e) = outcome.failure {
@@ -1614,13 +1658,19 @@ pub fn create_workweave(
         // §5.1: the project repo is an instance of the model, so this arm runs
         // the identical receipt-first birth over the identical ephemeral name.
         rollback.record_attempted_repo(project_dir.clone());
-        let birth = match birth_ephemeral_worktree(
-            &GitVcs,
-            &mut registry,
-            &project_dir,
-            &project_wt_dest,
-            &ephemeral,
-        ) {
+        let birth = match GitVcs
+            .head_revision(&project_dir)
+            .map_err(anyhow::Error::from)
+            .and_then(|start| {
+                birth_ephemeral_worktree(
+                    &GitVcs,
+                    &mut registry,
+                    &project_dir,
+                    &project_wt_dest,
+                    &ephemeral,
+                    start,
+                )
+            }) {
             Ok(outcome) => {
                 let failure = outcome.failure;
                 rollback.record_ref_attempt(outcome.owned, outcome.birth);
