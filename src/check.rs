@@ -1893,40 +1893,17 @@ fn workweave_containers_for_scan(ws_root: &Path) -> Vec<PathBuf> {
     containers
 }
 
-/// Append `parent: <primary>` to a legacy `.rwv-workweave` file.
+/// Backfill `parent: <primary>` into a legacy `.rwv-workweave` file.
 ///
 /// Idempotent: if `parent:` is already present, the file is not rewritten.
 /// Returns `true` if the file was rewritten, `false` if it was already
 /// up to date.
 pub fn fix_legacy_workweave_marker(finding: &LegacyWorkweaveMarkerFile) -> anyhow::Result<bool> {
-    let content = std::fs::read_to_string(&finding.marker_path)
-        .with_context(|| format!("failed to read {} for --fix", finding.marker_path.display()))?;
-    let raw: serde_yaml::Value = serde_yaml::from_str(&content).with_context(|| {
-        format!(
-            "failed to re-parse {} for --fix",
-            finding.marker_path.display()
-        )
-    })?;
-    // Re-check: don't rewrite if already has a non-null parent.
-    if !raw.get("parent").map(|v| v.is_null()).unwrap_or(true) {
-        return Ok(false);
-    }
-    // Append the parent line. Using a simple string append preserves any
-    // comments and existing key order, consistent with fix_legacy_role_primary.
-    let primary_str = finding.primary.to_string_lossy();
-    let line = format!("parent: {primary_str}\n");
-    let new_content = if content.ends_with('\n') {
-        format!("{content}{line}")
-    } else {
-        format!("{content}\n{line}")
-    };
-    std::fs::write(&finding.marker_path, new_content).with_context(|| {
-        format!(
-            "failed to write {} during --fix",
-            finding.marker_path.display()
-        )
-    })?;
-    Ok(true)
+    let dir = finding
+        .marker_path
+        .parent()
+        .expect(".rwv-workweave marker path always has a parent directory");
+    crate::workspace::WorkweaveMarker::migrate_legacy(dir)
 }
 
 /// Re-point a `dangling-parent` workweave marker's `parent:` field to

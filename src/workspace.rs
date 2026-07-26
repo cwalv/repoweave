@@ -1125,6 +1125,38 @@ impl WorkweaveMarker {
             .with_context(|| format!("failed to write {}", path.display()))?;
         Ok(())
     }
+
+    /// Migrate a legacy marker in `dir` (missing the `parent:` field checked
+    /// by [`Self::read`]) by backfilling `parent` to `primary` and rewriting
+    /// through [`Self::write`].
+    ///
+    /// Returns `Ok(false)` if `parent:` is already present and non-null —
+    /// idempotent, so callers can retry across a race without double-writing.
+    /// `Err` on I/O failure or if the file doesn't even have the `primary:`
+    /// field a legacy marker requires.
+    pub fn migrate_legacy(dir: &Path) -> anyhow::Result<bool> {
+        let path = dir.join(".rwv-workweave");
+        let content = std::fs::read_to_string(&path)
+            .with_context(|| format!("failed to read {} for --fix", path.display()))?;
+        let mut raw: serde_yaml::Value = serde_yaml::from_str(&content)
+            .with_context(|| format!("failed to parse .rwv-workweave at {}", path.display()))?;
+        if !raw.get("parent").map(|v| v.is_null()).unwrap_or(true) {
+            return Ok(false);
+        }
+        let primary = raw.get("primary").cloned().ok_or_else(|| {
+            anyhow::anyhow!(
+                "{} is missing the required `primary:` field",
+                path.display()
+            )
+        })?;
+        raw.as_mapping_mut()
+            .ok_or_else(|| anyhow::anyhow!("{} is not a YAML mapping", path.display()))?
+            .insert(serde_yaml::Value::String("parent".into()), primary);
+        let marker: Self = serde_yaml::from_value(raw)
+            .with_context(|| format!("failed to parse .rwv-workweave at {}", path.display()))?;
+        marker.write(dir)?;
+        Ok(true)
+    }
 }
 
 /// The index-side counterpart of the legacy-marker check in
@@ -1669,6 +1701,65 @@ mod tests {
         );
         // And primary remains its own value, not overwritten.
         assert_eq!(marker.primary, PathBuf::from("/home/user/primary"));
+    }
+
+    #[test]
+    fn workweave_marker_migrate_legacy_backfills_parent() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path();
+        let legacy = "primary: /home/user/weaveroot/primary\nproject: legacy-project\n";
+        std::fs::write(dir.join(".rwv-workweave"), legacy).unwrap();
+
+        assert!(
+            WorkweaveMarker::migrate_legacy(dir).unwrap(),
+            "a genuinely legacy marker should be rewritten"
+        );
+
+        let marker = WorkweaveMarker::read(dir).unwrap().unwrap();
+        assert_eq!(
+            marker.primary,
+            PathBuf::from("/home/user/weaveroot/primary")
+        );
+        assert_eq!(marker.parent, marker.primary);
+        assert_eq!(marker.project.as_str(), "legacy-project");
+    }
+
+    #[test]
+    fn workweave_marker_migrate_legacy_is_idempotent() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path();
+        let legacy = "primary: /home/user/weaveroot/primary\nproject: legacy-project\n";
+        std::fs::write(dir.join(".rwv-workweave"), legacy).unwrap();
+
+        assert!(WorkweaveMarker::migrate_legacy(dir).unwrap());
+        assert!(
+            !WorkweaveMarker::migrate_legacy(dir).unwrap(),
+            "parent: is already present on the second call; must not rewrite"
+        );
+    }
+
+    /// A plain YAML scalar cannot contain `: ` — the parser reads it as a
+    /// nested mapping key. A primary path with that shape (quoted here the
+    /// way the real serializer already quotes `primary:`) forces `parent:`
+    /// through the same quoting when migrate_legacy backfills it.
+    #[test]
+    fn workweave_marker_migrate_legacy_quotes_yaml_special_primary() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path();
+        let legacy =
+            "primary: '/home/user/weaveroot/has: a colon-space'\nproject: legacy-project\n";
+        std::fs::write(dir.join(".rwv-workweave"), legacy).unwrap();
+
+        assert!(WorkweaveMarker::migrate_legacy(dir).unwrap());
+
+        let marker = WorkweaveMarker::read(dir)
+            .expect("migrated marker must parse")
+            .expect("migrated marker must be present");
+        assert_eq!(
+            marker.primary,
+            PathBuf::from("/home/user/weaveroot/has: a colon-space")
+        );
+        assert_eq!(marker.parent, marker.primary);
     }
 
     /// Fixture: a primary with `projects/<name>/`, ready for an index.
