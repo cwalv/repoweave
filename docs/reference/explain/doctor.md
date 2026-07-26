@@ -43,8 +43,9 @@ rwv doctor [--all] [--locked] [--json] [--fix] [--reattach-checkouts]
   comments and key order), missing or mis-resolved surfacing symlinks
   (re-runs the framework surfacing primitive to (re)create symlinks for
   every file in the active project's `generated_files() ∪ managed_files()`
-  union; a real file occupying a surfacing path is user-held and is
-  reported but never auto-clobbered), stale safe-class ephemeral branches
+  union, and reclaims any weave-root shared name surfaced out of some
+  other project; a real file occupying a surfacing path is user-held and
+  is reported but never auto-clobbered), stale safe-class ephemeral branches
   in canonical stores (branches rwv holds an **ownership receipt** for
   whose `<project>--<workweave>` workweave no longer exists on disk and
   whose tip is an ancestor of the store's tip — no unique commits are lost;
@@ -2198,6 +2199,15 @@ rwv doctor --fix
   re-surface the symlink. If a real file occupies the surfacing path, the
   warning is marked not-safe-to-fix; resolve manually (move or remove the
   occupying file, then rerun `--fix`).
+- *surfacing: `<file>` resolves into project `<other>`* — a weave-root
+  symlink surfaces a SHARED name out of a project other than the one the
+  weave root presents. Shared names — every surfaced name except
+  `<project>.code-workspace`, which cannot collide and so may be surfaced
+  for any project — follow `.rwv-active` (a workweave's `.rwv-workweave`)
+  and nothing else. Run `rwv doctor --fix` scoped to the presented project
+  to reclaim the name. `--project X` does not produce this state: a repair
+  scoped to a project the root does not present surfaces only X's
+  per-project names.
 - *workweave-tree-integrity / dangling-parent* — a workweave's `.rwv-workweave`
   marker records a `parent:` path that no longer exists on disk (the parent
   was retired or deleted out-of-band). Run `rwv doctor --fix` to re-point

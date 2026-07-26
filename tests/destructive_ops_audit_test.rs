@@ -374,10 +374,15 @@ const ALLOWLIST: &[Allowed] = &[
     Allowed {
         file: "activate.rs",
         pattern: "remove_file",
-        count: 2,
+        count: 3,
         justification: "(1) activation-symlink cleanup: only symlinks that \
             are in the integration-owned set AND resolve into projects/. \
-            (2) deactivate removing .rwv-active (rwv-internal state).",
+            (2) deactivate removing .rwv-active (rwv-internal state). \
+            (3) foreign-shared-name cleanup: only top-level symlinks whose \
+            target is exactly projects/<other-project>/<same-name> — rwv's \
+            own surfacing of a shared name out of a project the weave root \
+            does not present — and only while surfacing the one it does. \
+            Recoverable by re-surfacing that other project.",
     },
     Allowed {
         file: "op_state.rs",

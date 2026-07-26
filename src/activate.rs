@@ -60,6 +60,22 @@ pub enum ActivationMode {
     Context,
 }
 
+/// What a surfacing call may do with the weave root's SHARED names — the
+/// surfaced paths more than one project can produce (`Cargo.toml`, `go.work`,
+/// `package.json`, whatever `static-files` declares). The root can show only
+/// one project's, so which project's is a fact the root already holds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SurfacingMode {
+    /// Project SELECTION: `project` becomes the project the root presents,
+    /// and the shared names move with it. The file naming that project is
+    /// written after surfacing, so this is the one call that cannot read it.
+    Select,
+    /// Repair of `project`'s surfacing without selecting it. Shared names
+    /// stay with the project the root presents; for any other project only
+    /// its per-project-named paths are surfaced.
+    Repair,
+}
+
 /// Report integration issues to stderr and bail if any are `Severity::Error`.
 ///
 /// `run_activations` runs BEFORE any symlinks are touched, so an error here
@@ -294,7 +310,21 @@ fn activate_at(
     //    workweave-create also runs, and is re-runnable on its own — it
     //    does NOT write `.rwv-active` (project SELECTION) and does NOT
     //    author integration content.
-    surface_symlinks(root, &project_name, &manifest, skip_missing_sources)?;
+    //    Context mode IS the selection verb, so it may move the root's shared
+    //    names; intent mode reached this line only because the root already
+    //    presents `project_name`, which is the same permission by the other
+    //    route.
+    let surfacing_mode = match mode {
+        ActivationMode::Context => SurfacingMode::Select,
+        ActivationMode::Intent => SurfacingMode::Repair,
+    };
+    surface_symlinks(
+        root,
+        &project_name,
+        &manifest,
+        skip_missing_sources,
+        surfacing_mode,
+    )?;
 
     // Run integration activate hooks (install commands).
     //    Per-integration hooks operate on the now-in-place symlinks at the
@@ -678,17 +708,41 @@ fn compute_active_owned_set(root: &Path) -> anyhow::Result<BTreeSet<String>> {
 /// exist are skipped (workweave surfacing — a view onto an existing project).
 /// When `false`, dangling symlinks are created intentionally so ecosystem lock
 /// files written later flow back through the symlink into the project dir.
+///
+/// `mode` decides whether `project` may take the root's shared names. In
+/// [`SurfacingMode::Repair`] it may only when the root already presents it, so
+/// a repair scoped to another project surfaces that project's per-project-named
+/// paths and leaves every shared name where the presented project put it.
 pub fn surface_symlinks(
     root: &Path,
     project: &ProjectName,
     manifest: &Manifest,
     skip_missing_sources: bool,
+    mode: SurfacingMode,
 ) -> anyhow::Result<()> {
     let project_dir = root.join("projects").join(project.as_str());
+    let presented = read_weave_root_project(root);
+    let presents_project = mode == SurfacingMode::Select || presented.as_ref() == Some(project);
 
-    // 1. Collect the owner-scoped surfacing set.
+    // 1. Collect the owner-scoped surfacing set, narrowed to the
+    //    per-project-named paths when `project` is not what the root presents.
     let owned = compute_owned_set(root, project, manifest);
-    let new_owned: BTreeSet<String> = owned.keys().cloned().collect();
+    let mut new_owned: BTreeSet<String> = owned.keys().cloned().collect();
+    if !presents_project {
+        new_owned.retain(|file| is_project_named(file, project));
+        let held = compute_active_owned_set(root)?;
+        if let Some(collision) = new_owned.iter().find(|file| held.contains(*file)) {
+            let presented = presented
+                .as_ref()
+                .map(ProjectName::as_str)
+                .unwrap_or("<none>");
+            anyhow::bail!(
+                "surfacing `{collision}` for project `{project}` would take a weave-root name \
+                 project `{presented}` also claims; a per-project name cannot be a shared name, \
+                 so one of the two projects has to be renamed"
+            );
+        }
+    }
     let new_generated: Vec<String> = new_owned.iter().cloned().collect();
 
     // 2. Remove old symlinks from a previous activation using the
@@ -701,7 +755,12 @@ pub fn surface_symlinks(
     //      - the previously-active project's owned set (read .rwv-active,
     //        load its manifest, recompute) — without this, switching A→B
     //        leaves orphaned symlinks for integrations B doesn't enable.
-    let removal_candidates = {
+    //
+    //    The union is what makes the candidate set reach names `project` does
+    //    not itself declare, so it is available only to the project the root
+    //    presents; for any other project the candidates are its own narrowed
+    //    set, or the repair would unlink the presented project's surfacing.
+    let removal_candidates = if presents_project {
         let mut union = new_owned.clone();
         if let Ok(prev_owned) = compute_active_owned_set(root) {
             for f in prev_owned {
@@ -709,8 +768,20 @@ pub fn surface_symlinks(
             }
         }
         union
+    } else {
+        new_owned.clone()
     };
     remove_activation_symlinks(root, &removal_candidates)?;
+
+    // 2b. Shared names surfaced out of some other project — left behind by a
+    //     project switch, or taken by a repair that predates the rule. The
+    //     presented project's declarations never reach them, so the removal
+    //     above cannot.
+    if presents_project {
+        for (file, _owner) in foreign_shared_name_links(root, project, &new_owned) {
+            std::fs::remove_file(root.join(&file))?;
+        }
+    }
 
     // 3. Create new symlinks at root pointing to project_dir files.
     //    Failures are collected as warnings so that partial symlink creation
@@ -793,6 +864,75 @@ fn relative_symlink_target(project: &str, file: &str) -> std::path::PathBuf {
     relative_target
 }
 
+/// Whether the surfaced path `file` is named for `project` — `<project>`
+/// followed by an extension, the shape `<project>.code-workspace` has. Such a
+/// name cannot collide with another project's, so it may sit at the weave root
+/// beside the presented project's surfacing.
+///
+/// Every other surfaced name is SHARED, and shared names follow the project
+/// the root presents rather than whichever project a verb was scoped to.
+fn is_project_named(file: &str, project: &ProjectName) -> bool {
+    file.strip_prefix(project.as_str())
+        .is_some_and(|ext| ext.starts_with('.'))
+}
+
+/// The project a top-level surfacing symlink named `name` resolves into:
+/// `Some(p)` exactly when `target` is `projects/<p>/<name>`, the shape
+/// [`relative_symlink_target`] produces for a top-level file. Any other target
+/// is not rwv's surfacing of `name`.
+fn surfaced_project(target: &Path, name: &str) -> Option<ProjectName> {
+    let rest = target.strip_prefix("projects").ok()?;
+    let project = rest.parent()?;
+    if project.as_os_str().is_empty() || rest.file_name()? != std::ffi::OsStr::new(name) {
+        return None;
+    }
+    Some(ProjectName::new(project.to_str()?))
+}
+
+/// Weave-root symlinks that surface a SHARED name out of a project other than
+/// `presented` — the state the two-class rule forbids, and the residue a
+/// repair scoped to the presented project would otherwise not see, because
+/// nothing that project declares claims those names.
+///
+/// Returns `(root name, the project it resolves into)`, sorted by name.
+/// Excluded: per-project-named links, which coexist by construction, and the
+/// names in `declared`, which the owner-scoped surfacing set already reaches.
+fn foreign_shared_name_links(
+    root: &Path,
+    presented: &ProjectName,
+    declared: &BTreeSet<String>,
+) -> Vec<(String, ProjectName)> {
+    let mut found: Vec<(String, ProjectName)> = Vec::new();
+    let entries = match std::fs::read_dir(root) {
+        Ok(entries) => entries,
+        Err(_) => return found,
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !path
+            .symlink_metadata()
+            .is_ok_and(|m| m.file_type().is_symlink())
+        {
+            continue;
+        }
+        let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+            continue;
+        };
+        let Ok(target) = std::fs::read_link(&path) else {
+            continue;
+        };
+        let Some(owner) = surfaced_project(&target, name) else {
+            continue;
+        };
+        if &owner == presented || is_project_named(name, &owner) || declared.contains(name) {
+            continue;
+        }
+        found.push((name.to_string(), owner));
+    }
+    found.sort_by(|a, b| a.0.cmp(&b.0));
+    found
+}
+
 /// Collect the member-incompatibility findings for `project`'s managed files
 /// at weave `root`, against the same project-dir view intent-mode activation
 /// authors into.
@@ -842,6 +982,12 @@ pub fn member_incompatibilities(
 /// surfacing), a file whose source does not yet exist on disk is NOT expected
 /// to be surfaced, so its missing symlink is not flagged — this keeps the
 /// check symmetric with what [`surface_symlinks`] actually creates.
+///
+/// The expectations are likewise symmetric with what a repair may create: a
+/// project the root does not present is expected to surface its
+/// per-project-named paths and nothing else, and the project the root DOES
+/// present is additionally expected to hold every shared name at the root,
+/// including names it does not itself declare.
 pub fn verify_surfacing(
     root: &Path,
     project: &ProjectName,
@@ -851,10 +997,29 @@ pub fn verify_surfacing(
     use crate::integration::{Issue, Severity};
 
     let project_dir = root.join("projects").join(project.as_str());
+    let presents_project = read_weave_root_project(root).as_ref() == Some(project);
     let owned = compute_owned_set(root, project, manifest);
     let mut issues = Vec::new();
 
+    if presents_project {
+        let declared: BTreeSet<String> = owned.keys().cloned().collect();
+        for (file, owner) in foreign_shared_name_links(root, project, &declared) {
+            issues.push(Issue {
+                integration: "core".into(),
+                severity: Severity::Warning,
+                message: format!(
+                    "surfacing: `{file}` resolves into project `{owner}` while the weave root \
+                     presents `{project}` (shared names follow the root's project; safe to --fix)"
+                ),
+                safe_to_fix: true,
+            });
+        }
+    }
+
     for (file, integration) in &owned {
+        if !presents_project && !is_project_named(file, project) {
+            continue;
+        }
         let source = project_dir.join(file);
         // Mirror the create path: a file whose source is absent in a workweave
         // is intentionally not surfaced, so don't flag its missing symlink.
@@ -1055,7 +1220,24 @@ mod tests {
         let root = tmp.path();
         // Registry marker dir so WorkspaceSession scans cleanly.
         std::fs::create_dir_all(root.join("github")).unwrap();
-        let project = "web-app";
+        let project = write_surfacing_project(root, "web-app", declared, authored);
+
+        // A primary root that presents this project. Shared names follow the
+        // pointer, so without it every surfacing call below would be scoped to
+        // a project the root does not present.
+        std::fs::write(root.join(".rwv-active"), format!("{project}\n")).unwrap();
+
+        (tmp, project)
+    }
+
+    /// Write a second project into an existing fixture root, so a test can
+    /// scope surfacing to a project the root does not present.
+    fn write_surfacing_project(
+        root: &Path,
+        project: &str,
+        declared: &[&str],
+        authored: &[&str],
+    ) -> ProjectName {
         let project_dir = root.join("projects").join(project);
         std::fs::create_dir_all(&project_dir).unwrap();
 
@@ -1092,7 +1274,7 @@ mod tests {
             std::fs::write(&p, format!("content of {f}\n")).unwrap();
         }
 
-        (tmp, ProjectName::new(project))
+        ProjectName::new(project)
     }
 
     fn load_manifest(root: &Path, project: &ProjectName) -> Manifest {
@@ -1109,7 +1291,7 @@ mod tests {
         let root = tmp.path();
         let manifest = load_manifest(root, &project);
 
-        surface_symlinks(root, &project, &manifest, false).unwrap();
+        surface_symlinks(root, &project, &manifest, false, SurfacingMode::Repair).unwrap();
 
         // The symlink exists at the root and resolves to the project copy.
         let link = root.join(".claude");
@@ -1205,7 +1387,7 @@ mod tests {
         assert_eq!(verify_surfacing(root, &project, &manifest, false).len(), 1);
 
         // The fix primitive (NOT activate_intent) creates the symlink.
-        surface_symlinks(root, &project, &manifest, false).unwrap();
+        surface_symlinks(root, &project, &manifest, false, SurfacingMode::Repair).unwrap();
         assert!(
             verify_surfacing(root, &project, &manifest, false).is_empty(),
             "re-surfacing should clear the missing-symlink finding"
@@ -1216,14 +1398,20 @@ mod tests {
     fn surface_does_not_write_rwv_active() {
         // The factored primitive is step-2 ONLY: it must not perform step-1
         // project SELECTION (.rwv-active write), which is a primary-only
-        // concept and must not be dragged into a workweave.
+        // concept and must not be dragged into a workweave. Surfacing a
+        // project the root does NOT present is where a selection write would
+        // be visible, and Select is the mode that would license one.
         let (tmp, project) = make_surfacing_workspace(&[".claude"]);
         let root = tmp.path();
-        let manifest = load_manifest(root, &project);
+        let other = write_surfacing_project(root, "other-app", &[".claude"], &[".claude"]);
+        let manifest = load_manifest(root, &other);
 
-        surface_symlinks(root, &project, &manifest, false).unwrap();
-        assert!(
-            !root.join(".rwv-active").exists(),
+        surface_symlinks(root, &other, &manifest, false, SurfacingMode::Select).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(root.join(".rwv-active"))
+                .unwrap()
+                .trim(),
+            project.as_str(),
             "surface_symlinks must not write .rwv-active (that is step-1 selection)"
         );
     }
@@ -1246,5 +1434,237 @@ mod tests {
         // skip_missing_sources = false → the missing symlink IS flagged
         // (primary semantics create dangling symlinks for lockfiles etc.).
         assert_eq!(verify_surfacing(root, &project, &manifest, false).len(), 1);
+    }
+
+    // -----------------------------------------------------------------------
+    // Two-class surfacing: shared names follow the project the root presents
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn project_named_is_the_project_name_plus_an_extension() {
+        let web = ProjectName::new("web-app");
+        assert!(is_project_named("web-app.code-workspace", &web));
+        // Shared names: another project produces the same string.
+        assert!(!is_project_named("Cargo.toml", &web));
+        assert!(!is_project_named(".claude", &web));
+        assert!(!is_project_named("gita/repos.csv", &web));
+        // A prefix match is not enough — `web-app-notes` is a different name,
+        // not `web-app` with an extension.
+        assert!(!is_project_named("web-app-notes", &web));
+        // Multi-segment project names surface nested, and the whole path is
+        // what carries the name.
+        let nested = ProjectName::new("acme/web-app");
+        assert!(is_project_named("acme/web-app.code-workspace", &nested));
+        assert!(!is_project_named("web-app.code-workspace", &nested));
+    }
+
+    /// Fixture for the two-class rule: the root presents `web-app`, which
+    /// declares two shared names; `other-app` declares one of them plus one
+    /// named for itself. `AGENTS.md` — shared, and declared only by the
+    /// presented project — is the name a repair scoped to `other-app` can
+    /// reach only through the previously-active union.
+    fn make_two_project_workspace() -> (tempfile::TempDir, ProjectName, ProjectName) {
+        let (tmp, presented) = make_surfacing_workspace(&[".claude", "AGENTS.md"]);
+        let other = write_surfacing_project(
+            tmp.path(),
+            "other-app",
+            &[".claude", "other-app.code-workspace"],
+            &[".claude", "other-app.code-workspace"],
+        );
+        let manifest = load_manifest(tmp.path(), &presented);
+        surface_symlinks(
+            tmp.path(),
+            &presented,
+            &manifest,
+            false,
+            SurfacingMode::Repair,
+        )
+        .unwrap();
+        (tmp, presented, other)
+    }
+
+    #[test]
+    fn repair_for_another_project_leaves_the_shared_name_with_the_presented_one() {
+        // The pinned incident: a repair scoped to a project the weave root
+        // does not present re-pointed the root's shared names at it. The
+        // per-project-named half of the same repair must still happen.
+        let (tmp, presented, other) = make_two_project_workspace();
+        let root = tmp.path();
+
+        surface_symlinks(
+            root,
+            &other,
+            &load_manifest(root, &other),
+            false,
+            SurfacingMode::Repair,
+        )
+        .unwrap();
+
+        assert_eq!(
+            std::fs::read_link(root.join(".claude")).unwrap(),
+            Path::new("projects/web-app/.claude"),
+            "a shared name must stay with the project the root presents ({presented})"
+        );
+        assert_eq!(
+            std::fs::read_link(root.join("other-app.code-workspace")).unwrap(),
+            Path::new("projects/other-app/other-app.code-workspace"),
+            "a per-project name is safe to surface for any project"
+        );
+    }
+
+    #[test]
+    fn repair_for_another_project_does_not_unlink_the_presented_project() {
+        // The other half of the same stomp: the removal candidates for a
+        // non-presented project must not reach the presented project's
+        // surfacing, which the previously-active union made them do.
+        // `AGENTS.md` is the case that isolates removal from re-pointing —
+        // `other-app` does not declare it, so a repair that unlinks it never
+        // puts anything back.
+        let (tmp, _presented, other) = make_two_project_workspace();
+        let root = tmp.path();
+
+        surface_symlinks(
+            root,
+            &other,
+            &load_manifest(root, &other),
+            false,
+            SurfacingMode::Repair,
+        )
+        .unwrap();
+
+        assert_eq!(
+            std::fs::read_link(root.join("AGENTS.md")).unwrap(),
+            Path::new("projects/web-app/AGENTS.md"),
+            "the presented project's surfacing must survive another project's repair"
+        );
+    }
+
+    #[test]
+    fn verify_for_another_project_expects_only_its_per_project_names() {
+        // The detector half: expecting a shared name to be surfaced for a
+        // project the root does not present is what licensed the repair.
+        let (tmp, _presented, other) = make_two_project_workspace();
+        let root = tmp.path();
+
+        let issues = verify_surfacing(root, &other, &load_manifest(root, &other), false);
+        assert_eq!(
+            issues.len(),
+            1,
+            "expected only the per-project name: {issues:?}"
+        );
+        assert!(
+            issues[0].message.contains("other-app.code-workspace"),
+            "the one finding must be the per-project name: {}",
+            issues[0].message
+        );
+    }
+
+    #[test]
+    fn verify_flags_a_shared_name_surfaced_out_of_another_project() {
+        // Residue of the incident: a shared name the presented project does
+        // not declare, left pointing into another project. Nothing the
+        // presented project declares reaches it, so only a root scan sees it.
+        let (tmp, presented, _other) = make_two_project_workspace();
+        let root = tmp.path();
+        std::os::unix::fs::symlink("projects/other-app/Cargo.toml", root.join("Cargo.toml"))
+            .unwrap();
+
+        let issues = verify_surfacing(root, &presented, &load_manifest(root, &presented), false);
+        assert_eq!(
+            issues.len(),
+            1,
+            "expected the foreign shared name: {issues:?}"
+        );
+        assert!(issues[0].safe_to_fix);
+        assert!(
+            issues[0].message.contains("Cargo.toml") && issues[0].message.contains("other-app"),
+            "the finding must name the path and the project it resolves into: {}",
+            issues[0].message
+        );
+    }
+
+    #[test]
+    fn verify_allows_another_projects_per_project_name_at_the_root() {
+        // The counterpart: `other-app.code-workspace` resolving into
+        // `other-app` while `web-app` is presented is the intended state, not
+        // a finding — that is what makes the two classes worth separating.
+        let (tmp, presented, other) = make_two_project_workspace();
+        let root = tmp.path();
+        surface_symlinks(
+            root,
+            &other,
+            &load_manifest(root, &other),
+            false,
+            SurfacingMode::Repair,
+        )
+        .unwrap();
+
+        let issues = verify_surfacing(root, &presented, &load_manifest(root, &presented), false);
+        assert!(
+            issues.is_empty(),
+            "expected clean surfacing, got: {issues:?}"
+        );
+    }
+
+    #[test]
+    fn re_surfacing_the_presented_project_reclaims_a_foreign_shared_name() {
+        let (tmp, presented, _other) = make_two_project_workspace();
+        let root = tmp.path();
+        std::os::unix::fs::symlink("projects/other-app/Cargo.toml", root.join("Cargo.toml"))
+            .unwrap();
+
+        surface_symlinks(
+            root,
+            &presented,
+            &load_manifest(root, &presented),
+            false,
+            SurfacingMode::Repair,
+        )
+        .unwrap();
+
+        assert!(
+            root.join("Cargo.toml").symlink_metadata().is_err(),
+            "re-surfacing the presented project must clear a foreign shared name"
+        );
+    }
+
+    #[test]
+    fn repair_refuses_a_per_project_name_the_presented_project_also_claims() {
+        // The class rule reads a project name out of a path, so a project
+        // named `go` makes `go.work` look per-project-named while it is also
+        // the shared name the presented project surfaces. Refuse: taking it
+        // would be the stomp, and skipping it would hide a naming collision
+        // rwv cannot resolve.
+        let (tmp, _presented, _other) = make_two_project_workspace();
+        let root = tmp.path();
+        let presented = write_surfacing_project(root, "web-app", &["go.work"], &["go.work"]);
+        let go = write_surfacing_project(root, "go", &["go.work"], &["go.work"]);
+        surface_symlinks(
+            root,
+            &presented,
+            &load_manifest(root, &presented),
+            false,
+            SurfacingMode::Repair,
+        )
+        .unwrap();
+
+        let err = surface_symlinks(
+            root,
+            &go,
+            &load_manifest(root, &go),
+            false,
+            SurfacingMode::Repair,
+        )
+        .unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("go.work") && msg.contains("web-app"),
+            "the refusal must name the path and the project holding it: {msg}"
+        );
+        assert_eq!(
+            std::fs::read_link(root.join("go.work")).unwrap(),
+            Path::new("projects/web-app/go.work"),
+            "the refusal must leave the presented project's surfacing in place"
+        );
     }
 }

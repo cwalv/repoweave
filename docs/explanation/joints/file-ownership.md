@@ -37,8 +37,22 @@ Consequences:
   mis-resolved. This catches divergence the per-integration `verify()` (Axis-2 content drift)
   cannot see — a manual `rm`, an interrupted create, a manifest that gained a file after a
   workweave was created, or an integration enabled in an existing workweave. The repair is a pure
-  re-surface (symlink (re)creation bound to the current weave directory); it never re-selects the
-  active project, so it is valid inside a workweave where `rwv activate` is refused.
+  re-surface (symlink (re)creation bound to the current weave directory); it never writes
+  `.rwv-active`, so it is valid inside a workweave where `rwv activate` is refused.
+- **Surfaced names come in two classes, and only one may cross projects.** A *per-project name* —
+  `<project>.code-workspace` — cannot collide with another project's, so two projects' can sit at
+  the weave root at once and either may be surfaced at any time. Every other surfaced name is
+  *shared*: more than one project produces `Cargo.toml`, so the root shows exactly one project's,
+  and which one is what `.rwv-active` (a workweave's `.rwv-workweave`) answers. Since `--project X`
+  scopes a verb to a project without selecting it, a repair for a project the weave root does not
+  present surfaces that project's per-project names and leaves every shared name where it is.
+  Not writing the pointer is not sufficient: moving the files the pointer governs performs the
+  switch and hides it, which is how a `--fix` scoped to a non-active project once re-pointed seven
+  shared root names out from under a concurrent seat. The check is symmetric — it expects only
+  per-project names for a project the root does not present, and for the project it does present
+  it flags any shared name resolving into another project, including names no enabled integration
+  of the presented project declares. Without that last part a stomp survives its own repair: the
+  presented project cannot reclaim a name nothing it declares can reach.
 
 See [sync-semantics](./sync-semantics.md) for how the project-repo commit structure interacts with workweave syncing.
 See [vcs-as-seam](./vcs-as-seam.md) for the VCS-layer abstraction that makes symlink mechanics portable.

@@ -7778,11 +7778,16 @@ pub fn run_check(
             // this weave directory. It authors no content — it only (re)creates
             // the owner-scoped symlinks, which is valid in any weave (it is
             // exactly what workweave-create runs at creation).
+            //
+            // Repair, not selection: `--project` scopes doctor to a project
+            // without switching to it, so the weave root's shared names stay
+            // with the project it presents.
             match crate::activate::surface_symlinks(
                 &workspace_dir,
                 &project.name,
                 &project.manifest,
                 in_workweave,
+                crate::activate::SurfacingMode::Repair,
             ) {
                 Ok(()) => println!(
                     "[fixed] core: re-surfaced symlinks for project `{}` (missing/mis-resolved surfacing)",
