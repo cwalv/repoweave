@@ -886,7 +886,7 @@ fn surfaced_project(target: &Path, name: &str) -> Option<ProjectName> {
     if project.as_os_str().is_empty() || rest.file_name()? != std::ffi::OsStr::new(name) {
         return None;
     }
-    Some(ProjectName::new(project.to_str()?))
+    ProjectName::new(project.to_str()?).ok()
 }
 
 /// Weave-root symlinks that surface a SHARED name out of a project other than
@@ -1442,7 +1442,7 @@ mod tests {
 
     #[test]
     fn project_named_is_the_project_name_plus_an_extension() {
-        let web = ProjectName::new("web-app");
+        let web = ProjectName::new("web-app").unwrap();
         assert!(is_project_named("web-app.code-workspace", &web));
         // Shared names: another project produces the same string.
         assert!(!is_project_named("Cargo.toml", &web));
@@ -1453,7 +1453,7 @@ mod tests {
         assert!(!is_project_named("web-app-notes", &web));
         // Multi-segment project names surface nested, and the whole path is
         // what carries the name.
-        let nested = ProjectName::new("acme/web-app");
+        let nested = ProjectName::new("acme/web-app").unwrap();
         assert!(is_project_named("acme/web-app.code-workspace", &nested));
         assert!(!is_project_named("web-app.code-workspace", &nested));
     }

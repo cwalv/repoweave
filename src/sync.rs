@@ -6199,7 +6199,7 @@ mod tests {
         let primary_canon = primary.canonicalize().unwrap();
         crate::workspace::WorkweaveMarker {
             primary: primary_canon.clone(),
-            project: ProjectName::new("web-app"),
+            project: ProjectName::new("web-app").unwrap(),
             parent: primary_canon,
         }
         .write(&ww)
@@ -6216,7 +6216,7 @@ mod tests {
             version: crate::vcs::RefName::new("main"),
             role: Role::Owned,
         };
-        (ctx, canonical, ProjectName::new("web-app"), entry)
+        (ctx, canonical, ProjectName::new("web-app").unwrap(), entry)
     }
 
     /// The receipt phase 3 wrote for this workweave's ephemeral ref, if any.
