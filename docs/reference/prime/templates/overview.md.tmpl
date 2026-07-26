@@ -67,6 +67,6 @@ These four commands are easy to confuse — they cooperate around the lock-autho
 
 ## Agent integration surfaces
 
-- **Structured output:** `rwv status --json`, `rwv doctor --json`, `rwv sync --json`. Array-of-records with `path` + `absolute_path` identifiers; per-record `kind` for failure discrimination.
+- **Structured output:** `rwv status --json`, `rwv doctor --json`, `rwv sync --json`. `sync` and `doctor` records carry `kind`; `status` has a single record shape and carries no `kind` (discriminate on `relation` instead). `path` + `absolute_path` identifiers are present on every `status` and `sync` record; in `doctor` they are per-kind, not universal — e.g. `weave-root-identity-conflict` carries `root` and `workweave-tree-integrity` carries `workweave_dir` instead. `docs/reference/schemas/<verb>.json` is the authoritative shape per verb.
 - **Per-verb reflection:** `rwv explain <verb>` returns a markdown bundle (purpose, invocation, output description with JSON Schema). Use when scripting against an unfamiliar verb.
 - **Schemas:** committed at `docs/reference/schemas/<verb>.json`. Each `--json` output embeds a `$schema` URL pointing here.

@@ -1,6 +1,6 @@
 //! Doc-claims tests for `rwv prime --no-suppress` / `render_overview`.
 //!
-//! Three classes of check anchored to the committed
+//! Four classes of check anchored to the committed
 //! `docs/reference/prime/overview.md` (rendered from
 //! `docs/reference/prime/templates/overview.md.tmpl` by `cargo run --bin
 //! generate-explain`):
@@ -24,7 +24,18 @@
 //! named `feat`, and asserts the resulting path matches
 //! `.workweaves/<project>--<name>/` as claimed in the prime overview.
 //! Catches `.workweaves/payments` class (missing project prefix).
+//!
+//! **Class 4 - JSON-record-shape verification.**
+//! For the "Agent integration surfaces" section's claims about which fields
+//! `status`/`sync`/`doctor` `--json` records carry, parse the committed
+//! schema artifacts (`docs/reference/schemas/<verb>.json`) instead of live
+//! output — doctor's ~30 violation kinds are impractical to fabricate on
+//! disk one by one, and the schema is generated from the same types that
+//! produce the JSON and is diffed for drift in CI. Catches `path` +
+//! `absolute_path` (or `kind`) claimed as universal across all three verbs
+//! when a verb's records actually vary by kind.
 
+use serde_json::Value;
 use std::path::Path;
 use std::process;
 
@@ -85,6 +96,13 @@ fn make_workspace(tmp: &Path, project: &str) -> std::path::PathBuf {
 /// The committed prime overview markdown.  Embedded at compile time so CI
 /// catches drift between the rendered artifact and the test suite.
 const PRIME_OVERVIEW_MD: &str = include_str!("../docs/reference/prime/overview.md");
+
+/// Committed JSON Schema artifacts backing the "Agent integration surfaces"
+/// claims (Class 4).  Same embed-at-compile-time rationale as
+/// `PRIME_OVERVIEW_MD`.
+const STATUS_SCHEMA_JSON: &str = include_str!("../docs/reference/schemas/status.json");
+const SYNC_SCHEMA_JSON: &str = include_str!("../docs/reference/schemas/sync.json");
+const DOCTOR_SCHEMA_JSON: &str = include_str!("../docs/reference/schemas/doctor.json");
 
 // ===========================================================================
 // Class 1 - CLI claim verification
@@ -403,5 +421,131 @@ fn class3_workweave_path_shape_matches_prime_claim() {
          should NOT exist. Found: {}\n\
          This indicates the path shape is wrong per the prime overview's claim.",
         wrong.display()
+    );
+}
+
+// ===========================================================================
+// Class 4 - JSON-record-shape verification
+//
+// Doc claim (Agent integration surfaces section): `sync` and `doctor`
+// records carry `kind`; `status` has a single record shape and carries no
+// `kind`. `path` + `absolute_path` are present on every `status` and `sync`
+// record; in `doctor` they are per-kind, not universal.
+// ===========================================================================
+
+fn parse_schema(json: &str) -> Value {
+    serde_json::from_str(json).expect("committed schema artifact should parse as JSON")
+}
+
+/// `variant["required"]` as a `Vec<&str>`. Every schemars-derived
+/// object/`oneOf` variant in these schemas declares one.
+fn required_fields(variant: &Value) -> Vec<&str> {
+    variant["required"]
+        .as_array()
+        .unwrap_or_else(|| panic!("expected a `required` array in {variant}"))
+        .iter()
+        .map(|v| v.as_str().expect("`required` entries are strings"))
+        .collect()
+}
+
+#[test]
+fn class4_status_records_have_no_kind_field() {
+    let schema = parse_schema(STATUS_SCHEMA_JSON);
+    let repo_status = &schema["definitions"]["RepoStatus"];
+
+    let required = required_fields(repo_status);
+    assert!(
+        required.contains(&"path") && required.contains(&"absolute_path"),
+        "RepoStatus (the `rwv status --json` per-repo record) should require \
+         `path` + `absolute_path` per the Agent integration surfaces claim; \
+         required: {required:?}"
+    );
+
+    let properties = repo_status["properties"]
+        .as_object()
+        .expect("RepoStatus should declare `properties`");
+    assert!(
+        !properties.contains_key("kind"),
+        "RepoStatus gained a `kind` field — update the Agent integration \
+         surfaces claim that `status` records carry no `kind` (`relation` is \
+         status's only discriminant)"
+    );
+}
+
+#[test]
+fn class4_sync_records_always_carry_kind_and_path_identifiers() {
+    let schema = parse_schema(SYNC_SCHEMA_JSON);
+    let variants = schema["definitions"]["SyncOutcomeOutput"]["oneOf"]
+        .as_array()
+        .expect("SyncOutcomeOutput should be a `oneOf` of per-kind variants");
+    assert!(
+        !variants.is_empty(),
+        "expected at least one `rwv sync --json` outcome kind"
+    );
+
+    for variant in variants {
+        let required = required_fields(variant);
+        for field in ["kind", "path", "absolute_path"] {
+            assert!(
+                required.contains(&field),
+                "every `rwv sync --json` outcome must require `{field}` per \
+                 the Agent integration surfaces claim; variant: {variant}"
+            );
+        }
+    }
+}
+
+#[test]
+fn class4_doctor_violations_carry_kind_but_path_identifiers_are_per_kind() {
+    let schema = parse_schema(DOCTOR_SCHEMA_JSON);
+    let variants = schema["definitions"]["ViolationOutput"]["oneOf"]
+        .as_array()
+        .expect("ViolationOutput should be a `oneOf` of per-kind variants");
+    assert!(
+        !variants.is_empty(),
+        "expected at least one `rwv doctor --json` violation kind"
+    );
+
+    for variant in variants {
+        assert!(
+            required_fields(variant).contains(&"kind"),
+            "every doctor violation kind must require `kind`; variant: {variant}"
+        );
+    }
+
+    // The claim is specifically that `path` + `absolute_path` are NOT
+    // universal here (unlike status/sync) — some kinds carry a kind-specific
+    // field instead. If every kind ever gained both fields, the doc's claim
+    // of heterogeneity would go stale; fail loudly instead of drifting.
+    let uniform = variants.iter().all(|v| {
+        let required = required_fields(v);
+        required.contains(&"path") && required.contains(&"absolute_path")
+    });
+    assert!(
+        !uniform,
+        "every doctor violation kind now carries `path` + `absolute_path` — \
+         the Agent integration surfaces claim that these are per-kind, not \
+         universal, for `doctor` is stale; update overview.md.tmpl"
+    );
+
+    // The doc's own examples: a weave-root finding names `root`, a
+    // workweave-directory finding names `workweave_dir` — neither `path`
+    // nor `absolute_path`.
+    let root_finding = variants
+        .iter()
+        .find(|v| v["properties"]["kind"]["enum"][0] == "weave-root-identity-conflict")
+        .expect("weave-root-identity-conflict should be a doctor violation kind");
+    assert!(
+        required_fields(root_finding).contains(&"root"),
+        "weave-root-identity-conflict should require `root`; got: {root_finding}"
+    );
+
+    let workweave_dir_finding = variants
+        .iter()
+        .find(|v| v["properties"]["kind"]["enum"][0] == "workweave-tree-integrity")
+        .expect("workweave-tree-integrity should be a doctor violation kind");
+    assert!(
+        required_fields(workweave_dir_finding).contains(&"workweave_dir"),
+        "workweave-tree-integrity should require `workweave_dir`; got: {workweave_dir_finding}"
     );
 }
