@@ -2612,12 +2612,11 @@ fn workweave_create_with_a_slash_in_the_name_is_refused() {
     let project_dir = ws.join("projects").join("myproj");
     std::fs::create_dir_all(&project_dir).unwrap();
     std::fs::write(project_dir.join("rwv.yaml"), "repositories: {}\n").unwrap();
-    let weaveroot = tmp.path().join(".workweaves");
+    let weaveroot = workweaves_dir(&ws);
     std::fs::create_dir_all(&weaveroot).unwrap();
 
     let create = rwv()
         .args(["workweave", "myproj", "create", "feat-a/nested"])
-        .env("RWV_WORKWEAVE_DIR", &weaveroot)
         .current_dir(&ws)
         .output()
         .unwrap();
