@@ -1728,38 +1728,45 @@ mod go_work {
     // must exercise the fallback deterministically. The current impl always
     // overwrites and does not use `go work edit`, so for now we exercise the
     // hand-parse fallback path implicitly (no `go work edit` exists).
+    //
+    // s6_go_1 and s6_go_2 pin their go.work/go.mod fixtures at 1.20, not this
+    // file's 1.26: both go through activate() with `go` on PATH, and 1.21 is
+    // the oldest go release with GOTOOLCHAIN switching, so a fixture at or
+    // below that never makes `go work` reach the network for a toolchain
+    // download. s6_go_3 and s6_go_4 go through deactivate(), which never
+    // invokes `go`, so they keep 1.26.
 
     /// §6.go.1 — Adding a repo preserves a hand-authored `replace` directive.
-    /// `go 1.26` must NOT be downgraded to `1.21` (the concrete bug).
+    /// `go 1.20` must NOT be downgraded to `1.21` (the concrete bug).
     #[test]
     fn s6_go_1_add_preserves_replace_and_go_version() {
         let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
-        // go.mod files declare go 1.26 to match the go.work version.
+        // go.mod files declare go 1.20 to match the go.work version.
         // When go is on PATH (primary path), max_go_version is computed from
         // these files; matching the go.work version prevents a downgrade.
         write_file(
             root,
             "github/cwalv/repoweave/go.mod",
-            "module github.com/cwalv/repoweave\n\ngo 1.26\n",
+            "module github.com/cwalv/repoweave\n\ngo 1.20\n",
         );
         write_file(
             root,
             "github/cwalv/some-go-tool/go.mod",
-            "module github.com/cwalv/some-go-tool\n\ngo 1.26\n",
+            "module github.com/cwalv/some-go-tool\n\ngo 1.20\n",
         );
         write_file(
             root,
             "github/cwalv/another-module/go.mod",
-            "module github.com/cwalv/another-module\n\ngo 1.26\n",
+            "module github.com/cwalv/another-module\n\ngo 1.20\n",
         );
 
-        // Pre-existing go.work with go 1.26, two members, a replace + comment.
+        // Pre-existing go.work with go 1.20, two members, a replace + comment.
         write_file(
             root,
             "go.work",
-            r#"go 1.26
+            r#"go 1.20
 
 // managed by repoweave
 use (
@@ -1798,8 +1805,8 @@ replace example.com/legacy => ./vendor/legacy
             "use must include the newly-added another-module; got:\n{content}"
         );
         assert!(
-            content.contains("go 1.26"),
-            "go 1.26 must survive (NOT downgraded to 1.21); got:\n{content}"
+            content.contains("go 1.20"),
+            "go 1.20 must survive (NOT downgraded to 1.21); got:\n{content}"
         );
         assert!(
             !content.contains("go 1.21"),
@@ -1820,17 +1827,17 @@ replace example.com/legacy => ./vendor/legacy
     fn s6_go_2_remove_keeps_toolchain_and_godebug() {
         let tmp = common::tempdir().unwrap();
         let root = tmp.path();
-        // go.mod files declare go 1.26 to match the go.work version (avoids
+        // go.mod files declare go 1.20 to match the go.work version (avoids
         // primary-path downgrade when go is on PATH and max_go_version is computed).
         write_file(
             root,
             "github/cwalv/repoweave/go.mod",
-            "module github.com/cwalv/repoweave\n\ngo 1.26\n",
+            "module github.com/cwalv/repoweave\n\ngo 1.20\n",
         );
         write_file(
             root,
             "github/cwalv/some-go-tool/go.mod",
-            "module github.com/cwalv/some-go-tool\n\ngo 1.26\n",
+            "module github.com/cwalv/some-go-tool\n\ngo 1.20\n",
         );
         // another-module is in the go.work seed but being removed from the manifest.
         // Its go.mod must exist on disk so the primary-path `go work use` for the
@@ -1838,17 +1845,17 @@ replace example.com/legacy => ./vendor/legacy
         write_file(
             root,
             "github/cwalv/another-module/go.mod",
-            "module github.com/cwalv/another-module\n\ngo 1.26\n",
+            "module github.com/cwalv/another-module\n\ngo 1.20\n",
         );
 
         write_file(
             root,
             "go.work",
-            r#"go 1.26
+            r#"go 1.20
 
-toolchain go1.26.0
+toolchain go1.20.0
 
-godebug default=go1.26
+godebug default=go1.20
 
 // managed by repoweave
 use (
@@ -1879,15 +1886,15 @@ use (
             "removed member must be gone from use; got:\n{content}"
         );
         assert!(
-            content.contains("toolchain go1.26.0"),
+            content.contains("toolchain go1.20.0"),
             "toolchain must survive; got:\n{content}"
         );
         assert!(
-            content.contains("godebug default=go1.26"),
+            content.contains("godebug default=go1.20"),
             "godebug must survive; got:\n{content}"
         );
         assert!(
-            content.contains("go 1.26"),
+            content.contains("go 1.20"),
             "go version must survive; got:\n{content}"
         );
     }
@@ -8696,12 +8703,17 @@ mod s8_cross_port_default_only {
     // fallback.  Both paths honour the DefaultOnly contract.
     // -----------------------------------------------------------------------
 
-    /// (a) go.work — existing `go 1.26` line survives re-activate.
+    /// (a) go.work — existing `go 1.20` line survives re-activate.
     ///
-    /// The member go.mod also declares `go 1.26`, so `max_go_version` computes
-    /// 1.26 whether `go` is on PATH (primary path: `go work edit -go=1.26`) or
-    /// not (fallback path: DefaultOnly preserves the existing 1.26).  In both
-    /// cases the go-line in the output must still be `go 1.26`.
+    /// The member go.mod also declares `go 1.20`, so `max_go_version` computes
+    /// 1.20 whether `go` is on PATH (primary path: `go work edit -go=1.20`) or
+    /// not (fallback path: DefaultOnly preserves the existing 1.20).  In both
+    /// cases the go-line in the output must still be `go 1.20`.
+    ///
+    /// 1.20 (not this file's usual 1.26): this test goes through activate()
+    /// with `go` on PATH, and 1.21 is the oldest go release with GOTOOLCHAIN
+    /// switching, so a fixture at or below that never makes `go work` reach
+    /// the network for a toolchain download.
     ///
     /// Note: the deeper DefaultOnly contract (preserving user-set version even
     /// when it differs from max_go_version) is fully tested in the fallback-
@@ -8714,20 +8726,20 @@ mod s8_cross_port_default_only {
         let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
-        // Member go.mod declares go 1.26 — same version as the go.work.
-        // max_go_version will compute 1.26, so both primary and fallback paths
-        // produce "go 1.26" and neither downgrades it.
+        // Member go.mod declares go 1.20 — same version as the go.work.
+        // max_go_version will compute 1.20, so both primary and fallback paths
+        // produce "go 1.20" and neither downgrades it.
         write_file(
             root,
             "github/acme/server/go.mod",
-            "module github.com/acme/server\n\ngo 1.26\n",
+            "module github.com/acme/server\n\ngo 1.20\n",
         );
 
-        // Pre-existing go.work with go 1.26.
+        // Pre-existing go.work with go 1.20.
         write_file(
             root,
             "go.work",
-            "go 1.26\n\n// managed by repoweave\nuse (\n\t./github/acme/server\n)\n",
+            "go 1.20\n\n// managed by repoweave\nuse (\n\t./github/acme/server\n)\n",
         );
 
         let manifest = make_manifest(vec![("github/acme/server", Role::Owned)]);
@@ -8740,10 +8752,10 @@ mod s8_cross_port_default_only {
 
         let content = std::fs::read_to_string(root.join("go.work")).unwrap();
 
-        // go 1.26 must be present after activate (not downgraded, not removed).
+        // go 1.20 must be present after activate (not downgraded, not removed).
         assert!(
-            content.contains("go 1.26"),
-            "go 1.26 must survive activate; got:\n{content}"
+            content.contains("go 1.20"),
+            "go 1.20 must survive activate; got:\n{content}"
         );
         // Confirm the marker is still present (Author key managed correctly).
         assert!(

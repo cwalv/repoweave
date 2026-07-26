@@ -810,6 +810,11 @@ mod cargo {
 mod go_work {
     use super::*;
 
+    // Tests below pin `go_version`/go.work seeds at 1.20, not the real-world
+    // go.work's 1.26: 1.21 is the oldest go release with GOTOOLCHAIN
+    // switching, so a `go work` invocation against anything at or below that
+    // never reaches the network for a toolchain download, on any installed
+    // go — matching the constant pair in go_work.rs's own unit tests.
     fn add_go_trigger(ws: &Path, repo_path: &str, module_path: &str, go_version: &str) {
         let dir = ws.join(repo_path);
         std::fs::create_dir_all(&dir).unwrap();
@@ -867,9 +872,9 @@ mod go_work {
     // Scenario 2: Customization survives — user go version preserved on add
     // -----------------------------------------------------------------------
     //
-    // CLI-level analog of §6.go.1: pre-seeded go.work at go 1.26. The new
-    // repo's go.mod also declares 1.26 so max_go_version = 1.26. After add,
-    // go.work must still declare go 1.26 and include the new repo.
+    // CLI-level analog of §6.go.1: pre-seeded go.work at go 1.20. The new
+    // repo's go.mod also declares 1.20 so max_go_version = 1.20. After add,
+    // go.work must still declare go 1.20 and include the new repo.
 
     #[test]
     fn customization_survives_go_version_not_downgraded() {
@@ -880,14 +885,14 @@ mod go_work {
             &ws,
             "github/org/module-a",
             "github.com/org/module-a",
-            "1.26",
+            "1.20",
         );
         init_git_repo(&ws.join("github/org/module-a"));
 
-        // Pre-seed go.work in proj_dir with go 1.26 and the rwv marker.
+        // Pre-seed go.work in proj_dir with go 1.20 and the rwv marker.
         // Do NOT create a ws/go.work symlink — the framework creates it after add.
         let int_file = proj_dir.join("go.work");
-        let seeded = "go 1.26\n\n// managed by repoweave\nuse (\n)\n";
+        let seeded = "go 1.20\n\n// managed by repoweave\nuse (\n)\n";
         std::fs::write(&int_file, seeded).unwrap();
 
         rwv()
@@ -899,10 +904,10 @@ mod go_work {
         // Read from proj_dir directly (symlink may or may not exist at ws root).
         let after = std::fs::read_to_string(&int_file).unwrap();
 
-        // go 1.26 must survive (max_go_version = 1.26 from go.mod, DefaultOnly preserves).
+        // go 1.20 must survive (max_go_version = 1.20 from go.mod, DefaultOnly preserves).
         assert!(
-            after.contains("go 1.26"),
-            "go.work: go 1.26 must survive after add (not downgraded); got:\n{after}"
+            after.contains("go 1.20"),
+            "go.work: go 1.20 must survive after add (not downgraded); got:\n{after}"
         );
         // module-a must be in the use block (Author key set by rwv).
         assert!(
@@ -916,7 +921,7 @@ mod go_work {
     // -----------------------------------------------------------------------
     //
     // CLI-level analog of §6.go.1: pre-seeded go.work with marker, a user
-    // `replace` directive, and go 1.26. After `rwv add` adds a new repo,
+    // `replace` directive, and go 1.20. After `rwv add` adds a new repo,
     // the replace must survive and go version must not drop.
 
     #[test]
@@ -924,19 +929,19 @@ mod go_work {
         let tmp = common::tempdir().unwrap();
         let (ws, proj_dir) = make_workspace_with_project(tmp.path(), "ws", "go-cutover-project");
 
-        // go.mod files at 1.26 to match the pre-seeded go.work.
+        // go.mod files at 1.20 to match the pre-seeded go.work.
         add_go_trigger(
             &ws,
             "github/org/module-a",
             "github.com/org/module-a",
-            "1.26",
+            "1.20",
         );
         init_git_repo(&ws.join("github/org/module-a"));
         add_go_trigger(
             &ws,
             "github/org/module-b",
             "github.com/org/module-b",
-            "1.26",
+            "1.20",
         );
         init_git_repo(&ws.join("github/org/module-b"));
 
@@ -944,7 +949,7 @@ mod go_work {
         // create ws/go.work -> proj_dir/go.work after activation completes.
         // Do NOT create the symlink here — that triggers the copy-to-self bug.
         let int_file = proj_dir.join("go.work");
-        let hand_authored = "go 1.26\n\n// managed by repoweave\nuse (\n\t./github/org/module-a\n)\n\n// pin legacy fork\nreplace example.com/legacy => ./vendor/legacy\n";
+        let hand_authored = "go 1.20\n\n// managed by repoweave\nuse (\n\t./github/org/module-a\n)\n\n// pin legacy fork\nreplace example.com/legacy => ./vendor/legacy\n";
         std::fs::write(&int_file, hand_authored).unwrap();
 
         // Update manifest to include module-a before add.
@@ -978,8 +983,8 @@ mod go_work {
 
         // (b) go version must not be downgraded.
         assert!(
-            after.contains("go 1.26"),
-            "go.work cutover: go 1.26 must survive after add; got:\n{after}"
+            after.contains("go 1.20"),
+            "go.work cutover: go 1.20 must survive after add; got:\n{after}"
         );
 
         // (c) Untracked user replace directive must survive.
@@ -1018,12 +1023,12 @@ mod go_work {
             &ws,
             "github/org/module-a",
             "github.com/org/module-a",
-            "1.26",
+            "1.20",
         );
         init_git_repo(&ws.join("github/org/module-a"));
 
         let int_file = proj_dir.join("go.work");
-        let seeded = "go 1.26\n\n// managed by repoweave\nuse (\n)\n";
+        let seeded = "go 1.20\n\n// managed by repoweave\nuse (\n)\n";
         std::fs::write(&int_file, seeded).unwrap();
 
         let ws_link = ws.join("go.work");
@@ -1046,8 +1051,8 @@ mod go_work {
             "fo-l22tpw: go.work must not be truncated by symlink self-copy; got empty file"
         );
         assert!(
-            after.contains("go 1.26"),
-            "fo-l22tpw: go 1.26 must survive; got:\n{after}"
+            after.contains("go 1.20"),
+            "fo-l22tpw: go 1.20 must survive; got:\n{after}"
         );
         assert!(
             after.contains("github/org/module-a"),
