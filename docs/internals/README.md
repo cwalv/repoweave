@@ -44,6 +44,12 @@ backstop unnecessary.
 - [op-state](./op-state.md) — field-level schemas of the `.rwv-op` owner record
   and the `.rwv-op-lease` pointer, for someone changing sync's resume logic.
   Consumers call back into `rwv` instead of parsing them.
+- [branch-model](./branch-model.md) — the MOVE / ATTACH / DESTROY /
+  DESTROY-STORE classification and the type split (`AttachedRef`,
+  `OwnedRef`, warrants, consent tokens) that makes ref discipline hold by
+  construction. Cited by section from `docs/reference/explain/doctor.md` and
+  `docs/reference/schemas/doctor.json`, so its section numbering is
+  load-bearing.
 
 ## Where else to look
 
