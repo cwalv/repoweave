@@ -1,0 +1,64 @@
+# The checks that decide whether a commit is releasable, on every platform a
+# release artifact targets.
+#
+# Called by ci.yml on push and pull_request, and by release.yml on a version
+# tag — declared once here so the two cannot drift, for the same reason
+# scripts/ci-local.sh exists.
+#
+# What a green run of this workflow does NOT establish is that a release is
+# safe to publish; see .githooks/pre-push, which is the gate that keeps a tag
+# off a red commit in the first place. By the time release.yml calls this, its
+# `plan` job has already run `dist host --steps=create`.
+name: CI checks
+
+on:
+  workflow_call:
+
+jobs:
+  checks:
+    name: CI (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Rust (pinned by rust-toolchain.toml)
+        # Single source of truth for the toolchain version + components is
+        # rust-toolchain.toml. `rustup show` provisions the pinned toolchain
+        # (and its listed components) so CI runs the exact clippy/rustfmt that
+        # `scripts/ci-local.sh` runs locally — no "stable drifts per-machine".
+        run: rustup show
+
+      - name: Install uv (required by uv-workspace e2e tests)
+        uses: astral-sh/setup-uv@v5
+
+      - name: Configure git identity (required by sync merge/rebase tests)
+        run: |
+          git config --global user.email "ci@example.com"
+          git config --global user.name "CI"
+
+      - name: Run CI checks
+        # Single source of truth: scripts/ci-local.sh runs the same checks
+        # locally and here.
+        shell: bash
+        run: ./scripts/ci-local.sh
+
+  windows-check:
+    # Release artifacts include windows-msvc, but the test suite is
+    # Unix-only (symlinks, permission bits, signals). Compile the
+    # production surface on Windows so a cfg gap surfaces here instead
+    # of at release-tag time.
+    name: Windows production-surface check
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Rust (pinned by rust-toolchain.toml)
+        run: rustup show
+
+      - name: Check lib and bins compile on Windows
+        run: cargo check --locked --lib --bins

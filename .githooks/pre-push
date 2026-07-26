@@ -12,7 +12,13 @@ cargo fmt --check
 echo "pre-push: running cargo test..."
 cargo test
 
-# If pushing a version tag, verify it matches Cargo.toml
+# A version tag is a publish trigger: pushing one builds and ships binaries,
+# the homebrew formula and PyPI wheels. Check what only this moment can check.
+#
+# The release workflow cannot do this for us. Its very first job runs
+# `dist host --steps=create` on the tag, so by the time any gate inside that
+# workflow could refuse, the release exists. A job added there can stop the
+# artifacts; it cannot stop the tag. This is where the tag is stoppable.
 while read local_ref local_sha remote_ref remote_sha; do
   case "$local_ref" in
     refs/tags/v*)
@@ -23,6 +29,27 @@ while read local_ref local_sha remote_ref remote_sha; do
         exit 1
       fi
       echo "pre-push: tag $tag matches Cargo.toml"
+
+      # Release artifacts target darwin and windows-msvc as well as linux, so
+      # the local checks above — one platform, one Go, one filesystem — do not
+      # answer whether this commit is releasable. The CI run on this exact
+      # commit does. Requiring the whole run to have concluded `success` keys
+      # on nothing that a new matrix entry would invalidate.
+      if ! command -v gh >/dev/null 2>&1; then
+        echo "pre-push: gh is required to verify CI before pushing a version tag"
+        exit 1
+      fi
+      slug=$(gh repo view --json nameWithOwner -q .nameWithOwner)
+      conclusion=$(gh api \
+        "repos/$slug/actions/workflows/ci.yml/runs?head_sha=$local_sha&per_page=1" \
+        -q '.workflow_runs[0].conclusion // "none"')
+      if [ "$conclusion" != "success" ]; then
+        echo "pre-push: refusing to push $tag — CI on $local_sha concluded '$conclusion', not 'success'."
+        echo "pre-push: a tag published from a red commit is what shipped v0.15.0 and v0.16.0 with macOS red."
+        echo "pre-push: push the commit, wait for CI, then push the tag."
+        exit 1
+      fi
+      echo "pre-push: CI is green on $local_sha"
       ;;
   esac
 done

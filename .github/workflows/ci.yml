@@ -1,3 +1,8 @@
+# A successful run of this workflow on a commit is what .githooks/pre-push
+# requires before it will let a version tag on that commit reach the remote.
+# The hook keys on this workflow's file name and overall conclusion, not on
+# individual job names, so the matrix in ci-checks.yml can grow a platform
+# without the hook needing to hear about it.
 name: CI
 
 on:
@@ -7,49 +12,4 @@ on:
 
 jobs:
   ci:
-    name: CI (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
-    strategy:
-      matrix:
-        os: [ubuntu-latest, macos-latest]
-
-    steps:
-      - uses: actions/checkout@v6
-
-      - name: Install Rust (pinned by rust-toolchain.toml)
-        # Single source of truth for the toolchain version + components is
-        # rust-toolchain.toml. `rustup show` provisions the pinned toolchain
-        # (and its listed components) so CI runs the exact clippy/rustfmt that
-        # `scripts/ci-local.sh` runs locally — no "stable drifts per-machine".
-        run: rustup show
-
-      - name: Install uv (required by uv-workspace e2e tests)
-        uses: astral-sh/setup-uv@v5
-
-      - name: Configure git identity (required by sync merge/rebase tests)
-        run: |
-          git config --global user.email "ci@example.com"
-          git config --global user.name "CI"
-
-      - name: Run CI checks
-        # Single source of truth: scripts/ci-local.sh runs the same four checks
-        # locally, in CI, and as release.yml's pre-tag gate.
-        shell: bash
-        run: ./scripts/ci-local.sh
-
-  windows-check:
-    # Release artifacts include windows-msvc, but the test suite is
-    # Unix-only (symlinks, permission bits, signals). Compile the
-    # production surface on Windows so a cfg gap surfaces here instead
-    # of at release-tag time.
-    name: Windows production-surface check
-    runs-on: windows-latest
-
-    steps:
-      - uses: actions/checkout@v6
-
-      - name: Install Rust (pinned by rust-toolchain.toml)
-        run: rustup show
-
-      - name: Check lib and bins compile on Windows
-        run: cargo check --locked --lib --bins
+    uses: ./.github/workflows/ci-checks.yml

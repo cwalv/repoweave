@@ -17,3 +17,11 @@ publish-jobs = ["homebrew"]
 targets = ["aarch64-apple-darwin", "aarch64-unknown-linux-gnu", "x86_64-apple-darwin", "x86_64-unknown-linux-gnu", "x86_64-pc-windows-msvc"]
 # Where to host releases
 hosting = "github"
+# No release artifacts get built for a commit CI has not passed. Declared here
+# rather than edited into release.yml, which is generated — a hand-edit there
+# is undone by the next `dist generate`.
+plan-jobs = ["./require-green-ci"]
+# Reading another workflow's conclusion needs `actions`; release.yml's
+# workflow-level block grants only `contents`, and job-level permissions
+# replace it rather than intersect with it.
+github-custom-job-permissions = { require-green-ci = { actions = "read", contents = "read" } }

@@ -1,0 +1,47 @@
+# Refuse to build release artifacts unless CI concluded `success` on the exact
+# commit being released.
+#
+# This does not re-run the checks. ci.yml already ran them on this commit when
+# it reached main, and a second full matrix here would spend ten minutes
+# re-deriving an answer that is already recorded. It asks the same question
+# .githooks/pre-push asks; what it adds is that a hook can be skipped with
+# --no-verify or bypassed entirely by tagging through the web UI, and this
+# cannot.
+#
+# What it cannot do is stop the release from existing. release.yml's `plan` job
+# runs `dist host --steps=create` on the tag before this job is reached, and
+# `host` accepts a *skipped* dependency — which is what a failed gate produces.
+# Blocking the artifacts is the guarantee available inside the release
+# workflow; keeping a tag off a red commit is the hook's job, because the tag
+# is only stoppable before it is pushed.
+name: Require green CI
+
+on:
+  workflow_call:
+
+jobs:
+  require-green-ci:
+    name: Require green CI on this commit
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check the CI conclusion for this commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          # Keyed on the workflow file and its overall conclusion rather than
+          # on job names, so a new platform in ci-checks.yml is covered without
+          # this file hearing about it.
+          conclusion=$(gh api \
+            "repos/$REPO/actions/workflows/ci.yml/runs?head_sha=$SHA&per_page=1" \
+            -q '.workflow_runs[0].conclusion // "none"')
+
+          echo "CI on $SHA concluded: $conclusion"
+          if [ "$conclusion" != "success" ]; then
+            echo "::error::CI concluded '$conclusion' on $SHA — refusing to build release artifacts. A tag on a red commit is how v0.15.0 and v0.16.0 shipped with macOS red."
+            exit 1
+          fi
