@@ -110,7 +110,7 @@ fn unknown_verb_with_help_has_no_footer() {
     // Use a PATH that intentionally does NOT contain a real `rwv-unknown-verb`.
     // A tempdir-only PATH prevents an unrelated PATH plugin from silently
     // handling the invocation.
-    let plugin_dir = tempfile::tempdir().expect("tempdir");
+    let plugin_dir = common::tempdir().expect("tempdir");
     rwv()
         .args(["unknown-verb", "--help"])
         .env("PATH", plugin_dir.path().to_string_lossy().to_string())

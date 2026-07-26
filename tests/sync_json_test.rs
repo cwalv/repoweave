@@ -191,7 +191,7 @@ fn make_shared_workspaces(parent: &Path) -> (Workspace, Workspace, String) {
 
 #[test]
 fn sync_json_emits_envelope_and_outcomes() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (primary, ww, _c1) = make_shared_workspaces(tmp.path());
 
     // Workweave: advance + relock.
@@ -244,7 +244,7 @@ fn sync_json_emits_envelope_and_outcomes() {
 fn sync_json_failed_outcome_yields_nonzero_exit() {
     // Build a divergence that ff cannot resolve, then run `--json` and
     // expect exit code 1 with a `failed` outcome in the JSON.
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (primary, ww, _c1) = make_shared_workspaces(tmp.path());
 
     // Primary: advance to C2.
@@ -299,7 +299,7 @@ fn sync_json_failed_outcome_yields_nonzero_exit() {
 
 #[test]
 fn sync_json_no_op_when_already_at_lock() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (primary, ww, c1) = make_shared_workspaces(tmp.path());
     let _ = ww; // unused
 
@@ -668,7 +668,7 @@ fn make_multi_repo_workspaces(parent: &Path) -> (Workspace, Workspace, Vec<Strin
 
 #[test]
 fn sync_json_ndjson_emits_one_record_per_line_under_jobs_gt_one() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (primary, ww, _shas) = make_multi_repo_workspaces(tmp.path());
 
     // Sync primary -> ww (so ww materializes nothing new; primary just
@@ -735,7 +735,7 @@ fn sync_json_ndjson_emits_one_record_per_line_under_jobs_gt_one() {
 fn sync_json_serial_emits_envelope_with_explicit_jobs_one() {
     // Acceptance: -j 1 with --json emits the envelope (not NDJSON), even
     // though we passed -j explicitly. This pins the "no-j or j=1" contract.
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (primary, ww, _shas) = make_multi_repo_workspaces(tmp.path());
 
     let assert = rwv()
@@ -765,7 +765,7 @@ fn sync_json_ndjson_no_text_prefix_wrapping() {
     // Acceptance: under `--json -j > 1`, the `[<prefix>] <line>` Reporter
     // wrapper must be bypassed. We verify by checking no line in stdout
     // starts with `[github/...]` (the prefix format).
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (primary, ww, _shas) = make_multi_repo_workspaces(tmp.path());
 
     let assert = rwv()
@@ -795,7 +795,7 @@ fn sync_json_ndjson_lines_are_not_interleaved() {
     // Each NDJSON line must be a complete JSON object. The mutex guard in
     // OutputSink::record ensures workers can't tear bytes mid-line. Parse
     // line-by-line — any failure indicates interleaving.
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (primary, ww, _shas) = make_multi_repo_workspaces(tmp.path());
 
     let assert = rwv()

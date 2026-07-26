@@ -220,7 +220,7 @@ fn rwv_lock_commit(workspace_root: &Path) {
 /// `merge=rwv-ours` + `--empty=drop` mechanism. No manual `git rebase --continue`.
 #[test]
 fn sync_two_workweaves_lock_only_rebase_converges() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let weaveroot = tmp.path().join(".workweaves");
     std::fs::create_dir_all(&weaveroot).unwrap();
 
@@ -323,7 +323,7 @@ fn sync_two_workweaves_lock_only_rebase_converges() {
 /// drop silently.
 #[test]
 fn sync_three_workweaves_lock_only_rebase_converges() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let weaveroot = tmp.path().join(".workweaves");
     std::fs::create_dir_all(&weaveroot).unwrap();
 
@@ -430,7 +430,7 @@ fn sync_three_workweaves_lock_only_rebase_converges() {
 ///    and the fix command `rwv doctor --fix`.
 #[test]
 fn sync_rebase_without_gitattributes_bails_cleanly() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let weaveroot = tmp.path().join(".workweaves");
     std::fs::create_dir_all(&weaveroot).unwrap();
 
@@ -589,7 +589,7 @@ fn sync_rebase_without_gitattributes_bails_cleanly() {
 /// behavior does NOT bleed into the ff path.
 #[test]
 fn sync_ff_preserves_lock_only_commits() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let weaveroot = tmp.path().join(".workweaves");
     std::fs::create_dir_all(&weaveroot).unwrap();
 
@@ -661,7 +661,7 @@ fn sync_ff_preserves_lock_only_commits() {
 /// assert the config is set after the sync completes.
 #[test]
 fn sync_rebase_plants_merge_driver_config() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let weaveroot = tmp.path().join(".workweaves");
     std::fs::create_dir_all(&weaveroot).unwrap();
 
@@ -734,7 +734,7 @@ fn sync_rebase_plants_merge_driver_config() {
 /// global-config collision hazard.
 #[test]
 fn sync_rebase_with_legacy_needle_bails_pointing_at_doctor_fix() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let weaveroot = tmp.path().join(".workweaves");
     std::fs::create_dir_all(&weaveroot).unwrap();
 
@@ -899,7 +899,7 @@ fn lock_yaml(manifest_repo: &Path, version: &str) -> String {
 /// way git's own hint says (`git rebase --skip`).
 #[test]
 fn bare_git_rebase_continue_resolves_lock_pick_via_planted_config_only() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let primary = make_primary(tmp.path());
     let repo = primary.project_dir.clone();
 
@@ -1193,7 +1193,7 @@ fn assert_mid_rebase(dir: &Path, expected: bool, msg: &str) {
 /// `--continue` promised to be end-to-end and delivered only step 1.
 #[test]
 fn sync_continue_completes_mid_rebase_with_lock_only_pick_via_inline_flags() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let weaveroot = tmp.path().join(".workweaves");
     std::fs::create_dir_all(&weaveroot).unwrap();
 
@@ -1320,7 +1320,7 @@ fn sync_continue_completes_mid_rebase_with_lock_only_pick_via_inline_flags() {
 /// only recovery).
 #[test]
 fn sync_continue_with_unstaged_resolution_bails_and_second_continue_succeeds() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let weaveroot = tmp.path().join(".workweaves");
     std::fs::create_dir_all(&weaveroot).unwrap();
 

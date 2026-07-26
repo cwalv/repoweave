@@ -5,6 +5,8 @@ use predicates::prelude::*;
 use std::fs;
 use std::path::Path;
 
+mod common;
+
 /// Create a minimal workspace root at `parent/name` with `github/` and
 /// `projects/` marker directories. Returns the root path.
 fn make_workspace(parent: &Path, name: &str) -> std::path::PathBuf {
@@ -26,7 +28,7 @@ fn write_manifest(root: &Path, project: &str, yaml: &str) {
 
 #[test]
 fn prime_silent_outside_workspace() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
 
     Command::cargo_bin("rwv")
         .unwrap()
@@ -43,7 +45,7 @@ fn prime_silent_outside_workspace() {
 
 #[test]
 fn prime_primary_with_project() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let root = make_workspace(tmp.path(), "ws");
 
     write_manifest(
@@ -94,7 +96,7 @@ integrations:
 
 #[test]
 fn prime_no_active_project() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let _root = make_workspace(tmp.path(), "ws");
 
     Command::cargo_bin("rwv")
@@ -114,7 +116,7 @@ fn prime_no_active_project() {
 
 #[test]
 fn prime_in_workweave() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let root = make_workspace(tmp.path(), "ws");
 
     write_manifest(
@@ -161,7 +163,7 @@ repositories:
 
 #[test]
 fn prime_directory_layout_active_marker() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let root = make_workspace(tmp.path(), "ws");
     fs::create_dir_all(root.join("projects").join("web-app")).unwrap();
     fs::create_dir_all(root.join("projects").join("mobile")).unwrap();
@@ -184,7 +186,7 @@ fn prime_directory_layout_active_marker() {
 
 #[test]
 fn prime_no_suppress_outside_workspace() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
 
     Command::cargo_bin("rwv")
         .unwrap()
@@ -212,7 +214,7 @@ fn prime_no_suppress_outside_workspace() {
 
 #[test]
 fn prime_no_suppress_has_no_gc_or_city_references() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
 
     let assert = Command::cargo_bin("rwv")
         .unwrap()
@@ -245,7 +247,7 @@ fn prime_no_suppress_has_no_gc_or_city_references() {
 
 #[test]
 fn prime_no_suppress_inside_workspace() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let root = make_workspace(tmp.path(), "ws");
 
     Command::cargo_bin("rwv")

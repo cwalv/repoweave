@@ -216,7 +216,7 @@ fn make_shared_workspaces(parent: &Path) -> (Workspace, Workspace, String) {
 
 #[test]
 fn concurrent_op_detection_blocks_new_sync_in_cwd_workspace() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (primary, ww, c1) = make_shared_workspaces(tmp.path());
 
     // Primary advances to C2, lock updated.
@@ -287,7 +287,7 @@ fn concurrent_op_detection_blocks_new_sync_in_cwd_workspace() {
 
 #[test]
 fn concurrent_op_detection_error_names_phase_and_start_time() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (primary, ww, _c1) = make_shared_workspaces(tmp.path());
 
     // Write a v2 owner record at a specific phase.
@@ -322,7 +322,7 @@ fn concurrent_op_detection_error_names_phase_and_start_time() {
 
 #[test]
 fn mid_step1_resume_with_continue_after_conflict_resolution() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (primary, ww, _c1) = make_shared_workspaces(tmp.path());
 
     // Primary: advance to C2 with a file.
@@ -430,7 +430,7 @@ fn mid_step1_resume_with_continue_after_conflict_resolution() {
 
 #[test]
 fn mid_step3_continue_does_not_produce_in_progress_refusal() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (primary, ww, _c1) = make_shared_workspaces(tmp.path());
 
     // Write a v2 owner record at advance-target phase into ww's workspace.
@@ -490,7 +490,7 @@ fn mid_step3_continue_does_not_produce_in_progress_refusal() {
 
 #[test]
 fn continue_with_strategy_flag_is_rejected() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (primary, ww, _c1) = make_shared_workspaces(tmp.path());
 
     // Plant a v2 owner record so --continue would proceed if it were alone.
@@ -522,7 +522,7 @@ fn continue_with_strategy_flag_is_rejected() {
 /// fo-jsbr3i.6.
 #[test]
 fn sync_force_flag_is_removed_and_produces_friendly_error() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (_primary, ww, _c1) = make_shared_workspaces(tmp.path());
 
     // --force must be rejected with a migration hint.
@@ -542,7 +542,7 @@ fn sync_force_flag_is_removed_and_produces_friendly_error() {
 /// --allow-stale-lock alongside --continue must be rejected (conflicts_with).
 #[test]
 fn continue_with_allow_stale_lock_flag_is_rejected() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (_primary, ww, _c1) = make_shared_workspaces(tmp.path());
 
     let assertion = rwv()
@@ -561,7 +561,7 @@ fn continue_with_allow_stale_lock_flag_is_rejected() {
 /// --discard-local-commits alongside --continue must be rejected (conflicts_with).
 #[test]
 fn continue_with_discard_local_commits_flag_is_rejected() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (_primary, ww, _c1) = make_shared_workspaces(tmp.path());
 
     let assertion = rwv()
@@ -579,7 +579,7 @@ fn continue_with_discard_local_commits_flag_is_rejected() {
 
 #[test]
 fn sync_to_continue_with_retire_flag_is_rejected() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (_primary, ww, _c1) = make_shared_workspaces(tmp.path());
 
     // rwv sync-to --retire --continue must be rejected.
@@ -598,7 +598,7 @@ fn sync_to_continue_with_retire_flag_is_rejected() {
 
 #[test]
 fn sync_to_continue_with_strategy_flag_is_rejected() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (_primary, ww, _c1) = make_shared_workspaces(tmp.path());
 
     // rwv sync-to --strategy=rebase --continue must be rejected.
@@ -617,7 +617,7 @@ fn sync_to_continue_with_strategy_flag_is_rejected() {
 
 #[test]
 fn continue_with_no_op_in_progress_errors_clearly() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (_primary, ww, _c1) = make_shared_workspaces(tmp.path());
 
     // No op-state file present. `rwv sync --continue` (alone, no other flags)
@@ -639,7 +639,7 @@ fn continue_with_no_op_in_progress_errors_clearly() {
 
 #[test]
 fn sync_to_continue_with_no_op_in_progress_errors_clearly() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (_primary, ww, _c1) = make_shared_workspaces(tmp.path());
 
     // No op-state file present. `rwv sync-to --continue` (alone, no other flags)
@@ -668,7 +668,7 @@ fn sync_to_continue_with_no_op_in_progress_errors_clearly() {
 
 #[test]
 fn abort_from_cwd_cleans_cross_workspace_op_state() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (primary, ww, _c1) = make_shared_workspaces(tmp.path());
 
     // Simulate an in-progress sync-to: plant op-state in both workspaces with
@@ -750,7 +750,7 @@ fn abort_from_cwd_cleans_cross_workspace_op_state() {
 
 #[test]
 fn abort_restores_repos_and_removes_op_state() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (primary, ww, _c1) = make_shared_workspaces(tmp.path());
 
     // Plant an op-state file in ww's workspace (simulate an in-progress sync).
@@ -847,7 +847,7 @@ fn assert_in_flight_op_refusal(stderr: &str, expect_verb: &str) {
 /// `rwv update` refuses while an op involves the active workspace.
 #[test]
 fn mid_op_update_refuses_with_in_flight_message() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (primary, ww, _c1) = make_shared_workspaces(tmp.path());
     plant_owner_record(&ww.root, "sync-to", "replay", &ww.root, &primary.root);
 
@@ -863,7 +863,7 @@ fn mid_op_update_refuses_with_in_flight_message() {
 /// `rwv lock --commit` refuses while an op involves the active workspace.
 #[test]
 fn mid_op_lock_commit_refuses_with_in_flight_message() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (primary, ww, _c1) = make_shared_workspaces(tmp.path());
     plant_owner_record(&ww.root, "sync", "relock", &primary.root, &ww.root);
 
@@ -881,7 +881,7 @@ fn mid_op_lock_commit_refuses_with_in_flight_message() {
 /// mutex is scoped to `--commit`. This guards the scope from over-broadening.
 #[test]
 fn mid_op_plain_lock_is_not_gated() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (primary, ww, _c1) = make_shared_workspaces(tmp.path());
     plant_owner_record(&ww.root, "sync", "relock", &primary.root, &ww.root);
 
@@ -903,7 +903,7 @@ fn mid_op_plain_lock_is_not_gated() {
 /// workspace — the op guard reports the in-flight op, covering the retire verb.
 #[test]
 fn mid_op_sync_to_refuses_with_in_flight_message() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (primary, ww, _c1) = make_shared_workspaces(tmp.path());
     plant_owner_record(&ww.root, "sync-to", "replay", &ww.root, &primary.root);
 
@@ -920,7 +920,7 @@ fn mid_op_sync_to_refuses_with_in_flight_message() {
 /// refuses; the guard follows the lease pointer to name the op / age / exits.
 #[test]
 fn mid_op_lease_side_verb_refuses_and_names_owner() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (primary, ww, _c1) = make_shared_workspaces(tmp.path());
 
     // Owner record at ww (the op's initiating workspace), thin lease at primary.
@@ -959,7 +959,7 @@ fn mid_op_lease_side_verb_refuses_and_names_owner() {
 /// reorder.
 #[test]
 fn op_guard_precedes_lock_relation_classification() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (primary, ww, _c1) = make_shared_workspaces(tmp.path());
 
     // Make ww's committed lock DIVERGE from HEAD so that, absent the op guard,
@@ -1011,7 +1011,7 @@ fn sync_continue_flag_is_recognized() {
 
 #[test]
 fn op_state_file_written_during_sync_and_removed_on_success() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (primary, ww, _c1) = make_shared_workspaces(tmp.path());
 
     // Primary advances to C2.

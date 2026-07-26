@@ -67,7 +67,7 @@ fn make_workweave(tmp: &Path, ws: &Path, project: &str, name: &str) -> std::path
 /// when invoked with a cwd of /tmp.
 #[test]
 fn c_flag_addresses_workweave_from_tmp() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_minimal_workspace(tmp.path(), "myproj");
     let ww = make_workweave(tmp.path(), &ws, "myproj", "feature-1");
     let ww_canon = ww.canonicalize().unwrap();
@@ -86,7 +86,7 @@ fn c_flag_addresses_workweave_from_tmp() {
 /// Same check with the long form `--cwd`.
 #[test]
 fn cwd_long_flag_addresses_workweave_from_tmp() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_minimal_workspace(tmp.path(), "myproj");
     let ww = make_workweave(tmp.path(), &ws, "myproj", "feature-1");
     let ww_canon = ww.canonicalize().unwrap();
@@ -104,7 +104,7 @@ fn cwd_long_flag_addresses_workweave_from_tmp() {
 /// -C pointing at the primary workspace resolves to the primary workspace.
 #[test]
 fn c_flag_addresses_primary_workspace() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_minimal_workspace(tmp.path(), "myproj");
     let ws_canon = ws.canonicalize().unwrap();
 
@@ -121,7 +121,7 @@ fn c_flag_addresses_primary_workspace() {
 /// -C pointing at a subdirectory inside a workspace still resolves the workspace.
 #[test]
 fn c_flag_resolves_from_subdir_inside_workspace() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_minimal_workspace(tmp.path(), "myproj");
     let subdir = ws.join("projects").join("myproj");
 
@@ -145,7 +145,7 @@ fn c_flag_resolves_from_subdir_inside_workspace() {
 /// directory, not in the process's cwd.
 #[test]
 fn init_c_flag_bootstraps_in_addressed_directory() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let target = tmp.path().join("fresh-ws");
     std::fs::create_dir_all(&target).unwrap();
 
@@ -179,7 +179,7 @@ fn init_c_flag_bootstraps_in_addressed_directory() {
 /// project inside the existing workspace rather than refusing.
 #[test]
 fn init_c_flag_creates_project_in_existing_workspace() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_minimal_workspace(tmp.path(), "first-project");
 
     rwv()
@@ -205,7 +205,7 @@ fn init_c_flag_creates_project_in_existing_workspace() {
 /// commands that operate against the workspace do so correctly.
 #[test]
 fn c_flag_status_resolves_from_addressed_workspace() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_minimal_workspace(tmp.path(), "myproj");
 
     rwv()
@@ -219,7 +219,7 @@ fn c_flag_status_resolves_from_addressed_workspace() {
 /// the containment walk resolves the workweave correctly.
 #[test]
 fn c_flag_resolves_from_subdir_inside_workweave() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_minimal_workspace(tmp.path(), "myproj");
     let ww = make_workweave(tmp.path(), &ws, "myproj", "my-feature");
 
@@ -245,7 +245,7 @@ fn c_flag_resolves_from_subdir_inside_workweave() {
 /// Passing -C twice must be rejected.
 #[test]
 fn duplicate_c_flag_is_rejected() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_minimal_workspace(tmp.path(), "myproj");
 
     rwv()
@@ -263,7 +263,7 @@ fn duplicate_c_flag_is_rejected() {
 /// Passing --cwd twice must also be rejected.
 #[test]
 fn duplicate_cwd_long_flag_is_rejected() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_minimal_workspace(tmp.path(), "myproj");
 
     rwv()
@@ -281,7 +281,7 @@ fn duplicate_cwd_long_flag_is_rejected() {
 /// Mixing -C and --cwd is also a duplicate.
 #[test]
 fn mixing_c_and_cwd_is_rejected() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_minimal_workspace(tmp.path(), "myproj");
 
     rwv()
@@ -371,7 +371,7 @@ fn c_flag_nonexistent_ordinary_path_gives_plain_error() {
 /// -C after the subcommand name (global flag, so clap should accept this).
 #[test]
 fn c_flag_after_subcommand_name_is_accepted() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_minimal_workspace(tmp.path(), "myproj");
 
     // Clap supports global flags anywhere; verify it works after the verb too.

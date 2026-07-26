@@ -184,7 +184,7 @@ const SCHEMA_FRAGMENT: &str = "docs/reference/schemas/sync-to.json";
 
 #[test]
 fn sync_to_json_serial_emits_envelope_with_schema_and_outcomes() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (primary, ww, _initial_sha) = make_shared(tmp.path());
 
     // Workweave advances so sync-to has actual work to do.
@@ -235,7 +235,7 @@ fn sync_to_json_serial_emits_envelope_with_schema_and_outcomes() {
 
 #[test]
 fn sync_to_json_schema_url_differs_from_sync_schema_url() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (primary, ww, _initial_sha) = make_shared(tmp.path());
 
     // Workweave advances.
@@ -398,7 +398,7 @@ fn make_shared_with_stale_target_for_sync_to(parent: &Path) -> (Workspace, Works
 /// "--allow-stale-lock".
 #[test]
 fn sync_to_stale_cwd_lock_names_condition_and_flag() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (primary, ww) = make_shared_with_stale_cwd_for_sync_to(tmp.path());
 
     let assert = rwv()
@@ -421,7 +421,7 @@ fn sync_to_stale_cwd_lock_names_condition_and_flag() {
 /// (ii) --allow-stale-lock bypasses the CWD stale-lock precondition for sync-to.
 #[test]
 fn sync_to_allow_stale_lock_bypasses_cwd_precondition() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (primary, ww) = make_shared_with_stale_cwd_for_sync_to(tmp.path());
 
     // Use --strategy=ff: ww's server is at the same SHA as primary's lock,
@@ -446,7 +446,7 @@ fn sync_to_allow_stale_lock_bypasses_cwd_precondition() {
 /// "--allow-stale-lock".
 #[test]
 fn sync_to_stale_target_lock_names_condition_and_flag() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (primary, ww) = make_shared_with_stale_target_for_sync_to(tmp.path());
 
     let assert = rwv()
@@ -475,7 +475,7 @@ fn sync_to_stale_target_lock_names_condition_and_flag() {
 /// from C1 to C2 (C1 is ancestor of C2) → success.
 #[test]
 fn sync_to_allow_stale_lock_bypasses_target_precondition() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (primary, ww) = make_shared_with_stale_target_for_sync_to(tmp.path());
 
     // Default strategy (rebase): step 1 rebases ww against primary's lock

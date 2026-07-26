@@ -101,7 +101,7 @@ fn doctor_output(workspace: &Path, args: &[&str]) -> String {
 /// directs the user at `rwv doctor --fix` for the migration.
 #[test]
 fn doctor_detects_legacy_role_primary_in_manifest() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (workspace, _, _) = make_workspace_with_legacy_manifest(tmp.path(), "ws", LEGACY_MANIFEST);
 
     let combined = doctor_output(&workspace, &[]);
@@ -118,7 +118,7 @@ fn doctor_detects_legacy_role_primary_in_manifest() {
 /// `rwv doctor --fix` rewrites `role: primary` → `role: owned` in place.
 #[test]
 fn doctor_fix_migrates_role_primary_to_owned() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (workspace, _, manifest_path) =
         make_workspace_with_legacy_manifest(tmp.path(), "ws", LEGACY_MANIFEST);
 
@@ -143,7 +143,7 @@ fn doctor_fix_migrates_role_primary_to_owned() {
 /// second run leaves the manifest content unchanged.
 #[test]
 fn doctor_fix_is_idempotent() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (workspace, _, manifest_path) =
         make_workspace_with_legacy_manifest(tmp.path(), "ws", LEGACY_MANIFEST);
 
@@ -166,7 +166,7 @@ fn doctor_fix_is_idempotent() {
 /// The migration preserves comments, key order, and unrelated fields.
 #[test]
 fn doctor_fix_preserves_other_manifest_content() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (workspace, _, manifest_path) =
         make_workspace_with_legacy_manifest(tmp.path(), "ws", LEGACY_MANIFEST);
 
@@ -197,7 +197,7 @@ fn doctor_fix_preserves_other_manifest_content() {
 /// signal is gone.
 #[test]
 fn doctor_fix_clears_legacy_role_primary_findings() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (workspace, _, _) = make_workspace_with_legacy_manifest(tmp.path(), "ws", LEGACY_MANIFEST);
 
     let _ = doctor_output(&workspace, &["--fix"]);

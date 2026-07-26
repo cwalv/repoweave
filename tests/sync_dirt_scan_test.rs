@@ -140,7 +140,7 @@ fn has_op_state(workspace_root: &Path) -> bool {
 
 /// Build the fixture: primary + one workweave sharing history.
 fn fixture() -> Fixture {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
 
     // -----------------------------------------------------------------------
     // Primary workspace

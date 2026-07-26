@@ -96,7 +96,7 @@ fn current_branch(dir: &Path) -> String {
 /// of the same `rwv workweave ... create ...` command.
 #[test]
 fn workweave_recreate_preserves_non_git_state() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_workspace(tmp.path(), "web-app");
 
     let weaveroot = tmp.path().join(".workweaves");
@@ -222,7 +222,7 @@ fn workweave_recreate_preserves_non_git_state() {
 /// command — a failed idempotency check here would clobber that work.
 #[test]
 fn workweave_recreate_refuses_on_local_modifications() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_workspace(tmp.path(), "web-app");
     let weaveroot = tmp.path().join(".workweaves");
     std::fs::create_dir_all(&weaveroot).unwrap();
@@ -303,7 +303,7 @@ fn workweave_recreate_refuses_on_local_modifications() {
 /// convention it's a simple peer-creation.
 #[test]
 fn workweave_same_name_different_projects_coexist() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_workspace(tmp.path(), "project-a");
     // Add a second project manifest pointing at the same repo.
     let project_b_dir = ws.join("projects/project-b");
@@ -363,7 +363,7 @@ fn workweave_same_name_different_projects_coexist() {
 /// recovery, reusing a slot for a new purpose).
 #[test]
 fn workweave_recreate_with_replace_existing_destroys_and_recreates() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_workspace(tmp.path(), "web-app");
     let weaveroot = tmp.path().join(".workweaves");
     std::fs::create_dir_all(&weaveroot).unwrap();
@@ -473,7 +473,7 @@ fn head_sha(dir: &Path) -> String {
 /// replace once clean.
 #[test]
 fn workweave_recreate_replace_existing_refuses_dirty_when_marker_missing() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_workspace(tmp.path(), "web-app");
     let weaveroot = tmp.path().join(".workweaves");
     std::fs::create_dir_all(&weaveroot).unwrap();
@@ -548,7 +548,7 @@ fn workweave_recreate_replace_existing_refuses_dirty_when_marker_missing() {
 /// not be touched by this create.
 #[test]
 fn workweave_create_succeeds_after_rm_rf_leaves_stale_git_registration() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_workspace(tmp.path(), "web-app");
     let weaveroot = tmp.path().join(".workweaves");
     std::fs::create_dir_all(&weaveroot).unwrap();
@@ -677,7 +677,7 @@ fn workweave_create_succeeds_after_rm_rf_leaves_stale_git_registration() {
 /// ephemeral-branch cleanup would force-delete the only ref to them.
 #[test]
 fn workweave_delete_refuses_on_unmerged_commits() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_workspace(tmp.path(), "web-app");
     let weaveroot = tmp.path().join(".workweaves");
     std::fs::create_dir_all(&weaveroot).unwrap();

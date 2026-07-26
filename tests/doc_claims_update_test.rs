@@ -108,7 +108,7 @@ struct UpdateWorkspace {
 /// Build a workspace with manifest repos at the given roles. The lock
 /// initially matches local HEAD (which itself matches the bare's HEAD).
 fn build_workspace(project_name: &str, repos: &[(&str, &str)]) -> UpdateWorkspace {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let workspace = tmp.path().join("ws");
     std::fs::create_dir_all(&workspace).unwrap();
     std::fs::create_dir_all(workspace.join("projects")).unwrap();
@@ -312,7 +312,7 @@ fn update_advances_lock_while_fetch_does_not() {
     // We mirror fetch_test.rs's setup: a bare project repo carrying rwv.yaml
     // + rwv.lock, fetched into an empty workspace. The fetched clone of
     // the manifest repo must be at the LOCK sha, not the new bare HEAD.
-    let tmp_fetch = tempfile::tempdir().unwrap();
+    let tmp_fetch = common::tempdir().unwrap();
     let ws_fetch = tmp_fetch.path().join("ws");
     std::fs::create_dir_all(&ws_fetch).unwrap();
 

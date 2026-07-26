@@ -5,11 +5,12 @@
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
-use tempfile::TempDir;
 
 use repoweave::integration::{is_enabled, Integration, IntegrationContext, Issue, Severity};
 use repoweave::manifest::{IntegrationConfig, ProjectName, RepoEntry, RepoPath, Role, VcsType};
 use repoweave::vcs::RefName;
+
+mod common;
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -143,7 +144,7 @@ fn active_repos_excludes_reference() {
     let project = ProjectName::new("test-project");
     let config = IntegrationConfig::default();
     let cache = HashMap::new();
-    let tmp = TempDir::new().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ctx = IntegrationContext {
         output_dir: tmp.path(),
         workspace_root: tmp.path(),
@@ -187,7 +188,7 @@ fn active_repos_includes_primary_fork_dependency() {
     let project = ProjectName::new("test-project");
     let config = IntegrationConfig::default();
     let cache = HashMap::new();
-    let tmp = TempDir::new().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ctx = IntegrationContext {
         output_dir: tmp.path(),
         workspace_root: tmp.path(),
@@ -367,8 +368,8 @@ fn touch(dir: &Path, relative: &str) {
 fn detect_repos_with_manifest_uses_workspace_root_not_output_dir() {
     // Set up two separate directories: workspace_root has the repos,
     // output_dir is an empty workweave directory.
-    let ws_tmp = TempDir::new().unwrap();
-    let out_tmp = TempDir::new().unwrap();
+    let ws_tmp = common::tempdir().unwrap();
+    let out_tmp = common::tempdir().unwrap();
     let workspace_root = ws_tmp.path();
     let output_dir = out_tmp.path();
 
@@ -416,8 +417,8 @@ fn detect_repos_with_manifest_ignores_output_dir_manifests() {
     // Manifest files exist only in output_dir but NOT in workspace_root.
     // detect_repos_with_manifest should return nothing because it checks
     // workspace_root, not output_dir.
-    let ws_tmp = TempDir::new().unwrap();
-    let out_tmp = TempDir::new().unwrap();
+    let ws_tmp = common::tempdir().unwrap();
+    let out_tmp = common::tempdir().unwrap();
     let workspace_root = ws_tmp.path();
     let output_dir = out_tmp.path();
 
@@ -455,7 +456,7 @@ fn detect_repos_with_manifest_ignores_output_dir_manifests() {
 #[test]
 fn context_output_dir_and_workspace_root_can_be_same() {
     // In the primary workspace, both point to the same directory.
-    let tmp = TempDir::new().unwrap();
+    let tmp = common::tempdir().unwrap();
     let root = tmp.path();
 
     touch(root, "github/acme/server/package.json");
@@ -662,7 +663,7 @@ fn cargo_workspace_generated_files() {
     )> = vec![];
     let project = ProjectName::new("test-project");
     let config = IntegrationConfig::default();
-    let tmp = TempDir::new().unwrap();
+    let tmp = common::tempdir().unwrap();
     let cache = HashMap::new();
     let ctx = IntegrationContext {
         output_dir: tmp.path(),
@@ -722,7 +723,7 @@ fn npm_workspaces_generated_files() {
     )> = vec![];
     let project = ProjectName::new("test-project");
     let config = IntegrationConfig::default();
-    let tmp = TempDir::new().unwrap();
+    let tmp = common::tempdir().unwrap();
     let cache = HashMap::new();
     let ctx = IntegrationContext {
         output_dir: tmp.path(),
@@ -778,7 +779,7 @@ fn pnpm_workspaces_generated_files() {
     )> = vec![];
     let project = ProjectName::new("test-project");
     let config = IntegrationConfig::default();
-    let tmp = TempDir::new().unwrap();
+    let tmp = common::tempdir().unwrap();
     let cache = HashMap::new();
     let ctx = IntegrationContext {
         output_dir: tmp.path(),
@@ -842,7 +843,7 @@ fn go_work_generated_files() {
     )> = vec![];
     let project = ProjectName::new("test-project");
     let config = IntegrationConfig::default();
-    let tmp = TempDir::new().unwrap();
+    let tmp = common::tempdir().unwrap();
     let cache = HashMap::new();
     let ctx = IntegrationContext {
         output_dir: tmp.path(),
@@ -900,7 +901,7 @@ fn uv_workspace_generated_files() {
     )> = vec![];
     let project = ProjectName::new("test-project");
     let config = IntegrationConfig::default();
-    let tmp = TempDir::new().unwrap();
+    let tmp = common::tempdir().unwrap();
     let cache = HashMap::new();
     let ctx = IntegrationContext {
         output_dir: tmp.path(),
@@ -1047,6 +1048,7 @@ fn vscode_workspace_generated_files_varies_with_project() {
 // ===========================================================================
 
 mod fo_cnpjy_3 {
+    use super::common;
     use std::cell::RefCell;
     use std::collections::HashMap;
     use std::path::{Path, PathBuf};
@@ -1265,7 +1267,7 @@ mod fo_cnpjy_3 {
 
     #[test]
     fn context_mode_activate_does_not_modify_hand_edited_managed_file() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = common::tempdir().unwrap();
         let ws = tmp.path().to_path_buf();
         std::fs::create_dir_all(ws.join("github")).unwrap();
         let project_dir = ws.join("projects/p");
@@ -1313,7 +1315,7 @@ mod fo_cnpjy_3 {
     fn owner_scoped_removal_preserves_unowned_symlinks() {
         use std::os::unix::fs::symlink;
 
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = common::tempdir().unwrap();
         let ws = tmp.path().to_path_buf();
         std::fs::create_dir_all(ws.join("github")).unwrap();
         let project_dir = ws.join("projects/p");
@@ -1456,7 +1458,7 @@ mod fo_cnpjy_3 {
     #[test]
     fn intent_vs_context_call_counts() {
         // We need a workspace shape that activate_at can resolve. Build it.
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = common::tempdir().unwrap();
         let ws = tmp.path().to_path_buf();
         std::fs::create_dir_all(ws.join("github")).unwrap();
         let project_dir = ws.join("projects/p");

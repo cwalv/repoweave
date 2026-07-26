@@ -243,7 +243,7 @@ fn advance_ww_branch(server_primary: &Path, branch: &str, new_sha: &str) {
 /// index in the workweave and reports "index stale (safe to --fix)".
 #[test]
 fn doctor_detects_stale_index_in_workweave() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (ws, _c1) = make_workspace_with_ww(tmp.path());
 
     // Commit C2 on primary's `main`.
@@ -282,7 +282,7 @@ fn doctor_detects_stale_index_in_workweave() {
 /// - An unstaged working-tree file is untouched
 #[test]
 fn doctor_fix_refreshes_stale_index_without_touching_working_tree() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (ws, _c1) = make_workspace_with_ww(tmp.path());
 
     // Write an UNSTAGED file in the workweave working tree.
@@ -336,7 +336,7 @@ fn doctor_fix_refreshes_stale_index_without_touching_working_tree() {
 /// discard the staged content.
 #[test]
 fn doctor_fix_does_not_clobber_live_staged_changes() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (ws, _c1) = make_workspace_with_ww(tmp.path());
 
     // Stage new content in the workweave — this file has NEVER been committed.
@@ -373,7 +373,7 @@ fn doctor_fix_does_not_clobber_live_staged_changes() {
 /// the sync (from a shared-ref advance), the index should be clean afterward.
 #[test]
 fn sync_post_refresh_clears_stale_index() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
 
     // --- Primary workspace ---
     let primary_root = tmp.path().join("primary");
@@ -499,7 +499,7 @@ fn sync_post_refresh_clears_stale_index() {
 /// and the staged content must survive.
 #[test]
 fn doctor_fix_refuses_non_reachable_index_tree() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (ws, _c1) = make_workspace_with_ww(tmp.path());
 
     // Stage content that has never been committed (tree will not be found
@@ -537,7 +537,7 @@ fn doctor_fix_refuses_non_reachable_index_tree() {
 /// This is the regression guard for the sync tag-drift companion fix.
 #[test]
 fn sync_precondition_accepts_tag_form_lock_entry() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
 
     // Source workspace: server at tag v1.0.0, lock records the tag name.
     let source_root = tmp.path().join("source");

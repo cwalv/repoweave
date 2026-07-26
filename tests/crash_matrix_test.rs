@@ -589,7 +589,7 @@ fn assert_plain_sync_aborted_clean(ww: &Workspace, ww_server_pre: &str, cell_nam
 /// re-enters replay (per-repo no-op since repos at savepoint tips).
 #[test]
 fn cell_e_replay_sync_continue_drives_to_clean_end_state() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (primary, ww, _sha) = make_shared_workspaces(tmp.path());
 
     let op_id = "crash-matrix-e-replay-sync";
@@ -613,7 +613,7 @@ fn cell_e_replay_sync_continue_drives_to_clean_end_state() {
 
 #[test]
 fn cell_e_replay_sync_abort_restores_to_pre_op() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (_primary, ww, sha) = make_shared_workspaces(tmp.path());
 
     let op_id = "crash-matrix-e-replay-sync-abort";
@@ -646,7 +646,7 @@ fn cell_e_replay_sync_abort_restores_to_pre_op() {
 /// converged tips is what we want to verify.
 #[test]
 fn cell_m_replay_sync_abort_cancels_mid_rebase_and_restores() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (_primary, ww, sha) = make_shared_workspaces(tmp.path());
 
     let op_id = "crash-matrix-m-replay-sync-abort";
@@ -747,7 +747,7 @@ fn cell_m_replay_sync_abort_cancels_mid_rebase_and_restores() {
 /// must not produce an end-state difference).
 #[test]
 fn cell_j_replay_sync_continue_drives_to_clean_end_state() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (primary, ww, _sha) = make_shared_workspaces(tmp.path());
 
     let op_id = "crash-matrix-j-replay-sync";
@@ -775,7 +775,7 @@ fn cell_j_replay_sync_continue_drives_to_clean_end_state() {
 /// `--continue` regenerates the lock (no-op if current) and finishes.
 #[test]
 fn cell_e_relock_sync_continue_drives_to_clean_end_state() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (primary, ww, _sha) = make_shared_workspaces(tmp.path());
 
     let op_id = "crash-matrix-e-relock-sync";
@@ -812,7 +812,7 @@ fn cell_e_relock_sync_continue_drives_to_clean_end_state() {
 /// abort refuses for that repo. We assert exactly that.
 #[test]
 fn cell_m_relock_sync_continue_drives_to_clean_end_state() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (primary, ww, _sha) = make_shared_workspaces(tmp.path());
 
     let op_id = "crash-matrix-m-relock-sync";
@@ -841,7 +841,7 @@ fn cell_m_relock_sync_continue_drives_to_clean_end_state() {
 /// the plain sync machine.
 #[test]
 fn cell_j_relock_sync_continue_drives_to_clean_end_state() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (primary, ww, _sha) = make_shared_workspaces(tmp.path());
 
     let op_id = "crash-matrix-j-relock-sync";
@@ -881,7 +881,7 @@ fn cell_j_relock_sync_continue_drives_to_clean_end_state() {
 /// done. `--continue` runs the full machine.
 #[test]
 fn cell_e_replay_sync_to_owner_continue() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (primary, ww, ww_server_tip, _ww_project_tip) = make_ww_ahead_sync_to(tmp.path());
 
     let op_id = "crash-matrix-e-replay-syncto-owner";
@@ -915,7 +915,7 @@ fn cell_e_replay_sync_to_owner_continue() {
 /// re-roots the engine at the owner. (fo-jsbr3i.2 invocation-side rule.)
 #[test]
 fn cell_e_replay_sync_to_lease_continue() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (primary, ww, ww_server_tip, _ww_project_tip) = make_ww_ahead_sync_to(tmp.path());
 
     let op_id = "crash-matrix-e-replay-syncto-lease";
@@ -946,7 +946,7 @@ fn cell_e_replay_sync_to_lease_continue() {
 
 #[test]
 fn cell_e_replay_sync_to_owner_abort() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (primary, ww, _ww_server_tip, _ww_project_tip) = make_ww_ahead_sync_to(tmp.path());
 
     let ww_server_pre = git_out(&["rev-parse", "HEAD"], &ww.server_dir);
@@ -985,7 +985,7 @@ fn cell_e_replay_sync_to_owner_abort() {
 
 #[test]
 fn cell_e_replay_sync_to_lease_abort() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (primary, ww, _ww_server_tip, _ww_project_tip) = make_ww_ahead_sync_to(tmp.path());
 
     let ww_server_pre = git_out(&["rev-parse", "HEAD"], &ww.server_dir);
@@ -1031,7 +1031,7 @@ fn cell_e_replay_sync_to_lease_abort() {
 /// recorded path routed through a symlink.
 #[test]
 fn cell_e_replay_sync_to_lease_abort_with_symlinked_record_paths() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let real = tmp.path().join("real");
     std::fs::create_dir_all(&real).unwrap();
     let link = tmp.path().join("link");
@@ -1087,7 +1087,7 @@ fn cell_e_replay_sync_to_lease_abort_with_symlinked_record_paths() {
 /// (trivial no-op). End state: primary ff'd to ww's tips.
 #[test]
 fn cell_m_replay_sync_to_owner_continue() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (primary, ww, ww_server_tip, _ww_project_tip) = make_ww_ahead_sync_to(tmp.path());
 
     let op_id = "crash-matrix-m-replay-syncto-owner";
@@ -1118,7 +1118,7 @@ fn cell_m_replay_sync_to_owner_continue() {
 
 #[test]
 fn cell_e_relock_sync_to_owner_continue() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (primary, ww, ww_server_tip, _ww_project_tip) = make_ww_ahead_sync_to(tmp.path());
 
     let op_id = "crash-matrix-e-relock-syncto-owner";
@@ -1148,7 +1148,7 @@ fn cell_e_relock_sync_to_owner_continue() {
 
 #[test]
 fn cell_m_relock_sync_to_owner_continue() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (primary, ww, ww_server_tip, _ww_project_tip) = make_ww_ahead_sync_to(tmp.path());
 
     let op_id = "crash-matrix-m-relock-syncto-owner";
@@ -1179,7 +1179,7 @@ fn cell_m_relock_sync_to_owner_continue() {
 
 #[test]
 fn cell_j_relock_sync_to_owner_continue() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (primary, ww, ww_server_tip, ww_project_tip) = make_ww_ahead_sync_to(tmp.path());
 
     let op_id = "crash-matrix-j-relock-syncto-owner";
@@ -1218,7 +1218,7 @@ fn cell_j_relock_sync_to_owner_continue() {
 /// crash semantics actually distinguish.
 #[test]
 fn cell_e_advance_target_sync_to_owner_continue() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (primary, ww, ww_server_tip, ww_project_tip) = make_ww_ahead_sync_to(tmp.path());
 
     let op_id = "crash-matrix-e-advance-syncto-owner";
@@ -1257,7 +1257,7 @@ fn cell_e_advance_target_sync_to_owner_continue() {
 
 #[test]
 fn cell_e_advance_target_sync_to_lease_continue() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (primary, ww, ww_server_tip, ww_project_tip) = make_ww_ahead_sync_to(tmp.path());
 
     let op_id = "crash-matrix-e-advance-syncto-lease";
@@ -1304,7 +1304,7 @@ fn cell_e_advance_target_sync_to_lease_continue() {
 /// already-advanced server (head == target) and advances the project.
 #[test]
 fn cell_m_advance_target_sync_to_owner_continue() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (primary, ww, ww_server_tip, ww_project_tip) = make_ww_ahead_sync_to(tmp.path());
 
     // Manually ff primary's server (modelling partial advance-target).
@@ -1370,7 +1370,7 @@ fn cell_m_advance_target_sync_to_owner_continue() {
 /// machine terminates.
 #[test]
 fn cell_j_advance_target_sync_to_owner_continue() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (primary, ww, ww_server_tip, ww_project_tip) = make_ww_ahead_sync_to(tmp.path());
 
     // Pre-advance primary's server AND project to ww's tips (modelling
@@ -1436,7 +1436,7 @@ fn cell_j_advance_target_sync_to_owner_continue() {
 /// savepoint → classified as `Untouched`. Both reset back to pre-op.
 #[test]
 fn cell_m_advance_target_sync_to_owner_abort() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (primary, ww, ww_server_tip, ww_project_tip) = make_ww_ahead_sync_to(tmp.path());
 
     let ww_server_pre = git_out(&["rev-parse", "HEAD"], &ww.server_dir);
@@ -1498,7 +1498,7 @@ fn cell_m_advance_target_sync_to_owner_abort() {
 
 #[test]
 fn cell_m_advance_target_sync_to_lease_abort() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (primary, ww, ww_server_tip, ww_project_tip) = make_ww_ahead_sync_to(tmp.path());
 
     let ww_server_pre = git_out(&["rev-parse", "HEAD"], &ww.server_dir);
@@ -1559,7 +1559,7 @@ fn cell_m_advance_target_sync_to_lease_abort() {
 /// exit nonzero, leave the tip unchanged, and retain op-state.
 #[test]
 fn cell_j_advance_target_sync_to_foreign_tip_abort_refuses() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (primary, ww, ww_server_tip, ww_project_tip) = make_ww_ahead_sync_to(tmp.path());
 
     let primary_server_pre = git_out(&["rev-parse", "HEAD"], &primary.server_dir);
@@ -1717,7 +1717,7 @@ fn make_retire_fixture(parent: &Path) -> RetireFixture {
 /// (the reconciled / happy path).
 #[test]
 fn cell_e_retire_sync_to_owner_continue_when_reconciled() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let RetireFixture { primary, ww } = make_retire_fixture(tmp.path());
 
     let op_id = "crash-matrix-e-retire-syncto-owner";
@@ -1773,7 +1773,7 @@ fn cell_e_retire_sync_to_owner_continue_when_reconciled() {
 /// (cleanup drops through `primary_path()`, which survives the workweave).
 #[test]
 fn cell_retire_sync_to_drops_savepoints_in_surviving_clone() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let RetireFixture { primary, ww } = make_retire_fixture(tmp.path());
 
     let op_id = "crash-matrix-retire-savepoint-leak";
@@ -1847,7 +1847,7 @@ fn cell_retire_sync_to_drops_savepoints_in_surviving_clone() {
 /// that this MUST be observationally identical.
 #[test]
 fn cell_e_retire_sync_to_lease_continue_when_reconciled() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let RetireFixture { primary, ww } = make_retire_fixture(tmp.path());
 
     let op_id = "crash-matrix-e-retire-syncto-lease";
@@ -1891,7 +1891,7 @@ fn cell_e_retire_sync_to_lease_continue_when_reconciled() {
 /// because still present) and target.
 #[test]
 fn cell_j_retire_sync_to_owner_abort_restores_target() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let RetireFixture { primary, ww } = make_retire_fixture(tmp.path());
 
     let ww_server_pre = git_out(&["rev-parse", "HEAD"], &ww.server_dir);
@@ -1977,7 +1977,7 @@ fn cell_j_retire_sync_to_owner_abort_restores_target() {
 /// the record across the `--continue` and gates cleanup.
 #[test]
 fn cell_override_resume_fidelity_discard_local_commits() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (primary, ww, _sha) = make_shared_workspaces(tmp.path());
 
     let op_id = "crash-matrix-override-resume-discard";
@@ -2039,7 +2039,7 @@ fn cell_override_resume_fidelity_discard_local_commits() {
 /// records the pre-op tip, and the project repo has since moved off it.
 #[test]
 fn cell_resumed_discard_rewind_keeps_the_original_savepoint() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (primary, ww, _sha) = make_shared_workspaces(tmp.path());
 
     // The pre-op tip: a project commit of the operator's that the discard is
@@ -2121,7 +2121,7 @@ fn cell_resumed_discard_rewind_keeps_the_original_savepoint() {
 /// - `--continue` re-pins, and ww must converge to primary's NEW tip.
 #[test]
 fn cell_continue_after_source_mutation_converges_to_new_pin() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (primary, ww, _sha) = make_shared_workspaces(tmp.path());
 
     let op_id = "crash-matrix-continue-after-source-mut";
@@ -2238,7 +2238,7 @@ fn make_primary_ahead_sync(parent: &Path) -> (Workspace, Workspace, String, Stri
 /// Zero refusals, success exit.
 #[test]
 fn cell_advanced_tips_entry_write_no_advances_abort_all_untouched() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (primary, ww, initial_sha, primary_server_tip) = make_primary_ahead_sync(tmp.path());
 
     let ww_server_pre = git_out(&["rev-parse", "HEAD"], &ww.server_dir);
@@ -2306,7 +2306,7 @@ fn cell_advanced_tips_entry_write_no_advances_abort_all_untouched() {
 /// Zero refusals, success exit.
 #[test]
 fn cell_advanced_tips_mid_fanout_server_advanced_project_at_savepoint_abort_zero_refusals() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (primary, ww, initial_sha, primary_server_tip) = make_primary_ahead_sync(tmp.path());
 
     let ww_server_pre = git_out(&["rev-parse", "HEAD"], &ww.server_dir);
@@ -2384,7 +2384,7 @@ fn cell_advanced_tips_mid_fanout_server_advanced_project_at_savepoint_abort_zero
 /// restores to savepoint. Zero refusals.
 #[test]
 fn cell_advanced_tips_rebase_captured_project_at_t1_abort_restores() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     // Use ww-ahead-of-primary sync-to context. ww's project has a local commit
     // (from make_ww_ahead_sync_to), so Phase 1' would rebase it.
     // We model the state AFTER Phase 1' succeeded: ww's project is at T1.
@@ -2476,7 +2476,7 @@ fn cell_advanced_tips_rebase_captured_project_at_t1_abort_restores() {
 /// ref present, tip unchanged.
 #[test]
 fn cell_advanced_tips_one_write_window_project_at_t1_abort_refuses() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (primary, ww, _ww_server_tip, _ww_project_tip) = make_ww_ahead_sync_to(tmp.path());
 
     let ww_project_pre = git_out(&["rev-parse", "HEAD"], &ww.project_dir);
@@ -2563,7 +2563,7 @@ fn cell_advanced_tips_one_write_window_project_at_t1_abort_refuses() {
 /// converged_tips (existing behaviour, no regression).
 #[test]
 fn cell_advanced_tips_after_relock_project_at_t2_abort_via_converged_tips() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (primary, ww, _ww_server_tip, _ww_project_tip) = make_ww_ahead_sync_to(tmp.path());
 
     let ww_server_pre = git_out(&["rev-parse", "HEAD"], &ww.server_dir);
@@ -2641,7 +2641,7 @@ fn cell_advanced_tips_after_relock_project_at_t2_abort_via_converged_tips() {
 /// refuses; project auto-restores. Regression test for the 2026-06-10 incident.
 #[test]
 fn cell_advanced_tips_mixed_foreign_server_refuses_intent_project_restores() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (primary, ww, primary_server_tip, _ww_project_tip) = make_primary_ahead_sync(tmp.path());
 
     let ww_server_pre = git_out(&["rev-parse", "HEAD"], &ww.server_dir);
@@ -2756,7 +2756,7 @@ fn cell_advanced_tips_mixed_foreign_server_refuses_intent_project_restores() {
 /// identically to pre-change behaviour. Repos at savepoint are Untouched.
 #[test]
 fn cell_advanced_tips_degradation_no_field_abort_behaves_as_pre_change() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (primary, ww, sha) = make_shared_workspaces(tmp.path());
 
     let ww_server_pre = git_out(&["rev-parse", "HEAD"], &ww.server_dir);

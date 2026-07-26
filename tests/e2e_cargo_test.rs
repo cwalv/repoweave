@@ -9,7 +9,6 @@
 
 use std::path::Path;
 use std::process::Command;
-use tempfile::TempDir;
 
 mod common;
 
@@ -138,7 +137,7 @@ fn e2e_cargo_workspace_wiring() {
         return;
     }
 
-    let tmp = TempDir::new().unwrap();
+    let tmp = common::tempdir().unwrap();
     let root = tmp.path();
 
     setup_weave(root);
@@ -211,7 +210,7 @@ fn cargo_release_version_pin_workflow() {
         return;
     }
 
-    let tmp = TempDir::new().unwrap();
+    let tmp = common::tempdir().unwrap();
     let root = tmp.path();
 
     // ---- Step 1: set up the weave with two Rust repos ----
@@ -345,7 +344,7 @@ fn e2e_cargo_lock_out_of_band_rewrite_surfaces_digest_warning() {
         return;
     }
 
-    let tmp = TempDir::new().unwrap();
+    let tmp = common::tempdir().unwrap();
     let root = tmp.path();
     setup_weave(root);
 
@@ -487,7 +486,7 @@ fn e2e_cargo_config_surface_reaches_nested_workspace_opt_out() {
         return;
     }
 
-    let tmp = TempDir::new().unwrap();
+    let tmp = common::tempdir().unwrap();
     let root = tmp.path();
 
     // ---- Base weave (two active Rust repos, one project) ----

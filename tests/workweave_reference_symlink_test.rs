@@ -142,7 +142,7 @@ fn fingerprint(canonical: &Path) -> CanonicalFingerprint {
 
 #[test]
 fn create_materializes_reference_as_symlink_and_owned_as_worktree() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_workspace_with_reference(tmp.path(), "proj");
 
     let ww = create_workweave(
@@ -232,7 +232,7 @@ fn create_materializes_reference_as_symlink_and_owned_as_worktree() {
 
 #[test]
 fn worktree_references_flag_cuts_a_worktree_for_reference_repos() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_workspace_with_reference(tmp.path(), "proj");
 
     let ww = create_workweave(
@@ -277,7 +277,7 @@ fn worktree_references_flag_cuts_a_worktree_for_reference_repos() {
 
 #[test]
 fn delete_unlinks_symlink_and_leaves_canonical_byte_for_byte_unchanged() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_workspace_with_reference(tmp.path(), "proj");
     let canonical = ws.join(REF_REPO);
 
@@ -326,7 +326,7 @@ fn delete_unlinks_symlink_and_leaves_canonical_byte_for_byte_unchanged() {
 
 #[test]
 fn delete_succeeds_with_a_dirty_canonical_and_leaves_it_untouched() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_workspace_with_reference(tmp.path(), "proj");
     let canonical = ws.join(REF_REPO);
 
@@ -379,7 +379,7 @@ fn delete_succeeds_with_a_dirty_canonical_and_leaves_it_untouched() {
 
 #[test]
 fn nested_workweave_reference_symlink_targets_primary_canonical() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_workspace_with_reference(tmp.path(), "proj");
 
     // Parent workweave forked from primary.
@@ -435,7 +435,7 @@ fn nested_workweave_reference_symlink_targets_primary_canonical() {
 
 #[test]
 fn two_workweaves_share_one_canonical_and_deleting_one_keeps_the_other_valid() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_workspace_with_reference(tmp.path(), "proj");
     let canonical = ws.join(REF_REPO).canonicalize().unwrap();
 
@@ -512,7 +512,7 @@ fn two_workweaves_share_one_canonical_and_deleting_one_keeps_the_other_valid() {
 
 #[test]
 fn workweave_created_after_add_reference_symlinks_the_new_repo() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = tmp.path().join("ws");
     std::fs::create_dir_all(ws.join("github")).unwrap();
 
@@ -578,7 +578,7 @@ fn workweave_created_after_add_reference_symlinks_the_new_repo() {
 
 #[test]
 fn idempotent_reuse_with_symlinked_reference_returns_clean() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_workspace_with_reference(tmp.path(), "proj");
     let canonical = ws.join(REF_REPO);
 

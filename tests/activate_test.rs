@@ -13,6 +13,8 @@ use repoweave::manifest::ProjectName;
 use repoweave::workspace::WorkweaveMarker;
 use std::path::Path;
 
+mod common;
+
 /// Build a `Command` for the `rwv` binary.
 fn rwv() -> Command {
     Command::cargo_bin("rwv").expect("rwv binary should be buildable")
@@ -124,7 +126,7 @@ fn activate_requires_project_argument() {
 
 #[test]
 fn activate_writes_rwv_active_file() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_workspace(tmp.path());
     make_project(
         &ws,
@@ -144,7 +146,7 @@ fn activate_writes_rwv_active_file() {
 
 #[test]
 fn activate_generates_ecosystem_files_in_project_dir() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_workspace(tmp.path());
     make_project(
         &ws,
@@ -182,7 +184,7 @@ fn activate_generates_ecosystem_files_in_project_dir() {
 
 #[test]
 fn activate_creates_symlinks_at_workspace_root() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_workspace(tmp.path());
     make_project(
         &ws,
@@ -222,7 +224,7 @@ fn activate_creates_symlinks_at_workspace_root() {
 
 #[test]
 fn activate_symlinks_point_to_correct_project_dir() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_workspace(tmp.path());
     make_project(
         &ws,
@@ -253,7 +255,7 @@ fn activate_symlinks_point_to_correct_project_dir() {
 
 #[test]
 fn activate_handles_multiple_ecosystem_types() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_workspace(tmp.path());
     make_project(
         &ws,
@@ -300,7 +302,7 @@ fn activate_handles_multiple_ecosystem_types() {
 
 #[test]
 fn switching_projects_swaps_symlinks() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_workspace(tmp.path());
 
     // Project A: has one npm repo
@@ -364,7 +366,7 @@ fn switching_projects_swaps_symlinks() {
 
 #[test]
 fn switching_projects_updates_rwv_active() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_workspace(tmp.path());
 
     make_project(
@@ -399,7 +401,7 @@ fn switching_projects_updates_rwv_active() {
 
 #[test]
 fn switching_removes_stale_symlinks_from_previous_project() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_workspace(tmp.path());
 
     // Project A has both npm and cargo
@@ -469,7 +471,7 @@ fn switching_removes_stale_symlinks_from_previous_project() {
 
 #[test]
 fn switching_back_restores_original_symlinks() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_workspace(tmp.path());
 
     make_project(
@@ -520,7 +522,7 @@ fn switching_back_restores_original_symlinks() {
 
 #[test]
 fn activate_works_from_workspace_subdirectory() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_workspace(tmp.path());
     make_project(
         &ws,
@@ -548,7 +550,7 @@ fn activate_works_from_workspace_subdirectory() {
 
 #[test]
 fn activate_nonexistent_project_fails() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_workspace(tmp.path());
 
     rwv()
@@ -564,7 +566,7 @@ fn activate_nonexistent_project_fails() {
 
 #[test]
 fn activate_same_project_twice_is_idempotent() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_workspace(tmp.path());
     make_project(
         &ws,
@@ -628,7 +630,7 @@ fn deactivate_descends_into_nondir_registry_subtrees() {
     // with an actually-owned name.
     use std::os::unix::fs::symlink;
 
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_workspace(tmp.path());
     let project_dir = ws.join("projects/web-app");
     std::fs::create_dir_all(&project_dir).unwrap();
@@ -717,7 +719,7 @@ integrations:\n  gita:\n    enabled: true\n",
 ///   - works for any project name (including the one already active in primary)
 #[test]
 fn activate_from_workweave_is_rejected() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_workspace(tmp.path());
     make_project(
         &ws,
@@ -760,7 +762,7 @@ fn activate_from_workweave_is_rejected() {
 /// The guard fires even when activating a *different* project from the workweave.
 #[test]
 fn activate_different_project_from_workweave_is_rejected() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_workspace(tmp.path());
     make_project(
         &ws,
@@ -813,7 +815,7 @@ fn activate_different_project_from_workweave_is_rejected() {
 
 #[test]
 fn activate_project_with_no_ecosystem_files() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_workspace(tmp.path());
 
     // Project with repos that have no ecosystem manifest files

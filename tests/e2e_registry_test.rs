@@ -15,6 +15,8 @@
 
 use std::process::Command;
 
+mod common;
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -67,7 +69,7 @@ fn go_registry_release_workflow() {
     require_registry_e2e!();
     require_tool!("go");
 
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let root = tmp.path();
 
     // -----------------------------------------------------------------------
@@ -175,7 +177,7 @@ fn npm_registry_release_workflow() {
     require_registry_e2e!();
     require_tool!("npm");
 
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let dir = tmp.path();
 
     // -----------------------------------------------------------------------
@@ -266,7 +268,7 @@ fn cargo_registry_release_workflow() {
     require_registry_e2e!();
     require_tool!("cargo");
 
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let dir = tmp.path();
 
     // -----------------------------------------------------------------------
@@ -350,7 +352,7 @@ fn python_registry_release_workflow() {
     require_registry_e2e!();
     require_tool!("uv");
 
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let dir = tmp.path();
 
     // -----------------------------------------------------------------------

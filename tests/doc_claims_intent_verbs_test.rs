@@ -73,7 +73,7 @@ fn init_bare_repo(path: &Path) {
 /// A bare repo with one commit, so it can be cloned/fetched from.
 fn init_bare_repo_with_commit(path: &Path) {
     init_bare_repo(path);
-    let tmp = tempfile::tempdir().expect("tempdir for working clone");
+    let tmp = common::tempdir().expect("tempdir for working clone");
     let work = tmp.path().join("work");
     git_run(
         &["clone", &path.to_string_lossy(), &work.to_string_lossy()],
@@ -89,7 +89,7 @@ fn init_bare_repo_with_commit(path: &Path) {
 /// detected as a `go-work` member and appears in the generated `use` block.
 fn init_bare_go_module(path: &Path, module: &str) {
     init_bare_repo(path);
-    let tmp = tempfile::tempdir().expect("tempdir for working clone");
+    let tmp = common::tempdir().expect("tempdir for working clone");
     let work = tmp.path().join("work");
     git_run(
         &["clone", &path.to_string_lossy(), &work.to_string_lossy()],
@@ -185,7 +185,7 @@ fn go_work(project_dir: &Path) -> PathBuf {
 
 #[test]
 fn add_authors_managed_content() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (ws, project_dir) = setup_git_project(tmp.path(), "myapp", &[]);
 
     assert!(
@@ -211,7 +211,7 @@ fn add_authors_managed_content() {
 
 #[test]
 fn remove_authors_managed_content() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let bare = tmp.path().join("dep.git");
     init_bare_repo_with_commit(&bare);
     let url = format!("file://{}", bare.display());
@@ -255,7 +255,7 @@ fn remove_authors_managed_content() {
 /// workspace must record the membership change without authoring.
 #[test]
 fn add_does_not_author_from_a_partial_member_set() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
 
     let absent_bare = tmp.path().join("org/absent.git");
     init_bare_go_module(&absent_bare, "example.com/absent");
@@ -295,7 +295,7 @@ fn add_does_not_author_from_a_partial_member_set() {
 /// there would rewrite the file from what remains and drop the rest.
 #[test]
 fn remove_does_not_overwrite_managed_content_from_a_partial_member_set() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
 
     let keep_bare = tmp.path().join("org/keep.git");
     init_bare_go_module(&keep_bare, "example.com/keep");
@@ -357,7 +357,7 @@ fn remove_does_not_overwrite_managed_content_from_a_partial_member_set() {
 
 #[test]
 fn fetch_does_not_author_managed_content() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = tmp.path().join("ws");
     std::fs::create_dir_all(&ws).unwrap();
 
@@ -383,7 +383,7 @@ fn fetch_does_not_author_managed_content() {
 
 #[test]
 fn activate_does_not_author_managed_content() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_workspace(tmp.path());
     let project_dir = ws.join("projects/myapp");
     std::fs::create_dir_all(&project_dir).unwrap();
@@ -405,7 +405,7 @@ fn activate_does_not_author_managed_content() {
 
 #[test]
 fn workweave_create_does_not_author_managed_content() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_workspace(tmp.path());
     let project_dir = ws.join("projects/myapp");
     std::fs::create_dir_all(&project_dir).unwrap();
@@ -430,7 +430,7 @@ fn workweave_create_does_not_author_managed_content() {
 
 #[test]
 fn init_does_not_author_managed_content() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = tmp.path().join("ws");
     std::fs::create_dir_all(&ws).unwrap();
 
@@ -450,7 +450,7 @@ fn init_does_not_author_managed_content() {
 
 #[test]
 fn init_adopt_does_not_author_managed_content() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_workspace(tmp.path());
 
     let project_bare = make_project_bare(tmp.path(), "adoptee", &[]);
@@ -502,7 +502,7 @@ fn init_adopt_does_not_author_managed_content() {
 
 #[test]
 fn init_adopt_does_not_reauthor_a_committed_code_workspace() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let bare = tmp.path().join("myapp.git");
     init_bare_repo(&bare);
     let work = tmp.path().join("myapp-work");
@@ -673,7 +673,7 @@ fn materialize_lib_subcrates(ws: &Path, subcrates: &[&str]) {
 #[test]
 fn init_adopt_does_not_truncate_committed_cargo_members() {
     require_cargo!();
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
 
     // Marked, committed manifest listing three members. `rwv.yaml`'s
     // `include:` names only two, so authoring computes a strictly smaller
@@ -722,7 +722,7 @@ lto = true
 #[test]
 fn init_adopt_does_not_write_into_a_user_held_cargo_manifest() {
     require_cargo!();
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
 
     // No marker, and members that already agree with the config — so the
     // only thing an authoring pass changes is the injected `resolver`.
@@ -805,7 +805,7 @@ version = \"0.0.9\"
 #[test]
 fn init_adopt_regenerates_a_committed_cargo_lock() {
     require_cargo!();
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
 
     // Marked, and members that already agree with the config — no truncation
     // axis in play, so the lock is the only thing under test.
@@ -859,7 +859,7 @@ resolver = \"2\"
 #[test]
 fn init_adopt_completes_when_workspace_members_are_not_fetched_yet() {
     require_cargo!();
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
 
     let committed_cargo_toml = "\
 [workspace]

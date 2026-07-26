@@ -145,7 +145,7 @@ mod npm {
 
     #[test]
     fn greenfield_name_derived_from_project() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = common::tempdir().unwrap();
         let (ws, _proj_dir) = make_workspace_with_project(tmp.path(), "ws", "my-cool-project");
 
         // Seed the first repo with a package.json trigger.
@@ -188,7 +188,7 @@ mod npm {
 
     #[test]
     fn customization_survives_second_add() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = common::tempdir().unwrap();
         let (ws, _proj_dir) = make_workspace_with_project(tmp.path(), "ws", "original-project");
 
         add_npm_trigger(&ws, "github/acme/api");
@@ -254,7 +254,7 @@ mod npm {
 
     #[test]
     fn cutover_preserves_custom_name_and_untracked_fields() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = common::tempdir().unwrap();
         let (ws, proj_dir) = make_workspace_with_project(tmp.path(), "ws", "some-project");
 
         add_npm_trigger(&ws, "github/org/lib");
@@ -354,7 +354,7 @@ mod uv {
 
     #[test]
     fn greenfield_package_false_set() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = common::tempdir().unwrap();
         let (ws, _proj_dir) = make_workspace_with_project(tmp.path(), "ws", "my-uv-project");
 
         add_uv_trigger(&ws, "github/astral/protocol");
@@ -387,7 +387,7 @@ mod uv {
 
     #[test]
     fn customization_survives_second_add() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = common::tempdir().unwrap();
         let (ws, _proj_dir) = make_workspace_with_project(tmp.path(), "ws", "my-uv-project");
 
         add_uv_trigger(&ws, "github/astral/protocol");
@@ -445,7 +445,7 @@ mod uv {
 
     #[test]
     fn cutover_preserves_user_package_key_and_untracked_fields() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = common::tempdir().unwrap();
         let (ws, proj_dir) = make_workspace_with_project(tmp.path(), "ws", "uv-cutover-project");
 
         add_uv_trigger(&ws, "github/org/lib");
@@ -535,7 +535,7 @@ mod cargo {
 
     #[test]
     fn greenfield_resolver_set() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = common::tempdir().unwrap();
         let (ws, _proj_dir) = make_workspace_with_project(tmp.path(), "ws", "my-cargo-project");
 
         add_cargo_trigger(&ws, "github/acme/lib", "acme-lib");
@@ -573,7 +573,7 @@ mod cargo {
 
     #[test]
     fn customization_survives_second_add() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = common::tempdir().unwrap();
         let (ws, _proj_dir) = make_workspace_with_project(tmp.path(), "ws", "my-cargo-project");
 
         add_cargo_trigger(&ws, "github/acme/lib", "acme-lib");
@@ -637,7 +637,7 @@ mod cargo {
 
     #[test]
     fn cutover_preserves_custom_resolver_and_untracked_fields() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = common::tempdir().unwrap();
         let (ws, proj_dir) = make_workspace_with_project(tmp.path(), "ws", "cargo-cutover-project");
 
         add_cargo_trigger(&ws, "github/org/crate-a", "crate-a");
@@ -708,7 +708,7 @@ mod cargo {
 
     #[test]
     fn doctor_reports_author_drift_not_default_only_drift() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = common::tempdir().unwrap();
         let (ws, proj_dir) = make_workspace_with_project(tmp.path(), "ws", "doctor-cargo-project");
 
         // Put a git repo on disk (so doctor doesn't error on missing clone).
@@ -826,7 +826,7 @@ mod go_work {
 
     #[test]
     fn greenfield_go_version_derived_from_go_mod() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = common::tempdir().unwrap();
         let (ws, _proj_dir) = make_workspace_with_project(tmp.path(), "ws", "my-go-project");
 
         add_go_trigger(
@@ -873,7 +873,7 @@ mod go_work {
 
     #[test]
     fn customization_survives_go_version_not_downgraded() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = common::tempdir().unwrap();
         let (ws, proj_dir) = make_workspace_with_project(tmp.path(), "ws", "my-go-project");
 
         add_go_trigger(
@@ -921,7 +921,7 @@ mod go_work {
 
     #[test]
     fn cutover_preserves_replace_and_go_version() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = common::tempdir().unwrap();
         let (ws, proj_dir) = make_workspace_with_project(tmp.path(), "ws", "go-cutover-project");
 
         // go.mod files at 1.26 to match the pre-seeded go.work.
@@ -1011,7 +1011,7 @@ mod go_work {
 
     #[test]
     fn fo_l22tpw_pre_existing_symlink_does_not_truncate() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = common::tempdir().unwrap();
         let (ws, proj_dir) = make_workspace_with_project(tmp.path(), "ws", "go-symlink-project");
 
         add_go_trigger(
@@ -1074,7 +1074,7 @@ mod go_work {
 
 #[test]
 fn fo_eli0oa_add_writes_only_inside_tempdir_sandbox() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (ws, _proj_dir) = make_workspace_with_project(tmp.path(), "ws", "sandbox-project");
 
     // Use a distinctive repo path that would be easy to spot if it leaked.

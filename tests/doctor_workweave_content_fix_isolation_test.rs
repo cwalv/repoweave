@@ -288,7 +288,7 @@ fn diff_snapshots(
 fn doctor_fix_from_workweave_leaves_primary_project_dir_byte_identical() {
     require_go!();
 
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let root = tmp.path();
 
     // ------------------------------------------------------------------

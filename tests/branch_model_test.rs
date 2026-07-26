@@ -69,7 +69,7 @@ fn git_ok(dir: &Path, args: &[&str]) -> bool {
 
 /// A repo with no commits: HEAD is symbolic and points at an unborn branch.
 fn empty_repo() -> TempDir {
-    let dir = TempDir::new().unwrap();
+    let dir = common::tempdir().unwrap();
     git(dir.path(), &["init"]);
     git(dir.path(), &["config", "user.email", "test@test.com"]);
     git(dir.path(), &["config", "user.name", "Test"]);
@@ -217,7 +217,7 @@ fn head_attachment_on_a_non_repo_is_not_a_detached_head() {
     // The shipped `current_ref` returned `Ok(None)` here, which is why
     // `rwv push` reported "is on a detached HEAD" for a directory with no
     // git in it at all.
-    let dir = TempDir::new().unwrap();
+    let dir = common::tempdir().unwrap();
 
     match GitVcs.head_attachment(dir.path()) {
         Err(VcsError::NotARepo(p)) => assert_eq!(p, dir.path()),
@@ -229,7 +229,7 @@ fn head_attachment_on_a_non_repo_is_not_a_detached_head() {
 fn head_attachment_kinds_are_distinguishable_in_json_output() {
     // Doctor / push / lock all report through the `--json` surface; the
     // point of the split is lost if the wire form re-collapses it.
-    let dir = TempDir::new().unwrap();
+    let dir = common::tempdir().unwrap();
     let err = GitVcs.head_attachment(dir.path()).unwrap_err();
     assert_eq!(err.kind(), "not-a-repo");
 }
@@ -667,7 +667,7 @@ fn remote_default_branch_is_none_for_a_symref_outside_the_remote_namespace() {
 
 #[test]
 fn remote_default_branch_on_a_non_repo_is_an_error_not_an_absence() {
-    let dir = TempDir::new().unwrap();
+    let dir = common::tempdir().unwrap();
     match GitVcs.remote_default_branch(dir.path()) {
         Err(VcsError::NotARepo(p)) => assert_eq!(p, dir.path()),
         other => panic!("expected NotARepo, got {other:?}"),

@@ -359,7 +359,7 @@ fn class3_workweave_path_shape_matches_prime_claim() {
     // And the Typical flow example:
     //   "# ... edit, test, commit across repos in .workweaves/<project>--<name>/ ..."
 
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_workspace(tmp.path(), "my-proj");
 
     // Redirect workweave output to a controlled directory.

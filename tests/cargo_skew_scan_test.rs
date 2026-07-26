@@ -22,7 +22,8 @@ use repoweave::integrations::cargo_workspace::{
 use repoweave::manifest::{IntegrationConfig, Manifest, ProjectName, Role};
 use std::collections::HashMap;
 use std::path::Path;
-use tempfile::TempDir;
+
+mod common;
 
 // ---------------------------------------------------------------------------
 // Fixture helpers
@@ -77,7 +78,7 @@ fn make_ctx<'a>(
 
 #[test]
 fn version_skew_detects_bare_string_requirement_difference() {
-    let tmp = TempDir::new().unwrap();
+    let tmp = common::tempdir().unwrap();
     let root = tmp.path();
 
     write_file(
@@ -109,7 +110,7 @@ fn version_skew_detects_bare_string_requirement_difference() {
 
 #[test]
 fn version_skew_silent_when_all_agree() {
-    let tmp = TempDir::new().unwrap();
+    let tmp = common::tempdir().unwrap();
     let root = tmp.path();
 
     write_file(
@@ -132,7 +133,7 @@ fn version_skew_silent_when_all_agree() {
 
 #[test]
 fn version_skew_inline_table_uses_version_field() {
-    let tmp = TempDir::new().unwrap();
+    let tmp = common::tempdir().unwrap();
     let root = tmp.path();
 
     write_file(
@@ -156,7 +157,7 @@ fn version_skew_inline_table_uses_version_field() {
 
 #[test]
 fn version_skew_ignores_path_and_git_deps() {
-    let tmp = TempDir::new().unwrap();
+    let tmp = common::tempdir().unwrap();
     let root = tmp.path();
 
     // A path/git dep is not a registry requirement — skew comparison would be
@@ -188,7 +189,7 @@ fn version_skew_ignores_path_and_git_deps() {
 
 #[test]
 fn version_skew_includes_dev_and_build_dependencies() {
-    let tmp = TempDir::new().unwrap();
+    let tmp = common::tempdir().unwrap();
     let root = tmp.path();
 
     write_file(
@@ -221,7 +222,7 @@ fn version_skew_includes_dev_and_build_dependencies() {
 
 #[test]
 fn version_skew_resolves_workspace_true_via_repo_workspace_deps() {
-    let tmp = TempDir::new().unwrap();
+    let tmp = common::tempdir().unwrap();
     let root = tmp.path();
 
     // Nested-workspace repo A: root has [workspace.dependencies].serde = "1.0",
@@ -273,7 +274,7 @@ fn version_skew_workspace_true_on_workspace_root_member() {
     // The root's own `[workspace.dependencies]` is where deps live; there
     // is nothing else to compare against, but the scan should not panic
     // and should silently produce no skew for a single member.
-    let tmp = TempDir::new().unwrap();
+    let tmp = common::tempdir().unwrap();
     let root = tmp.path();
 
     write_file(
@@ -291,7 +292,7 @@ fn version_skew_workspace_true_on_workspace_root_member() {
 
 #[test]
 fn version_skew_record_is_sorted_and_stable() {
-    let tmp = TempDir::new().unwrap();
+    let tmp = common::tempdir().unwrap();
     let root = tmp.path();
 
     // Three members with three different requirements — the record must
@@ -337,7 +338,7 @@ fn version_skew_record_is_sorted_and_stable() {
 
 #[test]
 fn patch_shadowing_detects_member_config_overriding_weave() {
-    let tmp = TempDir::new().unwrap();
+    let tmp = common::tempdir().unwrap();
     let root = tmp.path();
 
     // Weave-level Cargo.toml with a patch entry.
@@ -387,7 +388,7 @@ fn patch_shadowing_detects_member_config_overriding_weave() {
 
 #[test]
 fn patch_shadowing_silent_when_keys_do_not_collide() {
-    let tmp = TempDir::new().unwrap();
+    let tmp = common::tempdir().unwrap();
     let root = tmp.path();
 
     // Weave has a patch for `serde`, member has a patch for `tokio` — no
@@ -420,7 +421,7 @@ fn patch_shadowing_silent_when_keys_do_not_collide() {
 
 #[test]
 fn patch_shadowing_silent_when_member_has_no_cargo_config() {
-    let tmp = TempDir::new().unwrap();
+    let tmp = common::tempdir().unwrap();
     let root = tmp.path();
 
     write_file(
@@ -443,7 +444,7 @@ fn patch_shadowing_silent_when_member_has_no_cargo_config() {
 
 #[test]
 fn patch_shadowing_silent_when_weave_has_no_patches() {
-    let tmp = TempDir::new().unwrap();
+    let tmp = common::tempdir().unwrap();
     let root = tmp.path();
 
     // Weave Cargo.toml has no [patch.*]; a member's .cargo/config.toml
@@ -474,7 +475,7 @@ fn patch_shadowing_reads_weave_level_cargo_config_too() {
     // Finding 2 forward-looking: when a weave-level `.cargo/config.toml`
     // is introduced (or authored by the operator today), its `[patch.*]`
     // keys are just as vulnerable to shadowing as the manifest's.
-    let tmp = TempDir::new().unwrap();
+    let tmp = common::tempdir().unwrap();
     let root = tmp.path();
 
     write_file(
@@ -507,7 +508,7 @@ fn patch_shadowing_names_ancestor_config_between_member_and_weave() {
     // Cargo's discovery walks upward. A `.cargo/config.toml` sitting in
     // an intermediate ancestor (e.g. `github/acme/.cargo/config.toml`)
     // still shadows the weave root per closest-wins.
-    let tmp = TempDir::new().unwrap();
+    let tmp = common::tempdir().unwrap();
     let root = tmp.path();
 
     write_file(
@@ -633,7 +634,7 @@ fn patch_shadowing_wire_shape_has_stable_kind_tag_and_fields() {
 fn scan_cargo_ecosystem_produces_both_skew_and_shadowing_violations() {
     use repoweave::check::{scan_cargo_ecosystem, CheckViolation};
 
-    let tmp = TempDir::new().unwrap();
+    let tmp = common::tempdir().unwrap();
     let root = tmp.path();
 
     // A weave with two Rust members, a skewed dep, and a shadowing
@@ -707,7 +708,7 @@ fn scan_cargo_ecosystem_produces_both_skew_and_shadowing_violations() {
 fn scan_cargo_ecosystem_silent_when_no_cargo_members() {
     use repoweave::check::scan_cargo_ecosystem;
 
-    let tmp = TempDir::new().unwrap();
+    let tmp = common::tempdir().unwrap();
     let root = tmp.path();
 
     // No Cargo.toml files anywhere — scan must silently produce no findings
@@ -738,7 +739,7 @@ fn scan_members_auto_enumerates_nested_workspace_sub_crates_grok_build_shape() {
     // The grok-build fixture is exactly this shape (85 crates under one
     // nested workspace). With this fix, serde 1.0 (via workspace-deps in
     // grok-build's root) vs serde 2.0 (direct in "other") IS detected.
-    let tmp = TempDir::new().unwrap();
+    let tmp = common::tempdir().unwrap();
     let root = tmp.path();
 
     // Nested-workspace repo — activation would bail on this.
@@ -847,7 +848,7 @@ fn patch_shadowing_dedupes_repeated_findings_across_members() {
     // If two members share the same `.cargo/config.toml` (via an ancestor
     // dir like github/acme/.cargo/config.toml), the finding must be
     // reported once — one file has one shadowing key.
-    let tmp = TempDir::new().unwrap();
+    let tmp = common::tempdir().unwrap();
     let root = tmp.path();
 
     write_file(
@@ -890,7 +891,7 @@ fn patch_shadowing_dedupes_repeated_findings_across_members() {
 fn scan_members_glob_expansion_exact_path() {
     // Exact path (no wildcards) in [workspace].members is treated like any
     // other member: look for Cargo.toml at that exact sub-path.
-    let tmp = TempDir::new().unwrap();
+    let tmp = common::tempdir().unwrap();
     let root = tmp.path();
 
     write_file(
@@ -959,7 +960,7 @@ fn scan_members_glob_expansion_exact_path() {
 #[test]
 fn scan_members_glob_expansion_wildcard() {
     // Wildcard (`*`) pattern in [workspace].members: expand by filesystem.
-    let tmp = TempDir::new().unwrap();
+    let tmp = common::tempdir().unwrap();
     let root = tmp.path();
 
     write_file(
@@ -1029,7 +1030,7 @@ fn scan_members_glob_expansion_wildcard() {
 #[test]
 fn scan_members_glob_expansion_respects_workspace_exclude() {
     // [workspace].exclude prevents a matching sub-dir from being enumerated.
-    let tmp = TempDir::new().unwrap();
+    let tmp = common::tempdir().unwrap();
     let root = tmp.path();
 
     write_file(
@@ -1086,7 +1087,7 @@ fn scan_members_explicit_config_overrides_auto_enumeration() {
     // When members.<repo> is configured explicitly, the explicit list wins
     // over auto-enumeration of [workspace].members globs. The operator can
     // narrow (or completely override) what scan_members emits.
-    let tmp = TempDir::new().unwrap();
+    let tmp = common::tempdir().unwrap();
     let root = tmp.path();
 
     // Nested-workspace repo with two sub-crates in [workspace].members.
@@ -1140,7 +1141,7 @@ fn scan_members_explicit_config_overrides_auto_enumeration() {
 fn scan_members_non_workspace_repos_unaffected() {
     // Plain repos (no [workspace] in root Cargo.toml) must still emit only
     // their root — the auto-enumeration path must not touch them.
-    let tmp = TempDir::new().unwrap();
+    let tmp = common::tempdir().unwrap();
     let root = tmp.path();
 
     write_file(
@@ -1200,7 +1201,7 @@ fn nested_workspace_reference_repo_becomes_derived_patch_source() {
     use repoweave::integration::Integration;
     use repoweave::integrations::cargo_workspace::CargoWorkspace;
 
-    let tmp = TempDir::new().unwrap();
+    let tmp = common::tempdir().unwrap();
     let root = tmp.path();
 
     // Reference-role nested workspace repo: root has [workspace], no [package].

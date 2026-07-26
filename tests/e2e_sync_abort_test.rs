@@ -251,7 +251,7 @@ fn sync_without_source_outside_workweave_errors() {
     // recorded parent). Outside any workspace it should fail loudly — and
     // outside a workweave (in a primary weave) it should also fail with a
     // helpful message rather than silently doing nothing.
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     rwv().arg("sync").current_dir(tmp.path()).assert().failure();
 }
 
@@ -261,7 +261,7 @@ fn sync_without_source_outside_workweave_errors() {
 
 #[test]
 fn check_locked_passes_when_lock_matches_head() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (ws, _) = make_locked_workspace(tmp.path(), "primary");
     rwv()
         .args(["doctor", "--locked"])
@@ -272,7 +272,7 @@ fn check_locked_passes_when_lock_matches_head() {
 
 #[test]
 fn check_locked_fails_when_repo_has_advanced_past_lock() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (ws, _) = make_locked_workspace(tmp.path(), "primary");
 
     // Advance server past the locked SHA without updating rwv.lock.
@@ -292,7 +292,7 @@ fn check_locked_fails_when_repo_has_advanced_past_lock() {
 
 #[test]
 fn status_shows_per_repo_state() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (ws, _) = make_locked_workspace(tmp.path(), "primary");
     rwv()
         .arg("status")
@@ -304,7 +304,7 @@ fn status_shows_per_repo_state() {
 
 #[test]
 fn status_json_flag_produces_machine_readable_output() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (ws, _) = make_locked_workspace(tmp.path(), "primary");
     let assert = rwv()
         .args(["status", "--json"])
@@ -355,7 +355,7 @@ fn status_json_flag_produces_machine_readable_output() {
 /// Tutorial scenario: workweave finishes work → `rwv lock` → from primary `rwv sync <ww>`.
 #[test]
 fn sync_ff_primary_advances_to_workweave_lock() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (primary, ww, _c1) = make_shared_workspaces(tmp.path());
 
     // Workweave: make commit C2, update lock.
@@ -387,7 +387,7 @@ fn sync_ff_primary_advances_to_workweave_lock() {
 /// Tutorial scenario: primary has advanced → from workweave `rwv sync primary` catches up.
 #[test]
 fn sync_ff_is_symmetric_workweave_catches_up_to_primary() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (primary, ww, _c1) = make_shared_workspaces(tmp.path());
 
     // Primary: advance to C2, update lock.
@@ -426,7 +426,7 @@ fn sync_ff_is_symmetric_workweave_catches_up_to_primary() {
 /// sync refuses when the source workspace's lock is stale (source HEAD ≠ source lock).
 #[test]
 fn sync_refuses_when_source_lock_is_stale() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (primary, _) = make_locked_workspace(tmp.path(), "primary");
     let (source, _) = make_locked_workspace(tmp.path(), "source");
 
@@ -449,7 +449,7 @@ fn sync_refuses_when_source_lock_is_stale() {
 /// sync refuses when the CWD workspace's lock is stale (CWD HEAD ≠ CWD lock).
 #[test]
 fn sync_refuses_when_cwd_lock_is_stale() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (primary, _) = make_locked_workspace(tmp.path(), "primary");
     let (source, _) = make_locked_workspace(tmp.path(), "source");
 
@@ -475,7 +475,7 @@ fn sync_refuses_when_cwd_lock_is_stale() {
 /// end-state assertion, new flag spelling per spec fo-jsbr3i.6.)
 #[test]
 fn sync_allow_stale_lock_bypasses_lock_freshness_precondition() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (primary, _) = make_locked_workspace(tmp.path(), "primary");
     let (source, _) = make_locked_workspace(tmp.path(), "source");
 
@@ -537,7 +537,7 @@ fn primary_advance_project_one_commit(primary: &Workspace, server_sha: &str) {
 /// The error names both workspaces and the proper recovery path.
 #[test]
 fn sync_refuses_when_destination_project_repo_is_ahead_of_source() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (primary, ww, c1) = make_shared_workspaces(tmp.path());
 
     // Primary advances its project repo by one commit (still pointing at C1
@@ -580,7 +580,7 @@ fn sync_refuses_when_destination_project_repo_is_ahead_of_source() {
 /// (neither is an ancestor of the other), sync refuses.
 #[test]
 fn sync_refuses_when_destination_project_repo_has_diverged_from_source() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (primary, ww, c1) = make_shared_workspaces(tmp.path());
 
     // Primary advances its project by one commit (still pointing at C1 server).
@@ -616,7 +616,7 @@ fn sync_refuses_when_destination_project_repo_has_diverged_from_source() {
 /// guard explicitly that the ancestor precondition does NOT fire.
 #[test]
 fn sync_allows_when_destination_project_repo_is_strict_ancestor_of_source() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (primary, ww, c1) = make_shared_workspaces(tmp.path());
 
     // ww advances its project (server still at C1). primary's project stays at C1.
@@ -639,7 +639,7 @@ fn sync_allows_when_destination_project_repo_is_strict_ancestor_of_source() {
 /// Equal tips: both project repos at the same SHA — no-op, allowed.
 #[test]
 fn sync_allows_when_destination_project_repo_equals_source() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (primary, ww, _c1) = make_shared_workspaces(tmp.path());
 
     // No advances anywhere — both project tips share C1.
@@ -660,7 +660,7 @@ fn sync_allows_when_destination_project_repo_equals_source() {
 /// — same end-state assertions, new flag spelling per spec fo-jsbr3i.6.)
 #[test]
 fn sync_discard_local_commits_bypasses_phase1_ancestor_refusal_and_preserves_savepoint() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (primary, ww, c1) = make_shared_workspaces(tmp.path());
 
     // Primary advances its project past C1; ww's project stays at C1.
@@ -709,7 +709,7 @@ fn sync_discard_local_commits_bypasses_phase1_ancestor_refusal_and_preserves_sav
 /// diverging project commits without `--force`.
 #[test]
 fn sync_refusal_message_suggests_rebase_strategy() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (primary, ww, c1) = make_shared_workspaces(tmp.path());
 
     primary_advance_project_one_commit(&primary, &c1);
@@ -736,7 +736,7 @@ fn sync_refusal_message_suggests_rebase_strategy() {
 /// tips.
 #[test]
 fn sync_rebase_lands_lock_only_divergence_without_force() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (primary, ww, c1) = make_shared_workspaces(tmp.path());
 
     // primary advances its project by a lock-only commit; ww stays at C1.
@@ -763,7 +763,7 @@ fn sync_rebase_lands_lock_only_divergence_without_force() {
 /// first" — and that recovery actually works (no infinite refusal loop).
 #[test]
 fn sync_other_direction_first_unblocks_a_refused_backward_sync() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (primary, ww, c1) = make_shared_workspaces(tmp.path());
 
     // Primary advances its project by one commit (C1 server still).
@@ -798,7 +798,7 @@ fn sync_other_direction_first_unblocks_a_refused_backward_sync() {
 /// active project differs from the one being synced.
 #[test]
 fn lock_freshness_source_error_names_workspace_and_recovery_path() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (primary, _) = make_locked_workspace(tmp.path(), "primary");
     let (source, _) = make_locked_workspace(tmp.path(), "source");
 
@@ -852,7 +852,7 @@ fn lock_freshness_source_error_names_workspace_and_recovery_path() {
 /// project even when the active project differs from the one being synced.
 #[test]
 fn lock_freshness_destination_error_names_workspace_and_recovery_path() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (primary, _) = make_locked_workspace(tmp.path(), "primary");
     let (source, _) = make_locked_workspace(tmp.path(), "source");
 
@@ -906,7 +906,7 @@ fn lock_freshness_destination_error_names_workspace_and_recovery_path() {
 /// When CWD has local commits on top of an older base, --strategy rebase replays them.
 #[test]
 fn sync_rebase_replays_local_commits_on_source_tip() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (primary, ww, _c1) = make_shared_workspaces(tmp.path());
 
     // Primary: advance to C2, update lock.
@@ -984,7 +984,7 @@ fn sync_rebase_replays_local_commits_on_source_tip() {
 /// abort fails with a clear message when no sync operation is in progress.
 #[test]
 fn abort_fails_gracefully_when_no_op_in_progress() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (ws, _) = make_locked_workspace(tmp.path(), "primary");
     rwv()
         .arg("abort")
@@ -1000,7 +1000,7 @@ fn abort_fails_gracefully_when_no_op_in_progress() {
 /// After a conflicted rebase, abort restores every repo to its pre-sync state.
 #[test]
 fn abort_restores_repos_to_pre_op_state() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (primary, ww, _c1) = make_shared_workspaces(tmp.path());
 
     // Both sides make conflicting changes to the same file.
@@ -1070,7 +1070,7 @@ fn abort_restores_repos_to_pre_op_state() {
 /// clean).
 #[test]
 fn abort_succeeds_when_rwv_lock_contains_conflict_markers() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (ws, _server_sha) = make_locked_workspace(tmp.path(), "primary");
     let project_dir = &ws.project_dir;
 
@@ -1195,7 +1195,7 @@ fn git_tag(repo: &Path, tag: &str) {
 /// Regression test: before the fix, this spuriously produced "source lock is stale".
 #[test]
 fn sync_proceeds_when_source_lock_tag_matches_head() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (primary, ww, _c1) = make_shared_workspaces(tmp.path());
 
     // Tag primary's server at its current HEAD and update the source lock to the tag name.
@@ -1218,7 +1218,7 @@ fn sync_proceeds_when_source_lock_tag_matches_head() {
 /// Regression guard: SHA-form should always have worked; this ensures it still does.
 #[test]
 fn sync_proceeds_when_source_lock_sha_matches_head() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (primary, ww, c1) = make_shared_workspaces(tmp.path());
 
     // primary's project already has the lock with C1 SHA committed.
@@ -1237,7 +1237,7 @@ fn sync_proceeds_when_source_lock_sha_matches_head() {
 /// The "stale" error must fire even when the lock version is a tag name, not a raw SHA.
 #[test]
 fn sync_refuses_when_source_lock_tag_is_genuinely_stale() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (primary, _) = make_locked_workspace(tmp.path(), "primary");
     let (cwd_ws, _) = make_locked_workspace(tmp.path(), "cwd");
 
@@ -1270,7 +1270,7 @@ fn sync_refuses_when_source_lock_tag_is_genuinely_stale() {
 /// that no longer exists locally.
 #[test]
 fn sync_refuses_with_unknown_revision_when_source_lock_tag_missing() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (primary, _) = make_locked_workspace(tmp.path(), "primary");
     let (cwd_ws, _) = make_locked_workspace(tmp.path(), "cwd");
 
@@ -1301,7 +1301,7 @@ fn sync_refuses_with_unknown_revision_when_source_lock_tag_missing() {
 /// sync A→B then B→A should be a no-op on B (project repo must not grow unbounded).
 #[test]
 fn sync_roundtrip_converges_without_project_repo_growth() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (primary, ww, _c1) = make_shared_workspaces(tmp.path());
 
     // Advance primary to C2, update lock.
@@ -1422,7 +1422,7 @@ fn make_marker_workweave(parent: &Path, ww_name: &str) -> MarkerSharedWorkspaces
 /// primary's lock file content untouched.
 #[test]
 fn lock_in_marker_workweave_does_not_mutate_primary_lock_file() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_marker_workweave(tmp.path(), "feat");
 
     // Advance the workweave's server tip past the inherited C1 lock.
@@ -1467,7 +1467,7 @@ fn lock_in_marker_workweave_does_not_mutate_primary_lock_file() {
 /// operator's perspective.
 #[test]
 fn sync_in_marker_workweave_uses_workweave_own_lock_for_cwd_freshness() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_marker_workweave(tmp.path(), "feat");
 
     // Primary advances to C2 and commits the C2 lock on its main branch.
@@ -1508,7 +1508,7 @@ fn sync_in_marker_workweave_uses_workweave_own_lock_for_cwd_freshness() {
 /// primary's lock interpreted as the source's.
 #[test]
 fn sync_from_primary_with_marker_workweave_source_uses_source_own_lock() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_marker_workweave(tmp.path(), "feat");
 
     // Workweave advances to C2 and commits the C2 lock on its own project branch.
@@ -1544,7 +1544,7 @@ fn sync_from_primary_with_marker_workweave_source_uses_source_own_lock() {
 /// not silently pass by reading primary's lock.
 #[test]
 fn sync_in_marker_workweave_refuses_when_workweave_own_lock_is_stale() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_marker_workweave(tmp.path(), "feat");
 
     // Advance the workweave's server tip without updating the workweave's
@@ -1582,7 +1582,7 @@ fn sync_in_marker_workweave_refuses_when_workweave_own_lock_is_stale() {
 /// though HEAD didn't move to the lock SHA, leaving `rwv status` showing [ahead].
 #[test]
 fn sync_reports_already_ahead_when_cwd_is_past_lock_target() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (primary, ww, _c1) = make_shared_workspaces(tmp.path());
 
     // Primary: advance to C2, lock at C2.
@@ -1640,7 +1640,7 @@ fn sync_reports_already_ahead_when_cwd_is_past_lock_target() {
 /// Verifies the failure message structure carries through the new outcome enum unchanged.
 #[test]
 fn sync_ff_reports_failed_for_diverged_repo() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (primary, ww, _c1) = make_shared_workspaces(tmp.path());
 
     // Primary: advance to C2.
@@ -1692,7 +1692,7 @@ fn sync_ff_reports_failed_for_diverged_repo() {
 /// replacement flags (early-dispatch in `cli::dispatch`).
 #[test]
 fn sync_force_flag_rejected_with_migration_hint() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (primary, ww, _c1) = make_shared_workspaces(tmp.path());
 
     let assertion = rwv()
@@ -1715,7 +1715,7 @@ fn sync_force_flag_rejected_with_migration_hint() {
 /// `--force` is rejected on `rwv sync-to` with a migration hint.
 #[test]
 fn sync_to_force_flag_rejected_with_migration_hint() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (primary, ww, _c1) = make_shared_workspaces(tmp.path());
 
     let assertion = rwv()
@@ -1734,7 +1734,7 @@ fn sync_to_force_flag_rejected_with_migration_hint() {
 /// --allow-stale-lock and --discard-local-commits parse correctly on sync.
 #[test]
 fn sync_new_override_flags_parse_correctly() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (primary, ww, _c1) = make_shared_workspaces(tmp.path());
 
     // Both flags parse without a clap error. We don't need the operation to
@@ -1774,7 +1774,7 @@ fn sync_new_override_flags_parse_correctly() {
 /// (unrecoverable loss if hard-reset proceeded).
 #[test]
 fn sync_discard_local_commits_refuses_on_uncommitted_changes() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (primary, ww, c1) = make_shared_workspaces(tmp.path());
 
     // Primary advances its project past C1; ww's project stays at C1.
@@ -1808,7 +1808,7 @@ fn sync_discard_local_commits_refuses_on_uncommitted_changes() {
 /// and the tombstone savepoint is preserved after a successful sync.
 #[test]
 fn sync_discard_local_commits_records_override_and_preserves_tombstone() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (primary, ww, c1) = make_shared_workspaces(tmp.path());
 
     // Primary advances its project past C1; ww's project stays at C1.
@@ -1849,7 +1849,7 @@ fn sync_discard_local_commits_records_override_and_preserves_tombstone() {
 /// through to cleanup).
 #[test]
 fn sync_allow_stale_lock_override_recorded_and_op_completes() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (primary, _) = make_locked_workspace(tmp.path(), "primary");
     let (source, _) = make_locked_workspace(tmp.path(), "source");
 
@@ -1882,7 +1882,7 @@ fn sync_allow_stale_lock_override_recorded_and_op_completes() {
 
 #[test]
 fn gita_is_opt_in() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let root = tmp.path().join("ws");
     std::fs::create_dir_all(root.join("github/chatly")).unwrap();
     std::fs::create_dir_all(root.join("projects/no-gita")).unwrap();
@@ -1959,7 +1959,7 @@ fn gita_is_opt_in() {
 ///   - stderr does NOT contain "warning:" (old warn-and-proceed fingerprint)
 #[test]
 fn sync_bails_hard_when_post_phase1_manifest_reload_fails() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (primary, ww, _c1) = make_shared_workspaces(tmp.path());
 
     // Primary: advance server to C2 and commit an updated lock.  The WW

@@ -235,7 +235,7 @@ fn make_workweave_ahead_fixture(
 
 #[test]
 fn sync_to_retire_json_round_trip() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let workweave_name = "fo-test";
     let (primary, ww, primary_server, _ww_server, _primary_project, _ww_project, advance_sha) =
         make_workweave_ahead_fixture(tmp.path(), workweave_name);
@@ -350,7 +350,7 @@ fn sync_to_json_source_workweave_is_null_from_primary() {
     // "source" plays the role of a primary workweave; "target" is the destination.
     // Invoking sync-to from "source" (a Weave, not a Workweave) should yield
     // source_workweave == null.
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let parent = tmp.path();
 
     // Source workspace (plays the role of primary / non-workweave).
@@ -449,7 +449,7 @@ fn sync_to_json_source_workweave_is_null_from_primary() {
 
 #[test]
 fn sync_to_json_retired_false_without_retire_flag() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (primary, ww, _primary_server, _ww_server, _primary_project, _ww_project, _advance_sha) =
         make_workweave_ahead_fixture(tmp.path(), "test-ww");
 
@@ -487,7 +487,7 @@ fn sync_to_json_retired_false_without_retire_flag() {
 fn sync_to_json_step3_advance_absent_for_noop_repos() {
     // Invoke sync-to when source and target are already in sync.
     // step3_advance should be absent (no-op advance).
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let parent = tmp.path();
 
     let primary = parent.join("primary");
@@ -602,7 +602,7 @@ fn sync_to_json_step3_advance_absent_for_noop_repos() {
 #[test]
 fn sync_to_json_outside_workspace_no_panic() {
     // A plain temp dir is not inside any repoweave workspace.
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
 
     rwv()
         .args(["sync-to", "/some/nonexistent/target", "--json"])

@@ -64,7 +64,7 @@ fn read(dir: &Path, rel: &str) -> String {
 /// declared path would resolve mechanically no matter what any operation
 /// passed, and a policy parameter that did nothing would still look right.
 fn repo_declaring_derived_content() -> TempDir {
-    let dir = TempDir::new().unwrap();
+    let dir = common::tempdir().unwrap();
     let p = dir.path();
 
     git(p, &["init"]);

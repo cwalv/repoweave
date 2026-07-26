@@ -138,7 +138,7 @@ mod npm_workspaces {
 
     #[test]
     fn auto_detects_repos_with_package_json() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         // Create repos: two with package.json, one without
@@ -171,7 +171,7 @@ mod npm_workspaces {
 
     #[test]
     fn generates_root_package_json_with_workspaces_array() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         touch(root, "github/chatly/protocol/package.json");
@@ -206,7 +206,7 @@ mod npm_workspaces {
 
     #[test]
     fn excludes_reference_repos() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         touch(root, "github/acme/server/package.json");
@@ -233,7 +233,7 @@ mod npm_workspaces {
 
     #[test]
     fn multi_package_repo_expands_to_prefixed_globs() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         // A multi-package repo: root package.json declares its own workspaces.
@@ -272,7 +272,7 @@ mod npm_workspaces {
 
     #[test]
     fn multi_package_repo_object_form_workspaces_expands() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         write_file(
@@ -299,7 +299,7 @@ mod npm_workspaces {
 
     #[test]
     fn deactivation_strips_author_keys_preserves_default_only_keys() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         // name and private are Ownership::DefaultOnly — they are never stripped
@@ -344,7 +344,7 @@ mod npm_workspaces {
 
     #[test]
     fn deactivation_removes_package_json_when_only_author_keys_present() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         // A file with only the marker + workspaces (no name/private, no user fields).
@@ -366,7 +366,7 @@ mod npm_workspaces {
 
     #[test]
     fn deactivation_preserves_handwritten_package_json() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         // A hand-written package.json without the generated name should NOT be removed
@@ -387,7 +387,7 @@ mod npm_workspaces {
     /// fields while overwriting the three rwv-owned keys.
     #[test]
     fn activate_preserves_user_fields_in_existing_package_json() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         // Repo with a package.json so the integration detects it.
@@ -475,7 +475,7 @@ mod npm_workspaces {
     /// after adding a repo) must be idempotent with respect to user scripts.
     #[test]
     fn activate_is_idempotent_with_user_scripts() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         touch(root, "github/acme/server/package.json");
@@ -519,7 +519,7 @@ mod npm_workspaces {
     /// name and private are DefaultOnly — they survive deactivation.
     #[test]
     fn deactivation_strips_rwv_keys_but_preserves_user_fields() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         // Marker is x-repoweave. The file has user-authored fields (scripts,
@@ -584,7 +584,7 @@ mod npm_workspaces {
 
     #[test]
     fn check_warns_when_npm_not_on_path() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         touch(root, "github/acme/server/package.json");
@@ -621,7 +621,7 @@ mod npm_workspaces {
     /// `name: "tmuxcc"` in a tmuxcc workweave.
     #[test]
     fn fo_z8vyl_regression_name_and_scripts_survive_activate() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         touch(root, "github/cwalv/tmuxcc-daemon/package.json");
@@ -685,7 +685,7 @@ mod npm_workspaces {
     /// Greenfield test: fresh file gets name set from ctx.project (not "repoweave").
     #[test]
     fn greenfield_name_set_from_context_project_name() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         touch(root, "github/acme/api/package.json");
@@ -714,7 +714,7 @@ mod npm_workspaces {
     /// DefaultOnly survival test: user-set `private: false` must survive activate.
     #[test]
     fn default_only_private_false_survives_activate() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         touch(root, "github/acme/api/package.json");
@@ -767,7 +767,7 @@ mod npm_workspaces {
     /// User scripts / engines / devDependencies / packageManager survive.
     #[test]
     fn s6_npm_1_activate_array_workspaces_preserves_user_fields() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         touch(root, "github/acme/server/package.json");
@@ -842,7 +842,7 @@ mod npm_workspaces {
     /// (the data-loss regression test). Current :44 flattens the object.
     #[test]
     fn s6_npm_2_activate_preserves_object_form_workspaces_nohoist() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         touch(root, "github/acme/mobile/package.json");
@@ -919,7 +919,7 @@ mod npm_workspaces {
     /// Add a third member; only mutation is the added workspaces entry.
     #[test]
     fn s6_npm_3_reactivate_idempotent_preserve_order() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         // Scenario-1 result starting point: pre-activated file with marker
@@ -991,7 +991,7 @@ mod npm_workspaces {
     fn s6_npm_4_deactivate_handles_marker_and_lockfile() {
         // Sub-case (a): rwv-owned file (marker + name + private + workspaces)
         // + user fields + rwv-generated package-lock.json.
-        let tmp_a = TempDir::new().unwrap();
+        let tmp_a = common::tempdir().unwrap();
         let root_a = tmp_a.path();
         write_file(
             root_a,
@@ -1039,7 +1039,7 @@ mod npm_workspaces {
 
         // Sub-case (b): hand-written file with NO marker → leave alone, and
         // leave its lockfile alone (lockfile removal is gated on marker).
-        let tmp_b = TempDir::new().unwrap();
+        let tmp_b = common::tempdir().unwrap();
         let root_b = tmp_b.path();
         let user_pkg = r#"{
   "name": "my-app",
@@ -1073,7 +1073,7 @@ mod pnpm_workspaces {
 
     #[test]
     fn auto_detects_repos_with_package_json() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         touch(root, "github/acme/server/package.json");
@@ -1101,7 +1101,7 @@ mod pnpm_workspaces {
 
     #[test]
     fn generates_pnpm_workspace_yaml_with_packages_list() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         touch(root, "github/chatly/protocol/package.json");
@@ -1133,7 +1133,7 @@ mod pnpm_workspaces {
 
     #[test]
     fn excludes_reference_repos() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         touch(root, "github/acme/server/package.json");
@@ -1160,7 +1160,7 @@ mod pnpm_workspaces {
     fn deactivation_deletes_fully_rwv_authored_file() {
         // When the file was authored entirely by rwv (only a marker + packages
         // block, nothing user-authored), deactivation should delete it.
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         write_file(
@@ -1178,7 +1178,7 @@ mod pnpm_workspaces {
     #[test]
     fn deactivation_leaves_hand_owned_file_alone() {
         // A file without the marker was not authored by rwv — leave it alone.
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         write_file(root, "pnpm-workspace.yaml", "packages:\n  - foo\n");
@@ -1192,7 +1192,7 @@ mod pnpm_workspaces {
 
     #[test]
     fn check_warns_when_pnpm_not_on_path() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         touch(root, "github/acme/server/package.json");
@@ -1230,7 +1230,7 @@ mod pnpm_workspaces {
     /// §6.pnpm.1 — Activate preserves a user catalog and comment.
     #[test]
     fn s6_pnpm_1_activate_preserves_catalog_and_comments() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
         touch(root, "github/acme/server/package.json");
 
@@ -1281,7 +1281,7 @@ packages:
     /// Regression vs current unconditional remove_file at pnpm_workspaces.rs:33-35.
     #[test]
     fn s6_pnpm_2_deactivate_strips_packages_keeps_overrides() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         write_file(
@@ -1316,7 +1316,7 @@ packages:
     /// Keep ungated as a regression guard against the C10 port.
     #[test]
     fn s6_pnpm_3_deactivate_deletes_purely_rwv_file() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         write_file(
@@ -1340,7 +1340,7 @@ packages:
     /// twice with a member added in between.
     #[test]
     fn s6_pnpm_4_activate_idempotent_comments_preserved() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
         touch(root, "github/acme/server/package.json");
 
@@ -1418,7 +1418,7 @@ packages:
     /// itself is NOT emitted as an entry.
     #[test]
     fn multi_package_repo_expands_to_prefixed_globs() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         // A multi-package repo: root package.json present (triggers detection)
@@ -1471,7 +1471,7 @@ packages:
     /// `packages:` list is treated as a single-package repo (bare path entry).
     #[test]
     fn multi_package_repo_empty_packages_list_keeps_bare_path() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         touch(root, "github/acme/mono/package.json");
@@ -1502,7 +1502,7 @@ packages:
     /// `<repo-path>` entry (existing behavior, no regression).
     #[test]
     fn single_package_repo_no_pnpm_workspace_yaml_keeps_bare_path() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         touch(root, "github/acme/server/package.json");
@@ -1539,7 +1539,7 @@ mod go_work {
 
     #[test]
     fn auto_detects_repos_with_go_mod() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         // go work use requires valid go.mod files (not just empty touches).
@@ -1576,7 +1576,7 @@ mod go_work {
 
     #[test]
     fn generates_go_work_with_use_directives() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         write_file(
@@ -1622,7 +1622,7 @@ mod go_work {
 
     #[test]
     fn excludes_reference_repos() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         // go work use requires valid go.mod files.
@@ -1659,7 +1659,7 @@ mod go_work {
         // New behavior (merge port): deactivate strips the managed `use` block
         // and deletes the file only when nothing user-authored remains.
         // A file with no marker is left untouched (user holds the pen).
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         // File with marker + use block (no replace/toolchain/godebug = "empty").
@@ -1679,7 +1679,7 @@ mod go_work {
     #[test]
     fn deactivation_noop_when_no_marker() {
         // User-authored go.work without the rwv marker is left untouched.
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         write_file(root, "go.work", "go 1.21\n\nuse (\n)\n");
@@ -1693,7 +1693,7 @@ mod go_work {
 
     #[test]
     fn check_warns_when_go_not_on_path() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         touch(root, "github/acme/server/go.mod");
@@ -1733,7 +1733,7 @@ mod go_work {
     /// `go 1.26` must NOT be downgraded to `1.21` (the concrete bug).
     #[test]
     fn s6_go_1_add_preserves_replace_and_go_version() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         // go.mod files declare go 1.26 to match the go.work version.
@@ -1818,7 +1818,7 @@ replace example.com/legacy => ./vendor/legacy
     /// §6.go.2 — Removing a repo strips its use entry but keeps toolchain.
     #[test]
     fn s6_go_2_remove_keeps_toolchain_and_godebug() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
         // go.mod files declare go 1.26 to match the go.work version (avoids
         // primary-path downgrade when go is on PATH and max_go_version is computed).
@@ -1896,7 +1896,7 @@ use (
     /// Regression vs current unconditional remove_file at go_work.rs:36-38.
     #[test]
     fn s6_go_3_deactivate_strips_use_keeps_replace() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
         write_file(
             root,
@@ -1946,7 +1946,7 @@ replace example.com/foo => ../foo
     /// still hold (file deleted because the post-strip doc is empty).
     #[test]
     fn s6_go_4_deactivate_deletes_when_only_rwv_content() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
         write_file(
             root,
@@ -1979,7 +1979,7 @@ mod uv_workspace {
 
     #[test]
     fn auto_detects_repos_with_pyproject_toml() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         touch(root, "github/acme/server/pyproject.toml");
@@ -2007,7 +2007,7 @@ mod uv_workspace {
 
     #[test]
     fn generates_pyproject_toml_with_uv_workspace() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         touch(root, "github/chatly/protocol/pyproject.toml");
@@ -2044,7 +2044,7 @@ mod uv_workspace {
 
     #[test]
     fn excludes_reference_repos() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         touch(root, "github/acme/server/pyproject.toml");
@@ -2069,7 +2069,7 @@ mod uv_workspace {
 
     #[test]
     fn deactivation_removes_pyproject_toml() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         // A file holding only the marker-decorated managed region is fully
@@ -2088,7 +2088,7 @@ mod uv_workspace {
 
     #[test]
     fn deactivation_preserves_handwritten_pyproject_toml() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         // A hand-written pyproject.toml without the generated header should NOT be removed
@@ -2106,7 +2106,7 @@ mod uv_workspace {
 
     #[test]
     fn check_warns_when_uv_not_on_path() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         touch(root, "github/acme/server/pyproject.toml");
@@ -2139,7 +2139,7 @@ mod uv_workspace {
     /// §6.uv.1 — Activate preserves a real maturin+ruff root (merge, not clobber).
     #[test]
     fn s6_uv_1_activate_preserves_ruff_style_root() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
         touch(root, "github/astral/server/pyproject.toml");
         touch(root, "github/astral/web/pyproject.toml");
@@ -2238,7 +2238,7 @@ major_labels = []  # Ruff never uses major bumps
     /// `[tool.uv.sources]` entries that aren't `{workspace=true}` survive.
     #[test]
     fn s6_uv_2_add_member_preserves_user_sources() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
         touch(root, "github/astral/server/pyproject.toml");
 
@@ -2309,7 +2309,7 @@ some-private-lib = { git = "https://example.com/some-private-lib.git" }
     /// User non-workspace sources survive.
     #[test]
     fn s6_uv_3_deactivate_strips_keeps_user_manifest() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         write_file(
@@ -2378,7 +2378,7 @@ some-private-lib = { git = "https://example.com/some-private-lib.git" }
     /// stripped). The file survives deactivation with only the DefaultOnly key.
     #[test]
     fn s6_uv_4_greenfield_create_then_deactivate_preserves_package_false() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
         touch(root, "github/astral/protocol/pyproject.toml");
 
@@ -2440,7 +2440,7 @@ some-private-lib = { git = "https://example.com/some-private-lib.git" }
     /// `DefaultOnly` must never overwrite an existing value.
     #[test]
     fn default_only_does_not_overwrite_user_set_package_true() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
         touch(root, "github/astral/protocol/pyproject.toml");
 
@@ -2481,7 +2481,7 @@ some-private-lib = { git = "https://example.com/some-private-lib.git" }
     /// `[tool.uv].package = false` set by DefaultOnly.
     #[test]
     fn default_only_sets_package_false_on_greenfield() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
         touch(root, "github/astral/protocol/pyproject.toml");
 
@@ -2507,7 +2507,7 @@ some-private-lib = { git = "https://example.com/some-private-lib.git" }
     /// `[tool.uv].package` key → DefaultOnly sets `false`.
     #[test]
     fn default_only_sets_package_false_when_key_absent() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
         touch(root, "github/astral/protocol/pyproject.toml");
 
@@ -2547,7 +2547,7 @@ mod cargo_workspace {
 
     #[test]
     fn auto_detects_repos_with_cargo_toml() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         touch(root, "github/acme/server/Cargo.toml");
@@ -2575,7 +2575,7 @@ mod cargo_workspace {
 
     #[test]
     fn generates_cargo_toml_with_workspace_section() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         touch(root, "github/chatly/protocol/Cargo.toml");
@@ -2609,7 +2609,7 @@ mod cargo_workspace {
 
     #[test]
     fn excludes_reference_repos() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         touch(root, "github/acme/server/Cargo.toml");
@@ -2634,7 +2634,7 @@ mod cargo_workspace {
 
     #[test]
     fn deactivation_removes_generated_cargo_toml() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         // Post-port: ownership is proven by the per-key
@@ -2677,7 +2677,7 @@ mod cargo_workspace {
 
     #[test]
     fn deactivation_preserves_handwritten_cargo_toml() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         // A hand-written Cargo.toml without the generated header should NOT be removed
@@ -2695,7 +2695,7 @@ mod cargo_workspace {
 
     #[test]
     fn check_warns_when_cargo_not_on_path() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         touch(root, "github/acme/server/Cargo.toml");
@@ -2726,7 +2726,7 @@ mod cargo_workspace {
         // A member repo declares its own [workspace]. Activation must fail
         // before any cargo invocation, naming the conflicting repo and
         // listing the three resolutions.
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         write_file(
@@ -2779,7 +2779,7 @@ mod cargo_workspace {
         // and the helper's contract is "never author outside the owned-key
         // set". Operators see exclusions in rwv.yaml directly; surfacing
         // them in the file was decorative.
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         write_file(
@@ -2820,7 +2820,7 @@ mod cargo_workspace {
     fn virtual_workspace_without_opt_out_fails_with_named_repo_error() {
         // Virtual workspace = `[workspace]` and no `[package]`. Same failure
         // mode as a hybrid workspace+package file.
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         write_file(
@@ -2855,7 +2855,7 @@ mod cargo_workspace {
         // Operators should be able to pre-emptively opt out a repo path even
         // if that repo isn't a Rust repo today; the integration should not
         // complain. (No-op fallback per spec.)
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         write_file(
@@ -2889,7 +2889,7 @@ mod cargo_workspace {
     fn check_reports_nested_workspace_conflict_as_error_issue() {
         // `rwv doctor` should surface the same diagnostic as activation
         // would, so operators see it without having to attempt a lock.
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         write_file(
@@ -2930,7 +2930,7 @@ mod cargo_workspace {
     /// block, panic="abort", and clippy deny policy must all survive byte-stable.
     #[test]
     fn s6_1_activate_preserves_rvtty_profiles_and_lints() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         // Real Rust repos that the integration will detect as members.
@@ -3010,7 +3010,7 @@ dbg_macro    = "deny"
     /// / `[workspace.package]` / `[profile.*]` (the ruff surface).
     #[test]
     fn s6_2_reactivate_idempotent_over_ruff_surface() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         touch(root, "github/astral/ruff/Cargo.toml");
@@ -3093,7 +3093,7 @@ codegen-units = 1
     /// along with the rest of the user's content.
     #[test]
     fn s6_3_deactivate_strips_keeps_user_policy() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         // Seed with marker + owned keys + heavy user policy.
@@ -3153,7 +3153,7 @@ foo = { path = "vendor/foo" }
     /// C8 (cargo members-subpath + [patch] opt-in).
     #[test]
     fn s6_4_members_subpath_and_nested_workspace_exemption() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         // No root Cargo.toml under github/cwalv/rvtty.
@@ -3227,7 +3227,7 @@ foo = { path = "vendor/foo" }
     /// `[patch.crates-io].<crate>` entry keyed by the target crate's name.
     #[test]
     fn patch_opt_in_emits_crates_io_entries_for_cross_repo_path_deps() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         // Two repos. `app` depends on `lib` via a relative `path = ...`.
@@ -3286,7 +3286,7 @@ acme-lib = { path = "../lib" }
     /// rwv stays out of `[patch]` entirely (plan §5a-c, §12.3).
     #[test]
     fn patch_default_false_emits_no_patch_table() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         write_file(
@@ -3332,7 +3332,7 @@ acme-lib = { path = "../lib" }
     /// survive". (Co-requisite of the activate-time generation.)
     #[test]
     fn deactivate_strips_rwv_patch_entries_keeps_user_entries() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         // Seed a Cargo.toml that mixes an rwv-managed [patch.crates-io].acme-lib
@@ -3403,7 +3403,7 @@ vendor-foo = { git = "https://example.com/vendor-foo" }
     /// registry versions and the weave supplies the live sources.
     #[test]
     fn derived_patch_matches_registry_dep_by_name() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         // `acme-lib` at v0.3.5 in-weave; `acme-app` depends on it as a
@@ -3464,7 +3464,7 @@ vendor-foo = { git = "https://example.com/vendor-foo" }
     /// manifest_test.rs.
     #[test]
     fn committed_paths_mode_unchanged_for_path_dep_member() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         write_file(
@@ -3515,7 +3515,7 @@ vendor-foo = { git = "https://example.com/vendor-foo" }
     /// sources.
     #[test]
     fn derived_patch_includes_reference_repos_as_sources() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         // Reference-role repo hosts the crate.
@@ -3584,7 +3584,7 @@ vendor-foo = { git = "https://example.com/vendor-foo" }
     /// `[patch.crates-io]` entry does not patch a git-source dep.
     #[test]
     fn derived_patch_emits_git_url_subtable_for_git_source_dep() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         write_file(
@@ -3643,7 +3643,7 @@ vendor-foo = { git = "https://example.com/vendor-foo" }
     /// wouldn't fail the write, but the write must remain correct.
     #[test]
     fn derived_patch_surfaces_shadowing_warning_and_writes_output() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         write_file(
@@ -3704,7 +3704,7 @@ vendor-foo = { git = "https://example.com/vendor-foo" }
     /// to the tier boundary is caught.
     #[test]
     fn derived_patch_tier_boundary_unpublished_crate_still_patches() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         // `weave-only-lib` is a name that (by design) does not exist on
@@ -3755,7 +3755,7 @@ vendor-foo = { git = "https://example.com/vendor-foo" }
     /// to the operator).
     #[test]
     fn derived_patch_skips_incompatible_version() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         write_file(
@@ -3798,7 +3798,7 @@ vendor-foo = { git = "https://example.com/vendor-foo" }
     /// the dep.
     #[test]
     fn derived_patch_skips_self_patch() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         // Contrived: `foo` depends on `foo`. Not realistic, but the
@@ -3840,7 +3840,7 @@ vendor-foo = { git = "https://example.com/vendor-foo" }
     /// skip, no panic).
     #[test]
     fn derived_patch_workspace_true_without_anchor_skips_silently() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         write_file(
@@ -3887,7 +3887,7 @@ vendor-foo = { git = "https://example.com/vendor-foo" }
     /// committed-paths mode.
     #[test]
     fn derived_patch_verify_and_warn_preserves_user_authored_entry() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         // Seed a Cargo.toml with a user-authored patch entry the derived
@@ -3945,7 +3945,7 @@ vendor-foo = { git = "https://example.com/vendor-foo" }
     /// the mode is on.
     #[test]
     fn derived_patch_off_and_no_match_emit_no_table() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         write_file(
@@ -3977,7 +3977,7 @@ vendor-foo = { git = "https://example.com/vendor-foo" }
     /// crates-io.
     #[test]
     fn deactivate_strips_derived_git_patch_entries() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         write_file(
@@ -4039,7 +4039,7 @@ acme-lib = { path = "github/acme/lib" }
     /// location (probe P3/P7).
     #[test]
     fn cargo_config_surface_writes_patches_to_dot_cargo() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         write_file(
@@ -4128,7 +4128,7 @@ acme-lib = { path = "github/acme/lib" }
     /// that can serve both.
     #[test]
     fn cargo_config_surface_reaches_both_active_member_and_opt_out() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         // Weave-native lib.
@@ -4208,7 +4208,7 @@ acme-lib = { path = "github/acme/lib" }
     /// migration for existing manifests.
     #[test]
     fn manifest_surface_is_default_zero_migration() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         write_file(
@@ -4259,7 +4259,7 @@ acme-lib = { path = "github/acme/lib" }
     /// manifest surface — the marker is the pen.
     #[test]
     fn cargo_config_surface_preserves_user_authored_keys() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         // Seed a `.cargo/config.toml` with mixed user content: a linker
@@ -4332,7 +4332,7 @@ vendor-foo = { git = "https://user.example.com/vendor-foo.git" }
     /// deletes the file (and `.cargo/`) iff the strip leaves nothing.
     #[test]
     fn deactivate_strips_marked_entries_from_cargo_config_surface() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         // Seed the managed Cargo.toml (rwv-marker workspace).
@@ -4377,7 +4377,7 @@ vendor-foo = { git = "https://user.example.com/vendor-foo.git" }
     /// too is empty. Mirrors the file-deletion rule for hybrid files.
     #[test]
     fn deactivate_deletes_emptied_cargo_config_and_dir() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         // Managed Cargo.toml with only rwv-owned keys.
@@ -4419,7 +4419,7 @@ acme-lib = { path = "../github/acme/lib" }
     /// fires when the dir is EMPTY.
     #[test]
     fn deactivate_preserves_dot_cargo_siblings() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         write_file(
@@ -4473,7 +4473,7 @@ acme-lib = { path = "../github/acme/lib" }
     /// ever gets written.
     #[test]
     fn only_one_surface_writes_per_activation() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         write_file(
@@ -4533,7 +4533,7 @@ acme-lib = { path = "../github/acme/lib" }
     fn cargo_config_surface_verify_three_state() {
         use repoweave::integration::Integration;
 
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         write_file(
@@ -4640,7 +4640,7 @@ acme-lib = { path = "../github/acme/lib" }
     /// member configs regardless of where the weave writes).
     #[test]
     fn cargo_config_surface_shadowing_warning() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         write_file(
@@ -4726,7 +4726,7 @@ mod s7_cargo_doctor {
     /// Then:  verify() reports a single MISSING+safe_to_fix finding.
     #[test]
     fn s7_cargo_doctor_missing_reports_finding() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         // Repo "github/cwalv/rvtty" with sub-packages; no root Cargo.toml.
@@ -4767,7 +4767,7 @@ mod s7_cargo_doctor {
     ///   - Subsequent verify() returns no issues (CLEAN).
     #[test]
     fn s7_cargo_doctor_missing_fixed_by_activate() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         let config = IntegrationConfig::from_yaml(
@@ -4850,7 +4850,7 @@ mod s7_cargo_doctor {
     /// Then:  verify() reports a single DRIFT+safe_to_fix finding.
     #[test]
     fn s7_cargo_doctor_drift_reports_finding() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         // Write a Cargo.toml with per-key rwv markers but only one member (outdated).
@@ -4891,7 +4891,7 @@ mod s7_cargo_doctor {
     /// Then:  verify() returns no issues (CLEAN).
     #[test]
     fn s7_cargo_doctor_drift_fixed_by_activate() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         // Seed: only daemon in members (drift), with per-key markers.
@@ -4939,7 +4939,7 @@ mod s7_cargo_doctor {
     /// Then:  verify() reports a single USER-HELD+!safe_to_fix finding.
     #[test]
     fn s7_cargo_doctor_user_held_reports_finding() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         // No "# managed by rwv" marker — user holds the pen.
@@ -4982,7 +4982,7 @@ mod s7_cargo_doctor {
     ///        protect the user-held keys).
     #[test]
     fn s7_cargo_doctor_user_held_file_unchanged_after_activate() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         let original_content =
@@ -5031,7 +5031,7 @@ mod s7_cargo_doctor {
     /// Then:  verify() returns no issues (CLEAN).
     #[test]
     fn s7_cargo_doctor_clean_after_fresh_activate() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         let config = IntegrationConfig::from_yaml(
@@ -5062,7 +5062,7 @@ mod s7_cargo_doctor {
     /// Then:  resolver = "2" appears in the file.
     #[test]
     fn resolver_default_only_greenfield_sets_resolver_2() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         touch(root, "github/cwalv/myrepo/Cargo.toml");
@@ -5090,7 +5090,7 @@ mod s7_cargo_doctor {
     /// Then:  resolver = "2" is added to the file.
     #[test]
     fn resolver_default_only_no_resolver_key_sets_resolver_2() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         // File has marker+members but no resolver.
@@ -5126,7 +5126,7 @@ mod s7_cargo_doctor {
     /// Then:  resolver is still "1" in the file (not overwritten to "2").
     #[test]
     fn resolver_default_only_operator_override_preserved() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         // Cargo.toml seeded with resolver = "1" and the managed marker.
@@ -5168,7 +5168,7 @@ mod s7_cargo_doctor {
     ///        DRIFT finding for DefaultOnly keys).
     #[test]
     fn resolver_default_only_drift_is_clean() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         touch(root, "github/cwalv/rvtty/daemon/Cargo.toml");
@@ -5204,7 +5204,7 @@ mod s7_cargo_doctor {
     /// Then:  verify() reports exactly one DRIFT issue.
     #[test]
     fn resolver_default_only_members_drift_still_reported() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         // members is stale (only daemon), config expects daemon + client.
@@ -5266,7 +5266,7 @@ mod s7_cargo_doctor {
         IntegrationConfig,
         HashMap<String, Vec<String>>,
     ) {
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         // Repo with a Cargo.toml so `has_active_cargo_work` returns true.
@@ -5441,7 +5441,7 @@ mod s7_cargo_doctor {
     /// CLEAN when Cargo.lock is present-and-parseable.
     #[test]
     fn s7_6_hybrid_user_held_unchanged_by_fully_owned_split() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         // No "# managed by rwv" marker — user holds the pen on Cargo.toml.
@@ -5495,7 +5495,7 @@ mod s7_cargo_doctor {
     ///        BEFORE running cargo (which would fail with a confusing wrap).
     #[test]
     fn s7_7_activate_hook_refuses_when_managed_file_missing() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         // Repo has a Cargo.toml so has_active_cargo_work=true, but the
@@ -5538,7 +5538,7 @@ mod s7_cargo_doctor {
     /// (intent) path repairs.
     #[test]
     fn s7_7_activate_intent_regenerates_missing_managed_file() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         touch(root, "github/cwalv/mylib/Cargo.toml");
@@ -5763,7 +5763,7 @@ mod s7_cargo_doctor {
     ///        clean (toml repaired; lock digest still matches).
     #[test]
     fn s7_8_digest_state_survives_fix_of_other_issues() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         touch(root, "github/cwalv/mylib/Cargo.toml");
@@ -5851,7 +5851,7 @@ mod gita {
 
     #[test]
     fn auto_detects_all_repos() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         // gita uses all repos, not just those with a specific manifest file
@@ -5874,7 +5874,7 @@ mod gita {
 
     #[test]
     fn generates_repos_csv_with_correct_format() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         let manifest = make_manifest(vec![
@@ -5909,7 +5909,7 @@ mod gita {
 
     #[test]
     fn generates_groups_csv_by_role() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         let manifest = make_manifest(vec![
@@ -5933,7 +5933,7 @@ mod gita {
 
     #[test]
     fn excludes_reference_repos() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         let manifest = make_manifest(vec![
@@ -5958,7 +5958,7 @@ mod gita {
 
     #[test]
     fn deactivation_removes_gita_directory() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         std::fs::create_dir_all(root.join("gita")).unwrap();
@@ -5973,9 +5973,9 @@ mod gita {
 
     #[test]
     fn repos_csv_paths_use_workspace_root_not_output_dir() {
-        let workspace_tmp = TempDir::new().unwrap();
+        let workspace_tmp = common::tempdir().unwrap();
         let workspace_root = workspace_tmp.path();
-        let weave_tmp = TempDir::new().unwrap();
+        let weave_tmp = common::tempdir().unwrap();
         let output_dir = weave_tmp.path();
 
         let manifest = make_manifest(vec![("github/acme/server", Role::Owned)]);
@@ -6024,7 +6024,7 @@ mod gita {
 
     #[test]
     fn check_warns_when_gita_not_on_path() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         let manifest = make_manifest(vec![("github/acme/server", Role::Owned)]);
@@ -6049,7 +6049,7 @@ mod gita {
     /// Pre-fix, the concat-based writer produced a malformed row.
     #[test]
     fn csv_escaping_roundtrips_path_with_comma() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         // Use a repo path whose basename contains a comma. The manifest helper
@@ -6100,7 +6100,7 @@ mod gita {
     /// file (e.g. notes.txt) and the gita/ directory intact.
     #[test]
     fn deactivate_preserves_user_parked_file() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         std::fs::create_dir_all(root.join("gita")).unwrap();
@@ -6132,7 +6132,7 @@ mod gita {
     /// empty after removing the two rwv-owned CSVs.
     #[test]
     fn deactivate_removes_empty_gita_dir() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         std::fs::create_dir_all(root.join("gita")).unwrap();
@@ -6165,7 +6165,7 @@ mod vscode_workspace {
 
     #[test]
     fn auto_detects_all_repos() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         // vscode-workspace uses all repos (not filtered by manifest file)
@@ -6185,7 +6185,7 @@ mod vscode_workspace {
 
     #[test]
     fn generates_code_workspace_file_with_folders_and_settings() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         let manifest = make_manifest(vec![
@@ -6222,7 +6222,7 @@ mod vscode_workspace {
 
     #[test]
     fn project_name_appears_in_filename() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         let manifest = make_manifest(vec![("github/acme/server", Role::Owned)]);
@@ -6238,7 +6238,7 @@ mod vscode_workspace {
 
     #[test]
     fn preserves_user_customizations_on_reactivation() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         // Pre-existing rwv-managed workspace file with user customizations.
@@ -6294,7 +6294,7 @@ mod vscode_workspace {
 
     #[test]
     fn deactivation_removes_generated_code_workspace_files() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         // Write a file with the rwv.generated marker (as activate produces).
@@ -6312,7 +6312,7 @@ mod vscode_workspace {
 
     #[test]
     fn deactivation_preserves_handwritten_code_workspace_files() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         // A user-created .code-workspace without the rwv marker.
@@ -6332,7 +6332,7 @@ mod vscode_workspace {
 
     #[test]
     fn check_validates_workspace_file_exists() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         // No .code-workspace file present
@@ -6351,7 +6351,7 @@ mod vscode_workspace {
 
     #[test]
     fn files_exclude_hides_non_project_repos() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         // Active project has github/chatly/server.
@@ -6398,7 +6398,7 @@ mod vscode_workspace {
 
     #[test]
     fn files_exclude_hides_other_projects() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         let manifest = make_manifest(vec![("github/acme/server", Role::Owned)]);
@@ -6438,7 +6438,7 @@ mod vscode_workspace {
 
     #[test]
     fn files_exclude_hides_dotfiles_by_default() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         let manifest = make_manifest(vec![("github/acme/server", Role::Owned)]);
@@ -6461,7 +6461,7 @@ mod vscode_workspace {
 
     #[test]
     fn files_exclude_respects_hide_dotfiles_false() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         let manifest = make_manifest(vec![("github/acme/server", Role::Owned)]);
@@ -6483,7 +6483,7 @@ mod vscode_workspace {
 
     #[test]
     fn files_exclude_collapses_paths() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         // Active project has only github/acme/server.
@@ -6541,7 +6541,7 @@ mod vscode_workspace {
     /// not eat it. RED vs current :178-181 (whole-map insert).
     #[test]
     fn s6_vscode_1_user_files_exclude_entries_survive_activate() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         // Pre-existing rwv-generated workspace with rwv-owned files.exclude
@@ -6617,7 +6617,7 @@ mod vscode_workspace {
     /// activate AND deactivate. RED vs current :209 (whole-file delete).
     #[test]
     fn s6_vscode_2_user_top_level_blocks_survive_activate_and_deactivate() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         write_file(
@@ -6709,7 +6709,7 @@ mod vscode_workspace {
     /// RED vs current :119-122 (whole-array overwrite).
     #[test]
     fn s6_vscode_3_user_added_folder_survives_multi_root() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         write_file(
@@ -6769,7 +6769,7 @@ mod vscode_workspace {
     /// git.* defaults are written on a fresh (empty) workspace.
     #[test]
     fn git_settings_seeded_on_fresh_workspace() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         let manifest = make_manifest(vec![("github/acme/server", Role::Owned)]);
@@ -6796,7 +6796,7 @@ mod vscode_workspace {
     /// User-customized git.* values survive re-activation (DefaultOnly: no overwrite).
     #[test]
     fn git_settings_user_values_preserved_on_reactivate() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         // Pre-existing workspace with user-customized git settings and rwv marker.
@@ -6839,7 +6839,7 @@ mod vscode_workspace {
     /// file (no marker) is untouched.
     #[test]
     fn s6_vscode_4_deactivate_deletes_purely_rwv_preserves_hand_written() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         // (a) Purely-rwv-owned file: marker + only owned content. The marker
@@ -6906,7 +6906,7 @@ mod vscode_workspace_scenarios {
     // -------------------------------------------------------------------------
     #[test]
     fn scenario1_user_files_exclude_survives_reactivation() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         // Seed: an rwv-generated workspace file (marker present, primary folder,
@@ -7009,7 +7009,7 @@ mod vscode_workspace_scenarios {
     // -------------------------------------------------------------------------
     #[test]
     fn scenario2_user_blocks_survive_activate_and_deactivate() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         // Seed: rwv-generated workspace + the four user-added top-level blocks.
@@ -7138,7 +7138,7 @@ mod vscode_workspace_scenarios {
     // -------------------------------------------------------------------------
     #[test]
     fn scenario3_user_extra_folder_survives_reactivation() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         // Seed: primary folder + a user-added extra folder (shared-notes).
@@ -7211,7 +7211,7 @@ mod vscode_workspace_scenarios {
     // -------------------------------------------------------------------------
     #[test]
     fn scenario4_deactivate_deletes_pure_rwv_file_leaves_handwritten() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         // (a) A purely-rwv .code-workspace: marker + owned keys only. The
@@ -7271,7 +7271,7 @@ mod vscode_workspace_scenarios {
     // -------------------------------------------------------------------------
     #[test]
     fn scenario5_deactivate_preserves_user_excludes_and_folders() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         write_file(
@@ -7353,7 +7353,7 @@ mod vscode_workspace_scenarios {
     // -------------------------------------------------------------------------
     #[test]
     fn scenario6_deactivate_keeps_file_holding_user_changed_git_setting() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         write_file(
@@ -7390,7 +7390,7 @@ mod vscode_workspace_scenarios {
     // -------------------------------------------------------------------------
     #[test]
     fn scenario7_deactivate_leaves_excludes_when_marker_records_none() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         write_file(
@@ -7430,7 +7430,7 @@ mod vscode_workspace_scenarios {
     // -------------------------------------------------------------------------
     #[test]
     fn scenario8_activate_leaves_hand_authored_workspace_untouched() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         // A workspace a user wrote by hand: no rwv.generated marker, a folder
@@ -7481,7 +7481,7 @@ mod vscode_workspace_scenarios {
     // -------------------------------------------------------------------------
     #[test]
     fn scenario9_activate_adopts_unmarked_file_without_the_owned_region() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         write_file(
@@ -7539,7 +7539,7 @@ mod activate_hooks {
 
     #[test]
     fn npm_workspaces_activate_hook_runs_npm_install() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         // Set up a repo with a valid package.json so npm integration detects it
@@ -7582,7 +7582,7 @@ mod activate_hooks {
 
     #[test]
     fn npm_workspaces_activate_hook_noop_when_no_repos_detected() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         // No package.json in any repo
@@ -7610,7 +7610,7 @@ mod activate_hooks {
 
     #[test]
     fn cargo_workspace_activate_hook_runs_cargo_generate_lockfile() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         write_file(
@@ -7650,7 +7650,7 @@ mod activate_hooks {
 
     #[test]
     fn cargo_workspace_activate_hook_noop_when_no_repos_detected() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         let manifest = make_manifest(vec![("github/acme/server", Role::Owned)]);
@@ -7682,7 +7682,7 @@ mod activate_hooks {
     fn cargo_activate_hook_failure_names_exclude_and_members_hints() {
         use std::os::unix::fs::PermissionsExt;
 
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         // Write a Cargo.toml so the integration thinks there is cargo work.
@@ -7759,7 +7759,7 @@ mod activate_hooks {
 
     #[test]
     fn uv_workspace_activate_hook_runs_uv_sync() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         write_file(
@@ -7798,7 +7798,7 @@ mod activate_hooks {
 
     #[test]
     fn uv_workspace_activate_hook_noop_when_no_repos_detected() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         let manifest = make_manifest(vec![("github/acme/server", Role::Owned)]);
@@ -7825,7 +7825,7 @@ mod activate_hooks {
 
     #[test]
     fn pnpm_workspaces_activate_hook_runs_pnpm_install() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         write_file(
@@ -7864,7 +7864,7 @@ mod activate_hooks {
 
     #[test]
     fn pnpm_workspaces_activate_hook_noop_when_no_repos_detected() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         let manifest = make_manifest(vec![("github/acme/server", Role::Owned)]);
@@ -7891,7 +7891,7 @@ mod activate_hooks {
 
     #[test]
     fn go_work_activate_hook_is_noop() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         touch(root, "github/acme/server/go.mod");
@@ -7917,7 +7917,7 @@ mod activate_hooks {
 
     #[test]
     fn gita_activate_hook_is_noop() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         let manifest = make_manifest(vec![("github/acme/server", Role::Owned)]);
@@ -7937,7 +7937,7 @@ mod activate_hooks {
 
     #[test]
     fn vscode_workspace_activate_hook_is_noop() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         let manifest = make_manifest(vec![("github/acme/server", Role::Owned)]);
@@ -7976,7 +7976,7 @@ mod static_files {
 
     #[test]
     fn generated_files_returns_configured_files() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         let manifest = make_manifest(vec![("github/acme/server", Role::Owned)]);
@@ -7994,7 +7994,7 @@ mod static_files {
 
     #[test]
     fn generated_files_empty_when_no_files_configured() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         let manifest = make_manifest(vec![("github/acme/server", Role::Owned)]);
@@ -8010,7 +8010,7 @@ mod static_files {
 
     #[test]
     fn activate_succeeds_when_files_exist() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         // Create the declared files in the project directory (output_dir)
@@ -8031,7 +8031,7 @@ mod static_files {
 
     #[test]
     fn activate_succeeds_even_when_files_missing() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         // Don't create the files — activate should still succeed (just warn)
@@ -8051,7 +8051,7 @@ mod static_files {
 
     #[test]
     fn check_warns_on_missing_files() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         // Create one of two declared files
@@ -8074,7 +8074,7 @@ mod static_files {
 
     #[test]
     fn check_no_issues_when_all_files_present() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         write_file(root, "turbo.json", "{}");
@@ -8094,7 +8094,7 @@ mod static_files {
 
     #[test]
     fn check_no_issues_when_no_files_configured() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         let manifest = make_manifest(vec![("github/acme/server", Role::Owned)]);
@@ -8110,7 +8110,7 @@ mod static_files {
 
     #[test]
     fn deactivate_succeeds() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         let integration = StaticFiles;
@@ -8120,7 +8120,7 @@ mod static_files {
 
     #[test]
     fn activate_hook_is_noop() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         let manifest = make_manifest(vec![("github/acme/server", Role::Owned)]);
@@ -8146,7 +8146,7 @@ mod static_files {
     /// can act on it without re-reading the docs.
     #[test]
     fn activate_fails_when_name_collides_with_workweave_link() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         // The static file exists — collision detection runs before existence
@@ -8178,7 +8178,7 @@ mod static_files {
     /// signal that motivates the framework predicate).
     #[test]
     fn check_emits_error_for_workweave_link_collision() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
         write_file(root, ".beads", "");
 
@@ -8218,7 +8218,7 @@ mod static_files {
     /// aggregated message).
     #[test]
     fn check_emits_one_error_per_collision() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
         write_file(root, ".beads", "");
         write_file(root, ".secrets", "");
@@ -8255,7 +8255,7 @@ mod static_files {
     /// No workweave.link at all -> no collision Issues.
     #[test]
     fn check_no_collision_when_workweave_link_empty() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
         write_file(root, ".beads", "");
 
@@ -8280,7 +8280,7 @@ mod static_files {
     /// Disjoint names -> no collision Issues.
     #[test]
     fn check_no_collision_when_names_disjoint() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
         write_file(root, ".beads", "");
         write_file(root, "turbo.json", "{}");
@@ -8307,7 +8307,7 @@ mod static_files {
     /// `workweave:` section in rwv.yaml).
     #[test]
     fn check_no_collision_when_workweave_absent() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
         write_file(root, ".beads", "");
 
@@ -8440,7 +8440,7 @@ mod s8_cross_port_default_only {
     /// authored the file).  DefaultOnly must NOT overwrite the existing values.
     #[test]
     fn s8_npm_default_only_preserves_user_value() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         touch(root, "github/acme/api/package.json");
@@ -8484,7 +8484,7 @@ mod s8_cross_port_default_only {
     /// No pre-existing package.json.  DefaultOnly seeds sensible defaults.
     #[test]
     fn s8_npm_default_only_seeds_on_greenfield() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         touch(root, "github/acme/api/package.json");
@@ -8528,7 +8528,7 @@ mod s8_cross_port_default_only {
     /// DefaultOnly must not inject `package = false` when `package` already exists.
     #[test]
     fn s8_uv_default_only_preserves_user_value() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         touch(root, "github/astral/protocol/pyproject.toml");
@@ -8574,7 +8574,7 @@ mod s8_cross_port_default_only {
     /// so `uv sync` accepts a non-package root.
     #[test]
     fn s8_uv_default_only_seeds_on_greenfield() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         touch(root, "github/astral/protocol/pyproject.toml");
@@ -8615,7 +8615,7 @@ mod s8_cross_port_default_only {
     /// even when the rwv marker is present on members.
     #[test]
     fn s8_cargo_default_only_preserves_user_value() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         touch(root, "github/acme/server/Cargo.toml");
@@ -8654,7 +8654,7 @@ mod s8_cross_port_default_only {
     /// No pre-existing Cargo.toml.  DefaultOnly seeds resolver = "2".
     #[test]
     fn s8_cargo_default_only_seeds_on_greenfield() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         touch(root, "github/acme/server/Cargo.toml");
@@ -8711,7 +8711,7 @@ mod s8_cross_port_default_only {
     /// cross-port shape through the public Integration::activate() entrypoint.
     #[test]
     fn s8_go_work_default_only_preserves_user_value() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         // Member go.mod declares go 1.26 — same version as the go.work.
@@ -8758,7 +8758,7 @@ mod s8_cross_port_default_only {
     /// `max_go_version` across member go.mod files (a sensible non-literal default).
     #[test]
     fn s8_go_work_default_only_seeds_on_greenfield() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         // Member go.mod declares go 1.23.
@@ -8811,7 +8811,7 @@ mod s8_cross_port_default_only {
     /// default "subFolders").  DefaultOnly must not overwrite it.
     #[test]
     fn s8_vscode_default_only_preserves_user_value() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         // Pre-existing workspace: marker present, user-set git.* values.
@@ -8857,7 +8857,7 @@ mod s8_cross_port_default_only {
     /// to their sensible defaults.
     #[test]
     fn s8_vscode_default_only_seeds_on_greenfield() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         // No .code-workspace — greenfield.
@@ -8902,7 +8902,7 @@ mod s7_npm_doctor {
     /// Then:  verify() reports a single MISSING+safe_to_fix finding.
     #[test]
     fn s7_npm_doctor_missing_reports_finding() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         touch(root, "github/acme/server/package.json");
@@ -8938,7 +8938,7 @@ mod s7_npm_doctor {
     /// Then:  package.json created with x-repoweave marker; verify() returns CLEAN.
     #[test]
     fn s7_npm_doctor_missing_fixed_by_activate() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         touch(root, "github/acme/server/package.json");
@@ -8985,7 +8985,7 @@ mod s7_npm_doctor {
     /// Then:  verify() reports a single DRIFT+safe_to_fix finding.
     #[test]
     fn s7_npm_doctor_drift_reports_finding() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         // Write package.json with marker but only one workspace (outdated).
@@ -9028,7 +9028,7 @@ mod s7_npm_doctor {
     /// Then:  verify() returns CLEAN.
     #[test]
     fn s7_npm_doctor_drift_fixed_by_activate() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         write_file(
@@ -9076,7 +9076,7 @@ mod s7_npm_doctor {
     /// Then:  verify() reports USER-HELD+!safe_to_fix.
     #[test]
     fn s7_npm_doctor_user_held_reports_finding() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         // No x-repoweave marker — user holds the pen.
@@ -9118,7 +9118,7 @@ mod s7_npm_doctor {
     /// Then:  The workspaces content is left intact (merge defers to user).
     #[test]
     fn s7_npm_doctor_user_held_file_unchanged_after_activate() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         let original =
@@ -9159,7 +9159,7 @@ mod s7_npm_doctor {
     /// Then:  verify() returns no issues (CLEAN).
     #[test]
     fn s7_npm_doctor_clean_after_fresh_activate() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         touch(root, "github/acme/server/package.json");
@@ -9196,7 +9196,7 @@ mod s7_pnpm_doctor {
     /// Then:  verify() reports a single MISSING+safe_to_fix finding.
     #[test]
     fn s7_pnpm_doctor_missing_reports_finding() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         touch(root, "github/acme/server/package.json");
@@ -9227,7 +9227,7 @@ mod s7_pnpm_doctor {
     /// Then:  file created with marker; verify() returns CLEAN.
     #[test]
     fn s7_pnpm_doctor_missing_fixed_by_activate() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         touch(root, "github/acme/server/package.json");
@@ -9272,7 +9272,7 @@ mod s7_pnpm_doctor {
     /// Then:  verify() reports DRIFT+safe_to_fix.
     #[test]
     fn s7_pnpm_doctor_drift_reports_finding() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         write_file(
@@ -9312,7 +9312,7 @@ mod s7_pnpm_doctor {
     /// Then:  verify() returns CLEAN.
     #[test]
     fn s7_pnpm_doctor_drift_fixed_by_activate() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         write_file(
@@ -9353,7 +9353,7 @@ mod s7_pnpm_doctor {
     /// Then:  verify() reports USER-HELD+!safe_to_fix.
     #[test]
     fn s7_pnpm_doctor_user_held_reports_finding() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         // No marker line.
@@ -9395,7 +9395,7 @@ mod s7_pnpm_doctor {
     /// Then:  packages: content is not clobbered.
     #[test]
     fn s7_pnpm_doctor_user_held_file_unchanged_after_activate() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         let original = "packages:\n  - github/acme/server\n";
@@ -9430,7 +9430,7 @@ mod s7_pnpm_doctor {
     /// Then:  verify() returns no issues (CLEAN).
     #[test]
     fn s7_pnpm_doctor_clean_after_fresh_activate() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         touch(root, "github/acme/server/package.json");
@@ -9465,7 +9465,7 @@ mod s7_pnpm_doctor {
     /// Then:  verify() returns no issues (CLEAN).
     #[test]
     fn s7_pnpm_doctor_clean_when_member_has_duplicate_globs() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         // Multi-package repo whose pnpm-workspace.yaml repeats "packages/*".
@@ -9512,7 +9512,7 @@ mod s7_uv_doctor {
     /// Then:  verify() reports a single MISSING+safe_to_fix finding.
     #[test]
     fn s7_uv_doctor_missing_reports_finding() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         touch(root, "github/acme/server/pyproject.toml");
@@ -9548,7 +9548,7 @@ mod s7_uv_doctor {
     /// Then:  file created with marker; verify() returns CLEAN.
     #[test]
     fn s7_uv_doctor_missing_fixed_by_activate() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         touch(root, "github/acme/server/pyproject.toml");
@@ -9597,7 +9597,7 @@ mod s7_uv_doctor {
     /// Then:  verify() reports DRIFT+safe_to_fix.
     #[test]
     fn s7_uv_doctor_drift_reports_finding() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         // Seed: only server in members (drift — web was added to manifest).
@@ -9638,7 +9638,7 @@ mod s7_uv_doctor {
     /// Then:  verify() returns CLEAN.
     #[test]
     fn s7_uv_doctor_drift_fixed_by_activate() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         write_file(
@@ -9685,7 +9685,7 @@ mod s7_uv_doctor {
     /// Then:  verify() reports USER-HELD+!safe_to_fix.
     #[test]
     fn s7_uv_doctor_user_held_reports_finding() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         // No "# managed by rwv" marker.
@@ -9727,7 +9727,7 @@ mod s7_uv_doctor {
     /// Then:  The members key is NOT clobbered.
     #[test]
     fn s7_uv_doctor_user_held_file_unchanged_after_activate() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         let original = "[tool.uv.workspace]\nmembers = [\"github/acme/server\"]\n";
@@ -9762,7 +9762,7 @@ mod s7_uv_doctor {
     /// Then:  verify() returns no issues (CLEAN).
     #[test]
     fn s7_uv_doctor_clean_after_fresh_activate() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         touch(root, "github/acme/server/pyproject.toml");
@@ -9823,7 +9823,7 @@ mod s7_go_work_doctor {
     #[test]
     fn s7_go_work_doctor_missing_reports_finding() {
         force_fallback();
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         write_go_mod(root, "github/acme/server");
@@ -9855,7 +9855,7 @@ mod s7_go_work_doctor {
     #[test]
     fn s7_go_work_doctor_missing_fixed_by_activate() {
         force_fallback();
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         write_go_mod(root, "github/acme/server");
@@ -9898,7 +9898,7 @@ mod s7_go_work_doctor {
     #[test]
     fn s7_go_work_doctor_drift_reports_finding() {
         force_fallback();
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         write_file(
@@ -9945,7 +9945,7 @@ mod s7_go_work_doctor {
     #[test]
     fn s7_go_work_doctor_drift_fixed_by_activate() {
         force_fallback();
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         write_file(
@@ -9999,7 +9999,7 @@ mod s7_go_work_doctor {
     #[test]
     fn s7_go_work_doctor_user_held_reports_finding() {
         force_fallback();
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         // No marker.
@@ -10046,7 +10046,7 @@ mod s7_go_work_doctor {
     #[test]
     fn s7_go_work_doctor_user_held_file_unchanged_after_activate() {
         force_fallback();
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         let original = "go 1.22\n\nuse (\n\t./github/acme/server\n)\n";
@@ -10102,7 +10102,7 @@ mod s7_go_work_doctor {
     #[test]
     fn s7_go_work_doctor_clean_after_fresh_activate() {
         force_fallback();
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         write_go_mod(root, "github/acme/server");
@@ -10139,7 +10139,7 @@ mod s7_vscode_doctor {
     /// Then:  verify() reports MISSING+safe_to_fix.
     #[test]
     fn s7_vscode_doctor_missing_reports_finding() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         let manifest = make_manifest(vec![("github/acme/server", Role::Owned)]);
@@ -10168,7 +10168,7 @@ mod s7_vscode_doctor {
     /// Then:  file created with rwv.generated marker; verify() returns CLEAN.
     #[test]
     fn s7_vscode_doctor_missing_fixed_by_activate() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         let manifest = make_manifest(vec![("github/acme/server", Role::Owned)]);
@@ -10211,7 +10211,7 @@ mod s7_vscode_doctor {
     /// Then:  verify() reports DRIFT+safe_to_fix.
     #[test]
     fn s7_vscode_doctor_drift_reports_finding() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         // Wrong project name in the primary folder.
@@ -10252,7 +10252,7 @@ mod s7_vscode_doctor {
     /// Then:  verify() returns CLEAN.
     #[test]
     fn s7_vscode_doctor_drift_fixed_by_activate() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         write_file(
@@ -10293,7 +10293,7 @@ mod s7_vscode_doctor {
     /// Then:  verify() reports USER-HELD+!safe_to_fix.
     #[test]
     fn s7_vscode_doctor_user_held_reports_finding() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         // No rwv.generated marker.
@@ -10339,7 +10339,7 @@ mod s7_vscode_doctor {
     ///        takes the pen from a file it does not already hold.
     #[test]
     fn s7_vscode_doctor_user_held_file_unchanged_after_activate() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         let original = r#"{
@@ -10385,7 +10385,7 @@ mod s7_vscode_doctor {
     /// Then:  verify() returns no issues (CLEAN).
     #[test]
     fn s7_vscode_doctor_clean_after_fresh_activate() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         let manifest = make_manifest(vec![("github/acme/server", Role::Owned)]);
@@ -10503,7 +10503,7 @@ mod vscode_workspace_container_kind {
     ///        survives — in the marker AND in the live exclude map.
     #[test]
     fn workweave_regen_preserves_entries_it_cannot_observe() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         as_workweave_root(root);
@@ -10559,7 +10559,7 @@ mod vscode_workspace_container_kind {
     /// serialization and not a formatting accident.
     #[test]
     fn workweave_regen_with_no_member_change_is_a_fixpoint() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         let manifest = make_manifest(vec![("github/acme/server", Role::Owned)]);
@@ -10623,7 +10623,7 @@ mod vscode_workspace_container_kind {
     ///        keeping the entry would hide a member the user can see.
     #[test]
     fn workweave_regen_drops_an_entry_whose_path_it_can_see() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         as_workweave_root(root);
@@ -10672,7 +10672,7 @@ mod vscode_workspace_container_kind {
     ///        there is genuinely dead — the replace semantics are unchanged.
     #[test]
     fn primary_regen_drops_entries_for_genuinely_absent_paths() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         write_file(root, "test-project.code-workspace", WIDE_FILE);
@@ -10710,7 +10710,7 @@ mod vscode_workspace_container_kind {
     ///        regeneration here would keep, so they are not drift.
     #[test]
     fn verify_in_a_workweave_does_not_report_preserved_entries_as_drift() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         as_workweave_root(root);
@@ -10740,7 +10740,7 @@ mod vscode_workspace_container_kind {
     /// Then:  DRIFT, safe to fix. Primary still reports what it can prove.
     #[test]
     fn verify_at_primary_reports_a_shrunk_generated_set_as_drift() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = tmp.path();
 
         write_file(

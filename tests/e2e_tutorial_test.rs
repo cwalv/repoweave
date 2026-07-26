@@ -73,7 +73,7 @@ fn init_bare_repo(path: &Path) {
 /// downstream cargo-workspace integration recognises the clone.
 fn init_bare_cargo_lib(path: &Path, crate_name: &str) {
     init_bare_repo(path);
-    let tmp = tempfile::tempdir().expect("tempdir");
+    let tmp = common::tempdir().expect("tempdir");
     let work = tmp.path().join("w");
     run_git(
         &["clone", &path.to_string_lossy(), &work.to_string_lossy()],
@@ -239,7 +239,7 @@ struct Fixture {
 }
 
 fn build_fixture() -> Fixture {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let workspace = tmp.path().join("ws");
     std::fs::create_dir_all(&workspace).unwrap();
     let bare_a = tmp.path().join("a.git");

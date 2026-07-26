@@ -68,7 +68,7 @@ fn init_bare_repo_with_commit(path: &Path, files: &[(&str, &str)]) -> String {
         .expect("git should be available");
     assert!(status.success(), "git init --bare failed");
 
-    let tmp = tempfile::tempdir().expect("tempdir for working clone");
+    let tmp = common::tempdir().expect("tempdir for working clone");
     let work = tmp.path().join("work");
     git(
         &["clone", &path.to_string_lossy(), &work.to_string_lossy()],
@@ -134,7 +134,7 @@ fn setup_ci_shaped_workspace(tmp: &Path) -> (std::path::PathBuf, String) {
 
 #[test]
 fn ci_recipe_activate_then_frozen_fetch_succeeds() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (workspace, dep_sha) = setup_ci_shaped_workspace(tmp.path());
 
     rwv()
@@ -177,7 +177,7 @@ fn ci_recipe_activate_then_frozen_fetch_succeeds() {
 
 #[test]
 fn devcontainer_recipe_chained_shell_command_succeeds() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (workspace, dep_sha) = setup_ci_shaped_workspace(tmp.path());
 
     let rwv_bin = env!("CARGO_BIN_EXE_rwv");
@@ -208,7 +208,7 @@ fn devcontainer_recipe_chained_shell_command_succeeds() {
 
 #[test]
 fn shipped_recipe_without_nesting_fails() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let dep_bare = tmp.path().join("dep.git");
     init_bare_repo_with_commit(&dep_bare, &[("README", "dep\n")]);
     let dep_url = format!("file://{}", dep_bare.display());

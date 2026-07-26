@@ -270,7 +270,7 @@ fn branch_exists(repo: &Path, name: &str) -> bool {
 /// report any branch-discipline finding for this directory.
 #[test]
 fn healthy_workweave_ephemeral_branch_is_clean() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_primary(tmp.path());
     let canonical = ws.join("github").join("acme").join("repo");
     init_repo_with_commit(&canonical);
@@ -297,7 +297,7 @@ fn healthy_workweave_ephemeral_branch_is_clean() {
 /// acceptance criteria — must flag from creation, before any commit lands.
 #[test]
 fn shared_branch_main_in_workweave_is_reported() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_primary(tmp.path());
     let canonical = ws.join("github").join("acme").join("repo");
     init_repo_with_commit(&canonical);
@@ -338,7 +338,7 @@ fn shared_branch_main_in_workweave_is_reported() {
 /// name shape. The pair is what pins the distinction.
 #[test]
 fn foreign_ephemeral_branch_in_workweave_is_reported() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_primary(tmp.path());
     let canonical = ws.join("github").join("acme").join("repo");
     init_repo_with_commit(&canonical);
@@ -379,7 +379,7 @@ fn foreign_ephemeral_branch_in_workweave_is_reported() {
 /// by the name.
 #[test]
 fn handmade_lookalike_in_workweave_is_shared_not_foreign() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_primary(tmp.path());
     let canonical = ws.join("github").join("acme").join("repo");
     init_repo_with_commit(&canonical);
@@ -409,7 +409,7 @@ fn handmade_lookalike_in_workweave_is_shared_not_foreign() {
 /// detached sub-kind: workweave checkout in detached-HEAD state.
 #[test]
 fn detached_head_in_workweave_is_reported() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_primary(tmp.path());
     let canonical = ws.join("github").join("acme").join("repo");
     init_repo_with_commit(&canonical);
@@ -437,7 +437,7 @@ fn detached_head_in_workweave_is_reported() {
 /// No branch-discipline finding expected.
 #[test]
 fn healthy_canonical_on_main_is_clean() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_primary(tmp.path());
     let canonical = ws.join("github").join("acme").join("repo");
     init_repo_with_commit(&canonical);
@@ -461,7 +461,7 @@ fn healthy_canonical_on_main_is_clean() {
 /// simply stopped looking at canonicals cannot make both pass.
 #[test]
 fn handmade_lookalike_at_canonical_is_not_reported() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_primary(tmp.path());
     let canonical = ws.join("github").join("acme").join("repo");
     init_repo_with_commit(&canonical);
@@ -488,7 +488,7 @@ fn handmade_lookalike_at_canonical_is_not_reported() {
 /// `git switch` that frees it and the ref survives the run.
 #[test]
 fn canonical_holding_recorded_ref_of_deleted_workweave_is_reported() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_primary(tmp.path());
     let canonical = ws.join("github").join("acme").join("repo");
     init_repo_with_commit(&canonical);
@@ -528,7 +528,7 @@ fn canonical_holding_recorded_ref_of_deleted_workweave_is_reported() {
 /// moved or copied directory can produce. Report-only.
 #[test]
 fn canonical_holding_recorded_ref_of_live_workweave_is_reported() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_primary(tmp.path());
     let canonical = ws.join("github").join("acme").join("repo");
     init_repo_with_commit(&canonical);
@@ -567,7 +567,7 @@ fn canonical_holding_recorded_ref_of_live_workweave_is_reported() {
 /// report says so — the honest-but-partial half of §6 item 2.
 #[test]
 fn detached_canonical_is_reported() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_primary(tmp.path());
     let canonical = ws.join("github").join("acme").join("repo");
     init_repo_with_commit(&canonical);
@@ -632,7 +632,7 @@ fn detached_canonical_is_reported() {
 /// first assertion and one that never reattached fails the second.
 #[test]
 fn detached_canonical_reattaches_only_with_consent() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_primary(tmp.path());
     let canonical = ws.join("github").join("acme").join("repo");
     init_repo_with_commit(&canonical);
@@ -704,7 +704,7 @@ fn detached_canonical_reattaches_only_with_consent() {
 /// project-scope filter does not silently drop it.
 #[test]
 fn detached_project_repo_is_reported() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_primary(tmp.path());
     let canonical = ws.join("github").join("acme").join("repo");
     init_repo_with_commit(&canonical);
@@ -736,7 +736,7 @@ fn detached_project_repo_is_reported() {
 /// reports every project repo unconditionally.
 #[test]
 fn attached_project_repo_is_clean() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_primary(tmp.path());
     let canonical = ws.join("github").join("acme").join("repo");
     init_repo_with_commit(&canonical);
@@ -766,7 +766,7 @@ fn attached_project_repo_is_clean() {
 /// `--fix` retracts it.
 #[test]
 fn dangling_receipt_is_reported_and_retracted() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_primary(tmp.path());
     let canonical = ws.join("github").join("acme").join("repo");
     init_repo_with_commit(&canonical);
@@ -806,7 +806,7 @@ fn dangling_receipt_is_reported_and_retracted() {
 /// doctor finding: project-a active must not see — or retract — project-b's.
 #[test]
 fn dangling_receipt_is_scoped_to_active_project() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_primary(tmp.path());
     let repo_a = ws.join("github").join("acme").join("repo-a");
     let repo_b = ws.join("github").join("acme").join("repo-b");
@@ -862,7 +862,7 @@ fn dangling_receipt_is_scoped_to_active_project() {
 /// retracted everything cannot pass both.
 #[test]
 fn live_receipt_is_not_retracted() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_primary(tmp.path());
     let canonical = ws.join("github").join("acme").join("repo");
     init_repo_with_commit(&canonical);
@@ -908,7 +908,7 @@ fn live_receipt_is_not_retracted() {
 /// the registry in either direction.
 #[test]
 fn stale_ephemeral_branch_safe_is_reported_and_fixable() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_primary(tmp.path());
     let canonical = ws.join("github").join("acme").join("repo");
     init_repo_with_commit(&canonical);
@@ -1003,7 +1003,7 @@ fn stale_ephemeral_branch_safe_is_reported_and_fixable() {
 /// still passes — which is exactly the pairing that makes neither vacuous.
 #[test]
 fn handmade_lookalike_branch_survives_doctor_fix() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_primary(tmp.path());
     let canonical = ws.join("github").join("acme").join("repo");
     init_repo_with_commit(&canonical);
@@ -1055,7 +1055,7 @@ fn handmade_lookalike_branch_survives_doctor_fix() {
 /// that deletes here deletes the operator's branch.
 #[test]
 fn flat_lookalike_branch_survives_doctor_fix() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_primary(tmp.path());
     let canonical = ws.join("github").join("acme").join("repo");
     init_repo_with_commit(&canonical);
@@ -1099,7 +1099,7 @@ fn flat_lookalike_branch_survives_doctor_fix() {
 /// `--fix` must NOT delete it.
 #[test]
 fn stale_ephemeral_branch_live_is_reported_and_preserved() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_primary(tmp.path());
     let canonical = ws.join("github").join("acme").join("repo");
     init_repo_with_commit(&canonical);
@@ -1168,7 +1168,7 @@ fn stale_ephemeral_branch_live_is_reported_and_preserved() {
 /// flag it.
 #[test]
 fn ephemeral_branch_with_existing_workweave_is_clean() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_primary(tmp.path());
     let canonical = ws.join("github").join("acme").join("repo");
     init_repo_with_commit(&canonical);
@@ -1218,7 +1218,7 @@ fn set_active_project(ws: &Path, project_name: &str) {
 /// the entire weave regardless of scope, deleting branches across projects.
 #[test]
 fn fix_stale_ephemeral_branch_scoped_to_active_project() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_primary(tmp.path());
 
     // Two repos: repo-a (owned by project-a) and repo-b (owned by project-b).
@@ -1308,7 +1308,7 @@ fn fix_stale_ephemeral_branch_scoped_to_active_project() {
 /// text-output scope check above but exercises the JSON/collect path.
 #[test]
 fn json_branch_discipline_scoped_to_active_project() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_primary(tmp.path());
 
     let repo_a = ws.join("github").join("acme").join("repo-a");
@@ -1372,7 +1372,7 @@ fn json_branch_discipline_scoped_to_active_project() {
 
 #[test]
 fn json_output_includes_branch_discipline_kind() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_primary(tmp.path());
     let canonical = ws.join("github").join("acme").join("repo");
     init_repo_with_commit(&canonical);
@@ -1421,7 +1421,7 @@ fn json_output_includes_branch_discipline_kind() {
 #[cfg(unix)]
 #[test]
 fn symlinked_reference_does_not_fire_shared_branch() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_primary(tmp.path());
     let canonical = ws.join("github").join("acme").join("repo");
     init_repo_with_commit(&canonical);
@@ -1460,7 +1460,7 @@ fn symlinked_reference_does_not_fire_shared_branch() {
 #[cfg(unix)]
 #[test]
 fn worktree_reference_on_ephemeral_branch_flows_through_normally() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_primary(tmp.path());
     let canonical = ws.join("github").join("acme").join("repo");
     init_repo_with_commit(&canonical);
@@ -1493,7 +1493,7 @@ fn worktree_reference_on_ephemeral_branch_flows_through_normally() {
 #[cfg(unix)]
 #[test]
 fn worktree_reference_on_shared_branch_still_fires() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_primary(tmp.path());
     let canonical = ws.join("github").join("acme").join("repo");
     init_repo_with_commit(&canonical);
@@ -1599,7 +1599,7 @@ fn rev(repo: &Path, r: &str) -> String {
 /// the workweave was created.
 #[test]
 fn unmigrated_ephemeral_branch_is_reported_and_renamed() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_primary(tmp.path());
     let canonical = ws.join("github").join("acme").join("repo");
     init_repo_with_commit(&canonical);
@@ -1682,7 +1682,7 @@ fn unmigrated_ephemeral_branch_is_reported_and_renamed() {
 /// into if the process dies at that line.
 #[test]
 fn migration_replays_a_crash_between_the_receipt_and_the_rename() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_primary(tmp.path());
     let canonical = ws.join("github").join("acme").join("repo");
     init_repo_with_commit(&canonical);
@@ -1774,7 +1774,7 @@ fn migration_replays_a_crash_between_the_receipt_and_the_rename() {
 /// and re-adopt at the tip it observes.
 #[test]
 fn migration_replays_a_crash_after_adopting_a_branch_that_then_moved() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_primary(tmp.path());
     let canonical = ws.join("github").join("acme").join("repo");
     init_repo_with_commit(&canonical);
@@ -1831,7 +1831,7 @@ fn migration_replays_a_crash_after_adopting_a_branch_that_then_moved() {
 /// key — it is also what makes the whole pass re-runnable.
 #[test]
 fn unrecorded_flat_ref_is_reported_and_adopted() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_primary(tmp.path());
     let canonical = ws.join("github").join("acme").join("repo");
     init_repo_with_commit(&canonical);
@@ -1891,7 +1891,7 @@ fn unrecorded_flat_ref_is_reported_and_adopted() {
 /// change nothing.
 #[test]
 fn detached_checkout_with_commit_bearing_legacy_branch_reports_both_tips() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_primary(tmp.path());
     let canonical = ws.join("github").join("acme").join("repo");
     init_repo_with_commit(&canonical);
@@ -1965,7 +1965,7 @@ fn detached_checkout_with_commit_bearing_legacy_branch_reports_both_tips() {
 /// name is given up to make room, and the stranding is announced.
 #[test]
 fn adopt_detached_checkouts_mints_at_head_and_warns_about_stranding() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_primary(tmp.path());
     let canonical = ws.join("github").join("acme").join("repo");
     init_repo_with_commit(&canonical);
@@ -2024,7 +2024,7 @@ fn adopt_detached_checkouts_mints_at_head_and_warns_about_stranding() {
 /// warning to give — there is no competing tip.
 #[test]
 fn adopt_detached_checkouts_mints_at_head_with_no_legacy_ref() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_primary(tmp.path());
     let canonical = ws.join("github").join("acme").join("repo");
     init_repo_with_commit(&canonical);
@@ -2076,7 +2076,7 @@ fn adopt_detached_checkouts_mints_at_head_with_no_legacy_ref() {
 /// can only have succeeded if the field was added first.
 #[test]
 fn legacy_index_is_reported_and_migrated_before_the_refs() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_primary(tmp.path());
     let canonical = ws.join("github").join("acme").join("repo");
     init_repo_with_commit(&canonical);
@@ -2122,7 +2122,7 @@ fn legacy_index_is_reported_and_migrated_before_the_refs() {
 /// reachable, so the operator resolves the operation first.
 #[test]
 fn migration_skips_a_workweave_with_an_operation_in_flight() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_primary(tmp.path());
     let canonical = ws.join("github").join("acme").join("repo");
     init_repo_with_commit(&canonical);
@@ -2199,7 +2199,7 @@ fn migration_skips_a_workweave_with_an_operation_in_flight() {
 /// converging. Writing nothing is what stops that.
 #[test]
 fn migration_skips_a_workweave_namespace_holding_two_refs() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_primary(tmp.path());
     let canonical = ws.join("github").join("acme").join("repo");
     init_repo_with_commit(&canonical);
@@ -2321,7 +2321,7 @@ fn migration_skips_a_workweave_namespace_holding_two_refs() {
 /// retraction `--fix` destroys it.
 #[test]
 fn fix_retracts_a_pre_flat_receipt_instead_of_deleting_the_branch() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_primary(tmp.path());
     let canonical = ws.join("github").join("acme").join("repo");
     init_repo_with_commit(&canonical);
@@ -2409,7 +2409,7 @@ fn fix_retracts_a_pre_flat_receipt_instead_of_deleting_the_branch() {
 /// is the workweave's branch — which is the operator's call, and stays it.
 #[test]
 fn fix_converges_on_a_pre_flat_receipt_inside_a_blocked_namespace() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_primary(tmp.path());
     let canonical = ws.join("github").join("acme").join("repo");
     init_repo_with_commit(&canonical);
@@ -2514,7 +2514,7 @@ fn fix_converges_on_a_pre_flat_receipt_inside_a_blocked_namespace() {
 /// owns.
 #[test]
 fn the_retraction_arm_leaves_the_migrations_success_path_intact() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_primary(tmp.path());
     let canonical = ws.join("github").join("acme").join("repo");
     init_repo_with_commit(&canonical);
@@ -2583,7 +2583,7 @@ fn the_retraction_arm_leaves_the_migrations_success_path_intact() {
 /// the record is dropped, and this pins that it is.
 #[test]
 fn a_live_workweaves_own_segmented_name_keeps_its_receipt() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_primary(tmp.path());
     let canonical = ws.join("github").join("acme").join("repo");
     init_repo_with_commit(&canonical);
@@ -2625,7 +2625,7 @@ fn a_live_workweaves_own_segmented_name_keeps_its_receipt() {
 /// A migration that reconstructed ownership from `<a>--<b>/<c>` would take it.
 #[test]
 fn migration_leaves_a_stray_pre_flat_branch_alone() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_primary(tmp.path());
     let canonical = ws.join("github").join("acme").join("repo");
     init_repo_with_commit(&canonical);
@@ -2688,7 +2688,7 @@ fn migration_leaves_a_stray_pre_flat_branch_alone() {
 /// later `rwv workweave delete` refuses to touch it.
 #[test]
 fn migration_reaches_the_project_repo_checkout() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_primary(tmp.path());
     let project_repo = ws.join("projects").join("myproj");
     init_repo_with_commit(&project_repo);

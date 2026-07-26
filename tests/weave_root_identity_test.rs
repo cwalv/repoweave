@@ -117,7 +117,7 @@ fn has_marker(root: &Path) -> bool {
 /// `rwv workweave <project> create <name>` leaves the marker and no pointer.
 #[test]
 fn workweave_create_writes_the_marker_and_no_pointer() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_workspace(tmp.path(), "demo");
     let ww = create_workweave(&ws, "demo", "w1");
 
@@ -143,7 +143,7 @@ fn workweave_create_writes_the_marker_and_no_pointer() {
 /// activation with the workweave dir as its root.
 #[test]
 fn activation_inside_a_workweave_does_not_write_a_pointer() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_workspace(tmp.path(), "demo");
     let ww = create_workweave(&ws, "demo", "w1");
 
@@ -173,7 +173,7 @@ fn activation_inside_a_workweave_does_not_write_a_pointer() {
 /// that puts a pointer under a marker.
 #[test]
 fn activate_refuses_inside_a_workweave() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_workspace(tmp.path(), "demo");
     let ww = create_workweave(&ws, "demo", "w1");
 
@@ -197,7 +197,7 @@ fn activate_refuses_inside_a_workweave() {
 /// not the selector itself.
 #[test]
 fn activate_at_primary_still_writes_the_pointer() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_workspace(tmp.path(), "demo");
 
     rwv()
@@ -238,7 +238,7 @@ fn activate_at_primary_still_writes_the_pointer() {
 /// the observable the early return would remove.
 #[test]
 fn intent_verbs_still_surface_inside_a_pointerless_workweave() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_workspace(tmp.path(), "demo");
     let ww = create_workweave(&ws, "demo", "w1");
 
@@ -278,7 +278,7 @@ fn intent_verbs_still_surface_inside_a_pointerless_workweave() {
 /// pointer while leaving the marker.
 #[test]
 fn doctor_fix_clears_a_registered_workweaves_stray_pointer() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_workspace(tmp.path(), "demo");
     let ww = create_workweave(&ws, "demo", "w1");
 
@@ -327,7 +327,7 @@ fn doctor_fix_clears_a_registered_workweaves_stray_pointer() {
 /// them. B's registry is the authority for B's trees, and A does not read it.
 #[test]
 fn doctor_fix_ignores_a_conflicted_root_of_another_workspace() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws_a = make_workspace(tmp.path(), "alpha");
 
     // A second primary whose default container is the same directory.
@@ -407,7 +407,7 @@ fn doctor_fix_ignores_a_conflicted_root_of_another_workspace() {
 /// is disputed, and deleting either file would be a guess.
 #[test]
 fn doctor_fix_leaves_an_unregistered_both_files_tree_alone() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_workspace(tmp.path(), "demo");
     let ww = create_workweave(&ws, "demo", "w1");
 
@@ -441,7 +441,7 @@ fn doctor_fix_leaves_an_unregistered_both_files_tree_alone() {
 /// tell the fixable arm from the report-only one without parsing prose.
 #[test]
 fn doctor_json_carries_the_conflict_and_its_sub_kind() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_workspace(tmp.path(), "demo");
     let ww = create_workweave(&ws, "demo", "w1");
     std::fs::write(ww.join(".rwv-active"), "demo\n").unwrap();
@@ -474,7 +474,7 @@ fn doctor_json_carries_the_conflict_and_its_sub_kind() {
 /// A clean workspace produces no finding — neither root carries both files.
 #[test]
 fn clean_workspace_reports_no_conflict() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_workspace(tmp.path(), "demo");
     rwv()
         .args(["activate", "demo"])

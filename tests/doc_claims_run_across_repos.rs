@@ -63,7 +63,7 @@ fn ensure_tool(name: &str) -> bool {
 }
 
 fn setup_two_repo_workspace() -> (tempfile::TempDir, std::path::PathBuf, std::path::PathBuf) {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = tmp.path().join("ws");
     let repo_primary = ws.join("github/org/primary");
     let repo_fork = ws.join("github/org/fork");

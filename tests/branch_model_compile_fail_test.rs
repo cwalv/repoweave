@@ -22,6 +22,8 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+mod common;
+
 /// `target/<profile>/deps`, where the compiled library and its
 /// dependencies' metadata live.
 fn deps_dir() -> PathBuf {
@@ -61,7 +63,7 @@ fn repoweave_rlib() -> PathBuf {
 /// `--emit=metadata` stops before codegen: the snippets exist to be
 /// type-checked, and nothing here needs to link or run.
 fn compile(snippet: &str) -> (bool, String) {
-    let tmp = tempfile::tempdir().expect("tempdir");
+    let tmp = common::tempdir().expect("tempdir");
     let src = tmp.path().join("probe.rs");
     std::fs::write(&src, snippet).expect("write probe");
 

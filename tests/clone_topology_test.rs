@@ -158,7 +158,7 @@ fn build_primary_with_canonical(parent: &Path) -> (PathBuf, PathBuf) {
 /// is the fo-a0spgj inversion.
 #[test]
 fn standalone_in_workweave_is_reported() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (ws, _canon) = build_primary_with_canonical(tmp.path());
 
     // Synthesize a workweave whose `github/acme/widget` is a *full clone*
@@ -187,7 +187,7 @@ fn standalone_in_workweave_is_reported() {
 /// store. The canonical's DAG is islanded.
 #[test]
 fn disconnected_weave_clone_is_reported() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (ws, _canon) = build_primary_with_canonical(tmp.path());
 
     // Build a workweave whose `widget` is a full clone of its own (separate
@@ -224,7 +224,7 @@ fn disconnected_weave_clone_is_reported() {
 ///     store, not the canonical. That's the wrong-parent-worktree case.
 #[test]
 fn wrong_parent_worktree_is_reported() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (ws, _canon) = build_primary_with_canonical(tmp.path());
 
     // Rogue full clone under .workweaves/
@@ -270,7 +270,7 @@ fn wrong_parent_worktree_is_reported() {
 /// workspace, but its canonical store is elsewhere.
 #[test]
 fn weave_clone_is_worktree_is_reported() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_primary(tmp.path());
     write_manifest(&ws);
 
@@ -312,7 +312,7 @@ fn weave_clone_is_worktree_is_reported() {
 /// clone-topology violations.
 #[test]
 fn healthy_canonical_plus_linked_workweave_is_clean() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (ws, canon) = build_primary_with_canonical(tmp.path());
 
     // Create a workweave directory with a healthy marker.
@@ -348,7 +348,7 @@ fn healthy_canonical_plus_linked_workweave_is_clean() {
 /// produces zero clone-topology violations.
 #[test]
 fn lone_canonical_with_no_workweaves_is_clean() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (ws, _canon) = build_primary_with_canonical(tmp.path());
 
     let violations = doctor_violations(&ws);
@@ -402,7 +402,7 @@ fn symlink_reference_checkout(ww_repo: &Path, canon: &Path) {
 #[cfg(unix)]
 #[test]
 fn symlinked_reference_in_workweave_is_clean() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (ws, canon) = build_primary_with_canonical(tmp.path());
 
     let ww_dir = tmp.path().join(".workweaves/app--ref");
@@ -434,7 +434,7 @@ fn symlinked_reference_in_workweave_is_clean() {
 #[cfg(unix)]
 #[test]
 fn real_standalone_still_fires_alongside_symlinked_reference() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (ws, canon) = build_primary_with_canonical(tmp.path());
 
     // Workweave A: a valid symlinked reference checkout (must be skipped).

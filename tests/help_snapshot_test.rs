@@ -61,7 +61,7 @@ Global options:
 
     // Pin PATH to an empty directory so no `rwv-*` plugins are discovered
     // and the "External commands" section is absent from the output.
-    let empty_dir = tempfile::tempdir().expect("tempdir");
+    let empty_dir = common::tempdir().expect("tempdir");
     common::rwv()
         .arg("--help")
         .env("PATH", empty_dir.path())
@@ -78,7 +78,7 @@ fn rwv_help_external_commands_section_with_fixture_plugin() {
     use std::io::Write;
     use std::os::unix::fs::PermissionsExt;
 
-    let plugin_dir = tempfile::tempdir().expect("tempdir");
+    let plugin_dir = common::tempdir().expect("tempdir");
     let script_path = plugin_dir.path().join("rwv-myplugin");
     {
         let mut f = fs::File::create(&script_path).unwrap();
@@ -108,7 +108,7 @@ fn rwv_help_external_commands_section_with_fixture_plugin() {
 /// With an empty PATH (no plugins) the "External commands" section is absent.
 #[test]
 fn rwv_help_no_external_commands_section_with_empty_path() {
-    let empty_dir = tempfile::tempdir().expect("tempdir");
+    let empty_dir = common::tempdir().expect("tempdir");
     let out = common::rwv()
         .arg("--help")
         .env("PATH", empty_dir.path())

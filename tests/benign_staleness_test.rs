@@ -170,7 +170,7 @@ struct Fixture {
 
 /// Primary + one workweave `ww`, both at the initial (fresh, `ok`) lock state.
 fn fixture() -> Fixture {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let weaveroot = tmp.path().join(".workweaves");
     std::fs::create_dir_all(&weaveroot).unwrap();
     let main = make_main_workspace(tmp.path());

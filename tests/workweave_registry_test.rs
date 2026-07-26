@@ -78,7 +78,7 @@ fn read_index(ws: &Path, project: &str) -> serde_json::Value {
 
 #[test]
 fn create_records_workweave_in_the_index() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_workspace(tmp.path(), "web-app");
 
     let weaveroot = tmp.path().join(".workweaves");
@@ -118,7 +118,7 @@ fn create_records_workweave_in_the_index() {
 
 #[test]
 fn a_symlinked_container_is_recorded_canonicalized() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_workspace(tmp.path(), "web-app");
 
     let real = tmp.path().join("real-container");
@@ -146,7 +146,7 @@ fn a_symlinked_container_is_recorded_canonicalized() {
 
 #[test]
 fn set_container_records_a_symlinked_path_canonicalized() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_workspace(tmp.path(), "web-app");
 
     let real = tmp.path().join("real-container");
@@ -170,7 +170,7 @@ fn set_container_records_a_symlinked_path_canonicalized() {
 
 #[test]
 fn delete_removes_registry_entry() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_workspace(tmp.path(), "web-app");
 
     let weaveroot = tmp.path().join(".workweaves");
@@ -198,7 +198,7 @@ fn delete_removes_registry_entry() {
 
 #[test]
 fn delete_refuses_when_marker_round_trip_fails() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_workspace(tmp.path(), "web-app");
 
     let weaveroot = tmp.path().join(".workweaves");
@@ -248,7 +248,7 @@ fn delete_refuses_when_marker_round_trip_fails() {
 
 #[test]
 fn list_returns_empty_when_no_registry() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_workspace(tmp.path(), "web-app");
 
     // No workweave create ran; no `.rwv-workweave-index` should exist.
@@ -268,7 +268,7 @@ fn list_returns_empty_when_no_registry() {
 
 #[test]
 fn doctor_fix_prunes_stale_registry_entry() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_workspace(tmp.path(), "web-app");
 
     let weaveroot = tmp.path().join(".workweaves");
@@ -310,7 +310,7 @@ fn doctor_fix_prunes_stale_registry_entry() {
 
 #[test]
 fn doctor_fix_adopts_unregistered_workweave() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_workspace(tmp.path(), "web-app");
 
     let weaveroot = tmp.path().join(".workweaves");
@@ -358,7 +358,7 @@ fn doctor_fix_adopts_unregistered_workweave() {
 
 #[test]
 fn doctor_flags_tracked_index() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_workspace(tmp.path(), "web-app");
 
     // Make the project a git repo so we can commit the index into it.
@@ -394,7 +394,7 @@ fn doctor_flags_tracked_index() {
 
 #[test]
 fn deprecation_warning_fires_when_env_var_set() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_workspace(tmp.path(), "web-app");
 
     let weaveroot = tmp.path().join(".workweaves");
@@ -411,7 +411,7 @@ fn deprecation_warning_fires_when_env_var_set() {
 
 #[test]
 fn no_deprecation_warning_when_env_var_unset() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_workspace(tmp.path(), "web-app");
 
     rwv()
@@ -429,7 +429,7 @@ fn no_deprecation_warning_when_env_var_unset() {
 
 #[test]
 fn per_workweave_dir_override_lands_and_records_absolute_path() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_workspace(tmp.path(), "web-app");
 
     let alt = tmp.path().join("alt-container");
@@ -487,7 +487,7 @@ fn per_workweave_dir_override_lands_and_records_absolute_path() {
 
 #[test]
 fn set_container_verb_records_the_container() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_workspace(tmp.path(), "web-app");
 
     let alt = tmp.path().join("alt-container");

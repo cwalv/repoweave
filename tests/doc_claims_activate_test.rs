@@ -98,7 +98,7 @@ fn make_workspace_no_repo(parent: &Path, project: &str) -> PathBuf {
 fn workspace_context_from_project_dir_resolve() {
     // Doc claim: `rwv resolve` from inside projects/<project>/ returns the
     // workspace root path (not the project dir itself).
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (ws, _) = make_workspace_with_git_repo(tmp.path(), "my-project");
 
     let project_dir = ws.join("projects/my-project");
@@ -130,7 +130,7 @@ fn workspace_context_from_project_dir_resolve() {
 fn workspace_context_from_project_dir_no_subcommand() {
     // Doc claim: `rwv` (no subcommand) from projects/<project>/ shows the
     // correct project name in its output.
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (ws, _) = make_workspace_with_git_repo(tmp.path(), "my-project");
 
     let project_dir = ws.join("projects/my-project");
@@ -164,7 +164,7 @@ fn workspace_context_from_project_dir_no_subcommand() {
 
 #[test]
 fn check_missing_role_field() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_workspace_no_repo(tmp.path(), "my-project");
 
     // Write an rwv.yaml with a repo entry that is missing the `role` field.
@@ -221,7 +221,7 @@ fn check_missing_role_field() {
 
 #[test]
 fn check_workweave_drift_extra_repo() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (ws, _) = make_workspace_with_git_repo(tmp.path(), "my-project");
 
     // Add a second git repo on disk that is NOT in any rwv.yaml.
@@ -270,7 +270,7 @@ fn check_workweave_drift_extra_repo() {
 
 #[test]
 fn activate_symlinks_cargo_toml_and_lock() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws_root = tmp.path().join("ws");
     std::fs::create_dir_all(ws_root.join("github")).unwrap();
 
@@ -365,7 +365,7 @@ fn activate_symlinks_cargo_toml_and_lock() {
 
 #[test]
 fn static_files_missing_file_warning() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_workspace_no_repo(tmp.path(), "my-project");
 
     let project_dir = ws.join("projects/my-project");
@@ -423,7 +423,7 @@ integrations:
 
 #[test]
 fn static_files_symlink_creation() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_workspace_no_repo(tmp.path(), "my-project");
 
     let project_dir = ws.join("projects/my-project");
@@ -491,7 +491,7 @@ integrations:
 
 #[test]
 fn static_files_collides_with_workweave_link_errors_loud() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_workspace_no_repo(tmp.path(), "my-project");
 
     let project_dir = ws.join("projects/my-project");
@@ -558,7 +558,7 @@ fn activate_npm_no_install_run_during_activate() {
     // This test documents current behaviour.  If the implementation is updated
     // to run npm install on activate, update the assertions below.
 
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws_root = tmp.path().join("ws");
     std::fs::create_dir_all(ws_root.join("github")).unwrap();
 
@@ -628,7 +628,7 @@ fn activate_graceful_when_npm_unavailable() {
     // We cannot force npm off PATH in a portable way, but we can verify
     // that activate always exits 0 in our test environment.
 
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws_root = tmp.path().join("ws");
     std::fs::create_dir_all(ws_root.join("github")).unwrap();
 

@@ -56,7 +56,7 @@ fn tmp_cwd() -> std::path::PathBuf {
 /// the "core always wins" invariant has been broken.
 #[test]
 fn builtin_status_shadows_path_plugin() {
-    let plugin_dir = tempfile::tempdir().unwrap();
+    let plugin_dir = common::tempdir().unwrap();
     // A rwv-status that would exit 42 if invoked. If the builtin honours
     // this, the outer process would exit 42 (which we require NOT to
     // happen).
@@ -96,7 +96,7 @@ fn builtin_status_shadows_path_plugin() {
 /// exit-42-marker trick.
 #[test]
 fn builtin_all_core_verbs_shadow_path_plugins() {
-    let plugin_dir = tempfile::tempdir().unwrap();
+    let plugin_dir = common::tempdir().unwrap();
     // Every top-level verb that has its own subcommand variant. If a name
     // is a core verb, its plugin must NOT be dispatched.
     let core_verbs = [
@@ -160,7 +160,7 @@ fn builtin_all_core_verbs_shadow_path_plugins() {
 /// flags.
 #[test]
 fn external_verb_dispatched_with_args_verbatim() {
-    let plugin_dir = tempfile::tempdir().unwrap();
+    let plugin_dir = common::tempdir().unwrap();
     // Echo each argument on its own line so the test can assert on order.
     write_script(
         plugin_dir.path(),
@@ -195,9 +195,9 @@ fn external_verb_dispatched_with_args_verbatim() {
 /// addressing lives at one point.
 #[test]
 fn external_verb_does_not_see_global_addressing_flags() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_minimal_workspace(tmp.path(), "myproj");
-    let plugin_dir = tempfile::tempdir().unwrap();
+    let plugin_dir = common::tempdir().unwrap();
     write_script(
         plugin_dir.path(),
         "rwv-foo",
@@ -226,7 +226,7 @@ fn external_verb_does_not_see_global_addressing_flags() {
 /// Non-zero exit codes propagate verbatim.
 #[test]
 fn external_verb_exit_code_propagated_verbatim() {
-    let plugin_dir = tempfile::tempdir().unwrap();
+    let plugin_dir = common::tempdir().unwrap();
     for code in [0_i32, 1, 2, 3, 42, 127, 255] {
         write_script(
             plugin_dir.path(),
@@ -259,7 +259,7 @@ fn external_verb_exit_code_propagated_verbatim() {
 /// POSIX shell can raise on itself.
 #[test]
 fn external_verb_signal_reported_as_128_plus_n() {
-    let plugin_dir = tempfile::tempdir().unwrap();
+    let plugin_dir = common::tempdir().unwrap();
     write_script(plugin_dir.path(), "rwv-die", "kill -9 $$\n");
     let assert = rwv()
         .arg("die")
@@ -292,7 +292,7 @@ fn external_verb_signal_reported_as_128_plus_n() {
 fn unknown_verb_reports_no_core_no_plugin_message() {
     // Empty plugin dir; PATH only contains it so no accidental `rwv-*`
     // binaries can save the day.
-    let plugin_dir = tempfile::tempdir().unwrap();
+    let plugin_dir = common::tempdir().unwrap();
     rwv()
         .arg("no-such-verb-anywhere")
         .current_dir(tmp_cwd())
@@ -328,7 +328,7 @@ fn unknown_verb_reports_no_core_no_plugin_message() {
 /// fails at spawn. This test uses that shape.
 #[test]
 fn exec_failure_names_binary_and_errno() {
-    let plugin_dir = tempfile::tempdir().unwrap();
+    let plugin_dir = common::tempdir().unwrap();
     // Make a "rwv-broken" that is executable but a directory — `which`
     // considers it executable (has +x bit set on directories to allow
     // descent), but `Command::spawn` fails with EACCES / EISDIR.
@@ -368,7 +368,7 @@ fn exec_failure_names_binary_and_errno() {
 /// exec'd. Some plugins legitimately run outside a workspace.
 #[test]
 fn soft_fallthrough_execs_plugin_outside_workspace() {
-    let plugin_dir = tempfile::tempdir().unwrap();
+    let plugin_dir = common::tempdir().unwrap();
     write_script(plugin_dir.path(), "rwv-outside", "echo PLUGIN_RAN\n");
     // Run from a genuine "not a workspace" cwd — the plugin dir itself
     // (an empty tempdir) has no `.rwv-workweave` marker and no workspace
@@ -391,7 +391,7 @@ fn soft_fallthrough_execs_plugin_outside_workspace() {
 /// sees.
 #[test]
 fn explicit_c_flag_failure_errors_before_exec() {
-    let plugin_dir = tempfile::tempdir().unwrap();
+    let plugin_dir = common::tempdir().unwrap();
     // A plugin that would print a marker if wrongly spawned.
     write_script(plugin_dir.path(), "rwv-would-run", "echo SHOULD_NOT_RUN\n");
     // `-C` points at a path that doesn't exist. `resolve_cwd_override`
@@ -409,9 +409,9 @@ fn explicit_c_flag_failure_errors_before_exec() {
 /// spawned.
 #[test]
 fn explicit_w_flag_failure_errors_before_exec() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let _ws = make_minimal_workspace(tmp.path(), "myproj");
-    let plugin_dir = tempfile::tempdir().unwrap();
+    let plugin_dir = common::tempdir().unwrap();
     write_script(plugin_dir.path(), "rwv-would-run", "echo SHOULD_NOT_RUN\n");
     rwv()
         .args(["-w", "myproj--nonexistent-workweave", "would-run"])
@@ -430,7 +430,7 @@ fn explicit_w_flag_failure_errors_before_exec() {
 /// and does NOT exec anything on PATH.
 #[test]
 fn explain_non_core_verb_reports_external_pointer() {
-    let plugin_dir = tempfile::tempdir().unwrap();
+    let plugin_dir = common::tempdir().unwrap();
     // A rwv-foo that would print a marker if explain wrongly exec'd it.
     write_script(plugin_dir.path(), "rwv-foo", "echo EXPLAIN_EXEC_BUG\n");
     rwv()
@@ -467,7 +467,7 @@ fn explain_typo_still_gets_did_you_mean() {
 /// Ensures the join is `rwv-<verb>` regardless of internal dashes.
 #[test]
 fn external_verb_with_multiple_dashes_is_dispatched() {
-    let plugin_dir = tempfile::tempdir().unwrap();
+    let plugin_dir = common::tempdir().unwrap();
     write_script(plugin_dir.path(), "rwv-my-multi-word-verb", "echo RAN\n");
     rwv()
         .arg("my-multi-word-verb")
@@ -519,7 +519,7 @@ fn parse_env_dump(stdout: &str) -> std::collections::HashMap<String, String> {
 /// `RWV_VERSION` is always set, even outside a workspace.
 #[test]
 fn envelope_rwv_version_always_set_outside_workspace() {
-    let plugin_dir = tempfile::tempdir().unwrap();
+    let plugin_dir = common::tempdir().unwrap();
     write_env_dump_plugin(plugin_dir.path(), "rwv-envcheck", ENVELOPE_VARS);
 
     let assert = rwv()
@@ -558,9 +558,9 @@ fn envelope_rwv_version_always_set_outside_workspace() {
 /// workweave is absent.
 #[test]
 fn envelope_primary_workspace_sets_workspace_and_project() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_minimal_workspace(tmp.path(), "myproj");
-    let plugin_dir = tempfile::tempdir().unwrap();
+    let plugin_dir = common::tempdir().unwrap();
     write_env_dump_plugin(plugin_dir.path(), "rwv-envcheck", ENVELOPE_VARS);
 
     let assert = rwv()
@@ -608,10 +608,10 @@ fn envelope_primary_workspace_sets_workspace_and_project() {
 /// workweave context, including RWV_WORKWEAVE.
 #[test]
 fn envelope_via_w_flag_sets_workweave_var() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_minimal_workspace(tmp.path(), "myproj");
     let ws_canon = ws.canonicalize().unwrap();
-    let plugin_dir = tempfile::tempdir().unwrap();
+    let plugin_dir = common::tempdir().unwrap();
     write_env_dump_plugin(plugin_dir.path(), "rwv-envcheck", ENVELOPE_VARS);
 
     // Build a workweave (myproj--feat) in the same parent container so
@@ -673,9 +673,9 @@ fn envelope_via_w_flag_sets_workweave_var() {
 /// test catches it.
 #[test]
 fn envelope_and_json_resolution_block_agree() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_minimal_workspace(tmp.path(), "myproj");
-    let plugin_dir = tempfile::tempdir().unwrap();
+    let plugin_dir = common::tempdir().unwrap();
     write_env_dump_plugin(plugin_dir.path(), "rwv-envcheck", ENVELOPE_VARS);
 
     // Collect the env envelope from the plugin.

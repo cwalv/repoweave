@@ -67,7 +67,7 @@ fn npm_workspace_wiring_e2e() {
         return;
     }
 
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = tmp.path();
 
     // -------------------------------------------------------------------------
@@ -239,7 +239,7 @@ fn npm_release_version_pin_workflow() {
         return;
     }
 
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = tmp.path();
 
     // -------------------------------------------------------------------------

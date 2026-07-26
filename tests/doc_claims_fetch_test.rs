@@ -74,7 +74,7 @@ fn init_bare_repo(path: &Path) {
 fn init_bare_repo_with_commit(path: &Path) {
     init_bare_repo(path);
 
-    let tmp = tempfile::tempdir().expect("tempdir for working clone");
+    let tmp = common::tempdir().expect("tempdir for working clone");
     let work = tmp.path().join("work");
 
     let run = |args: &[&str], cwd: &Path| {
@@ -104,7 +104,7 @@ fn init_bare_repo_with_commit(path: &Path) {
 ///
 /// `repos` is a slice of `(canonical_path, url)` pairs.
 fn push_manifest_to_bare(bare: &Path, repos: &[(&str, &str)]) {
-    let tmp = tempfile::tempdir().expect("tempdir for manifest work clone");
+    let tmp = common::tempdir().expect("tempdir for manifest work clone");
     let work = tmp.path().join("mwork");
 
     let run = |args: &[&str], cwd: &Path| {
@@ -183,7 +183,7 @@ fn setup_workspace_with_project(
 
 #[test]
 fn fetch_name_collision_behavior() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let workspace = tmp.path().join("ws");
     std::fs::create_dir_all(&workspace).unwrap();
 
@@ -245,7 +245,7 @@ fn fetch_name_collision_behavior() {
 
 #[test]
 fn remove_delete_does_not_check_other_projects() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
 
     // Create a bare repo that both projects will reference.
     let shared_bare = tmp.path().join("shared.git");
@@ -326,7 +326,7 @@ fn remove_delete_does_not_check_other_projects() {
 
 #[test]
 fn add_from_local_path_infers_url() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
 
     // Create a bare repo to act as the remote origin.
     let bare = tmp.path().join("origin.git");
@@ -388,7 +388,7 @@ fn add_from_local_path_infers_url() {
 
 #[test]
 fn fetch_shorthand_notation_resolves_to_github() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let workspace = tmp.path().join("ws");
     std::fs::create_dir_all(&workspace).unwrap();
 
@@ -425,7 +425,7 @@ fn fetch_shorthand_notation_resolves_to_github() {
 /// that fetch correctly resolves shorthand and clones the content.
 #[test]
 fn fetch_shorthand_notation_with_local_bare_repo() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let workspace = tmp.path().join("ws");
     std::fs::create_dir_all(&workspace).unwrap();
 
@@ -459,7 +459,7 @@ fn fetch_shorthand_notation_with_local_bare_repo() {
 
 #[test]
 fn fetch_second_project_does_not_auto_activate() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let workspace = tmp.path().join("ws");
     std::fs::create_dir_all(&workspace).unwrap();
 
@@ -525,7 +525,7 @@ fn fetch_second_project_does_not_auto_activate() {
 
 #[test]
 fn fetch_json_envelope_shape() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let workspace = tmp.path().join("ws");
     std::fs::create_dir_all(&workspace).unwrap();
 
@@ -542,7 +542,7 @@ fn fetch_json_envelope_shape() {
     assert!(status.success());
 
     // Clone + commit + push to make repo_bare fetchable.
-    let tmp_work = tempfile::tempdir().unwrap();
+    let tmp_work = common::tempdir().unwrap();
     let work = tmp_work.path().join("work");
     git(
         &[
@@ -613,7 +613,7 @@ fn fetch_json_envelope_shape() {
 
 #[test]
 fn fetch_json_ndjson_under_parallel_jobs() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let workspace = tmp.path().join("ws");
     std::fs::create_dir_all(&workspace).unwrap();
 
@@ -633,7 +633,7 @@ fn fetch_json_ndjson_under_parallel_jobs() {
             .unwrap();
         assert!(s.success());
 
-        let tw = tempfile::tempdir().unwrap();
+        let tw = common::tempdir().unwrap();
         let w = tw.path().join("w");
         git(
             &["clone", &bare.to_string_lossy(), &w.to_string_lossy()],

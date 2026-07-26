@@ -98,7 +98,7 @@ fn rwv_cmd() -> Command {
 
 #[test]
 fn lock_in_primary_creates_lock_file() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let root = make_workspace(tmp.path(), "ws");
 
     // Create two repos under the workspace
@@ -170,7 +170,7 @@ fn lock_in_workweave_writes_to_workweave_project_dir_not_primary() {
     // -tree copy of `rwv.lock` on a separate branch; writing to primary from
     // a workweave clobbers primary's committed lock state with workweave-tip
     // values.
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let root = make_workspace(tmp.path(), "ws");
 
     let repo_path = "github/acme/server";
@@ -253,7 +253,7 @@ fn lock_in_workweave_writes_to_workweave_project_dir_not_primary() {
 
 #[test]
 fn lock_file_format_has_correct_fields() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let root = make_workspace(tmp.path(), "ws");
 
     let repo_path = "github/acme/server";
@@ -326,7 +326,7 @@ fn lock_file_format_has_correct_fields() {
 
 #[test]
 fn lock_with_no_project_errors() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let root = make_workspace(tmp.path(), "ws");
 
     // Run `rwv lock` from workspace root with no project context
@@ -344,7 +344,7 @@ fn lock_with_no_project_errors() {
 
 #[test]
 fn stale_lock_detected_after_new_commit() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let root = make_workspace(tmp.path(), "ws");
 
     let repo_path = "github/acme/server";
@@ -450,7 +450,7 @@ fn lock_command_is_recognized() {
 
 #[test]
 fn lock_errors_on_uncommitted_changes() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let root = make_workspace(tmp.path(), "ws");
 
     let repo_path = "github/acme/server";
@@ -487,7 +487,7 @@ fn lock_errors_on_uncommitted_changes() {
 
 #[test]
 fn lock_errors_on_staged_uncommitted_changes() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let root = make_workspace(tmp.path(), "ws");
 
     let repo_path = "github/acme/server";
@@ -521,7 +521,7 @@ fn lock_errors_on_staged_uncommitted_changes() {
 
 #[test]
 fn lock_dirty_flag_bypasses_uncommitted_check() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let root = make_workspace(tmp.path(), "ws");
 
     let repo_path = "github/acme/server";
@@ -564,7 +564,7 @@ fn lock_dirty_flag_bypasses_uncommitted_check() {
 
 #[test]
 fn lock_records_tag_name_when_head_is_tagged() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let root = make_workspace(tmp.path(), "ws");
 
     let repo_path = "github/acme/server";
@@ -608,7 +608,7 @@ fn lock_records_tag_name_when_head_is_tagged() {
 
 #[test]
 fn lock_records_sha_when_head_is_not_tagged() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let root = make_workspace(tmp.path(), "ws");
 
     let repo_path = "github/acme/server";
@@ -642,7 +642,7 @@ fn lock_records_sha_when_head_is_not_tagged() {
 
 #[test]
 fn lock_records_tag_per_repo_independently() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let root = make_workspace(tmp.path(), "ws");
 
     let repo_a = "github/acme/server";
@@ -705,7 +705,7 @@ fn lock_does_not_run_integration_hooks() {
     // workspace-root Cargo.toml) fires on `rwv activate`, not on
     // `rwv lock`. So `rwv lock` should succeed cleanly without touching
     // ecosystem state.
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let root = make_workspace(tmp.path(), "ws");
 
     let repo_path = "github/acme/server";
@@ -775,7 +775,7 @@ fn lock_all_is_removed_cli_error() {
     // one of the historical clap wordings. The PATH is pinned to an empty
     // dir so a stray plugin installed on the test host cannot hide the
     // regression.
-    let plugin_dir = tempfile::tempdir().expect("tempdir");
+    let plugin_dir = common::tempdir().expect("tempdir");
     rwv_cmd()
         .arg("lock-all")
         .env("PATH", plugin_dir.path().to_string_lossy().to_string())
@@ -799,7 +799,7 @@ fn lock_round_trip_preserves_tag_form_in_yaml() {
     // Generate a lock with a tag at HEAD, parse it back, write again — the
     // tag-form should survive the round-trip (i.e., `version: v1.0.0`, not the
     // canonical SHA).
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let root = make_workspace(tmp.path(), "ws");
 
     let repo_path = "github/acme/server";
@@ -845,7 +845,7 @@ fn lock_resolve_versions_makes_tag_form_equal_head() {
     // After loading a lock with `version: v1.0.0` and calling
     // `resolve_versions(workspace_dir)`, the entry's ResolvedRevisionId compares equal
     // to the head's ResolvedRevisionId — equality goes through canonical SHAs.
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let root = make_workspace(tmp.path(), "ws");
 
     let repo_path = "github/acme/server";
@@ -902,7 +902,7 @@ fn lock_resolve_versions_makes_tag_form_equal_head() {
 fn lock_resolve_versions_unknown_revision_returns_failure() {
     // A lock pinning a nonexistent revision is reported in the failures list
     // and the entry is left as-is so callers can craft a meaningful error.
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let root = make_workspace(tmp.path(), "ws");
 
     let repo_path = "github/acme/server";
@@ -950,7 +950,7 @@ fn lock_resolve_versions_unknown_revision_returns_failure() {
 
 #[test]
 fn lock_commit_flag_commits_lock_file() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let root = make_workspace(tmp.path(), "ws");
 
     let run_git = |args: &[&str]| {
@@ -1010,7 +1010,7 @@ fn lock_commit_flag_commits_lock_file() {
 
 #[test]
 fn lock_commit_flag_skips_when_lock_unchanged() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let root = make_workspace(tmp.path(), "ws");
 
     let run_git = |args: &[&str]| {
@@ -1081,7 +1081,7 @@ fn status_ok_when_lock_pins_tag_at_current_head() {
     // From SME's gc-wisp-mdcj: a workspace where rwv.lock has
     // `version: v0.3.3` for repoweave and HEAD is at the v0.3.3 commit
     // should report `ok` (not `ahead`).
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let root = make_workspace(tmp.path(), "ws");
 
     let repo_path = "github/acme/server";
@@ -1125,7 +1125,7 @@ fn status_ok_when_lock_pins_tag_at_current_head() {
 fn check_locked_ok_when_lock_pins_tag_at_current_head() {
     // Same scenario as the status test, but exercising `rwv doctor --locked`.
     // Should exit 0 (no drift) and not flag the entry as `tip ≠ lock`.
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let root = make_workspace(tmp.path(), "ws");
 
     let repo_path = "github/acme/server";
@@ -1169,7 +1169,7 @@ fn check_locked_ok_when_lock_pins_tag_at_current_head() {
 
 #[test]
 fn lock_commit_message_summarises_repos() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let root = make_workspace(tmp.path(), "ws");
 
     let run_git = |args: &[&str]| {
@@ -1235,7 +1235,7 @@ fn lock_commit_message_summarises_repos() {
 
 #[test]
 fn lock_commit_dirty_check_refuses_non_lock_changes() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let root = make_workspace(tmp.path(), "ws");
 
     let run_git = |args: &[&str]| {
@@ -1293,7 +1293,7 @@ fn lock_commit_dirty_check_refuses_non_lock_changes() {
 
 #[test]
 fn lock_commit_dirty_check_refuses_staged_non_lock_changes() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let root = make_workspace(tmp.path(), "ws");
 
     let run_git = |args: &[&str]| {
@@ -1356,7 +1356,7 @@ fn lock_file_from_path_yields_raw_entries() {
     // LockFile::from_path is the parse boundary: it produces a LockFile
     // whose entries' versions are RawRevisionId — no canonical-SHA
     // resolution has happened yet.
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let root = make_workspace(tmp.path(), "ws");
     let repo_path = "github/acme/server";
     let project_dir = root.join("projects").join("my-app");
@@ -1391,7 +1391,7 @@ fn resolve_versions_surfaces_unknown_ref_in_failures() {
     // ref does not appear in the resolved view and surfaces in failures
     // with its raw string intact, so callers can craft a precise
     // diagnostic ("lock pins unknown revision X").
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let root = make_workspace(tmp.path(), "ws");
     let repo_path = "github/acme/server";
     init_git_repo(&root.join(repo_path));
@@ -1432,7 +1432,7 @@ fn resolve_versions_roundtrip_raw_then_resolved_yaml_shape() {
     // not leak into the on-disk shape. A round-trip through
     // `from_path` -> `resolve_versions` -> `write_lock` -> `from_path`
     // preserves the version's display string for a tag-form entry.
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let root = make_workspace(tmp.path(), "ws");
     let repo_path = "github/acme/server";
     init_git_repo(&root.join(repo_path));
@@ -1493,7 +1493,7 @@ fn resolve_versions_roundtrip_raw_then_resolved_yaml_shape() {
 // arbitrarily corrupt existing file.
 #[test]
 fn lock_succeeds_over_conflict_markered_rwv_lock() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let root = make_workspace(tmp.path(), "ws");
 
     let repo_path = "github/acme/server";
@@ -1610,7 +1610,7 @@ fn lock_detached_head_member_succeeds_with_warning() {
     //   - the consequence ("no branch names this commit; a later fetch will
     //     materialize detached")
     //   - the next verb ("Create/checkout a branch if this is unintended")
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let root = make_workspace(tmp.path(), "ws");
 
     let repo_path = "github/acme/server";
@@ -1650,7 +1650,7 @@ fn lock_detached_head_member_succeeds_with_warning() {
 fn lock_detached_head_warning_contains_short_sha() {
     // The warning must include the abbreviated SHA so the operator can
     // identify which commit is pinned without opening rwv.lock.
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let root = make_workspace(tmp.path(), "ws");
 
     let repo_path = "github/acme/server";
@@ -1674,7 +1674,7 @@ fn lock_detached_head_warning_contains_short_sha() {
 #[test]
 fn lock_normal_head_no_detached_warning() {
     // A repo on a named branch must NOT produce a detached-HEAD warning.
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let root = make_workspace(tmp.path(), "ws");
 
     let repo_path = "github/acme/server";
@@ -1724,7 +1724,7 @@ fn lock_unborn_head_member_refuses_with_clear_message() {
     //
     // Before fo-oueuv7.4 the raw git error ("ambiguous argument 'HEAD'")
     // leaked to the terminal.
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let root = make_workspace(tmp.path(), "ws");
 
     let repo_path = "github/acme/server";
@@ -1754,7 +1754,7 @@ fn lock_unborn_head_member_refuses_with_clear_message() {
 fn lock_unborn_head_does_not_write_lock_file() {
     // When the member has an unborn HEAD, no rwv.lock should be written —
     // an early failure before the write step is the safe outcome.
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let root = make_workspace(tmp.path(), "ws");
 
     let repo_path = "github/acme/server";

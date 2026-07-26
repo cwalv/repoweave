@@ -90,7 +90,7 @@ struct PushWorkspace {
 /// each backed by its own bare remote. The committed lock matches every
 /// manifest repo's local HEAD so the precondition passes by default.
 fn build_workspace(project_name: &str, repos: &[(&str, &str)]) -> PushWorkspace {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let workspace = tmp.path().join("ws");
     std::fs::create_dir_all(&workspace).unwrap();
     std::fs::create_dir_all(workspace.join("projects")).unwrap();

@@ -84,7 +84,7 @@ fn make_workspace(parent: &Path, project: &str) -> (PathBuf, PathBuf, String) {
 
 #[test]
 fn status_json_emits_envelope_object_not_bare_array() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (ws, _repo, _url) = make_workspace(tmp.path(), "alpha");
 
     let output = rwv()
@@ -133,7 +133,7 @@ fn status_json_emits_envelope_object_not_bare_array() {
 
 #[test]
 fn status_json_schema_url_points_to_committed_artifact() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (ws, _repo, _url) = make_workspace(tmp.path(), "alpha");
 
     let output = rwv()
@@ -173,7 +173,7 @@ fn status_json_schema_url_points_to_committed_artifact() {
 
 #[test]
 fn status_json_per_repo_record_has_identifying_fields() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (ws, repo_dir, url) = make_workspace(tmp.path(), "alpha");
 
     let output = rwv()

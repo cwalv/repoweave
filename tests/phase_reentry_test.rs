@@ -201,7 +201,7 @@ fn create_savepoint(repo: &Path, op_id: &str) {
 
 #[test]
 fn replay_reentry_on_already_converged_repos_is_a_noop_success() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (primary, ww, _sha) = make_shared_workspaces(tmp.path());
 
     // ww and primary are already in sync; HEADs match. Write an owner
@@ -249,7 +249,7 @@ fn replay_reentry_on_already_converged_repos_is_a_noop_success() {
 
 #[test]
 fn relock_reentry_on_current_lock_is_a_noop_success() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (primary, ww, _sha) = make_shared_workspaces(tmp.path());
 
     let op_id = "reentry-test-relock";
@@ -315,7 +315,7 @@ fn write_lease(workspace: &Path, owner: &Path) {
 
 #[test]
 fn advance_target_reentry_on_equal_tips_is_a_noop_success() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (primary, ww, _sha) = make_shared_workspaces(tmp.path());
 
     // primary and ww share tips. Write a sync-to owner record at advance-target
@@ -366,7 +366,7 @@ fn advance_target_reentry_on_equal_tips_is_a_noop_success() {
 
 #[test]
 fn advance_target_reentry_refuses_to_land_on_a_detached_target() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (primary, ww, sha) = make_shared_workspaces(tmp.path());
 
     // Give the landing something to move.
@@ -471,7 +471,7 @@ fn write_lease_with_id(workspace: &Path, owner: &Path, id: &str) {
 
 #[test]
 fn sync_to_continue_from_lease_workspace_drives_owner_to_clean_state() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (primary, ww, _initial_sha) = make_shared_workspaces(tmp.path());
 
     // Real, multi-repo divergence so the bug's "engine ran against the
@@ -743,7 +743,7 @@ fn write_sync_to_retire_record(
 ///   - target lease still present at primary.
 #[test]
 fn retire_merged_check_failure_leaves_phase_retire_and_lease() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (primary, ww, _sha) = make_retire_workspaces(tmp.path());
 
     let op_id = "retire-merged-check-fail";
@@ -820,7 +820,7 @@ fn retire_merged_check_failure_leaves_phase_retire_and_lease() {
 /// lease is cleared.
 #[test]
 fn retire_continue_completes_after_reconciliation() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (primary, ww, _sha) = make_retire_workspaces(tmp.path());
 
     let op_id = "retire-continue-reconciled";
@@ -906,7 +906,7 @@ fn retire_continue_completes_after_reconciliation() {
 /// would have written to primary (ff'd to ww's tip).
 #[test]
 fn retire_abort_restores_source_and_target() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (primary, ww, initial_sha) = make_retire_workspaces(tmp.path());
 
     let op_id = "retire-abort-test";
@@ -1011,7 +1011,7 @@ fn retire_abort_restores_source_and_target() {
 
 #[test]
 fn re_entering_each_phase_independently_completes_to_a_clean_state() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (primary, ww, _sha) = make_shared_workspaces(tmp.path());
     let op_id = "reentry-test-multi";
 

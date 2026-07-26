@@ -75,7 +75,7 @@ fn commit_file(repo: &Path, filename: &str, content: &str, msg: &str) {
 
 #[test]
 fn assert_log_ordering_passes_for_correct_shape() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let repo = tmp.path().join("repo");
     init_repo(&repo);
 
@@ -99,7 +99,7 @@ fn assert_log_ordering_passes_for_correct_shape() {
 
 #[test]
 fn assert_log_ordering_fails_for_wrong_shape() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let repo = tmp.path().join("repo");
     init_repo(&repo);
 
@@ -142,7 +142,7 @@ fn assert_log_ordering_fails_for_wrong_shape() {
 
 #[test]
 fn assert_log_ordering_fails_for_missing_commit() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let repo = tmp.path().join("repo");
     init_repo(&repo);
 

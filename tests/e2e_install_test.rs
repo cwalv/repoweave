@@ -14,6 +14,8 @@
 
 use std::process::Command;
 
+mod common;
+
 /// Skip the test if `RWV_E2E_INSTALL` is not set to `"1"`.
 macro_rules! require_e2e {
     () => {
@@ -169,7 +171,7 @@ fn curl_install_script() {
 
     // Download and run the install script into a temp dir to avoid
     // clobbering an existing installation.
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let bin_dir = tmp.path().join("bin");
     std::fs::create_dir_all(&bin_dir).unwrap();
 

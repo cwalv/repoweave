@@ -111,7 +111,7 @@ fn make_two_project_workspace(parent: &Path) -> (PathBuf, PathBuf, PathBuf, Stri
 
 #[test]
 fn action_verb_in_project_dir_without_active_errors_helpfully() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (_ws, proj_a, _proj_b, _sha) = make_two_project_workspace(tmp.path());
 
     let out = rwv().args(["lock"]).current_dir(&proj_a).assert().failure();
@@ -137,7 +137,7 @@ fn action_verb_in_project_dir_without_active_errors_helpfully() {
 
 #[test]
 fn project_override_runs_without_changing_active() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (ws, _proj_a, _proj_b, _sha) = make_two_project_workspace(tmp.path());
 
     // Make proj-a active.
@@ -217,7 +217,7 @@ fn assert_regenerated_without_selecting(ws: &Path) {
 
 #[test]
 fn add_with_project_override_regenerates_without_selecting() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (ws, _proj_a, _proj_b, _sha) = make_two_project_workspace(tmp.path());
     select_proj_a(&ws);
 
@@ -247,7 +247,7 @@ fn add_with_project_override_regenerates_without_selecting() {
 
 #[test]
 fn remove_with_project_override_regenerates_without_selecting() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (ws, _proj_a, _proj_b, _sha) = make_two_project_workspace(tmp.path());
     select_proj_a(&ws);
 
@@ -274,7 +274,7 @@ fn remove_with_project_override_regenerates_without_selecting() {
 
 #[test]
 fn update_with_project_override_regenerates_without_selecting() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (ws, _proj_a, _proj_b, sha) = make_two_project_workspace(tmp.path());
     select_proj_a(&ws);
 
@@ -303,7 +303,7 @@ fn update_with_project_override_regenerates_without_selecting() {
 
 #[test]
 fn divergence_warning_when_cwd_project_differs_from_active() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (ws, _proj_a, proj_b, _sha) = make_two_project_workspace(tmp.path());
 
     // proj-a is active; CWD is proj-b — divergence.

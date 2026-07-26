@@ -43,7 +43,7 @@ fn init_bare(path: &Path) {
 
 fn init_bare_with_commit(path: &Path) -> String {
     init_bare(path);
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let work = tmp.path().join("work");
     git_run(
         &["clone", &path.to_string_lossy(), &work.to_string_lossy()],
@@ -116,7 +116,7 @@ fn bootstrap_via_fetch(tmp: &Path) -> (PathBuf, PathBuf, PathBuf, String) {
 
 #[test]
 fn update_advances_dep_to_branch_head_and_relocks() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (workspace, project_dir, dep_bare, initial_sha) = bootstrap_via_fetch(tmp.path());
 
     // Push a new commit to the dep's bare remote.
@@ -176,7 +176,7 @@ fn code_workspace(project_dir: &Path) -> PathBuf {
 
 #[test]
 fn update_authors_managed_content() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (workspace, project_dir, _dep_bare, _initial_sha) = bootstrap_via_fetch(tmp.path());
 
     // `rwv fetch` is a context verb, so nothing has authored yet.
@@ -199,7 +199,7 @@ fn update_authors_managed_content() {
 
 #[test]
 fn filtered_update_does_not_author_managed_content() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (workspace, project_dir, _dep_bare, _initial_sha) = bootstrap_via_fetch(tmp.path());
 
     // Selects the workspace's only repo, so the advance and the lock write do
@@ -229,7 +229,7 @@ fn filtered_update_does_not_author_managed_content() {
 fn lock_does_not_write_ecosystem_files() {
     // `rwv lock` is a pure git SHA snapshot. It should not invoke
     // `cargo generate-lockfile` / `npm install` / `uv sync`.
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let workspace = tmp.path().join("ws");
     std::fs::create_dir_all(workspace.join("github/acme")).unwrap();
     std::fs::create_dir_all(workspace.join("projects")).unwrap();

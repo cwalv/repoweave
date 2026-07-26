@@ -68,7 +68,7 @@ fn rwv() -> assert_cmd::Command {
 /// A workweave whose `parent` directory has been deleted → dangling-parent.
 #[test]
 fn dangling_parent_is_reported() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_primary(tmp.path());
     let ww_dir = workweaves_dir(&ws).join("my-project--feat");
     std::fs::create_dir_all(&ww_dir).unwrap();
@@ -94,7 +94,7 @@ fn dangling_parent_is_reported() {
 /// A workweave with a healthy parent (`parent:` == primary) → no dangling-parent.
 #[test]
 fn healthy_parent_is_clean() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_primary(tmp.path());
     let ww_dir = workweaves_dir(&ws).join("my-project--main");
     write_marker(&ww_dir, &ws, "my-project", &ws);
@@ -118,7 +118,7 @@ fn healthy_parent_is_clean() {
 
 #[test]
 fn self_loop_parent_is_reported() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_primary(tmp.path());
     let ww_dir = workweaves_dir(&ws).join("my-project--self-loop");
     std::fs::create_dir_all(&ww_dir).unwrap();
@@ -143,7 +143,7 @@ fn self_loop_parent_is_reported() {
 
 #[test]
 fn cycle_in_parent_chain_is_reported() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_primary(tmp.path());
     let ww_a = workweaves_dir(&ws).join("my-project--cycle-a");
     let ww_b = workweaves_dir(&ws).join("my-project--cycle-b");
@@ -169,7 +169,7 @@ fn cycle_in_parent_chain_is_reported() {
 
 #[test]
 fn cross_project_parent_is_reported() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_primary(tmp.path());
     let parent_ww = workweaves_dir(&ws).join("project-b--base");
     let child_ww = workweaves_dir(&ws).join("project-a--child");
@@ -202,7 +202,7 @@ fn cross_project_parent_is_reported() {
 /// Primary → workweave A → workweave A-child: all same project, no anomalies.
 #[test]
 fn healthy_nested_tree_is_clean() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_primary(tmp.path());
 
     let ww_a = workweaves_dir(&ws).join("my-project--feat-a");
@@ -232,7 +232,7 @@ fn healthy_nested_tree_is_clean() {
 
 #[test]
 fn unregistered_dir_is_reported() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_primary(tmp.path());
 
     // Create a directory under .workweaves/ with no .rwv-workweave marker.
@@ -251,7 +251,7 @@ fn unregistered_dir_is_reported() {
 /// A registered workweave (with a valid marker) must not be flagged as unregistered.
 #[test]
 fn registered_workweave_is_not_flagged_as_unregistered() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_primary(tmp.path());
     let ww_dir = workweaves_dir(&ws).join("my-project--registered");
     write_marker(&ww_dir, &ws, "my-project", &ws);
@@ -271,7 +271,7 @@ fn registered_workweave_is_not_flagged_as_unregistered() {
 
 #[test]
 fn foreign_primary_is_reported() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_primary(tmp.path());
     let ww_dir = workweaves_dir(&ws).join("my-project--foreign");
     std::fs::create_dir_all(&ww_dir).unwrap();
@@ -304,7 +304,7 @@ fn foreign_primary_is_reported() {
 /// must not be flagged as foreign.
 #[test]
 fn local_primary_is_not_flagged_as_foreign() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_primary(tmp.path());
     let ww_dir = workweaves_dir(&ws).join("my-project--local");
     write_marker(&ww_dir, &ws, "my-project", &ws);
@@ -324,7 +324,7 @@ fn local_primary_is_not_flagged_as_foreign() {
 
 #[test]
 fn json_output_includes_workweave_tree_integrity_kind() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_primary(tmp.path());
 
     // Create an unregistered directory (simplest violation to synthesize).
@@ -356,7 +356,7 @@ fn json_output_includes_workweave_tree_integrity_kind() {
 
 #[test]
 fn workspace_with_no_workweaves_dir_is_clean_of_tree_checks() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_primary(tmp.path());
     // Do NOT create .workweaves/ — it simply doesn't exist.
 

@@ -9,6 +9,8 @@ use predicates::prelude::*;
 use std::fs;
 use std::path::Path;
 
+mod common;
+
 /// Create a minimal workspace root at `parent/name` with `github/` and
 /// `projects/` marker directories. Returns the root path.
 fn make_workspace(parent: &Path, name: &str) -> std::path::PathBuf {
@@ -39,7 +41,7 @@ fn write_marker(weave_dir: &Path, primary: &Path, project: &str) {
 #[test]
 
 fn context_display_in_primary_shows_root_and_projects() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let root = make_workspace(tmp.path(), "myws");
 
     // Create a project so the display has something to list
@@ -59,7 +61,7 @@ fn context_display_in_primary_shows_root_and_projects() {
 #[test]
 
 fn context_display_in_primary_subdir() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let root = make_workspace(tmp.path(), "ws");
     let deep = root.join("github").join("acme").join("server");
     fs::create_dir_all(&deep).unwrap();
@@ -81,7 +83,7 @@ fn context_display_in_primary_subdir() {
 #[test]
 
 fn context_display_in_weave_shows_weave_info() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let root = make_workspace(tmp.path(), "ws");
 
     // Create the workweave sibling directory with a marker.
@@ -102,7 +104,7 @@ fn context_display_in_weave_shows_weave_info() {
 #[test]
 
 fn context_display_in_weave_subdir() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let root = make_workspace(tmp.path(), "ws");
 
     let weave_dir = tmp.path().join("ws--feat-login");
@@ -126,7 +128,7 @@ fn context_display_in_weave_subdir() {
 #[test]
 
 fn resolve_in_primary_prints_root_path() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let root = make_workspace(tmp.path(), "ws");
     let deep = root.join("github").join("acme").join("server");
     fs::create_dir_all(&deep).unwrap();
@@ -147,7 +149,7 @@ fn resolve_in_primary_prints_root_path() {
 #[test]
 
 fn resolve_at_workspace_root_prints_root_path() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let root = make_workspace(tmp.path(), "ws");
 
     let canonical_root = root.canonicalize().unwrap();
@@ -170,7 +172,7 @@ fn resolve_at_workspace_root_prints_root_path() {
 #[test]
 
 fn resolve_in_weave_prints_weave_dir_path() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let root = make_workspace(tmp.path(), "ws");
 
     let weave_dir = tmp.path().join("ws--hotfix");
@@ -193,7 +195,7 @@ fn resolve_in_weave_prints_weave_dir_path() {
 #[test]
 
 fn resolve_in_weave_subdir_prints_weave_dir_path() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let root = make_workspace(tmp.path(), "ws");
 
     let weave_dir = tmp.path().join("ws--agent-42");
@@ -221,7 +223,7 @@ fn resolve_in_weave_subdir_prints_weave_dir_path() {
 #[test]
 
 fn context_display_outside_workspace_errors() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     // No workspace markers — just an empty temp dir
 
     Command::cargo_bin("rwv")
@@ -238,7 +240,7 @@ fn context_display_outside_workspace_errors() {
 #[test]
 
 fn resolve_outside_workspace_errors() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
 
     Command::cargo_bin("rwv")
         .unwrap()

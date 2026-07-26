@@ -188,7 +188,7 @@ fn write_op_state(workspace_dir: &Path, op_id: &str) {
 /// and a re-run must be clean (idempotent).
 #[test]
 fn stale_worktree_registration_reported_and_fixable() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let root = make_workspace(tmp.path(), "ws");
 
     let repo_rel = "github/acme/server";
@@ -244,7 +244,7 @@ fn stale_worktree_registration_reported_and_fixable() {
 /// terminal that needs to roll back.
 #[test]
 fn stale_op_state_reported_untouched_by_fix() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let root = make_workspace(tmp.path(), "ws");
 
     let repo_rel = "github/acme/server";
@@ -296,7 +296,7 @@ fn stale_op_state_reported_untouched_by_fix() {
 /// ref; a re-run is clean.
 #[test]
 fn orphaned_savepoint_redundant_fixable() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let root = make_workspace(tmp.path(), "ws");
 
     let repo_rel = "github/acme/server";
@@ -363,7 +363,7 @@ fn orphaned_savepoint_redundant_fixable() {
 /// pointer to the discarded work). `--fix` must NOT drop it.
 #[test]
 fn orphaned_savepoint_live_is_kept_under_fix() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let root = make_workspace(tmp.path(), "ws");
 
     let repo_rel = "github/acme/server";
@@ -451,7 +451,7 @@ fn orphaned_savepoint_live_is_kept_under_fix() {
 /// A second `--fix` pass must be a no-op (idempotent).
 #[test]
 fn fix_is_idempotent_across_all_three_kinds() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let root = make_workspace(tmp.path(), "ws");
 
     let repo_rel = "github/acme/server";
@@ -558,7 +558,7 @@ fn fix_is_idempotent_across_all_three_kinds() {
 /// orphaned regardless of the savepoint tip's reachability.
 #[test]
 fn live_op_state_protects_matching_savepoint() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let root = make_workspace(tmp.path(), "ws");
 
     let repo_rel = "github/acme/server";
@@ -595,7 +595,7 @@ fn live_op_state_protects_matching_savepoint() {
 
 #[test]
 fn json_output_includes_state_hygiene_kinds() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let root = make_workspace(tmp.path(), "ws");
 
     let repo_rel = "github/acme/server";

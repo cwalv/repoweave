@@ -114,7 +114,7 @@ fn init_bare_repo(path: &Path) {
 /// Push an empty `rwv.yaml` manifest into a bare repo, via a temporary
 /// working clone.
 fn push_empty_manifest_to_bare(bare: &Path) {
-    let tmp = tempfile::tempdir().expect("tempdir for manifest work clone");
+    let tmp = common::tempdir().expect("tempdir for manifest work clone");
     let work = tmp.path().join("mwork");
     git(
         &["clone", &bare.to_string_lossy(), &work.to_string_lossy()],
@@ -134,7 +134,7 @@ fn push_empty_manifest_to_bare(bare: &Path) {
 /// content untouched.
 #[test]
 fn fetch_allow_non_empty_dir_waives_only_the_nonempty_dir_refusal() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
 
     let project_bare = tmp.path().join("proj.git");
     init_bare_repo(&project_bare);
@@ -223,7 +223,7 @@ fn make_workweave_with_dirty_and_unmerged_commit(
 /// it waives the dirty-worktree refusal, not the diverged-history one.
 #[test]
 fn workweave_delete_discard_uncommitted_does_not_waive_unmerged_commits() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (ws, weaveroot, ww_dir) =
         make_workweave_with_dirty_and_unmerged_commit(tmp.path(), "web-app", "both-a");
     let weave_repo = ww_dir.join("github/org/repo");
@@ -269,7 +269,7 @@ fn workweave_delete_discard_uncommitted_does_not_waive_unmerged_commits() {
 /// worktree: it waives the diverged-history refusal, not the uncommitted one.
 #[test]
 fn workweave_delete_discard_unmerged_commits_does_not_waive_uncommitted() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (ws, weaveroot, ww_dir) =
         make_workweave_with_dirty_and_unmerged_commit(tmp.path(), "web-app", "both-b");
     let weave_repo = ww_dir.join("github/org/repo");
@@ -315,7 +315,7 @@ fn workweave_delete_discard_unmerged_commits_does_not_waive_uncommitted() {
 /// contract fo-wdrl2r.2's doc update describes.
 #[test]
 fn workweave_delete_both_discard_flags_clear_both_preconditions() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (ws, weaveroot, ww_dir) =
         make_workweave_with_dirty_and_unmerged_commit(tmp.path(), "web-app", "both-c");
 
@@ -385,7 +385,7 @@ struct PushFixture {
 }
 
 fn build_push_fixture() -> PushFixture {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let workspace = tmp.path().join("ws");
     std::fs::create_dir_all(workspace.join("projects")).unwrap();
 

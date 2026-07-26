@@ -210,7 +210,7 @@ fn make_shared_workspaces(parent: &Path) -> (Workspace, Workspace, String) {
 #[test]
 fn concurrent_sync_atomic_acquire_yields_exactly_one_in_flight_refusal() {
     for trial in 0..3 {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = common::tempdir().unwrap();
         let (primary, ww, _c1) = make_shared_workspaces(tmp.path());
 
         // Give primary an advance so `sync` has real work to do (Phase 2).
@@ -313,7 +313,7 @@ fn concurrent_sync_atomic_acquire_yields_exactly_one_in_flight_refusal() {
 
 #[test]
 fn precondition_refusal_after_acquire_clears_op_state() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (primary, ww, _c1) = make_shared_workspaces(tmp.path());
 
     // Dirty the ww project repo so sync-to's dirty-source preflight refuses.
@@ -375,7 +375,7 @@ fn precondition_refusal_after_acquire_clears_op_state() {
 
 #[test]
 fn doctor_reports_dead_op_lease_with_missing_owner_record() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (_primary, ww, _c1) = make_shared_workspaces(tmp.path());
 
     // The recorded owner path exists as a directory but has no .rwv-op file.
@@ -409,7 +409,7 @@ fn doctor_reports_dead_op_lease_with_missing_owner_record() {
 
 #[test]
 fn doctor_fix_removes_dead_op_lease() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (_primary, ww, _c1) = make_shared_workspaces(tmp.path());
 
     let ghost_owner = tmp.path().join("ghost-owner-2");
@@ -442,7 +442,7 @@ fn doctor_leaves_live_lease_alone() {
     // The lease sits at the scanned workspace (ww) and points at a separate
     // directory that carries the matching owner record — the doctor
     // resolves the pointer, finds a matching op id, and reports nothing.
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (_primary, ww, _c1) = make_shared_workspaces(tmp.path());
 
     let op_id = "live-op-1234";
@@ -486,7 +486,7 @@ fn doctor_reports_dead_op_lease_on_op_id_mismatch() {
     // owner-pointer reference a separate directory that carries a
     // fresh-op `.rwv-op`. The doctor scan reads the lease, follows the
     // pointer, sees the id mismatch, and reports.
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (_primary, ww, _c1) = make_shared_workspaces(tmp.path());
 
     // A separate directory acting as the "owner workspace" that the lease

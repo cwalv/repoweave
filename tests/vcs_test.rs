@@ -10,7 +10,7 @@ mod common;
 
 /// Create a fresh git repo in a temp directory with one initial commit.
 fn init_repo() -> TempDir {
-    let dir = TempDir::new().unwrap();
+    let dir = common::tempdir().unwrap();
     let p = dir.path();
 
     git(p, &["init"]);
@@ -308,7 +308,7 @@ fn has_uncommitted_changes_staged_deletion() {
 
 #[test]
 fn init_repo_creates_git_directory() {
-    let dir = TempDir::new().unwrap();
+    let dir = common::tempdir().unwrap();
     let repo_path = dir.path().join("new-repo");
 
     let vcs = GitVcs;
@@ -322,7 +322,7 @@ fn init_repo_creates_git_directory() {
 
 #[test]
 fn init_repo_sets_main_as_initial_branch() {
-    let dir = TempDir::new().unwrap();
+    let dir = common::tempdir().unwrap();
     let repo_path = dir.path().join("new-repo");
 
     let vcs = GitVcs;
@@ -338,7 +338,7 @@ fn init_repo_sets_main_as_initial_branch() {
 
 #[test]
 fn init_repo_creates_nested_directories() {
-    let dir = TempDir::new().unwrap();
+    let dir = common::tempdir().unwrap();
     let repo_path = dir.path().join("a").join("b").join("c").join("repo");
 
     let vcs = GitVcs;
@@ -352,7 +352,7 @@ fn init_repo_creates_nested_directories() {
 
 #[test]
 fn init_repo_is_recognized_by_is_repo() {
-    let dir = TempDir::new().unwrap();
+    let dir = common::tempdir().unwrap();
     let repo_path = dir.path().join("new-repo");
 
     let vcs = GitVcs;
@@ -584,7 +584,7 @@ fn raw_revision_id_tag_resolves_to_head_sha() {
 /// and a "local" clone whose remote is named `remote_name`. Returns the
 /// workspace tempdir and the path to the local clone.
 fn repo_with_remote(remote_name: &str) -> (TempDir, std::path::PathBuf) {
-    let workspace = TempDir::new().unwrap();
+    let workspace = common::tempdir().unwrap();
     let remote_path = workspace.path().join("remote");
     let local_path = workspace.path().join("local");
 

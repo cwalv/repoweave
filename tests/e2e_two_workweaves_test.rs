@@ -199,7 +199,7 @@ fn rwv_lock_commit(workspace_root: &Path) {
 /// (ff), then ww2 syncs main with rebase, then sync ww2 → main (ff).
 #[test]
 fn sync_two_workweaves_lock_only_changes() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let weaveroot = tmp.path().join(".workweaves");
     std::fs::create_dir_all(&weaveroot).unwrap();
 
@@ -298,7 +298,7 @@ fn sync_two_workweaves_lock_only_changes() {
 /// main (ff). All four contributions land.
 #[test]
 fn sync_two_workweaves_with_project_doc_changes() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let weaveroot = tmp.path().join(".workweaves");
     std::fs::create_dir_all(&weaveroot).unwrap();
 
@@ -398,7 +398,7 @@ fn sync_two_workweaves_with_project_doc_changes() {
 /// Sync should fail with an actionable error naming the conflicting path.
 #[test]
 fn sync_rebase_surfaces_genuine_project_conflict() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let weaveroot = tmp.path().join(".workweaves");
     std::fs::create_dir_all(&weaveroot).unwrap();
 
@@ -458,7 +458,7 @@ fn sync_rebase_surfaces_genuine_project_conflict() {
 /// reference).
 #[test]
 fn sync_phase3_materializes_newly_added_repo_in_workweave() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let weaveroot = tmp.path().join(".workweaves");
     std::fs::create_dir_all(&weaveroot).unwrap();
 
@@ -571,7 +571,7 @@ fn sync_phase3_materializes_newly_added_repo_in_workweave() {
 /// lock advanced past a never-materialised repo and sync exited 0.
 #[test]
 fn sync_phase3_materialize_failure_is_fatal() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let weaveroot = tmp.path().join(".workweaves");
     std::fs::create_dir_all(&weaveroot).unwrap();
 
@@ -634,7 +634,7 @@ fn sync_phase3_materialize_failure_is_fatal() {
 /// now; bare `rwv sync` was removed (use `rwv sync-to` to land work upward).
 #[test]
 fn sync_with_explicit_primary_source_advances_workweave() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let weaveroot = tmp.path().join(".workweaves");
     std::fs::create_dir_all(&weaveroot).unwrap();
 
@@ -677,7 +677,7 @@ fn sync_with_explicit_primary_source_advances_workweave() {
 /// "bare" behavior — upward landing without requiring an explicit target.
 #[test]
 fn bare_sync_to_follows_recorded_parent_to_primary() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let weaveroot = tmp.path().join(".workweaves");
     std::fs::create_dir_all(&weaveroot).unwrap();
 
@@ -713,7 +713,7 @@ fn bare_sync_to_follows_recorded_parent_to_primary() {
 /// must error with a clear message — there is no recorded parent to target.
 #[test]
 fn bare_sync_to_from_primary_errors_with_no_parent_message() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
 
     let main = make_main_workspace(tmp.path());
     std::fs::write(main.root.join(".rwv-active"), format!("{PROJECT}\n")).unwrap();
@@ -736,7 +736,7 @@ fn bare_sync_to_from_primary_errors_with_no_parent_message() {
 /// `rwv sync-to --retire`. The --retire flag was removed from sync.
 #[test]
 fn sync_retire_flag_gives_did_you_mean_hint() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
 
     let main = make_main_workspace(tmp.path());
     std::fs::write(main.root.join(".rwv-active"), format!("{PROJECT}\n")).unwrap();
@@ -756,7 +756,7 @@ fn sync_retire_flag_gives_did_you_mean_hint() {
 /// `rwv sync` with no source must fail (source is now required).
 #[test]
 fn bare_sync_no_source_fails() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
 
     let main = make_main_workspace(tmp.path());
     std::fs::write(main.root.join(".rwv-active"), format!("{PROJECT}\n")).unwrap();
@@ -774,7 +774,7 @@ fn bare_sync_no_source_fails() {
 /// not a refusal.
 #[test]
 fn sibling_sync_emits_warning_and_proceeds() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let weaveroot = tmp.path().join(".workweaves");
     std::fs::create_dir_all(&weaveroot).unwrap();
 
@@ -813,7 +813,7 @@ fn sibling_sync_emits_warning_and_proceeds() {
 /// already at parent's tip (no divergent commits) lands work upward and deletes.
 #[test]
 fn sync_to_retire_clean_path_deletes_workweave() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let weaveroot = tmp.path().join(".workweaves");
     std::fs::create_dir_all(&weaveroot).unwrap();
 
@@ -867,7 +867,7 @@ fn sync_to_retire_clean_path_deletes_workweave() {
 /// names every dirty repo so the operator can commit or stash and re-run.
 #[test]
 fn sync_to_retire_with_dirty_worktree_refuses_to_delete() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let weaveroot = tmp.path().join(".workweaves");
     std::fs::create_dir_all(&weaveroot).unwrap();
 
@@ -909,7 +909,7 @@ fn sync_to_retire_with_dirty_worktree_refuses_to_delete() {
 /// `rwv sync` is a no-op for the converged project repo.
 #[test]
 fn sync_rebase_continue_then_resync_does_not_clobber_user_resolution() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let weaveroot = tmp.path().join(".workweaves");
     std::fs::create_dir_all(&weaveroot).unwrap();
 

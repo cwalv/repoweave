@@ -290,7 +290,7 @@ fn plant_savepoint(repo: &Path, op_id: &str, sha: &str) {
 
 #[test]
 fn sync_is_a_no_op_for_a_symlinked_reference_and_leaves_canonical_untouched() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let weaveroot = tmp.path().join(".workweaves");
     std::fs::create_dir_all(&weaveroot).unwrap();
 
@@ -352,7 +352,7 @@ fn sync_is_a_no_op_for_a_symlinked_reference_and_leaves_canonical_untouched() {
 
 #[test]
 fn sync_to_is_a_no_op_for_a_symlinked_reference_and_leaves_canonical_untouched() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let weaveroot = tmp.path().join(".workweaves");
     std::fs::create_dir_all(&weaveroot).unwrap();
 
@@ -406,7 +406,7 @@ fn sync_to_is_a_no_op_for_a_symlinked_reference_and_leaves_canonical_untouched()
 
 #[test]
 fn two_workweaves_sync_to_share_a_reference_without_colliding_on_op_refs() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let weaveroot = tmp.path().join(".workweaves");
     std::fs::create_dir_all(&weaveroot).unwrap();
 
@@ -475,7 +475,7 @@ fn two_workweaves_sync_to_share_a_reference_without_colliding_on_op_refs() {
 
 #[test]
 fn abort_does_not_reset_the_canonical_reference_even_with_a_planted_savepoint() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let weaveroot = tmp.path().join(".workweaves");
     std::fs::create_dir_all(&weaveroot).unwrap();
 
@@ -542,7 +542,7 @@ fn abort_does_not_reset_the_canonical_reference_even_with_a_planted_savepoint() 
 
 #[test]
 fn sync_to_retire_with_a_symlinked_reference_unlinks_it_and_leaves_canonical_intact() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let weaveroot = tmp.path().join(".workweaves");
     std::fs::create_dir_all(&weaveroot).unwrap();
 
@@ -613,7 +613,7 @@ fn sync_to_retire_with_a_symlinked_reference_unlinks_it_and_leaves_canonical_int
 
 #[test]
 fn worktree_references_reference_syncs_normally() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let weaveroot = tmp.path().join(".workweaves");
     std::fs::create_dir_all(&weaveroot).unwrap();
 

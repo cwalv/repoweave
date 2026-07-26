@@ -115,7 +115,7 @@ fn make_workspace_two_repos(tmp: &Path, project: &str) -> std::path::PathBuf {
 
 #[test]
 fn rwv_display_shows_repos() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_workspace_two_repos(tmp.path(), "web-app");
 
     // Activate the project by writing .rwv-active.
@@ -161,7 +161,7 @@ fn rwv_display_shows_repos() {
 
 #[test]
 fn rwv_display_no_active_project() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_workspace(tmp.path(), "my-project");
 
     // Deliberately do NOT write .rwv-active — no project is active.
@@ -205,7 +205,7 @@ fn rwv_display_no_active_project() {
 
 #[test]
 fn rwv_display_in_workweave() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_workspace(tmp.path(), "web-app");
 
     let weaveroot = tmp.path().join(".workweaves");

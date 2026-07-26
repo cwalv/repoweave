@@ -66,7 +66,7 @@ fn expected_target_line(ws: &Path, project: &str) -> String {
 /// project-scoped verb.
 #[test]
 fn target_line_prints_when_pointer_decides_multi_project_workspace() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_workspace_with_projects(tmp.path(), &["alpha", "beta", "gamma"]);
     set_active(&ws, "beta");
 
@@ -89,7 +89,7 @@ fn target_line_prints_when_pointer_decides_multi_project_workspace() {
 /// MUST print. Rule is uniform; no special-case suppression.
 #[test]
 fn target_line_prints_when_pointer_decides_single_project_workspace() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_workspace_with_projects(tmp.path(), &["only"]);
     set_active(&ws, "only");
 
@@ -119,7 +119,7 @@ fn target_line_prints_when_pointer_decides_single_project_workspace() {
 /// the stderr-vs-stdout discipline.
 #[test]
 fn target_line_does_not_contaminate_json_stdout() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_workspace_with_projects(tmp.path(), &["a", "b"]);
     set_active(&ws, "a");
 
@@ -155,7 +155,7 @@ fn target_line_does_not_contaminate_json_stdout() {
 /// line MUST NOT print — the operator already named the target.
 #[test]
 fn target_line_silent_under_project_flag() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_workspace_with_projects(tmp.path(), &["a", "b"]);
     set_active(&ws, "a");
 
@@ -176,7 +176,7 @@ fn target_line_silent_under_project_flag() {
 /// `--project`: still silent (no chain step consulted the pointer).
 #[test]
 fn target_line_silent_when_no_pointer_and_project_flag() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_workspace_with_projects(tmp.path(), &["p"]);
     // No .rwv-active written.
 
@@ -201,7 +201,7 @@ fn target_line_silent_when_no_pointer_and_project_flag() {
 /// Even with `.rwv-active` set, no target line prints.
 #[test]
 fn target_line_silent_for_workspace_scoped_verb() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_workspace_with_projects(tmp.path(), &["p"]);
     set_active(&ws, "p");
 
@@ -222,7 +222,7 @@ fn target_line_silent_for_workspace_scoped_verb() {
 /// `rwv explain` is workspace-scoped — silent.
 #[test]
 fn target_line_silent_for_explain() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_workspace_with_projects(tmp.path(), &["p"]);
     set_active(&ws, "p");
 
@@ -249,7 +249,7 @@ fn target_line_silent_for_explain() {
 /// silent `.rwv-active`).
 #[test]
 fn target_line_prints_for_lock_when_pointer_decides() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_workspace_with_projects(tmp.path(), &["foundations", "tmuxcc"]);
     set_active(&ws, "tmuxcc");
 
@@ -270,7 +270,7 @@ fn target_line_prints_for_lock_when_pointer_decides() {
 /// target line under pointer-decided resolution.
 #[test]
 fn target_line_prints_for_doctor_when_pointer_decides() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_workspace_with_projects(tmp.path(), &["a", "b"]);
     set_active(&ws, "b");
 
@@ -297,7 +297,7 @@ fn target_line_prints_for_doctor_when_pointer_decides() {
 /// project; the pointer is not consulted from a workweave.
 #[test]
 fn target_line_silent_inside_workweave() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_workspace_with_projects(tmp.path(), &["p1", "p2"]);
     // Primary pointer names p2 — must not leak into the workweave.
     set_active(&ws, "p2");

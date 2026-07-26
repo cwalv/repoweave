@@ -74,7 +74,7 @@ fn assert_dangling_error(stderr: &str, project_name: &str) {
 
 #[test]
 fn lock_fails_on_dangling_active() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_workspace(tmp.path());
     set_dangling_active(&ws, "nonexistent");
 
@@ -88,7 +88,7 @@ fn lock_fails_on_dangling_active() {
 
 #[test]
 fn add_fails_on_dangling_active() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_workspace(tmp.path());
     set_dangling_active(&ws, "ghost");
 
@@ -102,7 +102,7 @@ fn add_fails_on_dangling_active() {
 
 #[test]
 fn remove_fails_on_dangling_active() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_workspace(tmp.path());
     set_dangling_active(&ws, "phantom");
 
@@ -116,7 +116,7 @@ fn remove_fails_on_dangling_active() {
 
 #[test]
 fn update_fails_on_dangling_active() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_workspace(tmp.path());
     set_dangling_active(&ws, "missing-proj");
 
@@ -130,7 +130,7 @@ fn update_fails_on_dangling_active() {
 
 #[test]
 fn push_fails_on_dangling_active() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_workspace(tmp.path());
     set_dangling_active(&ws, "gone");
 
@@ -144,7 +144,7 @@ fn push_fails_on_dangling_active() {
 
 #[test]
 fn status_fails_on_dangling_active() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_workspace(tmp.path());
     set_dangling_active(&ws, "vanished");
 
@@ -158,7 +158,7 @@ fn status_fails_on_dangling_active() {
 
 #[test]
 fn sync_fails_on_dangling_active() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_workspace(tmp.path());
     set_dangling_active(&ws, "deleted-proj");
 
@@ -174,7 +174,7 @@ fn sync_fails_on_dangling_active() {
 
 #[test]
 fn sync_to_fails_on_dangling_active() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_workspace(tmp.path());
     // Create a sibling workweave so sync-to has a valid source to parse
     // (the active-project check fires before any git operations).
@@ -190,7 +190,7 @@ fn sync_to_fails_on_dangling_active() {
 
 #[test]
 fn error_lists_existing_projects() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_workspace(tmp.path());
 
     // Create a real project on disk.
@@ -213,7 +213,7 @@ fn error_lists_existing_projects() {
 
 #[test]
 fn doctor_reports_dangling_active_project() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_workspace(tmp.path());
     set_dangling_active(&ws, "stale-proj");
 
@@ -242,7 +242,7 @@ fn doctor_reports_dangling_active_project() {
 
 #[test]
 fn doctor_fix_clears_dangling_active() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_workspace(tmp.path());
     set_dangling_active(&ws, "deleted");
 
@@ -266,7 +266,7 @@ fn doctor_fix_clears_dangling_active() {
 
 #[test]
 fn doctor_json_includes_dangling_active_project() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_workspace(tmp.path());
     set_dangling_active(&ws, "absent");
 
@@ -307,7 +307,7 @@ fn doctor_json_includes_dangling_active_project() {
 /// they operate on workspace context without needing the project on disk.
 #[test]
 fn prime_and_resolve_tolerate_dangling_active() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_workspace(tmp.path());
     set_dangling_active(&ws, "gone");
 

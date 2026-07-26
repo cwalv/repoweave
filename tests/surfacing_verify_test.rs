@@ -118,7 +118,7 @@ fn claude_surfaced(ws: &Path) -> bool {
 /// weave was created. `rwv doctor` flags the missing surfacing.
 #[test]
 fn doctor_flags_missing_surfacing_symlink() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_workspace(tmp.path());
 
     // Surface via activate (no install hooks needed).
@@ -143,7 +143,7 @@ fn doctor_flags_missing_surfacing_symlink() {
 /// primitive: the symlink is re-created and a `[fixed]` line is emitted.
 #[test]
 fn doctor_fix_re_surfaces_missing_symlink() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_workspace(tmp.path());
 
     rwv_output(&ws, &["activate", "alpha", "--no-install"]);
@@ -172,7 +172,7 @@ fn doctor_fix_re_surfaces_missing_symlink() {
 /// check must not produce false positives when surfacing is intact.
 #[test]
 fn doctor_clean_when_surfacing_intact() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_workspace(tmp.path());
 
     rwv_output(&ws, &["activate", "alpha", "--no-install"]);

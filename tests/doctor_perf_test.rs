@@ -123,7 +123,7 @@ fn doctor_large_workspace_completes_under_budget() {
     // macOS CI runners (fo-f78ts4), hence the generous ceiling.
     let budget = std::time::Duration::from_secs(30);
 
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let root = build_large_workspace(tmp.path(), n_repos, n_ww);
 
     // Tell rwv to look for workweaves in the tmp scaffold, not the user's

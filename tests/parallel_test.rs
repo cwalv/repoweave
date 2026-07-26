@@ -51,7 +51,7 @@ fn init_bare_repo(path: &Path) {
 
 fn init_bare_repo_with_commit(path: &Path) {
     init_bare_repo(path);
-    let tmp = tempfile::tempdir().expect("tempdir");
+    let tmp = common::tempdir().expect("tempdir");
     let work = tmp.path().join("w");
     run_git(
         &["clone", &path.to_string_lossy(), &work.to_string_lossy()],
@@ -100,7 +100,7 @@ fn make_project_source(tmp: &Path, name: &str, repos: &[(&str, &str)]) -> String
 /// `[<repo-path>]` prefix.
 #[test]
 fn fetch_dash_j_one_emits_no_prefix() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = tmp.path().join("ws");
     std::fs::create_dir_all(&ws).unwrap();
 
@@ -134,7 +134,7 @@ fn fetch_dash_j_one_emits_no_prefix() {
 /// interleaved output is parseable. Mirrors `make -j` / `ninja`.
 #[test]
 fn fetch_dash_j_two_emits_repo_prefix() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = tmp.path().join("ws");
     std::fs::create_dir_all(&ws).unwrap();
 
@@ -169,7 +169,7 @@ fn fetch_dash_j_two_emits_repo_prefix() {
 /// entries or a truncated file.
 #[test]
 fn fetch_dash_j_clones_all_repos_and_writes_complete_lock() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = tmp.path().join("ws");
     std::fs::create_dir_all(&ws).unwrap();
 
@@ -227,7 +227,7 @@ fn fetch_dash_j_clones_all_repos_and_writes_complete_lock() {
 /// existing serial aggregation shape.
 #[test]
 fn fetch_dash_j_aggregates_failures() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = tmp.path().join("ws");
     std::fs::create_dir_all(&ws).unwrap();
 
@@ -264,7 +264,7 @@ fn fetch_dash_j_aggregates_failures() {
 /// `--jobs` long form is accepted (mirrors `-j` short form).
 #[test]
 fn fetch_accepts_long_jobs_flag() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = tmp.path().join("ws");
     std::fs::create_dir_all(&ws).unwrap();
 
@@ -289,7 +289,7 @@ fn update_accepts_dash_j_flag() {
     // reasons, not "unknown argument" reasons. clap-level rejection
     // would surface a "unexpected argument" error; we want to see the
     // workspace error instead, proving -j parses cleanly.
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     rwv()
         .args(["update", "-j", "2"])
         .current_dir(tmp.path())
@@ -328,7 +328,7 @@ fn advance_bare_repo(tmp: &Path, bare: &Path, label: &str) -> String {
 /// stale SHA.
 #[test]
 fn update_dash_j_advances_all_repos_and_relocks() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = tmp.path().join("ws");
     std::fs::create_dir_all(&ws).unwrap();
 
@@ -395,7 +395,7 @@ fn update_dash_j_advances_all_repos_and_relocks() {
 /// (lock not written).
 #[test]
 fn update_dash_j_aggregates_failures() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = tmp.path().join("ws");
     std::fs::create_dir_all(&ws).unwrap();
 

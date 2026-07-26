@@ -32,7 +32,7 @@ fn init_bare_repo_with_commit(path: &Path) {
     init_bare_repo(path);
 
     // Create a temporary working clone, make a commit, push to the bare repo.
-    let tmp = tempfile::tempdir().expect("tempdir for working clone");
+    let tmp = common::tempdir().expect("tempdir for working clone");
     let work = tmp.path().join("work");
 
     let run = |args: &[&str], cwd: &Path| {
@@ -79,7 +79,7 @@ fn fetch_no_source_outside_workspace_errors_usage() {
     // in-place mode has nothing to operate on. The error must name both
     // the missing SOURCE and the workspace requirement so the user sees
     // both viable invocations.
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     rwv()
         .arg("fetch")
         .current_dir(tmp.path())
@@ -108,7 +108,7 @@ fn fetch_accepts_source_argument() {
 
 #[test]
 fn fetch_clones_project_and_repos() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let workspace = tmp.path().join("ws");
     std::fs::create_dir_all(&workspace).unwrap();
 
@@ -185,7 +185,7 @@ fn fetch_clones_project_and_repos() {
 
 #[test]
 fn fetch_creates_project_dir_with_manifest() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let workspace = tmp.path().join("ws");
     std::fs::create_dir_all(&workspace).unwrap();
 
@@ -250,7 +250,7 @@ fn fetch_creates_project_dir_with_manifest() {
 
 #[test]
 fn fetch_repos_at_canonical_paths() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let workspace = tmp.path().join("ws");
     std::fs::create_dir_all(&workspace).unwrap();
 
@@ -314,7 +314,7 @@ fn fetch_repos_at_canonical_paths() {
 
 #[test]
 fn fetch_existing_workspace_handles_gracefully() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let workspace = tmp.path().join("ws");
     std::fs::create_dir_all(&workspace).unwrap();
 
@@ -391,7 +391,7 @@ fn fetch_existing_workspace_handles_gracefully() {
 
 #[test]
 fn fetch_invalid_source_errors_clearly() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
 
     rwv()
         .args(["fetch", "file:///nonexistent/path/to/repo.git"])
@@ -409,7 +409,7 @@ fn fetch_invalid_source_errors_clearly() {
 
 #[test]
 fn fetch_garbage_source_errors_clearly() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
 
     rwv()
         .args(["fetch", "not-a-valid-source-at-all"])
@@ -439,7 +439,7 @@ fn fetch_garbage_source_errors_clearly() {
 fn fetch_mode_default_updates_lock() {
     // Default fetch should clone repos at branch HEAD from rwv.yaml and then
     // write/update rwv.lock with the resolved SHAs.
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let workspace = tmp.path().join("ws");
     std::fs::create_dir_all(&workspace).unwrap();
 
@@ -507,7 +507,7 @@ fn fetch_mode_default_updates_lock() {
 fn fetch_default_auto_activates_project() {
     // Default fetch should auto-activate the project (write .rwv-active,
     // generate ecosystem files, create symlinks).
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let workspace = tmp.path().join("ws");
     std::fs::create_dir_all(&workspace).unwrap();
 
@@ -576,7 +576,7 @@ fn fetch_default_reads_lock_and_does_not_bump_it() {
     // SHA, NOT the manifest's branch HEAD. The lock file itself must not
     // be mutated when the lock already covers every manifest entry —
     // that is the headline guarantee of the fetch/update split.
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let workspace = tmp.path().join("ws");
     std::fs::create_dir_all(&workspace).unwrap();
 
@@ -694,7 +694,7 @@ fn fetch_default_reads_lock_and_does_not_bump_it() {
 #[test]
 fn fetch_frozen_errors_on_missing_lock() {
     // --frozen should error if rwv.lock does not exist.
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let workspace = tmp.path().join("ws");
     std::fs::create_dir_all(&workspace).unwrap();
 
@@ -753,7 +753,7 @@ fn fetch_frozen_errors_on_missing_lock() {
 fn fetch_frozen_errors_on_incomplete_lock() {
     // --frozen should error if rwv.lock exists but doesn't cover the manifest
     // (e.g., manifest has a repo that the lock file doesn't cover).
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let workspace = tmp.path().join("ws");
     std::fs::create_dir_all(&workspace).unwrap();
 
@@ -821,7 +821,7 @@ fn fetch_frozen_errors_on_incomplete_lock() {
 #[test]
 fn fetch_frozen_succeeds_with_valid_lock() {
     // --frozen should succeed when rwv.lock exists and covers all manifest repos.
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let workspace = tmp.path().join("ws");
     std::fs::create_dir_all(&workspace).unwrap();
 
@@ -911,7 +911,7 @@ fn fetch_second_invocation_is_idempotent() {
     // The second fetch must exit non-zero with an "already exists" error.
     // The first fetch activates the project; the active file must remain after
     // the failed second fetch.
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let workspace = tmp.path().join("ws");
     std::fs::create_dir_all(&workspace).unwrap();
 
@@ -1024,7 +1024,7 @@ fn write_manifest_with_roles(dir: &Path, repos: &[(&str, &str, &str)]) {
 fn fetch_no_reference_skips_reference_role_repos() {
     // `rwv fetch <source> --no-reference` should clone primary/fork/dependency
     // repos but skip any repo with `role: reference`.
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let workspace = tmp.path().join("ws");
     std::fs::create_dir_all(&workspace).unwrap();
 
@@ -1095,7 +1095,7 @@ fn fetch_frozen_no_reference_tolerates_reference_missing_from_lock() {
     // a reference repo present in the manifest but missing from rwv.lock
     // must NOT cause failure — the user has explicitly opted out of
     // fetching reference repos, so missing lock entries for them are fine.
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let workspace = tmp.path().join("ws");
     std::fs::create_dir_all(&workspace).unwrap();
 
@@ -1198,7 +1198,7 @@ fn fetch_frozen_without_no_reference_errors_when_reference_missing_from_lock() {
     // repo missing from the lock must still trigger the incomplete-lock error.
     // This guards against the find_incomplete_repos fix accidentally exempting
     // reference repos unconditionally.
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let workspace = tmp.path().join("ws");
     std::fs::create_dir_all(&workspace).unwrap();
 
@@ -1328,7 +1328,7 @@ fn build_filter_fixture(
 
 #[test]
 fn fetch_role_filter_only_clones_matching_role() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let workspace = tmp.path().join("ws");
     std::fs::create_dir_all(&workspace).unwrap();
 
@@ -1355,7 +1355,7 @@ fn fetch_role_filter_only_clones_matching_role() {
 
 #[test]
 fn fetch_repo_exact_selector_clones_only_that_path() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let workspace = tmp.path().join("ws");
     std::fs::create_dir_all(&workspace).unwrap();
 
@@ -1376,7 +1376,7 @@ fn fetch_repo_exact_selector_clones_only_that_path() {
 
 #[test]
 fn fetch_repo_glob_selector_clones_matching_paths() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let workspace = tmp.path().join("ws");
     std::fs::create_dir_all(&workspace).unwrap();
 
@@ -1405,7 +1405,7 @@ fn fetch_repo_glob_selector_clones_matching_paths() {
 
 #[test]
 fn fetch_repo_regex_selector_clones_matching_paths() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let workspace = tmp.path().join("ws");
     std::fs::create_dir_all(&workspace).unwrap();
 
@@ -1431,7 +1431,7 @@ fn fetch_repo_regex_selector_clones_matching_paths() {
 
 #[test]
 fn fetch_union_role_and_repo_selectors() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let workspace = tmp.path().join("ws");
     std::fs::create_dir_all(&workspace).unwrap();
 

@@ -154,7 +154,7 @@ fn workweave_accepts_project_and_name() {
 
 #[test]
 fn workweave_create_makes_directory_under_weaveroot() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_workspace(tmp.path(), "web-app");
 
     // Use RWV_WORKWEAVE_DIR so the workweave goes to a known location.
@@ -179,7 +179,7 @@ fn workweave_create_makes_directory_under_weaveroot() {
 
 #[test]
 fn workweave_create_worktrees_on_ephemeral_branches() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_workspace(tmp.path(), "web-app");
 
     let weaveroot = tmp.path().join(".workweaves");
@@ -221,7 +221,7 @@ fn workweave_create_worktrees_on_ephemeral_branches() {
 
 #[test]
 fn workweave_create_mirrors_primary_layout() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_workspace(tmp.path(), "web-app");
 
     let weaveroot = tmp.path().join(".workweaves");
@@ -254,7 +254,7 @@ fn workweave_create_mirrors_primary_layout() {
 
 #[test]
 fn create_workweave_includes_project_repo() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_workspace_with_project_repo(tmp.path(), "my-project");
 
     let weaveroot = tmp.path().join(".workweaves");
@@ -290,7 +290,7 @@ fn create_workweave_includes_project_repo() {
 
 #[test]
 fn delete_workweave_removes_project_worktree() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_workspace_with_project_repo(tmp.path(), "my-project");
 
     let weaveroot = tmp.path().join(".workweaves");
@@ -350,7 +350,7 @@ fn delete_workweave_removes_project_worktree() {
 
 #[test]
 fn create_workweave_processes_copy_entries() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_workspace(tmp.path(), "web-app");
 
     // Place a .env file in the workspace root.
@@ -406,7 +406,7 @@ workweave:
 #[test]
 #[cfg(unix)]
 fn create_workweave_processes_link_entries() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_workspace(tmp.path(), "web-app");
 
     // Create a shared directory to link.
@@ -476,7 +476,7 @@ workweave:
 
 #[test]
 fn create_workweave_writes_marker() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_workspace(tmp.path(), "web-app");
 
     let weaveroot = tmp.path().join(".workweaves");
@@ -525,7 +525,7 @@ fn create_workweave_writes_marker() {
 /// doctor` arm that clears a pointer left behind by an older build.
 #[test]
 fn create_workweave_writes_the_marker_and_not_rwv_active() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_workspace(tmp.path(), "web-app");
 
     let weaveroot = tmp.path().join(".workweaves");
@@ -565,7 +565,7 @@ fn create_workweave_writes_the_marker_and_not_rwv_active() {
 
 #[test]
 fn workweave_delete_removes_directory_and_worktrees() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_workspace(tmp.path(), "web-app");
 
     let weaveroot = tmp.path().join(".workweaves");
@@ -614,7 +614,7 @@ fn workweave_delete_removes_directory_and_worktrees() {
 
 #[test]
 fn workweave_list_shows_existing_workweaves() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_workspace(tmp.path(), "web-app");
 
     let weaveroot = tmp.path().join(".workweaves");
@@ -645,7 +645,7 @@ fn workweave_list_shows_existing_workweaves() {
 
 #[test]
 fn workweave_list_empty_when_no_workweaves() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_workspace(tmp.path(), "web-app");
 
     let weaveroot = tmp.path().join(".workweaves");
@@ -666,7 +666,7 @@ fn workweave_list_empty_when_no_workweaves() {
 
 #[test]
 fn workweave_respects_weaveroot_env() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_workspace(tmp.path(), "web-app");
 
     let custom_root = tmp.path().join("custom-weaves");
@@ -694,7 +694,7 @@ fn workweave_respects_weaveroot_env() {
 
 #[test]
 fn workweave_with_multiple_repos_creates_all_worktrees() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = tmp.path().join("ws");
 
     // Create two repos.
@@ -751,7 +751,7 @@ fn workweave_with_multiple_repos_creates_all_worktrees() {
 
 #[test]
 fn cli_workweave_hook_mode_outputs_path() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_workspace(tmp.path(), "web-app");
 
     let weaveroot = tmp.path().join(".workweaves");
@@ -786,7 +786,7 @@ fn cli_workweave_hook_mode_outputs_path() {
 
 #[test]
 fn cli_workweave_hook_mode_path_is_absolute() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_workspace(tmp.path(), "web-app");
 
     let weaveroot = tmp.path().join(".workweaves");
@@ -816,7 +816,7 @@ fn cli_workweave_hook_mode_path_is_absolute() {
 fn cli_workweave_create_without_hook_mode() {
     // Without --hook-mode, normal create should succeed but stdout should NOT
     // be just a bare path (it may be empty or contain human-friendly output).
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_workspace(tmp.path(), "web-app");
 
     let weaveroot = tmp.path().join(".workweaves");
@@ -858,7 +858,7 @@ fn cli_workweave_help_says_workweave() {
 
 #[test]
 fn workweave_full_round_trip() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_workspace_with_project_repo(tmp.path(), "round-trip-project");
 
     let weaveroot = tmp.path().join(".workweaves");
@@ -1008,7 +1008,7 @@ fn make_workspace_with_cargo_repo(tmp: &Path, project: &str) -> std::path::PathB
 
 #[test]
 fn create_workweave_generates_ecosystem_files() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_workspace_with_cargo_repo(tmp.path(), "cargo-project");
 
     let weaveroot = tmp.path().join(".workweaves");
@@ -1048,7 +1048,7 @@ fn create_workweave_generates_ecosystem_files() {
 
 #[test]
 fn resolve_from_inside_workweave_returns_workweave_path() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_workspace(tmp.path(), "web-app");
 
     let weaveroot = tmp.path().join(".workweaves");
@@ -1098,7 +1098,7 @@ fn resolve_from_inside_workweave_returns_workweave_path() {
 #[test]
 fn workweave_name_with_hyphens_and_underscores() {
     // Workweave names may contain hyphens and underscores.
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_workspace(tmp.path(), "web-app");
 
     let weaveroot = tmp.path().join(".workweaves");
@@ -1127,7 +1127,7 @@ fn workweave_name_with_hyphens_and_underscores() {
 fn workweave_create_without_rwv_active_in_primary() {
     // Creating a workweave does not require .rwv-active in the primary workspace
     // because the project name is passed explicitly as an argument.
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_workspace(tmp.path(), "my-proj");
 
     // Explicitly ensure .rwv-active does NOT exist in the workspace.
@@ -1156,7 +1156,7 @@ fn workweave_create_without_rwv_active_in_primary() {
 
 #[test]
 fn delete_nonexistent_workweave_errors_gracefully() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_workspace(tmp.path(), "web-app");
 
     let weaveroot = tmp.path().join(".workweaves");
@@ -1223,7 +1223,7 @@ fn branches_with_prefix(repo: &Path, prefix: &str) -> Vec<String> {
 
 #[test]
 fn delete_workweave_cleans_up_ephemeral_branches() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_workspace(tmp.path(), "web-app");
 
     let weaveroot = tmp.path().join(".workweaves");
@@ -1278,7 +1278,7 @@ fn delete_workweave_cleans_up_ephemeral_branches() {
 /// unique commit is gone.
 #[test]
 fn create_refuses_and_preserves_a_branch_it_does_not_own() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_workspace(tmp.path(), "web-app");
 
     let weaveroot = tmp.path().join(".workweaves");
@@ -1347,7 +1347,7 @@ fn create_refuses_and_preserves_a_branch_it_does_not_own() {
 /// `DeletionWarrant::unmoved` runs the comparison rather than asserting it.
 #[test]
 fn create_reuses_its_own_unmoved_leftover() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_workspace(tmp.path(), "web-app");
 
     let weaveroot = tmp.path().join(".workweaves");
@@ -1429,7 +1429,7 @@ fn workweave_create_from_workweave_cwd_forks_from_workweave() {
     // not from primary's. Establishes the rig=workweave model: peer rooted
     // in rig means rig→peer is a fast-forward and `rwv sync` works without
     // ancestor divergence.
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_workspace(tmp.path(), "web-app");
 
     let weaveroot = tmp.path().join(".workweaves");
@@ -1506,7 +1506,7 @@ fn workweave_create_from_primary_flag_overrides_active_path() {
     // peer should fork from primary's HEAD even though CWD's active
     // workspace is the rig. Escape hatch for operators who want the old
     // behavior explicitly.
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_workspace(tmp.path(), "web-app");
 
     let weaveroot = tmp.path().join(".workweaves");
@@ -1579,7 +1579,7 @@ fn worktree_remove_json(worktree_path: &std::path::Path) -> String {
 
 #[test]
 fn claude_hook_create_produces_path() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_workspace(tmp.path(), "web-app");
     std::fs::write(ws.join(".rwv-active"), "web-app\n").unwrap();
 
@@ -1619,7 +1619,7 @@ fn claude_hook_create_produces_path() {
 fn claude_hook_null_branch_fallback() {
     // When branch_name is "null", should generate a timestamp-based name
     // (session_id is ignored — it's constant within a session, causing collisions).
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_workspace(tmp.path(), "web-app");
     std::fs::write(ws.join(".rwv-active"), "web-app\n").unwrap();
 
@@ -1656,7 +1656,7 @@ fn claude_hook_null_branch_fallback() {
 
 #[test]
 fn claude_hook_remove_cleans_up() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_workspace(tmp.path(), "web-app");
     std::fs::write(ws.join(".rwv-active"), "web-app\n").unwrap();
 
@@ -1692,7 +1692,7 @@ fn claude_hook_remove_cleans_up() {
 
 #[test]
 fn claude_hook_unknown_event_errors() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_workspace(tmp.path(), "web-app");
 
     let json = serde_json::json!({
@@ -1728,7 +1728,7 @@ fn claude_hook_conflicts_with_hook_mode_flag() {
 /// from the primary weave's directory basename.
 #[test]
 fn create_workweave_dir_name_uses_project_not_primary_basename() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     // primary basename = "ws", project = "web-app". The directory must be
     // `web-app--scratch`, not `ws--scratch`.
     let ws = make_workspace(tmp.path(), "web-app");
@@ -1755,7 +1755,7 @@ fn create_workweave_dir_name_uses_project_not_primary_basename() {
 /// `delete_workweave` finds and removes the workweave under the new convention.
 #[test]
 fn delete_workweave_resolves_project_form() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_workspace(tmp.path(), "web-app");
     let weaveroot = tmp.path().join(".workweaves");
     std::fs::create_dir_all(&weaveroot).unwrap();
@@ -1783,7 +1783,7 @@ fn delete_workweave_resolves_project_form() {
 /// different project under the same primary are not included.
 #[test]
 fn list_workweaves_is_scoped_by_project() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_workspace(tmp.path(), "project-a");
     // Add a second project.
     let project_b_dir = ws.join("projects/project-b");
@@ -1844,7 +1844,7 @@ fn list_workweaves_is_scoped_by_project() {
 /// deliberately not provided.
 #[test]
 fn list_omits_unregistered_workweave_and_doctor_can_adopt_it() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_workspace(tmp.path(), "web-app");
     let weaveroot = tmp.path().join(".workweaves");
     std::fs::create_dir_all(&weaveroot).unwrap();
@@ -1916,7 +1916,7 @@ fn list_omits_unregistered_workweave_and_doctor_can_adopt_it() {
 /// name has no third component to fill in, so neither shape is representable.
 #[test]
 fn create_over_a_detached_source_still_mints_the_flat_name() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_workspace(tmp.path(), "web-app");
     let weaveroot = tmp.path().join(".workweaves");
     std::fs::create_dir_all(&weaveroot).unwrap();
@@ -1958,7 +1958,7 @@ fn create_over_a_detached_source_still_mints_the_flat_name() {
 /// finding B7.
 #[test]
 fn create_workweave_cleans_up_on_bail() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_workspace(tmp.path(), "web-app");
     let weaveroot = tmp.path().join(".workweaves");
     std::fs::create_dir_all(&weaveroot).unwrap();
@@ -2002,7 +2002,7 @@ fn create_workweave_cleans_up_on_bail() {
 /// that is not a worktree. Audit finding B8.
 #[test]
 fn create_workweave_bails_on_project_worktree_failure() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_workspace_with_project_repo(tmp.path(), "web-app");
     let weaveroot = tmp.path().join(".workweaves");
     std::fs::create_dir_all(&weaveroot).unwrap();
@@ -2077,7 +2077,7 @@ fn create_workweave_rollback_prunes_orphan_worktree_registrations() {
     // worktrees must be pruned from the primary repos' `.git/worktrees/`
     // metadata. Without this, the primary repo still knows about the partial
     // worktree, producing git warnings and blocking re-creates.
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_workspace_two_repos(tmp.path(), "web-app");
     let weaveroot = tmp.path().join(".workweaves");
     std::fs::create_dir_all(&weaveroot).unwrap();
@@ -2173,7 +2173,7 @@ fn make_workspace_three_repos(tmp: &std::path::Path, project: &str) -> std::path
 fn create_workweave_rollback_prunes_all_registered_worktrees_not_just_failed() {
     // repo1 and repo3 succeed (both registered); repo2 fails (missing).
     // After rollback, BOTH repo1 and repo3 must have clean worktree metadata.
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_workspace_three_repos(tmp.path(), "web-app");
     let weaveroot = tmp.path().join(".workweaves");
     std::fs::create_dir_all(&weaveroot).unwrap();
@@ -2212,7 +2212,7 @@ fn create_workweave_rollback_prunes_all_registered_worktrees_not_just_failed() {
 /// This is the end-to-end version of the atomicity contract.
 #[test]
 fn create_workweave_clean_retry_after_failure_succeeds() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = tmp.path().join("ws");
 
     // Set up a real repo at repo1.
@@ -2290,7 +2290,7 @@ fn create_workweave_clean_retry_after_failure_succeeds() {
 /// source code.
 #[test]
 fn no_marker_diagnostic_names_partial_create_as_likely_cause() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_workspace(tmp.path(), "web-app");
     let weaveroot = tmp.path().join(".workweaves");
     std::fs::create_dir_all(&weaveroot).unwrap();
@@ -2334,7 +2334,7 @@ fn no_marker_diagnostic_names_partial_create_as_likely_cause() {
 ///      c. Leave no orphan registrations in the primary repo.
 #[test]
 fn create_workweave_replace_existing_prunes_orphan_worktree_registrations() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_workspace(tmp.path(), "web-app");
     let weaveroot = tmp.path().join(".workweaves");
     std::fs::create_dir_all(&weaveroot).unwrap();
@@ -2454,7 +2454,7 @@ fn claude_hook_no_project_arg_needed() {
 fn workweave_delete_refuses_dirty_manifest_repo() {
     // Create a workweave, dirty up a manifest-repo worktree, verify that
     // `rwv workweave delete` (no waiver) refuses and names the dirty repo.
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_workspace(tmp.path(), "web-app");
 
     let weaveroot = tmp.path().join(".workweaves");
@@ -2493,7 +2493,7 @@ fn workweave_delete_refuses_dirty_manifest_repo() {
 
 #[test]
 fn workweave_delete_discard_uncommitted_proceeds_on_dirty() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_workspace(tmp.path(), "web-app");
 
     let weaveroot = tmp.path().join(".workweaves");
@@ -2537,7 +2537,7 @@ fn workweave_delete_clean_succeeds_without_waivers() {
     // generate a worktree there. The single manifest repo is clean after a
     // fresh create, so the dirty check should pass and delete should
     // succeed without any waiver.
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_workspace(tmp.path(), "web-app");
 
     let weaveroot = tmp.path().join(".workweaves");
@@ -2571,7 +2571,7 @@ fn workweave_create_picks_up_uncommitted_rwv_yaml() {
     // the working-tree rwv.yaml WITHOUT committing and verify that:
     //   (a) plain `create` refuses and names the dirty file
     //   (b) `create --capture-dirty` succeeds and the workweave sees the edit
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_workspace_with_project_repo(tmp.path(), "uncommit-test");
 
     // Append a comment to rwv.yaml in the primary's working tree, without
@@ -2648,7 +2648,7 @@ fn workweave_create_picks_up_uncommitted_rwv_yaml() {
 fn workweave_create_with_clean_committed_manifest_emits_no_dirty_warning() {
     // Sanity counterpart to the above: a clean workspace must NOT trigger
     // the dirty-state warning, so users don't get noise on every create.
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_workspace_with_project_repo(tmp.path(), "clean-test");
 
     let weaveroot = tmp.path().join(".workweaves");
@@ -2676,7 +2676,7 @@ fn workweave_create_with_clean_committed_manifest_emits_no_dirty_warning() {
 /// names the dirty files, and hints at all three remediation options.
 #[test]
 fn workweave_create_refuses_dirty_primary_by_default() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_workspace_with_project_repo(tmp.path(), "dirty-proj");
 
     // Write an uncommitted file in the project dir.
@@ -2727,7 +2727,7 @@ fn workweave_create_refuses_dirty_primary_by_default() {
 /// the project dir has uncommitted changes.
 #[test]
 fn workweave_create_capture_dirty_allows_dirty_primary() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_workspace_with_project_repo(tmp.path(), "dirty-ok");
 
     // Write an uncommitted file in the project dir.
@@ -2765,7 +2765,7 @@ fn workweave_create_capture_dirty_allows_dirty_primary() {
 #[test]
 fn workweave_create_no_project_repo_skips_dirty_check() {
     // `make_workspace` creates a plain (non-git) project dir.
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_workspace(tmp.path(), "plain-proj");
 
     // Write an arbitrary file into the plain project dir to confirm it's
@@ -2790,7 +2790,7 @@ fn workweave_create_no_project_repo_skips_dirty_check() {
 
 #[test]
 fn workweave_create_records_primary_as_parent() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_workspace(tmp.path(), "web-app");
 
     let weaveroot = tmp.path().join(".workweaves");
@@ -2821,7 +2821,7 @@ fn workweave_create_records_primary_as_parent() {
 
 #[test]
 fn workweave_forked_from_other_workweave_records_that_parent() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_workspace(tmp.path(), "web-app");
 
     let weaveroot = tmp.path().join(".workweaves");
@@ -2859,7 +2859,7 @@ fn bare_sync_outside_workweave_errors_clearly() {
     // project repo. Running `rwv sync` (no source) from primary should
     // refuse because `source` is now a required argument. The error must
     // be non-zero and mention source or SOURCE (clap capitalizes args).
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_workspace_with_project_repo(tmp.path(), "p");
 
     rwv()
@@ -3022,7 +3022,7 @@ fn create_workweave_fails_actionably_when_project_repo_has_no_commits() {
     // Regression: project git-init'd but not committed. The pre-flight
     // check must fire before any disk mutation and produce an error that
     // names projects/<project> and tells the user to commit.
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_workspace_with_uncommitted_project(tmp.path(), "fresh-project");
 
     let weaveroot = tmp.path().join(".workweaves");
@@ -3042,7 +3042,7 @@ fn create_workweave_fails_actionably_when_project_repo_has_no_commits() {
 fn create_workweave_preflight_error_names_project_path() {
     // Verify the exact shape of the error message matches the spec:
     //   "project <name> has no commits yet — run "git -C projects/<name> commit" ..."
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_workspace_with_uncommitted_project(tmp.path(), "myproj");
 
     let weaveroot = tmp.path().join(".workweaves");
@@ -3084,7 +3084,7 @@ fn create_workweave_preflight_error_names_project_path() {
 fn create_workweave_fails_actionably_when_manifest_repo_has_no_commits() {
     // Verify that the preflight check also fires for manifest repos (not just
     // the project repo). The error must name the specific repo path.
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_workspace_with_uncommitted_manifest_repo(tmp.path(), "multiproj");
 
     let weaveroot = tmp.path().join(".workweaves");
@@ -3104,7 +3104,7 @@ fn create_workweave_fails_actionably_when_manifest_repo_has_no_commits() {
 fn create_workweave_succeeds_when_all_repos_have_commits() {
     // Positive control: a well-formed workspace (all repos have commits) should
     // sail through the preflight check without error.
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_workspace(tmp.path(), "good-project");
 
     let weaveroot = tmp.path().join(".workweaves");
@@ -3168,7 +3168,7 @@ fn assert_no_branches_with_prefix(repo: &Path, prefix: &str) {
 #[test]
 #[cfg(unix)]
 fn hook_rejected_create_leaves_no_registration_and_no_branch() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_workspace(tmp.path(), "myproject");
     let repo_path = ws.join("github/org/repo");
 
@@ -3216,7 +3216,7 @@ fn hook_rejected_create_leaves_no_registration_and_no_branch() {
 #[test]
 #[cfg(unix)]
 fn partial_create_failure_rolls_back_branches_of_earlier_repos() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = tmp.path().join("ws");
 
     // repo1 succeeds; repo2 has a failing hook so it fails.
@@ -3308,7 +3308,7 @@ fn cleanup_failure_preserves_original_error_with_manual_note() {
     use repoweave::workweave::create_workweave;
     use std::os::unix::fs::PermissionsExt;
 
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = tmp.path().join("ws");
 
     // repo1 will succeed; repo2 is intentionally missing to trigger rollback.
@@ -3392,7 +3392,7 @@ fn cleanup_failure_preserves_original_error_with_manual_note() {
 /// a bare "git command failed" with opaque stderr.
 #[test]
 fn create_names_hook_config_when_git_hook_rejects_worktree() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_workspace(tmp.path(), "hook-test");
     let repo_path = ws.join("github/org/repo");
 

@@ -164,7 +164,7 @@ impl Fixture {
 /// `Cargo.toml` *contradicts* beta's config, and alpha's `go.work` /
 /// `package.json` / `pnpm-workspace.yaml` / `pyproject.toml` *satisfy* it.
 fn two_project_fixture() -> Fixture {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = tmp.path().join("ws");
     std::fs::create_dir_all(ws.join("projects")).unwrap();
     make_members(&ws);
@@ -333,7 +333,7 @@ fn an_inactive_project_is_not_verified_against_the_active_project_s_file() {
 /// root view named a path that existed in neither view.
 #[test]
 fn doctor_in_a_workweave_names_the_canonical_path_for_an_absent_file() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let root = tmp.path().to_path_buf();
     let ws = root.join("ws");
     std::fs::create_dir_all(ws.join("projects")).unwrap();

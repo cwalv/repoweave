@@ -133,7 +133,7 @@ fn write_marker(ww_dir: &Path, primary: &Path, project: &str) {
 /// it links into (via `.parent()`).
 #[test]
 fn canonical_store_resolves_to_linked_clone_under_correct_topology() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (ws, repo) = make_workspace(tmp.path(), "web-app");
     let ww_root = tmp.path().join(".workweaves").join("web-app--probe");
     add_workweave_checkout(&repo, &ww_root, "github/org/repo", "web-app--probe");
@@ -166,7 +166,7 @@ fn canonical_store_resolves_to_linked_clone_under_correct_topology() {
 /// entry behind. The disconnected primary slot stays untouched.
 #[test]
 fn delete_uses_resolved_parent_under_inverted_topology() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (ws, primary_slot) = make_workspace(tmp.path(), "web-app");
 
     // Fabricate the "real" canonical store living OUTSIDE the primary
@@ -247,7 +247,7 @@ fn delete_uses_resolved_parent_under_inverted_topology() {
 /// waivers.
 #[test]
 fn delete_refuses_when_checkout_hosts_foreign_worktrees_even_with_waivers() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (ws, primary_slot) = make_workspace(tmp.path(), "web-app");
 
     // The workweave's per-repo checkout will BE the canonical store. To
@@ -329,7 +329,7 @@ fn delete_refuses_when_checkout_hosts_foreign_worktrees_even_with_waivers() {
 /// precondition is "foreign dependents", not "is a canonical store".
 #[test]
 fn delete_proceeds_when_canonical_checkout_has_no_foreign_dependents() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (ws, primary_slot) = make_workspace(tmp.path(), "web-app");
 
     let weaveroot = tmp.path().join(".workweaves");
@@ -406,7 +406,7 @@ fn delete_proceeds_when_canonical_checkout_has_no_foreign_dependents() {
 /// commits not merged into the baseline.
 #[test]
 fn merged_check_refuses_vouch_across_distinct_canonical_stores() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (ws, primary_slot) = make_workspace(tmp.path(), "web-app");
 
     // Real canonical = a separate clone (disconnected DAG). After the

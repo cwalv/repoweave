@@ -83,7 +83,7 @@ fn init_requires_project_argument() {
 
 #[test]
 fn init_creates_project_directory() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_empty_workspace(tmp.path());
 
     rwv()
@@ -101,7 +101,7 @@ fn init_creates_project_directory() {
 
 #[test]
 fn init_creates_empty_rwv_yaml() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_empty_workspace(tmp.path());
 
     rwv()
@@ -134,7 +134,7 @@ fn init_creates_empty_rwv_yaml() {
 /// captures it.
 #[test]
 fn init_rwv_yaml_parses_via_manifest_loader() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_empty_workspace(tmp.path());
 
     rwv()
@@ -171,7 +171,7 @@ fn init_rwv_yaml_parses_via_manifest_loader() {
 
 #[test]
 fn init_runs_git_init_in_project_dir() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_empty_workspace(tmp.path());
 
     rwv()
@@ -194,7 +194,7 @@ fn init_writes_gitattributes_with_replay_exclusion() {
     // `rwv init` must seed `.gitattributes` with the
     // `rwv.lock merge=rwv-ours` line so future `rwv sync` rebases keep
     // source's lock through the replay.
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_empty_workspace(tmp.path());
 
     rwv()
@@ -217,7 +217,7 @@ fn init_writes_gitattributes_with_replay_exclusion() {
 
 #[test]
 fn init_rejects_duplicate_project_name() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_empty_workspace(tmp.path());
 
     // First init should succeed.
@@ -238,7 +238,7 @@ fn init_rejects_duplicate_project_name() {
 
 #[test]
 fn init_collision_does_not_modify_existing_project() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_empty_workspace(tmp.path());
 
     // Create the project.
@@ -274,7 +274,7 @@ fn init_collision_does_not_modify_existing_project() {
 
 #[test]
 fn init_with_provider_sets_git_remote() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_empty_workspace(tmp.path());
 
     rwv()
@@ -301,7 +301,7 @@ fn init_with_provider_sets_git_remote() {
 
 #[test]
 fn init_with_provider_remote_contains_project_name() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_empty_workspace(tmp.path());
 
     rwv()
@@ -321,7 +321,7 @@ fn init_with_provider_remote_contains_project_name() {
 
 #[test]
 fn init_without_provider_has_no_remote() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_empty_workspace(tmp.path());
 
     rwv()
@@ -344,7 +344,7 @@ fn init_without_provider_has_no_remote() {
 
 #[test]
 fn init_activates_project() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_empty_workspace(tmp.path());
 
     rwv()
@@ -364,7 +364,7 @@ fn init_activates_project() {
 
 #[test]
 fn init_last_project_wins_activation() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_empty_workspace(tmp.path());
 
     rwv()
@@ -394,7 +394,7 @@ fn init_last_project_wins_activation() {
 
 #[test]
 fn init_works_from_workspace_subdirectory() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_empty_workspace(tmp.path());
 
     // Run init from within the github/ subdirectory.
@@ -475,7 +475,7 @@ fn make_repo_with_commit(parent: &Path, name: &str) -> std::path::PathBuf {
 
 #[test]
 fn adopt_clones_repo_into_projects() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_empty_workspace(tmp.path());
     let bare = make_repo_with_commit(tmp.path(), "my-app");
 
@@ -500,7 +500,7 @@ fn adopt_clones_repo_into_projects() {
 
 #[test]
 fn adopt_writes_rwv_yaml_when_missing() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_empty_workspace(tmp.path());
     let bare = make_repo_with_commit(tmp.path(), "no-yaml");
 
@@ -519,7 +519,7 @@ fn adopt_writes_rwv_yaml_when_missing() {
 
 #[test]
 fn adopt_preserves_existing_rwv_yaml() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_empty_workspace(tmp.path());
 
     // Create a bare repo that already has an rwv.yaml
@@ -578,7 +578,7 @@ fn adopt_preserves_existing_rwv_yaml() {
 
 #[test]
 fn adopt_activates_project() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_empty_workspace(tmp.path());
     let bare = make_repo_with_commit(tmp.path(), "activated");
 
@@ -599,7 +599,7 @@ fn adopt_activates_project() {
 
 #[test]
 fn adopt_rejects_duplicate_project_name() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_empty_workspace(tmp.path());
     let bare = make_repo_with_commit(tmp.path(), "dup");
 
@@ -637,7 +637,7 @@ fn adopt_conflicts_with_provider() {
 /// workspace skeleton so that the caller can immediately use other rwv verbs.
 #[test]
 fn init_bootstraps_empty_directory() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = tmp.path().join("fresh");
     std::fs::create_dir_all(&ws).unwrap();
 
@@ -678,7 +678,7 @@ fn init_bootstraps_empty_directory() {
 /// that need a workspace work immediately without any extra steps).
 #[test]
 fn init_empty_dir_workspace_context_resolves_after() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = tmp.path().join("ctx-fresh");
     std::fs::create_dir_all(&ws).unwrap();
 
@@ -707,7 +707,7 @@ fn init_empty_dir_workspace_context_resolves_after() {
 /// clear message — naming the state and the next step.
 #[test]
 fn init_refuses_non_empty_non_workspace_directory() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let noisy = tmp.path().join("noisy");
     std::fs::create_dir_all(&noisy).unwrap();
     // Seed with an unrelated file so it is non-empty.
@@ -736,7 +736,7 @@ fn init_refuses_non_empty_non_workspace_directory() {
 /// anything outside the new project.
 #[test]
 fn init_existing_workspace_unaffected_by_bootstrap_path() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     // Use make_empty_workspace which creates github/ + projects/.
     let ws = make_empty_workspace(tmp.path());
 
@@ -765,7 +765,7 @@ fn init_existing_workspace_unaffected_by_bootstrap_path() {
 /// skeleton before cloning.
 #[test]
 fn adopt_bootstraps_empty_directory() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = tmp.path().join("adopt-fresh");
     std::fs::create_dir_all(&ws).unwrap();
     let bare = make_repo_with_commit(tmp.path(), "adopted-proj");

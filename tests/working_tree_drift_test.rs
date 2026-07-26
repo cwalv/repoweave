@@ -217,7 +217,7 @@ fn make_working_tree_stale(server_ww: &Path, server_primary: &Path, new_sha: &st
 
 #[test]
 fn doctor_detects_stale_working_tree_in_workweave() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (ws, _c1) = make_workspace_with_ww(tmp.path());
 
     let c2 = make_commit(&ws.server_primary, "change.txt", "new\n", "primary: C2");
@@ -250,7 +250,7 @@ fn doctor_detects_stale_working_tree_in_workweave() {
 
 #[test]
 fn doctor_fix_restores_stale_working_tree() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (ws, _c1) = make_workspace_with_ww(tmp.path());
 
     // Write an UNTRACKED file — must survive the fix.
@@ -302,7 +302,7 @@ fn doctor_fix_restores_stale_working_tree() {
 
 #[test]
 fn doctor_fix_does_not_clobber_live_working_tree_edits() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (ws, _c1) = make_workspace_with_ww(tmp.path());
 
     // C2 on primary — we'll advance the ww branch ref to it.
@@ -341,7 +341,7 @@ fn doctor_fix_does_not_clobber_live_working_tree_edits() {
 
 #[test]
 fn sync_post_refresh_clears_stale_working_tree() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
 
     let primary_root = tmp.path().join("primary");
     std::fs::create_dir_all(primary_root.join("github/chatly")).unwrap();
@@ -456,7 +456,7 @@ fn sync_post_refresh_clears_stale_working_tree() {
 
 #[test]
 fn doctor_detects_working_tree_drift_in_three_worktrees() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (ws, _c1) = make_workspace_with_ww(tmp.path());
 
     // Create a second workweave.
@@ -530,7 +530,7 @@ fn doctor_detects_working_tree_drift_in_three_worktrees() {
 
 #[test]
 fn doctor_fix_refuses_when_working_tree_has_unreachable_content() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (ws, _c1) = make_workspace_with_ww(tmp.path());
 
     // Advance the ww branch and reset index (working-tree drift setup).
@@ -569,7 +569,7 @@ fn doctor_fix_refuses_when_working_tree_has_unreachable_content() {
 /// `rwv doctor --fix` must clean both, leaving no residual diffs.
 #[test]
 fn doctor_fix_clears_both_index_and_working_tree_drift() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (ws, _c1) = make_workspace_with_ww(tmp.path());
 
     let c2 = make_commit(&ws.server_primary, "change.txt", "new\n", "primary: C2");
@@ -648,7 +648,7 @@ fn doctor_fix_clears_both_index_and_working_tree_drift() {
 /// edits"). This is the core re-attribution scenario from bead fo-8cbhpg.1.
 #[test]
 fn doctor_reports_missing_canonical_not_live_edits() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (ws, _c1) = make_workspace_with_ww(tmp.path());
 
     // Remove the primary clone out-of-band, as if the user ran `rm -rf`.
@@ -693,7 +693,7 @@ fn doctor_reports_missing_canonical_not_live_edits() {
 /// not suppress legitimate drift findings.
 #[test]
 fn doctor_canonical_intact_classification_unchanged() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (ws, _c1) = make_workspace_with_ww(tmp.path());
 
     // Introduce real working-tree drift (stale, not live edits).
@@ -730,7 +730,7 @@ fn doctor_canonical_intact_classification_unchanged() {
 /// in rwv.yaml but no longer on disk). Both findings must appear together.
 #[test]
 fn doctor_dangling_reference_fires_alongside_missing_canonical() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (ws, _c1) = make_workspace_with_ww(tmp.path());
 
     // Remove the primary clone — makes the primary weave entry dangling.

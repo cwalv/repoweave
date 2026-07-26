@@ -108,7 +108,7 @@ impl Fixture {
 /// Workspace with one manifest repo (`version: main`), cloned on `main`, and
 /// a lock recording its current tip.
 fn build_workspace() -> Fixture {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let workspace = tmp.path().join("ws");
     std::fs::create_dir_all(workspace.join("projects")).unwrap();
 

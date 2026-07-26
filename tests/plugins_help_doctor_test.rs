@@ -99,7 +99,7 @@ fn make_minimal_workspace(tmp: &Path, project: &str) -> PathBuf {
 /// With a fixture plugin on PATH the "External commands" section appears.
 #[test]
 fn help_shows_external_commands_section_with_fixture_plugin() {
-    let plugin_dir = tempfile::tempdir().expect("tempdir");
+    let plugin_dir = common::tempdir().expect("tempdir");
     write_script(plugin_dir.path(), "rwv-example");
 
     let out = rwv()
@@ -121,7 +121,7 @@ fn help_shows_external_commands_section_with_fixture_plugin() {
 /// With no `rwv-*` executables on PATH the section is entirely absent.
 #[test]
 fn help_no_external_commands_section_when_path_is_empty() {
-    let empty_dir = tempfile::tempdir().expect("tempdir");
+    let empty_dir = common::tempdir().expect("tempdir");
     let out = rwv()
         .arg("--help")
         .env("PATH", empty_dir.path())
@@ -140,7 +140,7 @@ fn help_no_external_commands_section_when_path_is_empty() {
 /// Non-executable `rwv-*` files in PATH are NOT listed.
 #[test]
 fn help_non_executable_rwv_file_not_listed() {
-    let dir = tempfile::tempdir().expect("tempdir");
+    let dir = common::tempdir().expect("tempdir");
     write_non_exec(dir.path(), "rwv-notexec");
     // Also add an executable one so the section appears at all.
     write_script(dir.path(), "rwv-realexec");
@@ -167,8 +167,8 @@ fn help_non_executable_rwv_file_not_listed() {
 /// Shadowed duplicates are NOT listed in the help section.
 #[test]
 fn help_shadowed_duplicate_not_listed_twice() {
-    let dir1 = tempfile::tempdir().expect("tempdir");
-    let dir2 = tempfile::tempdir().expect("tempdir");
+    let dir1 = common::tempdir().expect("tempdir");
+    let dir2 = common::tempdir().expect("tempdir");
     write_script(dir1.path(), "rwv-tool");
     write_script(dir2.path(), "rwv-tool");
     let path = format!("{}:{}", dir1.path().display(), dir2.path().display());
@@ -198,11 +198,11 @@ fn help_shadowed_duplicate_not_listed_twice() {
 /// empty — the key is always present, just an empty array).
 #[test]
 fn doctor_json_has_plugins_key() {
-    let tmp = tempfile::tempdir().expect("tempdir");
+    let tmp = common::tempdir().expect("tempdir");
     let ws = make_minimal_workspace(tmp.path(), "myproj");
     // Use a temp dir with NO rwv-* files but keep git available on PATH via
     // path_with_prefix so rwv's internal git calls succeed.
-    let empty_plugin_dir = tempfile::tempdir().expect("tempdir");
+    let empty_plugin_dir = common::tempdir().expect("tempdir");
     let path = path_with_prefix(empty_plugin_dir.path());
 
     let out = rwv()
@@ -232,9 +232,9 @@ fn doctor_json_has_plugins_key() {
 /// the expected record shape (name, path, shadowed=false, no shadowed_by).
 #[test]
 fn doctor_json_plugins_array_populated_with_fixture_plugin() {
-    let tmp = tempfile::tempdir().expect("tempdir");
+    let tmp = common::tempdir().expect("tempdir");
     let ws = make_minimal_workspace(tmp.path(), "myproj");
-    let plugin_dir = tempfile::tempdir().expect("tempdir");
+    let plugin_dir = common::tempdir().expect("tempdir");
     let script = write_script(plugin_dir.path(), "rwv-myplugin");
     let path = path_with_prefix(plugin_dir.path());
 
@@ -276,10 +276,10 @@ fn doctor_json_plugins_array_populated_with_fixture_plugin() {
 /// `shadowed_by` naming the winning binary.
 #[test]
 fn doctor_json_plugins_shadowed_record_shape() {
-    let tmp = tempfile::tempdir().expect("tempdir");
+    let tmp = common::tempdir().expect("tempdir");
     let ws = make_minimal_workspace(tmp.path(), "myproj");
-    let dir1 = tempfile::tempdir().expect("tempdir");
-    let dir2 = tempfile::tempdir().expect("tempdir");
+    let dir1 = common::tempdir().expect("tempdir");
+    let dir2 = common::tempdir().expect("tempdir");
     let winner = write_script(dir1.path(), "rwv-duptool");
     write_script(dir2.path(), "rwv-duptool");
     let path = multi_path_with_prefix(&[dir1.path(), dir2.path()]);
@@ -340,11 +340,11 @@ fn doctor_json_plugins_shadowed_record_shape() {
 /// the key is always emitted.
 #[test]
 fn doctor_json_plugins_array_empty_with_no_plugins_on_path() {
-    let tmp = tempfile::tempdir().expect("tempdir");
+    let tmp = common::tempdir().expect("tempdir");
     let ws = make_minimal_workspace(tmp.path(), "myproj");
     // Use path_with_prefix with an empty dir — no rwv-* files, but git remains
     // available so doctor's internal git calls succeed.
-    let empty_dir = tempfile::tempdir().expect("tempdir");
+    let empty_dir = common::tempdir().expect("tempdir");
     let path = path_with_prefix(empty_dir.path());
 
     let out = rwv()
@@ -369,9 +369,9 @@ fn doctor_json_plugins_array_empty_with_no_plugins_on_path() {
 /// Doctor exit code is zero for a clean workspace regardless of plugin presence.
 #[test]
 fn doctor_exit_code_unaffected_by_plugin_presence() {
-    let tmp = tempfile::tempdir().expect("tempdir");
+    let tmp = common::tempdir().expect("tempdir");
     let ws = make_minimal_workspace(tmp.path(), "myproj");
-    let plugin_dir = tempfile::tempdir().expect("tempdir");
+    let plugin_dir = common::tempdir().expect("tempdir");
     write_script(plugin_dir.path(), "rwv-someplugin");
     let path = path_with_prefix(plugin_dir.path());
 
@@ -388,9 +388,9 @@ fn doctor_exit_code_unaffected_by_plugin_presence() {
 /// Plugins array records are sorted by name for deterministic output.
 #[test]
 fn doctor_json_plugins_sorted_by_name() {
-    let tmp = tempfile::tempdir().expect("tempdir");
+    let tmp = common::tempdir().expect("tempdir");
     let ws = make_minimal_workspace(tmp.path(), "myproj");
-    let dir = tempfile::tempdir().expect("tempdir");
+    let dir = common::tempdir().expect("tempdir");
     write_script(dir.path(), "rwv-zebra");
     write_script(dir.path(), "rwv-alpha");
     write_script(dir.path(), "rwv-middle");

@@ -31,7 +31,7 @@ fn init_bare_repo(path: &Path) {
 fn init_bare_repo_with_commit(path: &Path) {
     init_bare_repo(path);
 
-    let tmp = tempfile::tempdir().expect("tempdir for working clone");
+    let tmp = common::tempdir().expect("tempdir for working clone");
     let work = tmp.path().join("work");
 
     let run = |args: &[&str], cwd: &Path| {
@@ -143,7 +143,7 @@ fn remove_subcommand_is_recognized() {
 fn add_accepts_url_argument() {
     // CLI parses the URL argument successfully. Fails at workspace resolution
     // (not argument parsing) because we run from an empty temp dir.
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     rwv()
         .args(["add", "https://example.com/org/repo.git"])
         .current_dir(tmp.path())
@@ -156,7 +156,7 @@ fn add_accepts_url_argument() {
 fn remove_accepts_path_argument() {
     // CLI parses the path argument successfully. Fails at workspace resolution
     // (not argument parsing) because we run from an empty temp dir.
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     rwv()
         .args(["remove", "github/example/repo"])
         .current_dir(tmp.path())
@@ -172,7 +172,7 @@ fn remove_accepts_path_argument() {
 #[test]
 
 fn add_clones_repo_to_canonical_path() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
 
     // Create a bare repo to serve as the "remote".
     let bare = tmp.path().join("remote.git");
@@ -202,7 +202,7 @@ fn add_clones_repo_to_canonical_path() {
 #[test]
 
 fn add_with_role_flag_sets_annotation() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
 
     let bare = tmp.path().join("fork-remote.git");
     init_bare_repo_with_commit(&bare);
@@ -228,7 +228,7 @@ fn add_with_role_flag_sets_annotation() {
 #[test]
 
 fn add_existing_repo_handles_gracefully() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
 
     let bare = tmp.path().join("existing.git");
     init_bare_repo_with_commit(&bare);
@@ -273,7 +273,7 @@ fn add_existing_repo_handles_gracefully() {
 #[test]
 
 fn add_invalid_url_errors_clearly() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (workspace, _project_dir) = setup_workspace_with_project(&tmp, &[]);
 
     rwv()
@@ -298,7 +298,7 @@ fn add_invalid_url_errors_clearly() {
 #[test]
 
 fn remove_path_removes_manifest_entry() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
 
     let bare = tmp.path().join("to-remove.git");
     init_bare_repo_with_commit(&bare);
@@ -347,7 +347,7 @@ fn remove_path_removes_manifest_entry() {
 #[test]
 
 fn remove_with_delete_flag_removes_clone() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
 
     let bare = tmp.path().join("delete-me.git");
     init_bare_repo_with_commit(&bare);
@@ -396,7 +396,7 @@ fn remove_with_delete_flag_removes_clone() {
 #[test]
 
 fn remove_nonexistent_path_errors_clearly() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (workspace, _project_dir) = setup_workspace_with_project(&tmp, &[]);
 
     rwv()
@@ -419,7 +419,7 @@ fn remove_nonexistent_path_errors_clearly() {
 
 #[test]
 fn add_new_creates_git_repo_at_canonical_path() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (workspace, _project_dir) = setup_workspace_with_project(&tmp, &[]);
 
     rwv()
@@ -442,7 +442,7 @@ fn add_new_creates_git_repo_at_canonical_path() {
 
 #[test]
 fn add_new_updates_manifest_with_inferred_url() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (workspace, _project_dir) = setup_workspace_with_project(&tmp, &[]);
 
     rwv()
@@ -467,7 +467,7 @@ fn add_new_updates_manifest_with_inferred_url() {
 
 #[test]
 fn add_new_sets_role_to_primary() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (workspace, _project_dir) = setup_workspace_with_project(&tmp, &[]);
 
     rwv()
@@ -490,7 +490,7 @@ fn add_new_sets_role_to_primary() {
 
 #[test]
 fn add_new_infers_url_for_github_path() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (workspace, _project_dir) = setup_workspace_with_project(&tmp, &[]);
 
     rwv()
@@ -510,7 +510,7 @@ fn add_new_infers_url_for_github_path() {
 
 #[test]
 fn add_new_without_path_like_argument_errors() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (workspace, _project_dir) = setup_workspace_with_project(&tmp, &[]);
 
     // A bare name without slashes is not a valid path.
@@ -528,7 +528,7 @@ fn add_new_without_path_like_argument_errors() {
 
 #[test]
 fn add_new_with_two_segment_path_errors() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (workspace, _project_dir) = setup_workspace_with_project(&tmp, &[]);
 
     // Two segments (owner/repo) without registry prefix is not enough.
@@ -546,7 +546,7 @@ fn add_new_with_two_segment_path_errors() {
 
 #[test]
 fn add_new_with_unknown_registry_errors() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (workspace, _project_dir) = setup_workspace_with_project(&tmp, &[]);
 
     // A three-segment path with an unknown registry prefix should fail.
@@ -564,7 +564,7 @@ fn add_new_with_unknown_registry_errors() {
 
 #[test]
 fn add_new_existing_repo_in_manifest_handles_gracefully() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
 
     let repo_path = "github/myorg/existing";
     let (workspace, _project_dir) = setup_workspace_with_project(
@@ -601,7 +601,7 @@ fn remote_url(repo: &Path, name: &str) -> Option<String> {
 fn add_fork_clones_with_origin_remote() {
     // Fork now means URL = writable fork; rwv clones to `origin` like every
     // other role. The `upstream` remote convention is gone.
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
 
     let bare = tmp.path().join("fork-src.git");
     init_bare_repo_with_commit(&bare);
@@ -632,7 +632,7 @@ fn add_fork_clones_with_origin_remote() {
 
 #[test]
 fn add_owned_clones_with_origin_remote() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
 
     let bare = tmp.path().join("owned-src.git");
     init_bare_repo_with_commit(&bare);
@@ -663,7 +663,7 @@ fn add_owned_clones_with_origin_remote() {
 /// verb that emitted the error.
 #[test]
 fn add_primary_cli_alias_no_longer_accepted_with_doctor_hint() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
 
     let bare = tmp.path().join("legacy-primary-src.git");
     init_bare_repo_with_commit(&bare);
@@ -825,7 +825,7 @@ fn setup_workweave_for_add_tests(
 fn add_from_primary_cwd_writes_to_primary_rwv_yaml() {
     // Regression: `rwv add` from primary's CWD still writes to primary's
     // manifest (the unchanged baseline behaviour).
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
 
     let bare = tmp.path().join("primary-add.git");
     init_bare_repo_with_commit(&bare);
@@ -855,7 +855,7 @@ fn add_from_workweave_cwd_writes_to_workweave_rwv_yaml_not_primary() {
     // existing per-workspace resolution; manifest and lock are siblings
     // in the project repo and follow the same `active_path()` rule.
     // See `docs/explanation/joints/lock-as-derived.md`.
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
 
     let bare = tmp.path().join("workweave-add.git");
     init_bare_repo_with_commit(&bare);
@@ -900,7 +900,7 @@ fn add_from_workweave_clones_to_primary_canonical_path() {
     // even when add runs from a workweave: the canonical store is the
     // primary-side artifact; workweaves link into it via git worktree.
     // See `docs/explanation/joints/clone-topology.md` (invariant I1).
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
 
     let bare = tmp.path().join("clone-target.git");
     init_bare_repo_with_commit(&bare);
@@ -930,7 +930,7 @@ fn add_from_workweave_creates_worktree_at_workweave() {
     // repo as a worktree at the workweave so the operator's CWD sees the
     // repo immediately (no separate sync step required for the add-from-
     // workweave flow).
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
 
     let bare = tmp.path().join("wt-target.git");
     init_bare_repo_with_commit(&bare);
@@ -980,7 +980,7 @@ fn add_from_workweave_does_not_modify_primary_rwv_active() {
     // ecosystem symlinks). The activation pass binds to the workweave dir,
     // whose project its `.rwv-workweave` marker names — primary's pointer is
     // not consulted and not written.
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
 
     let bare = tmp.path().join("active-target.git");
     init_bare_repo_with_commit(&bare);
@@ -1082,7 +1082,7 @@ fn add_url_arm_from_workweave_git_common_dir_points_to_primary_clone() {
     //      worktree, not an independent clone.
     //   3. The worktree is on the ephemeral branch
     //      `test-project--feat/main`.
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
 
     let bare = tmp.path().join("url-gcdir.git");
     init_bare_repo_with_commit(&bare);
@@ -1183,7 +1183,7 @@ fn add_local_path_arm_from_workweave_git_common_dir_points_to_primary_clone() {
     // from a workweave must produce the same placement guarantee as the URL
     // arm — canonical clone stays in primary, workweave gets a linked
     // worktree with git-common-dir pointing to the canonical clone.
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
 
     let bare = tmp.path().join("localpath-gcdir.git");
     init_bare_repo_with_commit(&bare);
@@ -1357,7 +1357,7 @@ fn setup_two_project_workspace(
 /// `.rwv-active` state contamination from the first add's activation pass.
 #[test]
 fn add_url_arm_warns_shared_clone_names_other_project_and_role() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
 
     // Create a bare repo to serve as the remote (shared by both projects).
     let bare = tmp.path().join("shared-remote.git");
@@ -1431,7 +1431,7 @@ fn add_url_arm_warns_shared_clone_names_other_project_and_role() {
 /// the clone is not registered by any other project.
 #[test]
 fn add_url_arm_no_warning_when_clone_is_unshared() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
 
     let bare = tmp.path().join("unshared-remote.git");
     init_bare_repo_with_commit(&bare);
@@ -1464,7 +1464,7 @@ fn add_url_arm_no_warning_when_clone_is_unshared() {
 /// path is the argument itself, so the manifest key is exactly `path_arg`).
 #[test]
 fn add_new_warns_shared_clone_names_other_project_and_role() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
 
     // project-a registers github/testorg/newshared as reference.
     let (workspace, _project_a_dir, _project_b_dir) = setup_two_project_workspace(

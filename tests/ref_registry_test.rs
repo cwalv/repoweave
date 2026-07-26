@@ -57,7 +57,7 @@ fn git(dir: &Path, args: &[&str]) -> String {
 /// Returns `(tempdir, primary_root, project, store)`. The store path is
 /// canonicalized because that is the spelling the registry records.
 fn weave() -> (TempDir, PathBuf, ProjectName, PathBuf) {
-    let tmp = TempDir::new().unwrap();
+    let tmp = common::tempdir().unwrap();
     let primary = tmp.path().join("ws");
     std::fs::create_dir_all(primary.join("projects/web-app")).unwrap();
 
@@ -251,7 +251,7 @@ fn the_receipt_reaches_the_disk_before_record_created_returns() {
         eprintln!("SKIP: strace not installed; the durability claim is unchecked here");
         return;
     }
-    let tmp = TempDir::new().unwrap();
+    let tmp = common::tempdir().unwrap();
     let out = Command::new("strace")
         .args([
             "-f",

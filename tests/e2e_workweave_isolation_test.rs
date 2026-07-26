@@ -59,7 +59,7 @@ fn e2e_workweave_isolation_with_go_ecosystem() {
     // ------------------------------------------------------------------
     // Build the temp directory layout
     // ------------------------------------------------------------------
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let root = tmp.path();
 
     // Workspace root is tmp/ws (mirrors the naming used in workweave_test.rs).

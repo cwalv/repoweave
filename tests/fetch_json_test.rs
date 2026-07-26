@@ -153,7 +153,7 @@ fn init_bare_repo(path: &Path) {
 fn init_bare_repo_with_commit(path: &Path) {
     init_bare_repo(path);
 
-    let tmp = tempfile::tempdir().expect("tempdir for working clone");
+    let tmp = common::tempdir().expect("tempdir for working clone");
     let work = tmp.path().join("work");
 
     let run = |args: &[&str], cwd: &Path| {
@@ -181,7 +181,7 @@ fn init_bare_repo_with_commit(path: &Path) {
 
 /// Push an `rwv.yaml` manifest into a bare repo.
 fn push_manifest_to_bare(bare: &Path, repos: &[(&str, &str)]) {
-    let tmp = tempfile::tempdir().expect("tempdir");
+    let tmp = common::tempdir().expect("tempdir");
     let work = tmp.path().join("mwork");
 
     let run = |args: &[&str], cwd: &Path| {
@@ -220,7 +220,7 @@ fn push_manifest_to_bare(bare: &Path, repos: &[(&str, &str)]) {
 
 #[test]
 fn fetch_json_envelope_emits_schema_and_outcomes_array() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let workspace = tmp.path().join("ws");
     std::fs::create_dir_all(&workspace).unwrap();
 
@@ -295,7 +295,7 @@ fn fetch_json_envelope_emits_schema_and_outcomes_array() {
 
 #[test]
 fn fetch_json_ndjson_emits_one_record_per_line_under_jobs_gt_one() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let workspace = tmp.path().join("ws");
     std::fs::create_dir_all(&workspace).unwrap();
 
@@ -388,7 +388,7 @@ fn fetch_json_ndjson_emits_one_record_per_line_under_jobs_gt_one() {
 fn fetch_json_ndjson_lines_are_not_interleaved() {
     // Under -j 4 --json, the Mutex stdout_lock must prevent byte interleaving.
     // We verify by parsing every non-empty line as JSON — any torn line fails parse.
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let workspace = tmp.path().join("ws");
     std::fs::create_dir_all(&workspace).unwrap();
 

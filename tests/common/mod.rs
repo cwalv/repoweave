@@ -2,7 +2,46 @@
 
 pub mod contract;
 
+use std::path::PathBuf;
 use std::process::Command;
+use std::sync::OnceLock;
+
+/// A temporary directory whose path is already canonical. Drop-in for
+/// `tempfile::tempdir()`; use it for every fixture root in the suite.
+///
+/// `tempfile` hands back whatever `$TMPDIR` names, and on macOS that is under
+/// `/var`, a symlink to `/private/var`. rwv canonicalizes the paths it prints,
+/// so an expected path a test builds from a raw temp root is a *different
+/// spelling of the same file* than the one rwv reports. Every such comparison
+/// passes on Linux, where `/tmp` is a real directory, and fails on macOS —
+/// which is how macOS CI stayed red through a release while Linux was green.
+/// `git worktree list --porcelain` resolves the same way, so the mismatch is
+/// not limited to paths rwv itself prints.
+///
+/// Canonicalizing the root here rather than at each comparison is the point.
+/// A rule applied where paths are compared has to be remembered by every test
+/// anyone adds later; rooted here there is no non-canonical path in the suite
+/// to get wrong. `canonical_temp_root_test.rs` keeps it that way.
+///
+/// Reproduce the macOS geometry on any platform:
+///
+/// ```sh
+/// mkdir -p $T/real && ln -s $T/real $T/link
+/// TMPDIR=$T/link cargo test --release --no-fail-fast
+/// ```
+///
+/// Pick a `$T` outside any repoweave weave: a temp root nested under one puts
+/// every fixture inside it, and the suite's "outside a workspace" tests then
+/// fail for that reason instead.
+pub fn tempdir() -> std::io::Result<tempfile::TempDir> {
+    static ROOT: OnceLock<PathBuf> = OnceLock::new();
+    let root = ROOT.get_or_init(|| {
+        let raw = std::env::temp_dir();
+        raw.canonicalize()
+            .unwrap_or_else(|e| panic!("temp dir {} does not resolve: {e}", raw.display()))
+    });
+    tempfile::TempDir::new_in(root)
+}
 
 /// `GIT_*` environment variables that git itself sets for hooks and that
 /// would silently misdirect any subprocess `git` invocation if inherited.

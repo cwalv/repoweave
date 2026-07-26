@@ -115,7 +115,7 @@ fn init_bare_repo_with_two_commits(path: &Path) -> (String, String) {
         .expect("git should be available");
     assert!(status.success(), "git init --bare failed");
 
-    let tmp = tempfile::tempdir().expect("tempdir for working clone");
+    let tmp = common::tempdir().expect("tempdir for working clone");
     let work = tmp.path().join("work");
     git_run(
         &["clone", &path.to_string_lossy(), &work.to_string_lossy()],
@@ -138,7 +138,7 @@ fn init_bare_repo_with_two_commits(path: &Path) -> (String, String) {
 /// Workspace with an active project whose manifest lists `repo_paths`. No
 /// `rwv.lock` is written — each test writes the lock state it is pinning.
 fn setup(repo_paths: &[&str]) -> Fixture {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let workspace = tmp.path().join("ws");
     std::fs::create_dir_all(&workspace).unwrap();
 
@@ -229,7 +229,7 @@ impl Fixture {
     /// ever fetching it. Returns its SHA.
     fn push_third_commit(&self, path: &str) -> String {
         let repo = self.repo(path);
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = common::tempdir().unwrap();
         let work = tmp.path().join("work");
         git_run(
             &[

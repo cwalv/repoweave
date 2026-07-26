@@ -19,7 +19,8 @@
 
 use std::path::Path;
 use std::process::Command;
-use tempfile::TempDir;
+
+mod common;
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -82,7 +83,7 @@ fn cargo_catches_workspace_version_mismatch() {
         return;
     }
 
-    let tmp = TempDir::new().unwrap();
+    let tmp = common::tempdir().unwrap();
     let root = tmp.path();
 
     // ---- workspace Cargo.toml ----
@@ -181,7 +182,7 @@ fn go_work_catches_version_mismatch() {
         return;
     }
 
-    let tmp = TempDir::new().unwrap();
+    let tmp = common::tempdir().unwrap();
     let root = tmp.path();
 
     // ---- lib module at v1 path ----
@@ -284,7 +285,7 @@ fn npm_workspace_checks_version_mismatch() {
         return;
     }
 
-    let tmp = TempDir::new().unwrap();
+    let tmp = common::tempdir().unwrap();
     let root = tmp.path();
 
     // ---- root package.json with workspaces ----
@@ -370,7 +371,7 @@ fn uv_workspace_silently_allows_version_mismatch() {
         return;
     }
 
-    let tmp = TempDir::new().unwrap();
+    let tmp = common::tempdir().unwrap();
     let root = tmp.path();
 
     // ---- root pyproject.toml declaring the workspace ----

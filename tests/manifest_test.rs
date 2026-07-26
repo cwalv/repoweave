@@ -4,6 +4,8 @@ use repoweave::manifest::{
 };
 use repoweave::vcs::{RawRevisionId, RefName};
 
+mod common;
+
 // ---------------------------------------------------------------------------
 // Helper YAML literals
 // ---------------------------------------------------------------------------
@@ -248,7 +250,7 @@ fn lock_without_workweave_round_trip_skips_workweave_key() {
 
 #[test]
 fn project_from_dir_manifest_only() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = common::tempdir().unwrap();
     std::fs::write(dir.path().join("rwv.yaml"), MINIMAL_MANIFEST_YAML).unwrap();
 
     let project = Project::from_dir(dir.path()).unwrap();
@@ -259,7 +261,7 @@ fn project_from_dir_manifest_only() {
 
 #[test]
 fn project_from_dir_manifest_and_lock() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = common::tempdir().unwrap();
     std::fs::write(dir.path().join("rwv.yaml"), FULL_MANIFEST_YAML).unwrap();
     std::fs::write(dir.path().join("rwv.lock"), LOCK_WITH_WORKWEAVE_YAML).unwrap();
 
@@ -272,7 +274,7 @@ fn project_from_dir_manifest_and_lock() {
 
 #[test]
 fn project_from_dir_missing_manifest_errors() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = common::tempdir().unwrap();
     // No rwv.yaml written — from_dir should fail.
     let result = Project::from_dir(dir.path());
     assert!(result.is_err());
@@ -280,7 +282,7 @@ fn project_from_dir_missing_manifest_errors() {
 
 #[test]
 fn project_name_derived_from_dir() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = common::tempdir().unwrap();
     std::fs::write(dir.path().join("rwv.yaml"), MINIMAL_MANIFEST_YAML).unwrap();
 
     let project = Project::from_dir(dir.path()).unwrap();
@@ -291,7 +293,7 @@ fn project_name_derived_from_dir() {
 
 #[test]
 fn project_name_strips_projects_prefix() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = common::tempdir().unwrap();
     let project_dir = dir.path().join("projects").join("web-app");
     std::fs::create_dir_all(&project_dir).unwrap();
     std::fs::write(project_dir.join("rwv.yaml"), MINIMAL_MANIFEST_YAML).unwrap();

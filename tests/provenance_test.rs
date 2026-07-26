@@ -119,7 +119,7 @@ fn rwv() -> assert_cmd::Command {
 /// flagged as an `origin-url-mismatch` warning.
 #[test]
 fn origin_url_mismatch_is_reported() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_primary(tmp.path());
 
     // Create a "remote" bare repo.
@@ -172,7 +172,7 @@ fn origin_url_mismatch_is_reported() {
 /// `origin-url-mismatch` violation must be emitted.
 #[test]
 fn matching_origin_url_is_clean() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_primary(tmp.path());
 
     // Create a repo with an `origin` remote.
@@ -204,7 +204,7 @@ fn matching_origin_url_is_clean() {
 /// must be flagged as `lock-sha-unreachable` at Error severity.
 #[test]
 fn lock_sha_unreachable_is_reported() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_primary(tmp.path());
 
     let repo_abs = ws.join("github/myorg/myrepo");
@@ -249,7 +249,7 @@ fn lock_sha_unreachable_is_reported() {
 /// `lock-sha-unreachable`.
 #[test]
 fn reachable_lock_sha_is_clean() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_primary(tmp.path());
 
     let repo_abs = ws.join("github/myorg/myrepo");
@@ -281,7 +281,7 @@ fn reachable_lock_sha_is_clean() {
 /// `origin-url-mismatch` violation exists.
 #[test]
 fn json_output_includes_provenance_kind() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_primary(tmp.path());
 
     let repo_abs = ws.join("github/myorg/myrepo");

@@ -93,7 +93,7 @@ fn make_workspace_with_repo(tmp: &Path) -> (std::path::PathBuf, std::path::PathB
 
 #[test]
 fn lock_does_not_run_integration_hooks() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (root, project_dir, _) = make_workspace_with_repo(tmp.path());
 
     // Add a Cargo.toml to the manifest repo — enough to trigger the cargo
@@ -142,7 +142,7 @@ fn lock_does_not_run_integration_hooks() {
 
 #[test]
 fn lock_overwrites_previous_lock_with_current_head() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (_root, project_dir, real_sha) = make_workspace_with_repo(tmp.path());
 
     // Hand-write a lock containing a fake SHA.
@@ -187,7 +187,7 @@ fn lock_overwrites_previous_lock_with_current_head() {
 
 #[test]
 fn lock_records_local_head_not_remote_tip() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let root = tmp.path().join("ws");
     std::fs::create_dir_all(root.join("github")).unwrap();
     std::fs::create_dir_all(root.join("projects")).unwrap();

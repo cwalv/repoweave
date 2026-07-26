@@ -125,7 +125,7 @@ fn rwv() -> assert_cmd::Command {
 /// revision and converges to V1.
 #[test]
 fn sync_reads_committed_lock_not_working_tree() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let tmp = tmp.path();
 
     // ---- Build the `lib` repo with two commits ----
@@ -230,7 +230,7 @@ fn sync_reads_committed_lock_not_working_tree() {
 /// the working tree and converge there, making (2) and (3) fail.
 #[test]
 fn sync_result_is_source_as_of_t0_not_working_tree_mutation() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let tmp = tmp.path();
 
     // ---- lib repo: two commits ----
@@ -332,7 +332,7 @@ fn sync_result_is_source_as_of_t0_not_working_tree_mutation() {
 fn read_file_at_revision_returns_committed_content() {
     use repoweave::vcs::Vcs;
 
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let tmp = tmp.path();
 
     let repo = tmp.join("repo");

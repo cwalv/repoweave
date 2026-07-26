@@ -136,7 +136,7 @@ fn make_workspace_with_lock(parent: &Path, project: &str) -> (PathBuf, PathBuf, 
 
 #[test]
 fn status_human_shows_missing_not_no_lock_when_clone_dir_absent() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (ws, repo_abs, _url, _sha) = make_workspace_with_lock(tmp.path(), "alpha");
 
     // Remove the clone directory out-of-band.
@@ -168,7 +168,7 @@ fn status_human_shows_missing_not_no_lock_when_clone_dir_absent() {
 
 #[test]
 fn status_json_relation_is_missing_when_clone_dir_absent() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (ws, repo_abs, _url, sha) = make_workspace_with_lock(tmp.path(), "alpha");
 
     // Remove the clone directory out-of-band.
@@ -226,7 +226,7 @@ fn status_json_relation_is_missing_when_clone_dir_absent() {
 
 #[test]
 fn status_human_shows_unreachable_not_no_lock_when_sha_gone() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (ws, repo_abs, url, sha) = make_workspace_with_lock(tmp.path(), "alpha");
 
     // Pin the lock to the initial SHA, then rewrite history so that SHA is
@@ -296,7 +296,7 @@ fn status_human_shows_unreachable_not_no_lock_when_sha_gone() {
 /// of the test.
 #[test]
 fn status_json_relation_is_unreachable_for_fabricated_bad_sha() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (ws, _repo_abs, url, _sha) = make_workspace_with_lock(tmp.path(), "alpha");
 
     // Overwrite the lock with a SHA that can never exist on disk.
@@ -357,7 +357,7 @@ fn status_json_relation_is_unreachable_for_fabricated_bad_sha() {
 /// `[unreachable]`.
 #[test]
 fn status_healthy_repo_still_shows_ok() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (ws, _repo_abs, _url, _sha) = make_workspace_with_lock(tmp.path(), "alpha");
 
     let output = rwv()
@@ -410,7 +410,7 @@ fn make_workspace_with_bare_remote(parent: &Path) -> (PathBuf, PathBuf, PathBuf,
     assert!(status.success(), "git init --bare failed");
 
     // Seed the bare repo with an initial commit via a throw-away working clone.
-    let tmp_work = tempfile::tempdir().unwrap();
+    let tmp_work = common::tempdir().unwrap();
     let work = tmp_work.path().join("work");
     git(
         &["clone", &bare.to_string_lossy(), &work.to_string_lossy()],
@@ -463,7 +463,7 @@ fn make_workspace_with_bare_remote(parent: &Path) -> (PathBuf, PathBuf, PathBuf,
 ///   status [missing] → rwv fetch (in-place) → status [ok], clone at locked SHA
 #[test]
 fn missing_repair_drive_fetch_in_place_restores_ok() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (ws, _project_dir, _bare, clone_abs, locked_sha) =
         make_workspace_with_bare_remote(tmp.path());
 
@@ -595,7 +595,7 @@ fn missing_repair_drive_fetch_in_place_restores_ok() {
 /// `rwv fetch` in-place verb.
 #[test]
 fn unreachable_repair_drive_git_fetch_restores_ok() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (ws, project_dir, bare, repo_abs, sha) = make_workspace_with_bare_remote(tmp.path());
 
     // Rewrite history in the local clone so the original SHA becomes

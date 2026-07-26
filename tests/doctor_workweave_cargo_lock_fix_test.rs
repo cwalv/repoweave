@@ -112,7 +112,7 @@ impl Fixture {
 /// primary has no lock either and the workweave's missing lock cannot be an
 /// artifact of a copy that did not happen.
 fn fixture() -> Fixture {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let root = tmp.path().to_path_buf();
     let ws = root.join("ws");
     std::fs::create_dir_all(ws.join("projects")).unwrap();

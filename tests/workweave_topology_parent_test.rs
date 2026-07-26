@@ -195,7 +195,7 @@ fn canon(p: &Path) -> String {
 /// Deleting a childless workweave prints no adoption line and succeeds.
 #[test]
 fn delete_with_zero_children_adopts_nothing() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let main = make_main_workspace(tmp.path());
     let ww = create_workweave(&main, "solo", None);
     // Ensure clean (no unmerged commits) so delete without a waiver works.
@@ -224,7 +224,7 @@ fn delete_with_zero_children_adopts_nothing() {
 /// stale record.
 #[test]
 fn delete_refuses_while_workweave_is_mid_op() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let main = make_main_workspace(tmp.path());
     let ww = create_workweave(&main, "busy", None);
 
@@ -268,7 +268,7 @@ fn delete_refuses_while_workweave_is_mid_op() {
 /// op-state.
 #[test]
 fn delete_waivers_do_not_bypass_op_mutex() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let main = make_main_workspace(tmp.path());
     let ww = create_workweave(&main, "busyforce", None);
 
@@ -314,7 +314,7 @@ fn delete_waivers_do_not_bypass_op_mutex() {
 /// prints the loud line.
 #[test]
 fn delete_with_one_child_adopts_to_grandparent_primary() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let main = make_main_workspace(tmp.path());
 
     // wwa forked from primary; wwb forked from wwa (stacked).
@@ -355,7 +355,7 @@ fn delete_with_one_child_adopts_to_grandparent_primary() {
 /// the grandparent (a workweave, NOT primary) — the grandparent-fallback path.
 #[test]
 fn delete_middle_adopts_to_grandparent_workweave() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let main = make_main_workspace(tmp.path());
 
     // wwa (from primary) → wwb (from wwa) → wwc (from wwb).
@@ -395,7 +395,7 @@ fn delete_middle_adopts_to_grandparent_workweave() {
 /// line per child.
 #[test]
 fn delete_with_n_children_adopts_all() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let main = make_main_workspace(tmp.path());
 
     let wwa = create_workweave(&main, "wwa", None);
@@ -435,7 +435,7 @@ fn delete_with_n_children_adopts_all() {
 /// shared child-enumeration + adopt step.
 #[test]
 fn retire_adopts_children() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let main = make_main_workspace(tmp.path());
 
     // wwa from primary; wwb from wwa. wwa makes no unique commits, so a bare
@@ -477,7 +477,7 @@ fn retire_adopts_children() {
 /// `rwv doctor --fix` re-points the marker to primary.
 #[test]
 fn doctor_fix_repoints_dangling_parent_to_primary() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let main = make_main_workspace(tmp.path());
 
     let wwa = create_workweave(&main, "wwa", None);
@@ -546,7 +546,7 @@ fn doctor_fix_repoints_dangling_parent_to_primary() {
 /// (os error 2)`.
 #[test]
 fn bare_sync_to_dangling_parent_is_friendly() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let main = make_main_workspace(tmp.path());
 
     let wwa = create_workweave(&main, "wwa", None);
@@ -582,7 +582,7 @@ fn bare_sync_to_dangling_parent_is_friendly() {
 /// a workweave, not primary) and a resolvable per-repo parent tip.
 #[test]
 fn status_json_parent_correct_for_stacked_parent() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let main = make_main_workspace(tmp.path());
 
     let wwa = create_workweave(&main, "wwa", None);
@@ -635,7 +635,7 @@ fn status_json_parent_correct_for_stacked_parent() {
 /// merge-base so an advanced-parent's other changes never appear as reversals.
 #[test]
 fn workweave_log_and_diff_correct_when_parent_advanced() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let main = make_main_workspace(tmp.path());
 
     // Fork wwb from a first-level workweave wwa (STACKED parent).
@@ -744,7 +744,7 @@ fn workweave_log_and_diff_correct_when_parent_advanced() {
 /// `rwv workweave log` text output lists unique commits and names the parent.
 #[test]
 fn workweave_log_text_output() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let main = make_main_workspace(tmp.path());
 
     let ww = create_workweave(&main, "feat", None);
@@ -775,7 +775,7 @@ fn workweave_log_text_output() {
 /// `rwv workweave log` from the primary weave refuses (it's not a workweave).
 #[test]
 fn workweave_log_refuses_in_primary_weave() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let main = make_main_workspace(tmp.path());
 
     let out = rwv()
@@ -800,7 +800,7 @@ fn workweave_log_refuses_in_primary_weave() {
 /// reflect real per-workweave project-repo work (e.g. a doc or lock commit).
 #[test]
 fn workweave_log_json_includes_project_repo_unique_commits() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let main = make_main_workspace(tmp.path());
 
     let ww = create_workweave(&main, "feat", None);
@@ -846,7 +846,7 @@ fn workweave_log_json_includes_project_repo_unique_commits() {
 /// `rwv workweave log` text output includes an `=== (project) ===` section.
 #[test]
 fn workweave_log_text_includes_project_repo_section() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let main = make_main_workspace(tmp.path());
 
     let ww = create_workweave(&main, "feat2", None);
@@ -885,7 +885,7 @@ fn workweave_log_text_includes_project_repo_section() {
 /// when the project repo has NO commits unique vs the parent.
 #[test]
 fn workweave_log_json_project_repo_no_unique_commits_when_clean() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let main = make_main_workspace(tmp.path());
 
     let ww = create_workweave(&main, "clean", None);
@@ -917,7 +917,7 @@ fn workweave_log_json_project_repo_no_unique_commits_when_clean() {
 /// the `(project)` section when the project repo has no unique commits.
 #[test]
 fn workweave_log_text_project_repo_no_unique_commits_label() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let main = make_main_workspace(tmp.path());
 
     let ww = create_workweave(&main, "clean2", None);
@@ -950,7 +950,7 @@ fn workweave_log_text_project_repo_no_unique_commits_label() {
 /// content when the project repo has unique work.
 #[test]
 fn workweave_log_diff_json_includes_project_repo() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let main = make_main_workspace(tmp.path());
 
     let ww = create_workweave(&main, "difftest", None);

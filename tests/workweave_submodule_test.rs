@@ -133,7 +133,7 @@ fn add_submodule(repo_dir: &Path, sub_path: &str, submodule_remote: &Path) {
 /// the env; nothing is widened in the production code path.
 #[test]
 fn create_initializes_submodules_when_gitmodules_present() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_workspace(tmp.path(), "proj");
 
     // Create a small repo that will serve as the submodule remote.
@@ -216,7 +216,7 @@ fn create_initializes_submodules_when_gitmodules_present() {
 /// asserted; both take the same warn-and-continue arm.
 #[test]
 fn create_succeeds_with_warning_when_submodule_remote_unreachable() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_workspace(tmp.path(), "proj");
 
     let repo = ws.join("github/org/repo");
@@ -317,7 +317,7 @@ fn create_succeeds_with_warning_when_submodule_remote_unreachable() {
 /// `scan_uninitialized_submodules` finds nothing.
 #[test]
 fn create_no_submodule_invocation_for_repo_without_gitmodules() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_workspace(tmp.path(), "proj");
 
     // No submodule added — the repo has no .gitmodules.
@@ -372,7 +372,7 @@ fn create_no_submodule_invocation_for_repo_without_gitmodules() {
 /// `scan_uninitialized_submodules` returns empty when no `.gitmodules` exists.
 #[test]
 fn scan_no_gitmodules_returns_empty() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let repo = tmp.path().join("repo");
     std::fs::create_dir_all(&repo).unwrap();
     // No .gitmodules written.
@@ -384,7 +384,7 @@ fn scan_no_gitmodules_returns_empty() {
 /// is empty.
 #[test]
 fn scan_empty_submodule_dir_is_reported() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let repo = tmp.path().join("repo");
     std::fs::create_dir_all(&repo).unwrap();
 
@@ -410,7 +410,7 @@ fn scan_empty_submodule_dir_is_reported() {
 /// populated.
 #[test]
 fn scan_populated_submodule_dir_is_not_reported() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let repo = tmp.path().join("repo");
     std::fs::create_dir_all(&repo).unwrap();
 
@@ -436,7 +436,7 @@ fn scan_populated_submodule_dir_is_not_reported() {
 /// is absent (was never created by git submodule update).
 #[test]
 fn scan_absent_submodule_dir_is_reported() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let repo = tmp.path().join("repo");
     std::fs::create_dir_all(&repo).unwrap();
 
@@ -468,7 +468,7 @@ fn doctor_scan_reports_uninitialized_submodule_in_workweave() {
     use repoweave::check::{scan_uninitialized_submodules_in_workweaves, CheckViolation};
     use repoweave::manifest::Project;
 
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_workspace(tmp.path(), "proj");
 
     // Create a submodule remote and add it to the member repo.
@@ -534,7 +534,7 @@ fn doctor_scan_silent_for_repo_without_gitmodules() {
     use repoweave::check::scan_uninitialized_submodules_in_workweaves;
     use repoweave::manifest::Project;
 
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_workspace(tmp.path(), "proj");
 
     // No submodule added.

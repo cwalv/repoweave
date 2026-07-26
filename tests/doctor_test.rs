@@ -95,7 +95,7 @@ fn rwv_cmd() -> Command {
 #[test]
 
 fn check_clean_workspace_exits_zero() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let root = make_workspace(tmp.path(), "ws");
 
     // Create a repo on disk
@@ -123,7 +123,7 @@ fn check_clean_workspace_exits_zero() {
 #[test]
 
 fn check_orphaned_clone_reported() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let root = make_workspace(tmp.path(), "ws");
 
     // Create two repos on disk
@@ -154,7 +154,7 @@ fn check_orphaned_clone_reported() {
 #[test]
 
 fn check_dangling_reference_reported() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let root = make_workspace(tmp.path(), "ws");
 
     // Create one repo on disk but reference two in the manifest
@@ -187,7 +187,7 @@ fn check_dangling_reference_reported() {
 #[test]
 
 fn check_stale_lock_reported() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let root = make_workspace(tmp.path(), "ws");
 
     let repo_path = "github/acme/server";
@@ -224,7 +224,7 @@ fn check_stale_lock_reported() {
 #[test]
 
 fn check_incomplete_lock_reported() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let root = make_workspace(tmp.path(), "ws");
 
     let repo_path = "github/acme/server";
@@ -256,7 +256,7 @@ fn check_incomplete_lock_reported() {
 #[test]
 
 fn check_multi_project_no_false_orphan() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let root = make_workspace(tmp.path(), "ws");
 
     // Create two repos
@@ -294,7 +294,7 @@ fn check_multi_project_no_false_orphan() {
 #[test]
 
 fn check_outside_workspace_errors() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     // No workspace markers here — just an empty temp dir
 
     rwv_cmd()
@@ -312,7 +312,7 @@ fn check_outside_workspace_errors() {
 #[test]
 
 fn check_integration_hooks_report_warnings() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let root = make_workspace(tmp.path(), "ws");
 
     // Create a repo on disk
@@ -395,7 +395,7 @@ fn make_commit(repo: &std::path::Path) -> String {
 #[test]
 fn check_locked_tag_form_reports_ok() {
     // Lock pins a tag name; HEAD is at that tag's commit — should exit 0.
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let root = make_workspace(tmp.path(), "ws");
 
     let repo_path = "github/acme/server";
@@ -423,7 +423,7 @@ fn check_locked_tag_form_reports_ok() {
 #[test]
 fn check_locked_sha_form_reports_ok() {
     // Lock pins a SHA directly; HEAD is the same commit — should exit 0.
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let root = make_workspace(tmp.path(), "ws");
 
     let repo_path = "github/acme/server";
@@ -450,7 +450,7 @@ fn check_locked_sha_form_reports_ok() {
 #[test]
 fn check_locked_tag_form_drift_reported() {
     // Lock pins a tag; HEAD is at a later commit — should exit 1.
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let root = make_workspace(tmp.path(), "ws");
 
     let repo_path = "github/acme/server";
@@ -479,7 +479,7 @@ fn check_locked_tag_form_drift_reported() {
 fn check_locked_unknown_tag_reported_as_drift() {
     // Lock pins a tag that no longer exists locally — should exit 1 with a
     // clear "unknown revision" message rather than a generic "tip ≠ lock".
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let root = make_workspace(tmp.path(), "ws");
 
     let repo_path = "github/acme/server";
@@ -515,7 +515,7 @@ fn check_locked_missing_on_disk_reported_as_drift() {
     // A repo listed in the lock but missing from disk should fail
     // `rwv doctor --locked` with a clear message — this is the precondition
     // `rwv sync` enforces so the operator notices the gap before syncing.
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let root = make_workspace(tmp.path(), "ws");
 
     let present_repo = "github/acme/server";
@@ -562,7 +562,7 @@ fn check_locked_missing_on_disk_reported_as_drift() {
 /// that most needs to know when resolution failed.
 #[test]
 fn check_flags_unresolvable_lock_revision() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let root = make_workspace(tmp.path(), "ws");
 
     let repo_path = "github/acme/server";
@@ -604,7 +604,7 @@ fn check_flags_unresolvable_lock_revision() {
 /// `Error`-severity issue. Simulated by removing `.git/HEAD` after init.
 #[test]
 fn check_flags_unreadable_head() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let root = make_workspace(tmp.path(), "ws");
 
     let repo_path = "github/acme/server";
@@ -656,7 +656,7 @@ fn doctor_command_is_recognized() {
 /// `rwv.lock merge=rwv-ours` line in `.gitattributes`.
 #[test]
 fn check_warns_when_project_missing_replay_exclusion() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let root = make_workspace(tmp.path(), "ws");
 
     let repo_path = "github/acme/server";
@@ -679,7 +679,7 @@ fn check_warns_when_project_missing_replay_exclusion() {
 /// `rwv doctor --fix` writes the missing `rwv.lock merge=rwv-ours` line.
 #[test]
 fn check_fix_writes_replay_exclusion() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let root = make_workspace(tmp.path(), "ws");
 
     let repo_path = "github/acme/server";
@@ -747,7 +747,7 @@ fn git_capture(dir: &Path, args: &[&str]) -> String {
 /// with a message pointing at `rwv doctor --fix` for migration.
 #[test]
 fn check_warns_when_project_has_legacy_replay_exclusion() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let root = make_workspace(tmp.path(), "ws");
     let repo_path = "github/acme/server";
     init_git_repo(&root.join(repo_path));
@@ -776,7 +776,7 @@ fn check_warns_when_project_has_legacy_replay_exclusion() {
 /// repo has no other pending work. Post-fix, doctor is quiet.
 #[test]
 fn check_fix_migrates_and_commits_legacy_replay_exclusion() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let root = make_workspace(tmp.path(), "ws");
     let repo_path = "github/acme/server";
     init_git_repo(&root.join(repo_path));
@@ -848,7 +848,7 @@ fn check_fix_migrates_and_commits_legacy_replay_exclusion() {
 /// their own change), but HEAD is unchanged and stdout says so.
 #[test]
 fn check_fix_skips_migration_commit_when_repo_has_other_staged_changes() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let root = make_workspace(tmp.path(), "ws");
     let repo_path = "github/acme/server";
     init_git_repo(&root.join(repo_path));
@@ -913,7 +913,7 @@ fn check_fix_skips_migration_commit_when_repo_has_other_staged_changes() {
 /// `git rebase --continue`.
 #[test]
 fn check_fix_plants_rwv_ours_driver_config() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let root = make_workspace(tmp.path(), "ws");
     let repo_path = "github/acme/server";
     init_git_repo(&root.join(repo_path));
@@ -1019,7 +1019,7 @@ mod doctor_json {
 
     #[test]
     fn json_clean_workspace_emits_empty_array() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = make_workspace(tmp.path(), "ws");
 
         let repo_path = "github/acme/server";
@@ -1055,7 +1055,7 @@ mod doctor_json {
 
     #[test]
     fn json_orphaned_clone_variant() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = make_workspace(tmp.path(), "ws");
 
         let known = "github/acme/server";
@@ -1101,7 +1101,7 @@ mod doctor_json {
 
     #[test]
     fn json_dangling_reference_variant() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = make_workspace(tmp.path(), "ws");
 
         let real = "github/acme/server";
@@ -1137,7 +1137,7 @@ mod doctor_json {
 
     #[test]
     fn json_stale_lock_variant() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = make_workspace(tmp.path(), "ws");
 
         let repo_path = "github/acme/server";
@@ -1196,7 +1196,7 @@ mod doctor_json {
 
     #[test]
     fn json_incomplete_lock_variant() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = make_workspace(tmp.path(), "ws");
 
         let repo_path = "github/acme/server";
@@ -1231,7 +1231,7 @@ mod doctor_json {
 
     #[test]
     fn json_missing_replay_exclusion_variant() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = common::tempdir().unwrap();
         let root = make_workspace(tmp.path(), "ws");
 
         let repo_path = "github/acme/server";
@@ -1742,7 +1742,7 @@ mod doctor_json {
 /// inside that workweave to fail with a clear, actionable error.
 #[test]
 fn legacy_workweave_marker_causes_error_on_rwv_invocation() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let root = make_workspace(tmp.path(), "ws");
     let ww_dir_container = tmp.path().join("ww-container");
     std::fs::create_dir_all(&ww_dir_container).unwrap();
@@ -1774,7 +1774,7 @@ fn legacy_workweave_marker_causes_error_on_rwv_invocation() {
 /// with a marker missing `parent:`.
 #[test]
 fn doctor_reports_legacy_workweave_marker() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let root = make_workspace(tmp.path(), "ws");
     let ww_dir_container = tmp.path().join("ww-container");
     std::fs::create_dir_all(&ww_dir_container).unwrap();
@@ -1807,7 +1807,7 @@ fn doctor_reports_legacy_workweave_marker() {
 /// reports clean (no more legacy-marker violation).
 #[test]
 fn doctor_fix_migrates_legacy_workweave_marker() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let root = make_workspace(tmp.path(), "ws");
     let primary_canon = root.canonicalize().unwrap();
     let ww_dir_container = tmp.path().join("ww-container");
@@ -1853,7 +1853,7 @@ fn doctor_fix_migrates_legacy_workweave_marker() {
 /// `rwv doctor` does NOT warn when the project carries the replay-exclusion entry.
 #[test]
 fn check_silent_when_project_has_replay_exclusion() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let root = make_workspace(tmp.path(), "ws");
 
     let repo_path = "github/acme/server";
@@ -1891,7 +1891,7 @@ fn check_silent_when_project_has_replay_exclusion() {
 /// broken project (indistinguishable from a healthy workspace).
 #[test]
 fn check_unparseable_project_reported_as_violation() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let root = make_workspace(tmp.path(), "ws");
 
     // Write a syntactically broken rwv.yaml — invalid YAML.
@@ -1923,7 +1923,7 @@ fn check_unparseable_project_reported_as_violation() {
 /// `unparseable-project` entry in the violations array and exits non-zero.
 #[test]
 fn check_unparseable_project_in_json_output() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let root = make_workspace(tmp.path(), "ws");
 
     let project_dir = root.join("projects").join("broken-app");
@@ -1976,7 +1976,7 @@ fn check_unparseable_project_in_json_output() {
 /// that no automated unsafe mutation is attempted.
 #[test]
 fn check_unparseable_project_not_fixed_by_fix_flag() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let root = make_workspace(tmp.path(), "ws");
 
     let bad_yaml = "repositories: {\n  this is not: valid yaml: [ unclosed\n";
@@ -2017,7 +2017,7 @@ fn set_active_project(workspace_root: &std::path::Path, project_name: &str) {
 /// project scope produces false positives.
 #[test]
 fn default_scope_no_orphan_when_active_project_set() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let root = make_workspace(tmp.path(), "ws");
 
     // Project "active-proj" owns one repo.
@@ -2063,7 +2063,7 @@ fn default_scope_no_orphan_when_active_project_set() {
 /// `rwv doctor --all` DOES report orphaned clones regardless of active project.
 #[test]
 fn all_flag_reports_orphan_even_with_active_project() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let root = make_workspace(tmp.path(), "ws");
 
     let owned_repo = "github/acme/owned";
@@ -2103,7 +2103,7 @@ fn all_flag_reports_orphan_even_with_active_project() {
 /// when an active project is set.
 #[test]
 fn default_scope_no_cross_project_stale_lock() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let root = make_workspace(tmp.path(), "ws");
 
     // Project "alpha" owns repo-a; lock is fresh.
@@ -2166,7 +2166,7 @@ fn default_scope_no_cross_project_stale_lock() {
 /// from all projects, not just the active one.
 #[test]
 fn all_flag_reports_cross_project_stale_lock() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let root = make_workspace(tmp.path(), "ws");
 
     let repo_a = "github/acme/repo-a";
@@ -2220,7 +2220,7 @@ fn all_flag_reports_cross_project_stale_lock() {
 /// clone entries in the violations array.
 #[test]
 fn default_scope_json_no_orphan_when_active_project_set() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let root = make_workspace(tmp.path(), "ws");
 
     let owned_repo = "github/acme/owned";
@@ -2288,7 +2288,7 @@ fn doctor_unborn_head_member_names_state_not_raw_git_error() {
     // one as `{repo_path}: HEAD unreadable ({err_msg})`. The `err_msg` is
     // the `VcsError::CommandFailed.stderr` field — which, after fo-oueuv7.4,
     // contains "unborn HEAD ..." instead of the raw git message.
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let root = make_workspace(tmp.path(), "ws");
 
     let repo_path = "github/acme/server";
@@ -2331,7 +2331,7 @@ fn doctor_unborn_head_member_names_state_not_raw_git_error() {
 fn doctor_unborn_head_member_includes_action_hint() {
     // The "unborn HEAD" error message includes actionable guidance:
     // telling the operator to "make an initial commit".
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let root = make_workspace(tmp.path(), "ws");
 
     let repo_path = "github/acme/server";
@@ -2372,7 +2372,7 @@ fn doctor_unborn_head_member_includes_action_hint() {
 /// `orphaned clone` message names `rwv add` and/or `remove` as repair actions.
 #[test]
 fn orphaned_clone_names_repair_verb() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let root = make_workspace(tmp.path(), "ws");
 
     let orphan_repo = "github/acme/orphan";
@@ -2413,7 +2413,7 @@ fn orphaned_clone_names_repair_verb() {
 /// fetch::run_fetch_in_place.
 #[test]
 fn dangling_reference_names_rwv_fetch_repair_verb() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let root = make_workspace(tmp.path(), "ws");
 
     let real_repo = "github/acme/server";
@@ -2472,7 +2472,7 @@ fn dangling_reference_names_rwv_fetch_repair_verb() {
 fn dead_op_lease_names_fix_verb_and_age() {
     use std::path::PathBuf;
 
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     // Build a minimal workspace with the usual layout.
     let root = tmp.path().join("ws");
     std::fs::create_dir_all(root.join("github")).unwrap();

@@ -159,7 +159,7 @@ fn hand_made_branch_with_unique_commit(repo: &Path, name: &str, file: &str) -> S
 /// that case here belongs with the change that fixes it.
 #[test]
 fn delete_destroys_only_the_ref_it_recorded() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_workspace(tmp.path());
     let weaveroot = tmp.path().join(".workweaves");
     std::fs::create_dir_all(&weaveroot).unwrap();
@@ -235,7 +235,7 @@ fn delete_destroys_only_the_ref_it_recorded() {
 /// under it cannot exist to be reported.
 #[test]
 fn delete_reports_the_branches_it_will_not_touch() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_workspace(tmp.path());
     let weaveroot = tmp.path().join(".workweaves");
     std::fs::create_dir_all(&weaveroot).unwrap();
@@ -311,7 +311,7 @@ fn delete_reports_the_branches_it_will_not_touch() {
 /// which the prefix half claims on its own.
 #[test]
 fn delete_reports_a_flat_leftover_it_holds_no_receipt_for() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_workspace(tmp.path());
     let weaveroot = tmp.path().join(".workweaves");
     std::fs::create_dir_all(&weaveroot).unwrap();
@@ -367,7 +367,7 @@ fn delete_reports_a_flat_leftover_it_holds_no_receipt_for() {
 
 #[test]
 fn create_refuses_a_name_the_index_already_records() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_workspace(tmp.path());
     let weaveroot = tmp.path().join(".workweaves");
     std::fs::create_dir_all(&weaveroot).unwrap();
@@ -425,7 +425,7 @@ fn create_refuses_a_name_the_index_already_records() {
 /// ordering §5's `prune_dropped_repo` row describes.
 #[test]
 fn remove_delete_refuses_a_claimed_store_and_succeeds_after_the_claim_is_gone() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_workspace(tmp.path());
     let weaveroot = tmp.path().join(".workweaves");
     std::fs::create_dir_all(&weaveroot).unwrap();
@@ -507,7 +507,7 @@ fn remove_delete_refuses_a_claimed_store_and_succeeds_after_the_claim_is_gone() 
 /// that the workweave and its work SURVIVE.
 #[test]
 fn claude_worktree_remove_hook_does_not_destroy_uncommitted_work() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_workspace(tmp.path());
     let weaveroot = tmp.path().join(".workweaves");
     std::fs::create_dir_all(&weaveroot).unwrap();

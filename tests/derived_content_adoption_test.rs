@@ -333,7 +333,7 @@ fn add_a_verb_and_lock(ws: &Workspace, verb: &str) {
 
 #[test]
 fn a_land_conflict_in_a_generated_artifact_resolves_mechanically() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let weaveroot = tmp.path().join(".workweaves");
     std::fs::create_dir_all(&weaveroot).unwrap();
 
@@ -411,7 +411,7 @@ fn a_land_conflict_in_a_generated_artifact_resolves_mechanically() {
 
 #[test]
 fn the_same_land_conflict_without_the_declaration_stops_the_sync() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let weaveroot = tmp.path().join(".workweaves");
     std::fs::create_dir_all(&weaveroot).unwrap();
 
@@ -452,7 +452,7 @@ fn the_same_land_conflict_without_the_declaration_stops_the_sync() {
 
 #[test]
 fn the_templates_the_generator_reads_stay_authored() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let weaveroot = tmp.path().join(".workweaves");
     std::fs::create_dir_all(&weaveroot).unwrap();
 

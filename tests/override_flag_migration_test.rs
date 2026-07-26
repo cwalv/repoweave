@@ -18,7 +18,7 @@ fn rwv() -> Command {
 /// hints fire in early dispatch, before any workspace resolution, so no
 /// fixture is needed.
 fn stderr_of(args: &[&str]) -> String {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let output = rwv()
         .args(args)
         .current_dir(tmp.path())

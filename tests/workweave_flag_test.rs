@@ -116,7 +116,7 @@ fn register_workweave(ws: &Path, project: &str, name: &str) -> PathBuf {
 /// from the primary workspace cwd.
 #[test]
 fn w_flag_resolves_workweave_from_primary_cwd() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_workspace(tmp.path(), "myproj");
     let ww = register_workweave(&ws, "myproj", "feat");
     let ww_canon = ww.canonicalize().unwrap();
@@ -134,7 +134,7 @@ fn w_flag_resolves_workweave_from_primary_cwd() {
 /// Long form `--workweave` must work the same as `-w`.
 #[test]
 fn workweave_long_flag_resolves_workweave_from_primary_cwd() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_workspace(tmp.path(), "myproj");
     let ww = register_workweave(&ws, "myproj", "feat");
     let ww_canon = ww.canonicalize().unwrap();
@@ -154,7 +154,7 @@ fn workweave_long_flag_resolves_workweave_from_primary_cwd() {
 /// workweave marker, then the registry lookup confirms the registered path.
 #[test]
 fn w_flag_resolves_from_workweave_cwd() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_workspace(tmp.path(), "myproj");
     let ww = register_workweave(&ws, "myproj", "feat");
     let ww_canon = ww.canonicalize().unwrap();
@@ -178,7 +178,7 @@ fn w_flag_resolves_from_workweave_cwd() {
 /// -w selects the workweave. Must succeed from an arbitrary cwd like /tmp.
 #[test]
 fn w_flag_composed_with_c_flag_from_tmp() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_workspace(tmp.path(), "myproj");
     let ww = register_workweave(&ws, "myproj", "feat");
     let ww_canon = ww.canonicalize().unwrap();
@@ -197,7 +197,7 @@ fn w_flag_composed_with_c_flag_from_tmp() {
 /// regardless of order).
 #[test]
 fn w_flag_and_c_flag_in_reverse_order() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_workspace(tmp.path(), "myproj");
     let ww = register_workweave(&ws, "myproj", "feat");
     let ww_canon = ww.canonicalize().unwrap();
@@ -220,7 +220,7 @@ fn w_flag_and_c_flag_in_reverse_order() {
 /// the project, so the operator can spot a typo.
 #[test]
 fn w_flag_unknown_name_lists_candidates() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_workspace(tmp.path(), "myproj");
     // Register a workweave under a different name so the list is non-empty.
     register_workweave(&ws, "myproj", "existing-ww");
@@ -241,7 +241,7 @@ fn w_flag_unknown_name_lists_candidates() {
 /// `rwv workweave create` rather than an empty candidates list.
 #[test]
 fn w_flag_unknown_name_empty_registry_corrective_message() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_workspace(tmp.path(), "myproj");
     // No workweaves registered.
 
@@ -286,7 +286,7 @@ fn w_flag_relative_path_gets_corrective_error() {
 /// `-C`, even if the name shape would otherwise parse.
 #[test]
 fn w_flag_existing_disk_path_gets_corrective_error() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     // Create a directory whose basename looks like a workweave name.
     let ww_like = tmp.path().join("myproj--feat");
     std::fs::create_dir_all(&ww_like).unwrap();
@@ -327,7 +327,7 @@ fn w_flag_empty_project_gives_form_error() {
 /// `-w project--` (empty name part) must fail.
 #[test]
 fn w_flag_empty_name_gives_form_error() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_workspace(tmp.path(), "myproj");
 
     rwv()
@@ -345,7 +345,7 @@ fn w_flag_empty_name_gives_form_error() {
 /// Passing -w twice must be rejected.
 #[test]
 fn duplicate_w_flag_is_rejected() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_workspace(tmp.path(), "myproj");
     register_workweave(&ws, "myproj", "feat");
 
@@ -365,7 +365,7 @@ fn duplicate_w_flag_is_rejected() {
 /// provenance case), never for explicit addressing.
 #[test]
 fn w_flag_does_not_print_target_line() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_workspace(tmp.path(), "myproj");
     register_workweave(&ws, "myproj", "feat");
 
@@ -396,7 +396,7 @@ fn w_flag_does_not_print_target_line() {
 /// `-w`-addressed workweave directory.
 #[test]
 fn w_flag_project_override_wins_over_w_prefix() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_workspace(tmp.path(), "proj-a");
     // Also create a second project so `--project proj-b` names a real project.
     let proj_b_dir = ws.join("projects").join("proj-b");
@@ -443,7 +443,7 @@ fn w_flag_project_override_wins_over_w_prefix() {
 /// With two workweaves registered, `-w` must select exactly the named one.
 #[test]
 fn w_flag_selects_correct_workweave_when_multiple_registered() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_workspace(tmp.path(), "myproj");
     let ww_a = register_workweave(&ws, "myproj", "feature-a");
     let ww_b = register_workweave(&ws, "myproj", "feature-b");

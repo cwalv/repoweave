@@ -35,7 +35,7 @@ fn go_workspace_wiring_resolves_cross_module_import() {
     // ------------------------------------------------------------------
     // 1. Create weave root with the required directory structure
     // ------------------------------------------------------------------
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let root = tmp.path();
 
     // Create registry and projects directories (workspace markers)
@@ -192,7 +192,7 @@ repositories:\n  \
 fn go_primary_path_preserves_existing_go_line_no_downgrade() {
     require_go!();
 
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let root = tmp.path();
 
     std::fs::create_dir_all(root.join("github")).unwrap();
@@ -286,7 +286,7 @@ fn go_release_version_pin_workflow() {
     // ------------------------------------------------------------------
     // 1. Create weave root with the required directory structure
     // ------------------------------------------------------------------
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let root = tmp.path();
 
     std::fs::create_dir_all(root.join("github")).unwrap();

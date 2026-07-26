@@ -197,7 +197,7 @@ const SCHEMA_FRAGMENT: &str = "docs/reference/schemas/sync.json";
 
 #[test]
 fn sync_json_serial_emits_envelope_with_schema_and_outcomes() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (primary, ww, _initial_sha) = make_shared(tmp.path());
 
     // Advance the workweave's server repo and re-lock so sync from primary
@@ -264,7 +264,7 @@ fn sync_json_parallel_emits_ndjson_records_with_embedded_schema() {
     // parallel pool and produce multiple records. Reuse the
     // sync_json_test.rs multi-repo fixture shape but inline-trimmed for
     // the four claims we need to anchor.
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let parent = tmp.path();
 
     // Build a primary with two manifest repos.
@@ -433,7 +433,7 @@ fn sync_json_parallel_emits_ndjson_records_with_embedded_schema() {
 
 #[test]
 fn sync_json_failed_outcome_has_stable_kebab_kind() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (primary, ww, _initial_sha) = make_shared(tmp.path());
 
     // Primary advances to C2; workweave diverges. Strategy=ff cannot
@@ -513,7 +513,7 @@ fn sync_json_failed_outcome_has_stable_kebab_kind() {
 /// fo-jsbr3i.6 — same end-state assertions, new flag spelling.)
 #[test]
 fn sync_discard_local_commits_refuses_when_cwd_project_dirty() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (primary, ww, _sha) = make_shared(tmp.path());
 
     // Uncommitted edit in ww's project repo — the file --discard-local-commits'
@@ -625,7 +625,7 @@ fn make_shared_with_stale_destination(parent: &Path) -> (Workspace, Workspace) {
 /// "lock-freshness precondition" AND "--allow-stale-lock".
 #[test]
 fn sync_stale_destination_lock_names_condition_and_flag() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (primary, ww) = make_shared_with_stale_destination(tmp.path());
 
     let assert = rwv()
@@ -654,7 +654,7 @@ fn sync_stale_destination_lock_names_condition_and_flag() {
 /// (the ff ancestry precondition would fire without it).
 #[test]
 fn sync_allow_stale_lock_bypasses_destination_precondition() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (primary, ww) = make_shared_with_stale_destination(tmp.path());
 
     rwv()
@@ -712,7 +712,7 @@ fn make_shared_with_stale_source(parent: &Path) -> (Workspace, Workspace) {
 /// condition and the flag — establishing that the check runs on both sides.
 #[test]
 fn sync_stale_source_lock_names_condition_and_flag() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (primary, ww) = make_shared_with_stale_source(tmp.path());
 
     let assert = rwv()
@@ -735,7 +735,7 @@ fn sync_stale_source_lock_names_condition_and_flag() {
 /// (ii) --allow-stale-lock bypasses the source stale-lock precondition.
 #[test]
 fn sync_allow_stale_lock_bypasses_source_precondition() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (primary, ww) = make_shared_with_stale_source(tmp.path());
 
     rwv()

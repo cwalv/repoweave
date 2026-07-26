@@ -78,7 +78,7 @@ struct PushWorkspace {
 }
 
 fn build_workspace(project_name: &str, repos: &[(&str, &str)]) -> PushWorkspace {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let workspace = tmp.path().join("ws");
     std::fs::create_dir_all(&workspace).unwrap();
     std::fs::create_dir_all(workspace.join("projects")).unwrap();

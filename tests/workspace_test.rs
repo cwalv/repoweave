@@ -3,6 +3,8 @@ use repoweave::workspace::{
     parse_weave_dir_name, read_active_project, set_active_project, weave_dir_name,
 };
 
+mod common;
+
 // ============================================================================
 // weave_dir_name — generates "{primary}--{workweave}" directory names (legacy convention)
 // ============================================================================
@@ -138,13 +140,13 @@ fn round_trip_single_char_components() {
 
 #[test]
 fn read_active_project_returns_none_when_no_file() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     assert!(read_active_project(tmp.path()).is_none());
 }
 
 #[test]
 fn read_active_project_returns_name_from_file() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     std::fs::write(tmp.path().join(".rwv-active"), "my-project\n").unwrap();
     let project = read_active_project(tmp.path()).expect("should read project name");
     assert_eq!(project.as_str(), "my-project");
@@ -152,7 +154,7 @@ fn read_active_project_returns_name_from_file() {
 
 #[test]
 fn read_active_project_returns_none_for_empty_file() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     std::fs::write(tmp.path().join(".rwv-active"), "").unwrap();
     assert!(read_active_project(tmp.path()).is_none());
 }
@@ -163,7 +165,7 @@ fn read_active_project_returns_none_for_empty_file() {
 
 #[test]
 fn set_active_project_creates_file() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let project = ProjectName::new("web-app");
     set_active_project(tmp.path(), &project).unwrap();
     let content = std::fs::read_to_string(tmp.path().join(".rwv-active")).unwrap();
@@ -172,7 +174,7 @@ fn set_active_project_creates_file() {
 
 #[test]
 fn set_active_project_round_trips_with_read() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let project = ProjectName::new("mobile-app");
     set_active_project(tmp.path(), &project).unwrap();
     let result = read_active_project(tmp.path()).expect("should read back");

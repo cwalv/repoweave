@@ -254,7 +254,7 @@ fn doctor_output(ws: &Path) -> String {
 
 #[test]
 fn doctor_reports_go_work_pinned_below_members() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_doctor_workspace(tmp.path(), "go-pin-project", "1.21", "1.26");
 
     let combined = doctor_output(&ws);
@@ -268,7 +268,7 @@ fn doctor_reports_go_work_pinned_below_members() {
 
 #[test]
 fn doctor_silent_when_pin_meets_members() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_doctor_workspace(tmp.path(), "go-ok-project", "1.26", "1.26");
 
     let combined = doctor_output(&ws);
@@ -285,7 +285,7 @@ fn doctor_silent_when_pin_meets_members() {
 /// verdict rather than reinterpreting it.
 #[test]
 fn doctor_does_not_report_go_line_as_drift() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_doctor_workspace(tmp.path(), "go-coexist-project", "1.21", "1.26");
 
     let combined = doctor_output(&ws);
@@ -366,7 +366,7 @@ fn build_update_fixture(
     go_work_version: &str,
     member_go_version: &str,
 ) -> UpdateFixture {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let workspace = tmp.path().join("ws");
     std::fs::create_dir_all(workspace.join("projects")).unwrap();
 

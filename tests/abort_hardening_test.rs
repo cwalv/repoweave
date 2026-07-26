@@ -229,7 +229,7 @@ fn savepoint_sha(repo: &Path, op_id: &str) -> Option<String> {
 /// runs even on the no-op restore path.
 #[test]
 fn abort_untouched_is_noop_and_writes_pre_abort_ref() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_fixture(tmp.path(), "primary");
 
     let op_id = "20991231T000001Z";
@@ -277,7 +277,7 @@ fn abort_untouched_is_noop_and_writes_pre_abort_ref() {
 /// converged tip. This is the "post-replay crash" path.
 #[test]
 fn abort_converged_resets_to_savepoint_and_preserves_converged_tip() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_fixture(tmp.path(), "primary");
 
     let op_id = "20991231T000002Z";
@@ -342,7 +342,7 @@ fn abort_converged_resets_to_savepoint_and_preserves_converged_tip() {
 /// the savepoint).
 #[test]
 fn abort_mid_op_cancels_and_resets_to_savepoint() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_fixture(tmp.path(), "primary");
 
     let op_id = "20991231T000003Z";
@@ -427,7 +427,7 @@ fn abort_mid_op_cancels_and_resets_to_savepoint() {
 /// - op-state is RETAINED so the operator can re-run abort
 #[test]
 fn abort_foreign_tip_refuses_and_preserves_state() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_fixture(tmp.path(), "primary");
 
     let op_id = "20991231T000004Z";
@@ -499,7 +499,7 @@ fn abort_foreign_tip_refuses_and_preserves_state() {
 /// (by then the only reference to it), not the reconciled tip.
 #[test]
 fn pre_abort_ref_first_write_wins_across_abort_reruns() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_fixture(tmp.path(), "primary");
 
     let op_id = "20991231T000006Z";
@@ -553,7 +553,7 @@ fn pre_abort_ref_first_write_wins_across_abort_reruns() {
 /// untouched; pre-restore HEAD for converged/mid-op).
 #[test]
 fn pre_abort_refs_persist_after_clean_abort() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_fixture(tmp.path(), "primary");
 
     let op_id = "20991231T000005Z";
@@ -613,7 +613,7 @@ fn pre_abort_refs_persist_after_clean_abort() {
 /// stdout. This avoids the 90-line noise seen in the motivating incident.
 #[test]
 fn abort_noise_collapses_to_summary_line() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_fixture(tmp.path(), "primary");
 
     let op_id = "20991231T000010Z";
@@ -634,7 +634,7 @@ fn abort_noise_collapses_to_summary_line() {
 /// → single options block.
 #[test]
 fn abort_foreign_tip_options_block_printed_once() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
 
     // Build a fixture with TWO manifest repos to exercise the "multiple
     // refusals, options block once" path.
@@ -716,7 +716,7 @@ fn abort_foreign_tip_options_block_printed_once() {
 /// commits (savepoint..tip) inline for each refused repo.
 #[test]
 fn abort_foreign_tip_shows_blocking_commits() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let ws = make_fixture(tmp.path(), "primary");
 
     let op_id = "20991231T000012Z";

@@ -85,7 +85,7 @@ struct PushWorkspace {
 /// the manifest repos' local HEAD SHAs. Returns the workspace handle.
 fn build_workspace(project_name: &str, repos: &[(&str, &str)]) -> PushWorkspace {
     // repos is &[(canonical_path, role)]
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let workspace = tmp.path().join("ws");
     std::fs::create_dir_all(&workspace).unwrap();
     std::fs::create_dir_all(workspace.join("projects")).unwrap();
@@ -796,7 +796,7 @@ fn push_command_is_registered() {
 
 #[test]
 fn push_requires_a_workspace() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let output = rwv()
         .args(["push"])
         .current_dir(tmp.path())

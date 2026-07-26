@@ -209,7 +209,7 @@ fn make_shared_workspaces(parent: &Path) -> (Workspace, Workspace, String) {
 
 #[test]
 fn sync_to_ff_clean_advances_target() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (primary, ww, initial_sha) = make_shared_workspaces(tmp.path());
 
     // Workweave advances the server repo and updates its lock.
@@ -273,7 +273,7 @@ fn sync_to_ff_clean_advances_target() {
 
 #[test]
 fn sync_to_rebase_cwd_commits_land_on_top_of_target() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (primary, ww, initial_sha) = make_shared_workspaces(tmp.path());
 
     // Primary makes a non-lock project commit that ww doesn't have.
@@ -365,7 +365,7 @@ fn sync_to_rebase_cwd_commits_land_on_top_of_target() {
 
 #[test]
 fn sync_to_conflict_leaves_op_state_in_both_workspaces() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (primary, ww, _initial_sha) = make_shared_workspaces(tmp.path());
 
     // Both primary and workweave modify the same file in the server repo.
@@ -463,7 +463,7 @@ fn sync_to_conflict_leaves_op_state_in_both_workspaces() {
 
 #[test]
 fn sync_to_auto_relock_commit_appears_after_rebase() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (primary, ww, _initial_sha) = make_shared_workspaces(tmp.path());
 
     // Primary advances the server repo and updates its lock.
@@ -551,7 +551,7 @@ fn sync_to_auto_relock_commit_appears_after_rebase() {
 
 #[test]
 fn sync_to_clears_op_state_on_success() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (primary, ww, _initial_sha) = make_shared_workspaces(tmp.path());
 
     // Workweave advances and runs sync-to.
@@ -586,7 +586,7 @@ fn sync_to_clears_op_state_on_success() {
 
 #[test]
 fn sync_to_continue_from_step3_ff() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (primary, ww, _initial_sha) = make_shared_workspaces(tmp.path());
 
     // Workweave advances.
@@ -634,7 +634,7 @@ fn sync_to_continue_from_step3_ff() {
 
 #[test]
 fn sync_to_ff_refuses_when_cwd_not_ahead() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (primary, ww, _initial_sha) = make_shared_workspaces(tmp.path());
 
     // Primary makes a unique commit — CWD (ww) is NOT ahead of primary.
@@ -681,7 +681,7 @@ fn sync_to_ff_refuses_when_cwd_not_ahead() {
 
 #[test]
 fn sync_to_refuses_when_target_has_uncommitted_changes() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (primary, ww, _initial_sha) = make_shared_workspaces(tmp.path());
 
     // Workweave advances the server repo and updates its lock, so there is
@@ -774,7 +774,7 @@ fn sync_to_refuses_when_target_has_uncommitted_changes() {
 
 #[test]
 fn sync_to_advances_the_target_branch_not_just_head() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (primary, ww, _initial_sha) = make_shared_workspaces(tmp.path());
 
     let c2 = make_commit(&ww.server_dir, "ww.txt", "workweave\n", "ww: advance");
@@ -836,7 +836,7 @@ fn sync_to_advances_the_target_branch_not_just_head() {
 
 #[test]
 fn sync_to_refuses_when_target_member_repo_is_detached() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (primary, ww, initial_sha) = make_shared_workspaces(tmp.path());
 
     let c2 = make_commit(&ww.server_dir, "ww.txt", "workweave\n", "ww: advance");
@@ -901,7 +901,7 @@ fn sync_to_refuses_when_target_member_repo_is_detached() {
 
 #[test]
 fn sync_to_refuses_when_target_project_repo_is_detached() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (primary, ww, _initial_sha) = make_shared_workspaces(tmp.path());
 
     let c2 = make_commit(&ww.server_dir, "ww.txt", "workweave\n", "ww: advance");
@@ -946,7 +946,7 @@ fn sync_to_refuses_when_target_project_repo_is_detached() {
 
 #[test]
 fn a_refused_landing_leaves_the_source_ref_where_it_was() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (primary, ww, _initial_sha) = make_shared_workspaces(tmp.path());
 
     let c2 = make_commit(&ww.server_dir, "ww.txt", "workweave\n", "ww: advance");
@@ -1043,7 +1043,7 @@ fn make_marker_ww(parent: &Path) -> (Workspace, PathBuf, PathBuf, PathBuf, Strin
 
 #[test]
 fn sync_to_succeeds_when_primary_rwv_active_differs_from_workweave_project() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (primary, ww_root, ww_project, ww_server, _initial_sha) = make_marker_ww(tmp.path());
 
     // Workweave makes a unique commit (server + project lock bump).
@@ -1082,7 +1082,7 @@ fn sync_to_succeeds_when_primary_rwv_active_differs_from_workweave_project() {
 
 #[test]
 fn sync_succeeds_when_primary_rwv_active_differs_from_workweave_project() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (primary, ww_root, ww_project, _ww_server, initial_sha) = make_marker_ww(tmp.path());
 
     // Primary makes a unique commit that workweave doesn't have.
@@ -1221,7 +1221,7 @@ fn make_nested_workweaves(parent_tmp: &Path) -> (Workspace, PathBuf, PathBuf, Pa
 
 #[test]
 fn nested_workweave_naked_sync_to_retire_lands_in_parent() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (primary, weaveroot, parent_ww, child_ww, initial_sha) = make_nested_workweaves(tmp.path());
 
     // Work lands in the child, lock bumped and committed (the documented
@@ -1265,7 +1265,7 @@ fn nested_workweave_naked_sync_to_retire_lands_in_parent() {
 
 #[test]
 fn nested_workweave_delete_refuses_only_on_truly_unmerged_work() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let (primary, weaveroot, _parent_ww, child_ww, _initial_sha) =
         make_nested_workweaves(tmp.path());
 

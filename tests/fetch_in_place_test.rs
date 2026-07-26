@@ -86,7 +86,7 @@ fn init_bare_repo(path: &Path) {
 fn init_bare_repo_with_two_commits(path: &Path) -> (String, String) {
     init_bare_repo(path);
 
-    let tmp = tempfile::tempdir().expect("tempdir for working clone");
+    let tmp = common::tempdir().expect("tempdir for working clone");
     let work = tmp.path().join("work");
 
     git_run(
@@ -120,7 +120,7 @@ struct Setup {
 }
 
 fn setup_workspace_with_locked_project(repo_paths: &[&str]) -> Setup {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let workspace = tmp.path().join("ws");
     std::fs::create_dir_all(&workspace).unwrap();
 
@@ -635,7 +635,7 @@ fn in_place_fetch_missing_repo_no_lock_entry_clones_at_default_branch() {
     // Set up a project where the manifest has TWO repos but the lock only
     // covers one. The missing repo is the one NOT in the lock — it must
     // clone at default branch HEAD, and the message must say so.
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     let workspace = tmp.path().join("ws");
     std::fs::create_dir_all(&workspace).unwrap();
 
@@ -832,7 +832,7 @@ fn in_place_fetch_outside_workspace_names_both_forms() {
     // Empty tempdir → no workspace above; no SOURCE arg either.
     // The error must mention SOURCE (naming the bootstrap form) and workspace
     // (naming the in-place form) so the user sees both viable exits.
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     rwv()
         .arg("fetch")
         .current_dir(tmp.path())
@@ -850,7 +850,7 @@ fn in_place_fetch_allow_non_empty_dir_without_source_is_rejected() {
     // --allow-non-empty-dir is only meaningful in bootstrap mode. Passing it
     // with no SOURCE would silently pretend to matter; keep the UX honest by
     // rejecting it.
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = common::tempdir().unwrap();
     rwv()
         .args(["fetch", "--allow-non-empty-dir"])
         .current_dir(tmp.path())
