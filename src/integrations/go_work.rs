@@ -366,6 +366,13 @@ fn activate_via_go_tool(
     }
     // If neither exists, `go work init` (below) will create work_tmp.
 
+    // Which releases of the `go` tool stamp the toolchain they ran under into
+    // a go.work they rewrite is not stable: 1.24 and earlier write the line,
+    // 1.25 does not. Snapshot the operator's state before any `go work` runs,
+    // so the restore below can tell a line they wrote from a witness of
+    // whichever Go happens to be installed here.
+    let seeded_toolchain = read_toolchain_directive_from_file(&work_tmp);
+
     // Ownership::DefaultOnly for the go-line: `go_version` is written only
     // when absent here, checked before `go work init` seeds its own
     // (toolchain-version) go-line into a fresh file.
@@ -442,6 +449,8 @@ fn activate_via_go_tool(
     if let Some(want) = &settled_go {
         restore_go_directive(&work_tmp, want)?;
     }
+
+    restore_toolchain_directive(&work_tmp, seeded_toolchain.as_deref())?;
 
     // Inject the ownership marker above the use block in work_tmp.
     ensure_marker_present(&work_tmp)?;
@@ -530,6 +539,59 @@ fn restore_go_directive(path: &Path, want: &str) -> anyhow::Result<()> {
     let out = doc.serialize()?;
     std::fs::write(path, out)
         .with_context(|| format!("writing {} to restore its go directive", path.display()))?;
+    Ok(())
+}
+
+/// Force the `toolchain` directive of `path` back to `want`, where `None` means
+/// the file carried no toolchain line before any `go work` command ran.
+///
+/// A `go` tool old enough to stamp the toolchain it executed under leaves that
+/// line behind in the committed file, which makes activate's output a function
+/// of the Go installed on this machine — the fallback path never writes one,
+/// and neither does a newer tool. Only a line the operator wrote survives.
+///
+/// Line-level rather than through [`GoWorkDoc`], which models `go` and `use`
+/// and round-trips everything else as opaque text.
+fn restore_toolchain_directive(path: &Path, want: Option<&str>) -> anyhow::Result<()> {
+    let text = std::fs::read_to_string(path)
+        .with_context(|| format!("reading {} to restore its toolchain", path.display()))?;
+    if toolchain_directive_in(&text).as_deref() == want {
+        return Ok(());
+    }
+
+    let mut lines: Vec<String> = text.lines().map(str::to_string).collect();
+    let at = lines
+        .iter()
+        .position(|l| l.trim().starts_with("toolchain "));
+    match (at, want) {
+        // Rewrite in place, so a line the operator put somewhere deliberate
+        // keeps its position among the other directives.
+        (Some(i), Some(v)) => lines[i] = format!("toolchain {v}"),
+        // Take the injected line, and the blank line the tool pads it with.
+        (Some(i), None) => {
+            if lines.get(i + 1).is_some_and(|l| l.trim().is_empty()) {
+                lines.remove(i + 1);
+            }
+            lines.remove(i);
+        }
+        (None, Some(v)) => {
+            let after_go = lines
+                .iter()
+                .position(|l| l.trim().starts_with("go "))
+                .map_or(0, |i| i + 1);
+            lines.insert(after_go, String::new());
+            lines.insert(after_go + 1, format!("toolchain {v}"));
+        }
+        // Equal states returned above.
+        (None, None) => return Ok(()),
+    }
+
+    let mut out = lines.join("\n");
+    if text.ends_with('\n') {
+        out.push('\n');
+    }
+    std::fs::write(path, out)
+        .with_context(|| format!("writing {} to restore its toolchain", path.display()))?;
     Ok(())
 }
 
@@ -666,6 +728,22 @@ fn go_directive_in(text: &str) -> Option<String> {
 fn read_go_directive_from_file(path: &Path) -> Option<String> {
     let text = std::fs::read_to_string(path).ok()?;
     go_directive_in(&text)
+}
+
+/// The `toolchain` directive's value (`go1.24.13`), if `text` carries one.
+fn toolchain_directive_in(text: &str) -> Option<String> {
+    text.lines().find_map(|line| {
+        line.trim()
+            .strip_prefix("toolchain ")
+            .map(|v| v.trim().to_string())
+    })
+}
+
+/// Read the toolchain-directive value from `path`. `None` when the file is
+/// absent, unreadable, or carries no toolchain line.
+fn read_toolchain_directive_from_file(path: &Path) -> Option<String> {
+    let text = std::fs::read_to_string(path).ok()?;
+    toolchain_directive_in(&text)
 }
 
 /// The strongest go version the members require: `(parsed, raw value, member
@@ -1317,6 +1395,42 @@ mod tests {
             "activate must not depend on whether `go` is installed\n\
              --- primary (go work) ---\n{via_tool}\n\
              --- fallback (hand-edit) ---\n{via_hand}"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // The other half of the same property: a toolchain line the operator wrote
+    // is theirs. A `go` tool old enough to stamp its own overwrites it with the
+    // installed version, so this discriminates only on such a tool — a newer
+    // one leaves the line alone and the assertion holds without the restore
+    // having done anything. `go{MEMBER_GO}.0` inherits the no-download argument
+    // the constants above carry.
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn regression_go_tool_path_preserves_existing_toolchain_line() {
+        if !require_go() {
+            return;
+        }
+
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        seed_pin_below_member(root);
+        write_file(
+            root,
+            "go.work",
+            &format!(
+                "go {PINNED_GO}\n\ntoolchain go{MEMBER_GO}.0\n\n\
+                 // managed by repoweave\nuse (\n\t./github/test/repoweave\n)\n"
+            ),
+        );
+
+        activate_in(root);
+
+        let text = std::fs::read_to_string(root.join("go.work")).unwrap();
+        assert!(
+            text.contains(&format!("toolchain go{MEMBER_GO}.0")),
+            "the operator's toolchain line must survive activate: {text}"
         );
     }
 
