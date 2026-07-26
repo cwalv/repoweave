@@ -45,6 +45,26 @@ const RAW_CONSTRUCTORS: &[&str] = &["tempfile::tempdir()", "TempDir::new()"];
 /// would defeat the whole fix, which is precisely when this should fire.
 const EXEMPT: &[&str] = &["canonical_temp_root_test.rs"];
 
+/// A `tempdir()` reached by any route other than `common::`.
+///
+/// The literals above are written the way the offending call usually reads,
+/// but `use tempfile::tempdir;` makes the call site read as a bare
+/// `tempdir()` and no literal matches it. Qualifier-based instead: anything
+/// that is not `common::tempdir()` builds the root somewhere this test cannot
+/// vouch for. The definition in `common/mod.rs` is the one bare spelling that
+/// is allowed to exist.
+fn foreign_tempdir_call(line: &str) -> bool {
+    let mut rest = line;
+    while let Some(i) = rest.find("tempdir()") {
+        let before = &rest[..i];
+        if !before.ends_with("common::") && !before.trim_end().ends_with("fn") {
+            return true;
+        }
+        rest = &rest[i + "tempdir()".len()..];
+    }
+    false
+}
+
 fn tests_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("tests")
 }
@@ -82,10 +102,10 @@ fn every_fixture_root_comes_from_the_canonical_constructor() {
             if line.trim_start().starts_with("//") {
                 continue;
             }
-            for pattern in RAW_CONSTRUCTORS {
-                if line.contains(pattern) {
-                    offenders.push(format!("{rel}:{} — {}", n + 1, line.trim()));
-                }
+            let hit =
+                RAW_CONSTRUCTORS.iter().any(|p| line.contains(p)) || foreign_tempdir_call(line);
+            if hit {
+                offenders.push(format!("{rel}:{} — {}", n + 1, line.trim()));
             }
         }
     }
