@@ -1167,8 +1167,12 @@ mod tests {
         .unwrap();
 
         let got = read(&primary, &project).unwrap().unwrap();
-        // Container defaults to `<parent-of-root>/.workweaves` when no env var set.
-        assert_eq!(got.container, primary.parent().unwrap().join(".workweaves"));
+        // Container defaults to `<parent-of-root>/.workweaves` when no env var
+        // set, recorded in the same canonical form as the placements under it.
+        assert_eq!(
+            got.container,
+            canonical_recorded_path(&primary.parent().unwrap().join(".workweaves"))
+        );
         assert_eq!(got.workweaves.len(), 1);
     }
 
@@ -1295,7 +1299,10 @@ mod tests {
         std::env::remove_var("RWV_WORKWEAVE_DIR");
 
         let got = resolve_container(&primary, &project).unwrap();
-        assert_eq!(got, primary.parent().unwrap().join(".workweaves"));
+        assert_eq!(
+            got,
+            canonical_recorded_path(&primary.parent().unwrap().join(".workweaves"))
+        );
 
         if let Some(v) = prev {
             std::env::set_var("RWV_WORKWEAVE_DIR", v);
