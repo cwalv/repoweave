@@ -1326,9 +1326,9 @@ impl LockFile {
 
     /// Parse a lock file from a YAML string.
     ///
-    /// Used by snapshot reads (§6 of the sync design) where content is
-    /// obtained via [`crate::vcs::Vcs::read_file_at_revision`] rather
-    /// than from the working tree.
+    /// Used by snapshot reads, where content is obtained via
+    /// [`crate::vcs::Vcs::read_file_at_revision`] rather than from the
+    /// working tree.
     pub fn from_yaml_str(content: &str) -> anyhow::Result<Self> {
         let lock: Self = serde_yaml::from_str(content)?;
         Ok(lock)

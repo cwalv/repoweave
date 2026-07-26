@@ -187,7 +187,6 @@ impl Integration for NpmWorkspaces {
         strip_deactivate::<JsonDoc<XRepoweaveMarker>>(&path, &owned_keys)?;
 
         // Remove package-lock.json only when we owned the package.json.
-        // (§6 npm scenario 4a; fixes the generated_files asymmetry.)
         if we_owned {
             let lock_path = root.join("package-lock.json");
             if lock_path.exists() {

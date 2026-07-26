@@ -66,7 +66,7 @@
 //! `ManagedDoc` for a single integration's edge case. Option (a) keeps the
 //! shared helper clean and moves the specialization to the one integration that
 //! needs it. The bespoke adapter is ~30 lines in this file; the logic is
-//! self-contained and tested by the §6.uv.3 scenario.
+//! self-contained.
 //!
 //! ## managed/generated split (C3)
 //!

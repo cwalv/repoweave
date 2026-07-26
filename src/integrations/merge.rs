@@ -241,7 +241,7 @@ pub trait ManagedDoc: Sized {
 
 /// Activate the managed region of a hybrid file.
 ///
-/// Semantics (the contract — joint doc §4):
+/// Semantics (the contract):
 /// - If the file is missing, start from an empty document.
 /// - Parse; bail loudly if malformed (never silently zero a user file).
 /// - For each `(key, ownership, value)` in `owned`:

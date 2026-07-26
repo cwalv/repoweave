@@ -469,10 +469,10 @@ fn remove_activation_symlinks_in(
 
         if meta.file_type().is_symlink() {
             if let Ok(target) = std::fs::read_link(&path) {
-                // Owner-scoped predicate (§4.1 of the integration-ownership
-                // plan): unlink only when both (a) the symlink's name is in
-                // the active integrations' union, AND (b) its target resolves
-                // to `projects/<some-project>/<that-file>`. A symlink whose
+                // Owner-scoped predicate: unlink only when both (a) the
+                // symlink's name is in the active integrations' union, AND
+                // (b) its target resolves to
+                // `projects/<some-project>/<that-file>`. A symlink whose
                 // name we don't claim, or whose target points elsewhere
                 // (e.g. workweave.link → source-root path), is preserved.
                 let rel_from_root = match path.strip_prefix(root) {

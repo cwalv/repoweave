@@ -36,7 +36,9 @@
 //!
 //! ## Read-only workspaces
 //!
-//! Not marked. Safe because source reads are snapshots (§6 of the design).
+//! Not marked. Safe because source reads are snapshots: a read resolves its
+//! content at a revision, never from the working tree, so a concurrent write
+//! to that workspace cannot tear it.
 //!
 //! ## Acquisition atomicity
 //!
