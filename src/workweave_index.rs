@@ -570,9 +570,9 @@ pub fn lookup_raw(
 /// use repoweave::vcs::{EphemeralRefName, ResolvedRevisionId};
 /// use repoweave::workweave_index::RefRegistry;
 /// use std::path::Path;
-/// let project = ProjectName::new("p");
+/// let project = ProjectName::new("p").unwrap();
 /// let mut registry = RefRegistry::for_project(Path::new("/ws"), &project);
-/// let name = EphemeralRefName::mint(&project, &WorkweaveName::new("ww"));
+/// let name = EphemeralRefName::mint(&project, &WorkweaveName::new("ww").unwrap());
 /// let at = ResolvedRevisionId::from_canonical("a".repeat(40), None);
 /// let _ = registry.record_created(Path::new("/ws/store"), name, at);
 /// ```
@@ -586,7 +586,7 @@ pub fn lookup_raw(
 /// use repoweave::vcs::{RawRefName, ResolvedRevisionId};
 /// use repoweave::workweave_index::RefRegistry;
 /// use std::path::Path;
-/// let project = ProjectName::new("p");
+/// let project = ProjectName::new("p").unwrap();
 /// let mut registry = RefRegistry::for_project(Path::new("/ws"), &project);
 /// let at = ResolvedRevisionId::from_canonical("a".repeat(40), None);
 /// let _ = registry.record_created(Path::new("/ws/store"), RawRefName::new("p--ww"), at);
@@ -1068,7 +1068,7 @@ pub fn projects_on_disk(primary_root: &Path) -> Vec<ProjectName> {
         .flatten()
         .filter(|e| e.path().is_dir())
         .filter_map(|e| e.file_name().into_string().ok())
-        .map(ProjectName::new)
+        .filter_map(|s| ProjectName::new(s).ok())
         .collect();
     names.sort_by(|a, b| a.as_str().cmp(b.as_str()));
     names
@@ -1086,7 +1086,7 @@ mod tests {
     fn make_project(primary: &Path, name: &str) -> ProjectName {
         let p = primary.join("projects").join(name);
         std::fs::create_dir_all(&p).unwrap();
-        ProjectName::new(name)
+        ProjectName::new(name).unwrap()
     }
 
     /// A canonical store directory under `weave`, canonicalized so tests
@@ -1104,7 +1104,7 @@ mod tests {
     }
 
     fn ephemeral(project: &ProjectName, workweave: &str) -> EphemeralRefName {
-        EphemeralRefName::mint(project, &WorkweaveName::new(workweave))
+        EphemeralRefName::mint(project, &WorkweaveName::new(workweave).unwrap())
     }
 
     #[test]
@@ -1254,7 +1254,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let primary = tmp.path().join("ws");
         // Note: no projects/web-app dir.
-        let project = ProjectName::new("web-app");
+        let project = ProjectName::new("web-app").unwrap();
 
         let index = WorkweaveIndex::new(PathBuf::from("/x"));
         let result = write(&primary, &project, &index);

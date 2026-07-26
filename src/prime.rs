@@ -366,7 +366,7 @@ integrations:
         let primary_canon = root.canonicalize().unwrap();
         crate::workspace::WorkweaveMarker {
             primary: primary_canon.clone(),
-            project: crate::manifest::ProjectName::new("ws"),
+            project: crate::manifest::ProjectName::new("ws").unwrap(),
             parent: primary_canon,
         }
         .write(&workweave_dir)

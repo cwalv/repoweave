@@ -71,7 +71,7 @@ fn weave() -> (TempDir, PathBuf, ProjectName, PathBuf) {
     git(&store, &["commit", "-m", "one"]);
 
     let store = store.canonicalize().unwrap();
-    (tmp, primary, ProjectName::new("web-app"), store)
+    (tmp, primary, ProjectName::new("web-app").unwrap(), store)
 }
 
 fn commit(repo: &Path, file: &str) -> ResolvedRevisionId {
@@ -82,7 +82,7 @@ fn commit(repo: &Path, file: &str) -> ResolvedRevisionId {
 }
 
 fn ephemeral(project: &ProjectName, workweave: &str) -> EphemeralRefName {
-    EphemeralRefName::mint(project, &WorkweaveName::new(workweave))
+    EphemeralRefName::mint(project, &WorkweaveName::new(workweave).unwrap())
 }
 
 // ---------------------------------------------------------------------------
@@ -223,7 +223,7 @@ fn strace_probe_child_records_one_receipt() {
     std::fs::create_dir_all(primary.join("projects/web-app")).unwrap();
     std::fs::create_dir_all(&store).unwrap();
 
-    let project = ProjectName::new("web-app");
+    let project = ProjectName::new("web-app").unwrap();
     RefRegistry::for_project(&primary, &project)
         .record_created(
             &store,

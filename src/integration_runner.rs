@@ -459,7 +459,7 @@ mod tests {
         let integrations: Vec<&dyn Integration> = vec![&enabled, &disabled];
 
         let manifest = make_manifest(BTreeMap::new());
-        let project = ProjectName::new("test-project");
+        let project = ProjectName::new("test-project").unwrap();
         let cache = HashMap::new();
         let ctx_base = make_ctx_base(&project, &cache);
 
@@ -482,7 +482,7 @@ mod tests {
             IntegrationConfig::from_yaml("enabled: true"),
         );
         let manifest = make_manifest(configs);
-        let project = ProjectName::new("test-project");
+        let project = ProjectName::new("test-project").unwrap();
         let cache = HashMap::new();
         let ctx_base = make_ctx_base(&project, &cache);
 
@@ -502,7 +502,7 @@ mod tests {
             IntegrationConfig::from_yaml("enabled: false"),
         );
         let manifest = make_manifest(configs);
-        let project = ProjectName::new("test-project");
+        let project = ProjectName::new("test-project").unwrap();
         let cache = HashMap::new();
         let ctx_base = make_ctx_base(&project, &cache);
 
@@ -518,7 +518,7 @@ mod tests {
         let integrations: Vec<&dyn Integration> = vec![&failing, &succeeding];
 
         let manifest = make_manifest(BTreeMap::new());
-        let project = ProjectName::new("test-project");
+        let project = ProjectName::new("test-project").unwrap();
         let cache = HashMap::new();
         let ctx_base = make_ctx_base(&project, &cache);
 
@@ -546,7 +546,7 @@ mod tests {
         );
         // npm gets default config (no entry)
         let manifest = make_manifest(configs);
-        let project = ProjectName::new("test-project");
+        let project = ProjectName::new("test-project").unwrap();
         let cache = HashMap::new();
         let ctx_base = make_ctx_base(&project, &cache);
 
@@ -579,7 +579,7 @@ mod tests {
         let integrations: Vec<&dyn Integration> = vec![&cargo, &npm];
 
         let manifest = make_manifest(BTreeMap::new());
-        let project = ProjectName::new("test-project");
+        let project = ProjectName::new("test-project").unwrap();
         let cache = HashMap::new();
         let ctx_base = make_ctx_base(&project, &cache);
 
@@ -595,7 +595,7 @@ mod tests {
         let integrations: Vec<&dyn Integration> = vec![&disabled];
 
         let manifest = make_manifest(BTreeMap::new());
-        let project = ProjectName::new("test-project");
+        let project = ProjectName::new("test-project").unwrap();
         let cache = HashMap::new();
         let ctx_base = make_ctx_base(&project, &cache);
 
@@ -616,7 +616,7 @@ mod tests {
         let integrations: Vec<&dyn Integration> = vec![&failing, &succeeding];
 
         let manifest = make_manifest(BTreeMap::new());
-        let project = ProjectName::new("test-project");
+        let project = ProjectName::new("test-project").unwrap();
         let cache = HashMap::new();
         let ctx_base = make_ctx_base(&project, &cache);
 
@@ -697,7 +697,7 @@ mod tests {
         let integrations: Vec<&dyn Integration> = vec![&enabled, &disabled];
 
         let manifest = make_manifest(BTreeMap::new());
-        let project = ProjectName::new("test-project");
+        let project = ProjectName::new("test-project").unwrap();
         let cache = HashMap::new();
         let ctx_base = make_ctx_base(&project, &cache);
 
@@ -720,7 +720,7 @@ mod tests {
         let integrations: Vec<&dyn Integration> = vec![&failing, &succeeding];
 
         let manifest = make_manifest(BTreeMap::new());
-        let project = ProjectName::new("test-project");
+        let project = ProjectName::new("test-project").unwrap();
         let cache = HashMap::new();
         let ctx_base = make_ctx_base(&project, &cache);
 
@@ -750,7 +750,7 @@ mod tests {
             IntegrationConfig::from_yaml("enabled: true"),
         );
         let manifest = make_manifest(configs);
-        let project = ProjectName::new("test-project");
+        let project = ProjectName::new("test-project").unwrap();
         let cache = HashMap::new();
         let ctx_base = make_ctx_base(&project, &cache);
 
@@ -771,7 +771,7 @@ mod tests {
         let integrations: Vec<&dyn Integration> = vec![&integration];
 
         let manifest = make_manifest(BTreeMap::new());
-        let project = ProjectName::new("my-special-project");
+        let project = ProjectName::new("my-special-project").unwrap();
         let cache = HashMap::new();
         let ctx_base = make_ctx_base(&project, &cache);
 

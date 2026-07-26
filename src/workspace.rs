@@ -234,9 +234,7 @@ pub fn detect_project(cwd: &Path, root: &Path) -> Option<ProjectName> {
         return None;
     }
     let project_name = components.next()?;
-    Some(ProjectName::new(
-        project_name.as_os_str().to_string_lossy().to_string(),
-    ))
+    ProjectName::new(project_name.as_os_str().to_string_lossy().to_string()).ok()
 }
 
 // ---------------------------------------------------------------------------
@@ -274,7 +272,7 @@ pub fn read_active_project(root: &Path) -> Option<ProjectName> {
     if trimmed.is_empty() {
         return None;
     }
-    Some(ProjectName::new(trimmed))
+    ProjectName::new(trimmed).ok()
 }
 
 /// The project a weave root presents, read from whichever file names it.
@@ -307,7 +305,7 @@ pub fn read_weave_root_project(root: &Path) -> Option<ProjectName> {
         if project.is_empty() {
             return None;
         }
-        return Some(ProjectName::new(project));
+        return ProjectName::new(project).ok();
     }
     read_active_project(root)
 }
@@ -615,9 +613,10 @@ impl WorkspaceContext {
                     // retire flows. parse_weave_dir_name returns the
                     // right-hand side; fall back to the full basename for
                     // exotic shapes that don't parse.
-                    let workweave_name = parse_weave_dir_name(dir_basename)
-                        .map(|(_, n)| n)
-                        .unwrap_or_else(|| WorkweaveName::new(dir_basename));
+                    let workweave_name = match parse_weave_dir_name(dir_basename) {
+                        Some((_, n)) => n,
+                        None => WorkweaveName::new(dir_basename)?,
+                    };
                     // Provenance: `--project` wins if set, else the marker
                     // determines the project (structural — a workweave root
                     // carries no `.rwv-active`, so there is no ambient
@@ -1056,7 +1055,7 @@ pub fn parse_weave_dir_name(dir_name: &str) -> Option<(&str, WorkweaveName)> {
     if left.is_empty() || workweave.is_empty() {
         return None;
     }
-    Some((left, WorkweaveName::new(workweave)))
+    Some((left, WorkweaveName::new(workweave).ok()?))
 }
 
 // ---------------------------------------------------------------------------
@@ -1357,7 +1356,8 @@ mod tests {
         let root = make_workspace(tmp.path(), "ws");
 
         let ctx =
-            WorkspaceContext::resolve(&root, Some(ProjectName::new("overridden-project"))).unwrap();
+            WorkspaceContext::resolve(&root, Some(ProjectName::new("overridden-project").unwrap()))
+                .unwrap();
         match &ctx.checkout {
             Checkout::Primary { project } => {
                 let p = project.as_ref().expect("project should be set");
@@ -1378,13 +1378,14 @@ mod tests {
         let primary_canon = root.canonicalize().unwrap();
         let marker = WorkweaveMarker {
             primary: primary_canon.clone(),
-            project: ProjectName::new("ws"),
+            project: ProjectName::new("ws").unwrap(),
             parent: primary_canon,
         };
         marker.write(&weave_dir).unwrap();
 
         let ctx =
-            WorkspaceContext::resolve(&weave_dir, Some(ProjectName::new("custom-proj"))).unwrap();
+            WorkspaceContext::resolve(&weave_dir, Some(ProjectName::new("custom-proj").unwrap()))
+                .unwrap();
         match &ctx.checkout {
             Checkout::Workweave { project, .. } => {
                 assert_eq!(project.as_str(), "custom-proj");
@@ -1465,7 +1466,7 @@ mod tests {
     fn set_active_project_writes_file() {
         let tmp = tempfile::tempdir().unwrap();
         let root = make_workspace(tmp.path(), "ws");
-        let project = ProjectName::new("web-app");
+        let project = ProjectName::new("web-app").unwrap();
         set_active_project(&root, &project).unwrap();
 
         let content = std::fs::read_to_string(root.join(".rwv-active")).unwrap();
@@ -1476,8 +1477,8 @@ mod tests {
     fn set_active_project_overwrites_existing() {
         let tmp = tempfile::tempdir().unwrap();
         let root = make_workspace(tmp.path(), "ws");
-        set_active_project(&root, &ProjectName::new("old-project")).unwrap();
-        set_active_project(&root, &ProjectName::new("new-project")).unwrap();
+        set_active_project(&root, &ProjectName::new("old-project").unwrap()).unwrap();
+        set_active_project(&root, &ProjectName::new("new-project").unwrap()).unwrap();
 
         let project = read_active_project(&root).expect("should return project");
         assert_eq!(project.as_str(), "new-project");
@@ -1487,7 +1488,7 @@ mod tests {
     fn set_then_read_round_trips() {
         let tmp = tempfile::tempdir().unwrap();
         let root = make_workspace(tmp.path(), "ws");
-        let project = ProjectName::new("mobile-app");
+        let project = ProjectName::new("mobile-app").unwrap();
         set_active_project(&root, &project).unwrap();
 
         let read_back = read_active_project(&root).expect("should return project");
@@ -1554,7 +1555,8 @@ mod tests {
         std::fs::write(root.join(".rwv-active"), "from-file\n").unwrap();
 
         let ctx =
-            WorkspaceContext::resolve(&root, Some(ProjectName::new("explicit-override"))).unwrap();
+            WorkspaceContext::resolve(&root, Some(ProjectName::new("explicit-override").unwrap()))
+                .unwrap();
         match &ctx.checkout {
             Checkout::Primary { project } => {
                 let p = project.as_ref().expect("project should be set");
@@ -1620,7 +1622,7 @@ mod tests {
         let dir = tmp.path();
         let marker = WorkweaveMarker {
             primary: PathBuf::from("/home/user/weaveroot"),
-            project: ProjectName::new("my-project"),
+            project: ProjectName::new("my-project").unwrap(),
             parent: PathBuf::from("/home/user/weaveroot"),
         };
         marker.write(dir).unwrap();
@@ -1647,7 +1649,7 @@ mod tests {
         let parent = PathBuf::from("/home/user/weaveroot/.workweaves/primary--ww1");
         let marker = WorkweaveMarker {
             primary: primary.clone(),
-            project: ProjectName::new("p"),
+            project: ProjectName::new("p").unwrap(),
             parent: parent.clone(),
         };
         marker.write(dir).unwrap();
@@ -1765,7 +1767,7 @@ mod tests {
     /// Fixture: a primary with `projects/<name>/`, ready for an index.
     fn primary_with_project(root: &Path, name: &str) -> ProjectName {
         std::fs::create_dir_all(root.join("projects").join(name)).unwrap();
-        ProjectName::new(name)
+        ProjectName::new(name).unwrap()
     }
 
     #[test]
@@ -1827,7 +1829,7 @@ mod tests {
         let primary_canon = root.canonicalize().unwrap();
         let marker = WorkweaveMarker {
             primary: primary_canon.clone(),
-            project: ProjectName::new("web-app"),
+            project: ProjectName::new("web-app").unwrap(),
             parent: primary_canon.clone(),
         };
         marker.write(&weave_dir).unwrap();
@@ -1857,7 +1859,7 @@ mod tests {
         let primary_canon = root.canonicalize().unwrap();
         let marker = WorkweaveMarker {
             primary: primary_canon.clone(),
-            project: ProjectName::new("web-app"),
+            project: ProjectName::new("web-app").unwrap(),
             parent: primary_canon,
         };
         marker.write(&weave_dir).unwrap();
@@ -1888,7 +1890,7 @@ mod tests {
         let primary_canon = root.canonicalize().unwrap();
         let marker = WorkweaveMarker {
             primary: primary_canon.clone(),
-            project: ProjectName::new("marker-project"),
+            project: ProjectName::new("marker-project").unwrap(),
             parent: primary_canon,
         };
         marker.write(&weave_dir).unwrap();
@@ -2175,7 +2177,7 @@ mod tests {
     fn write_marker(dir: &Path, primary: &Path, project: &str) {
         let marker = WorkweaveMarker {
             primary: primary.to_path_buf(),
-            project: ProjectName::new(project),
+            project: ProjectName::new(project).unwrap(),
             parent: primary.to_path_buf(),
         };
         marker.write(dir).unwrap();
@@ -2190,7 +2192,7 @@ mod tests {
         make_projects(&root, &["one", "two"]);
         std::fs::write(root.join(".rwv-active"), "one\n").unwrap();
 
-        let ctx = WorkspaceContext::resolve(&root, Some(ProjectName::new("two"))).unwrap();
+        let ctx = WorkspaceContext::resolve(&root, Some(ProjectName::new("two").unwrap())).unwrap();
         assert_eq!(ctx.active_project().unwrap().as_str(), "two");
         assert_eq!(ctx.project_provenance(), Some(ProjectProvenance::Flag));
     }
@@ -2206,7 +2208,8 @@ mod tests {
         std::fs::create_dir_all(&weave_dir).unwrap();
         write_marker(&weave_dir, &root.canonicalize().unwrap(), "one");
 
-        let ctx = WorkspaceContext::resolve(&weave_dir, Some(ProjectName::new("two"))).unwrap();
+        let ctx =
+            WorkspaceContext::resolve(&weave_dir, Some(ProjectName::new("two").unwrap())).unwrap();
         assert_eq!(ctx.active_project().unwrap().as_str(), "two");
         assert_eq!(ctx.project_provenance(), Some(ProjectProvenance::Flag));
     }
@@ -2294,7 +2297,8 @@ mod tests {
         std::fs::create_dir_all(&weave_dir).unwrap();
         write_marker(&weave_dir, &root.canonicalize().unwrap(), "marker-p");
 
-        let ctx = WorkspaceContext::resolve(&weave_dir, Some(ProjectName::new("flag-p"))).unwrap();
+        let ctx = WorkspaceContext::resolve(&weave_dir, Some(ProjectName::new("flag-p").unwrap()))
+            .unwrap();
         assert_eq!(ctx.active_project().unwrap().as_str(), "flag-p");
         assert_eq!(ctx.project_provenance(), Some(ProjectProvenance::Flag));
     }
@@ -2342,7 +2346,7 @@ mod tests {
         make_projects(&root, &["p"]);
 
         // Flag: silent.
-        let ctx = WorkspaceContext::resolve(&root, Some(ProjectName::new("p"))).unwrap();
+        let ctx = WorkspaceContext::resolve(&root, Some(ProjectName::new("p").unwrap())).unwrap();
         assert_eq!(ctx.project_provenance(), Some(ProjectProvenance::Flag));
         ctx.emit_target_line(); // must not panic; policy says silent
 
@@ -2530,7 +2534,7 @@ mod tests {
         std::fs::create_dir_all(&weave_dir).unwrap();
         let marker = WorkweaveMarker {
             primary: primary_canon.clone(),
-            project: ProjectName::new("myproject"),
+            project: ProjectName::new("myproject").unwrap(),
             parent: primary_canon,
         };
         marker.write(&weave_dir).unwrap();
@@ -2600,7 +2604,7 @@ mod tests {
         std::fs::create_dir_all(&weave_dir).unwrap();
         let marker = WorkweaveMarker {
             primary: primary_canon.clone(),
-            project: ProjectName::new("myproject"),
+            project: ProjectName::new("myproject").unwrap(),
             parent: primary_canon,
         };
         marker.write(&weave_dir).unwrap();

@@ -331,8 +331,8 @@ fn create_no_submodule_invocation_for_repo_without_gitmodules() {
     let result = create_workweave(
         &ws,
         &ws,
-        &ProjectName::new("proj"),
-        &WorkweaveName::new("feat"),
+        &ProjectName::new("proj").unwrap(),
+        &WorkweaveName::new("feat").unwrap(),
         false,
         false,
         false,
@@ -487,8 +487,8 @@ fn doctor_scan_reports_uninitialized_submodule_in_workweave() {
     let workweave_path = create_workweave(
         &ws,
         &ws,
-        &ProjectName::new("proj"),
-        &WorkweaveName::new("feat"),
+        &ProjectName::new("proj").unwrap(),
+        &WorkweaveName::new("feat").unwrap(),
         false,
         false,
         false,
@@ -542,8 +542,8 @@ fn doctor_scan_silent_for_repo_without_gitmodules() {
     let _workweave_path = create_workweave(
         &ws,
         &ws,
-        &ProjectName::new("proj"),
-        &WorkweaveName::new("feat"),
+        &ProjectName::new("proj").unwrap(),
+        &WorkweaveName::new("feat").unwrap(),
         false,
         false,
         false,

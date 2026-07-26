@@ -576,8 +576,8 @@ fn tracking_ref_projections_are_named_not_implicit() {
 #[test]
 fn ephemeral_names_are_flat_and_derived_from_exactly_two_inputs() {
     let name = EphemeralRefName::mint(
-        &ProjectName::new("foundations"),
-        &WorkweaveName::new("fix-42"),
+        &ProjectName::new("foundations").unwrap(),
+        &WorkweaveName::new("fix-42").unwrap(),
     );
     assert_eq!(name.to_string(), "foundations--fix-42");
     assert_eq!(name.to_raw().as_str(), "foundations--fix-42");
@@ -589,12 +589,15 @@ fn ephemeral_names_are_flat_and_derived_from_exactly_two_inputs() {
 }
 
 #[test]
-fn ephemeral_name_minting_is_total() {
-    // Deliberately no validation: the legal grammar for project and
-    // workweave names is an open question, and under ownership-by-receipt a
-    // collision is a legibility problem rather than a correctness one.
-    let odd = EphemeralRefName::mint(&ProjectName::new("p--x"), &WorkweaveName::new("y"));
-    assert_eq!(odd.to_string(), "p--x--y");
+fn ephemeral_name_minting_rejects_the_pair_that_used_to_collide() {
+    // Project `p` + workweave `x--y` and project `p--x` + workweave `y` used
+    // to mint the same name ("p--x--y") because mint validated neither
+    // input. Resolved at the constructor boundary rather than left as a
+    // legibility problem: `--` is refused in both a project name and a
+    // workweave name, so neither half of the colliding pair can be
+    // constructed, and mint never sees them.
+    assert!(ProjectName::new("p--x").is_err());
+    assert!(WorkweaveName::new("x--y").is_err());
 }
 
 // ---------------------------------------------------------------------------

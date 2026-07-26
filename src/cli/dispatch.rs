@@ -154,8 +154,10 @@ fn resolve_workweave_flag(
         );
     }
 
-    let project = ProjectName::new(project_str);
-    let name = WorkweaveName::new(name_str);
+    let project = ProjectName::new(project_str)
+        .with_context(|| format!("'-w {raw}' has an invalid project name"))?;
+    let name =
+        WorkweaveName::new(name_str).with_context(|| format!("'-w {raw}' has an invalid name"))?;
 
     // Find the primary workspace root from the workspace_origin path (from -C
     // or process cwd). The registry lives on the primary; look up from there.
@@ -594,7 +596,7 @@ pub fn run() -> anyhow::Result<()> {
             new,
             project,
         }) => {
-            let project_override = project.map(crate::manifest::ProjectName::new);
+            let project_override = project.map(crate::manifest::ProjectName::new).transpose()?;
             let ctx = resolve_project_scoped(&origin_dir, project_override, use_workweave_flag)?;
             if new {
                 add_remove::run_add_new(&url, &ctx)?;
@@ -701,7 +703,7 @@ pub fn run() -> anyhow::Result<()> {
             delete_shared_clone,
             project,
         }) => {
-            let project_override = project.map(crate::manifest::ProjectName::new);
+            let project_override = project.map(crate::manifest::ProjectName::new).transpose()?;
             let ctx = resolve_project_scoped(&origin_dir, project_override, use_workweave_flag)?;
             add_remove::run_remove(&path, delete, delete_shared_clone, &ctx)?;
         }
@@ -718,7 +720,7 @@ pub fn run() -> anyhow::Result<()> {
                 crate::workweave::handle_claude_hook()?;
             } else {
                 let project = project.expect("project is required unless --claude-hook is set");
-                let project = crate::manifest::ProjectName::new(project);
+                let project = crate::manifest::ProjectName::new(project)?;
                 let ctx = WorkspaceContext::resolve(&origin_dir, None)?;
                 let primary_root = ctx.primary_path();
 
@@ -737,7 +739,7 @@ pub fn run() -> anyhow::Result<()> {
                         workweave_delete(
                             primary_root,
                             &project,
-                            &WorkweaveName::new(name),
+                            &WorkweaveName::new(name)?,
                             discard_uncommitted,
                             discard_unmerged_commits,
                         )?;
@@ -767,7 +769,7 @@ pub fn run() -> anyhow::Result<()> {
                             primary_root,
                             &source_root,
                             &project,
-                            &WorkweaveName::new(name),
+                            &WorkweaveName::new(name)?,
                             replace_existing,
                             capture_dirty,
                             worktree_references,
@@ -807,7 +809,7 @@ pub fn run() -> anyhow::Result<()> {
             adopt_detached_checkouts,
             project,
         }) => {
-            let project_override = project.map(crate::manifest::ProjectName::new);
+            let project_override = project.map(crate::manifest::ProjectName::new).transpose()?;
             let ctx = resolve_project_scoped(&origin_dir, project_override, use_workweave_flag)?;
             // Minted here — the CLI boundary is the only place that knows
             // the operator asked. `run_check` gates §7.2's Detached-arm
@@ -842,12 +844,12 @@ pub fn run() -> anyhow::Result<()> {
             commit,
             project,
         }) => {
-            let project_override = project.map(crate::manifest::ProjectName::new);
+            let project_override = project.map(crate::manifest::ProjectName::new).transpose()?;
             let ctx = resolve_project_scoped(&origin_dir, project_override, use_workweave_flag)?;
             lock::lock(&ctx, dirty, commit)?;
         }
         Some(Commands::Status { json, project }) => {
-            let project_override = project.map(crate::manifest::ProjectName::new);
+            let project_override = project.map(crate::manifest::ProjectName::new).transpose()?;
             let ctx = resolve_project_scoped(&origin_dir, project_override, use_workweave_flag)?;
             status::run_status(&ctx, json)?;
         }
@@ -865,7 +867,7 @@ pub fn run() -> anyhow::Result<()> {
             project,
             do_continue,
         }) => {
-            let project_override = project.map(crate::manifest::ProjectName::new);
+            let project_override = project.map(crate::manifest::ProjectName::new).transpose()?;
             let ctx =
                 resolve_project_scoped(&origin_dir, project_override.clone(), use_workweave_flag)?;
             // sync's default is serial (jobs=1). This differs from fetch/update
@@ -907,7 +909,7 @@ pub fn run() -> anyhow::Result<()> {
             project,
             do_continue,
         }) => {
-            let project_override = project.map(crate::manifest::ProjectName::new);
+            let project_override = project.map(crate::manifest::ProjectName::new).transpose()?;
             let ctx =
                 resolve_project_scoped(&origin_dir, project_override.clone(), use_workweave_flag)?;
             let jobs = match jobs {
@@ -984,7 +986,7 @@ pub fn run() -> anyhow::Result<()> {
             jobs,
             json,
         }) => {
-            let project_override = project.map(crate::manifest::ProjectName::new);
+            let project_override = project.map(crate::manifest::ProjectName::new).transpose()?;
             let ctx = resolve_project_scoped(&origin_dir, project_override, use_workweave_flag)?;
             let filter = crate::selector::RepoFilter::parse(&roles, &repos)?;
             // push's default is serial (jobs=1). This differs from fetch/update
@@ -1008,7 +1010,7 @@ pub fn run() -> anyhow::Result<()> {
             jobs,
             json,
         }) => {
-            let project_override = project.map(crate::manifest::ProjectName::new);
+            let project_override = project.map(crate::manifest::ProjectName::new).transpose()?;
             let ctx = resolve_project_scoped(&origin_dir, project_override, use_workweave_flag)?;
             // Mint once from the parsed flag; the token threads down to
             // advance_checkout, where it gates the ff-or-refuse guard (§5.3).

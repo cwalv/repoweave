@@ -52,7 +52,7 @@ fn make_workweave(tmp: &Path, ws: &Path, project: &str, name: &str) -> std::path
     let primary_canon = ws.canonicalize().unwrap();
     let marker = WorkweaveMarker {
         primary: primary_canon.clone(),
-        project: ProjectName::new(project),
+        project: ProjectName::new(project).unwrap(),
         parent: primary_canon,
     };
     marker.write(&ww_dir).unwrap();

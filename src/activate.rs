@@ -233,7 +233,7 @@ fn activate_at(
     opts: ActivateOptions,
     mode: ActivationMode,
 ) -> anyhow::Result<()> {
-    let project_name = ProjectName::new(project);
+    let project_name = ProjectName::new(project)?;
     let project_dir = root.join("projects").join(project);
     let manifest_path = project_dir.join("rwv.yaml");
     let manifest = Manifest::from_path(&manifest_path)?;
@@ -1274,7 +1274,7 @@ mod tests {
             std::fs::write(&p, format!("content of {f}\n")).unwrap();
         }
 
-        ProjectName::new(project)
+        ProjectName::new(project).unwrap()
     }
 
     fn load_manifest(root: &Path, project: &ProjectName) -> Manifest {

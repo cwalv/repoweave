@@ -5,7 +5,9 @@
 
 use crate::git::GitVcs;
 use crate::lock::{commit_lock_file_with_message, generate_lock};
-use crate::manifest::{LockFile, Manifest, Project, ProjectName, RepoPath, Role, WorkweaveName};
+use crate::manifest::{
+    LockFile, Manifest, Project, ProjectName, RepoPath, Role, WorkweaveName, WorkweaveNameError,
+};
 use crate::op_state::{self, OpVerb, OwnerRecord};
 use crate::parallel::run_in_parallel;
 use crate::status::{compute_relation, LockRelation};
@@ -173,7 +175,7 @@ impl SyncSource {
 }
 
 impl FromStr for SyncSource {
-    type Err = std::convert::Infallible;
+    type Err = WorkweaveNameError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         if s == "primary" {
@@ -182,7 +184,7 @@ impl FromStr for SyncSource {
         if looks_path_like(s) {
             return Ok(Self::Path(PathBuf::from(s)));
         }
-        Ok(Self::Workweave(WorkweaveName::new(s)))
+        Ok(Self::Workweave(WorkweaveName::new(s)?))
     }
 }
 
@@ -5721,7 +5723,7 @@ mod tests {
         std::fs::create_dir_all(primary.join("projects").join("web-app")).unwrap();
         let store = primary.join("github/example/server");
         init_repo(&store);
-        (store, primary, ProjectName::new("web-app"))
+        (store, primary, ProjectName::new("web-app").unwrap())
     }
 
     fn dropped() -> RepoPath {
@@ -5777,7 +5779,7 @@ mod tests {
         registry
             .record_created(
                 &store,
-                EphemeralRefName::mint(&project, &WorkweaveName::new("hotfix")),
+                EphemeralRefName::mint(&project, &WorkweaveName::new("hotfix").unwrap()),
                 at,
             )
             .unwrap();
@@ -5812,7 +5814,7 @@ mod tests {
         let err = check_store_unclaimed(
             &not_a_repo,
             tmp.path(),
-            &ProjectName::new("web-app"),
+            &ProjectName::new("web-app").unwrap(),
             &dropped(),
         )
         .expect_err("an unreadable store must not be destroyed on the strength of a guess");
@@ -5848,7 +5850,7 @@ mod tests {
         git(&store, &["config", "user.email", "t@t"]);
         git(&store, &["config", "user.name", "T"]);
 
-        let project = ProjectName::new("web-app");
+        let project = ProjectName::new("web-app").unwrap();
         let ctx = WorkspaceContext::resolve(&primary, Some(project.clone()))
             .expect("the fixture is a workspace root");
         (ctx, store, project)
@@ -5909,7 +5911,7 @@ mod tests {
         registry
             .record_created(
                 &store,
-                EphemeralRefName::mint(&project, &WorkweaveName::new("feat")),
+                EphemeralRefName::mint(&project, &WorkweaveName::new("feat").unwrap()),
                 at,
             )
             .unwrap();
@@ -5972,7 +5974,7 @@ mod tests {
         crate::workweave_index::RefRegistry::for_project(ctx.primary_path(), &project)
             .record_created(
                 &store,
-                EphemeralRefName::mint(&project, &WorkweaveName::new("feat")),
+                EphemeralRefName::mint(&project, &WorkweaveName::new("feat").unwrap()),
                 at,
             )
             .unwrap();
@@ -6052,7 +6054,7 @@ mod tests {
         let primary_canon = primary.canonicalize().unwrap();
         crate::workspace::WorkweaveMarker {
             primary: primary_canon.clone(),
-            project: ProjectName::new("web-app"),
+            project: ProjectName::new("web-app").unwrap(),
             parent: primary_canon,
         }
         .write(&ww)
@@ -6070,7 +6072,7 @@ mod tests {
         (
             ctx,
             ww.join("github/example/server"),
-            ProjectName::new("web-app"),
+            ProjectName::new("web-app").unwrap(),
         )
     }
 
@@ -6365,7 +6367,22 @@ mod tests {
     #[test]
     fn sync_source_parses_workweave_name() {
         let parsed: SyncSource = "hotfix".parse().unwrap();
-        assert_eq!(parsed, SyncSource::Workweave(WorkweaveName::new("hotfix")));
+        assert_eq!(
+            parsed,
+            SyncSource::Workweave(WorkweaveName::new("hotfix").unwrap())
+        );
+    }
+
+    /// Not path-like (`looks_path_like` requires a separator, a leading dot,
+    /// or an absolute path), so this reaches the `WorkweaveName::new` arm and
+    /// is refused there rather than silently minting an ambiguous name.
+    #[test]
+    fn sync_source_parse_rejects_double_dash() {
+        let err = "proj--feat--v2".parse::<SyncSource>().unwrap_err();
+        assert!(
+            matches!(err, WorkweaveNameError::AmbiguousDelimiter(_)),
+            "expected AmbiguousDelimiter, got: {err:?}"
+        );
     }
 
     #[test]
@@ -6398,7 +6415,7 @@ mod tests {
 
     #[test]
     fn sync_source_display_round_trips_workweave() {
-        let s = SyncSource::Workweave(WorkweaveName::new("ww1"));
+        let s = SyncSource::Workweave(WorkweaveName::new("ww1").unwrap());
         assert_eq!(s.to_string(), "ww1");
         assert_eq!(s.to_string().parse::<SyncSource>().unwrap(), s);
     }
@@ -6784,7 +6801,7 @@ mod tests {
             "expected Weave with no project, got something else"
         );
 
-        let src = SyncSource::Workweave(WorkweaveName::new("some-ww"));
+        let src = SyncSource::Workweave(WorkweaveName::new("some-ww").unwrap());
         let err = src.resolve(&ctx).unwrap_err().to_string();
 
         // require_active_project produces this message when no project is set

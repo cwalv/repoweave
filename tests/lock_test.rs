@@ -226,7 +226,7 @@ fn lock_in_workweave_writes_to_workweave_project_dir_not_primary() {
     let workweave_lock = repoweave::manifest::LockFile::from_path(&workweave_lock_path).unwrap();
     assert_eq!(
         workweave_lock.workweave,
-        Some(repoweave::manifest::WorkweaveName::new("hotfix")),
+        Some(repoweave::manifest::WorkweaveName::new("hotfix").unwrap()),
         "lock should include workweave name"
     );
     let entry = workweave_lock

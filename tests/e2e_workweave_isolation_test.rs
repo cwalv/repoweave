@@ -183,8 +183,8 @@ repositories:\n  \
     let workweave_root = tmp.path().join(".workweaves");
     std::fs::create_dir_all(&workweave_root).unwrap();
 
-    let ww_name = repoweave::manifest::WorkweaveName::new("agent-1");
-    let ww_project = repoweave::manifest::ProjectName::new("web-app");
+    let ww_name = repoweave::manifest::WorkweaveName::new("agent-1").unwrap();
+    let ww_project = repoweave::manifest::ProjectName::new("web-app").unwrap();
     let ww_dir = repoweave::workweave::create_workweave(
         &ws,
         &ws,

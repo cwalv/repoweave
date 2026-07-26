@@ -541,7 +541,7 @@ fn sync_phase3_materializes_newly_added_repo_in_workweave() {
     let canonical = main.root.join(new_repo_path);
     let receipt = repoweave::workweave_index::RefRegistry::for_project(
         &main.root,
-        &repoweave::manifest::ProjectName::new(PROJECT),
+        &repoweave::manifest::ProjectName::new(PROJECT).unwrap(),
     )
     .lookup(
         &canonical,

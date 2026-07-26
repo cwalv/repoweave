@@ -11,25 +11,28 @@ mod common;
 
 #[test]
 fn weave_dir_name_simple() {
-    let name = weave_dir_name("web-app", &WorkweaveName::new("agent-42"));
+    let name = weave_dir_name("web-app", &WorkweaveName::new("agent-42").unwrap());
     assert_eq!(name, "web-app--agent-42");
 }
 
 #[test]
 fn weave_dir_name_single_word_components() {
-    let name = weave_dir_name("myproject", &WorkweaveName::new("hotfix"));
+    let name = weave_dir_name("myproject", &WorkweaveName::new("hotfix").unwrap());
     assert_eq!(name, "myproject--hotfix");
 }
 
 #[test]
 fn weave_dir_name_complex_primary() {
-    let name = weave_dir_name("my-complex-project", &WorkweaveName::new("feat-login"));
+    let name = weave_dir_name(
+        "my-complex-project",
+        &WorkweaveName::new("feat-login").unwrap(),
+    );
     assert_eq!(name, "my-complex-project--feat-login");
 }
 
 #[test]
 fn weave_dir_name_weave_with_numbers() {
-    let name = weave_dir_name("app", &WorkweaveName::new("issue-1234"));
+    let name = weave_dir_name("app", &WorkweaveName::new("issue-1234").unwrap());
     assert_eq!(name, "app--issue-1234");
 }
 
@@ -42,21 +45,21 @@ fn parse_valid_simple() {
     let result = parse_weave_dir_name("web-app--agent-42");
     let (primary, workweave) = result.expect("should parse valid workweave dir name");
     assert_eq!(primary, "web-app");
-    assert_eq!(workweave, WorkweaveName::new("agent-42"));
+    assert_eq!(workweave, WorkweaveName::new("agent-42").unwrap());
 }
 
 #[test]
 fn parse_valid_single_word() {
     let (primary, workweave) = parse_weave_dir_name("proj--fix").unwrap();
     assert_eq!(primary, "proj");
-    assert_eq!(workweave, WorkweaveName::new("fix"));
+    assert_eq!(workweave, WorkweaveName::new("fix").unwrap());
 }
 
 #[test]
 fn parse_valid_hyphenated_components() {
     let (primary, workweave) = parse_weave_dir_name("my-app--my-feature").unwrap();
     assert_eq!(primary, "my-app");
-    assert_eq!(workweave, WorkweaveName::new("my-feature"));
+    assert_eq!(workweave, WorkweaveName::new("my-feature").unwrap());
 }
 
 // ============================================================================
@@ -96,18 +99,18 @@ fn parse_only_double_dash_returns_none() {
 }
 
 #[test]
-fn parse_multiple_double_dashes_splits_at_first() {
-    // "a--b--c" should split at first "--" giving primary="a", workweave="b--c"
-    let (primary, workweave) = parse_weave_dir_name("a--b--c").unwrap();
-    assert_eq!(primary, "a");
-    assert_eq!(workweave, WorkweaveName::new("b--c"));
+fn parse_multiple_double_dashes_is_rejected() {
+    // Splitting "a--b--c" at the first "--" gives workweave "b--c" — but a
+    // workweave name may not itself contain "--" (WorkweaveName::new
+    // refuses it), so this no longer parses. Guessing the split here is
+    // exactly what would let project="a--b" + workweave="c" mint the same
+    // flat name.
+    assert!(parse_weave_dir_name("a--b--c").is_none());
 }
 
 #[test]
-fn parse_multiple_double_dashes_preserves_remainder() {
-    let (primary, workweave) = parse_weave_dir_name("proj--feat--v2--rc1").unwrap();
-    assert_eq!(primary, "proj");
-    assert_eq!(workweave, WorkweaveName::new("feat--v2--rc1"));
+fn parse_workweave_portion_with_double_dash_is_rejected() {
+    assert!(parse_weave_dir_name("proj--feat--v2--rc1").is_none());
 }
 
 // ============================================================================
@@ -117,7 +120,7 @@ fn parse_multiple_double_dashes_preserves_remainder() {
 #[test]
 fn round_trip_simple() {
     let primary = "web-app";
-    let workweave = WorkweaveName::new("agent-42");
+    let workweave = WorkweaveName::new("agent-42").unwrap();
     let dir_name = weave_dir_name(primary, &workweave);
     let (parsed_primary, parsed_workweave) = parse_weave_dir_name(&dir_name).unwrap();
     assert_eq!(parsed_primary, primary);
@@ -127,7 +130,7 @@ fn round_trip_simple() {
 #[test]
 fn round_trip_single_char_components() {
     let primary = "a";
-    let workweave = WorkweaveName::new("b");
+    let workweave = WorkweaveName::new("b").unwrap();
     let dir_name = weave_dir_name(primary, &workweave);
     let (parsed_primary, parsed_workweave) = parse_weave_dir_name(&dir_name).unwrap();
     assert_eq!(parsed_primary, primary);
@@ -166,7 +169,7 @@ fn read_active_project_returns_none_for_empty_file() {
 #[test]
 fn set_active_project_creates_file() {
     let tmp = common::tempdir().unwrap();
-    let project = ProjectName::new("web-app");
+    let project = ProjectName::new("web-app").unwrap();
     set_active_project(tmp.path(), &project).unwrap();
     let content = std::fs::read_to_string(tmp.path().join(".rwv-active")).unwrap();
     assert_eq!(content, "web-app\n");
@@ -175,7 +178,7 @@ fn set_active_project_creates_file() {
 #[test]
 fn set_active_project_round_trips_with_read() {
     let tmp = common::tempdir().unwrap();
-    let project = ProjectName::new("mobile-app");
+    let project = ProjectName::new("mobile-app").unwrap();
     set_active_project(tmp.path(), &project).unwrap();
     let result = read_active_project(tmp.path()).expect("should read back");
     assert_eq!(result, project);

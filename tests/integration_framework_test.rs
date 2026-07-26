@@ -141,7 +141,7 @@ fn active_repos_excludes_reference() {
         make_repo_entry(Role::Owned),
     );
 
-    let project = ProjectName::new("test-project");
+    let project = ProjectName::new("test-project").unwrap();
     let config = IntegrationConfig::default();
     let cache = HashMap::new();
     let tmp = common::tempdir().unwrap();
@@ -185,7 +185,7 @@ fn active_repos_includes_primary_fork_dependency() {
         make_repo_entry(Role::Reference),
     );
 
-    let project = ProjectName::new("test-project");
+    let project = ProjectName::new("test-project").unwrap();
     let config = IntegrationConfig::default();
     let cache = HashMap::new();
     let tmp = common::tempdir().unwrap();
@@ -226,7 +226,7 @@ fn mock_activate_receives_correct_context() {
         make_repo_entry(Role::Owned),
     );
 
-    let project = ProjectName::new("my-project");
+    let project = ProjectName::new("my-project").unwrap();
     let config = IntegrationConfig::default();
     let cache = HashMap::new();
     let ctx = IntegrationContext {
@@ -288,7 +288,7 @@ fn mock_check_returns_issues() {
         make_repo_entry(Role::Owned),
     );
 
-    let project = ProjectName::new("check-project");
+    let project = ProjectName::new("check-project").unwrap();
     let config = IntegrationConfig::default();
     let cache = HashMap::new();
     let ctx = IntegrationContext {
@@ -390,7 +390,7 @@ fn detect_repos_with_manifest_uses_workspace_root_not_output_dir() {
         make_repo_entry(Role::Owned),
     );
 
-    let project = ProjectName::new("test-project");
+    let project = ProjectName::new("test-project").unwrap();
     let config = IntegrationConfig::default();
     let cache = HashMap::new();
     let ctx = IntegrationContext {
@@ -431,7 +431,7 @@ fn detect_repos_with_manifest_ignores_output_dir_manifests() {
         make_repo_entry(Role::Owned),
     );
 
-    let project = ProjectName::new("test-project");
+    let project = ProjectName::new("test-project").unwrap();
     let config = IntegrationConfig::default();
     let cache = HashMap::new();
     let ctx = IntegrationContext {
@@ -467,7 +467,7 @@ fn context_output_dir_and_workspace_root_can_be_same() {
         make_repo_entry(Role::Owned),
     );
 
-    let project = ProjectName::new("test-project");
+    let project = ProjectName::new("test-project").unwrap();
     let config = IntegrationConfig::default();
     let cache = HashMap::new();
     let ctx = IntegrationContext {
@@ -501,7 +501,7 @@ fn default_activate_hook_is_noop() {
         repoweave::manifest::RepoPath,
         repoweave::manifest::RepoEntry,
     )> = vec![];
-    let project = ProjectName::new("test-project");
+    let project = ProjectName::new("test-project").unwrap();
     let config = IntegrationConfig::default();
     let cache = HashMap::new();
     let ctx = IntegrationContext {
@@ -585,7 +585,7 @@ fn overridden_activate_hook_is_called() {
         repoweave::manifest::RepoPath,
         repoweave::manifest::RepoEntry,
     )> = vec![];
-    let project = ProjectName::new("my-project");
+    let project = ProjectName::new("my-project").unwrap();
     let config = IntegrationConfig::default();
     let cache = HashMap::new();
     let ctx = IntegrationContext {
@@ -623,7 +623,7 @@ fn default_generated_files_returns_empty() {
         repoweave::manifest::RepoPath,
         repoweave::manifest::RepoEntry,
     )> = vec![];
-    let project = ProjectName::new("test-project");
+    let project = ProjectName::new("test-project").unwrap();
     let config = IntegrationConfig::default();
     let cache = HashMap::new();
     let ctx = IntegrationContext {
@@ -661,7 +661,7 @@ fn cargo_workspace_generated_files() {
         repoweave::manifest::RepoPath,
         repoweave::manifest::RepoEntry,
     )> = vec![];
-    let project = ProjectName::new("test-project");
+    let project = ProjectName::new("test-project").unwrap();
     let config = IntegrationConfig::default();
     let tmp = common::tempdir().unwrap();
     let cache = HashMap::new();
@@ -721,7 +721,7 @@ fn npm_workspaces_generated_files() {
         repoweave::manifest::RepoPath,
         repoweave::manifest::RepoEntry,
     )> = vec![];
-    let project = ProjectName::new("test-project");
+    let project = ProjectName::new("test-project").unwrap();
     let config = IntegrationConfig::default();
     let tmp = common::tempdir().unwrap();
     let cache = HashMap::new();
@@ -777,7 +777,7 @@ fn pnpm_workspaces_generated_files() {
         repoweave::manifest::RepoPath,
         repoweave::manifest::RepoEntry,
     )> = vec![];
-    let project = ProjectName::new("test-project");
+    let project = ProjectName::new("test-project").unwrap();
     let config = IntegrationConfig::default();
     let tmp = common::tempdir().unwrap();
     let cache = HashMap::new();
@@ -841,7 +841,7 @@ fn go_work_generated_files() {
         repoweave::manifest::RepoPath,
         repoweave::manifest::RepoEntry,
     )> = vec![];
-    let project = ProjectName::new("test-project");
+    let project = ProjectName::new("test-project").unwrap();
     let config = IntegrationConfig::default();
     let tmp = common::tempdir().unwrap();
     let cache = HashMap::new();
@@ -899,7 +899,7 @@ fn uv_workspace_generated_files() {
         repoweave::manifest::RepoPath,
         repoweave::manifest::RepoEntry,
     )> = vec![];
-    let project = ProjectName::new("test-project");
+    let project = ProjectName::new("test-project").unwrap();
     let config = IntegrationConfig::default();
     let tmp = common::tempdir().unwrap();
     let cache = HashMap::new();
@@ -958,7 +958,7 @@ fn gita_generated_files() {
         repoweave::manifest::RepoPath,
         repoweave::manifest::RepoEntry,
     )> = vec![];
-    let project = ProjectName::new("test-project");
+    let project = ProjectName::new("test-project").unwrap();
     let config = IntegrationConfig::default();
     let cache = HashMap::new();
     let ctx = IntegrationContext {
@@ -988,7 +988,7 @@ fn vscode_workspace_generated_files_includes_project_name() {
         repoweave::manifest::RepoPath,
         repoweave::manifest::RepoEntry,
     )> = vec![];
-    let project = ProjectName::new("web-app");
+    let project = ProjectName::new("web-app").unwrap();
     let config = IntegrationConfig::default();
     let cache = HashMap::new();
     let ctx = IntegrationContext {
@@ -1021,7 +1021,7 @@ fn vscode_workspace_generated_files_varies_with_project() {
     let config = IntegrationConfig::default();
 
     // Different project name produces different filename
-    let project = ProjectName::new("mobile-app");
+    let project = ProjectName::new("mobile-app").unwrap();
     let cache = HashMap::new();
     let ctx = IntegrationContext {
         output_dir: Path::new("/workspace"),
@@ -1168,7 +1168,7 @@ mod fo_cnpjy_3 {
             // managed_files NOT overridden — should default to generated_files
         }
 
-        let project = ProjectName::new("p");
+        let project = ProjectName::new("p").unwrap();
         let config = repoweave::manifest::IntegrationConfig::default();
         let cache = HashMap::new();
         let ctx = IntegrationContext {
@@ -1225,7 +1225,7 @@ mod fo_cnpjy_3 {
             }
         }
 
-        let project = ProjectName::new("p");
+        let project = ProjectName::new("p").unwrap();
         let config = repoweave::manifest::IntegrationConfig::default();
         let cache = HashMap::new();
         let ctx = IntegrationContext {
@@ -1375,7 +1375,7 @@ mod fo_cnpjy_3 {
         // Split integration: distinct generated and managed sets.
         let split = FakeHybrid::new("split", vec!["pure.txt".into()], vec!["hybrid.txt".into()]);
 
-        let project = ProjectName::new("p");
+        let project = ProjectName::new("p").unwrap();
         let config = repoweave::manifest::IntegrationConfig::default();
         let cache: HashMap<String, Vec<String>> = HashMap::new();
         let ctx = IntegrationContext {
@@ -1477,7 +1477,7 @@ mod fo_cnpjy_3 {
         let fake = FakeHybrid::new("fake-hybrid", vec!["g.txt".into()], vec!["m.txt".into()])
             .with_write_on_activate("intent-output.txt", "authored under intent\n");
 
-        let project = ProjectName::new("p");
+        let project = ProjectName::new("p").unwrap();
         let config = repoweave::manifest::IntegrationConfig::default();
         let cache = HashMap::new();
         let ctx = IntegrationContext {

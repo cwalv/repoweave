@@ -121,7 +121,7 @@ fn write_marker(ww_dir: &Path, primary: &Path, project: &str) {
         .expect("workweave dir name must be `<project>--<name>`");
     repoweave::workweave_index::record_workweave(
         primary,
-        &repoweave::manifest::ProjectName::new(project),
+        &repoweave::manifest::ProjectName::new(project).unwrap(),
         &name,
         ww_dir.to_path_buf(),
     )
@@ -216,8 +216,8 @@ fn delete_uses_resolved_parent_under_inverted_topology() {
     // resolves to `real_canonical` and the registration is cleaned up.
     let result = workweave_delete(
         &ws,
-        &ProjectName::new("web-app"),
-        &WorkweaveName::new("ww"),
+        &ProjectName::new("web-app").unwrap(),
+        &WorkweaveName::new("ww").unwrap(),
         true, // discard_uncommitted: we're testing topology, not the dirty gate
         true, // --discard-unmerged-commits, minted into a token by the same
               // dispatch path the CLI takes
@@ -293,8 +293,8 @@ fn delete_refuses_when_checkout_hosts_foreign_worktrees_even_with_waivers() {
     // Even with both waivers, delete must refuse.
     let result = workweave_delete(
         &ws,
-        &ProjectName::new("web-app"),
-        &WorkweaveName::new("bad"),
+        &ProjectName::new("web-app").unwrap(),
+        &WorkweaveName::new("bad").unwrap(),
         true,
         true,
     );
@@ -355,8 +355,8 @@ fn delete_proceeds_when_canonical_checkout_has_no_foreign_dependents() {
 
     let result = workweave_delete(
         &ws,
-        &ProjectName::new("web-app"),
-        &WorkweaveName::new("lone"),
+        &ProjectName::new("web-app").unwrap(),
+        &WorkweaveName::new("lone").unwrap(),
         true,
         true,
     );
@@ -462,8 +462,8 @@ fn merged_check_refuses_vouch_across_distinct_canonical_stores() {
     // the baseline cannot vouch.
     let result = workweave_delete(
         &ws,
-        &ProjectName::new("web-app"),
-        &WorkweaveName::new("diverged"),
+        &ProjectName::new("web-app").unwrap(),
+        &WorkweaveName::new("diverged").unwrap(),
         true,  // uncommitted changes are irrelevant here
         false, // no waiver: exercise the merged-check
     );

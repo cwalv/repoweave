@@ -735,7 +735,10 @@ pub(crate) fn is_release_shape_name(s: &str) -> bool {
 /// targets and is what this mirrors. Validating at the seam rather than in
 /// the git impl means a manifest carrying `feat/../../etc` is refused once,
 /// at parse time, instead of once per VCS.
-fn validate_ref_name(s: &str) -> Result<(), RefNameError> {
+///
+/// `pub(crate)`: also the ref-name-shape half of [`ProjectName::new`] and
+/// [`WorkweaveName::new`], which layer their own delimiter rule on top.
+pub(crate) fn validate_ref_name(s: &str) -> Result<(), RefNameError> {
     let malformed = |reason: &'static str| {
         Err(RefNameError::Malformed {
             name: s.to_owned(),
@@ -946,12 +949,10 @@ impl fmt::Display for LocalRefName {
 /// ref rwv's to destroy ([`OwnedRef`], R2), which is why this type has no
 /// path to one that does not go through the registry.
 ///
-/// **Q12 stays open.** The legal grammar for project and workweave names is
-/// undecided (a project `p` with workweave `x--y` and a project `p--x` with
-/// workweave `y` mint the same name), so `mint` deliberately does not
-/// validate its components. Under R2 that collision is a legibility
-/// problem, not a correctness one — ownership comes from the receipt, not
-/// from parsing the name back apart.
+/// `mint` itself performs no validation and cannot fail: [`ProjectName::new`]
+/// and [`WorkweaveName::new`] already reject anything that would make two
+/// distinct (project, workweave) pairs mint the same name, or that would
+/// make the result read as [`LegacyEphemeralRefName`]'s segmented shape.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct EphemeralRefName(String);
 

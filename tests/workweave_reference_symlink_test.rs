@@ -148,8 +148,8 @@ fn create_materializes_reference_as_symlink_and_owned_as_worktree() {
     let ww = create_workweave(
         &ws,
         &ws,
-        &ProjectName::new("proj"),
-        &WorkweaveName::new("feat"),
+        &ProjectName::new("proj").unwrap(),
+        &WorkweaveName::new("feat").unwrap(),
         false,
         false,
         false, // default: symlink references
@@ -238,8 +238,8 @@ fn worktree_references_flag_cuts_a_worktree_for_reference_repos() {
     let ww = create_workweave(
         &ws,
         &ws,
-        &ProjectName::new("proj"),
-        &WorkweaveName::new("feat"),
+        &ProjectName::new("proj").unwrap(),
+        &WorkweaveName::new("feat").unwrap(),
         false,
         false,
         true, // escape hatch: worktree references
@@ -286,8 +286,8 @@ fn delete_unlinks_symlink_and_leaves_canonical_byte_for_byte_unchanged() {
     let ww = create_workweave(
         &ws,
         &ws,
-        &ProjectName::new("proj"),
-        &WorkweaveName::new("feat"),
+        &ProjectName::new("proj").unwrap(),
+        &WorkweaveName::new("feat").unwrap(),
         false,
         false,
         false,
@@ -298,8 +298,8 @@ fn delete_unlinks_symlink_and_leaves_canonical_byte_for_byte_unchanged() {
 
     delete_workweave(
         &ws,
-        &ProjectName::new("proj"),
-        &WorkweaveName::new("feat"),
+        &ProjectName::new("proj").unwrap(),
+        &WorkweaveName::new("feat").unwrap(),
         false,
         None,
     )
@@ -333,8 +333,8 @@ fn delete_succeeds_with_a_dirty_canonical_and_leaves_it_untouched() {
     let ww = create_workweave(
         &ws,
         &ws,
-        &ProjectName::new("proj"),
-        &WorkweaveName::new("feat"),
+        &ProjectName::new("proj").unwrap(),
+        &WorkweaveName::new("feat").unwrap(),
         false,
         false,
         false,
@@ -357,8 +357,8 @@ fn delete_succeeds_with_a_dirty_canonical_and_leaves_it_untouched() {
 
     delete_workweave(
         &ws,
-        &ProjectName::new("proj"),
-        &WorkweaveName::new("feat"),
+        &ProjectName::new("proj").unwrap(),
+        &WorkweaveName::new("feat").unwrap(),
         false, // no waiver: alias dirty state must not be attributed here
         None,
     )
@@ -386,8 +386,8 @@ fn nested_workweave_reference_symlink_targets_primary_canonical() {
     let parent = create_workweave(
         &ws,
         &ws,
-        &ProjectName::new("proj"),
-        &WorkweaveName::new("parent"),
+        &ProjectName::new("proj").unwrap(),
+        &WorkweaveName::new("parent").unwrap(),
         false,
         false,
         false,
@@ -401,8 +401,8 @@ fn nested_workweave_reference_symlink_targets_primary_canonical() {
     let child = create_workweave(
         &ws,     // primary_root
         &parent, // source_root = parent workweave
-        &ProjectName::new("proj"),
-        &WorkweaveName::new("child"),
+        &ProjectName::new("proj").unwrap(),
+        &WorkweaveName::new("child").unwrap(),
         false,
         false,
         false,
@@ -442,8 +442,8 @@ fn two_workweaves_share_one_canonical_and_deleting_one_keeps_the_other_valid() {
     let wa = create_workweave(
         &ws,
         &ws,
-        &ProjectName::new("proj"),
-        &WorkweaveName::new("wa"),
+        &ProjectName::new("proj").unwrap(),
+        &WorkweaveName::new("wa").unwrap(),
         false,
         false,
         false,
@@ -453,8 +453,8 @@ fn two_workweaves_share_one_canonical_and_deleting_one_keeps_the_other_valid() {
     let wb = create_workweave(
         &ws,
         &ws,
-        &ProjectName::new("proj"),
-        &WorkweaveName::new("wb"),
+        &ProjectName::new("proj").unwrap(),
+        &WorkweaveName::new("wb").unwrap(),
         false,
         false,
         false,
@@ -477,8 +477,8 @@ fn two_workweaves_share_one_canonical_and_deleting_one_keeps_the_other_valid() {
     // Delete wa; wb's symlink must remain valid and resolve to the canonical.
     delete_workweave(
         &ws,
-        &ProjectName::new("proj"),
-        &WorkweaveName::new("wa"),
+        &ProjectName::new("proj").unwrap(),
+        &WorkweaveName::new("wa").unwrap(),
         false,
         None,
     )
@@ -551,8 +551,8 @@ fn workweave_created_after_add_reference_symlinks_the_new_repo() {
     let ww = create_workweave(
         &ws,
         &ws,
-        &ProjectName::new("proj"),
-        &WorkweaveName::new("after-add"),
+        &ProjectName::new("proj").unwrap(),
+        &WorkweaveName::new("after-add").unwrap(),
         false,
         false,
         false,
@@ -585,8 +585,8 @@ fn idempotent_reuse_with_symlinked_reference_returns_clean() {
     let first = create_workweave(
         &ws,
         &ws,
-        &ProjectName::new("proj"),
-        &WorkweaveName::new("feat"),
+        &ProjectName::new("proj").unwrap(),
+        &WorkweaveName::new("feat").unwrap(),
         false,
         false,
         false,
@@ -604,8 +604,8 @@ fn idempotent_reuse_with_symlinked_reference_returns_clean() {
     let second = create_workweave(
         &ws,
         &ws,
-        &ProjectName::new("proj"),
-        &WorkweaveName::new("feat"),
+        &ProjectName::new("proj").unwrap(),
+        &WorkweaveName::new("feat").unwrap(),
         false, // not replace_existing
         false,
         false,

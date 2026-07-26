@@ -737,7 +737,7 @@ fn activate_from_workweave_is_rejected() {
     let primary_canon = ws.canonicalize().unwrap();
     let marker = WorkweaveMarker {
         primary: primary_canon.clone(),
-        project: ProjectName::new("my-proj"),
+        project: ProjectName::new("my-proj").unwrap(),
         parent: primary_canon.clone(),
     };
     marker.write(&workweave_dir).unwrap();
@@ -787,7 +787,7 @@ fn activate_different_project_from_workweave_is_rejected() {
     let primary_canon = ws.canonicalize().unwrap();
     let marker = WorkweaveMarker {
         primary: primary_canon.clone(),
-        project: ProjectName::new("proj-a"),
+        project: ProjectName::new("proj-a").unwrap(),
         parent: primary_canon.clone(),
     };
     marker.write(&workweave_dir).unwrap();

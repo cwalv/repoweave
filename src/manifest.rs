@@ -119,13 +119,60 @@ impl<'de> serde::Deserialize<'de> for RepoPath {
 }
 
 /// A project name, possibly multi-segment (e.g., `web-app` or `chatly/web-app`).
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+///
+/// # Construction cannot be treated as infallible
+///
+/// ```compile_fail
+/// use repoweave::manifest::ProjectName;
+/// fn take(_: ProjectName) {}
+/// fn f(s: String) {
+///     take(ProjectName::new(s)); // E0308: expected ProjectName, found Result<ProjectName, ProjectNameError>
+/// }
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize)]
 #[serde(transparent)]
 pub struct ProjectName(String);
 
+/// Typed error returned by [`ProjectName::new`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ProjectNameError {
+    /// Contains `--`, or starts/ends with `-`: any of these could be
+    /// confused with the `--` [`crate::vcs::EphemeralRefName::mint`] joins
+    /// project to workweave with, letting two distinct (project, workweave)
+    /// pairs mint the same name.
+    AmbiguousDelimiter(String),
+    /// Not usable as a (possibly `/`-segmented) ref-name component.
+    InvalidRef(crate::vcs::RefNameError),
+}
+
+impl fmt::Display for ProjectNameError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::AmbiguousDelimiter(s) => write!(
+                f,
+                "'{s}' is not a valid project name: contains `--` or starts/ends \
+                 with `-`, ambiguous against the `--` that joins project to workweave"
+            ),
+            Self::InvalidRef(e) => write!(f, "not a valid project name: {e}"),
+        }
+    }
+}
+
+impl std::error::Error for ProjectNameError {}
+
+fn validate_project_name(s: &str) -> Result<(), ProjectNameError> {
+    if s.contains("--") || s.starts_with('-') || s.ends_with('-') {
+        return Err(ProjectNameError::AmbiguousDelimiter(s.to_owned()));
+    }
+    crate::vcs::validate_ref_name(s).map_err(ProjectNameError::InvalidRef)
+}
+
 impl ProjectName {
-    pub fn new(s: impl Into<String>) -> Self {
-        Self(s.into())
+    /// Construct a `ProjectName`, returning a [`ProjectNameError`] if `s` fails validation.
+    pub fn new(s: impl Into<String>) -> Result<Self, ProjectNameError> {
+        let s = s.into();
+        validate_project_name(&s)?;
+        Ok(Self(s))
     }
 
     pub fn as_str(&self) -> &str {
@@ -145,14 +192,82 @@ impl AsRef<Path> for ProjectName {
     }
 }
 
+impl<'de> serde::Deserialize<'de> for ProjectName {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let s = String::deserialize(deserializer)?;
+        validate_project_name(&s).map_err(serde::de::Error::custom)?;
+        Ok(ProjectName(s))
+    }
+}
+
 /// A workweave name (e.g., `agent-42`, `hotfix`).
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+///
+/// # Construction cannot be treated as infallible
+///
+/// ```compile_fail
+/// use repoweave::manifest::WorkweaveName;
+/// fn take(_: WorkweaveName) {}
+/// fn f(s: String) {
+///     take(WorkweaveName::new(s)); // E0308: expected WorkweaveName, found Result<WorkweaveName, WorkweaveNameError>
+/// }
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize)]
 #[serde(transparent)]
 pub struct WorkweaveName(String);
 
+/// Typed error returned by [`WorkweaveName::new`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum WorkweaveNameError {
+    /// Contains `/`. Unlike [`ProjectName`], a workweave name is never
+    /// `/`-segmented, because [`crate::vcs::EphemeralRefName::mint`] would
+    /// then read back as [`crate::vcs::LegacyEphemeralRefName`]'s segmented
+    /// shape for a *different*, entirely valid, live workweave.
+    Slash(String),
+    /// Contains `--`, or starts/ends with `-`: any of these could be
+    /// confused with the `--` `mint` joins project to workweave with,
+    /// letting two distinct (project, workweave) pairs mint the same name.
+    AmbiguousDelimiter(String),
+    /// Not usable as a ref-name component.
+    InvalidRef(crate::vcs::RefNameError),
+}
+
+impl fmt::Display for WorkweaveNameError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Slash(s) => write!(
+                f,
+                "'{s}' is not a valid workweave name: contains `/`, which would \
+                 make a minted ephemeral ref name masquerade as the pre-flat \
+                 segmented shape"
+            ),
+            Self::AmbiguousDelimiter(s) => write!(
+                f,
+                "'{s}' is not a valid workweave name: contains `--` or starts/ends \
+                 with `-`, ambiguous against the `--` that joins project to workweave"
+            ),
+            Self::InvalidRef(e) => write!(f, "not a valid workweave name: {e}"),
+        }
+    }
+}
+
+impl std::error::Error for WorkweaveNameError {}
+
+fn validate_workweave_name(s: &str) -> Result<(), WorkweaveNameError> {
+    if s.contains('/') {
+        return Err(WorkweaveNameError::Slash(s.to_owned()));
+    }
+    if s.contains("--") || s.starts_with('-') || s.ends_with('-') {
+        return Err(WorkweaveNameError::AmbiguousDelimiter(s.to_owned()));
+    }
+    crate::vcs::validate_ref_name(s).map_err(WorkweaveNameError::InvalidRef)
+}
+
 impl WorkweaveName {
-    pub fn new(s: impl Into<String>) -> Self {
-        Self(s.into())
+    /// Construct a `WorkweaveName`, returning a [`WorkweaveNameError`] if `s` fails validation.
+    pub fn new(s: impl Into<String>) -> Result<Self, WorkweaveNameError> {
+        let s = s.into();
+        validate_workweave_name(&s)?;
+        Ok(Self(s))
     }
 
     pub fn as_str(&self) -> &str {
@@ -163,6 +278,14 @@ impl WorkweaveName {
 impl fmt::Display for WorkweaveName {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(&self.0)
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for WorkweaveName {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let s = String::deserialize(deserializer)?;
+        validate_workweave_name(&s).map_err(serde::de::Error::custom)?;
+        Ok(WorkweaveName(s))
     }
 }
 
@@ -1397,7 +1520,7 @@ impl Project {
 
         Ok(Self {
             dir: dir.to_path_buf(),
-            name: ProjectName::new(name),
+            name: ProjectName::new(name)?,
             manifest,
             lock,
         })
@@ -1427,7 +1550,7 @@ impl Project {
 
         Ok(Self {
             dir: dir.to_path_buf(),
-            name: ProjectName::new(name),
+            name: ProjectName::new(name)?,
             manifest,
             lock: None,
         })
@@ -1745,7 +1868,10 @@ repositories:
         std::fs::write(&path, VALID_LOCK).unwrap();
 
         let lock = LockFile::from_path(&path).unwrap();
-        assert_eq!(lock.workweave, Some(WorkweaveName::new("hotfix-42")));
+        assert_eq!(
+            lock.workweave,
+            Some(WorkweaveName::new("hotfix-42").unwrap())
+        );
         assert_eq!(lock.repositories.len(), 1);
     }
 
@@ -2174,6 +2300,169 @@ repositories:
     }
 
     // ========================================================================
+    // ProjectName::new — parse-boundary validation
+    // ========================================================================
+
+    #[test]
+    fn project_name_new_simple_accepted() {
+        assert_eq!(ProjectName::new("web-app").unwrap().as_str(), "web-app");
+    }
+
+    /// The multi-segment shape `name_from_dir` derives for nested projects
+    /// must keep working — `/` is not one of the rejected characters.
+    #[test]
+    fn project_name_new_multi_segment_slash_accepted() {
+        assert_eq!(
+            ProjectName::new("chatly/web-app").unwrap().as_str(),
+            "chatly/web-app"
+        );
+    }
+
+    #[test]
+    fn project_name_new_double_dash_rejected() {
+        let err = ProjectName::new("p--x").unwrap_err();
+        assert!(
+            matches!(err, ProjectNameError::AmbiguousDelimiter(_)),
+            "expected AmbiguousDelimiter, got: {err:?}"
+        );
+    }
+
+    #[test]
+    fn project_name_new_leading_dash_rejected() {
+        assert!(ProjectName::new("-foo").is_err());
+    }
+
+    #[test]
+    fn project_name_new_trailing_dash_rejected() {
+        assert!(ProjectName::new("foo-").is_err());
+    }
+
+    #[test]
+    fn project_name_new_empty_rejected() {
+        let err = ProjectName::new("").unwrap_err();
+        assert!(
+            matches!(
+                err,
+                ProjectNameError::InvalidRef(crate::vcs::RefNameError::Empty)
+            ),
+            "expected InvalidRef(Empty), got: {err:?}"
+        );
+    }
+
+    #[test]
+    fn project_name_new_git_illegal_char_rejected() {
+        let err = ProjectName::new("foo bar").unwrap_err();
+        assert!(
+            matches!(err, ProjectNameError::InvalidRef(_)),
+            "expected InvalidRef, got: {err:?}"
+        );
+    }
+
+    #[test]
+    fn project_name_deserialize_rejects_double_dash() {
+        let result: Result<ProjectName, _> = serde_yaml::from_str("p--x");
+        assert!(result.is_err(), "double-dash project name must be rejected");
+    }
+
+    #[test]
+    fn project_name_deserialize_accepts_multi_segment() {
+        let name: ProjectName = serde_yaml::from_str("chatly/web-app").unwrap();
+        assert_eq!(name.as_str(), "chatly/web-app");
+    }
+
+    /// `ProjectName::new` and the serde `Deserialize` impl run the same
+    /// validation, so a project name that reaches rwv through a manifest
+    /// is refused just as reliably as one built in-process.
+    #[test]
+    fn project_name_new_and_serde_agree_on_rejection() {
+        assert!(ProjectName::new("p--x").is_err());
+        let via_serde: Result<ProjectName, _> = serde_yaml::from_str("p--x");
+        assert!(via_serde.is_err());
+    }
+
+    // ========================================================================
+    // WorkweaveName::new — parse-boundary validation
+    // ========================================================================
+
+    #[test]
+    fn workweave_name_new_simple_accepted() {
+        assert_eq!(WorkweaveName::new("agent-42").unwrap().as_str(), "agent-42");
+    }
+
+    /// The vulnerability this type exists to close: a workweave named with a
+    /// `/` mints an ephemeral ref name that [`crate::vcs::LegacyEphemeralRefName::claim`]
+    /// would read as a *different* live workweave's pre-flat segmented ref.
+    #[test]
+    fn workweave_name_new_slash_rejected() {
+        let err = WorkweaveName::new("feat-a/main").unwrap_err();
+        assert!(
+            matches!(err, WorkweaveNameError::Slash(_)),
+            "expected Slash, got: {err:?}"
+        );
+    }
+
+    #[test]
+    fn workweave_name_new_double_dash_rejected() {
+        let err = WorkweaveName::new("b--c").unwrap_err();
+        assert!(
+            matches!(err, WorkweaveNameError::AmbiguousDelimiter(_)),
+            "expected AmbiguousDelimiter, got: {err:?}"
+        );
+    }
+
+    #[test]
+    fn workweave_name_new_leading_dash_rejected() {
+        assert!(WorkweaveName::new("-foo").is_err());
+    }
+
+    #[test]
+    fn workweave_name_new_trailing_dash_rejected() {
+        assert!(WorkweaveName::new("foo-").is_err());
+    }
+
+    #[test]
+    fn workweave_name_new_empty_rejected() {
+        let err = WorkweaveName::new("").unwrap_err();
+        assert!(
+            matches!(
+                err,
+                WorkweaveNameError::InvalidRef(crate::vcs::RefNameError::Empty)
+            ),
+            "expected InvalidRef(Empty), got: {err:?}"
+        );
+    }
+
+    #[test]
+    fn workweave_name_deserialize_rejects_slash() {
+        let result: Result<WorkweaveName, _> = serde_yaml::from_str("feat-a/main");
+        assert!(
+            result.is_err(),
+            "slash-containing workweave name must be rejected"
+        );
+    }
+
+    #[test]
+    fn workweave_name_deserialize_rejects_double_dash() {
+        let result: Result<WorkweaveName, _> = serde_yaml::from_str("feat--v2--rc1");
+        assert!(
+            result.is_err(),
+            "double-dash workweave name must be rejected"
+        );
+    }
+
+    /// `LockFile.workweave` deserializes through this same boundary — a
+    /// hand-edited `rwv.lock` cannot smuggle an invalid name past it.
+    #[test]
+    fn workweave_name_deserialize_rejected_in_lock_file() {
+        let yaml = "workweave: feat-a/main\nrepositories: {}\n";
+        let result: Result<LockFile, _> = serde_yaml::from_str(yaml);
+        assert!(
+            result.is_err(),
+            "rwv.lock with a slash workweave must be rejected"
+        );
+    }
+
+    // ========================================================================
     // Project::from_dir edge cases
     // ========================================================================
 
@@ -2192,12 +2481,18 @@ repositories:
     #[test]
     fn project_from_dir_manifest_only_no_lock() {
         let dir = tempfile::tempdir().unwrap();
-        std::fs::write(dir.path().join("rwv.yaml"), MINIMAL_MANIFEST).unwrap();
+        // A tempdir's own name (e.g. `.tmpXXXXXX`) is not a valid project
+        // name (leading `.`), and `Project::from_dir` now enforces that even
+        // on the no-`projects/`-ancestor fallback — so tests exercising this
+        // loader nest under a plain-named subdirectory instead.
+        let project_dir = dir.path().join("proj");
+        std::fs::create_dir_all(&project_dir).unwrap();
+        std::fs::write(project_dir.join("rwv.yaml"), MINIMAL_MANIFEST).unwrap();
 
-        let project = Project::from_dir(dir.path()).unwrap();
+        let project = Project::from_dir(&project_dir).unwrap();
         assert!(project.lock.is_none());
         assert_eq!(project.manifest.repositories.len(), 1);
-        assert_eq!(project.dir, dir.path());
+        assert_eq!(project.dir, project_dir);
     }
 
     #[test]
@@ -2227,19 +2522,23 @@ repositories:
     #[test]
     fn project_from_dir_skip_lock_succeeds_with_conflict_markers() {
         let dir = tempfile::tempdir().unwrap();
-        std::fs::write(dir.path().join("rwv.yaml"), MINIMAL_MANIFEST).unwrap();
+        // See project_from_dir_manifest_only_no_lock: nest under a
+        // plain-named subdirectory so the derived project name is valid.
+        let project_dir = dir.path().join("proj");
+        std::fs::create_dir_all(&project_dir).unwrap();
+        std::fs::write(project_dir.join("rwv.yaml"), MINIMAL_MANIFEST).unwrap();
         let conflict_content = "\
 <<<<<<< HEAD\nworkweave: hotfix\nrepositories: {}\n=======\nrepositories: {}\n>>>>>>> abc1234\n";
-        std::fs::write(dir.path().join("rwv.lock"), conflict_content).unwrap();
+        std::fs::write(project_dir.join("rwv.lock"), conflict_content).unwrap();
 
         // Strict loader must fail.
         assert!(
-            Project::from_dir(dir.path()).is_err(),
+            Project::from_dir(&project_dir).is_err(),
             "from_dir must fail when rwv.lock contains conflict markers"
         );
 
         // Lockless loader must succeed and return lock: None.
-        let project = Project::from_dir_skip_lock(dir.path()).unwrap();
+        let project = Project::from_dir_skip_lock(&project_dir).unwrap();
         assert!(
             project.lock.is_none(),
             "from_dir_skip_lock must return lock: None regardless of rwv.lock content"
@@ -2256,10 +2555,14 @@ repositories:
     #[test]
     fn project_from_dir_skip_lock_succeeds_with_missing_lock() {
         let dir = tempfile::tempdir().unwrap();
-        std::fs::write(dir.path().join("rwv.yaml"), MINIMAL_MANIFEST).unwrap();
+        // See project_from_dir_manifest_only_no_lock: nest under a
+        // plain-named subdirectory so the derived project name is valid.
+        let project_dir = dir.path().join("proj");
+        std::fs::create_dir_all(&project_dir).unwrap();
+        std::fs::write(project_dir.join("rwv.yaml"), MINIMAL_MANIFEST).unwrap();
         // No rwv.lock written.
 
-        let project = Project::from_dir_skip_lock(dir.path()).unwrap();
+        let project = Project::from_dir_skip_lock(&project_dir).unwrap();
         assert!(
             project.lock.is_none(),
             "from_dir_skip_lock must return lock: None when rwv.lock is absent"
@@ -2273,17 +2576,21 @@ repositories:
     #[test]
     fn project_from_dir_skip_lock_succeeds_with_empty_lock() {
         let dir = tempfile::tempdir().unwrap();
-        std::fs::write(dir.path().join("rwv.yaml"), MINIMAL_MANIFEST).unwrap();
-        std::fs::write(dir.path().join("rwv.lock"), "").unwrap();
+        // See project_from_dir_manifest_only_no_lock: nest under a
+        // plain-named subdirectory so the derived project name is valid.
+        let project_dir = dir.path().join("proj");
+        std::fs::create_dir_all(&project_dir).unwrap();
+        std::fs::write(project_dir.join("rwv.yaml"), MINIMAL_MANIFEST).unwrap();
+        std::fs::write(project_dir.join("rwv.lock"), "").unwrap();
 
         // Strict loader must fail on an empty file.
         assert!(
-            Project::from_dir(dir.path()).is_err(),
+            Project::from_dir(&project_dir).is_err(),
             "from_dir must fail when rwv.lock is empty"
         );
 
         // Lockless loader must succeed.
-        let project = Project::from_dir_skip_lock(dir.path()).unwrap();
+        let project = Project::from_dir_skip_lock(&project_dir).unwrap();
         assert!(
             project.lock.is_none(),
             "from_dir_skip_lock must return lock: None when rwv.lock is empty"
@@ -2452,7 +2759,10 @@ repositories:
     version: abc123
 "#;
         let lock: LockFile = serde_yaml::from_str(yaml).unwrap();
-        assert_eq!(lock.workweave, Some(WorkweaveName::new("agent-42")));
+        assert_eq!(
+            lock.workweave,
+            Some(WorkweaveName::new("agent-42").unwrap())
+        );
     }
 
     #[test]
@@ -2467,7 +2777,10 @@ repositories:
     version: deadbeef
 "#;
         let lock: LockFile = serde_yaml::from_str(yaml).unwrap();
-        assert_eq!(lock.workweave, Some(WorkweaveName::new("hotfix-99")));
+        assert_eq!(
+            lock.workweave,
+            Some(WorkweaveName::new("hotfix-99").unwrap())
+        );
     }
 
     // ========================================================================
@@ -2477,13 +2790,20 @@ repositories:
     #[test]
     fn project_from_dir_with_lock() {
         let dir = tempfile::tempdir().unwrap();
-        std::fs::write(dir.path().join("rwv.yaml"), VALID_MANIFEST).unwrap();
-        std::fs::write(dir.path().join("rwv.lock"), VALID_LOCK).unwrap();
+        // See project_from_dir_manifest_only_no_lock: nest under a
+        // plain-named subdirectory so the derived project name is valid.
+        let project_dir = dir.path().join("proj");
+        std::fs::create_dir_all(&project_dir).unwrap();
+        std::fs::write(project_dir.join("rwv.yaml"), VALID_MANIFEST).unwrap();
+        std::fs::write(project_dir.join("rwv.lock"), VALID_LOCK).unwrap();
 
-        let project = Project::from_dir(dir.path()).unwrap();
+        let project = Project::from_dir(&project_dir).unwrap();
         assert!(project.lock.is_some());
         let lock = project.lock.unwrap();
-        assert_eq!(lock.workweave, Some(WorkweaveName::new("hotfix-42")));
+        assert_eq!(
+            lock.workweave,
+            Some(WorkweaveName::new("hotfix-42").unwrap())
+        );
     }
 
     // ========================================================================

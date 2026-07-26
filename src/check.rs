@@ -1768,10 +1768,12 @@ fn scan_project_dir_for_legacy(
                     .unwrap_or(project_dir)
                     .to_string_lossy()
                     .into_owned();
-                out.push(LegacyRolePrimaryManifest {
-                    project: ProjectName::new(project_name),
-                    manifest_path,
-                });
+                if let Ok(project) = ProjectName::new(project_name) {
+                    out.push(LegacyRolePrimaryManifest {
+                        project,
+                        manifest_path,
+                    });
+                }
             }
         }
     }
@@ -3406,9 +3408,10 @@ impl RecordedRefs {
                 .get_or_insert_with(|| crate::workweave::list_workweave_dirs(ws_root));
             let mut live_ref_names = std::collections::HashMap::new();
             for workweave in live_workweave_names(ws_root, &name, dirs) {
-                let minted =
-                    EphemeralRefName::mint(&name, &crate::manifest::WorkweaveName::new(&workweave));
-                live_ref_names.insert(minted.to_raw(), workweave);
+                if let Ok(workweave_name) = crate::manifest::WorkweaveName::new(&workweave) {
+                    let minted = EphemeralRefName::mint(&name, &workweave_name);
+                    live_ref_names.insert(minted.to_raw(), workweave);
+                }
             }
             projects.push(RecordedProject {
                 name,
@@ -3581,10 +3584,13 @@ fn scan_workweave_repo_branches(
 ) {
     use crate::vcs::{EphemeralRefName, HeadAttachment};
 
-    let flat = EphemeralRefName::mint(
-        &ProjectName::new(project_name),
-        &crate::manifest::WorkweaveName::new(workweave_name),
-    );
+    let Ok(project) = ProjectName::new(project_name) else {
+        return;
+    };
+    let Ok(workweave) = crate::manifest::WorkweaveName::new(workweave_name) else {
+        return;
+    };
+    let flat = EphemeralRefName::mint(&project, &workweave);
     let expected_ref = flat.to_string();
 
     for abs in workweave_checkouts(vcs, workweave_dir, project_name) {
@@ -4066,10 +4072,9 @@ fn live_minted_ref_names(ws_root: &Path) -> Vec<crate::vcs::EphemeralRefName> {
     // that turns a real branch into a "leftover".
     for (name, dir) in crate::workweave::list_workweave_dirs(ws_root) {
         if let Ok(Some(marker)) = crate::workspace::WorkweaveMarker::read(&dir) {
-            out.push(EphemeralRefName::mint(
-                &marker.project,
-                &crate::manifest::WorkweaveName::new(&name),
-            ));
+            if let Ok(workweave_name) = crate::manifest::WorkweaveName::new(&name) {
+                out.push(EphemeralRefName::mint(&marker.project, &workweave_name));
+            }
         }
     }
     // The indexes, which are the only record of a `--dir` placement outside
@@ -4079,10 +4084,9 @@ fn live_minted_ref_names(ws_root: &Path) -> Vec<crate::vcs::EphemeralRefName> {
         if let Ok(Some(index)) = crate::workweave_index::read(ws_root, &project) {
             for (name, path) in &index.workweaves {
                 if path.is_dir() {
-                    out.push(EphemeralRefName::mint(
-                        &project,
-                        &crate::manifest::WorkweaveName::new(name),
-                    ));
+                    if let Ok(workweave_name) = crate::manifest::WorkweaveName::new(name) {
+                        out.push(EphemeralRefName::mint(&project, &workweave_name));
+                    }
                 }
             }
         }
@@ -4244,7 +4248,9 @@ pub fn scan_uninitialized_submodules_in_workweaves(
     let mut violations = Vec::new();
 
     for (workweave_name_str, workweave_dir) in crate::workweave::list_workweave_dirs(ws_root) {
-        let workweave_name = WorkweaveName::new(workweave_name_str);
+        let Ok(workweave_name) = WorkweaveName::new(workweave_name_str) else {
+            continue;
+        };
         for project in projects {
             for (repo_path, _entry) in project.manifest.iter_entries() {
                 let worktree = workweave_dir.join(repo_path.as_path());
@@ -4813,10 +4819,17 @@ pub fn fix_branch_model_migration(
             continue;
         }
 
-        let flat = EphemeralRefName::mint(
-            &marker.project,
-            &crate::manifest::WorkweaveName::new(&workweave_name),
-        );
+        let workweave_name_typed = match crate::manifest::WorkweaveName::new(&workweave_name) {
+            Ok(n) => n,
+            Err(e) => {
+                errors.push(format!(
+                    "{}: skipped the branch-model migration — {e}",
+                    workweave_dir.display()
+                ));
+                continue;
+            }
+        };
+        let flat = EphemeralRefName::mint(&marker.project, &workweave_name_typed);
         let mut registry = RefRegistry::for_project(ws_root, &marker.project);
 
         for abs in workweave_checkouts(vcs, &workweave_dir, marker.project.as_str()) {
@@ -7091,11 +7104,9 @@ pub fn run_check(
                     // We push directly into `all_issues` at display time.
                     // Store for now in a side-channel parallel to the other
                     // failure vecs already used in this function.
-                    unparseable_projects.push((
-                        crate::manifest::ProjectName::new(name_from_rel),
-                        manifest_path,
-                        e.to_string(),
-                    ));
+                    if let Ok(project_name) = crate::manifest::ProjectName::new(name_from_rel) {
+                        unparseable_projects.push((project_name, manifest_path, e.to_string()));
+                    }
                 }
             }
         }
@@ -7239,12 +7250,15 @@ pub fn run_check(
                         },
                     ..
                 } => {
-                    let project_name = crate::manifest::ProjectName::new(project.clone());
-                    match fix_stale_registry_entry(
-                        ctx.primary_path(),
-                        &project_name,
-                        workweave_name,
-                    ) {
+                    let fix_result = match crate::manifest::ProjectName::new(project.clone()) {
+                        Ok(project_name) => fix_stale_registry_entry(
+                            ctx.primary_path(),
+                            &project_name,
+                            workweave_name,
+                        ),
+                        Err(e) => Err(e.into()),
+                    };
+                    match fix_result {
                         Ok(()) => {
                             println!(
                                 "[fixed] core: pruned stale registry entry `{}` \
@@ -7271,13 +7285,16 @@ pub fn run_check(
                             workweave_name,
                         },
                 } => {
-                    let project_name = crate::manifest::ProjectName::new(project.clone());
-                    match fix_unregistered_workweave(
-                        ctx.primary_path(),
-                        &project_name,
-                        workweave_name,
-                        workweave_dir,
-                    ) {
+                    let fix_result = match crate::manifest::ProjectName::new(project.clone()) {
+                        Ok(project_name) => fix_unregistered_workweave(
+                            ctx.primary_path(),
+                            &project_name,
+                            workweave_name,
+                            workweave_dir,
+                        ),
+                        Err(e) => Err(e.into()),
+                    };
+                    match fix_result {
                         Ok(()) => {
                             println!(
                                 "[fixed] core: adopted workweave `{}` at {} into \
@@ -8025,7 +8042,7 @@ pub fn run_check(
                     let abs = ww_dir.join(repo_path.as_path());
                     if abs.exists() && hygiene_seen.insert((Some(ww_name.clone()), abs.clone())) {
                         hygiene_targets.push(StateHygieneScanTarget {
-                            workweave: Some(WorkweaveName::new(ww_name.clone())),
+                            workweave: WorkweaveName::new(ww_name.clone()).ok(),
                             abs,
                             repo: repo_path.clone(),
                         });
@@ -8060,7 +8077,7 @@ pub fn run_check(
                     && hygiene_seen.insert((Some(ww_name.clone()), ww_project_abs.clone()))
                 {
                     hygiene_targets.push(StateHygieneScanTarget {
-                        workweave: Some(WorkweaveName::new(ww_name.clone())),
+                        workweave: WorkweaveName::new(ww_name.clone()).ok(),
                         abs: ww_project_abs,
                         repo: project_repo_path.clone(),
                     });
@@ -8532,11 +8549,13 @@ fn collect_doctor_violations(
                     projects.push(project);
                 }
                 Err(e) => {
-                    unparseable_projects_json.push((
-                        crate::manifest::ProjectName::new(name_from_rel),
-                        manifest_path,
-                        e.to_string(),
-                    ));
+                    if let Ok(project_name) = crate::manifest::ProjectName::new(name_from_rel) {
+                        unparseable_projects_json.push((
+                            project_name,
+                            manifest_path,
+                            e.to_string(),
+                        ));
+                    }
                 }
             }
         }
@@ -8766,7 +8785,9 @@ fn collect_doctor_violations(
 
     if matches!(ctx.checkout, Checkout::Primary { .. }) {
         for (ww_name_str, ww_dir) in crate::workweave::list_workweave_dirs(ctx.primary_path()) {
-            let ww_name = WorkweaveName::new(ww_name_str);
+            let Ok(ww_name) = WorkweaveName::new(ww_name_str) else {
+                continue;
+            };
             workweave_dirs.insert(ww_name.clone(), ww_dir.clone());
             for project in &input.projects {
                 for repo_path in project.manifest.iter_repo_paths() {

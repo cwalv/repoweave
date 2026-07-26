@@ -874,7 +874,7 @@ mod tests {
             ("github/test/repoweave", Role::Owned),
             ("github/test/some-go-tool", Role::Owned),
         ]);
-        let project = ProjectName::new("test-project");
+        let project = ProjectName::new("test-project").unwrap();
         let config = IntegrationConfig::default(); // go_version = None
         let cache = HashMap::new();
         let ctx = make_ctx_local(root, &project, &manifest, &config, &cache);
@@ -955,7 +955,7 @@ mod tests {
             ("github/test/repoweave", Role::Owned),
             ("github/test/some-go-tool", Role::Owned),
         ]);
-        let project = ProjectName::new("test-project");
+        let project = ProjectName::new("test-project").unwrap();
         let config = IntegrationConfig::default();
         let cache = HashMap::new();
         let ctx = make_ctx_local(root, &project, &manifest, &config, &cache);
@@ -1133,7 +1133,7 @@ mod tests {
         touch(root, "github/test/repoweave/go.mod");
 
         let manifest = make_manifest_local(vec![("github/test/repoweave", Role::Owned)]);
-        let project = ProjectName::new("test-project");
+        let project = ProjectName::new("test-project").unwrap();
         let config = IntegrationConfig::default();
         let cache = HashMap::new();
         let ctx = make_ctx_local(root, &project, &manifest, &config, &cache);
@@ -1182,7 +1182,7 @@ mod tests {
         touch(root, "github/test/repoweave/go.mod");
 
         let manifest = make_manifest_local(vec![("github/test/repoweave", Role::Owned)]);
-        let project = ProjectName::new("test-project");
+        let project = ProjectName::new("test-project").unwrap();
         // Set go_version explicitly in config.
         let config = IntegrationConfig::from_yaml("go-version: \"1.23\"");
         let cache = HashMap::new();
@@ -1231,7 +1231,7 @@ mod tests {
         );
 
         let manifest = make_manifest_local(vec![("github/test/repoweave", Role::Owned)]);
-        let project = ProjectName::new("test-project");
+        let project = ProjectName::new("test-project").unwrap();
         let config = IntegrationConfig::default(); // go_version = None
         let cache = HashMap::new();
         let ctx = make_ctx_local(root, &project, &manifest, &config, &cache);
@@ -1318,7 +1318,7 @@ mod tests {
 
     fn activate_in(root: &Path) {
         let manifest = make_manifest_local(vec![("github/test/repoweave", Role::Owned)]);
-        let project = ProjectName::new("test-project");
+        let project = ProjectName::new("test-project").unwrap();
         let config = IntegrationConfig::default(); // go_version = None
         let cache = HashMap::new();
         let ctx = make_ctx_local(root, &project, &manifest, &config, &cache);
@@ -1454,7 +1454,7 @@ mod tests {
         );
 
         let manifest = make_manifest_local(vec![("github/test/repoweave", Role::Owned)]);
-        let project = ProjectName::new("test-project");
+        let project = ProjectName::new("test-project").unwrap();
         let config = IntegrationConfig::default(); // go_version = None
         let cache = HashMap::new();
         let ctx = make_ctx_local(root, &project, &manifest, &config, &cache);
@@ -1500,7 +1500,7 @@ mod tests {
         );
 
         let manifest = make_manifest_local(vec![("github/test/repoweave", Role::Owned)]);
-        let project = ProjectName::new("test-project");
+        let project = ProjectName::new("test-project").unwrap();
         let config = IntegrationConfig::default(); // go_version = None
         let cache = HashMap::new();
         let ctx = make_ctx_local(root, &project, &manifest, &config, &cache);
@@ -1545,7 +1545,7 @@ mod tests {
         );
 
         let manifest = make_manifest_local(vec![("github/test/repoweave", Role::Owned)]);
-        let project = ProjectName::new("test-project");
+        let project = ProjectName::new("test-project").unwrap();
         let config = IntegrationConfig::default();
         let cache = HashMap::new();
         let ctx = make_ctx_local(root, &project, &manifest, &config, &cache);
@@ -1569,7 +1569,7 @@ mod tests {
         touch(root, "github/test/repoweave/go.mod");
 
         let manifest = make_manifest_local(vec![("github/test/repoweave", Role::Owned)]);
-        let project = ProjectName::new("test-project");
+        let project = ProjectName::new("test-project").unwrap();
         let config = IntegrationConfig::default();
         let cache = HashMap::new();
         let ctx = make_ctx_local(root, &project, &manifest, &config, &cache);
@@ -1660,7 +1660,7 @@ mod tests {
 
         let manifest =
             make_manifest_local(members.iter().map(|(p, _)| (*p, Role::Owned)).collect());
-        let project = ProjectName::new("test-project");
+        let project = ProjectName::new("test-project").unwrap();
         let config = IntegrationConfig::default();
         let cache = HashMap::new();
         member_incompatibility_for(root, &manifest, &project, &config, &cache)
@@ -1673,7 +1673,7 @@ mod tests {
         seed_go_workspace(root, go_work_version, member_version);
 
         let manifest = make_manifest_local(vec![("github/test/repoweave", Role::Owned)]);
-        let project = ProjectName::new("test-project");
+        let project = ProjectName::new("test-project").unwrap();
         let config = IntegrationConfig::default();
         let cache = HashMap::new();
         member_incompatibility_for(root, &manifest, &project, &config, &cache)
@@ -1843,7 +1843,7 @@ mod tests {
         seed_go_workspace(root, Some("1.21"), "1.26");
 
         let manifest = make_manifest_local(vec![("github/test/repoweave", Role::Owned)]);
-        let project = ProjectName::new("test-project");
+        let project = ProjectName::new("test-project").unwrap();
         let config = IntegrationConfig::default();
         let cache = HashMap::new();
         let ctx = make_ctx_local(root, &project, &manifest, &config, &cache);

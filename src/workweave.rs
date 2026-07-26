@@ -3004,6 +3004,10 @@ pub fn doctor_scan_container(
             continue;
         }
         let (project_str, parsed_name) = parsed.unwrap();
+        let project_name = match ProjectName::new(project_str) {
+            Ok(p) => p,
+            Err(_) => continue,
+        };
         let marker = match WorkweaveMarker::read(&dir) {
             Ok(Some(m)) => m,
             _ => continue,
@@ -3015,11 +3019,7 @@ pub fn doctor_scan_container(
         if m_primary != primary_canonical {
             continue;
         }
-        result.push((
-            ProjectName::new(project_str),
-            parsed_name.as_str().to_string(),
-            dir,
-        ));
+        result.push((project_name, parsed_name.as_str().to_string(), dir));
     }
     result.sort_by(|a, b| (a.0.as_str().cmp(b.0.as_str())).then(a.1.cmp(&b.1)));
     result
@@ -3440,7 +3440,7 @@ pub fn handle_claude_hook() -> anyhow::Result<()> {
                 primary_root,
                 source_root,
                 &project,
-                &WorkweaveName::new(&name),
+                &WorkweaveName::new(&name)?,
                 false,
                 false,
                 false,
@@ -3481,14 +3481,17 @@ pub fn handle_claude_hook() -> anyhow::Result<()> {
                 // for the same reason: "Claude moved on" is not the
                 // operator consenting to lose their edits, and a refusal on
                 // stderr is strictly better than a silent destroy.
-                if let Err(e) = delete_workweave(
-                    &marker.primary,
-                    &marker.project,
-                    &WorkweaveName::new(name),
-                    false,
-                    None,
-                ) {
-                    eprintln!("rwv workweave --claude-hook WorktreeRemove: warning: {e}");
+                match WorkweaveName::new(name) {
+                    Ok(name) => {
+                        if let Err(e) =
+                            delete_workweave(&marker.primary, &marker.project, &name, false, None)
+                        {
+                            eprintln!("rwv workweave --claude-hook WorktreeRemove: warning: {e}");
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("rwv workweave --claude-hook WorktreeRemove: warning: {e}");
+                    }
                 }
             }
             // Always exit 0.
@@ -3537,7 +3540,7 @@ mod tests {
     fn weave() -> (tempfile::TempDir, PathBuf, ProjectName, PathBuf) {
         let tmp = tempfile::tempdir().unwrap();
         let primary = tmp.path().join("ws");
-        let project = ProjectName::new("web-app");
+        let project = ProjectName::new("web-app").unwrap();
         std::fs::create_dir_all(primary.join("projects/web-app")).unwrap();
         let store = primary.join("github/org/repo");
         std::fs::create_dir_all(&store).unwrap();
@@ -3561,7 +3564,7 @@ mod tests {
     fn rollback_destroys_a_ref_this_create_authored_and_retracts_its_receipt() {
         let (_tmp, primary, project, store) = weave();
         let mut registry = RefRegistry::for_project(&primary, &project);
-        let name = EphemeralRefName::mint(&project, &WorkweaveName::new("ww"));
+        let name = EphemeralRefName::mint(&project, &WorkweaveName::new("ww").unwrap());
         let at = GitVcs.head_revision(&store).unwrap();
         let owned = registry.record_created(&store, name.clone(), at).unwrap();
 
@@ -3595,7 +3598,7 @@ mod tests {
     fn rollback_leaves_an_adopted_ref_alone() {
         let (_tmp, primary, project, store) = weave();
         let mut registry = RefRegistry::for_project(&primary, &project);
-        let name = EphemeralRefName::mint(&project, &WorkweaveName::new("ww"));
+        let name = EphemeralRefName::mint(&project, &WorkweaveName::new("ww").unwrap());
 
         // A branch that was already there, carrying a commit of its own.
         git(&store, &["checkout", "-b", &name.to_string()]);
@@ -3636,7 +3639,7 @@ mod tests {
     fn rollback_reports_a_ref_that_moved_instead_of_destroying_it() {
         let (_tmp, primary, project, store) = weave();
         let mut registry = RefRegistry::for_project(&primary, &project);
-        let name = EphemeralRefName::mint(&project, &WorkweaveName::new("ww"));
+        let name = EphemeralRefName::mint(&project, &WorkweaveName::new("ww").unwrap());
         let at = GitVcs.head_revision(&store).unwrap();
         let owned = registry.record_created(&store, name.clone(), at).unwrap();
 

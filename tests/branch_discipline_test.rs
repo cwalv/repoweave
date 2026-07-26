@@ -21,10 +21,10 @@
 //! **Ownership is by record.** Everything in (b), and the safe/live half of
 //! (c), keys on an ownership receipt (`branch-model.md` R2), not on the
 //! branch's name. So most fixtures below record a receipt explicitly — see
-//! [`record_receipt`] for why a receipt for `<p>--<a>/<b>` is minted from
-//! the workweave name `<a>/<b>`. A fixture that skips the receipt is
-//! asserting the *other* half: a branch that merely looks like rwv's is the
-//! operator's, and `--fix` must leave it alone.
+//! [`record_receipt`] for how a receipt for `<p>--<a>/<b>` is adopted rather
+//! than minted. A fixture that skips the receipt is asserting the *other*
+//! half: a branch that merely looks like rwv's is the operator's, and
+//! `--fix` must leave it alone.
 //!
 //! Fixture rationale: branch-discipline operates on real git repos, so the
 //! workspaces here include actual git checkouts (not just directory shells
@@ -32,7 +32,7 @@
 
 use repoweave::git::GitVcs;
 use repoweave::manifest::{ProjectName, WorkweaveName};
-use repoweave::vcs::{EphemeralRefName, Vcs};
+use repoweave::vcs::{EphemeralRefName, LegacyEphemeralRefName, RawRefName, Vcs};
 use repoweave::workweave_index::RefRegistry;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -176,46 +176,69 @@ fn create_branch(repo: &Path, name: &str, start_point: &str) {
 }
 
 /// Record an ownership receipt (`branch-model.md` §4.2) for the branch that
-/// `(project, workweave)` mints, in `store`.
+/// `(project, workweave)` names, in `store`.
 ///
 /// This is how rwv's own create path claims a ref, and after R2 it is the
 /// *only* thing that makes a ref rwv's to destroy — so a fixture that wants
 /// doctor to treat a branch as rwv's has to call this.
 ///
-/// **Why the workweave name looks odd in some callers.**
-/// [`EphemeralRefName::mint`] is total on `(project, workweave)` and yields
-/// `<project>--<workweave>`; there is no other route to a recordable name,
-/// because recording an *observed* name would mint the receipt that
-/// authorizes destroying it. So a receipt for a branch spelled
-/// `<project>--<a>/<b>` — the shape the (c) scanner still discovers, until
-/// §7.1's flat-name cutover lands — is minted from the workweave name
-/// `<a>/<b>`. `mint` deliberately does not validate its components (Q12
-/// leaves the legal grammar for names open), so that is a legal name today.
+/// **Why some callers pass a `workweave` with a `/` in it.**
+/// A receipt for a branch spelled `<project>--<a>/<b>` — the shape the (c)
+/// scanner still discovers, until §7.1's flat-name cutover lands — cannot be
+/// [`EphemeralRefName::mint`]ed: a workweave name may not contain `/`. Such a
+/// branch is instead *adopted*, the same route the migration itself takes —
+/// `workweave` is split at the first `/` into the live workweave (`<a>`,
+/// whose own flat name is the namespace) and the pre-flat branch's remainder
+/// (`<b>`), and [`LegacyEphemeralRefName::claim`] recognises the branch as
+/// sitting under that namespace.
 ///
 /// The receipt is recorded at the branch's current tip, and the branch must
 /// already exist: recording against an absent ref would produce the dangling
 /// state, which is a different fixture.
 fn record_receipt(primary: &Path, project: &str, workweave: &str, store: &Path) {
     std::fs::create_dir_all(primary.join("projects").join(project)).unwrap();
-    let project = ProjectName::new(project);
+    let project = ProjectName::new(project).unwrap();
     let mut registry = RefRegistry::for_project(primary, &project);
-    let name = EphemeralRefName::mint(&project, &WorkweaveName::new(workweave));
-    let tip = GitVcs
-        .resolve_local_branch_tip(store, &name.to_raw())
-        .expect("store is readable")
-        .unwrap_or_else(|| panic!("branch `{name}` must exist before recording a receipt for it"));
-    registry
-        .record_created(store, name, tip)
-        .expect("receipt should record");
+
+    match workweave.split_once('/') {
+        None => {
+            let name = EphemeralRefName::mint(&project, &WorkweaveName::new(workweave).unwrap());
+            let tip = GitVcs
+                .resolve_local_branch_tip(store, &name.to_raw())
+                .expect("store is readable")
+                .unwrap_or_else(|| {
+                    panic!("branch `{name}` must exist before recording a receipt for it")
+                });
+            registry
+                .record_created(store, name, tip)
+                .expect("receipt should record");
+        }
+        Some((live_workweave, _remainder)) => {
+            let flat =
+                EphemeralRefName::mint(&project, &WorkweaveName::new(live_workweave).unwrap());
+            let observed = RawRefName::new(format!("{}--{workweave}", project.as_str()));
+            let legacy = LegacyEphemeralRefName::claim(&flat, &observed)
+                .expect("fixture: `workweave` must be `<live>/<remainder>` shaped");
+            let tip = GitVcs
+                .resolve_local_branch_tip(store, &observed)
+                .expect("store is readable")
+                .unwrap_or_else(|| {
+                    panic!("branch `{observed}` must exist before recording a receipt for it")
+                });
+            registry
+                .adopt_legacy(store, legacy, tip)
+                .expect("receipt should record");
+        }
+    }
 }
 
 /// Record an ownership receipt for a ref that does **not** exist — the
 /// dangling-receipt state §4.2 calls the benign crash residue.
 fn record_dangling_receipt(primary: &Path, project: &str, workweave: &str, store: &Path) {
     std::fs::create_dir_all(primary.join("projects").join(project)).unwrap();
-    let project = ProjectName::new(project);
+    let project = ProjectName::new(project).unwrap();
     let mut registry = RefRegistry::for_project(primary, &project);
-    let name = EphemeralRefName::mint(&project, &WorkweaveName::new(workweave));
+    let name = EphemeralRefName::mint(&project, &WorkweaveName::new(workweave).unwrap());
     // Any resolvable revision works as the recorded tip: the receipt names a
     // ref that is not there, so nothing ever compares against it.
     let head = GitVcs.head_revision(store).expect("store has a HEAD");
@@ -1569,7 +1592,7 @@ fn record_placement(primary: &Path, project: &str, workweave: &str, dir: &Path) 
     std::fs::create_dir_all(primary.join("projects").join(project)).unwrap();
     repoweave::workweave_index::record_workweave(
         primary,
-        &ProjectName::new(project),
+        &ProjectName::new(project).unwrap(),
         workweave,
         dir.to_path_buf(),
     )
@@ -1698,19 +1721,19 @@ fn migration_replays_a_crash_between_the_receipt_and_the_rename() {
     // exist yet — written at the tip the crashing run observed.
     let crashed_at = rev(&ww_checkout, "HEAD");
     {
-        let project = ProjectName::new("myproj");
+        let project = ProjectName::new("myproj").unwrap();
         let mut registry = RefRegistry::for_project(&ws, &project);
+        // The pre-flat ref itself — not a workweave name, so built as a raw
+        // string rather than through WorkweaveName, which refuses `/`.
+        let pre_flat = RawRefName::new(format!("{}--feat-a/main", project.as_str()));
         let at = GitVcs
-            .resolve_local_branch_tip(
-                &canonical,
-                &EphemeralRefName::mint(&project, &WorkweaveName::new("feat-a/main")).to_raw(),
-            )
+            .resolve_local_branch_tip(&canonical, &pre_flat)
             .unwrap()
             .unwrap();
         registry
             .record_created(
                 &canonical,
-                EphemeralRefName::mint(&project, &WorkweaveName::new("feat-a")),
+                EphemeralRefName::mint(&project, &WorkweaveName::new("feat-a").unwrap()),
                 at,
             )
             .expect("receipt records");
@@ -2571,48 +2594,49 @@ fn the_retraction_arm_leaves_the_migrations_success_path_intact() {
     );
 }
 
-/// The name test alone is not the finding. [`EphemeralRefName::mint`] does
-/// not validate its components (Q12 leaves the grammar open), so a workweave
-/// *named* `a/b` mints `p--a/b` — the one segmented name that is a live
-/// workweave's own ref.
+/// This used to pin a liveness-guard safety net: [`EphemeralRefName::mint`]
+/// did not validate its components, so a workweave *named* `a/b` minted
+/// `p--a/b` — a segmented name that was a live workweave's own ref, which
+/// retraction had to be taught not to disown (nothing re-adopts a placement
+/// recorded by absolute path, outside every container scan).
 ///
-/// Retracting it would disown a workweave nothing re-adopts: §7.1's pass
-/// walks the container scan, which cannot see a placement recorded by
-/// absolute path (Q10), so no later run would put the receipt back and no
-/// verb could ever clean the ref up. The liveness question is asked before
-/// the record is dropped, and this pins that it is.
+/// That state is no longer reachable to retract-or-keep: `WorkweaveName::new`
+/// now refuses a name containing `/` before a workweave can be created at
+/// all, so `EphemeralRefName::mint` can no longer be called with one — the
+/// guard has nothing left to defend. This pins the refusal at the point
+/// that matters instead: the CLI verb itself.
 #[test]
-fn a_live_workweaves_own_segmented_name_keeps_its_receipt() {
+fn workweave_create_with_a_slash_in_the_name_is_refused() {
     let tmp = common::tempdir().unwrap();
     let ws = make_primary(tmp.path());
-    let canonical = ws.join("github").join("acme").join("repo");
-    init_repo_with_commit(&canonical);
+    let project_dir = ws.join("projects").join("myproj");
+    std::fs::create_dir_all(&project_dir).unwrap();
+    std::fs::write(project_dir.join("rwv.yaml"), "repositories: {}\n").unwrap();
+    let weaveroot = tmp.path().join(".workweaves");
+    std::fs::create_dir_all(&weaveroot).unwrap();
 
-    // Placed by absolute path, outside every container — the shape that
-    // makes the name legal and the workweave invisible to the migration.
-    let ww_dir = tmp.path().join("elsewhere").join("nested-ww");
-    write_marker(&ww_dir, &ws, "myproj", &ws);
-    record_placement(&ws, "myproj", "feat-a/nested", &ww_dir);
-    let ww_checkout = ww_dir.join("github").join("acme").join("repo");
-    std::fs::create_dir_all(ww_checkout.parent().unwrap()).unwrap();
-    worktree_add(&canonical, &ww_checkout, "myproj--feat-a/nested");
-    record_receipt(&ws, "myproj", "feat-a/nested", &canonical);
-
-    let fix = rwv()
-        .args(["doctor", "--fix", "--all"])
+    let create = rwv()
+        .args(["workweave", "myproj", "create", "feat-a/nested"])
+        .env("RWV_WORKWEAVE_DIR", &weaveroot)
         .current_dir(&ws)
         .output()
         .unwrap();
-    let fix_stdout = String::from_utf8_lossy(&fix.stdout).into_owned();
 
+    let stderr = String::from_utf8_lossy(&create.stderr);
     assert!(
-        receipt_recorded(&ws, "myproj", "myproj--feat-a/nested"),
-        "this receipt is true: the workweave is on disk and mints exactly \
-         that name, so the `/` says nothing about it; got:\n{fix_stdout}"
+        !create.status.success(),
+        "a workweave name containing `/` must be refused, not silently \
+         minted into a name that masquerades as a different workweave's \
+         pre-flat ref; got:\n{stderr}"
     );
     assert!(
-        branch_exists(&canonical, "myproj--feat-a/nested"),
-        "and its ref is untouched"
+        stderr.contains("not a valid") && stderr.contains('/'),
+        "the refusal should be the name-validation error naming the \
+         offending character, not some other failure; got:\n{stderr}"
+    );
+    assert!(
+        !weaveroot.join("myproj--feat-a").exists(),
+        "no partial workweave directory must be left behind"
     );
 }
 

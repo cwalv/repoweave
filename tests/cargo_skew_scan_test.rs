@@ -667,7 +667,7 @@ fn scan_cargo_ecosystem_produces_both_skew_and_shadowing_violations() {
         ("github/acme/foo", Role::Owned),
         ("github/acme/bar", Role::Owned),
     ]);
-    let project = ProjectName::new("test-project");
+    let project = ProjectName::new("test-project").unwrap();
     let config = IntegrationConfig::default();
     let mut cache: HashMap<String, Vec<String>> = HashMap::new();
     cache.insert(
@@ -714,7 +714,7 @@ fn scan_cargo_ecosystem_silent_when_no_cargo_members() {
     // No Cargo.toml files anywhere — scan must silently produce no findings
     // rather than erroring.
     let manifest = make_manifest(vec![]);
-    let project = ProjectName::new("test-project");
+    let project = ProjectName::new("test-project").unwrap();
     let config = IntegrationConfig::default();
     let cache: HashMap<String, Vec<String>> = HashMap::new();
     let ctx = make_ctx(root, &project, &manifest, &config, &cache);
@@ -767,7 +767,7 @@ fn scan_members_auto_enumerates_nested_workspace_sub_crates_grok_build_shape() {
         ("github/xai/grok-build", Role::Owned),
         ("github/acme/other", Role::Owned),
     ]);
-    let project = ProjectName::new("test-project");
+    let project = ProjectName::new("test-project").unwrap();
     let config = IntegrationConfig::default();
     let mut cache: HashMap<String, Vec<String>> = HashMap::new();
     cache.insert(
@@ -923,7 +923,7 @@ fn scan_members_glob_expansion_exact_path() {
         ("github/xai/big-repo", Role::Owned),
         ("github/acme/other", Role::Owned),
     ]);
-    let project = ProjectName::new("test-project");
+    let project = ProjectName::new("test-project").unwrap();
     let config = IntegrationConfig::default();
     let mut cache: HashMap<String, Vec<String>> = HashMap::new();
     cache.insert(
@@ -993,7 +993,7 @@ fn scan_members_glob_expansion_wildcard() {
         ("github/xai/big-repo", Role::Owned),
         ("github/acme/other", Role::Owned),
     ]);
-    let project = ProjectName::new("test-project");
+    let project = ProjectName::new("test-project").unwrap();
     let config = IntegrationConfig::default();
     let mut cache: HashMap<String, Vec<String>> = HashMap::new();
     cache.insert(
@@ -1056,7 +1056,7 @@ fn scan_members_glob_expansion_respects_workspace_exclude() {
     );
 
     let manifest = make_manifest(vec![("github/xai/big-repo", Role::Owned)]);
-    let project = ProjectName::new("test-project");
+    let project = ProjectName::new("test-project").unwrap();
     let config = IntegrationConfig::default();
     let mut cache: HashMap<String, Vec<String>> = HashMap::new();
     cache.insert(
@@ -1108,7 +1108,7 @@ fn scan_members_explicit_config_overrides_auto_enumeration() {
     );
 
     let manifest = make_manifest(vec![("github/xai/big-repo", Role::Owned)]);
-    let project = ProjectName::new("test-project");
+    let project = ProjectName::new("test-project").unwrap();
 
     // Operator explicitly configures only crate-a (not crate-b).
     // IntegrationConfig::from_yaml takes the settings block for the
@@ -1161,7 +1161,7 @@ fn scan_members_non_workspace_repos_unaffected() {
         ("github/acme/foo", Role::Owned),
         ("github/acme/bar", Role::Owned),
     ]);
-    let project = ProjectName::new("test-project");
+    let project = ProjectName::new("test-project").unwrap();
     let config = IntegrationConfig::default();
     let mut cache: HashMap<String, Vec<String>> = HashMap::new();
     cache.insert(
@@ -1228,7 +1228,7 @@ fn nested_workspace_reference_repo_becomes_derived_patch_source() {
         ("github/acme/ref-lib", Role::Reference),
         ("github/acme/app", Role::Owned),
     ]);
-    let project = ProjectName::new("test-project");
+    let project = ProjectName::new("test-project").unwrap();
 
     // Enable derived patch mode. IntegrationConfig::from_yaml parses the
     // cargo-workspace integration settings block directly.

@@ -173,7 +173,10 @@ integrations:
 #[test]
 fn lock_with_workweave_provenance() {
     let lock: LockFile = serde_yaml::from_str(LOCK_WITH_WORKWEAVE_YAML).unwrap();
-    assert_eq!(lock.workweave, Some(WorkweaveName::new("hotfix-42")));
+    assert_eq!(
+        lock.workweave,
+        Some(WorkweaveName::new("hotfix-42").unwrap())
+    );
     assert_eq!(lock.len(), 2);
 
     let server =
@@ -251,24 +254,35 @@ fn lock_without_workweave_round_trip_skips_workweave_key() {
 #[test]
 fn project_from_dir_manifest_only() {
     let dir = common::tempdir().unwrap();
-    std::fs::write(dir.path().join("rwv.yaml"), MINIMAL_MANIFEST_YAML).unwrap();
+    // A tempdir's own name (e.g. `.tmpXXXXXX`) is not a valid project name
+    // (leading `.`), and `Project::from_dir` now enforces that even on the
+    // no-`projects/`-ancestor fallback — so nest under a plain-named
+    // subdirectory instead.
+    let project_dir = dir.path().join("proj");
+    std::fs::create_dir_all(&project_dir).unwrap();
+    std::fs::write(project_dir.join("rwv.yaml"), MINIMAL_MANIFEST_YAML).unwrap();
 
-    let project = Project::from_dir(dir.path()).unwrap();
+    let project = Project::from_dir(&project_dir).unwrap();
     assert_eq!(project.manifest.len(), 1);
     assert!(project.lock.is_none());
-    assert_eq!(project.dir, dir.path());
+    assert_eq!(project.dir, project_dir);
 }
 
 #[test]
 fn project_from_dir_manifest_and_lock() {
     let dir = common::tempdir().unwrap();
-    std::fs::write(dir.path().join("rwv.yaml"), FULL_MANIFEST_YAML).unwrap();
-    std::fs::write(dir.path().join("rwv.lock"), LOCK_WITH_WORKWEAVE_YAML).unwrap();
+    let project_dir = dir.path().join("proj");
+    std::fs::create_dir_all(&project_dir).unwrap();
+    std::fs::write(project_dir.join("rwv.yaml"), FULL_MANIFEST_YAML).unwrap();
+    std::fs::write(project_dir.join("rwv.lock"), LOCK_WITH_WORKWEAVE_YAML).unwrap();
 
-    let project = Project::from_dir(dir.path()).unwrap();
+    let project = Project::from_dir(&project_dir).unwrap();
     assert_eq!(project.manifest.len(), 4);
     let lock = project.lock.as_ref().unwrap();
-    assert_eq!(lock.workweave, Some(WorkweaveName::new("hotfix-42")));
+    assert_eq!(
+        lock.workweave,
+        Some(WorkweaveName::new("hotfix-42").unwrap())
+    );
     assert_eq!(lock.len(), 2);
 }
 
@@ -283,11 +297,13 @@ fn project_from_dir_missing_manifest_errors() {
 #[test]
 fn project_name_derived_from_dir() {
     let dir = common::tempdir().unwrap();
-    std::fs::write(dir.path().join("rwv.yaml"), MINIMAL_MANIFEST_YAML).unwrap();
+    let project_dir = dir.path().join("proj");
+    std::fs::create_dir_all(&project_dir).unwrap();
+    std::fs::write(project_dir.join("rwv.yaml"), MINIMAL_MANIFEST_YAML).unwrap();
 
-    let project = Project::from_dir(dir.path()).unwrap();
-    // Name is derived from the path; since tempdir isn't under `projects/`,
-    // the full path is used as the name.
+    let project = Project::from_dir(&project_dir).unwrap();
+    // Name is derived from the path; since the project dir isn't under
+    // `projects/`, the last path component is used as the name.
     assert!(!project.name.as_str().is_empty());
 }
 

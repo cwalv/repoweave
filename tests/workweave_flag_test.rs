@@ -87,7 +87,7 @@ fn register_workweave(ws: &Path, project: &str, name: &str) -> PathBuf {
     // Write the `.rwv-workweave` marker so the round-trip validation passes.
     let marker = WorkweaveMarker {
         primary: ws_canon.clone(),
-        project: ProjectName::new(project),
+        project: ProjectName::new(project).unwrap(),
         parent: ws_canon.clone(),
     };
     marker.write(&ww_dir).unwrap();
@@ -99,11 +99,17 @@ fn register_workweave(ws: &Path, project: &str, name: &str) -> PathBuf {
     std::fs::write(ww_project_dir.join("rwv.yaml"), "repositories: {}\n").unwrap();
 
     // Register the workweave in the index.
-    workweave_index::record_workweave(&ws_canon, &ProjectName::new(project), name, ww_dir.clone())
-        .unwrap();
+    workweave_index::record_workweave(
+        &ws_canon,
+        &ProjectName::new(project).unwrap(),
+        name,
+        ww_dir.clone(),
+    )
+    .unwrap();
 
     // Seed the container in the index (required by `list`).
-    workweave_index::set_container(&ws_canon, &ProjectName::new(project), container).unwrap();
+    workweave_index::set_container(&ws_canon, &ProjectName::new(project).unwrap(), container)
+        .unwrap();
 
     ww_dir
 }

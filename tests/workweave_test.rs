@@ -3278,8 +3278,8 @@ fn cleanup_failure_preserves_original_error_with_manual_note() {
     std::fs::set_permissions(&hook_path, std::fs::Permissions::from_mode(0o755)).unwrap();
 
     let refs_heads = repo1.join(".git/refs/heads");
-    let project = ProjectName::new("locked-branch".to_string());
-    let ww_name = WorkweaveName::new("stuck".to_string());
+    let project = ProjectName::new("locked-branch".to_string()).unwrap();
+    let ww_name = WorkweaveName::new("stuck".to_string()).unwrap();
     let err = create_workweave(&ws, &ws, &project, &ww_name, false, false, false, None);
 
     // Restore permissions so tempdir cleanup doesn't fail.
