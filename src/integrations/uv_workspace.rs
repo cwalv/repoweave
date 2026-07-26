@@ -14,9 +14,12 @@
 //!
 //! **Owned keys** (the only bytes rwv writes):
 //! - `[tool.uv.workspace].members` — the member path array.
-//! - `[tool.uv.sources].<member-name>` = `{ workspace = true }` — one entry
-//!   per detected member (only `workspace=true` entries; user git/url/index/
-//!   path sources inside `[tool.uv.sources]` are NOT touched).
+//! - `[tool.uv.sources].<name>` = `{ workspace = true }` — one entry per
+//!   detected member, keyed by that member's own `[project].name` (read from
+//!   its `pyproject.toml`, not the directory path). A member whose name can't
+//!   be read is skipped with a warning rather than keyed by directory
+//!   basename (only `workspace=true` entries; user git/url/index/path
+//!   sources inside `[tool.uv.sources]` are NOT touched).
 //! - `[tool.uv].package` = `false` — **`DefaultOnly`**: written only when the
 //!   key is absent from the file. Required so `uv sync` accepts a non-package
 //!   root on fresh files. Never overwrites a user-set value (e.g. `true`).
@@ -124,6 +127,12 @@ impl UvWorkspace {
     /// Set `[tool.uv.sources].<dep_name> = { workspace = true }` for each
     /// member into the file at `path`, using a direct toml_edit pass.
     ///
+    /// `dep_name` is the member's own `[project].name` (read from
+    /// `<workspace_root>/<member>/pyproject.toml`) — never the directory
+    /// basename, which is not a package identity uv resolves. A member whose
+    /// name can't be read (missing file, parse failure, no `[project].name`)
+    /// is skipped with a warning naming it, via `member_package_name`.
+    ///
     /// This is a **separate pass** from `merge_activate` so that source entries
     /// do NOT carry the `# managed by rwv` marker decoration. The marker lives
     /// solely on `members`; per-source markers would cause the "exactly one
@@ -131,7 +140,11 @@ impl UvWorkspace {
     ///
     /// Preserves all user-authored keys in `[tool.uv.sources]` (git/url/index/
     /// path sources).  Only sets the workspace-true entries for each member.
-    fn set_workspace_sources(path: &Path, members: &[String]) -> anyhow::Result<()> {
+    fn set_workspace_sources(
+        path: &Path,
+        workspace_root: &Path,
+        members: &[String],
+    ) -> anyhow::Result<()> {
         if members.is_empty() || !path.exists() {
             return Ok(());
         }
@@ -142,11 +155,13 @@ impl UvWorkspace {
             .with_context(|| format!("parsing {} for sources set", path.display()))?;
 
         for member in members {
-            let dep_name = member
-                .rsplit('/')
-                .next()
-                .unwrap_or(member.as_str())
-                .to_string();
+            let Some(dep_name) = member_package_name(workspace_root, member) else {
+                eprintln!(
+                    "[warning] uv-workspace: skipping [tool.uv.sources] entry for \
+                     '{member}' — could not read [project].name from its pyproject.toml"
+                );
+                continue;
+            };
 
             // Walk/create [tool][uv][sources], then set <dep_name> = { workspace = true }.
             // Using nested get_mut/insert rather than the private parent_and_leaf helper.
@@ -309,6 +324,24 @@ fn is_workspace_true_source(item: &toml_edit::Item) -> bool {
         .unwrap_or(false)
 }
 
+/// Read `member`'s own `[project].name` from
+/// `<workspace_root>/<member>/pyproject.toml`.
+///
+/// `None` on any failure — missing file, parse error, no `[project]` table,
+/// no `name` key, or a non-string value. Callers must treat `None` as skip
+/// and warn, never as license to fall back to the directory basename: that
+/// basename is not a package identity uv resolves.
+fn member_package_name(workspace_root: &Path, member: &str) -> Option<String> {
+    let manifest = workspace_root.join(member).join("pyproject.toml");
+    let text = std::fs::read_to_string(manifest).ok()?;
+    let doc: toml_edit::DocumentMut = text.parse().ok()?;
+    doc.get("project")?
+        .as_table()?
+        .get("name")?
+        .as_str()
+        .map(String::from)
+}
+
 /// Return true if the `pyproject.toml` at `path` carries the `# managed by rwv`
 /// marker on one of `owned_keys`.
 ///
@@ -405,7 +438,7 @@ impl Integration for UvWorkspace {
         // Step 2: write `[tool.uv.sources].<dep> = { workspace = true }` for
         // each member via a direct toml_edit pass. Source entries do NOT carry
         // the marker (only `members` does) — see module doc.
-        Self::set_workspace_sources(&path, &members)
+        Self::set_workspace_sources(&path, ctx.workspace_root, &members)
             .with_context(|| format!("set-workspace-sources {}", path.display()))?;
 
         // `MergeResult.deferred` lists keys the user took the pen on.
@@ -603,6 +636,180 @@ mod tests {
         let sources = doc["tool"]["uv"]["sources"].as_table().unwrap();
         let item = &sources["bar"];
         assert!(!is_workspace_true_source(item));
+    }
+
+    /// The member's directory basename (`py-server`) differs from its real
+    /// `[project].name` (`acme-server`) — the shape the dir-basename bug
+    /// requires to reproduce.
+    #[test]
+    fn set_workspace_sources_keys_by_project_name_not_dir_basename() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+
+        write_file(
+            &tmp,
+            "services/py-server/pyproject.toml",
+            "[project]\nname = \"acme-server\"\n",
+        );
+        let path = write_file(
+            &tmp,
+            "pyproject.toml",
+            "[tool.uv.workspace]\n# managed by rwv\nmembers = [\"services/py-server\"]\n",
+        );
+
+        UvWorkspace::set_workspace_sources(&path, root, &["services/py-server".to_string()])
+            .unwrap();
+
+        let content = std::fs::read_to_string(&path).unwrap();
+        assert!(
+            content.contains("acme-server = { workspace = true }"),
+            "sources key must be the member's [project].name; got:\n{content}"
+        );
+        assert!(
+            !content.contains("py-server ="),
+            "directory basename must not be used as the sources key; got:\n{content}"
+        );
+    }
+
+    /// A member whose `pyproject.toml` is missing, and one whose
+    /// `pyproject.toml` has no `[project]` table, must both be skipped rather
+    /// than keyed by their directory basename — the loud-fallback contract.
+    #[test]
+    fn set_workspace_sources_skips_member_when_name_unreadable() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+
+        write_file(
+            &tmp,
+            "services/py-server/pyproject.toml",
+            "[project]\nname = \"acme-server\"\n",
+        );
+        write_file(
+            &tmp,
+            "services/headless/pyproject.toml",
+            "[tool.ruff]\nline-length = 100\n",
+        );
+        // `services/ghost` has no pyproject.toml on disk at all.
+        let path = write_file(
+            &tmp,
+            "pyproject.toml",
+            "[tool.uv.workspace]\n# managed by rwv\nmembers = [\"services/ghost\", \"services/headless\", \"services/py-server\"]\n",
+        );
+
+        UvWorkspace::set_workspace_sources(
+            &path,
+            root,
+            &[
+                "services/py-server".to_string(),
+                "services/ghost".to_string(),
+                "services/headless".to_string(),
+            ],
+        )
+        .unwrap();
+
+        let content = std::fs::read_to_string(&path).unwrap();
+        assert!(
+            content.contains("acme-server = { workspace = true }"),
+            "the one readable member must still get its entry; got:\n{content}"
+        );
+        assert!(
+            !content.contains("ghost = "),
+            "member with no pyproject.toml must be skipped, not keyed by dir basename; got:\n{content}"
+        );
+        assert!(
+            !content.contains("headless = "),
+            "member with no [project].name must be skipped, not keyed by dir basename; got:\n{content}"
+        );
+    }
+
+    /// `strip_workspace_sources` removes source entries by value shape
+    /// (`workspace = true`), regardless of key — so it already clears an old
+    /// wrong-basename entry. This pins the other half: regen must key the
+    /// replacement by the member's real name, not reproduce the basename it
+    /// just stripped.
+    #[test]
+    fn strip_then_regen_converges_wrong_basename_key_to_project_name() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+
+        write_file(
+            &tmp,
+            "services/py-server/pyproject.toml",
+            "[project]\nname = \"acme-server\"\n",
+        );
+        let path = write_file(
+            &tmp,
+            "pyproject.toml",
+            r#"[tool.uv.workspace]
+# managed by rwv
+members = ["services/py-server"]
+
+[tool.uv.sources]
+py-server = { workspace = true }
+"#,
+        );
+
+        UvWorkspace::strip_workspace_sources(&path).unwrap();
+        let after_strip = std::fs::read_to_string(&path).unwrap();
+        assert!(
+            !after_strip.contains("py-server ="),
+            "old wrong-keyed entry must be gone after strip; got:\n{after_strip}"
+        );
+
+        UvWorkspace::set_workspace_sources(&path, root, &["services/py-server".to_string()])
+            .unwrap();
+        let after_regen = std::fs::read_to_string(&path).unwrap();
+        assert!(
+            after_regen.contains("acme-server = { workspace = true }"),
+            "regen must key the entry by [project].name; got:\n{after_regen}"
+        );
+        assert!(
+            !after_regen.contains("py-server ="),
+            "wrong basename key must not reappear; got:\n{after_regen}"
+        );
+    }
+
+    /// `set_workspace_sources` only ever sets the current `dep_name`; it does
+    /// not scan `[tool.uv.sources]` for keys it no longer expects. A stale
+    /// entry from an old key therefore survives a bare re-`activate()` and
+    /// sits alongside the correct one — convergence needs the strip/regen
+    /// cycle pinned above, not a plain re-run.
+    #[test]
+    fn set_workspace_sources_alone_does_not_clear_a_stale_key() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+
+        write_file(
+            &tmp,
+            "services/py-server/pyproject.toml",
+            "[project]\nname = \"acme-server\"\n",
+        );
+        let path = write_file(
+            &tmp,
+            "pyproject.toml",
+            r#"[tool.uv.workspace]
+# managed by rwv
+members = ["services/py-server"]
+
+[tool.uv.sources]
+py-server = { workspace = true }
+"#,
+        );
+
+        UvWorkspace::set_workspace_sources(&path, root, &["services/py-server".to_string()])
+            .unwrap();
+
+        let content = std::fs::read_to_string(&path).unwrap();
+        assert!(
+            content.contains("acme-server = { workspace = true }"),
+            "correct entry must be present; got:\n{content}"
+        );
+        assert!(
+            content.contains("py-server = { workspace = true }"),
+            "documents current behavior: a bare re-activate leaves the stale \
+             basename-keyed entry in place, alongside the new correct one; \
+             got:\n{content}"
+        );
     }
 
     #[test]
