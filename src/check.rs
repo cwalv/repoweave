@@ -648,10 +648,22 @@ pub enum WorkweaveTreeIntegrityKind {
     /// Report-only.
     UnregisteredDir,
     /// The marker's `primary:` path does not resolve to the workspace this
-    /// scan was started from (e.g. an rsync'd workweave whose marker still
-    /// points at the origin machine's absolute path). Report-only.
+    /// scan was started from, and the path itself resolves to no workspace
+    /// either (missing, or exists but is not a workspace root) — e.g. an
+    /// rsync'd workweave whose marker still points at the origin machine's
+    /// absolute path. Report-only.
     ForeignPrimary {
         /// The primary path recorded in the marker (unresolved).
+        marker_primary: PathBuf,
+    },
+    /// The marker's `primary:` path does not match this workspace, but
+    /// resolves to a different, valid workspace root — the normal shape
+    /// when several weaves share one workweave container. Not a defect in
+    /// this workweave, so excluded from the default text report: every
+    /// sibling weave's doctor would otherwise repeat this about every other
+    /// sibling. Still enumerated under `--json`.
+    ForeignPrimaryOtherWorkspace {
+        /// The other workspace's primary path (resolved).
         marker_primary: PathBuf,
     },
     /// A registered workweave entry whose recorded path is not a valid
@@ -2520,11 +2532,18 @@ pub fn scan_workweave_tree_integrity(ws_root: &Path) -> Vec<CheckViolation> {
             .canonicalize()
             .unwrap_or_else(|_| marker.primary.clone());
         if marker_primary_canonical != ws_canonical {
+            let sub_kind = if crate::workspace::is_workspace_root(&marker_primary_canonical) {
+                WorkweaveTreeIntegrityKind::ForeignPrimaryOtherWorkspace {
+                    marker_primary: marker_primary_canonical.clone(),
+                }
+            } else {
+                WorkweaveTreeIntegrityKind::ForeignPrimary {
+                    marker_primary: marker.primary.clone(),
+                }
+            };
             violations.push(CheckViolation::WorkweaveTreeIntegrity {
                 workweave_dir: dir.clone(),
-                sub_kind: WorkweaveTreeIntegrityKind::ForeignPrimary {
-                    marker_primary: marker.primary.clone(),
-                },
+                sub_kind,
             });
             // A foreign-primary marker's `parent` field refers to another
             // machine's paths; chain analysis against our on-disk tree would
@@ -5488,7 +5507,22 @@ fn reattach_advice(recorded_ref: Option<&str>, expected_prefix: &str) -> String 
 pub fn violations_to_issues(violations: Vec<CheckViolation>) -> Vec<Issue> {
     violations
         .into_iter()
-        .map(|v| {
+        .filter_map(|v| {
+            // A foreign-primary marker that resolves to a different, valid
+            // workspace is expected under a shared workweave container and
+            // not this workspace's problem; every sibling weave's doctor
+            // would otherwise repeat the same finding about every other
+            // sibling. `--json` still carries it: `ViolationOutput` is built
+            // straight from `CheckViolation`, not through this function.
+            if matches!(
+                &v,
+                CheckViolation::WorkweaveTreeIntegrity {
+                    sub_kind: WorkweaveTreeIntegrityKind::ForeignPrimaryOtherWorkspace { .. },
+                    ..
+                }
+            ) {
+                return None;
+            }
             // safe_to_fix defaults to true; live-class branch-discipline
             // findings override to false so `doctor --fix` leaves them alone.
             let mut safe_to_fix = true;
@@ -5725,6 +5759,13 @@ pub fn violations_to_issues(violations: Vec<CheckViolation>) -> Vec<Issue> {
                         WorkweaveTreeIntegrityKind::ForeignPrimary { marker_primary } => format!(
                             "{}: marker `primary` (`{}`) does not match this workspace; \
                              this workweave may have been copied from another machine",
+                            workweave_dir.display(),
+                            marker_primary.display()
+                        ),
+                        WorkweaveTreeIntegrityKind::ForeignPrimaryOtherWorkspace {
+                            marker_primary,
+                        } => format!(
+                            "{}: belongs to workspace `{}`; not this workspace's to manage",
                             workweave_dir.display(),
                             marker_primary.display()
                         ),
@@ -6338,12 +6379,12 @@ pub fn violations_to_issues(violations: Vec<CheckViolation>) -> Vec<Issue> {
                     )
                 }
             };
-            Issue {
+            Some(Issue {
                 integration: "core".into(),
                 severity,
                 message,
                 safe_to_fix,
-            }
+            })
         })
         .collect()
 }

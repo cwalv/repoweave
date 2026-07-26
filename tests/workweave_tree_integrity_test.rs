@@ -6,7 +6,11 @@
 //!   2. `parent-chain-anomaly` — cycle, parent==self, parent belongs to a
 //!      different project
 //!   3. `unregistered-dir` — directory under `.workweaves/` with no marker
-//!   4. `foreign-primary`  — marker `primary:` does not match the workspace
+//!   4. `foreign-primary`  — marker `primary:` does not match the workspace;
+//!      splits into `foreign-primary` (the recorded path resolves to no
+//!      workspace) and `foreign-primary-other-workspace` (it resolves to a
+//!      different, real one — expected when several weaves share one
+//!      container, so filtered from the default text report)
 //!
 //! Each sub-kind has:
 //!   - a synthetic-violation fixture test (reports the violation)
@@ -298,6 +302,14 @@ fn foreign_primary_is_reported() {
         stdout.contains("other/machine") || stdout.contains("foreign"),
         "report should reference the foreign primary path; got:\n{stdout}"
     );
+    // A primary that resolves to no workspace at all is the one case the
+    // copied-from-another-machine hypothesis actually fits; pin the exact
+    // phrase so it can't quietly erode once a second, unrelated cause
+    // (foreign-primary-other-workspace, below) also lives in this match.
+    assert!(
+        stdout.contains("copied from another machine"),
+        "an unresolvable primary must still name the likely cause; got:\n{stdout}"
+    );
 }
 
 /// A workweave with its `primary:` correctly set to the current workspace
@@ -315,6 +327,83 @@ fn local_primary_is_not_flagged_as_foreign() {
     assert!(
         !stdout.contains("foreign-primary"),
         "workweave with correct primary should not be flagged as foreign; got:\n{stdout}"
+    );
+}
+
+// ===========================================================================
+// 4b. Foreign-primary pointing at a different, but real, workspace
+//
+// The shape at issue: several weaves share one `.workweaves` container, so
+// each one's marker names its own primary — which is "foreign" to every
+// *other* weave scanning that same container. That is not a copied-marker
+// defect, and the fix must not say it is.
+// ===========================================================================
+
+/// A marker whose `primary` resolves to a different, *real* workspace root
+/// must not claim to have been copied from another machine — and, per the
+/// filtered-by-default design here, must not appear in the default text
+/// report at all (it is not this workspace's problem).
+#[test]
+fn foreign_primary_pointing_at_a_real_workspace_is_not_reported_as_copied() {
+    let tmp = common::tempdir().unwrap();
+    let ws = make_primary(tmp.path());
+    let other_ws = make_primary(&tmp.path().join("elsewhere"));
+    let ww_dir = workweaves_dir(&ws).join("my-project--sibling");
+    write_marker(&ww_dir, &other_ws, "my-project", &other_ws);
+
+    let out = rwv().args(["doctor"]).current_dir(&ws).output().unwrap();
+    let stdout = String::from_utf8_lossy(&out.stdout);
+
+    assert!(
+        !stdout.contains("copied from another machine"),
+        "a marker pointing at a different but real workspace must not claim \
+         to have been copied; got:\n{stdout}"
+    );
+    assert!(
+        !stdout.contains("my-project--sibling"),
+        "foreign-primary-other-workspace is filtered from the default text \
+         report — it belongs to a sibling weave sharing this container, not \
+         a finding this workspace's operator needs to act on; got:\n{stdout}"
+    );
+}
+
+/// The suppressed-from-text finding above is not simply dropped: `--json`
+/// still carries it, correctly discriminated from the unresolvable case.
+#[test]
+fn foreign_primary_other_workspace_is_visible_via_json() {
+    let tmp = common::tempdir().unwrap();
+    let ws = make_primary(tmp.path());
+    let other_ws = make_primary(&tmp.path().join("elsewhere"));
+    let ww_dir = workweaves_dir(&ws).join("my-project--sibling");
+    write_marker(&ww_dir, &other_ws, "my-project", &other_ws);
+
+    let out = rwv()
+        .args(["doctor", "--json"])
+        .current_dir(&ws)
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let json: serde_json::Value = serde_json::from_str(&stdout)
+        .unwrap_or_else(|e| panic!("doctor --json produced invalid JSON: {e}\noutput: {stdout}"));
+
+    let violations = json["violations"].as_array().expect("violations is array");
+    let finding = violations
+        .iter()
+        .find(|v| {
+            v["kind"] == "workweave-tree-integrity"
+                && v["sub_kind"]
+                    .get("foreign-primary-other-workspace")
+                    .is_some()
+        })
+        .unwrap_or_else(|| {
+            panic!("expected a foreign-primary-other-workspace finding; got: {violations:?}")
+        });
+
+    let other_ws_canonical = other_ws.canonicalize().unwrap();
+    assert_eq!(
+        finding["sub_kind"]["foreign-primary-other-workspace"]["marker_primary"],
+        serde_json::Value::String(other_ws_canonical.to_string_lossy().into_owned()),
+        "must name the resolved path of the other workspace"
     );
 }
 

@@ -186,7 +186,7 @@ fn workspace_marker_names() -> Vec<String> {
 
 /// Returns true if `dir` looks like a workspace root (contains projects/ or
 /// a registry directory).
-fn is_workspace_root(dir: &Path) -> bool {
+pub fn is_workspace_root(dir: &Path) -> bool {
     for marker in workspace_marker_names() {
         let candidate = dir.join(&marker);
         if candidate.is_dir() {
