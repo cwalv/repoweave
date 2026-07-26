@@ -770,8 +770,7 @@ impl Integration for CargoWorkspace {
             return Ok(());
         }
 
-        // Precheck: `activate` is a context verb (per trigger-model.md and
-        // file-ownership.md §"The trigger model") — it surfaces + verifies but
+        // Precheck: `activate` is a context verb — it surfaces + verifies but
         // NEVER authors managed content. If the hybrid `Cargo.toml` was never
         // generated (typically: a repo acquired its `Cargo.toml` AFTER the
         // `rwv add` that would have triggered generation), running
@@ -1364,8 +1363,7 @@ impl CargoWorkspace {
     }
 
     /// The owned key paths stripped on `deactivate(root)`. Static because
-    /// `Integration::deactivate` has no `IntegrationContext` — see
-    /// `integration.rs:154`. Plan §3 / §11 res #15:
+    /// `Integration::deactivate` has no `IntegrationContext`:
     ///
     /// - `members` is stripped unconditionally — it is an `Ownership::Author`
     ///   key.

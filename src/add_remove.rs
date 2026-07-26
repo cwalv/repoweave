@@ -40,12 +40,12 @@ fn find_project_dir(ctx: &WorkspaceContext) -> anyhow::Result<std::path::PathBuf
 ///
 /// Used by `rwv add` from a workweave so the workweave gets the new repo's
 /// worktree as part of the add (mirrors the pattern in
-/// `sync::materialize_missing_repo`). This is a **birth** (§3.3 R1) and it
-/// goes through the same [`EphemeralRefName::mint`] as `workweave create`:
-/// the inlined derivation that used to live here — the canonical's
-/// `current_ref` plus a private 12-char truncation, one of the three
-/// disagreeing copies §3.5 deletes — is gone, along with the third component
-/// it derived.
+/// `sync::materialize_missing_repo`). Creating an attachment where there was
+/// none is a **birth**: it attaches at the revision the verb is
+/// materializing, and is never followed by a move to reach the intended
+/// revision. The name comes from [`EphemeralRefName::mint`], the same and
+/// only minter `workweave create` uses — deriving one here instead is what
+/// let three copies of the derivation disagree.
 ///
 /// It also **emits an ownership receipt**, which is what makes a later
 /// `workweave delete` visit this ref at all: under R2 delete destroys the
@@ -526,10 +526,10 @@ pub fn run_remove(
 
 /// R4: refuse a DESTROY-STORE while the store is still claimed.
 ///
-/// `remove --delete` deletes an entire ref store and its object database
-/// (branch-model.md §3.2), which destroys every ref and every object at once
-/// — so no ref-level rule can gate it, and none is allowed to be read as
-/// permitting it. R4 names the two claims that must be gone first:
+/// `remove --delete` deletes an entire ref store and its object database,
+/// which destroys every ref and every object at once — so no ref-level rule
+/// can gate it, and none is allowed to be read as permitting it. R4 names the
+/// two claims that must be gone first:
 ///
 /// - **no live worktree registered against the store.** Every workweave
 ///   checkout of this repo is a linked worktree of this store, so deleting it

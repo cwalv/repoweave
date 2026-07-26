@@ -97,19 +97,13 @@ pub fn generate_lock(
 
         // Ask what HEAD *is* before asking what it resolves to.
         //
-        // This is lock's restatement of the deleted `current_ref` in terms of
-        // `branch-model.md` §4.3's observation replacement, `head_attachment`
-        // (§5's `lock` row: "warning text gains the unborn/detached
-        // distinction"). The old line was
-        // `current_ref(..).ok().flatten().is_none()`, which read as "on no
-        // branch" but actually meant *four* things at once (§4.5): detached,
-        // unborn, not-a-repo, and unreadable-ref-database. `.ok()` threw the
-        // last two away, so lock could not tell an operator whose member
-        // directory was not a repo at all from one who had detached on
-        // purpose. `head_attachment` is total over the three that are states
-        // and returns the two that are errors as errors — so the `Err` arm
-        // below is now a refusal that names the repo, not a silent
-        // no-warning.
+        // "On no branch" is four situations, not one: detached, unborn,
+        // not-a-repo, and an unreadable ref database. `head_attachment` is
+        // total over the three that are states and returns the two that are
+        // errors as errors, so the `Err` arm below must refuse and name the
+        // repo. Collapsing it to a `.ok()` would leave an operator whose
+        // member directory is not a repo at all indistinguishable from one
+        // who detached on purpose.
         //
         // Unborn deliberately warns about nothing: an unborn HEAD cannot be
         // pinned at all, and `head_revision` refuses it by name two lines
