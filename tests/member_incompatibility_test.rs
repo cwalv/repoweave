@@ -18,6 +18,7 @@
 use assert_cmd::Command;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
+use std::sync::OnceLock;
 
 mod common;
 
@@ -41,18 +42,48 @@ fn rwv() -> Command {
 /// `doctor` authors nothing and needs no such pinning.
 fn rwv_without_go() -> Command {
     let mut cmd = common::rwv();
-    let filtered: Vec<PathBuf> = std::env::var_os("PATH")
-        .map(|p| {
-            std::env::split_paths(&p)
-                .filter(|dir| !dir.join("go").exists())
-                .collect()
-        })
-        .unwrap_or_default();
-    cmd.env(
-        "PATH",
-        std::env::join_paths(&filtered).expect("PATH entries should rejoin"),
-    );
+    cmd.env("PATH", go_free_bin());
     cmd
+}
+
+/// A directory holding a symlink to `git` and nothing else — the `PATH` the
+/// helper above hands to `rwv`.
+///
+/// Stated as an allow-list because the subtractive spelling is wrong in a way
+/// that hides. Dropping every `PATH` entry that contains a `go` also drops
+/// `git` wherever the two are installed into one bin directory, as they are on
+/// the CI runner: every subprocess then fails naming the wrong tool (`git fetch
+/// failed to spawn`), and whether the suite passes at all depends on the
+/// operator's Go install layout. A directory is not the unit the intent is
+/// about.
+///
+/// A test under this helper that needs a tool beyond `git` fails loudly and
+/// says which — add it here.
+fn go_free_bin() -> PathBuf {
+    static DIR: OnceLock<PathBuf> = OnceLock::new();
+    DIR.get_or_init(|| {
+        // Not a `TempDir`: one held in a `static` never drops, so it would
+        // leave a directory behind on every run.
+        let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("go-free-bin");
+        std::fs::create_dir_all(&dir).expect("shim bin directory should be creatable");
+
+        let git = which("git").expect("git must be on PATH to run these tests");
+        let link = dir.join("git");
+        match std::os::unix::fs::symlink(&git, &link) {
+            Ok(()) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
+            Err(e) => panic!("linking git into {}: {e}", dir.display()),
+        }
+        dir
+    })
+    .clone()
+}
+
+/// Absolute path of `name` on the ambient `PATH`.
+fn which(name: &str) -> Option<PathBuf> {
+    std::env::split_paths(&std::env::var_os("PATH")?)
+        .map(|dir| dir.join(name))
+        .find(|p| p.is_file())
 }
 
 /// Whether the real `go` binary is on `PATH`.
