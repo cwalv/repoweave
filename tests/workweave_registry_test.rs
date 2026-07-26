@@ -111,6 +111,63 @@ fn create_records_workweave_in_the_index() {
     );
 }
 
+// The container is recorded in the same canonical form as the placements under
+// it. macOS reproduces this for free — `tempfile` hands out a path under `/var`,
+// which is a symlink to `/private/var` — so an explicit symlink is what makes
+// the same assertion bite on Linux instead of only in CI.
+
+#[test]
+fn a_symlinked_container_is_recorded_canonicalized() {
+    let tmp = tempfile::tempdir().unwrap();
+    let ws = make_workspace(tmp.path(), "web-app");
+
+    let real = tmp.path().join("real-container");
+    std::fs::create_dir_all(&real).unwrap();
+    let link = tmp.path().join("link-container");
+    std::os::unix::fs::symlink(&real, &link).unwrap();
+
+    rwv()
+        .args(["workweave", "web-app", "create", "feat"])
+        .env("RWV_WORKWEAVE_DIR", &link)
+        .current_dir(&ws)
+        .assert()
+        .success();
+
+    let idx = read_index(&ws, "web-app");
+    let container = idx["container"].as_str().unwrap();
+    assert_eq!(container, real.canonicalize().unwrap().to_string_lossy());
+
+    let placement = idx["workweaves"]["feat"].as_str().unwrap();
+    assert!(
+        placement.starts_with(&format!("{container}/")),
+        "placement {placement} must sit under the recorded container {container}"
+    );
+}
+
+#[test]
+fn set_container_records_a_symlinked_path_canonicalized() {
+    let tmp = tempfile::tempdir().unwrap();
+    let ws = make_workspace(tmp.path(), "web-app");
+
+    let real = tmp.path().join("real-container");
+    std::fs::create_dir_all(&real).unwrap();
+    let link = tmp.path().join("link-container");
+    std::os::unix::fs::symlink(&real, &link).unwrap();
+
+    rwv()
+        .args(["workweave", "web-app", "set-container"])
+        .arg(&link)
+        .current_dir(&ws)
+        .assert()
+        .success();
+
+    let idx = read_index(&ws, "web-app");
+    assert_eq!(
+        idx["container"].as_str().unwrap(),
+        real.canonicalize().unwrap().to_string_lossy()
+    );
+}
+
 #[test]
 fn delete_removes_registry_entry() {
     let tmp = tempfile::tempdir().unwrap();

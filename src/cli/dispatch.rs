@@ -787,16 +787,12 @@ pub fn run() -> anyhow::Result<()> {
                         } else {
                             primary_root.join(&raw)
                         };
-                        let canonical = abs.canonicalize().unwrap_or(abs);
-                        crate::workweave_index::set_container(
-                            primary_root,
-                            &project,
-                            canonical.clone(),
-                        )?;
+                        let recorded =
+                            crate::workweave_index::set_container(primary_root, &project, abs)?;
                         eprintln!(
                             "recorded workweave container for project `{}`: {}",
                             project.as_str(),
-                            canonical.display()
+                            recorded.display()
                         );
                     }
                 }

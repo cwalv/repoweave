@@ -998,27 +998,6 @@ pub(crate) fn receipt_store_for(checkout: &Path) -> PathBuf {
     resolved_worktree_parent(checkout, checkout)
 }
 
-/// A comparable form of a workweave placement, for a path that may not exist
-/// yet.
-///
-/// Placements are recorded canonicalized, so comparing a recorded entry
-/// against a directory this create has not made yet needs the *container*
-/// canonicalized and the leaf rejoined — otherwise a `/tmp` that is a symlink
-/// makes every not-yet-created placement look different from its own recorded
-/// entry.
-fn canonical_placement(dir: &Path) -> PathBuf {
-    if let Ok(p) = dir.canonicalize() {
-        return p;
-    }
-    match (dir.parent(), dir.file_name()) {
-        (Some(parent), Some(leaf)) => parent
-            .canonicalize()
-            .map(|p| p.join(leaf))
-            .unwrap_or_else(|_| dir.to_path_buf()),
-        _ => dir.to_path_buf(),
-    }
-}
-
 /// Materialize a worktree at `dest` on this workweave's ephemeral ref in the
 /// store behind `source_repo`, writing the ownership receipt first.
 ///
@@ -1243,7 +1222,9 @@ pub fn create_workweave(
     // and `birth_ephemeral_worktree` refuses to destroy a ref it cannot prove
     // is a stale leftover.
     if let Some(recorded) = workweave_index::lookup_raw(primary_root, project, name.as_str())? {
-        if canonical_placement(&recorded) != canonical_placement(&workweave_dir) {
+        if workweave_index::canonical_recorded_path(&recorded)
+            != workweave_index::canonical_recorded_path(&workweave_dir)
+        {
             bail!(
                 "project `{project}` already records a workweave named `{name}` at {recorded}; \
                  refusing to create a second one at {requested}.\n\n\

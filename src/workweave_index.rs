@@ -210,6 +210,29 @@ pub fn default_container(primary_root: &Path) -> PathBuf {
         .join(".workweaves")
 }
 
+/// The form in which this index records an absolute path, for a directory that
+/// may not exist yet.
+///
+/// Recorded paths are canonicalized, so comparing a recorded entry against a
+/// directory no one has created yet needs the *parent* canonicalized and the
+/// leaf rejoined — otherwise a `/tmp` that is a symlink makes every
+/// not-yet-created path look different from its own recorded entry. The
+/// container is subject to the same rule as the placements under it: on macOS
+/// a temporary directory reached through `/var` records one way and resolves
+/// the other.
+pub(crate) fn canonical_recorded_path(dir: &Path) -> PathBuf {
+    if let Ok(p) = dir.canonicalize() {
+        return p;
+    }
+    match (dir.parent(), dir.file_name()) {
+        (Some(parent), Some(leaf)) => parent
+            .canonicalize()
+            .map(|p| p.join(leaf))
+            .unwrap_or_else(|_| dir.to_path_buf()),
+        _ => dir.to_path_buf(),
+    }
+}
+
 /// Read the index file for `(primary_root, project)`.
 ///
 /// Returns `Ok(None)` if the file does not exist (bootstrap case: workspace
@@ -397,27 +420,35 @@ pub fn resolve_container(primary_root: &Path, project: &ProjectName) -> anyhow::
     }
     if let Ok(v) = std::env::var("RWV_WORKWEAVE_DIR") {
         if !v.is_empty() {
-            return Ok(PathBuf::from(v));
+            return Ok(canonical_recorded_path(Path::new(&v)));
         }
     }
-    Ok(default_container(primary_root))
+    Ok(canonical_recorded_path(&default_container(primary_root)))
 }
 
 /// Set the container in the index for `(primary_root, project)`, creating
 /// the index file with an empty `workweaves` map if it did not exist.
 ///
-/// The recorded entries are preserved. `container` should be an absolute
-/// path; the caller canonicalizes if needed.
+/// The recorded entries are preserved. `container` must be absolute; it is
+/// recorded in [`canonical_recorded_path`] form, like the placements under it,
+/// and that recorded form is returned.
+///
+/// Canonicalizing here rather than in each caller is what keeps the rule true:
+/// the container and the placements beneath it are written by different code
+/// paths, and a rule every caller has to remember is one this index spent a
+/// release not obeying.
 pub fn set_container(
     primary_root: &Path,
     project: &ProjectName,
     container: PathBuf,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<PathBuf> {
     let _guard = index_rmw_guard();
+    let container = canonical_recorded_path(&container);
     let mut index =
         read(primary_root, project)?.unwrap_or_else(|| WorkweaveIndex::new(container.clone()));
-    index.container = container;
-    write(primary_root, project, &index)
+    index.container = container.clone();
+    write(primary_root, project, &index)?;
+    Ok(container)
 }
 
 /// Record a workweave entry `name → path` in the index for
@@ -463,7 +494,7 @@ fn read_or_seed(primary_root: &Path, project: &ProjectName) -> anyhow::Result<Wo
         Ok(v) if !v.is_empty() => PathBuf::from(v),
         _ => default_container(primary_root),
     };
-    Ok(WorkweaveIndex::new(seed))
+    Ok(WorkweaveIndex::new(canonical_recorded_path(&seed)))
 }
 
 /// Remove a workweave entry from the index. No-op if the entry (or the index
