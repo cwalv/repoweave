@@ -337,6 +337,167 @@ fn add_invalid_url_errors_clearly() {
 }
 
 // ============================================================================
+// default branch: honest resolution, never a fabricated guess
+// ============================================================================
+
+#[test]
+fn add_url_resolves_a_non_main_remote_default_branch() {
+    let tmp = common::tempdir().unwrap();
+
+    // A remote whose real default branch is `master`, not `main` — the
+    // regression shape for a machine with `init.defaultBranch=master`.
+    let bare = tmp.path().join("acme").join("masterrepo.git");
+    std::fs::create_dir_all(bare.parent().unwrap()).unwrap();
+    let status = common::git()
+        .args(["init", "--bare", "--initial-branch=master"])
+        .arg(&bare)
+        .stdout(process::Stdio::null())
+        .stderr(process::Stdio::null())
+        .status()
+        .expect("git should be available");
+    assert!(status.success(), "git init --bare failed");
+
+    let work_tmp = common::tempdir().expect("tempdir for working clone");
+    let work = work_tmp.path().join("work");
+    let run = |args: &[&str], cwd: &Path| {
+        let status = common::git()
+            .args(args)
+            .current_dir(cwd)
+            .stdout(process::Stdio::null())
+            .stderr(process::Stdio::null())
+            .status()
+            .expect("git command failed to start");
+        assert!(status.success(), "git {:?} failed", args);
+    };
+    run(
+        &["clone", &bare.to_string_lossy(), &work.to_string_lossy()],
+        work_tmp.path(),
+    );
+    run(&["config", "user.email", "test@test.com"], &work);
+    run(&["config", "user.name", "Test"], &work);
+    std::fs::write(work.join("README"), "init").unwrap();
+    run(&["add", "."], &work);
+    run(&["commit", "-m", "initial"], &work);
+    run(&["push", "origin", "master"], &work);
+
+    let remote_url = format!("file://{}", bare.display());
+    let (workspace, _project_dir) = setup_workspace_with_project(&tmp, &[]);
+
+    rwv()
+        .args(["add", &remote_url])
+        .current_dir(&workspace)
+        .assert()
+        .success();
+
+    let manifest_path = workspace.join("projects/test-project/rwv.yaml");
+    let manifest =
+        Manifest::from_path(&manifest_path).expect("rwv.yaml written by `rwv add` must parse");
+    let entry = manifest
+        .get_entry(&RepoPath::new("local/acme/masterrepo").unwrap())
+        .expect("expected local/acme/masterrepo in the manifest");
+    assert_eq!(
+        entry.version.as_str(),
+        "master",
+        "the remote's real default branch is `master`; the manifest must record \
+         that (read from origin/HEAD), not a fabricated `main`"
+    );
+}
+
+#[test]
+fn add_local_path_refuses_rather_than_fabricate_main_when_origin_head_is_unset() {
+    let tmp = common::tempdir().unwrap();
+
+    // Any valid remote target — this codepath never fetches from it, only
+    // reads the local clone's own config and refs.
+    let bare = tmp.path().join("unset-head-remote.git");
+    init_bare_repo_with_commit(&bare);
+
+    let (workspace, _project_dir) = setup_workspace_with_project(&tmp, &[]);
+
+    // A pre-existing local repo on branch `master` (the shape a machine
+    // with `init.defaultBranch=master` produces) with an `origin` remote
+    // configured but never fetched or cloned through — `git remote add`
+    // alone never creates `refs/remotes/origin/HEAD`; only a real
+    // `git clone` or an explicit `git remote set-head` does (verified
+    // separately; `add_url_resolves_a_non_main_remote_default_branch`
+    // covers the clone case).
+    let repo_path = "local/acme/masterrepo";
+    let local_dir = workspace.join(repo_path);
+    std::fs::create_dir_all(&local_dir).unwrap();
+    let run = |args: &[&str]| {
+        let status = common::git()
+            .args(args)
+            .current_dir(&local_dir)
+            .stdout(process::Stdio::null())
+            .stderr(process::Stdio::null())
+            .status()
+            .expect("git command failed to start");
+        assert!(status.success(), "git {:?} failed", args);
+    };
+    run(&["init", "--initial-branch=master"]);
+    run(&["remote", "add", "origin", &bare.to_string_lossy()]);
+
+    let result = rwv()
+        .args(["add", repo_path])
+        .current_dir(&workspace)
+        .assert()
+        .failure();
+
+    let stderr = String::from_utf8_lossy(&result.get_output().stderr).to_string();
+    assert!(
+        stderr.contains("origin/HEAD") && stderr.contains("remote set-head"),
+        "refusal must name the resolving command, got: {stderr}"
+    );
+
+    let manifest_path = workspace.join("projects/test-project/rwv.yaml");
+    let manifest_content = std::fs::read_to_string(&manifest_path).unwrap();
+    assert!(
+        !manifest_content.contains(repo_path),
+        "a refused add must not write a manifest entry at all, got:\n{manifest_content}"
+    );
+    assert!(
+        !manifest_content.contains("main"),
+        "must never fabricate 'main' for a repo whose real branch is master, got:\n{manifest_content}"
+    );
+}
+
+#[test]
+fn add_new_records_the_branch_git_init_actually_created() {
+    let tmp = common::tempdir().unwrap();
+    let (workspace, _project_dir) = setup_workspace_with_project(&tmp, &[]);
+
+    rwv()
+        .args(["add", "github/myorg/newrepo", "--new"])
+        .current_dir(&workspace)
+        .assert()
+        .success();
+
+    let manifest_path = workspace.join("projects/test-project/rwv.yaml");
+    let manifest = Manifest::from_path(&manifest_path)
+        .expect("rwv.yaml written by `rwv add --new` must parse");
+    let entry = manifest
+        .get_entry(&RepoPath::new("github/myorg/newrepo").unwrap())
+        .expect("expected github/myorg/newrepo in the manifest");
+
+    // Read HEAD back from the repo `rwv add --new` just created instead of
+    // hardcoding an expectation, so this stays honest even if `init_repo`'s
+    // own initial-branch choice ever changes.
+    let repo_dir = workspace.join("github/myorg/newrepo");
+    let output = common::git()
+        .args(["symbolic-ref", "--short", "HEAD"])
+        .current_dir(&repo_dir)
+        .output()
+        .expect("git symbolic-ref should run");
+    let actual_branch = String::from_utf8_lossy(&output.stdout).trim().to_string();
+
+    assert_eq!(
+        entry.version.as_str(),
+        actual_branch,
+        "the manifest's version: must match the repo's real HEAD branch, not a guess"
+    );
+}
+
+// ============================================================================
 // rwv remove PATH — removes entry from manifest
 // ============================================================================
 

@@ -945,22 +945,6 @@ impl Vcs for GitVcs {
         Ok(())
     }
 
-    fn default_branch(&self, repo: &Path) -> Result<RefName, VcsError> {
-        const FALLBACK: &str = "main";
-
-        // All rwv clones use `origin`. Strip the prefix to recover the bare
-        // branch name; fall back to "main" if the symref isn't set yet.
-        let sym = "refs/remotes/origin/HEAD";
-        if let Ok(sym_ref) = Self::run(&["symbolic-ref", sym], repo) {
-            let branch = sym_ref
-                .strip_prefix("refs/remotes/origin/")
-                .unwrap_or(FALLBACK)
-                .to_string();
-            return Ok(RefName::new(branch));
-        }
-        Ok(RefName::new(FALLBACK))
-    }
-
     fn conflict_resolution_hint(&self, op: ConflictOp) -> String {
         git_conflict_resolution_hint(op)
     }
@@ -2144,9 +2128,9 @@ impl Vcs for GitVcs {
         }
         const NAMESPACE: &str = "refs/remotes/origin/";
         match Self::run(&["symbolic-ref", "refs/remotes/origin/HEAD"], repo) {
-            // No fallback. The shipped `default_branch` invented "main"
-            // here, so the publish gate compared an observation against a
-            // guess; `None` makes the gate refuse and say what is missing.
+            // No fallback: an unset or malformed symref is an absence, not
+            // a guess. A caller that invents a name here trades an honest
+            // refusal for a comparison against a fabrication.
             Ok(target) => Ok(RemoteDefaultBranch::from_symref_target(&target, NAMESPACE)),
             Err(_) => Ok(None),
         }

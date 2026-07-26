@@ -478,6 +478,10 @@ fn sync_phase3_materializes_newly_added_repo_in_workweave() {
         ],
         &new_repo_abs,
     );
+    // `rwv add` refuses rather than guess when origin/HEAD is unset, so
+    // fetch and set it — the state a real pre-existing clone would have.
+    git(&["fetch", "origin"], &new_repo_abs);
+    git(&["remote", "set-head", "origin", "-a"], &new_repo_abs);
 
     rwv()
         .args(["add", new_repo_path])
@@ -590,6 +594,10 @@ fn sync_phase3_materialize_failure_is_fatal() {
         ],
         &new_repo_abs,
     );
+    // `rwv add` refuses rather than guess when origin/HEAD is unset, so
+    // fetch and set it — the state a real pre-existing clone would have.
+    git(&["fetch", "origin"], &new_repo_abs);
+    git(&["remote", "set-head", "origin", "-a"], &new_repo_abs);
     rwv()
         .args(["add", new_repo_path])
         .current_dir(&main.root)

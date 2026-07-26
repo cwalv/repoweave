@@ -222,11 +222,21 @@ fn add_with_project_override_regenerates_without_selecting() {
     select_proj_a(&ws);
 
     // A second on-disk repo, added by local path so no clone is needed.
-    // Local-path add reads the repo's `origin` to record a URL.
+    // Local-path add reads the repo's `origin` to record a URL — the
+    // origin is unreachable on purpose, so origin/HEAD is planted by hand
+    // rather than fetched, the same local-only state `rwv add` reads.
     let client = ws.join("github/acme/client");
     init_repo(&client);
     git(
         &["remote", "add", "origin", "file:///nowhere/client.git"],
+        &client,
+    );
+    git(
+        &[
+            "symbolic-ref",
+            "refs/remotes/origin/HEAD",
+            "refs/remotes/origin/main",
+        ],
         &client,
     );
 

@@ -6,7 +6,7 @@ use crate::git::GitVcs;
 use crate::integration_runner::missing_active_members;
 use crate::manifest::{Manifest, ProjectName, RepoEntry, RepoPath, RepoUrl, Role, VcsType};
 use crate::registry::{builtin_registries, Registry};
-use crate::vcs::{EphemeralRefName, Vcs};
+use crate::vcs::{EphemeralRefName, HeadAttachment, RefName, Vcs};
 use crate::workspace::{Checkout, WorkspaceContext};
 use crate::workweave_index::RefRegistry;
 use anyhow::{bail, Context};
@@ -292,7 +292,20 @@ pub fn run_add(url: &str, role: Role, ctx: &WorkspaceContext) -> anyhow::Result<
     }
 
     let git = GitVcs;
-    let default_branch = git.default_branch(&dest)?;
+    let Some(remote_default) = git
+        .remote_default_branch(&dest)
+        .with_context(|| format!("failed to determine default branch for {}", dest.display()))?
+    else {
+        anyhow::bail!(
+            "rwv add: origin/HEAD is unset for '{}' at {}; run `git remote set-head origin -a` \
+             there (or push once with an explicit branch) to record its canonical branch, \
+             then re-run `rwv add {}`",
+            repo_path.as_str(),
+            dest.display(),
+            url
+        );
+    };
+    let default_branch = RefName::new(remote_default.local_counterpart().to_string());
 
     // Add entry to manifest.
     let entry = RepoEntry {
@@ -378,7 +391,23 @@ fn run_add_from_local_path(
     }
 
     let git = GitVcs;
-    let default_branch = git.default_branch(clone_dir)?;
+    let Some(remote_default) = git.remote_default_branch(clone_dir).with_context(|| {
+        format!(
+            "failed to determine default branch for {}",
+            clone_dir.display()
+        )
+    })?
+    else {
+        anyhow::bail!(
+            "rwv add: origin/HEAD is unset for '{}' at {}; run `git remote set-head origin -a` \
+             there (or push once with an explicit branch) to record its canonical branch, \
+             then re-run `rwv add {}`",
+            repo_path.as_str(),
+            clone_dir.display(),
+            path_arg
+        );
+    };
+    let default_branch = RefName::new(remote_default.local_counterpart().to_string());
 
     // Add entry to manifest using the inferred origin URL.
     let entry = RepoEntry {
@@ -661,7 +690,17 @@ pub fn run_add_new(path_arg: &str, ctx: &WorkspaceContext) -> anyhow::Result<()>
     }
 
     let git = GitVcs;
-    let default_branch = git.default_branch(&dest)?;
+    let default_branch = match git.head_attachment(&dest)? {
+        HeadAttachment::Unborn(u) => RefName::new(u.to_string()),
+        HeadAttachment::Attached(a) => RefName::new(a.to_string()),
+        HeadAttachment::Detached(_) => anyhow::bail!(
+            "rwv add: repo at {} has a detached HEAD right after `git init`; \
+             inspect with `git -C {} status` before retrying `rwv add {} --new`",
+            dest.display(),
+            dest.display(),
+            path_arg
+        ),
+    };
 
     // Add entry to manifest with role primary.
     let entry = RepoEntry {

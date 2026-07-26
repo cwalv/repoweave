@@ -1342,11 +1342,10 @@ impl fmt::Display for BornRef {
 ///
 /// Its sole producer is [`Vcs::remote_default_branch`], which returns
 /// `None` when the remote's HEAD is unset or malformed. **There is no
-/// fallback.** The shipped implementation fabricated `"main"` on any
-/// failure, so the publish gate compared an observation against an
-/// invention; with `None`, the gate has to refuse and say the remote's HEAD
-/// is unset. Q6 — *which* ref publishes, and where a non-default channel's
-/// identity is recorded — is policy and stays open.
+/// fallback** — a guessed name here would let a caller compare an
+/// observation against an invention instead of refusing and saying the
+/// remote's HEAD is unset. Q6 — *which* ref publishes, and where a
+/// non-default channel's identity is recorded — is policy and stays open.
 ///
 /// Display only, like the other types the publish gate touches: the gate
 /// compares through [`RemoteDefaultBranch::local_counterpart`], the same
@@ -1953,13 +1952,6 @@ pub trait Vcs {
 
     /// Prune stale worktree administrative files from a repo.
     fn worktree_prune(&self, repo: &Path) -> Result<(), VcsError>;
-
-    /// Return the default branch name for `repo`.
-    ///
-    /// Reads `refs/remotes/origin/HEAD` via `git symbolic-ref` and strips the
-    /// `refs/remotes/origin/` prefix to obtain the branch name (e.g., `main`).
-    /// Falls back to `"main"` when no remote or no `origin/HEAD` is configured.
-    fn default_branch(&self, repo: &Path) -> Result<RefName, VcsError>;
 
     /// Human-readable hint text for the VCS-level steps to resolve a conflict
     /// and stage the result. Embedded verbatim in sync's conflict-bail messages.
