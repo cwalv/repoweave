@@ -157,18 +157,17 @@ fn workweave_create_makes_directory_under_weaveroot() {
     let tmp = common::tempdir().unwrap();
     let ws = make_workspace(tmp.path(), "web-app");
 
-    // Use RWV_WORKWEAVE_DIR so the workweave goes to a known location.
+    // The default container, so the workweave lands here with no override.
     let weaveroot = tmp.path().join(".workweaves");
     std::fs::create_dir_all(&weaveroot).unwrap();
 
     rwv()
         .args(["workweave", "web-app", "create", "hotfix"])
-        .env("RWV_WORKWEAVE_DIR", &weaveroot)
         .current_dir(&ws)
         .assert()
         .success();
 
-    // Workweave directory should be under RWV_WORKWEAVE_DIR.
+    // Workweave directory should be under the default container.
     let ww_dir = weaveroot.join("web-app--hotfix");
     assert!(
         ww_dir.exists(),
@@ -187,7 +186,6 @@ fn workweave_create_worktrees_on_ephemeral_branches() {
 
     rwv()
         .args(["workweave", "web-app", "create", "hotfix"])
-        .env("RWV_WORKWEAVE_DIR", &weaveroot)
         .current_dir(&ws)
         .assert()
         .success();
@@ -229,7 +227,6 @@ fn workweave_create_mirrors_primary_layout() {
 
     rwv()
         .args(["workweave", "web-app", "create", "feat-x"])
-        .env("RWV_WORKWEAVE_DIR", &weaveroot)
         .current_dir(&ws)
         .assert()
         .success();
@@ -262,7 +259,6 @@ fn create_workweave_includes_project_repo() {
 
     rwv()
         .args(["workweave", "my-project", "create", "feat"])
-        .env("RWV_WORKWEAVE_DIR", &weaveroot)
         .current_dir(&ws)
         .assert()
         .success();
@@ -299,7 +295,6 @@ fn delete_workweave_removes_project_worktree() {
     // Create first.
     rwv()
         .args(["workweave", "my-project", "create", "to-del"])
-        .env("RWV_WORKWEAVE_DIR", &weaveroot)
         .current_dir(&ws)
         .assert()
         .success();
@@ -320,7 +315,6 @@ fn delete_workweave_removes_project_worktree() {
             "to-del",
             "--discard-uncommitted",
         ])
-        .env("RWV_WORKWEAVE_DIR", &weaveroot)
         .current_dir(&ws)
         .assert()
         .success();
@@ -378,7 +372,6 @@ workweave:
 
     rwv()
         .args(["workweave", "web-app", "create", "copy-test"])
-        .env("RWV_WORKWEAVE_DIR", &weaveroot)
         .current_dir(&ws)
         .assert()
         .success();
@@ -436,7 +429,6 @@ workweave:
 
     rwv()
         .args(["workweave", "web-app", "create", "link-test"])
-        .env("RWV_WORKWEAVE_DIR", &weaveroot)
         .current_dir(&ws)
         .assert()
         .success();
@@ -484,7 +476,6 @@ fn create_workweave_writes_marker() {
 
     rwv()
         .args(["workweave", "web-app", "create", "marker-test"])
-        .env("RWV_WORKWEAVE_DIR", &weaveroot)
         .current_dir(&ws)
         .assert()
         .success();
@@ -533,7 +524,6 @@ fn create_workweave_writes_the_marker_and_not_rwv_active() {
 
     rwv()
         .args(["workweave", "web-app", "create", "active-test"])
-        .env("RWV_WORKWEAVE_DIR", &weaveroot)
         .current_dir(&ws)
         .assert()
         .success();
@@ -574,7 +564,6 @@ fn workweave_delete_removes_directory_and_worktrees() {
     // Create a workweave first.
     rwv()
         .args(["workweave", "web-app", "create", "to-delete"])
-        .env("RWV_WORKWEAVE_DIR", &weaveroot)
         .current_dir(&ws)
         .assert()
         .success();
@@ -585,7 +574,6 @@ fn workweave_delete_removes_directory_and_worktrees() {
     // Delete it.
     rwv()
         .args(["workweave", "web-app", "delete", "to-delete"])
-        .env("RWV_WORKWEAVE_DIR", &weaveroot)
         .current_dir(&ws)
         .assert()
         .success();
@@ -623,20 +611,17 @@ fn workweave_list_shows_existing_workweaves() {
     // Create two workweaves.
     rwv()
         .args(["workweave", "web-app", "create", "alpha"])
-        .env("RWV_WORKWEAVE_DIR", &weaveroot)
         .current_dir(&ws)
         .assert()
         .success();
     rwv()
         .args(["workweave", "web-app", "create", "beta"])
-        .env("RWV_WORKWEAVE_DIR", &weaveroot)
         .current_dir(&ws)
         .assert()
         .success();
 
     rwv()
         .args(["workweave", "web-app", "list"])
-        .env("RWV_WORKWEAVE_DIR", &weaveroot)
         .current_dir(&ws)
         .assert()
         .success()
@@ -653,7 +638,6 @@ fn workweave_list_empty_when_no_workweaves() {
 
     rwv()
         .args(["workweave", "web-app", "list"])
-        .env("RWV_WORKWEAVE_DIR", &weaveroot)
         .current_dir(&ws)
         .assert()
         .success();
@@ -661,30 +645,35 @@ fn workweave_list_empty_when_no_workweaves() {
 }
 
 // ============================================================================
-// RWV_WORKWEAVE_DIR override
+// RWV_WORKWEAVE_DIR is inert
 // ============================================================================
 
 #[test]
-fn workweave_respects_weaveroot_env() {
+fn workweave_ignores_weaveroot_env() {
     let tmp = common::tempdir().unwrap();
     let ws = make_workspace(tmp.path(), "web-app");
 
-    let custom_root = tmp.path().join("custom-weaves");
-    std::fs::create_dir_all(&custom_root).unwrap();
+    let decoy_root = tmp.path().join("custom-weaves");
+    std::fs::create_dir_all(&decoy_root).unwrap();
 
     rwv()
         .args(["workweave", "web-app", "create", "override-test"])
-        .env("RWV_WORKWEAVE_DIR", &custom_root)
+        .env("RWV_WORKWEAVE_DIR", &decoy_root)
         .current_dir(&ws)
         .assert()
         .success();
 
-    // The workweave should be created under the custom root.
-    let ww_in_custom = custom_root.join("web-app--override-test");
+    // The workweave must land in the compiled-in default container, not
+    // the directory the retired env var names.
     assert!(
-        ww_in_custom.exists(),
-        "workweave should be created under RWV_WORKWEAVE_DIR at {}",
-        ww_in_custom.display()
+        decoy_root.read_dir().unwrap().next().is_none(),
+        "RWV_WORKWEAVE_DIR must not steer placement"
+    );
+    let ww_default = tmp.path().join(".workweaves/web-app--override-test");
+    assert!(
+        ww_default.exists(),
+        "workweave should be created under the default container at {}",
+        ww_default.display()
     );
 }
 
@@ -729,7 +718,6 @@ fn workweave_with_multiple_repos_creates_all_worktrees() {
 
     rwv()
         .args(["workweave", "full-stack", "create", "multi"])
-        .env("RWV_WORKWEAVE_DIR", &weaveroot)
         .current_dir(&ws)
         .assert()
         .success();
@@ -759,7 +747,6 @@ fn cli_workweave_hook_mode_outputs_path() {
 
     let output = rwv()
         .args(["workweave", "web-app", "--hook-mode", "create", "hook-test"])
-        .env("RWV_WORKWEAVE_DIR", &weaveroot)
         .current_dir(&ws)
         .assert()
         .success()
@@ -794,7 +781,6 @@ fn cli_workweave_hook_mode_path_is_absolute() {
 
     let output = rwv()
         .args(["workweave", "web-app", "--hook-mode", "create", "abs-test"])
-        .env("RWV_WORKWEAVE_DIR", &weaveroot)
         .current_dir(&ws)
         .assert()
         .success()
@@ -824,7 +810,6 @@ fn cli_workweave_create_without_hook_mode() {
 
     let output = rwv()
         .args(["workweave", "web-app", "create", "normal-test"])
-        .env("RWV_WORKWEAVE_DIR", &weaveroot)
         .current_dir(&ws)
         .assert()
         .success()
@@ -867,7 +852,6 @@ fn workweave_full_round_trip() {
     // --- Create ---
     rwv()
         .args(["workweave", "round-trip-project", "create", "rt"])
-        .env("RWV_WORKWEAVE_DIR", &weaveroot)
         .current_dir(&ws)
         .assert()
         .success();
@@ -921,7 +905,6 @@ fn workweave_full_round_trip() {
             "rt",
             "--discard-uncommitted",
         ])
-        .env("RWV_WORKWEAVE_DIR", &weaveroot)
         .current_dir(&ws)
         .assert()
         .success();
@@ -1016,7 +999,6 @@ fn create_workweave_generates_ecosystem_files() {
 
     rwv()
         .args(["workweave", "cargo-project", "create", "eco"])
-        .env("RWV_WORKWEAVE_DIR", &weaveroot)
         .current_dir(&ws)
         .assert()
         .success();
@@ -1057,7 +1039,6 @@ fn resolve_from_inside_workweave_returns_workweave_path() {
     // Create a workweave.
     rwv()
         .args(["workweave", "web-app", "create", "resolve-test"])
-        .env("RWV_WORKWEAVE_DIR", &weaveroot)
         .current_dir(&ws)
         .assert()
         .success();
@@ -1067,7 +1048,6 @@ fn resolve_from_inside_workweave_returns_workweave_path() {
     // Run `rwv resolve` from inside the workweave directory.
     let output = rwv()
         .arg("resolve")
-        .env("RWV_WORKWEAVE_DIR", &weaveroot)
         .current_dir(&ww_dir)
         .assert()
         .success()
@@ -1106,7 +1086,6 @@ fn workweave_name_with_hyphens_and_underscores() {
 
     rwv()
         .args(["workweave", "web-app", "create", "feat_my-feature_v2"])
-        .env("RWV_WORKWEAVE_DIR", &weaveroot)
         .current_dir(&ws)
         .assert()
         .success();
@@ -1142,7 +1121,6 @@ fn workweave_create_without_rwv_active_in_primary() {
     // Should succeed: project name is provided as CLI argument.
     rwv()
         .args(["workweave", "my-proj", "create", "no-active"])
-        .env("RWV_WORKWEAVE_DIR", &weaveroot)
         .current_dir(&ws)
         .assert()
         .success();
@@ -1165,7 +1143,6 @@ fn delete_nonexistent_workweave_errors_gracefully() {
     // Attempt to delete a workweave that was never created.
     let result = rwv()
         .args(["workweave", "web-app", "delete", "ghost"])
-        .env("RWV_WORKWEAVE_DIR", &weaveroot)
         .current_dir(&ws)
         .assert();
 
@@ -1232,7 +1209,6 @@ fn delete_workweave_cleans_up_ephemeral_branches() {
     // Create a workweave — this creates ephemeral branch "web-app--cleanup" in the repo.
     rwv()
         .args(["workweave", "web-app", "create", "cleanup"])
-        .env("RWV_WORKWEAVE_DIR", &weaveroot)
         .current_dir(&ws)
         .assert()
         .success();
@@ -1250,7 +1226,6 @@ fn delete_workweave_cleans_up_ephemeral_branches() {
     // Delete the workweave.
     rwv()
         .args(["workweave", "web-app", "delete", "cleanup"])
-        .env("RWV_WORKWEAVE_DIR", &weaveroot)
         .current_dir(&ws)
         .assert()
         .success();
@@ -1308,7 +1283,6 @@ fn create_refuses_and_preserves_a_branch_it_does_not_own() {
     // The create must refuse rather than clear the name.
     let assert = rwv()
         .args(["workweave", "web-app", "create", "stale-test"])
-        .env("RWV_WORKWEAVE_DIR", &weaveroot)
         .current_dir(&ws)
         .assert()
         .failure();
@@ -1355,7 +1329,6 @@ fn create_reuses_its_own_unmoved_leftover() {
 
     rwv()
         .args(["workweave", "web-app", "create", "leftover"])
-        .env("RWV_WORKWEAVE_DIR", &weaveroot)
         .current_dir(&ws)
         .assert()
         .success();
@@ -1392,7 +1365,6 @@ fn create_reuses_its_own_unmoved_leftover() {
     // Recreating the same workweave proceeds: receipt present, tip unmoved.
     rwv()
         .args(["workweave", "web-app", "create", "leftover"])
-        .env("RWV_WORKWEAVE_DIR", &weaveroot)
         .current_dir(&ws)
         .assert()
         .success();
@@ -1438,7 +1410,6 @@ fn workweave_create_from_workweave_cwd_forks_from_workweave() {
     // Create the rig workweave from primary CWD (today's behavior).
     rwv()
         .args(["workweave", "web-app", "create", "rig"])
-        .env("RWV_WORKWEAVE_DIR", &weaveroot)
         .current_dir(&ws)
         .assert()
         .success();
@@ -1464,7 +1435,6 @@ fn workweave_create_from_workweave_cwd_forks_from_workweave() {
     // should fork from rig.
     rwv()
         .args(["workweave", "web-app", "create", "peer"])
-        .env("RWV_WORKWEAVE_DIR", &weaveroot)
         .current_dir(&rig_dir)
         .assert()
         .success();
@@ -1514,7 +1484,6 @@ fn workweave_create_from_primary_flag_overrides_active_path() {
 
     rwv()
         .args(["workweave", "web-app", "create", "rig"])
-        .env("RWV_WORKWEAVE_DIR", &weaveroot)
         .current_dir(&ws)
         .assert()
         .success();
@@ -1540,7 +1509,6 @@ fn workweave_create_from_primary_flag_overrides_active_path() {
             "--from",
             "primary",
         ])
-        .env("RWV_WORKWEAVE_DIR", &weaveroot)
         .current_dir(&rig_dir)
         .assert()
         .success();
@@ -1590,7 +1558,6 @@ fn claude_hook_create_produces_path() {
 
     let output = rwv()
         .args(["workweave", "--claude-hook"])
-        .env("RWV_WORKWEAVE_DIR", &weaveroot)
         .write_stdin(json)
         .output()
         .unwrap();
@@ -1630,7 +1597,6 @@ fn claude_hook_null_branch_fallback() {
 
     let output = rwv()
         .args(["workweave", "--claude-hook"])
-        .env("RWV_WORKWEAVE_DIR", &weaveroot)
         .write_stdin(json)
         .output()
         .unwrap();
@@ -1666,7 +1632,6 @@ fn claude_hook_remove_cleans_up() {
     // First create a workweave the normal way.
     rwv()
         .args(["workweave", "web-app", "create", "to-remove"])
-        .env("RWV_WORKWEAVE_DIR", &weaveroot)
         .current_dir(&ws)
         .assert()
         .success();
@@ -1679,7 +1644,6 @@ fn claude_hook_remove_cleans_up() {
 
     rwv()
         .args(["workweave", "--claude-hook"])
-        .env("RWV_WORKWEAVE_DIR", &weaveroot)
         .write_stdin(json)
         .assert()
         .success();
@@ -1737,7 +1701,6 @@ fn create_workweave_dir_name_uses_project_not_primary_basename() {
 
     rwv()
         .args(["workweave", "web-app", "create", "scratch"])
-        .env("RWV_WORKWEAVE_DIR", &weaveroot)
         .current_dir(&ws)
         .assert()
         .success();
@@ -1762,7 +1725,6 @@ fn delete_workweave_resolves_project_form() {
 
     rwv()
         .args(["workweave", "web-app", "create", "del-me"])
-        .env("RWV_WORKWEAVE_DIR", &weaveroot)
         .current_dir(&ws)
         .assert()
         .success();
@@ -1771,7 +1733,6 @@ fn delete_workweave_resolves_project_form() {
 
     rwv()
         .args(["workweave", "web-app", "delete", "del-me"])
-        .env("RWV_WORKWEAVE_DIR", &weaveroot)
         .current_dir(&ws)
         .assert()
         .success();
@@ -1806,20 +1767,17 @@ fn list_workweaves_is_scoped_by_project() {
 
     rwv()
         .args(["workweave", "project-a", "create", "a-only"])
-        .env("RWV_WORKWEAVE_DIR", &weaveroot)
         .current_dir(&ws)
         .assert()
         .success();
     rwv()
         .args(["workweave", "project-b", "create", "b-only"])
-        .env("RWV_WORKWEAVE_DIR", &weaveroot)
         .current_dir(&ws)
         .assert()
         .success();
 
     let out = rwv()
         .args(["workweave", "project-a", "list"])
-        .env("RWV_WORKWEAVE_DIR", &weaveroot)
         .current_dir(&ws)
         .assert()
         .success()
@@ -1865,7 +1823,6 @@ fn list_omits_unregistered_workweave_and_doctor_can_adopt_it() {
     let stdout = String::from_utf8(
         rwv()
             .args(["workweave", "web-app", "list"])
-            .env("RWV_WORKWEAVE_DIR", &weaveroot)
             .current_dir(&ws)
             .assert()
             .success()
@@ -1882,7 +1839,6 @@ fn list_omits_unregistered_workweave_and_doctor_can_adopt_it() {
     // Doctor --fix adopts it into the registry.
     rwv()
         .args(["doctor", "--fix"])
-        .env("RWV_WORKWEAVE_DIR", &weaveroot)
         .current_dir(&ws)
         .assert()
         .stdout(predicates::str::contains("adopted workweave `from-old`"));
@@ -1891,7 +1847,6 @@ fn list_omits_unregistered_workweave_and_doctor_can_adopt_it() {
     let stdout2 = String::from_utf8(
         rwv()
             .args(["workweave", "web-app", "list"])
-            .env("RWV_WORKWEAVE_DIR", &weaveroot)
             .current_dir(&ws)
             .assert()
             .success()
@@ -1928,7 +1883,6 @@ fn create_over_a_detached_source_still_mints_the_flat_name() {
 
     rwv()
         .args(["workweave", "web-app", "create", "det"])
-        .env("RWV_WORKWEAVE_DIR", &weaveroot)
         .current_dir(&ws)
         .assert()
         .success();
@@ -1977,7 +1931,6 @@ fn create_workweave_cleans_up_on_bail() {
 
     rwv()
         .args(["workweave", "web-app", "create", "retryme"])
-        .env("RWV_WORKWEAVE_DIR", &weaveroot)
         .current_dir(&ws)
         .assert()
         .failure();
@@ -2018,7 +1971,6 @@ fn create_workweave_bails_on_project_worktree_failure() {
 
     rwv()
         .args(["workweave", "web-app", "create", "conflict"])
-        .env("RWV_WORKWEAVE_DIR", &weaveroot)
         .current_dir(&ws)
         .assert()
         .failure();
@@ -2084,7 +2036,6 @@ fn create_workweave_rollback_prunes_orphan_worktree_registrations() {
 
     rwv()
         .args(["workweave", "web-app", "create", "partial"])
-        .env("RWV_WORKWEAVE_DIR", &weaveroot)
         .current_dir(&ws)
         .assert()
         .failure();
@@ -2180,7 +2131,6 @@ fn create_workweave_rollback_prunes_all_registered_worktrees_not_just_failed() {
 
     rwv()
         .args(["workweave", "web-app", "create", "multi-partial"])
-        .env("RWV_WORKWEAVE_DIR", &weaveroot)
         .current_dir(&ws)
         .assert()
         .failure();
@@ -2245,7 +2195,6 @@ fn create_workweave_clean_retry_after_failure_succeeds() {
 
     rwv()
         .args(["workweave", "web-app", "create", "retry-me"])
-        .env("RWV_WORKWEAVE_DIR", &weaveroot)
         .current_dir(&ws)
         .assert()
         .failure();
@@ -2267,7 +2216,6 @@ fn create_workweave_clean_retry_after_failure_succeeds() {
     // cleaned up all state from the first attempt.
     rwv()
         .args(["workweave", "web-app", "create", "retry-me"])
-        .env("RWV_WORKWEAVE_DIR", &weaveroot)
         .current_dir(&ws)
         .assert()
         .success();
@@ -2302,7 +2250,6 @@ fn no_marker_diagnostic_names_partial_create_as_likely_cause() {
 
     rwv()
         .args(["workweave", "web-app", "create", "orphan"])
-        .env("RWV_WORKWEAVE_DIR", &weaveroot)
         .current_dir(&ws)
         .assert()
         .failure()
@@ -2390,7 +2337,6 @@ fn create_workweave_replace_existing_prunes_orphan_worktree_registrations() {
             "stale-ww",
             "--replace-existing",
         ])
-        .env("RWV_WORKWEAVE_DIR", &weaveroot)
         .current_dir(&ws)
         .assert()
         .success();
@@ -2462,7 +2408,6 @@ fn workweave_delete_refuses_dirty_manifest_repo() {
 
     rwv()
         .args(["workweave", "web-app", "create", "dirty"])
-        .env("RWV_WORKWEAVE_DIR", &weaveroot)
         .current_dir(&ws)
         .assert()
         .success();
@@ -2474,7 +2419,6 @@ fn workweave_delete_refuses_dirty_manifest_repo() {
     // Plain delete: must refuse, must name the waiver and the dirty repo.
     rwv()
         .args(["workweave", "web-app", "delete", "dirty"])
-        .env("RWV_WORKWEAVE_DIR", &weaveroot)
         .current_dir(&ws)
         .assert()
         .failure()
@@ -2501,7 +2445,6 @@ fn workweave_delete_discard_uncommitted_proceeds_on_dirty() {
 
     rwv()
         .args(["workweave", "web-app", "create", "del-force"])
-        .env("RWV_WORKWEAVE_DIR", &weaveroot)
         .current_dir(&ws)
         .assert()
         .success();
@@ -2519,7 +2462,6 @@ fn workweave_delete_discard_uncommitted_proceeds_on_dirty() {
             "del-force",
             "--discard-uncommitted",
         ])
-        .env("RWV_WORKWEAVE_DIR", &weaveroot)
         .current_dir(&ws)
         .assert()
         .success();
@@ -2545,14 +2487,12 @@ fn workweave_delete_clean_succeeds_without_waivers() {
 
     rwv()
         .args(["workweave", "web-app", "create", "clean"])
-        .env("RWV_WORKWEAVE_DIR", &weaveroot)
         .current_dir(&ws)
         .assert()
         .success();
 
     rwv()
         .args(["workweave", "web-app", "delete", "clean"])
-        .env("RWV_WORKWEAVE_DIR", &weaveroot)
         .current_dir(&ws)
         .assert()
         .success();
@@ -2587,7 +2527,6 @@ fn workweave_create_picks_up_uncommitted_rwv_yaml() {
     // --- (a) plain create must refuse and name the dirty file ---
     let refuse_assert = rwv()
         .args(["workweave", "uncommit-test", "create", "ww-uncommit"])
-        .env("RWV_WORKWEAVE_DIR", &weaveroot)
         .current_dir(&ws)
         .assert()
         .failure();
@@ -2622,7 +2561,6 @@ fn workweave_create_picks_up_uncommitted_rwv_yaml() {
             "ww-uncommit",
             "--capture-dirty",
         ])
-        .env("RWV_WORKWEAVE_DIR", &weaveroot)
         .current_dir(&ws)
         .assert()
         .success();
@@ -2656,7 +2594,6 @@ fn workweave_create_with_clean_committed_manifest_emits_no_dirty_warning() {
 
     let assert = rwv()
         .args(["workweave", "clean-test", "create", "ww-clean"])
-        .env("RWV_WORKWEAVE_DIR", &weaveroot)
         .current_dir(&ws)
         .assert()
         .success();
@@ -2688,7 +2625,6 @@ fn workweave_create_refuses_dirty_primary_by_default() {
 
     let assert = rwv()
         .args(["workweave", "dirty-proj", "create", "blocked"])
-        .env("RWV_WORKWEAVE_DIR", &weaveroot)
         .current_dir(&ws)
         .assert()
         .failure();
@@ -2745,7 +2681,6 @@ fn workweave_create_capture_dirty_allows_dirty_primary() {
             "allowed",
             "--capture-dirty",
         ])
-        .env("RWV_WORKWEAVE_DIR", &weaveroot)
         .current_dir(&ws)
         .assert()
         .success();
@@ -2778,7 +2713,6 @@ fn workweave_create_no_project_repo_skips_dirty_check() {
 
     rwv()
         .args(["workweave", "plain-proj", "create", "no-git-check"])
-        .env("RWV_WORKWEAVE_DIR", &weaveroot)
         .current_dir(&ws)
         .assert()
         .success();
@@ -2798,7 +2732,6 @@ fn workweave_create_records_primary_as_parent() {
 
     rwv()
         .args(["workweave", "web-app", "create", "parented"])
-        .env("RWV_WORKWEAVE_DIR", &weaveroot)
         .current_dir(&ws)
         .assert()
         .success();
@@ -2830,7 +2763,6 @@ fn workweave_forked_from_other_workweave_records_that_parent() {
     // Step 1: create ww1 forked from primary.
     rwv()
         .args(["workweave", "web-app", "create", "ww1"])
-        .env("RWV_WORKWEAVE_DIR", &weaveroot)
         .current_dir(&ws)
         .assert()
         .success();
@@ -2839,7 +2771,6 @@ fn workweave_forked_from_other_workweave_records_that_parent() {
     let ww1 = weaveroot.join("web-app--ww1");
     rwv()
         .args(["workweave", "web-app", "create", "ww2"])
-        .env("RWV_WORKWEAVE_DIR", &weaveroot)
         .current_dir(&ww1)
         .assert()
         .success();
@@ -2988,7 +2919,6 @@ fn assert_preflight_fails_with_actionable_message(
 ) {
     let assert = rwv()
         .args(["workweave", project, "create", ww_name])
-        .env("RWV_WORKWEAVE_DIR", weaveroot)
         .current_dir(ws)
         .assert()
         .failure();
@@ -3050,7 +2980,6 @@ fn create_workweave_preflight_error_names_project_path() {
 
     let output = rwv()
         .args(["workweave", "myproj", "create", "check-msg"])
-        .env("RWV_WORKWEAVE_DIR", &weaveroot)
         .current_dir(&ws)
         .assert()
         .failure()
@@ -3112,7 +3041,6 @@ fn create_workweave_succeeds_when_all_repos_have_commits() {
 
     rwv()
         .args(["workweave", "good-project", "create", "preflight-ok"])
-        .env("RWV_WORKWEAVE_DIR", &weaveroot)
         .current_dir(&ws)
         .assert()
         .success();
@@ -3179,7 +3107,6 @@ fn hook_rejected_create_leaves_no_registration_and_no_branch() {
 
     rwv()
         .args(["workweave", "myproject", "create", "ww-hook"])
-        .env("RWV_WORKWEAVE_DIR", &weaveroot)
         .current_dir(&ws)
         .assert()
         .failure();
@@ -3253,7 +3180,6 @@ fn partial_create_failure_rolls_back_branches_of_earlier_repos() {
 
     rwv()
         .args(["workweave", "multi-hook", "create", "partial-hook"])
-        .env("RWV_WORKWEAVE_DIR", &weaveroot)
         .current_dir(&ws)
         .assert()
         .failure();
@@ -3416,7 +3342,6 @@ fn create_names_hook_config_when_git_hook_rejects_worktree() {
 
     let output = rwv()
         .args(["workweave", "hook-test", "create", "hook-ww"])
-        .env("RWV_WORKWEAVE_DIR", &weaveroot)
         .current_dir(&ws)
         .output()
         .expect("failed to spawn rwv workweave create");

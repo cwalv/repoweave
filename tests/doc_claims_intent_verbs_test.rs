@@ -416,7 +416,6 @@ fn workweave_create_does_not_author_managed_content() {
 
     rwv()
         .args(["workweave", "myapp", "create", "feat"])
-        .env("RWV_WORKWEAVE_DIR", &weaveroot)
         .current_dir(&ws)
         .assert()
         .success();

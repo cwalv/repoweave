@@ -105,7 +105,6 @@ fn workweave_recreate_preserves_non_git_state() {
     // ---- First invocation: create the workweave fresh. ----
     rwv()
         .args(["workweave", "web-app", "create", "resume"])
-        .env("RWV_WORKWEAVE_DIR", &weaveroot)
         .current_dir(&ws)
         .assert()
         .success();
@@ -153,7 +152,6 @@ fn workweave_recreate_preserves_non_git_state() {
     // fix to support the pool-worker resume contract.
     rwv()
         .args(["workweave", "web-app", "create", "resume"])
-        .env("RWV_WORKWEAVE_DIR", &weaveroot)
         .current_dir(&ws)
         .assert()
         .success();
@@ -230,7 +228,6 @@ fn workweave_recreate_refuses_on_local_modifications() {
     // ---- Case A: uncommitted changes in the worktree. ----
     rwv()
         .args(["workweave", "web-app", "create", "dirty"])
-        .env("RWV_WORKWEAVE_DIR", &weaveroot)
         .current_dir(&ws)
         .assert()
         .success();
@@ -244,7 +241,6 @@ fn workweave_recreate_refuses_on_local_modifications() {
 
     rwv()
         .args(["workweave", "web-app", "create", "dirty"])
-        .env("RWV_WORKWEAVE_DIR", &weaveroot)
         .current_dir(&ws)
         .assert()
         .failure()
@@ -264,7 +260,6 @@ fn workweave_recreate_refuses_on_local_modifications() {
     // ---- Case B: a new commit on the ephemeral branch. ----
     rwv()
         .args(["workweave", "web-app", "create", "advanced"])
-        .env("RWV_WORKWEAVE_DIR", &weaveroot)
         .current_dir(&ws)
         .assert()
         .success();
@@ -279,7 +274,6 @@ fn workweave_recreate_refuses_on_local_modifications() {
 
     rwv()
         .args(["workweave", "web-app", "create", "advanced"])
-        .env("RWV_WORKWEAVE_DIR", &weaveroot)
         .current_dir(&ws)
         .assert()
         .failure()
@@ -327,7 +321,6 @@ fn workweave_same_name_different_projects_coexist() {
     // Create workweave "shared" for project-a.
     rwv()
         .args(["workweave", "project-a", "create", "shared"])
-        .env("RWV_WORKWEAVE_DIR", &weaveroot)
         .current_dir(&ws)
         .assert()
         .success();
@@ -340,7 +333,6 @@ fn workweave_same_name_different_projects_coexist() {
     // own directory, leaving project-a's untouched.
     rwv()
         .args(["workweave", "project-b", "create", "shared"])
-        .env("RWV_WORKWEAVE_DIR", &weaveroot)
         .current_dir(&ws)
         .assert()
         .success();
@@ -370,7 +362,6 @@ fn workweave_recreate_with_replace_existing_destroys_and_recreates() {
 
     rwv()
         .args(["workweave", "web-app", "create", "reset"])
-        .env("RWV_WORKWEAVE_DIR", &weaveroot)
         .current_dir(&ws)
         .assert()
         .success();
@@ -395,7 +386,6 @@ fn workweave_recreate_with_replace_existing_destroys_and_recreates() {
             "reset",
             "--replace-existing",
         ])
-        .env("RWV_WORKWEAVE_DIR", &weaveroot)
         .current_dir(&ws)
         .assert()
         .failure()
@@ -427,7 +417,6 @@ fn workweave_recreate_with_replace_existing_destroys_and_recreates() {
             "reset",
             "--replace-existing",
         ])
-        .env("RWV_WORKWEAVE_DIR", &weaveroot)
         .current_dir(&ws)
         .assert()
         .success();
@@ -480,7 +469,6 @@ fn workweave_recreate_replace_existing_refuses_dirty_when_marker_missing() {
 
     rwv()
         .args(["workweave", "web-app", "create", "reset"])
-        .env("RWV_WORKWEAVE_DIR", &weaveroot)
         .current_dir(&ws)
         .assert()
         .success();
@@ -500,7 +488,6 @@ fn workweave_recreate_replace_existing_refuses_dirty_when_marker_missing() {
             "reset",
             "--replace-existing",
         ])
-        .env("RWV_WORKWEAVE_DIR", &weaveroot)
         .current_dir(&ws)
         .assert()
         .failure()
@@ -528,7 +515,6 @@ fn workweave_recreate_replace_existing_refuses_dirty_when_marker_missing() {
             "reset",
             "--replace-existing",
         ])
-        .env("RWV_WORKWEAVE_DIR", &weaveroot)
         .current_dir(&ws)
         .assert()
         .success();
@@ -556,14 +542,12 @@ fn workweave_create_succeeds_after_rm_rf_leaves_stale_git_registration() {
     // ---- Create the target workweave and a peer (live) workweave. ----
     rwv()
         .args(["workweave", "web-app", "create", "target"])
-        .env("RWV_WORKWEAVE_DIR", &weaveroot)
         .current_dir(&ws)
         .assert()
         .success();
 
     rwv()
         .args(["workweave", "web-app", "create", "live-peer"])
-        .env("RWV_WORKWEAVE_DIR", &weaveroot)
         .current_dir(&ws)
         .assert()
         .success();
@@ -620,7 +604,6 @@ fn workweave_create_succeeds_after_rm_rf_leaves_stale_git_registration() {
     // ---- Re-create: must succeed WITHOUT any manual git worktree prune. ----
     rwv()
         .args(["workweave", "web-app", "create", "target"])
-        .env("RWV_WORKWEAVE_DIR", &weaveroot)
         .current_dir(&ws)
         .assert()
         .success();
@@ -684,7 +667,6 @@ fn workweave_delete_refuses_on_unmerged_commits() {
 
     rwv()
         .args(["workweave", "web-app", "create", "committed"])
-        .env("RWV_WORKWEAVE_DIR", &weaveroot)
         .current_dir(&ws)
         .assert()
         .success();
@@ -701,7 +683,6 @@ fn workweave_delete_refuses_on_unmerged_commits() {
 
     let err_output = rwv()
         .args(["workweave", "web-app", "delete", "committed"])
-        .env("RWV_WORKWEAVE_DIR", &weaveroot)
         .current_dir(&ws)
         .assert()
         .failure()
@@ -727,7 +708,6 @@ fn workweave_delete_refuses_on_unmerged_commits() {
             "committed",
             "--discard-unmerged-commits",
         ])
-        .env("RWV_WORKWEAVE_DIR", &weaveroot)
         .current_dir(&ws)
         .assert()
         .success();

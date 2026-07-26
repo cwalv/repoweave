@@ -126,10 +126,6 @@ fn doctor_large_workspace_completes_under_budget() {
     let tmp = common::tempdir().unwrap();
     let root = build_large_workspace(tmp.path(), n_repos, n_ww);
 
-    // Tell rwv to look for workweaves in the tmp scaffold, not the user's
-    // real ~/weaveroot/.workweaves.
-    std::env::set_var("RWV_WORKWEAVE_DIR", tmp.path().join(".workweaves"));
-
     let start = Instant::now();
     // Use scope_all=true so the perf test exercises the full weave-wide scan
     // (the same load it was originally benchmarking).
@@ -139,7 +135,6 @@ fn doctor_large_workspace_completes_under_budget() {
     let res = check::run_check(&ctx, false, true, None, None);
     let elapsed = start.elapsed();
 
-    std::env::remove_var("RWV_WORKWEAVE_DIR");
     eprintln!("doctor_large_workspace: {n_ww} workweaves × {n_repos} repos -> {elapsed:?}");
 
     assert!(res.is_ok(), "run_check returned an error: {:?}", res.err());

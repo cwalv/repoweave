@@ -386,7 +386,6 @@ fn class3_workweave_path_shape_matches_prime_claim() {
 
     rwv()
         .args(["workweave", "my-proj", "create", "feat"])
-        .env("RWV_WORKWEAVE_DIR", &weaveroot)
         .current_dir(&ws)
         .assert()
         .success();

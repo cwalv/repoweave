@@ -407,21 +407,10 @@ fn sync_dir(_dir: &Path) -> anyhow::Result<()> {
 ///
 /// Priority:
 ///   1. The `container` field of the recorded index, if the index exists.
-///   2. The `RWV_WORKWEAVE_DIR` env var, if set (deprecation warning fires
-///      via the caller — this function is pure to keep it usable in tests).
-///   3. [`default_container`] (`<parent-of-root>/.workweaves`).
-///
-/// The env var is a transitional fallback; see [`crate::workweave`] for the
-/// deprecation-warning path. Once a follow-up release removes env-var
-/// handling entirely, priority (2) drops.
+///   2. [`default_container`] (`<parent-of-root>/.workweaves`).
 pub fn resolve_container(primary_root: &Path, project: &ProjectName) -> anyhow::Result<PathBuf> {
     if let Some(idx) = read(primary_root, project)? {
         return Ok(idx.container);
-    }
-    if let Ok(v) = std::env::var("RWV_WORKWEAVE_DIR") {
-        if !v.is_empty() {
-            return Ok(canonical_recorded_path(Path::new(&v)));
-        }
     }
     Ok(canonical_recorded_path(&default_container(primary_root)))
 }
@@ -476,9 +465,8 @@ pub fn record_workweave(
 
 /// Read the index, or seed a fresh one when the file does not exist.
 ///
-/// Bootstrap seeds the container with the effective one so the next
-/// create's default lands in the same place: the env-var fallback
-/// (transitional) then the compiled-in default.
+/// Bootstrap seeds the container with the compiled-in default so the next
+/// create's default lands in the same place.
 ///
 /// A seeded index is **not** a legacy index — see
 /// [`WorkweaveIndex::has_receipt_registry`]. An absent file records no
@@ -490,11 +478,9 @@ fn read_or_seed(primary_root: &Path, project: &ProjectName) -> anyhow::Result<Wo
     if let Some(idx) = read(primary_root, project)? {
         return Ok(idx);
     }
-    let seed = match std::env::var("RWV_WORKWEAVE_DIR") {
-        Ok(v) if !v.is_empty() => PathBuf::from(v),
-        _ => default_container(primary_root),
-    };
-    Ok(WorkweaveIndex::new(canonical_recorded_path(&seed)))
+    Ok(WorkweaveIndex::new(canonical_recorded_path(
+        &default_container(primary_root),
+    )))
 }
 
 /// Remove a workweave entry from the index. No-op if the entry (or the index
@@ -1287,26 +1273,16 @@ mod tests {
     }
 
     #[test]
-    fn resolve_container_falls_back_to_default_when_no_index_and_no_env() {
+    fn resolve_container_falls_back_to_default_when_no_index() {
         let tmp = tempfile::tempdir().unwrap();
         let primary = tmp.path().join("ws");
         let project = make_project(&primary, "web-app");
-
-        // Clear the env var for this test — global state, so serialize with
-        // other env-touching tests only if this becomes a problem.
-        // Safe: we save and restore.
-        let prev = std::env::var("RWV_WORKWEAVE_DIR").ok();
-        std::env::remove_var("RWV_WORKWEAVE_DIR");
 
         let got = resolve_container(&primary, &project).unwrap();
         assert_eq!(
             got,
             canonical_recorded_path(&primary.parent().unwrap().join(".workweaves"))
         );
-
-        if let Some(v) = prev {
-            std::env::set_var("RWV_WORKWEAVE_DIR", v);
-        }
     }
 
     // -----------------------------------------------------------------

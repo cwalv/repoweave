@@ -274,7 +274,6 @@ fn make_primary(tmp: &Path, declare: bool) -> Workspace {
 fn create_workweave(primary: &Workspace, weaveroot: &Path, name: &str) -> Workspace {
     rwv()
         .args(["workweave", PROJECT, "create", name])
-        .env("RWV_WORKWEAVE_DIR", weaveroot)
         .current_dir(&primary.root)
         .assert()
         .success();

@@ -360,7 +360,6 @@ fn doctor_in_a_workweave_names_the_canonical_path_for_an_absent_file() {
         let output = common::rwv()
             .args(args)
             .current_dir(cwd)
-            .env("RWV_WORKWEAVE_DIR", &weaveroot)
             .output()
             .expect("rwv should run");
         format!(

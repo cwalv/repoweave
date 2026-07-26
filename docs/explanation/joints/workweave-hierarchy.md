@@ -157,9 +157,7 @@ override it per-workweave with `rwv workweave create --dir <path>`.
 Every `find`-direction verb consults the recorded `name → absolute path`
 entries rather than reconstructing from convention, so a per-workweave
 override is as first-class as a default-container placement.
-`RWV_WORKWEAVE_DIR` is a deprecated fallback (loud warning on read);
-removal ships in a follow-up release. Each workweave directory is named
-`<project>--<workweave-name>`:
+Each workweave directory is named `<project>--<workweave-name>`:
 
 ```
 work/

@@ -2,15 +2,14 @@
 #
 # Policy: argv addresses; environment variables are handoff surfaces set
 # for child processes by their parent, never inputs consulted by rwv itself.
-# After the RWV_WORKWEAVE_DIR deprecation fallback is removed, the
-# inventory reaches $HOME only.
+# The inventory is $HOME only.
 #
 # Scope: this allowlist covers std::env::var and std::env::var_os reads
 # in non-test production code under src/. The dirs crate reads $HOME via
 # OS identity APIs (dirs::home_dir), not via std::env::var; it is excluded
 # from this textual check and documented here as the sole remaining env
-# read after RWV_WORKWEAVE_DIR is retired. std::env::args and
-# std::env::current_dir are argv and cwd respectively — out of scope.
+# read. std::env::args and std::env::current_dir are argv and cwd
+# respectively — out of scope.
 #
 # Format (one entry per line, blank lines and lines starting with '#' ignored):
 #
@@ -20,5 +19,3 @@
 # is removed from src/ or promoted to a documented handoff surface.
 # No age-based expiry — use structural triggers (name the removal change
 # or the condition, not a date).
-
-env-input:RWV_WORKWEAVE_DIR  # transitional container-seed fallback during the deprecation window; seeds the container value when no registry entry exists and fires a loud one-shot deprecation warning; read at workweave.rs (deprecation guard + scan), workweave_index.rs (resolve_container + record_workweave bootstrap), and check.rs (doctor adoption scan); drop this entry when the deprecation fallback is removed

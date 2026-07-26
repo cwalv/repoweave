@@ -188,7 +188,6 @@ fn make_primary(tmp: &Path) -> PrimaryWorkspace {
 fn create_workweave(primary: &PrimaryWorkspace, weaveroot: &Path, name: &str) -> Workweave {
     rwv()
         .args(["workweave", PROJECT, "create", name])
-        .env("RWV_WORKWEAVE_DIR", weaveroot)
         .current_dir(&primary.root)
         .assert()
         .success();
@@ -467,7 +466,6 @@ fn sync_rebase_without_gitattributes_bails_cleanly() {
     let ww = {
         rwv()
             .args(["workweave", PROJECT, "create", "ww"])
-            .env("RWV_WORKWEAVE_DIR", &weaveroot)
             .current_dir(&ws)
             .assert()
             .success();

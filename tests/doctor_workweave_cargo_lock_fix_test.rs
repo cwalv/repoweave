@@ -65,7 +65,6 @@ fn git_init_with_commit(dir: &Path) {
 /// The paths a fixture hands back to a test.
 struct Fixture {
     _tmp: tempfile::TempDir,
-    weaveroot: PathBuf,
     ww_dir: PathBuf,
     /// stderr+stdout of the `rwv workweave ... create` that made `ww_dir`.
     create_output: String,
@@ -88,7 +87,6 @@ impl Fixture {
         let output = common::rwv()
             .args(args)
             .current_dir(cwd)
-            .env("RWV_WORKWEAVE_DIR", &self.weaveroot)
             .output()
             .expect("rwv should run");
         format!(
@@ -200,7 +198,6 @@ repositories:
         let output = common::rwv()
             .args(["workweave", "web-app", "create", "agent-1"])
             .current_dir(&ws)
-            .env("RWV_WORKWEAVE_DIR", &weaveroot)
             .output()
             .expect("rwv workweave create should run");
         assert!(
@@ -224,7 +221,6 @@ repositories:
 
     Fixture {
         _tmp: tmp,
-        weaveroot,
         ww_dir,
         create_output,
     }

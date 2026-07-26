@@ -2,8 +2,8 @@
 //!
 //! Covers the acceptance criteria added by the workweave-addressing
 //! design (§5): create-records / delete-removes / marker round-trip
-//! guard, doctor's prune / adopt / tracked-index findings, deprecation
-//! warning for `RWV_WORKWEAVE_DIR`, and per-workweave placement.
+//! guard, doctor's prune / adopt / tracked-index findings, and
+//! per-workweave placement.
 
 use assert_cmd::Command;
 use predicates::prelude::*;
@@ -86,13 +86,12 @@ fn create_records_workweave_in_the_index() {
 
     rwv()
         .args(["workweave", "web-app", "create", "feat"])
-        .env("RWV_WORKWEAVE_DIR", &weaveroot)
         .current_dir(&ws)
         .assert()
         .success();
 
     let idx = read_index(&ws, "web-app");
-    // Container was recorded from the env var fallback.
+    // Container was recorded from the compiled-in default.
     assert_eq!(
         idx["container"].as_str().unwrap(),
         weaveroot
@@ -127,8 +126,18 @@ fn a_symlinked_container_is_recorded_canonicalized() {
     std::os::unix::fs::symlink(&real, &link).unwrap();
 
     rwv()
+        .args([
+            "workweave",
+            "web-app",
+            "set-container",
+            &link.to_string_lossy(),
+        ])
+        .current_dir(&ws)
+        .assert()
+        .success();
+
+    rwv()
         .args(["workweave", "web-app", "create", "feat"])
-        .env("RWV_WORKWEAVE_DIR", &link)
         .current_dir(&ws)
         .assert()
         .success();
@@ -178,13 +187,11 @@ fn delete_removes_registry_entry() {
 
     rwv()
         .args(["workweave", "web-app", "create", "feat"])
-        .env("RWV_WORKWEAVE_DIR", &weaveroot)
         .current_dir(&ws)
         .assert()
         .success();
     rwv()
         .args(["workweave", "web-app", "delete", "feat"])
-        .env("RWV_WORKWEAVE_DIR", &weaveroot)
         .current_dir(&ws)
         .assert()
         .success();
@@ -206,7 +213,6 @@ fn delete_refuses_when_marker_round_trip_fails() {
 
     rwv()
         .args(["workweave", "web-app", "create", "feat"])
-        .env("RWV_WORKWEAVE_DIR", &weaveroot)
         .current_dir(&ws)
         .assert()
         .success();
@@ -232,7 +238,6 @@ fn delete_refuses_when_marker_round_trip_fails() {
     // Delete must refuse: the marker no longer round-trips.
     rwv()
         .args(["workweave", "web-app", "delete", "feat"])
-        .env("RWV_WORKWEAVE_DIR", &weaveroot)
         .current_dir(&ws)
         .assert()
         .failure()
@@ -276,7 +281,6 @@ fn doctor_fix_prunes_stale_registry_entry() {
 
     rwv()
         .args(["workweave", "web-app", "create", "feat"])
-        .env("RWV_WORKWEAVE_DIR", &weaveroot)
         .current_dir(&ws)
         .assert()
         .success();
@@ -289,7 +293,6 @@ fn doctor_fix_prunes_stale_registry_entry() {
     // Doctor without --fix must surface the stale entry.
     rwv()
         .args(["doctor"])
-        .env("RWV_WORKWEAVE_DIR", &weaveroot)
         .current_dir(&ws)
         .assert()
         .stdout(predicate::str::contains("stale entry"));
@@ -297,7 +300,6 @@ fn doctor_fix_prunes_stale_registry_entry() {
     // Doctor with --fix must prune it.
     rwv()
         .args(["doctor", "--fix"])
-        .env("RWV_WORKWEAVE_DIR", &weaveroot)
         .current_dir(&ws)
         .assert()
         .stdout(predicate::str::contains(
@@ -318,7 +320,6 @@ fn doctor_fix_adopts_unregistered_workweave() {
 
     rwv()
         .args(["workweave", "web-app", "create", "feat"])
-        .env("RWV_WORKWEAVE_DIR", &weaveroot)
         .current_dir(&ws)
         .assert()
         .success();
@@ -334,7 +335,6 @@ fn doctor_fix_adopts_unregistered_workweave() {
     // Doctor without --fix must surface the unregistered workweave.
     rwv()
         .args(["doctor"])
-        .env("RWV_WORKWEAVE_DIR", &weaveroot)
         .current_dir(&ws)
         .assert()
         .stdout(predicate::str::contains(
@@ -344,7 +344,6 @@ fn doctor_fix_adopts_unregistered_workweave() {
     // Doctor with --fix must adopt it.
     rwv()
         .args(["doctor", "--fix"])
-        .env("RWV_WORKWEAVE_DIR", &weaveroot)
         .current_dir(&ws)
         .assert()
         .stdout(predicate::str::contains("[fixed] core: adopted workweave"));
@@ -370,7 +369,6 @@ fn doctor_flags_tracked_index() {
 
     rwv()
         .args(["workweave", "web-app", "create", "feat"])
-        .env("RWV_WORKWEAVE_DIR", &weaveroot)
         .current_dir(&ws)
         .assert()
         .success();
@@ -382,45 +380,52 @@ fn doctor_flags_tracked_index() {
 
     rwv()
         .args(["doctor"])
-        .env("RWV_WORKWEAVE_DIR", &weaveroot)
         .current_dir(&ws)
         .assert()
         .stdout(predicate::str::contains("tracked by the project repo"));
 }
 
 // ---------------------------------------------------------------------------
-// deprecation warning when RWV_WORKWEAVE_DIR is set
+// RWV_WORKWEAVE_DIR is inert
 // ---------------------------------------------------------------------------
 
 #[test]
-fn deprecation_warning_fires_when_env_var_set() {
+fn env_var_no_longer_steers_placement_or_output() {
     let tmp = common::tempdir().unwrap();
     let ws = make_workspace(tmp.path(), "web-app");
 
-    let weaveroot = tmp.path().join(".workweaves");
-    std::fs::create_dir_all(&weaveroot).unwrap();
+    // A container distinct from the compiled-in default. If the env var
+    // still had any effect, the workweave would land here instead.
+    let decoy = tmp.path().join("decoy-container");
+    std::fs::create_dir_all(&decoy).unwrap();
 
-    rwv()
+    let assert = rwv()
         .args(["workweave", "web-app", "create", "feat"])
-        .env("RWV_WORKWEAVE_DIR", &weaveroot)
+        .env("RWV_WORKWEAVE_DIR", &decoy)
         .current_dir(&ws)
         .assert()
-        .success()
-        .stderr(predicate::str::contains("RWV_WORKWEAVE_DIR is deprecated"));
-}
+        .success();
+    let stderr = String::from_utf8_lossy(&assert.get_output().stderr);
+    assert!(
+        !stderr.to_lowercase().contains("rwv_workweave_dir"),
+        "the retired env var must not appear in output: {stderr}"
+    );
 
-#[test]
-fn no_deprecation_warning_when_env_var_unset() {
-    let tmp = common::tempdir().unwrap();
-    let ws = make_workspace(tmp.path(), "web-app");
+    assert!(
+        decoy.read_dir().unwrap().next().is_none(),
+        "RWV_WORKWEAVE_DIR must not steer placement — the decoy container it named must stay empty"
+    );
 
-    rwv()
-        .args(["workweave", "web-app", "create", "feat"])
-        .env_remove("RWV_WORKWEAVE_DIR")
-        .current_dir(&ws)
-        .assert()
-        .success()
-        .stderr(predicate::str::contains("RWV_WORKWEAVE_DIR is deprecated").not());
+    let idx = read_index(&ws, "web-app");
+    let recorded_path = PathBuf::from(idx["workweaves"]["feat"].as_str().unwrap());
+    let default_container = repoweave::workweave_index::default_container(&ws)
+        .canonicalize()
+        .unwrap();
+    assert_eq!(
+        recorded_path.parent().unwrap(),
+        default_container,
+        "workweave must land under the compiled-in default container"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -445,7 +450,6 @@ fn per_workweave_dir_override_lands_and_records_absolute_path() {
             "--dir",
             &custom.to_string_lossy(),
         ])
-        .env_remove("RWV_WORKWEAVE_DIR")
         .current_dir(&ws)
         .assert()
         .success();
@@ -466,7 +470,6 @@ fn per_workweave_dir_override_lands_and_records_absolute_path() {
     // work via the registry.
     rwv()
         .args(["workweave", "web-app", "list"])
-        .env_remove("RWV_WORKWEAVE_DIR")
         .current_dir(&ws)
         .assert()
         .success()
@@ -474,7 +477,6 @@ fn per_workweave_dir_override_lands_and_records_absolute_path() {
 
     rwv()
         .args(["workweave", "web-app", "delete", "feat"])
-        .env_remove("RWV_WORKWEAVE_DIR")
         .current_dir(&ws)
         .assert()
         .success();
@@ -500,7 +502,6 @@ fn set_container_verb_records_the_container() {
             "set-container",
             &alt.to_string_lossy(),
         ])
-        .env_remove("RWV_WORKWEAVE_DIR")
         .current_dir(&ws)
         .assert()
         .success();
@@ -517,7 +518,6 @@ fn set_container_verb_records_the_container() {
     // Subsequent workweave create lands in the recorded container.
     rwv()
         .args(["workweave", "web-app", "create", "feat"])
-        .env_remove("RWV_WORKWEAVE_DIR")
         .current_dir(&ws)
         .assert()
         .success();

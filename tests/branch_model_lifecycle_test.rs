@@ -176,7 +176,6 @@ fn delete_destroys_only_the_ref_it_recorded() {
     // destroy — otherwise "nothing was deleted" would prove nothing.
     rwv()
         .args(["workweave", "web-app", "create", "real"])
-        .env("RWV_WORKWEAVE_DIR", &weaveroot)
         .current_dir(&ws)
         .assert()
         .success();
@@ -185,15 +184,10 @@ fn delete_destroys_only_the_ref_it_recorded() {
         "precondition: the create must have recorded and written its own ref"
     );
 
-    let _ = rwv()
-        .args(["doctor", "--fix"])
-        .env("RWV_WORKWEAVE_DIR", &weaveroot)
-        .current_dir(&ws)
-        .assert();
+    let _ = rwv().args(["doctor", "--fix"]).current_dir(&ws).assert();
 
     rwv()
         .args(["workweave", "web-app", "delete", "real"])
-        .env("RWV_WORKWEAVE_DIR", &weaveroot)
         .current_dir(&ws)
         .assert()
         .success();
@@ -242,7 +236,6 @@ fn delete_reports_the_branches_it_will_not_touch() {
 
     rwv()
         .args(["workweave", "web-app", "create", "reported"])
-        .env("RWV_WORKWEAVE_DIR", &weaveroot)
         .current_dir(&ws)
         .assert()
         .success();
@@ -268,7 +261,6 @@ fn delete_reports_the_branches_it_will_not_touch() {
 
     let assert = rwv()
         .args(["workweave", "web-app", "delete", "reported"])
-        .env("RWV_WORKWEAVE_DIR", &weaveroot)
         .current_dir(&ws)
         .assert()
         .success();
@@ -318,7 +310,6 @@ fn delete_reports_a_flat_leftover_it_holds_no_receipt_for() {
 
     rwv()
         .args(["workweave", "web-app", "create", "unowned"])
-        .env("RWV_WORKWEAVE_DIR", &weaveroot)
         .current_dir(&ws)
         .assert()
         .success();
@@ -344,7 +335,6 @@ fn delete_reports_a_flat_leftover_it_holds_no_receipt_for() {
 
     let assert = rwv()
         .args(["workweave", "web-app", "delete", "unowned"])
-        .env("RWV_WORKWEAVE_DIR", &weaveroot)
         .current_dir(&ws)
         .assert()
         .success();
@@ -374,7 +364,6 @@ fn create_refuses_a_name_the_index_already_records() {
 
     rwv()
         .args(["workweave", "web-app", "create", "dup"])
-        .env("RWV_WORKWEAVE_DIR", &weaveroot)
         .current_dir(&ws)
         .assert()
         .success();
@@ -389,7 +378,6 @@ fn create_refuses_a_name_the_index_already_records() {
             "--dir",
             elsewhere.to_str().unwrap(),
         ])
-        .env("RWV_WORKWEAVE_DIR", &weaveroot)
         .current_dir(&ws)
         .assert()
         .failure();
@@ -433,7 +421,6 @@ fn remove_delete_refuses_a_claimed_store_and_succeeds_after_the_claim_is_gone() 
 
     rwv()
         .args(["workweave", "web-app", "create", "live"])
-        .env("RWV_WORKWEAVE_DIR", &weaveroot)
         .current_dir(&ws)
         .assert()
         .success();
@@ -448,7 +435,6 @@ fn remove_delete_refuses_a_claimed_store_and_succeeds_after_the_claim_is_gone() 
             "--project",
             "web-app",
         ])
-        .env("RWV_WORKWEAVE_DIR", &weaveroot)
         .current_dir(&ws)
         .assert()
         .failure();
@@ -473,7 +459,6 @@ fn remove_delete_refuses_a_claimed_store_and_succeeds_after_the_claim_is_gone() 
     // Retire the claims in the order R4 requires, then the store may go.
     rwv()
         .args(["workweave", "web-app", "delete", "live"])
-        .env("RWV_WORKWEAVE_DIR", &weaveroot)
         .current_dir(&ws)
         .assert()
         .success();
@@ -486,7 +471,6 @@ fn remove_delete_refuses_a_claimed_store_and_succeeds_after_the_claim_is_gone() 
             "--project",
             "web-app",
         ])
-        .env("RWV_WORKWEAVE_DIR", &weaveroot)
         .current_dir(&ws)
         .assert()
         .success();
@@ -514,7 +498,6 @@ fn claude_worktree_remove_hook_does_not_destroy_uncommitted_work() {
 
     rwv()
         .args(["workweave", "web-app", "create", "hooked"])
-        .env("RWV_WORKWEAVE_DIR", &weaveroot)
         .current_dir(&ws)
         .assert()
         .success();
@@ -531,7 +514,6 @@ fn claude_worktree_remove_hook_does_not_destroy_uncommitted_work() {
 
     rwv()
         .args(["workweave", "--claude-hook"])
-        .env("RWV_WORKWEAVE_DIR", &weaveroot)
         .current_dir(&ws)
         .write_stdin(payload)
         .assert()

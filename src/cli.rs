@@ -495,9 +495,8 @@ pub enum WorkweaveAction {
     /// Sets the `container` field in `projects/<project>/.rwv-workweave-index`
     /// — the directory `workweave create` places new workweaves under by
     /// default. Per-workweave `--dir` overrides on `create` are unaffected.
-    /// The recorded container is an explicit act (visible in the checked-in
-    /// tree via `.gitignore`; audit-visible via the file itself), replacing
-    /// the deprecated `RWV_WORKWEAVE_DIR` environment variable.
+    /// The recorded container is an explicit act, visible in the checked-in
+    /// tree via `.gitignore` and audit-visible via the file itself.
     SetContainer {
         /// Absolute path to record. Relative paths resolve against the
         /// primary workspace root.

@@ -157,10 +157,7 @@ fn create_workweave(main: &MainWorkspace, name: &str, from: Option<&Path>) -> Wo
     if let Some(f) = from {
         cmd.args(["--from", &f.to_string_lossy()]);
     }
-    cmd.env("RWV_WORKWEAVE_DIR", &main.weaveroot)
-        .current_dir(&main.root)
-        .assert()
-        .success();
+    cmd.current_dir(&main.root).assert().success();
 
     let root = main.weaveroot.join(format!("{PROJECT}--{name}"));
     Workweave {
@@ -201,7 +198,6 @@ fn delete_with_zero_children_adopts_nothing() {
     // Ensure clean (no unmerged commits) so delete without a waiver works.
     let out = rwv()
         .args(["workweave", PROJECT, "delete", &ww.name])
-        .env("RWV_WORKWEAVE_DIR", &main.weaveroot)
         .current_dir(&main.root)
         .output()
         .unwrap();
@@ -240,7 +236,6 @@ fn delete_refuses_while_workweave_is_mid_op() {
 
     let out = rwv()
         .args(["workweave", PROJECT, "delete", &ww.name])
-        .env("RWV_WORKWEAVE_DIR", &main.weaveroot)
         .current_dir(&main.root)
         .output()
         .unwrap();
@@ -290,7 +285,6 @@ fn delete_waivers_do_not_bypass_op_mutex() {
             "--discard-uncommitted",
             "--discard-unmerged-commits",
         ])
-        .env("RWV_WORKWEAVE_DIR", &main.weaveroot)
         .current_dir(&main.root)
         .output()
         .unwrap();
@@ -327,7 +321,6 @@ fn delete_with_one_child_adopts_to_grandparent_primary() {
     // Delete wwa. wwb should be adopted by wwa's parent = primary.
     let out = rwv()
         .args(["workweave", PROJECT, "delete", &wwa.name])
-        .env("RWV_WORKWEAVE_DIR", &main.weaveroot)
         .current_dir(&main.root)
         .output()
         .unwrap();
@@ -369,7 +362,6 @@ fn delete_middle_adopts_to_grandparent_workweave() {
     // workweave, NOT primary — the grandparent path, not the primary fallback).
     let out = rwv()
         .args(["workweave", PROJECT, "delete", &wwb.name])
-        .env("RWV_WORKWEAVE_DIR", &main.weaveroot)
         .current_dir(&main.root)
         .output()
         .unwrap();
@@ -405,7 +397,6 @@ fn delete_with_n_children_adopts_all() {
 
     let out = rwv()
         .args(["workweave", PROJECT, "delete", &wwa.name])
-        .env("RWV_WORKWEAVE_DIR", &main.weaveroot)
         .current_dir(&main.root)
         .output()
         .unwrap();
@@ -446,7 +437,6 @@ fn retire_adopts_children() {
     // Retire wwa to primary (bare sync-to reads parent = primary).
     let out = rwv()
         .args(["sync-to", "--retire"])
-        .env("RWV_WORKWEAVE_DIR", &main.weaveroot)
         .current_dir(&wwa.root)
         .output()
         .unwrap();
@@ -495,7 +485,6 @@ fn doctor_fix_repoints_dangling_parent_to_primary() {
     // doctor (no --fix) reports the dangling parent.
     let report = rwv()
         .args(["doctor"])
-        .env("RWV_WORKWEAVE_DIR", &main.weaveroot)
         .current_dir(&main.root)
         .output()
         .unwrap();
@@ -508,7 +497,6 @@ fn doctor_fix_repoints_dangling_parent_to_primary() {
     // doctor --fix re-points wwb to primary and reports [fixed].
     let fixed = rwv()
         .args(["doctor", "--fix"])
-        .env("RWV_WORKWEAVE_DIR", &main.weaveroot)
         .current_dir(&main.root)
         .output()
         .unwrap();
@@ -526,7 +514,6 @@ fn doctor_fix_repoints_dangling_parent_to_primary() {
     // A follow-up doctor is clean of the dangling-parent violation.
     let after = rwv()
         .args(["doctor"])
-        .env("RWV_WORKWEAVE_DIR", &main.weaveroot)
         .current_dir(&main.root)
         .output()
         .unwrap();
@@ -557,7 +544,6 @@ fn bare_sync_to_dangling_parent_is_friendly() {
 
     let out = rwv()
         .args(["sync-to"])
-        .env("RWV_WORKWEAVE_DIR", &main.weaveroot)
         .current_dir(&wwb.root)
         .output()
         .unwrap();
@@ -590,7 +576,6 @@ fn status_json_parent_correct_for_stacked_parent() {
 
     let out = rwv()
         .args(["status", "--json"])
-        .env("RWV_WORKWEAVE_DIR", &main.weaveroot)
         .current_dir(&wwb.root)
         .output()
         .unwrap();
@@ -663,7 +648,6 @@ fn workweave_log_and_diff_correct_when_parent_advanced() {
     // and neither should it cause wwb's commit to be hidden.
     let out = rwv()
         .args(["workweave", PROJECT, "log", "--json"])
-        .env("RWV_WORKWEAVE_DIR", &main.weaveroot)
         .current_dir(&wwb.root)
         .output()
         .unwrap();
@@ -701,7 +685,6 @@ fn workweave_log_and_diff_correct_when_parent_advanced() {
     // HEAD doesn't have).
     let dout = rwv()
         .args(["workweave", PROJECT, "log", "--diff", "--json"])
-        .env("RWV_WORKWEAVE_DIR", &main.weaveroot)
         .current_dir(&wwb.root)
         .output()
         .unwrap();
@@ -752,7 +735,6 @@ fn workweave_log_text_output() {
 
     let out = rwv()
         .args(["workweave", PROJECT, "log"])
-        .env("RWV_WORKWEAVE_DIR", &main.weaveroot)
         .current_dir(&ww.root)
         .output()
         .unwrap();
@@ -780,7 +762,6 @@ fn workweave_log_refuses_in_primary_weave() {
 
     let out = rwv()
         .args(["workweave", PROJECT, "log"])
-        .env("RWV_WORKWEAVE_DIR", &main.weaveroot)
         .current_dir(&main.root)
         .output()
         .unwrap();
@@ -810,7 +791,6 @@ fn workweave_log_json_includes_project_repo_unique_commits() {
 
     let out = rwv()
         .args(["workweave", PROJECT, "log", "--json"])
-        .env("RWV_WORKWEAVE_DIR", &main.weaveroot)
         .current_dir(&ww.root)
         .output()
         .unwrap();
@@ -861,7 +841,6 @@ fn workweave_log_text_includes_project_repo_section() {
 
     let out = rwv()
         .args(["workweave", PROJECT, "log"])
-        .env("RWV_WORKWEAVE_DIR", &main.weaveroot)
         .current_dir(&ww.root)
         .output()
         .unwrap();
@@ -893,7 +872,6 @@ fn workweave_log_json_project_repo_no_unique_commits_when_clean() {
 
     let out = rwv()
         .args(["workweave", PROJECT, "log", "--json"])
-        .env("RWV_WORKWEAVE_DIR", &main.weaveroot)
         .current_dir(&ww.root)
         .output()
         .unwrap();
@@ -925,7 +903,6 @@ fn workweave_log_text_project_repo_no_unique_commits_label() {
 
     let out = rwv()
         .args(["workweave", PROJECT, "log"])
-        .env("RWV_WORKWEAVE_DIR", &main.weaveroot)
         .current_dir(&ww.root)
         .output()
         .unwrap();
@@ -964,7 +941,6 @@ fn workweave_log_diff_json_includes_project_repo() {
 
     let out = rwv()
         .args(["workweave", PROJECT, "log", "--diff", "--json"])
-        .env("RWV_WORKWEAVE_DIR", &main.weaveroot)
         .current_dir(&ww.root)
         .output()
         .unwrap();

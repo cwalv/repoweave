@@ -42,7 +42,6 @@ use crate::workweave_index;
 use crate::workweave_index::RefRegistry;
 use anyhow::{anyhow, bail, Context};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
 
 /// How a repo is materialized inside a workweave.
 ///
@@ -100,38 +99,6 @@ pub fn classify_checkout(path: &Path) -> CheckoutKind {
     }
 }
 
-/// Print the `RWV_WORKWEAVE_DIR` deprecation warning at most once per process.
-///
-/// The env var is being retired: consumption for addressing / discovery is
-/// replaced by the recorded [`crate::workweave_index`]. During the transition
-/// window the var still acts as the initial-container fallback when no index
-/// exists, so users' existing shell setups keep working — but every rwv
-/// invocation with the var set fires this warning so operators migrate to the
-/// container-setting verb.
-///
-/// Final deletion of the fallback ships in a follow-up release. Until then,
-/// this warning is the deprecation signal.
-static DEPRECATION_WARNED: AtomicBool = AtomicBool::new(false);
-
-pub(crate) fn warn_rwv_workweave_dir_deprecated_if_set() {
-    if std::env::var("RWV_WORKWEAVE_DIR").is_err() {
-        return;
-    }
-    if DEPRECATION_WARNED
-        .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
-        .is_err()
-    {
-        return;
-    }
-    eprintln!(
-        "warning: RWV_WORKWEAVE_DIR is deprecated and will be removed in a future release; \
-         the workweave container is now recorded per-project in \
-         `projects/<project>/.rwv-workweave-index`. Run \
-         `rwv workweave <project> set-container <path>` to record the container \
-         explicitly. See `rwv explain workweave`."
-    );
-}
-
 /// Determine the workweave container for `(primary_root, project)`.
 ///
 /// The container is the directory `workweave create` places new workweaves
@@ -139,15 +106,12 @@ pub(crate) fn warn_rwv_workweave_dir_deprecated_if_set() {
 /// priority:
 ///
 ///   1. The `container` field of the recorded `.rwv-workweave-index`.
-///   2. `RWV_WORKWEAVE_DIR` (transitional fallback; fires the deprecation
-///      warning).
-///   3. `<parent-of-primary>/.workweaves` (compiled-in default).
+///   2. `<parent-of-primary>/.workweaves` (compiled-in default).
 ///
 /// Prefer using this in the `create` direction only. The `find` direction
 /// (list, delete, sync targets, etc.) resolves via the recorded name → path
 /// entries, so it does not consult this at all.
 pub fn workweave_container(primary_root: &Path, project: &ProjectName) -> anyhow::Result<PathBuf> {
-    warn_rwv_workweave_dir_deprecated_if_set();
     workweave_index::resolve_container(primary_root, project)
 }
 
@@ -2977,8 +2941,7 @@ fn list_workweave_dirs_for_project(
 /// them.
 ///
 /// Enumerates every unique container (default `<parent-of-primary>/.workweaves`
-/// plus every recorded per-project container, plus the `RWV_WORKWEAVE_DIR`
-/// fallback during the deprecation window) and returns marker-bearing
+/// plus every recorded per-project container) and returns marker-bearing
 /// directories whose `.rwv-workweave` `primary` canonicalizes to `ws_root`.
 pub fn list_workweave_dirs(ws_root: &Path) -> Vec<(String, PathBuf)> {
     let mut containers: Vec<PathBuf> = Vec::new();
@@ -2992,11 +2955,6 @@ pub fn list_workweave_dirs(ws_root: &Path) -> Vec<(String, PathBuf)> {
     for project in workweave_index::projects_on_disk(ws_root) {
         if let Ok(Some(idx)) = workweave_index::read(ws_root, &project) {
             push_unique(idx.container, &mut containers);
-        }
-    }
-    if let Ok(v) = std::env::var("RWV_WORKWEAVE_DIR") {
-        if !v.is_empty() {
-            push_unique(PathBuf::from(v), &mut containers);
         }
     }
 

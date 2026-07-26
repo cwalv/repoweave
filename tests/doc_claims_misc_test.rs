@@ -214,7 +214,6 @@ fn rwv_display_in_workweave() {
     // Create the workweave.
     rwv()
         .args(["workweave", "web-app", "create", "display-test"])
-        .env("RWV_WORKWEAVE_DIR", &weaveroot)
         .current_dir(&ws)
         .assert()
         .success();

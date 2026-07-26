@@ -240,7 +240,6 @@ fn create_workweave(
     }
     rwv()
         .args(&args)
-        .env("RWV_WORKWEAVE_DIR", weaveroot)
         .current_dir(&primary.root)
         .assert()
         .success();

@@ -155,7 +155,6 @@ fn create_initializes_submodules_when_gitmodules_present() {
 
     common::rwv()
         .args(["workweave", "proj", "create", "feat"])
-        .env("RWV_WORKWEAVE_DIR", &ww_dir)
         .env("GIT_CONFIG_COUNT", "2")
         .env("GIT_CONFIG_KEY_1", "protocol.file.allow")
         .env("GIT_CONFIG_VALUE_1", "always")
@@ -255,7 +254,6 @@ fn create_succeeds_with_warning_when_submodule_remote_unreachable() {
     // the warning must name the state and the fix.
     let assert = common::rwv()
         .args(["workweave", "proj", "create", "feat"])
-        .env("RWV_WORKWEAVE_DIR", &ww_dir)
         .current_dir(&ws)
         .assert()
         .success();

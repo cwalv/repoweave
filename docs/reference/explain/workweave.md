@@ -108,11 +108,9 @@ relative paths resolve against the primary root. Existing entries in the
 registry are preserved. Per-workweave `--dir` overrides on `create` are
 unaffected.
 
-This is the replacement for the deprecated `RWV_WORKWEAVE_DIR` environment
-variable: an explicit, recorded, audit-visible act — not ambient process
-state. When `RWV_WORKWEAVE_DIR` is set, `create` still seeds the initial
-container from it and fires a loud deprecation warning; removal of the
-env-var fallback ships in a follow-up release.
+The recorded container is an explicit, audit-visible act, not ambient
+process state: it lives in a file the operator can read, not in a shell
+environment.
 
 ### `rwv workweave <project> delete <name> [--discard-uncommitted] [--discard-unmerged-commits]`
 

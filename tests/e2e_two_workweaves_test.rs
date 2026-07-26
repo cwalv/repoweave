@@ -168,7 +168,6 @@ struct Workweave {
 fn create_workweave(main: &MainWorkspace, weaveroot: &Path, name: &str) -> Workweave {
     rwv()
         .args(["workweave", PROJECT, "create", name])
-        .env("RWV_WORKWEAVE_DIR", weaveroot)
         .current_dir(&main.root)
         .assert()
         .success();

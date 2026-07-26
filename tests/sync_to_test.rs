@@ -1185,7 +1185,6 @@ fn make_nested_workweaves(parent_tmp: &Path) -> (Workspace, PathBuf, PathBuf, Pa
 
     rwv()
         .args(["workweave", "web-app", "create", "parent"])
-        .env("RWV_WORKWEAVE_DIR", &weaveroot)
         .current_dir(&primary_root)
         .assert()
         .success();
@@ -1200,7 +1199,6 @@ fn make_nested_workweaves(parent_tmp: &Path) -> (Workspace, PathBuf, PathBuf, Pa
             "--from",
             &parent_ww.to_string_lossy(),
         ])
-        .env("RWV_WORKWEAVE_DIR", &weaveroot)
         .current_dir(&primary_root)
         .assert()
         .success();
@@ -1222,7 +1220,8 @@ fn make_nested_workweaves(parent_tmp: &Path) -> (Workspace, PathBuf, PathBuf, Pa
 #[test]
 fn nested_workweave_naked_sync_to_retire_lands_in_parent() {
     let tmp = common::tempdir().unwrap();
-    let (primary, weaveroot, parent_ww, child_ww, initial_sha) = make_nested_workweaves(tmp.path());
+    let (primary, _weaveroot, parent_ww, child_ww, initial_sha) =
+        make_nested_workweaves(tmp.path());
 
     // Work lands in the child, lock bumped and committed (the documented
     // pre-sync step; sync-to refuses on a stale lock).
@@ -1242,7 +1241,6 @@ fn nested_workweave_naked_sync_to_retire_lands_in_parent() {
     // once the parent has it.
     rwv()
         .args(["sync-to", "--retire"])
-        .env("RWV_WORKWEAVE_DIR", &weaveroot)
         .current_dir(&child_ww)
         .assert()
         .success();
@@ -1266,7 +1264,7 @@ fn nested_workweave_naked_sync_to_retire_lands_in_parent() {
 #[test]
 fn nested_workweave_delete_refuses_only_on_truly_unmerged_work() {
     let tmp = common::tempdir().unwrap();
-    let (primary, weaveroot, _parent_ww, child_ww, _initial_sha) =
+    let (primary, _weaveroot, _parent_ww, child_ww, _initial_sha) =
         make_nested_workweaves(tmp.path());
 
     let c2 = make_commit(
@@ -1284,7 +1282,6 @@ fn nested_workweave_delete_refuses_only_on_truly_unmerged_work() {
     // compared against.
     let err_output = rwv()
         .args(["workweave", "web-app", "delete", "child"])
-        .env("RWV_WORKWEAVE_DIR", &weaveroot)
         .current_dir(&primary.root)
         .assert()
         .failure()
@@ -1305,13 +1302,11 @@ fn nested_workweave_delete_refuses_only_on_truly_unmerged_work() {
     // then succeeds without --force.
     rwv()
         .args(["sync-to"])
-        .env("RWV_WORKWEAVE_DIR", &weaveroot)
         .current_dir(&child_ww)
         .assert()
         .success();
     rwv()
         .args(["workweave", "web-app", "delete", "child"])
-        .env("RWV_WORKWEAVE_DIR", &weaveroot)
         .current_dir(&primary.root)
         .assert()
         .success();

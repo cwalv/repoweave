@@ -213,7 +213,7 @@ Every per-repo variant carries `path` (manifest-relative) and
 `legacy-role-primary` carries `project` and
 `manifest_path` so the caller can locate the file `--fix` will rewrite.
 `workweave-tree-integrity` carries `workweave_dir` and a `sub_kind`
-(`dangling-parent`, `foreign-primary`, `parent-chain-anomaly`, `stale-registry-entry`, `tracked-index`, `unregistered-dir`, `unregistered-workweave`).
+(`dangling-parent`, `foreign-primary`, `foreign-primary-other-workspace`, `parent-chain-anomaly`, `stale-registry-entry`, `tracked-index`, `unregistered-dir`, `unregistered-workweave`).
 
 The `plugins` array is the PATH inventory of `rwv-*` executables found at
 run time. Each record carries `name` (the `<verb>` in `rwv-<verb>`), `path`
@@ -2014,7 +2014,7 @@ Schema:
           ]
         },
         {
-          "description": "The marker's `primary:` path does not resolve to the workspace this scan was started from (e.g. an rsync'd workweave whose marker still points at the origin machine's absolute path). Report-only.",
+          "description": "The marker's `primary:` path does not resolve to the workspace this scan was started from, and the path itself resolves to no workspace either (missing, or exists but is not a workspace root) — e.g. an rsync'd workweave whose marker still points at the origin machine's absolute path. Report-only.",
           "type": "object",
           "required": [
             "foreign-primary"
@@ -2028,6 +2028,28 @@ Schema:
               "properties": {
                 "marker_primary": {
                   "description": "The primary path recorded in the marker (unresolved).",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "description": "The marker's `primary:` path does not match this workspace, but resolves to a different, valid workspace root — the normal shape when several weaves share one workweave container. Not a defect in this workweave, so excluded from the default text report: every sibling weave's doctor would otherwise repeat this about every other sibling. Still enumerated under `--json`.",
+          "type": "object",
+          "required": [
+            "foreign-primary-other-workspace"
+          ],
+          "properties": {
+            "foreign-primary-other-workspace": {
+              "type": "object",
+              "required": [
+                "marker_primary"
+              ],
+              "properties": {
+                "marker_primary": {
+                  "description": "The other workspace's primary path (resolved).",
                   "type": "string"
                 }
               }

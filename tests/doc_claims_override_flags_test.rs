@@ -200,7 +200,6 @@ fn make_workweave_with_dirty_and_unmerged_commit(
 
     rwv()
         .args(["workweave", project, "create", name])
-        .env("RWV_WORKWEAVE_DIR", &weaveroot)
         .current_dir(&ws)
         .assert()
         .success();
@@ -224,7 +223,7 @@ fn make_workweave_with_dirty_and_unmerged_commit(
 #[test]
 fn workweave_delete_discard_uncommitted_does_not_waive_unmerged_commits() {
     let tmp = common::tempdir().unwrap();
-    let (ws, weaveroot, ww_dir) =
+    let (ws, _weaveroot, ww_dir) =
         make_workweave_with_dirty_and_unmerged_commit(tmp.path(), "web-app", "both-a");
     let weave_repo = ww_dir.join("github/org/repo");
     let head_before = head_sha(&weave_repo);
@@ -237,7 +236,6 @@ fn workweave_delete_discard_uncommitted_does_not_waive_unmerged_commits() {
             "both-a",
             "--discard-uncommitted",
         ])
-        .env("RWV_WORKWEAVE_DIR", &weaveroot)
         .current_dir(&ws)
         .output()
         .expect("rwv workweave delete should run");
@@ -270,7 +268,7 @@ fn workweave_delete_discard_uncommitted_does_not_waive_unmerged_commits() {
 #[test]
 fn workweave_delete_discard_unmerged_commits_does_not_waive_uncommitted() {
     let tmp = common::tempdir().unwrap();
-    let (ws, weaveroot, ww_dir) =
+    let (ws, _weaveroot, ww_dir) =
         make_workweave_with_dirty_and_unmerged_commit(tmp.path(), "web-app", "both-b");
     let weave_repo = ww_dir.join("github/org/repo");
     let head_before = head_sha(&weave_repo);
@@ -283,7 +281,6 @@ fn workweave_delete_discard_unmerged_commits_does_not_waive_uncommitted() {
             "both-b",
             "--discard-unmerged-commits",
         ])
-        .env("RWV_WORKWEAVE_DIR", &weaveroot)
         .current_dir(&ws)
         .output()
         .expect("rwv workweave delete should run");
@@ -316,7 +313,7 @@ fn workweave_delete_discard_unmerged_commits_does_not_waive_uncommitted() {
 #[test]
 fn workweave_delete_both_discard_flags_clear_both_preconditions() {
     let tmp = common::tempdir().unwrap();
-    let (ws, weaveroot, ww_dir) =
+    let (ws, _weaveroot, ww_dir) =
         make_workweave_with_dirty_and_unmerged_commit(tmp.path(), "web-app", "both-c");
 
     rwv()
@@ -328,7 +325,6 @@ fn workweave_delete_both_discard_flags_clear_both_preconditions() {
             "--discard-uncommitted",
             "--discard-unmerged-commits",
         ])
-        .env("RWV_WORKWEAVE_DIR", &weaveroot)
         .current_dir(&ws)
         .assert()
         .success();

@@ -1744,7 +1744,10 @@ mod doctor_json {
 fn legacy_workweave_marker_causes_error_on_rwv_invocation() {
     let tmp = common::tempdir().unwrap();
     let root = make_workspace(tmp.path(), "ws");
-    let ww_dir_container = tmp.path().join("ww-container");
+    // The default container: doctor's scan always covers it, with no
+    // registry entry required — these markers are hand-written, not
+    // created via `rwv workweave create`.
+    let ww_dir_container = tmp.path().join(".workweaves");
     std::fs::create_dir_all(&ww_dir_container).unwrap();
     let ww_dir = ww_dir_container.join("ws--feat");
     std::fs::create_dir_all(&ww_dir).unwrap();
@@ -1760,7 +1763,6 @@ fn legacy_workweave_marker_causes_error_on_rwv_invocation() {
     rwv_cmd()
         .arg("status")
         .current_dir(&ww_dir)
-        .env("RWV_WORKWEAVE_DIR", &ww_dir_container)
         .assert()
         .failure()
         .stderr(
@@ -1776,7 +1778,10 @@ fn legacy_workweave_marker_causes_error_on_rwv_invocation() {
 fn doctor_reports_legacy_workweave_marker() {
     let tmp = common::tempdir().unwrap();
     let root = make_workspace(tmp.path(), "ws");
-    let ww_dir_container = tmp.path().join("ww-container");
+    // The default container: doctor's scan always covers it, with no
+    // registry entry required — these markers are hand-written, not
+    // created via `rwv workweave create`.
+    let ww_dir_container = tmp.path().join(".workweaves");
     std::fs::create_dir_all(&ww_dir_container).unwrap();
     let ww_dir = ww_dir_container.join("ws--feat");
     std::fs::create_dir_all(&ww_dir).unwrap();
@@ -1791,7 +1796,6 @@ fn doctor_reports_legacy_workweave_marker() {
     rwv_cmd()
         .arg("doctor")
         .current_dir(&root)
-        .env("RWV_WORKWEAVE_DIR", &ww_dir_container)
         .assert()
         // Exits non-zero because there is a warning (exit 0 = no issues).
         // doctor currently exits 1 only on errors; warnings produce exit 0.
@@ -1810,7 +1814,10 @@ fn doctor_fix_migrates_legacy_workweave_marker() {
     let tmp = common::tempdir().unwrap();
     let root = make_workspace(tmp.path(), "ws");
     let primary_canon = root.canonicalize().unwrap();
-    let ww_dir_container = tmp.path().join("ww-container");
+    // The default container: doctor's scan always covers it, with no
+    // registry entry required — these markers are hand-written, not
+    // created via `rwv workweave create`.
+    let ww_dir_container = tmp.path().join(".workweaves");
     std::fs::create_dir_all(&ww_dir_container).unwrap();
     let ww_dir = ww_dir_container.join("ws--feat");
     std::fs::create_dir_all(&ww_dir).unwrap();
@@ -1823,7 +1830,6 @@ fn doctor_fix_migrates_legacy_workweave_marker() {
     rwv_cmd()
         .args(["doctor", "--fix"])
         .current_dir(&root)
-        .env("RWV_WORKWEAVE_DIR", &ww_dir_container)
         .assert()
         .stdout(predicate::str::contains("[fixed]").and(predicate::str::contains("parent")));
 
@@ -1838,7 +1844,6 @@ fn doctor_fix_migrates_legacy_workweave_marker() {
     let stdout = rwv_cmd()
         .arg("doctor")
         .current_dir(&root)
-        .env("RWV_WORKWEAVE_DIR", &ww_dir_container)
         .assert()
         .get_output()
         .stdout

@@ -368,7 +368,6 @@ repositories:\n  \
     // ------------------------------------------------------------------
     let weaveroot = root.join(".workweaves");
     std::fs::create_dir_all(&weaveroot).unwrap();
-    std::env::set_var("RWV_WORKWEAVE_DIR", &weaveroot);
 
     let ww_project = repoweave::manifest::ProjectName::new("web-app");
     let ww_name = repoweave::manifest::WorkweaveName::new("agent-1");
@@ -486,9 +485,7 @@ repositories:\n  \
     // 6. Run `rwv doctor --fix` with cwd inside the workweave.
     // ------------------------------------------------------------------
     let mut cmd = common::rwv();
-    cmd.args(["doctor", "--fix"])
-        .current_dir(&ww_dir)
-        .env("RWV_WORKWEAVE_DIR", &weaveroot);
+    cmd.args(["doctor", "--fix"]).current_dir(&ww_dir);
     let output = cmd.output().expect("rwv doctor should run");
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
