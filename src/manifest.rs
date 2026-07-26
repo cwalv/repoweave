@@ -427,7 +427,11 @@ impl RepoUrl {
     pub fn local_path(&self) -> Option<PathBuf> {
         let registry = self.registry()?;
         let (owner, repo) = self.owner_repo()?;
-        Some(Path::new(registry.as_str()).join(owner).join(repo))
+        Some(crate::registry::canonical_local_path(
+            registry.as_str(),
+            owner,
+            repo,
+        ))
     }
 }
 

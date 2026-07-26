@@ -324,7 +324,9 @@ fn remove_does_not_overwrite_managed_content_from_a_partial_member_set() {
 
     let authored = std::fs::read_to_string(go_work(&project_dir))
         .expect("`rwv add` over a whole member set authors go.work");
-    for member in ["org/keep", "org/gone", "org/drop"] {
+    // `file://` matches no built-in registry, so `drop_url` lands at
+    // `local/org/drop`, not the bare `org/drop` its pre-seeded siblings use.
+    for member in ["org/keep", "org/gone", "local/org/drop"] {
         assert!(
             authored.contains(member),
             "go.work should list {member}, got:\n{authored}"
@@ -334,14 +336,14 @@ fn remove_does_not_overwrite_managed_content_from_a_partial_member_set() {
     std::fs::remove_dir_all(ws.join("org/gone")).unwrap();
 
     rwv()
-        .args(["remove", "org/drop"])
+        .args(["remove", "local/org/drop"])
         .current_dir(&ws)
         .assert()
         .success();
 
     let manifest = std::fs::read_to_string(project_dir.join("rwv.yaml")).unwrap();
     assert!(
-        !manifest.contains("org/drop"),
+        !manifest.contains("local/org/drop"),
         "`rwv remove` must still record the membership change, got:\n{manifest}"
     );
     assert_eq!(

@@ -5,6 +5,7 @@
 
 use assert_cmd::Command;
 use predicates::prelude::*;
+use repoweave::manifest::{Manifest, RepoPath};
 use std::path::Path;
 use std::process;
 
@@ -196,6 +197,50 @@ fn add_clones_repo_to_canonical_path() {
     assert!(
         manifest_content.contains(&remote_url) || manifest_content.contains("file://"),
         "manifest should contain the added repo URL, got:\n{manifest_content}"
+    );
+}
+
+#[test]
+fn add_unrecognized_registry_url_writes_three_segment_manifest_path() {
+    // No built-in registry matches `file://`, so this drives the exact
+    // fallback an unrecognized HTTPS host would, offline and
+    // deterministically: the manifest key must land as
+    // `{registry}/{owner}/{repo}`, not the bare `{owner}/{repo}` that used
+    // to escape to the workspace-root level.
+    let tmp = common::tempdir().unwrap();
+
+    let bare = tmp.path().join("acme").join("widgets.git");
+    std::fs::create_dir_all(bare.parent().unwrap()).unwrap();
+    init_bare_repo_with_commit(&bare);
+    let remote_url = format!("file://{}", bare.display());
+
+    let (workspace, _project_dir) = setup_workspace_with_project(&tmp, &[]);
+
+    rwv()
+        .args(["add", &remote_url])
+        .current_dir(&workspace)
+        .assert()
+        .success();
+
+    let manifest_path = workspace.join("projects/test-project/rwv.yaml");
+    let manifest =
+        Manifest::from_path(&manifest_path).expect("rwv.yaml written by `rwv add` must parse");
+
+    assert!(
+        manifest
+            .get_entry(&RepoPath::new("local/acme/widgets").unwrap())
+            .is_some(),
+        "expected the three-segment 'local/acme/widgets' path, got: {:?}",
+        manifest
+            .iter_repo_paths()
+            .map(|p| p.as_str())
+            .collect::<Vec<_>>()
+    );
+    assert!(
+        manifest
+            .get_entry(&RepoPath::new("acme/widgets").unwrap())
+            .is_none(),
+        "the two-segment shape must not reach the manifest"
     );
 }
 

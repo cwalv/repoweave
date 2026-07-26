@@ -169,7 +169,7 @@ Clone a repo (if not present), register it in the *active workspace*'s `rwv.yaml
 
 `rwv add` writes to CWD's workspace's manifest (the active workspace's `rwv.yaml`), not always primary's.
 
-**Canonical path.** For URLs matching the `<host>/<owner>/<repo>` shape (github, gitlab, etc.), the clone lands at `<host>/<owner>/<repo>/`. Other URL shapes (bare `file://` remotes, self-hosted git servers with non-`<owner>/<repo>` paths) land at the URL's tail path segments — the canonical-path convention only applies where the URL exposes an unambiguous owner/repo split.
+**Canonical path.** Every URL lands at `<registry>/<owner>/<repo>/`. `<registry>` is the matched built-in registry's name (`github`, `gitlab`, `bitbucket`) when the host is one of those; for a host none of them recognise, it's the URL's own host (e.g. `git.corp.example/team/repo/`); for `file://`, which has no host, it's `local`.
 
 **Shared-clone warning.** If the target clone directory is already registered by another project in the same weave, `rwv add` proceeds (the manifest entry is added to the active project as usual) and emits a warning to stderr naming the other project(s). Sharing a clone across projects is legal — the same repo can be a `dependency` in one project and `owned` in another — but is worth flagging so accidental double-registration is visible.
 

@@ -55,6 +55,12 @@ impl RepoId {
     }
 }
 
+/// The canonical local-path shape every mint site shares:
+/// `{registry}/{owner}/{repo}`.
+pub(crate) fn canonical_local_path(registry: &str, owner: &str, repo: &str) -> PathBuf {
+    Path::new(registry).join(owner).join(repo)
+}
+
 /// A code host or directory that can resolve URLs to local paths.
 ///
 /// Different registries may parse URLs differently (HTTPS vs SSH vs
@@ -77,9 +83,7 @@ pub trait Registry {
 
     /// The local path for a repo: `{registry}/{owner}/{repo}`.
     fn local_path(&self, id: &RepoId) -> PathBuf {
-        Path::new(self.name().as_str())
-            .join(id.owner())
-            .join(id.repo())
+        canonical_local_path(self.name().as_str(), id.owner(), id.repo())
     }
 }
 
