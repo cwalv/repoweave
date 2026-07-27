@@ -3114,7 +3114,7 @@ mod derived_content_tests {
         // `true` exits 0 without touching the file, which is what leaves the
         // target-side version standing. Anything else here would be a
         // command running mid-replay, with whatever the machine's
-        // environment happens to give it (regenerable-regions.md D2).
+        // environment happens to give it.
         assert_eq!(
             definition, "true",
             "the driver must be the no-op side-pick, not a command that regenerates content"

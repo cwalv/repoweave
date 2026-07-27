@@ -1741,7 +1741,7 @@ impl DeletionWarrant {
 }
 
 // ===========================================================================
-// Derived content (regenerable-regions.md D1–D3)
+// Derived content
 // ===========================================================================
 //
 // Some tracked paths are not authored, they are *derived*: regenerated from

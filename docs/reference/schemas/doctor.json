@@ -110,7 +110,7 @@
           "additionalProperties": false
         },
         {
-          "description": "(a) The workweave checkout is in detached-HEAD state — HEAD points directly at a commit instead of a named branch. Detached HEAD breaks the merged-check and ref-namespace invariants in `clone-topology.md`.\n\n`--fix --adopt-detached-checkouts` mints the workweave's flat ref **at HEAD** — i.e. at the lock SHA — and, when `legacy_branch` is `Some`, gives that branch's name up to make room for it.",
+          "description": "(a) The workweave checkout is in detached-HEAD state — HEAD points directly at a commit instead of a named branch. With no branch name there is nothing for the merged-check to ask about and nothing for the workweave's ref namespace to be keyed by, so both invariants lapse for as long as the checkout stays detached.\n\n`--fix --adopt-detached-checkouts` mints the workweave's flat ref **at HEAD** — i.e. at the lock SHA — and, when `legacy_branch` is `Some`, gives that branch's name up to make room for it.",
           "type": "object",
           "required": [
             "detached"

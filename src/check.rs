@@ -900,9 +900,10 @@ pub enum BranchDisciplineKind {
         recorded_ref: Option<String>,
     },
     /// (a) The workweave checkout is in detached-HEAD state — HEAD points
-    /// directly at a commit instead of a named branch. Detached HEAD
-    /// breaks the merged-check and ref-namespace invariants in
-    /// `clone-topology.md`.
+    /// directly at a commit instead of a named branch. With no branch
+    /// name there is nothing for the merged-check to ask about and
+    /// nothing for the workweave's ref namespace to be keyed by, so both
+    /// invariants lapse for as long as the checkout stays detached.
     ///
     /// `--fix --adopt-detached-checkouts` mints the workweave's flat ref
     /// **at HEAD** — i.e. at the lock SHA — and, when `legacy_branch` is
@@ -7310,8 +7311,8 @@ pub fn run_check(
         violations.push(v);
     }
 
-    // Phantom `merge=rwv-*` attributes (regenerable-regions.md D4): a
-    // declaration naming a driver rwv does not define. Report-only.
+    // Phantom `merge=rwv-*` attributes: a declaration naming a driver rwv
+    // does not define. Report-only.
     for v in scan_phantom_merge_drivers(&workspace_dir, &input.projects) {
         violations.push(v);
     }
@@ -8661,8 +8662,8 @@ fn collect_doctor_violations(
         violations.push(v);
     }
 
-    // Phantom `merge=rwv-*` attributes (regenerable-regions.md D4). Same
-    // scan, same scoping as the text channel; report-only there and here.
+    // Phantom `merge=rwv-*` attributes. Same scan, same scoping as the text
+    // channel; report-only there and here.
     for v in scan_phantom_merge_drivers(&workspace_dir, &input.projects) {
         violations.push(v);
     }
@@ -8709,8 +8710,9 @@ fn collect_doctor_violations(
         }
     }
 
-    // Clone-topology findings. Tier-0 invariants from clone-topology.md;
-    // workspace-level, always run.
+    // Clone-topology findings: the tier-0 invariants a manifest repo's slot
+    // must satisfy before any higher check means anything. Workspace-level,
+    // always run.
     for v in scan_clone_topology(ctx.primary_path(), &input.known_repos) {
         violations.push(v);
     }

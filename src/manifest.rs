@@ -1350,9 +1350,7 @@ impl LockFile {
     ///
     /// Takes `self` (not `&mut self`) because the raw → resolved
     /// transformation is one-way: once an entry is resolved, the raw
-    /// string would be misleading to keep around. Per
-    /// `fp-principles-in-rust.md`, prefer transformations that return
-    /// new immutable values.
+    /// string would be misleading to keep around.
     pub fn resolve_versions(
         self,
         workspace_dir: &Path,
