@@ -50,7 +50,7 @@
 //! marker, because the refs outlive the workweave directory: `workweave
 //! delete` runs `remove_dir_all` over the directory, so a marker-homed
 //! receipt would die with the very directory whose leftover refs it exists
-//! to account for (§6 item 5).
+//! to account for.
 //!
 //! Receipts are keyed by **(canonical store, ref name)**. Same name, two
 //! stores, two receipts — one workweave's repos each get an ephemeral ref
@@ -147,8 +147,8 @@ impl WorkweaveIndex {
     /// Whether this index carries the ownership-receipt registry at all.
     ///
     /// `false` for an index written before the registry existed. Such an
-    /// index needs the migration in `branch-model.md` §7.1 arm 7 before rwv
-    /// may create or destroy refs for this project — see
+    /// index must be migrated before rwv may create or destroy refs for this
+    /// project — see
     /// [`crate::workspace::pending_index_migration`] for the operator-facing
     /// hook and [`RefRegistry::migrate_legacy_index`] for the migration
     /// itself.
@@ -268,8 +268,8 @@ pub fn read(primary_root: &Path, project: &ProjectName) -> anyhow::Result<Option
 /// rename-over-an-existing-file is a heuristic, not a guarantee. That gap is
 /// tolerable for the placement entries and **not** tolerable for the
 /// ownership receipts sharing this file, whose whole contract is that the
-/// receipt reaches disk *before* the ref it describes (`branch-model.md`
-/// §7.1). git fsyncs a loose ref it writes; if the receipt were only in the
+/// receipt reaches disk *before* the ref it describes. git fsyncs a loose
+/// ref it writes; if the receipt were only in the
 /// page cache, the surviving state after a crash would be a ref with no
 /// receipt — the one state R2 permanently disowns.
 ///
@@ -470,7 +470,7 @@ pub fn record_workweave(
 ///
 /// A seeded index is **not** a legacy index — see
 /// [`WorkweaveIndex::has_receipt_registry`]. An absent file records no
-/// workweaves, so it has no refs whose ownership the §7.1 arm-7 migration
+/// workweaves, so it has no refs whose ownership the legacy-index migration
 /// could have missed; the refs of a workweave that predates the index file
 /// entirely are reached by that pass's per-repo arms, which enumerate refs
 /// per store rather than reading this file.
@@ -520,7 +520,7 @@ pub fn lookup_raw(
 }
 
 // ---------------------------------------------------------------------------
-// RefRegistry — the ownership-receipt store (branch-model.md §3.3 R2, §4.2)
+// RefRegistry — the ownership-receipt store
 // ---------------------------------------------------------------------------
 
 /// The ownership receipts for one `(primary, project)` pair: the answer to
@@ -535,9 +535,8 @@ pub fn lookup_raw(
 /// ## Receipt-first, and what that costs
 ///
 /// `record_created` persists the receipt **durably, before** the caller
-/// creates the ref it describes (`branch-model.md` §7.1's write-ordering
-/// rule, binding on every arm). The two crash windows are therefore not
-/// symmetric, deliberately:
+/// creates the ref it describes. That ordering binds every path that creates
+/// a ref. The two crash windows are therefore not symmetric, deliberately:
 ///
 /// - Crash after the receipt, before the ref: a **dangling receipt**. It
 ///   names a ref that does not exist, authorizes nothing (no
@@ -638,9 +637,9 @@ impl RefRegistry {
     /// `(store, name)` it is returned unchanged and `created_at` is
     /// ignored — no write happens at all. Two reasons, both load-bearing:
     ///
-    /// - §7.1's migration must be re-runnable over its own partial output,
-    ///   and its adopt arm reaches the same end state only if re-recording
-    ///   is a no-op.
+    /// - The legacy-index migration must be re-runnable over its own partial
+    ///   output, and its adopt arm reaches the same end state only if
+    ///   re-recording is a no-op.
     /// - Overwriting `created_at` with a freshly observed tip would forge
     ///   an [`Unmoved`](crate::vcs::DeletionWarrant::unmoved) warrant: the
     ///   check compares the ref's tip against the recorded one, so
@@ -656,13 +655,13 @@ impl RefRegistry {
     ///   nothing to key the receipt to, and a receipt under an unresolvable
     ///   key would be unfindable by the DESTROY that needs it later.
     /// - The index is a legacy index (no registry field). Recording into it
-    ///   would erase the only signal that the §7.1 arm-7 migration has not
-    ///   run, leaving every pre-existing ref permanently disowned. Run
+    ///   would erase the only signal that the migration has not run, leaving
+    ///   every pre-existing ref permanently disowned. Run
     ///   [`RefRegistry::migrate_legacy_index`] first.
-    /// - The write failed. §4.2 sketches this as returning a bare
-    ///   `OwnedRef`; it returns a `Result` because a receipt that failed to
-    ///   persist must not be able to look like one that did — handing back
-    ///   the receipt anyway is exactly the unreceipted-ref state.
+    /// - The write failed. It returns a `Result` rather than a bare
+    ///   `OwnedRef` because a receipt that failed to persist must not be able
+    ///   to look like one that did — handing back the receipt anyway is
+    ///   exactly the unreceipted-ref state.
     pub fn record_created(
         &mut self,
         store: &Path,
@@ -672,13 +671,13 @@ impl RefRegistry {
         self.persist_receipt(store, name.to_raw(), created_at)
     }
 
-    /// Adopt a pre-flat ref into a receipt — `branch-model.md` §7.1 arm 1.
+    /// Adopt a pre-flat ref into a receipt.
     ///
     /// The migration's only route from an observation to ownership, and the
     /// narrowness is the point: a [`LegacyEphemeralRefName`] exists only for a
     /// ref that sits under the namespace a **live** workweave mints, and its
-    /// sole consumer is the rename that gives that ref its flat name. §3.4
-    /// derives a rename as a DESTROY of the old name plus a birth, and a
+    /// sole consumer is the rename that gives that ref its flat name. A
+    /// rename is a DESTROY of the old name plus a birth, and a
     /// DESTROY needs a receipt — this is that receipt, and rwv genuinely did
     /// create the ref, before receipts existed to say so.
     ///
@@ -783,9 +782,10 @@ impl RefRegistry {
     /// there.
     ///
     /// The retraction **primitive** — R4 requires retraction before a store
-    /// may be destroyed, and a dangling receipt (§7.1's benign crash
-    /// residue) is cleaned up with this. It takes no warrant on purpose:
-    /// see the type-level note on Q14.
+    /// may be destroyed, and a dangling receipt (the benign residue of a
+    /// crash between the receipt and the ref) is cleaned up with this. It
+    /// takes no warrant on purpose: what consent a retraction needs is
+    /// undecided, and a warrant parameter would decide it by implementation.
     ///
     /// Idempotent, and it does not write when there is nothing to remove —
     /// so retracting into a legacy index cannot quietly create the registry
@@ -808,8 +808,7 @@ impl RefRegistry {
         Ok(true)
     }
 
-    /// Give a legacy index an empty receipt registry — the field migration
-    /// of `branch-model.md` §7.1 arm 7.
+    /// Give a legacy index an empty receipt registry.
     ///
     /// The migration pass runs this first, then records a receipt per ref
     /// it adopts or renames; the receipt-first ordering is what makes the
@@ -1286,7 +1285,7 @@ mod tests {
     }
 
     // -----------------------------------------------------------------
-    // RefRegistry — receipts (branch-model.md §3.3 R2/R4, §4.2, §7.1)
+    // RefRegistry — receipts
     // -----------------------------------------------------------------
 
     /// The benign crash window: the receipt is persisted, then the process
@@ -1452,9 +1451,9 @@ mod tests {
         }
     }
 
-    /// §6 item 5's reason for the home: the receipt has to be readable
-    /// after `workweave delete`'s `remove_dir_all`, because the refs it
-    /// accounts for are exactly the ones that directory left behind.
+    /// The receipt has to be readable after `workweave delete`'s
+    /// `remove_dir_all`, because the refs it accounts for are exactly the
+    /// ones that directory left behind.
     #[test]
     fn receipts_outlive_the_workweave_directory() {
         let tmp = tempfile::tempdir().unwrap();
