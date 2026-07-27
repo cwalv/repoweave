@@ -4,6 +4,7 @@ use repoweave::vcs::{
     ConflictOp, DerivedContentPolicy, RefName, ResolvedRevisionId, Vcs, VcsError,
 };
 use std::fs;
+use std::path::Path;
 use tempfile::TempDir;
 
 mod common;
@@ -300,6 +301,60 @@ fn has_uncommitted_changes_staged_deletion() {
 
     let vcs = GitVcs;
     assert!(vcs.has_uncommitted_changes(p).unwrap());
+}
+
+// ============================================================================
+// dirty_file_names / tracked_dirty_file_names / is_tracked
+// ============================================================================
+
+#[test]
+fn dirty_file_names_lists_tracked_and_untracked() {
+    let dir = init_repo();
+    let p = dir.path();
+    fs::write(p.join("README.md"), "modified").unwrap();
+    fs::write(p.join("scratch.txt"), "new").unwrap();
+
+    let mut names = GitVcs.dirty_file_names(p).unwrap();
+    names.sort();
+    assert_eq!(names, vec!["README.md", "scratch.txt"]);
+}
+
+#[test]
+fn tracked_dirty_file_names_excludes_untracked() {
+    let dir = init_repo();
+    let p = dir.path();
+    fs::write(p.join("README.md"), "modified").unwrap();
+    fs::write(p.join("scratch.txt"), "new").unwrap();
+
+    assert_eq!(GitVcs.tracked_dirty_file_names(p).unwrap(), ["README.md"]);
+}
+
+#[test]
+fn dirty_file_names_empty_on_clean_repo() {
+    let dir = init_repo();
+    let p = dir.path();
+
+    assert!(GitVcs.dirty_file_names(p).unwrap().is_empty());
+    assert!(GitVcs.tracked_dirty_file_names(p).unwrap().is_empty());
+}
+
+#[test]
+fn is_tracked_distinguishes_committed_from_untracked() {
+    let dir = init_repo();
+    let p = dir.path();
+    fs::write(p.join("scratch.txt"), "new").unwrap();
+
+    assert!(GitVcs.is_tracked(p, Path::new("README.md")).unwrap());
+    assert!(!GitVcs.is_tracked(p, Path::new("scratch.txt")).unwrap());
+}
+
+#[test]
+fn is_tracked_is_false_rather_than_err_outside_a_repo() {
+    let dir = common::tempdir().unwrap();
+    let p = dir.path();
+    fs::write(p.join("loose.txt"), "loose").unwrap();
+
+    assert!(!GitVcs.is_tracked(p, Path::new("loose.txt")).unwrap());
 }
 
 // ============================================================================

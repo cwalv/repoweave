@@ -1868,6 +1868,13 @@ pub trait Vcs {
     /// Human-readable name (e.g., `"git"`, `"jj"`).
     fn name(&self) -> &str;
 
+    /// Create an empty repository at `dest`, creating the directory and any
+    /// missing parents first.
+    ///
+    /// For [`GitVcs`](crate::git::GitVcs): runs
+    /// `git init --initial-branch=main`.
+    fn init_repo(&self, dest: &Path) -> Result<(), VcsError>;
+
     /// Clone a remote URL into `dest`.
     fn clone_repo(&self, url: &str, dest: &Path) -> Result<(), VcsError>;
 
@@ -1942,6 +1949,39 @@ pub trait Vcs {
     /// This includes staged but uncommitted changes, unstaged modifications,
     /// and untracked files.
     fn has_uncommitted_changes(&self, repo: &Path) -> Result<bool, VcsError>;
+
+    /// Return the path of every dirty file in `repo` — the same population
+    /// [`Vcs::has_uncommitted_changes`] collapses to a `bool`. Empty when the
+    /// working tree is clean.
+    ///
+    /// Paths are repo-relative, in the implementation's own order.
+    ///
+    /// For [`GitVcs`](crate::git::GitVcs): parses `git status --porcelain`.
+    fn dirty_file_names(&self, repo: &Path) -> Result<Vec<String>, VcsError>;
+
+    /// Return the path of every dirty **tracked** file in `repo`, with
+    /// untracked files excluded.
+    ///
+    /// The source-side cleanliness signal a replay-based landing refuses on:
+    /// tracked dirt would go stale under the replay, untracked scratch
+    /// survives it untouched.
+    ///
+    /// For [`GitVcs`](crate::git::GitVcs): parses
+    /// `git status --porcelain --untracked-files=no`.
+    fn tracked_dirty_file_names(&self, repo: &Path) -> Result<Vec<String>, VcsError>;
+
+    /// Return `true` when `path` is under version control in `repo`. A
+    /// relative `path` is resolved against `repo`.
+    ///
+    /// A path the VCS does not know — untracked, ignored, or outside the repo
+    /// entirely — is `Ok(false)`. `Err` is reserved for the VCS itself being
+    /// unreachable, so a caller that wants the historical
+    /// never-fabricate-a-finding behaviour writes `.unwrap_or(false)` and says
+    /// so at its own site.
+    ///
+    /// For [`GitVcs`](crate::git::GitVcs): runs
+    /// `git ls-files --error-unmatch <path>`.
+    fn is_tracked(&self, repo: &Path, path: &Path) -> Result<bool, VcsError>;
 
     /// Return the tag name pointing at HEAD, if any.
     ///

@@ -227,6 +227,10 @@ impl Vcs for FakeVcs {
             .collect())
     }
 
+    fn init_repo(&self, _dest: &Path) -> Result<(), VcsError> {
+        unsupported("init_repo")
+    }
+
     fn clone_repo(&self, _url: &str, _dest: &Path) -> Result<(), VcsError> {
         unsupported("clone_repo")
     }
@@ -275,6 +279,18 @@ impl Vcs for FakeVcs {
 
     fn has_uncommitted_changes(&self, _repo: &Path) -> Result<bool, VcsError> {
         unsupported("has_uncommitted_changes")
+    }
+
+    fn dirty_file_names(&self, _repo: &Path) -> Result<Vec<String>, VcsError> {
+        unsupported("dirty_file_names")
+    }
+
+    fn tracked_dirty_file_names(&self, _repo: &Path) -> Result<Vec<String>, VcsError> {
+        unsupported("tracked_dirty_file_names")
+    }
+
+    fn is_tracked(&self, _repo: &Path, _path: &Path) -> Result<bool, VcsError> {
+        unsupported("is_tracked")
     }
 
     fn tag_at_head(&self, _repo: &Path) -> Result<Option<RefName>, VcsError> {

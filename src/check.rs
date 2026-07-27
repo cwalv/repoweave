@@ -2213,11 +2213,14 @@ fn scan_registry_reconciliation(ws_root: &Path) -> Vec<CheckViolation> {
 
 /// Best-effort check for whether `path` is tracked by git.
 ///
-/// Uses `git ls-files --error-unmatch <path>` from the file's parent
-/// directory. Any error (not a git repo, git not installed, etc.) returns
-/// `false` — hygiene surfaces should never fabricate findings on
+/// Asks from the file's parent directory, so a path whose parent is not a
+/// repo at all answers `false` rather than escaping upward. An unreachable
+/// git is `false` too — hygiene surfaces should never fabricate findings on
 /// non-git-managed projects.
 fn is_tracked_by_git(path: &Path) -> bool {
+    use crate::git::GitVcs;
+    use crate::vcs::Vcs;
+
     let dir = match path.parent() {
         Some(d) => d,
         None => return false,
@@ -2226,12 +2229,7 @@ fn is_tracked_by_git(path: &Path) -> bool {
         Some(n) => n,
         None => return false,
     };
-    let output = std::process::Command::new("git")
-        .args(["ls-files", "--error-unmatch"])
-        .arg(name)
-        .current_dir(dir)
-        .output();
-    matches!(output, Ok(o) if o.status.success())
+    GitVcs.is_tracked(dir, Path::new(name)).unwrap_or(false)
 }
 
 /// Adopt an on-disk workweave into its project's `.rwv-workweave-index`.

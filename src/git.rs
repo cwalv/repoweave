@@ -693,18 +693,6 @@ impl GitVcs {
     }
 }
 
-impl GitVcs {
-    /// Initialize a new git repo at `dest`.
-    pub fn init_repo(&self, dest: &Path) -> Result<(), VcsError> {
-        std::fs::create_dir_all(dest).map_err(|e| VcsError::Io {
-            ctx: format!("failed to create directory {}", dest.display()),
-            source: e,
-        })?;
-        Self::run(&["init", "--initial-branch=main"], dest)?;
-        Ok(())
-    }
-}
-
 /// Git-specific "how do I resume this operation?" text for [`ConflictOp`].
 ///
 /// Returned text is a short indented block (no trailing newline) that
@@ -784,6 +772,15 @@ fn is_release_shape_tag(tag: &str) -> bool {
 impl Vcs for GitVcs {
     fn name(&self) -> &str {
         "git"
+    }
+
+    fn init_repo(&self, dest: &Path) -> Result<(), VcsError> {
+        std::fs::create_dir_all(dest).map_err(|e| VcsError::Io {
+            ctx: format!("failed to create directory {}", dest.display()),
+            source: e,
+        })?;
+        Self::run(&["init", "--initial-branch=main"], dest)?;
+        Ok(())
     }
 
     fn clone_repo(&self, url: &str, dest: &Path) -> Result<(), VcsError> {
@@ -921,6 +918,28 @@ impl Vcs for GitVcs {
         // empty output means the tree is clean.
         let output = Self::run(&["status", "--porcelain"], repo)?;
         Ok(!output.is_empty())
+    }
+
+    fn dirty_file_names(&self, repo: &Path) -> Result<Vec<String>, VcsError> {
+        Self::dirty_file_names_inner(repo, false)
+    }
+
+    fn tracked_dirty_file_names(&self, repo: &Path) -> Result<Vec<String>, VcsError> {
+        Self::dirty_file_names_inner(repo, true)
+    }
+
+    fn is_tracked(&self, repo: &Path, path: &Path) -> Result<bool, VcsError> {
+        let path = path.to_str().ok_or_else(|| VcsError::Io {
+            ctx: format!("path {} is not valid UTF-8", path.display()),
+            source: std::io::Error::new(std::io::ErrorKind::InvalidInput, "non-utf8 path"),
+        })?;
+        match Self::run(&["ls-files", "--error-unmatch", path], repo) {
+            Ok(_) => Ok(true),
+            // `--error-unmatch` exits non-zero for every "no" this question
+            // has: untracked, ignored, outside the repo, not a repo at all.
+            Err(VcsError::CommandFailed { .. }) => Ok(false),
+            Err(e) => Err(e),
+        }
     }
 
     fn tag_at_head(&self, repo: &Path) -> Result<Option<RefName>, VcsError> {
