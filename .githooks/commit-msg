@@ -1,0 +1,9 @@
+#!/bin/sh
+# commit-msg hook: drop harness Claude-Session trailers before they land.
+# Install with: git config core.hooksPath .githooks
+set -e
+
+msg_file="$1"
+tmp="$msg_file.tmp.$$"
+sed '/^Claude-Session:/d' "$msg_file" > "$tmp"
+mv "$tmp" "$msg_file"
