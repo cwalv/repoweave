@@ -80,6 +80,48 @@ in `rwv explain` output has nothing to open. `check_no_tracker_ids` in
 `tests/` is outside both rules. A test may name the regression it pins and
 describe the scenario it reproduces.
 
+### Operator-facing text is self-contained
+
+The carve-out above is about *paths a program operates on*. It does not
+license a string that cites a document at the reader.
+
+Operator-facing text — anything an operator can meet in `rwv` output: a
+`bail!`, a `doctor` finding, an `rwv explain` page — carries the rule or the
+action itself. It never points into an internals document for the rule.
+
+```rust
+// WRONG — the operator has nothing to open
+"rwv holds no ownership receipt for it (branch-model.md R2)"
+
+// RIGHT — the sentence is the rule
+"rwv holds no ownership receipt for it — a ref that looks like rwv's is not rwv's"
+```
+
+`docs/internals/` is not in `docs/SUMMARY.md`, so mdBook does not render it and
+a user has no page to reach. That is the same defect the tracker-ID ban names,
+arriving in a different shape, and the same rationale settles it.
+
+Where the deferred material is too long for a message, publish it: a page under
+`docs/reference/`, listed in `SUMMARY.md`, keyed by whatever token the machine
+surface already uses — `docs/reference/doctor-findings.md` is keyed by the
+`rwv doctor --json` `kind`. Key it off an existing identifier; a second
+message-id namespace is a thing to keep in sync, not a feature.
+
+A pointer to a **published** page (one `SUMMARY.md` lists) is fine after the
+sentence has already said the thing, on the same terms as a resolving path in
+a comment.
+
+This restricts message text only, and it does not reach doc comments. A
+machine surface may carry a precise binding the human channel would not: the
+human channel is a readable view, and a caller keying off a schema is not a
+user with nothing to open. `docs/reference/schemas/doctor.json` and
+`docs/reference/explain/doctor.md` are *generated* from `src/check.rs` doc
+comments, so what they say about a document is decided by the comment rule
+above, not here.
+
+Nothing mechanises this — no gate matches a section pointer inside a string —
+so it is enforced by reading.
+
 ### Escape hatch
 
 A single site may keep an otherwise-forbidden path by annotating it on the line
