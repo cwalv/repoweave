@@ -258,8 +258,39 @@ wrong report from the gate.
 ## A green gate is not coverage
 
 Both rules above end with a "What is mechanised, and what is not". That is not
-boilerplate. It is the same defect written down twice, and a survey of this
-repository's own checks found it four times:
+boilerplate. It is the same defect written down twice: **a check green-lights
+what it examined, and reading it as green-lighting what it was pointed at is
+the error.**
+
+Take the strength of the evidence first. A survey of this repository's checks
+found the defect four times. The work that fixed those four then reproduced it
+three times *in itself*, inside a week, while its author was watching for
+exactly this — and those three are the argument, because they are what the
+defect looks like when someone is already looking for it:
+
+- **The sweep that cleared the ground matched one spelling.** Before the
+  citation gate could be widened, ~290 bare section pointers had to come out of
+  `src/` comments. That sweep enumerated `§`. Four files wrote their section
+  pointers `D2`, `D4`, `D1–D3` — same shape, different notation — and were left
+  standing, to be found by the widened gate afterwards. A one-spelling matcher
+  was used to clear the ground for the change about one-spelling matchers.
+- **The replacement check passed a corrupted input on its first run.** The new
+  half of `tests/doc_claims_cli_md_test.rs` reads documented flag values out of
+  a markdown section and asserts clap accepts them. Its section slicer cut at
+  the wrong offset; the odd backtick in a heading like ``### `rwv sync
+  <source>` `` inverted backtick-span parity for the rest of the section; the
+  parser read **zero** claims and reported nothing. A gate written specifically
+  to catch "passes for the wrong reason" passed for the wrong reason, in its
+  first hour.
+- **The scope matcher recognised one module name.** `before_test_module` in
+  `src/bin/generate-explain.rs` ended the scan at a literal `mod tests`, so
+  `src/git.rs` — which names its test modules `branch_model_tests` and
+  `derived_content_tests` — was scanned end to end. The freshly hardened gate
+  then reported a comment the rule does not cover, and the two obvious ways to
+  green were to edit a test-module comment to appease a buggy scope, or to ship
+  the check disabled. Both are this section's subject.
+
+The four the survey found, for the taxonomy:
 
 - **one direction** — the cli.md gate compared documented flag *names* against
   `--help` and never checked anything else about them, so a documented flag
@@ -269,33 +300,30 @@ repository's own checks found it four times:
 - **one syntactic form** — the citation gate required a `/` in a token before
   it would look at the token at all. Roughly eighty bare `<document>.md §N`
   citations sat unexamined behind that one character.
-- **one spelling** — the tracker-ID matcher recognised the retired `fo-`
-  prefix and not the one that replaced it, so live IDs sat green. The hand
-  sweep that cleared the § pointers had the same bug: it matched `§` and left
-  `D2`, `D4` and `D1–D3` standing in four files, which the widened gate then
-  reported.
-- **one region of the file** — the citation gate stops scanning at
-  `#[cfg(test)] mod tests`, and a non-resolving citation below that line is
-  invisible for as long as it sits there. The boundary detector has the
-  previous bug too: it matches that module name literally, so a file naming its
-  test module anything else (`mod derived_content_tests`) is scanned to the
-  end. Two files here do, which means the same comment is in scope or out of it
-  depending on what someone called a module.
+- **one spelling** — the tracker-ID matcher recognises the retired `fo-` prefix
+  and not the one that replaced it, so live IDs sit green.
+- **one region of the file** — the citation gate stops scanning at the first
+  `#[cfg(test)]` module. That exclusion is deliberate, but nothing re-examines
+  it: a non-resolving citation below that line is invisible for as long as it
+  sits there, and one is.
 
-A check green-lights what it examined. Reading it as green-lighting what it was
-*pointed at* is the error, and every one of these survived because someone made
-that read. Three habits, in the order they pay off:
+Four habits, in the order they pay off:
 
 1. **Ship a seeded-failure test with every check.** A fixture the check must
    report, asserting on the finding. Not "the tree is clean" — that passes when
-   the check does nothing. All four of these had a passing suite.
-2. **Pin non-vacuity separately.** A check that walks a corpus and reports what
-   it finds is indistinguishable, when green, from one that finds nothing
-   because its parser broke. Assert that the walk really yields the claims you
-   think it does. The value check in `tests/doc_claims_cli_md_test.rs` needed
-   exactly this on its first run: a mis-sliced section inverted backtick
-   parity, it read zero claims, and it passed a deliberately corrupted value.
-3. **Write down the residue next to the rule.** Not in the commit message —
+   the check does nothing. Every instance above had a passing suite.
+2. **Seed the failure in more than one place, and require every surface to
+   react.** The corrupted-input pass was caught only because the bad value was
+   planted in both README and `docs/reference/cli.md` and only one of the two
+   tests went red. A single-plant check would have shown green and a dead gate
+   would have shipped. One green is not evidence; the disagreement is.
+3. **Pin non-vacuity separately, and permanently.** A check that walks a corpus
+   and reports what it finds is indistinguishable, when green, from one that
+   finds nothing because its parser broke. Assert the walk really yields the
+   claims you think it does — a count asserted non-zero is the cheapest guard
+   against this whole class, and every check here that iterates a parsed
+   section wants one.
+4. **Write down the residue next to the rule.** Not in the commit message —
    next to the prohibition, where the next person sweeping by hand will read
    it. If you cannot state what your check does not cover, you do not know.
 
