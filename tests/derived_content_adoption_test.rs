@@ -347,7 +347,7 @@ fn a_land_conflict_in_a_generated_artifact_resolves_mechanically() {
     let primary_artifact = read(&primary.managed_repo, ARTIFACT);
     assert_no_durable_definition(&ww.managed_repo);
 
-    rwv()
+    let synced = rwv()
         .args(["sync", "primary", "--strategy", "rebase"])
         .current_dir(&ww.root)
         .assert()
@@ -357,6 +357,15 @@ fn a_land_conflict_in_a_generated_artifact_resolves_mechanically() {
         GitVcs.mid_op(&ww.managed_repo),
         None,
         "a declared derived path must not leave the land half-finished"
+    );
+
+    // The pull direction resolves the same way and owes the same report as
+    // the landing direction below — one code path, so a report that reached
+    // only one of them would mean the two had drifted apart.
+    let stderr = String::from_utf8_lossy(&synced.get_output().stderr).into_owned();
+    assert!(
+        stderr.contains(ARTIFACT),
+        "`rwv sync` must name what it resolved away too; got:\n{stderr}"
     );
 
     // The pick is a side-pick and nothing else. Byte-identical to what the
