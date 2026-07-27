@@ -277,7 +277,7 @@ pub fn ensure_registered_workweave(
 
 /// Whether `observed` is a branch this workweave's namespace could have
 /// produced: the flat name itself, or a legacy `{flat}/{segment}` name from
-/// before §3.5 dropped the segment.
+/// before the segment was dropped.
 ///
 /// A plain `starts_with(flat)` is wrong in the direction that matters for a
 /// report: deleting workweave `feat` would list project `p`'s unrelated
@@ -294,9 +294,9 @@ pub fn ensure_registered_workweave(
 /// characters, so this is not a bug fix — it is keeping the one legal
 /// conversion distinct from the rendering. `Display` is what an
 /// `EphemeralRefName` offers a human; laundering that rendering into a string
-/// in order to compare it with an observed name is precisely the move §4.2
-/// removes `as_str()` to prevent, and a comparison written that way keeps
-/// compiling if the two notions ever diverge.
+/// in order to compare it with an observed name is precisely what removing
+/// `as_str()` prevents, and a comparison written that way keeps compiling if
+/// the two notions ever diverge.
 fn is_this_workweaves_namespace(observed: &RawRefName, flat: &EphemeralRefName) -> bool {
     let flat = flat.to_raw();
     observed == &flat
@@ -433,11 +433,10 @@ fn orphan_prune_pairs(
 /// required.
 /// What one create attempt did to the ref its receipt names.
 ///
-/// §6.1: rollback used to record the *intended* branch unconditionally, so a
-/// create that merely **adopted** a pre-existing branch force-deleted it on
-/// the way out — taking a unique commit with it. The distinction that fixes
-/// that is [`Vcs::create_worktree_on`]'s return value, and this enum is
-/// where the call site parks it.
+/// Rollback must not destroy a branch this create merely **adopted**:
+/// force-deleting one takes a unique commit with it. The distinction is
+/// [`Vcs::create_worktree_on`]'s return value, and this enum is where the
+/// call site parks it.
 enum RefBirth {
     /// `create_worktree_on` returned a [`BornRef`]: this call wrote the ref.
     Authored(BornRef),
@@ -449,7 +448,7 @@ enum RefBirth {
     /// plus the `Unmoved` warrant rollback still has to obtain.
     AuthoredOrAbsent,
     /// `create_worktree_on` returned `None`: it adopted a branch that was
-    /// already there. **Never** this create's to destroy (§6.1) — only the
+    /// already there. **Never** this create's to destroy — only the
     /// receipt this attempt wrote is retracted.
     Adopted,
 }
@@ -653,7 +652,7 @@ impl CreateRollbackGuard {
     ///   is the case the old unconditional `branch -D` destroyed silently.
     ///
     /// An [`RefBirth::Adopted`] ref is never destroyed at all, whatever its
-    /// tip: this create did not write it (§6.1).
+    /// tip: this create did not write it.
     fn undo_ref_births(&self) -> Vec<String> {
         let vcs = GitVcs;
         let mut registry = RefRegistry::for_project(&self.primary_root, &self.project);
@@ -953,7 +952,7 @@ impl BirthOutcome {
     /// Resolve the outcome here, for a caller with no rollback guard to hand
     /// it to: a receipt survives only if this call authored the ref it names.
     ///
-    /// An adopted ref is not this call's to hold a claim on (§6.1), and with
+    /// An adopted ref is not this call's to hold a claim on, and with
     /// no guard there is no later pass to notice — so the receipt is retracted
     /// before the error returns, rather than being left standing over a branch
     /// rwv did not create. A birth that *failed* keeps its receipt: the ref may
@@ -997,9 +996,9 @@ pub(crate) fn receipt_store_for(checkout: &Path) -> PathBuf {
 /// Materialize a worktree at `dest` on this workweave's ephemeral ref in the
 /// store behind `source_repo`, writing the ownership receipt first.
 ///
-/// This is §5's `workweave create` row and §4.6(3)'s retry in one place. The
-/// name is minted flat ([`EphemeralRefName::mint`]) and nothing observed feeds
-/// into it, so there is no third component to disagree about (§3.5).
+/// The name is minted flat ([`EphemeralRefName::mint`]) and nothing observed
+/// feeds into it, so there is no third component for two call sites to
+/// derive differently.
 ///
 /// The ref begins at `start`, which is also what the receipt records:
 /// [`Vcs::create_worktree_on`] takes the start point from the receipt, so the
@@ -1104,7 +1103,7 @@ pub(crate) fn birth_ephemeral_worktree(
         (None, None) => {}
     }
 
-    // Receipt first, durably, then the ref (§7.1). A crash between the two
+    // Receipt first, durably, then the ref. A crash between the two
     // leaves a dangling receipt (benign, retracted above on the next pass),
     // never an unreceipted ref (permanently disowned under R2).
     let owned = registry.record_created(&store, ephemeral.clone(), start)?;
@@ -1213,13 +1212,13 @@ pub fn create_workweave(
         }
     };
 
-    // §3.5: name uniqueness is checked against the workweave INDEX, not just
-    // the container directory. The directory check below sees only the slot
-    // this invocation picked, so `--dir` walks straight past it, and the index
+    // Name uniqueness is checked against the workweave INDEX, not just the
+    // container directory. The directory check below sees only the slot this
+    // invocation picked, so `--dir` walks straight past it, and the index
     // insert is a silent last-writer-wins. Two workweaves of one project
-    // sharing a name used to be merely confusing; under flat ephemeral names
-    // they mint the *same* branch in the same store, where the second create's
-    // collision handling would be pointed at the first's live ref. The two
+    // sharing a name mint the *same* flat branch in the same store, where the
+    // second create's collision handling would be pointed at the first's live
+    // ref. The two
     // guards are complementary: this one refuses the duplicate name outright,
     // and `birth_ephemeral_worktree` refuses to destroy a ref it cannot prove
     // is a stale leftover.
@@ -1301,7 +1300,7 @@ pub fn create_workweave(
                 // lose, and --replace-existing authorised replacing the (clean)
                 // workweave. No unmerged-commits consent is passed and none is
                 // constructible here — that token is minted only from
-                // `--discard-unmerged-commits` at CLI dispatch (§4.4). The scan
+                // `--discard-unmerged-commits` at CLI dispatch. The scan
                 // proved there is nothing unmerged either, so every recorded ref
                 // gets a `Merged` warrant on its own merits.
                 delete_workweave(primary_root, project, name, true, None)?;
@@ -1435,7 +1434,7 @@ pub fn create_workweave(
 
     // The one ephemeral name this create uses, in every store it touches.
     // Flat: `{project}--{workweave}`, minted from two inputs, with nothing
-    // observed feeding in (§3.5). Two repos of one workweave live in
+    // observed feeding in. Two repos of one workweave live in
     // different object stores, so one name per store is enough.
     let ephemeral = EphemeralRefName::mint(project, name);
     let mut registry = RefRegistry::for_project(primary_root, project);
@@ -1619,8 +1618,8 @@ pub fn create_workweave(
         std::fs::create_dir_all(project_wt_dest.parent().unwrap())?;
         // Record the project repo for the post-rollback prune pass BEFORE the
         // birth, for the same hook-failure reason as manifest repos above.
-        // §5.1: the project repo is an instance of the model, so this arm runs
-        // the identical receipt-first birth over the identical ephemeral name.
+        // The project repo is an instance of the model, so this arm runs the
+        // identical receipt-first birth over the identical ephemeral name.
         rollback.record_attempted_repo(project_dir.clone());
         let birth = match GitVcs
             .head_revision(&project_dir)
@@ -2405,10 +2404,9 @@ fn baseline_tips_in_store(
 /// Destroy the refs rwv **recorded creating** in `store` for this workweave,
 /// and *report* every other branch in the workweave's namespace.
 ///
-/// §5's `workweave delete` row and §4.6(4). The set/singleton mismatch the
-/// shipped code carried — a merged-check that inspected one HEAD per repo
-/// authorizing a deletion that globbed a whole prefix — cannot recur, because
-/// both now range over the same thing: the receipt.
+/// The merged-check and the deletion range over the same thing — the receipt
+/// — so a check that inspects one HEAD per repo cannot authorize a deletion
+/// that sweeps a whole prefix.
 ///
 /// The listing pass is report-only **by type**. `list_branch_names_with_prefix`
 /// answers in [`RawRefName`]s, and no route leads from one of those to
@@ -2517,10 +2515,8 @@ fn retire_recorded_refs(
 ///
 /// `discard_unmerged` is a token rather than a bool because it is also the
 /// [`DeletionWarrant::operator_discarded`] warrant every unmerged ref's
-/// DESTROY needs (R3). Only CLI dispatch can mint one (§4.4), which is what
-/// makes the Claude `WorktreeRemove` hook — the one path that used to destroy
-/// dirty *and* diverged workweaves with no operator confirmation — unable to
-/// ask for this.
+/// DESTROY needs (R3). Only CLI dispatch can mint one, which is what leaves
+/// the Claude `WorktreeRemove` hook unable to ask for this.
 ///
 /// Independently of both waivers, refuses when any per-repo checkout in the
 /// workweave is itself a canonical store with foreign worktrees linked into
@@ -2574,7 +2570,7 @@ pub(crate) fn delete_workweave_for_retire(
 ) -> anyhow::Result<()> {
     // `--retire` has no `--discard-unmerged-commits` flag, so no
     // DiscardUnmergedConsent can be minted for this path — and minting one
-    // here from a bool is exactly the laundering §4.4's token exists to
+    // here from a bool is exactly the laundering the token exists to
     // prevent. The retire phase runs its own diverged-and-dirty refusals
     // before calling this and passes `false`, so reading the parameter as
     // "no consent" changes nothing behaviourally and fails safe if it ever
@@ -2786,7 +2782,7 @@ fn delete_workweave_inner_at(
                 let msg = format!("{}: {e}", repo_path.as_str());
                 eprintln!("rwv workweave delete: error: {msg}");
                 errors.push(msg);
-                // Fall through to the ref pass anyway (§5.1): the receipt set
+                // Fall through to the ref pass anyway: the receipt set
                 // does not depend on whether the worktree could be removed,
                 // and a ref left standing because its branch is still checked
                 // out gets reported rather than silently skipped.
@@ -2815,12 +2811,11 @@ fn delete_workweave_inner_at(
     // (or absent), the workweave copy was a plain directory copy — just let
     // remove_dir_all below handle it.
     //
-    // §5.1: the project repo is an instance of the branch model, so the ref
-    // pass below is NOT nested inside the worktree-removal outcome the way it
-    // used to be. Under R2 both arms are the same operation over the same
-    // receipt set, and the asymmetry — project refs cleaned only when
-    // `.git` was a file AND `remove_worktree` returned `Ok`, while the
-    // directory removal ran regardless — had nowhere left to live.
+    // The project repo is an instance of the branch model, so the ref pass
+    // below is NOT nested inside the worktree-removal outcome. Under R2 both
+    // arms are the same operation over the same receipt set, so whether
+    // `.git` was a file and whether `remove_worktree` returned `Ok` do not
+    // change which receipts are owed a DESTROY.
     let project_rel = Path::new("projects").join(project.as_str());
     let project_dir_fallback = ws_root.join(&project_rel);
     let project_worktree = workweave_dir.join(&project_rel);
@@ -3464,17 +3459,17 @@ pub fn handle_claude_hook() -> anyhow::Result<()> {
                     .map(|(_, n)| n)
                     .unwrap_or(dir_name);
 
-                // Waives NOTHING (§6.1). This hook used to pass both
-                // waivers, which made it the one path where a dirty *and*
-                // diverged workweave was destroyed with no operator
-                // confirmation — on a name `.unwrap_or(dir_name)` may have
-                // fabricated from a basename with no `--`.
+                // Waives NOTHING. Passing either waiver here would make
+                // this the one path where a dirty *and* diverged workweave
+                // is destroyed with no operator confirmation — on a name
+                // `.unwrap_or(dir_name)` may have fabricated from a basename
+                // with no `--`.
                 //
                 // The unmerged half is now unconstructible rather than
                 // merely unpassed: the warrant an unmerged ref's DESTROY
                 // needs is `DeletionWarrant::operator_discarded`, which
                 // takes a `DiscardUnmergedConsent` that only CLI dispatch
-                // can mint (§4.4). There is no flag on this path to mint it
+                // can mint. There is no flag on this path to mint it
                 // from, so an unmerged ref is reported and left standing.
                 // The uncommitted half is a verb-level precondition rather
                 // than a warrant, so it stays a bool — passed `false` here
@@ -3509,14 +3504,11 @@ mod tests {
     use super::*;
 
     // -----------------------------------------------------------------------
-    // Create rollback (branch-model.md §6.1, R2, R3)
+    // Create rollback
     //
-    // Rollback used to record the *intended* branch name before the call and
-    // force-delete it afterwards, so a create that ADOPTED a pre-existing
-    // branch destroyed it on the way out. These drive the guard directly
-    // because the distinction it keys on — `create_worktree_on` returning a
-    // `BornRef` or not — is not observable from the CLI once create refuses
-    // an unowned name outright.
+    // These drive the guard directly because the distinction it keys on —
+    // `create_worktree_on` returning a `BornRef` or not — is not observable
+    // from the CLI once create refuses an unowned name outright.
     // -----------------------------------------------------------------------
 
     /// Run git in `dir`, panicking on failure.
