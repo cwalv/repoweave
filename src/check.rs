@@ -331,9 +331,9 @@ pub enum CheckViolation {
     /// [`crate::workweave_index::RefRegistry::retract`].
     ///
     /// Only raised when the store is present and readable. A receipt whose
-    /// *store* is gone is R4/Q14 territory (whether receipts are ever
-    /// reclaimed in bulk under a store-destroy is open), so it is left
-    /// alone here.
+    /// *store* is gone is R4 territory — whether receipts are ever
+    /// reclaimed in bulk under a store-destroy is open — so it is left alone
+    /// here.
     DanglingRefReceipt {
         /// The project whose registry holds the receipt.
         project: ProjectName,
@@ -3241,7 +3241,8 @@ fn looks_like_a_pre_flat_ref(name: &str) -> bool {
 /// false record to slip past.
 ///
 /// One caveat this does **not** decide alone: [`mint`] does not validate its
-/// components (Q12 leaves the grammar open), so a workweave *named* `a/b`
+/// components — the legal grammar for a name is undecided — so a workweave
+/// *named* `a/b`
 /// mints `p--a/b` — a segmented name that is nonetheless a live workweave's
 /// own ref. Every caller pairs this with the liveness question before
 /// retracting anything; see [`scan_pre_flat_receipts`].
@@ -3332,8 +3333,8 @@ struct RecordedRef {
     /// The live workweave whose minted name this receipt carries. `None`
     /// means no workweave on disk would mint it — the ref is a leak from a
     /// deleted workweave (or from a `--dir` placement the container scan
-    /// cannot see, which is Q10 and stays open; that is why `None` alone
-    /// never authorizes anything, only a warrant does).
+    /// cannot see, which stays open; that is why `None` alone never
+    /// authorizes anything, only a warrant does).
     live_workweave: Option<String>,
 }
 
@@ -3347,8 +3348,8 @@ struct RecordedProject {
     /// on `(project, workweave)`, so "which live workweave would have minted
     /// this receipt's name" is a lookup against names rwv itself produced,
     /// never a parse of a name back into its parts. R2 rules the second one
-    /// out, and Q12 (the legal grammar for project and workweave names)
-    /// makes it unsound anyway.
+    /// out, and the undecided grammar for project and workweave names makes
+    /// it unsound anyway.
     ///
     /// [`EphemeralRefName::mint`]: crate::vcs::EphemeralRefName::mint
     live_ref_names: std::collections::HashMap<crate::vcs::RawRefName, String>,
@@ -3705,9 +3706,9 @@ enum TrackingSource {
     /// A manifest member with exactly one declared `version:` across the
     /// projects that reference it.
     Declared(crate::vcs::TrackingRef),
-    /// The project repo. Its counterpart is observed, not declared: Q6 (what
-    /// a channel's publish ref is) stays open, and reading the remote's own
-    /// HEAD answers "which branch is this repo's trunk" without deciding it.
+    /// The project repo. Its counterpart is observed, not declared: what a
+    /// channel's publish ref is stays open, and reading the remote's own HEAD
+    /// answers "which branch is this repo's trunk" without deciding it.
     RemoteDefault,
     /// No declaration resolves — the repo is on disk but in no manifest, or
     /// two projects declare different `version:` values for it. Nothing can
@@ -3944,7 +3945,7 @@ fn scan_canonical_stores(
             // A receipt whose workweave is still on disk is not leaked at
             // all. The receipt is the authority when the container scan
             // disagrees — a `--dir` placement outside every container is
-            // invisible to that scan (Q10), and treating its live ref as a
+            // invisible to that scan, and treating its live ref as a
             // leak is the exact failure the receipt rule exists to
             // prevent.
             if rec.live_workweave.is_some() {
@@ -4062,7 +4063,7 @@ fn live_minted_ref_names(ws_root: &Path) -> Vec<crate::vcs::EphemeralRefName> {
         }
     }
     // The indexes, which are the only record of a `--dir` placement outside
-    // every container (Q10). Consulted only for entries whose directory
+    // every container. Consulted only for entries whose directory
     // actually exists, so a stale entry cannot resurrect a deleted workweave.
     for project in crate::workweave_index::projects_on_disk(ws_root) {
         if let Ok(Some(index)) = crate::workweave_index::read(ws_root, &project) {
@@ -4083,8 +4084,8 @@ fn live_minted_ref_names(ws_root: &Path) -> Vec<crate::vcs::EphemeralRefName> {
 /// write and the ref creation.
 ///
 /// Only stores that are present and readable are considered. A receipt whose
-/// store has gone is R4/Q14 territory (whether receipts are reclaimed in bulk
-/// under a store-destroy is open), and retracting one here would answer that
+/// store has gone is R4 territory — whether receipts are reclaimed in bulk
+/// under a store-destroy is open — and retracting one here would answer that
 /// by implementation.
 ///
 /// `active_project` scopes the walk the way every other doctor scan is
@@ -4147,7 +4148,7 @@ fn scan_dangling_receipts(
 /// records something rwv cannot have created: every ref rwv mints is flat.
 ///
 /// **The liveness guard is not belt-and-braces.**
-/// [`EphemeralRefName::mint`] does not validate its components (Q12), so a
+/// [`EphemeralRefName::mint`] does not validate its components, so a
 /// workweave literally named `a/b` mints `p--a/b`, and that receipt is a
 /// live workweave's own — the one segmented name that is true. Retracting it
 /// would disown a workweave nothing later re-adopts (the migration walks the
@@ -4157,7 +4158,7 @@ fn scan_dangling_receipts(
 ///
 /// **The store is never consulted.** [`scan_dangling_receipts`] visits only
 /// present, readable stores because its question is about a ref *in* one,
-/// and a receipt whose store has gone is R4/Q14 territory it declines to
+/// and a receipt whose store has gone is R4 territory it declines to
 /// answer. The question here is about the record alone — a segmented name is
 /// one rwv could not have minted whether or not the store is on disk — so
 /// the same guard would only strand a false receipt behind a repo someone
@@ -4606,7 +4607,7 @@ fn branch_discipline_in_scope(
 /// the registry claim a ref that no longer exists, which is the dangling
 /// state [`scan_dangling_receipts`] exists to clear. Retracting the receipt
 /// of a ref this call just destroyed is bookkeeping, not reclamation policy
-/// — Q14 (whether receipts are reclaimed in bulk) stays open.
+/// — whether receipts are reclaimed in bulk stays open.
 ///
 /// When `active_project` is `Some(name)`, only safe-class branches that
 /// belong to that project are deleted (same scoping as `run_check` without

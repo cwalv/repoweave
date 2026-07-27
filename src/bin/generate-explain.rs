@@ -1568,10 +1568,10 @@ fn is_local_ref_hatch(line: &str) -> bool {
 /// `CLAUDE.md` bans three shapes in comments. The tracker-ID shape is
 /// `check_no_tracker_ids`. The third — a **section pointer** into a design
 /// document (`branch-model.md §3.3`, `plan §7.1 arm 7`) — is **not mechanised
-/// anywhere**, here or elsewhere. Around 290 bare `§` sites stand in `src/`
-/// today, concentrated in `check.rs`, `sync.rs` and `vcs.rs`; a matcher for
-/// them has to follow the sweep that removes them, not precede it. Reading a
-/// green gate as "this tree has no section pointers" is wrong.
+/// anywhere**, here or elsewhere. `src/` comments carry none today, but that
+/// is the state a sweep left behind, not a property anything maintains:
+/// nothing stops the next one landing. Reading a green gate as "this tree has
+/// no section pointers" is wrong.
 ///
 /// Three further limits, all taken deliberately against over-eagerness: only
 /// the extensions in `DOC_PATH_EXTENSIONS` count as a document citation; a

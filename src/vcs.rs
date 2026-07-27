@@ -311,8 +311,8 @@ pub enum VcsError {
     /// moment it was produced; the repo can move underneath it. Every
     /// consumer re-observes before acting and returns this rather than
     /// applying the operation to a state nobody authorized. (How wide a
-    /// witness's validity window *should* be is Q15, still open — this
-    /// variant is what makes the narrow answer observable.)
+    /// witness's validity window *should* be is still open — this variant
+    /// is what makes the narrow answer observable.)
     StaleRefWitness {
         repo: PathBuf,
         /// What the witness asserted, rendered.
@@ -1137,8 +1137,7 @@ impl fmt::Display for OwnedRef {
 /// What is guaranteed: the MOVE lands on the repo whose attachment was
 /// actually observed. What is *not* guaranteed: that the attachment still
 /// holds at consumption time — each consumer re-observes and refuses a
-/// stale witness. The wider validity-window question is Q15 and stays
-/// open.
+/// stale witness. How wide that window should be stays open.
 ///
 /// # No string access at all
 ///
@@ -1230,8 +1229,8 @@ impl fmt::Display for AttachedRef {
 /// semantics on an unborn HEAD are undefined (a fast-forward merge fails
 /// while a reset would stamp the branch into existence), so the model makes
 /// the call unrepresentable rather than picking one — an `UnbornRef` cannot
-/// be passed to [`Vcs::advance_attached_ref`]. This is the Q9 lesson
-/// applied inside the Q9 fix.
+/// be passed to [`Vcs::advance_attached_ref`] — the same refusal to collapse
+/// distinct states that splits [`HeadAttachment`], applied one level in.
 ///
 /// Carries the branch name because `git symbolic-ref --short HEAD` succeeds
 /// here, so the state is reportable ("on branch `main`, no commits yet")
@@ -1342,8 +1341,8 @@ impl fmt::Display for BornRef {
 /// `None` when the remote's HEAD is unset or malformed. **There is no
 /// fallback** — a guessed name here would let a caller compare an
 /// observation against an invention instead of refusing and saying the
-/// remote's HEAD is unset. Q6 — *which* ref publishes, and where a
-/// non-default channel's identity is recorded — is policy and stays open.
+/// remote's HEAD is unset. *Which* ref publishes, and where a non-default
+/// channel's identity is recorded, is policy and stays open.
 ///
 /// Display only, like the other types the publish gate touches: the gate
 /// compares through [`RemoteDefaultBranch::local_counterpart`], the same
@@ -1389,9 +1388,10 @@ impl fmt::Display for RemoteDefaultBranch {
 ///
 /// An opaque wrapper whose constructors are visible only inside this crate
 /// and whose *use* is confined to one decision site in `push.rs`'s publish
-/// gate. Q6 — is a member's publish ref the attached ref or the manifest's
-/// declared tracking branch; is `version:` a constraint or a default — is
-/// **open**, and this type is where the deferral is visible: a deferred
+/// gate. Whether a member's publish ref is the attached ref or the
+/// manifest's declared tracking branch, and whether `version:` is a
+/// constraint or a default, is **open** — and this type is where the
+/// deferral is visible: a deferred
 /// decision with a producer, rather than a placeholder without one. The
 /// gate calls `from_attached`, preserving today's behaviour; nothing here
 /// decides the policy.
@@ -1406,7 +1406,7 @@ impl PublishRef {
     /// which is what push publishes. `from_local` stays defined and is
     /// called by no gate — only
     /// by `push.rs`'s `test_publish_ref` helper, to fabricate a value — so
-    /// Q6's other answer keeps a producer even though one branch is now live.
+    /// the other answer keeps a producer even though one branch is live.
     pub(crate) fn from_attached(a: &AttachedRef) -> Self {
         Self(a.name.clone())
     }
@@ -1414,7 +1414,7 @@ impl PublishRef {
     /// Publish the local counterpart of a declared tracking branch.
     ///
     /// Unused by the shipped gate (see `from_attached`). Left in place as
-    /// Q6's other answer: if the decision goes to "publish the manifest's
+    /// the other answer: if the decision goes to "publish the manifest's
     /// declared branch", this is the constructor the call site switches to.
     #[allow(dead_code)]
     pub(crate) fn from_local(l: &LocalRefName) -> Self {
@@ -3022,8 +3022,8 @@ pub trait Vcs {
     ///
     /// The ref is a **parameter**, so the choice of what to publish is made
     /// at one site in `push.rs` instead of being implicit inside the VCS
-    /// impl. Q6 decides what that site passes; this signature only makes
-    /// the decision visible.
+    /// impl. What that site passes is still policy; this signature only
+    /// makes the decision visible.
     fn push_ref(
         &self,
         repo: &Path,

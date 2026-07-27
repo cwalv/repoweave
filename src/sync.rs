@@ -5543,8 +5543,8 @@ fn ff_advance_repo(
     // Fast-forward. The witness names both the ref that moves and the repo
     // it moves in; `advance_attached_ref` re-observes before acting, so an
     // attachment that changed since the read above is a refusal rather than
-    // a landing on whatever HEAD became (how wide that window should be is
-    // Q15, and stays open). Underneath, the ff refuses rather than clobbers
+    // a landing on whatever HEAD became (how wide that window should be
+    // stays open). Underneath, the ff refuses rather than clobbers
     // if the update would touch uncommitted changes — the VCS-native
     // backstop behind the two explicit dirty gates above.
     GitVcs

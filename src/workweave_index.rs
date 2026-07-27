@@ -321,7 +321,7 @@ pub fn write(
 /// index can still race, and the mutating verbs are gated against each
 /// other by the op-state lease rather than here. Widening this to a
 /// cross-process lock is a design decision with its own blast radius, and
-/// receipt lifecycle beyond the home is Q14.
+/// receipt lifecycle beyond the home is undecided.
 static INDEX_RMW: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 /// Take [`INDEX_RMW`], ignoring poisoning: a writer that panicked mid-way
@@ -559,8 +559,8 @@ pub fn lookup_raw(
 /// [`RefRegistry::retract`] is policy-free: it removes a record and asks
 /// for no warrant. Which callers may retract, whether a store-destroy
 /// retracts per-ref (each with its own warrant) or in bulk under one
-/// consent, and whether receipts are ever reclaimed, are Q14 and stay open.
-/// Putting a warrant parameter here would answer Q14 by implementation.
+/// consent, and whether receipts are ever reclaimed, all stay open. Putting
+/// a warrant parameter here would answer them by implementation.
 ///
 /// # Only a minted name can become an owned one
 ///

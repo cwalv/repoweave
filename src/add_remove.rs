@@ -544,7 +544,7 @@ pub fn run_remove(
 ///   same store.
 ///
 /// The verb's own named preconditions (dirty state, unpushed work) sit on top
-/// of this and are separate work — **Q11, narrowed**, still open.
+/// of this and are separate work, still open.
 fn refuse_claimed_store(primary_root: &Path, repo_dir: &Path) -> anyhow::Result<()> {
     let mut claims: Vec<String> = Vec::new();
 
