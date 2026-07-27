@@ -2021,9 +2021,9 @@ fn run_doc_symbol_check(root: &Path) -> Vec<String> {
 /// other inflections. That is deliberate — `beads-core` appears twice in
 /// `src/` as an illustrative example crate name (manifest.rs,
 /// integrations/cargo_workspace.rs) and matching the plural would force
-/// rewording a hit that has nothing to do with the tracker. Most entries here
-/// have never had a live hit outside this file; the list names known house
-/// vocabulary, not a log of past violations. `workweave` is core rwv
+/// rewording a hit that has nothing to do with the tracker. An entry names
+/// known house vocabulary; a prior hit is not a precondition for adding one,
+/// and this list is not a log of past violations. `workweave` is core rwv
 /// vocabulary and must never be added here, and neither is `dispatch` — rwv's
 /// own CLI dispatch uses the word throughout `src/`, so it cannot be added as
 /// a bare word without banning rwv's own vocabulary alongside the consumer
