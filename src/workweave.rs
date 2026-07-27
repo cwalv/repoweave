@@ -1051,7 +1051,7 @@ pub(crate) fn birth_ephemeral_worktree(
             "cannot create branch `{ephemeral}` in {store}: {n} branch(es) already occupy \
              its namespace, and git cannot hold both `refs/heads/{ephemeral}` and \
              `refs/heads/{ephemeral}/...`:\n  {list}\n\n\
-             These carry the pre-§3.5 shape `{{project}}--{{workweave}}/<segment>`, which \
+             These carry the pre-flat shape `{{project}}--{{workweave}}/<segment>`, which \
              rwv no longer mints. Run `rwv doctor --fix` to migrate the ones rwv created; \
              one you made yourself is yours to rename or delete — rwv will not touch it.",
             store = store.display(),

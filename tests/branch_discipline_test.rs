@@ -2391,7 +2391,7 @@ fn fix_retracts_a_pre_flat_receipt_instead_of_deleting_the_branch() {
     let after_stdout = String::from_utf8_lossy(&after.stdout).into_owned();
     assert!(
         after_stdout.contains("myproj--ghost/main")
-            && after_stdout.contains("§7.3 forbids guessing"),
+            && after_stdout.contains("rwv does not guess which workweave"),
         "the ref must fall back to the unowned class, not go quiet; got:\n{after_stdout}"
     );
 
@@ -2668,7 +2668,8 @@ fn migration_leaves_a_stray_pre_flat_branch_alone() {
     let out = rwv().args(["doctor"]).current_dir(&ws).output().unwrap();
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(
-        stdout.contains("myproj--ghost/main") && stdout.contains("§7.3 forbids guessing"),
+        stdout.contains("myproj--ghost/main")
+            && stdout.contains("rwv does not guess which workweave"),
         "the stray must be reported as unowned; got:\n{stdout}"
     );
 

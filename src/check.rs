@@ -4662,8 +4662,7 @@ pub fn fix_stale_ephemeral_branches(
         else {
             errors.push(format!(
                 "refusing to delete stale ephemeral branch `{}` in {}: rwv holds no \
-                 ownership receipt for it (branch-model.md R2 — a ref that looks like \
-                 rwv's is not rwv's)",
+                 ownership receipt for it — a ref that looks like rwv's is not rwv's",
                 branch_name,
                 store_path.display()
             ));
@@ -5640,7 +5639,8 @@ pub fn violations_to_issues(violations: Vec<CheckViolation>) -> Vec<Issue> {
                         "{} is a legacy workweave index written before ref-ownership \
                          receipts existed (no `receipts` field), so rwv can neither \
                          record nor destroy an ephemeral ref for this project; run \
-                         `rwv doctor --fix` to migrate it (branch-model.md §7.1 arm 7)",
+                         `rwv doctor --fix` to add the field — it is the precondition \
+                         for every other arm of the migration",
                         index_path.display()
                     ),
                 ),
@@ -5979,20 +5979,21 @@ pub fn violations_to_issues(violations: Vec<CheckViolation>) -> Vec<Issue> {
                             expected_ref,
                         } => format!(
                             "{}: workweave checkout is on `{}`, the pre-flat \
-                             `<project>--<workweave>/<segment>` shape rwv no longer mints \
-                             (branch-model.md §3.5); `rwv doctor --fix` records an \
-                             ownership receipt for it and renames it to `{}` — a rename \
-                             preserves the tip, so no commit moves",
+                             `<project>--<workweave>/<segment>` shape rwv no longer \
+                             mints; `rwv doctor --fix` records an ownership receipt \
+                             for it and renames it to `{}` — a rename preserves the \
+                             tip, so no commit moves",
                             repo_path.display(),
                             actual_branch,
                             expected_ref,
                         ),
                         BranchDisciplineKind::UnrecordedEphemeralBranch { branch } => format!(
                             "{}: branch `{}` is this workweave's ephemeral ref but rwv \
-                             holds no ownership receipt for it, so under branch-model.md \
-                             R2 it is not rwv's to delete and `rwv workweave delete` will \
-                             leave it behind; `rwv doctor --fix` adopts it at its current \
-                             tip",
+                             holds no ownership receipt for it. rwv deletes a branch \
+                             only against a receipt it recorded, never on the strength \
+                             of the name, so this one is not rwv's to delete and \
+                             `rwv workweave delete` will leave it behind; \
+                             `rwv doctor --fix` adopts it at its current tip",
                             repo_path.display(),
                             branch,
                         ),
@@ -6097,9 +6098,10 @@ pub fn violations_to_issues(violations: Vec<CheckViolation>) -> Vec<Issue> {
                                 "{}: branch `{}` carries the pre-flat \
                                  `<project>--<workweave>/<segment>` shape and no workweave \
                                  on disk claims that namespace, but rwv holds no ownership \
-                                 receipt for it — under branch-model.md R2 it is not rwv's \
-                                 to delete, and §7.3 forbids guessing whose workweave it \
-                                 was. `--fix` will never touch it; remove it by hand if it \
+                                 receipt for it. Ownership is by record, never by name \
+                                 shape, so this branch is not rwv's to delete — and rwv \
+                                 does not guess which workweave a stray ref belonged to. \
+                                 `--fix` will never touch it; remove it by hand if it \
                                  is yours to remove",
                                 repo_path.display(),
                                 branch
@@ -6157,8 +6159,10 @@ pub fn violations_to_issues(violations: Vec<CheckViolation>) -> Vec<Issue> {
                     format!(
                         "{}: project `{}` holds an ownership receipt for `{}` but no such \
                          ref is there — the benign residue of a crash between the receipt \
-                         write and the ref creation (branch-model.md §4.2). It authorizes \
-                         nothing; run `rwv doctor --fix` to retract it",
+                         write and the ref creation. rwv writes the receipt first on \
+                         purpose, so a crash leaves a receipt with no ref rather than a \
+                         ref rwv could never destroy. It authorizes nothing; run \
+                         `rwv doctor --fix` to retract it",
                         store_path.display(),
                         project,
                         ref_name
@@ -6173,9 +6177,9 @@ pub fn violations_to_issues(violations: Vec<CheckViolation>) -> Vec<Issue> {
                     format!(
                         "{}: project `{}` holds an ownership receipt for `{}`, whose name \
                          carries a `/` segment — no workweave on disk mints that name, so \
-                         rwv cannot have created the ref under the flat scheme \
-                         (branch-model.md §3.5). Left recorded, §7.2 reads the branch as a \
-                         leaked one rwv owns and may delete. Run `rwv doctor --fix` to \
+                         rwv cannot have created the ref under the flat scheme. Left \
+                         recorded, the canonical-store scan reads the branch as a leak \
+                         rwv owns and may delete. Run `rwv doctor --fix` to \
                          retract the receipt: that drops the record only — the branch is \
                          not touched, and afterwards it is unowned, which `--fix` never \
                          deletes",
