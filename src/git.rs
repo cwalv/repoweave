@@ -420,24 +420,6 @@ impl GitVcs {
 }
 
 impl GitVcs {
-    /// Check if `ancestor` is a strict ancestor of `descendant` in `repo`.
-    ///
-    /// Uses `git merge-base --is-ancestor`. Returns `Ok(false)` when the
-    /// objects are the same (equal, not strictly ancestral).
-    pub fn is_ancestor(repo: &Path, ancestor: &str, descendant: &str) -> bool {
-        if ancestor == descendant {
-            return false;
-        }
-        git_command()
-            .args(["merge-base", "--is-ancestor", ancestor, descendant])
-            .current_dir(repo)
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .status()
-            .map(|s| s.success())
-            .unwrap_or(false)
-    }
-
     /// Resolve `rev` to its canonical 40-hex SHA in `repo`.
     ///
     /// Thin wrapper over `git rev-parse --verify <rev>^{commit}`. Private

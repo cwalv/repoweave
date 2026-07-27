@@ -145,8 +145,8 @@ pub(crate) fn compute_relation(
         return LockRelation::Ok;
     }
 
-    let tip_ahead = GitVcs::is_ancestor(repo_abs, lock.as_str(), tip.as_str());
-    let tip_behind = GitVcs::is_ancestor(repo_abs, tip.as_str(), lock.as_str());
+    let tip_ahead = GitVcs.is_ancestor(repo_abs, lock, tip).unwrap_or(false);
+    let tip_behind = GitVcs.is_ancestor(repo_abs, tip, lock).unwrap_or(false);
 
     match (tip_ahead, tip_behind) {
         (true, _) => LockRelation::Ahead,

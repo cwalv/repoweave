@@ -2053,7 +2053,9 @@ fn collect_diverged_paths(
             if let Ok(c) = GitVcs.head_revision(&canonical) {
                 // Run is_ancestor in the resolved canonical store so the
                 // query is rooted in the DAG that contains both refs.
-                if wt_head == c || GitVcs::is_ancestor(&wt_canonical, wt_head.as_str(), c.as_str())
+                if GitVcs
+                    .is_ancestor(&wt_canonical, &wt_head, &c)
+                    .unwrap_or(false)
                 {
                     return; // vouched: this baseline contains the work
                 }
