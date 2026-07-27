@@ -7,13 +7,13 @@
 //! `rwv update` advances and re-snapshots.
 
 use crate::cli::consent::DetachConsent;
-use crate::git::{git_command, GitVcs};
+use crate::git::git_command;
 use crate::lock;
 use crate::manifest::{Project, ProjectName, RepoEntry, RepoPath};
 use crate::parallel::{run_in_parallel, run_subprocess_with_reporter, Reporter};
 use crate::selector::RepoFilter;
 use crate::vcs::{
-    HeadAttachment, RawRefName, RefName, ResolvedRevisionId, TrackingRef, Vcs, VcsError,
+    vcs_for, HeadAttachment, RawRefName, RefName, ResolvedRevisionId, TrackingRef, Vcs, VcsError,
 };
 use crate::workspace::{Checkout, Resolution, WorkspaceContext};
 use anyhow::Context;
@@ -178,6 +178,9 @@ struct WorkItem {
     /// HEAD SHA before the advance (`None` if unreadable — e.g. repo
     /// missing or git error).
     old_sha: Option<String>,
+    /// The backend resolved from this entry's `vcs_type`, resolved once here
+    /// and borrowed by the worker rather than re-resolved per repo.
+    vcs: Box<dyn Vcs>,
 }
 
 /// Internal: do the update for a specific project under `ctx.active_path()`.
@@ -199,8 +202,6 @@ fn update_for_project(
     let project = Project::from_dir(&project_dir)
         .with_context(|| format!("failed to load project '{}'", project_name))?;
 
-    let git = GitVcs;
-
     // Snapshot the repo list into a Vec so the parallel loop can index by
     // position. The BTreeMap iteration is deterministic, so the resulting
     // Vec mirrors the previous serial loop's order exactly.
@@ -221,7 +222,8 @@ fn update_for_project(
         .filter(|(rp, entry)| filter.matches(rp, entry.role))
         .map(|(rp, entry)| {
             let abs = resolve_repo_dir(rp, primary_root, workweave_dir);
-            let old_sha = git
+            let vcs = vcs_for(entry.vcs_type);
+            let old_sha = vcs
                 .head_revision(&abs)
                 .ok()
                 .map(|r| r.display_str().to_owned());
@@ -230,6 +232,7 @@ fn update_for_project(
                 entry: entry.clone(),
                 absolute_path: abs,
                 old_sha,
+                vcs,
             }
         })
         .collect();
@@ -247,7 +250,7 @@ fn update_for_project(
             Reporter::serial()
         };
         advance_one(
-            &git,
+            item.vcs.as_ref(),
             &item.repo_path,
             &item.entry,
             primary_root,
@@ -472,7 +475,7 @@ fn resolve_repo_dir(
 /// reporter is a no-prefix passthrough.
 #[allow(clippy::too_many_arguments)]
 fn advance_one(
-    git: &GitVcs,
+    vcs: &dyn Vcs,
     repo_path: &RepoPath,
     entry: &RepoEntry,
     primary_root: &Path,
@@ -555,7 +558,7 @@ fn advance_one(
     // resolving against a ghost ref. The error below names the state and
     // the two actionable exits so the operator knows what to do.
     let branch_ref = RefName::new(branch);
-    let resolved = match git.resolve_branch_on_remote(&repo_dir, entry.role, &branch_ref) {
+    let resolved = match vcs.resolve_branch_on_remote(&repo_dir, entry.role, &branch_ref) {
         Ok(r) => r,
         Err(_) => {
             return Err(format!(
@@ -570,7 +573,7 @@ fn advance_one(
     };
 
     advance_checkout(
-        git,
+        vcs,
         repo_path,
         entry,
         &repo_dir,
@@ -580,7 +583,7 @@ fn advance_one(
     )?;
 
     // Capture the new SHA after checkout for JSON reporting.
-    let new_sha = git
+    let new_sha = vcs
         .head_revision(&repo_dir)
         .ok()
         .map(|r| r.display_str().to_owned())
@@ -618,7 +621,7 @@ fn advance_one(
 ///   rather than undecided: an `UnbornRef` cannot be passed to
 ///   `advance_attached_ref`, and `detach_head` takes an `AttachedRef`.
 fn advance_checkout(
-    git: &GitVcs,
+    vcs: &dyn Vcs,
     repo_path: &RepoPath,
     entry: &RepoEntry,
     repo_dir: &Path,
@@ -628,12 +631,12 @@ fn advance_checkout(
 ) -> Result<(), String> {
     let describe = |e: VcsError| format!("{}: {e}", repo_path.as_str());
 
-    let attached = match git.head_attachment(repo_dir).map_err(describe)? {
+    let attached = match vcs.head_attachment(repo_dir).map_err(describe)? {
         HeadAttachment::Detached(was) => {
             if was.at() == target {
                 return Ok(());
             }
-            return git.advance_detached_head(&was, target).map_err(describe);
+            return vcs.advance_detached_head(&was, target).map_err(describe);
         }
         HeadAttachment::Unborn(u) => {
             return Err(format!(
@@ -647,16 +650,16 @@ fn advance_checkout(
         HeadAttachment::Attached(a) => a,
     };
 
-    let head = git.head_revision(repo_dir).map_err(describe)?;
+    let head = vcs.head_revision(repo_dir).map_err(describe)?;
     let is_fast_forward =
-        &head == target || git.is_ancestor(repo_dir, &head, target).map_err(describe)?;
+        &head == target || vcs.is_ancestor(repo_dir, &head, target).map_err(describe)?;
 
     if in_workweave {
         if &head == target {
             return Ok(());
         }
         if is_fast_forward {
-            return git
+            return vcs
                 .advance_attached_ref(&attached, target)
                 .map_err(describe);
         }
@@ -698,7 +701,7 @@ fn advance_checkout(
                 target.display_str(),
             ));
         };
-        return git
+        return vcs
             .detach_head(&attached, target, consent)
             .map_err(describe);
     }
@@ -707,7 +710,7 @@ fn advance_checkout(
         return Ok(());
     }
     if is_fast_forward {
-        return git
+        return vcs
             .advance_attached_ref(&attached, target)
             .map_err(describe);
     }
@@ -724,6 +727,6 @@ fn advance_checkout(
             target.display_str(),
         ));
     };
-    git.detach_head(&attached, target, consent)
+    vcs.detach_head(&attached, target, consent)
         .map_err(describe)
 }

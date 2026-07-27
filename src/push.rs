@@ -5,11 +5,12 @@
 //! committed lock that pins manifest SHAs, so collaborators' `rwv fetch`
 //! must never see a committed lock referencing unpushed manifest commits.
 
-use crate::git::GitVcs;
-use crate::manifest::{Project, ProjectName, RepoEntry, RepoPath, Role};
+use crate::manifest::{Project, ProjectName, RepoEntry, RepoPath, Role, VcsType};
 use crate::parallel::{run_in_parallel, Reporter};
 use crate::selector::RepoFilter;
-use crate::vcs::{HeadAttachment, PublishRef, RawRefName, RawRevisionId, TrackingRef, Vcs};
+use crate::vcs::{
+    project_vcs, vcs_for, HeadAttachment, PublishRef, RawRefName, RawRevisionId, TrackingRef, Vcs,
+};
 use crate::workspace::{Checkout, Resolution, WorkspaceContext};
 use anyhow::Context;
 use schemars::JsonSchema;
@@ -163,7 +164,7 @@ pub fn run_push(
     let project = Project::from_dir(&project_dir)
         .with_context(|| format!("failed to load project '{}'", project_name))?;
 
-    let git = GitVcs;
+    let project_vcs = project_vcs();
 
     // 2. Project repo must be on its canonical branch. Publishing is a
     //    gateway-to-collaboration operation; require a stable primary
@@ -175,7 +176,7 @@ pub fn run_push(
     //    "main". A non-repo project dir surfaces as `VcsError::NotARepo`
     //    here, before HEAD is ever read, instead of being misreported as a
     //    detached checkout.
-    let project_remote_default = git
+    let project_remote_default = project_vcs
         .remote_default_branch(&project_dir)
         .with_context(|| format!("failed to determine canonical branch for {project_name}"))?;
     let Some(project_remote_default) = project_remote_default else {
@@ -187,7 +188,7 @@ pub fn run_push(
     };
     let project_canonical = project_remote_default.local_counterpart();
 
-    let project_attachment = git
+    let project_attachment = project_vcs
         .head_attachment(&project_dir)
         .with_context(|| format!("failed to read current branch for {project_name}"))?;
     let project_attached = match project_attachment {
@@ -245,7 +246,8 @@ pub fn run_push(
         };
 
     let mut lock_mismatches: Vec<String> = Vec::new();
-    for (repo_path, _entry) in &manifest_repos {
+    for (repo_path, entry) in &manifest_repos {
+        let vcs = vcs_for(entry.vcs_type);
         let repo_dir = primary_root.join(repo_path.as_path());
         if !repo_dir.exists() {
             // `rwv fetch` (no SOURCE) re-clones missing members of the
@@ -258,7 +260,7 @@ pub fn run_push(
             ));
             continue;
         }
-        let head = match git.head_revision(&repo_dir) {
+        let head = match vcs.head_revision(&repo_dir) {
             Ok(h) => h,
             Err(e) => {
                 lock_mismatches.push(format!(
@@ -278,7 +280,7 @@ pub fn run_push(
         };
         // Resolve the lock's raw version against the repo so tag-form lock
         // entries (e.g. `v1.2.3`) compare equal to a SHA-form HEAD.
-        let lock_resolved = match git.resolve_revision(&repo_dir, lock_raw.as_str()) {
+        let lock_resolved = match vcs.resolve_revision(&repo_dir, lock_raw.as_str()) {
             Ok(r) => r,
             Err(e) => {
                 lock_mismatches.push(format!(
@@ -358,8 +360,9 @@ pub fn run_push(
     let mut branch_errors: Vec<String> = Vec::new();
     let mut plan: Vec<PushPlanItem> = Vec::with_capacity(filtered_repos.len());
     for (repo_path, entry) in &filtered_repos {
+        let vcs = vcs_for(entry.vcs_type);
         let repo_dir = primary_root.join(repo_path.as_path());
-        let attachment = match git.head_attachment(&repo_dir) {
+        let attachment = match vcs.head_attachment(&repo_dir) {
             Ok(a) => a,
             Err(e) => {
                 branch_errors.push(format!(
@@ -415,6 +418,7 @@ pub fn run_push(
             repo_path: repo_path.clone(),
             branch: attached.to_string(),
             role: entry.role,
+            vcs_type: entry.vcs_type,
             publish_ref: PublishRef::from_attached(attached),
         });
     }
@@ -481,11 +485,17 @@ pub fn run_push(
             repo_path: item.repo_path.clone(),
             branch: item.branch.clone(),
             role: item.role,
+            vcs_type: item.vcs_type,
             publish_ref: item.publish_ref.clone(),
         })
         .collect();
 
-    let raw_outcomes: Vec<PushOutcome> = run_in_parallel(&plan_items, jobs, |_idx, item| {
+    // One handle per repo, resolved from its declared backend before the
+    // fan-out. Workers index by the same position `run_in_parallel` hands
+    // the item at, so nothing is resolved on a worker thread.
+    let plan_vcs: Vec<Box<dyn Vcs>> = plan_items.iter().map(|i| vcs_for(i.vcs_type)).collect();
+
+    let raw_outcomes: Vec<PushOutcome> = run_in_parallel(&plan_items, jobs, |idx, item| {
         let reporter = if json {
             // Under --json, suppress the text-mode chatter; records come out
             // via our own JSON/NDJSON emit after the loop. We use a silent
@@ -497,7 +507,13 @@ pub fn run_push(
         } else {
             Reporter::serial()
         };
-        push_one(&git, item, &primary_root, &reporter, force)
+        push_one(
+            plan_vcs[idx].as_ref(),
+            item,
+            &primary_root,
+            &reporter,
+            force,
+        )
     });
 
     // Build wire-output records (manifest repos only, in order).
@@ -621,7 +637,8 @@ pub fn run_push(
             project_name, project_current,
         );
     }
-    let project_push_result = git.push_ref(&project_dir, Role::Owned, &project_publish_ref, force);
+    let project_push_result =
+        project_vcs.push_ref(&project_dir, Role::Owned, &project_publish_ref, force);
 
     let project_wire = match &project_push_result {
         Ok(()) => PushOutcomeOutput::ProjectRepoPushed {
@@ -711,6 +728,7 @@ struct PushPlanItem {
     repo_path: RepoPath,
     branch: String,
     role: Role,
+    vcs_type: VcsType,
     publish_ref: PublishRef,
 }
 
@@ -739,7 +757,7 @@ enum PushOutcome {
 /// failure the captured stderr is surfaced through the aggregated error
 /// summary post-join.
 fn push_one(
-    git: &GitVcs,
+    vcs: &dyn Vcs,
     item: &PushPlanItem,
     primary_root: &Path,
     reporter: &Reporter<'_>,
@@ -752,7 +770,7 @@ fn push_one(
         item.branch,
         remote_label(item.role),
     ));
-    match git.push_ref(&repo_dir, item.role, &item.publish_ref, force) {
+    match vcs.push_ref(&repo_dir, item.role, &item.publish_ref, force) {
         Ok(()) => PushOutcome::Pushed,
         Err(e) => PushOutcome::Failed(format!("{}: git push failed: {e}", item.repo_path.as_str())),
     }
@@ -905,6 +923,7 @@ mod tests {
             repo_path: RepoPath::new("github/cwalv/repoweave").expect("known-safe literal"),
             branch: "main".to_string(),
             role: Role::Owned,
+            vcs_type: VcsType::Git,
             publish_ref: test_publish_ref("main"),
         };
         assert_eq!(item.repo_path.as_str(), "github/cwalv/repoweave");
@@ -922,18 +941,21 @@ mod tests {
                 repo_path: RepoPath::new("a").expect("known-safe literal"),
                 branch: "main".into(),
                 role: Role::Owned,
+                vcs_type: VcsType::Git,
                 publish_ref: test_publish_ref("main"),
             },
             PushPlanItem {
                 repo_path: RepoPath::new("b").expect("known-safe literal"),
                 branch: "main".into(),
                 role: Role::Fork,
+                vcs_type: VcsType::Git,
                 publish_ref: test_publish_ref("main"),
             },
             PushPlanItem {
                 repo_path: RepoPath::new("c").expect("known-safe literal"),
                 branch: "main".into(),
                 role: Role::Dependency,
+                vcs_type: VcsType::Git,
                 publish_ref: test_publish_ref("main"),
             },
         ];

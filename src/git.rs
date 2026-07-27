@@ -382,6 +382,15 @@ pub fn has_rwv_merge_driver_config(repo: &Path) -> Result<bool, VcsError> {
 /// Git-based version control operations.
 pub struct GitVcs;
 
+/// The only way to obtain a git backend from outside this module.
+///
+/// [`GitVcs`] itself is private, so a caller that wants git behaviour must
+/// accept it as a [`Vcs`](crate::vcs::Vcs) handle and can be handed a
+/// different one.
+pub fn git_vcs() -> Box<dyn crate::vcs::Vcs> {
+    Box::new(GitVcs)
+}
+
 impl GitVcs {
     /// Run a git command in `dir` and return trimmed stdout on success.
     ///

@@ -275,8 +275,19 @@ impl fmt::Display for RefName {
 /// Resolve a VCS implementation from a [`crate::manifest::VcsType`].
 pub(crate) fn vcs_for(vcs_type: crate::manifest::VcsType) -> Box<dyn Vcs> {
     match vcs_type {
-        crate::manifest::VcsType::Git => Box::new(crate::git::GitVcs),
+        crate::manifest::VcsType::Git => crate::git::git_vcs(),
     }
+}
+
+/// Resolve the VCS backing `projects/<project>/`, which has no manifest entry
+/// and therefore no [`crate::manifest::VcsType`] to resolve from.
+///
+/// It is git by construction: `rwv init` creates the project repo with `git
+/// init` and `rwv fetch` clones it with git, so no other backend can reach it.
+/// Call this once per invocation at a verb's entry point and pass the handle
+/// down; the frames below it must not re-resolve.
+pub(crate) fn project_vcs() -> Box<dyn Vcs> {
+    crate::git::git_vcs()
 }
 
 /// Typed errors returned by [`Vcs`] trait methods.

@@ -4,13 +4,15 @@
 //! the registry). Local paths are not accepted; use `rwv activate` instead.
 
 use crate::cli::consent::DetachConsent;
-use crate::git::GitVcs;
 use crate::lock;
 use crate::manifest::{LockFile, Manifest, RepoEntry, RepoPath, Role};
 use crate::parallel::{run_in_parallel, Reporter};
 use crate::registry;
 use crate::selector::RepoFilter;
-use crate::vcs::{HeadAttachment, RawRefName, ResolvedRevisionId, TrackingRef, Vcs, VcsError};
+use crate::vcs::{
+    project_vcs, vcs_for, HeadAttachment, RawRefName, ResolvedRevisionId, TrackingRef, Vcs,
+    VcsError,
+};
 use crate::workspace::{Resolution, WorkspaceContext};
 use anyhow::{bail, Context};
 use schemars::JsonSchema;
@@ -198,7 +200,7 @@ pub fn run_fetch(
     jobs: usize,
     json: bool,
 ) -> anyhow::Result<()> {
-    let git = GitVcs;
+    let project_vcs = project_vcs();
 
     // Resolve source to a clone URL (supports full URLs and owner/repo shorthand).
     let (url, owner) = resolve_source(source)?;
@@ -225,7 +227,8 @@ pub fn run_fetch(
         } else {
             println!("rwv fetch: cloning project '{}'", name);
         }
-        git.clone_repo(&url_str, &project_dir)
+        project_vcs
+            .clone_repo(&url_str, &project_dir)
             .with_context(|| format!("failed to clone project source '{}'", url))?;
     }
 
@@ -340,8 +343,6 @@ fn fetch_project_repos(
     auto_activate_on_bootstrap: bool,
     resolution: Option<Resolution>,
 ) -> anyhow::Result<()> {
-    let git = GitVcs;
-
     // Read the manifest
     let manifest_path = project_dir.join("rwv.yaml");
     let manifest = Manifest::from_path(&manifest_path)
@@ -403,11 +404,11 @@ fn fetch_project_repos(
     // Apply the `--role` / `--repo` filter here so the worker pool only sees
     // selected repos. Empty filter is a no-op (every repo passes). See
     // `src/selector.rs` for the grammar and union semantics.
-    let work_items: Vec<(RepoPath, RepoEntry)> = manifest
+    let work_items: Vec<(RepoPath, RepoEntry, Box<dyn Vcs>)> = manifest
         .repositories
         .iter()
         .filter(|(rp, entry)| filter.matches(rp, entry.role))
-        .map(|(rp, e)| (rp.clone(), e.clone()))
+        .map(|(rp, e)| (rp.clone(), e.clone(), vcs_for(e.vcs_type)))
         .collect();
 
     let parallel = jobs > 1;
@@ -418,7 +419,7 @@ fn fetch_project_repos(
     let ndjson = json && parallel;
 
     let outcomes: Vec<FetchOutcome> = run_in_parallel(&work_items, jobs, |_idx, item| {
-        let (repo_path, entry) = item;
+        let (repo_path, entry, vcs) = item;
         let reporter = if parallel && !json {
             // Text parallel mode: use prefixed reporter.
             Reporter::parallel(repo_path.as_str().to_string(), &write_lock)
@@ -431,7 +432,7 @@ fn fetch_project_repos(
             Reporter::serial()
         };
         let outcome = fetch_one(
-            &git,
+            vcs.as_ref(),
             repo_path,
             entry,
             workspace_root,
@@ -494,7 +495,7 @@ fn fetch_project_repos(
     // For envelope mode (json && !ndjson), collect records in work_items order.
     let mut envelope_records: Vec<FetchOutcomeOutput> = Vec::new();
 
-    for (outcome, (repo_path, _entry)) in outcomes.iter().zip(work_items.iter()) {
+    for (outcome, (repo_path, _entry, _vcs)) in outcomes.iter().zip(work_items.iter()) {
         let abs_path = workspace_root
             .join(repo_path.as_path())
             .to_string_lossy()
@@ -715,7 +716,7 @@ fn fetch_project_repos(
 ///
 /// Returns the refusal or failure message when the operation must stop.
 fn realign_present_clone(
-    git: &GitVcs,
+    vcs: &dyn Vcs,
     repo_path: &RepoPath,
     entry: &RepoEntry,
     dest: &Path,
@@ -724,7 +725,7 @@ fn realign_present_clone(
 ) -> Result<(), String> {
     let describe = |e: VcsError| format!("{}: {e}", repo_path.as_str());
 
-    let attached = match git.head_attachment(dest).map_err(describe)? {
+    let attached = match vcs.head_attachment(dest).map_err(describe)? {
         HeadAttachment::Detached(was) => {
             if was.at() == target {
                 // The absorbed no-op: a clone already at the pin is not
@@ -732,7 +733,7 @@ fn realign_present_clone(
                 // nothing is written.
                 return Ok(());
             }
-            return git.advance_detached_head(&was, target).map_err(describe);
+            return vcs.advance_detached_head(&was, target).map_err(describe);
         }
         HeadAttachment::Unborn(u) => {
             return Err(format!(
@@ -774,20 +775,20 @@ fn realign_present_clone(
                 target.display_str(),
             ));
         };
-        return git
+        return vcs
             .detach_head(&attached, target, consent)
             .map_err(describe);
     }
 
-    let head = git.head_revision(dest).map_err(describe)?;
+    let head = vcs.head_revision(dest).map_err(describe)?;
     if &head == target {
         return Ok(());
     }
     // Classify before acting rather than reading a failure back out of git:
     // `merge --ff-only` also fails on a dirty tree, and the two need
     // different messages.
-    if git.is_ancestor(dest, &head, target).map_err(describe)? {
-        return git
+    if vcs.is_ancestor(dest, &head, target).map_err(describe)? {
+        return vcs
             .advance_attached_ref(&attached, target)
             .map_err(describe);
     }
@@ -805,7 +806,7 @@ fn realign_present_clone(
             target.display_str(),
         ));
     };
-    git.detach_head(&attached, target, consent)
+    vcs.detach_head(&attached, target, consent)
         .map_err(describe)
 }
 
@@ -820,7 +821,7 @@ fn realign_present_clone(
 /// machine-readable JSON output.
 #[allow(clippy::too_many_arguments)]
 fn fetch_one(
-    git: &GitVcs,
+    vcs: &dyn Vcs,
     repo_path: &RepoPath,
     entry: &RepoEntry,
     workspace_root: &Path,
@@ -858,7 +859,7 @@ fn fetch_one(
                 repo_path.as_str(),
                 lock_entry.version,
             ));
-            let resolved = match git.resolve_revision(&dest, lock_entry.version.as_str()) {
+            let resolved = match vcs.resolve_revision(&dest, lock_entry.version.as_str()) {
                 Ok(r) => r,
                 Err(e) => {
                     return FetchOutcome::Failed {
@@ -871,7 +872,7 @@ fn fetch_one(
                 }
             };
             if let Err(msg) =
-                realign_present_clone(git, repo_path, entry, &dest, &resolved, detach_checkouts)
+                realign_present_clone(vcs, repo_path, entry, &dest, &resolved, detach_checkouts)
             {
                 return FetchOutcome::Failed { msg };
             }
@@ -943,7 +944,7 @@ fn fetch_one(
             declared.local_counterpart(),
             lock_entry.version,
         ));
-        if let Err(e) = git.clone_attached_at(
+        if let Err(e) = vcs.clone_attached_at(
             &entry.url.to_string(),
             &dest,
             entry.role,
@@ -962,7 +963,7 @@ fn fetch_one(
         return FetchOutcome::Ok { add_to_lock };
     }
 
-    if let Err(e) = git.clone_with_role(&entry.url.to_string(), &dest, entry.role) {
+    if let Err(e) = vcs.clone_with_role(&entry.url.to_string(), &dest, entry.role) {
         return FetchOutcome::Failed {
             msg: format!(
                 "{}: failed to clone {} into {}: {e}",
