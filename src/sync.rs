@@ -12,9 +12,9 @@ use crate::op_state::{self, OpVerb, OwnerRecord};
 use crate::parallel::run_in_parallel;
 use crate::status::{compute_relation, LockRelation};
 use crate::vcs::{
-    AttachedRef, ConflictOp, DerivedContentPolicy, DiscardLocalCommitsConsent, DiscardWarrant,
-    EphemeralRefName, HeadAttachment, RefName, ResolvedRevisionId, Vcs, VcsError, VcsErrorOutput,
-    VerifiedRestoreOutcome,
+    vcs_for, AttachedRef, ConflictOp, DerivedContentPolicy, DiscardLocalCommitsConsent,
+    DiscardWarrant, EphemeralRefName, HeadAttachment, RefName, ResolvedRevisionId, Vcs, VcsError,
+    VcsErrorOutput, VerifiedRestoreOutcome,
 };
 use crate::workspace::{Checkout, Resolution, WorkspaceContext};
 use crate::workweave::{classify_checkout, ensure_registered_workweave, CheckoutKind};
@@ -3467,7 +3467,8 @@ fn classify_lock_relations(
     };
 
     let mut out = Vec::new();
-    for repo_path in manifest.iter_repo_paths() {
+    for (repo_path, entry) in manifest.iter_entries() {
+        let vcs = vcs_for(entry.vcs_type);
         let repo_abs = workspace_dir.join(repo_path.as_path());
         // Reference aliases are read-only and never rebased; do not classify.
         if !checkout_is_syncable(&repo_abs) {
@@ -3476,7 +3477,7 @@ fn classify_lock_relations(
         if !repo_abs.exists() {
             continue;
         }
-        let tip = GitVcs.head_revision(&repo_abs).ok();
+        let tip = vcs.head_revision(&repo_abs).ok();
         // A repo whose lock entry failed to resolve is reported via
         // `unresolvable` (a corrupt-lock error), not as a `no-lock` relation —
         // skip it here to avoid a double-report.
@@ -3487,13 +3488,13 @@ fn classify_lock_relations(
             .as_ref()
             .and_then(|l| l.get_entry(repo_path))
             .map(|e| e.version.clone());
-        let relation = compute_relation(&repo_abs, &tip, &lock_sha);
+        let relation = compute_relation(vcs.as_ref(), &repo_abs, &tip, &lock_sha);
         let ahead_count = if relation == LockRelation::Ahead {
             // `Ahead` ⟺ lock is a strict ancestor of tip (both present, per
             // compute_relation). Count lock..HEAD — the commits the landing
             // replays / the auto-relock pins.
             match (lock_sha.as_ref(), tip.as_ref()) {
-                (Some(lock), Some(tip)) => GitVcs.count_commits_in_range(&repo_abs, lock, tip).ok(),
+                (Some(lock), Some(tip)) => vcs.count_commits_in_range(&repo_abs, lock, tip).ok(),
                 _ => None,
             }
         } else {

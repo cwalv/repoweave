@@ -1,8 +1,7 @@
 //! `rwv status` — per-repo state of the CWD workspace.
 
-use crate::git::GitVcs;
 use crate::manifest::Project;
-use crate::vcs::{ResolvedRevisionId, Vcs};
+use crate::vcs::{vcs_for, ResolvedRevisionId, Vcs};
 use crate::workspace::{Checkout, Resolution, WorkspaceContext};
 use anyhow::Context;
 use schemars::JsonSchema;
@@ -131,6 +130,7 @@ pub struct RepoStatus {
 /// neither is an ancestor of the other. Exposed `pub(crate)` so `sync` can reuse
 /// this exact vocabulary rather than inventing a parallel enum.
 pub(crate) fn compute_relation(
+    vcs: &dyn Vcs,
     repo_abs: &Path,
     tip: &Option<ResolvedRevisionId>,
     lock_sha: &Option<ResolvedRevisionId>,
@@ -145,8 +145,8 @@ pub(crate) fn compute_relation(
         return LockRelation::Ok;
     }
 
-    let tip_ahead = GitVcs.is_ancestor(repo_abs, lock, tip).unwrap_or(false);
-    let tip_behind = GitVcs.is_ancestor(repo_abs, tip, lock).unwrap_or(false);
+    let tip_ahead = vcs.is_ancestor(repo_abs, lock, tip).unwrap_or(false);
+    let tip_behind = vcs.is_ancestor(repo_abs, tip, lock).unwrap_or(false);
 
     match (tip_ahead, tip_behind) {
         (true, _) => LockRelation::Ahead,
@@ -173,9 +173,9 @@ pub(crate) fn compute_relation(
 ///   signal (`Missing` / `Unreachable`) that tells an operator which repair
 ///   verb to reach for. Distinguishing the two in the *output* would be a
 ///   schema change.
-fn checkout_branch(git: &GitVcs, repo_abs: &Path) -> Option<String> {
+fn checkout_branch(vcs: &dyn Vcs, repo_abs: &Path) -> Option<String> {
     use crate::vcs::HeadAttachment;
-    match git.head_attachment(repo_abs) {
+    match vcs.head_attachment(repo_abs) {
         Ok(HeadAttachment::Attached(a)) => Some(a.to_string()),
         Ok(HeadAttachment::Unborn(u)) => Some(u.name().as_str().to_owned()),
         Ok(HeadAttachment::Detached(_)) | Err(_) => None,
@@ -205,7 +205,6 @@ pub fn run_status(ctx: &WorkspaceContext, json: bool) -> anyhow::Result<()> {
         ctx.require_active_project_on_disk()?;
     }
 
-    let git = GitVcs;
     let workspace_dir = ctx.active_path().to_path_buf();
 
     // Recorded parent path from the `.rwv-workweave` marker (workweave-level;
@@ -254,6 +253,7 @@ pub fn run_status(ctx: &WorkspaceContext, json: bool) -> anyhow::Result<()> {
         };
 
         for (repo_path, entry) in &project.manifest.repositories {
+            let vcs = vcs_for(entry.vcs_type);
             let repo_abs = workspace_dir.join(repo_path.as_path());
 
             // --- clone-health pre-check ---
@@ -310,15 +310,15 @@ pub fn run_status(ctx: &WorkspaceContext, json: bool) -> anyhow::Result<()> {
                     .and_then(|(raw, _)| raw.get_entry(repo_path))
                     .map(|e| e.version.as_str().to_owned());
 
-                let branch = checkout_branch(&git, &repo_abs);
+                let branch = checkout_branch(vcs.as_ref(), &repo_abs);
 
-                let tip = git.head_revision(&repo_abs).ok();
+                let tip = vcs.head_revision(&repo_abs).ok();
 
-                let mid_op = GitVcs::mid_op_state(&repo_abs);
+                let mid_op = vcs.mid_operation(&repo_abs);
 
                 let parent = recorded_parent.as_ref().map(|parent_path| {
                     let parent_repo_abs = parent_path.join(repo_path.as_path());
-                    let parent_tip = git
+                    let parent_tip = vcs
                         .head_revision(&parent_repo_abs)
                         .ok()
                         .map(|r| r.as_str().to_owned());
@@ -344,25 +344,25 @@ pub fn run_status(ctx: &WorkspaceContext, json: bool) -> anyhow::Result<()> {
                 continue;
             }
 
-            let branch = checkout_branch(&git, &repo_abs);
+            let branch = checkout_branch(vcs.as_ref(), &repo_abs);
 
-            let tip = git.head_revision(&repo_abs).ok();
+            let tip = vcs.head_revision(&repo_abs).ok();
 
             let lock_sha = lock
                 .as_ref()
                 .and_then(|(_, resolved)| resolved.get_entry(repo_path))
                 .map(|e| e.version.clone());
 
-            let relation = compute_relation(&repo_abs, &tip, &lock_sha);
+            let relation = compute_relation(vcs.as_ref(), &repo_abs, &tip, &lock_sha);
 
-            let mid_op = GitVcs::mid_op_state(&repo_abs);
+            let mid_op = vcs.mid_operation(&repo_abs);
 
             // Per-repo parent tip: resolve THIS repo's HEAD in the parent's
             // checkout of the same repo path. Read from the recorded parent
             // path, not a reconstructed branch name.
             let parent = recorded_parent.as_ref().map(|parent_path| {
                 let parent_repo_abs = parent_path.join(repo_path.as_path());
-                let parent_tip = git
+                let parent_tip = vcs
                     .head_revision(&parent_repo_abs)
                     .ok()
                     .map(|r| r.as_str().to_owned());
