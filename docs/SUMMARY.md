@@ -52,6 +52,7 @@
 # Reference
 
 - [CLI](./reference/cli.md)
+- [Doctor findings](./reference/doctor-findings.md)
 - [Plugin protocol](./reference/plugin-protocol.md)
 - [Formats](./reference/formats.md)
 - [Roles](./reference/roles.md)
