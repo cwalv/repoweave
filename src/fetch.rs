@@ -685,8 +685,7 @@ fn fetch_project_repos(
     Ok(())
 }
 
-/// Realign a clone that is already on disk to `target` (§5's `fetch`
-/// (present clone) row).
+/// Realign a clone that is already on disk to `target`.
 ///
 /// The kind of ref write this performs is decided by what HEAD is, and each
 /// kind carries its own precondition:
@@ -697,13 +696,13 @@ fn fetch_project_repos(
 ///   not seen) refuses, naming `--detach-checkouts`.
 /// - **Attached to anything else** — an operator's personal branch. Refuses
 ///   naming both refs rather than relocating a ref it cannot relate to the
-///   layer that justifies the move (§5.3). It refuses even when `target`
-///   *would* be a fast-forward: attachment is operator state (§8.3), and a
-///   fast-forward of a personal bookmark still silently changes what it means.
+///   layer that justifies the move. It refuses even when `target` *would* be
+///   a fast-forward: attachment is operator state, and a fast-forward of a
+///   personal bookmark still silently changes what it means.
 /// - **Detached** — a MOVE of HEAD itself, which stays detached. Subject to
 ///   the mid-operation precondition inside [`Vcs::advance_detached_head`]
-///   (§3.6): `Detached` alone cannot tell "rwv left this at a lock SHA" apart
-///   from "the operator is stopped mid-bisect".
+///   — `Detached` alone cannot tell "rwv left this at a lock SHA" apart from
+///   "the operator is stopped mid-bisect".
 /// - **Unborn** — refuses. Both exits are unrepresentable rather than
 ///   undecided: MOVE semantics on an unborn HEAD are undefined (an
 ///   `UnbornRef` cannot be passed to `advance_attached_ref`), and
@@ -922,10 +921,9 @@ fn fetch_one(
 
     let mut add_to_lock: Option<RepoPath> = None;
     // A lock-pinned clone is born ATTACHED AT THE PIN — one operation, not a
-    // clone followed by an align (§5's `fetch` (absent clone) row). The
-    // sequence it replaces landed on the remote tip and then detached, which
-    // is why the ordinary post-fetch state of a weave was "every member
-    // detached" (§6 item 2).
+    // clone followed by an align. Cloning to the remote tip and then moving
+    // to the pin would leave the member detached, which is not a state a
+    // fetch is entitled to put an operator's checkout in.
     if let Some(lock_entry) = lock_entry {
         let declared = match TrackingRef::parse(RawRefName::new(entry.version.as_str())) {
             Ok(t) => t,

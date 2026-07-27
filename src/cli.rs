@@ -534,7 +534,7 @@ pub enum SetupAction {
 }
 
 // ---------------------------------------------------------------------------
-// Consent tokens (branch-model.md §4.4)
+// Consent tokens
 // ---------------------------------------------------------------------------
 //
 // This is the CLI layer's flag module, and it is the *only* place that can
@@ -552,18 +552,17 @@ pub enum SetupAction {
 //  2. The minting function. `from_flag` is `pub(in crate::cli)`: visible to
 //     this module tree and nowhere else. The only other member of the tree
 //     is `cli::dispatch`, which is where a parsed flag exists to mint from.
-//     `vcs.rs` — the module §4.4 names as the one that must only ever
-//     *receive* a token — cannot call it: `DetachConsent::from_flag(true)`
-//     there is E0624, `associated function is private`.
+//     `vcs.rs` — which must only ever *receive* a token, never mint one —
+//     cannot call it: `DetachConsent::from_flag(true)` there is E0624,
+//     `associated function is private`.
 //
 // Seal 2 is why dispatch lives in `cli::dispatch` rather than in `main.rs`.
 // A `[[bin]]` target is a *separate crate* from this `[lib]`, so a minting
 // caller out there can only reach a `pub` constructor — and a `pub fn`
 // returning the token is a second construction route reachable from every
-// module of this crate, which is exactly what §4.4 forbids. The narrowest
-// visibility that admits an out-of-crate caller is `pub`; the narrowest that
-// admits `cli::dispatch` is `pub(in crate::cli)`. Moving the caller in is
-// what let the visibility come down.
+// module of this crate — exactly the reach these seals exist to deny. The
+// narrowest visibility that admits an out-of-crate caller is `pub`; the
+// narrowest that admits `cli::dispatch` is `pub(in crate::cli)`.
 //
 // `granted()` — the unconditional mint, which checks nothing — is
 // `#[cfg(test)]`, and exists only on the tokens some in-crate fixture
@@ -605,8 +604,8 @@ pub mod consent {
         ///
         /// `pub(in crate::cli)`: a parsed flag exists only in
         /// [`crate::cli::dispatch`], and confining the mint to this module
-        /// tree is what turns §4.4's "only the flag module can construct
-        /// one" into a compile error everywhere else.
+        /// tree is what turns "only the flag module can construct one" into a
+        /// compile error everywhere else.
         pub(in crate::cli) fn from_flag(detach_checkouts: bool) -> Option<Self> {
             detach_checkouts.then_some(Self(()))
         }
@@ -662,11 +661,11 @@ pub mod consent {
         }
     }
 
-    /// Proof that the operator consented to `branch-model.md` §7.1 arms 3
-    /// and 5: minting a workweave's flat ephemeral ref **at a detached
-    /// HEAD**, and — when a pre-flat branch holds the name — giving that
-    /// branch's name up so the flat one can exist in its place. Minted from
-    /// `--adopt-detached-checkouts`.
+    /// Proof that the operator consented to two things a migration of a
+    /// detached checkout does: minting a workweave's flat ephemeral ref **at
+    /// a detached HEAD**, and — when a pre-flat branch holds the name —
+    /// giving that branch's name up so the flat one can exist in its place.
+    /// Minted from `--adopt-detached-checkouts`.
     ///
     /// A third token rather than a reuse of [`ReattachConsent`]: reattaching
     /// moves a checkout onto a branch that already exists and loses nothing,

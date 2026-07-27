@@ -529,7 +529,7 @@ impl GitVcs {
     /// appears in [`Vcs::mid_op`] — but it is operator state living in
     /// HEAD's *position*, and repositioning HEAD out from under it loses
     /// the bisect with nothing to resume from. That is the state the
-    /// detached-MOVE precondition (§3.6) exists to see.
+    /// detached-MOVE precondition exists to see.
     pub fn mid_op_state(repo: &Path) -> Option<String> {
         let git_dir = match Self::run(&["rev-parse", "--git-dir"], repo) {
             Ok(s) => {
@@ -1360,7 +1360,8 @@ impl Vcs for GitVcs {
         }
 
         // Intent tip: the op advanced this repo during replay (before relock).
-        // Exact-match only — no heuristic (§6 rules out any descendant check).
+        // Exact-match only: a descendant check would accept a tip the op
+        // never recorded advancing to.
         if let Some(intent) = recorded_intent_tip {
             if head_sha == intent {
                 return self.reset_and_drop_savepoint(
@@ -1833,7 +1834,7 @@ impl Vcs for GitVcs {
     }
 
     // =======================================================================
-    // The branch model (branch-model.md §4.3)
+    // The branch model
     // =======================================================================
 
     fn observe_head(&self, repo: &Path) -> Result<HeadObservation, VcsError> {
@@ -1963,9 +1964,8 @@ impl Vcs for GitVcs {
         // remote tip. Cloning still writes the remote's default branch as a
         // local ref — git offers no way to decline that — but no working
         // tree hangs off it, nothing has observed it, and rwv issues no
-        // MOVE against it. That last part is the property §5 needs:
-        // bootstrapping from a lock behind origin must not require a
-        // rewind's consent.
+        // MOVE against it. That last part is what matters: bootstrapping
+        // from a lock behind origin must not require a rewind's consent.
         Self::run(
             &[
                 "clone",
@@ -2892,7 +2892,7 @@ mod branch_model_tests {
     }
 
     // -----------------------------------------------------------------------
-    // Publish: the ref is a parameter (§4.3, §5 `push` (member repo))
+    // Publish: the ref is a parameter
     // -----------------------------------------------------------------------
     //
     // These moved here from `tests/vcs_test.rs`, where they exercised
@@ -3027,9 +3027,9 @@ mod branch_model_tests {
 
     #[test]
     fn push_ref_publishes_the_ref_it_was_given_not_the_one_head_is_on() {
-        // The whole point of §4.3's publish change: the ref is a parameter,
-        // so the choice is made at one site in push.rs instead of being
-        // whatever branch the checkout happened to be on when the impl ran.
+        // The ref is a parameter, so the choice is made at one site in
+        // push.rs rather than being whatever branch the checkout happened to
+        // be on when the impl ran.
         // Switching HEAD after the PublishRef is built must not redirect the
         // push — if the impl still read HEAD, this would publish `sideshow`.
         let (_tmp, clone, bare) = clone_of_bare_origin();

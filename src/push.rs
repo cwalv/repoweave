@@ -170,11 +170,11 @@ pub fn run_push(
     //    context so collaborators see a predictable target branch.
     //
     //    "Canonical branch" is the remote's own declaration
-    //    (`RemoteDefaultBranch`, branch-model.md §4.2) — not a fabricated
-    //    default. `None` means `origin/HEAD` is unset, and the gate refuses
-    //    rather than guessing "main" (§4.6(2)). A non-repo project dir
-    //    surfaces as `VcsError::NotARepo` here, before HEAD is ever read,
-    //    instead of being misreported as a detached checkout (§4.5).
+    //    (`RemoteDefaultBranch`) — not a fabricated default. `None` means
+    //    `origin/HEAD` is unset, and the gate refuses rather than guessing
+    //    "main". A non-repo project dir surfaces as `VcsError::NotARepo`
+    //    here, before HEAD is ever read, instead of being misreported as a
+    //    detached checkout.
     let project_remote_default = git
         .remote_default_branch(&project_dir)
         .with_context(|| format!("failed to determine canonical branch for {project_name}"))?;
@@ -208,10 +208,8 @@ pub fn run_push(
              Switch to '{project_canonical}' before pushing — publishing requires a stable primary context."
         );
     }
-    // The single decision site (§4.6(2)): `from_attached` publishes
-    // whatever the checkout is on, matching the shipped behaviour exactly.
-    // Q6 — whether that should instead be the manifest's declared branch —
-    // stays open; see `PublishRef::from_attached`'s doc comment.
+    // The single decision site: `from_attached` publishes whatever the
+    // checkout is on, never the manifest's declared branch.
     let project_publish_ref = PublishRef::from_attached(&project_attached);
     let project_current = project_attached.to_string();
 
@@ -706,9 +704,9 @@ fn emit_ndjson_record(write_lock: &Mutex<()>, outcome: &PushOutcomeOutput) {
 ///
 /// `publish_ref` is the typed ref `push_one` hands to `Vcs::push_ref` —
 /// computed once, at plan time, from the same `AttachedRef` witness
-/// `branch` was rendered from. There is no independent re-read at push
-/// time (branch-model.md §9 Q15, the witness validity-window question,
-/// stays open — this plan doesn't add a re-observation policy on its own).
+/// `branch` was rendered from. There is no independent re-read at push time,
+/// so the plan reports and pushes the same ref even if the checkout moves
+/// under it.
 struct PushPlanItem {
     repo_path: RepoPath,
     branch: String,
@@ -889,9 +887,9 @@ mod tests {
     ///
     /// `PublishRef::from_attached` needs an `AttachedRef` witness, which
     /// only `Vcs::head_attachment` can produce (its fields are private
-    /// outside `vcs.rs`). `from_local` is the other, still-uncalled-by-the-
-    /// gate constructor (§9 Q6) — reaching for it here to fabricate a test
-    /// value doesn't touch the gate's decision, it just needs *a* value.
+    /// outside `vcs.rs`). `from_local` is the other constructor, which the
+    /// gate does not call — reaching for it here to fabricate a test value
+    /// doesn't touch the gate's decision, it just needs *a* value.
     fn test_publish_ref(name: &str) -> PublishRef {
         let declared = TrackingRef::parse(RawRefName::new(name)).expect("known-safe literal");
         PublishRef::from_local(&declared.local_counterpart())
