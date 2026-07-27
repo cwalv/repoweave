@@ -254,3 +254,52 @@ contrast is load-bearing, state the invariant that holds now and leave the dead
 name out; an unqualified mention of a foreign name (`into_boxed_path` rather
 than the qualified form) is out of scope by construction, and is the way past a
 wrong report from the gate.
+
+## A green gate is not coverage
+
+Both rules above end with a "What is mechanised, and what is not". That is not
+boilerplate. It is the same defect written down twice, and a survey of this
+repository's own checks found it four times:
+
+- **one direction** — the cli.md gate compared documented flag *names* against
+  `--help` and never checked anything else about them, so a documented flag
+  *value* clap rejects was invisible. README advertised a `--strategy` value
+  that hard-errors at parse time, through a green CI, on the first page a new
+  user reads.
+- **one syntactic form** — the citation gate required a `/` in a token before
+  it would look at the token at all. Roughly eighty bare `<document>.md §N`
+  citations sat unexamined behind that one character.
+- **one spelling** — the tracker-ID matcher recognised the retired `fo-`
+  prefix and not the one that replaced it, so live IDs sat green. The hand
+  sweep that cleared the § pointers had the same bug: it matched `§` and left
+  `D2`, `D4` and `D1–D3` standing in four files, which the widened gate then
+  reported.
+- **one region of the file** — the citation gate stops scanning at
+  `#[cfg(test)] mod tests`, and a non-resolving citation below that line is
+  invisible for as long as it sits there. The boundary detector has the
+  previous bug too: it matches that module name literally, so a file naming its
+  test module anything else (`mod derived_content_tests`) is scanned to the
+  end. Two files here do, which means the same comment is in scope or out of it
+  depending on what someone called a module.
+
+A check green-lights what it examined. Reading it as green-lighting what it was
+*pointed at* is the error, and every one of these survived because someone made
+that read. Three habits, in the order they pay off:
+
+1. **Ship a seeded-failure test with every check.** A fixture the check must
+   report, asserting on the finding. Not "the tree is clean" — that passes when
+   the check does nothing. All four of these had a passing suite.
+2. **Pin non-vacuity separately.** A check that walks a corpus and reports what
+   it finds is indistinguishable, when green, from one that finds nothing
+   because its parser broke. Assert that the walk really yields the claims you
+   think it does. The value check in `tests/doc_claims_cli_md_test.rs` needed
+   exactly this on its first run: a mis-sliced section inverted backtick
+   parity, it read zero claims, and it passed a deliberately corrupted value.
+3. **Write down the residue next to the rule.** Not in the commit message —
+   next to the prohibition, where the next person sweeping by hand will read
+   it. If you cannot state what your check does not cover, you do not know.
+
+When you widen a matcher, measure before you commit to the predicate. Run it,
+read every site it reports, and separate the ones it is right about from the
+ones it is merely loud about — the precision work is the design, and a matcher
+that reports correct code will be turned off.
