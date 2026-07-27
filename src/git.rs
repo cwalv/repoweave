@@ -2284,19 +2284,6 @@ impl GitVcs {
 }
 
 impl GitVcs {
-    /// Return the list of dirty **tracked** file paths in `repo` — staged and
-    /// unstaged modifications to files git already tracks, with untracked files
-    /// excluded (`git status --porcelain --untracked-files=no`).
-    ///
-    /// This is the source-side cleanliness signal: a
-    /// `sync-to` refuses up-front on tracked dirt (it would go stale mid-rebase)
-    /// but leaves untracked scratch files alone (they survive the replay). The
-    /// parsing contract matches [`Vcs::dirty_file_names`]; only the untracked
-    /// class is filtered out at the git level.
-    pub(crate) fn tracked_dirty_file_names(repo: &Path) -> Result<Vec<String>, VcsError> {
-        Self::dirty_file_names_inner(repo, true)
-    }
-
     /// Return the list of dirty file paths in `repo` as reported by
     /// `git status --porcelain`.
     ///

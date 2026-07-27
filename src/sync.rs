@@ -3,7 +3,6 @@
 //! `rwv sync` aligns the CWD workspace with another workspace's committed
 //! `rwv.lock`. `rwv abort` rolls back to pre-sync state using savepoint refs.
 
-use crate::git::GitVcs;
 use crate::lock::{commit_lock_file_with_message, generate_lock};
 use crate::manifest::{
     LockFile, Manifest, Project, ProjectName, RepoPath, Role, WorkweaveName, WorkweaveNameError,
@@ -602,6 +601,7 @@ impl fmt::Display for RepoSyncOutcome {
 /// question. `None` means the caller could not establish it, and an
 /// unestablished starting point yields no report rather than a guessed one.
 fn dropped_derived_content(
+    vcs: &dyn Vcs,
     repo: &Path,
     target: &ResolvedRevisionId,
     pre_replay_tip: Option<&ResolvedRevisionId>,
@@ -609,15 +609,15 @@ fn dropped_derived_content(
     let Some(pre_replay_tip) = pre_replay_tip else {
         return Vec::new();
     };
-    let Ok(landed) = GitVcs.head_revision(repo) else {
+    let Ok(landed) = vcs.head_revision(repo) else {
         return Vec::new();
     };
-    GitVcs
-        .derived_content_dropped_by_replay(repo, target, pre_replay_tip, &landed)
+    vcs.derived_content_dropped_by_replay(repo, target, pre_replay_tip, &landed)
         .unwrap_or_default()
 }
 
 fn sync_one_repo(
+    vcs: &dyn Vcs,
     repo: &Path,
     target: &ResolvedRevisionId,
     strategy: SyncStrategy,
@@ -631,10 +631,10 @@ fn sync_one_repo(
     // `apply_strategy` so the `rebase_continue` path drives the rebase
     // forward; the head-equality / AlreadyAhead short-circuits assume a
     // repo not in a mid-op state.
-    if matches!(GitVcs.mid_op(repo), Some(ConflictOp::Rebase)) && strategy == SyncStrategy::Rebase {
-        return match apply_strategy(repo, target, strategy) {
+    if matches!(vcs.mid_op(repo), Some(ConflictOp::Rebase)) && strategy == SyncStrategy::Rebase {
+        return match apply_strategy(vcs, repo, target, strategy) {
             Ok(()) => RepoSyncOutcome::Converged {
-                derived_content_dropped: dropped_derived_content(repo, target, pre_replay_tip),
+                derived_content_dropped: dropped_derived_content(vcs, repo, target, pre_replay_tip),
             },
             Err(StrategyError { message, cause }) => {
                 RepoSyncOutcome::Failed(SyncFailure::for_strategy(strategy, message, cause))
@@ -642,7 +642,7 @@ fn sync_one_repo(
         };
     }
 
-    let head = match GitVcs.head_revision(repo) {
+    let head = match vcs.head_revision(repo) {
         Ok(h) => h,
         Err(e) => {
             let error = e.to_string();
@@ -658,18 +658,16 @@ fn sync_one_repo(
     }
 
     // Detect AlreadyAhead: lock is a strict ancestor of HEAD (HEAD is past the lock).
-    let is_ancestor = GitVcs.is_ancestor(repo, target, &head).unwrap_or(false);
+    let is_ancestor = vcs.is_ancestor(repo, target, &head).unwrap_or(false);
 
     if is_ancestor {
-        let commits_ahead = GitVcs
-            .count_commits_in_range(repo, target, &head)
-            .unwrap_or(0);
+        let commits_ahead = vcs.count_commits_in_range(repo, target, &head).unwrap_or(0);
         return RepoSyncOutcome::AlreadyAhead { commits_ahead };
     }
 
-    match apply_strategy(repo, target, strategy) {
+    match apply_strategy(vcs, repo, target, strategy) {
         Ok(()) => RepoSyncOutcome::Converged {
-            derived_content_dropped: dropped_derived_content(repo, target, pre_replay_tip),
+            derived_content_dropped: dropped_derived_content(vcs, repo, target, pre_replay_tip),
         },
         Err(StrategyError { message, cause }) => {
             RepoSyncOutcome::Failed(SyncFailure::for_strategy(strategy, message, cause))
@@ -766,13 +764,14 @@ impl StrategyError {
 }
 
 fn apply_strategy(
+    vcs: &dyn Vcs,
     repo: &Path,
     target: &ResolvedRevisionId,
     strategy: SyncStrategy,
 ) -> Result<(), StrategyError> {
     match strategy {
         SyncStrategy::Ff => {
-            if let Err(e) = GitVcs.advance_if_fast_forward(repo, target) {
+            if let Err(e) = vcs.advance_if_fast_forward(repo, target) {
                 return Err(StrategyError::from_message(format!(
                     "cannot fast-forward; rerun with --strategy rebase. {}",
                     e
@@ -803,21 +802,19 @@ fn apply_strategy(
             // never reached, so a resume under a different policy than the
             // replay it resumes would resolve the tail of one operation by
             // different rules than its head.
-            match GitVcs.mid_op(repo) {
+            match vcs.mid_op(repo) {
                 Some(ConflictOp::Rebase) => {
-                    GitVcs
-                        .rebase_continue(repo, DerivedContentPolicy::keep_target_side())
+                    vcs.rebase_continue(repo, DerivedContentPolicy::keep_target_side())
                         .map_err(StrategyError::from_vcs)?;
                 }
                 _ => {
-                    GitVcs
-                        .rebase(
-                            repo,
-                            target,
-                            target,
-                            DerivedContentPolicy::keep_target_side(),
-                        )
-                        .map_err(StrategyError::from_vcs)?;
+                    vcs.rebase(
+                        repo,
+                        target,
+                        target,
+                        DerivedContentPolicy::keep_target_side(),
+                    )
+                    .map_err(StrategyError::from_vcs)?;
                 }
             }
         }
@@ -825,12 +822,16 @@ fn apply_strategy(
     Ok(())
 }
 
-fn create_savepoint(repo: &Path, op_id: &OpId) -> anyhow::Result<ResolvedRevisionId> {
-    Ok(GitVcs.create_savepoint(repo, op_id.as_str())?)
+fn create_savepoint(
+    vcs: &dyn Vcs,
+    repo: &Path,
+    op_id: &OpId,
+) -> anyhow::Result<ResolvedRevisionId> {
+    Ok(vcs.create_savepoint(repo, op_id.as_str())?)
 }
 
-fn delete_savepoint(repo: &Path, op_id: &OpId) {
-    GitVcs.drop_savepoint(repo, op_id.as_str());
+fn delete_savepoint(vcs: &dyn Vcs, repo: &Path, op_id: &OpId) {
+    vcs.drop_savepoint(repo, op_id.as_str());
 }
 
 /// Derive the savepoint op-id string used for target-workspace repos.
@@ -860,6 +861,7 @@ fn target_savepoint_id(op_id: &OpId) -> String {
 /// discard reachable commits? Returns `true` when CWD is an ancestor of (or
 /// equal to) source — the safe cases.
 fn cwd_is_ancestor_or_equal(
+    vcs: &dyn Vcs,
     cwd_project_dir: &Path,
     cwd_tip: &ResolvedRevisionId,
     source_tip: &ResolvedRevisionId,
@@ -870,8 +872,7 @@ fn cwd_is_ancestor_or_equal(
     // Both tips must be reachable in cwd_project_dir's object DB for
     // is_ancestor to work. (Source's tip is reachable because Phase 1's
     // reset --hard relies on the same reachability.)
-    GitVcs
-        .is_ancestor(cwd_project_dir, cwd_tip, source_tip)
+    vcs.is_ancestor(cwd_project_dir, cwd_tip, source_tip)
         .unwrap_or(false)
 }
 
@@ -888,19 +889,20 @@ fn cwd_is_ancestor_or_equal(
 /// divergence by replaying CWD's project commits (with `rwv.lock` excluded)
 /// onto source's tip.
 fn check_phase1_ancestor(
+    vcs: &dyn Vcs,
     cwd_project_dir: &Path,
     cwd_tip: &ResolvedRevisionId,
     source_tip: &ResolvedRevisionId,
     cwd_workspace_name: &str,
     source_workspace_name: &str,
 ) -> anyhow::Result<()> {
-    if cwd_is_ancestor_or_equal(cwd_project_dir, cwd_tip, source_tip) {
+    if cwd_is_ancestor_or_equal(vcs, cwd_project_dir, cwd_tip, source_tip) {
         return Ok(());
     }
 
     // CWD is not an ancestor of source. Count the commits CWD has that source
     // doesn't (the ones a fast-forward would refuse to land).
-    let extra_count = GitVcs
+    let extra_count = vcs
         .count_commits_in_range(cwd_project_dir, source_tip, cwd_tip)
         .map(|n| n.to_string())
         .unwrap_or_else(|_| "?".to_owned());
@@ -971,11 +973,15 @@ fn resume_command(verb: OpVerb) -> String {
 /// [`ConflictOp::Rebase`] the VCS hint stops at staging — the rwv-native
 /// `{resume}` line IS the continue step; merge/cherry-pick
 /// hints still carry their VCS-native continue since rwv cannot resume those.
-fn manifest_repo_failure_message(verb: OpVerb, live_conflict: Option<ConflictOp>) -> String {
+fn manifest_repo_failure_message(
+    vcs: &dyn Vcs,
+    verb: OpVerb,
+    live_conflict: Option<ConflictOp>,
+) -> String {
     let resume = resume_command(verb);
     match live_conflict {
         Some(op) => {
-            let hint = GitVcs.conflict_resolution_hint(op);
+            let hint = vcs.conflict_resolution_hint(op);
             format!(
                 "sync hit conflicts in one or more manifest repos (see per-repo lines above).\n\
                  \n\
@@ -1010,6 +1016,7 @@ fn manifest_repo_failure_message(verb: OpVerb, live_conflict: Option<ConflictOp>
 /// VCS conflict, so it always passes `None` and never teaches a spurious
 /// `git rebase --continue` (which would print "No rebase in progress").
 fn phase1_or_phase3_failure_message(
+    vcs: &dyn Vcs,
     phase: Phase,
     cwd_project_dir: &Path,
     verb: OpVerb,
@@ -1020,7 +1027,7 @@ fn phase1_or_phase3_failure_message(
     let repo_display = cwd_project_dir.display();
     match live_conflict {
         Some(op) => {
-            let hint = GitVcs.conflict_resolution_hint(op);
+            let hint = vcs.conflict_resolution_hint(op);
             format!(
                 "sync failed in {phase_label} (see error above).\n\
                  \n\
@@ -1057,13 +1064,14 @@ fn phase1_or_phase3_failure_message(
 /// resume for those ops; the operator finishes them in git, then `{resume}`
 /// picks the op back up.
 fn per_conflict_bail_message(
+    vcs: &dyn Vcs,
     repo: &Path,
     op: ConflictOp,
     op_label: &str,
     detail: &str,
     verb: OpVerb,
 ) -> String {
-    let hint = GitVcs.conflict_resolution_hint(op);
+    let hint = vcs.conflict_resolution_hint(op);
     let resume = resume_command(verb);
     let repo_display = repo.display();
     format!(
@@ -1133,7 +1141,7 @@ fn per_conflict_bail_message(
 /// The .gitattributes assignment itself is NOT written by this function
 /// — that's `rwv doctor --fix`'s job, and requires a commit which sync
 /// must not silently make on the operator's behalf.
-fn verify_replay_exclusion_invariant(cwd_project_dir: &Path) -> anyhow::Result<()> {
+fn verify_replay_exclusion_invariant(vcs: &dyn Vcs, cwd_project_dir: &Path) -> anyhow::Result<()> {
     // Plant the durable config first — regardless of whether the
     // .gitattributes assignment is present, having the driver defined
     // makes any downstream `git rebase --continue` safe against the
@@ -1147,7 +1155,7 @@ fn verify_replay_exclusion_invariant(cwd_project_dir: &Path) -> anyhow::Result<(
         )
     })?;
 
-    let has_new = GitVcs
+    let has_new = vcs
         .has_committed_replay_exclusion(cwd_project_dir, Path::new("rwv.lock"))
         .unwrap_or(false);
     if has_new {
@@ -1282,6 +1290,7 @@ fn checkout_is_syncable(abs: &Path) -> bool {
 /// out. Caller is responsible for the surrounding sync flow (Phase 2 will then
 /// call `sync_one_repo` to land HEAD on `target`).
 fn materialize_missing_repo(
+    vcs: &dyn Vcs,
     ctx: &WorkspaceContext,
     repo_path: &RepoPath,
     entry: &crate::manifest::RepoEntry,
@@ -1309,13 +1318,13 @@ fn materialize_missing_repo(
             // call `create_workweave` (`workweave.rs`) and `rwv add`
             // (`add_remove.rs`) make, from the same two inputs.
             let start_ref = entry.version.as_str();
-            let start = GitVcs
+            let start = vcs
                 .resolve_revision(&canonical, start_ref)
                 .with_context(|| format!("failed to resolve {start_ref} in canonical clone"))?;
             let mut registry =
                 crate::workweave_index::RefRegistry::for_project(ctx.primary_path(), project_name);
             crate::workweave::birth_ephemeral_worktree(
-                &GitVcs,
+                vcs,
                 &mut registry,
                 &canonical,
                 &dest,
@@ -1327,8 +1336,7 @@ fn materialize_missing_repo(
             .with_context(|| format!("worktree add for {repo_path} failed"))?;
         }
         Checkout::Primary { .. } => {
-            GitVcs
-                .clone_repo(&entry.url.to_string(), &dest)
+            vcs.clone_repo(&entry.url.to_string(), &dest)
                 .with_context(|| format!("clone of {repo_path} from {} failed", entry.url))?;
         }
     }
@@ -1355,12 +1363,13 @@ fn materialize_missing_repo(
 /// Fail-closed on an unreadable store: a claim we could not enumerate is
 /// treated as a claim that stands.
 fn check_store_unclaimed(
+    vcs: &dyn Vcs,
     store: &Path,
     primary_root: &Path,
     project: &ProjectName,
     repo_path: &RepoPath,
 ) -> anyhow::Result<()> {
-    let registered = GitVcs.list_worktrees(store).with_context(|| {
+    let registered = vcs.list_worktrees(store).with_context(|| {
         format!(
             "{repo_path}: cannot enumerate the worktrees registered against {}; \
              refusing to destroy a store whose claims could not be read",
@@ -1521,7 +1530,7 @@ fn prune_dropped_repo(
             // Conservative — any branch with commits not on origin is grounds.
             // We don't know the manifest role of this dropped repo at prune
             // time (the lock entry is gone); Role::Owned selects the
-            // canonical-clone remote convention (`origin` in [`GitVcs`])
+            // canonical-clone remote convention (`origin` for git)
             // which matches what every non-fork lock entry was cloned with.
             let any_local_only = match vcs.list_local_branches(&dest) {
                 Ok(names) => {
@@ -1573,7 +1582,7 @@ fn prune_dropped_repo(
             // DESTROY-STORE: `dest` in the primary IS the canonical
             // store — the refdb and object database every workweave worktree
             // of this repo is registered in. R4 gates it.
-            check_store_unclaimed(&dest, ctx.primary_path(), project_name, repo_path)?;
+            check_store_unclaimed(vcs, &dest, ctx.primary_path(), project_name, repo_path)?;
             std::fs::remove_dir_all(&dest)
                 .with_context(|| format!("failed to remove {}", dest.display()))?;
         }
@@ -1849,6 +1858,10 @@ struct OpContext<'a> {
     retire: bool,
     jobs: usize,
     handler: &'a dyn OutputHandler,
+    /// The CWD project repo's backend. One per invocation, because the
+    /// project repo is one per invocation — see [`crate::vcs::project_vcs`]
+    /// for why it cannot be resolved from a manifest entry.
+    project_vcs: Box<dyn Vcs>,
     verb: op_state::OpVerb,
     op_id: OpId,
     /// Atomic source snapshot pinned at guard time (T0): one ref read of
@@ -2128,6 +2141,7 @@ struct PreconditionOutcome {
 /// releases the acquired records).
 #[allow(clippy::too_many_arguments)]
 fn run_preconditions_after_acquire(
+    project_vcs: &dyn Vcs,
     verb: MachineVerb,
     strategy: SyncStrategy,
     allow_stale_lock: bool,
@@ -2147,7 +2161,7 @@ fn run_preconditions_after_acquire(
     emit_text: bool,
 ) -> anyhow::Result<PreconditionOutcome> {
     // CWD project repo must not be mid-op.
-    if let Some(op) = GitVcs.mid_op(cwd_project_dir) {
+    if let Some(op) = project_vcs.mid_op(cwd_project_dir) {
         anyhow::bail!(
             "CWD project repo is mid-{op}; resolve before running sync",
             op = mid_op_label(op),
@@ -2157,7 +2171,7 @@ fn run_preconditions_after_acquire(
     // sync-to: --strategy=ff has special semantics (CWD must be strictly
     // ahead of target). Bail before any side effects on a refusal.
     if matches!(verb, MachineVerb::SyncTo) && strategy == SyncStrategy::Ff {
-        check_sync_to_ff_precondition(cwd_project_dir, dest_project_dir, emit_text)?;
+        check_sync_to_ff_precondition(project_vcs, cwd_project_dir, dest_project_dir, emit_text)?;
     }
 
     // Pre-flight dirt scans: refuse before any mutation when
@@ -2179,7 +2193,12 @@ fn run_preconditions_after_acquire(
             // does not affect the op.
             let cwd_project_preflight = Project::from_dir(cwd_project_dir)
                 .context("failed to load CWD project for sync dirt scan")?;
-            check_dirty_preflight_sync(&cwd_project_preflight, cwd_workspace_dir, cwd_project_dir)?;
+            check_dirty_preflight_sync(
+                project_vcs,
+                &cwd_project_preflight,
+                cwd_workspace_dir,
+                cwd_project_dir,
+            )?;
         }
         MachineVerb::SyncTo => {
             // sync-to preflights (all refuse before any side effects):
@@ -2191,17 +2210,20 @@ fn run_preconditions_after_acquire(
             let cwd_project_preflight = Project::from_dir(cwd_project_dir)
                 .context("failed to load CWD project for sync-to preflights")?;
             check_dirty_source_preflight(
+                project_vcs,
                 &cwd_project_preflight,
                 cwd_workspace_dir,
                 cwd_project_dir,
             )?;
             check_dirty_target_preflight(
+                project_vcs,
                 &cwd_project_preflight,
                 dest_workspace_dir,
                 dest_project_dir,
                 cli_path,
             )?;
             check_detached_target_preflight(
+                project_vcs,
                 &cwd_project_preflight,
                 dest_workspace_dir,
                 dest_project_dir,
@@ -2214,7 +2236,7 @@ fn run_preconditions_after_acquire(
     // all reads against a coherent T0. This is the "snapshot reads"
     // mechanism: one atomic ref read pins source; manifest + lock are read
     // at that revision; everything downstream is content-addressed.
-    let snapshot = pin_source_snapshot(source_project_dir)?;
+    let snapshot = pin_source_snapshot(project_vcs, source_project_dir)?;
 
     // Replay preconditions (pure reads; refusals leave no trace on-workspace —
     // the acquired op-state is cleaned up by the caller on Err).
@@ -2374,13 +2396,13 @@ fn run_preconditions_after_acquire(
         }
     }
     if matches!(strategy, SyncStrategy::Rebase) {
-        verify_replay_exclusion_invariant(cwd_project_dir)?;
+        verify_replay_exclusion_invariant(project_vcs, cwd_project_dir)?;
     }
-    let cwd_project_tip = GitVcs
+    let cwd_project_tip = project_vcs
         .head_revision(cwd_project_dir)
         .context("failed to read CWD project HEAD")?;
     let phase1_ancestor_bypassed = if discard_local_commits {
-        if GitVcs
+        if project_vcs
             .has_uncommitted_changes(cwd_project_dir)
             .unwrap_or(true)
         {
@@ -2394,6 +2416,7 @@ fn run_preconditions_after_acquire(
             );
         }
         !cwd_is_ancestor_or_equal(
+            project_vcs,
             cwd_project_dir,
             &cwd_project_tip,
             &snapshot.source_project_tip,
@@ -2401,6 +2424,7 @@ fn run_preconditions_after_acquire(
     } else if strategy == SyncStrategy::Ff && matches!(verb, MachineVerb::Sync) {
         // Plain sync + ff: CWD must be ancestor-or-equal of source.
         check_phase1_ancestor(
+            project_vcs,
             cwd_project_dir,
             &cwd_project_tip,
             &snapshot.source_project_tip,
@@ -2588,7 +2612,12 @@ fn guard_and_mark<'a>(
     // the acquired records (see the cleanup-table row for "refusal → cleared
     // everywhere"). We wrap the precondition block in a closure so `?` inside
     // routes through the release path.
+    // One handle for the CWD project repo, resolved here at the verb's entry
+    // and threaded through every phase; the `OpContext` below carries the same
+    // one for the phases that run past this function.
+    let project_vcs = project_vcs();
     let precondition_result = run_preconditions_after_acquire(
+        project_vcs.as_ref(),
         verb,
         strategy,
         allow_stale_lock,
@@ -2675,13 +2704,13 @@ fn guard_and_mark<'a>(
     // way to do that symmetrically is via the same savepoint mechanism used
     // on the CWD side. Sibling .4 (abort hardening) verifies these refs
     // against HEAD; we create them here so the anchor exists.
-    create_savepoint(&cwd_project_dir, &op_id)?;
-    for repo_path in cwd_project.manifest.iter_repo_paths() {
+    create_savepoint(project_vcs.as_ref(), &cwd_project_dir, &op_id)?;
+    for (repo_path, entry) in cwd_project.manifest.iter_entries() {
         let abs = cwd_workspace_dir.join(repo_path.as_path());
         // Skip reference symlinks: a savepoint here would write
         // `refs/rwv/pre-op/*` into the shared canonical store.
         if checkout_is_syncable(&abs) {
-            let _ = create_savepoint(&abs, &op_id);
+            let _ = create_savepoint(vcs_for(entry.vcs_type).as_ref(), &abs, &op_id);
         }
     }
 
@@ -2704,13 +2733,13 @@ fn guard_and_mark<'a>(
         };
         if let Some(tpname) = target_project_name {
             let target_project_dir = dest_workspace_dir.join("projects").join(&tpname);
-            let _ = create_savepoint(&target_project_dir, &tsp_id);
+            let _ = create_savepoint(project_vcs.as_ref(), &target_project_dir, &tsp_id);
             if let Ok(tp) = crate::manifest::Project::from_dir_skip_lock(&target_project_dir) {
-                for repo_path in tp.manifest.iter_repo_paths() {
+                for (repo_path, entry) in tp.manifest.iter_entries() {
                     let abs = dest_workspace_dir.join(repo_path.as_path());
                     // Skip reference symlinks (shared canonical store).
                     if checkout_is_syncable(&abs) {
-                        let _ = create_savepoint(&abs, &tsp_id);
+                        let _ = create_savepoint(vcs_for(entry.vcs_type).as_ref(), &abs, &tsp_id);
                     }
                 }
             }
@@ -2772,6 +2801,7 @@ fn guard_and_mark<'a>(
         retire,
         jobs,
         handler,
+        project_vcs,
         verb: verb.op_verb(),
         op_id,
         snapshot,
@@ -2904,7 +2934,8 @@ fn load_continuing_context<'a>(
     // T0 is "the start of the (resumed) replay" — re-pinning here gives
     // replay's re-entry rule a coherent set of inputs. Per-repo no-op
     // detection handles already-converged repos cleanly.
-    let snapshot = pin_source_snapshot(&source_project_dir)?;
+    let project_vcs = project_vcs();
+    let snapshot = pin_source_snapshot(project_vcs.as_ref(), &source_project_dir)?;
 
     // --continue resumes with the same consents recorded at fresh-start
     // time: read `overrides` and re-derive each named override from the
@@ -2932,6 +2963,7 @@ fn load_continuing_context<'a>(
         retire: record.retire,
         jobs,
         handler,
+        project_vcs,
         verb: record.verb,
         op_id,
         snapshot,
@@ -2990,14 +3022,15 @@ fn warn_on_sibling_sync(cwd_ctx: &WorkspaceContext, source_workspace_dir: &Path,
 /// short-circuits — handled inside `run_replay` via the noop-detection path).
 /// If diverged: refuse before any side effects.
 fn check_sync_to_ff_precondition(
+    vcs: &dyn Vcs,
     cwd_project_dir: &Path,
     target_project_dir: &Path,
     _emit_text: bool,
 ) -> anyhow::Result<()> {
-    let cwd_tip = GitVcs
+    let cwd_tip = vcs
         .head_revision(cwd_project_dir)
         .context("failed to read CWD project HEAD")?;
-    let target_tip = GitVcs
+    let target_tip = vcs
         .head_revision(target_project_dir)
         .context("failed to read target project HEAD")?;
     if cwd_tip == target_tip {
@@ -3006,7 +3039,7 @@ fn check_sync_to_ff_precondition(
         // record/lease cleanup happens through the canonical cleanup phase.
         return Ok(());
     }
-    let cwd_ahead = GitVcs
+    let cwd_ahead = vcs
         .is_ancestor(cwd_project_dir, &target_tip, &cwd_tip)
         .unwrap_or(false);
     if !cwd_ahead {
@@ -3024,23 +3057,26 @@ fn check_sync_to_ff_precondition(
 /// sync-to dirty-target preflight: refuse if the target workweave has
 /// uncommitted changes that advance-target would overwrite.
 fn check_dirty_target_preflight(
+    project_vcs: &dyn Vcs,
     cwd_project: &Project,
     target_workspace_dir: &Path,
     target_project_dir: &Path,
     target_path: &Path,
 ) -> anyhow::Result<()> {
     let mut dirty: Vec<String> = Vec::new();
-    for repo_path in cwd_project.manifest.iter_repo_paths() {
+    for (repo_path, entry) in cwd_project.manifest.iter_entries() {
         let target_repo = target_workspace_dir.join(repo_path.as_path());
         // Skip reference symlinks: a dirty shared canonical must not block a
         // sync-to that never touches it (advance-target excludes it too).
         if checkout_is_syncable(&target_repo)
-            && GitVcs.has_uncommitted_changes(&target_repo).unwrap_or(true)
+            && vcs_for(entry.vcs_type)
+                .has_uncommitted_changes(&target_repo)
+                .unwrap_or(true)
         {
             dirty.push(repo_path.to_string());
         }
     }
-    if GitVcs
+    if project_vcs
         .has_uncommitted_changes(target_project_dir)
         .unwrap_or(true)
     {
@@ -3070,6 +3106,7 @@ fn check_dirty_target_preflight(
 /// that covers `--continue` (a resumed op re-enters at the phase body, not
 /// here).
 fn check_detached_target_preflight(
+    project_vcs: &dyn Vcs,
     cwd_project: &Project,
     target_workspace_dir: &Path,
     target_project_dir: &Path,
@@ -3083,7 +3120,7 @@ fn check_detached_target_preflight(
     // fell through to a `merge --ff-only` that cannot work. An unreadable
     // HEAD keeps the shipped fail-closed direction: it is named, not
     // skipped.
-    let unattached = |repo: &Path| match GitVcs.head_attachment(repo) {
+    let unattached = |vcs: &dyn Vcs, repo: &Path| match vcs.head_attachment(repo) {
         Ok(HeadAttachment::Attached(_)) => None,
         Ok(HeadAttachment::Detached(d)) => Some(format!("detached HEAD at {}", d.at())),
         Ok(HeadAttachment::Unborn(u)) => Some(format!("unborn branch '{u}', no commits yet")),
@@ -3091,18 +3128,18 @@ fn check_detached_target_preflight(
     };
 
     let mut detached: Vec<String> = Vec::new();
-    for repo_path in cwd_project.manifest.iter_repo_paths() {
+    for (repo_path, entry) in cwd_project.manifest.iter_entries() {
         let target_repo = target_workspace_dir.join(repo_path.as_path());
         // Skip reference symlinks: advance-target excludes them, so their
         // attachment is not this op's business.
         if !checkout_is_syncable(&target_repo) {
             continue;
         }
-        if let Some(state) = unattached(&target_repo) {
+        if let Some(state) = unattached(vcs_for(entry.vcs_type).as_ref(), &target_repo) {
             detached.push(format!("{repo_path} ({state})"));
         }
     }
-    if let Some(state) = unattached(target_project_dir) {
+    if let Some(state) = unattached(project_vcs, target_project_dir) {
         detached.push(format!("(project) ({state})"));
     }
     if !detached.is_empty() {
@@ -3226,6 +3263,7 @@ fn classify_sync_dirt(repo: &Path, label: String) -> Option<String> {
 /// reference symlinks — the shared canonical store is never rebased by sync)
 /// and the project repo.
 fn check_dirty_preflight_sync(
+    project_vcs: &dyn Vcs,
     cwd_project: &Project,
     cwd_workspace_dir: &Path,
     cwd_project_dir: &Path,
@@ -3233,7 +3271,7 @@ fn check_dirty_preflight_sync(
     let mut user_dirt: Vec<String> = Vec::new();
     let mut unreadable: Vec<String> = Vec::new();
 
-    for repo_path in cwd_project.manifest.iter_repo_paths() {
+    for (repo_path, entry) in cwd_project.manifest.iter_entries() {
         let repo = cwd_workspace_dir.join(repo_path.as_path());
         // Skip reference symlinks: the shared canonical store is never
         // rebased or ff'd by sync (checkout_is_syncable guards every mutating
@@ -3241,7 +3279,7 @@ fn check_dirty_preflight_sync(
         if !checkout_is_syncable(&repo) {
             continue;
         }
-        match GitVcs::tracked_dirty_file_names(&repo) {
+        match vcs_for(entry.vcs_type).tracked_dirty_file_names(&repo) {
             // Clean (tracked-wise): untracked-only repos land here too.
             Ok(tracked) if tracked.is_empty() => {}
             Ok(_) => {
@@ -3261,7 +3299,7 @@ fn check_dirty_preflight_sync(
     // for sync-to). For sync (pull), Phase 1' ff's or rebases the project repo
     // directly, and git refuses on any tracked dirty file including rwv.lock.
     // Name the specific tracked files so the operator sees exactly what refuses.
-    match GitVcs::tracked_dirty_file_names(cwd_project_dir) {
+    match project_vcs.tracked_dirty_file_names(cwd_project_dir) {
         Ok(tracked) if tracked.is_empty() => {}
         Ok(tracked) => {
             let files = tracked
@@ -3339,22 +3377,25 @@ fn check_dirty_preflight_sync(
 ///   still refuses (and the project entry names the specific files so the lock
 ///   carve-out is auditable).
 fn check_dirty_source_preflight(
+    project_vcs: &dyn Vcs,
     cwd_project: &Project,
     cwd_workspace_dir: &Path,
     cwd_project_dir: &Path,
 ) -> anyhow::Result<()> {
     let mut dirty: Vec<String> = Vec::new();
 
-    for repo_path in cwd_project.manifest.iter_repo_paths() {
+    for (repo_path, entry) in cwd_project.manifest.iter_entries() {
         let repo = cwd_workspace_dir.join(repo_path.as_path());
         // Skip reference symlinks: a dirty shared canonical must not block a
         // sync-to that never rebases it (replay excludes it too).
         if checkout_is_syncable(&repo) {
-            let tracked = GitVcs::tracked_dirty_file_names(&repo).unwrap_or_else(|_| {
-                // Treat an unreadable repo as dirty so we fail closed rather
-                // than silently rebasing over an unknown state.
-                vec!["(status unreadable)".to_string()]
-            });
+            let tracked = vcs_for(entry.vcs_type)
+                .tracked_dirty_file_names(&repo)
+                .unwrap_or_else(|_| {
+                    // Treat an unreadable repo as dirty so we fail closed rather
+                    // than silently rebasing over an unknown state.
+                    vec!["(status unreadable)".to_string()]
+                });
             if !tracked.is_empty() {
                 dirty.push(repo_path.to_string());
             }
@@ -3363,7 +3404,8 @@ fn check_dirty_source_preflight(
 
     // Project repo: apply the rwv.lock carve-out. A project repo dirty ONLY in
     // rwv.lock is the auto-relock's expected input, not dirt.
-    let project_tracked = GitVcs::tracked_dirty_file_names(cwd_project_dir)
+    let project_tracked = project_vcs
+        .tracked_dirty_file_names(cwd_project_dir)
         .unwrap_or_else(|_| vec!["(status unreadable)".to_string()]);
     let non_lock: Vec<&String> = project_tracked
         .iter()
@@ -3666,7 +3708,8 @@ fn run_replay(ctx: &OpContext<'_>) -> anyhow::Result<()> {
 
     // CWD project tip — read before any side effects so Phase 1' has the
     // pre-op starting state for its `cwd_tip == source_tip` short-circuit.
-    let cwd_project_tip = GitVcs
+    let cwd_project_tip = ctx
+        .project_vcs
         .head_revision(&ctx.cwd_project_dir)
         .context("failed to read CWD project HEAD")?;
 
@@ -3687,7 +3730,13 @@ fn run_replay(ctx: &OpContext<'_>) -> anyhow::Result<()> {
             Some(e) => e,
             None => continue,
         };
-        match materialize_missing_repo(&ctx.cwd_ctx, repo_path, entry, &ctx.cwd_project_name) {
+        match materialize_missing_repo(
+            vcs_for(entry.vcs_type).as_ref(),
+            &ctx.cwd_ctx,
+            repo_path,
+            entry,
+            &ctx.cwd_project_name,
+        ) {
             Ok(()) => {
                 if emit_text {
                     println!("  {repo_path}: materialized");
@@ -3756,6 +3805,9 @@ fn run_replay(ctx: &OpContext<'_>) -> anyhow::Result<()> {
     struct SyncTask {
         repo_path: crate::manifest::RepoPath,
         abs: PathBuf,
+        /// The repo's backend, resolved on this thread before the fan-out.
+        /// Workers borrow it; none of them resolves one.
+        vcs: Box<dyn Vcs>,
         target: ResolvedRevisionId,
         /// The repo's tip before this op replayed anything, taken from the
         /// op's savepoint so a `--continue` re-entry reads the same tip the
@@ -3805,10 +3857,18 @@ fn run_replay(ctx: &OpContext<'_>) -> anyhow::Result<()> {
             Some(e) => e,
             None => continue,
         };
+        // The lock names paths; the manifest names backends. A lock entry
+        // with no manifest entry has no declared backend to resolve from.
+        let vcs = cwd_project
+            .manifest
+            .get_entry(repo_path)
+            .map(|e| vcs_for(e.vcs_type))
+            .unwrap_or_else(crate::vcs::probe_vcs);
         sync_tasks.push(SyncTask {
             repo_path: repo_path.clone(),
-            pre_replay_tip: GitVcs.resolve_savepoint(&abs, ctx.op_id.as_str()),
+            pre_replay_tip: vcs.resolve_savepoint(&abs, ctx.op_id.as_str()),
             abs,
+            vcs,
             target: lock_entry.version.clone(),
         });
     }
@@ -3830,9 +3890,10 @@ fn run_replay(ctx: &OpContext<'_>) -> anyhow::Result<()> {
         let mut entry_tips: std::collections::BTreeMap<String, String> =
             std::collections::BTreeMap::new();
         for task in &sync_tasks {
-            if let Ok(head) = GitVcs.head_revision(&task.abs) {
+            if let Ok(head) = task.vcs.head_revision(&task.abs) {
                 if head != task.target
-                    && GitVcs
+                    && task
+                        .vcs
                         .is_ancestor(&task.abs, &head, &task.target)
                         .unwrap_or(false)
                 {
@@ -3869,6 +3930,7 @@ fn run_replay(ctx: &OpContext<'_>) -> anyhow::Result<()> {
     let task_results: Vec<(bool, Option<String>)> =
         run_in_parallel(&sync_tasks, ctx.jobs, |_idx, task| {
             let outcome = sync_one_repo(
+                task.vcs.as_ref(),
                 &task.abs,
                 &task.target,
                 strategy,
@@ -3879,7 +3941,7 @@ fn run_replay(ctx: &OpContext<'_>) -> anyhow::Result<()> {
             // For ff-movers this equals the pre-written target (idempotent
             // overwrite in write 3); for rebased repos it is the fresh SHA.
             let converged_head = if matches!(outcome, RepoSyncOutcome::Converged { .. }) {
-                GitVcs
+                task.vcs
                     .head_revision(&task.abs)
                     .ok()
                     .map(|h| h.as_str().to_owned())
@@ -3887,8 +3949,8 @@ fn run_replay(ctx: &OpContext<'_>) -> anyhow::Result<()> {
                 None
             };
             if !is_failure {
-                GitVcs.refresh_index_to_head_if_safe(&task.abs);
-                GitVcs.refresh_working_tree_to_head_if_safe(&task.abs);
+                task.vcs.refresh_index_to_head_if_safe(&task.abs);
+                task.vcs.refresh_working_tree_to_head_if_safe(&task.abs);
             }
             ctx.handler.record(
                 task.repo_path.as_str(),
@@ -3939,8 +4001,16 @@ fn run_replay(ctx: &OpContext<'_>) -> anyhow::Result<()> {
         // genuinely left mid-op (Correction 4). Probe the involved repos for a
         // live conflict rather than assuming one from the strategy — a batch of
         // fetch/head-unreadable failures leaves no rebase to `--continue`.
-        let live_conflict = sync_tasks.iter().find_map(|t| GitVcs.mid_op(&t.abs));
-        anyhow::bail!("{}", manifest_repo_failure_message(ctx.verb, live_conflict));
+        let live_conflict = sync_tasks
+            .iter()
+            .find_map(|t| t.vcs.mid_op(&t.abs).map(|op| (t.vcs.as_ref(), op)));
+        anyhow::bail!(
+            "{}",
+            match live_conflict {
+                Some((vcs, op)) => manifest_repo_failure_message(vcs, ctx.verb, Some(op)),
+                None => manifest_repo_failure_message(ctx.project_vcs.as_ref(), ctx.verb, None),
+            }
+        );
     }
 
     // === Phase 1' (project repo) — strategy on the project repo ===
@@ -3960,6 +4030,7 @@ fn run_replay(ctx: &OpContext<'_>) -> anyhow::Result<()> {
         rewind_project_repo(ctx, &snapshot.source_project_tip)
     } else {
         apply_project_strategy(
+            ctx.project_vcs.as_ref(),
             &ctx.cwd_project_dir,
             &snapshot.source_project_tip,
             &cwd_project_tip,
@@ -3975,10 +4046,11 @@ fn run_replay(ctx: &OpContext<'_>) -> anyhow::Result<()> {
         // Only teach the VCS-native resume when the project repo is actually
         // left mid-op (Correction 4). A `--discard-local-commits` hard-reset
         // failure or a non-conflict rebase error leaves no in-flight VCS op.
-        let live_conflict = GitVcs.mid_op(&ctx.cwd_project_dir);
+        let live_conflict = ctx.project_vcs.mid_op(&ctx.cwd_project_dir);
         anyhow::bail!(
             "{}",
             phase1_or_phase3_failure_message(
+                ctx.project_vcs.as_ref(),
                 Phase::One,
                 &ctx.cwd_project_dir,
                 ctx.verb,
@@ -3995,7 +4067,8 @@ fn run_replay(ctx: &OpContext<'_>) -> anyhow::Result<()> {
     // covers the ff/discard-local-commits case (tip == source tip, idempotent
     // overwrite).
     {
-        let project_tip = GitVcs
+        let project_tip = ctx
+            .project_vcs
             .head_revision(&ctx.cwd_project_dir)
             .context("failed to read project HEAD after Phase 1'")?;
         let mut owner = op_state::read_owner(&ctx.owner_workspace_dir)?
@@ -4018,13 +4091,16 @@ fn run_replay(ctx: &OpContext<'_>) -> anyhow::Result<()> {
 /// then read source manifest + lock AT that revision. Combined with the
 /// no-op-in-progress check on the source (in `check_no_op_in_progress`),
 /// source reads are effectively serialisable with no locks.
-fn pin_source_snapshot(source_project_dir: &Path) -> anyhow::Result<SourceSnapshot> {
-    let source_project_tip = GitVcs
+fn pin_source_snapshot(
+    source_vcs: &dyn Vcs,
+    source_project_dir: &Path,
+) -> anyhow::Result<SourceSnapshot> {
+    let source_project_tip = source_vcs
         .head_revision(source_project_dir)
         .context("failed to read source project HEAD")?;
 
     let raw_source_lock = {
-        let content = GitVcs
+        let content = source_vcs
             .read_file_at_revision(
                 source_project_dir,
                 &source_project_tip,
@@ -4047,7 +4123,7 @@ fn pin_source_snapshot(source_project_dir: &Path) -> anyhow::Result<SourceSnapsh
     };
 
     let source_manifest = {
-        let content = GitVcs
+        let content = source_vcs
             .read_file_at_revision(
                 source_project_dir,
                 &source_project_tip,
@@ -4127,7 +4203,13 @@ fn run_relock(ctx: &OpContext<'_>) -> anyhow::Result<()> {
         // `rwv {verb} --continue`, not a spurious `git rebase --continue`.
         anyhow::bail!(
             "{}",
-            phase1_or_phase3_failure_message(Phase::Three, &ctx.cwd_project_dir, ctx.verb, None,)
+            phase1_or_phase3_failure_message(
+                ctx.project_vcs.as_ref(),
+                Phase::Three,
+                &ctx.cwd_project_dir,
+                ctx.verb,
+                None,
+            )
         );
     }
 
@@ -4147,16 +4229,16 @@ fn record_converged_tips(ctx: &OpContext<'_>, cwd_project: &Project) -> anyhow::
     // Build the converged table from post-replay HEADs...
     let mut converged: std::collections::BTreeMap<String, String> =
         std::collections::BTreeMap::new();
-    for repo_path in cwd_project.manifest.iter_repo_paths() {
+    for (repo_path, entry) in cwd_project.manifest.iter_entries() {
         let abs = ctx.cwd_workspace_dir.join(repo_path.as_path());
         if !abs.exists() {
             continue;
         }
-        if let Ok(rev) = GitVcs.head_revision(&abs) {
+        if let Ok(rev) = vcs_for(entry.vcs_type).head_revision(&abs) {
             converged.insert(repo_path.as_str().to_owned(), rev.as_str().to_owned());
         }
     }
-    if let Ok(rev) = GitVcs.head_revision(&ctx.cwd_project_dir) {
+    if let Ok(rev) = ctx.project_vcs.head_revision(&ctx.cwd_project_dir) {
         converged.insert("(project)".to_owned(), rev.as_str().to_owned());
     }
     // ...then swap atomically: `PhaseTips::converge` discards the replay-phase
@@ -4191,7 +4273,8 @@ fn run_advance_target(ctx: &OpContext<'_>) -> anyhow::Result<()> {
         .context("failed to reload CWD project for advance-target")?;
 
     let mut any_ff_failure = false;
-    for repo_path in cwd_project_final.manifest.iter_repo_paths() {
+    for (repo_path, entry) in cwd_project_final.manifest.iter_entries() {
+        let vcs = vcs_for(entry.vcs_type);
         let cwd_repo = ctx.cwd_workspace_dir.join(repo_path.as_path());
         let target_repo = ctx.dest_workspace_dir.join(repo_path.as_path());
         // Skip reference symlinks on either side: ff'ing the target alias would
@@ -4206,7 +4289,7 @@ fn run_advance_target(ctx: &OpContext<'_>) -> anyhow::Result<()> {
             }
             continue;
         }
-        let cwd_tip = match GitVcs.head_revision(&cwd_repo) {
+        let cwd_tip = match vcs.head_revision(&cwd_repo) {
             Ok(tip) => tip,
             Err(e) => {
                 if emit_text {
@@ -4217,8 +4300,8 @@ fn run_advance_target(ctx: &OpContext<'_>) -> anyhow::Result<()> {
             }
         };
         // Read target tip BEFORE the advance so we can report from_sha.
-        let target_tip_before = GitVcs.head_revision(&target_repo).ok();
-        match ff_advance_repo(&target_repo, &cwd_repo, &cwd_tip) {
+        let target_tip_before = vcs.head_revision(&target_repo).ok();
+        match ff_advance_repo(vcs.as_ref(), &target_repo, &cwd_repo, &cwd_tip) {
             Ok(advanced) => {
                 if emit_text {
                     println!(
@@ -4247,13 +4330,15 @@ fn run_advance_target(ctx: &OpContext<'_>) -> anyhow::Result<()> {
         }
     }
 
-    let cwd_project_tip = GitVcs
+    let cwd_project_tip = ctx
+        .project_vcs
         .head_revision(&ctx.cwd_project_dir)
         .context("failed to read CWD project HEAD for advance-target")?;
 
     // Read project target tip BEFORE the advance so we can report from_sha.
-    let project_target_tip_before = GitVcs.head_revision(&ctx.dest_project_dir).ok();
+    let project_target_tip_before = ctx.project_vcs.head_revision(&ctx.dest_project_dir).ok();
     match ff_advance_repo(
+        ctx.project_vcs.as_ref(),
         &ctx.dest_project_dir,
         &ctx.cwd_project_dir,
         &cwd_project_tip,
@@ -4322,6 +4407,7 @@ fn run_retire(ctx: &OpContext<'_>) -> anyhow::Result<()> {
 
     match &ctx.cwd_ctx.checkout {
         Checkout::Workweave { dir, name, project } => retire_workweave_after_sync_to(
+            ctx.project_vcs.as_ref(),
             &ctx.cwd_ctx,
             dir,
             name,
@@ -4380,7 +4466,7 @@ fn cleanup(ctx: &OpContext<'_>) -> anyhow::Result<()> {
         .unwrap_or(false);
 
     if !discard_tombstone {
-        delete_savepoint(&canonical_project_dir, &ctx.op_id);
+        delete_savepoint(ctx.project_vcs.as_ref(), &canonical_project_dir, &ctx.op_id);
     } else if emit_text {
         eprintln!(
             "note: --discard-local-commits discarded project commits; pre-sync state preserved at \
@@ -4397,9 +4483,9 @@ fn cleanup(ctx: &OpContext<'_>) -> anyhow::Result<()> {
     // existence guard is needed (and `if abs.exists()` would re-introduce the
     // leak by skipping the now-deleted workweave paths).
     if let Ok(project) = Project::from_dir_skip_lock(&canonical_project_dir) {
-        for repo_path in project.manifest.iter_repo_paths() {
+        for (repo_path, entry) in project.manifest.iter_entries() {
             let abs = primary.join(repo_path.as_path());
-            delete_savepoint(&abs, &ctx.op_id);
+            delete_savepoint(vcs_for(entry.vcs_type).as_ref(), &abs, &ctx.op_id);
         }
     }
 
@@ -4415,12 +4501,12 @@ fn cleanup(ctx: &OpContext<'_>) -> anyhow::Result<()> {
             .and_then(|c| find_project_name(&c).ok());
         if let Some(tpname) = target_project_name {
             let target_project_dir = ctx.dest_workspace_dir.join("projects").join(&tpname);
-            delete_savepoint(&target_project_dir, &tsp_id);
+            delete_savepoint(ctx.project_vcs.as_ref(), &target_project_dir, &tsp_id);
             if let Ok(tp) = Project::from_dir_skip_lock(&target_project_dir) {
-                for repo_path in tp.manifest.iter_repo_paths() {
+                for (repo_path, entry) in tp.manifest.iter_entries() {
                     let abs = ctx.dest_workspace_dir.join(repo_path.as_path());
                     if abs.exists() {
-                        delete_savepoint(&abs, &tsp_id);
+                        delete_savepoint(vcs_for(entry.vcs_type).as_ref(), &abs, &tsp_id);
                     }
                 }
             }
@@ -4452,6 +4538,7 @@ fn cleanup(ctx: &OpContext<'_>) -> anyhow::Result<()> {
 /// honest "work has converged" signal: Phase 2 advances both sides to the
 /// same SHAs, so post-sync the manifest repos should be byte-equal.
 fn retire_workweave_after_sync_to(
+    project_vcs: &dyn Vcs,
     ctx: &WorkspaceContext,
     workweave_dir: &Path,
     workweave_name: &WorkweaveName,
@@ -4471,7 +4558,8 @@ fn retire_workweave_after_sync_to(
     let target_root = target_workspace_dir;
 
     let mut diverged: Vec<String> = Vec::new();
-    for repo_path in manifest.iter_repo_paths() {
+    for (repo_path, entry) in manifest.iter_entries() {
+        let vcs = vcs_for(entry.vcs_type);
         let cwd_repo = workweave_dir.join(repo_path.as_path());
         let target_repo = target_root.join(repo_path.as_path());
         if !cwd_repo.exists() || !target_repo.exists() {
@@ -4480,10 +4568,10 @@ fn retire_workweave_after_sync_to(
             diverged.push(format!("{}: missing on one side", repo_path.as_str()));
             continue;
         }
-        let cwd_head = GitVcs
+        let cwd_head = vcs
             .head_revision(&cwd_repo)
             .with_context(|| format!("--retire: read CWD head for {}", repo_path))?;
-        let target_head = GitVcs
+        let target_head = vcs
             .head_revision(&target_repo)
             .with_context(|| format!("--retire: read target head for {}", repo_path))?;
         if cwd_head != target_head {
@@ -4510,12 +4598,8 @@ fn retire_workweave_after_sync_to(
     }
 
     // Reuse the shared dirty-path check. Any dirty worktree blocks retire.
-    let dirty = crate::workweave::collect_dirty_paths(
-        project_vcs().as_ref(),
-        workweave_dir,
-        project,
-        &manifest,
-    );
+    let dirty =
+        crate::workweave::collect_dirty_paths(project_vcs, workweave_dir, project, &manifest);
     if !dirty.is_empty() {
         anyhow::bail!(
             "--retire: workweave has uncommitted changes after sync-to; refusing to delete:\n  {}\n\
@@ -4575,7 +4659,8 @@ fn short_sha(sha: &str) -> &str {
 /// comment for why the compiler cannot make that count-of-one a rule, and
 /// what to do instead of adding a second.
 fn rewind_project_repo(ctx: &OpContext<'_>, to: &ResolvedRevisionId) -> anyhow::Result<()> {
-    let savepoint = GitVcs
+    let vcs = ctx.project_vcs.as_ref();
+    let savepoint = vcs
         .resolve_savepoint_ref(&ctx.cwd_project_dir, ctx.op_id.as_str())
         .ok_or_else(|| {
             anyhow::anyhow!(
@@ -4587,11 +4672,11 @@ fn rewind_project_repo(ctx: &OpContext<'_>, to: &ResolvedRevisionId) -> anyhow::
         })?;
     let warrant = DiscardWarrant::new(savepoint, DiscardLocalCommitsConsent::granted());
 
-    match GitVcs
+    match vcs
         .head_attachment(&ctx.cwd_project_dir)
         .context("failed to read project HEAD ref")?
     {
-        HeadAttachment::Attached(on) => GitVcs
+        HeadAttachment::Attached(on) => vcs
             .reset_attached_ref(&on, to, warrant)
             .map_err(anyhow::Error::from)
             .context("project repo rewind (--discard-local-commits) failed"),
@@ -4601,7 +4686,7 @@ fn rewind_project_repo(ctx: &OpContext<'_>, to: &ResolvedRevisionId) -> anyhow::
         // carrying operator state a silent reposition would destroy. The
         // savepoint above still stands; `advance_detached_head` takes no
         // warrant, so the recoverability here rests on the savepoint alone.
-        HeadAttachment::Detached(was) => GitVcs
+        HeadAttachment::Detached(was) => vcs
             .advance_detached_head(&was, to)
             .map_err(anyhow::Error::from)
             .context("project repo rewind (--discard-local-commits) failed"),
@@ -4634,6 +4719,7 @@ fn rewind_project_repo(ctx: &OpContext<'_>, to: &ResolvedRevisionId) -> anyhow::
 /// conflict-bail message shows the correct rwv-native resume command
 /// (`rwv sync --continue` / `rwv sync-to --continue`).
 fn apply_project_strategy(
+    vcs: &dyn Vcs,
     cwd_project_dir: &Path,
     source_tip: &ResolvedRevisionId,
     cwd_tip: &ResolvedRevisionId,
@@ -4648,7 +4734,7 @@ fn apply_project_strategy(
     // and lying to the caller that Phase 1' completed. Mid-rebase is the
     // signal that trumps head-equality: always route through
     // `Vcs::rebase_continue` (below) when we see it under a rebase strategy.
-    let mid_rebase = matches!(GitVcs.mid_op(cwd_project_dir), Some(ConflictOp::Rebase))
+    let mid_rebase = matches!(vcs.mid_op(cwd_project_dir), Some(ConflictOp::Rebase))
         && strategy == SyncStrategy::Rebase;
 
     if !mid_rebase && cwd_tip == source_tip {
@@ -4659,7 +4745,7 @@ fn apply_project_strategy(
     match strategy {
         SyncStrategy::Ff => {
             // CWD must be ancestor of source (caller verified). Fast-forward.
-            GitVcs.advance_if_fast_forward(cwd_project_dir, source_tip)?;
+            vcs.advance_if_fast_forward(cwd_project_dir, source_tip)?;
         }
         SyncStrategy::Rebase => {
             // The replay states `keep_target_side`, which is what the repo's
@@ -4682,9 +4768,9 @@ fn apply_project_strategy(
             // preserve today's behavior of calling `Vcs::rebase`, which will
             // fail loudly rather than silently adopting foreign state.
             let outcome = if mid_rebase {
-                GitVcs.rebase_continue(cwd_project_dir, DerivedContentPolicy::keep_target_side())
+                vcs.rebase_continue(cwd_project_dir, DerivedContentPolicy::keep_target_side())
             } else {
-                GitVcs.rebase(
+                vcs.rebase(
                     cwd_project_dir,
                     source_tip,
                     source_tip,
@@ -4694,10 +4780,11 @@ fn apply_project_strategy(
             match outcome {
                 Ok(()) => {}
                 Err(VcsError::RebaseConflict { repo, op }) => {
-                    let detail = GitVcs.rebase_stopped_commit_detail(&repo);
+                    let detail = vcs.rebase_stopped_commit_detail(&repo);
                     anyhow::bail!(
                         "{}",
                         per_conflict_bail_message(
+                            vcs,
                             &repo,
                             op,
                             "rebase (project repo)",
@@ -4869,7 +4956,9 @@ pub fn run_abort(ctx: &WorkspaceContext) -> anyhow::Result<()> {
     let mut noise_summary = AbortNoiseSummary::default();
 
     // Restore CWD manifest repos first.
-    for repo_path in cwd_project.manifest.iter_repo_paths() {
+    let project_vcs = project_vcs();
+    for (repo_path, entry) in cwd_project.manifest.iter_entries() {
+        let vcs = vcs_for(entry.vcs_type);
         let abs = workspace_dir.join(repo_path.as_path());
         // Skip reference symlinks: `reset --hard` here would rewind the shared
         // canonical store. Sync never savepoints or advances a reference (the
@@ -4880,8 +4969,9 @@ pub fn run_abort(ctx: &WorkspaceContext) -> anyhow::Result<()> {
         }
         let intent = advanced_tips.get(repo_path.as_str()).map(String::as_str);
         let converged = converged_tips.get(repo_path.as_str()).map(String::as_str);
-        match abort_one_repo(&abs, &cwd_restore_id, intent, converged) {
+        match abort_one_repo(vcs.as_ref(), &abs, &cwd_restore_id, intent, converged) {
             Ok(outcome) => report_abort_outcome(
+                vcs.as_ref(),
                 repo_path.as_str(),
                 &outcome,
                 Some(abs.as_path()),
@@ -4899,12 +4989,14 @@ pub fn run_abort(ctx: &WorkspaceContext) -> anyhow::Result<()> {
     let project_intent = advanced_tips.get("(project)").map(String::as_str);
     let project_converged = converged_tips.get("(project)").map(String::as_str);
     match abort_one_repo(
+        project_vcs.as_ref(),
         &cwd_project_dir,
         &cwd_restore_id,
         project_intent,
         project_converged,
     ) {
         Ok(outcome) => report_abort_outcome(
+            project_vcs.as_ref(),
             "(project)",
             &outcome,
             Some(cwd_project_dir.as_path()),
@@ -4957,7 +5049,8 @@ pub fn run_abort(ctx: &WorkspaceContext) -> anyhow::Result<()> {
                     }
                 };
                 let extra_ws_dir = extra_ctx.active_path().to_path_buf();
-                for repo_path in extra_project.manifest.iter_repo_paths() {
+                for (repo_path, entry) in extra_project.manifest.iter_entries() {
+                    let vcs = vcs_for(entry.vcs_type);
                     let abs = extra_ws_dir.join(repo_path.as_path());
                     // Skip reference symlinks (shared canonical store): nothing
                     // was savepointed or advanced for them, so nothing to reset.
@@ -4967,8 +5060,9 @@ pub fn run_abort(ctx: &WorkspaceContext) -> anyhow::Result<()> {
                     // Target-side repos: advanced_tips is source/owner side only.
                     // Target tips land in converged_tips post-relock; no intent entry.
                     let converged = converged_tips.get(repo_path.as_str()).map(String::as_str);
-                    match abort_one_repo(&abs, &extra_restore_id, None, converged) {
+                    match abort_one_repo(vcs.as_ref(), &abs, &extra_restore_id, None, converged) {
                         Ok(outcome) => report_abort_outcome(
+                            vcs.as_ref(),
                             &format!("[target] {repo_path}"),
                             &outcome,
                             Some(abs.as_path()),
@@ -4983,12 +5077,14 @@ pub fn run_abort(ctx: &WorkspaceContext) -> anyhow::Result<()> {
                 }
                 let extra_project_converged = converged_tips.get("(project)").map(String::as_str);
                 match abort_one_repo(
+                    project_vcs.as_ref(),
                     &extra_project_dir,
                     &extra_restore_id,
                     None, // target-side: no advanced_tips entry
                     extra_project_converged,
                 ) {
                     Ok(outcome) => report_abort_outcome(
+                        project_vcs.as_ref(),
                         "[target] (project)",
                         &outcome,
                         Some(extra_project_dir.as_path()),
@@ -5067,6 +5163,7 @@ pub fn run_abort(ctx: &WorkspaceContext) -> anyhow::Result<()> {
 /// map for this repo (source/owner side only — target side passes `None`).
 /// `recorded_converged_tip` is from `converged_tips` (written at relock).
 fn abort_one_repo(
+    vcs: &dyn Vcs,
     repo: &Path,
     op_id: &OpId,
     recorded_intent_tip: Option<&str>,
@@ -5080,21 +5177,19 @@ fn abort_one_repo(
     // and continue with the verified restore — but only if we can determine
     // the failure is benign. Today we propagate the error: failing to
     // preserve information is itself a violation of the doctrine.
-    GitVcs
-        .create_pre_abort_ref(repo, op_id.as_str())
+    vcs.create_pre_abort_ref(repo, op_id.as_str())
         .context("create pre-abort ref failed")?;
 
     // Rail 2: HEAD-verified restore. `verified_restore_savepoint` performs
     // the classification + restore-if-attributable atomically; foreign tips
     // are returned as `ForeignTip` for the caller to report.
-    GitVcs
-        .verified_restore_savepoint(
-            repo,
-            op_id.as_str(),
-            recorded_intent_tip,
-            recorded_converged_tip,
-        )
-        .context("verified restore failed")
+    vcs.verified_restore_savepoint(
+        repo,
+        op_id.as_str(),
+        recorded_intent_tip,
+        recorded_converged_tip,
+    )
+    .context("verified restore failed")
 }
 
 /// Accumulated counts for non-actionable per-repo abort outcomes. Gathered
@@ -5119,6 +5214,7 @@ const BLOCKING_COMMITS_CAP: usize = 5;
 /// read-only `git log` lookup on foreign-tip refusals; pass `None` when the
 /// path is unavailable (e.g. the repo does not exist on disk).
 fn report_abort_outcome(
+    vcs: &dyn Vcs,
     label: &str,
     outcome: &VerifiedRestoreOutcome,
     repo_abs: Option<&Path>,
@@ -5157,7 +5253,7 @@ fn report_abort_outcome(
 
             // Determine the commit-graph shape and fetch blocking commits.
             let shape_and_commits = if let Some(repo) = repo_abs {
-                let (ahead, behind) = GitVcs.ahead_behind(repo, savepoint, observed_tip);
+                let (ahead, behind) = vcs.ahead_behind(repo, savepoint, observed_tip);
                 let shape = if behind == 0 && ahead > 0 {
                     format!("tip is {ahead} commit(s) ahead of savepoint (strictly ahead — common recoverable case)")
                 } else if ahead > 0 && behind > 0 {
@@ -5167,7 +5263,7 @@ fn report_abort_outcome(
                     "tip equals savepoint (unexpected ForeignTip state)".to_string()
                 };
                 let (commits, total) =
-                    GitVcs.log_oneline_range(repo, savepoint, observed_tip, BLOCKING_COMMITS_CAP);
+                    vcs.log_oneline_range(repo, savepoint, observed_tip, BLOCKING_COMMITS_CAP);
                 let commit_block = if commits.is_empty() {
                     "\t  (no commits in range or range unresolvable)".to_string()
                 } else {
@@ -5549,13 +5645,14 @@ fn ff_advance_line(advanced: Option<&AttachedRef>, tip: &ResolvedRevisionId) -> 
 /// its own repo, using CWD's attachment to move the target is not a check
 /// someone can route around — it is a call that does not typecheck.
 fn ff_advance_repo(
+    vcs: &dyn Vcs,
     target_repo: &Path,
     cwd_repo: &Path,
     cwd_tip: &ResolvedRevisionId,
 ) -> anyhow::Result<Option<AttachedRef>> {
     // Verify that target_repo's HEAD is an ancestor of (or equal to) cwd_tip.
     // If not, this is a concurrent-modification scenario — bail.
-    let target_tip = GitVcs
+    let target_tip = vcs
         .head_revision(target_repo)
         .context("failed to read target HEAD")?;
 
@@ -5575,7 +5672,7 @@ fn ff_advance_repo(
     // detached — unreachable here, because a branch with no commits
     // fails the `head_revision` read above, but it is answered rather than
     // folded in so the arm cannot be quietly re-collapsed.
-    let on = match GitVcs
+    let on = match vcs
         .head_attachment(target_repo)
         .context("failed to read target HEAD ref")?
     {
@@ -5604,7 +5701,7 @@ fn ff_advance_repo(
     // concurrent modification since then, with a named precondition instead
     // of merge's generic refusal. Checked after the equal-tip return: a
     // dirty worktree we won't move is safe.
-    if GitVcs.has_uncommitted_changes(target_repo).unwrap_or(true) {
+    if vcs.has_uncommitted_changes(target_repo).unwrap_or(true) {
         anyhow::bail!(
             "target repo at {} has uncommitted changes; refusing to fast-forward \
              over them. Commit or stash in the target, then re-run.",
@@ -5617,9 +5714,9 @@ fn ff_advance_repo(
     // SHAs reachable in target_repo. For sibling worktrees that share an
     // object store this is a no-op; for independent clones it copies
     // objects across.
-    GitVcs.fetch_objects_from(target_repo, cwd_repo);
+    vcs.fetch_objects_from(target_repo, cwd_repo);
 
-    let is_ancestor = GitVcs
+    let is_ancestor = vcs
         .is_ancestor(target_repo, &target_tip, cwd_tip)
         .unwrap_or(false);
 
@@ -5640,8 +5737,7 @@ fn ff_advance_repo(
     // stays open). Underneath, the ff refuses rather than clobbers
     // if the update would touch uncommitted changes — the VCS-native
     // backstop behind the two explicit dirty gates above.
-    GitVcs
-        .advance_attached_ref(&on, cwd_tip)
+    vcs.advance_attached_ref(&on, cwd_tip)
         .context("fast-forward advance failed in target")?;
 
     Ok(Some(on))
@@ -5689,7 +5785,7 @@ mod tests {
         std::fs::write(dir.join(name), name).unwrap();
         git(dir, &["add", "."]);
         git(dir, &["commit", "-m", name]);
-        GitVcs.head_revision(dir).unwrap()
+        git_vcs().head_revision(dir).unwrap()
     }
 
     // -----------------------------------------------------------------------
@@ -5733,7 +5829,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let (cwd, target, cwd_tip) = landing_pair(tmp.path());
 
-        let landed = ff_advance_repo(&target, &cwd, &cwd_tip)
+        let landed = ff_advance_repo(git_vcs().as_ref(), &target, &cwd, &cwd_tip)
             .expect("an attached target accepts the landing")
             .expect("the target moved, so a branch received it");
 
@@ -5762,7 +5858,7 @@ mod tests {
         git(&target, &["checkout", "--detach", "HEAD"]);
         let head_before = git(&target, &["rev-parse", "HEAD"]);
 
-        let err = ff_advance_repo(&target, &cwd, &cwd_tip)
+        let err = ff_advance_repo(git_vcs().as_ref(), &target, &cwd, &cwd_tip)
             .expect_err("a detached target has no branch for the landing to advance");
         let msg = format!("{err:#}");
         assert!(
@@ -5798,7 +5894,7 @@ mod tests {
         git(&target, &["fetch", cwd.to_str().unwrap(), "HEAD"]);
         git(&target, &["checkout", "--detach", cwd_tip.as_str()]);
 
-        let landed = ff_advance_repo(&target, &cwd, &cwd_tip)
+        let landed = ff_advance_repo(git_vcs().as_ref(), &target, &cwd, &cwd_tip)
             .expect("an already-converged target is a no-op, detached or not");
         assert!(
             landed.is_none(),
@@ -5831,7 +5927,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let (store, primary, project) = store_fixture(tmp.path());
 
-        check_store_unclaimed(&store, &primary, &project, &dropped())
+        check_store_unclaimed(git_vcs().as_ref(), &store, &primary, &project, &dropped())
             .expect("no worktrees registered and no receipts standing");
     }
 
@@ -5850,7 +5946,7 @@ mod tests {
             &["worktree", "add", "--detach", live.to_str().unwrap()],
         );
 
-        let err = check_store_unclaimed(&store, &primary, &project, &dropped())
+        let err = check_store_unclaimed(git_vcs().as_ref(), &store, &primary, &project, &dropped())
             .expect_err("a store with a live worktree registered against it is claimed");
         let msg = format!("{err:#}");
         assert!(
@@ -5867,7 +5963,7 @@ mod tests {
     fn check_store_unclaimed_refuses_while_a_receipt_stands() {
         let tmp = tempfile::tempdir().unwrap();
         let (store, primary, project) = store_fixture(tmp.path());
-        let at = GitVcs.head_revision(&store).unwrap();
+        let at = git_vcs().head_revision(&store).unwrap();
 
         let mut registry = crate::workweave_index::RefRegistry::for_project(&primary, &project);
         registry
@@ -5878,7 +5974,7 @@ mod tests {
             )
             .unwrap();
 
-        let err = check_store_unclaimed(&store, &primary, &project, &dropped())
+        let err = check_store_unclaimed(git_vcs().as_ref(), &store, &primary, &project, &dropped())
             .expect_err("a standing receipt is rwv still accounting for a ref in there");
         let msg = format!("{err:#}");
         assert!(
@@ -5894,7 +5990,7 @@ mod tests {
         registry
             .retract(&store, &crate::vcs::RawRefName::new("web-app--hotfix"))
             .unwrap();
-        check_store_unclaimed(&store, &primary, &project, &dropped())
+        check_store_unclaimed(git_vcs().as_ref(), &store, &primary, &project, &dropped())
             .expect("with the receipt retracted the store is unclaimed");
     }
 
@@ -5906,6 +6002,7 @@ mod tests {
         std::fs::create_dir_all(&not_a_repo).unwrap();
 
         let err = check_store_unclaimed(
+            git_vcs().as_ref(),
             &not_a_repo,
             tmp.path(),
             &ProjectName::new("web-app").unwrap(),
@@ -5999,7 +6096,7 @@ mod tests {
     fn prune_dropped_repo_refuses_until_the_receipts_are_retracted() {
         let tmp = tempfile::tempdir().unwrap();
         let (ctx, store, project) = primary_with_cloned_store(tmp.path());
-        let at = GitVcs.head_revision(&store).unwrap();
+        let at = git_vcs().head_revision(&store).unwrap();
 
         let mut registry =
             crate::workweave_index::RefRegistry::for_project(ctx.primary_path(), &project);
@@ -6049,7 +6146,7 @@ mod tests {
         // a receipt on file, not in spite of one.
         let tmp = tempfile::tempdir().unwrap();
         let (ctx, store, project) = primary_with_cloned_store(tmp.path());
-        let at = GitVcs.head_revision(&store).unwrap();
+        let at = git_vcs().head_revision(&store).unwrap();
 
         let live = tmp.path().join("live-workweave");
         git(
@@ -6104,7 +6201,7 @@ mod tests {
         std::fs::create_dir_all(dangling.parent().unwrap()).unwrap();
         std::fs::write(&dangling, "1111111111111111111111111111111111111111\n").unwrap();
         assert!(
-            GitVcs
+            git_vcs()
                 .branch_has_remote_counterpart(
                     &store,
                     &RefName::new("main".to_owned()),
@@ -6194,7 +6291,7 @@ mod tests {
             checkout.join(".git").is_dir(),
             "the fixture must be a standalone clone, not a linked workspace"
         );
-        let tip = GitVcs.head_revision(&checkout).unwrap();
+        let tip = git_vcs().head_revision(&checkout).unwrap();
 
         let err = prune_dropped_repo(git_vcs().as_ref(), &ctx, &dropped(), &project)
             .expect_err("a checkout that IS the store is not a working tree to delete");
@@ -6209,7 +6306,7 @@ mod tests {
             "a refused prune must leave the store on disk"
         );
         assert_eq!(
-            GitVcs.head_revision(&checkout).unwrap(),
+            git_vcs().head_revision(&checkout).unwrap(),
             tip,
             "the object database must survive the refused prune intact"
         );
@@ -6243,7 +6340,7 @@ mod tests {
             "the dropped repo's working tree must actually be removed"
         );
         assert!(
-            GitVcs.head_revision(&store).is_ok(),
+            git_vcs().head_revision(&store).is_ok(),
             "the store the checkout linked into must be left intact"
         );
     }
@@ -6335,7 +6432,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let (ctx, canonical, project, entry) = workweave_missing_one_repo(tmp.path());
 
-        materialize_missing_repo(&ctx, &dropped(), &entry, &project)
+        materialize_missing_repo(git_vcs().as_ref(), &ctx, &dropped(), &entry, &project)
             .expect("a name nothing holds is the ordinary create");
 
         let checkout = ctx.active_path().join(dropped().as_path());
@@ -6365,7 +6462,7 @@ mod tests {
         let operator_tip = commit(&canonical, "operators-work");
         git(&canonical, &["checkout", "main"]);
 
-        let err = materialize_missing_repo(&ctx, &dropped(), &entry, &project)
+        let err = materialize_missing_repo(git_vcs().as_ref(), &ctx, &dropped(), &entry, &project)
             .expect_err("a branch rwv holds no receipt for is not rwv's to reuse");
         let msg = format!("{err:#}");
         assert!(
@@ -6379,7 +6476,7 @@ mod tests {
              is what a later delete reads as authorization to destroy it"
         );
         assert_eq!(
-            GitVcs
+            git_vcs()
                 .resolve_revision(&canonical, "web-app--feat")
                 .unwrap(),
             operator_tip,
@@ -6602,7 +6699,11 @@ mod tests {
     // step — rwv resumes the rebase natively).
     #[test]
     fn manifest_repo_failure_message_live_conflict_includes_vcs_and_verb_resume() {
-        let msg = manifest_repo_failure_message(OpVerb::SyncTo, Some(ConflictOp::Rebase));
+        let msg = manifest_repo_failure_message(
+            git_vcs().as_ref(),
+            OpVerb::SyncTo,
+            Some(ConflictOp::Rebase),
+        );
         assert!(
             !msg.contains("git rebase --continue"),
             "rebase hint must NOT spell raw `git rebase --continue`; got: {msg}"
@@ -6624,7 +6725,7 @@ mod tests {
     // message points straight at the verb-derived resume.
     #[test]
     fn manifest_repo_failure_message_no_conflict_omits_vcs_hint() {
-        let msg = manifest_repo_failure_message(OpVerb::Sync, None);
+        let msg = manifest_repo_failure_message(git_vcs().as_ref(), OpVerb::Sync, None);
         assert!(
             !msg.contains("git rebase --continue")
                 && !msg.contains("git merge --continue")
@@ -6643,6 +6744,7 @@ mod tests {
     fn phase1_bail_message_live_conflict_includes_resolution_and_verb_resume() {
         let cwd = Path::new("/ws/projects/web-app");
         let msg = phase1_or_phase3_failure_message(
+            git_vcs().as_ref(),
             Phase::One,
             cwd,
             OpVerb::SyncTo,
@@ -6676,7 +6778,13 @@ mod tests {
     #[test]
     fn phase1_bail_message_no_conflict_omits_vcs_hint() {
         let cwd = Path::new("/ws/projects/web-app");
-        let msg = phase1_or_phase3_failure_message(Phase::One, cwd, OpVerb::Sync, None);
+        let msg = phase1_or_phase3_failure_message(
+            git_vcs().as_ref(),
+            Phase::One,
+            cwd,
+            OpVerb::Sync,
+            None,
+        );
         assert!(
             !msg.contains("git rebase --continue"),
             "VCS hint must be absent without a live conflict: {msg}"
@@ -6694,7 +6802,13 @@ mod tests {
     #[test]
     fn phase3_bail_message_never_teaches_vcs_hint() {
         let cwd = Path::new("/ws/projects/web-app");
-        let msg = phase1_or_phase3_failure_message(Phase::Three, cwd, OpVerb::SyncTo, None);
+        let msg = phase1_or_phase3_failure_message(
+            git_vcs().as_ref(),
+            Phase::Three,
+            cwd,
+            OpVerb::SyncTo,
+            None,
+        );
         assert!(
             msg.contains("Phase 3 (re-lock)"),
             "expected phase label in: {msg}"
@@ -6723,6 +6837,7 @@ mod tests {
     fn per_conflict_bail_cherry_pick_includes_cherry_pick_hint() {
         let repo = Path::new("/ws/projects/web-app");
         let msg = per_conflict_bail_message(
+            git_vcs().as_ref(),
             repo,
             ConflictOp::CherryPick,
             "cherry-pick (rebase replay)",
@@ -6757,6 +6872,7 @@ mod tests {
     fn per_conflict_bail_merge_includes_merge_hint() {
         let repo = Path::new("/ws/projects/web-app");
         let msg = per_conflict_bail_message(
+            git_vcs().as_ref(),
             repo,
             ConflictOp::Merge,
             "merge",
@@ -6789,6 +6905,7 @@ mod tests {
         let repo = Path::new("/ws/projects/web-app");
         let detail = "commit abc1234 (lock: refresh — post-OOB drift in gc-formulas)";
         let msg = per_conflict_bail_message(
+            git_vcs().as_ref(),
             repo,
             ConflictOp::Rebase,
             "rebase (project repo)",
@@ -7070,7 +7187,7 @@ mod tests {
         std::fs::write(dir.join("shared.txt"), "main version\n").unwrap();
         git(dir, &["add", "."]);
         git(dir, &["commit", "-m", "main: regenerate"]);
-        let main_tip = GitVcs.head_revision(dir).unwrap();
+        let main_tip = git_vcs().head_revision(dir).unwrap();
 
         git(dir, &["checkout", "-b", "feat", &base]);
         main_tip
@@ -7106,7 +7223,7 @@ mod tests {
         git(&repo, &["add", "."]);
         git(&repo, &["commit", "-m", "feat: regenerate"]);
 
-        apply_strategy(&repo, &main_tip, SyncStrategy::Rebase)
+        apply_strategy(git_vcs().as_ref(), &repo, &main_tip, SyncStrategy::Rebase)
             .map_err(|e| e.message)
             .expect("a declared derived path must not stop a manifest-repo replay");
 
@@ -7139,13 +7256,13 @@ mod tests {
         git(&repo, &["add", "."]);
         git(&repo, &["commit", "-m", "feat: regenerate"]);
 
-        let stopped = apply_strategy(&repo, &main_tip, SyncStrategy::Rebase);
+        let stopped = apply_strategy(git_vcs().as_ref(), &repo, &main_tip, SyncStrategy::Rebase);
         assert!(
             stopped.is_err(),
             "an authored conflict must stop the replay whatever the policy"
         );
         assert_eq!(
-            GitVcs.mid_op(&repo),
+            git_vcs().mid_op(&repo),
             Some(ConflictOp::Rebase),
             "the replay must be left resumable"
         );
@@ -7155,12 +7272,12 @@ mod tests {
         std::fs::write(repo.join("shared.txt"), "merged\n").unwrap();
         git(&repo, &["add", "shared.txt"]);
 
-        apply_strategy(&repo, &main_tip, SyncStrategy::Rebase)
+        apply_strategy(git_vcs().as_ref(), &repo, &main_tip, SyncStrategy::Rebase)
             .map_err(|e| e.message)
             .expect("the resumed replay must carry through the declared path");
 
         assert!(
-            GitVcs.mid_op(&repo).is_none(),
+            git_vcs().mid_op(&repo).is_none(),
             "the replay must be complete after a successful resume"
         );
         assert_eq!(
