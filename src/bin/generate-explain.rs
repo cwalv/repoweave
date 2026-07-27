@@ -2057,6 +2057,53 @@ fn check_no_foreign_vocabulary(root: &Path) -> Vec<String> {
     errors
 }
 
+/// Scan generated operator surfaces for `docs/internals/` paths.
+///
+/// The reader-axis rule is that operator-facing text references only pages
+/// mdBook renders. `docs/internals/` is not in `docs/SUMMARY.md`, so a
+/// reader who meets one of those paths on an operator surface has nothing to
+/// open. The generator is an audience boundary — comment text that would be
+/// legal in a clone becomes an operator surface once it is lifted onto one,
+/// and the check makes that boundary executable.
+///
+/// Scope is the two directories the generator writes: assembled
+/// `rwv explain` pages and their embedded schemas. Templates under
+/// `docs/reference/explain/templates/` are excluded — the assembled output
+/// is what a user reads, and it is what this gate reports on.
+fn check_no_internals_on_operator_surfaces(root: &Path) -> Vec<String> {
+    let mut errors = Vec::new();
+    let explain_dir = root.join("docs/reference/explain");
+    let templates_dir = explain_dir.join("templates");
+    let schemas_dir = root.join("docs/reference/schemas");
+    let mut files: Vec<PathBuf> = collect_md_files(&explain_dir, &[templates_dir])
+        .into_iter()
+        .collect();
+    if schemas_dir.is_dir() {
+        for entry in fs::read_dir(&schemas_dir).into_iter().flatten().flatten() {
+            let path = entry.path();
+            if path.extension() == Some(OsStr::new("json")) {
+                files.push(path);
+            }
+        }
+    }
+    for path in files {
+        let Ok(content) = fs::read_to_string(&path) else {
+            continue;
+        };
+        let rel = path.strip_prefix(root).unwrap_or(&path).display();
+        for (n, line) in content.lines().enumerate() {
+            if line.contains("docs/internals/") {
+                errors.push(format!(
+                    "{rel}:{}: contains `docs/internals/` — an operator surface \
+                     references only pages `docs/SUMMARY.md` lists",
+                    n + 1
+                ));
+            }
+        }
+    }
+    errors
+}
+
 fn repo_root() -> PathBuf {
     // CARGO_MANIFEST_DIR points at the crate root, which is the repoweave dir.
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -2340,6 +2387,21 @@ fn main() -> anyhow::Result<()> {
         anyhow::bail!(
             "foreign-vocabulary check failed:\n{msg}\n\n\
              Fix: describe the behaviour in rwv's own terms."
+        );
+    }
+
+    // --- operator-surface internals gate ---------------------------------
+    // The generator is an audience boundary: comment text landing on
+    // docs/reference/explain/** or docs/reference/schemas/*.json must not
+    // point at docs/internals/, which mdBook does not render.
+    let internals_errors = check_no_internals_on_operator_surfaces(&root);
+    if !internals_errors.is_empty() {
+        let msg = internals_errors.join("\n");
+        anyhow::bail!(
+            "operator-surface internals check failed:\n{msg}\n\n\
+             Fix: state the rule inline, or point at a published page under \
+             `docs/reference/` listed in `docs/SUMMARY.md`. `docs/internals/` \
+             is not rendered."
         );
     }
 
@@ -3380,6 +3442,99 @@ mod tests {
         assert!(
             errors.is_empty(),
             "the section-pointer clause itself still has no matcher, got:\n{}",
+            errors.join("\n")
+        );
+    }
+
+    // ── operator-surface internals check unit tests ─────────────────────────
+
+    /// A `docs/internals/` reference on an assembled explain page is caught.
+    /// This is the seeded-failure test: the gate must report a fixture whose
+    /// content it is meant to reject, not merely stay quiet on a clean tree.
+    #[test]
+    fn internals_path_on_assembled_explain_page_is_reported() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let root = tmp.path();
+        let explain = root.join("docs/reference/explain");
+        fs::create_dir_all(&explain).unwrap();
+        fs::write(
+            explain.join("doctor.md"),
+            "# doctor\n\nSee docs/internals/branch-model.md.\n",
+        )
+        .unwrap();
+        let errors = check_no_internals_on_operator_surfaces(root);
+        let combined = errors.join("\n");
+        assert!(
+            combined.contains("docs/internals/") && combined.contains("doctor.md"),
+            "an internals reference on an explain page must be reported, got:\n{combined}"
+        );
+    }
+
+    /// A `docs/internals/` reference embedded in a generated schema is caught.
+    #[test]
+    fn internals_path_in_generated_schema_is_reported() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let root = tmp.path();
+        let schemas = root.join("docs/reference/schemas");
+        fs::create_dir_all(&schemas).unwrap();
+        fs::write(
+            schemas.join("doctor.json"),
+            "{\"description\": \"See docs/internals/branch-model.md R2.\"}\n",
+        )
+        .unwrap();
+        let errors = check_no_internals_on_operator_surfaces(root);
+        let combined = errors.join("\n");
+        assert!(
+            combined.contains("docs/internals/") && combined.contains("doctor.json"),
+            "an internals reference in a generated schema must be reported, got:\n{combined}"
+        );
+    }
+
+    /// Templates under `docs/reference/explain/templates/` are the source that
+    /// generation reads, not the operator surface generation writes. The gate
+    /// scans only assembled output.
+    #[test]
+    fn internals_path_in_template_is_out_of_scope() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let root = tmp.path();
+        let templates = root.join("docs/reference/explain/templates");
+        fs::create_dir_all(&templates).unwrap();
+        fs::write(
+            templates.join("doctor.md.tmpl"),
+            "# doctor\n\nSee docs/internals/branch-model.md.\n",
+        )
+        .unwrap();
+        let errors = check_no_internals_on_operator_surfaces(root);
+        assert!(
+            errors.is_empty(),
+            "the gate must not report on templates, got:\n{}",
+            errors.join("\n")
+        );
+    }
+
+    /// A clean assembled tree passes.
+    #[test]
+    fn clean_operator_surfaces_are_allowed() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let root = tmp.path();
+        let explain = root.join("docs/reference/explain");
+        let schemas = root.join("docs/reference/schemas");
+        fs::create_dir_all(&explain).unwrap();
+        fs::create_dir_all(&schemas).unwrap();
+        fs::write(
+            explain.join("doctor.md"),
+            "# doctor\n\nA ref that looks like rwv's is not rwv's.\n",
+        )
+        .unwrap();
+        fs::write(
+            schemas.join("doctor.json"),
+            "{\"description\": \"Ownership is by record, never by name shape.\"}\n",
+        )
+        .unwrap();
+        let errors = check_no_internals_on_operator_surfaces(root);
+        assert!(
+            errors.is_empty(),
+            "a clean tree must pass, got:\n{}",
             errors.join("\n")
         );
     }

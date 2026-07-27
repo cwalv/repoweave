@@ -36,152 +36,98 @@ written cannot go stale.
 
 ## Comments do not cite trackers or documents
 
-A comment states the invariant itself. It does not point somewhere else for the
-reader to go find it.
+A reader never lands on a dead end. Text says what it means where it stands,
+and anything it points at is somewhere the reader can go.
 
-Never, in any comment under `src/`:
+The rule turns on **who the reader is**, not on what syntax the text is written
+in. Two audiences, one question each:
 
-- **a tracker ID** — `fo-…`, `#1234`, `PROJ-56`;
-- **a section pointer into a design document** — `branch-model.md §3.3`,
-  `plan §7.1 arm 7`, `Finding 1 of …`;
-- **a document citation that resolves from neither of the two bases below** —
-  most often a path into the workspace this repo is developed in
-  (`docs/repoweave/…`, `docs/agent-persona/…`, `../../../../projects/…`).
-  Someone holding only a clone of this repo has no such file. The reference is
-  unfollowable from the day it is written, and it rots invisibly, because
-  nothing can check a path that was never expected to resolve.
+- **Repo-internal text** — a comment read from a clone. May cite anything in
+  the repo by resolving path; `docs/internals/` counts, because a cloner has
+  it. A resolving citation is followable; a non-resolving one is not, and the
+  reader must be able to open what it names. A citation resolves from one of
+  two bases, and it must resolve from one: the **repo root**
+  (`docs/explanation/joints/clone-topology.md`), or the **directory of the
+  citing file** (a comment in `src/` naming `notes.md` means `src/notes.md`).
+  Existing somewhere in the repo does not count — a bare `clone-topology.md`
+  is a violation even though `docs/explanation/joints/clone-topology.md` is
+  right there, because the reader holds a comment and not an index.
+- **Operator-facing text** — a `bail!`, a `doctor` finding, an `rwv explain`
+  page, `--help` output, and any comment a generator lifts onto one of those
+  surfaces. Carries the rule or the action itself, and references only pages
+  `docs/SUMMARY.md` lists (plus root README/ARCHITECTURE.md). A page under
+  `docs/internals/` is not one of those; mdBook does not render it and the
+  reader has no page to reach.
 
-A citation resolves from exactly two bases, and it must resolve from one of
-them:
+Citation demand is the graduation signal. When repo text wants to cite
+something that is not yet in the repo, **graduate it** — pull it in from the
+project workspace, `docs/internals/` counts as landing. When operator text
+wants to reference something not yet published, **publish it** — a page under
+`docs/reference/`, listed in `SUMMARY.md`, keyed by whatever token the machine
+surface already uses (`docs/reference/doctor-findings.md` is keyed by the
+`rwv doctor --json` `kind`; a second namespace is a thing to keep in sync,
+not a feature).
 
-1. **the repository root** — `docs/explanation/joints/clone-topology.md`,
-   `docs/reference/cli.md`;
-2. **the directory of the file the comment is in** — a comment in `src/` naming
-   `notes.md` means `src/notes.md`.
+Two shapes stay banned everywhere in `src/` and `docs/`, string literals and
+generated surfaces included, because they encode no route a reader can take:
 
-Nothing else counts, and in particular **existing somewhere in the repository
-does not count**. A bare `clone-topology.md` in a `src/` comment is a violation
-even though `docs/explanation/joints/clone-topology.md` is right there: the
-reader holds a comment, not an index, and "it's in here somewhere, go look" is
-the reference being unfollowable in a politer voice. Write the path that
-resolves, or state the invariant and drop the reference.
+- **a tracker ID** — `fo-…`, `#1234`, `PROJ-56`. `check_no_tracker_ids` in
+  `src/bin/generate-explain.rs` enforces it.
+- **a comment whose entire content is a reference** — `// See
+  docs/explanation/joints/clone-topology.md.`. Delete it and write the
+  sentence it was standing in for. A resolving trailing pointer is fine after
+  the comment has said the thing.
 
-A citation that *does* resolve may appear as a trailing pointer, after the
-comment has already said the thing. A comment whose entire content is the
-reference (`// See docs/explanation/joints/clone-topology.md.`) is a violation:
-delete it and write the sentence it was standing in for.
-
-Rationale belongs in `docs/explanation/joints/`. That is what those documents
-are for. The comment carries the invariant; the joint doc carries the argument.
-
-### Scope: comments, not strings
-
-The document half of this rule governs comment text only. A string literal or a
-path expression is a program operating on a path, not a comment citing a
-document, and is unaffected:
-
-```rust
-include_str!("../docs/reference/explain/fetch.md")
-root.join("docs/reference/cli.md")
-bail!("add `cli-md:{path}` to docs/cli-coverage-allowlist.txt with a reason")
-```
-
-Tracker IDs are the exception: they are banned everywhere in `src/` and
-`docs/`, string literals included. A user who meets one in an error message or
-in `rwv explain` output has nothing to open. `check_no_tracker_ids` in
-`src/bin/generate-explain.rs` already enforces that.
-
-`tests/` is outside both rules. A test may name the regression it pins and
+`tests/` is outside these rules. A test may name the regression it pins and
 describe the scenario it reproduces.
 
-### Operator-facing text is self-contained
-
-The carve-out above is about *paths a program operates on*. It does not
-license a string that cites a document at the reader.
-
-Operator-facing text — anything an operator can meet in `rwv` output: a
-`bail!`, a `doctor` finding, an `rwv explain` page — carries the rule or the
-action itself. It never points into an internals document for the rule.
-
-```rust
-// WRONG — the operator has nothing to open
-"rwv holds no ownership receipt for it (branch-model.md R2)"
-
-// RIGHT — the sentence is the rule
-"rwv holds no ownership receipt for it — a ref that looks like rwv's is not rwv's"
-```
-
-`docs/internals/` is not in `docs/SUMMARY.md`, so mdBook does not render it and
-a user has no page to reach. That is the same defect the tracker-ID ban names,
-arriving in a different shape, and the same rationale settles it.
-
-Where the deferred material is too long for a message, publish it: a page under
-`docs/reference/`, listed in `SUMMARY.md`, keyed by whatever token the machine
-surface already uses — `docs/reference/doctor-findings.md` is keyed by the
-`rwv doctor --json` `kind`. Key it off an existing identifier; a second
-message-id namespace is a thing to keep in sync, not a feature.
-
-A pointer to a **published** page (one `SUMMARY.md` lists) is fine after the
-sentence has already said the thing, on the same terms as a resolving path in
-a comment.
-
-This restricts message text only, and it does not reach doc comments. A
-machine surface may carry a precise binding the human channel would not: the
-human channel is a readable view, and a caller keying off a schema is not a
-user with nothing to open. `docs/reference/schemas/doctor.json` and
-`docs/reference/explain/doctor.md` are *generated* from `src/check.rs` doc
-comments, so what they say about a document is decided by the comment rule
-above, not here.
-
-Nothing mechanises this — no gate matches a section pointer inside a string —
-so it is enforced by reading.
+**When letter and spirit disagree, spirit wins and the letter is a bug — file
+it.** A rewrite of the rulebook that leaves a specific clause misfiring is
+this file's own defect, and the fix is here, not a workaround at the site.
 
 ### Escape hatch
 
-A single site may keep an otherwise-forbidden path by annotating it on the line
-above:
+A single site may keep an otherwise-forbidden path by annotating it on the
+line above:
 
 ```rust
 // weave-local-ref: <why it must stay>; does not resolve in a standalone clone
 ```
 
-The trailing clause is part of the annotation, not decoration, and must be
-literally true. It therefore covers exactly one case: a path outside this
-repository. It is not available for a tracker ID, not available for a path that
-does resolve here, and not a way to preserve a comment that a rewrite would
-have removed.
-
-Expect to reach for it close to never. The fix for an unfollowable reference is
-almost always to state the invariant and delete the reference.
+The trailing clause is part of the annotation and must be literally true, so
+it covers exactly one case: a path outside this repository. Not for a tracker
+ID, not for a path that does resolve here, not a way to preserve a comment a
+rewrite would have removed. Expect to reach for it close to never.
 
 ### What is mechanised, and what is not
 
-`check_doc_citations` in `src/bin/generate-explain.rs` enforces the two-base
-resolution rule and the bare-pointer clause over comments in `src/`, for tokens
-whose last component ends in a document extension. A filename with no `/` in it
-counts, for `.md` — that is what makes "it's in here somewhere" a finding.
+Two gates in `src/bin/generate-explain.rs`:
 
-Two things it deliberately does not report. A filename this repository's own
-non-test code operates on is an artifact the program handles, not a document
-the comment cites — the string-literal carve-out above, reaching the comment
-that describes the same operation. And a bare filename accompanied **in the
-same comment block** by a resolving path to it is followable as it stands,
-which is what a markdown link already gives the reader.
+- `check_doc_citations` enforces the two-base resolution rule and the
+  bare-pointer clause over comments in `src/`, for tokens whose last
+  component ends in a document extension. A filename with no `/` counts, for
+  `.md`. Two exemptions: a filename this repository's own non-test code
+  operates on is an artifact the program handles, not a document the comment
+  cites; and a bare filename accompanied **in the same comment block** by a
+  resolving path is followable as it stands (which is what a markdown link
+  already gives the reader).
+- `check_no_internals_on_operator_surfaces` scans generated operator surfaces
+  — `docs/reference/explain/**` and `docs/reference/schemas/*.json` — for
+  `docs/internals/` paths. The generator is an audience boundary; what it
+  lifts onto an operator page must be operator-clean.
 
-**The section-pointer clause is not mechanised as such.** A section pointer
-written against a bare filename — `branch-model.md §3.3` — is caught, but only
-because that filename resolves from neither base; the `§3.3` is invisible to
-the gate. Written against a path that resolves, or against a document named
-with no file extension (`plan §7.1 arm 7`, `Finding 1 of …`), nothing fires.
+**The section-pointer shape (`plan §7.1 arm 7`, `Finding 1 of …`) is not
+mechanised as such.** Written against a bare filename it is caught, but only
+because the filename does not resolve; the section token is invisible to the
+gate. Written against a path that resolves, or against a document named with
+no file extension, nothing fires.
 
 **A green gate therefore does not mean the tree has no section pointers.** It
-also does not mean `docs/` is clean: this gate reads `src/` only, and it stops
-at an inline `#[cfg(test)] mod tests` — matching that module name literally, so
-how much of a file is scanned depends on what its test module is called. When
-you sweep by hand, match on the
-*shape* — a document name followed by a section token — and match it in every
-spelling it is written in. The sweep before this gate matched `§` and left
-`D2`, `D4` and `D1–D3` standing in four files.
+also does not mean `docs/` is clean: `check_doc_citations` reads `src/` only,
+and it stops at an inline `#[cfg(test)] mod tests`. When you sweep by hand,
+match on the *shape* — a document name followed by a section token — in every
+spelling. The sweep before this gate matched `§` and left `D2`, `D4` and
+`D1–D3` standing in four files.
 
 ## Comments do not name symbols that no longer exist
 
