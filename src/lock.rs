@@ -3,7 +3,7 @@
 use crate::manifest::{
     LockFile, Manifest, Project, ResolvedLockEntry, ResolvedLockFile, WorkweaveName,
 };
-use crate::vcs::{vcs_for, HeadAttachment};
+use crate::vcs::{project_vcs, vcs_for, HeadAttachment, Vcs};
 use crate::workspace::{Checkout, WorkspaceContext};
 use anyhow::Context;
 use std::collections::{BTreeMap, BTreeSet};
@@ -250,43 +250,36 @@ fn stage_and_commit(project_dir: &Path, paths: &[&str], message: &str) -> anyhow
 /// Refuses if the project repo has uncommitted changes outside that set —
 /// the auto-commit must not bundle unrelated work-in-progress.
 fn commit_lock_file(
+    vcs: &dyn Vcs,
     project_dir: &Path,
     new_lock: &ResolvedLockFile,
     old_lock: Option<&ResolvedLockFile>,
     authored: &BTreeSet<String>,
 ) -> anyhow::Result<()> {
-    use crate::git::git_command;
+    // Two questions, two answers, one predicate between them: everything
+    // dirty says which owned paths to stage, and everything dirty *and
+    // tracked* says whether anything unrelated is in the way. Files omitted
+    // from the dirty set — absent, or ignored by operator policy — are
+    // omitted from the commit for the same reason.
+    let dirty = vcs
+        .dirty_file_names(project_dir)
+        .context("failed to read project repo status")?;
+    let tracked_dirty = vcs
+        .tracked_dirty_file_names(project_dir)
+        .context("failed to read project repo status")?;
 
-    // Dirty check (scoped to the project repo).
-    let status_out = git_command()
-        .args(["status", "--porcelain"])
-        .current_dir(project_dir)
-        .output()
-        .context("failed to run git status")?;
-    if !status_out.status.success() {
-        let stderr = String::from_utf8_lossy(&status_out.stderr);
-        anyhow::bail!("git status failed: {}", stderr.trim());
-    }
-    let status_str = String::from_utf8_lossy(&status_out.stdout);
-
-    // One pass over the status answers both questions: which owned paths to
-    // stage, and whether anything unrelated is in the way. Files git omits
-    // here — absent, or ignored by operator policy — are omitted from the
-    // commit for the same reason.
     let mut authored_paths: Vec<&str> = Vec::new();
-    let mut has_other_changes = false;
-    for line in status_str.lines() {
-        // Porcelain format: "XY path" — path starts at byte 3.
-        let path = line.get(3..).unwrap_or("").trim();
+    for path in &dirty {
         if path == "rwv.lock" {
             continue;
         }
-        if let Some(owned) = authored.get(path) {
+        if let Some(owned) = authored.get(path.as_str()) {
             authored_paths.push(owned.as_str());
-        } else if !line.starts_with("??") {
-            has_other_changes = true;
         }
     }
+    let has_other_changes = tracked_dirty
+        .iter()
+        .any(|path| path != "rwv.lock" && !authored.contains(path.as_str()));
     if has_other_changes {
         anyhow::bail!(
             "project repo has uncommitted changes outside rwv.lock; \
@@ -413,6 +406,7 @@ pub(crate) fn commit_project_lock(
     authored: &BTreeSet<String>,
 ) -> anyhow::Result<()> {
     commit_lock_file(
+        project_vcs().as_ref(),
         &pending.project_dir,
         &pending.new_lock,
         pending.old_lock.as_ref(),

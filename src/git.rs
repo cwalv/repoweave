@@ -382,6 +382,28 @@ pub fn has_rwv_merge_driver_config(repo: &Path) -> Result<bool, VcsError> {
 /// Git-based version control operations.
 pub struct GitVcs;
 
+/// True when `checkout` is a linked worktree rather than a canonical store.
+///
+/// The test is git's own on-disk convention: a linked worktree's `.git` is a
+/// *file* holding a gitlink into `.git/worktrees/<name>`, where a canonical
+/// store's is a directory. `git worktree remove` refuses on the latter with
+/// "is a main working tree", so a caller that has to tell them apart is asking
+/// a question about git's layout and nothing else.
+pub(crate) fn is_linked_worktree(checkout: &Path) -> bool {
+    let dot_git = checkout.join(".git");
+    dot_git.exists() && dot_git.is_file()
+}
+
+/// True when `dir` carries a `.git` entry of either shape.
+///
+/// A cheap on-disk probe for a directory walk that has no manifest to consult
+/// and cannot afford a subprocess per candidate. It answers "does git live
+/// here", which only git's layout can be asked; [`Vcs::is_repo`] is the
+/// backend-neutral question and costs a process.
+pub(crate) fn has_git_dir(dir: &Path) -> bool {
+    dir.join(".git").exists()
+}
+
 /// The only way to obtain a git backend from outside this module.
 ///
 /// [`GitVcs`] itself is private, so a caller that wants git behaviour must

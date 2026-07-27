@@ -2126,7 +2126,7 @@ fn collect_diverged_paths(
 /// fails is reported as dirty (conservative: "we couldn't confirm clean").
 fn collect_dirty_repos_by_walk(vcs: &dyn Vcs, dir: &Path) -> Vec<String> {
     fn walk(vcs: &dyn Vcs, base: &Path, cur: &Path, dirty: &mut Vec<String>) {
-        if cur.join(".git").exists() {
+        if crate::git::has_git_dir(cur) {
             if vcs.has_uncommitted_changes(cur).unwrap_or(true) {
                 let rel = cur.strip_prefix(base).unwrap_or(cur);
                 dirty.push(rel.display().to_string());
@@ -2877,16 +2877,13 @@ fn delete_workweave_inner_at(
         &project_worktree,
         &project_dir_fallback,
     );
-    if project_worktree.exists() {
-        let dot_git = project_worktree.join(".git");
-        if dot_git.exists() && dot_git.is_file() {
-            if let Err(e) = project_vcs.remove_worktree(&project_store, &project_worktree) {
-                let msg = format!("projects/{}: {e}", project.as_str());
-                eprintln!("rwv workweave delete: error: {msg}");
-                errors.push(msg);
-            }
-            let _ = project_vcs.worktree_prune(&project_store);
+    if project_worktree.exists() && crate::git::is_linked_worktree(&project_worktree) {
+        if let Err(e) = project_vcs.remove_worktree(&project_store, &project_worktree) {
+            let msg = format!("projects/{}: {e}", project.as_str());
+            eprintln!("rwv workweave delete: error: {msg}");
+            errors.push(msg);
         }
+        let _ = project_vcs.worktree_prune(&project_store);
     }
     let project_baseline_tips = baseline_tips_in_store(
         project_vcs.as_ref(),
