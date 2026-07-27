@@ -6834,19 +6834,612 @@ pub fn run_check_locked(ctx: &crate::workspace::WorkspaceContext) -> anyhow::Res
     Ok(any_drift)
 }
 
+/// Repairs that have to land before any manifest is parsed. The parser
+/// rejects the legacy `role: primary` spelling outright, so a project
+/// carrying it does not load at all until the rewrite has run.
+fn apply_prelude_repairs(
+    ctx: &crate::workspace::WorkspaceContext,
+    scope_all: bool,
+    fix_errors: &mut Vec<String>,
+) {
+    let active_project = ctx.active_project().cloned();
+    let project_scope = if scope_all {
+        None
+    } else {
+        active_project.as_ref().map(|n| n.as_str())
+    };
+
+    for finding in scan_workspace_for_legacy_role_primary(ctx.active_path()) {
+        if let Some(active) = project_scope {
+            if finding.project.as_str() != active {
+                continue;
+            }
+        }
+        match fix_legacy_role_primary(&finding.manifest_path) {
+            // The detector saw the legacy spelling and the rewriter found
+            // none: something else migrated it between the two reads.
+            Ok(0) => {}
+            Ok(count) => println!(
+                "[fixed] core: migrated {count} `role: primary` → `role: owned` in {}",
+                finding.manifest_path.display()
+            ),
+            Err(e) => fix_errors.push(format!(
+                "{}: legacy `role: primary` fix failed: {e}",
+                finding.project
+            )),
+        }
+    }
+
+    for finding in scan_for_legacy_workweave_markers(ctx.primary_path()) {
+        match fix_legacy_workweave_marker(&finding) {
+            Ok(true) => println!(
+                "[fixed] core: appended `parent:` to {}",
+                finding.marker_path.display()
+            ),
+            Ok(false) => {}
+            Err(e) => fix_errors.push(format!("legacy workweave marker fix failed: {e}")),
+        }
+    }
+}
+
+/// `--fix` arms that repair the workspace rather than a collected finding.
+///
+/// They run before [`collect_doctor_violations`], which is what lets a
+/// repaired workspace report as healthy instead of surfacing both `[fixed]`
+/// and the warning it just resolved. Within this function the order is load
+/// bearing twice over: the pre-flat receipt arm must precede the branch-model
+/// migration so it inspects only receipts that predate this run, and the
+/// reattach must precede it too, since a store that has just been reattached
+/// is no longer a detached finding.
+///
+/// Every arm through the migration reads state the workspace holds in exactly
+/// one place — receipts live only in primary's `.rwv-workweave-index`, and the
+/// refs they describe live in the one physical refdb every linked worktree
+/// shares — so they take `primary_path()` and ignore which weave invoked
+/// doctor. Arms repairing per-weave state must take `active_path()` instead.
+fn apply_workspace_repairs(
+    ctx: &crate::workspace::WorkspaceContext,
+    world: &DoctorWorld,
+    reattach: Option<crate::cli::consent::ReattachConsent>,
+    adopt_detached: Option<crate::cli::consent::AdoptDetachedConsent>,
+    fix_errors: &mut Vec<String>,
+) {
+    use crate::workspace::read_active_project;
+
+    let vcs = world.vcs.as_ref();
+    let project_scope = world.project_scope();
+
+    if let Some(active_name) = read_active_project(ctx.primary_path()) {
+        let project_dir = ctx
+            .primary_path()
+            .join("projects")
+            .join(active_name.as_str());
+        if !project_dir.is_dir() {
+            let active_file = ctx.primary_path().join(".rwv-active");
+            match std::fs::remove_file(&active_file) {
+                Ok(()) => println!(
+                    "[fixed] core: cleared `.rwv-active` (was pointing at missing project `{}`)",
+                    active_name
+                ),
+                Err(e) => fix_errors.push(format!(
+                    "dangling-active-project fix failed for `{}`: {e}",
+                    active_name
+                )),
+            }
+        }
+    }
+
+    // Only the registered-workweave arm is repairable — see
+    // `WeaveRootIdentityConflictKind` for why the split is not symmetric.
+    for v in scan_weave_root_identity(ctx.primary_path(), ctx.active_path()) {
+        if let CheckViolation::WeaveRootIdentityConflict {
+            root,
+            sub_kind:
+                WeaveRootIdentityConflictKind::RegisteredWorkweave {
+                    project,
+                    workweave_name,
+                },
+            ..
+        } = &v
+        {
+            match fix_weave_root_identity(root) {
+                Ok(()) => println!(
+                    "[fixed] core: deleted `.rwv-active` at {} \
+                     (redundant with the `.rwv-workweave` marker of registered workweave \
+                     `{workweave_name}` in project `{project}`; the marker is unchanged)",
+                    root.display()
+                ),
+                Err(e) => fix_errors.push(format!(
+                    "weave-root-identity-conflict fix failed for {}: {e}",
+                    root.display()
+                )),
+            }
+        }
+    }
+
+    let (retracted, retract_errs) = fix_dangling_receipts(ctx.primary_path(), vcs, project_scope);
+    for (store_path, ref_name) in &retracted {
+        println!(
+            "[fixed] core: retracted dangling ownership receipt for `{}` in {}",
+            ref_name,
+            store_path.display()
+        );
+    }
+    fix_errors.extend(retract_errs);
+
+    let (retracted, retract_errs) = fix_pre_flat_receipts(ctx.primary_path(), project_scope);
+    for (store_path, ref_name) in &retracted {
+        println!(
+            "[fixed] core: retracted the ownership receipt for `{}` in {} — the name \
+             carries a `/` segment, which no workweave on disk mints; the branch \
+             itself was left untouched and is now unowned",
+            ref_name,
+            store_path.display()
+        );
+    }
+    fix_errors.extend(retract_errs);
+
+    // Adding the `receipts` field is the migration's precondition, not one of
+    // its arms: `RefRegistry::record_created` refuses against an index without
+    // it. The registry it produces is empty, so every pre-existing ref stays
+    // unowned until an arm records it.
+    for project in crate::workweave_index::projects_on_disk(ctx.primary_path()) {
+        if let Some(active) = project_scope {
+            if project.as_str() != active {
+                continue;
+            }
+        }
+        let mut registry =
+            crate::workweave_index::RefRegistry::for_project(ctx.primary_path(), &project);
+        match registry.migrate_legacy_index() {
+            Ok(true) => println!(
+                "[fixed] core: added the ref-ownership registry to {}",
+                crate::workweave_index::index_path(ctx.primary_path(), &project).display()
+            ),
+            Ok(false) => {}
+            Err(e) => fix_errors.push(format!(
+                "failed to migrate {}'s workweave index to the ref-ownership registry: {e}",
+                project
+            )),
+        }
+    }
+
+    if let Some(consent) = reattach {
+        let (reattached, reattach_errs) = fix_detached_canonicals(
+            ctx.primary_path(),
+            vcs,
+            &world.input.projects,
+            project_scope,
+            &world.input.known_repos,
+            consent,
+        );
+        for (store_path, branch) in &reattached {
+            println!(
+                "[fixed] core: reattached detached canonical {} to `{}`",
+                store_path.display(),
+                branch
+            );
+        }
+        fix_errors.extend(reattach_errs);
+    }
+
+    let (applied, migration_errs) =
+        fix_branch_model_migration(ctx.primary_path(), vcs, project_scope, adopt_detached);
+    for msg in &applied {
+        println!("[fixed] core: {msg}");
+    }
+    fix_errors.extend(migration_errs);
+
+    for project in &world.input.projects {
+        let project_repo = world
+            .workspace_dir
+            .join("projects")
+            .join(project.name.as_str());
+        if !project_repo.is_dir() {
+            continue;
+        }
+        let has_legacy = crate::git::has_working_tree_legacy_replay_exclusion(
+            &project_repo,
+            std::path::Path::new("rwv.lock"),
+        )
+        .unwrap_or(false);
+        let has_new = vcs
+            .has_replay_exclusion(&project_repo, std::path::Path::new("rwv.lock"))
+            .unwrap_or(false);
+        if has_new && !has_legacy {
+            continue;
+        }
+        // Rewrites a legacy line to the new name in place rather than
+        // appending alongside it, and is a no-op once the new line is the
+        // only one.
+        match vcs.set_replay_exclusion(&project_repo, std::path::Path::new("rwv.lock")) {
+            Ok(()) => {
+                if has_legacy {
+                    // The invariant reads the *committed* form, so a migration
+                    // that stops at the working tree is not yet in effect. A
+                    // repo with unrelated staged work is left uncommitted —
+                    // user work is never bundled with an rwv-authored fix.
+                    match commit_replay_exclusion_migration(&project_repo) {
+                        Ok(CommitOutcome::Committed) => println!(
+                            "[fixed] core: migrated `rwv.lock merge=ours` → \
+                             `rwv.lock merge=rwv-ours` in {}/.gitattributes (committed)",
+                            project.name
+                        ),
+                        Ok(CommitOutcome::SkippedUnrelatedStaged) => println!(
+                            "[fixed] core: migrated `rwv.lock merge=ours` → \
+                             `rwv.lock merge=rwv-ours` in {}/.gitattributes (NOT committed: \
+                             project repo has unrelated staged changes; commit them, then \
+                             re-run `rwv doctor --fix` to complete the migration)",
+                            project.name
+                        ),
+                        Ok(CommitOutcome::NothingToCommit) => println!(
+                            "[fixed] core: migrated `rwv.lock merge=ours` → \
+                             `rwv.lock merge=rwv-ours` in {}/.gitattributes",
+                            project.name
+                        ),
+                        Err(e) => fix_errors.push(format!(
+                            "{}: migrated .gitattributes but commit failed: {e}",
+                            project.name
+                        )),
+                    }
+                } else if !has_new {
+                    println!(
+                        "[fixed] core: wrote `rwv.lock merge=rwv-ours` to {}/.gitattributes",
+                        project.name
+                    );
+                }
+            }
+            Err(e) => fix_errors.push(format!(
+                "{}: failed to write replay-exclusion: {e}",
+                project.name
+            )),
+        }
+    }
+
+    for project in &world.input.projects {
+        let project_repo = world
+            .workspace_dir
+            .join("projects")
+            .join(project.name.as_str());
+        if !project_repo.is_dir() {
+            continue;
+        }
+        if let Ok(false) = crate::git::has_rwv_merge_driver_config(&project_repo) {
+            match crate::git::plant_rwv_merge_driver_config(&project_repo) {
+                Ok(()) => println!(
+                    "[fixed] core: planted `{}` config in {}",
+                    crate::git::RWV_MERGE_DRIVER_CONFIG_KEY,
+                    project.name
+                ),
+                Err(e) => fix_errors.push(format!(
+                    "{}: failed to plant `{}`: {e}",
+                    project.name,
+                    crate::git::RWV_MERGE_DRIVER_CONFIG_KEY
+                )),
+            }
+        }
+    }
+}
+
+/// `--fix` arms that act on a collected finding rather than on the workspace.
+///
+/// A repaired finding is dropped from the returned vector so the operator is
+/// never shown both `[fixed]` and the warning it resolved. A repair that
+/// errored is dropped too — the error itself is the report.
+fn apply_finding_repairs(
+    ctx: &crate::workspace::WorkspaceContext,
+    world: &DoctorWorld,
+    violations: Vec<CheckViolation>,
+    repo_locations: &std::collections::HashMap<
+        (Option<WorkweaveName>, RepoPath),
+        std::path::PathBuf,
+    >,
+    fix_errors: &mut Vec<String>,
+) -> Vec<CheckViolation> {
+    let vcs = world.vcs.as_ref();
+
+    let (deleted, delete_errs) = fix_stale_ephemeral_branches(
+        ctx.primary_path(),
+        vcs,
+        &world.input.projects,
+        world.project_scope(),
+        &world.input.known_repos,
+    );
+    for (repo_path, branch) in &deleted {
+        println!(
+            "[fixed] core: deleted safe-class stale ephemeral branch `{}` in {}",
+            branch,
+            repo_path.display()
+        );
+    }
+    let deleted_keys: std::collections::HashSet<(PathBuf, String)> = deleted.into_iter().collect();
+    fix_errors.extend(delete_errs);
+
+    let location_of = |workweave: &Option<WorkweaveName>, repo: &RepoPath| match workweave {
+        Some(ww) => format!("{ww}/{repo}"),
+        None => format!("{repo}"),
+    };
+
+    let mut kept = Vec::with_capacity(violations.len());
+    for v in violations {
+        let repaired = match &v {
+            CheckViolation::BranchDiscipline {
+                repo_path,
+                sub_kind: BranchDisciplineKind::StaleEphemeralBranchSafe { branch, .. },
+            } => deleted_keys.contains(&(repo_path.clone(), branch.clone())),
+
+            // Repaired from the vector rather than before it, because the
+            // weave-root-identity classification asks which workweaves the
+            // registry vouches for. Adopting an unregistered tree first would
+            // re-answer that question mid-run, and a tree the operator copied
+            // out-of-band would be reported as one rwv had always known.
+            CheckViolation::WorkweaveTreeIntegrity {
+                workweave_dir,
+                sub_kind: WorkweaveTreeIntegrityKind::DanglingParent { .. },
+            } => match fix_dangling_parent(workweave_dir, ctx.primary_path()) {
+                Ok(true) => {
+                    println!(
+                        "[fixed] core: re-pointed dangling parent of {} to primary",
+                        workweave_dir.display()
+                    );
+                    true
+                }
+                Ok(false) => true,
+                Err(e) => {
+                    fix_errors.push(format!("dangling-parent --fix failed: {e}"));
+                    false
+                }
+            },
+
+            CheckViolation::WorkweaveTreeIntegrity {
+                sub_kind:
+                    WorkweaveTreeIntegrityKind::StaleRegistryEntry {
+                        project,
+                        workweave_name,
+                        recorded_path,
+                        ..
+                    },
+                ..
+            } => {
+                let outcome = match crate::manifest::ProjectName::new(project.clone()) {
+                    Ok(project_name) => {
+                        fix_stale_registry_entry(ctx.primary_path(), &project_name, workweave_name)
+                    }
+                    Err(e) => Err(e.into()),
+                };
+                match outcome {
+                    Ok(()) => {
+                        println!(
+                            "[fixed] core: pruned stale registry entry `{}` \
+                             → {} in project `{}`",
+                            workweave_name,
+                            recorded_path.display(),
+                            project
+                        );
+                        true
+                    }
+                    Err(e) => {
+                        fix_errors.push(format!(
+                            "workweave-index --fix failed: prune of stale entry `{}` in `{}` \
+                             failed: {e}",
+                            workweave_name, project
+                        ));
+                        false
+                    }
+                }
+            }
+
+            CheckViolation::WorkweaveTreeIntegrity {
+                workweave_dir,
+                sub_kind:
+                    WorkweaveTreeIntegrityKind::UnregisteredWorkweave {
+                        project,
+                        workweave_name,
+                    },
+            } => {
+                let outcome = match crate::manifest::ProjectName::new(project.clone()) {
+                    Ok(project_name) => fix_unregistered_workweave(
+                        ctx.primary_path(),
+                        &project_name,
+                        workweave_name,
+                        workweave_dir,
+                    ),
+                    Err(e) => Err(e.into()),
+                };
+                match outcome {
+                    Ok(()) => {
+                        println!(
+                            "[fixed] core: adopted workweave `{}` at {} into \
+                             project `{}`'s registry",
+                            workweave_name,
+                            workweave_dir.display(),
+                            project
+                        );
+                        true
+                    }
+                    Err(e) => {
+                        fix_errors.push(format!(
+                            "workweave-index --fix failed: adopt of workweave `{}` at {} \
+                             failed: {e}",
+                            workweave_name,
+                            workweave_dir.display()
+                        ));
+                        false
+                    }
+                }
+            }
+
+            CheckViolation::IndexDrift {
+                workweave,
+                repo,
+                kind: IndexDriftKind::SafeToFix,
+            } => match repo_locations.get(&(workweave.clone(), repo.clone())) {
+                Some(repo_abs) => {
+                    let location = location_of(workweave, repo);
+                    match reset_index_to_head(repo_abs) {
+                        Ok(()) => println!("[fixed] core: index refreshed for {location}"),
+                        Err(e) => fix_errors.push(format!("{location}: index fix failed: {e}")),
+                    }
+                    true
+                }
+                None => false,
+            },
+
+            CheckViolation::WorkingTreeDrift {
+                workweave,
+                repo,
+                kind: WorkingTreeDriftKind::SafeToFix,
+            } => match repo_locations.get(&(workweave.clone(), repo.clone())) {
+                Some(repo_abs) => {
+                    let location = location_of(workweave, repo);
+                    match restore_working_tree_to_head(repo_abs) {
+                        Ok(()) => println!("[fixed] core: working tree refreshed for {location}"),
+                        Err(e) => {
+                            fix_errors.push(format!("{location}: working-tree fix failed: {e}"))
+                        }
+                    }
+                    true
+                }
+                None => false,
+            },
+
+            // The auto-fixable state-hygiene set; `fix_state_hygiene` carries
+            // the policy for why the rest are left alone.
+            CheckViolation::StaleWorktreeRegistration {
+                workweave, repo, ..
+            }
+            | CheckViolation::OrphanedSavepoint {
+                workweave,
+                repo,
+                sub_kind: OrphanedSavepointKind::Redundant,
+                ..
+            } => match repo_locations.get(&(workweave.clone(), repo.clone())) {
+                Some(repo_abs) => match fix_state_hygiene(vcs, &v, repo_abs) {
+                    Ok(true) => {
+                        let (kind_label, extra) = match &v {
+                            CheckViolation::StaleWorktreeRegistration { .. } => {
+                                ("stale-worktree-registration", "pruned".to_string())
+                            }
+                            CheckViolation::OrphanedSavepoint { op_id, .. } => {
+                                ("orphaned-savepoint", format!("dropped op_id={op_id}"))
+                            }
+                            _ => ("state-hygiene", String::new()),
+                        };
+                        println!(
+                            "[fixed] core: {kind_label} for {}: {extra}",
+                            location_of(workweave, repo)
+                        );
+                        true
+                    }
+                    Ok(false) => false,
+                    Err(e) => {
+                        fix_errors.push(format!("state-hygiene --fix failed: {e}"));
+                        true
+                    }
+                },
+                None => false,
+            },
+
+            // Operates on the lease's own workspace dir, so no repo lookup.
+            CheckViolation::DeadOpLease {
+                workspace_dir,
+                op_id,
+                ..
+            } => match fix_state_hygiene(vcs, &v, workspace_dir) {
+                Ok(true) => {
+                    println!(
+                        "[fixed] core: dead-op-lease for {}: removed lease (op_id={op_id})",
+                        workspace_dir.display()
+                    );
+                    true
+                }
+                Ok(false) => false,
+                Err(e) => {
+                    fix_errors.push(format!("state-hygiene --fix failed: {e}"));
+                    true
+                }
+            },
+
+            _ => false,
+        };
+        if !repaired {
+            kept.push(v);
+        }
+    }
+    kept
+}
+
+/// The text renderer over a collected violation vector.
+///
+/// The one kind it formats itself is `missing-replay-exclusion`: a project
+/// still carrying the legacy `merge=ours` spelling needs the migration
+/// wording rather than the write-it-fresh wording, and the legacy spelling has
+/// no `CheckViolation` variant of its own to carry that. `--json` therefore
+/// reports the finding without the distinction.
+fn violations_to_text_issues(world: &DoctorWorld, violations: Vec<CheckViolation>) -> Vec<Issue> {
+    let legacy_replay: std::collections::HashSet<crate::manifest::ProjectName> = world
+        .input
+        .projects
+        .iter()
+        .filter(|project| {
+            let project_repo = world
+                .workspace_dir
+                .join("projects")
+                .join(project.name.as_str());
+            project_repo.is_dir()
+                && crate::git::has_working_tree_legacy_replay_exclusion(
+                    &project_repo,
+                    std::path::Path::new("rwv.lock"),
+                )
+                .unwrap_or(false)
+        })
+        .map(|project| project.name.clone())
+        .collect();
+
+    let (legacy_findings, rest): (Vec<_>, Vec<_>) = violations.into_iter().partition(|v| {
+        matches!(v, CheckViolation::MissingReplayExclusion { project }
+            if legacy_replay.contains(project))
+    });
+
+    let mut issues = violations_to_issues(rest);
+    for v in legacy_findings {
+        if let CheckViolation::MissingReplayExclusion { project } = v {
+            issues.push(Issue {
+                integration: "core".into(),
+                severity: crate::integration::Severity::Warning,
+                message: format!(
+                    "{project}: project repo has legacy `rwv.lock merge=ours` in .gitattributes; \
+                     the driver was renamed to close a global-config collision hazard \
+                     (run `rwv doctor --fix` to migrate to `rwv.lock merge=rwv-ours` \
+                     and commit)"
+                ),
+                safe_to_fix: true,
+            });
+        }
+    }
+    issues
+}
+
 /// Execute `rwv doctor` for the current workspace context.
 ///
 /// Scans registry directories for repos on disk, loads all project manifests,
 /// runs convention checks and integration check hooks, then displays issues.
-/// When `fix` is `true`, safely-auto-fixable index-drift cases are remediated
-/// in place with `git reset` (index ← HEAD, working tree untouched).
+/// When `fix` is `true`, the repairable subset is remediated in place before
+/// the report is rendered, so a repaired workspace reports healthy.
+///
+/// The violations it renders come from [`collect_doctor_violations`], the same
+/// pass [`run_check_json`] renders. What this function adds on top are the
+/// findings that have no `CheckViolation` variant: integration-runner and
+/// surfacing issues, unreadable HEADs, unresolvable lock entries, the legacy
+/// replay-exclusion spelling and the missing merge-driver config. Those reach
+/// the text report alone.
 ///
 /// When `scope_all` is `false` (the default), only the active project is
 /// checked: stale locks, dangling references, and integration hooks are
 /// scoped to that project, and orphan detection is skipped (a repo absent
 /// from the active project may belong to another project). Pass `scope_all =
-/// true` (via `--all`) to reproduce the previous weave-wide behaviour,
-/// including orphan detection across every project.
+/// true` (via `--all`) to reproduce the weave-wide behaviour, including orphan
+/// detection across every project.
 ///
 /// Returns `Ok(true)` if there are errors (exit 1), `Ok(false)` if clean.
 ///
@@ -6872,735 +7465,36 @@ pub fn run_check(
 ) -> anyhow::Result<bool> {
     use crate::integration::Severity;
     use crate::integration_runner::run_checks;
-    use crate::manifest::Project;
-    use crate::workspace::{Checkout, WorkspaceSession};
+    use crate::workspace::Checkout;
 
-    let workspace_dir = ctx.active_path().to_path_buf();
+    let mut fix_errors: Vec<String> = Vec::new();
 
-    // Dangling active-project check: if `.rwv-active` names a project whose
-    // `projects/<name>/` directory does not exist on disk, report it as an
-    // error. With `--fix`, clear `.rwv-active` so the workspace is no longer
-    // broken. Either way, doctor continues to report other violations.
-    let dangling_active: Option<CheckViolation> = {
-        use crate::workspace::read_active_project;
-        if let Some(active_name) = read_active_project(ctx.primary_path()) {
-            let project_dir = ctx
-                .primary_path()
-                .join("projects")
-                .join(active_name.as_str());
-            if !project_dir.is_dir() {
-                Some(CheckViolation::DanglingActiveProject {
-                    project: active_name.clone(),
-                    missing_dir: project_dir.clone(),
-                })
-            } else {
-                None
-            }
-        } else {
-            None
-        }
+    if fix {
+        apply_prelude_repairs(ctx, scope_all, &mut fix_errors);
+    }
+
+    let world = load_doctor_world(ctx, scope_all)?;
+    let workspace_dir = world.workspace_dir.clone();
+
+    if fix {
+        apply_workspace_repairs(ctx, &world, reattach, adopt_detached, &mut fix_errors);
+    }
+
+    let DoctorFindings {
+        violations,
+        repo_locations,
+        ..
+    } = collect_doctor_violations(ctx, &world, ScanProgress::Heartbeat);
+
+    let violations = if fix {
+        apply_finding_repairs(ctx, &world, violations, &repo_locations, &mut fix_errors)
+    } else {
+        violations
     };
 
-    // Build session (runs builtin_registries → scan_repos_on_disk → discover_project_paths).
-    let session = WorkspaceSession::new(&workspace_dir);
-    let vcs = crate::vcs::probe_vcs();
+    let mut all_issues = violations_to_text_issues(&world, violations);
 
-    // Legacy `role: primary` scan + optional --fix migration. Runs before
-    // `Project::from_dir`, since manifests with the legacy spelling fail
-    // to parse now that the back-compat alias is gone. With `--fix`, the
-    // rewrite happens here so subsequent loaders see the migrated
-    // manifests.
-    // In default (project-scoped) mode with an active project, only report
-    // findings for that project. Without an active project, report all
-    // (matches the fall-through in project loading).
-    let active_project_name: Option<crate::manifest::ProjectName> = ctx.active_project().cloned();
-    let legacy_role_primary_all = scan_workspace_for_legacy_role_primary(&workspace_dir);
-    let legacy_role_primary: Vec<_> = if scope_all || active_project_name.is_none() {
-        legacy_role_primary_all
-    } else {
-        legacy_role_primary_all
-            .into_iter()
-            .filter(|f| {
-                active_project_name
-                    .as_ref()
-                    .map(|a| f.project.as_str() == a.as_str())
-                    .unwrap_or(true)
-            })
-            .collect()
-    };
-    let mut legacy_role_primary_warnings: Vec<(crate::manifest::ProjectName, PathBuf)> = Vec::new();
-    let mut legacy_role_primary_errors: Vec<(crate::manifest::ProjectName, String)> = Vec::new();
-    for finding in &legacy_role_primary {
-        if fix {
-            match fix_legacy_role_primary(&finding.manifest_path) {
-                Ok(0) => {
-                    // Race: detector saw the legacy spelling but the
-                    // rewriter found none. Treat as a no-op.
-                }
-                Ok(count) => {
-                    println!(
-                        "[fixed] core: migrated {count} `role: primary` → `role: owned` in {}",
-                        finding.manifest_path.display()
-                    );
-                }
-                Err(e) => {
-                    legacy_role_primary_errors.push((finding.project.clone(), e.to_string()));
-                }
-            }
-        } else {
-            legacy_role_primary_warnings
-                .push((finding.project.clone(), finding.manifest_path.clone()));
-        }
-    }
-
-    // Legacy workweave-marker scan + optional --fix migration. Runs from the
-    // primary weave only (workweave markers live in the workweave-parent dir
-    // which is sibling to the primary). Scans even from a workweave CWD so
-    // `rwv doctor --fix` works from wherever the operator runs it.
-    let legacy_ww_markers = scan_for_legacy_workweave_markers(ctx.primary_path());
-    let mut legacy_ww_marker_warnings: Vec<LegacyWorkweaveMarkerFile> = Vec::new();
-    let mut legacy_ww_marker_errors: Vec<String> = Vec::new();
-    for finding in &legacy_ww_markers {
-        if fix {
-            match fix_legacy_workweave_marker(finding) {
-                Ok(true) => {
-                    println!(
-                        "[fixed] core: appended `parent:` to {}",
-                        finding.marker_path.display()
-                    );
-                }
-                Ok(false) => {
-                    // Race: already had parent: by the time we tried to fix.
-                }
-                Err(e) => {
-                    legacy_ww_marker_errors.push(e.to_string());
-                }
-            }
-        } else {
-            legacy_ww_marker_warnings.push(finding.clone());
-        }
-    }
-
-    // Resolve HEAD revisions for each repo on disk. Errors are kept (not
-    // dropped) so that `find_violations` can flag on-disk repos whose HEAD
-    // could not be read (corrupted, mid-rebase, permissions). Audit B4.
-    let mut head_revisions = BTreeMap::new();
-    let mut head_read_failures: Vec<(RepoPath, String)> = Vec::new();
-    for repo_path in session.repos_on_disk() {
-        let abs = workspace_dir.join(repo_path.as_path());
-        match vcs.head_revision(&abs) {
-            Ok(rev) => {
-                head_revisions.insert(repo_path.clone(), rev);
-            }
-            Err(e) => {
-                head_read_failures.push((repo_path.clone(), e.to_string()));
-            }
-        }
-    }
-
-    // Determine which project(s) to load. In default (project-scoped) mode
-    // only the active project is loaded so that stale-lock, dangling-reference,
-    // and integration findings stay within the project the operator cares about.
-    // Under `--all`, every project is loaded and weave-wide checks (orphan
-    // detection, cross-project stale locks) run as before.
-    let active_project_name: Option<crate::manifest::ProjectName> = ctx.active_project().cloned();
-
-    // Load project manifest(s) from projects/*/rwv.yaml.
-    // In default mode: only the active project (identified by active_project_name).
-    // In --all mode: every project under projects/.
-    let projects_dir = workspace_dir.join("projects");
-    let mut projects = Vec::new();
-    let mut known_repos = BTreeSet::new();
-    let mut lock_resolve_failures: Vec<(crate::manifest::ProjectName, RepoPath)> = Vec::new();
-    // Projects whose rwv.yaml exists but fails to parse — surfaced as
-    // `unparseable-project` violations so the workspace is never silent-clean
-    // when a manifest is broken.
-    let mut unparseable_projects: Vec<(crate::manifest::ProjectName, PathBuf, String)> = Vec::new();
-
-    let mut resolved_locks: std::collections::HashMap<
-        crate::manifest::ProjectName,
-        crate::manifest::ResolvedLockFile,
-    > = std::collections::HashMap::new();
-
-    if projects_dir.is_dir() {
-        let mut entries: Vec<_> = std::fs::read_dir(&projects_dir)?
-            .filter_map(|e| e.ok())
-            .collect();
-        entries.sort_by_key(|e| e.file_name());
-
-        for entry in entries {
-            let project_dir = entry.path();
-            if !project_dir.is_dir() {
-                continue;
-            }
-            let manifest_path = project_dir.join("rwv.yaml");
-            if !manifest_path.exists() {
-                continue;
-            }
-            let rel_dir = project_dir
-                .strip_prefix(&workspace_dir)
-                .unwrap_or(&project_dir);
-            let name_from_rel = rel_dir
-                .strip_prefix("projects")
-                .unwrap_or(rel_dir)
-                .to_string_lossy()
-                .into_owned();
-
-            // In default mode with an active project, skip other projects so
-            // that stale-lock, dangling-reference, and integration findings
-            // stay within the project the operator cares about.
-            // If no active project is set, fall back to loading every project
-            // (preserves behaviour in simple workspaces that don't call `rwv
-            // activate`).
-            if !scope_all {
-                if let Some(ref active) = active_project_name {
-                    if name_from_rel != active.as_str() {
-                        continue;
-                    }
-                }
-                // No active project → don't skip; fall through to load all.
-            }
-
-            match Project::from_dir(&project_dir) {
-                Ok(project) => {
-                    // Resolve lock entries against on-disk repos so the
-                    // canonical-SHA equality used by `find_violations` works
-                    // uniformly for tag-form, branch-form, and SHA-form locks.
-                    //
-                    // B3: capture unresolvable entries instead of discarding
-                    // them. An unresolvable rev means the local clone has
-                    // never seen the SHA/tag the lock pinned; without this
-                    // diagnostic, `find_violations` either flags nothing
-                    // (no head_revisions entry) or falsely reports StaleLock
-                    // by comparing the raw tag string against a real SHA.
-                    if let Some(raw_lock) = project.lock.clone() {
-                        let project_name_for_issue = project.name.clone();
-                        let (resolved, failures) = raw_lock.resolve_versions(&workspace_dir);
-                        for (unresolved, _raw_rev) in failures {
-                            lock_resolve_failures
-                                .push((project_name_for_issue.clone(), unresolved));
-                        }
-                        resolved_locks.insert(project.name.clone(), resolved);
-                    }
-
-                    for repo_path in project.manifest.iter_repo_paths() {
-                        known_repos.insert(repo_path.clone());
-                    }
-                    projects.push(project);
-                }
-                Err(e) => {
-                    // Surface unparseable manifests as a violation so
-                    // operators get a clear signal instead of zero findings
-                    // (which looks identical to a healthy project). --fix
-                    // does not auto-repair broken YAML; the operator must
-                    // fix by hand and re-run.
-                    // Defer: collect violations after the input is built.
-                    // We push directly into `all_issues` at display time.
-                    // Store for now in a side-channel parallel to the other
-                    // failure vecs already used in this function.
-                    if let Ok(project_name) = crate::manifest::ProjectName::new(name_from_rel) {
-                        unparseable_projects.push((project_name, manifest_path, e.to_string()));
-                    }
-                }
-            }
-        }
-    }
-
-    // Orphan detection requires all projects to be loaded (otherwise repos
-    // that belong to non-loaded projects look orphaned). Run it when:
-    //   - `--all` was passed (all projects loaded), OR
-    //   - no active project is set (fall-through path also loaded all projects).
-    let loaded_all_projects = scope_all || active_project_name.is_none();
-
-    // Build CheckInput and find violations
-    let input = CheckInput {
-        known_repos,
-        repos_on_disk: session.repos_on_disk().to_vec(),
-        projects,
-        head_revisions,
-        resolved_locks,
-        check_orphans: loaded_all_projects,
-    };
-
-    let mut violations = find_violations(&input);
-    for (project, manifest_path) in &legacy_role_primary_warnings {
-        violations.push(CheckViolation::LegacyRolePrimary {
-            project: project.clone(),
-            manifest_path: manifest_path.clone(),
-        });
-    }
-
-    // Dangling active-project: emit the violation or apply the --fix.
-    // Fix errors are collected here so they can be appended to all_issues
-    // after the violations batch is converted below.
-    let mut dangling_fix_errors: Vec<String> = Vec::new();
-    // Branch-discipline --fix errors collected the same way.
-    let mut all_issues_branch_discipline_errors: Vec<String> = Vec::new();
-    if let Some(CheckViolation::DanglingActiveProject {
-        project: dap_project,
-        missing_dir: dap_dir,
-    }) = dangling_active
-    {
-        if fix {
-            let active_file = ctx.primary_path().join(".rwv-active");
-            match std::fs::remove_file(&active_file) {
-                Ok(()) => println!(
-                    "[fixed] core: cleared `.rwv-active` (was pointing at missing project `{}`)",
-                    dap_project
-                ),
-                Err(e) => {
-                    dangling_fix_errors.push(format!(
-                        "dangling-active-project fix failed for `{}`: {e}",
-                        dap_project
-                    ));
-                }
-            }
-        } else {
-            violations.push(CheckViolation::DanglingActiveProject {
-                project: dap_project,
-                missing_dir: dap_dir,
-            });
-        }
-    }
-
-    for finding in &legacy_ww_marker_warnings {
-        violations.push(CheckViolation::LegacyWorkweaveMarker {
-            marker_path: finding.marker_path.clone(),
-            primary: finding.primary.clone(),
-        });
-    }
-
-    // Weave-root identity: a root carrying BOTH `.rwv-active` and
-    // `.rwv-workweave`. Only the registered-workweave arm is fixable — see
-    // `WeaveRootIdentityConflictKind` for why the split is not symmetric.
-    let mut weave_root_identity_fix_errors: Vec<String> = Vec::new();
-    for v in scan_weave_root_identity(ctx.primary_path(), ctx.active_path()) {
-        match &v {
-            CheckViolation::WeaveRootIdentityConflict {
-                root,
-                sub_kind:
-                    WeaveRootIdentityConflictKind::RegisteredWorkweave {
-                        project,
-                        workweave_name,
-                    },
-                ..
-            } if fix => match fix_weave_root_identity(root) {
-                Ok(()) => println!(
-                    "[fixed] core: deleted `.rwv-active` at {} \
-                     (redundant with the `.rwv-workweave` marker of registered workweave \
-                     `{workweave_name}` in project `{project}`; the marker is unchanged)",
-                    root.display()
-                ),
-                Err(e) => {
-                    weave_root_identity_fix_errors.push(format!(
-                        "weave-root-identity-conflict fix failed for {}: {e}",
-                        root.display()
-                    ));
-                    violations.push(v);
-                }
-            },
-            _ => violations.push(v),
-        }
-    }
-
-    // Workweave-tree integrity: dangling parent, chain anomalies, unregistered
-    // dirs, foreign-primary markers, plus the registry reconciliation
-    // findings (`stale-registry-entry`, `unregistered-workweave`,
-    // `tracked-index`). Chain-anomaly / unregistered-dir / foreign-primary /
-    // tracked-index are report-only. `dangling-parent`, `stale-registry-entry`,
-    // and `unregistered-workweave` gain a `--fix` path. Runs from the primary
-    // weave so the scan covers all workweaves belonging to this workspace.
-    let mut dangling_parent_fix_errors: Vec<String> = Vec::new();
-    let mut registry_fix_errors: Vec<String> = Vec::new();
-    for v in scan_workweave_tree_integrity(vcs.as_ref(), ctx.primary_path()) {
-        if fix {
-            match &v {
-                CheckViolation::WorkweaveTreeIntegrity {
-                    workweave_dir,
-                    sub_kind: WorkweaveTreeIntegrityKind::DanglingParent { .. },
-                } => {
-                    match fix_dangling_parent(workweave_dir, ctx.primary_path()) {
-                        Ok(true) => {
-                            println!(
-                                "[fixed] core: re-pointed dangling parent of {} to primary",
-                                workweave_dir.display()
-                            );
-                            continue;
-                        }
-                        Ok(false) => continue, // race
-                        Err(e) => {
-                            dangling_parent_fix_errors.push(e.to_string());
-                            // Fall through and still report.
-                        }
-                    }
-                }
-                CheckViolation::WorkweaveTreeIntegrity {
-                    sub_kind:
-                        WorkweaveTreeIntegrityKind::StaleRegistryEntry {
-                            project,
-                            workweave_name,
-                            recorded_path,
-                            ..
-                        },
-                    ..
-                } => {
-                    let fix_result = match crate::manifest::ProjectName::new(project.clone()) {
-                        Ok(project_name) => fix_stale_registry_entry(
-                            ctx.primary_path(),
-                            &project_name,
-                            workweave_name,
-                        ),
-                        Err(e) => Err(e.into()),
-                    };
-                    match fix_result {
-                        Ok(()) => {
-                            println!(
-                                "[fixed] core: pruned stale registry entry `{}` \
-                                 → {} in project `{}`",
-                                workweave_name,
-                                recorded_path.display(),
-                                project
-                            );
-                            continue;
-                        }
-                        Err(e) => {
-                            registry_fix_errors.push(format!(
-                                "prune of stale entry `{}` in `{}` failed: {e}",
-                                workweave_name, project
-                            ));
-                        }
-                    }
-                }
-                CheckViolation::WorkweaveTreeIntegrity {
-                    workweave_dir,
-                    sub_kind:
-                        WorkweaveTreeIntegrityKind::UnregisteredWorkweave {
-                            project,
-                            workweave_name,
-                        },
-                } => {
-                    let fix_result = match crate::manifest::ProjectName::new(project.clone()) {
-                        Ok(project_name) => fix_unregistered_workweave(
-                            ctx.primary_path(),
-                            &project_name,
-                            workweave_name,
-                            workweave_dir,
-                        ),
-                        Err(e) => Err(e.into()),
-                    };
-                    match fix_result {
-                        Ok(()) => {
-                            println!(
-                                "[fixed] core: adopted workweave `{}` at {} into \
-                                 project `{}`'s registry",
-                                workweave_name,
-                                workweave_dir.display(),
-                                project
-                            );
-                            continue;
-                        }
-                        Err(e) => {
-                            registry_fix_errors.push(format!(
-                                "adopt of workweave `{}` at {} failed: {e}",
-                                workweave_name,
-                                workweave_dir.display()
-                            ));
-                        }
-                    }
-                }
-                _ => {}
-            }
-        }
-        violations.push(v);
-    }
-
-    // Provenance checks: origin-url-mismatch and lock-sha-unreachable.
-    // Always report-only (no --fix path).
-    for v in scan_provenance(&workspace_dir, &input.projects) {
-        violations.push(v);
-    }
-
-    // Phantom `merge=rwv-*` attributes: a declaration naming a driver rwv
-    // does not define. Report-only.
-    for v in scan_phantom_merge_drivers(&workspace_dir, &input.projects) {
-        violations.push(v);
-    }
-
-    // Uninitialized-submodule findings (R23 GAP). Only meaningful from the
-    // primary weave (workweave checkouts are reached via list_workweave_dirs).
-    // Report-only: fix is a single git command named in the message.
-    if matches!(ctx.checkout, Checkout::Primary { .. }) {
-        for v in scan_uninitialized_submodules_in_workweaves(ctx.primary_path(), &input.projects) {
-            violations.push(v);
-        }
-    }
-
-    // Clone-topology: tier-0 invariants from
-    // `docs/explanation/joints/clone-topology.md`. Compares each manifest
-    // repo's canonical store at `<weave>/<repo>` against every workweave
-    // checkout's store. Report-only (repair is an object-store migration).
-    for v in scan_clone_topology(vcs.as_ref(), ctx.primary_path(), &input.known_repos) {
-        violations.push(v);
-    }
-
-    // Dangling ownership receipts: a receipt whose ref never appeared. `--fix` retracts them; the retraction runs before
-    // the branch-discipline scan below so the scan sees the cleaned
-    // registry.
-    //
-    // WORKSPACE-ROOTED ARM — `ctx.primary_path()`, not `ctx.active_path()`,
-    // and that is deliberate. This and every arm below it through the
-    // stale-ephemeral-branch deletion repair state the workspace holds in
-    // exactly one place: the receipts live only in primary's
-    // `.rwv-workweave-index`, and the refs they describe live in one physical
-    // refdb that every workweave's linked worktree shares. There is no
-    // per-weave copy to bind to, so these arms ignore which weave invoked
-    // doctor. The opposite class — arms repairing per-weave state, which MUST
-    // take `active_path()` — is pinned by
-    // `doctor_workweave_content_fix_isolation_test`; its module doc states
-    // both contracts and why acting on another weave's refs is a policy
-    // rather than a consequence of the sharing.
-    let receipt_scope = if scope_all {
-        None
-    } else {
-        active_project_name.as_ref().map(|n| n.as_str())
-    };
-    if fix {
-        let (retracted, retract_errs) =
-            fix_dangling_receipts(ctx.primary_path(), vcs.as_ref(), receipt_scope);
-        for (store_path, ref_name) in &retracted {
-            println!(
-                "[fixed] core: retracted dangling ownership receipt for `{}` in {}",
-                ref_name,
-                store_path.display()
-            );
-        }
-        for msg in retract_errs {
-            all_issues_branch_discipline_errors.push(msg);
-        }
-    } else {
-        scan_dangling_receipts(
-            vcs.as_ref(),
-            ctx.primary_path(),
-            receipt_scope,
-            &mut violations,
-        );
-    }
-
-    // Ownership receipts naming a pre-flat ref: a record no live workweave
-    // mints, which the canonical-store pass then reads as a leak it may
-    // delete. `--fix` retracts them.
-    //
-    // Ordering, deliberate: **before** the migration pass below. The
-    // pre-flat arm holds exactly this receipt between its rename and its
-    // retraction, so
-    // this arm placed after the migration would be inspecting receipts the
-    // same run had just written, and could only stay correct as long as
-    // `migrate_legacy_ref` cleaned up after itself — a distant invariant
-    // holding this one up. Placed here it can see only what predates the
-    // run. The migration then re-adopts anything still migratable at the tip
-    // it observes, so a single `--fix` clears the record and finishes the
-    // migration where the store allows it.
-    if fix {
-        let (retracted, retract_errs) = fix_pre_flat_receipts(ctx.primary_path(), receipt_scope);
-        for (store_path, ref_name) in &retracted {
-            println!(
-                "[fixed] core: retracted the ownership receipt for `{}` in {} — the name \
-                 carries a `/` segment, which no workweave on disk mints; the branch \
-                 itself was left untouched and is now unowned",
-                ref_name,
-                store_path.display()
-            );
-        }
-        for msg in retract_errs {
-            all_issues_branch_discipline_errors.push(msg);
-        }
-    } else {
-        scan_pre_flat_receipts(ctx.primary_path(), receipt_scope, &mut violations);
-    }
-
-    // Branch-discipline: (a) workweave-branch, (b) the canonical-store
-    // arms, (c) stale-ephemeral-branches. (a) and (b) are report-only except
-    // for the Detached arm, which `--fix --reattach-checkouts` repairs; (c)
-    // splits into safe-class (deletable under --fix, receipt + warrant),
-    // live-class and unowned (never auto-deleted). The --fix paths are
-    // applied below before violations are emitted so a successful repair is
-    // reported as `[fixed]` instead of surfacing the paired warning.
-    //
-    // Scope: when scope_all is false and an active project is set, filter
-    // findings to only those belonging to the active project. This mirrors
-    // the legacy_role_primary filter above and prevents the doctor scoped
-    // to a single active project from touching another project's stale
-    // ephemeral branches.
-    //
-    // The legacy index field, alongside the legacy-marker `parent:`
-    // migration above that it mirrors. It runs
-    // *before* the migration pass because `RefRegistry::record_created`
-    // refuses against an index with no `receipts` field: adding the field is
-    // the pass's precondition, not one of its arms. Adding it is not itself
-    // an ownership claim — the registry it produces is empty, and every
-    // pre-existing ref stays unowned until an arm records it explicitly.
-    if fix {
-        for project in crate::workweave_index::projects_on_disk(ctx.primary_path()) {
-            if let Some(active) = receipt_scope {
-                if project.as_str() != active {
-                    continue;
-                }
-            }
-            let mut registry =
-                crate::workweave_index::RefRegistry::for_project(ctx.primary_path(), &project);
-            match registry.migrate_legacy_index() {
-                Ok(true) => println!(
-                    "[fixed] core: added the ref-ownership registry to {}",
-                    crate::workweave_index::index_path(ctx.primary_path(), &project).display()
-                ),
-                Ok(false) => {}
-                Err(e) => all_issues_branch_discipline_errors.push(format!(
-                    "failed to migrate {}'s workweave index to the ref-ownership \
-                     registry: {e}",
-                    project
-                )),
-            }
-        }
-    } else {
-        for project in crate::workweave_index::projects_on_disk(ctx.primary_path()) {
-            if let Some(active) = receipt_scope {
-                if project.as_str() != active {
-                    continue;
-                }
-            }
-            if let Ok(Some(path)) =
-                crate::workspace::pending_index_migration(ctx.primary_path(), &project)
-            {
-                violations.push(CheckViolation::LegacyWorkweaveIndex {
-                    project: project.clone(),
-                    index_path: path,
-                });
-            }
-        }
-    }
-
-    // The migration pass. Runs before the branch-discipline scan below so
-    // a workweave it migrated reports as healthy rather than as both `[fixed]`
-    // and a paired warning — the same ordering the reattach uses, for the same
-    // reason.
-    if fix {
-        let fix_active = if scope_all {
-            None
-        } else {
-            active_project_name.as_ref().map(|n| n.as_str())
-        };
-        let (applied, migration_errs) = fix_branch_model_migration(
-            ctx.primary_path(),
-            vcs.as_ref(),
-            fix_active,
-            adopt_detached,
-        );
-        for msg in &applied {
-            println!("[fixed] core: {msg}");
-        }
-        for msg in migration_errs {
-            all_issues_branch_discipline_errors.push(msg);
-        }
-    }
-
-    // Ordering: the reattach runs first. Its condition (counterpart exists
-    // and its tip equals HEAD) is read off state the deletion pass can
-    // change, and a store that has just been reattached is no longer a
-    // Detached finding — so reattaching first means the scan below reports
-    // the state the operator is left in.
-    if fix {
-        if let Some(consent) = reattach {
-            let fix_active = if scope_all {
-                None
-            } else {
-                active_project_name.as_ref().map(|n| n.as_str())
-            };
-            let (reattached, reattach_errs) = fix_detached_canonicals(
-                ctx.primary_path(),
-                vcs.as_ref(),
-                &input.projects,
-                fix_active,
-                &input.known_repos,
-                consent,
-            );
-            for (store_path, branch) in &reattached {
-                println!(
-                    "[fixed] core: reattached detached canonical {} to `{}`",
-                    store_path.display(),
-                    branch
-                );
-            }
-            for msg in reattach_errs {
-                all_issues_branch_discipline_errors.push(msg);
-            }
-        }
-    }
-
-    let mut branch_discipline_violations =
-        scan_branch_discipline(ctx.primary_path(), vcs.as_ref(), &input.projects);
-    if !scope_all {
-        if let Some(ref active) = active_project_name {
-            branch_discipline_violations.retain(|v| {
-                branch_discipline_in_scope(
-                    v,
-                    ctx.primary_path(),
-                    active.as_str(),
-                    &input.known_repos,
-                )
-            });
-        }
-    }
-    if fix {
-        // Pass the active-project scope into the deleter so it only removes
-        // branches that belong to the active project.
-        let fix_active = if scope_all {
-            None
-        } else {
-            active_project_name.as_ref().map(|n| n.as_str())
-        };
-        let (deleted, fix_errs) = fix_stale_ephemeral_branches(
-            ctx.primary_path(),
-            vcs.as_ref(),
-            &input.projects,
-            fix_active,
-            &input.known_repos,
-        );
-        for (repo_path, branch) in &deleted {
-            println!(
-                "[fixed] core: deleted safe-class stale ephemeral branch `{}` in {}",
-                branch,
-                repo_path.display()
-            );
-        }
-        let deleted_keys: std::collections::HashSet<(PathBuf, String)> =
-            deleted.into_iter().collect();
-        // Drop safe-class findings the fix path successfully deleted so
-        // the operator doesn't see both `[fixed]` and a paired warning.
-        branch_discipline_violations.retain(|v| match v {
-            CheckViolation::BranchDiscipline {
-                repo_path,
-                sub_kind: BranchDisciplineKind::StaleEphemeralBranchSafe { branch, .. },
-            } => !deleted_keys.contains(&(repo_path.clone(), branch.clone())),
-            _ => true,
-        });
-        for msg in fix_errs {
-            all_issues_branch_discipline_errors.push(msg);
-        }
-    }
-    violations.extend(branch_discipline_violations);
-
-    // Surface unparseable manifests as first-class violations so the
-    // workspace is never reported as "clean" when a manifest is broken.
-    for (project, manifest_path, message) in &unparseable_projects {
-        violations.push(CheckViolation::UnparseableProject {
-            project: project.clone(),
-            manifest_path: manifest_path.clone(),
-            message: message.clone(),
-        });
-    }
-
-    let mut all_issues = violations_to_issues(violations);
-    for msg in all_issues_branch_discipline_errors {
+    for msg in fix_errors {
         all_issues.push(Issue {
             integration: "core".into(),
             severity: Severity::Error,
@@ -7609,63 +7503,9 @@ pub fn run_check(
         });
     }
 
-    for msg in dangling_fix_errors {
-        all_issues.push(Issue {
-            integration: "core".into(),
-            severity: Severity::Error,
-            message: msg,
-            safe_to_fix: true,
-        });
-    }
-
-    for msg in dangling_parent_fix_errors {
-        all_issues.push(Issue {
-            integration: "core".into(),
-            severity: Severity::Error,
-            message: format!("dangling-parent --fix failed: {msg}"),
-            safe_to_fix: true,
-        });
-    }
-
-    for msg in weave_root_identity_fix_errors {
-        all_issues.push(Issue {
-            integration: "core".into(),
-            severity: Severity::Error,
-            message: msg,
-            safe_to_fix: true,
-        });
-    }
-
-    for msg in registry_fix_errors {
-        all_issues.push(Issue {
-            integration: "core".into(),
-            severity: Severity::Error,
-            message: format!("workweave-index --fix failed: {msg}"),
-            safe_to_fix: true,
-        });
-    }
-
-    for (project_name, err) in &legacy_role_primary_errors {
-        all_issues.push(Issue {
-            integration: "core".into(),
-            severity: Severity::Error,
-            message: format!("{project_name}: legacy `role: primary` fix failed: {err}"),
-            safe_to_fix: true,
-        });
-    }
-    for err in &legacy_ww_marker_errors {
-        all_issues.push(Issue {
-            integration: "core".into(),
-            severity: Severity::Error,
-            message: format!("legacy workweave marker fix failed: {err}"),
-            safe_to_fix: true,
-        });
-    }
-
-    // B3: surface lock entries that couldn't be resolved against the local
-    // repo. Doctor is the diagnostic of last resort — swallowing this signal
-    // is exactly the wrong place to drop information.
-    for (project_name, repo_path) in &lock_resolve_failures {
+    // Doctor is the diagnostic of last resort; a lock entry the local clone
+    // has never seen is exactly the wrong signal to swallow.
+    for (project_name, repo_path) in &world.lock_resolve_failures {
         all_issues.push(Issue {
             integration: "core".into(),
             severity: Severity::Error,
@@ -7676,10 +7516,7 @@ pub fn run_check(
         });
     }
 
-    // B4: surface on-disk repos whose HEAD could not be read. Previously the
-    // Err was silently dropped, so `find_violations` produced zero
-    // violations for these repos and doctor reported clean.
-    for (repo_path, err_msg) in &head_read_failures {
+    for (repo_path, err_msg) in &world.head_read_failures {
         all_issues.push(Issue {
             integration: "core".into(),
             severity: Severity::Error,
@@ -7688,95 +7525,96 @@ pub fn run_check(
         });
     }
 
-    // Run integration check hooks for each project
+    let vcs_for_report = world.vcs.as_ref();
+
+    // Neither of these has a `CheckViolation` variant, so `--json` carries
+    // neither. The missing-config arm reports only without `--fix`: with it
+    // on the plant has already run, and its failure is the report.
+    for project in &world.input.projects {
+        let project_repo = workspace_dir.join("projects").join(project.name.as_str());
+        if !project_repo.is_dir() {
+            continue;
+        }
+        match crate::git::has_rwv_merge_driver_config(&project_repo) {
+            Ok(true) => {}
+            Ok(false) => {
+                if !fix {
+                    all_issues.push(Issue {
+                        integration: "core".into(),
+                        severity: Severity::Warning,
+                        message: format!(
+                            "{}: project repo missing `{}` config \
+                             (defines the `rwv-ours` merge driver used by bare \
+                             `git rebase --continue`; run `rwv doctor --fix` to plant)",
+                            project.name,
+                            crate::git::RWV_MERGE_DRIVER_CONFIG_KEY,
+                        ),
+                        safe_to_fix: true,
+                    });
+                }
+            }
+            Err(e) => all_issues.push(Issue {
+                integration: "core".into(),
+                severity: Severity::Warning,
+                message: format!(
+                    "{}: failed to read `{}` config: {e}",
+                    project.name,
+                    crate::git::RWV_MERGE_DRIVER_CONFIG_KEY,
+                ),
+                safe_to_fix: true,
+            }),
+        }
+        if let Err(e) =
+            vcs_for_report.has_replay_exclusion(&project_repo, std::path::Path::new("rwv.lock"))
+        {
+            all_issues.push(Issue {
+                integration: "core".into(),
+                severity: Severity::Warning,
+                message: format!(
+                    "{}: failed to read .gitattributes for replay-exclusion check: {e}",
+                    project.name
+                ),
+                safe_to_fix: true,
+            });
+        }
+    }
+
     let builtin = crate::integrations::builtin_integrations();
     let integrations: Vec<&dyn crate::integration::Integration> =
         builtin.iter().map(|b| b.as_ref()).collect();
 
-    for project in &input.projects {
+    for project in &world.input.projects {
         let detection_cache = crate::integration_runner::build_detection_cache(
             &workspace_dir,
             project.manifest.iter_entries(),
         );
-        let ctx_base = session.context_base(
+        let ctx_base = world.session.context_base(
             &project.name,
             &detection_cache,
             project.manifest.workweave.as_ref(),
         );
-        let integration_issues = run_checks(&integrations, &project.manifest, &ctx_base);
-        all_issues.extend(integration_issues);
+        all_issues.extend(run_checks(&integrations, &project.manifest, &ctx_base));
 
-        // Cargo version-skew observatory + patch-shadowing precheck.
-        // Warning-only findings; feed the same `violations_to_issues` path
-        // the built-in `CheckViolation`s use so exit-status and formatting
-        // stay consistent. Emitted here (not in `find_violations`) because
-        // the scan needs an `IntegrationContext` — it walks the cargo
-        // integration's members-with-config expansion.
-        {
-            let default_cfg = crate::manifest::IntegrationConfig::default();
-            let cargo_cfg = project
-                .manifest
-                .integrations
-                .get("cargo-workspace")
-                .unwrap_or(&default_cfg);
-            let cargo_ctx = ctx_base.build_context(cargo_cfg, &project.manifest);
-            match scan_cargo_ecosystem(&cargo_ctx) {
-                Ok(vs) => all_issues.extend(violations_to_issues(vs)),
-                Err(e) => all_issues.push(Issue {
-                    integration: "cargo-workspace".into(),
-                    severity: Severity::Warning,
-                    message: format!("skew/patch scan failed: {e}"),
-                    safe_to_fix: true,
-                }),
-            }
-        }
-
-        // Content drift check: the integrations' `verify()` pass reports drift
-        // between on-disk managed/generated content and what `activate()` would
-        // produce. Under `--fix`, doctor invokes the intent-mode write path to
-        // regenerate safe-to-fix drift. Without `--fix`, all drift findings
-        // surface as warnings — `doctor` is the detector and the fixer.
-        //
-        // USER-HELD findings (`safe_to_fix = false`) are always surfaced as-is,
-        // even under `--fix` — these are cases where the user holds the pen on a
-        // managed file region and auto-repair would silently destroy user content.
-        // Doctor never auto-takes-over a user-held file.
+        // The integrations' `verify()` pass reports drift between on-disk
+        // managed content and what `activate()` would produce. USER-HELD
+        // findings (`safe_to_fix = false`) surface even under `--fix`: the
+        // user holds the pen on that file region and auto-repair would
+        // silently destroy their content.
         let verify_issues = crate::integration_runner::run_verifications(
             &integrations,
             &project.manifest,
             &ctx_base,
         );
-        // Split into auto-fixable (safe_to_fix=true) and user-held (safe_to_fix=false).
         let (fixable_issues, user_held_issues): (Vec<_>, Vec<_>) =
             verify_issues.into_iter().partition(|i| i.safe_to_fix);
-        // USER-HELD findings always surface — we never auto-rewrite them.
         all_issues.extend(user_held_issues);
         if fix && !fixable_issues.is_empty() {
-            // Regenerate by running intent-mode activation bound to THIS weave
-            // (primary or workweave). This is the canonical write path; any
-            // integration whose verify() flagged safe-to-fix drift will re-author
-            // its content here.
-            //
-            // Weave-binding mirrors the surfacing-fix precedent below: the
-            // repair primitive must be pointed at the same weave dir the
-            // detector scanned, never at ctx.primary_path() unconditionally.
-            // From a workweave-checkout context, the naive `activate_intent`
-            // path targets primary and would silently rewrite the PRIMARY
-            // project's managed files from inside a workweave — breaking the
-            // isolation contract that makes workweave-scoped repair risk-free.
-            // `activate_intent_at` takes the weave dir as its parameter, so
-            // one call covers both: `workspace_dir` is `ctx.active_path()`,
-            // which IS `ctx.primary_path()` at primary and the workweave dir
-            // inside a workweave.
-            //
-            // The weave the repair binds to is the ONLY thing that varies.
-            // The workweave arm used to run a hook-suppressed variant, so a
-            // missing `Cargo.lock` (a `generated_files()` entry only
-            // `cargo generate-lockfile` can author) was reported as
-            // safe-to-fix and then left missing by the fix that named itself
-            // in the report.
-            let result = crate::activate::activate_intent_at(project.name.as_str(), &workspace_dir);
-            match result {
+            // The repair primitive must be pointed at the same weave the
+            // detector scanned. `activate_intent` targets primary
+            // unconditionally, so from a workweave it would rewrite the
+            // PRIMARY project's managed files — `activate_intent_at` takes the
+            // weave dir, and `workspace_dir` is `ctx.active_path()`.
+            match crate::activate::activate_intent_at(project.name.as_str(), &workspace_dir) {
                 Ok(()) => println!(
                     "[fixed] core: regenerated integration content for project `{}` (drift detected)",
                     project.name
@@ -7795,25 +7633,20 @@ pub fn run_check(
             all_issues.extend(fixable_issues);
         }
 
-        // Member-incompatibility observation arm. Informational and never
-        // gated: an `Ownership::DefaultOnly` value the operator holds may be
+        // An `Ownership::DefaultOnly` value the operator holds may be
         // incompatible with what the members require, which `verify()` does
-        // NOT see — rule 5 keeps DefaultOnly divergence CLEAN, permanently, and
-        // this coexists with that rather than reinterpreting it. The findings
-        // are structurally `safe_to_fix = false` (no automated repair exists),
-        // so they bypass the --fix partition above and always surface as-is.
+        // not see. No automated repair exists, so these bypass the `--fix`
+        // partition above.
         all_issues.extend(crate::integration_runner::run_member_incompatibilities(
             &integrations,
             &project.manifest,
             &ctx_base,
         ));
 
-        // Framework-level Axis-1 surfacing check. Distinct from the
-        // per-integration `verify()` pass above, which only sees Axis-2 content
-        // drift: nothing there asserts that the *symlinks* the surfacing layer
-        // should have created actually exist and resolve. It scopes to
-        // `workspace_dir` (= `ctx.active_path()`), so run at primary it checks
-        // primary's surfacing and run in a workweave it checks that workweave's.
+        // Axis-1: nothing in `verify()` asserts that the surfacing *symlinks*
+        // exist and resolve. Scoped to `workspace_dir` (= `ctx.active_path()`),
+        // so it checks primary's surfacing at primary and the workweave's
+        // inside a workweave.
         let in_workweave = matches!(ctx.checkout, Checkout::Workweave { .. });
         let surfacing_issues = crate::activate::verify_surfacing(
             &workspace_dir,
@@ -7823,18 +7656,15 @@ pub fn run_check(
         );
         let (surf_fixable, surf_user_held): (Vec<_>, Vec<_>) =
             surfacing_issues.into_iter().partition(|i| i.safe_to_fix);
-        // A real file/dir occupying a surfacing path is user-held — never
-        // auto-clobbered; always surfaced as-is.
+        // A real file or dir occupying a surfacing path is user-held and never
+        // auto-clobbered.
         all_issues.extend(surf_user_held);
         if fix && !surf_fixable.is_empty() {
-            // Re-surface by re-running the step-2 surfacing primitive against
-            // this weave directory. It authors no content — it only (re)creates
-            // the owner-scoped symlinks, which is valid in any weave (it is
-            // exactly what workweave-create runs at creation).
-            //
-            // Repair, not selection: `--project` scopes doctor to a project
-            // without switching to it, so the weave root's shared names stay
-            // with the project it presents.
+            // Authors no content — it only (re)creates the owner-scoped
+            // symlinks, which is what workweave-create runs at creation.
+            // `--project` scopes doctor to a project without switching to it,
+            // so the weave root's shared names stay with the project it
+            // presents.
             match crate::activate::surface_symlinks(
                 &workspace_dir,
                 &project.name,
@@ -7861,546 +7691,6 @@ pub fn run_check(
         }
     }
 
-    // Index-drift + working-tree-drift detection.
-    //
-    // Scan list: every materialized worktree referenced by a manifest. From
-    // the primary weave we additionally enumerate each workweave's repos.
-    // The build loop dedupes by absolute path so multiple projects that share
-    // a repo only pay one round of git subprocess cost per physical worktree.
-    // The two drift kinds are then classified in a single
-    // pass using [`classify_drift`], which collapses the common
-    // "worktree is clean" case to one `git status` invocation instead of two
-    // back-to-back `git diff-index` invocations.
-    let mut index_scan: Vec<(Option<String>, std::path::PathBuf, String)> = Vec::new();
-    let mut scan_seen: std::collections::HashSet<(Option<String>, std::path::PathBuf)> =
-        std::collections::HashSet::new();
-
-    for project in &input.projects {
-        for repo_path in project.manifest.iter_repo_paths() {
-            let abs = workspace_dir.join(repo_path.as_path());
-            if abs.exists() && scan_seen.insert((None, abs.clone())) {
-                index_scan.push((None, abs, repo_path.to_string()));
-            }
-        }
-    }
-
-    // From the primary weave: also scan every known workweave.
-    if matches!(ctx.checkout, Checkout::Primary { .. }) {
-        for (ww_name, ww_dir) in crate::workweave::list_workweave_dirs(ctx.primary_path()) {
-            for project in &input.projects {
-                for repo_path in project.manifest.iter_repo_paths() {
-                    let abs = ww_dir.join(repo_path.as_path());
-                    if abs.exists() && scan_seen.insert((Some(ww_name.clone()), abs.clone())) {
-                        index_scan.push((Some(ww_name.clone()), abs, repo_path.to_string()));
-                    }
-                }
-            }
-        }
-    }
-    drop(scan_seen);
-
-    // Progress output: workspace-scale doctor runs (80+ workweaves × ~13
-    // repos) were previously silent for many seconds. Emit a heartbeat
-    // to stderr so the operator can tell "in progress" from "hung". The
-    // line goes to stderr to keep stdout free of noise for the human-
-    // facing report below. JSON callers go through `run_check_json` and
-    // don't see this.
-    let total_scans = index_scan.len();
-    let progress_every = total_scans.div_ceil(20).max(1);
-    if total_scans > 0 {
-        eprintln!("doctor: scanning {total_scans} worktree(s) for drift...");
-    }
-
-    for (i, (ww_label, repo_abs, repo_display)) in index_scan.iter().enumerate() {
-        if total_scans >= 50 && (i + 1) % progress_every == 0 {
-            eprintln!("doctor: scanned {}/{total_scans}", i + 1);
-        }
-        let location = match ww_label {
-            Some(ww) => format!("{ww}/{repo_display}"),
-            None => repo_display.clone(),
-        };
-
-        // Pre-flight: detect a missing canonical clone before attempting any
-        // git classification. When the primary clone directory was removed out-
-        // of-band, all git commands in this linked worktree will fail — the
-        // previous behaviour was to misattribute the failure as `LiveEdits`.
-        // Only linked worktrees (workweave repos) can have a missing canonical;
-        // skip the check for primary-weave entries (ww_label == None) since
-        // those ARE the canonical clones.
-        if ww_label.is_some() {
-            if let Some(canonical_path) = worktree_canonical_clone_missing(repo_abs) {
-                all_issues.push(Issue {
-                    integration: "core".into(),
-                    severity: Severity::Warning,
-                    message: format!(
-                        "{location}: canonical clone for `{repo_display}` is absent \
-                         (expected at {}) — this worktree cannot be classified; \
-                         run `rwv fetch` from the workspace root to \
-                         re-materialize it, then re-run `rwv doctor` to verify",
-                        canonical_path.display()
-                    ),
-                    safe_to_fix: false,
-                });
-                continue; // skip drift classification for this worktree
-            }
-        }
-
-        let (idx_drift, wt_drift) = classify_drift(repo_abs);
-
-        if let Some(drift_kind) = idx_drift {
-            match drift_kind {
-                IndexDriftKind::SafeToFix => {
-                    if fix {
-                        match reset_index_to_head(repo_abs) {
-                            Ok(()) => println!("[fixed] core: index refreshed for {location}"),
-                            Err(e) => all_issues.push(Issue {
-                                integration: "core".into(),
-                                severity: Severity::Error,
-                                message: format!("{location}: index fix failed: {e}"),
-                                safe_to_fix: true,
-                            }),
-                        }
-                    } else {
-                        all_issues.push(Issue {
-                            integration: "core".into(),
-                            severity: Severity::Warning,
-                            message: format!("{location}: index stale (safe to --fix)"),
-                            safe_to_fix: true,
-                        });
-                    }
-                }
-                IndexDriftKind::LiveStaged => {
-                    all_issues.push(Issue {
-                        integration: "core".into(),
-                        severity: Severity::Warning,
-                        message: format!(
-                            "{location}: index has live staged changes (manual review)"
-                        ),
-                        safe_to_fix: true,
-                    });
-                }
-            }
-        }
-
-        if let Some(drift_kind) = wt_drift {
-            match drift_kind {
-                WorkingTreeDriftKind::SafeToFix => {
-                    if fix {
-                        match restore_working_tree_to_head(repo_abs) {
-                            Ok(()) => {
-                                println!("[fixed] core: working tree refreshed for {location}")
-                            }
-                            Err(e) => all_issues.push(Issue {
-                                integration: "core".into(),
-                                severity: Severity::Error,
-                                message: format!("{location}: working-tree fix failed: {e}"),
-                                safe_to_fix: true,
-                            }),
-                        }
-                    } else {
-                        all_issues.push(Issue {
-                            integration: "core".into(),
-                            severity: Severity::Warning,
-                            message: format!("{location}: working tree stale (safe to --fix)"),
-                            safe_to_fix: true,
-                        });
-                    }
-                }
-                WorkingTreeDriftKind::LiveEdits => {
-                    all_issues.push(Issue {
-                        integration: "core".into(),
-                        severity: Severity::Warning,
-                        message: format!("{location}: working tree has live edits (manual review)"),
-                        safe_to_fix: true,
-                    });
-                }
-            }
-        }
-    }
-
-    // State hygiene: stale worktree registrations, stale `.rwv-op`,
-    // orphaned savepoints. See `scan_state_hygiene` for the rationale.
-    // Mirrors the index_scan enumeration (every manifest repo, every
-    // workweave) and additionally pulls in the project repo
-    // (`projects/<name>/`), which also carries savepoints (sync.rs:1573).
-    let mut hygiene_targets: Vec<StateHygieneScanTarget> = Vec::new();
-    let mut hygiene_seen: std::collections::HashSet<(Option<String>, std::path::PathBuf)> =
-        std::collections::HashSet::new();
-    for project in &input.projects {
-        for repo_path in project.manifest.iter_repo_paths() {
-            let abs = workspace_dir.join(repo_path.as_path());
-            if abs.exists() && hygiene_seen.insert((None, abs.clone())) {
-                hygiene_targets.push(StateHygieneScanTarget {
-                    workweave: None,
-                    abs,
-                    repo: repo_path.clone(),
-                });
-            }
-        }
-    }
-    if matches!(ctx.checkout, Checkout::Primary { .. }) {
-        for (ww_name, ww_dir) in crate::workweave::list_workweave_dirs(ctx.primary_path()) {
-            for project in &input.projects {
-                for repo_path in project.manifest.iter_repo_paths() {
-                    let abs = ww_dir.join(repo_path.as_path());
-                    if abs.exists() && hygiene_seen.insert((Some(ww_name.clone()), abs.clone())) {
-                        hygiene_targets.push(StateHygieneScanTarget {
-                            workweave: WorkweaveName::new(ww_name.clone()).ok(),
-                            abs,
-                            repo: repo_path.clone(),
-                        });
-                    }
-                }
-            }
-        }
-    }
-    // Project repos: `projects/<name>/` is itself a git repo carrying
-    // savepoints (sync.rs creates one there for the CWD project at sync
-    // time). The manifest enumeration above doesn't include it because
-    // the project repo is not a `repositories:` entry.
-    for project in &input.projects {
-        let pname = project.name.as_str();
-        let project_rel = format!("projects/{pname}");
-        let project_repo_path = match RepoPath::new(project_rel.clone()) {
-            Ok(rp) => rp,
-            Err(_) => continue,
-        };
-        let project_abs = workspace_dir.join(&project_rel);
-        if project_abs.is_dir() && hygiene_seen.insert((None, project_abs.clone())) {
-            hygiene_targets.push(StateHygieneScanTarget {
-                workweave: None,
-                abs: project_abs,
-                repo: project_repo_path.clone(),
-            });
-        }
-        if matches!(ctx.checkout, Checkout::Primary { .. }) {
-            for (ww_name, ww_dir) in crate::workweave::list_workweave_dirs(ctx.primary_path()) {
-                let ww_project_abs = ww_dir.join(&project_rel);
-                if ww_project_abs.is_dir()
-                    && hygiene_seen.insert((Some(ww_name.clone()), ww_project_abs.clone()))
-                {
-                    hygiene_targets.push(StateHygieneScanTarget {
-                        workweave: WorkweaveName::new(ww_name.clone()).ok(),
-                        abs: ww_project_abs,
-                        repo: project_repo_path.clone(),
-                    });
-                }
-            }
-        }
-    }
-    drop(hygiene_seen);
-
-    // Op-state scan: check the CWD workspace and every workweave for `.rwv-op`.
-    let mut hygiene_op_state_targets: Vec<StateHygieneOpStateTarget> = Vec::new();
-    hygiene_op_state_targets.push(StateHygieneOpStateTarget {
-        workspace_dir: workspace_dir.clone(),
-    });
-    if matches!(ctx.checkout, Checkout::Primary { .. }) {
-        for (_ww_name, ww_dir) in crate::workweave::list_workweave_dirs(ctx.primary_path()) {
-            // Dedupe against the active workspace dir (operator may run
-            // from inside a workweave, in which case it's already added).
-            if !hygiene_op_state_targets
-                .iter()
-                .any(|t| t.workspace_dir == ww_dir)
-            {
-                hygiene_op_state_targets.push(StateHygieneOpStateTarget {
-                    workspace_dir: ww_dir,
-                });
-            }
-        }
-    }
-
-    let hygiene_violations =
-        scan_state_hygiene(vcs.as_ref(), &hygiene_targets, &hygiene_op_state_targets);
-    // Mirror the project-scoped target dedupe used elsewhere: build a quick
-    // map from `(workweave, repo)` to absolute path so the `--fix` path can
-    // call into the right repo. The keys come straight from the targets we
-    // just scanned.
-    let target_lookup: std::collections::HashMap<(Option<String>, String), std::path::PathBuf> =
-        hygiene_targets
-            .iter()
-            .map(|t| {
-                (
-                    (
-                        t.workweave.as_ref().map(|w| w.to_string()),
-                        t.repo.to_string(),
-                    ),
-                    t.abs.clone(),
-                )
-            })
-            .collect();
-
-    for violation in hygiene_violations {
-        // Try the --fix path first when enabled; the auto-fixable set is:
-        //   - `StaleWorktreeRegistration`
-        //   - `OrphanedSavepoint { Redundant }`
-        //   - `DeadOpLease` (routes to op_state::fix_dead_lease directly, no
-        //     repo lookup needed)
-        // See `fix_state_hygiene` for the policy rationale.
-        let fix_attempted = if fix {
-            match &violation {
-                CheckViolation::StaleWorktreeRegistration {
-                    workweave, repo, ..
-                }
-                | CheckViolation::OrphanedSavepoint {
-                    workweave,
-                    repo,
-                    sub_kind: OrphanedSavepointKind::Redundant,
-                    ..
-                } => {
-                    let key = (workweave.as_ref().map(|w| w.to_string()), repo.to_string());
-                    match target_lookup.get(&key) {
-                        Some(repo_abs) => {
-                            match fix_state_hygiene(vcs.as_ref(), &violation, repo_abs) {
-                                Ok(true) => {
-                                    let (kind_label, extra) = match &violation {
-                                        CheckViolation::StaleWorktreeRegistration { .. } => {
-                                            ("stale-worktree-registration", "pruned".to_string())
-                                        }
-                                        CheckViolation::OrphanedSavepoint { op_id, .. } => {
-                                            ("orphaned-savepoint", format!("dropped op_id={op_id}"))
-                                        }
-                                        _ => ("state-hygiene", String::new()),
-                                    };
-                                    let location = match (workweave, repo) {
-                                        (Some(ww), r) => format!("{ww}/{r}"),
-                                        (None, r) => r.to_string(),
-                                    };
-                                    println!("[fixed] core: {kind_label} for {location}: {extra}");
-                                    true
-                                }
-                                Ok(false) => false,
-                                Err(e) => {
-                                    all_issues.push(Issue {
-                                        integration: "core".into(),
-                                        severity: Severity::Error,
-                                        message: format!("state-hygiene --fix failed: {e}"),
-                                        safe_to_fix: true,
-                                    });
-                                    true
-                                }
-                            }
-                        }
-                        None => false,
-                    }
-                }
-                CheckViolation::DeadOpLease {
-                    workspace_dir,
-                    op_id,
-                    ..
-                } => {
-                    // fix_state_hygiene ignores repo_abs for this variant —
-                    // it operates on the lease's workspace_dir directly. We
-                    // pass workspace_dir as a stand-in so the signature is
-                    // unchanged.
-                    match fix_state_hygiene(vcs.as_ref(), &violation, workspace_dir) {
-                        Ok(true) => {
-                            println!(
-                                "[fixed] core: dead-op-lease for {}: removed lease (op_id={op_id})",
-                                workspace_dir.display()
-                            );
-                            true
-                        }
-                        Ok(false) => false,
-                        Err(e) => {
-                            all_issues.push(Issue {
-                                integration: "core".into(),
-                                severity: Severity::Error,
-                                message: format!("state-hygiene --fix failed: {e}"),
-                                safe_to_fix: true,
-                            });
-                            true
-                        }
-                    }
-                }
-                _ => false,
-            }
-        } else {
-            false
-        };
-        if !fix_attempted {
-            all_issues.extend(violations_to_issues(vec![violation]));
-        }
-    }
-
-    // Replay-exclusion check: each project repo should carry
-    // `rwv.lock merge=rwv-ours` in `.gitattributes` AND the paired
-    // `merge.rwv-ours.driver=true` durable config. Older projects
-    // don't have either; the legacy spelling `rwv.lock merge=ours`
-    // (from before the rename to a namespaced driver) may still be
-    // present, which `--fix` migrates in place. `--fix` writes the
-    // line in place
-    // (idempotent — re-running on a fixed repo is a no-op) and, when
-    // the change is a legacy-name migration, commits it (skipping the
-    // commit when the repo has unrelated staged work so we never
-    // bundle a user's WIP).
-    for project in &input.projects {
-        let project_repo = workspace_dir.join("projects").join(project.name.as_str());
-        if !project_repo.is_dir() {
-            continue;
-        }
-
-        // Detect legacy `rwv.lock merge=ours` in the working tree so
-        // `--fix` can migrate + commit even when the on-disk `.gitattributes`
-        // carries the old spelling.
-        let has_legacy = crate::git::has_working_tree_legacy_replay_exclusion(
-            &project_repo,
-            std::path::Path::new("rwv.lock"),
-        )
-        .unwrap_or(false);
-
-        match vcs.has_replay_exclusion(&project_repo, std::path::Path::new("rwv.lock")) {
-            Ok(true) if !has_legacy => {}
-            Ok(has_new) => {
-                if fix {
-                    // `set_replay_exclusion` migrates a legacy line to
-                    // the new name in place (rewrite, not append-alongside)
-                    // and appends the new needle when neither is present.
-                    // Idempotent when the new line is already the only one.
-                    match vcs.set_replay_exclusion(&project_repo, std::path::Path::new("rwv.lock"))
-                    {
-                        Ok(()) => {
-                            if has_legacy {
-                                // Migration path: also commit the change so
-                                // the invariant (which reads the *committed*
-                                // form) sees the new spelling on the next
-                                // sync. Skip the commit if the repo carries
-                                // unrelated staged changes — user work must
-                                // not be bundled with an rwv-authored fix.
-                                match commit_replay_exclusion_migration(&project_repo) {
-                                    Ok(CommitOutcome::Committed) => println!(
-                                        "[fixed] core: migrated `rwv.lock merge=ours` → \
-                                         `rwv.lock merge=rwv-ours` in {}/.gitattributes (committed)",
-                                        project.name
-                                    ),
-                                    Ok(CommitOutcome::SkippedUnrelatedStaged) => println!(
-                                        "[fixed] core: migrated `rwv.lock merge=ours` → \
-                                         `rwv.lock merge=rwv-ours` in {}/.gitattributes (NOT committed: \
-                                         project repo has unrelated staged changes; commit them, then \
-                                         re-run `rwv doctor --fix` to complete the migration)",
-                                        project.name
-                                    ),
-                                    Ok(CommitOutcome::NothingToCommit) => println!(
-                                        "[fixed] core: migrated `rwv.lock merge=ours` → \
-                                         `rwv.lock merge=rwv-ours` in {}/.gitattributes",
-                                        project.name
-                                    ),
-                                    Err(e) => all_issues.push(Issue {
-                                        integration: "core".into(),
-                                        severity: Severity::Error,
-                                        message: format!(
-                                            "{}: migrated .gitattributes but commit failed: {e}",
-                                            project.name
-                                        ),
-                                        safe_to_fix: true,
-                                    }),
-                                }
-                            } else if !has_new {
-                                println!(
-                                    "[fixed] core: wrote `rwv.lock merge=rwv-ours` to {}/.gitattributes",
-                                    project.name
-                                );
-                            }
-                        }
-                        Err(e) => all_issues.push(Issue {
-                            integration: "core".into(),
-                            severity: Severity::Error,
-                            message: format!(
-                                "{}: failed to write replay-exclusion: {e}",
-                                project.name
-                            ),
-                            safe_to_fix: true,
-                        }),
-                    }
-                } else {
-                    let msg = if has_legacy {
-                        format!(
-                            "{}: project repo has legacy `rwv.lock merge=ours` in .gitattributes; \
-                             the driver was renamed to close a global-config collision hazard \
-                             (run `rwv doctor --fix` to migrate to `rwv.lock merge=rwv-ours` \
-                             and commit)",
-                            project.name
-                        )
-                    } else {
-                        format!(
-                            "{}: project repo missing `rwv.lock merge=rwv-ours` in .gitattributes \
-                             (run `rwv doctor --fix` to add)",
-                            project.name
-                        )
-                    };
-                    all_issues.push(Issue {
-                        integration: "core".into(),
-                        severity: Severity::Warning,
-                        message: msg,
-                        safe_to_fix: true,
-                    });
-                }
-            }
-            Err(e) => all_issues.push(Issue {
-                integration: "core".into(),
-                severity: Severity::Warning,
-                message: format!(
-                    "{}: failed to read .gitattributes for replay-exclusion check: {e}",
-                    project.name
-                ),
-                safe_to_fix: true,
-            }),
-        }
-
-        // Durable-config plant: `merge.rwv-ours.driver` config keeps the
-        // exclusion working across bare `git rebase --continue` (see
-        // `plant_rwv_merge_driver_config`). Detect via `git config --get`;
-        // `--fix` writes both `.driver` and `.name` entries.
-        match crate::git::has_rwv_merge_driver_config(&project_repo) {
-            Ok(true) => {}
-            Ok(false) => {
-                if fix {
-                    match crate::git::plant_rwv_merge_driver_config(&project_repo) {
-                        Ok(()) => println!(
-                            "[fixed] core: planted `{}` config in {}",
-                            crate::git::RWV_MERGE_DRIVER_CONFIG_KEY,
-                            project.name
-                        ),
-                        Err(e) => all_issues.push(Issue {
-                            integration: "core".into(),
-                            severity: Severity::Error,
-                            message: format!(
-                                "{}: failed to plant `{}`: {e}",
-                                project.name,
-                                crate::git::RWV_MERGE_DRIVER_CONFIG_KEY
-                            ),
-                            safe_to_fix: true,
-                        }),
-                    }
-                } else {
-                    all_issues.push(Issue {
-                        integration: "core".into(),
-                        severity: Severity::Warning,
-                        message: format!(
-                            "{}: project repo missing `{}` config \
-                             (defines the `rwv-ours` merge driver used by bare \
-                             `git rebase --continue`; run `rwv doctor --fix` to plant)",
-                            project.name,
-                            crate::git::RWV_MERGE_DRIVER_CONFIG_KEY,
-                        ),
-                        safe_to_fix: true,
-                    });
-                }
-            }
-            Err(e) => all_issues.push(Issue {
-                integration: "core".into(),
-                severity: Severity::Warning,
-                message: format!(
-                    "{}: failed to read `{}` config: {e}",
-                    project.name,
-                    crate::git::RWV_MERGE_DRIVER_CONFIG_KEY,
-                ),
-                safe_to_fix: true,
-            }),
-        }
-    }
-
-    // Display issues and determine exit status
     let mut has_errors = false;
     for issue in &all_issues {
         let prefix = match issue.severity {
@@ -8410,7 +7700,6 @@ pub fn run_check(
                 "error"
             }
         };
-        // The tests check stdout for the issue messages
         println!("[{prefix}] {}: {}", issue.integration, issue.message);
     }
 
@@ -8449,62 +7738,70 @@ pub fn build_doctor_json(
     doc
 }
 
-/// Collect every `CheckViolation` `rwv doctor` knows how to produce.
+/// Everything `rwv doctor` reads off disk before any scan runs: the workspace
+/// session, the loaded manifests, and each on-disk repo's HEAD.
 ///
-/// Mirrors the scaffolding in [`run_check`] but returns a typed enum vector
-/// instead of mixing `Issue`s and `CheckViolation`s. Integration-runner
-/// findings and lock-resolution / HEAD-read failures are out of scope: they
-/// are not `CheckViolation` variants today and the spec explicitly excludes
-/// them from `--json` (the acceptance criterion is "each `CheckViolation`
-/// variant serializes").
-///
-/// When `scope_all` is `false`, only the active project is loaded and the
-/// orphan check is skipped (matching the default scoping of `run_check`).
-/// Pass `scope_all = true` (`--all`) for the weave-wide scan.
-///
-/// Returns `(violations, workweave_dirs)` so the caller can resolve
-/// workweave-scoped `absolute_path` fields.
-fn collect_doctor_violations(
+/// `head_read_failures` and `lock_resolve_failures` have no `CheckViolation`
+/// variant, so they reach the text renderer alone.
+struct DoctorWorld {
+    workspace_dir: PathBuf,
+    session: crate::workspace::WorkspaceSession,
+    vcs: Box<dyn crate::vcs::Vcs>,
+    active_project: Option<crate::manifest::ProjectName>,
+    scope_all: bool,
+    input: CheckInput,
+    unparseable_projects: Vec<(crate::manifest::ProjectName, PathBuf, String)>,
+    head_read_failures: Vec<(RepoPath, String)>,
+    lock_resolve_failures: Vec<(crate::manifest::ProjectName, RepoPath)>,
+}
+
+impl DoctorWorld {
+    /// `Some(name)` restricts a scan to one project's registry or findings;
+    /// `None` visits every project. A workspace with no active project takes
+    /// the weave-wide path even without `--all`, because there is nothing to
+    /// narrow to.
+    fn project_scope(&self) -> Option<&str> {
+        if self.scope_all {
+            None
+        } else {
+            self.active_project.as_ref().map(|n| n.as_str())
+        }
+    }
+}
+
+fn load_doctor_world(
     ctx: &crate::workspace::WorkspaceContext,
     scope_all: bool,
-) -> anyhow::Result<(
-    Vec<CheckViolation>,
-    std::path::PathBuf,
-    std::collections::HashMap<WorkweaveName, std::path::PathBuf>,
-)> {
-    use crate::workspace::{Checkout, WorkspaceSession};
+) -> anyhow::Result<DoctorWorld> {
+    use crate::manifest::Project;
+    use crate::workspace::WorkspaceSession;
 
     let workspace_dir = ctx.active_path().to_path_buf();
-
     let session = WorkspaceSession::new(&workspace_dir);
     let vcs = crate::vcs::probe_vcs();
+    let active_project: Option<crate::manifest::ProjectName> = ctx.active_project().cloned();
 
-    // Resolve HEAD revisions for each repo on disk. HEAD-read failures are
-    // surfaced by the non-JSON `run_check` as `Issue`s; they have no
-    // `CheckViolation` variant and are therefore not emitted under `--json`.
     let mut head_revisions = BTreeMap::new();
+    let mut head_read_failures: Vec<(RepoPath, String)> = Vec::new();
     for repo_path in session.repos_on_disk() {
         let abs = workspace_dir.join(repo_path.as_path());
-        if let Ok(rev) = vcs.head_revision(&abs) {
-            head_revisions.insert(repo_path.clone(), rev);
+        match vcs.head_revision(&abs) {
+            Ok(rev) => {
+                head_revisions.insert(repo_path.clone(), rev);
+            }
+            Err(e) => head_read_failures.push((repo_path.clone(), e.to_string())),
         }
     }
 
-    // Active project name for project-scoped filtering.
-    let active_project_name: Option<crate::manifest::ProjectName> = ctx.active_project().cloned();
-
-    // Load projects + resolve lock files.
-    // In default mode: only the active project. In --all mode: every project.
     let projects_dir = workspace_dir.join("projects");
     let mut projects = Vec::new();
     let mut known_repos = BTreeSet::new();
+    let mut lock_resolve_failures: Vec<(crate::manifest::ProjectName, RepoPath)> = Vec::new();
+    let mut unparseable_projects: Vec<(crate::manifest::ProjectName, PathBuf, String)> = Vec::new();
     let mut resolved_locks: std::collections::HashMap<
         crate::manifest::ProjectName,
         crate::manifest::ResolvedLockFile,
     > = std::collections::HashMap::new();
-    // Unparseable manifests collected here and emitted as violations below.
-    let mut unparseable_projects_json: Vec<(crate::manifest::ProjectName, PathBuf, String)> =
-        Vec::new();
 
     if projects_dir.is_dir() {
         let mut entries: Vec<_> = std::fs::read_dir(&projects_dir)?
@@ -8530,23 +7827,30 @@ fn collect_doctor_violations(
                 .to_string_lossy()
                 .into_owned();
 
-            // In default mode with an active project, skip other projects.
-            // If no active project is set, fall back to loading every project.
             if !scope_all {
-                if let Some(ref active) = active_project_name {
+                if let Some(ref active) = active_project {
                     if name_from_rel != active.as_str() {
                         continue;
                     }
                 }
-                // No active project → fall through to load all.
             }
 
             match Project::from_dir(&project_dir) {
                 Ok(project) => {
+                    // Resolving against the on-disk repos is what makes the
+                    // canonical-SHA equality in `find_violations` work
+                    // uniformly for tag-form, branch-form and SHA-form locks.
+                    // An entry that will not resolve is kept as a failure
+                    // rather than dropped: dropping it leaves the repo with no
+                    // `head_revisions` entry, which reads as healthy.
                     if let Some(raw_lock) = project.lock.clone() {
-                        let (resolved, _failures) = raw_lock.resolve_versions(&workspace_dir);
+                        let (resolved, failures) = raw_lock.resolve_versions(&workspace_dir);
+                        for (unresolved, _raw_rev) in failures {
+                            lock_resolve_failures.push((project.name.clone(), unresolved));
+                        }
                         resolved_locks.insert(project.name.clone(), resolved);
                     }
+
                     for repo_path in project.manifest.iter_repo_paths() {
                         known_repos.insert(repo_path.clone());
                     }
@@ -8554,18 +7858,16 @@ fn collect_doctor_violations(
                 }
                 Err(e) => {
                     if let Ok(project_name) = crate::manifest::ProjectName::new(name_from_rel) {
-                        unparseable_projects_json.push((
-                            project_name,
-                            manifest_path,
-                            e.to_string(),
-                        ));
+                        unparseable_projects.push((project_name, manifest_path, e.to_string()));
                     }
                 }
             }
         }
     }
 
-    let loaded_all_projects_json = scope_all || active_project_name.is_none();
+    // Orphan detection is weave-wide by construction: a repo is orphaned only
+    // if it belongs to *no* project, which a partial load cannot establish.
+    let check_orphans = scope_all || active_project.is_none();
 
     let input = CheckInput {
         known_repos,
@@ -8573,13 +7875,75 @@ fn collect_doctor_violations(
         projects,
         head_revisions,
         resolved_locks,
-        check_orphans: loaded_all_projects_json,
+        check_orphans,
     };
 
-    let mut violations = find_violations(&input);
+    Ok(DoctorWorld {
+        workspace_dir,
+        session,
+        vcs,
+        active_project,
+        scope_all,
+        input,
+        unparseable_projects,
+        head_read_failures,
+        lock_resolve_failures,
+    })
+}
 
-    // Dangling active-project: .rwv-active names a project whose directory
-    // doesn't exist. The JSON channel never auto-fixes; that's for run_check.
+/// Whether the drift scan announces its progress on stderr.
+///
+/// A workspace-scale run (80+ workweaves × ~13 repos) is silent for many
+/// seconds otherwise, and the operator cannot tell it apart from a hang. The
+/// wire format stays silent: stdout carries the document and a caller piping
+/// it has no report to read the heartbeat against.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ScanProgress {
+    Silent,
+    Heartbeat,
+}
+
+/// What one pass of [`collect_doctor_violations`] found.
+///
+/// `repo_locations` resolves a `(workweave, repo)` pair from a violation back
+/// to the worktree it was observed in, which is what the text renderer's
+/// `--fix` arms need to act on a finding they did not scan for themselves.
+struct DoctorFindings {
+    violations: Vec<CheckViolation>,
+    workweave_dirs: std::collections::HashMap<WorkweaveName, std::path::PathBuf>,
+    repo_locations:
+        std::collections::HashMap<(Option<WorkweaveName>, RepoPath), std::path::PathBuf>,
+}
+
+/// The one place `rwv doctor` decides which scans run.
+///
+/// Both renderers consume what this returns — the text report in
+/// [`run_check`] and the wire format in [`run_check_json`] — so a scan
+/// reachable from one of them is reachable from the other by construction.
+/// Deciding twice is what let a whole finding kind reach the text report and
+/// never the JSON one.
+///
+/// Repairs are not collection: `--fix` runs its bulk arms before this and its
+/// per-finding arms over the vector this returns, so a scan here always
+/// observes the state the operator is left in.
+///
+/// Integration-runner findings, unreadable HEADs and unresolvable lock entries
+/// are outside this vector: they are `Issue`s with no `CheckViolation` variant
+/// and reach the text renderer alone.
+fn collect_doctor_violations(
+    ctx: &crate::workspace::WorkspaceContext,
+    world: &DoctorWorld,
+    progress: ScanProgress,
+) -> DoctorFindings {
+    use crate::workspace::Checkout;
+
+    let workspace_dir = &world.workspace_dir;
+    let input = &world.input;
+    let vcs = world.vcs.as_ref();
+    let project_scope = world.project_scope();
+
+    let mut violations = find_violations(input);
+
     {
         use crate::workspace::read_active_project;
         if let Some(active_name) = read_active_project(ctx.primary_path()) {
@@ -8596,53 +7960,33 @@ fn collect_doctor_violations(
         }
     }
 
-    // Weave-root identity conflicts: report both arms. The JSON channel
-    // never auto-fixes, so the registered-workweave arm is reported here
-    // rather than repaired; `--fix` is `run_check`'s.
     violations.extend(scan_weave_root_identity(
         ctx.primary_path(),
         ctx.active_path(),
     ));
 
-    // Unparseable manifests: surface as violations in the JSON channel too.
-    for (project, manifest_path, message) in unparseable_projects_json {
+    for (project, manifest_path, message) in &world.unparseable_projects {
         violations.push(CheckViolation::UnparseableProject {
-            project,
-            manifest_path,
-            message,
+            project: project.clone(),
+            manifest_path: manifest_path.clone(),
+            message: message.clone(),
         });
     }
 
-    // Legacy `role: primary` findings — text-scan over `projects/*/rwv.yaml`
-    // since the parser rejects the spelling and a `Project` wouldn't load.
-    // The JSON channel never auto-fixes; `--fix` is reserved for the
-    // human-facing `run_check`.
-    // In default mode with an active project, restrict to that project only.
-    // Without an active project, report all (same fall-through as project loading).
-    let legacy_role_all = scan_workspace_for_legacy_role_primary(&workspace_dir);
-    let legacy_role_findings: Vec<_> = if loaded_all_projects_json {
-        legacy_role_all
-    } else {
-        // scope_all=false and active project is set
-        legacy_role_all
-            .into_iter()
-            .filter(|f| {
-                active_project_name
-                    .as_ref()
-                    .map(|a| f.project.as_str() == a.as_str())
-                    .unwrap_or(true) // no active → include all
-            })
-            .collect()
-    };
-    for finding in legacy_role_findings {
+    // Text-scanned rather than read off a `Project`: the parser rejects the
+    // legacy spelling, so a manifest carrying it never loads.
+    for finding in scan_workspace_for_legacy_role_primary(workspace_dir) {
+        if let Some(active) = project_scope {
+            if finding.project.as_str() != active {
+                continue;
+            }
+        }
         violations.push(CheckViolation::LegacyRolePrimary {
             project: finding.project,
             manifest_path: finding.manifest_path,
         });
     }
 
-    // Legacy workweave-marker findings — scan the workweave-parent directory.
-    // These are workspace-level infrastructure checks; always run.
     for finding in scan_for_legacy_workweave_markers(ctx.primary_path()) {
         violations.push(CheckViolation::LegacyWorkweaveMarker {
             marker_path: finding.marker_path,
@@ -8650,14 +7994,10 @@ fn collect_doctor_violations(
         });
     }
 
-    // The index-side twin of the legacy marker. Same channel, same scoping
-    // rule as the receipt findings below.
     for project in crate::workweave_index::projects_on_disk(ctx.primary_path()) {
-        if !scope_all {
-            if let Some(active) = active_project_name.as_ref() {
-                if project.as_str() != active.as_str() {
-                    continue;
-                }
+        if let Some(active) = project_scope {
+            if project.as_str() != active {
+                continue;
             }
         }
         if let Ok(Some(index_path)) =
@@ -8670,35 +8010,20 @@ fn collect_doctor_violations(
         }
     }
 
-    // Workweave-tree integrity findings. Workspace-level, always run.
-    for v in scan_workweave_tree_integrity(vcs.as_ref(), ctx.primary_path()) {
-        violations.push(v);
-    }
+    violations.extend(scan_workweave_tree_integrity(vcs, ctx.primary_path()));
+    violations.extend(scan_provenance(workspace_dir, &input.projects));
+    violations.extend(scan_phantom_merge_drivers(workspace_dir, &input.projects));
 
-    // Provenance checks: origin-url-mismatch and lock-sha-unreachable.
-    // Always report-only (no --fix path).
-    for v in scan_provenance(&workspace_dir, &input.projects) {
-        violations.push(v);
-    }
-
-    // Phantom `merge=rwv-*` attributes. Same scan, same scoping as the text
-    // channel; report-only there and here.
-    for v in scan_phantom_merge_drivers(&workspace_dir, &input.projects) {
-        violations.push(v);
-    }
-
-    // Cargo version-skew + patch-shadowing scans. Per-project because they
-    // consume the cargo-workspace integration config; findings are always
-    // Warning severity so `--json` reports them but exit-status stays 0 by
-    // default (they are informational, not gates).
+    // Warning severity throughout, so `--json` reports them while the default
+    // exit status stays 0. The scan needs an `IntegrationContext`, which is
+    // why it is not part of `find_violations`.
     {
-        let session_for_cargo = crate::workspace::WorkspaceSession::new(&workspace_dir);
         for project in &input.projects {
             let detection_cache = crate::integration_runner::build_detection_cache(
-                &workspace_dir,
+                workspace_dir,
                 project.manifest.iter_entries(),
             );
-            let ctx_base = session_for_cargo.context_base(
+            let ctx_base = world.session.context_base(
                 &project.name,
                 &detection_cache,
                 project.manifest.workweave.as_ref(),
@@ -8713,66 +8038,45 @@ fn collect_doctor_violations(
             if let Ok(vs) = scan_cargo_ecosystem(&cargo_ctx) {
                 violations.extend(vs);
             }
-            // Silent skip on Err — the text channel surfaces the failure;
-            // JSON stays clean rather than emit a bespoke "scan-failed"
-            // pseudo-record. Failure is rare (cfg deser error).
         }
     }
 
-    // Uninitialized-submodule findings. Workspace-level, always run.
-    // Only fired for workweave checkouts: `git worktree add` does not init
-    // submodules, so a workweave created from a repo-with-submodules will
-    // have empty submodule dirs if the create-time init failed (e.g. network).
+    // `git worktree add` does not init submodules, so a workweave forked from
+    // a repo with submodules carries empty submodule dirs when the create-time
+    // init failed. Reachable only from primary, which is where the workweave
+    // dirs are enumerated.
     if matches!(ctx.checkout, Checkout::Primary { .. }) {
-        for v in scan_uninitialized_submodules_in_workweaves(ctx.primary_path(), &input.projects) {
-            violations.push(v);
-        }
+        violations.extend(scan_uninitialized_submodules_in_workweaves(
+            ctx.primary_path(),
+            &input.projects,
+        ));
     }
 
-    // Clone-topology findings: the tier-0 invariants a manifest repo's slot
-    // must satisfy before any higher check means anything. Workspace-level,
-    // always run.
-    for v in scan_clone_topology(vcs.as_ref(), ctx.primary_path(), &input.known_repos) {
-        violations.push(v);
-    }
-    // Dangling ownership receipts. Report-only here; the JSON channel never
-    // auto-fixes. Scoped like the text channel.
-    scan_dangling_receipts(
-        vcs.as_ref(),
+    violations.extend(scan_clone_topology(
+        vcs,
         ctx.primary_path(),
-        if scope_all {
-            None
-        } else {
-            active_project_name.as_ref().map(|n| n.as_str())
-        },
-        &mut violations,
-    );
+        &input.known_repos,
+    ));
 
-    // Branch-discipline findings.
-    // JSON channel never auto-fixes; `--fix` is reserved for `run_check`.
-    // Scope: filter to active project unless scope_all (mirrors run_check).
-    for v in scan_branch_discipline(ctx.primary_path(), vcs.as_ref(), &input.projects) {
-        if !scope_all {
-            if let Some(ref active) = active_project_name {
-                if !branch_discipline_in_scope(
-                    &v,
-                    ctx.primary_path(),
-                    active.as_str(),
-                    &input.known_repos,
-                ) {
-                    continue;
-                }
+    // Both receipt scans read the primary's `.rwv-workweave-index` and the one
+    // physical refdb every linked worktree shares. There is no per-weave copy,
+    // so which weave invoked doctor does not enter into it.
+    scan_dangling_receipts(vcs, ctx.primary_path(), project_scope, &mut violations);
+    scan_pre_flat_receipts(ctx.primary_path(), project_scope, &mut violations);
+
+    for v in scan_branch_discipline(ctx.primary_path(), vcs, &input.projects) {
+        if let Some(active) = project_scope {
+            if !branch_discipline_in_scope(&v, ctx.primary_path(), active, &input.known_repos) {
+                continue;
             }
         }
         violations.push(v);
     }
 
-    // Index-drift + working-tree-drift detection. Same scan list as
-    // `run_check`: CWD workspace repos plus, from the primary weave, every
-    // known workweave. Dedupe by `(workweave, abs)` so multiple projects
-    // referencing the same physical worktree don't multiply git subprocess
-    // cost. Drift is classified via [`classify_drift`] (single `git status`
-    // fast-path for clean worktrees).
+    // Index-drift and working-tree-drift over every materialized worktree a
+    // manifest names, plus — from primary — each workweave's copy. Deduped by
+    // `(workweave, abs)` so repos shared between projects cost one round of
+    // git subprocesses, and classified in a single pass by `classify_drift`.
     let mut workweave_dirs: std::collections::HashMap<WorkweaveName, std::path::PathBuf> =
         std::collections::HashMap::new();
     let mut index_scan: Vec<(Option<WorkweaveName>, std::path::PathBuf, RepoPath)> = Vec::new();
@@ -8806,11 +8110,21 @@ fn collect_doctor_violations(
     }
     drop(scan_seen);
 
-    for (ww_label, repo_abs, repo_path) in &index_scan {
-        // Pre-flight: detect a missing canonical clone before attempting any
-        // git classification — same logic as the human-facing `run_check`.
-        // Only linked worktrees (workweave repos, ww_label == Some) can have a
-        // missing canonical.
+    let total_scans = index_scan.len();
+    let progress_every = total_scans.div_ceil(20).max(1);
+    if progress == ScanProgress::Heartbeat && total_scans > 0 {
+        eprintln!("doctor: scanning {total_scans} worktree(s) for drift...");
+    }
+
+    for (i, (ww_label, repo_abs, repo_path)) in index_scan.iter().enumerate() {
+        if progress == ScanProgress::Heartbeat && total_scans >= 50 && (i + 1) % progress_every == 0
+        {
+            eprintln!("doctor: scanned {}/{total_scans}", i + 1);
+        }
+        // A linked worktree whose canonical store was removed out-of-band
+        // fails every git command in it; classifying first would misreport
+        // that as live edits. Only workweave entries can have one — a primary
+        // entry IS the canonical store.
         if let Some(ww_name) = ww_label {
             if let Some(canonical_path) = worktree_canonical_clone_missing(repo_abs) {
                 violations.push(CheckViolation::MissingCanonicalClone {
@@ -8818,7 +8132,7 @@ fn collect_doctor_violations(
                     repo: repo_path.clone(),
                     canonical_path,
                 });
-                continue; // skip drift classification for this worktree
+                continue;
             }
         }
 
@@ -8839,9 +8153,9 @@ fn collect_doctor_violations(
         }
     }
 
-    // State hygiene: stale worktree registrations, stale `.rwv-op`,
-    // orphaned savepoints. Builds the same enumeration the human-facing
-    // `run_check` uses, plus the project repos.
+    // State hygiene widens the drift enumeration by the project repos:
+    // `projects/<name>/` is itself a git repo and carries savepoints, but is
+    // not a `repositories:` entry so the manifest walk above misses it.
     let mut hygiene_targets: Vec<StateHygieneScanTarget> = index_scan
         .iter()
         .map(|(ww, abs, repo)| StateHygieneScanTarget {
@@ -8850,22 +8164,19 @@ fn collect_doctor_violations(
             repo: repo.clone(),
         })
         .collect();
-    let mut hygiene_seen_proj: std::collections::HashSet<(
-        Option<WorkweaveName>,
-        std::path::PathBuf,
-    )> = index_scan
-        .iter()
-        .map(|(ww, abs, _)| (ww.clone(), abs.clone()))
-        .collect();
+    let mut hygiene_seen: std::collections::HashSet<(Option<WorkweaveName>, std::path::PathBuf)> =
+        index_scan
+            .iter()
+            .map(|(ww, abs, _)| (ww.clone(), abs.clone()))
+            .collect();
     for project in &input.projects {
-        let pname = project.name.as_str();
-        let project_rel = format!("projects/{pname}");
+        let project_rel = format!("projects/{}", project.name);
         let project_repo_path = match RepoPath::new(project_rel.clone()) {
             Ok(rp) => rp,
             Err(_) => continue,
         };
         let project_abs = workspace_dir.join(&project_rel);
-        if project_abs.is_dir() && hygiene_seen_proj.insert((None, project_abs.clone())) {
+        if project_abs.is_dir() && hygiene_seen.insert((None, project_abs.clone())) {
             hygiene_targets.push(StateHygieneScanTarget {
                 workweave: None,
                 abs: project_abs,
@@ -8875,7 +8186,7 @@ fn collect_doctor_violations(
         for (ww_name, ww_dir) in workweave_dirs.iter() {
             let ww_project_abs = ww_dir.join(&project_rel);
             if ww_project_abs.is_dir()
-                && hygiene_seen_proj.insert((Some(ww_name.clone()), ww_project_abs.clone()))
+                && hygiene_seen.insert((Some(ww_name.clone()), ww_project_abs.clone()))
             {
                 hygiene_targets.push(StateHygieneScanTarget {
                     workweave: Some(ww_name.clone()),
@@ -8885,7 +8196,7 @@ fn collect_doctor_violations(
             }
         }
     }
-    drop(hygiene_seen_proj);
+    drop(hygiene_seen);
 
     let mut hygiene_op_state_targets: Vec<StateHygieneOpStateTarget> =
         vec![StateHygieneOpStateTarget {
@@ -8902,21 +8213,20 @@ fn collect_doctor_violations(
         }
     }
 
-    let hygiene_violations =
-        scan_state_hygiene(vcs.as_ref(), &hygiene_targets, &hygiene_op_state_targets);
-    violations.extend(hygiene_violations);
+    violations.extend(scan_state_hygiene(
+        vcs,
+        &hygiene_targets,
+        &hygiene_op_state_targets,
+    ));
 
-    // Replay-exclusion check: each project repo should carry
-    // `rwv.lock merge=rwv-ours` in `.gitattributes`. A project still on
-    // the legacy `merge=ours` spelling reports missing too —
-    // `has_replay_exclusion` matches only the new needle so the legacy
-    // line drives the same `--fix`-migrates code path via the JSON
-    // channel that the text channel already exposes.
     for project in &input.projects {
         let project_repo = workspace_dir.join("projects").join(project.name.as_str());
         if !project_repo.is_dir() {
             continue;
         }
+        // `has_replay_exclusion` matches only the current needle, so a project
+        // still on the legacy spelling reports missing and drives the same
+        // `--fix` migration.
         if let Ok(false) = vcs.has_replay_exclusion(&project_repo, std::path::Path::new("rwv.lock"))
         {
             violations.push(CheckViolation::MissingReplayExclusion {
@@ -8925,7 +8235,16 @@ fn collect_doctor_violations(
         }
     }
 
-    Ok((violations, workspace_dir, workweave_dirs))
+    let repo_locations = hygiene_targets
+        .into_iter()
+        .map(|t| ((t.workweave, t.repo), t.abs))
+        .collect();
+
+    DoctorFindings {
+        violations,
+        workweave_dirs,
+        repo_locations,
+    }
 }
 
 /// Run `rwv doctor --json`.
@@ -8946,7 +8265,12 @@ pub fn run_check_json(
     ctx: &crate::workspace::WorkspaceContext,
     scope_all: bool,
 ) -> anyhow::Result<bool> {
-    let (violations, workspace_dir, workweave_dirs) = collect_doctor_violations(ctx, scope_all)?;
+    let world = load_doctor_world(ctx, scope_all)?;
+    let DoctorFindings {
+        violations,
+        workweave_dirs,
+        ..
+    } = collect_doctor_violations(ctx, &world, ScanProgress::Silent);
     let has_violations = !violations.is_empty();
     // Discover `rwv-*` executables on PATH for the inventory. This is
     // reporting only — the presence or absence of plugins never affects the
@@ -8954,7 +8278,7 @@ pub fn run_check_json(
     let plugins = crate::plugins::discover_plugins(None::<&std::ffi::OsStr>);
     let payload = build_doctor_json(
         violations,
-        &workspace_dir,
+        &world.workspace_dir,
         &workweave_dirs,
         ctx.resolution(),
         plugins,
