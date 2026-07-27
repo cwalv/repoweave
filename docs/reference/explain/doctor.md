@@ -241,7 +241,7 @@ Schema:
 ```json
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "title": "DoctorEnvelope",
+  "title": "DoctorJsonOutput",
   "description": "Output envelope for `rwv doctor --json`. By default only the active project is checked and orphan detection is skipped; pass `--all` to scan every project and enable weave-wide orphan detection. The `violations` array contains one entry per finding; an empty array means the checked scope is clean. The `plugins` array is the PATH inventory of `rwv-*` executables (reporting only — plugin presence never fails the doctor check or affects the exit code).",
   "type": "object",
   "required": [

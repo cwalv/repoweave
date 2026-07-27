@@ -41,12 +41,11 @@ use std::path::{Path, PathBuf};
 use clap::CommandFactory;
 use regex::Regex;
 use schemars::schema_for;
-use serde::Serialize;
 
-use repoweave::check::ViolationOutput;
+use repoweave::check::DoctorJsonOutput;
 use repoweave::cli::Cli;
 use repoweave::fetch::FetchJsonOutput;
-use repoweave::plugins::{envelope_vars, PluginRecord};
+use repoweave::plugins::envelope_vars;
 use repoweave::push::{PushJsonOutput, PUSH_SCHEMA_URL};
 use repoweave::status::StatusJsonOutput;
 use repoweave::sync::{
@@ -55,34 +54,6 @@ use repoweave::sync::{
 };
 use repoweave::update::{UpdateJsonOutput, UPDATE_SCHEMA_URL};
 use repoweave::workspace::Resolution;
-
-/// Output envelope for `rwv doctor --json`. By default only the active project
-/// is checked and orphan detection is skipped; pass `--all` to scan every
-/// project and enable weave-wide orphan detection. The `violations` array
-/// contains one entry per finding; an empty array means the checked scope is
-/// clean. The `plugins` array is the PATH inventory of `rwv-*` executables
-/// (reporting only — plugin presence never fails the doctor check or affects
-/// the exit code).
-#[derive(Serialize, schemars::JsonSchema)]
-#[allow(dead_code)]
-struct DoctorEnvelope {
-    #[serde(rename = "$schema")]
-    schema: String,
-    violations: Vec<ViolationOutput>,
-    /// `rwv-*` executables discovered on `PATH`. Each record carries the verb
-    /// name, absolute path, and a `shadowed` flag for duplicates: when the
-    /// same name appears in multiple `PATH` directories, the first copy wins
-    /// at exec time; later copies are marked `shadowed: true` with
-    /// `shadowed_by` pointing at the winning binary. Records are sorted by
-    /// `(name, path)` for deterministic output. An empty array means no
-    /// `rwv-*` executables were found. Never a failed check — the inventory
-    /// is the audit surface for the PATH trust boundary.
-    plugins: Vec<PluginRecord>,
-    /// Resolved workspace coordinates (workspace root, optional workweave
-    /// identity, project). Absent when no project is resolved.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    resolution: Option<Resolution>,
-}
 
 /// One explainable verb.
 struct Verb {
@@ -101,7 +72,7 @@ fn schema_status() -> String {
 }
 
 fn schema_doctor() -> String {
-    let schema = schema_for!(DoctorEnvelope);
+    let schema = schema_for!(DoctorJsonOutput);
     serde_json::to_string_pretty(&schema).expect("doctor schema serializes")
 }
 
@@ -109,7 +80,7 @@ fn schema_doctor() -> String {
 /// schema, walked from the schemars-derived doctor JSON Schema rather than a
 /// hand-typed list — so it cannot drift out of sync with the enum.
 fn doctor_violation_variants() -> Vec<(String, serde_json::Value)> {
-    let schema = schema_for!(DoctorEnvelope);
+    let schema = schema_for!(DoctorJsonOutput);
     let json = serde_json::to_value(&schema).expect("doctor schema serializes");
     json["definitions"]["ViolationOutput"]["oneOf"]
         .as_array()
@@ -193,7 +164,7 @@ fn externally_tagged_variant_tag(variant: &serde_json::Value) -> String {
 /// `ViolationOutput::WorkweaveTreeIntegrity::sub_kind`) rather than
 /// hand-typed.
 fn doctor_workweave_tree_integrity_subkind_list_md() -> String {
-    let schema = schema_for!(DoctorEnvelope);
+    let schema = schema_for!(DoctorJsonOutput);
     let json = serde_json::to_value(&schema).expect("doctor schema serializes");
     let (_, variant) = doctor_violation_variants()
         .into_iter()

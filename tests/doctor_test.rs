@@ -1530,7 +1530,11 @@ mod doctor_json {
             },
         ];
 
-        let payload = build_doctor_json(violations, &ws, &ww_dirs, None, vec![]);
+        // Serialized, not field-accessed: the assertions below are about the
+        // bytes an operator receives, not about the struct that produced them.
+        let payload =
+            serde_json::to_value(build_doctor_json(violations, &ws, &ww_dirs, None, vec![]))
+                .expect("doctor payload serializes");
         assert_eq!(
             payload.get("$schema").and_then(|s| s.as_str()),
             Some(DOCTOR_SCHEMA_URL)
@@ -1679,7 +1683,9 @@ mod doctor_json {
         ];
         let expected_len = violations.len();
 
-        let payload = build_doctor_json(violations, &ws, &no_ww, None, vec![]);
+        let payload =
+            serde_json::to_value(build_doctor_json(violations, &ws, &no_ww, None, vec![]))
+                .expect("doctor payload serializes");
         let arr = payload.get("violations").unwrap().clone();
         let parsed: Vec<WireViolation> = serde_json::from_value(arr).expect("round-trip failed");
         assert_eq!(parsed.len(), expected_len);

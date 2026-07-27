@@ -580,7 +580,16 @@ fn renders_as_text(v: CheckViolation) -> bool {
 fn renders_as_json(v: CheckViolation) -> bool {
     let mut workweave_dirs = HashMap::new();
     workweave_dirs.insert(workweave(), path("/ws/.workweaves/proj--feat-a"));
-    let doc = build_doctor_json(vec![v], &path("/ws"), &workweave_dirs, None, Vec::new());
+    // Serialized rather than field-accessed: parity is a claim about the two
+    // rendered surfaces, so this side must read the emitted JSON.
+    let doc = serde_json::to_value(build_doctor_json(
+        vec![v],
+        &path("/ws"),
+        &workweave_dirs,
+        None,
+        Vec::new(),
+    ))
+    .expect("doctor payload serializes");
     doc["violations"]
         .as_array()
         .and_then(|vs| vs.first())
