@@ -3781,4 +3781,221 @@ mod tests {
         assert!(input.hook_event_name.is_none());
         assert!(input.worktree_path.is_none());
     }
+
+    // -----------------------------------------------------------------------
+    // Receipt survival across the Vcs seam's failure arms
+    //
+    // Each of these turns on something a real repo will not do on request: a
+    // ref appearing inside the interval between classification and birth, and
+    // a destroy that fails. What they pin is the same question in three
+    // answers — whether the ownership receipt survives — because a receipt
+    // that outlives a ref rwv did not author claims it, and one retracted
+    // over a ref that may exist disowns it permanently.
+    //
+    // Every scenario is paired with the setup that reaches a different arm
+    // from the same double, so a fake that ignored its ref store would fail
+    // one of the pair rather than pass both.
+    // -----------------------------------------------------------------------
+
+    use crate::vcs::testing::{FakeVcs, VcsCall};
+    use crate::vcs::VcsError;
+
+    /// A distinct canonical revision per `hex` character.
+    fn fake_rev(hex: char) -> ResolvedRevisionId {
+        ResolvedRevisionId::from_canonical(hex.to_string().repeat(40), None)
+    }
+
+    /// A weave whose store is a plain directory, canonicalized: [`FakeVcs`]
+    /// keys refs on the path it is handed, and the receipt is keyed on the
+    /// canonical spelling.
+    fn fake_weave() -> (tempfile::TempDir, PathBuf, ProjectName, PathBuf) {
+        let tmp = tempfile::tempdir().unwrap();
+        let primary = tmp.path().join("ws");
+        let project = ProjectName::new("web-app").unwrap();
+        std::fs::create_dir_all(primary.join("projects/web-app")).unwrap();
+        let store = primary.join("github/org/repo");
+        std::fs::create_dir_all(&store).unwrap();
+        let store = store.canonicalize().unwrap();
+        (tmp, primary, project, store)
+    }
+
+    #[test]
+    fn a_ref_born_inside_the_window_is_adopted_and_its_receipt_retracted() {
+        let (_tmp, primary, project, store) = fake_weave();
+        let mut registry = RefRegistry::for_project(&primary, &project);
+        let ephemeral = EphemeralRefName::mint(&project, &WorkweaveName::new("ww").unwrap());
+        let raw = ephemeral.to_raw();
+
+        let fake = FakeVcs::new();
+        fake.before_next(VcsCall::MaterializeWorktreeOnRef, {
+            let (store, raw) = (store.clone(), raw.clone());
+            move |vcs| vcs.put_branch(&store, &raw, fake_rev('c'))
+        });
+
+        let outcome = birth_ephemeral_worktree(
+            &fake,
+            &mut registry,
+            &store,
+            &primary.join("wt"),
+            &ephemeral,
+            fake_rev('a'),
+        )
+        .unwrap();
+
+        assert_eq!(
+            fake.calls(),
+            vec![
+                VcsCall::ListBranchNamesWithPrefix,
+                VcsCall::ResolveLocalBranchTip,
+                VcsCall::MaterializeWorktreeOnRef,
+            ],
+            "no destroy and no refusal: classification ran first and found the name free"
+        );
+        assert!(registry.lookup(&store, &raw).unwrap().is_some());
+
+        let err = outcome.into_authored(&mut registry).unwrap_err();
+        assert!(
+            err.to_string().contains("adopted a ref rwv did not create"),
+            "unexpected error: {err}"
+        );
+        assert!(
+            registry.lookup(&store, &raw).unwrap().is_none(),
+            "an adopted ref is not rwv's, so its receipt must not survive"
+        );
+    }
+
+    #[test]
+    fn the_same_ref_standing_before_classification_refuses_instead() {
+        let (_tmp, primary, project, store) = fake_weave();
+        let mut registry = RefRegistry::for_project(&primary, &project);
+        let ephemeral = EphemeralRefName::mint(&project, &WorkweaveName::new("ww").unwrap());
+        let raw = ephemeral.to_raw();
+
+        let fake = FakeVcs::new();
+        fake.put_branch(&store, &raw, fake_rev('c'));
+
+        let err = match birth_ephemeral_worktree(
+            &fake,
+            &mut registry,
+            &store,
+            &primary.join("wt"),
+            &ephemeral,
+            fake_rev('a'),
+        ) {
+            Err(e) => e,
+            Ok(_) => panic!("a ref rwv holds no receipt for must refuse, not be adopted"),
+        };
+
+        assert!(
+            err.to_string().contains("rwv holds no ownership receipt"),
+            "unexpected error: {err}"
+        );
+        assert_eq!(
+            fake.calls(),
+            vec![
+                VcsCall::ListBranchNamesWithPrefix,
+                VcsCall::ResolveLocalBranchTip,
+            ],
+            "the refusal must land before anything is written"
+        );
+        assert!(registry.lookup(&store, &raw).unwrap().is_none());
+    }
+
+    #[test]
+    fn a_birth_that_failed_keeps_its_receipt() {
+        let (_tmp, primary, project, store) = fake_weave();
+        let mut registry = RefRegistry::for_project(&primary, &project);
+        let ephemeral = EphemeralRefName::mint(&project, &WorkweaveName::new("ww").unwrap());
+        let raw = ephemeral.to_raw();
+
+        let fake = FakeVcs::new();
+        fake.fail_next(
+            VcsCall::MaterializeWorktreeOnRef,
+            VcsError::NotARepo(store.clone()),
+        );
+
+        let outcome = birth_ephemeral_worktree(
+            &fake,
+            &mut registry,
+            &store,
+            &primary.join("wt"),
+            &ephemeral,
+            fake_rev('a'),
+        )
+        .unwrap();
+        assert!(outcome.failure.is_some());
+
+        let err = outcome.into_authored(&mut registry).unwrap_err();
+        assert!(
+            err.to_string().contains("is not a vcs repository"),
+            "the birth's own failure must be what surfaces: {err}"
+        );
+        assert!(
+            registry.lookup(&store, &raw).unwrap().is_some(),
+            "the ref may exist regardless, and only a receipt can authorize removing it later"
+        );
+    }
+
+    #[test]
+    fn a_destroy_that_failed_leaves_the_receipt_standing() {
+        let (_tmp, primary, project, store) = fake_weave();
+        let mut registry = RefRegistry::for_project(&primary, &project);
+        let ephemeral = EphemeralRefName::mint(&project, &WorkweaveName::new("ww").unwrap());
+        let raw = ephemeral.to_raw();
+        registry
+            .record_created(&store, ephemeral.clone(), fake_rev('a'))
+            .unwrap();
+
+        let fake = FakeVcs::new();
+        fake.put_branch(&store, &raw, fake_rev('a'));
+        fake.declare_ancestor(&fake_rev('a'), &fake_rev('b'));
+        fake.fail_next(VcsCall::DestroyLocalRef, VcsError::NotARepo(store.clone()));
+
+        retire_recorded_refs(
+            &fake,
+            &mut registry,
+            &store,
+            &ephemeral,
+            "github/org/repo",
+            &[fake_rev('b')],
+            None,
+        );
+
+        assert!(
+            fake.branch_tip(&store, &raw).is_some(),
+            "the destroy failed, so the ref is still there"
+        );
+        assert!(
+            registry.lookup(&store, &raw).unwrap().is_some(),
+            "retracting over a ref that survived would disown it permanently"
+        );
+    }
+
+    #[test]
+    fn a_destroy_that_succeeded_retracts_the_receipt() {
+        let (_tmp, primary, project, store) = fake_weave();
+        let mut registry = RefRegistry::for_project(&primary, &project);
+        let ephemeral = EphemeralRefName::mint(&project, &WorkweaveName::new("ww").unwrap());
+        let raw = ephemeral.to_raw();
+        registry
+            .record_created(&store, ephemeral.clone(), fake_rev('a'))
+            .unwrap();
+
+        let fake = FakeVcs::new();
+        fake.put_branch(&store, &raw, fake_rev('a'));
+        fake.declare_ancestor(&fake_rev('a'), &fake_rev('b'));
+
+        retire_recorded_refs(
+            &fake,
+            &mut registry,
+            &store,
+            &ephemeral,
+            "github/org/repo",
+            &[fake_rev('b')],
+            None,
+        );
+
+        assert!(fake.branch_tip(&store, &raw).is_none());
+        assert!(registry.lookup(&store, &raw).unwrap().is_none());
+    }
 }

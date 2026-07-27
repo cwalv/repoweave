@@ -13,6 +13,9 @@ use std::fmt;
 use std::io;
 use std::path::{Path, PathBuf};
 
+#[cfg(test)]
+pub(crate) mod testing;
+
 /// A resolved commit identifier — `canonical` is always a 40-hex SHA.
 ///
 /// `display` optionally preserves a tag/branch name when the value was
