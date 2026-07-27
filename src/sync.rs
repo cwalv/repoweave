@@ -1289,10 +1289,10 @@ fn materialize_missing_repo(
     Ok(())
 }
 
-/// R4 (§3.3): refuse to destroy `store` while anything still claims it.
+/// R4: refuse to destroy `store` while anything still claims it.
 ///
 /// A store-level destroy takes out every ref and every object at once, so
-/// no ref-level rule can gate it (§3.2, DESTROY-STORE). Two things must
+/// no ref-level rule can gate it. Two things must
 /// both be true first:
 ///
 /// - **No live worktree is registered against the store.** `git worktree
@@ -1386,7 +1386,7 @@ fn check_store_unclaimed(
 /// incidentally the only thing that has been keeping `remove_dir_all` off a
 /// live workweave's object store, so excluding recorded rwv refs from its
 /// predicate would remove that protection. Unblocking prune is not a payoff
-/// of ownership-by-receipt (§5, `prune_dropped_repo` row). What R2 adds here
+/// of ownership-by-receipt. What R2 adds here
 /// is [`check_store_unclaimed`] in *front* of the destroy, not a relaxation
 /// behind it.
 fn prune_dropped_repo(
@@ -1434,7 +1434,7 @@ fn prune_dropped_repo(
                 // inverted topology (docs/explanation/joints/clone-topology.md,
                 // I1) a workweave checkout can itself be the standalone clone holding the
                 // repo's only object database, and `remove_dir_all` on that is
-                // a DESTROY-STORE (§3.2), not a checkout removal. It is also
+                // a DESTROY-STORE, not a checkout removal. It is also
                 // one this arm could not discharge if it wanted to — with no
                 // canonical to compare against, the divergence refusal above
                 // is not merely skipped here, it is unavailable, so nothing
@@ -1524,7 +1524,7 @@ fn prune_dropped_repo(
                      push them and re-run, or remove manually"
                 );
             }
-            // DESTROY-STORE (§3.2): `dest` in the primary IS the canonical
+            // DESTROY-STORE: `dest` in the primary IS the canonical
             // store — the refdb and object database every workweave worktree
             // of this repo is registered in. R4 gates it.
             check_store_unclaimed(&dest, ctx.primary_path(), project_name, repo_path)?;
@@ -2036,7 +2036,7 @@ fn next_after_advance_target(ctx: &OpContext<'_>) -> Option<op_state::OpPhase> {
 /// `cwd_workspace_name_str` in Savepoint and the auto-relock line, and so on),
 /// so nameable field access is easier to review than positional indices.
 struct PreconditionOutcome {
-    /// Source pinned at T₀ (§6 snapshot reads).
+    /// Source pinned at T₀ by a snapshot read.
     snapshot: SourceSnapshot,
     /// CWD's parsed project (manifest + lock, if present).
     cwd_project: Project,
@@ -2119,7 +2119,7 @@ fn run_preconditions_after_acquire(
         }
         MachineVerb::SyncTo => {
             // sync-to preflights (all refuse before any side effects):
-            //   - dirty-source (§1): CWD-side tracked dirt would go stale mid-rebase.
+            //   - dirty-source: CWD-side tracked dirt would go stale mid-rebase.
             //   - dirty-target: the target's uncommitted work advance-target overwrites.
             //   - detached-target: advance-target would have no branch to land on.
             // Source before target: the operator's own workspace is the first thing they
@@ -2147,7 +2147,7 @@ fn run_preconditions_after_acquire(
     }
 
     // Pin the source snapshot now so the remaining replay preconditions are
-    // all reads against a coherent T0. This is the §6 "snapshot reads"
+    // all reads against a coherent T0. This is the "snapshot reads"
     // mechanism: one atomic ref read pins source; manifest + lock are read
     // at that revision; everything downstream is content-addressed.
     let snapshot = pin_source_snapshot(source_project_dir)?;
@@ -2158,14 +2158,14 @@ fn run_preconditions_after_acquire(
         .context("failed to load CWD project for guard preconditions")?;
     let cwd_workspace_name_str = workspace_name(cwd_ctx);
 
-    // === Benign-staleness classification (§2, Correction 2) ===
+    // === Benign-staleness classification ===
     //
     // Classify each side's committed lock↔HEAD relation with the SAME per-repo
     // vocabulary `rwv status` uses ([`LockRelation`]). Recall the terminology
     // inversion: the spec's benign "lock behind HEAD" is `LockRelation::Ahead`
     // (tip ahead of lock). `--allow-stale-lock` bypasses the whole gate.
     //
-    // Scope of the benign relaxation (kept to the spec's EXPLICIT §2 bullets):
+    // Scope of the benign relaxation:
     //   - sync-to (landing): CWD is the landing set. A lock-behind-HEAD (`Ahead`)
     //     CWD repo auto-relocks at op start (below), LOUD line per repo with
     //     commit count. Every other non-`ok` CWD relation refuses.
@@ -2439,7 +2439,7 @@ fn guard_and_mark<'a>(
 
     // source_workspace_dir is the operator's arg for both verbs (sync's <src>
     // and sync-to's <tgt> — replay pulls from there in either case).
-    // `source_is_workweave` scopes tips-as-truth (§2): a `behind` source lock is
+    // `source_is_workweave` scopes tips-as-truth: a `behind` source lock is
     // pulled-as-tips only when the source is workweave-typed; a primary-weave
     // source keeps the refusal (a reproducibility-sensitive locked-snapshot pull
     // from the primary must not silently take live tips over its committed lock).
@@ -2572,7 +2572,7 @@ fn guard_and_mark<'a>(
         record.overrides.push("allow-stale-lock".to_owned());
     }
     if phase1_ancestor_bypassed {
-        // §7-style named consent: --discard-local-commits will discard
+        // Named consent: --discard-local-commits will discard
         // reachable project commits in Phase 1'. Recorded in the audit-trail
         // `overrides` field so cleanup preserves the project savepoint as a
         // tombstone and --continue resumes with the same consent.
@@ -2653,7 +2653,7 @@ fn guard_and_mark<'a>(
         }
     }
 
-    // === Op-start auto-relock (§2, sync-to landing) ===
+    // === Op-start auto-relock (sync-to landing) ===
     //
     // Runs AFTER savepoints so abort can roll the relock commit back with the
     // rest of the op. When CWD's manifest repos have a lock behind HEAD (relation
@@ -2736,9 +2736,9 @@ fn load_continuing_context<'a>(
     // The literal invocation context is only used to locate op-state; it lets
     // `op_state::resume` follow a lease pointer (when `--continue` was invoked
     // from the leased target). Everything the engine consumes is rooted at the
-    // OWNER below — design §3: "`--continue` / `abort` invoked from a leased
-    // workspace follow the pointer to the owner record and operate identically
-    // to owner-side invocation."
+    // OWNER below: `--continue` / `abort` invoked from a leased workspace
+    // follow the pointer to the owner record and operate identically to
+    // owner-side invocation.
     let invocation_workspace_dir = invocation_ctx.active_path().to_path_buf();
 
     let (record, owner_workspace_dir) = op_state::resume(&invocation_workspace_dir)?;
@@ -3270,7 +3270,7 @@ fn check_dirty_preflight_sync(
 ///   the intent recorded in the spec (a scratch file must not block a landing).
 ///   Only tracked modifications (staged or unstaged) refuse.
 /// - **Carve-out:** a dirty `projects/<p>/rwv.lock` *alone* is NOT dirt — it is
-///   the auto-relock's own input (§2) and the op commits it. A project repo that
+///   the auto-relock's own input and the op commits it. A project repo that
 ///   is dirty *only* in `rwv.lock` passes; any other tracked project-repo change
 ///   still refuses (and the project entry names the specific files so the lock
 ///   carve-out is auditable).
@@ -3490,11 +3490,11 @@ fn unresolvable_lock_refusal(
 /// destination whose lock is behind HEAD). Returns `None` when `offending` is
 /// empty (nothing to refuse).
 ///
-/// Preserves the documented `lock-freshness precondition` phrase (cli.md §sync
-/// `--allow-stale-lock` row), the "stale lock" wording, the `--project <p>`-
-/// qualified recovery hint, and the `--allow-stale-lock` escape
-/// hatch, while additionally NAMING each repo's relation (§2 guardrail). A
-/// `diverged` repo also earns the `rwv lock --commit` bless-HEAD hint.
+/// The `lock-freshness precondition` phrase, the "stale lock" wording and
+/// the `--allow-stale-lock` name are contractual: `tests/benign_staleness_test.rs`
+/// and `tests/doc_claims_sync_to_test.rs` assert on them, so a reworded
+/// refusal fails the gate. On top of that this names each repo's relation,
+/// and a `diverged` repo also earns the `rwv lock --commit` bless-HEAD hint.
 fn lock_relation_refusal(
     side: Side,
     workspace_name: &str,
@@ -3563,7 +3563,7 @@ fn lock_relation_refusal(
 // partial-failure reporting live inside this phase — the `--json` / NDJSON
 // contracts are byte-compatible with the pre-restructure shape.
 //
-// **Re-entry rule (§4):** per-repo state is derived from the VCS itself:
+// **Re-entry rule:** per-repo state is derived from the VCS itself:
 // - repo at its savepoint → redo the strategy (no-op for already-clean cases);
 // - repo mid-conflict → leave the VCS-native continue/abort to the operator;
 // - repo already at the converged target → no-op (HEAD == lock target).
@@ -3591,7 +3591,7 @@ fn run_replay(ctx: &OpContext<'_>) -> anyhow::Result<()> {
     }
 
     // Snapshot was pinned in guard (or re-pinned on --continue). Re-entry
-    // rule (§4): per-repo state is derived from the VCS itself — already-
+    // rule: per-repo state is derived from the VCS itself — already-
     // converged repos no-op via `sync_one_repo`'s head-equals-target check.
     let snapshot = &ctx.snapshot;
 
@@ -3736,12 +3736,12 @@ fn run_replay(ctx: &OpContext<'_>) -> anyhow::Result<()> {
     // current HEAD is a STRICT ancestor of the lock target (head ≠ target AND
     // head ⊏ target), this is a genuine fast-forward and the landing tip is
     // knowable now.  Pre-write target → advanced_tips so abort can attribute the
-    // repo the instant it is advanced, with no window (§4 case 1).
+    // repo the instant it is advanced, with no window.
     //
     // Repos whose HEAD equals target (NoOp) or whose HEAD is ahead of target
     // (AlreadyAhead) are skipped — savepoint already attributes the no-op case,
-    // and recording an unreached target for an already-ahead repo is forgeable
-    // (§10 Q4).  Repos with local commits that diverge (not strict ancestors)
+    // and recording an unreached target for an already-ahead repo is
+    // forgeable.  Repos with local commits that diverge (not strict ancestors)
     // are skipped here; their fresh rebased tip is captured post-join (write 3).
     {
         let mut entry_tips: std::collections::BTreeMap<String, String> =
@@ -3782,7 +3782,7 @@ fn run_replay(ctx: &OpContext<'_>) -> anyhow::Result<()> {
     // Return type: (is_failure, Option<actual_head_if_converged>).
     // The actual HEAD is read inside the closure (single-repo reads, no shared
     // state) and returned for the post-join batch write.  No write to the owner
-    // record happens inside this closure — that would be a race (§4).
+    // record happens inside this closure — that would be a race.
     let task_results: Vec<(bool, Option<String>)> =
         run_in_parallel(&sync_tasks, ctx.jobs, |_idx, task| {
             let outcome = sync_one_repo(&task.abs, &task.target, strategy);
@@ -3814,7 +3814,7 @@ fn run_replay(ctx: &OpContext<'_>) -> anyhow::Result<()> {
     //
     // Single-threaded post-join, so no race against write_owner.  Overwrites the
     // ff-pre-written entries (same value, idempotent) and captures fresh rebased
-    // SHAs for manifest repos that had local commits to replay (§4 case 2, §6).
+    // SHAs for manifest repos that had local commits to replay.
     // Must precede the any_failure bail so partially-advanced repos are captured
     // even when the overall fan-out fails.
     {
@@ -3862,7 +3862,7 @@ fn run_replay(ctx: &OpContext<'_>) -> anyhow::Result<()> {
         // discarding any project commits not reachable from source. Guard
         // already refused on uncommitted changes.
         //
-        // A rewinding MOVE (§3.2) needs a `DiscardWarrant`, and the warrant
+        // A rewinding MOVE needs a `DiscardWarrant`, and the warrant
         // needs a savepoint that has actually been written — not one that is
         // planned. `guard_and_mark` wrote it before this phase, which is what
         // keeps the discarded commits reachable through `rwv abort`, so this
@@ -3903,9 +3903,9 @@ fn run_replay(ctx: &OpContext<'_>) -> anyhow::Result<()> {
     //
     // Phase 1' may rebase CWD's project commits onto source_project_tip, landing
     // at a fresh SHA T1 that was not knowable at replay entry.  Overwrite
-    // advanced_tips["(project)"] with the actual post-rebase HEAD (§4 case 2,
-    // §6).  This also covers the ff/discard-local-commits case (tip == source
-    // tip, idempotent overwrite).
+    // advanced_tips["(project)"] with the actual post-rebase HEAD.  This also
+    // covers the ff/discard-local-commits case (tip == source tip, idempotent
+    // overwrite).
     {
         let project_tip = GitVcs
             .head_revision(&ctx.cwd_project_dir)
@@ -3929,7 +3929,7 @@ fn run_replay(ctx: &OpContext<'_>) -> anyhow::Result<()> {
 /// Pin the atomic source snapshot at T0: read the source project tip once,
 /// then read source manifest + lock AT that revision. Combined with the
 /// no-op-in-progress check on the source (in `check_no_op_in_progress`),
-/// source reads are effectively serialisable with no locks (§6).
+/// source reads are effectively serialisable with no locks.
 fn pin_source_snapshot(source_project_dir: &Path) -> anyhow::Result<SourceSnapshot> {
     let source_project_tip = GitVcs
         .head_revision(source_project_dir)
@@ -4073,7 +4073,7 @@ fn record_converged_tips(ctx: &OpContext<'_>, cwd_project: &Project) -> anyhow::
     }
     // ...then swap atomically: `PhaseTips::converge` discards the replay-phase
     // advanced_tips and installs converged_tips in one move, so they land in the
-    // SAME persist (§4 "Clearing order"). The ADT makes the both-populated state
+    // SAME persist. The ADT makes the both-populated state
     // unrepresentable, so the prior "clear advanced before populating converged"
     // ordering hazard cannot recur.
     owner.tips.converge(converged);
@@ -4464,7 +4464,7 @@ fn short_sha(sha: &str) -> &str {
 /// Phase 1' under `--discard-local-commits`: rewind the CWD project repo to
 /// `to`, discarding whatever it had that `to` does not reach.
 ///
-/// This is the rewinding MOVE of §3.2, so it is constructed rather than
+/// This is a rewinding MOVE, so its consent is constructed rather than
 /// merely intended: the `DiscardWarrant` pairs the savepoint `guard_and_mark`
 /// wrote with the operator's consent, and `reset_attached_ref` will not
 /// accept a savepoint taken in some other repo. Without both, there is no
@@ -4503,7 +4503,7 @@ fn rewind_project_repo(ctx: &OpContext<'_>, to: &ResolvedRevisionId) -> anyhow::
             .map_err(anyhow::Error::from)
             .context("project repo rewind (--discard-local-commits) failed"),
         // Already detached: repositioning HEAD changes no attachment, so it
-        // is a MOVE too (§3.2) — one subject to the mid-operation
+        // is a MOVE too — one subject to the mid-operation
         // precondition, because a repo parked mid-bisect or mid-rebase is
         // carrying operator state a silent reposition would destroy. The
         // savepoint above still stands; `advance_detached_head` takes no
@@ -4736,7 +4736,7 @@ pub fn run_abort(ctx: &WorkspaceContext) -> anyhow::Result<()> {
     // `advanced_tips` is the op's replay-phase intent: the planned target
     // (ff advances) or captured actual tip (rebased advances), written before
     // or right after each advance. Source/owner side only — target tips land
-    // in converged_tips post-relock (§7). Empty for pre-field records and
+    // in converged_tips post-relock. Empty for pre-field records and
     // once converged — graceful degradation to pre-change behavior. The
     // inactive half reads as an empty map so the `.get()` lookups below are
     // unchanged.
@@ -4871,7 +4871,7 @@ pub fn run_abort(ctx: &WorkspaceContext) -> anyhow::Result<()> {
                     if !checkout_is_syncable(&abs) {
                         continue;
                     }
-                    // Target-side repos: advanced_tips is source/owner side only (§7).
+                    // Target-side repos: advanced_tips is source/owner side only.
                     // Target tips land in converged_tips post-relock; no intent entry.
                     let converged = converged_tips.get(repo_path.as_str()).map(String::as_str);
                     match abort_one_repo(&abs, &extra_restore_id, None, converged) {
@@ -4892,7 +4892,7 @@ pub fn run_abort(ctx: &WorkspaceContext) -> anyhow::Result<()> {
                 match abort_one_repo(
                     &extra_project_dir,
                     &extra_restore_id,
-                    None, // target-side: no advanced_tips entry (§7)
+                    None, // target-side: no advanced_tips entry
                     extra_project_converged,
                 ) {
                     Ok(outcome) => report_abort_outcome(
@@ -4960,7 +4960,7 @@ pub fn run_abort(ctx: &WorkspaceContext) -> anyhow::Result<()> {
 
 /// Restore a single repo as part of `rwv abort`.
 ///
-/// Two rails (design § 5):
+/// Two rails:
 ///
 /// 1. **Pre-abort ref**: a durable reference at the repo's current tip is
 ///    written *before* any restore is attempted — abort is itself
@@ -5440,10 +5440,10 @@ fn ff_advance_line(advanced: Option<&AttachedRef>, tip: &ResolvedRevisionId) -> 
 /// The fetch-then-advance approach works for both worktrees (same object
 /// store, fetch is a no-op) and independent clones (fetch copies objects).
 ///
-/// # The landing target is a witness, not a path (§4.6(1))
+/// # The landing target is a witness, not a path
 ///
-/// The refusal below used to be the only thing standing between a detached
-/// target and a landing that referenced nothing. It is now also a *type*:
+/// The refusal below is not the only thing standing between a detached
+/// target and a landing that referenced nothing; it is also a *type*:
 /// the MOVE takes an [`AttachedRef`] and derives the repo it moves from
 /// that witness, so there is no signature in which the branch this function
 /// establishes and the repo it advances can come apart. `target_repo` is
@@ -5479,7 +5479,7 @@ fn ff_advance_repo(
     // Obtaining the witness IS the refusal: the MOVE below cannot be written
     // without one, and the only producer is a `head_attachment` read of this
     // repo. `Unborn` is a third state rather than a second spelling of
-    // detached (§4.5) — unreachable here, because a branch with no commits
+    // detached — unreachable here, because a branch with no commits
     // fails the `head_revision` read above, but it is answered rather than
     // folded in so the arm cannot be quietly re-collapsed.
     let on = match GitVcs
@@ -5559,7 +5559,7 @@ mod tests {
     use super::*;
 
     // -----------------------------------------------------------------------
-    // Fixtures for the branch-model tests below (§4.6(1), R4)
+    // Fixtures for the branch-model tests below
     // -----------------------------------------------------------------------
 
     /// Run git in `dir`, panicking on failure.
@@ -5599,7 +5599,7 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // ff_advance_repo — landing takes the target's witness (§4.6(1))
+    // ff_advance_repo — landing takes the target's witness
     //
     // This is the phase-body layer of the detached-target refusal, and it is
     // the layer that covers `sync-to --continue`: a resumed op re-enters at
@@ -5657,7 +5657,7 @@ mod tests {
 
     #[test]
     fn ff_advance_repo_refuses_to_land_onto_a_detached_target() {
-        // The §2.1 #1 loss chain: `merge --ff-only` against a detached HEAD
+        // The loss chain: `merge --ff-only` against a detached HEAD
         // moves HEAD alone and reports success, so the landing ends up
         // referenced by nothing — and `--retire` then force-deletes the
         // source's branch, the only other ref that was holding it.
@@ -5943,7 +5943,7 @@ mod tests {
 
     #[test]
     fn prune_dropped_repo_does_not_exempt_a_recorded_ref_from_the_local_only_refusal() {
-        // §5's prune row: recorded rwv refs are deliberately NOT excluded
+        // Recorded rwv refs are deliberately NOT excluded
         // from the local-only predicate. That refusal is incidentally the
         // only thing that has been keeping `remove_dir_all` off a live
         // workweave's object store, so ownership-by-receipt buys no
