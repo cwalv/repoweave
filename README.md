@@ -82,6 +82,8 @@ cd ../.workweaves/web-app--payments
 
 | Command | Description |
 |---|---|
+| `-C <path>`, `--cwd <path>` | Global: resolve the workspace as if invoked from `<path>` (precedes the subcommand) |
+| `-w <project>--<name>`, `--workweave <project>--<name>` | Global: address a workweave by name from anywhere (precedes the subcommand) |
 | `rwv` | Show current context (weave, project, workweave, repos) |
 | `rwv fetch <source>` | Clone a project and all its repos; align repos to `rwv.lock`; activate and install. `--frozen` errors if the lock is incomplete (CI) |
 | `rwv init <project>` | Create a new project with empty `rwv.yaml`. Optional `--provider registry/owner` sets up the remote |
@@ -97,12 +99,15 @@ cd ../.workweaves/web-app--payments
 | `rwv push` | Coordinated cross-repo push: manifest repos first, then project repo. `--dry-run` to preview; `--force` for force-push consent; `--role`/`--repo` selectors to limit scope |
 | `rwv update` | Advance each repo to its branch HEAD and re-snapshot `rwv.lock` (network bump; analogous to `cargo update`). `--commit` to commit the lock after writing it |
 | `rwv workweave <project> create <name>` | Create an isolated working copy (worktrees on ephemeral branches) |
+| `rwv workweave <project> set-container <path>` | Set the directory new workweaves for `project` are created under by default |
 | `rwv workweave <project> delete <name>` | Delete a workweave (remove worktrees, clean up ephemeral branches) |
 | `rwv workweave <project> list` | List workweaves for a project |
+| `rwv workweave <project> log` | Show this workweave's unique commits (or `--diff` for the diff) versus its recorded parent, per repo. `--json` for machine-readable output |
 | `rwv resolve` | Print the weave directory path (useful for scripting: `cd $(rwv resolve)`) |
 | `rwv prime` | Print structured workspace context for agent system prompts |
+| `rwv explain [<verb>]` | Print a markdown reflection bundle for `<verb>` (purpose, invocation, output, JSON Schema, exit codes, examples). Omit `<verb>` to list explainable verbs |
 | `rwv setup claude` | Register `rwv prime` as a Claude Code hook (SessionStart + PreCompact) |
-| `rwv setup agents-md` | Generate `AGENTS.md` at the weave directory for Cursor, Copilot, and other agents |
+| `rwv setup agents-md` | Generate `AGENTS.md` at the workspace root for Cursor, Copilot, and other agents |
 | `rwv completions <shell>` | Generate shell completions (bash, zsh, fish, etc.) |
 
 ### Shell completions

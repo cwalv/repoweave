@@ -92,6 +92,7 @@ Realignment refuses when it cannot do that: when the pin is not a fast-forward o
 |---|---|
 | `--frozen` | Error if lock is incomplete; never advance. Suitable for CI |
 | `--allow-non-empty-dir` | Bootstrap into a non-empty directory that is not a workspace |
+| `--no-reference` | Skip cloning/fetching repositories with `role: reference` |
 | `--detach-checkouts` | Realign a present clone even where that changes what HEAD is attached to: materialize the pin on a detached HEAD instead of refusing |
 | `--role` / `--repo` | Selector filters (see [Selector grammar](#selector-grammar)). A filtered run skips the lock write |
 | `-j N` | Parallel per-repo workers (default: min(nproc, 8)) |
@@ -144,7 +145,11 @@ Pure git SHA snapshot — no integration hooks fire. To refresh ecosystem lockfi
 
 ### `rwv activate <project>`
 
-Set the active project. Updates `.rwv-active`, regenerates ecosystem workspace files in the project directory, symlinks them to the weave directory.
+Set the active project. Updates `.rwv-active`, regenerates ecosystem workspace files in the project directory, symlinks them to the weave directory, then runs integration install hooks (`npm install`, `uv sync`, `cargo generate-lockfile`, etc.).
+
+| Flag | Effect |
+|---|---|
+| `--no-install` | Skip integration install hooks for a fast context-switch |
 
 `.rwv-active` is the single source of truth for the active project; CWD does not override.
 
@@ -158,7 +163,7 @@ When invoked in an **empty directory**, `init` bootstraps that directory as a wo
 
 With `--adopt`, `<name-or-source>` is a URL or `owner/repo` shorthand: `init` clones the project repo from that source instead of `git init`-ing a new one (brownfield adoption of an existing project repo).
 
-### `rwv add <url> [--role <role>] [--new]`
+### `rwv add <url> [...]`
 
 Clone a repo (if not present), register it in the *active workspace*'s `rwv.yaml`, run integration hooks.
 
@@ -166,6 +171,7 @@ Clone a repo (if not present), register it in the *active workspace*'s `rwv.yaml
 |---|---|
 | `--role <role>` | Sets the role (`owned` / `fork` / `dependency` / `reference`). Defaults to `owned`. |
 | `--new` | Init a new local repo at canonical path; infer URL from path convention |
+| `--project <name>` | Operate on this project instead of the active project (does not change `.rwv-active`) |
 
 `rwv add` writes to CWD's workspace's manifest (the active workspace's `rwv.yaml`), not always primary's.
 
@@ -173,7 +179,7 @@ Clone a repo (if not present), register it in the *active workspace*'s `rwv.yaml
 
 **Shared-clone warning.** If the target clone directory is already registered by another project in the same weave, `rwv add` proceeds (the manifest entry is added to the active project as usual) and emits a warning to stderr naming the other project(s). Sharing a clone across projects is legal — the same repo can be a `dependency` in one project and `owned` in another — but is worth flagging so accidental double-registration is visible.
 
-### `rwv remove <path> [--delete] [--delete-shared-clone]`
+### `rwv remove <path> [...]`
 
 Remove from `rwv.yaml`, re-run activation (regenerates ecosystem workspace files).
 
@@ -181,6 +187,7 @@ Remove from `rwv.yaml`, re-run activation (regenerates ecosystem workspace files
 |---|---|
 | `--delete` | Also remove the clone (errors if another project references it) |
 | `--delete-shared-clone` | With `--delete`, remove the clone even if other projects still reference it |
+| `--project <name>` | Operate on this project instead of the active project (does not change `.rwv-active`) |
 
 ### `rwv sync <source> [...]`
 
@@ -245,6 +252,7 @@ Coordinated cross-repo push. Default scope: `owned` and `fork` repos (the roles 
 | `-j N` | Parallel push (up to N concurrent for manifest repos; project repo always last and serial) |
 | `--json` / `-j N` | Structured output / parallel push (NDJSON when N > 1) |
 | `--dry-run` | Print the push plan without executing |
+| `--project <name>` | Operate on this project instead of the active project (does not change `.rwv-active`) |
 
 `--json` emits the envelope `{"$schema": "...", "outcomes": [...]}`. Manifest-repo records use `kind` `pushed`, `skipped`, or `failed`; the project-repo record (always last) uses `kind` `project-repo-pushed` or `project-repo-failed`. See [JSON envelope convention](#--json-envelope-convention).
 
@@ -259,6 +267,11 @@ Errors if no sync operation is in progress.
 ### `rwv status [--json] [...]`
 
 Show per-repo state for the CWD workspace.
+
+| Flag | Effect |
+|---|---|
+| `--json` | Output as JSON (see envelope below) |
+| `--project <name>` | Operate on this project instead of the active project (does not change `.rwv-active`) |
 
 | Column | Values |
 |---|---|
@@ -284,6 +297,10 @@ Convention audit. Reports orphaned clones, dangling references, missing roles, s
 | `--locked` | Zero exit iff every repo tip matches its lock entry (precondition for `rwv sync`) |
 | `--fix` | Auto-remediate safely-fixable findings: index drift, working-tree drift, missing `rwv.lock merge=rwv-ours` replay-exclusion (including migration from the legacy `merge=ours` spelling — auto-commits when the repo has no other staged changes) and its paired durable `merge.rwv-ours.driver` config, and legacy `role: primary` manifest spellings. Never touches live staged content or live edits. Idempotent. |
 | `--json` | Emits envelope `{"$schema": "...", "violations": [...]}` |
+| `--all` | Scan all projects and run weave-wide checks (orphan detection, cross-project stale locks, etc.). By default only the active project is checked |
+| `--reattach-checkouts` | With `--fix`, reattach a canonical store's detached HEAD to its tracking counterpart when that counterpart exists and its tip equals HEAD. Without this flag, `--fix` only reports a detached canonical, naming the `git switch` that would reattach it |
+| `--adopt-detached-checkouts` | With `--fix`, let the branch-model migration mint a workweave's ephemeral branch at a detached checkout's HEAD (the lock SHA), giving up a pre-flat branch holding that name if one exists (warns if doing so strands commits HEAD does not carry). Without this flag, `--fix` reports both tips and leaves the checkout alone |
+| `--project <name>` | Operate on this project instead of the active project (does not change `.rwv-active`) |
 
 | Check | Description |
 |---|---|
@@ -339,6 +356,17 @@ Show this workweave's unique commits versus its recorded parent, per repo, inclu
 | `--json` | Emit machine-readable JSON |
 
 Text output includes one `=== <path> ===` section per manifest repo followed by `=== (project) ===` for the project repo. JSON output adds a `project_repo` field at the top level (same shape as each element of `repos[]`, `path` set to `"(project)"`).
+
+### `rwv workweave [--hook-mode] [--claude-hook] <project> <action>`
+
+Two flags on `workweave` itself, preceding `<project>` — not part of any subaction — for driving workweave creation and teardown from Claude Code's own hook events instead of the shell.
+
+| Flag | Effect |
+|---|---|
+| `--hook-mode` | With `create`, print only the new workweave's path to stdout instead of the usual create output. Registered by `rwv setup claude` as the Claude Code `WorktreeCreate` hook command |
+| `--claude-hook` | Read a Claude Code hook payload as JSON from stdin and dispatch on it directly, bypassing `<project>` and `<action>` entirely. `hook_event_name: "WorktreeCreate"` creates a workweave — project inferred from the hook's `cwd` (the current workweave's project, or the primary weave's active project), name derived from `branch_name` (falling back to a timestamp) — and prints its path to stdout. `"WorktreeRemove"` deletes the workweave named by `worktree_path`; fire-and-forget, warnings go to stderr and it always exits `0`. `<project>` is not required when this flag is set. Conflicts with `--hook-mode` |
+
+`rwv setup claude` registers `rwv workweave --claude-hook` for both the `WorktreeCreate` and `WorktreeRemove` Claude Code hook events.
 
 ### Scripting helpers
 
@@ -401,7 +429,7 @@ The pointer is total at primary by construction: every path that creates a proje
 
 ### Target line — visibility when the pointer decides
 
-When resolution falls through to step 4, the verb prints a target line to **stderr** before acting:
+When resolution falls through to step 3, the verb prints a target line to **stderr** before acting:
 
 ```
 target: workspace /home/cwa/weaveroot/foundations · project tmuxcc (.rwv-active)
