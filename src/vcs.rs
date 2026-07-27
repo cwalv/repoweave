@@ -323,7 +323,7 @@ pub enum VcsError {
     /// The repo is mid-operation and the requested ref write would yank
     /// operator state out from under it.
     ///
-    /// A MOVE of an already-detached HEAD refuses here (§3.6): "rwv
+    /// A MOVE of an already-detached HEAD refuses here: "rwv
     /// detached this HEAD at a lock SHA" and "the operator is mid-bisect /
     /// stopped at a `rebase -i` edit" are different situations, and only
     /// the first is rwv's to move.
@@ -586,7 +586,7 @@ pub enum VerifiedRestoreOutcome {
 }
 
 // ===========================================================================
-// The branch model (branch-model.md §4)
+// The branch model
 // ===========================================================================
 //
 // `RefName` above is one type standing in for four different notions: the
@@ -599,8 +599,7 @@ pub enum VerifiedRestoreOutcome {
 // already made in this file: one parse boundary, one refined value per
 // notion, no cross-type comparison, and a `compile_fail` doctest per
 // invariant so a later "make it easier" `PartialEq`/`From` impl fails CI
-// rather than passing review. See §4.1 for the precedent and §4.2 for the
-// table these types implement.
+// rather than passing review.
 //
 // `RefName` and the trait methods that take it are NOT removed here: the
 // old and new surfaces run side by side until every call site has been
@@ -654,7 +653,7 @@ pub enum RefNameError {
     /// The name is empty.
     Empty,
     /// The name is commit-id shaped. `version:` declares what to TRACK;
-    /// the lock records where you ARE (§8.8) — a pin needs a different
+    /// the lock records where you ARE — a pin needs a different
     /// field, not an overloaded one.
     ShaShaped(String),
     /// The name is release-tag shaped. Same reason as [`Self::ShaShaped`]:
@@ -709,9 +708,9 @@ fn is_sha_shaped(s: &str) -> bool {
 /// True for release-shape names (e.g. `v1.2.3`, `v0.3.4-rc1`).
 ///
 /// Two callers, deliberately sharing one definition: [`TrackingRef::parse`]
-/// rejects names of this shape (§8.8 — `version:` is a declaration, not a
-/// pin), and [`crate::git::GitVcs::tag_at_head`] uses it as a tiebreaker so
-/// a release tag wins over an arbitrary lightweight tag. Both are asking
+/// rejects names of this shape (`version:` is a declaration, not a pin), and
+/// [`crate::git::GitVcs::tag_at_head`] uses it as a tiebreaker so a release
+/// tag wins over an arbitrary lightweight tag. Both are asking
 /// "does this read as a release tag"; one answer.
 pub(crate) fn is_release_shape_name(s: &str) -> bool {
     let rest = match s.strip_prefix('v') {
@@ -793,7 +792,7 @@ pub(crate) fn validate_ref_name(s: &str) -> Result<(), RefNameError> {
 /// A `TrackingRef` is a statement of intent about a *remote* channel. It is
 /// not a claim that any local ref of that name exists, and it is not a
 /// revision — [`TrackingRef::parse`] refuses commit-id-shaped and
-/// tag-shaped input for exactly that reason (§8.8).
+/// tag-shaped input for exactly that reason.
 ///
 /// # Display only, deliberately
 ///
@@ -941,7 +940,7 @@ impl fmt::Display for LocalRefName {
 /// [`EphemeralRefName::mint`] is total and takes exactly two inputs — a
 /// project and a workweave. There is no third component: the three
 /// derivation sites in the tree disagreed about what it should be, no
-/// consumer read it, and §3.5 deletes it rather than picking a winner.
+/// consumer read it, and it was deleted rather than a winner picked.
 /// Nothing observed can be fed in, so a name can never be derived from the
 /// branch a checkout happens to be on.
 ///
@@ -984,13 +983,13 @@ impl fmt::Display for EphemeralRefName {
 }
 
 /// An observed ref that a **live** workweave's own minted namespace claims —
-/// the only observed name `branch-model.md` §7.1's migration may adopt into
-/// a receipt.
+/// the only observed name the migration may adopt into a receipt.
 ///
-/// Before §3.5 flattened the scheme, rwv minted `{project}--{workweave}/<segment>`.
-/// Those refs predate ownership receipts, so under R2 they are nobody's:
-/// unownable, and therefore undeletable — including by the arm-1 rename,
-/// which §3.4 spells out is a DESTROY of the old name and needs a receipt for
+/// Before the scheme was flattened, rwv minted
+/// `{project}--{workweave}/<segment>`. Those refs predate ownership
+/// receipts, so under R2 they are nobody's:
+/// unownable, and therefore undeletable — including by the rename that
+/// migrates them, which is a DESTROY of the old name and needs a receipt for
 /// it. This type is the one route from an observation to that receipt, and it
 /// is deliberately narrow.
 ///
@@ -1000,7 +999,7 @@ impl fmt::Display for EphemeralRefName {
 /// whether the observed name sits under it. The observed name is never split
 /// into parts and no part of it is handed on: the answer is this whole name
 /// or nothing. So the migration cannot reconstruct which workweave a stray
-/// `<a>--<b>/<c>` belonged to (§7.3) — it can only recognise a ref inside a
+/// `<a>--<b>/<c>` belonged to — it can only recognise a ref inside a
 /// namespace it is standing in.
 ///
 /// That is not "ownership by name shape". It authorizes exactly one thing: a
@@ -1015,9 +1014,8 @@ impl LegacyEphemeralRefName {
     /// — i.e. it is `{flat}/<something non-empty>`.
     ///
     /// `flat` itself is **not** a legacy name and yields `None`: adopting the
-    /// flat name is §7.1 arm 2, which goes through
-    /// [`RefRegistry::record_created`] on the minted name and needs no
-    /// observation at all.
+    /// flat name goes through [`RefRegistry::record_created`] on the minted
+    /// name and needs no observation at all.
     ///
     /// [`RefRegistry::record_created`]: crate::workweave_index::RefRegistry::record_created
     pub fn claim(flat: &EphemeralRefName, observed: &RawRefName) -> Option<Self> {
@@ -1066,8 +1064,8 @@ pub struct OwnedRef {
 impl OwnedRef {
     /// Mint from a receipt the registry has already **persisted**.
     ///
-    /// `pub(crate)` because the receipt store is the producer (§4.2:
-    /// `RefRegistry::record_created` / `RefRegistry::lookup`), and receipts
+    /// `pub(crate)` because the receipt store is the producer
+    /// (`RefRegistry::record_created` / `RefRegistry::lookup`), and receipts
     /// are written before the ref they describe so a crash leaves a
     /// dangling receipt (benign) rather than an unreceipted ref
     /// (permanently disowned under R2).
@@ -1194,7 +1192,7 @@ impl AttachedRef {
     ///
     /// The comparison the L1 publish gate needs — "is the checkout on the
     /// branch a projection names" — without ever exposing the witness's
-    /// name as a string. Both `push.rs` call sites (§4.6(2)) go through
+    /// name as a string. Both `push.rs` call sites go through
     /// this: the project gate against `RemoteDefaultBranch::local_counterpart`,
     /// the member gate against `TrackingRef::local_counterpart`.
     pub fn is_named(&self, name: &LocalRefName) -> bool {
@@ -1211,7 +1209,7 @@ impl AttachedRef {
     }
 
     /// The pre-flat ref this checkout is on, when `flat`'s namespace claims
-    /// it — `branch-model.md` §7.1 arm 1's classifier.
+    /// it.
     ///
     /// `None` for the flat name itself and for every ref outside the
     /// namespace, including another workweave's.
@@ -1403,11 +1401,10 @@ pub struct PublishRef(RawRefName);
 impl PublishRef {
     /// Publish the ref the checkout is actually on.
     ///
-    /// This is the constructor `push.rs`'s publish gate calls (§4.6(2)),
-    /// the single site the type's doc comment promises: it accepts exactly
-    /// what today's shipped behaviour publishes — the attached ref — so
-    /// wiring the gate through `PublishRef` changes no observable
-    /// behaviour. `from_local` stays defined and is called by no gate — only
+    /// This is the constructor `push.rs`'s publish gate calls, the single
+    /// site the type's doc comment promises: it accepts the attached ref,
+    /// which is what push publishes. `from_local` stays defined and is
+    /// called by no gate — only
     /// by `push.rs`'s `test_publish_ref` helper, to fabricate a value — so
     /// Q6's other answer keeps a producer even though one branch is now live.
     pub(crate) fn from_attached(a: &AttachedRef) -> Self {
@@ -1437,7 +1434,7 @@ impl fmt::Display for PublishRef {
 }
 
 // ---------------------------------------------------------------------------
-// Q9: "no current branch" is not one state (§4.5)
+// "No current branch" is not one state
 // ---------------------------------------------------------------------------
 
 /// What a VCS reports about HEAD, before the model interprets it.
@@ -1519,7 +1516,7 @@ impl fmt::Display for HeadAttachment {
 }
 
 // ---------------------------------------------------------------------------
-// Consent and warrant tokens (§4.4)
+// Consent and warrant tokens
 // ---------------------------------------------------------------------------
 //
 // `DetachConsent`, `ReattachConsent`, `DiscardUnmergedConsent` and
@@ -1566,7 +1563,7 @@ impl fmt::Display for HeadAttachment {
 /// rest are in-crate test fixtures. **If you need this consent somewhere else, take the token
 /// as a parameter and thread it down from there** — a second mint would be
 /// a second layer claiming to know what the operator asked for, which is
-/// the thing §4.4 exists to prevent.
+/// the thing the one-mint rule exists to prevent.
 #[derive(Debug)]
 pub struct DiscardLocalCommitsConsent(());
 
@@ -1708,17 +1705,16 @@ impl DeletionWarrant {
         Self(WarrantKind::OperatorDiscarded)
     }
 
-    /// The operator passed `--adopt-detached-checkouts`, which
-    /// `branch-model.md` §7.1 arm 3 makes the consent for stranding a legacy
-    /// branch's tip.
+    /// The operator passed `--adopt-detached-checkouts`, the consent for
+    /// stranding a legacy branch's tip.
     ///
     /// A second constructor rather than a widened `operator_discarded`
     /// because the two flags consent to different losses and the house rule
-    /// (§4.4) is one token per consequence: `--discard-unmerged-commits`
+    /// is one token per consequence: `--discard-unmerged-commits`
     /// gives up commits at `workweave delete`, `--adopt-detached-checkouts`
     /// gives up the *name* a legacy branch holds so the flat one can exist in
-    /// its place. Arm 3 requires the caller to warn when that strands a tip;
-    /// the token records only that the operator asked for it.
+    /// its place. The caller must warn when that strands a tip; the token
+    /// records only that the operator asked for it.
     pub fn adopt_detached(consent: AdoptDetachedConsent) -> Self {
         let _ = consent;
         Self(WarrantKind::OperatorDiscarded)
@@ -2484,7 +2480,7 @@ pub trait Vcs {
     /// Returns the raw byte content of the file as committed at that
     /// revision. Useful for reading files (e.g. manifests, lock files)
     /// at a pinned commit without touching the working tree — the
-    /// snapshot-reads primitive (§6 of the sync design).
+    /// snapshot-reads primitive.
     ///
     /// `file_path` is a path relative to the repo root (e.g.
     /// `Path::new("rwv.lock")` or `Path::new("rwv.yaml")`).
@@ -2576,12 +2572,12 @@ pub trait Vcs {
     ) -> Result<UniqueDiff, VcsError>;
 
     // =======================================================================
-    // The branch model (branch-model.md §4.3)
+    // The branch model
     // =======================================================================
     //
     // Every ref write rwv performs is exactly one of four kinds — MOVE,
     // ATTACH, DESTROY, DESTROY-STORE — and the kind decides what consent is
-    // required (§3.2). The methods below are grouped by kind, and each
+    // required. The methods below are grouped by kind, and each
     // takes the proof its kind needs: a witness for a MOVE, a consent token
     // for an ATTACH that is not a birth, a receipt plus a warrant for a
     // DESTROY. Store-level destroys (R4) are not ref operations and have no
@@ -2597,7 +2593,7 @@ pub trait Vcs {
     // (by `push_ref`), and `list_branches_with_prefix` (by
     // `list_branch_names_with_prefix`).
 
-    // ---- observation (§4.5) -----------------------------------------------
+    // ---- observation -------------------------------------------------------
 
     /// Report what `repo`'s HEAD is, without interpreting it.
     ///
@@ -2670,12 +2666,12 @@ pub trait Vcs {
     ///
     /// Broader than [`mid_op`]: that one reports only the operations with a
     /// conflict-resume path, and returns `None` for a bisect, which is
-    /// exactly the state §3.6's precondition has to see.
+    /// exactly the state the detached-MOVE precondition has to see.
     ///
     /// [`mid_op`]: Vcs::mid_op
     fn mid_operation(&self, repo: &Path) -> Option<String>;
 
-    // ---- MOVE (§3.2) ------------------------------------------------------
+    // ---- MOVE --------------------------------------------------------------
 
     /// Fast-forward the ref `on` witnesses, refusing rather than clobbering
     /// when a fast-forward is not possible.
@@ -2722,7 +2718,7 @@ pub trait Vcs {
     /// Move an already-detached HEAD to `to`.
     ///
     /// This is a MOVE, not an ATTACH: HEAD's symbolic-ness does not change.
-    /// It is subject to the mid-operation precondition (§3.6) — a repo
+    /// It is subject to the mid-operation precondition — a repo
     /// stopped mid-bisect or mid-rebase is carrying operator state that a
     /// silent reposition would destroy, and `Detached` alone cannot tell
     /// that apart from "rwv detached this at a lock SHA".
@@ -2751,7 +2747,7 @@ pub trait Vcs {
         self.set_detached_head(was.repo(), to)
     }
 
-    // ---- ATTACH (§3.2) ----------------------------------------------------
+    // ---- ATTACH ------------------------------------------------------------
 
     /// Materialize a worktree at `dest` on the ref a receipt describes.
     ///
@@ -2804,13 +2800,13 @@ pub trait Vcs {
     /// positioned at the lock scalar `at`, which is resolved *inside* the
     /// new clone and returned.
     ///
-    /// The **birth** arm of `rwv fetch` (§5's `fetch` (absent clone) row):
+    /// The **birth** arm of `rwv fetch`:
     /// no consent token, because there was no prior attachment to lose.
     /// The birth target is the lock revision, not the remote tip. Cloning
     /// onto the tip and then aligning would make bootstrapping a weave from
     /// a lock that is behind origin a *rewind*, and a rewinding MOVE needs a
     /// `DiscardWarrant` — so that sequence would refuse on every repo and
-    /// mass-produce the fully-detached weave §6 item 2 calls a problem.
+    /// mass-produce a weave with every member detached.
     ///
     /// One call rather than a clone plus an align so there is no way to
     /// point the positioning half at a repo this call did not just create:
@@ -2891,7 +2887,7 @@ pub trait Vcs {
     /// [`reattach_head`]: Vcs::reattach_head
     fn attach_head_to(&self, repo: &Path, name: &LocalRefName) -> Result<(), VcsError>;
 
-    // ---- DESTROY (§3.2) ---------------------------------------------------
+    // ---- DESTROY -----------------------------------------------------------
 
     /// Destroy a ref rwv holds a receipt for.
     ///
@@ -2915,11 +2911,11 @@ pub trait Vcs {
     /// [`delete_owned_ref`]: Vcs::delete_owned_ref
     fn destroy_local_ref(&self, store: &Path, name: &RawRefName) -> Result<(), VcsError>;
 
-    // ---- rename (§3.4: a DESTROY of the old name plus a birth) ------------
+    // ---- rename (a DESTROY of the old name plus a birth) -----------------
 
-    /// Rename `from` to `to` — `branch-model.md` §7.1 arm 1's migration.
+    /// Rename `from` to `to`, migrating a pre-flat ref to its flat name.
     ///
-    /// Both halves are receipts, because §3.4 derives a rename as a DESTROY
+    /// Both halves are receipts, because a rename is a DESTROY
     /// of the old name plus a birth of the new: the DESTROY needs `from`'s
     /// receipt and `warrant`, and the birth's receipt (`to`) has to be on
     /// disk before the ref write, which it is — an [`OwnedRef`] exists only
@@ -2929,8 +2925,8 @@ pub trait Vcs {
     /// half can go first**. git cannot hold `refs/heads/p--w` and
     /// `refs/heads/p--w/<segment>` at the same time (a ref and a directory of
     /// the same name), so the birth cannot precede the DESTROY; and git
-    /// refuses to delete the branch a worktree's HEAD is on, which for arm 1
-    /// is exactly the branch being renamed, so the DESTROY cannot precede the
+    /// refuses to delete the branch a worktree's HEAD is on, which here is
+    /// exactly the branch being renamed, so the DESTROY cannot precede the
     /// birth either. The rename resolves both at once, and moves every
     /// worktree HEAD that pointed at the old name.
     ///
@@ -2976,10 +2972,10 @@ pub trait Vcs {
         to: &RawRefName,
     ) -> Result<(), VcsError>;
 
-    // ---- adoption of a detached checkout (§7.1 arms 3 and 5) --------------
+    // ---- adoption of a detached checkout ---------------------------------
 
     /// Birth `to` at the commit `from` is detached on, and attach the
-    /// checkout to it — `branch-model.md` §7.1 arms 3 and 5.
+    /// checkout to it.
     ///
     /// A birth *and* an ATTACH, which is why it takes a consent token: R1
     /// makes detached → attached an attachment change, and the workweave's
