@@ -4,12 +4,12 @@
 //! Dispatch lives in the library rather than in `main.rs`, and that is
 //! load-bearing rather than tidy. A `[[bin]]` target is a *separate crate*
 //! from the `[lib]`, so a dispatch layer in `main.rs` can only reach the
-//! library through its `pub` surface — which forced the consent tokens of
-//! `branch-model.md` §4.4 to expose a `pub` mint for dispatch to call, and a
-//! `pub` mint is reachable from every module of the library, `vcs.rs`
-//! included. With dispatch in-crate the mint narrows to `pub(in crate::cli)`
-//! and the compiler enforces §4.4's "only the flag module can construct one".
-//! See [`super::consent`].
+//! library through its `pub` surface — which would force the consent tokens
+//! to expose a `pub` mint for dispatch to call, and a `pub` mint is reachable
+//! from every module of the library, `vcs.rs` included. With dispatch
+//! in-crate the mint narrows to `pub(in crate::cli)` and the compiler
+//! enforces that only the flag module can construct one. See
+//! [`super::consent`].
 //!
 //! `main.rs` is a shim over [`run`] and holds no logic of its own.
 
@@ -295,8 +295,8 @@ fn levenshtein(a: &str, b: &str) -> usize {
 /// `e2e_workweave_isolation_test` build clone topologies that would be
 /// laborious to reach through argv, and then assert on the `Err` value
 /// rather than on stderr. They cannot mint a
-/// [`consent::DiscardUnmergedConsent`] themselves — that is the point of
-/// §4.4 — so they pass the flags and come through the door dispatch uses.
+/// [`consent::DiscardUnmergedConsent`] themselves — that is the point of the
+/// token — so they pass the flags and come through the door dispatch uses.
 pub fn workweave_delete(
     primary_root: &Path,
     project: &ProjectName,
@@ -304,10 +304,9 @@ pub fn workweave_delete(
     discard_uncommitted: bool,
     discard_unmerged_commits: bool,
 ) -> anyhow::Result<()> {
-    // The token IS the warrant an unmerged ref's DESTROY needs
-    // (branch-model.md §3.3 R3, §4.4): `delete_workweave` waives the
-    // verb-level precondition on it AND hands it to
-    // `DeletionWarrant::operator_discarded` per ref.
+    // The token IS the warrant an unmerged ref's DESTROY needs:
+    // `delete_workweave` waives the verb-level precondition on it AND hands
+    // it to `DeletionWarrant::operator_discarded` per ref.
     let discard_unmerged = consent::DiscardUnmergedConsent::from_flag(discard_unmerged_commits);
     crate::workweave::delete_workweave(
         primary_root,
@@ -621,7 +620,7 @@ pub fn run() -> anyhow::Result<()> {
                 fetch::FetchMode::Default
             };
             // Mint once from the parsed flag; the token threads down to
-            // fetch_one, where it gates the realign-detach refusal (§5.3).
+            // fetch_one, where it gates the realign-detach refusal.
             let detach_checkouts = consent::DetachConsent::from_flag(detach_checkouts);
             let filter = crate::selector::RepoFilter::parse(&roles, &repos)?;
             // fetch's default is auto-resolve (min(nproc, 8)), unlike sync which
@@ -812,13 +811,12 @@ pub fn run() -> anyhow::Result<()> {
             let project_override = project.map(crate::manifest::ProjectName::new).transpose()?;
             let ctx = resolve_project_scoped(&origin_dir, project_override, use_workweave_flag)?;
             // Minted here — the CLI boundary is the only place that knows
-            // the operator asked. `run_check` gates §7.2's Detached-arm
-            // reattach on it; without the flag `--fix` reports the
+            // the operator asked. `run_check` gates the detached canonical
+            // store's reattach on it; without the flag `--fix` reports the
             // `git switch` instead of performing the ATTACH.
             let reattach_checkouts = consent::ReattachConsent::from_flag(reattach_checkouts);
-            // §7.1 arms 3 and 5: the consent for minting a workweave's ref at
-            // a detached HEAD, and for giving up a legacy branch's name to
-            // make room for it.
+            // Consent for minting a workweave's ref at a detached HEAD, and
+            // for giving up a legacy branch's name to make room for it.
             let adopt_detached_checkouts =
                 consent::AdoptDetachedConsent::from_flag(adopt_detached_checkouts);
             if locked {
@@ -1013,7 +1011,7 @@ pub fn run() -> anyhow::Result<()> {
             let project_override = project.map(crate::manifest::ProjectName::new).transpose()?;
             let ctx = resolve_project_scoped(&origin_dir, project_override, use_workweave_flag)?;
             // Mint once from the parsed flag; the token threads down to
-            // advance_checkout, where it gates the ff-or-refuse guard (§5.3).
+            // advance_checkout, where it gates the ff-or-refuse guard.
             let detach_checkouts = consent::DetachConsent::from_flag(detach_checkouts);
             let filter = crate::selector::RepoFilter::parse(&roles, &repos)?;
             // Update's default is auto-parallel (min(nproc, 8)). The envelope/NDJSON

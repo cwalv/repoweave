@@ -275,10 +275,8 @@ fn update_for_project(
         let record = match outcome {
             Ok(new_sha) => {
                 // "advanced N repo(s)" counts SHA deltas, not non-`Err`
-                // outcomes (§6.2). The old count reported every repo it
-                // visited as advanced, so a fully up-to-date weave claimed
-                // to have advanced all of them — and the `--json` records
-                // right here already knew better.
+                // outcomes: a repo that was already at the target was
+                // visited successfully but advanced nothing.
                 let kind = if item.old_sha.as_deref() == Some(new_sha.as_str()) {
                     UpdateKind::UpToDate
                 } else {
@@ -486,7 +484,7 @@ fn advance_one(
     let repo_dir = resolve_repo_dir(repo_path, primary_root, workweave_dir);
     // Which checkout this run is advancing decides which ref is the legal
     // object of the MOVE — the canonical's tracking counterpart, or the
-    // workweave's ephemeral ref (§5's two `update` rows). `resolve_repo_dir`
+    // workweave's ephemeral ref. `resolve_repo_dir`
     // prefers the workweave's slot only when the member is materialized
     // there, so the answer is per repo, not per invocation.
     let in_workweave = workweave_dir.is_some_and(|wd| repo_dir.starts_with(wd));
@@ -592,33 +590,30 @@ fn advance_one(
 }
 
 /// Advance one checkout onto `target`, the tracking branch's tip on the
-/// role-conventional remote (§5's two `update` rows).
+/// role-conventional remote.
 ///
 /// Which ref is the legal object of the move depends on the checkout:
 ///
 /// - **Canonical, attached to the tracking declaration's local counterpart**
 ///   — fast-forward that branch. A non-fast-forward refuses, naming the two
-///   exits §5 states: reconcile the branch with its tracking tip yourself
-///   (ordinary `git rebase` / `git merge`, per §8.7) and re-run, or
-///   `--detach-checkouts` to materialize the tip without moving your branch.
-/// - **Canonical, attached to anything else** — refuses naming both refs
-///   (§5.3). `update`'s justification comes from the tracking declaration, so
-///   its object must too; it does not relocate an operator's personal branch,
-///   not even by a fast-forward, because attachment is operator state (§8.3).
+///   exits: reconcile the branch with its tracking tip yourself (ordinary
+///   `git rebase` / `git merge`) and re-run, or `--detach-checkouts` to
+///   materialize the tip without moving your branch.
+/// - **Canonical, attached to anything else** — refuses naming both refs.
+///   `update`'s justification comes from the tracking declaration, so its
+///   object must too; it does not relocate an operator's personal branch, not
+///   even by a fast-forward, because attachment is operator state.
 /// - **Inside a workweave** — advances the ephemeral ref the checkout is on
-///   when `target` is a fast-forward, and otherwise points at `rwv sync`
-///   (Q8, answered as a consequence in §5's row). Where the canonical arm
-///   offers `--detach-checkouts`, this one does not: `rwv sync` is the verb
-///   that reconciles a workweave with its parent, and detaching the ephemeral
-///   ref is what made this path report "advanced 1 repo(s)" while detaching
-///   at the identical SHA. The relatedness guard is deliberately *not*
-///   applied here — asking whether an operator-created branch inside a
-///   workweave is legal is Q7, which is open.
+///   when `target` is a fast-forward, and otherwise points at `rwv sync`.
+///   Where the canonical arm offers `--detach-checkouts`, this one does not:
+///   `rwv sync` is the verb that reconciles a workweave with its parent, and
+///   detaching the ephemeral ref would report "advanced 1 repo(s)" for a
+///   detach at the identical SHA. The relatedness guard is deliberately
+///   *not* applied here: whether an operator-created branch inside a
+///   workweave is legal at all is undecided, so this path does not decide it.
 /// - **Detached** — a MOVE of HEAD itself, which stays detached; the
-///   mid-operation precondition inside [`Vcs::advance_detached_head`] (§3.6)
+///   mid-operation precondition inside [`Vcs::advance_detached_head`]
 ///   refuses when the repo is stopped mid-rebase, mid-merge or mid-bisect.
-///   This is the state most weaves are in today, because it is what every
-///   `rwv fetch` / `rwv update` before this change left behind (§6 item 2).
 /// - **Unborn** — refuses. As in `fetch`, both exits are unrepresentable
 ///   rather than undecided: an `UnbornRef` cannot be passed to
 ///   `advance_attached_ref`, and `detach_head` takes an `AttachedRef`.
