@@ -679,8 +679,11 @@ mod tests {
         let _ = FakeVcs::new().head_revision(Path::new("/store"));
     }
 
+    /// The re-entrant call is what the hazard is about; the assertion before it
+    /// is what keeps a regression reportable. Held guards make the call hang,
+    /// and a hung suite prints nothing, so the cheap check has to run first.
     #[test]
-    fn a_hook_runs_with_every_lock_free() {
+    fn a_hook_can_re_enter_a_call_that_takes_the_locks_it_was_dispatched_from() {
         let fake = FakeVcs::new();
         let store = Path::new("/store");
         let name = RawRefName::new("p--w");
@@ -693,12 +696,24 @@ mod tests {
                     "a lock was held while the hook ran; re-entry deadlocks instead of failing"
                 );
                 vcs.put_branch(Path::new("/store"), &name, rev('a'));
+                assert_eq!(
+                    vcs.resolve_local_branch_tip(Path::new("/store"), &name)
+                        .unwrap(),
+                    Some(rev('a'))
+                );
             }
         });
 
         assert!(!fake
             .materialize_worktree_on_ref(store, Path::new("/dest"), &name, &rev('b'))
             .unwrap());
+        assert_eq!(
+            fake.calls(),
+            vec![
+                VcsCall::MaterializeWorktreeOnRef,
+                VcsCall::ResolveLocalBranchTip
+            ]
+        );
     }
 
     #[test]
