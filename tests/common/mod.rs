@@ -203,8 +203,8 @@ pub fn assert_log_ordering(repo: &std::path::Path, commit_messages: &[&str]) {
 /// in a test those are fixture bugs, and letting them read as "detached" is
 /// exactly the conflation §4.5 removes.
 pub fn checkout_ref(repo: &std::path::Path) -> Option<String> {
-    use repoweave::vcs::{HeadAttachment, Vcs};
-    match repoweave::git::GitVcs.head_attachment(repo) {
+    use repoweave::vcs::HeadAttachment;
+    match repoweave::git::git_vcs().head_attachment(repo) {
         Ok(HeadAttachment::Attached(a)) => Some(a.to_string()),
         Ok(HeadAttachment::Unborn(u)) => Some(u.name().as_str().to_owned()),
         Ok(HeadAttachment::Detached(_)) => None,

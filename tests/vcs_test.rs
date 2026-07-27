@@ -1,8 +1,6 @@
-use repoweave::git::GitVcs;
+use repoweave::git::git_vcs;
 use repoweave::manifest::Role;
-use repoweave::vcs::{
-    ConflictOp, DerivedContentPolicy, RefName, ResolvedRevisionId, Vcs, VcsError,
-};
+use repoweave::vcs::{ConflictOp, DerivedContentPolicy, RefName, ResolvedRevisionId, VcsError};
 use std::fs;
 use std::path::Path;
 use tempfile::TempDir;
@@ -50,7 +48,7 @@ fn git(dir: &std::path::Path, args: &[&str]) -> String {
 #[test]
 fn has_uncommitted_changes_clean_repo() {
     let dir = init_repo();
-    let vcs = GitVcs;
+    let vcs = git_vcs();
     assert!(!vcs.has_uncommitted_changes(dir.path()).unwrap());
 }
 
@@ -62,7 +60,7 @@ fn has_uncommitted_changes_staged_changes() {
     fs::write(p.join("new.txt"), "staged content").unwrap();
     git(p, &["add", "new.txt"]);
 
-    let vcs = GitVcs;
+    let vcs = git_vcs();
     assert!(vcs.has_uncommitted_changes(p).unwrap());
 }
 
@@ -74,7 +72,7 @@ fn has_uncommitted_changes_unstaged_modification() {
     // Modify a tracked file without staging.
     fs::write(p.join("README.md"), "modified").unwrap();
 
-    let vcs = GitVcs;
+    let vcs = git_vcs();
     assert!(vcs.has_uncommitted_changes(p).unwrap());
 }
 
@@ -85,7 +83,7 @@ fn has_uncommitted_changes_untracked_file() {
 
     fs::write(p.join("untracked.txt"), "hello").unwrap();
 
-    let vcs = GitVcs;
+    let vcs = git_vcs();
     assert!(vcs.has_uncommitted_changes(p).unwrap());
 }
 
@@ -96,7 +94,7 @@ fn has_uncommitted_changes_untracked_file() {
 #[test]
 fn tag_at_head_no_tag() {
     let dir = init_repo();
-    let vcs = GitVcs;
+    let vcs = git_vcs();
     assert_eq!(vcs.tag_at_head(dir.path()).unwrap(), None);
 }
 
@@ -107,7 +105,7 @@ fn tag_at_head_lightweight_tag() {
 
     git(p, &["tag", "v0.1.0"]);
 
-    let vcs = GitVcs;
+    let vcs = git_vcs();
     let tag = vcs.tag_at_head(p).unwrap();
     assert_eq!(tag.as_ref().map(|t| t.as_str()), Some("v0.1.0"));
 }
@@ -119,7 +117,7 @@ fn tag_at_head_annotated_tag() {
 
     git(p, &["tag", "-a", "v1.0.0", "-m", "release v1.0.0"]);
 
-    let vcs = GitVcs;
+    let vcs = git_vcs();
     let tag = vcs.tag_at_head(p).unwrap();
     assert_eq!(tag.as_ref().map(|t| t.as_str()), Some("v1.0.0"));
 }
@@ -136,7 +134,7 @@ fn tag_at_head_tag_not_at_head() {
     git(p, &["add", "."]);
     git(p, &["commit", "-m", "second commit"]);
 
-    let vcs = GitVcs;
+    let vcs = git_vcs();
     assert_eq!(vcs.tag_at_head(p).unwrap(), None);
 }
 
@@ -148,7 +146,7 @@ fn tag_at_head_multiple_tags() {
     git(p, &["tag", "v1.0.0"]);
     git(p, &["tag", "release-1"]);
 
-    let vcs = GitVcs;
+    let vcs = git_vcs();
     let tag = vcs.tag_at_head(p).unwrap();
     let tag_str = tag.as_ref().map(|t| t.as_str());
     // When multiple tags point at HEAD, we get one of them.
@@ -168,7 +166,7 @@ fn tag_at_head_skips_savepoint_only() {
 
     git(p, &["tag", "savepoint/2024-01-01-abc"]);
 
-    let vcs = GitVcs;
+    let vcs = git_vcs();
     assert_eq!(vcs.tag_at_head(p).unwrap(), None);
 }
 
@@ -179,7 +177,7 @@ fn tag_at_head_skips_pre_op_only() {
 
     git(p, &["tag", "rwv/pre-op/op-xyz"]);
 
-    let vcs = GitVcs;
+    let vcs = git_vcs();
     assert_eq!(vcs.tag_at_head(p).unwrap(), None);
 }
 
@@ -192,7 +190,7 @@ fn tag_at_head_prefers_release_over_transient() {
     git(p, &["tag", "savepoint/old"]);
     git(p, &["tag", "v9.9.9"]);
 
-    let vcs = GitVcs;
+    let vcs = git_vcs();
     let tag = vcs.tag_at_head(p).unwrap();
     assert_eq!(tag.as_ref().map(|t| t.as_str()), Some("v9.9.9"));
 }
@@ -207,7 +205,7 @@ fn tag_at_head_prefers_release_over_lightweight() {
     git(p, &["tag", "aaa-arbitrary"]);
     git(p, &["tag", "v1.2.3"]);
 
-    let vcs = GitVcs;
+    let vcs = git_vcs();
     let tag = vcs.tag_at_head(p).unwrap();
     assert_eq!(tag.as_ref().map(|t| t.as_str()), Some("v1.2.3"));
 }
@@ -222,7 +220,7 @@ fn head_revision_skips_savepoint_tag_display() {
 
     git(p, &["tag", "savepoint/op-1"]);
 
-    let vcs = GitVcs;
+    let vcs = git_vcs();
     let head = vcs.head_revision(p).unwrap();
     // canonical is the SHA, display falls back to canonical (no tag chosen).
     assert_eq!(head.display_str(), head.as_str());
@@ -238,7 +236,7 @@ fn head_revision_picks_release_tag_when_mixed() {
     git(p, &["tag", "savepoint/op-1"]);
     git(p, &["tag", "v9.9.9"]);
 
-    let vcs = GitVcs;
+    let vcs = git_vcs();
     let head = vcs.head_revision(p).unwrap();
     assert_eq!(head.display_str(), "v9.9.9");
 }
@@ -256,7 +254,7 @@ fn revision_id_tag_form_equals_sha_form_after_resolve() {
     let p = dir.path();
     git(p, &["tag", "v1.0.0"]);
 
-    let vcs = GitVcs;
+    let vcs = git_vcs();
     let head_sha_form = vcs.head_revision(p).unwrap();
     let tag_form_resolved = vcs.resolve_revision(p, "v1.0.0").unwrap();
     assert_eq!(tag_form_resolved, head_sha_form);
@@ -270,7 +268,7 @@ fn has_uncommitted_changes_deleted_tracked_file() {
     // Delete a tracked file without staging the deletion.
     fs::remove_file(p.join("README.md")).unwrap();
 
-    let vcs = GitVcs;
+    let vcs = git_vcs();
     assert!(vcs.has_uncommitted_changes(p).unwrap());
 }
 
@@ -286,7 +284,7 @@ fn has_uncommitted_changes_gitignored_file() {
 
     fs::write(p.join("debug.log"), "some logs").unwrap();
 
-    let vcs = GitVcs;
+    let vcs = git_vcs();
     // Ignored files should NOT count as uncommitted changes.
     assert!(!vcs.has_uncommitted_changes(p).unwrap());
 }
@@ -299,7 +297,7 @@ fn has_uncommitted_changes_staged_deletion() {
     // Stage removal of a tracked file.
     git(p, &["rm", "README.md"]);
 
-    let vcs = GitVcs;
+    let vcs = git_vcs();
     assert!(vcs.has_uncommitted_changes(p).unwrap());
 }
 
@@ -314,7 +312,7 @@ fn dirty_file_names_lists_tracked_and_untracked() {
     fs::write(p.join("README.md"), "modified").unwrap();
     fs::write(p.join("scratch.txt"), "new").unwrap();
 
-    let mut names = GitVcs.dirty_file_names(p).unwrap();
+    let mut names = git_vcs().dirty_file_names(p).unwrap();
     names.sort();
     assert_eq!(names, vec!["README.md", "scratch.txt"]);
 }
@@ -326,7 +324,10 @@ fn tracked_dirty_file_names_excludes_untracked() {
     fs::write(p.join("README.md"), "modified").unwrap();
     fs::write(p.join("scratch.txt"), "new").unwrap();
 
-    assert_eq!(GitVcs.tracked_dirty_file_names(p).unwrap(), ["README.md"]);
+    assert_eq!(
+        git_vcs().tracked_dirty_file_names(p).unwrap(),
+        ["README.md"]
+    );
 }
 
 #[test]
@@ -334,8 +335,8 @@ fn dirty_file_names_empty_on_clean_repo() {
     let dir = init_repo();
     let p = dir.path();
 
-    assert!(GitVcs.dirty_file_names(p).unwrap().is_empty());
-    assert!(GitVcs.tracked_dirty_file_names(p).unwrap().is_empty());
+    assert!(git_vcs().dirty_file_names(p).unwrap().is_empty());
+    assert!(git_vcs().tracked_dirty_file_names(p).unwrap().is_empty());
 }
 
 #[test]
@@ -344,8 +345,8 @@ fn is_tracked_distinguishes_committed_from_untracked() {
     let p = dir.path();
     fs::write(p.join("scratch.txt"), "new").unwrap();
 
-    assert!(GitVcs.is_tracked(p, Path::new("README.md")).unwrap());
-    assert!(!GitVcs.is_tracked(p, Path::new("scratch.txt")).unwrap());
+    assert!(git_vcs().is_tracked(p, Path::new("README.md")).unwrap());
+    assert!(!git_vcs().is_tracked(p, Path::new("scratch.txt")).unwrap());
 }
 
 #[test]
@@ -354,7 +355,7 @@ fn is_tracked_is_false_rather_than_err_outside_a_repo() {
     let p = dir.path();
     fs::write(p.join("loose.txt"), "loose").unwrap();
 
-    assert!(!GitVcs.is_tracked(p, Path::new("loose.txt")).unwrap());
+    assert!(!git_vcs().is_tracked(p, Path::new("loose.txt")).unwrap());
 }
 
 // ============================================================================
@@ -366,7 +367,7 @@ fn init_repo_creates_git_directory() {
     let dir = common::tempdir().unwrap();
     let repo_path = dir.path().join("new-repo");
 
-    let vcs = GitVcs;
+    let vcs = git_vcs();
     vcs.init_repo(&repo_path).unwrap();
 
     assert!(
@@ -380,7 +381,7 @@ fn init_repo_sets_main_as_initial_branch() {
     let dir = common::tempdir().unwrap();
     let repo_path = dir.path().join("new-repo");
 
-    let vcs = GitVcs;
+    let vcs = git_vcs();
     vcs.init_repo(&repo_path).unwrap();
 
     // Verify the initial branch is "main" by reading HEAD.
@@ -396,7 +397,7 @@ fn init_repo_creates_nested_directories() {
     let dir = common::tempdir().unwrap();
     let repo_path = dir.path().join("a").join("b").join("c").join("repo");
 
-    let vcs = GitVcs;
+    let vcs = git_vcs();
     vcs.init_repo(&repo_path).unwrap();
 
     assert!(
@@ -410,7 +411,7 @@ fn init_repo_is_recognized_by_is_repo() {
     let dir = common::tempdir().unwrap();
     let repo_path = dir.path().join("new-repo");
 
-    let vcs = GitVcs;
+    let vcs = git_vcs();
     vcs.init_repo(&repo_path).unwrap();
 
     assert!(
@@ -520,7 +521,7 @@ fn resolve_revision_tag_to_canonical_sha() {
     git(p, &["tag", "v1.0.0"]);
     let head_sha = git(p, &["rev-parse", "HEAD"]);
 
-    let vcs = GitVcs;
+    let vcs = git_vcs();
     let resolved = vcs.resolve_revision(p, "v1.0.0").unwrap();
     assert_eq!(resolved.as_str(), &head_sha, "canonical should be the SHA");
     assert_eq!(
@@ -536,7 +537,7 @@ fn resolve_revision_sha_passes_through() {
     let p = dir.path();
     let head_sha = git(p, &["rev-parse", "HEAD"]);
 
-    let vcs = GitVcs;
+    let vcs = git_vcs();
     let resolved = vcs.resolve_revision(p, &head_sha).unwrap();
     assert_eq!(resolved.as_str(), &head_sha);
     // SHA input — no separate display form.
@@ -546,7 +547,7 @@ fn resolve_revision_sha_passes_through() {
 #[test]
 fn resolve_revision_unknown_revision_errors() {
     let dir = init_repo();
-    let vcs = GitVcs;
+    let vcs = git_vcs();
     let result = vcs.resolve_revision(dir.path(), "v9.9.9-nope");
     assert!(result.is_err());
 }
@@ -559,7 +560,7 @@ fn resolve_revision_then_equal_to_head_revision() {
     let p = dir.path();
     git(p, &["tag", "v0.3.4"]);
 
-    let vcs = GitVcs;
+    let vcs = git_vcs();
     let lock_entry = vcs.resolve_revision(p, "v0.3.4").unwrap();
     let head = vcs.head_revision(p).unwrap();
     assert_eq!(
@@ -574,7 +575,7 @@ fn head_revision_preserves_tag_at_head_as_display() {
     let p = dir.path();
     git(p, &["tag", "v0.3.4"]);
 
-    let vcs = GitVcs;
+    let vcs = git_vcs();
     let head = vcs.head_revision(p).unwrap();
     let head_sha = git(p, &["rev-parse", "HEAD"]);
     assert_eq!(head.as_str(), &head_sha);
@@ -623,7 +624,7 @@ fn raw_revision_id_tag_resolves_to_head_sha() {
     git(p, &["tag", "v1.0.0"]);
 
     let raw = RawRevisionId::new("v1.0.0");
-    let vcs = GitVcs;
+    let vcs = git_vcs();
     let resolved = vcs.resolve_revision(p, raw.as_str()).unwrap();
     let head = vcs.head_revision(p).unwrap();
     assert_eq!(resolved, head);
@@ -669,7 +670,7 @@ fn resolve_branch_on_remote_fork_uses_origin() {
     let (_ws, local) = repo_with_remote("origin");
     let expected_sha = git(&local, &["rev-parse", "origin/main"]);
 
-    let vcs = GitVcs;
+    let vcs = git_vcs();
     let resolved = vcs
         .resolve_branch_on_remote(&local, Role::Fork, &RefName::new("main"))
         .unwrap();
@@ -683,7 +684,7 @@ fn resolve_branch_on_remote_primary_uses_origin() {
     let (_ws, local) = repo_with_remote("origin");
     let expected_sha = git(&local, &["rev-parse", "origin/main"]);
 
-    let vcs = GitVcs;
+    let vcs = git_vcs();
     let resolved = vcs
         .resolve_branch_on_remote(&local, Role::Owned, &RefName::new("main"))
         .unwrap();
@@ -695,7 +696,7 @@ fn resolve_branch_on_remote_primary_uses_origin() {
 #[test]
 fn resolve_branch_on_remote_dependency_uses_origin() {
     let (_ws, local) = repo_with_remote("origin");
-    let vcs = GitVcs;
+    let vcs = git_vcs();
     let resolved = vcs
         .resolve_branch_on_remote(&local, Role::Dependency, &RefName::new("main"))
         .unwrap();
@@ -705,7 +706,7 @@ fn resolve_branch_on_remote_dependency_uses_origin() {
 #[test]
 fn resolve_branch_on_remote_reference_uses_origin() {
     let (_ws, local) = repo_with_remote("origin");
-    let vcs = GitVcs;
+    let vcs = git_vcs();
     let resolved = vcs
         .resolve_branch_on_remote(&local, Role::Reference, &RefName::new("main"))
         .unwrap();
@@ -719,7 +720,7 @@ fn resolve_branch_on_remote_missing_remote_errors() {
     // roles now use `origin`.
     let (_ws, local) = repo_with_remote("other");
 
-    let vcs = GitVcs;
+    let vcs = git_vcs();
     let result = vcs.resolve_branch_on_remote(&local, Role::Fork, &RefName::new("main"));
 
     let err = result.expect_err("missing origin remote must error");
@@ -745,7 +746,7 @@ fn resolve_branch_on_remote_missing_branch_errors() {
     // Remote exists but branch doesn't — also a clear error.
     let (_ws, local) = repo_with_remote("origin");
 
-    let vcs = GitVcs;
+    let vcs = git_vcs();
     let result =
         vcs.resolve_branch_on_remote(&local, Role::Owned, &RefName::new("nonexistent-branch"));
 
@@ -770,7 +771,7 @@ fn conflict_resolution_hint_rebase_does_not_spell_git_rebase_continue() {
     // Seam-rule: the VCS impl stops at staging for Rebase; rwv core appends
     // `rwv sync --continue` / `rwv sync-to --continue`. The hint must NOT
     // spell `git rebase --continue` in operator-facing text.
-    let vcs = GitVcs;
+    let vcs = git_vcs();
     let hint = vcs.conflict_resolution_hint(ConflictOp::Rebase);
     assert!(
         !hint.contains("git rebase --continue"),
@@ -793,7 +794,7 @@ fn conflict_resolution_hint_rebase_does_not_spell_git_rebase_continue() {
 
 #[test]
 fn conflict_resolution_hint_merge_uses_git_merge_continue() {
-    let vcs = GitVcs;
+    let vcs = git_vcs();
     let hint = vcs.conflict_resolution_hint(ConflictOp::Merge);
     assert!(
         hint.contains("git merge --continue"),
@@ -815,7 +816,7 @@ fn conflict_resolution_hint_merge_uses_git_merge_continue() {
 
 #[test]
 fn conflict_resolution_hint_cherry_pick_uses_git_cherry_pick_continue() {
-    let vcs = GitVcs;
+    let vcs = git_vcs();
     let hint = vcs.conflict_resolution_hint(ConflictOp::CherryPick);
     assert!(
         hint.contains("git cherry-pick --continue"),
@@ -841,7 +842,7 @@ fn conflict_resolution_hint_does_not_mention_rwv_abort() {
     // sync.rs framing supplies the `rwv abort` rollback option. Keeping the
     // VCS-vocabulary text and the rwv-CLI text in their own layers is the
     // whole point of the trait — verify the separation.
-    let vcs = GitVcs;
+    let vcs = git_vcs();
     for op in [
         ConflictOp::Rebase,
         ConflictOp::Merge,
@@ -871,7 +872,7 @@ fn conflict_resolution_hint_does_not_mention_rwv_abort() {
 #[test]
 fn set_replay_exclusion_creates_gitattributes_when_missing() {
     let dir = init_repo();
-    let vcs = GitVcs;
+    let vcs = git_vcs();
 
     vcs.set_replay_exclusion(dir.path(), std::path::Path::new("rwv.lock"))
         .unwrap();
@@ -886,7 +887,7 @@ fn set_replay_exclusion_creates_gitattributes_when_missing() {
 #[test]
 fn set_replay_exclusion_appends_to_existing_gitattributes() {
     let dir = init_repo();
-    let vcs = GitVcs;
+    let vcs = git_vcs();
     let attrs_path = dir.path().join(".gitattributes");
 
     // Pre-existing user content (no trailing newline to exercise the
@@ -910,7 +911,7 @@ fn set_replay_exclusion_appends_to_existing_gitattributes() {
 #[test]
 fn set_replay_exclusion_is_idempotent() {
     let dir = init_repo();
-    let vcs = GitVcs;
+    let vcs = git_vcs();
 
     vcs.set_replay_exclusion(dir.path(), std::path::Path::new("rwv.lock"))
         .unwrap();
@@ -936,7 +937,7 @@ fn set_replay_exclusion_is_idempotent() {
 #[test]
 fn has_replay_exclusion_false_when_gitattributes_missing() {
     let dir = init_repo();
-    let vcs = GitVcs;
+    let vcs = git_vcs();
 
     assert!(!vcs
         .has_replay_exclusion(dir.path(), std::path::Path::new("rwv.lock"))
@@ -946,7 +947,7 @@ fn has_replay_exclusion_false_when_gitattributes_missing() {
 #[test]
 fn has_replay_exclusion_false_when_line_absent() {
     let dir = init_repo();
-    let vcs = GitVcs;
+    let vcs = git_vcs();
     fs::write(dir.path().join(".gitattributes"), "*.png binary\n").unwrap();
 
     assert!(!vcs
@@ -957,7 +958,7 @@ fn has_replay_exclusion_false_when_line_absent() {
 #[test]
 fn has_replay_exclusion_true_when_line_present() {
     let dir = init_repo();
-    let vcs = GitVcs;
+    let vcs = git_vcs();
     vcs.set_replay_exclusion(dir.path(), std::path::Path::new("rwv.lock"))
         .unwrap();
 
@@ -977,7 +978,7 @@ fn has_replay_exclusion_true_when_line_present() {
 #[test]
 fn has_replay_exclusion_false_when_only_legacy_line_present() {
     let dir = init_repo();
-    let vcs = GitVcs;
+    let vcs = git_vcs();
     fs::write(dir.path().join(".gitattributes"), "rwv.lock merge=ours\n").unwrap();
 
     assert!(!vcs
@@ -994,7 +995,7 @@ fn has_replay_exclusion_false_when_only_legacy_line_present() {
 #[test]
 fn set_replay_exclusion_migrates_legacy_line_in_place() {
     let dir = init_repo();
-    let vcs = GitVcs;
+    let vcs = git_vcs();
     let attrs_path = dir.path().join(".gitattributes");
     fs::write(&attrs_path, "*.png binary\nrwv.lock merge=ours\n").unwrap();
 
@@ -1031,7 +1032,7 @@ fn set_replay_exclusion_migrates_legacy_line_in_place() {
 #[test]
 fn set_replay_exclusion_is_noop_when_new_line_already_only_present() {
     let dir = init_repo();
-    let vcs = GitVcs;
+    let vcs = git_vcs();
     let attrs_path = dir.path().join(".gitattributes");
     fs::write(&attrs_path, "rwv.lock merge=rwv-ours\n").unwrap();
     let before = fs::read_to_string(&attrs_path).unwrap();
@@ -1054,7 +1055,7 @@ fn set_replay_exclusion_is_noop_when_new_line_already_only_present() {
 #[test]
 fn set_replay_exclusion_dedupes_when_both_lines_present() {
     let dir = init_repo();
-    let vcs = GitVcs;
+    let vcs = git_vcs();
     let attrs_path = dir.path().join(".gitattributes");
     fs::write(
         &attrs_path,
@@ -1169,7 +1170,7 @@ fn rebase_clean_advances_head_onto_target() {
     let main_tip = ResolvedRevisionId::from_canonical(git(p, &["rev-parse", "main"]), None);
 
     // feat is checked out — rebase it onto main.
-    GitVcs
+    git_vcs()
         .rebase(
             p,
             &main_tip,
@@ -1214,7 +1215,7 @@ fn rebase_conflict_on_non_lock_file_returns_rebase_conflict_and_leaves_mid_op() 
 
     let main_tip = ResolvedRevisionId::from_canonical(git(p, &["rev-parse", "main"]), None);
 
-    let result = GitVcs.rebase(
+    let result = git_vcs().rebase(
         p,
         &main_tip,
         &main_tip,
@@ -1227,7 +1228,7 @@ fn rebase_conflict_on_non_lock_file_returns_rebase_conflict_and_leaves_mid_op() 
         "expected RebaseConflict, got {err:?}"
     );
     // Repo is left mid-rebase so `git rebase --continue` works.
-    let mid_op = repoweave::git::GitVcs::mid_op_state(p);
+    let mid_op = repoweave::git::git_vcs().mid_operation(p);
     assert_eq!(
         mid_op.as_deref(),
         Some("mid-rebase"),
@@ -1244,7 +1245,7 @@ fn rebase_auto_resolves_lock_collision_when_replay_exclusion_set() {
     fs::write(p.join("rwv.lock"), "v0\n").unwrap();
     git(p, &["add", "rwv.lock"]);
     // Configure replay-exclusion BEFORE the commits that mutate the lock.
-    GitVcs
+    git_vcs()
         .set_replay_exclusion(p, std::path::Path::new("rwv.lock"))
         .unwrap();
     git(p, &["add", ".gitattributes"]);
@@ -1263,7 +1264,7 @@ fn rebase_auto_resolves_lock_collision_when_replay_exclusion_set() {
 
     let main_tip = ResolvedRevisionId::from_canonical(git(p, &["rev-parse", "main"]), None);
 
-    GitVcs
+    git_vcs()
         .rebase(
             p,
             &main_tip,
@@ -1282,7 +1283,7 @@ fn rebase_auto_resolves_lock_collision_when_replay_exclusion_set() {
     );
     // And the repo should not be left in a mid-op state.
     assert!(
-        repoweave::git::GitVcs::mid_op_state(p).is_none(),
+        repoweave::git::git_vcs().mid_operation(p).is_none(),
         "successful rebase must leave repo in a clean state"
     );
 }
@@ -1324,7 +1325,7 @@ fn rebase_stopped_commit_detail_returns_sha_and_subject() {
     let feature_sha = git(p, &["rev-parse", "HEAD"]);
 
     // Rebase feature onto main — will conflict on shared.txt.
-    let result = GitVcs.rebase(
+    let result = git_vcs().rebase(
         p,
         &main_tip,
         &main_tip,
@@ -1332,13 +1333,13 @@ fn rebase_stopped_commit_detail_returns_sha_and_subject() {
     );
     assert!(result.is_err(), "expected conflict on rebase");
     assert_eq!(
-        GitVcs::mid_op_state(p).as_deref(),
+        git_vcs().mid_operation(p).as_deref(),
         Some("mid-rebase"),
         "repo must be mid-rebase after conflicting rebase"
     );
 
     // rebase_stopped_commit_detail must include the short SHA and subject.
-    let detail = GitVcs.rebase_stopped_commit_detail(p);
+    let detail = git_vcs().rebase_stopped_commit_detail(p);
     let short = &feature_sha[..7];
     assert!(
         detail.contains(short),
@@ -1363,11 +1364,11 @@ fn rebase_stopped_commit_detail_falls_back_when_no_rebase_in_progress() {
 
     // Repo is clean (init_repo leaves it in a normal state).
     assert!(
-        GitVcs::mid_op_state(p).is_none(),
+        git_vcs().mid_operation(p).is_none(),
         "repo should not be mid-rebase after init"
     );
 
-    let detail = GitVcs.rebase_stopped_commit_detail(p);
+    let detail = git_vcs().rebase_stopped_commit_detail(p);
     assert!(
         !detail.is_empty(),
         "fallback must be non-empty; got: {detail}"
@@ -1394,11 +1395,11 @@ fn rebase_continue_on_clean_repo_returns_error_not_silent_noop() {
     let p = dir.path();
 
     assert!(
-        GitVcs::mid_op_state(p).is_none(),
+        git_vcs().mid_operation(p).is_none(),
         "fixture precondition: repo must not be mid-rebase"
     );
 
-    let err = GitVcs
+    let err = git_vcs()
         .rebase_continue(p, DerivedContentPolicy::keep_target_side())
         .expect_err("rebase_continue on a clean repo must return an error");
 
@@ -1450,7 +1451,7 @@ fn rebase_continue_with_unstaged_conflicts_bails_and_leaves_mid_rebase() {
     let main_tip = ResolvedRevisionId::from_canonical(git(p, &["rev-parse", "main"]), None);
 
     // First rebase stops on the conflict.
-    let first = GitVcs.rebase(
+    let first = git_vcs().rebase(
         p,
         &main_tip,
         &main_tip,
@@ -1461,7 +1462,7 @@ fn rebase_continue_with_unstaged_conflicts_bails_and_leaves_mid_rebase() {
         "first rebase must conflict; got {first:?}"
     );
     assert_eq!(
-        GitVcs::mid_op_state(p).as_deref(),
+        git_vcs().mid_operation(p).as_deref(),
         Some("mid-rebase"),
         "fixture precondition: repo must be mid-rebase"
     );
@@ -1472,14 +1473,14 @@ fn rebase_continue_with_unstaged_conflicts_bails_and_leaves_mid_rebase() {
     fs::write(p.join("shared"), "merged\n").unwrap();
     // Deliberately no `git add`.
 
-    let cont = GitVcs.rebase_continue(p, DerivedContentPolicy::keep_target_side());
+    let cont = git_vcs().rebase_continue(p, DerivedContentPolicy::keep_target_side());
 
     assert!(
         matches!(cont, Err(VcsError::RebaseConflict { ref op, .. }) if *op == ConflictOp::Rebase),
         "expected RebaseConflict, got {cont:?}"
     );
     assert_eq!(
-        GitVcs::mid_op_state(p).as_deref(),
+        git_vcs().mid_operation(p).as_deref(),
         Some("mid-rebase"),
         "repo must still be mid-rebase after a failed continue so the \
          operator can stage-and-retry"
@@ -1504,7 +1505,7 @@ fn rebase_continue_after_staging_completes_and_resolves_lock_pick_via_inline_fla
     fs::write(p.join("rwv.lock"), "v0\n").unwrap();
     fs::write(p.join("shared"), "v0\n").unwrap();
     git(p, &["add", "rwv.lock", "shared"]);
-    GitVcs
+    git_vcs()
         .set_replay_exclusion(p, std::path::Path::new("rwv.lock"))
         .unwrap();
     git(p, &["add", ".gitattributes"]);
@@ -1544,7 +1545,7 @@ fn rebase_continue_after_staging_completes_and_resolves_lock_pick_via_inline_fla
     );
 
     // Step 1: `Vcs::rebase` stops on F1's shared conflict.
-    let first = GitVcs.rebase(
+    let first = git_vcs().rebase(
         p,
         &main_tip,
         &main_tip,
@@ -1555,7 +1556,7 @@ fn rebase_continue_after_staging_completes_and_resolves_lock_pick_via_inline_fla
         "expected first rebase to conflict on shared; got {first:?}"
     );
     assert_eq!(
-        GitVcs::mid_op_state(p).as_deref(),
+        git_vcs().mid_operation(p).as_deref(),
         Some("mid-rebase"),
         "repo must be mid-rebase after F1 conflict"
     );
@@ -1567,13 +1568,13 @@ fn rebase_continue_after_staging_completes_and_resolves_lock_pick_via_inline_fla
     // Step 2: `rebase_continue` must apply the resolved F1 pick, then also
     // apply F2 (the lock-only pick) via the inline merge-driver flag — no
     // second conflict on rwv.lock.
-    GitVcs
+    git_vcs()
         .rebase_continue(p, DerivedContentPolicy::keep_target_side())
         .expect("rebase_continue must complete after staging");
 
     // Repo is no longer mid-rebase.
     assert!(
-        GitVcs::mid_op_state(p).is_none(),
+        git_vcs().mid_operation(p).is_none(),
         "rebase must be complete after successful continue"
     );
 

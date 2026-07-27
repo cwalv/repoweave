@@ -325,13 +325,11 @@ fn sync_result_is_source_as_of_t0_not_working_tree_mutation() {
 /// `read_file_at_revision` returns the file content at a specific commit.
 ///
 /// This directly tests the new `Vcs::read_file_at_revision` method on
-/// `GitVcs`, verifying that:
+/// the git backend, verifying that:
 ///   - It returns the content at the specified revision
 ///   - Subsequent working-tree modifications do not affect the read
 #[test]
 fn read_file_at_revision_returns_committed_content() {
-    use repoweave::vcs::Vcs;
-
     let tmp = common::tempdir().unwrap();
     let tmp = tmp.path();
 
@@ -356,7 +354,7 @@ fn read_file_at_revision_returns_committed_content() {
     // Overwrite the working tree with "version three" (uncommitted).
     std::fs::write(repo.join("file.txt"), "version three\n").unwrap();
 
-    let vcs = repoweave::git::GitVcs;
+    let vcs = repoweave::git::git_vcs();
 
     // Reading at rev_v1 should give "version one" regardless of WT state.
     let content_v1 = vcs

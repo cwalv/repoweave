@@ -1196,6 +1196,78 @@ fn run_env_input_check(root: &Path) -> anyhow::Result<Vec<String>> {
     Ok(check_env_input_reads(&src_dir, &allowlist))
 }
 
+/// Check that nothing outside `crate::git` reaches around the `Vcs` seam.
+///
+/// The backend type itself is closed by the compiler — it is private to
+/// `src/git.rs`, so `error[E0603]` answers "did anyone name it". Two ways past
+/// the seam survive that, because neither names a type:
+///
+/// 1. **Calling the constructor at a call site.** `git_vcs()` is `pub` because
+///    `tests/` needs a concrete backend, and `pub` means a verb could mint one
+///    instead of accepting a handle — which dispatches correctly and can never
+///    be handed a double. It belongs only where a backend is *resolved*:
+///    `src/vcs.rs`, whose two named resolvers say why each one cannot resolve
+///    from a manifest entry.
+/// 2. **Spawning git from scratch.** `Command::new("git")` bypasses both the
+///    trait and `git_command`'s environment scrubbing.
+///
+/// Test modules are out of scope for both: a `#[cfg(test)]` module is free to
+/// build a concrete git backend, which is what `git_vcs` is `pub` for. The
+/// boundary is [`before_test_module`] — the first `#[cfg(test)]` that actually
+/// opens a module, under any name — not `mod tests` by name.
+///
+/// Returns error messages (one per bypass); empty means clean.
+fn check_vcs_seam_bypasses(src_dir: &Path) -> Vec<String> {
+    // Written as patterns rather than literals so this file stays in its own
+    // scope: a plain `"Command::new(\"git\")"` needle would match the line
+    // that defines it.
+    let spawn = Regex::new(r#"Command::new\("git"\)"#).unwrap();
+    let mint = Regex::new(r"git_vcs\(").unwrap();
+
+    let mut errors: Vec<String> = Vec::new();
+
+    for path in collect_rs_files(src_dir) {
+        let rel = path
+            .strip_prefix(src_dir)
+            .unwrap_or(&path)
+            .to_string_lossy()
+            .replace('\\', "/");
+        if rel == "git.rs" {
+            continue;
+        }
+        let content = match std::fs::read_to_string(&path) {
+            Ok(c) => c,
+            Err(e) => {
+                errors.push(format!("vcs-seam: could not read {}: {e}", path.display()));
+                continue;
+            }
+        };
+
+        for (n, line) in before_test_module(&content).lines().enumerate() {
+            if line.trim_start().starts_with("//") {
+                continue;
+            }
+            if spawn.is_match(line) {
+                errors.push(format!(
+                    "vcs-seam: src/{rel}:{} spawns git directly; go through the `Vcs` \
+                     handle the frame was given, or move the call into src/git.rs",
+                    n + 1
+                ));
+            }
+            if rel != "vcs.rs" && mint.is_match(line) {
+                errors.push(format!(
+                    "vcs-seam: src/{rel}:{} mints a git backend; take a `&dyn Vcs` \
+                     parameter instead, or resolve it in src/vcs.rs beside a named \
+                     reason it cannot come from a manifest entry",
+                    n + 1
+                ));
+            }
+        }
+    }
+
+    errors
+}
+
 /// Check that every variable name emitted by [`repoweave::plugins::envelope_vars`]
 /// is documented in `docs/reference/plugin-protocol.md`.
 ///
@@ -2295,6 +2367,22 @@ fn main() -> anyhow::Result<()> {
         );
     }
 
+    // --- vcs-seam gate ----------------------------------------------------
+    // `GitVcs` is private, so the compiler already refuses anyone who names
+    // the backend. These are the two bypasses that name no type: minting one
+    // through the `pub` constructor at a call site, and spawning git from
+    // scratch. Both are production-only; a test module may do either.
+    let seam_errors = check_vcs_seam_bypasses(&root.join("src"));
+    if !seam_errors.is_empty() {
+        let msg = seam_errors.join("\n");
+        anyhow::bail!(
+            "vcs-seam check failed:\n{msg}\n\n\
+             Fix: accept a `&dyn Vcs` parameter from the frame that owns the \
+             repo's identity, rather than resolving a backend where the work \
+             happens."
+        );
+    }
+
     // --- envelope-output documentation gate ------------------------------
     // Every RWV_* variable set on plugin spawns by envelope_vars() in
     // src/plugins.rs must be documented in docs/reference/plugin-protocol.md.
@@ -2930,6 +3018,112 @@ mod tests {
         assert!(
             combined.contains("env-input-allowlist.txt"),
             "error should name the allowlist file, got:\n{combined}"
+        );
+    }
+
+    /// A production site that spawns git from scratch fails the seam check.
+    ///
+    /// The compiler closes the `GitVcs` name; nothing but this closes a raw
+    /// spawn. A check that never fires is indistinguishable from a correct one.
+    #[test]
+    fn vcs_seam_check_fails_on_a_raw_git_spawn() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let src = tmp.path().join("src");
+        fs::create_dir_all(&src).unwrap();
+        fs::write(
+            src.join("verb.rs"),
+            "pub fn f() { let _ = std::process::Command::new(\"git\").arg(\"status\"); }\n",
+        )
+        .unwrap();
+        let errors = check_vcs_seam_bypasses(&src);
+        assert_eq!(
+            errors.len(),
+            1,
+            "expected one bypass, got:\n{}",
+            errors.join("\n")
+        );
+        assert!(
+            errors[0].contains("verb.rs:1") && errors[0].contains("spawns git directly"),
+            "error should name the line and the bypass, got:\n{}",
+            errors[0]
+        );
+    }
+
+    /// A production site that mints its own backend fails the seam check.
+    ///
+    /// This is the bypass the TL's ruling names: minting dispatches correctly
+    /// and can never be handed a double, so it is not a converted call site.
+    #[test]
+    fn vcs_seam_check_fails_on_a_minted_backend() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let src = tmp.path().join("src");
+        fs::create_dir_all(&src).unwrap();
+        fs::write(
+            src.join("verb.rs"),
+            "pub fn f() { let vcs = crate::git::git_vcs(); let _ = vcs; }\n",
+        )
+        .unwrap();
+        let errors = check_vcs_seam_bypasses(&src);
+        assert_eq!(
+            errors.len(),
+            1,
+            "expected one bypass, got:\n{}",
+            errors.join("\n")
+        );
+        assert!(
+            errors[0].contains("mints a git backend"),
+            "error should name the bypass, got:\n{}",
+            errors[0]
+        );
+    }
+
+    /// `src/vcs.rs` resolves backends; `src/git.rs` is the seam itself.
+    #[test]
+    fn vcs_seam_check_allows_the_resolver_and_the_backend_module() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let src = tmp.path().join("src");
+        fs::create_dir_all(&src).unwrap();
+        fs::write(
+            src.join("vcs.rs"),
+            "pub fn project_vcs() -> Box<dyn Vcs> { crate::git::git_vcs() }\n",
+        )
+        .unwrap();
+        fs::write(
+            src.join("git.rs"),
+            "pub fn git_vcs() -> Box<dyn Vcs> { Box::new(GitVcs) }\n\
+             fn run() { let _ = std::process::Command::new(\"git\"); }\n",
+        )
+        .unwrap();
+        let errors = check_vcs_seam_bypasses(&src);
+        assert!(
+            errors.is_empty(),
+            "resolver and backend module are the seam, got:\n{}",
+            errors.join("\n")
+        );
+    }
+
+    /// A test module may build a concrete backend — that is what `git_vcs` is
+    /// `pub` for. The boundary is any test module, not one named `tests`.
+    #[test]
+    fn vcs_seam_check_excludes_test_modules_under_any_name() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let src = tmp.path().join("src");
+        fs::create_dir_all(&src).unwrap();
+        fs::write(
+            src.join("verb.rs"),
+            "pub fn f() {}\n\
+             #[cfg(test)]\n\
+             mod seam_tests {\n    \
+             fn t() { let _ = crate::git::git_vcs(); \
+             let _ = std::process::Command::new(\"git\"); }\n\
+             }\n",
+        )
+        .unwrap();
+        let errors = check_vcs_seam_bypasses(&src);
+        assert!(
+            errors.is_empty(),
+            "test-module bypasses are out of scope, got:\n{}",
+            errors.join("\n")
         );
     }
 

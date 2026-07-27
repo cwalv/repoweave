@@ -93,7 +93,7 @@ pub const RWV_MERGE_DRIVER_NAME_KEY: &str = "merge.rwv-ours.name";
 pub const RWV_MERGE_DRIVER_NAME_DESC: &str = "keep ours during replay (rwv replay-exclusion)";
 
 /// Legacy driver name from before the rename. Read-only: the
-/// migrator in [`GitVcs::set_replay_exclusion`] rewrites `merge=ours` lines
+/// migrator in [`Vcs::set_replay_exclusion`] rewrites `merge=ours` lines
 /// to the new name, and `sync::verify_replay_exclusion_invariant` produces
 /// a targeted "run rwv doctor --fix" bail when it finds the legacy line
 /// committed in `.gitattributes`.
@@ -120,7 +120,7 @@ pub fn legacy_rwv_replay_exclusion_needle(path_str: &str) -> String {
 /// are no-ops.
 ///
 /// rwv's own rebase invocations pass the definition inline as `-c` flags
-/// (see [`GitVcs::rebase`]) so they don't depend on config state. But when
+/// (see [`Vcs::rebase`]) so they don't depend on config state. But when
 /// a rebase stops on a genuine non-lock conflict and the operator resumes
 /// with plain `git rebase --continue`, that new git process has no inline
 /// `-c` — without the durable config, every subsequent lock-only pick would
@@ -380,7 +380,11 @@ pub fn has_rwv_merge_driver_config(repo: &Path) -> Result<bool, VcsError> {
 }
 
 /// Git-based version control operations.
-pub struct GitVcs;
+///
+/// Private to this module: outside it the git backend is reachable only as a
+/// [`Vcs`](crate::vcs::Vcs) handle from [`git_vcs`], so no call site can name
+/// a backend it could not be handed a different one of.
+struct GitVcs;
 
 /// True when `checkout` is a linked worktree rather than a canonical store.
 ///
@@ -406,9 +410,8 @@ pub(crate) fn has_git_dir(dir: &Path) -> bool {
 
 /// The only way to obtain a git backend from outside this module.
 ///
-/// [`GitVcs`] itself is private, so a caller that wants git behaviour must
-/// accept it as a [`Vcs`](crate::vcs::Vcs) handle and can be handed a
-/// different one.
+/// The backend type itself is private, so a caller that wants git behaviour
+/// must accept it as a [`Vcs`] handle and can be handed a different one.
 pub fn git_vcs() -> Box<dyn crate::vcs::Vcs> {
     Box::new(GitVcs)
 }

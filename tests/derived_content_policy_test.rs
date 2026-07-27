@@ -13,8 +13,8 @@
 //! different derived path here is what shows the primitive is general and
 //! keeps the two from being read as one test of the same thing.
 
-use repoweave::git::{has_rwv_merge_driver_config, GitVcs};
-use repoweave::vcs::{ConflictOp, DerivedContentPolicy, ResolvedRevisionId, Vcs, VcsError};
+use repoweave::git::{git_vcs, has_rwv_merge_driver_config};
+use repoweave::vcs::{ConflictOp, DerivedContentPolicy, ResolvedRevisionId, VcsError};
 use std::fs;
 use std::path::Path;
 use tempfile::TempDir;
@@ -73,7 +73,7 @@ fn repo_declaring_derived_content() -> TempDir {
 
     write(p, DERIVED, "generated: v0\n");
     write(p, AUTHORED, "authored: v0\n");
-    GitVcs
+    git_vcs()
         .set_replay_exclusion(p, Path::new(DERIVED))
         .expect("declaring a path derived writes the repo's tracked metadata");
     git(p, &["add", "."]);
@@ -121,7 +121,7 @@ fn keeping_the_target_side_resolves_a_declared_path_without_stopping() {
     let p = dir.path();
     let main_tip = diverge_on(p, DERIVED);
 
-    GitVcs
+    git_vcs()
         .rebase(
             p,
             &main_tip,
@@ -136,7 +136,7 @@ fn keeping_the_target_side_resolves_a_declared_path_without_stopping() {
         "the target side's version must be the one left standing"
     );
     assert!(
-        GitVcs::mid_op_state(p).is_none(),
+        git_vcs().mid_operation(p).is_none(),
         "nothing may be left in flight: the resolution is mechanical, not something to finish"
     );
     // The replayed commit had nothing left to record once its only change
@@ -157,7 +157,7 @@ fn the_same_replay_without_the_policy_stops_on_the_same_path() {
     // Same fixture, same declaration, same operation — only the policy
     // differs. This is what makes the parameter load-bearing rather than
     // decorative: the declaration on its own resolves nothing.
-    let err = GitVcs
+    let err = git_vcs()
         .rebase(p, &main_tip, &main_tip, DerivedContentPolicy::vcs_default())
         .expect_err("with no resolver supplied, a declared path conflicts like any other");
 
@@ -166,11 +166,11 @@ fn the_same_replay_without_the_policy_stops_on_the_same_path() {
         "expected the ordinary textual-merge conflict, got {err:?}"
     );
     assert_eq!(
-        GitVcs::mid_op_state(p).as_deref(),
+        git_vcs().mid_operation(p).as_deref(),
         Some("mid-rebase"),
         "an unresolved conflict must leave the repo where the operator can act on it"
     );
-    GitVcs.cancel_in_flight_op(p);
+    git_vcs().cancel_in_flight_op(p);
 }
 
 #[test]
@@ -181,7 +181,7 @@ fn no_policy_resolves_a_path_the_repo_never_declared() {
 
     // The resolution applies to what the repo declared and nothing else.
     // A policy that swallowed authored conflicts would be losing work.
-    let err = GitVcs
+    let err = git_vcs()
         .rebase(
             p,
             &main_tip,
@@ -194,7 +194,7 @@ fn no_policy_resolves_a_path_the_repo_never_declared() {
         matches!(err, VcsError::RebaseConflict { ref op, .. } if *op == ConflictOp::Rebase),
         "expected RebaseConflict on the authored path, got {err:?}"
     );
-    GitVcs.cancel_in_flight_op(p);
+    git_vcs().cancel_in_flight_op(p);
 }
 
 // ============================================================================
@@ -225,7 +225,7 @@ fn diverge_with_a_conflict_ahead_of_the_declared_one(p: &Path) -> ResolvedRevisi
 /// Stop the replay on the authored conflict and resolve it the way an
 /// operator would, leaving the declared-path pick still to come.
 fn replay_until_the_authored_conflict(p: &Path, main_tip: &ResolvedRevisionId) {
-    let err = GitVcs
+    let err = git_vcs()
         .rebase(
             p,
             main_tip,
@@ -249,7 +249,7 @@ fn a_resumed_replay_resolves_the_declared_path_it_reaches() {
     let main_tip = diverge_with_a_conflict_ahead_of_the_declared_one(p);
     replay_until_the_authored_conflict(p, &main_tip);
 
-    GitVcs
+    git_vcs()
         .rebase_continue(p, DerivedContentPolicy::keep_target_side())
         .expect("the pick behind the resolved conflict must not stop the replay in turn");
 
@@ -264,7 +264,7 @@ fn a_resumed_replay_resolves_the_declared_path_it_reaches() {
         "the operator's own resolution must be what lands"
     );
     assert!(
-        GitVcs::mid_op_state(p).is_none(),
+        git_vcs().mid_operation(p).is_none(),
         "the replay must have run to completion"
     );
 }
@@ -279,7 +279,7 @@ fn a_resumed_replay_without_the_policy_stops_on_the_declared_path() {
     // The resume is a fresh operation and states its own policy. Supplying
     // none leaves the picks it reaches to resolve textually — including the
     // declared one the interrupted replay never got to.
-    let err = GitVcs
+    let err = git_vcs()
         .rebase_continue(p, DerivedContentPolicy::vcs_default())
         .expect_err("with no resolver supplied, the declared path conflicts in its turn");
 
@@ -292,5 +292,5 @@ fn a_resumed_replay_without_the_policy_stops_on_the_declared_path() {
         conflicted.contains(DERIVED),
         "the declared path must be the one left conflicted; got {conflicted:?}"
     );
-    GitVcs.cancel_in_flight_op(p);
+    git_vcs().cancel_in_flight_op(p);
 }

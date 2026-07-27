@@ -20,9 +20,9 @@
 //!      assertion in this file while failing the only case it is for. The
 //!      last test reads the syscalls.
 
-use repoweave::git::GitVcs;
+use repoweave::git::git_vcs;
 use repoweave::manifest::{ProjectName, WorkweaveName};
-use repoweave::vcs::{DeletionWarrant, EphemeralRefName, RawRefName, ResolvedRevisionId, Vcs};
+use repoweave::vcs::{DeletionWarrant, EphemeralRefName, RawRefName, ResolvedRevisionId};
 use repoweave::workweave_index::RefRegistry;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -78,7 +78,7 @@ fn commit(repo: &Path, file: &str) -> ResolvedRevisionId {
     std::fs::write(repo.join(file), file).unwrap();
     git(repo, &["add", "."]);
     git(repo, &["commit", "-m", file]);
-    GitVcs.head_revision(repo).unwrap()
+    git_vcs().head_revision(repo).unwrap()
 }
 
 fn ephemeral(project: &ProjectName, workweave: &str) -> EphemeralRefName {
@@ -102,7 +102,7 @@ fn a_ref_that_exists_without_a_receipt_is_not_rwvs() {
     // nothing records it.
     git(&store, &["branch", "web-app--hotfix"]);
     assert!(
-        GitVcs
+        git_vcs()
             .resolve_local_branch_tip(&store, &name)
             .unwrap()
             .is_some(),
@@ -130,7 +130,7 @@ fn a_ref_that_exists_without_a_receipt_is_not_rwvs() {
 #[test]
 fn a_dangling_receipt_authorizes_nothing_but_a_live_one_does() {
     let (_tmp, primary, project, store) = weave();
-    let tip = GitVcs.head_revision(&store).unwrap();
+    let tip = git_vcs().head_revision(&store).unwrap();
     let mut registry = RefRegistry::for_project(&primary, &project);
 
     // Crash between the receipt and the birth: receipt, no ref.
@@ -138,18 +138,18 @@ fn a_dangling_receipt_authorizes_nothing_but_a_live_one_does() {
         .record_created(&store, ephemeral(&project, "ghost"), tip.clone())
         .unwrap();
     assert!(
-        GitVcs
+        git_vcs()
             .resolve_local_branch_tip(&store, &RawRefName::new("web-app--ghost"))
             .unwrap()
             .is_none(),
         "fixture check: the ref must be the one thing that is missing"
     );
     assert!(
-        DeletionWarrant::unmoved(&GitVcs, &dangling).is_none(),
+        DeletionWarrant::unmoved(git_vcs().as_ref(), &dangling).is_none(),
         "no ref, no unmoved warrant"
     );
     assert!(
-        DeletionWarrant::merged(&GitVcs, &dangling, &tip).is_none(),
+        DeletionWarrant::merged(git_vcs().as_ref(), &dangling, &tip).is_none(),
         "no ref, no merged warrant"
     );
 
@@ -158,8 +158,8 @@ fn a_dangling_receipt_authorizes_nothing_but_a_live_one_does() {
         .record_created(&store, ephemeral(&project, "hotfix"), tip.clone())
         .unwrap();
     git(&store, &["branch", "web-app--hotfix"]);
-    let warrant =
-        DeletionWarrant::unmoved(&GitVcs, &born).expect("a ref at its recorded tip is unmoved");
+    let warrant = DeletionWarrant::unmoved(git_vcs().as_ref(), &born)
+        .expect("a ref at its recorded tip is unmoved");
     assert!(
         warrant.describe().contains(tip.as_str()),
         "the warrant names the tip it certifies: {}",
@@ -173,7 +173,7 @@ fn a_dangling_receipt_authorizes_nothing_but_a_live_one_does() {
 #[test]
 fn a_receipt_stops_yielding_unmoved_once_the_ref_moves() {
     let (_tmp, primary, project, store) = weave();
-    let tip = GitVcs.head_revision(&store).unwrap();
+    let tip = git_vcs().head_revision(&store).unwrap();
     let mut registry = RefRegistry::for_project(&primary, &project);
 
     let owned = registry
@@ -184,7 +184,7 @@ fn a_receipt_stops_yielding_unmoved_once_the_ref_moves() {
     assert_ne!(moved, tip, "fixture check: the ref really moved");
 
     assert!(
-        DeletionWarrant::unmoved(&GitVcs, &owned).is_none(),
+        DeletionWarrant::unmoved(git_vcs().as_ref(), &owned).is_none(),
         "operator commits are not 'unmoved since rwv created it'"
     );
     // Merged against a baseline that contains the work does hold — the
@@ -194,9 +194,9 @@ fn a_receipt_stops_yielding_unmoved_once_the_ref_moves() {
         &store,
         &["merge", "-q", "--no-ff", "-m", "merge", "web-app--hotfix"],
     );
-    let baseline = GitVcs.head_revision(&store).unwrap();
+    let baseline = git_vcs().head_revision(&store).unwrap();
     assert!(
-        DeletionWarrant::merged(&GitVcs, &owned, &baseline).is_some(),
+        DeletionWarrant::merged(git_vcs().as_ref(), &owned, &baseline).is_some(),
         "a merged ref is destroyable; that is the point of the second warrant"
     );
 }

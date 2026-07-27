@@ -42,6 +42,13 @@ The trait surface lives in `src/vcs.rs`; the git implementation lives
 in `src/git.rs`. Future implementations (jj, hg, sl) would each own
 their own file; rwv core consumes the trait, not any one impl.
 
+The backend type is **private to `src/git.rs`**. Outside that module the
+git implementation is reachable only as a `Vcs` handle, from
+`crate::git::git_vcs`. That is what makes the principle above a
+compile-time property rather than a convention: rwv core cannot name a
+backend, so every frame that speaks to a repository has to accept a
+handle it could be given a different one of.
+
 ## Why this matters
 
 Two failure modes the seam prevents:
@@ -90,8 +97,8 @@ fn resolve_branch_on_remote(
 ) -> Result<ResolvedRevisionId, VcsError>;
 ```
 
-**Git impl** (`GitVcs::clone_with_role`, `GitVcs::resolve_branch_on_remote`
-in `src/git.rs`):
+**Git impl** (`Vcs::clone_with_role`, `Vcs::resolve_branch_on_remote`
+for git, in `src/git.rs`):
 
 ```rust
 fn clone_with_role(&self, url: &str, dest: &Path, role: Role) -> Result<(), VcsError> {
@@ -149,8 +156,8 @@ fn conflict_resolution_hint(&self, op: ConflictOp) -> String;
 `src/vcs.rs`) that distinguishes the three in-flight ops sync's
 project-repo path can leave behind: `Rebase`, `Merge`, `CherryPick`.
 
-**Git impl** (`GitVcs::conflict_resolution_hint` plus the free helper
-`git_conflict_resolution_hint` in `src/git.rs`):
+**Git impl** (`Vcs::conflict_resolution_hint` for git, plus the free
+helper `git_conflict_resolution_hint` in `src/git.rs`):
 
 ```rust
 fn conflict_resolution_hint(&self, op: ConflictOp) -> String {
@@ -180,8 +187,12 @@ fn git_conflict_resolution_hint(op: ConflictOp) -> String {
 messages (search for `conflict_resolution_hint` in `src/sync.rs`):
 
 ```rust
-let hint = GitVcs.conflict_resolution_hint(op);
+let hint = vcs.conflict_resolution_hint(op);
 ```
+
+`vcs` there is the handle the frame was given — sync resolves one per
+repo from `entry.vcs_type` and passes `&dyn Vcs` down, so the hint text
+comes from whichever backend that repo declared.
 
 **Why this is the seam shape.** Before the refactor, sync's
 `bail!` macros embedded "git add" / "git rebase --continue" text
@@ -236,12 +247,12 @@ fn set_replay_exclusion(&self, repo: &Path, path: &Path) -> Result<(), VcsError>
 fn has_replay_exclusion(&self, repo: &Path, path: &Path) -> Result<bool, VcsError>;
 ```
 
-**Git impl** (`GitVcs::set_replay_exclusion` in `src/git.rs`): appends
+**Git impl** (`Vcs::set_replay_exclusion` for git, in `src/git.rs`): appends
 `<path> merge=rwv-ours` to `<repo>/.gitattributes`, idempotently (and
 migrates legacy `merge=ours` lines in place when found). The
 `merge.rwv-ours.driver=true` config that makes the driver succeed
 without modifying the merged file is supplied in two ways: inline `-c`
-flags on every `GitVcs::rebase` and `GitVcs::rebase_continue`
+flags on every `Vcs::rebase` and `Vcs::rebase_continue`
 invocation (belt-and-braces for the rwv-driven path), plus a durable
 repo-local config plant that `verify_replay_exclusion_invariant` writes
 before each rebase-strategy sync (so bare `git rebase --continue` —
@@ -287,7 +298,7 @@ fn push_ref(&self, repo: &Path, role: Role, r: &PublishRef, force: bool)
     -> Result<(), VcsError>;
 ```
 
-**Git impl** (`GitVcs::push_ref` in `src/git.rs`): see the file for the
+**Git impl** (`Vcs::push_ref` for git, in `src/git.rs`): see the file for the
 full body. The relevant detail is that the impl owns:
 
 - The remote name selection (all roles push to `origin`; the `role`
@@ -333,30 +344,46 @@ composable (a future verb that wants to push only owned repos calls
 debuggable (the default-scope choice is one visible location in
 `src/push.rs`).
 
-## What this means for code review
+## What enforces this
 
-Concrete checklist for reviewers when a PR adds VCS-aware code:
+The parts of the principle that can be mechanised are mechanised, and a
+reviewer should read a green build as having already answered them.
 
-1. **Does the PR spell a git command in rwv core?** ("git ...",
-   `Command::new("git")`, `.args(["rebase", ...])`.) If so outside
-   `src/git.rs`, send it back — the wrapper belongs in the Vcs impl.
-2. **Does the PR introduce a remote name?** ("origin", "upstream",
-   "fork".) If outside `src/git.rs`, send it back — the naming
-   policy belongs in the VCS impl (currently `GitVcs`, which uses
-   `origin` for all roles).
-3. **Does the PR introduce a `.git*` file convention?**
-   (`.gitattributes`, `.gitignore`, `.gitmodules`.) If outside
-   `src/git.rs`, send it back — the file convention belongs in the
-   Vcs impl.
-4. **Does the PR introduce a user-facing git-vocabulary string?**
-   ("rebase", "cherry-pick", "merge --continue".) If the string is
-   shown to users from rwv core, send it back — the per-VCS phrasing
-   belongs in a Vcs trait method like `conflict_resolution_hint`.
+1. **Naming the backend.** The type is private to `src/git.rs`, so any
+   reference from rwv core is `error[E0603]`. There is no way to write a
+   new hardcoded backend that compiles.
+2. **Minting one.** `git_vcs()` is `pub` because `tests/` needs a
+   concrete backend, which means a verb could call it instead of
+   accepting a handle — dispatching correctly while remaining impossible
+   to substitute in a test. The `vcs-seam` gate in
+   `src/bin/generate-explain.rs` refuses it outside `src/vcs.rs`, where
+   the two named resolvers each say why the backend they return cannot
+   come from a manifest entry.
+3. **Spawning git from scratch.** The same gate refuses
+   `Command::new("git")` outside `src/git.rs`. Both rules stop at the
+   first test module, under any name: a `#[cfg(test)]` module may build
+   a concrete backend.
 
-Each of the four worked examples above started as a PR that initially
-put VCS-specific code in rwv core; each one was refactored to move the
-behavior across the seam. The discipline isn't novel; the joint just
-names it so reviewers have one canonical pointer.
+`scripts/ci-local.sh` runs the gate. It fails naming the file, the line
+and which of the two bypasses it is.
+
+What is left for a human is the part no gate can see — whether a *name*
+carries git's vocabulary across the seam:
+
+- **A remote name.** ("origin", "upstream", "fork".) The naming policy
+  belongs behind the trait; git uses `origin` for all roles.
+- **A `.git*` file convention.** (`.gitattributes`, `.gitignore`,
+  `.gitmodules`.) The convention belongs in `src/git.rs`; a caller
+  outside it that needs one is in the wrong module.
+- **A user-facing git-vocabulary string.** ("rebase", "cherry-pick",
+  "merge --continue".) Per-VCS phrasing belongs in a trait method like
+  `conflict_resolution_hint`.
+
+Each of the four worked examples above started as a change that
+initially put VCS-specific code in rwv core; each one was refactored to
+move the behavior across the seam. Every one of them predates the gate,
+which is the argument for the gate: a convention that well-informed
+authors violated repeatedly is a preference until something refuses it.
 
 ## Anchoring
 

@@ -884,8 +884,7 @@ fn lock_resolve_versions_makes_tag_form_equal_head() {
         "resolution should succeed: {failures:?}"
     );
 
-    use repoweave::vcs::Vcs;
-    let head = repoweave::git::GitVcs
+    let head = repoweave::git::git_vcs()
         .head_revision(&root.join(repo_path))
         .unwrap();
     let entry = &resolved_lock.repo_map()

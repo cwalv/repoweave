@@ -23,11 +23,11 @@
 //! on the types and pinned by error code in
 //! `tests/branch_model_compile_fail_test.rs`.
 
-use repoweave::git::GitVcs;
+use repoweave::git::git_vcs;
 use repoweave::manifest::{ProjectName, Role, WorkweaveName};
 use repoweave::vcs::{
     EphemeralRefName, HeadAttachment, RawRefName, RefNameError, ResolvedRevisionId, TrackingRef,
-    Vcs, VcsError,
+    VcsError,
 };
 use std::path::Path;
 use tempfile::TempDir;
@@ -88,7 +88,7 @@ fn commit(repo: &Path, file: &str, content: &str) -> ResolvedRevisionId {
     std::fs::write(repo.join(file), content).unwrap();
     git(repo, &["add", "."]);
     git(repo, &["commit", "-m", file]);
-    GitVcs.head_revision(repo).unwrap()
+    git_vcs().head_revision(repo).unwrap()
 }
 
 /// The branch HEAD is on, as git itself reports it — the independent
@@ -112,7 +112,7 @@ fn git_says_branch(repo: &Path) -> Option<String> {
 fn head_attachment_reports_the_branch_a_checkout_is_on() {
     let repo = repo_with_commit();
 
-    let observed = GitVcs.head_attachment(repo.path()).unwrap();
+    let observed = git_vcs().head_attachment(repo.path()).unwrap();
 
     match &observed {
         HeadAttachment::Attached(a) => {
@@ -133,7 +133,7 @@ fn head_attachment_reports_the_branch_a_checkout_is_on() {
 fn head_attachment_reports_unborn_separately_from_attached() {
     let repo = empty_repo();
 
-    match GitVcs.head_attachment(repo.path()).unwrap() {
+    match git_vcs().head_attachment(repo.path()).unwrap() {
         HeadAttachment::Unborn(u) => {
             // `symbolic-ref` succeeds here, so the state is reportable
             // rather than merely diagnosable.
@@ -147,10 +147,10 @@ fn head_attachment_reports_unborn_separately_from_attached() {
 #[test]
 fn head_attachment_reports_detached_separately_from_unborn() {
     let repo = repo_with_commit();
-    let tip = GitVcs.head_revision(repo.path()).unwrap();
+    let tip = git_vcs().head_revision(repo.path()).unwrap();
     git(repo.path(), &["checkout", "--detach", tip.as_str()]);
 
-    match GitVcs.head_attachment(repo.path()).unwrap() {
+    match git_vcs().head_attachment(repo.path()).unwrap() {
         HeadAttachment::Detached(d) => {
             assert_eq!(d.at(), &tip);
             assert_eq!(d.repo(), repo.path());
@@ -178,7 +178,7 @@ fn head_attachment_names_the_branch_not_the_shortest_unambiguous_ref() {
         "fixture really is ambiguous; without this the test proves nothing"
     );
 
-    let observed = GitVcs.head_attachment(repo.path()).unwrap();
+    let observed = git_vcs().head_attachment(repo.path()).unwrap();
 
     assert_eq!(observed.to_string(), "on branch 'main'");
     let HeadAttachment::Attached(a) = &observed else {
@@ -187,7 +187,7 @@ fn head_attachment_names_the_branch_not_the_shortest_unambiguous_ref() {
     // The round trip is the property that matters: the name a witness
     // carries has to be resolvable as a branch.
     assert!(
-        GitVcs
+        git_vcs()
             .resolve_local_branch_tip(a.repo(), &RawRefName::new("main"))
             .unwrap()
             .is_some(),
@@ -204,7 +204,7 @@ fn a_symbolic_head_that_names_no_branch_is_an_error_not_an_attachment() {
     let repo = repo_with_commit();
     git(repo.path(), &["symbolic-ref", "HEAD", "refs/foo/bar"]);
 
-    let err = GitVcs.head_attachment(repo.path()).unwrap_err();
+    let err = git_vcs().head_attachment(repo.path()).unwrap_err();
     assert_eq!(err.kind(), "command-failed");
     assert!(
         err.to_string().contains("refs/foo/bar"),
@@ -219,7 +219,7 @@ fn head_attachment_on_a_non_repo_is_not_a_detached_head() {
     // git in it at all.
     let dir = common::tempdir().unwrap();
 
-    match GitVcs.head_attachment(dir.path()) {
+    match git_vcs().head_attachment(dir.path()) {
         Err(VcsError::NotARepo(p)) => assert_eq!(p, dir.path()),
         other => panic!("expected NotARepo, got {other:?}"),
     }
@@ -230,7 +230,7 @@ fn head_attachment_kinds_are_distinguishable_in_json_output() {
     // Doctor / push / lock all report through the `--json` surface; the
     // point of the split is lost if the wire form re-collapses it.
     let dir = common::tempdir().unwrap();
-    let err = GitVcs.head_attachment(dir.path()).unwrap_err();
+    let err = git_vcs().head_attachment(dir.path()).unwrap_err();
     assert_eq!(err.kind(), "not-a-repo");
 }
 
@@ -242,7 +242,7 @@ fn head_revision_still_names_the_unborn_branch_it_no_longer_detects_itself() {
     // re-deriving it, so the operator-facing message is unchanged.
     let repo = empty_repo();
 
-    let err = GitVcs.head_revision(repo.path()).unwrap_err();
+    let err = git_vcs().head_revision(repo.path()).unwrap_err();
     let text = err.to_string();
     assert!(
         text.contains("unborn HEAD") && text.contains("on branch 'main'"),
@@ -257,23 +257,23 @@ fn head_revision_still_names_the_unborn_branch_it_no_longer_detects_itself() {
 #[test]
 fn advance_attached_ref_moves_the_ref_the_checkout_is_on() {
     let repo = repo_with_commit();
-    let base = GitVcs.head_revision(repo.path()).unwrap();
+    let base = git_vcs().head_revision(repo.path()).unwrap();
 
     // Build a target commit on a side branch, then come back to main.
     git(repo.path(), &["checkout", "-b", "side"]);
     let target = commit(repo.path(), "two", "2");
     git(repo.path(), &["checkout", "main"]);
 
-    let HeadAttachment::Attached(witness) = GitVcs.head_attachment(repo.path()).unwrap() else {
+    let HeadAttachment::Attached(witness) = git_vcs().head_attachment(repo.path()).unwrap() else {
         panic!("fixture should be attached");
     };
-    GitVcs.advance_attached_ref(&witness, &target).unwrap();
+    git_vcs().advance_attached_ref(&witness, &target).unwrap();
 
     // Which ref is this checkout on? Still `main` — a MOVE does not change
     // the attachment, which is the whole of R1.
-    let after = GitVcs.head_attachment(repo.path()).unwrap();
+    let after = git_vcs().head_attachment(repo.path()).unwrap();
     assert_eq!(after.to_string(), "on branch 'main'");
-    assert_eq!(GitVcs.head_revision(repo.path()).unwrap(), target);
+    assert_eq!(git_vcs().head_revision(repo.path()).unwrap(), target);
     assert_ne!(target, base);
 }
 
@@ -284,7 +284,7 @@ fn advance_attached_ref_refuses_a_witness_whose_repo_moved_under_it() {
     let target = commit(repo.path(), "two", "2");
     git(repo.path(), &["checkout", "main"]);
 
-    let HeadAttachment::Attached(witness) = GitVcs.head_attachment(repo.path()).unwrap() else {
+    let HeadAttachment::Attached(witness) = git_vcs().head_attachment(repo.path()).unwrap() else {
         panic!("fixture should be attached");
     };
 
@@ -292,7 +292,7 @@ fn advance_attached_ref_refuses_a_witness_whose_repo_moved_under_it() {
     // the TOCTOU form of the cross-repo pass.
     git(repo.path(), &["checkout", "side"]);
 
-    match GitVcs.advance_attached_ref(&witness, &target) {
+    match git_vcs().advance_attached_ref(&witness, &target) {
         Err(VcsError::StaleRefWitness {
             repo: r,
             expected,
@@ -309,22 +309,24 @@ fn advance_attached_ref_refuses_a_witness_whose_repo_moved_under_it() {
 #[test]
 fn advance_attached_ref_refuses_a_witness_for_a_repo_that_became_detached() {
     let repo = repo_with_commit();
-    let base = GitVcs.head_revision(repo.path()).unwrap();
+    let base = git_vcs().head_revision(repo.path()).unwrap();
     git(repo.path(), &["checkout", "-b", "side"]);
     let target = commit(repo.path(), "two", "2");
     git(repo.path(), &["checkout", "main"]);
 
-    let HeadAttachment::Attached(witness) = GitVcs.head_attachment(repo.path()).unwrap() else {
+    let HeadAttachment::Attached(witness) = git_vcs().head_attachment(repo.path()).unwrap() else {
         panic!("fixture should be attached");
     };
     git(repo.path(), &["checkout", "--detach", base.as_str()]);
 
     // This is the shape that landed commits on nothing: a phase detaches a
     // repo while a later phase still holds a witness for it.
-    let err = GitVcs.advance_attached_ref(&witness, &target).unwrap_err();
+    let err = git_vcs()
+        .advance_attached_ref(&witness, &target)
+        .unwrap_err();
     assert_eq!(err.kind(), "stale-ref-witness");
     assert_eq!(
-        GitVcs.head_revision(repo.path()).unwrap(),
+        git_vcs().head_revision(repo.path()).unwrap(),
         base,
         "the refusal is a refusal: nothing moved"
     );
@@ -342,36 +344,44 @@ fn a_witness_from_one_repo_cannot_move_another() {
     let b_target = commit(repo_b.path(), "two", "2");
     git(repo_b.path(), &["checkout", "main"]);
 
-    let HeadAttachment::Attached(witness_a) = GitVcs.head_attachment(repo_a.path()).unwrap() else {
+    let HeadAttachment::Attached(witness_a) = git_vcs().head_attachment(repo_a.path()).unwrap()
+    else {
         panic!("fixture should be attached");
     };
 
     // `b_target` is not an object in repo A at all, so the MOVE derived from
     // witness A fails against A rather than quietly advancing B.
-    assert!(GitVcs.advance_attached_ref(&witness_a, &b_target).is_err());
+    assert!(git_vcs()
+        .advance_attached_ref(&witness_a, &b_target)
+        .is_err());
     assert_eq!(
-        GitVcs.head_attachment(repo_b.path()).unwrap().to_string(),
+        git_vcs()
+            .head_attachment(repo_b.path())
+            .unwrap()
+            .to_string(),
         "on branch 'main'"
     );
-    assert_ne!(GitVcs.head_revision(repo_b.path()).unwrap(), b_target);
+    assert_ne!(git_vcs().head_revision(repo_b.path()).unwrap(), b_target);
 }
 
 #[test]
 fn advance_attached_ref_refuses_a_non_fast_forward() {
     let repo = repo_with_commit();
-    let base = GitVcs.head_revision(repo.path()).unwrap();
+    let base = git_vcs().head_revision(repo.path()).unwrap();
     git(repo.path(), &["checkout", "-b", "side"]);
     git(repo.path(), &["reset", "--hard", base.as_str()]);
     let divergent = commit(repo.path(), "side-only", "s");
     git(repo.path(), &["checkout", "main"]);
     let _ = commit(repo.path(), "main-only", "m");
-    let main_tip = GitVcs.head_revision(repo.path()).unwrap();
+    let main_tip = git_vcs().head_revision(repo.path()).unwrap();
 
-    let HeadAttachment::Attached(witness) = GitVcs.head_attachment(repo.path()).unwrap() else {
+    let HeadAttachment::Attached(witness) = git_vcs().head_attachment(repo.path()).unwrap() else {
         panic!("fixture should be attached");
     };
-    assert!(GitVcs.advance_attached_ref(&witness, &divergent).is_err());
-    assert_eq!(GitVcs.head_revision(repo.path()).unwrap(), main_tip);
+    assert!(git_vcs()
+        .advance_attached_ref(&witness, &divergent)
+        .is_err());
+    assert_eq!(git_vcs().head_revision(repo.path()).unwrap(), main_tip);
 }
 
 // ---------------------------------------------------------------------------
@@ -381,17 +391,17 @@ fn advance_attached_ref_refuses_a_non_fast_forward() {
 #[test]
 fn advance_detached_head_moves_a_detached_head() {
     let repo = repo_with_commit();
-    let base = GitVcs.head_revision(repo.path()).unwrap();
+    let base = git_vcs().head_revision(repo.path()).unwrap();
     let target = commit(repo.path(), "two", "2");
     git(repo.path(), &["checkout", "--detach", base.as_str()]);
 
-    let HeadAttachment::Detached(witness) = GitVcs.head_attachment(repo.path()).unwrap() else {
+    let HeadAttachment::Detached(witness) = git_vcs().head_attachment(repo.path()).unwrap() else {
         panic!("fixture should be detached");
     };
-    GitVcs.advance_detached_head(&witness, &target).unwrap();
+    git_vcs().advance_detached_head(&witness, &target).unwrap();
 
     // Still detached: moving a detached HEAD is a MOVE, not an ATTACH.
-    match GitVcs.head_attachment(repo.path()).unwrap() {
+    match git_vcs().head_attachment(repo.path()).unwrap() {
         HeadAttachment::Detached(d) => assert_eq!(d.at(), &target),
         other => panic!("expected Detached, got {other:?}"),
     }
@@ -403,7 +413,7 @@ fn advance_detached_head_refuses_a_repo_stopped_mid_bisect() {
     // operator is mid-bisect". Only the first is rwv's to move, and the
     // shipped detection did not look for a bisect at all.
     let repo = repo_with_commit();
-    let base = GitVcs.head_revision(repo.path()).unwrap();
+    let base = git_vcs().head_revision(repo.path()).unwrap();
     let mid = commit(repo.path(), "two", "2");
     let tip = commit(repo.path(), "three", "3");
 
@@ -411,12 +421,12 @@ fn advance_detached_head_refuses_a_repo_stopped_mid_bisect() {
     git(repo.path(), &["bisect", "bad", tip.as_str()]);
     git(repo.path(), &["bisect", "good", base.as_str()]);
 
-    let bisect_position = GitVcs.head_revision(repo.path()).unwrap();
-    let HeadAttachment::Detached(witness) = GitVcs.head_attachment(repo.path()).unwrap() else {
+    let bisect_position = git_vcs().head_revision(repo.path()).unwrap();
+    let HeadAttachment::Detached(witness) = git_vcs().head_attachment(repo.path()).unwrap() else {
         panic!("a bisect leaves HEAD detached");
     };
 
-    match GitVcs.advance_detached_head(&witness, &mid) {
+    match git_vcs().advance_detached_head(&witness, &mid) {
         Err(VcsError::MidOperation { repo: r, operation }) => {
             assert_eq!(r, repo.path());
             assert_eq!(operation, "mid-bisect", "the refusal names the operation");
@@ -424,7 +434,7 @@ fn advance_detached_head_refuses_a_repo_stopped_mid_bisect() {
         other => panic!("expected MidOperation, got {other:?}"),
     }
     assert_eq!(
-        GitVcs.head_revision(repo.path()).unwrap(),
+        git_vcs().head_revision(repo.path()).unwrap(),
         bisect_position,
         "the operator's bisect position survives the refusal"
     );
@@ -433,7 +443,7 @@ fn advance_detached_head_refuses_a_repo_stopped_mid_bisect() {
 #[test]
 fn mid_operation_sees_a_bisect_that_mid_op_cannot() {
     let repo = repo_with_commit();
-    let base = GitVcs.head_revision(repo.path()).unwrap();
+    let base = git_vcs().head_revision(repo.path()).unwrap();
     let _ = commit(repo.path(), "two", "2");
     let tip = commit(repo.path(), "three", "3");
     git(repo.path(), &["bisect", "start"]);
@@ -441,11 +451,11 @@ fn mid_operation_sees_a_bisect_that_mid_op_cannot() {
     git(repo.path(), &["bisect", "good", base.as_str()]);
 
     assert_eq!(
-        GitVcs.mid_operation(repo.path()).as_deref(),
+        git_vcs().mid_operation(repo.path()).as_deref(),
         Some("mid-bisect")
     );
     assert!(
-        GitVcs.mid_op(repo.path()).is_none(),
+        git_vcs().mid_op(repo.path()).is_none(),
         "a bisect has no conflict-resume path, so it is not a ConflictOp — \
          which is exactly why the precondition needs its own accessor"
     );
@@ -454,26 +464,28 @@ fn mid_operation_sees_a_bisect_that_mid_op_cannot() {
 #[test]
 fn mid_operation_is_none_in_a_clean_repo() {
     let repo = repo_with_commit();
-    assert_eq!(GitVcs.mid_operation(repo.path()), None);
+    assert_eq!(git_vcs().mid_operation(repo.path()), None);
 }
 
 #[test]
 fn advance_detached_head_refuses_a_stale_witness() {
     let repo = repo_with_commit();
-    let base = GitVcs.head_revision(repo.path()).unwrap();
+    let base = git_vcs().head_revision(repo.path()).unwrap();
     let target = commit(repo.path(), "two", "2");
     git(repo.path(), &["checkout", "--detach", base.as_str()]);
 
-    let HeadAttachment::Detached(witness) = GitVcs.head_attachment(repo.path()).unwrap() else {
+    let HeadAttachment::Detached(witness) = git_vcs().head_attachment(repo.path()).unwrap() else {
         panic!("fixture should be detached");
     };
     // Someone reattaches between observation and consumption.
     git(repo.path(), &["checkout", "main"]);
 
-    let err = GitVcs.advance_detached_head(&witness, &target).unwrap_err();
+    let err = git_vcs()
+        .advance_detached_head(&witness, &target)
+        .unwrap_err();
     assert_eq!(err.kind(), "stale-ref-witness");
     assert_eq!(
-        GitVcs.head_attachment(repo.path()).unwrap().to_string(),
+        git_vcs().head_attachment(repo.path()).unwrap().to_string(),
         "on branch 'main'"
     );
 }
@@ -609,7 +621,10 @@ fn remote_default_branch_is_none_when_origin_head_is_unset() {
     // The shipped implementation fabricated "main" here, so the publish
     // gate compared an observation against an invention.
     let repo = repo_with_commit();
-    assert!(GitVcs.remote_default_branch(repo.path()).unwrap().is_none());
+    assert!(git_vcs()
+        .remote_default_branch(repo.path())
+        .unwrap()
+        .is_none());
 }
 
 #[test]
@@ -633,7 +648,7 @@ fn remote_default_branch_reads_the_symref_when_it_is_set() {
         ],
     );
 
-    let observed = GitVcs.remote_default_branch(repo.path()).unwrap();
+    let observed = git_vcs().remote_default_branch(repo.path()).unwrap();
     let observed = observed.expect("symref is set");
     assert_eq!(observed.to_string(), "trunk");
     assert_eq!(
@@ -659,7 +674,10 @@ fn remote_default_branch_is_none_for_a_symref_outside_the_remote_namespace() {
     );
 
     assert!(
-        GitVcs.remote_default_branch(repo.path()).unwrap().is_none(),
+        git_vcs()
+            .remote_default_branch(repo.path())
+            .unwrap()
+            .is_none(),
         "a symref pointing outside the remote namespace names no default — \
          and there is no fallback to invent one"
     );
@@ -671,7 +689,7 @@ fn remote_default_branch_is_none_for_a_symref_outside_the_remote_namespace() {
 #[test]
 fn remote_default_branch_on_a_non_repo_is_an_error_not_an_absence() {
     let dir = common::tempdir().unwrap();
-    match GitVcs.remote_default_branch(dir.path()) {
+    match git_vcs().remote_default_branch(dir.path()) {
         Err(VcsError::NotARepo(p)) => assert_eq!(p, dir.path()),
         other => panic!("expected NotARepo, got {other:?}"),
     }
@@ -695,7 +713,7 @@ fn listings_return_observed_names() {
     // Nested too: `lstrip=2` must drop exactly `refs/heads/`, no more.
     git(repo.path(), &["branch", "p--deep/inner"]);
 
-    let mut all: Vec<String> = GitVcs
+    let mut all: Vec<String> = git_vcs()
         .list_local_branch_names(repo.path())
         .unwrap()
         .iter()
@@ -707,7 +725,7 @@ fn listings_return_observed_names() {
         ["main", "p--deep/inner", "p--other", "p--ww", "unrelated"]
     );
 
-    let mut prefixed: Vec<String> = GitVcs
+    let mut prefixed: Vec<String> = git_vcs()
         .list_branch_names_with_prefix(repo.path(), "p--")
         .unwrap()
         .iter()
@@ -726,7 +744,7 @@ fn listings_return_observed_names() {
     // "what is left over" reads as "these do not exist".
     for name in &prefixed {
         assert!(
-            GitVcs
+            git_vcs()
                 .resolve_local_branch_tip(repo.path(), &RawRefName::new(name.clone()))
                 .unwrap()
                 .is_some(),
@@ -738,7 +756,7 @@ fn listings_return_observed_names() {
 #[test]
 fn listing_a_prefix_with_no_matches_is_empty_not_an_error() {
     let repo = repo_with_commit();
-    assert!(GitVcs
+    assert!(git_vcs()
         .list_branch_names_with_prefix(repo.path(), "nothing--")
         .unwrap()
         .is_empty());
@@ -781,20 +799,20 @@ fn resolved_revisions_from_ref_resolution_are_canonical_by_construction() {
 #[test]
 fn savepoint_resolution_still_round_trips_through_the_checked_constructor() {
     let repo = repo_with_commit();
-    let head = GitVcs.head_revision(repo.path()).unwrap();
+    let head = git_vcs().head_revision(repo.path()).unwrap();
 
-    let captured = GitVcs.create_savepoint(repo.path(), "op-1").unwrap();
+    let captured = git_vcs().create_savepoint(repo.path(), "op-1").unwrap();
     assert_eq!(captured, head);
-    assert_eq!(GitVcs.resolve_savepoint(repo.path(), "op-1"), Some(head));
-    assert_eq!(GitVcs.resolve_savepoint(repo.path(), "absent"), None);
+    assert_eq!(git_vcs().resolve_savepoint(repo.path(), "op-1"), Some(head));
+    assert_eq!(git_vcs().resolve_savepoint(repo.path(), "absent"), None);
 }
 
 #[test]
 fn a_savepoint_ref_is_proof_the_savepoint_exists() {
     let repo = repo_with_commit();
-    let head = GitVcs.head_revision(repo.path()).unwrap();
+    let head = git_vcs().head_revision(repo.path()).unwrap();
 
-    let savepoint = GitVcs.create_savepoint_ref(repo.path(), "op-2").unwrap();
+    let savepoint = git_vcs().create_savepoint_ref(repo.path(), "op-2").unwrap();
     assert_eq!(savepoint.repo(), repo.path());
     assert_eq!(savepoint.op_id(), "op-2");
     assert_eq!(savepoint.at(), &head);

@@ -14,7 +14,6 @@
 
 use repoweave::cli::dispatch::workweave_delete;
 use repoweave::manifest::{ProjectName, WorkweaveName};
-use repoweave::vcs::Vcs;
 use std::path::{Path, PathBuf};
 
 mod common;
@@ -139,7 +138,7 @@ fn canonical_store_resolves_to_linked_clone_under_correct_topology() {
     add_workweave_checkout(&repo, &ww_root, "github/org/repo", "web-app--probe");
 
     let checkout = ww_root.join("github/org/repo");
-    let store_path = repoweave::git::GitVcs
+    let store_path = repoweave::git::git_vcs()
         .resolve_canonical_store(&checkout)
         .expect("resolve_canonical_store returned None");
     // `.parent()` strips the trailing `.git` component to get the clone directory.

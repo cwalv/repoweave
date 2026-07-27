@@ -736,7 +736,7 @@ fn is_sha_shaped(s: &str) -> bool {
 ///
 /// Two callers, deliberately sharing one definition: [`TrackingRef::parse`]
 /// rejects names of this shape (`version:` is a declaration, not a pin), and
-/// [`crate::git::GitVcs::tag_at_head`] uses it as a tiebreaker so a release
+/// git's [`Vcs::tag_at_head`] uses it as a tiebreaker so a release
 /// tag wins over an arbitrary lightweight tag. Both are asking
 /// "does this read as a release tag"; one answer.
 pub(crate) fn is_release_shape_name(s: &str) -> bool {
@@ -1802,7 +1802,7 @@ impl DeletionWarrant {
 ///
 /// Values name a resolution; they do not describe a mechanism. A VCS impl
 /// translates the one it is handed into whatever its own merge machinery
-/// takes ([`GitVcs`](crate::git::GitVcs): an inline merge-driver
+/// takes (git: an inline merge-driver
 /// definition), which is what keeps the choice spellable by callers that
 /// know nothing about git.
 ///
@@ -1892,6 +1892,11 @@ impl DerivedContentPolicy {
 /// `Send + Sync` is required because a `&dyn Vcs` is captured by the closure
 /// `run_in_parallel` hands to worker threads. Implementations use interior
 /// mutability (e.g. `Mutex`) for any mutable state.
+///
+/// Each method below says what git does under **For git:**. The git
+/// implementation is a private type; [`crate::git::git_vcs`] hands out the
+/// only handle to it, so a caller documents against this trait and can be
+/// given a different backend.
 pub trait Vcs: Send + Sync {
     /// Human-readable name (e.g., `"git"`, `"jj"`).
     fn name(&self) -> &str;
@@ -1899,7 +1904,7 @@ pub trait Vcs: Send + Sync {
     /// Create an empty repository at `dest`, creating the directory and any
     /// missing parents first.
     ///
-    /// For [`GitVcs`](crate::git::GitVcs): runs
+    /// For git: runs
     /// `git init --initial-branch=main`.
     fn init_repo(&self, dest: &Path) -> Result<(), VcsError>;
 
@@ -1924,7 +1929,7 @@ pub trait Vcs: Send + Sync {
     ///
     /// Pushing remote-naming policy into the VCS layer keeps git-specific
     /// vocabulary (`upstream` vs `origin`) out of the manifest types. For
-    /// [`GitVcs`](crate::git::GitVcs): `Role::Fork` clones to `upstream`
+    /// git: `Role::Fork` clones to `upstream`
     /// (so a stray `git push` does not target the source-of-record); all
     /// other roles clone to `origin`. Other VCS impls choose their own
     /// conventions.
@@ -1932,7 +1937,7 @@ pub trait Vcs: Send + Sync {
 
     /// Resolve `branch` on the remote associated with `role` in `repo`.
     ///
-    /// For [`GitVcs`](crate::git::GitVcs): builds the qualified ref
+    /// For git: builds the qualified ref
     /// `"upstream/{branch}"` for `Role::Fork`, `"origin/{branch}"` for all
     /// other roles, and resolves it via [`resolve_revision`]. There is no
     /// bare-branch fallback — a missing role-conventional remote yields
@@ -1984,7 +1989,7 @@ pub trait Vcs: Send + Sync {
     ///
     /// Paths are repo-relative, in the implementation's own order.
     ///
-    /// For [`GitVcs`](crate::git::GitVcs): parses `git status --porcelain`.
+    /// For git: parses `git status --porcelain`.
     fn dirty_file_names(&self, repo: &Path) -> Result<Vec<String>, VcsError>;
 
     /// Return the path of every dirty **tracked** file in `repo`, with
@@ -1994,7 +1999,7 @@ pub trait Vcs: Send + Sync {
     /// tracked dirt would go stale under the replay, untracked scratch
     /// survives it untouched.
     ///
-    /// For [`GitVcs`](crate::git::GitVcs): parses
+    /// For git: parses
     /// `git status --porcelain --untracked-files=no`.
     fn tracked_dirty_file_names(&self, repo: &Path) -> Result<Vec<String>, VcsError>;
 
@@ -2007,7 +2012,7 @@ pub trait Vcs: Send + Sync {
     /// never-fabricate-a-finding behaviour writes `.unwrap_or(false)` and says
     /// so at its own site.
     ///
-    /// For [`GitVcs`](crate::git::GitVcs): runs
+    /// For git: runs
     /// `git ls-files --error-unmatch <path>`.
     fn is_tracked(&self, repo: &Path, path: &Path) -> Result<bool, VcsError>;
 
@@ -2030,7 +2035,7 @@ pub trait Vcs: Send + Sync {
     ///
     /// `op` is the in-flight operation that produced the conflict (rebase,
     /// merge, cherry-pick); the hint text varies per VCS and per op. No
-    /// `repo` param: the hint text for [`GitVcs`](crate::git::GitVcs)
+    /// `repo` param: the hint text for git
     /// doesn't vary per-repo, and adding a parameter we don't read would be
     /// noise. Add one if a future VCS needs to inspect on-disk state.
     ///
@@ -2048,7 +2053,7 @@ pub trait Vcs: Send + Sync {
     /// Rebase commits in the range `upstream..` of `repo`'s current branch
     /// onto `onto`, resolving declared derived content per `derived`.
     ///
-    /// For [`GitVcs`](crate::git::GitVcs): runs `git rebase --onto <onto>
+    /// For git: runs `git rebase --onto <onto>
     /// <upstream>`. On conflict, leaves the repo in the VCS-native in-flight
     /// state (for git: mid-rebase, with conflict markers in the working tree
     /// and `.git/rebase-merge/`) and returns
@@ -2069,7 +2074,7 @@ pub trait Vcs: Send + Sync {
     ///
     /// The parameter is not a convenience: it is what makes the resolution a
     /// caller's stated choice rather than a property of whichever impl runs.
-    /// For [`GitVcs`](crate::git::GitVcs) it becomes the inline merge-driver
+    /// For git it becomes the inline merge-driver
     /// definition (`-c merge.<name>.driver=…`) for that single invocation, so
     /// it is in force for exactly this operation and leaves no configuration
     /// behind; the trait hides that spelling so other VCS impls can use their
@@ -2114,7 +2119,7 @@ pub trait Vcs: Send + Sync {
     /// deliberately, not a detail it can leave to whichever value happened to
     /// be in scope.
     ///
-    /// For [`GitVcs`](crate::git::GitVcs): runs `git rebase --continue`,
+    /// For git: runs `git rebase --continue`,
     /// spelling `derived` the same way [`rebase`] does, so a replay that
     /// stopped on a conflict and the resume that finishes it cannot disagree
     /// about how a declared path resolves. The invocation runs
@@ -2147,7 +2152,7 @@ pub trait Vcs: Send + Sync {
     /// `Ok(vec![])` is the normal outcome and carries no suspicion — it is
     /// what a replay with nothing to resolve returns.
     ///
-    /// For [`GitVcs`](crate::git::GitVcs): intersects `git diff --name-only
+    /// For git: intersects `git diff --name-only
     /// <base>...<source>` with `git diff --name-only <landed> <source>`, then
     /// asks `git check-attr merge` which survivors carry the rwv resolution.
     /// Delegating the pattern evaluation to git is what keeps a `!merge`
@@ -2165,7 +2170,7 @@ pub trait Vcs: Send + Sync {
     /// `path` are silently overridden — the replay target's version of `path`
     /// always wins.
     ///
-    /// For [`GitVcs`](crate::git::GitVcs): appends a
+    /// For git: appends a
     /// `<path> merge=rwv-ours` line to `<repo>/.gitattributes` (idempotent
     /// — re-running is a no-op if the line is already present). If the
     /// file still carries the legacy `<path> merge=ours` line, the writer
@@ -2183,7 +2188,7 @@ pub trait Vcs: Send + Sync {
     /// `true` when [`set_replay_exclusion`] has been configured for `path` in
     /// `repo`.
     ///
-    /// For [`GitVcs`](crate::git::GitVcs): true iff `<repo>/.gitattributes`
+    /// For git: true iff `<repo>/.gitattributes`
     /// contains a `<path> merge=rwv-ours` line. The legacy `merge=ours`
     /// spelling is NOT accepted — a repo carrying only the legacy line is
     /// reported as missing so `rwv doctor --fix` migrates it. See
@@ -2221,7 +2226,7 @@ pub trait Vcs: Send + Sync {
     /// branch ref are touched only on success. No conflict markers are ever
     /// left in the working tree.
     ///
-    /// For [`GitVcs`](crate::git::GitVcs): runs `git merge --ff-only <to>`.
+    /// For git: runs `git merge --ff-only <to>`.
     /// Safe by construction: no `reset --hard` replacement that could
     /// discard reachable history.
     fn advance_if_fast_forward(&self, repo: &Path, to: &ResolvedRevisionId)
@@ -2236,7 +2241,7 @@ pub trait Vcs: Send + Sync {
     /// in place under [`refs/rwv/pre-op/<op-id>`] for `rwv abort` to roll
     /// back to.
     ///
-    /// For [`GitVcs`](crate::git::GitVcs): runs `git reset --hard <to>`.
+    /// For git: runs `git reset --hard <to>`.
     ///
     /// [`refs/rwv/pre-op/<op-id>`]: Vcs::create_savepoint
     fn hard_reset(&self, repo: &Path, to: &ResolvedRevisionId) -> Result<(), VcsError>;
@@ -2245,7 +2250,7 @@ pub trait Vcs: Send + Sync {
     /// `repo`. A revision counts as its own ancestor, so equal revisions
     /// return `true` (non-strict, matching `git merge-base --is-ancestor`).
     ///
-    /// For [`GitVcs`](crate::git::GitVcs): runs
+    /// For git: runs
     /// `git merge-base --is-ancestor <ancestor> <descendant>`.
     fn is_ancestor(
         &self,
@@ -2259,7 +2264,7 @@ pub trait Vcs: Send + Sync {
     ///
     /// Returns 0 when `to` is an ancestor of (or equal to) `from`.
     ///
-    /// For [`GitVcs`](crate::git::GitVcs): runs
+    /// For git: runs
     /// `git rev-list --count <from>..<to>`. The bounded count is what
     /// callers like `rwv sync`'s `AlreadyAhead` reporting actually need —
     /// no commit list is materialised.
@@ -2273,7 +2278,7 @@ pub trait Vcs: Send + Sync {
     /// Create a savepoint capturing the current `HEAD` of `repo` under an
     /// op-id-namespaced ref.
     ///
-    /// For [`GitVcs`](crate::git::GitVcs): writes
+    /// For git: writes
     /// `refs/rwv/pre-op/<op_id>` pointing at `HEAD`. The ref namespace is an
     /// impl detail — callers pass the opaque `op_id` and never spell the
     /// ref directly.
@@ -2285,7 +2290,7 @@ pub trait Vcs: Send + Sync {
     /// Look up the savepoint captured under `op_id` in `repo`, returning
     /// the SHA it points at, or `None` when no such savepoint exists.
     ///
-    /// For [`GitVcs`](crate::git::GitVcs): reads `refs/rwv/pre-op/<op_id>`.
+    /// For git: reads `refs/rwv/pre-op/<op_id>`.
     fn resolve_savepoint(&self, repo: &Path, op_id: &str) -> Option<ResolvedRevisionId>;
 
     /// Drop the savepoint captured under `op_id` in `repo`. No-op when
@@ -2297,7 +2302,7 @@ pub trait Vcs: Send + Sync {
     /// keyed by `op_id`, returning the captured tip and the operator-
     /// spellable label of the reference.
     ///
-    /// For [`GitVcs`](crate::git::GitVcs): writes
+    /// For git: writes
     /// `refs/rwv/pre-abort/<op_id>` pointing at `HEAD`. The ref namespace
     /// is a VCS impl detail — callers receive the [`PreAbortRef`] back
     /// with `label` containing the spellable name for refusal messages.
@@ -2318,7 +2323,7 @@ pub trait Vcs: Send + Sync {
     /// Resolve the pre-abort reference captured under `op_id` in `repo`,
     /// returning `None` when no such reference exists.
     ///
-    /// For [`GitVcs`](crate::git::GitVcs): reads
+    /// For git: reads
     /// `refs/rwv/pre-abort/<op_id>`.
     ///
     /// Used by tests and recovery tooling to verify that abort wrote the
@@ -2356,7 +2361,7 @@ pub trait Vcs: Send + Sync {
     /// The caller derives the key (e.g. the repo's path relative to the
     /// workspace root, or `"(project)"` for the project repo).
     ///
-    /// For [`GitVcs`](crate::git::GitVcs): when restoring, runs
+    /// For git: when restoring, runs
     /// `git reset --hard refs/rwv/pre-op/<op_id>` and drops the savepoint,
     /// gated by the classification above. This is the only remaining way
     /// to reach that reset: the unverified `restore_savepoint` it
@@ -2373,7 +2378,7 @@ pub trait Vcs: Send + Sync {
     /// Return the in-flight VCS operation `repo` is currently mid-way
     /// through, if any.
     ///
-    /// For [`GitVcs`](crate::git::GitVcs): detects mid-rebase
+    /// For git: detects mid-rebase
     /// (`rebase-merge/` or `rebase-apply/` present), mid-merge
     /// (`MERGE_HEAD` present), or mid-cherry-pick (`CHERRY_PICK_HEAD`
     /// present). Returns `None` when the repo is in a clean (non-in-flight)
@@ -2383,7 +2388,7 @@ pub trait Vcs: Send + Sync {
     /// Cancel any in-flight VCS operation in `repo` (rebase, merge,
     /// cherry-pick). No-op when the repo is in a clean state.
     ///
-    /// For [`GitVcs`](crate::git::GitVcs): runs
+    /// For git: runs
     /// `git rebase --abort` / `git merge --abort` / `git cherry-pick --abort`
     /// depending on what [`mid_op`] reports. Errors from the underlying
     /// abort command are swallowed — the call is a best-effort cleanup
@@ -2395,7 +2400,7 @@ pub trait Vcs: Send + Sync {
 
     /// Return `true` when `branch` in `repo` has a counterpart on the
     /// role-conventional remote (e.g. `refs/remotes/origin/<branch>` for
-    /// `Role::Primary` in [`GitVcs`](crate::git::GitVcs)).
+    /// `Role::Primary` in git).
     ///
     /// Used by `prune_dropped_repo` to refuse pruning a clone that has
     /// local-only branches: a branch with no remote counterpart is
@@ -2416,7 +2421,7 @@ pub trait Vcs: Send + Sync {
     /// [`branch_has_remote_counterpart`]; this method may error when it
     /// does not.
     ///
-    /// For [`GitVcs`](crate::git::GitVcs): runs
+    /// For git: runs
     /// `git rev-list --count refs/remotes/<remote>/<branch>..<branch>`.
     ///
     /// [`branch_has_remote_counterpart`]: Vcs::branch_has_remote_counterpart
@@ -2429,7 +2434,7 @@ pub trait Vcs: Send + Sync {
 
     /// List every local branch in `repo`.
     ///
-    /// For [`GitVcs`](crate::git::GitVcs): enumerates
+    /// For git: enumerates
     /// `refs/heads/` via `git for-each-ref`. Differs from
     /// [`list_branch_names_with_prefix`] in that it returns every branch
     /// regardless of name.
@@ -2440,7 +2445,7 @@ pub trait Vcs: Send + Sync {
     /// Fetch objects from `src_repo` into `dst_repo` so SHAs reachable in
     /// `src_repo` are reachable in `dst_repo`.
     ///
-    /// For [`GitVcs`](crate::git::GitVcs): runs `git fetch <src_path> HEAD`
+    /// For git: runs `git fetch <src_path> HEAD`
     /// in `dst_repo`. For sibling worktrees that share an object store this
     /// is a no-op; for independent clones it copies objects across. Errors
     /// are swallowed — the caller (e.g. `sync-to` step 3) is expected to
@@ -2457,7 +2462,7 @@ pub trait Vcs: Send + Sync {
     /// a committed tree reachable from `HEAD`. Live staged content is left
     /// untouched.
     ///
-    /// For [`GitVcs`](crate::git::GitVcs): runs `git reset` (mixed) after
+    /// For git: runs `git reset` (mixed) after
     /// verifying via `git write-tree` + `git log` that the index tree is
     /// among the last 200 commits' trees. Infallible — failures along the
     /// way silently leave the index alone.
@@ -2472,7 +2477,7 @@ pub trait Vcs: Send + Sync {
     /// a committed blob reachable from `HEAD`. Live edits are left
     /// untouched.
     ///
-    /// For [`GitVcs`](crate::git::GitVcs): runs `git checkout HEAD --
+    /// For git: runs `git checkout HEAD --
     /// <files>` after verifying each modified file's blob is reachable
     /// via `git rev-list --objects` of the last 200 commits. Infallible —
     /// failures along the way silently leave the working tree alone.
@@ -2481,7 +2486,7 @@ pub trait Vcs: Send + Sync {
     /// Return the fetch URL of a named remote in `repo`, or `None` when
     /// that remote does not exist.
     ///
-    /// For [`GitVcs`](crate::git::GitVcs): runs
+    /// For git: runs
     /// `git remote get-url <remote>`. Returns `None` when the remote is
     /// absent (git exits non-zero with "No such remote"). Returns
     /// `Some(url)` with the URL string as git reports it. Other errors
@@ -2494,7 +2499,7 @@ pub trait Vcs: Send + Sync {
     /// Return `true` when `sha` names a commit object that exists in
     /// `repo`'s object store.
     ///
-    /// For [`GitVcs`](crate::git::GitVcs): runs
+    /// For git: runs
     /// `git cat-file -e <sha>^{commit}`. Exit 0 means the object exists
     /// and is a commit; any other exit (including the case where `sha`
     /// resolves to a non-commit object type) returns `false`.
@@ -2541,14 +2546,14 @@ pub trait Vcs: Send + Sync {
     /// like `git worktree remove` that run in the repo root, not the
     /// `.git/` subdir) should call `.parent()` on the returned path.
     ///
-    /// For [`GitVcs`](crate::git::GitVcs): runs `git rev-parse
+    /// For git: runs `git rev-parse
     /// --path-format=absolute --git-common-dir` in `workspace`.
     fn resolve_canonical_store(&self, workspace: &Path) -> Option<PathBuf>;
     /// List paths registered as worktrees of `repo` whose on-disk
     /// directories no longer exist. The administrative entries are still
     /// in the VCS state and will be dropped by [`worktree_prune`].
     ///
-    /// For [`GitVcs`](crate::git::GitVcs): parses
+    /// For git: parses
     /// `git worktree list --porcelain` and returns the `worktree` path
     /// from every record marked `prunable`. Returns paths verbatim from
     /// the porcelain output; the caller is responsible for any further
@@ -2566,7 +2571,7 @@ pub trait Vcs: Send + Sync {
     /// List the opaque `op_id` strings of every savepoint currently
     /// recorded in `repo`.
     ///
-    /// For [`GitVcs`](crate::git::GitVcs): enumerates
+    /// For git: enumerates
     /// `refs/rwv/pre-op/*` via `git for-each-ref` and returns the
     /// trailing path component (the `op_id`) of each ref. The ref
     /// namespace (`refs/rwv/pre-op/<id>`) is an impl detail — callers
@@ -2595,7 +2600,7 @@ pub trait Vcs: Send + Sync {
     /// revision (the error's `rev` field carries the full
     /// `<revision>:<path>` spec, naming the absent path).
     ///
-    /// For [`GitVcs`](crate::git::GitVcs): runs
+    /// For git: runs
     /// `git show <revision>:<file_path>` in `repo`.
     fn read_file_at_revision(
         &self,
@@ -2650,7 +2655,7 @@ pub trait Vcs: Send + Sync {
     /// commits the parent already has are excluded because they are
     /// reachable from `parent_tip`.
     ///
-    /// For [`GitVcs`](crate::git::GitVcs): computes `git log
+    /// For git: computes `git log
     /// <parent-tip>..<tip>` and maps each entry into a [`CommitSummary`].
     fn unique_commits(
         &self,
@@ -2668,7 +2673,7 @@ pub trait Vcs: Send + Sync {
     /// deletion) in the workweave's diff. The returned [`UniqueDiff::base`]
     /// carries the anchor revision so callers can display it.
     ///
-    /// For [`GitVcs`](crate::git::GitVcs): anchors at `git merge-base
+    /// For git: anchors at `git merge-base
     /// <parent-tip> <tip>` and diffs `<anchor>..<tip>`.
     fn unique_diff(
         &self,

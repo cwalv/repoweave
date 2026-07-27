@@ -32,8 +32,8 @@
 //! [`the_templates_the_generator_reads_stay_authored`] holds to its claim.
 
 use assert_cmd::Command as AssertCommand;
-use repoweave::git::{has_rwv_merge_driver_config, GitVcs};
-use repoweave::vcs::{ConflictOp, Vcs};
+use repoweave::git::{git_vcs, has_rwv_merge_driver_config};
+use repoweave::vcs::ConflictOp;
 use std::path::{Path, PathBuf};
 
 mod common;
@@ -354,7 +354,7 @@ fn a_land_conflict_in_a_generated_artifact_resolves_mechanically() {
         .success();
 
     assert_eq!(
-        GitVcs.mid_op(&ww.managed_repo),
+        git_vcs().mid_op(&ww.managed_repo),
         None,
         "a declared derived path must not leave the land half-finished"
     );
@@ -443,7 +443,7 @@ fn the_same_land_conflict_without_the_declaration_stops_the_sync() {
     let stdout = String::from_utf8_lossy(&out.get_output().stdout).into_owned();
 
     assert_eq!(
-        GitVcs.mid_op(&ww.managed_repo),
+        git_vcs().mid_op(&ww.managed_repo),
         Some(ConflictOp::Rebase),
         "an undeclared conflict must leave the land where an operator can act \
          on it.\nstdout:\n{stdout}\nstderr:\n{stderr}"

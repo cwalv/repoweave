@@ -961,7 +961,7 @@ fn sync_rebase_continue_then_resync_does_not_clobber_user_resolution() {
         ww2.project_dir.join(".git").exists() || ww2.project_dir.join(".git").is_file(),
         "ww2 project repo should still exist"
     );
-    let mid_op = repoweave::git::GitVcs::mid_op_state(&ww2.project_dir);
+    let mid_op = repoweave::git::git_vcs().mid_operation(&ww2.project_dir);
     assert_eq!(
         mid_op.as_deref(),
         Some("mid-rebase"),
@@ -979,7 +979,9 @@ fn sync_rebase_continue_then_resync_does_not_clobber_user_resolution() {
 
     // After --continue, the repo is no longer mid-rebase.
     assert!(
-        repoweave::git::GitVcs::mid_op_state(&ww2.project_dir).is_none(),
+        repoweave::git::git_vcs()
+            .mid_operation(&ww2.project_dir)
+            .is_none(),
         "after `git rebase --continue` the repo must not be mid-op"
     );
     let resolved_content =

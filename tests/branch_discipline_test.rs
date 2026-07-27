@@ -30,9 +30,9 @@
 //! workspaces here include actual git checkouts (not just directory shells
 //! like the tree-integrity tests).
 
-use repoweave::git::GitVcs;
+use repoweave::git::git_vcs;
 use repoweave::manifest::{ProjectName, WorkweaveName};
-use repoweave::vcs::{EphemeralRefName, LegacyEphemeralRefName, RawRefName, Vcs};
+use repoweave::vcs::{EphemeralRefName, LegacyEphemeralRefName, RawRefName};
 use repoweave::workweave_index::RefRegistry;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -203,7 +203,7 @@ fn record_receipt(primary: &Path, project: &str, workweave: &str, store: &Path) 
     match workweave.split_once('/') {
         None => {
             let name = EphemeralRefName::mint(&project, &WorkweaveName::new(workweave).unwrap());
-            let tip = GitVcs
+            let tip = git_vcs()
                 .resolve_local_branch_tip(store, &name.to_raw())
                 .expect("store is readable")
                 .unwrap_or_else(|| {
@@ -219,7 +219,7 @@ fn record_receipt(primary: &Path, project: &str, workweave: &str, store: &Path) 
             let observed = RawRefName::new(format!("{}--{workweave}", project.as_str()));
             let legacy = LegacyEphemeralRefName::claim(&flat, &observed)
                 .expect("fixture: `workweave` must be `<live>/<remainder>` shaped");
-            let tip = GitVcs
+            let tip = git_vcs()
                 .resolve_local_branch_tip(store, &observed)
                 .expect("store is readable")
                 .unwrap_or_else(|| {
@@ -241,7 +241,7 @@ fn record_dangling_receipt(primary: &Path, project: &str, workweave: &str, store
     let name = EphemeralRefName::mint(&project, &WorkweaveName::new(workweave).unwrap());
     // Any resolvable revision works as the recorded tip: the receipt names a
     // ref that is not there, so nothing ever compares against it.
-    let head = GitVcs.head_revision(store).expect("store has a HEAD");
+    let head = git_vcs().head_revision(store).expect("store has a HEAD");
     registry
         .record_created(store, name, head)
         .expect("receipt should record");
@@ -1726,7 +1726,7 @@ fn migration_replays_a_crash_between_the_receipt_and_the_rename() {
         // The pre-flat ref itself — not a workweave name, so built as a raw
         // string rather than through WorkweaveName, which refuses `/`.
         let pre_flat = RawRefName::new(format!("{}--feat-a/main", project.as_str()));
-        let at = GitVcs
+        let at = git_vcs()
             .resolve_local_branch_tip(&canonical, &pre_flat)
             .unwrap()
             .unwrap();
