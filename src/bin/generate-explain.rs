@@ -2017,13 +2017,18 @@ fn run_doc_symbol_check(root: &Path) -> Vec<String> {
 /// for them.
 ///
 /// The list is literal, not stemmed: it matches exactly `bead`/`choreograph`/
-/// `subagent`/`sling` at word boundaries, not their plurals or other
-/// inflections. That is deliberate — `beads-core` appears twice in `src/` as
-/// an illustrative example crate name (manifest.rs, integrations/cargo_workspace.rs)
-/// and matching the plural would force rewording a hit that has nothing to
-/// do with the tracker. Add an entry only against a real hit in the tree;
-/// `workweave` is core rwv vocabulary and must never be added here.
-const CONSUMER_VOCABULARY: &[&str] = &["bead", "choreograph", "subagent", "sling"];
+/// `subagent`/`sling`/`tl`/`epic` at word boundaries, not their plurals or
+/// other inflections. That is deliberate — `beads-core` appears twice in
+/// `src/` as an illustrative example crate name (manifest.rs,
+/// integrations/cargo_workspace.rs) and matching the plural would force
+/// rewording a hit that has nothing to do with the tracker. Most entries here
+/// have never had a live hit outside this file; the list names known house
+/// vocabulary, not a log of past violations. `workweave` is core rwv
+/// vocabulary and must never be added here, and neither is `dispatch` — rwv's
+/// own CLI dispatch uses the word throughout `src/`, so it cannot be added as
+/// a bare word without banning rwv's own vocabulary alongside the consumer
+/// sense of it.
+const CONSUMER_VOCABULARY: &[&str] = &["bead", "choreograph", "subagent", "sling", "tl", "epic"];
 
 /// True if `word` occurs in `haystack` (already lowercased) bounded on both
 /// sides by a non-alphanumeric character or a string edge — i.e. as a whole
@@ -3051,8 +3056,8 @@ mod tests {
 
     /// A production site that mints its own backend fails the seam check.
     ///
-    /// This is the bypass the TL's ruling names: minting dispatches correctly
-    /// and can never be handed a double, so it is not a converted call site.
+    /// Minting dispatches correctly and can never be handed a double, so it
+    /// is not a converted call site.
     #[test]
     fn vcs_seam_check_fails_on_a_minted_backend() {
         let tmp = tempfile::tempdir().expect("tempdir");
@@ -3167,6 +3172,55 @@ mod tests {
         assert!(
             errors.is_empty(),
             "env reads on comment lines should be excluded, got:\n{}",
+            errors.join("\n")
+        );
+    }
+
+    /// `tl` and `epic` are in `CONSUMER_VOCABULARY` and the check reports
+    /// them — a check that finds nothing is indistinguishable from one that
+    /// never runs.
+    #[test]
+    fn consumer_vocabulary_check_fails_on_tl_and_epic() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let src = tmp.path().join("src");
+        fs::create_dir_all(&src).unwrap();
+        fs::write(
+            src.join("lib.rs"),
+            "// The TL signed off on this.\n// Each epic decomposes further.\n",
+        )
+        .unwrap();
+        let errors = check_no_consumer_vocabulary(tmp.path());
+        assert!(
+            errors.iter().any(|e| e.contains("consumer vocabulary `tl`")),
+            "expected a `tl` hit, got:\n{}",
+            errors.join("\n")
+        );
+        assert!(
+            errors
+                .iter()
+                .any(|e| e.contains("consumer vocabulary `epic`")),
+            "expected an `epic` hit, got:\n{}",
+            errors.join("\n")
+        );
+    }
+
+    /// Words that merely contain the letters `tl` adjacently must not fire —
+    /// `contains_word` requires `tl` to stand on its own, bounded by
+    /// non-alphanumeric characters or a string edge on both sides.
+    #[test]
+    fn consumer_vocabulary_check_ignores_tl_look_alikes() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let src = tmp.path().join("src");
+        fs::create_dir_all(&src).unwrap();
+        fs::write(
+            src.join("lib.rs"),
+            "// Negotiated over TLS, rendered as HTML, and told them to settle.\n",
+        )
+        .unwrap();
+        let errors = check_no_consumer_vocabulary(tmp.path());
+        assert!(
+            errors.is_empty(),
+            "TLS/HTML/settle contain the letters `tl` but not the word, got:\n{}",
             errors.join("\n")
         );
     }
