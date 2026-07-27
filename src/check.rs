@@ -2784,7 +2784,7 @@ pub fn scan_provenance(workspace_dir: &Path, projects: &[Project]) -> Vec<CheckV
                 .manifest
                 .get_entry(repo_path)
                 .map(|e| vcs_for(e.vcs_type))
-                .unwrap_or_else(crate::vcs::discovery_vcs);
+                .unwrap_or_else(crate::vcs::probe_vcs);
             let repo_abs = workspace_dir.join(repo_path.as_path());
             if !repo_abs.is_dir() {
                 continue;
@@ -3597,7 +3597,7 @@ fn scan_workweave_repo_branches(
         // primary and a manifest path, so an inverted topology reports
         // against the store the refs are actually in. Resolved per repo
         // because a receipt is keyed by (store, name).
-        let store = crate::workweave::receipt_store_for(&abs);
+        let store = crate::workweave::receipt_store_for(vcs, &abs);
         let store_receipts = recorded.for_store(&store);
         let flat_raw = flat.to_raw();
         let recorded_ref = store_receipts
@@ -4823,7 +4823,7 @@ pub fn fix_branch_model_migration(
         let mut registry = RefRegistry::for_project(ws_root, &marker.project);
 
         for abs in workweave_checkouts(vcs, &workweave_dir, marker.project.as_str()) {
-            let store = crate::workweave::receipt_store_for(&abs);
+            let store = crate::workweave::receipt_store_for(vcs, &abs);
             let (flat_present, legacy_refs) = refs_in_workweave_namespace(vcs, &store, &flat);
 
             // Pass rule: the migration runs only where the flat name is
@@ -6738,7 +6738,7 @@ pub fn restore_working_tree_to_head(repo: &Path) -> anyhow::Result<()> {
 /// in when passed). Handlers must not re-resolve.
 pub fn run_check_locked(ctx: &crate::workspace::WorkspaceContext) -> anyhow::Result<bool> {
     use crate::manifest::Project;
-    use crate::vcs::{discovery_vcs, vcs_for};
+    use crate::vcs::{probe_vcs, vcs_for};
     use crate::workspace::Checkout;
 
     let workspace_dir = ctx.active_path().to_path_buf();
@@ -6791,7 +6791,7 @@ pub fn run_check_locked(ctx: &crate::workspace::WorkspaceContext) -> anyhow::Res
                 .manifest
                 .get_entry(repo_path)
                 .map(|e| vcs_for(e.vcs_type))
-                .unwrap_or_else(discovery_vcs);
+                .unwrap_or_else(probe_vcs);
             let repo_abs = workspace_dir.join(repo_path.as_path());
 
             let actual = match vcs.head_revision(&repo_abs) {
@@ -6903,7 +6903,7 @@ pub fn run_check(
 
     // Build session (runs builtin_registries → scan_repos_on_disk → discover_project_paths).
     let session = WorkspaceSession::new(&workspace_dir);
-    let vcs = crate::vcs::discovery_vcs();
+    let vcs = crate::vcs::probe_vcs();
 
     // Legacy `role: primary` scan + optional --fix migration. Runs before
     // `Project::from_dir`, since manifests with the legacy spelling fail
@@ -8477,7 +8477,7 @@ fn collect_doctor_violations(
     let workspace_dir = ctx.active_path().to_path_buf();
 
     let session = WorkspaceSession::new(&workspace_dir);
-    let vcs = crate::vcs::discovery_vcs();
+    let vcs = crate::vcs::probe_vcs();
 
     // Resolve HEAD revisions for each repo on disk. HEAD-read failures are
     // surfaced by the non-JSON `run_check` as `Issue`s; they have no

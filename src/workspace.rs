@@ -419,7 +419,7 @@ impl WorkspaceSession {
     /// `builtin_registries()` → `scan_repos_on_disk()` → `discover_project_paths()`.
     pub fn new(root: &Path) -> Self {
         let registries = builtin_registries();
-        let vcs = crate::vcs::discovery_vcs();
+        let vcs = crate::vcs::probe_vcs();
         let repos_on_disk = scan_repos_on_disk(root, &registries, vcs.as_ref());
         let project_paths = discover_project_paths(root);
         Self {

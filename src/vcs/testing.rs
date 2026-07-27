@@ -219,6 +219,22 @@ impl Vcs for FakeVcs {
             .contains(&(ancestor.as_str().to_owned(), descendant.as_str().to_owned())))
     }
 
+    /// The canonical store `workspace` resolves to: always `None`.
+    ///
+    /// A modelled answer, not an absent one. The real method reports `None`
+    /// for a path that is not a repo, and this double's refs live in a map
+    /// keyed by the path a caller hands it rather than in an object store two
+    /// paths could share — so no path it is given has one. That is what keeps
+    /// an ownership receipt keyed to the path under test.
+    ///
+    /// It has no error channel, so nothing here can be failed or intercepted
+    /// and it takes no [`VcsCall`]. A test that needs two checkouts to share a
+    /// store is asserting about the store itself; that wants real repos, or a
+    /// declared mapping added here beside the arm that needs it.
+    fn resolve_canonical_store(&self, _workspace: &Path) -> Option<PathBuf> {
+        None
+    }
+
     fn resolve_local_branch_tip(
         &self,
         repo: &Path,
@@ -487,10 +503,6 @@ impl Vcs for FakeVcs {
 
     fn commit_object_exists(&self, _repo: &Path, _sha: &str) -> Result<bool, VcsError> {
         unsupported("commit_object_exists")
-    }
-
-    fn resolve_canonical_store(&self, _workspace: &Path) -> Option<PathBuf> {
-        unsupported("resolve_canonical_store")
     }
 
     fn list_stale_worktree_registrations(&self, _repo: &Path) -> Result<Vec<PathBuf>, VcsError> {

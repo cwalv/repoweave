@@ -29,11 +29,11 @@
 //!   adoption is a doctor act with the operator's consent.
 
 use crate::cli::consent::DiscardUnmergedConsent;
-use crate::git::{git_command, GitVcs};
+use crate::git::git_command;
 use crate::manifest::{Manifest, ProjectName, Role, WorkweaveName};
 use crate::vcs::{
-    vcs_for, BornRef, DeletionWarrant, EphemeralRefName, OwnedRef, RawRefName, ResolvedRevisionId,
-    Vcs,
+    project_vcs, vcs_for, BornRef, DeletionWarrant, EphemeralRefName, OwnedRef, RawRefName,
+    ResolvedRevisionId, Vcs,
 };
 use crate::workspace::{
     parse_weave_dir_name, read_active_project, weave_dir_name, WorkweaveMarker,
@@ -347,9 +347,8 @@ fn copy_dir_recursive(src: &Path, dst: &Path) -> anyhow::Result<()> {
 /// repos. This matches `delete_workweave`'s existing "continue on error, collect
 /// at the end" pattern — orphan refs in a secondary repo should not prevent
 /// the workweave dir from being removed.
-pub fn prune_orphan_worktrees_for(pairs: &[(PathBuf, PathBuf)]) {
+pub fn prune_orphan_worktrees_for(vcs: &dyn Vcs, pairs: &[(PathBuf, PathBuf)]) {
     for (repo_abs, worktree_path) in pairs {
-        let vcs = GitVcs;
         if worktree_path.exists() {
             // Directory still on disk — use `remove --force` which handles
             // both the on-disk tree and the `.git/worktrees/` registration.
@@ -461,6 +460,12 @@ struct RefAttempt {
 }
 
 struct CreateRollbackGuard {
+    /// The handle the create ran through, used again to undo it. One create
+    /// spans every repo in the manifest, so this is the backend of the
+    /// workweave rather than of any one repo: a manifest whose entries
+    /// declared different backends would need one handle per recorded
+    /// worktree, not one per guard.
+    vcs: Box<dyn Vcs>,
     /// The top-level workweave directory created for this attempt.
     workweave_dir: PathBuf,
     /// The primary weave and project the ownership receipts are keyed to.
@@ -487,8 +492,14 @@ struct CreateRollbackGuard {
 }
 
 impl CreateRollbackGuard {
-    fn new(workweave_dir: PathBuf, primary_root: &Path, project: &ProjectName) -> Self {
+    fn new(
+        vcs: Box<dyn Vcs>,
+        workweave_dir: PathBuf,
+        primary_root: &Path,
+        project: &ProjectName,
+    ) -> Self {
         Self {
+            vcs,
             workweave_dir,
             primary_root: primary_root.to_path_buf(),
             project: project.clone(),
@@ -553,9 +564,8 @@ impl CreateRollbackGuard {
         // Step 1: Remove worktree directories and prune registrations for
         // repos that SUCCESSFULLY registered a worktree.
         for (repo_abs, worktree_path) in &self.registered_worktrees {
-            let vcs = GitVcs;
             if worktree_path.exists() {
-                if let Err(e) = vcs.remove_worktree(repo_abs, worktree_path) {
+                if let Err(e) = self.vcs.remove_worktree(repo_abs, worktree_path) {
                     eprintln!(
                         "rwv workweave rollback: warning: could not remove worktree {}: {e}",
                         worktree_path.display()
@@ -568,7 +578,7 @@ impl CreateRollbackGuard {
                 }
             }
             // Always prune stale admin entries regardless of remove outcome.
-            if let Err(e) = vcs.worktree_prune(repo_abs) {
+            if let Err(e) = self.vcs.worktree_prune(repo_abs) {
                 eprintln!(
                     "rwv workweave rollback: warning: git worktree prune failed in {}: {e}",
                     repo_abs.display()
@@ -611,9 +621,8 @@ impl CreateRollbackGuard {
         // Step 2's dir-removal makes the admin entries prunable (they point to the
         // now-gone directory). Repos already handled in step 1 are included here
         // too — prune is idempotent.
-        let vcs = GitVcs;
         for repo_abs in &self.prune_on_rollback {
-            if let Err(e) = vcs.worktree_prune(repo_abs) {
+            if let Err(e) = self.vcs.worktree_prune(repo_abs) {
                 eprintln!(
                     "rwv workweave rollback: warning: git worktree prune failed in {}: {e}",
                     repo_abs.display()
@@ -627,7 +636,6 @@ impl CreateRollbackGuard {
         // worktree registrations (step 3). The prune step is critical: git refuses
         // to force-delete a branch listed in any `.git/worktrees/<name>` entry,
         // even when the worktree directory no longer exists on disk.
-        let _ = vcs;
         failures.extend(self.undo_ref_births());
 
         failures
@@ -654,7 +662,7 @@ impl CreateRollbackGuard {
     /// An [`RefBirth::Adopted`] ref is never destroyed at all, whatever its
     /// tip: this create did not write it.
     fn undo_ref_births(&self) -> Vec<String> {
-        let vcs = GitVcs;
+        let vcs = self.vcs.as_ref();
         let mut registry = RefRegistry::for_project(&self.primary_root, &self.project);
         let mut failures: Vec<String> = Vec::new();
 
@@ -674,7 +682,7 @@ impl CreateRollbackGuard {
                 continue;
             }
 
-            match DeletionWarrant::unmoved(&vcs, owned) {
+            match DeletionWarrant::unmoved(vcs, owned) {
                 Some(warrant) => {
                     if let Err(e) = vcs.delete_owned_ref(owned, warrant) {
                         eprintln!(
@@ -749,9 +757,9 @@ impl Drop for CreateRollbackGuard {
         //
         // 1. Prune orphan worktree registrations and remove worktree directories
         //    for repos that SUCCESSFULLY registered (same as registered_worktrees).
-        prune_orphan_worktrees_for(&self.registered_worktrees);
+        prune_orphan_worktrees_for(self.vcs.as_ref(), &self.registered_worktrees);
 
-        let vcs = GitVcs;
+        let vcs = self.vcs.as_ref();
 
         // 2. Remove the partially-created workweave directory.
         //    Must happen BEFORE branch deletion: git refuses to force-delete a
@@ -806,6 +814,7 @@ impl Drop for CreateRollbackGuard {
 /// Siblings `.2` (rollback) and `.3` (replace-existing prune) may call this same
 /// function before their own mutations.
 pub fn preflight_check_heads(
+    project_vcs: &dyn Vcs,
     source_root: &Path,
     project: &ProjectName,
     manifest: &Manifest,
@@ -814,7 +823,7 @@ pub fn preflight_check_heads(
 
     // Check project repo.
     let project_dir = source_root.join("projects").join(project.as_str());
-    if GitVcs.is_repo(&project_dir) && GitVcs.head_revision(&project_dir).is_err() {
+    if project_vcs.is_repo(&project_dir) && project_vcs.head_revision(&project_dir).is_err() {
         missing.push(format!(
             "project {name} has no commits yet — run \
              \"git -C projects/{name} commit\" to land the activate-generated \
@@ -989,8 +998,8 @@ impl BirthOutcome {
 /// a create wrote is invisible to the delete that has to consume it. Resolving
 /// through git's common-dir is what makes that true — the path each verb
 /// happens to hold is not.
-pub(crate) fn receipt_store_for(checkout: &Path) -> PathBuf {
-    resolved_worktree_parent(checkout, checkout)
+pub(crate) fn receipt_store_for(vcs: &dyn Vcs, checkout: &Path) -> PathBuf {
+    resolved_worktree_parent(vcs, checkout, checkout)
 }
 
 /// Materialize a worktree at `dest` on this workweave's ephemeral ref in the
@@ -1034,7 +1043,7 @@ pub(crate) fn birth_ephemeral_worktree(
     ephemeral: &EphemeralRefName,
     start: ResolvedRevisionId,
 ) -> anyhow::Result<BirthOutcome> {
-    let store = receipt_store_for(source_repo);
+    let store = receipt_store_for(vcs, source_repo);
     let raw = ephemeral.to_raw();
 
     // Classify the D/F collision before asking git, so it surfaces as a
@@ -1198,6 +1207,7 @@ pub fn create_workweave(
     worktree_references: bool,
     dir_override: Option<&Path>,
 ) -> anyhow::Result<PathBuf> {
+    let project_vcs = project_vcs();
     let manifest = load_manifest(source_root, project)?;
     // Placement is authoritative here (create direction): either the caller
     // named an explicit path (recorded verbatim) or the recorded container
@@ -1263,9 +1273,11 @@ pub fn create_workweave(
             let at_risk = if can_use_structured_delete {
                 // Uncommitted changes plus committed-but-unmerged work —
                 // both are destroyed by the replace.
-                let mut paths = collect_dirty_paths(&workweave_dir, project, &manifest);
+                let mut paths =
+                    collect_dirty_paths(project_vcs.as_ref(), &workweave_dir, project, &manifest);
                 let baselines = merge_baselines(&workweave_dir, primary_root);
                 paths.extend(collect_diverged_paths(
+                    project_vcs.as_ref(),
                     &workweave_dir,
                     project,
                     &manifest,
@@ -1275,7 +1287,7 @@ pub fn create_workweave(
             } else {
                 // Marker missing/foreign: no manifest can be trusted to
                 // enumerate the contents, so scan for repos directly.
-                collect_dirty_repos_by_walk(&workweave_dir)
+                collect_dirty_repos_by_walk(project_vcs.as_ref(), &workweave_dir)
             };
             if !at_risk.is_empty() {
                 bail!(
@@ -1317,7 +1329,7 @@ pub fn create_workweave(
                 // registration and must not be `git worktree remove`d
                 // through the link into the canonical store.
                 let orphan_pairs = orphan_prune_pairs(&manifest, source_root, &workweave_dir);
-                prune_orphan_worktrees_for(&orphan_pairs);
+                prune_orphan_worktrees_for(project_vcs.as_ref(), &orphan_pairs);
                 std::fs::remove_dir_all(&workweave_dir)?;
             }
         } else {
@@ -1344,8 +1356,8 @@ pub fn create_workweave(
     // explicitly overlay its working-tree `rwv.yaml`/`rwv.lock` below.
     if !capture_dirty {
         let project_dir = source_root.join("projects").join(project.as_str());
-        if GitVcs.is_repo(&project_dir) {
-            match crate::git::GitVcs::dirty_file_names(&project_dir) {
+        if project_vcs.is_repo(&project_dir) {
+            match project_vcs.dirty_file_names(&project_dir) {
                 Ok(dirty) if !dirty.is_empty() => {
                     bail!(
                         "rwv workweave create: refusing to create workweave — \
@@ -1378,7 +1390,7 @@ pub fn create_workweave(
     // the user gets a raw "fatal: ambiguous argument 'HEAD'" from git, which
     // names no path and suggests no fix. We run this BEFORE any disk mutation
     // so a missing-HEAD failure leaves no partial workweave directory behind.
-    preflight_check_heads(source_root, project, &manifest)?;
+    preflight_check_heads(project_vcs.as_ref(), source_root, project, &manifest)?;
 
     // Pre-add prune: clear any orphaned `.git/worktrees/<name>` registrations
     // left over from a previous (failed or manually-deleted) create attempt.
@@ -1421,7 +1433,7 @@ pub fn create_workweave(
                 (repo_abs, worktree_dest)
             })
             .collect();
-        prune_orphan_worktrees_for(&orphan_pairs);
+        prune_orphan_worktrees_for(project_vcs.as_ref(), &orphan_pairs);
     }
 
     std::fs::create_dir_all(&workweave_dir)?;
@@ -1430,7 +1442,12 @@ pub fn create_workweave(
     // path (including `bail!` / `?` propagation). Tracks which repos got
     // worktrees added so orphan `.git/worktrees/` registrations can be pruned
     // in addition to removing the workweave directory.
-    let mut rollback = CreateRollbackGuard::new(workweave_dir.clone(), primary_root, project);
+    let mut rollback = CreateRollbackGuard::new(
+        crate::vcs::project_vcs(),
+        workweave_dir.clone(),
+        primary_root,
+        project,
+    );
 
     // The one ephemeral name this create uses, in every store it touches.
     // Flat: `{project}--{workweave}`, minted from two inputs, with nothing
@@ -1609,7 +1626,7 @@ pub fn create_workweave(
     // workweave so that activate_workweave can find rwv.yaml there.
     let project_dir = source_root.join("projects").join(project.as_str());
     let project_wt_dest = workweave_dir.join("projects").join(project.as_str());
-    if GitVcs.is_repo(&project_dir) {
+    if project_vcs.is_repo(&project_dir) {
         // B8: project-worktree creation failure must NOT silently fall
         // through to a static directory copy. The copy fallback is for
         // the "project dir exists but is not a git repo" branch only.
@@ -1621,12 +1638,12 @@ pub fn create_workweave(
         // The project repo is an instance of the model, so this arm runs the
         // identical receipt-first birth over the identical ephemeral name.
         rollback.record_attempted_repo(project_dir.clone());
-        let birth = match GitVcs
+        let birth = match project_vcs
             .head_revision(&project_dir)
             .map_err(anyhow::Error::from)
             .and_then(|start| {
                 birth_ephemeral_worktree(
-                    &GitVcs,
+                    project_vcs.as_ref(),
                     &mut registry,
                     &project_dir,
                     &project_wt_dest,
@@ -1916,6 +1933,7 @@ fn short_sha(sha: &str) -> &str {
 /// check itself fails is reported as dirty (conservative: "we couldn't
 /// confirm clean").
 pub fn collect_dirty_paths(
+    project_vcs: &dyn Vcs,
     workweave_dir: &Path,
     project: &ProjectName,
     manifest: &Manifest,
@@ -1924,8 +1942,8 @@ pub fn collect_dirty_paths(
 
     // Project worktree.
     let project_wt = workweave_dir.join("projects").join(project.as_str());
-    if GitVcs.is_repo(&project_wt) {
-        match GitVcs.has_uncommitted_changes(&project_wt) {
+    if project_vcs.is_repo(&project_wt) {
+        match project_vcs.has_uncommitted_changes(&project_wt) {
             Ok(true) => dirty.push(format!("projects/{}", project.as_str())),
             Ok(false) => {}
             Err(e) => dirty.push(format!(
@@ -1987,6 +2005,7 @@ fn merge_baselines(workweave_dir: &Path, ws_root: &Path) -> Vec<PathBuf> {
 /// couldn't confirm safe"); a repo present in no baseline at all is skipped,
 /// matching the dirty check's missing-repo behavior.
 fn collect_diverged_paths(
+    project_vcs: &dyn Vcs,
     workweave_dir: &Path,
     project: &ProjectName,
     manifest: &Manifest,
@@ -1994,11 +2013,11 @@ fn collect_diverged_paths(
 ) -> Vec<String> {
     let mut diverged = Vec::new();
 
-    let mut check = |wt: &Path, rel: &Path, label: String| {
+    let mut check = |vcs: &dyn Vcs, wt: &Path, rel: &Path, label: String| {
         if !wt.exists() {
             return;
         }
-        let wt_head = match GitVcs.head_revision(wt) {
+        let wt_head = match vcs.head_revision(wt) {
             Ok(h) => h,
             Err(e) => {
                 diverged.push(format!("{label}: HEAD check failed: {e}"));
@@ -2014,7 +2033,7 @@ fn collect_diverged_paths(
         // worktree. Under tier-0 violations the canonical store for the
         // workweave checkout differs from the baseline's canonical store,
         // and we conservatively decline to vouch — see below.
-        let wt_canonical = match GitVcs
+        let wt_canonical = match vcs
             .resolve_canonical_store(wt)
             .and_then(|s| s.parent().map(|p| p.to_path_buf()))
         {
@@ -2029,7 +2048,7 @@ fn collect_diverged_paths(
         let mut candidates = 0;
         for base in baselines {
             let canonical = base.join(rel);
-            if !GitVcs.is_repo(&canonical) {
+            if !vcs.is_repo(&canonical) {
                 continue;
             }
             candidates += 1;
@@ -2040,7 +2059,7 @@ fn collect_diverged_paths(
             // When the baseline's canonical store differs from the
             // workweave checkout's, treat as not-vouched-by-this-baseline
             // and let the operator run `rwv doctor`.
-            let base_canonical = match GitVcs
+            let base_canonical = match vcs
                 .resolve_canonical_store(&canonical)
                 .and_then(|s| s.parent().map(|p| p.to_path_buf()))
             {
@@ -2050,10 +2069,10 @@ fn collect_diverged_paths(
             if base_canonical != wt_canonical {
                 continue;
             }
-            if let Ok(c) = GitVcs.head_revision(&canonical) {
+            if let Ok(c) = vcs.head_revision(&canonical) {
                 // Run is_ancestor in the resolved canonical store so the
                 // query is rooted in the DAG that contains both refs.
-                if GitVcs
+                if vcs
                     .is_ancestor(&wt_canonical, &wt_head, &c)
                     .unwrap_or(false)
                 {
@@ -2068,15 +2087,16 @@ fn collect_diverged_paths(
 
     let project_rel = Path::new("projects").join(project.as_str());
     let project_wt = workweave_dir.join(&project_rel);
-    if GitVcs.is_repo(&project_wt) {
+    if project_vcs.is_repo(&project_wt) {
         check(
+            project_vcs,
             &project_wt,
             &project_rel,
             format!("projects/{}", project.as_str()),
         );
     }
 
-    for (repo_path, _entry) in manifest.iter_entries() {
+    for (repo_path, entry) in manifest.iter_entries() {
         let wt = workweave_dir.join(repo_path.as_path());
         // A reference alias shares the canonical's branch (e.g. `main`); it
         // has no per-workweave commits that could be "unmerged" and force-
@@ -2086,7 +2106,12 @@ fn collect_diverged_paths(
         if classify_checkout(&wt) == CheckoutKind::ReferenceAlias {
             continue;
         }
-        check(&wt, repo_path.as_path(), repo_path.as_str().to_string());
+        check(
+            vcs_for(entry.vcs_type).as_ref(),
+            &wt,
+            repo_path.as_path(),
+            repo_path.as_str().to_string(),
+        );
     }
 
     diverged
@@ -2099,10 +2124,10 @@ fn collect_diverged_paths(
 /// so no manifest can be trusted to enumerate its contents. Descent stops at
 /// each repo root (no nested-repo scanning), and a repo whose dirty check
 /// fails is reported as dirty (conservative: "we couldn't confirm clean").
-fn collect_dirty_repos_by_walk(dir: &Path) -> Vec<String> {
-    fn walk(base: &Path, cur: &Path, dirty: &mut Vec<String>) {
+fn collect_dirty_repos_by_walk(vcs: &dyn Vcs, dir: &Path) -> Vec<String> {
+    fn walk(vcs: &dyn Vcs, base: &Path, cur: &Path, dirty: &mut Vec<String>) {
         if cur.join(".git").exists() {
-            if GitVcs.has_uncommitted_changes(cur).unwrap_or(true) {
+            if vcs.has_uncommitted_changes(cur).unwrap_or(true) {
                 let rel = cur.strip_prefix(base).unwrap_or(cur);
                 dirty.push(rel.display().to_string());
             }
@@ -2112,13 +2137,13 @@ fn collect_dirty_repos_by_walk(dir: &Path) -> Vec<String> {
             for entry in entries.flatten() {
                 let path = entry.path();
                 if path.is_dir() {
-                    walk(base, &path, dirty);
+                    walk(vcs, base, &path, dirty);
                 }
             }
         }
     }
     let mut dirty = Vec::new();
-    walk(dir, dir, &mut dirty);
+    walk(vcs, dir, dir, &mut dirty);
     dirty
 }
 
@@ -2148,11 +2173,11 @@ fn collect_dirty_repos_by_walk(dir: &Path) -> Vec<String> {
 /// used unconditionally — preserving behavior for the (now-explicit)
 /// "checkout is gone" branch while making the canonical resolution
 /// authoritative for the live case.
-pub(crate) fn resolved_worktree_parent(checkout: &Path, fallback: &Path) -> PathBuf {
+pub(crate) fn resolved_worktree_parent(vcs: &dyn Vcs, checkout: &Path, fallback: &Path) -> PathBuf {
     if !checkout.exists() {
         return fallback.to_path_buf();
     }
-    match GitVcs
+    match vcs
         .resolve_canonical_store(checkout)
         .and_then(|s| s.parent().map(|p| p.to_path_buf()))
     {
@@ -2182,17 +2207,18 @@ pub(crate) fn resolved_worktree_parent(checkout: &Path, fallback: &Path) -> Path
 /// about is the workweave's own checkout (the topology is fine — git just
 /// records the checkout as its own worktree).
 fn refuse_if_checkouts_host_foreign_worktrees(
+    project_vcs: &dyn Vcs,
     workweave_dir: &Path,
     project: &ProjectName,
     manifest: &Manifest,
 ) -> anyhow::Result<()> {
     let mut hazards: Vec<String> = Vec::new();
 
-    let mut check = |checkout: &Path, label: String| {
+    let mut check = |vcs: &dyn Vcs, checkout: &Path, label: String| {
         if !checkout.exists() {
             return;
         }
-        let canonical = match GitVcs
+        let canonical = match vcs
             .resolve_canonical_store(checkout)
             .and_then(|s| s.parent().map(|p| p.to_path_buf()))
         {
@@ -2208,7 +2234,7 @@ fn refuse_if_checkouts_host_foreign_worktrees(
         // checkout IS the canonical store. Enumerate every worktree this
         // store knows about and flag any whose path is NOT under our
         // workweave_dir (foreign — would be orphaned by delete).
-        let worktrees = match GitVcs.list_worktrees(checkout) {
+        let worktrees = match vcs.list_worktrees(checkout) {
             Ok(ws) => ws,
             Err(_) => return,
         };
@@ -2240,10 +2266,14 @@ fn refuse_if_checkouts_host_foreign_worktrees(
     // Project worktree.
     let project_rel = Path::new("projects").join(project.as_str());
     let project_wt = workweave_dir.join(&project_rel);
-    check(&project_wt, format!("projects/{}", project.as_str()));
+    check(
+        project_vcs,
+        &project_wt,
+        format!("projects/{}", project.as_str()),
+    );
 
     // Manifest repos.
-    for (repo_path, _entry) in manifest.iter_entries() {
+    for (repo_path, entry) in manifest.iter_entries() {
         let wt = workweave_dir.join(repo_path.as_path());
         // A reference alias resolves THROUGH the symlink to the canonical
         // store, whose own (legitimate) worktrees in other workweaves would
@@ -2252,7 +2282,11 @@ fn refuse_if_checkouts_host_foreign_worktrees(
         if classify_checkout(&wt) == CheckoutKind::ReferenceAlias {
             continue;
         }
-        check(&wt, repo_path.as_str().to_string());
+        check(
+            vcs_for(entry.vcs_type).as_ref(),
+            &wt,
+            repo_path.as_str().to_string(),
+        );
     }
 
     if hazards.is_empty() {
@@ -2386,6 +2420,7 @@ fn adopt_children_of(retiree_dir: &Path, primary_root: &Path) {
 /// [`collect_diverged_paths`] makes, applied to the warrant that authorizes
 /// the deletion rather than to the precondition that permits the verb.
 fn baseline_tips_in_store(
+    vcs: &dyn Vcs,
     store: &Path,
     baselines: &[PathBuf],
     rel: &Path,
@@ -2393,10 +2428,10 @@ fn baseline_tips_in_store(
     let mut tips = Vec::new();
     for base in baselines {
         let candidate = base.join(rel);
-        if !GitVcs.is_repo(&candidate) || receipt_store_for(&candidate) != store {
+        if !vcs.is_repo(&candidate) || receipt_store_for(vcs, &candidate) != store {
             continue;
         }
-        if let Ok(tip) = GitVcs.head_revision(&candidate) {
+        if let Ok(tip) = vcs.head_revision(&candidate) {
             tips.push(tip);
         }
     }
@@ -2646,6 +2681,7 @@ fn delete_workweave_inner_at(
     discard_unmerged: Option<DiscardUnmergedConsent>,
     skip_op_guard: bool,
 ) -> anyhow::Result<()> {
+    let project_vcs = project_vcs();
     let manifest = load_manifest(ws_root, project)?;
     let workweave_dir = workweave_dir.to_path_buf();
     let ephemeral = EphemeralRefName::mint(project, name);
@@ -2658,7 +2694,12 @@ fn delete_workweave_inner_at(
     // workweave's own work. See docs/explanation/joints/clone-topology.md and
     // docs/explanation/destructive-operations.md (precondition-or-stop).
     if workweave_dir.exists() {
-        refuse_if_checkouts_host_foreign_worktrees(&workweave_dir, project, &manifest)?;
+        refuse_if_checkouts_host_foreign_worktrees(
+            project_vcs.as_ref(),
+            &workweave_dir,
+            project,
+            &manifest,
+        )?;
     }
 
     // Cross-verb mutex (Correction 1, COVERAGE). A workweave that is mid-op
@@ -2679,7 +2720,7 @@ fn delete_workweave_inner_at(
     // Safety checks: each refusal has its own waiver. Skipped when the
     // workweave directory doesn't exist (nothing to lose).
     if !discard_uncommitted && workweave_dir.exists() {
-        let dirty = collect_dirty_paths(&workweave_dir, project, &manifest);
+        let dirty = collect_dirty_paths(project_vcs.as_ref(), &workweave_dir, project, &manifest);
         if !dirty.is_empty() {
             bail!(
                 "workweave {} has uncommitted changes; refusing to delete without \
@@ -2700,7 +2741,13 @@ fn delete_workweave_inner_at(
     // commits. This is the verb-level precondition; each destroy below
     // additionally has to hold its own warrant (R3).
     if discard_unmerged.is_none() && workweave_dir.exists() {
-        let diverged = collect_diverged_paths(&workweave_dir, project, &manifest, &baselines);
+        let diverged = collect_diverged_paths(
+            project_vcs.as_ref(),
+            &workweave_dir,
+            project,
+            &manifest,
+            &baselines,
+        );
         if !diverged.is_empty() {
             bail!(
                 "workweave {} has commits not merged into {}; \
@@ -2759,7 +2806,7 @@ fn delete_workweave_inner_at(
         // know about this checkout — running `worktree remove` there leaves
         // a stale registration. See docs/explanation/joints/clone-topology.md.
         let fallback_repo_abs = ws_root.join(repo_path.as_path());
-        let repo_abs = resolved_worktree_parent(&worktree_path, &fallback_repo_abs);
+        let repo_abs = resolved_worktree_parent(vcs.as_ref(), &worktree_path, &fallback_repo_abs);
 
         if worktree_path.exists() {
             // Detect "checkout is its own canonical store" — `git worktree
@@ -2795,7 +2842,8 @@ fn delete_workweave_inner_at(
         // Same resolved-parent rationale applies — pruning the wrong repo
         // leaves the actual canonical store's stale entries in place.
         let _ = vcs.worktree_prune(&repo_abs);
-        let baseline_tips = baseline_tips_in_store(&repo_abs, &baselines, repo_path.as_path());
+        let baseline_tips =
+            baseline_tips_in_store(vcs.as_ref(), &repo_abs, &baselines, repo_path.as_path());
         retire_recorded_refs(
             vcs.as_ref(),
             &mut registry,
@@ -2824,21 +2872,30 @@ fn delete_workweave_inner_at(
     // Resolve the project worktree's actual canonical store, same as for
     // manifest repos above. Resolved before the removal, while the checkout
     // is still there to be asked.
-    let project_store = resolved_worktree_parent(&project_worktree, &project_dir_fallback);
+    let project_store = resolved_worktree_parent(
+        project_vcs.as_ref(),
+        &project_worktree,
+        &project_dir_fallback,
+    );
     if project_worktree.exists() {
         let dot_git = project_worktree.join(".git");
         if dot_git.exists() && dot_git.is_file() {
-            if let Err(e) = GitVcs.remove_worktree(&project_store, &project_worktree) {
+            if let Err(e) = project_vcs.remove_worktree(&project_store, &project_worktree) {
                 let msg = format!("projects/{}: {e}", project.as_str());
                 eprintln!("rwv workweave delete: error: {msg}");
                 errors.push(msg);
             }
-            let _ = GitVcs.worktree_prune(&project_store);
+            let _ = project_vcs.worktree_prune(&project_store);
         }
     }
-    let project_baseline_tips = baseline_tips_in_store(&project_store, &baselines, &project_rel);
+    let project_baseline_tips = baseline_tips_in_store(
+        project_vcs.as_ref(),
+        &project_store,
+        &baselines,
+        &project_rel,
+    );
     retire_recorded_refs(
-        &GitVcs,
+        project_vcs.as_ref(),
         &mut registry,
         &project_store,
         &ephemeral,
@@ -3230,14 +3287,14 @@ pub fn workweave_log(
         });
     }
 
-    // Project repo: `projects/<project>/.git`. Always git; uses the
-    // `"(project)"` sentinel for its path field, matching the convention
-    // sync-to uses. Parent tip is read from the parent's project checkout,
-    // exactly as the parent marker recorded it — no branch-name reconstruction.
+    // The project repo uses the `"(project)"` sentinel for its path field,
+    // matching the convention sync-to uses. Parent tip is read from the
+    // parent's project checkout, exactly as the parent marker recorded it —
+    // no branch-name reconstruction.
     let project_repo = {
         let ww_project = ww_dir.join("projects").join(project.as_str());
         let parent_project = parent_path.join("projects").join(project.as_str());
-        let vcs = GitVcs;
+        let vcs = project_vcs();
 
         let mut note: Option<String> = None;
 
@@ -3504,6 +3561,7 @@ pub fn handle_claude_hook() -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::git::git_vcs;
 
     // -----------------------------------------------------------------------
     // Create rollback
@@ -3549,7 +3607,8 @@ mod tests {
 
     /// A guard with nothing but the ref attempt under test recorded.
     fn guard_for(primary: &Path, project: &ProjectName) -> CreateRollbackGuard {
-        let mut g = CreateRollbackGuard::new(primary.join("never-created"), primary, project);
+        let mut g =
+            CreateRollbackGuard::new(git_vcs(), primary.join("never-created"), primary, project);
         g.defuse(); // Drop must not re-run what the test drives explicitly.
         g
     }
@@ -3559,24 +3618,24 @@ mod tests {
         let (_tmp, primary, project, store) = weave();
         let mut registry = RefRegistry::for_project(&primary, &project);
         let name = EphemeralRefName::mint(&project, &WorkweaveName::new("ww").unwrap());
-        let at = GitVcs.head_revision(&store).unwrap();
+        let at = git_vcs().head_revision(&store).unwrap();
         let owned = registry.record_created(&store, name.clone(), at).unwrap();
 
         // A real birth, so the `BornRef` is the one `create_worktree_on`
         // produced rather than a value the test made up.
         let dest = primary.join("wt");
-        let born = GitVcs
+        let born = git_vcs()
             .create_worktree_on(&owned, &dest)
             .unwrap()
             .expect("a fresh name must be AUTHORED, not adopted");
-        GitVcs.remove_worktree(&store, &dest).unwrap();
+        git_vcs().remove_worktree(&store, &dest).unwrap();
 
         let mut g = guard_for(&primary, &project);
         g.record_ref_attempt(owned, RefBirth::Authored(born));
         assert!(g.undo_ref_births().is_empty(), "the destroy should succeed");
 
         assert!(
-            GitVcs
+            git_vcs()
                 .resolve_local_branch_tip(&store, &name.to_raw())
                 .unwrap()
                 .is_none(),
@@ -3604,15 +3663,19 @@ mod tests {
 
         // The receipt this create wrote before discovering it had adopted.
         let owned = registry
-            .record_created(&store, name.clone(), GitVcs.head_revision(&store).unwrap())
+            .record_created(
+                &store,
+                name.clone(),
+                git_vcs().head_revision(&store).unwrap(),
+            )
             .unwrap();
         let dest = primary.join("wt");
-        let born = GitVcs.create_worktree_on(&owned, &dest).unwrap();
+        let born = git_vcs().create_worktree_on(&owned, &dest).unwrap();
         assert!(
             born.is_none(),
             "fixture: a name already in the store must be ADOPTED, not authored"
         );
-        GitVcs.remove_worktree(&store, &dest).unwrap();
+        git_vcs().remove_worktree(&store, &dest).unwrap();
 
         let mut g = guard_for(&primary, &project);
         g.record_ref_attempt(owned, RefBirth::Adopted);
@@ -3634,11 +3697,11 @@ mod tests {
         let (_tmp, primary, project, store) = weave();
         let mut registry = RefRegistry::for_project(&primary, &project);
         let name = EphemeralRefName::mint(&project, &WorkweaveName::new("ww").unwrap());
-        let at = GitVcs.head_revision(&store).unwrap();
+        let at = git_vcs().head_revision(&store).unwrap();
         let owned = registry.record_created(&store, name.clone(), at).unwrap();
 
         let dest = primary.join("wt");
-        let born = GitVcs
+        let born = git_vcs()
             .create_worktree_on(&owned, &dest)
             .unwrap()
             .expect("authored");
@@ -3649,7 +3712,7 @@ mod tests {
         git(&dest, &["add", "."]);
         git(&dest, &["commit", "-m", "later"]);
         let moved_tip = git(&store, &["rev-parse", &name.to_string()]);
-        GitVcs.remove_worktree(&store, &dest).unwrap();
+        git_vcs().remove_worktree(&store, &dest).unwrap();
 
         let mut g = guard_for(&primary, &project);
         g.record_ref_attempt(owned, RefBirth::Authored(born));

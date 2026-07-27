@@ -12,9 +12,9 @@ use crate::op_state::{self, OpVerb, OwnerRecord};
 use crate::parallel::run_in_parallel;
 use crate::status::{compute_relation, LockRelation};
 use crate::vcs::{
-    vcs_for, AttachedRef, ConflictOp, DerivedContentPolicy, DiscardLocalCommitsConsent,
-    DiscardWarrant, EphemeralRefName, HeadAttachment, RefName, ResolvedRevisionId, Vcs, VcsError,
-    VcsErrorOutput, VerifiedRestoreOutcome,
+    project_vcs, vcs_for, AttachedRef, ConflictOp, DerivedContentPolicy,
+    DiscardLocalCommitsConsent, DiscardWarrant, EphemeralRefName, HeadAttachment, RefName,
+    ResolvedRevisionId, Vcs, VcsError, VcsErrorOutput, VerifiedRestoreOutcome,
 };
 use crate::workspace::{Checkout, Resolution, WorkspaceContext};
 use crate::workweave::{classify_checkout, ensure_registered_workweave, CheckoutKind};
@@ -1436,6 +1436,7 @@ fn check_store_unclaimed(
 /// is [`check_store_unclaimed`] in *front* of the destroy, not a relaxation
 /// behind it.
 fn prune_dropped_repo(
+    vcs: &dyn Vcs,
     ctx: &WorkspaceContext,
     repo_path: &RepoPath,
     project_name: &ProjectName,
@@ -1444,7 +1445,7 @@ fn prune_dropped_repo(
     if !dest.exists() {
         return Ok(());
     }
-    if GitVcs.has_uncommitted_changes(&dest).unwrap_or(true) {
+    if vcs.has_uncommitted_changes(&dest).unwrap_or(true) {
         anyhow::bail!(
             "{repo_path}: dropped from lock but worktree has uncommitted changes; \
              commit/discard and re-run sync, or remove manually"
@@ -1456,12 +1457,12 @@ fn prune_dropped_repo(
             // Diverged-from-canonical check: refuse if local commits would be lost.
             let canonical = ctx.primary_path().join(repo_path.as_path());
             if canonical.exists() {
-                let wt_head = GitVcs.head_revision(&dest).ok();
-                let canon_head = GitVcs.head_revision(&canonical).ok();
+                let wt_head = vcs.head_revision(&dest).ok();
+                let canon_head = vcs.head_revision(&canonical).ok();
                 if let (Some(w), Some(c)) = (wt_head, canon_head) {
                     if w != c {
                         // Allow when w is ancestor of c (no unique commits in workweave).
-                        let is_ancestor = GitVcs.is_ancestor(&dest, &w, &c).unwrap_or(false);
+                        let is_ancestor = vcs.is_ancestor(&dest, &w, &c).unwrap_or(false);
                         if !is_ancestor {
                             anyhow::bail!(
                                 "{repo_path}: dropped from lock but worktree has commits not in canonical clone; \
@@ -1470,10 +1471,9 @@ fn prune_dropped_repo(
                         }
                     }
                 }
-                GitVcs
-                    .remove_worktree(&canonical, &dest)
+                vcs.remove_worktree(&canonical, &dest)
                     .with_context(|| format!("worktree remove for {repo_path} failed"))?;
-                let _ = GitVcs.worktree_prune(&canonical);
+                let _ = vcs.worktree_prune(&canonical);
             } else {
                 // No canonical at the primary-side slot. That is a fact about
                 // the PRIMARY and says nothing about what `dest` is: under
@@ -1491,7 +1491,7 @@ fn prune_dropped_repo(
                 // compare the checkout against the store its refs live in.
                 // The fallback is `dest` itself, which makes an unresolvable
                 // store refuse rather than be assumed linked.
-                let store = crate::workweave::resolved_worktree_parent(&dest, &dest);
+                let store = crate::workweave::resolved_worktree_parent(vcs, &dest, &dest);
                 let dest_canonical = dest.canonicalize().unwrap_or_else(|_| dest.clone());
                 if store == dest_canonical {
                     anyhow::bail!(
@@ -1523,7 +1523,7 @@ fn prune_dropped_repo(
             // time (the lock entry is gone); Role::Owned selects the
             // canonical-clone remote convention (`origin` in [`GitVcs`])
             // which matches what every non-fork lock entry was cloned with.
-            let any_local_only = match GitVcs.list_local_branches(&dest) {
+            let any_local_only = match vcs.list_local_branches(&dest) {
                 Ok(names) => {
                     let mut any = false;
                     for branch in &names {
@@ -1532,7 +1532,7 @@ fn prune_dropped_repo(
                         let short = RefName::new(
                             branch.as_str().trim_start_matches("refs/heads/").to_owned(),
                         );
-                        let has_counterpart = GitVcs
+                        let has_counterpart = vcs
                             .branch_has_remote_counterpart(&dest, &short, Role::Owned)
                             .unwrap_or(false);
                         if !has_counterpart {
@@ -1545,7 +1545,7 @@ fn prune_dropped_repo(
                         // clear the branch and hand the store to the delete.
                         // Refuse on the same terms as an unreadable branch
                         // list below, and say which of the two happened.
-                        let count = GitVcs
+                        let count = vcs
                             .count_commits_ahead_of_remote(&dest, &short, Role::Owned)
                             .with_context(|| {
                                 format!(
@@ -3714,7 +3714,20 @@ fn run_replay(ctx: &OpContext<'_>) -> anyhow::Result<()> {
             if classify_checkout(&abs) == CheckoutKind::ReferenceAlias {
                 continue;
             }
-            match prune_dropped_repo(&ctx.cwd_ctx, repo_path, &ctx.cwd_project_name) {
+            // The lock named this path and no longer does, so there is no
+            // entry to resolve a backend from unless the manifest still
+            // carries one.
+            let dropped_vcs = cwd_project
+                .manifest
+                .get_entry(repo_path)
+                .map(|e| vcs_for(e.vcs_type))
+                .unwrap_or_else(crate::vcs::probe_vcs);
+            match prune_dropped_repo(
+                dropped_vcs.as_ref(),
+                &ctx.cwd_ctx,
+                repo_path,
+                &ctx.cwd_project_name,
+            ) {
                 Ok(()) => {
                     if emit_text {
                         println!("  {repo_path}: pruned (dropped from lock)");
@@ -4497,7 +4510,12 @@ fn retire_workweave_after_sync_to(
     }
 
     // Reuse the shared dirty-path check. Any dirty worktree blocks retire.
-    let dirty = crate::workweave::collect_dirty_paths(workweave_dir, project, &manifest);
+    let dirty = crate::workweave::collect_dirty_paths(
+        project_vcs().as_ref(),
+        workweave_dir,
+        project,
+        &manifest,
+    );
     if !dirty.is_empty() {
         anyhow::bail!(
             "--retire: workweave has uncommitted changes after sync-to; refusing to delete:\n  {}\n\
@@ -5632,6 +5650,7 @@ fn ff_advance_repo(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::git::git_vcs;
 
     // -----------------------------------------------------------------------
     // Fixtures for the branch-model tests below
@@ -5938,7 +5957,8 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let (ctx, store, project) = primary_with_cloned_store(tmp.path());
 
-        prune_dropped_repo(&ctx, &dropped(), &project).expect("nothing claims this store");
+        prune_dropped_repo(git_vcs().as_ref(), &ctx, &dropped(), &project)
+            .expect("nothing claims this store");
         assert!(
             !store.exists(),
             "an unclaimed store is what prune is for; it must actually be removed"
@@ -5961,7 +5981,7 @@ mod tests {
             &["worktree", "add", "--detach", live.to_str().unwrap()],
         );
 
-        let err = prune_dropped_repo(&ctx, &dropped(), &project)
+        let err = prune_dropped_repo(git_vcs().as_ref(), &ctx, &dropped(), &project)
             .expect_err("a store a live workweave is registered against is claimed");
         let msg = format!("{err:#}");
         assert!(
@@ -5991,7 +6011,7 @@ mod tests {
             )
             .unwrap();
 
-        let err = prune_dropped_repo(&ctx, &dropped(), &project)
+        let err = prune_dropped_repo(git_vcs().as_ref(), &ctx, &dropped(), &project)
             .expect_err("rwv still accounts for a ref in this store");
         let msg = format!("{err:#}");
         assert!(
@@ -6008,7 +6028,7 @@ mod tests {
         registry
             .retract(&store, &crate::vcs::RawRefName::new("web-app--feat"))
             .unwrap();
-        prune_dropped_repo(&ctx, &dropped(), &project)
+        prune_dropped_repo(git_vcs().as_ref(), &ctx, &dropped(), &project)
             .expect("with every receipt retracted the store is unclaimed");
         assert!(
             !store.exists(),
@@ -6054,7 +6074,7 @@ mod tests {
             )
             .unwrap();
 
-        let err = prune_dropped_repo(&ctx, &dropped(), &project)
+        let err = prune_dropped_repo(git_vcs().as_ref(), &ctx, &dropped(), &project)
             .expect_err("a store holding a commit that exists nowhere else is not prunable");
         assert!(
             format!("{err:#}").contains("local-only commits"),
@@ -6095,7 +6115,7 @@ mod tests {
              under test is never reached"
         );
 
-        let err = prune_dropped_repo(&ctx, &dropped(), &project)
+        let err = prune_dropped_repo(git_vcs().as_ref(), &ctx, &dropped(), &project)
             .expect_err("a count git could not take is not evidence that nothing is unpushed");
         let msg = format!("{err:#}");
         assert!(
@@ -6176,7 +6196,7 @@ mod tests {
         );
         let tip = GitVcs.head_revision(&checkout).unwrap();
 
-        let err = prune_dropped_repo(&ctx, &dropped(), &project)
+        let err = prune_dropped_repo(git_vcs().as_ref(), &ctx, &dropped(), &project)
             .expect_err("a checkout that IS the store is not a working tree to delete");
         let msg = format!("{err:#}");
         assert!(
@@ -6216,7 +6236,7 @@ mod tests {
             "the fixture must be a linked workspace, not a standalone clone"
         );
 
-        prune_dropped_repo(&ctx, &dropped(), &project)
+        prune_dropped_repo(git_vcs().as_ref(), &ctx, &dropped(), &project)
             .expect("a linked workspace is a working tree, and pruning it is what this arm is for");
         assert!(
             !checkout.exists(),
@@ -6302,7 +6322,7 @@ mod tests {
     ) -> Option<crate::vcs::OwnedRef> {
         crate::workweave_index::RefRegistry::for_project(ctx.primary_path(), project)
             .lookup(
-                &crate::workweave::receipt_store_for(canonical),
+                &crate::workweave::receipt_store_for(crate::git::git_vcs().as_ref(), canonical),
                 &crate::vcs::RawRefName::new("web-app--feat"),
             )
             .expect("the receipt store is readable")

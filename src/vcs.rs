@@ -290,16 +290,16 @@ pub(crate) fn project_vcs() -> Box<dyn Vcs> {
     crate::git::git_vcs()
 }
 
-/// Resolve the backend a scan probes with when it runs *before* any manifest
-/// is read — repo discovery under the registry dirs, and the weave-wide
-/// `rwv doctor` sweeps over what discovery found.
+/// Resolve the backend for a repo path that has no manifest entry behind it.
 ///
-/// These scans produce the repo set that `vcs_for` would resolve from, so
-/// there is nothing to resolve from yet and no entry to attribute a found
-/// repo to. They probe for git. A second backend makes this a
+/// Two situations reach here and they are the same situation from opposite
+/// ends: repo discovery and the `rwv doctor` sweeps run *before* any manifest,
+/// producing the set an entry could name; a path dropped from the lock has an
+/// entry that is already gone. Neither has a `VcsType` to resolve from, so
+/// both probe, and they probe for git. A second backend makes this a
 /// probe-every-backend problem rather than a single handle, and that is the
 /// limit this function exists to name.
-pub(crate) fn discovery_vcs() -> Box<dyn Vcs> {
+pub(crate) fn probe_vcs() -> Box<dyn Vcs> {
     crate::git::git_vcs()
 }
 
