@@ -24,7 +24,6 @@
 //! feed a flag-derived path to [`WorkspaceContext::resolve`] instead of
 //! [`acquire_origin_dir`], and everything downstream would still work.
 
-use crate::git::GitVcs;
 use crate::integration_runner::IntegrationContextBase;
 use crate::manifest::{Manifest, ProjectName, RepoPath, WorkweaveName};
 use crate::registry::{builtin_registries, Registry};
@@ -420,8 +419,8 @@ impl WorkspaceSession {
     /// `builtin_registries()` → `scan_repos_on_disk()` → `discover_project_paths()`.
     pub fn new(root: &Path) -> Self {
         let registries = builtin_registries();
-        let git = GitVcs;
-        let repos_on_disk = scan_repos_on_disk(root, &registries, &git);
+        let vcs = crate::vcs::discovery_vcs();
+        let repos_on_disk = scan_repos_on_disk(root, &registries, vcs.as_ref());
         let project_paths = discover_project_paths(root);
         Self {
             root: root.to_path_buf(),

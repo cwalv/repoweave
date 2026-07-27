@@ -2,11 +2,10 @@
 
 use crate::activate::{activate_intent, activate_workweave_intent};
 use crate::git::git_command;
-use crate::git::GitVcs;
 use crate::integration_runner::missing_active_members;
 use crate::manifest::{Manifest, ProjectName, RepoEntry, RepoPath, RepoUrl, Role, VcsType};
 use crate::registry::{builtin_registries, Registry};
-use crate::vcs::{EphemeralRefName, HeadAttachment, RefName, Vcs};
+use crate::vcs::{vcs_for, EphemeralRefName, HeadAttachment, RefName, Vcs};
 use crate::workspace::{Checkout, WorkspaceContext};
 use crate::workweave_index::RefRegistry;
 use anyhow::{bail, Context};
@@ -57,6 +56,7 @@ fn find_project_dir(ctx: &WorkspaceContext) -> anyhow::Result<std::path::PathBuf
 /// against an unborn HEAD would fail, and the user can materialize the
 /// worktree after the first commit via `rwv sync`.
 fn create_worktree_in_workweave(
+    vcs: &dyn Vcs,
     primary_root: &Path,
     canonical_clone: &Path,
     workweave_dir: &Path,
@@ -72,7 +72,7 @@ fn create_worktree_in_workweave(
     }
 
     // Skip if the canonical has no HEAD (empty `git init` from --new).
-    let start = match GitVcs.head_revision(canonical_clone) {
+    let start = match vcs.head_revision(canonical_clone) {
         Ok(start) => start,
         Err(_) => {
             eprintln!(
@@ -93,7 +93,7 @@ fn create_worktree_in_workweave(
     let mut registry = RefRegistry::for_project(primary_root, project);
     let ephemeral = EphemeralRefName::mint(project, workweave_name);
     let outcome = crate::workweave::birth_ephemeral_worktree(
-        &GitVcs,
+        vcs,
         &mut registry,
         canonical_clone,
         &dest,
@@ -168,6 +168,11 @@ fn activate_for_workspace(ctx: &WorkspaceContext, project_name: &str) -> anyhow:
 /// `ctx` is the already-resolved invocation context (with `--project`
 /// baked in when passed). Handlers must not re-resolve.
 pub fn run_add(url: &str, role: Role, ctx: &WorkspaceContext) -> anyhow::Result<()> {
+    // `rwv add` mints the manifest entry, so the backend is an input to the
+    // verb rather than a lookup: one value feeds both the handle this verb
+    // operates through and the `vcs_type` it records.
+    let vcs_type = VcsType::Git;
+    let vcs = vcs_for(vcs_type);
     let project_dir = find_project_dir(ctx)?;
     let manifest_path = project_dir.join("rwv.yaml");
 
@@ -194,7 +199,14 @@ pub fn run_add(url: &str, role: Role, ctx: &WorkspaceContext) -> anyhow::Result<
                     role,
                 );
             }
-            run_add_from_local_path(url, &candidate, role, &manifest_path)?;
+            run_add_from_local_path(
+                vcs.as_ref(),
+                vcs_type,
+                url,
+                &candidate,
+                role,
+                &manifest_path,
+            )?;
             let project_name = project_dir
                 .file_name()
                 .and_then(|n| n.to_str())
@@ -207,6 +219,7 @@ pub fn run_add(url: &str, role: Role, ctx: &WorkspaceContext) -> anyhow::Result<
                 let canonical = ctx.primary_path().join(repo_path.as_path());
                 if canonical.exists() {
                     create_worktree_in_workweave(
+                        vcs.as_ref(),
                         ctx.primary_path(),
                         &canonical,
                         dir,
@@ -286,13 +299,11 @@ pub fn run_add(url: &str, role: Role, ctx: &WorkspaceContext) -> anyhow::Result<
             std::fs::create_dir_all(parent)
                 .with_context(|| format!("failed to create directory {}", parent.display()))?;
         }
-        let git = GitVcs;
-        git.clone_with_role(url, &dest, role)
+        vcs.clone_with_role(url, &dest, role)
             .with_context(|| format!("failed to clone '{}' into {}", url, dest.display()))?;
     }
 
-    let git = GitVcs;
-    let Some(remote_default) = git
+    let Some(remote_default) = vcs
         .remote_default_branch(&dest)
         .with_context(|| format!("failed to determine default branch for {}", dest.display()))?
     else {
@@ -309,7 +320,7 @@ pub fn run_add(url: &str, role: Role, ctx: &WorkspaceContext) -> anyhow::Result<
 
     // Add entry to manifest.
     let entry = RepoEntry {
-        vcs_type: VcsType::Git,
+        vcs_type,
         url: parsed_url,
         version: default_branch,
         role,
@@ -325,7 +336,15 @@ pub fn run_add(url: &str, role: Role, ctx: &WorkspaceContext) -> anyhow::Result<
     // In a workweave, also create a worktree at the workweave so the new
     // repo is materialized there.
     if let Checkout::Workweave { name, dir, project } = &ctx.checkout {
-        create_worktree_in_workweave(ctx.primary_path(), &dest, dir, &repo_path, project, name)?;
+        create_worktree_in_workweave(
+            vcs.as_ref(),
+            ctx.primary_path(),
+            &dest,
+            dir,
+            &repo_path,
+            project,
+            name,
+        )?;
     }
 
     // Re-run activation so ecosystem files (Cargo.toml, package.json, etc.) are updated.
@@ -342,6 +361,8 @@ pub fn run_add(url: &str, role: Role, ctx: &WorkspaceContext) -> anyhow::Result<
 /// existing directory under the workspace root.  Infers the URL by reading the
 /// clone's `origin` remote.
 fn run_add_from_local_path(
+    vcs: &dyn Vcs,
+    vcs_type: VcsType,
     path_arg: &str,
     clone_dir: &Path,
     role: Role,
@@ -390,8 +411,7 @@ fn run_add_from_local_path(
         return Ok(());
     }
 
-    let git = GitVcs;
-    let Some(remote_default) = git.remote_default_branch(clone_dir).with_context(|| {
+    let Some(remote_default) = vcs.remote_default_branch(clone_dir).with_context(|| {
         format!(
             "failed to determine default branch for {}",
             clone_dir.display()
@@ -411,7 +431,7 @@ fn run_add_from_local_path(
 
     // Add entry to manifest using the inferred origin URL.
     let entry = RepoEntry {
-        vcs_type: VcsType::Git,
+        vcs_type,
         url: origin_url.parse()?,
         version: default_branch,
         role,
@@ -447,9 +467,9 @@ pub fn run_remove(
     let mut manifest = Manifest::from_path(&manifest_path)
         .with_context(|| format!("failed to load manifest at {}", manifest_path.display()))?;
 
-    if manifest.repositories.remove(&repo_path).is_none() {
+    let Some(removed) = manifest.repositories.remove(&repo_path) else {
         bail!("Error: path '{}' not found in manifest", repo_path.as_str());
-    }
+    };
 
     // Before writing anything, check for cross-project references when --delete
     // is requested.  If another project references the repo and
@@ -490,7 +510,11 @@ pub fn run_remove(
             // so `rwv remove --delete` is retryable after the operator clears
             // the claims rather than leaving them holding a store the manifest
             // no longer declares.
-            refuse_claimed_store(ctx.primary_path(), &repo_dir)?;
+            refuse_claimed_store(
+                vcs_for(removed.vcs_type).as_ref(),
+                ctx.primary_path(),
+                &repo_dir,
+            )?;
         }
     }
 
@@ -545,10 +569,10 @@ pub fn run_remove(
 ///
 /// The verb's own named preconditions (dirty state, unpushed work) sit on top
 /// of this and are separate work, still open.
-fn refuse_claimed_store(primary_root: &Path, repo_dir: &Path) -> anyhow::Result<()> {
+fn refuse_claimed_store(vcs: &dyn Vcs, primary_root: &Path, repo_dir: &Path) -> anyhow::Result<()> {
     let mut claims: Vec<String> = Vec::new();
 
-    match GitVcs.list_worktrees(repo_dir) {
+    match vcs.list_worktrees(repo_dir) {
         Ok(worktrees) => {
             let store = repo_dir
                 .canonicalize()
@@ -564,7 +588,7 @@ fn refuse_claimed_store(primary_root: &Path, repo_dir: &Path) -> anyhow::Result<
         // store is not a DESTROY-STORE, and a store that cannot be
         // interrogated is not one this verb may assume is unclaimed.
         Err(e) => {
-            if GitVcs.is_repo(repo_dir) {
+            if vcs.is_repo(repo_dir) {
                 anyhow::bail!(
                     "refusing to delete '{}': it is a repo whose worktree registrations \
                      could not be read ({e}), so rwv cannot establish that no live \
@@ -617,6 +641,11 @@ fn refuse_claimed_store(primary_root: &Path, repo_dir: &Path) -> anyhow::Result<
 /// `ctx` is the already-resolved invocation context. Handlers must not
 /// re-resolve.
 pub fn run_add_new(path_arg: &str, ctx: &WorkspaceContext) -> anyhow::Result<()> {
+    // `rwv add` mints the manifest entry, so the backend is an input to the
+    // verb rather than a lookup: one value feeds both the handle this verb
+    // operates through and the `vcs_type` it records.
+    let vcs_type = VcsType::Git;
+    let vcs = vcs_for(vcs_type);
     let project_dir = find_project_dir(ctx)?;
     let manifest_path = project_dir.join("rwv.yaml");
 
@@ -684,13 +713,11 @@ pub fn run_add_new(path_arg: &str, ctx: &WorkspaceContext) -> anyhow::Result<()>
             std::fs::create_dir_all(parent)
                 .with_context(|| format!("failed to create directory {}", parent.display()))?;
         }
-        let git = GitVcs;
-        git.init_repo(&dest)
+        vcs.init_repo(&dest)
             .with_context(|| format!("failed to init repo at {}", dest.display()))?;
     }
 
-    let git = GitVcs;
-    let default_branch = match git.head_attachment(&dest)? {
+    let default_branch = match vcs.head_attachment(&dest)? {
         HeadAttachment::Unborn(u) => RefName::new(u.to_string()),
         HeadAttachment::Attached(a) => RefName::new(a.to_string()),
         HeadAttachment::Detached(_) => anyhow::bail!(
@@ -704,7 +731,7 @@ pub fn run_add_new(path_arg: &str, ctx: &WorkspaceContext) -> anyhow::Result<()>
 
     // Add entry to manifest with role primary.
     let entry = RepoEntry {
-        vcs_type: VcsType::Git,
+        vcs_type,
         url,
         version: default_branch,
         role: Role::Owned,
@@ -721,7 +748,15 @@ pub fn run_add_new(path_arg: &str, ctx: &WorkspaceContext) -> anyhow::Result<()>
     // so create_worktree_in_workweave silently skips until the first commit
     // lands upstream (operator can then `rwv sync`).
     if let Checkout::Workweave { name, dir, project } = &ctx.checkout {
-        create_worktree_in_workweave(ctx.primary_path(), &dest, dir, &repo_path, project, name)?;
+        create_worktree_in_workweave(
+            vcs.as_ref(),
+            ctx.primary_path(),
+            &dest,
+            dir,
+            &repo_path,
+            project,
+            name,
+        )?;
     }
 
     // Re-run activation so ecosystem files (Cargo.toml, package.json, etc.) are updated.

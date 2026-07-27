@@ -290,6 +290,19 @@ pub(crate) fn project_vcs() -> Box<dyn Vcs> {
     crate::git::git_vcs()
 }
 
+/// Resolve the backend a scan probes with when it runs *before* any manifest
+/// is read — repo discovery under the registry dirs, and the weave-wide
+/// `rwv doctor` sweeps over what discovery found.
+///
+/// These scans produce the repo set that `vcs_for` would resolve from, so
+/// there is nothing to resolve from yet and no entry to attribute a found
+/// repo to. They probe for git. A second backend makes this a
+/// probe-every-backend problem rather than a single handle, and that is the
+/// limit this function exists to name.
+pub(crate) fn discovery_vcs() -> Box<dyn Vcs> {
+    crate::git::git_vcs()
+}
+
 /// Typed errors returned by [`Vcs`] trait methods.
 ///
 /// Specific variants (`NotARepo`, `RevisionNotFound`, ...) let callers

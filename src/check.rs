@@ -2111,7 +2111,7 @@ pub(crate) fn commit_replay_exclusion_migration(
 /// yet, live workweaves at the compiled-in default) surface every
 /// marker-bearing directory as `unregistered-workweave` — the intended
 /// self-heal path is `rwv doctor --fix` on first run after upgrade.
-fn scan_registry_reconciliation(ws_root: &Path) -> Vec<CheckViolation> {
+fn scan_registry_reconciliation(vcs: &dyn crate::vcs::Vcs, ws_root: &Path) -> Vec<CheckViolation> {
     let mut violations = Vec::new();
 
     // Pass 1 — every recorded entry that fails validation is stale. Also
@@ -2172,7 +2172,7 @@ fn scan_registry_reconciliation(ws_root: &Path) -> Vec<CheckViolation> {
         // project repos; a non-git project has nothing to track. Silent on
         // errors (a missing repo, a non-git repo) — hygiene, not correctness.
         let index_path = crate::workweave_index::index_path(ws_root, &project);
-        if index_path.exists() && is_tracked_by_git(&index_path) {
+        if index_path.exists() && is_tracked_in_parent_repo(vcs, &index_path) {
             violations.push(CheckViolation::WorkweaveTreeIntegrity {
                 workweave_dir: index_path.clone(),
                 sub_kind: WorkweaveTreeIntegrityKind::TrackedIndex {
@@ -2211,16 +2211,13 @@ fn scan_registry_reconciliation(ws_root: &Path) -> Vec<CheckViolation> {
     violations
 }
 
-/// Best-effort check for whether `path` is tracked by git.
+/// Best-effort check for whether `path` is tracked by the repo containing it.
 ///
 /// Asks from the file's parent directory, so a path whose parent is not a
 /// repo at all answers `false` rather than escaping upward. An unreachable
 /// git is `false` too — hygiene surfaces should never fabricate findings on
 /// non-git-managed projects.
-fn is_tracked_by_git(path: &Path) -> bool {
-    use crate::git::GitVcs;
-    use crate::vcs::Vcs;
-
+fn is_tracked_in_parent_repo(vcs: &dyn crate::vcs::Vcs, path: &Path) -> bool {
     let dir = match path.parent() {
         Some(d) => d,
         None => return false,
@@ -2229,7 +2226,7 @@ fn is_tracked_by_git(path: &Path) -> bool {
         Some(n) => n,
         None => return false,
     };
-    GitVcs.is_tracked(dir, Path::new(name)).unwrap_or(false)
+    vcs.is_tracked(dir, Path::new(name)).unwrap_or(false)
 }
 
 /// Adopt an on-disk workweave into its project's `.rwv-workweave-index`.
@@ -2431,7 +2428,10 @@ fn fix_weave_root_identity(root: &Path) -> anyhow::Result<()> {
         .with_context(|| format!("failed to remove {}", pointer.display()))
 }
 
-pub fn scan_workweave_tree_integrity(ws_root: &Path) -> Vec<CheckViolation> {
+pub fn scan_workweave_tree_integrity(
+    vcs: &dyn crate::vcs::Vcs,
+    ws_root: &Path,
+) -> Vec<CheckViolation> {
     let ws_canonical = ws_root
         .canonicalize()
         .unwrap_or_else(|_| ws_root.to_path_buf());
@@ -2445,7 +2445,7 @@ pub fn scan_workweave_tree_integrity(ws_root: &Path) -> Vec<CheckViolation> {
     // findings the registry-based design added; the marker-integrity
     // checks that follow are unchanged from the pre-registry era except
     // that they now iterate over every recorded container.
-    violations.extend(scan_registry_reconciliation(ws_root));
+    violations.extend(scan_registry_reconciliation(vcs, ws_root));
 
     // Enumerate every unique container to scan for marker-shape issues.
     let containers = workweave_containers_for_scan(ws_root);
@@ -2738,21 +2738,21 @@ pub fn scan_cargo_ecosystem(
 /// tested verbatim.
 pub fn scan_provenance(workspace_dir: &Path, projects: &[Project]) -> Vec<CheckViolation> {
     use crate::manifest::clone_urls_equivalent;
-    use crate::vcs::Vcs;
+    use crate::vcs::vcs_for;
 
-    let git = crate::git::GitVcs;
     let mut violations = Vec::new();
 
     for project in projects {
         // --- origin-url-mismatch ---
         for (repo_path, entry) in project.manifest.iter_entries() {
+            let vcs = vcs_for(entry.vcs_type);
             let repo_abs = workspace_dir.join(repo_path.as_path());
             if !repo_abs.is_dir() {
                 continue;
             }
 
             let manifest_url = entry.url.to_string();
-            let actual_url = match git.remote_url(&repo_abs, "origin") {
+            let actual_url = match vcs.remote_url(&repo_abs, "origin") {
                 Ok(Some(u)) => u,
                 Ok(None) => continue, // no `origin` remote — not this check's concern
                 Err(_) => continue,   // can't read remote — skip silently
@@ -2778,6 +2778,13 @@ pub fn scan_provenance(workspace_dir: &Path, projects: &[Project]) -> Vec<CheckV
         };
 
         for (repo_path, lock_entry) in raw_lock.iter_entries() {
+            // The lock names paths; the manifest names backends. A lock entry
+            // with no manifest entry has no declared backend to resolve from.
+            let vcs = project
+                .manifest
+                .get_entry(repo_path)
+                .map(|e| vcs_for(e.vcs_type))
+                .unwrap_or_else(crate::vcs::discovery_vcs);
             let repo_abs = workspace_dir.join(repo_path.as_path());
             if !repo_abs.is_dir() {
                 continue;
@@ -2790,12 +2797,12 @@ pub fn scan_provenance(workspace_dir: &Path, projects: &[Project]) -> Vec<CheckV
             // a SHA that git cannot find at all — test it directly so
             // we don't silently skip the reachability check in the
             // disconnected-clone / force-push scenario.
-            let sha_to_test = match git.resolve_revision(&repo_abs, lock_entry.version.as_str()) {
+            let sha_to_test = match vcs.resolve_revision(&repo_abs, lock_entry.version.as_str()) {
                 Ok(resolved) => resolved.as_str().to_owned(),
                 Err(_) => lock_entry.version.as_str().to_owned(),
             };
 
-            match git.commit_object_exists(&repo_abs, &sha_to_test) {
+            match vcs.commit_object_exists(&repo_abs, &sha_to_test) {
                 Ok(true) => {} // present — all good
                 Ok(false) => {
                     violations.push(CheckViolation::Provenance {
@@ -2819,7 +2826,7 @@ pub fn scan_provenance(workspace_dir: &Path, projects: &[Project]) -> Vec<CheckV
 /// The namespace prefix that makes a merge-driver name rwv's to account for.
 ///
 /// Only rwv writes `merge=rwv-…` and only rwv defines `merge.rwv-….driver`
-/// (the pairing argued for in `git.rs`'s replay-exclusion preamble), so a name
+/// (the pairing argued for in `vcs.rs`'s replay-exclusion preamble), so a name
 /// inside this prefix that rwv does not define is one nothing else will define
 /// either. Names outside it belong to the repo and are none of doctor's
 /// business.
@@ -2993,16 +3000,17 @@ fn split_attribute_line(line: &str) -> Option<(&str, &str)> {
 ///
 /// Symlink/trailing-slash differences are absorbed by canonicalizing both
 /// sides before equality.
-pub fn scan_clone_topology(ws_root: &Path, repo_paths: &BTreeSet<RepoPath>) -> Vec<CheckViolation> {
-    use crate::git::GitVcs;
-    use crate::vcs::Vcs;
+pub fn scan_clone_topology(
+    vcs: &dyn crate::vcs::Vcs,
+    ws_root: &Path,
+    repo_paths: &BTreeSet<RepoPath>,
+) -> Vec<CheckViolation> {
     use crate::workweave::{classify_checkout, CheckoutKind};
 
     let mut violations = Vec::new();
     if repo_paths.is_empty() {
         return violations;
     }
-    let git = GitVcs;
 
     // Collect every workweave under this weave once; we iterate per-repo
     // inside the loop.
@@ -3010,7 +3018,7 @@ pub fn scan_clone_topology(ws_root: &Path, repo_paths: &BTreeSet<RepoPath>) -> V
 
     for repo in repo_paths {
         let canonical_slot = ws_root.join(repo.as_path());
-        let canonical_store_raw = git.resolve_canonical_store(&canonical_slot);
+        let canonical_store_raw = vcs.resolve_canonical_store(&canonical_slot);
 
         // Expected canonical store path: `<canonical_slot>/.git`. Compare via
         // canonicalize to absorb any trailing-slash / symlink differences.
@@ -3073,7 +3081,7 @@ pub fn scan_clone_topology(ws_root: &Path, repo_paths: &BTreeSet<RepoPath>) -> V
                 continue;
             }
 
-            let ww_store_raw = match git.resolve_canonical_store(&ww_checkout) {
+            let ww_store_raw = match vcs.resolve_canonical_store(&ww_checkout) {
                 Some(p) => p,
                 None => continue, // not a workspace there; skip silently
             };
@@ -6729,12 +6737,10 @@ pub fn restore_working_tree_to_head(repo: &Path) -> anyhow::Result<()> {
 /// `ctx` is the already-resolved invocation context (with `--project` baked
 /// in when passed). Handlers must not re-resolve.
 pub fn run_check_locked(ctx: &crate::workspace::WorkspaceContext) -> anyhow::Result<bool> {
-    use crate::git::GitVcs;
     use crate::manifest::Project;
-    use crate::vcs::Vcs;
+    use crate::vcs::{discovery_vcs, vcs_for};
     use crate::workspace::Checkout;
 
-    let git = GitVcs;
     let workspace_dir = ctx.active_path().to_path_buf();
 
     let project_names: Vec<String> = match &ctx.checkout {
@@ -6779,9 +6785,16 @@ pub fn run_check_locked(ctx: &crate::workspace::WorkspaceContext) -> anyhow::Res
             failures.into_iter().collect();
 
         for (repo_path, raw_entry) in &raw_entries {
+            // The lock names paths; the manifest names backends. A lock entry
+            // with no manifest entry has no declared backend to resolve from.
+            let vcs = project
+                .manifest
+                .get_entry(repo_path)
+                .map(|e| vcs_for(e.vcs_type))
+                .unwrap_or_else(discovery_vcs);
             let repo_abs = workspace_dir.join(repo_path.as_path());
 
-            let actual = match git.head_revision(&repo_abs) {
+            let actual = match vcs.head_revision(&repo_abs) {
                 Ok(rev) => rev,
                 Err(_) => {
                     println!(
@@ -6857,11 +6870,9 @@ pub fn run_check(
     reattach: Option<crate::cli::consent::ReattachConsent>,
     adopt_detached: Option<crate::cli::consent::AdoptDetachedConsent>,
 ) -> anyhow::Result<bool> {
-    use crate::git::GitVcs;
     use crate::integration::Severity;
     use crate::integration_runner::run_checks;
     use crate::manifest::Project;
-    use crate::vcs::Vcs;
     use crate::workspace::{Checkout, WorkspaceSession};
 
     let workspace_dir = ctx.active_path().to_path_buf();
@@ -6892,7 +6903,7 @@ pub fn run_check(
 
     // Build session (runs builtin_registries → scan_repos_on_disk → discover_project_paths).
     let session = WorkspaceSession::new(&workspace_dir);
-    let git = GitVcs;
+    let vcs = crate::vcs::discovery_vcs();
 
     // Legacy `role: primary` scan + optional --fix migration. Runs before
     // `Project::from_dir`, since manifests with the legacy spelling fail
@@ -6977,7 +6988,7 @@ pub fn run_check(
     let mut head_read_failures: Vec<(RepoPath, String)> = Vec::new();
     for repo_path in session.repos_on_disk() {
         let abs = workspace_dir.join(repo_path.as_path());
-        match git.head_revision(&abs) {
+        match vcs.head_revision(&abs) {
             Ok(rev) => {
                 head_revisions.insert(repo_path.clone(), rev);
             }
@@ -7201,7 +7212,7 @@ pub fn run_check(
     // weave so the scan covers all workweaves belonging to this workspace.
     let mut dangling_parent_fix_errors: Vec<String> = Vec::new();
     let mut registry_fix_errors: Vec<String> = Vec::new();
-    for v in scan_workweave_tree_integrity(ctx.primary_path()) {
+    for v in scan_workweave_tree_integrity(vcs.as_ref(), ctx.primary_path()) {
         if fix {
             match &v {
                 CheckViolation::WorkweaveTreeIntegrity {
@@ -7328,7 +7339,7 @@ pub fn run_check(
     // `docs/explanation/joints/clone-topology.md`. Compares each manifest
     // repo's canonical store at `<weave>/<repo>` against every workweave
     // checkout's store. Report-only (repair is an object-store migration).
-    for v in scan_clone_topology(ctx.primary_path(), &input.known_repos) {
+    for v in scan_clone_topology(vcs.as_ref(), ctx.primary_path(), &input.known_repos) {
         violations.push(v);
     }
 
@@ -7355,7 +7366,7 @@ pub fn run_check(
     };
     if fix {
         let (retracted, retract_errs) =
-            fix_dangling_receipts(ctx.primary_path(), &git, receipt_scope);
+            fix_dangling_receipts(ctx.primary_path(), vcs.as_ref(), receipt_scope);
         for (store_path, ref_name) in &retracted {
             println!(
                 "[fixed] core: retracted dangling ownership receipt for `{}` in {}",
@@ -7367,7 +7378,12 @@ pub fn run_check(
             all_issues_branch_discipline_errors.push(msg);
         }
     } else {
-        scan_dangling_receipts(&git, ctx.primary_path(), receipt_scope, &mut violations);
+        scan_dangling_receipts(
+            vcs.as_ref(),
+            ctx.primary_path(),
+            receipt_scope,
+            &mut violations,
+        );
     }
 
     // Ownership receipts naming a pre-flat ref: a record no live workweave
@@ -7473,8 +7489,12 @@ pub fn run_check(
         } else {
             active_project_name.as_ref().map(|n| n.as_str())
         };
-        let (applied, migration_errs) =
-            fix_branch_model_migration(ctx.primary_path(), &git, fix_active, adopt_detached);
+        let (applied, migration_errs) = fix_branch_model_migration(
+            ctx.primary_path(),
+            vcs.as_ref(),
+            fix_active,
+            adopt_detached,
+        );
         for msg in &applied {
             println!("[fixed] core: {msg}");
         }
@@ -7497,7 +7517,7 @@ pub fn run_check(
             };
             let (reattached, reattach_errs) = fix_detached_canonicals(
                 ctx.primary_path(),
-                &git,
+                vcs.as_ref(),
                 &input.projects,
                 fix_active,
                 &input.known_repos,
@@ -7517,7 +7537,7 @@ pub fn run_check(
     }
 
     let mut branch_discipline_violations =
-        scan_branch_discipline(ctx.primary_path(), &git, &input.projects);
+        scan_branch_discipline(ctx.primary_path(), vcs.as_ref(), &input.projects);
     if !scope_all {
         if let Some(ref active) = active_project_name {
             branch_discipline_violations.retain(|v| {
@@ -7540,7 +7560,7 @@ pub fn run_check(
         };
         let (deleted, fix_errs) = fix_stale_ephemeral_branches(
             ctx.primary_path(),
-            &git,
+            vcs.as_ref(),
             &input.projects,
             fix_active,
             &input.known_repos,
@@ -8090,7 +8110,8 @@ pub fn run_check(
         }
     }
 
-    let hygiene_violations = scan_state_hygiene(&git, &hygiene_targets, &hygiene_op_state_targets);
+    let hygiene_violations =
+        scan_state_hygiene(vcs.as_ref(), &hygiene_targets, &hygiene_op_state_targets);
     // Mirror the project-scoped target dedupe used elsewhere: build a quick
     // map from `(workweave, repo)` to absolute path so the `--fix` path can
     // call into the right repo. The keys come straight from the targets we
@@ -8129,35 +8150,37 @@ pub fn run_check(
                 } => {
                     let key = (workweave.as_ref().map(|w| w.to_string()), repo.to_string());
                     match target_lookup.get(&key) {
-                        Some(repo_abs) => match fix_state_hygiene(&git, &violation, repo_abs) {
-                            Ok(true) => {
-                                let (kind_label, extra) = match &violation {
-                                    CheckViolation::StaleWorktreeRegistration { .. } => {
-                                        ("stale-worktree-registration", "pruned".to_string())
-                                    }
-                                    CheckViolation::OrphanedSavepoint { op_id, .. } => {
-                                        ("orphaned-savepoint", format!("dropped op_id={op_id}"))
-                                    }
-                                    _ => ("state-hygiene", String::new()),
-                                };
-                                let location = match (workweave, repo) {
-                                    (Some(ww), r) => format!("{ww}/{r}"),
-                                    (None, r) => r.to_string(),
-                                };
-                                println!("[fixed] core: {kind_label} for {location}: {extra}");
-                                true
+                        Some(repo_abs) => {
+                            match fix_state_hygiene(vcs.as_ref(), &violation, repo_abs) {
+                                Ok(true) => {
+                                    let (kind_label, extra) = match &violation {
+                                        CheckViolation::StaleWorktreeRegistration { .. } => {
+                                            ("stale-worktree-registration", "pruned".to_string())
+                                        }
+                                        CheckViolation::OrphanedSavepoint { op_id, .. } => {
+                                            ("orphaned-savepoint", format!("dropped op_id={op_id}"))
+                                        }
+                                        _ => ("state-hygiene", String::new()),
+                                    };
+                                    let location = match (workweave, repo) {
+                                        (Some(ww), r) => format!("{ww}/{r}"),
+                                        (None, r) => r.to_string(),
+                                    };
+                                    println!("[fixed] core: {kind_label} for {location}: {extra}");
+                                    true
+                                }
+                                Ok(false) => false,
+                                Err(e) => {
+                                    all_issues.push(Issue {
+                                        integration: "core".into(),
+                                        severity: Severity::Error,
+                                        message: format!("state-hygiene --fix failed: {e}"),
+                                        safe_to_fix: true,
+                                    });
+                                    true
+                                }
                             }
-                            Ok(false) => false,
-                            Err(e) => {
-                                all_issues.push(Issue {
-                                    integration: "core".into(),
-                                    severity: Severity::Error,
-                                    message: format!("state-hygiene --fix failed: {e}"),
-                                    safe_to_fix: true,
-                                });
-                                true
-                            }
-                        },
+                        }
                         None => false,
                     }
                 }
@@ -8170,7 +8193,7 @@ pub fn run_check(
                     // it operates on the lease's workspace_dir directly. We
                     // pass workspace_dir as a stand-in so the signature is
                     // unchanged.
-                    match fix_state_hygiene(&git, &violation, workspace_dir) {
+                    match fix_state_hygiene(vcs.as_ref(), &violation, workspace_dir) {
                         Ok(true) => {
                             println!(
                                 "[fixed] core: dead-op-lease for {}: removed lease (op_id={op_id})",
@@ -8226,7 +8249,7 @@ pub fn run_check(
         )
         .unwrap_or(false);
 
-        match git.has_replay_exclusion(&project_repo, std::path::Path::new("rwv.lock")) {
+        match vcs.has_replay_exclusion(&project_repo, std::path::Path::new("rwv.lock")) {
             Ok(true) if !has_legacy => {}
             Ok(has_new) => {
                 if fix {
@@ -8234,7 +8257,7 @@ pub fn run_check(
                     // the new name in place (rewrite, not append-alongside)
                     // and appends the new needle when neither is present.
                     // Idempotent when the new line is already the only one.
-                    match git.set_replay_exclusion(&project_repo, std::path::Path::new("rwv.lock"))
+                    match vcs.set_replay_exclusion(&project_repo, std::path::Path::new("rwv.lock"))
                     {
                         Ok(()) => {
                             if has_legacy {
@@ -8449,14 +8472,12 @@ fn collect_doctor_violations(
     std::path::PathBuf,
     std::collections::HashMap<WorkweaveName, std::path::PathBuf>,
 )> {
-    use crate::git::GitVcs;
-    use crate::vcs::Vcs;
     use crate::workspace::{Checkout, WorkspaceSession};
 
     let workspace_dir = ctx.active_path().to_path_buf();
 
     let session = WorkspaceSession::new(&workspace_dir);
-    let git = GitVcs;
+    let vcs = crate::vcs::discovery_vcs();
 
     // Resolve HEAD revisions for each repo on disk. HEAD-read failures are
     // surfaced by the non-JSON `run_check` as `Issue`s; they have no
@@ -8464,7 +8485,7 @@ fn collect_doctor_violations(
     let mut head_revisions = BTreeMap::new();
     for repo_path in session.repos_on_disk() {
         let abs = workspace_dir.join(repo_path.as_path());
-        if let Ok(rev) = git.head_revision(&abs) {
+        if let Ok(rev) = vcs.head_revision(&abs) {
             head_revisions.insert(repo_path.clone(), rev);
         }
     }
@@ -8650,7 +8671,7 @@ fn collect_doctor_violations(
     }
 
     // Workweave-tree integrity findings. Workspace-level, always run.
-    for v in scan_workweave_tree_integrity(ctx.primary_path()) {
+    for v in scan_workweave_tree_integrity(vcs.as_ref(), ctx.primary_path()) {
         violations.push(v);
     }
 
@@ -8711,13 +8732,13 @@ fn collect_doctor_violations(
     // Clone-topology findings: the tier-0 invariants a manifest repo's slot
     // must satisfy before any higher check means anything. Workspace-level,
     // always run.
-    for v in scan_clone_topology(ctx.primary_path(), &input.known_repos) {
+    for v in scan_clone_topology(vcs.as_ref(), ctx.primary_path(), &input.known_repos) {
         violations.push(v);
     }
     // Dangling ownership receipts. Report-only here; the JSON channel never
     // auto-fixes. Scoped like the text channel.
     scan_dangling_receipts(
-        &git,
+        vcs.as_ref(),
         ctx.primary_path(),
         if scope_all {
             None
@@ -8730,7 +8751,7 @@ fn collect_doctor_violations(
     // Branch-discipline findings.
     // JSON channel never auto-fixes; `--fix` is reserved for `run_check`.
     // Scope: filter to active project unless scope_all (mirrors run_check).
-    for v in scan_branch_discipline(ctx.primary_path(), &git, &input.projects) {
+    for v in scan_branch_discipline(ctx.primary_path(), vcs.as_ref(), &input.projects) {
         if !scope_all {
             if let Some(ref active) = active_project_name {
                 if !branch_discipline_in_scope(
@@ -8881,7 +8902,8 @@ fn collect_doctor_violations(
         }
     }
 
-    let hygiene_violations = scan_state_hygiene(&git, &hygiene_targets, &hygiene_op_state_targets);
+    let hygiene_violations =
+        scan_state_hygiene(vcs.as_ref(), &hygiene_targets, &hygiene_op_state_targets);
     violations.extend(hygiene_violations);
 
     // Replay-exclusion check: each project repo should carry
@@ -8895,7 +8917,7 @@ fn collect_doctor_violations(
         if !project_repo.is_dir() {
             continue;
         }
-        if let Ok(false) = git.has_replay_exclusion(&project_repo, std::path::Path::new("rwv.lock"))
+        if let Ok(false) = vcs.has_replay_exclusion(&project_repo, std::path::Path::new("rwv.lock"))
         {
             violations.push(CheckViolation::MissingReplayExclusion {
                 project: project.name.clone(),
