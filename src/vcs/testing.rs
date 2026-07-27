@@ -21,8 +21,8 @@
 //! double starts lying.
 
 use super::*;
-use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::sync::Mutex;
 
 /// The trait methods [`FakeVcs`] models, and the key a script or a hook is
 /// registered under.
@@ -40,20 +40,24 @@ pub(crate) enum VcsCall {
     DestroyLocalRef,
 }
 
-type Hook = Box<dyn FnOnce(&FakeVcs)>;
+type Hook = Box<dyn FnOnce(&FakeVcs) + Send>;
 
 /// A fake [`Vcs`] over a map of `(store, ref name) -> tip`.
 ///
 /// Dropping one with a scripted failure or hook still queued panics: a script
 /// nothing consumed means the call it was written for never happened, and the
 /// assertions that ran did so against a path the test did not intend.
+///
+/// State sits behind [`Mutex`] rather than `RefCell` because [`Vcs`] is
+/// `Send + Sync`. `Mutex` is not reentrant, so no guard may be held while a
+/// hook runs — see [`FakeVcs::locks_all_free`].
 #[derive(Default)]
 pub(crate) struct FakeVcs {
-    branches: RefCell<BTreeMap<(PathBuf, String), ResolvedRevisionId>>,
-    ancestries: RefCell<BTreeSet<(String, String)>>,
-    failures: RefCell<BTreeMap<VcsCall, VecDeque<VcsError>>>,
-    hooks: RefCell<BTreeMap<VcsCall, VecDeque<Hook>>>,
-    log: RefCell<Vec<VcsCall>>,
+    branches: Mutex<BTreeMap<(PathBuf, String), ResolvedRevisionId>>,
+    ancestries: Mutex<BTreeSet<(String, String)>>,
+    failures: Mutex<BTreeMap<VcsCall, VecDeque<VcsError>>>,
+    hooks: Mutex<BTreeMap<VcsCall, VecDeque<Hook>>>,
+    log: Mutex<Vec<VcsCall>>,
 }
 
 impl FakeVcs {
@@ -67,12 +71,17 @@ impl FakeVcs {
     /// the store from inside a call the subject is already making.
     pub(crate) fn put_branch(&self, store: &Path, name: &RawRefName, at: ResolvedRevisionId) {
         self.branches
-            .borrow_mut()
+            .lock()
+            .unwrap()
             .insert(Self::key(store, name), at);
     }
 
     pub(crate) fn branch_tip(&self, store: &Path, name: &RawRefName) -> Option<ResolvedRevisionId> {
-        self.branches.borrow().get(&Self::key(store, name)).cloned()
+        self.branches
+            .lock()
+            .unwrap()
+            .get(&Self::key(store, name))
+            .cloned()
     }
 
     pub(crate) fn declare_ancestor(
@@ -81,14 +90,16 @@ impl FakeVcs {
         descendant: &ResolvedRevisionId,
     ) {
         self.ancestries
-            .borrow_mut()
+            .lock()
+            .unwrap()
             .insert((ancestor.as_str().to_owned(), descendant.as_str().to_owned()));
     }
 
     /// Make the next `call` return `err` instead of consulting the store.
     pub(crate) fn fail_next(&self, call: VcsCall, err: VcsError) {
         self.failures
-            .borrow_mut()
+            .lock()
+            .unwrap()
             .entry(call)
             .or_default()
             .push_back(err);
@@ -96,9 +107,10 @@ impl FakeVcs {
 
     /// Run `hook` immediately before the next `call`, with the store open for
     /// writing.
-    pub(crate) fn before_next(&self, call: VcsCall, hook: impl FnOnce(&FakeVcs) + 'static) {
+    pub(crate) fn before_next(&self, call: VcsCall, hook: impl FnOnce(&FakeVcs) + Send + 'static) {
         self.hooks
-            .borrow_mut()
+            .lock()
+            .unwrap()
             .entry(call)
             .or_default()
             .push_back(Box::new(hook));
@@ -106,7 +118,21 @@ impl FakeVcs {
 
     /// Every modelled call this double has served, in order.
     pub(crate) fn calls(&self) -> Vec<VcsCall> {
-        self.log.borrow().clone()
+        self.log.lock().unwrap().clone()
+    }
+
+    /// True when every lock this double holds is free.
+    ///
+    /// A hook runs inside a call the subject is already making, and may call
+    /// back into any method. `Mutex` is not reentrant, so a guard still held
+    /// when the hook fires turns that re-entry into a deadlock — a hang, which
+    /// no assertion can report — rather than a failure.
+    fn locks_all_free(&self) -> bool {
+        self.branches.try_lock().is_ok()
+            && self.ancestries.try_lock().is_ok()
+            && self.failures.try_lock().is_ok()
+            && self.hooks.try_lock().is_ok()
+            && self.log.try_lock().is_ok()
     }
 
     fn key(store: &Path, name: &RawRefName) -> (PathBuf, String) {
@@ -114,10 +140,11 @@ impl FakeVcs {
     }
 
     fn enter(&self, call: VcsCall) -> Result<(), VcsError> {
-        self.log.borrow_mut().push(call);
+        self.log.lock().unwrap().push(call);
         let hook = self
             .hooks
-            .borrow_mut()
+            .lock()
+            .unwrap()
             .get_mut(&call)
             .and_then(VecDeque::pop_front);
         if let Some(hook) = hook {
@@ -125,7 +152,8 @@ impl FakeVcs {
         }
         let failure = self
             .failures
-            .borrow_mut()
+            .lock()
+            .unwrap()
             .get_mut(&call)
             .and_then(VecDeque::pop_front);
         match failure {
@@ -140,14 +168,24 @@ impl Drop for FakeVcs {
         if std::thread::panicking() {
             return;
         }
-        let failures: usize = self.failures.borrow().values().map(VecDeque::len).sum();
-        let hooks: usize = self.hooks.borrow().values().map(VecDeque::len).sum();
+        fn queued<T>(m: &Mutex<BTreeMap<VcsCall, VecDeque<T>>>) -> usize {
+            m.lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .values()
+                .map(VecDeque::len)
+                .sum()
+        }
+        let failures = queued(&self.failures);
+        let hooks = queued(&self.hooks);
         assert_eq!(
             (failures, hooks),
             (0, 0),
             "FakeVcs dropped with {failures} scripted failure(s) and {hooks} hook(s) unconsumed \
              after serving {served:?}",
-            served = self.log.borrow(),
+            served = self
+                .log
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner),
         );
     }
 }
@@ -176,7 +214,8 @@ impl Vcs for FakeVcs {
         }
         Ok(self
             .ancestries
-            .borrow()
+            .lock()
+            .unwrap()
             .contains(&(ancestor.as_str().to_owned(), descendant.as_str().to_owned())))
     }
 
@@ -198,7 +237,7 @@ impl Vcs for FakeVcs {
     ) -> Result<bool, VcsError> {
         self.enter(VcsCall::MaterializeWorktreeOnRef)?;
         let key = Self::key(store, name);
-        let mut branches = self.branches.borrow_mut();
+        let mut branches = self.branches.lock().unwrap();
         if branches.contains_key(&key) {
             return Ok(false);
         }
@@ -208,7 +247,10 @@ impl Vcs for FakeVcs {
 
     fn destroy_local_ref(&self, store: &Path, name: &RawRefName) -> Result<(), VcsError> {
         self.enter(VcsCall::DestroyLocalRef)?;
-        self.branches.borrow_mut().remove(&Self::key(store, name));
+        self.branches
+            .lock()
+            .unwrap()
+            .remove(&Self::key(store, name));
         Ok(())
     }
 
@@ -220,7 +262,8 @@ impl Vcs for FakeVcs {
         self.enter(VcsCall::ListBranchNamesWithPrefix)?;
         Ok(self
             .branches
-            .borrow()
+            .lock()
+            .unwrap()
             .keys()
             .filter(|(store, name)| store == repo && name.starts_with(prefix))
             .map(|(_, name)| RawRefName::new(name.clone()))
@@ -634,5 +677,53 @@ mod tests {
     #[should_panic(expected = "`head_revision`")]
     fn an_unmodelled_method_names_itself() {
         let _ = FakeVcs::new().head_revision(Path::new("/store"));
+    }
+
+    #[test]
+    fn a_hook_runs_with_every_lock_free() {
+        let fake = FakeVcs::new();
+        let store = Path::new("/store");
+        let name = RawRefName::new("p--w");
+
+        fake.before_next(VcsCall::MaterializeWorktreeOnRef, {
+            let name = name.clone();
+            move |vcs| {
+                assert!(
+                    vcs.locks_all_free(),
+                    "a lock was held while the hook ran; re-entry deadlocks instead of failing"
+                );
+                vcs.put_branch(Path::new("/store"), &name, rev('a'));
+            }
+        });
+
+        assert!(!fake
+            .materialize_worktree_on_ref(store, Path::new("/dest"), &name, &rev('b'))
+            .unwrap());
+    }
+
+    #[test]
+    fn a_poisoned_lock_does_not_turn_a_clean_drop_into_a_panic() {
+        let fake = FakeVcs::new();
+
+        let poisoner = std::thread::scope(|s| {
+            s.spawn(|| {
+                let _held = fake.failures.lock().unwrap();
+                panic!("poisoning a queue that a clean drop still has to read");
+            })
+            .join()
+        });
+
+        assert!(poisoner.is_err());
+    }
+
+    /// No production code consumes the supertrait yet, so removing it from
+    /// [`Vcs`] compiles clean and every other test stays green. Until the
+    /// verbs thread a handle into `run_in_parallel`, this is the only thing
+    /// holding it.
+    #[test]
+    fn the_seam_and_the_double_both_cross_threads() {
+        fn require<T: Send + Sync + ?Sized>() {}
+        require::<dyn Vcs>();
+        require::<FakeVcs>();
     }
 }

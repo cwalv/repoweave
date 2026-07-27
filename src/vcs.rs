@@ -1864,7 +1864,11 @@ impl DerivedContentPolicy {
 /// Methods return [`VcsError`] (rather than `anyhow::Error`) so callers
 /// can pattern-match on failure modes. Application-level glue may convert
 /// to `anyhow::Error` at the boundary via the `?` operator.
-pub trait Vcs {
+///
+/// `Send + Sync` is required because a `&dyn Vcs` is captured by the closure
+/// `run_in_parallel` hands to worker threads. Implementations use interior
+/// mutability (e.g. `Mutex`) for any mutable state.
+pub trait Vcs: Send + Sync {
     /// Human-readable name (e.g., `"git"`, `"jj"`).
     fn name(&self) -> &str;
 
