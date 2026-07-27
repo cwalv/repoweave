@@ -1464,8 +1464,18 @@ fn comment_blocks(content: &str) -> Vec<CommentBlock> {
     blocks
 }
 
-/// Path-shaped tokens in `text`: a run of path characters holding a `/`, whose
-/// last component ends in a `DOC_PATH_EXTENSIONS` suffix.
+/// Document-citation tokens in `text`: a run of path characters whose last
+/// component is `<stem>.<ext>` with `ext` in `DOC_PATH_EXTENSIONS` and `stem`
+/// non-empty.
+///
+/// A `/` is **not** required. A bare filename — `clone-topology.md` — cites a
+/// document just as a path does; the reader simply has less to go on. Treating
+/// only slashed tokens as citations is what let a bare filename sit
+/// unexamined, so the distinction the caller draws is over *where the token
+/// may resolve*, not over whether it is a citation at all.
+///
+/// The non-empty stem is what keeps a bare extension out: prose naming `.md`
+/// as a file type is not naming a file.
 ///
 /// Markdown and rustdoc link punctuation is outside the character run, so
 /// ``[clone-topology](../../docs/explanation/joints/clone-topology.md)`` and
@@ -1476,29 +1486,68 @@ fn doc_path_tokens(text: &str) -> Vec<&str> {
     text.split(|c: char| !(c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '/' | '-')))
         .map(|run| run.trim_end_matches('.'))
         .filter(|tok| {
-            tok.contains('/')
-                && tok
-                    .rsplit('/')
-                    .next()
-                    .and_then(|last| last.rsplit_once('.'))
-                    .is_some_and(|(_, ext)| DOC_PATH_EXTENSIONS.contains(&ext))
+            tok.rsplit('/')
+                .next()
+                .and_then(|last| last.rsplit_once('.'))
+                .is_some_and(|(stem, ext)| !stem.is_empty() && DOC_PATH_EXTENSIONS.contains(&ext))
         })
         .collect()
 }
 
-/// True if `token` names a file present in a clone of this repository.
+/// The last `/`-separated component of `token`.
+fn token_filename(token: &str) -> &str {
+    token.rsplit('/').next().unwrap_or(token)
+}
+
+/// True if `token` resolves against the **repo root**, one of the two bases a
+/// citation may be written from.
 ///
 /// A leading `../` run is dropped first. A rustdoc link is written relative to
 /// the generated HTML tree, not the repo root, and the question the rule asks
 /// is whether a cloner holds the file — not whether the prefix would resolve
 /// from `root`. Dropping the prefix cannot admit a genuine escape: the
 /// remainder still has to name something that exists here.
-fn resolves_in_repo(root: &Path, token: &str) -> bool {
+fn resolves_from_root(root: &Path, token: &str) -> bool {
     let mut rest = token;
     while let Some(next) = rest.strip_prefix("../").or_else(|| rest.strip_prefix("./")) {
         rest = next;
     }
     !rest.is_empty() && root.join(rest).exists()
+}
+
+/// True if `token` resolves against **the citing file's own directory**, the
+/// other base a citation may be written from.
+///
+/// `..` is walked lexically rather than by touching the filesystem, and a run
+/// that climbs above `root` fails instead of resolving. A path that leaves the
+/// repository is the case this rule exists to catch, and letting
+/// `<root>/src/../../projects/…` be answered by the developer's own
+/// surroundings would hand exactly that case a pass on the one machine where
+/// nobody needs the check.
+fn resolves_from_file_dir(root: &Path, dir: &Path, token: &str) -> bool {
+    let Ok(rel) = dir.strip_prefix(root) else {
+        return false;
+    };
+    let mut parts: Vec<&OsStr> = rel.iter().collect();
+    for component in token.split('/') {
+        match component {
+            "" | "." => {}
+            ".." => {
+                if parts.pop().is_none() {
+                    return false;
+                }
+            }
+            name => parts.push(OsStr::new(name)),
+        }
+    }
+    if parts.is_empty() {
+        return false;
+    }
+    let mut resolved = root.to_path_buf();
+    for part in parts {
+        resolved.push(part);
+    }
+    resolved.exists()
 }
 
 /// True if the comment says nothing beyond its references — every word left
@@ -1547,63 +1596,148 @@ fn is_local_ref_hatch(line: &str) -> bool {
         .is_some_and(|reason| !reason.trim().is_empty())
 }
 
+/// Every document filename this repository's own code **operates on** — the
+/// last component of each path-shaped token appearing in non-comment `src/`
+/// text.
+///
+/// `CLAUDE.md` already exempts a path a program acts on from the citation
+/// rule: `include_str!("../docs/reference/explain/index.md")` is a program
+/// reading a file, not a comment citing a document. This set carries that
+/// exemption across to the comment that *describes* the same operation —
+/// `writes an `index.md` listing all explainable verbs` names the artifact the
+/// line below it produces, and asking a reader to "follow" it is a category
+/// error.
+///
+/// Inline test modules are dropped, and that is load-bearing rather than
+/// tidiness — the same reason `src_code_identifiers` drops them. A fixture is
+/// free to write any filename it likes, so a fixture that counts as evidence
+/// would let this gate vouch for the very citation it is meant to reject: this
+/// file's own test module writes docs/explanation/joints/clone-topology.md
+/// into a temp tree, and counting that filename would have exempted the two
+/// live bare citations of it elsewhere in `src/`.
+///
+/// The limit worth naming: an author can defeat the bare-filename clause by
+/// making the program handle that filename somewhere. That is a real hole and
+/// a small one — it takes a code change, not a comment, and a program that
+/// genuinely operates on the file is the case being exempted.
+fn src_code_doc_filenames(root: &Path) -> HashSet<String> {
+    let mut names = HashSet::new();
+    for path in src_rs_files(root) {
+        let Ok(content) = fs::read_to_string(&path) else {
+            continue;
+        };
+        for line in before_test_module(&content).lines() {
+            for token in doc_path_tokens(code_on_line(line)) {
+                names.insert(token_filename(token).to_owned());
+            }
+        }
+    }
+    names
+}
+
 /// Enforce the **path-resolution clause** of `CLAUDE.md`'s "Comments do not
 /// cite trackers or documents", over comments in `src/`:
 ///
-/// - a path in a comment must name a file that exists in this repository. A
-///   path into the workspace this repo is developed in is unfollowable from a
-///   clone, and it rots invisibly, because nothing can check a path that was
-///   never expected to resolve;
+/// - a document citation in a comment must resolve against one of the two
+///   bases a reader can be expected to try: the **repo root**, or the
+///   **directory of the citing file**. A citation that resolves under neither
+///   is unfollowable from a clone, and it rots invisibly, because nothing can
+///   check a reference that was never expected to resolve;
 /// - a comment whose *entire* content is the reference is a violation even
-///   when the path resolves — it points instead of stating. A resolving path
-///   is legal as a trailing pointer, after the comment has said the thing.
+///   when it resolves — it points instead of stating. A resolving path is
+///   legal as a trailing pointer, after the comment has said the thing.
 ///
 /// A site may keep a path that leaves this repository by annotating the line
 /// above it `weave-local-ref: <reason>`. The hatch suppresses the resolution
 /// clause only; it is not a way to keep a comment that is nothing but a
 /// pointer, and there is no allowlist file.
 ///
+/// # Bare filenames are citations
+///
+/// A token needs no `/` to be a citation. `docs/explanation/joints/clone-topology.md`
+/// and that filename alone point at the same document; the second just gives
+/// the reader less. Existing *somewhere* in the repo is deliberately **not** a
+/// passing condition — that would make the gate answer a question ("is there a
+/// file by this name?") the reader cannot ask, since the reader has a comment
+/// and no index. Both bases are positional, and a citation that matches
+/// neither is one the reader must go hunting for.
+///
+/// Two limits keep this from firing on text that cites nothing:
+///
+/// - a bare filename counts only for `.md`, this repository's document format
+///   and the only one `docs/` and mdBook use. Written as a path, every
+///   `DOC_PATH_EXTENSIONS` suffix still counts; the narrowing is for the
+///   filename-alone case, where prose naming an incidental `notes.txt` is far
+///   likelier than a citation;
+/// - a filename the code itself operates on (`src_code_doc_filenames`) is
+///   exempt, and a bare filename is also satisfied by a resolving path to the
+///   same filename **in the same comment block** — which is what a markdown
+///   link written `[name](path)` already gives the reader, and what the
+///   paragraph above does for its own example. Block-level, not file-level: a
+///   resolving path elsewhere in the file is not something a reader of this
+///   comment has.
+///
 /// # This gate is not the whole rule
 ///
 /// `CLAUDE.md` bans three shapes in comments. The tracker-ID shape is
 /// `check_no_tracker_ids`. The third — a **section pointer** into a design
-/// document (`branch-model.md §3.3`, `plan §7.1 arm 7`) — is **not mechanised
-/// anywhere**, here or elsewhere. `src/` comments carry none today, but that
-/// is the state a sweep left behind, not a property anything maintains:
-/// nothing stops the next one landing. Reading a green gate as "this tree has
-/// no section pointers" is wrong.
+/// document, a document name followed by a section token — is still not
+/// mechanised *as such*. What changed is the size of the gap, not its
+/// existence: a section pointer written against a bare filename is now caught,
+/// because the filename does not resolve. A section pointer written against a
+/// path that *does* resolve is not caught, and neither is one against a
+/// document named without a file extension. Reading a green gate as "this tree
+/// has no section pointers" is still wrong.
 ///
-/// Three further limits, all taken deliberately against over-eagerness: only
-/// the extensions in `DOC_PATH_EXTENSIONS` count as a document citation; a
-/// path with no `/` is not a path token, so a bare filename in prose is not
-/// checked; and inline test-module content is dropped (`before_test_module`),
-/// as the env-input gate also drops it. That last one is a scope difference
-/// from `check_no_tracker_ids` and `check_no_consumer_vocabulary`, which scan
-/// whole files: those two ban text that reaches a user wherever it sits, while
-/// this one asks whether a reader can follow a reference, and a test comment
-/// describing the fixture tree it builds in a temp directory is not citing a
-/// document.
-fn check_doc_citations(root: &Path, files: &[PathBuf]) -> Vec<String> {
+/// One further limit: inline test-module content is dropped
+/// (`before_test_module`), as the env-input gate also drops it. That is a
+/// scope difference from `check_no_tracker_ids` and
+/// `check_no_consumer_vocabulary`, which scan whole files: those two ban text
+/// that reaches a user wherever it sits, while this one asks whether a reader
+/// can follow a reference, and a test comment describing the fixture tree it
+/// builds in a temp directory is not citing a document.
+fn check_doc_citations(root: &Path, files: &[PathBuf], operated: &HashSet<String>) -> Vec<String> {
     let mut errors = Vec::new();
     for path in files {
         let Ok(content) = fs::read_to_string(path) else {
             continue;
         };
         let rel = path.strip_prefix(root).unwrap_or(path).display();
+        let dir = path.parent().unwrap_or(root);
         for block in comment_blocks(before_test_module(&content)) {
             let joined = block.text();
             let block_tokens = doc_path_tokens(&joined);
             if block_tokens.is_empty() {
                 continue;
             }
+            // A bare filename the block itself also writes as a resolving path
+            // is followable from the comment the reader is holding.
+            let shown_as_path: HashSet<&str> = block_tokens
+                .iter()
+                .filter(|tok| {
+                    tok.contains('/')
+                        && (resolves_from_root(root, tok) || resolves_from_file_dir(root, dir, tok))
+                })
+                .map(|tok| token_filename(tok))
+                .collect();
             for (i, (n, text)) in block.lines.iter().enumerate() {
                 if i > 0 && is_local_ref_hatch(&block.lines[i - 1].1) {
                     continue;
                 }
                 for token in doc_path_tokens(text) {
-                    if !resolves_in_repo(root, token) {
+                    if !token.contains('/')
+                        && (!token.ends_with(".md")
+                            || operated.contains(token)
+                            || shown_as_path.contains(token))
+                    {
+                        continue;
+                    }
+                    if !resolves_from_root(root, token) && !resolves_from_file_dir(root, dir, token)
+                    {
                         errors.push(format!(
-                            "{rel}:{n}: `{token}` does not resolve to a file in this repository"
+                            "{rel}:{n}: `{token}` resolves neither from the repo root nor from \
+                             `{}` — a reader has nothing to open",
+                            dir.strip_prefix(root).unwrap_or(dir).display()
                         ));
                     }
                 }
@@ -1633,7 +1767,7 @@ fn src_rs_files(root: &Path) -> Vec<PathBuf> {
 }
 
 fn run_doc_citation_check(root: &Path) -> Vec<String> {
-    check_doc_citations(root, &src_rs_files(root))
+    check_doc_citations(root, &src_rs_files(root), &src_code_doc_filenames(root))
 }
 
 /// Every identifier that appears in `src/` outside a comment.
@@ -2133,20 +2267,24 @@ fn main() -> anyhow::Result<()> {
     }
 
     // --- doc-citation gate -------------------------------------------------
-    // A path in a src/ comment must name a file a cloner has, and a comment
-    // must not be nothing but that reference. Enforces the path-resolution
-    // clause only — the section-pointer clause of the same rule has no
-    // matcher; see check_doc_citations.
+    // A document a src/ comment cites must resolve from the repo root or from
+    // the citing file's own directory, and a comment must not be nothing but
+    // that reference. Enforces the path-resolution clause only — the
+    // section-pointer clause of the same rule is caught only where the
+    // document is named by a filename that does not resolve; see
+    // check_doc_citations.
     let citation_errors = run_doc_citation_check(&root);
     if !citation_errors.is_empty() {
         let msg = citation_errors.join("\n");
         anyhow::bail!(
             "doc-citation check failed:\n{msg}\n\n\
-             Fix: state the invariant in the comment. A path that leaves this \
-             repository is unfollowable from a clone; a comment that is only a \
-             pointer should be the sentence it was standing in for. A path out \
-             of the repo that must stay takes `weave-local-ref: <reason>` on \
-             the line above it."
+             Fix: state the invariant in the comment. A citation a reader \
+             cannot resolve from the repo root or from the citing file's own \
+             directory is unfollowable from a clone — write the path that \
+             resolves, or drop the reference and say the thing. A comment that \
+             is only a pointer should be the sentence it was standing in for. \
+             A path out of the repo that must stay takes \
+             `weave-local-ref: <reason>` on the line above it."
         );
     }
 
@@ -2863,6 +3001,12 @@ mod tests {
     /// `docs/explanation/joints/clone-topology.md` to resolve against, and
     /// return the gate's findings.
     fn citation_errors(body: &str) -> Vec<String> {
+        citation_errors_with(&[], body)
+    }
+
+    /// `citation_errors`, plus `extra` files written relative to the repo root
+    /// so a fixture can supply whatever a citation is supposed to resolve to.
+    fn citation_errors_with(extra: &[(&str, &str)], body: &str) -> Vec<String> {
         let tmp = tempfile::tempdir().expect("tempdir");
         let root = tmp.path();
         let joints = root.join("docs/explanation/joints");
@@ -2870,9 +3014,15 @@ mod tests {
         fs::write(joints.join("clone-topology.md"), "# clone topology\n").unwrap();
         let src = root.join("src");
         fs::create_dir_all(&src).unwrap();
+        for (rel, content) in extra {
+            let path = root.join(rel);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(&path, content).unwrap();
+        }
         let file = src.join("lib.rs");
         fs::write(&file, body).unwrap();
-        check_doc_citations(root, &[file])
+        let operated = src_code_doc_filenames(root);
+        check_doc_citations(root, &[file], &operated)
     }
 
     /// A resolving path as a trailing pointer, after the comment has said the
@@ -2902,8 +3052,200 @@ mod tests {
         );
         let combined = errors.join("\n");
         assert!(
-            combined.contains("does not resolve"),
+            combined.contains("resolves neither"),
             "a path outside the repository must be reported, got:\n{combined}"
+        );
+    }
+
+    /// **Pinning test for the bare-filename clause.** The document exists in
+    /// the fixture repo, at `docs/explanation/joints/clone-topology.md`, and is
+    /// cited by filename alone.
+    ///
+    /// This fails two ways if the clause regresses: if `doc_path_tokens` goes
+    /// back to requiring a `/`, the token is never examined; and if resolution
+    /// is ever relaxed to "a file by this name exists somewhere in the repo",
+    /// the citation passes. Both are the permissiveness this test exists to
+    /// forbid — the reader holds a comment, not an index.
+    #[test]
+    fn bare_filename_citation_is_reported_though_the_file_exists_in_the_repo() {
+        let errors = citation_errors(
+            "// A workweave checkout is a full clone, not a linked worktree.\n\
+             // The tier-0 invariants are in clone-topology.md.\n\
+             pub fn f() {}\n",
+        );
+        let combined = errors.join("\n");
+        assert!(
+            combined.contains("`clone-topology.md`") && combined.contains("resolves neither"),
+            "a bare filename must be reported even though the file exists here, got:\n{combined}"
+        );
+    }
+
+    /// The repo root is one of the two bases a citation may be written from.
+    #[test]
+    fn bare_filename_resolving_from_the_repo_root_is_allowed() {
+        let errors = citation_errors_with(
+            &[("ARCHITECTURE.md", "# architecture\n")],
+            "// The seam layering is what keeps the VCS backend swappable.\n\
+             // ARCHITECTURE.md carries the argument.\n\
+             pub fn f() {}\n",
+        );
+        assert!(
+            errors.is_empty(),
+            "a filename resolving from the repo root must not be reported, got:\n{}",
+            errors.join("\n")
+        );
+    }
+
+    /// The citing file's own directory is the other base. `src/lib.rs` naming
+    /// `notes.md` means `src/notes.md`, and a reader opens it without being
+    /// told where to look.
+    #[test]
+    fn bare_filename_resolving_from_the_citing_files_directory_is_allowed() {
+        let errors = citation_errors_with(
+            &[("src/notes.md", "# notes\n")],
+            "// Resolution order is deliberate and argued for next door.\n\
+             // notes.md carries the argument.\n\
+             pub fn f() {}\n",
+        );
+        assert!(
+            errors.is_empty(),
+            "a filename resolving beside the citing file must not be reported, got:\n{}",
+            errors.join("\n")
+        );
+    }
+
+    /// Resolution from the citing file's directory is lexical, and a `..` run
+    /// that climbs above the repo root fails rather than resolving.
+    ///
+    /// The fixture puts a real file immediately outside the repo, which is the
+    /// developer's own surroundings. Answering the citation from there would
+    /// hand the "path into the workspace this repo is developed in" case a pass
+    /// on the one machine where nobody needs the check.
+    #[test]
+    fn a_citation_climbing_above_the_repo_root_is_reported() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        fs::write(tmp.path().join("design.md"), "# design\n").unwrap();
+        let root = tmp.path().join("repo");
+        let src = root.join("src");
+        fs::create_dir_all(&src).unwrap();
+        let file = src.join("lib.rs");
+        fs::write(
+            &file,
+            "// A workweave checkout is a full clone, not a linked worktree.\n\
+             // The argument is in ../../design.md.\n\
+             pub fn f() {}\n",
+        )
+        .unwrap();
+        let operated = src_code_doc_filenames(&root);
+        let errors = check_doc_citations(&root, &[file], &operated);
+        let combined = errors.join("\n");
+        assert!(
+            combined.contains("resolves neither"),
+            "a path resolving only outside the repo must be reported, got:\n{combined}"
+        );
+    }
+
+    /// Prose naming a file type is not naming a file.
+    #[test]
+    fn a_bare_extension_is_not_a_citation() {
+        let errors = citation_errors(
+            "// Every page under the docs tree is a .md file, so the walker\n\
+             // filters on that extension.\n\
+             pub fn f() {}\n",
+        );
+        assert!(
+            errors.is_empty(),
+            "a bare extension must not be treated as a filename, got:\n{}",
+            errors.join("\n")
+        );
+    }
+
+    /// A filename this repository's own code operates on is an artifact the
+    /// program handles, not a document the comment cites. This is the
+    /// string-literal carve-out of the rule, reaching the comment that
+    /// describes the same operation.
+    #[test]
+    fn a_filename_the_code_operates_on_is_not_a_citation() {
+        let errors = citation_errors(
+            "/// Writes the verb listing the book's nav bar renders from.\n\
+             pub fn write_index(root: &std::path::Path) {\n\
+             \x20   let _ = root.join(\"docs/reference/explain/index.md\");\n\
+             }\n\
+             // The nav bar is generated, so index.md is rewritten every run\n\
+             // rather than hand-edited.\n\
+             pub fn f() {}\n",
+        );
+        assert!(
+            errors.is_empty(),
+            "a filename the code operates on must not be reported, got:\n{}",
+            errors.join("\n")
+        );
+    }
+
+    /// **Pinning test for the `#[cfg(test)]` drop in `src_code_doc_filenames`.**
+    ///
+    /// A fixture may write any filename it likes. If fixture text counted as
+    /// evidence that the program operates on a file, the gate would vouch for
+    /// the very citation it is meant to reject — and this repository really
+    /// does write `clone-topology.md` from a test fixture while citing it bare
+    /// in production comments elsewhere.
+    #[test]
+    fn a_filename_written_only_by_a_test_fixture_does_not_exempt_a_citation() {
+        let errors = citation_errors(
+            "// A workweave checkout is a full clone, not a linked worktree.\n\
+             // The tier-0 invariants are in clone-topology.md.\n\
+             pub fn f() {}\n\
+             #[cfg(test)]\n\
+             mod tests {\n\
+             \x20   #[test]\n\
+             \x20   fn fixture() {\n\
+             \x20       let _ = std::path::Path::new(\"clone-topology.md\");\n\
+             \x20   }\n\
+             }\n",
+        );
+        let combined = errors.join("\n");
+        assert!(
+            combined.contains("`clone-topology.md`"),
+            "a fixture-only filename must not exempt a live citation, got:\n{combined}"
+        );
+    }
+
+    /// A markdown link gives the reader the resolving path alongside the
+    /// filename, so the block is followable as it stands.
+    #[test]
+    fn a_filename_shown_as_a_resolving_path_in_the_same_block_is_allowed() {
+        let errors = citation_errors(
+            "// The bottom tier of the stability stack\n\
+             // ([clone-topology.md](../../docs/explanation/joints/clone-topology.md))\n\
+             // is what a manifest slot must satisfy.\n\
+             pub fn f() {}\n",
+        );
+        assert!(
+            errors.is_empty(),
+            "a filename accompanied by its resolving path must not be reported, got:\n{}",
+            errors.join("\n")
+        );
+    }
+
+    /// Satisfaction is block-level, not file-level. A resolving path in some
+    /// other comment is not something the reader of *this* comment holds — and
+    /// file-level would have excused two live bare citations in this
+    /// repository, both in a file that spells the full path once, far away.
+    #[test]
+    fn a_resolving_path_elsewhere_in_the_file_does_not_satisfy_a_bare_citation() {
+        let errors = citation_errors(
+            "// The stability stack is described in\n\
+             // docs/explanation/joints/clone-topology.md.\n\
+             pub fn stated_here() {}\n\
+             \n\
+             // Detached HEAD breaks the ref-namespace invariant recorded in\n\
+             // clone-topology.md.\n\
+             pub fn f() {}\n",
+        );
+        let combined = errors.join("\n");
+        assert!(
+            combined.contains("`clone-topology.md`") && combined.contains("resolves neither"),
+            "a distant path must not satisfy a bare citation, got:\n{combined}"
         );
     }
 
@@ -2920,7 +3262,7 @@ mod tests {
             "a comment that is only a reference must be reported, got:\n{combined}"
         );
         assert!(
-            !combined.contains("does not resolve"),
+            !combined.contains("resolves neither"),
             "the path resolves; only the bare-pointer clause should fire, got:\n{combined}"
         );
     }
@@ -2958,18 +3300,39 @@ mod tests {
         );
     }
 
-    /// Section pointers are banned by CLAUDE.md but deliberately not mechanised
-    /// here; this pins that the gate is silent about them, so a future sweep
-    /// does not mistake a green gate for a clean tree.
+    /// A section pointer written against a bare filename is caught — not
+    /// because it is a section pointer, but because the filename resolves from
+    /// neither base. This is the shape the sweep before this gate was chasing,
+    /// and the shape that used to pass unexamined.
     #[test]
-    fn section_pointers_are_not_mechanised() {
+    fn a_section_pointer_against_a_bare_filename_is_reported() {
         let errors = citation_errors(
-            "// The refusal is the one branch-model.md §3.3 arm 2 describes.\n\
+            "// The refusal is the one the ownership-receipt arm describes\n\
+             // (branch-model.md §3.3 arm 2).\n\
+             pub fn f() {}\n",
+        );
+        let combined = errors.join("\n");
+        assert!(
+            combined.contains("`branch-model.md`"),
+            "a section pointer against an unresolvable filename must be reported, got:\n{combined}"
+        );
+    }
+
+    /// **The residual gap, pinned deliberately.** CLAUDE.md's section-pointer
+    /// clause is still not mechanised *as such*: when the document is named by
+    /// a path that resolves, the section pointer hanging off it is invisible
+    /// here. The clause above narrowed this gap; it did not close it, and a
+    /// green gate must not be read as "this tree has no section pointers".
+    #[test]
+    fn a_section_pointer_against_a_resolving_path_is_not_mechanised() {
+        let errors = citation_errors(
+            "// The refusal is the one the ownership-receipt arm describes\n\
+             // (docs/explanation/joints/clone-topology.md §3.3 arm 2).\n\
              pub fn f() {}\n",
         );
         assert!(
             errors.is_empty(),
-            "the section-pointer clause has no matcher yet, got:\n{}",
+            "the section-pointer clause itself still has no matcher, got:\n{}",
             errors.join("\n")
         );
     }

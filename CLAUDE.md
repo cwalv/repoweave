@@ -44,18 +44,32 @@ Never, in any comment under `src/`:
 - **a tracker ID** — `fo-…`, `#1234`, `PROJ-56`;
 - **a section pointer into a design document** — `branch-model.md §3.3`,
   `plan §7.1 arm 7`, `Finding 1 of …`;
-- **a path that does not resolve to a file in this repository** — most often a
-  path into the workspace this repo is developed in (`docs/repoweave/…`,
-  `docs/agent-persona/…`, `../../../../projects/…`). Someone holding only a
-  clone of this repo has no such file. The reference is unfollowable from the
-  day it is written, and it rots invisibly, because nothing can check a path
-  that was never expected to resolve.
+- **a document citation that resolves from neither of the two bases below** —
+  most often a path into the workspace this repo is developed in
+  (`docs/repoweave/…`, `docs/agent-persona/…`, `../../../../projects/…`).
+  Someone holding only a clone of this repo has no such file. The reference is
+  unfollowable from the day it is written, and it rots invisibly, because
+  nothing can check a path that was never expected to resolve.
 
-A path that *does* resolve here — `docs/explanation/joints/clone-topology.md`,
-`docs/reference/cli.md` — may appear as a trailing pointer, after the comment
-has already said the thing. A comment whose entire content is the reference
-(`// See docs/explanation/joints/clone-topology.md.`) is a violation: delete it
-and write the sentence it was standing in for.
+A citation resolves from exactly two bases, and it must resolve from one of
+them:
+
+1. **the repository root** — `docs/explanation/joints/clone-topology.md`,
+   `docs/reference/cli.md`;
+2. **the directory of the file the comment is in** — a comment in `src/` naming
+   `notes.md` means `src/notes.md`.
+
+Nothing else counts, and in particular **existing somewhere in the repository
+does not count**. A bare `clone-topology.md` in a `src/` comment is a violation
+even though `docs/explanation/joints/clone-topology.md` is right there: the
+reader holds a comment, not an index, and "it's in here somewhere, go look" is
+the reference being unfollowable in a politer voice. Write the path that
+resolves, or state the invariant and drop the reference.
+
+A citation that *does* resolve may appear as a trailing pointer, after the
+comment has already said the thing. A comment whose entire content is the
+reference (`// See docs/explanation/joints/clone-topology.md.`) is a violation:
+delete it and write the sentence it was standing in for.
 
 Rationale belongs in `docs/explanation/joints/`. That is what those documents
 are for. The comment carries the invariant; the joint doc carries the argument.
@@ -139,6 +153,35 @@ have removed.
 
 Expect to reach for it close to never. The fix for an unfollowable reference is
 almost always to state the invariant and delete the reference.
+
+### What is mechanised, and what is not
+
+`check_doc_citations` in `src/bin/generate-explain.rs` enforces the two-base
+resolution rule and the bare-pointer clause over comments in `src/`, for tokens
+whose last component ends in a document extension. A filename with no `/` in it
+counts, for `.md` — that is what makes "it's in here somewhere" a finding.
+
+Two things it deliberately does not report. A filename this repository's own
+non-test code operates on is an artifact the program handles, not a document
+the comment cites — the string-literal carve-out above, reaching the comment
+that describes the same operation. And a bare filename accompanied **in the
+same comment block** by a resolving path to it is followable as it stands,
+which is what a markdown link already gives the reader.
+
+**The section-pointer clause is not mechanised as such.** A section pointer
+written against a bare filename — `branch-model.md §3.3` — is caught, but only
+because that filename resolves from neither base; the `§3.3` is invisible to
+the gate. Written against a path that resolves, or against a document named
+with no file extension (`plan §7.1 arm 7`, `Finding 1 of …`), nothing fires.
+
+**A green gate therefore does not mean the tree has no section pointers.** It
+also does not mean `docs/` is clean: this gate reads `src/` only, and it stops
+at an inline `#[cfg(test)] mod tests` — matching that module name literally, so
+how much of a file is scanned depends on what its test module is called. When
+you sweep by hand, match on the
+*shape* — a document name followed by a section token — and match it in every
+spelling it is written in. The sweep before this gate matched `§` and left
+`D2`, `D4` and `D1–D3` standing in four files.
 
 ## Comments do not name symbols that no longer exist
 
