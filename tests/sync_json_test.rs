@@ -339,7 +339,13 @@ fn serialize_outcome(path: &str, abs: &str, outcome: &RepoSyncOutcome) -> Value 
 
 #[test]
 fn outcome_converged_serializes() {
-    let v = serialize_outcome("github/cwalv/foo", "/abs/foo", &RepoSyncOutcome::Converged);
+    let v = serialize_outcome(
+        "github/cwalv/foo",
+        "/abs/foo",
+        &RepoSyncOutcome::Converged {
+            derived_content_dropped: Vec::new(),
+        },
+    );
     assert_eq!(v["kind"], "converged");
     assert_eq!(v["path"], "github/cwalv/foo");
     assert_eq!(v["absolute_path"], "/abs/foo");
@@ -824,7 +830,9 @@ fn sync_json_envelope_round_trips() {
             SyncOutcomeOutput::from_outcome(
                 "p1".into(),
                 "/abs/p1".into(),
-                &RepoSyncOutcome::Converged,
+                &RepoSyncOutcome::Converged {
+                    derived_content_dropped: Vec::new(),
+                },
             ),
             SyncOutcomeOutput::from_outcome(
                 "p2".into(),

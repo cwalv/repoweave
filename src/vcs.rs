@@ -2059,6 +2059,40 @@ pub trait Vcs {
     /// [`mid_op`]: Vcs::mid_op
     fn rebase_continue(&self, repo: &Path, derived: DerivedContentPolicy) -> Result<(), VcsError>;
 
+    /// Declared derived paths the range `base..source` changed whose
+    /// `source`-side content the tree at `landed` does not carry.
+    ///
+    /// The observable half of [`DerivedContentPolicy::keep_target_side`].
+    /// That resolution leaves no conflict, no marker and no entry in the
+    /// landed commit's diff, so comparing what went into a replay against
+    /// what came out is the only thing that can name what it dropped.
+    ///
+    /// Restricting to paths the range changed is what separates a drop from
+    /// an ordinary difference: a declared path `source` never touched differs
+    /// from `landed` whenever the target moved it, and a caller reporting
+    /// that would be reporting someone else's work.
+    ///
+    /// The question is about the landed tree, not about resolver
+    /// invocations: a path an intermediate step resolved away and a later one
+    /// put back lost nothing, and is not in the result.
+    ///
+    /// `Ok(vec![])` is the normal outcome and carries no suspicion — it is
+    /// what a replay with nothing to resolve returns.
+    ///
+    /// For [`GitVcs`](crate::git::GitVcs): intersects `git diff --name-only
+    /// <base>...<source>` with `git diff --name-only <landed> <source>`, then
+    /// asks `git check-attr merge` which survivors carry the rwv resolution.
+    /// Delegating the pattern evaluation to git is what keeps a `!merge`
+    /// carve-out inside a declared subtree honored here without a second
+    /// matcher to keep in step with git's own.
+    fn derived_content_dropped_by_replay(
+        &self,
+        repo: &Path,
+        base: &ResolvedRevisionId,
+        source: &ResolvedRevisionId,
+        landed: &ResolvedRevisionId,
+    ) -> Result<Vec<String>, VcsError>;
+
     /// Configure `repo` so that during replay (rebase, merge) any changes to
     /// `path` are silently overridden — the replay target's version of `path`
     /// always wins.

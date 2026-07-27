@@ -307,6 +307,16 @@ impl Vcs for FakeVcs {
         unsupported("rebase_continue")
     }
 
+    fn derived_content_dropped_by_replay(
+        &self,
+        _repo: &Path,
+        _base: &ResolvedRevisionId,
+        _source: &ResolvedRevisionId,
+        _landed: &ResolvedRevisionId,
+    ) -> Result<Vec<String>, VcsError> {
+        unsupported("derived_content_dropped_by_replay")
+    }
+
     fn set_replay_exclusion(&self, _repo: &Path, _path: &Path) -> Result<(), VcsError> {
         unsupported("set_replay_exclusion")
     }

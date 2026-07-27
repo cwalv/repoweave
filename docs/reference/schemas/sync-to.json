@@ -233,6 +233,13 @@
             "absolute_path": {
               "type": "string"
             },
+            "derived_content_dropped": {
+              "description": "Repo-relative paths this repo declares derived whose replayed version the landed tree does not carry: the replay resolved them to the target's version instead. Regenerating them from their source of record and committing is what makes the landed tree describe itself again. Omitted when nothing was resolved away.",
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
             "kind": {
               "type": "string",
               "enum": [

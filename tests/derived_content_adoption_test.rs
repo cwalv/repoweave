@@ -498,3 +498,158 @@ fn the_templates_the_generator_reads_stay_authored() {
         "a template is authored content and its conflicts are real; got {conflicted:?}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// The report — regression pin for a landing that discarded a regeneration
+// silently
+// ---------------------------------------------------------------------------
+//
+// Two workweaves regenerated `docs/reference/explain/doctor.md`. The first
+// landed. The second rebased on top; its workweave diff carried the file and
+// its landed commit did not contain it at all. The side-pick was correct and
+// documented — what was wrong was that nothing said so. No conflict, no
+// marker, no diffstat entry, no line in the sync output. The tree then held a
+// shipped page that did not describe a shipped finding, and the next person to
+// run the drift gate inherited a red gate they had not caused.
+//
+// The prohibition these two tests pin is "the discard is not silent". They are
+// written to fail if the report is removed or narrowed, because the asymmetry
+// it introduces — a warning on a resolution the design calls correct — is
+// exactly the kind of thing a later reader tidies away.
+
+/// Land `ww` onto its recorded parent, returning `(stdout, stderr)`.
+fn land(ww: &Workspace, json: bool) -> (String, String) {
+    let mut cmd = rwv();
+    cmd.args(["sync-to", "--strategy", "rebase"]);
+    if json {
+        cmd.arg("--json");
+    }
+    let out = cmd.current_dir(&ww.root).assert().success();
+    (
+        String::from_utf8_lossy(&out.get_output().stdout).into_owned(),
+        String::from_utf8_lossy(&out.get_output().stderr).into_owned(),
+    )
+}
+
+/// Both sides regenerate the index, then `ww` lands. Returns the land's
+/// output, having first established that the land really did resolve `ww`'s
+/// regeneration away — a report asserted against a land that dropped nothing
+/// would pass for the wrong reason.
+fn land_after_both_sides_regenerate(tmp: &Path, json: bool) -> (String, String) {
+    let weaveroot = tmp.join(".workweaves");
+    std::fs::create_dir_all(&weaveroot).unwrap();
+
+    let primary = make_primary(tmp, true);
+    let ww = create_workweave(&primary, &weaveroot, "ww");
+
+    add_a_verb_and_lock(&primary, "sync");
+    add_a_verb_and_lock(&ww, "weave");
+
+    let ww_regeneration = read(&ww.managed_repo, ARTIFACT);
+    let target_version = read(&primary.managed_repo, ARTIFACT);
+    assert_ne!(
+        ww_regeneration, target_version,
+        "fixture precondition: the two sides must disagree about the artifact, \
+         or there is no discard to report"
+    );
+    assert_no_durable_definition(&ww.managed_repo);
+
+    let output = land(&ww, json);
+
+    assert_eq!(
+        read(&ww.managed_repo, ARTIFACT),
+        target_version,
+        "fixture precondition: the land must have resolved `ww`'s regeneration \
+         away. Without that this asserts a report about nothing."
+    );
+    assert!(
+        !git_out(&["log", "-1", "--name-only", "--format="], &ww.managed_repo).contains(ARTIFACT),
+        "fixture precondition: the discard must be invisible in the landed \
+         commit — that invisibility is the whole reason the report has to exist"
+    );
+    output
+}
+
+#[test]
+fn a_land_that_resolves_a_regeneration_away_names_the_path() {
+    let tmp = common::tempdir().unwrap();
+    let (stdout, stderr) = land_after_both_sides_regenerate(tmp.path(), false);
+    let output = format!("{stdout}{stderr}");
+
+    assert!(
+        output.contains(ARTIFACT),
+        "a land that took the operator's regeneration out of what it landed must \
+         name the path it took out. Got:\nstdout:\n{stdout}\nstderr:\n{stderr}"
+    );
+    assert!(
+        output.contains("regenerate"),
+        "naming the path is half the report; the operator also has to be told \
+         what to do about it. Got:\nstdout:\n{stdout}\nstderr:\n{stderr}"
+    );
+}
+
+#[test]
+fn the_same_land_names_the_path_in_json() {
+    let tmp = common::tempdir().unwrap();
+    let (stdout, stderr) = land_after_both_sides_regenerate(tmp.path(), true);
+
+    let envelope: serde_json::Value = serde_json::from_str(&stdout)
+        .unwrap_or_else(|e| panic!("`sync-to --json` must emit one envelope: {e}\n{stdout}"));
+    let dropped: Vec<&str> = envelope["outcomes"]
+        .as_array()
+        .expect("the envelope carries per-repo outcomes")
+        .iter()
+        .filter_map(|o| o["derived_content_dropped"].as_array())
+        .flatten()
+        .filter_map(|p| p.as_str())
+        .collect();
+
+    // Two surfaces, one land: a report that reaches only the one being read
+    // is a report that has already half-decayed. The text assertion above and
+    // this one have to move together.
+    assert!(
+        dropped.contains(&ARTIFACT),
+        "the machine surface must name it too; got {dropped:?} in:\n{stdout}\
+         \nstderr:\n{stderr}"
+    );
+}
+
+#[test]
+fn a_land_that_did_not_touch_the_artifact_reports_nothing() {
+    let tmp = common::tempdir().unwrap();
+    let weaveroot = tmp.path().join(".workweaves");
+    std::fs::create_dir_all(&weaveroot).unwrap();
+
+    // Only the target regenerates. `ww` commits authored content that has
+    // nothing to do with the artifact — so the artifact differs between `ww`'s
+    // tip and what lands, and nothing of `ww`'s was discarded.
+    //
+    // This is the case a report keyed on "the artifact changed" would cry wolf
+    // about, and crying wolf is how a warning gets ignored and then removed.
+    let primary = make_primary(tmp.path(), true);
+    let ww = create_workweave(&primary, &weaveroot, "ww");
+
+    add_a_verb_and_lock(&primary, "sync");
+
+    write(&ww.managed_repo, "NOTES.md", "unrelated\n");
+    git(&["add", "."], &ww.managed_repo);
+    git(&["commit", "-m", "docs: notes"], &ww.managed_repo);
+    rwv()
+        .args(["lock", "--commit"])
+        .current_dir(&ww.root)
+        .assert()
+        .success();
+
+    let (stdout, stderr) = land(&ww, false);
+
+    assert_ne!(
+        read(&ww.managed_repo, ARTIFACT),
+        String::new(),
+        "sanity: the artifact exists on the landed tree"
+    );
+    assert!(
+        !stderr.contains(ARTIFACT) && !stdout.contains(ARTIFACT),
+        "nothing of `ww`'s was discarded, so nothing is owed a report. Got:\
+         \nstdout:\n{stdout}\nstderr:\n{stderr}"
+    );
+}

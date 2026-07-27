@@ -329,6 +329,19 @@ fn derived_content_git_args(policy: DerivedContentPolicy) -> Vec<String> {
     }
 }
 
+/// Split a git `-z` stream into its records.
+///
+/// Git terminates — rather than separates — each record under `-z`, so the
+/// trailing empty tail is an artifact of the format and not a record. `-z` is
+/// also what turns quoting off, so a record is the pathname's own bytes.
+fn nul_terminated_fields(stream: &str) -> Vec<String> {
+    stream
+        .split('\0')
+        .filter(|f| !f.is_empty())
+        .map(str::to_owned)
+        .collect()
+}
+
 /// `true` when `merge.rwv-ours.driver` is set (to anything) in any config
 /// scope git can see for `repo`. Used by `rwv doctor` to detect projects
 /// that haven't had the durable plant run yet.
@@ -1082,6 +1095,56 @@ impl Vcs for GitVcs {
             repo: repo.to_path_buf(),
             stderr,
         })
+    }
+
+    fn derived_content_dropped_by_replay(
+        &self,
+        repo: &Path,
+        base: &ResolvedRevisionId,
+        source: &ResolvedRevisionId,
+        landed: &ResolvedRevisionId,
+    ) -> Result<Vec<String>, VcsError> {
+        let fork_point_to_source = format!("{}...{}", base.as_str(), source.as_str());
+        let changed_by_range = nul_terminated_fields(&Self::run(
+            &["diff", "--name-only", "-z", &fork_point_to_source],
+            repo,
+        )?);
+        if changed_by_range.is_empty() {
+            return Ok(Vec::new());
+        }
+        let not_reproduced: std::collections::BTreeSet<String> = nul_terminated_fields(&Self::run(
+            &[
+                "diff",
+                "--name-only",
+                "-z",
+                landed.as_str(),
+                source.as_str(),
+            ],
+            repo,
+        )?)
+        .into_iter()
+        .collect();
+
+        let candidates: Vec<String> = changed_by_range
+            .into_iter()
+            .filter(|p| not_reproduced.contains(p))
+            .collect();
+        if candidates.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let mut args: Vec<&str> = vec!["check-attr", "-z", "merge", "--"];
+        args.extend(candidates.iter().map(String::as_str));
+        let attrs = Self::run(&args, repo)?;
+
+        // `check-attr -z` emits a flat NUL-separated stream of
+        // (path, attribute, value) triples, one per queried path.
+        let fields = nul_terminated_fields(&attrs);
+        Ok(fields
+            .chunks_exact(3)
+            .filter(|triple| triple[2] == RWV_MERGE_DRIVER_NAME)
+            .map(|triple| triple[0].clone())
+            .collect())
     }
 
     fn set_replay_exclusion(&self, repo: &Path, path: &Path) -> Result<(), VcsError> {
@@ -3118,6 +3181,26 @@ mod derived_content_tests {
         assert_eq!(
             definition, "true",
             "the driver must be the no-op side-pick, not a command that regenerates content"
+        );
+    }
+
+    #[test]
+    fn a_z_stream_is_read_as_terminated_records_not_separated_ones() {
+        // `derived_content_dropped_by_replay` reads three `-z` streams and
+        // reports what survives the last one. A parser that mistook the
+        // trailing terminator for an empty record, or that dropped the final
+        // record for lack of one, would report nothing — and reporting
+        // nothing is indistinguishable from a replay that discarded nothing.
+        assert_eq!(
+            nul_terminated_fields("docs/a.md\0docs/b.md\0"),
+            vec!["docs/a.md", "docs/b.md"]
+        );
+        assert_eq!(nul_terminated_fields(""), Vec::<String>::new());
+
+        // What `check-attr -z` emits, whose triples the caller chunks.
+        assert_eq!(
+            nul_terminated_fields("docs/a.md\0merge\0rwv-ours\0").len() % 3,
+            0
         );
     }
 

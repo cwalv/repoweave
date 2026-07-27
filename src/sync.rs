@@ -315,7 +315,14 @@ impl fmt::Display for SyncFailure {
 #[derive(Debug)]
 pub enum RepoSyncOutcome {
     /// HEAD advanced to the lock SHA.
-    Converged,
+    ///
+    /// `derived_content_dropped` names the declared derived paths whose
+    /// replayed version the landed tree does not carry — empty on all but the
+    /// replays that resolved one. Only this variant can carry them: the two
+    /// no-op variants never replay, and a failed replay lands nothing.
+    Converged {
+        derived_content_dropped: Vec<String>,
+    },
     /// Lock SHA is already an ancestor of HEAD; no change made.
     AlreadyAhead { commits_ahead: usize },
     /// HEAD was already equal to the lock SHA before sync.
@@ -409,6 +416,13 @@ pub enum SyncOutcomeOutput {
         /// `rwv sync-to --json` output when step 3 advanced this repo.
         #[serde(skip_serializing_if = "Option::is_none")]
         step3_advance: Option<Step3AdvanceOutput>,
+        /// Repo-relative paths this repo declares derived whose replayed
+        /// version the landed tree does not carry: the replay resolved them
+        /// to the target's version instead. Regenerating them from their
+        /// source of record and committing is what makes the landed tree
+        /// describe itself again. Omitted when nothing was resolved away.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        derived_content_dropped: Vec<String>,
     },
     AlreadyAhead {
         path: String,
@@ -442,10 +456,13 @@ pub enum SyncOutcomeOutput {
 impl SyncOutcomeOutput {
     pub fn from_outcome(path: String, absolute_path: String, outcome: &RepoSyncOutcome) -> Self {
         match outcome {
-            RepoSyncOutcome::Converged => Self::Converged {
+            RepoSyncOutcome::Converged {
+                derived_content_dropped,
+            } => Self::Converged {
                 path,
                 absolute_path,
                 step3_advance: None,
+                derived_content_dropped: derived_content_dropped.clone(),
             },
             RepoSyncOutcome::AlreadyAhead { commits_ahead } => Self::AlreadyAhead {
                 path,
@@ -563,7 +580,7 @@ pub const SYNC_TO_JSON_SCHEMA_URL: &str =
 impl fmt::Display for RepoSyncOutcome {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Converged => f.write_str("converged"),
+            Self::Converged { .. } => f.write_str("converged"),
             Self::AlreadyAhead { commits_ahead } => write!(
                 f,
                 "already-ahead (lock is {commits_ahead} commit{s} behind HEAD; \
@@ -576,10 +593,35 @@ impl fmt::Display for RepoSyncOutcome {
     }
 }
 
+/// Name the declared derived paths `repo`'s replay resolved to the target's
+/// version, by comparing the tree the replay produced against the tip it
+/// started from.
+///
+/// `pre_replay_tip` is that starting tip, read before any of this op's picks
+/// applied — a resumed replay's HEAD is mid-sequence and answers a different
+/// question. `None` means the caller could not establish it, and an
+/// unestablished starting point yields no report rather than a guessed one.
+fn dropped_derived_content(
+    repo: &Path,
+    target: &ResolvedRevisionId,
+    pre_replay_tip: Option<&ResolvedRevisionId>,
+) -> Vec<String> {
+    let Some(pre_replay_tip) = pre_replay_tip else {
+        return Vec::new();
+    };
+    let Ok(landed) = GitVcs.head_revision(repo) else {
+        return Vec::new();
+    };
+    GitVcs
+        .derived_content_dropped_by_replay(repo, target, pre_replay_tip, &landed)
+        .unwrap_or_default()
+}
+
 fn sync_one_repo(
     repo: &Path,
     target: &ResolvedRevisionId,
     strategy: SyncStrategy,
+    pre_replay_tip: Option<&ResolvedRevisionId>,
 ) -> RepoSyncOutcome {
     // Replay re-entry (`rwv sync --continue`) can find a manifest repo
     // mid-rebase from a previous phase that stopped on a conflict. HEAD in
@@ -591,7 +633,9 @@ fn sync_one_repo(
     // repo not in a mid-op state.
     if matches!(GitVcs.mid_op(repo), Some(ConflictOp::Rebase)) && strategy == SyncStrategy::Rebase {
         return match apply_strategy(repo, target, strategy) {
-            Ok(()) => RepoSyncOutcome::Converged,
+            Ok(()) => RepoSyncOutcome::Converged {
+                derived_content_dropped: dropped_derived_content(repo, target, pre_replay_tip),
+            },
             Err(StrategyError { message, cause }) => {
                 RepoSyncOutcome::Failed(SyncFailure::for_strategy(strategy, message, cause))
             }
@@ -624,7 +668,9 @@ fn sync_one_repo(
     }
 
     match apply_strategy(repo, target, strategy) {
-        Ok(()) => RepoSyncOutcome::Converged,
+        Ok(()) => RepoSyncOutcome::Converged {
+            derived_content_dropped: dropped_derived_content(repo, target, pre_replay_tip),
+        },
         Err(StrategyError { message, cause }) => {
             RepoSyncOutcome::Failed(SyncFailure::for_strategy(strategy, message, cause))
         }
@@ -1606,6 +1652,24 @@ impl OutputHandler for TextHandler<'_> {
             eprintln!("  {path}: {outcome}");
         } else {
             println!("  {path}: {outcome}");
+        }
+        if let RepoSyncOutcome::Converged {
+            derived_content_dropped,
+        } = outcome
+        {
+            if !derived_content_dropped.is_empty() {
+                eprintln!(
+                    "  warning: {path}: the replay kept the target's version of these declared \
+                     derived paths — what you replayed is not what landed:"
+                );
+                for dropped in derived_content_dropped {
+                    eprintln!("      {dropped}");
+                }
+                eprintln!(
+                    "  regenerate them from their source of record in {path} and commit — \
+                     until then the landed tree is stale at those paths."
+                );
+            }
         }
     }
 }
@@ -3679,6 +3743,10 @@ fn run_replay(ctx: &OpContext<'_>) -> anyhow::Result<()> {
         repo_path: crate::manifest::RepoPath,
         abs: PathBuf,
         target: ResolvedRevisionId,
+        /// The repo's tip before this op replayed anything, taken from the
+        /// op's savepoint so a `--continue` re-entry reads the same tip the
+        /// interrupted run did rather than the pick it stopped on.
+        pre_replay_tip: Option<ResolvedRevisionId>,
     }
     let mut sync_tasks: Vec<SyncTask> = Vec::new();
 
@@ -3725,6 +3793,7 @@ fn run_replay(ctx: &OpContext<'_>) -> anyhow::Result<()> {
         };
         sync_tasks.push(SyncTask {
             repo_path: repo_path.clone(),
+            pre_replay_tip: GitVcs.resolve_savepoint(&abs, ctx.op_id.as_str()),
             abs,
             target: lock_entry.version.clone(),
         });
@@ -3785,12 +3854,17 @@ fn run_replay(ctx: &OpContext<'_>) -> anyhow::Result<()> {
     // record happens inside this closure — that would be a race.
     let task_results: Vec<(bool, Option<String>)> =
         run_in_parallel(&sync_tasks, ctx.jobs, |_idx, task| {
-            let outcome = sync_one_repo(&task.abs, &task.target, strategy);
+            let outcome = sync_one_repo(
+                &task.abs,
+                &task.target,
+                strategy,
+                task.pre_replay_tip.as_ref(),
+            );
             let is_failure = outcome.is_failure();
             // Capture the actual post-advance HEAD if this task converged.
             // For ff-movers this equals the pre-written target (idempotent
             // overwrite in write 3); for rebased repos it is the fresh SHA.
-            let converged_head = if matches!(outcome, RepoSyncOutcome::Converged) {
+            let converged_head = if matches!(outcome, RepoSyncOutcome::Converged { .. }) {
                 GitVcs
                     .head_revision(&task.abs)
                     .ok()
@@ -6906,7 +6980,9 @@ mod tests {
     fn output_handler_is_open_for_extension_without_modifying_existing_handlers() {
         // Build three distinct outcomes.
         let outcomes = vec![
-            RepoSyncOutcome::Converged,
+            RepoSyncOutcome::Converged {
+                derived_content_dropped: Vec::new(),
+            },
             RepoSyncOutcome::NoOp,
             RepoSyncOutcome::Failed(SyncFailure::HeadUnreadable {
                 error: "test".to_owned(),
