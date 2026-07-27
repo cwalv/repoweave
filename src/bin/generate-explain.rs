@@ -3191,7 +3191,9 @@ mod tests {
         .unwrap();
         let errors = check_no_consumer_vocabulary(tmp.path());
         assert!(
-            errors.iter().any(|e| e.contains("consumer vocabulary `tl`")),
+            errors
+                .iter()
+                .any(|e| e.contains("consumer vocabulary `tl`")),
             "expected a `tl` hit, got:\n{}",
             errors.join("\n")
         );
