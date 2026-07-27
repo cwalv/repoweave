@@ -1564,10 +1564,15 @@ fn is_bare_pointer(block_text: &str, tokens: &[&str]) -> bool {
 }
 
 /// Content up to the first `#[cfg(test)]` that is followed by a line break and
-/// `mod tests`.
+/// a module declaration.
+///
+/// The module's name is not part of the boundary: `mod branch_model_tests` ends
+/// the scanned region exactly as `mod tests` does. A scope that recognised one
+/// name decided whether a comment was in scope by what someone called a module,
+/// which is the defect this gate exists to catch, one level up.
 ///
 /// Not `strip_test_module`, which this gate cannot use. That one takes the
-/// *last* marker and accepts `mod tests` on the same line, so a doc comment
+/// *last* marker and accepts the module on the same line, so a doc comment
 /// mentioning `#[cfg(test)] mod tests` in prose counts as the boundary — this
 /// file has several, and the last of them sits well below its own test module.
 /// Requiring the line break admits only the real attribute; taking the first
@@ -1579,15 +1584,22 @@ fn before_test_module(content: &str) -> &str {
         let at = from + pos;
         let after = content[at + marker.len()..].trim_start_matches([' ', '\t', '\r']);
         if after.starts_with('\n')
-            && after
-                .trim_start_matches([' ', '\t', '\r', '\n'])
-                .starts_with("mod tests")
+            && declares_module(after.trim_start_matches([' ', '\t', '\r', '\n']))
         {
             return &content[..at];
         }
         from = at + marker.len();
     }
     content
+}
+
+/// True if `text` opens a module declaration, under any name and any visibility.
+fn declares_module(text: &str) -> bool {
+    let mut words = text.split_whitespace().skip_while(|w| w.starts_with("pub"));
+    words.next() == Some("mod")
+        && words
+            .next()
+            .is_some_and(|name| name.starts_with(|c: char| c.is_ascii_alphabetic() || c == '_'))
 }
 
 /// True if `line` is the inline escape-hatch annotation, with a reason.
@@ -3207,6 +3219,41 @@ mod tests {
         assert!(
             combined.contains("`clone-topology.md`"),
             "a fixture-only filename must not exempt a live citation, got:\n{combined}"
+        );
+    }
+
+    /// **Pinning test for the test-module boundary in `before_test_module`.**
+    ///
+    /// `#[cfg(test)]` puts a comment outside the rule whatever the module is
+    /// called. Matching the name `tests` literally left `src/git.rs` — whose
+    /// test modules are `branch_model_tests` and `derived_content_tests` —
+    /// scanned end to end, one file in scope on different terms from every
+    /// other, decided by what someone named a module. The same citation is
+    /// asserted above the boundary as well: a boundary that swallowed the
+    /// whole file would pass the first half on its own.
+    #[test]
+    fn a_citation_inside_a_differently_named_test_module_is_out_of_scope() {
+        let below = citation_errors(
+            "pub fn f() {}\n\
+             #[cfg(test)]\n\
+             mod derived_content_tests {\n\
+             \x20   // The driver is the no-op side-pick (regenerable-regions.md D2).\n\
+             \x20   fn t() {}\n\
+             }\n",
+        );
+        assert!(
+            below.is_empty(),
+            "a comment inside a test module is outside the rule, got:\n{}",
+            below.join("\n")
+        );
+        let above = citation_errors(
+            "// The driver is the no-op side-pick (regenerable-regions.md D2).\n\
+             pub fn f() {}\n",
+        );
+        assert!(
+            above.iter().any(|e| e.contains("regenerable-regions.md")),
+            "the same citation above the boundary must be reported, got:\n{}",
+            above.join("\n")
         );
     }
 
