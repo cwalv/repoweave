@@ -32,40 +32,14 @@ rwv doctor [--all] [--locked] [--json] [--fix] [--reattach-checkouts]
 - `--json` emits machine-readable output (see Output below). Mutually
   exclusive with `--locked` and `--fix`. Honors the same scoping as the
   default text output: project-scoped by default, weave-wide with `--all`.
-- `--fix` attempts auto-remediation for variants that are safe to fix:
-  index drift where the displaced tree is a known ancestor, working-tree
-  drift where on-disk content matches a known blob, missing
-  `rwv.lock merge=rwv-ours` replay-exclusion (including migration from the
-  legacy `merge=ours` spelling — auto-commits when the repo has no other
-  staged changes) and its paired durable `merge.rwv-ours.driver` config,
-  legacy `role: primary`
-  manifest spellings (rewritten to `role: owned` in place — preserves
-  comments and key order), missing or mis-resolved surfacing symlinks
-  (re-runs the framework surfacing primitive to (re)create symlinks for
-  every file in the active project's `generated_files() ∪ managed_files()`
-  union, and reclaims any weave-root shared name surfaced out of some
-  other project; a real file occupying a surfacing path is user-held and
-  is reported but never auto-clobbered), stale safe-class ephemeral branches
-  in canonical stores (branches rwv holds an **ownership receipt** for
-  whose `<project>--<workweave>` workweave no longer exists on disk and
-  whose tip is an ancestor of the store's tip — no unique commits are lost;
-  scoped to the active project unless `--all`), dangling ownership receipts
-  (a receipt naming a ref that is not in the store it names — the residue
-  of a crash between the receipt write and the ref creation; it authorizes
-  nothing, so retracting it destroys no work), ownership receipts naming a
-  pre-flat ref (a receipt whose name carries a `/` segment that no workweave
-  on disk mints — rwv cannot have created that ref under the flat scheme, and
-  while the record stands the branch reads as a leak rwv owns and may delete;
-  the retraction drops the record only, leaves the branch exactly where it
-  is, and leaves it unowned, which `--fix` never touches), orphaned savepoints
-  classified as `Redundant`
-  (a `refs/rwv/pre-op/<op-id>` ref whose op-id matches no live `.rwv-op`
-  file and whose tip is already reachable from the current branch; dropping
-  the ref loses no objects), stale worktree registrations (git worktree
-  entries pointing at directories that no longer exist, pruned via
-  `git worktree prune`), and dangling workweave parents (a `.rwv-workweave`
-  marker whose `parent:` path no longer exists on disk — re-pointed to
-  primary, which always exists; branch names are left untouched). Idempotent.
+- `--fix` repairs every finding marked **Auto-fixable** in
+  `docs/reference/doctor-findings.md`. That page carries the mark on each
+  finding it documents, alongside what the repair does and why the findings
+  it does not mark are left to you. The set is not restated here: a second
+  copy goes stale the first time an arm moves, and the one an operator reads
+  is the last to be corrected. A finding marked **Report-only by default**
+  is repaired only when you also pass the flag named in its entry —
+  `--reattach-checkouts` or `--adopt-detached-checkouts`. Idempotent.
   Mutually exclusive with `--locked` and `--json`.
 - `--reattach-checkouts` widens `--fix` by exactly one arm
   (`branch-model.md` §7.2): a canonical store whose HEAD is detached is
@@ -280,7 +254,7 @@ Schema:
   },
   "definitions": {
     "BranchDisciplineKind": {
-      "description": "Discriminator for `CheckViolation::BranchDiscipline` findings.\n\nThree groupings, mirroring the three checks in the spec:\n\n* (a) workweave-branch — a workweave checkout is on the wrong branch: `SharedBranch`, `ForeignEphemeral`, `Detached`. Report-only. * (b) canonical-store attachment — what the canonical store's HEAD is: `CanonicalHoldsLiveWorkweaveRef`, `CanonicalHoldsLeakedRef`, `CanonicalDetached`. * (c) stale-ephemeral-branches — a `<project>--<name>/...` branch exists in a canonical clone but workweave `<name>` no longer exists on disk: `StaleEphemeralBranchSafe` (auto-fixable by `--fix`), `StaleEphemeralBranchLive` (carries unique commits; never auto-deleted), or `StaleEphemeralBranchUnowned` (rwv holds no receipt for it; never auto-deleted). The safe/live split applies the doctrine in `docs/explanation/joints/shared-refs-drift.md` to refs: a tip that is an ancestor of the primary's tracking-branch tip carries no unique work and is safely removable; a tip with commits not reachable from the primary is live work and must be left alone.\n\n# Ownership is by record, never by name shape (R2)\n\nThe (b) grouping and the safe/live/unowned split in (c) both key on whether rwv holds a persisted ownership receipt (`crate::workweave_index::RefRegistry`) for the exact ref in the exact store. A branch that merely *looks* like one of rwv's — a hand-made `<a>--<b>/<c>` — is an operator branch: the canonical-store pass leaves it alone, and `--fix` never deletes it.",
+      "description": "Discriminator for `CheckViolation::BranchDiscipline` findings.\n\nThree groupings, mirroring the three checks in the spec:\n\n* (a) workweave-branch — a workweave checkout is on the wrong branch, or on a ref of its own namespace that predates the flat naming: `SharedBranch`, `ForeignEphemeral`, `Detached`, `UnmigratedEphemeralBranch`, `UnrecordedEphemeralBranch`, `UnbornCheckout`. * (b) canonical-store attachment — what the canonical store's HEAD is: `CanonicalHoldsLiveWorkweaveRef`, `CanonicalHoldsLeakedRef`, `CanonicalDetached`. * (c) stale-ephemeral-branches — a `<project>--<name>/...` branch exists in a canonical clone but workweave `<name>` no longer exists on disk: `StaleEphemeralBranchSafe`, `StaleEphemeralBranchLive`, or `StaleEphemeralBranchUnowned`. The safe/live split applies the doctrine in `docs/explanation/joints/shared-refs-drift.md` to refs: a tip that is an ancestor of the primary's tracking-branch tip carries no unique work and is safely removable; a tip with commits not reachable from the primary is live work and must be left alone.\n\n# Ownership is by record, never by name shape (R2)\n\nThe (b) grouping and the safe/live/unowned split in (c) both key on whether rwv holds a persisted ownership receipt (`crate::workweave_index::RefRegistry`) for the exact ref in the exact store. A branch that merely *looks* like one of rwv's — a hand-made `<a>--<b>/<c>` — is an operator branch: the canonical-store pass leaves it alone, and `--fix` never deletes it.",
       "oneOf": [
         {
           "description": "(a) The workweave checkout is on a non-ephemeral branch (e.g. `main`).\n\nCaused by `git switch main` inside a workweave or by a bare clone that was never moved to an ephemeral branch. The fixture for this sub-kind exercises the bare-main-in-workweave case from the spec's acceptance criteria: the violation must flag from creation, before any commit lands. Report-only.\n\nReference-alias carve-out: a symlinked `reference` checkout (a `CheckoutKind::ReferenceAlias`) legitimately shares the canonical store's non-ephemeral branch (e.g. `main`) — it has no per-workweave ephemeral branch by design, because it is the canonical store viewed through a symlink. The I3 branch-discipline scan skips such aliases, so they never fire this finding. A `reference` repo created with `--worktree-references` is a real worktree (`CheckoutKind::Worktree`) on its own ephemeral branch and is checked normally.",

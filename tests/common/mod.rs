@@ -1,6 +1,7 @@
 #![allow(dead_code)]
 
 pub mod contract;
+pub mod doctor_corpus;
 
 use std::path::PathBuf;
 use std::process::Command;

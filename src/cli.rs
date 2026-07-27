@@ -173,7 +173,7 @@ pub enum Commands {
         /// Zero exit iff every repo's tip matches its rwv.lock entry (scriptable precondition for rwv sync)
         #[arg(long)]
         locked: bool,
-        /// Auto-fix safely-fixable violations: index/working-tree drift, rwv.lock merge=rwv-ours replay-exclusion (including migration from the legacy merge=ours spelling — auto-commits when the repo has no other staged changes), merge.rwv-ours.driver config plant, legacy role:primary manifests, surfacing symlinks, safe-class stale ephemeral branches — refs rwv holds an ownership receipt for, never a look-alike (active-project scoped; use --all to widen), dangling ownership receipts, Redundant orphaned savepoints, and stale worktree registrations. See `rwv explain doctor`.
+        /// Repair every finding marked Auto-fixable in docs/reference/doctor-findings.md, which carries that mark on each finding it documents. Never touches live staged content or live edits, and never a ref rwv holds no ownership receipt for. Idempotent. Active-project scoped; use --all to widen.
         #[arg(long, conflicts_with = "locked")]
         fix: bool,
         /// Emit violations as JSON (array-of-records with stable per-variant `kind`). See `rwv explain doctor`.

@@ -185,10 +185,8 @@ pub enum CheckViolation {
     /// A `.rwv-workweave` marker tree anomaly: dangling parent, chain anomaly,
     /// unregistered directory, or foreign-primary marker.
     ///
-    /// The `dangling-parent` sub-kind is auto-fixable (`rwv doctor --fix`
-    /// re-points the child's `parent:` to primary, which always exists). The
-    /// other three sub-kinds are report-only: no auto-fix is safe without
-    /// operator input.
+    /// Whether `--fix` acts turns on the sub-kind, and the sub-kinds that
+    /// carry no repair carry none because choosing one needs operator input.
     WorkweaveTreeIntegrity {
         /// Absolute path to the workweave directory (or the marker file for
         /// file-level violations).
@@ -201,11 +199,10 @@ pub enum CheckViolation {
     /// URL (`origin-url-mismatch`) or a lock-file SHA is absent from the
     /// local object store (`lock-sha-unreachable`).
     ///
-    /// Always report-only (no `--fix` path): the `origin-url-mismatch` case
-    /// requires the operator to decide whether the manifest or the remote is
-    /// the source of truth; reference-role repos may intentionally diverge.
-    /// The `lock-sha-unreachable` case requires a fetch from the remote, not
-    /// a sync.
+    /// The `origin-url-mismatch` case needs the operator to decide whether
+    /// the manifest or the remote is the source of truth; reference-role
+    /// repos may intentionally diverge. The `lock-sha-unreachable` case needs
+    /// a fetch from the remote, not a sync.
     Provenance {
         /// The project the affected repo belongs to.
         project: ProjectName,
@@ -221,9 +218,9 @@ pub enum CheckViolation {
     ///
     /// All four sub-kinds are silent for every higher-tier `rwv doctor`
     /// check (those operate on revisions and content; this one operates on
-    /// the physical object-store topology). Always report-only: repair is
-    /// an object-store migration (re-parenting), out of `--fix` scope per
-    /// the alpha guideline.
+    /// the physical object-store topology). Repair is an object-store
+    /// migration — a re-parenting — which is out of `--fix` scope per the
+    /// alpha guideline.
     CloneTopology {
         /// Absolute path of the workspace that exhibits the violation. For
         /// `WeaveCloneIsWorktree` and `DisconnectedWeaveClone`, this is the
@@ -488,6 +485,112 @@ pub enum CheckViolation {
         /// The `rwv-`-prefixed driver name that resolves to nothing.
         driver: String,
     },
+}
+
+/// What `rwv doctor --fix` does about a finding.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FixDisposition {
+    /// `--fix` repairs it with no further input.
+    Auto,
+    /// `--fix` repairs it only when the operator also passes this flag; bare
+    /// `--fix` reports it and moves nothing.
+    Consented(&'static str),
+    /// `--fix` does not touch it.
+    ReportOnly,
+}
+
+impl CheckViolation {
+    /// The one place that says which findings `rwv doctor --fix` repairs.
+    ///
+    /// The match is exhaustive down to the sub-kind, so a finding added
+    /// without a disposition does not compile. Every other statement of the
+    /// set — the `--fix` flag help, `rwv explain doctor`, and the per-`kind`
+    /// entries in `docs/reference/doctor-findings.md` — is checked against
+    /// this one rather than maintained beside it.
+    ///
+    /// Answering here is not the same as repairing here: an
+    /// [`Auto`](FixDisposition::Auto) finding may be repaired by a workspace
+    /// pass that runs before collection, in which case the finding is never
+    /// raised at all.
+    pub fn fix_disposition(&self) -> FixDisposition {
+        use FixDisposition::{Auto, Consented, ReportOnly};
+        match self {
+            CheckViolation::OrphanedClone { .. }
+            | CheckViolation::DanglingReference { .. }
+            | CheckViolation::MissingRole { .. }
+            | CheckViolation::StaleLock { .. }
+            | CheckViolation::IncompleteLock { .. }
+            | CheckViolation::UnparseableProject { .. }
+            | CheckViolation::WorkweaveDrift { .. }
+            | CheckViolation::StaleOpState { .. }
+            | CheckViolation::CargoVersionSkew { .. }
+            | CheckViolation::CargoPatchShadowing { .. }
+            | CheckViolation::MissingCanonicalClone { .. }
+            | CheckViolation::UninitializedSubmodule { .. }
+            | CheckViolation::PhantomMergeDriver { .. } => ReportOnly,
+
+            CheckViolation::MissingReplayExclusion { .. }
+            | CheckViolation::LegacyRolePrimary { .. }
+            | CheckViolation::DanglingActiveProject { .. }
+            | CheckViolation::LegacyWorkweaveMarker { .. }
+            | CheckViolation::LegacyWorkweaveIndex { .. }
+            | CheckViolation::StaleWorktreeRegistration { .. }
+            | CheckViolation::DanglingRefReceipt { .. }
+            | CheckViolation::PreFlatRefReceipt { .. }
+            | CheckViolation::DeadOpLease { .. } => Auto,
+
+            CheckViolation::IndexDrift { kind, .. } => match kind {
+                IndexDriftKind::SafeToFix => Auto,
+                IndexDriftKind::LiveStaged => ReportOnly,
+            },
+            CheckViolation::WorkingTreeDrift { kind, .. } => match kind {
+                WorkingTreeDriftKind::SafeToFix => Auto,
+                WorkingTreeDriftKind::LiveEdits => ReportOnly,
+            },
+            CheckViolation::WeaveRootIdentityConflict { sub_kind, .. } => match sub_kind {
+                WeaveRootIdentityConflictKind::RegisteredWorkweave { .. } => Auto,
+                WeaveRootIdentityConflictKind::Unwitnessed { .. } => ReportOnly,
+            },
+            CheckViolation::WorkweaveTreeIntegrity { sub_kind, .. } => match sub_kind {
+                WorkweaveTreeIntegrityKind::DanglingParent { .. }
+                | WorkweaveTreeIntegrityKind::StaleRegistryEntry { .. }
+                | WorkweaveTreeIntegrityKind::UnregisteredWorkweave { .. } => Auto,
+                WorkweaveTreeIntegrityKind::ParentChainAnomaly { .. }
+                | WorkweaveTreeIntegrityKind::UnregisteredDir
+                | WorkweaveTreeIntegrityKind::ForeignPrimary { .. }
+                | WorkweaveTreeIntegrityKind::ForeignPrimaryOtherWorkspace { .. }
+                | WorkweaveTreeIntegrityKind::TrackedIndex { .. } => ReportOnly,
+            },
+            CheckViolation::Provenance { sub_kind, .. } => match sub_kind {
+                ProvenanceKind::OriginUrlMismatch { .. }
+                | ProvenanceKind::LockShaUnreachable { .. } => ReportOnly,
+            },
+            CheckViolation::CloneTopology { sub_kind, .. } => match sub_kind {
+                CloneTopologyKind::StandaloneInWorkweave { .. }
+                | CloneTopologyKind::DisconnectedWeaveClone { .. }
+                | CloneTopologyKind::WrongParentWorktree { .. }
+                | CloneTopologyKind::WeaveCloneIsWorktree { .. } => ReportOnly,
+            },
+            CheckViolation::BranchDiscipline { sub_kind, .. } => match sub_kind {
+                BranchDisciplineKind::UnmigratedEphemeralBranch { .. }
+                | BranchDisciplineKind::UnrecordedEphemeralBranch { .. }
+                | BranchDisciplineKind::StaleEphemeralBranchSafe { .. } => Auto,
+                BranchDisciplineKind::Detached { .. } => Consented("--adopt-detached-checkouts"),
+                BranchDisciplineKind::CanonicalDetached { .. } => Consented("--reattach-checkouts"),
+                BranchDisciplineKind::SharedBranch { .. }
+                | BranchDisciplineKind::ForeignEphemeral { .. }
+                | BranchDisciplineKind::UnbornCheckout { .. }
+                | BranchDisciplineKind::CanonicalHoldsLiveWorkweaveRef { .. }
+                | BranchDisciplineKind::CanonicalHoldsLeakedRef { .. }
+                | BranchDisciplineKind::StaleEphemeralBranchLive { .. }
+                | BranchDisciplineKind::StaleEphemeralBranchUnowned { .. } => ReportOnly,
+            },
+            CheckViolation::OrphanedSavepoint { sub_kind, .. } => match sub_kind {
+                OrphanedSavepointKind::Redundant => Auto,
+                OrphanedSavepointKind::Live => ReportOnly,
+            },
+        }
+    }
 }
 
 /// Classification of an orphaned savepoint, controlling `--fix` policy.
@@ -820,27 +923,28 @@ pub enum CloneTopologyKind {
 ///
 /// Three groupings, mirroring the three checks in the spec:
 ///
-/// * (a) workweave-branch — a workweave checkout is on the wrong branch:
+/// * (a) workweave-branch — a workweave checkout is on the wrong branch, or
+///   on a ref of its own namespace that predates the flat naming:
 ///   [`SharedBranch`](Self::SharedBranch),
 ///   [`ForeignEphemeral`](Self::ForeignEphemeral),
-///   [`Detached`](Self::Detached). Report-only.
+///   [`Detached`](Self::Detached),
+///   [`UnmigratedEphemeralBranch`](Self::UnmigratedEphemeralBranch),
+///   [`UnrecordedEphemeralBranch`](Self::UnrecordedEphemeralBranch),
+///   [`UnbornCheckout`](Self::UnbornCheckout).
 /// * (b) canonical-store attachment — what the canonical store's HEAD is:
 ///   [`CanonicalHoldsLiveWorkweaveRef`](Self::CanonicalHoldsLiveWorkweaveRef),
 ///   [`CanonicalHoldsLeakedRef`](Self::CanonicalHoldsLeakedRef),
 ///   [`CanonicalDetached`](Self::CanonicalDetached).
 /// * (c) stale-ephemeral-branches — a `<project>--<name>/...` branch
 ///   exists in a canonical clone but workweave `<name>` no longer exists
-///   on disk: [`StaleEphemeralBranchSafe`](Self::StaleEphemeralBranchSafe)
-///   (auto-fixable by `--fix`),
-///   [`StaleEphemeralBranchLive`](Self::StaleEphemeralBranchLive)
-///   (carries unique commits; never auto-deleted), or
-///   [`StaleEphemeralBranchUnowned`](Self::StaleEphemeralBranchUnowned)
-///   (rwv holds no receipt for it; never auto-deleted). The safe/live split
-///   applies the doctrine in `docs/explanation/joints/shared-refs-drift.md`
-///   to refs: a tip that is an ancestor of the primary's tracking-branch
-///   tip carries no unique work and is safely removable; a tip with
-///   commits not reachable from the primary is live work and must be left
-///   alone.
+///   on disk: [`StaleEphemeralBranchSafe`](Self::StaleEphemeralBranchSafe),
+///   [`StaleEphemeralBranchLive`](Self::StaleEphemeralBranchLive), or
+///   [`StaleEphemeralBranchUnowned`](Self::StaleEphemeralBranchUnowned).
+///   The safe/live split applies the doctrine in
+///   `docs/explanation/joints/shared-refs-drift.md` to refs: a tip that is an
+///   ancestor of the primary's tracking-branch tip carries no unique work and
+///   is safely removable; a tip with commits not reachable from the primary
+///   is live work and must be left alone.
 ///
 /// # Ownership is by record, never by name shape (R2)
 ///
@@ -7153,6 +7257,10 @@ fn apply_workspace_repairs(
 /// A repaired finding is dropped from the returned vector so the operator is
 /// never shown both `[fixed]` and the warning it resolved. A repair that
 /// errored is dropped too — the error itself is the report.
+///
+/// Nothing here can act on a finding [`CheckViolation::fix_disposition`] calls
+/// report-only, so the register can narrow what this repairs but never widen
+/// it.
 fn apply_finding_repairs(
     ctx: &crate::workspace::WorkspaceContext,
     world: &DoctorWorld,
@@ -7189,6 +7297,10 @@ fn apply_finding_repairs(
 
     let mut kept = Vec::with_capacity(violations.len());
     for v in violations {
+        if matches!(v.fix_disposition(), FixDisposition::ReportOnly) {
+            kept.push(v);
+            continue;
+        }
         let repaired = match &v {
             CheckViolation::BranchDiscipline {
                 repo_path,

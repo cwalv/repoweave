@@ -295,7 +295,7 @@ Convention audit. Reports orphaned clones, dangling references, missing roles, s
 | Flag | Effect |
 |---|---|
 | `--locked` | Zero exit iff every repo tip matches its lock entry (precondition for `rwv sync`) |
-| `--fix` | Auto-remediate safely-fixable findings: index drift, working-tree drift, missing `rwv.lock merge=rwv-ours` replay-exclusion (including migration from the legacy `merge=ours` spelling — auto-commits when the repo has no other staged changes) and its paired durable `merge.rwv-ours.driver` config, and legacy `role: primary` manifest spellings. Never touches live staged content or live edits. Idempotent. |
+| `--fix` | Repair every finding marked **Auto-fixable** in [Doctor findings](./doctor-findings.md), which carries that mark on each finding it documents. Never touches live staged content or live edits. Idempotent. |
 | `--json` | Emits envelope `{"$schema": "...", "violations": [...]}` |
 | `--all` | Scan all projects and run weave-wide checks (orphan detection, cross-project stale locks, etc.). By default only the active project is checked |
 | `--reattach-checkouts` | With `--fix`, reattach a canonical store's detached HEAD to its tracking counterpart when that counterpart exists and its tip equals HEAD. Without this flag, `--fix` only reports a detached canonical, naming the `git switch` that would reattach it |

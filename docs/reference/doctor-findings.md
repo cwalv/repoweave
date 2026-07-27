@@ -42,6 +42,17 @@ Schema is `docs/reference/schemas/doctor.json`.
 than a gap. Either the repair needs a judgment rwv cannot make, or the state
 is indistinguishable from work you meant to keep.
 
+**Report-only by default** — `--fix` repairs it only when you also pass the
+flag the entry names. The flag is named for the consequence it accepts, never
+as a blanket override.
+
+Every entry below opens with one of those three marks, and the marks are the
+published statement of what `--fix` does. `rwv doctor --help` and
+`rwv explain doctor` point here rather than restating the set, and a test
+compares each mark against the code that repairs it — so an arm that is added,
+removed or changes disposition without this page moving with it fails the
+build.
+
 **Safe class / live class** — a distinction applied to anything droppable. A
 ref or savepoint whose tip is already reachable from a live branch carries no
 unique commits, so removing it loses nothing; a tip carrying commits nothing
@@ -284,12 +295,12 @@ machine's absolute path.
 
 #### `foreign-primary-other-workspace`
 
-**Warning. Report-only, and not shown by default.** The marker's `primary:`
-resolves to a different but perfectly valid workspace root — the normal shape
-when several weaves share one workweave container. It is not a defect in this
-workweave, so it is excluded from the text report; every sibling weave's
-doctor would otherwise repeat this about every other sibling. It is still
-enumerated under `--json`.
+**Warning. Report-only.** The marker's `primary:` resolves to a different but
+perfectly valid workspace root — the normal shape when several weaves share
+one workweave container. It is not a defect in this workweave, so it is the
+one finding excluded from the text report; every sibling weave's doctor would
+otherwise repeat this about every other sibling. It is still enumerated under
+`--json`.
 
 **What to do:** nothing.
 
@@ -393,12 +404,10 @@ never run there. Detection needs no network — the scan only stats the paths
 
 ### `provenance`
 
-Report-only in both shapes.
-
 #### `origin-url-mismatch`
 
-**Warning.** The clone's `origin` URL differs from the manifest's. Until it is
-reconciled, a push may publish to the wrong remote.
+**Warning. Report-only.** The clone's `origin` URL differs from the
+manifest's. Until it is reconciled, a push may publish to the wrong remote.
 
 **What to do:** decide which is right and change the other. `--fix` has no arm
 here because that decision is yours: a `reference`-role repo may point at a
@@ -407,7 +416,8 @@ when the role is `reference`.
 
 #### `lock-sha-unreachable`
 
-**Error.** The SHA `rwv.lock` pins is absent from the clone's object store.
+**Error. Report-only.** The SHA `rwv.lock` pins is absent from the clone's
+object store.
 
 **What to do:** `rwv fetch`. A sync will not recover it — the object has to
 come from the remote.
@@ -508,10 +518,10 @@ the other off the ref. Nothing here can tell them apart, which is exactly why
 
 #### `canonical-holds-leaked-ref`
 
-**Warning. Report-only in practice.** The canonical store is attached to a ref
-recorded for a workweave that is gone — a leak. The reclaim cannot run while
-the store's own HEAD is on it, because git refuses to delete a branch a
-worktree uses.
+**Warning. Report-only.** The canonical store is attached to a ref recorded
+for a workweave that is gone — a leak. The reclaim cannot run while the
+store's own HEAD is on it, because git refuses to delete a branch a worktree
+uses, so there is no arm here even though the ref is one rwv owns.
 
 **What to do:** `git switch <tracking-branch>`, then re-run
 `rwv doctor --fix`. Once the store is off the ref it becomes an ordinary
@@ -554,11 +564,12 @@ you can inspect the commits before deciding.
 
 #### `stale-ephemeral-branch-unowned`
 
-**Warning. Report-only, permanently.** A branch shaped like one rwv minted
-before names were flattened, which no workweave on disk claims and which rwv
-holds no receipt for. It is not rwv's: name shape is not ownership. Deleting
-this class is precisely how a hand-made branch could disappear under `--fix`,
-so `--fix` never touches it.
+**Warning. Report-only.** A branch shaped like one rwv minted before names
+were flattened, which no workweave on disk claims and which rwv holds no
+receipt for. It is not rwv's: name shape is not ownership. Deleting this class
+is precisely how a hand-made branch could disappear under `--fix`, so `--fix`
+never touches it — and this is the one entry where that is permanent rather
+than pending an arm nobody has written.
 
 This is the one class discovered by name shape rather than by asking the
 registry — every other arm has a receipt or a live workweave's minted name to
@@ -669,8 +680,8 @@ reason the reflog is never cut.
 
 ### `stale-op-state`
 
-**Warning. Never auto-fixed.** A `.rwv-op` file is present at a workspace
-root. The finding reports the file's age and path.
+**Warning. Report-only.** A `.rwv-op` file is present at a workspace root.
+The finding reports the file's age and path.
 
 `--fix` has no arm here and will not grow one: another terminal may be
 mid-conflict-resolution, and rwv has no daemon that could know which workspace
@@ -706,17 +717,18 @@ sovereign repos; it does not mandate to them.
 
 ### `cargo-version-skew`
 
-The same crate is required at different version strings by two or more cargo
-workspace members, after `workspace = true` indirection is resolved.
+**Warning. Report-only.** The same crate is required at different version
+strings by two or more cargo workspace members, after `workspace = true`
+indirection is resolved.
 
 **What to do:** reconcile the requirements if you want them reconciled. rwv
 reports the skew and stops there.
 
 ### `cargo-patch-shadowing`
 
-A member's `.cargo/config.toml` declares a `[patch.<registry>].<crate>` key
-that silently defeats a weave-level entry for the same key — cargo resolves
-patches closest-config-wins, per key.
+**Warning. Report-only.** A member's `.cargo/config.toml` declares a
+`[patch.<registry>].<crate>` key that silently defeats a weave-level entry for
+the same key — cargo resolves patches closest-config-wins, per key.
 
 This doubles as the mandatory precheck for derived-patch generation: when a
 patch silently does not apply, cargo's own mismatch diagnostic actively
