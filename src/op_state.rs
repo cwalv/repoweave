@@ -125,6 +125,20 @@ impl fmt::Display for OpId {
     }
 }
 
+/// The operator-facing resume command for a mid-op verb.
+///
+/// A failed op is resumed with `--continue` from the OWNING workspace, which
+/// reads every parameter (source, strategy, target, retire, overrides) back
+/// out of op-state — so the resume text is `rwv {verb} --continue`, NEVER a
+/// hardcoded `rwv sync {source}`. Hardcoding `rwv sync` was wrong two ways:
+/// it named the PULL verb for a `sync-to` (landing) op, and it re-supplied
+/// arguments the record already holds. The verb comes from the op's `verb`
+/// field ([`OpVerb`]) so the string is derived from op-state, not from a guess
+/// made where the message is written.
+pub(crate) fn resume_command(verb: OpVerb) -> String {
+    format!("rwv {verb} --continue")
+}
+
 // ---------------------------------------------------------------------------
 // SyncStrategy — typed sync strategy
 // ---------------------------------------------------------------------------
@@ -175,7 +189,9 @@ impl FromStr for SyncStrategy {
 // ---------------------------------------------------------------------------
 
 /// Which top-level verb started this op.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema,
+)]
 #[serde(rename_all = "kebab-case")]
 pub enum OpVerb {
     /// Single-step sync (existing `rwv sync`).
@@ -1323,6 +1339,15 @@ fn parse_rfc3339_to_unix(s: &str) -> Option<u64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The resume verb is derived from the op's `verb` field, never hardcoded
+    /// `rwv sync`: naming the pull verb for a `sync-to` op sends the operator
+    /// into the verb-mismatch refusal.
+    #[test]
+    fn resume_command_derives_from_op_verb() {
+        assert_eq!(resume_command(OpVerb::Sync), "rwv sync --continue");
+        assert_eq!(resume_command(OpVerb::SyncTo), "rwv sync-to --continue");
+    }
 
     #[test]
     fn utc_roundtrip_is_plausible() {

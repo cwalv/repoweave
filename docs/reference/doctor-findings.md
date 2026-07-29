@@ -681,13 +681,15 @@ reason the reflog is never cut.
 ### `stale-op-state`
 
 **Warning. Report-only.** A `.rwv-op` file is present at a workspace root.
-The finding reports the file's age and path.
+The finding reports the file's age, its path, and the `verb` that started the
+op (`sync` or `sync-to`).
 
 `--fix` has no arm here and will not grow one: another terminal may be
 mid-conflict-resolution, and rwv has no daemon that could know which workspace
 the op state legitimately belongs to.
 
-**What to do:** inspect it, then either `rwv sync --continue` to resume or
+**What to do:** inspect it, then either resume with the `--continue` the
+finding names — an op is only resumable under the verb that started it — or
 `rwv abort` to roll back.
 
 ### `dead-op-lease`

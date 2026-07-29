@@ -851,20 +851,6 @@ impl Phase {
     }
 }
 
-/// The operator-facing resume command for a mid-op verb (Correction 4).
-///
-/// A failed op is resumed with `--continue` from the OWNING workspace, which
-/// reads every parameter (source, strategy, target, retire, overrides) back
-/// out of op-state — so the resume text is `rwv {verb} --continue`, NEVER a
-/// hardcoded `rwv sync {source}`. Hardcoding `rwv sync` was wrong two ways:
-/// it named the PULL verb for a `sync-to` (landing) op, and it re-supplied
-/// arguments the record already holds. The verb comes from the op's `verb`
-/// field ([`OpVerb`]) so the string is derived from op-state, not the engine's
-/// guess.
-fn resume_command(verb: OpVerb) -> String {
-    format!("rwv {verb} --continue")
-}
-
 /// Bail message for the manifest-repo per-repo sync loop (Site 1).
 ///
 /// One or more repos in the loop emitted a per-repo failure (printed already).
@@ -884,7 +870,7 @@ fn manifest_repo_failure_message(
     verb: OpVerb,
     live_conflict: Option<ConflictOp>,
 ) -> String {
-    let resume = resume_command(verb);
+    let resume = op_state::resume_command(verb);
     match live_conflict {
         Some(op) => {
             let hint = vcs.conflict_resolution_hint(op);
@@ -928,7 +914,7 @@ fn phase1_or_phase3_failure_message(
     verb: OpVerb,
     live_conflict: Option<ConflictOp>,
 ) -> String {
-    let resume = resume_command(verb);
+    let resume = op_state::resume_command(verb);
     let phase_label = phase.label();
     let repo_display = cwd_project_dir.display();
     match live_conflict {
@@ -978,7 +964,7 @@ fn per_conflict_bail_message(
     verb: OpVerb,
 ) -> String {
     let hint = vcs.conflict_resolution_hint(op);
-    let resume = resume_command(verb);
+    let resume = op_state::resume_command(verb);
     let repo_display = repo.display();
     format!(
         "sync hit a conflict in {repo_display} during {op_label} ({detail}).\n\
@@ -6587,15 +6573,6 @@ mod tests {
             "`rwv abort` must come AFTER the resolution steps; \
              abort_pos={abort_pos}, add_pos={add_pos}, msg={msg}"
         );
-    }
-
-    // Correction 4 — resume verb is derived from the op's `verb` field, NEVER
-    // hardcoded `rwv sync`. The plain resume string builder is the single
-    // source of that vocabulary.
-    #[test]
-    fn resume_command_derives_from_op_verb() {
-        assert_eq!(resume_command(OpVerb::Sync), "rwv sync --continue");
-        assert_eq!(resume_command(OpVerb::SyncTo), "rwv sync-to --continue");
     }
 
     // Site 1 — manifest-repo per-repo sync loop failure summary. With a live

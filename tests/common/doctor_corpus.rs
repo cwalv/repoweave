@@ -12,6 +12,7 @@ use repoweave::check::{
     WeaveRootIdentityConflictKind, WorkingTreeDriftKind, WorkweaveTreeIntegrityKind,
 };
 use repoweave::integrations::cargo_workspace::CargoSkewOccurrence;
+use repoweave::op_state::OpVerb;
 use repoweave::manifest::{ProjectName, RepoPath, WorkweaveName};
 use repoweave::vcs::ResolvedRevisionId;
 use std::path::PathBuf;
@@ -449,6 +450,7 @@ pub fn corpus() -> Vec<CheckViolation> {
         },
         CheckViolation::StaleOpState {
             workspace_dir: path("/ws"),
+            verb: OpVerb::SyncTo,
             started_at: "2026-01-01T00:00:00Z".into(),
         },
         CheckViolation::DeadOpLease {

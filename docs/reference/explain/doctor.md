@@ -826,6 +826,25 @@ Schema:
         }
       }
     },
+    "OpVerb": {
+      "description": "Which top-level verb started this op.",
+      "oneOf": [
+        {
+          "description": "Single-step sync (existing `rwv sync`).",
+          "type": "string",
+          "enum": [
+            "sync"
+          ]
+        },
+        {
+          "description": "Two-step sync-to.",
+          "type": "string",
+          "enum": [
+            "sync-to"
+          ]
+        }
+      ]
+    },
     "OrphanedSavepointKind": {
       "description": "Classification of an orphaned savepoint, controlling `--fix` policy.",
       "oneOf": [
@@ -1521,6 +1540,7 @@ Schema:
           "required": [
             "kind",
             "started_at",
+            "verb",
             "workspace_dir"
           ],
           "properties": {
@@ -1533,6 +1553,14 @@ Schema:
             "started_at": {
               "description": "Raw `started_at` string from the op-state file (RFC3339 UTC).",
               "type": "string"
+            },
+            "verb": {
+              "description": "The verb that started the stalled op — the one `--continue` resumes it under.",
+              "allOf": [
+                {
+                  "$ref": "#/definitions/OpVerb"
+                }
+              ]
             },
             "workspace_dir": {
               "description": "Absolute path to the workspace dir that holds the `.rwv-op` file.",

@@ -163,9 +163,14 @@ fn rwv_cmd() -> Command {
 ///
 /// [v1→v2 spec fo-jsbr3i.1: phase "running" → "replay"; added converged_tips/overrides.]
 fn write_op_state(workspace_dir: &Path, op_id: &str) {
+    write_op_state_for_verb(workspace_dir, op_id, "sync");
+}
+
+/// As [`write_op_state`], for an op started by `verb`.
+fn write_op_state_for_verb(workspace_dir: &Path, op_id: &str, verb: &str) {
     let yaml = format!(
         "id: {op_id}\n\
-         verb: sync\n\
+         verb: {verb}\n\
          strategy: rebase\n\
          source: /tmp/src\n\
          target: /tmp/tgt\n\
@@ -285,6 +290,70 @@ fn stale_op_state_reported_untouched_by_fix() {
         root.join(".rwv-op").exists(),
         "doctor --fix must not delete the .rwv-op file"
     );
+}
+
+/// Every verb the published doctor schema admits on a stale-op-state
+/// finding, read out of the generated artifact rather than restated here.
+fn published_op_verbs() -> Vec<String> {
+    let schema_path =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("docs/reference/schemas/doctor.json");
+    let schema: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&schema_path).expect("read doctor schema"))
+            .expect("parse doctor schema");
+    schema["definitions"]["OpVerb"]["oneOf"]
+        .as_array()
+        .expect("doctor schema must define OpVerb as a oneOf")
+        .iter()
+        .map(|variant| {
+            variant["enum"][0]
+                .as_str()
+                .expect("each OpVerb variant is a single-token string enum")
+                .to_owned()
+        })
+        .collect()
+}
+
+/// An op is only resumable under the verb that started it — running
+/// `rwv sync --continue` against a stalled `sync-to` earns the verb-mismatch
+/// refusal. So the finding has to name the record's own verb, and must not
+/// name any other.
+#[test]
+fn stale_op_state_hint_names_the_verb_that_started_the_op() {
+    let verbs = published_op_verbs();
+    assert!(
+        verbs.len() >= 2,
+        "read {} verbs out of the doctor schema — with fewer than two the \
+         cross-verb assertion below is vacuous; got {verbs:?}",
+        verbs.len()
+    );
+
+    for verb in &verbs {
+        let tmp = common::tempdir().unwrap();
+        let root = make_workspace(tmp.path(), "ws");
+        let repo_rel = "github/acme/server";
+        init_git_repo(&root.join(repo_rel));
+        write_manifest(
+            &root.join("projects").join("my-app"),
+            &[(repo_rel, "https://github.com/acme/server.git")],
+        );
+        write_op_state_for_verb(&root, "9999999999999999999", verb);
+
+        let out = rwv_cmd().arg("doctor").current_dir(&root).output().unwrap();
+        let stdout = String::from_utf8_lossy(&out.stdout);
+
+        assert!(
+            stdout.contains(&format!("`rwv {verb} --continue`")),
+            "a stalled `{verb}` op must be reported with its own resume \
+             command; got:\n{stdout}"
+        );
+        for other in verbs.iter().filter(|o| *o != verb) {
+            assert!(
+                !stdout.contains(&format!("`rwv {other} --continue`")),
+                "a stalled `{verb}` op must not be reported with `{other}`'s \
+                 resume command; got:\n{stdout}"
+            );
+        }
+    }
 }
 
 // ===========================================================================

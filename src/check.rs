@@ -273,14 +273,17 @@ pub enum CheckViolation {
     },
 
     /// A `.rwv-op` file is present at a workspace root. Reports the file's
-    /// age and the path so the operator can inspect, resume
-    /// (`rwv sync --continue`), or roll back (`rwv abort`). **Never
-    /// auto-fixed**: another terminal may be mid-conflict-resolution; rwv
-    /// has no daemon to know which workspace the op-state legitimately
-    /// belongs to.
+    /// age, the path, and the verb that started the op so the operator can
+    /// inspect, resume, or roll back (`rwv abort`). **Never auto-fixed**:
+    /// another terminal may be mid-conflict-resolution; rwv has no daemon to
+    /// know which workspace the op-state legitimately belongs to.
     StaleOpState {
         /// Absolute path to the workspace dir that holds the `.rwv-op` file.
         workspace_dir: PathBuf,
+        /// The verb that started the stalled op. `--continue` only resumes
+        /// under the verb that started the op, so a report that omitted it
+        /// could only guess which command to name.
+        verb: crate::op_state::OpVerb,
         /// Raw `started_at` string from the op-state file (RFC3339 UTC),
         /// preserved verbatim so the operator sees the same value
         /// `op_state::read_owner` would.
@@ -1359,6 +1362,9 @@ pub enum ViolationOutput {
     StaleOpState {
         /// Absolute path to the workspace dir that holds the `.rwv-op` file.
         workspace_dir: String,
+        /// The verb that started the stalled op — the one `--continue`
+        /// resumes it under.
+        verb: crate::op_state::OpVerb,
         /// Raw `started_at` string from the op-state file (RFC3339 UTC).
         started_at: String,
     },
@@ -1678,9 +1684,11 @@ impl ViolationOutput {
             },
             CheckViolation::StaleOpState {
                 workspace_dir: ws_dir,
+                verb,
                 started_at,
             } => Self::StaleOpState {
                 workspace_dir: ws_dir.to_string_lossy().into_owned(),
+                verb,
                 started_at,
             },
             CheckViolation::DeadOpLease {
@@ -4513,6 +4521,7 @@ pub fn scan_state_hygiene(
         if let Ok(Some(state)) = crate::op_state::read_owner(&target.workspace_dir) {
             violations.push(CheckViolation::StaleOpState {
                 workspace_dir: target.workspace_dir.clone(),
+                verb: state.verb,
                 started_at: state.started_at.clone(),
             });
             live_op_ids.insert(state.id);
@@ -6327,14 +6336,16 @@ pub fn violations_to_issues(violations: Vec<CheckViolation>) -> Vec<Issue> {
                 ),
                 CheckViolation::StaleOpState {
                     workspace_dir,
+                    verb,
                     started_at,
                 } => (
                     crate::integration::Severity::Warning,
                     format!(
                         "{}/.rwv-op: stale-op-state present (started_at={started_at}); \
-                         resume with `rwv sync --continue` or roll back with `rwv abort`. \
+                         resume with `{resume}` or roll back with `rwv abort`. \
                          Never auto-fixed — another terminal may be mid-conflict-resolution.",
-                        workspace_dir.display()
+                        workspace_dir.display(),
+                        resume = crate::op_state::resume_command(verb),
                     ),
                 ),
                 CheckViolation::DeadOpLease {
