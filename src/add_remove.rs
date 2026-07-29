@@ -27,11 +27,17 @@ use std::path::{Path, PathBuf};
 /// — clones are global infrastructure shared across workweaves via
 /// `git worktree` (canonical store at primary, linked workspaces in
 /// workweaves; see `docs/explanation/joints/clone-topology.md`).
-/// Callers compose `find_project_dir` (workspace-owned state) with
+/// Callers compose `find_project` (workspace-owned state) with
 /// `primary_path()` (global clones) explicitly.
-fn find_project_dir(ctx: &WorkspaceContext) -> anyhow::Result<std::path::PathBuf> {
-    let name = ctx.require_active_project_on_disk()?;
-    Ok(ctx.active_path().join("projects").join(name.as_str()))
+///
+/// The name travels with the directory because a [`ProjectName`] may carry a
+/// separator (`chatly/web-app`); recovering it from the directory's last
+/// component would silently collapse that to `web-app` and load a different
+/// project's manifest.
+fn find_project(ctx: &WorkspaceContext) -> anyhow::Result<(ProjectName, PathBuf)> {
+    let name = ctx.require_active_project_on_disk()?.clone();
+    let dir = ctx.active_path().join("projects").join(name.as_str());
+    Ok((name, dir))
 }
 
 /// Create a worktree of `repo_path` in the workweave directory, pointing at
@@ -138,11 +144,11 @@ fn create_worktree_in_workweave(
 /// over a partial member set they would be rewritten without the rest. The
 /// manifest change still lands, and `rwv doctor --fix` regenerates once the
 /// member set is whole.
-fn activate_for_workspace(ctx: &WorkspaceContext, project_name: &str) -> anyhow::Result<()> {
+fn activate_for_workspace(ctx: &WorkspaceContext, project: &ProjectName) -> anyhow::Result<()> {
     let root = ctx.active_path();
     let manifest_path = root
         .join("projects")
-        .join(project_name)
+        .join(project.as_str())
         .join(Manifest::FILE_NAME);
     let manifest = Manifest::from_path(&manifest_path)
         .with_context(|| format!("failed to load manifest at {}", manifest_path.display()))?;
@@ -161,8 +167,8 @@ fn activate_for_workspace(ctx: &WorkspaceContext, project_name: &str) -> anyhow:
     }
 
     match &ctx.checkout {
-        Checkout::Workweave { dir, .. } => activate_workweave_intent(project_name, dir),
-        Checkout::Primary { .. } => activate_intent(project_name, ctx),
+        Checkout::Workweave { dir, .. } => activate_workweave_intent(project.as_str(), dir),
+        Checkout::Primary { .. } => activate_intent(project.as_str(), ctx),
     }
 }
 
@@ -176,7 +182,7 @@ pub fn run_add(url: &str, role: Role, ctx: &WorkspaceContext) -> anyhow::Result<
     // operates through and the `vcs_type` it records.
     let vcs_type = VcsType::Git;
     let vcs = vcs_for(vcs_type);
-    let project_dir = find_project_dir(ctx)?;
+    let (project, project_dir) = find_project(ctx)?;
     let manifest_path = project_dir.join(Manifest::FILE_NAME);
 
     // Check if the argument is a local path (no URL scheme and directory exists
@@ -190,17 +196,7 @@ pub fn run_add(url: &str, role: Role, ctx: &WorkspaceContext) -> anyhow::Result<
             // as the URL arm.
             {
                 let repo_path = RepoPath::new(url)?;
-                let primary_project_dir = ctx
-                    .primary_path()
-                    .join("projects")
-                    .join(project_dir.file_name().unwrap_or_default());
-                warn_if_shared_clone(
-                    ctx.primary_path(),
-                    &primary_project_dir,
-                    &repo_path,
-                    &candidate,
-                    role,
-                );
+                warn_if_shared_clone(ctx.primary_path(), &project, &repo_path, &candidate, role);
             }
             run_add_from_local_path(
                 vcs.as_ref(),
@@ -210,10 +206,6 @@ pub fn run_add(url: &str, role: Role, ctx: &WorkspaceContext) -> anyhow::Result<
                 role,
                 &manifest_path,
             )?;
-            let project_name = project_dir
-                .file_name()
-                .and_then(|n| n.to_str())
-                .ok_or_else(|| anyhow::anyhow!("could not determine project name from path"))?;
             // Local-path add doesn't clone, but if we are in a workweave the
             // operator may still expect the workweave to see the repo as a
             // worktree. Mirror the URL path's worktree-creation step.
@@ -232,7 +224,7 @@ pub fn run_add(url: &str, role: Role, ctx: &WorkspaceContext) -> anyhow::Result<
                     )?;
                 }
             }
-            return activate_for_workspace(ctx, project_name);
+            return activate_for_workspace(ctx, &project);
         }
     }
 
@@ -279,17 +271,7 @@ pub fn run_add(url: &str, role: Role, ctx: &WorkspaceContext) -> anyhow::Result<
     // The physical clone is shared; the operator should know. This is not a
     // refusal — sharing is legitimate and supported.
     {
-        let primary_project_dir = ctx
-            .primary_path()
-            .join("projects")
-            .join(project_dir.file_name().unwrap_or_default());
-        warn_if_shared_clone(
-            ctx.primary_path(),
-            &primary_project_dir,
-            &repo_path,
-            &dest,
-            role,
-        );
+        warn_if_shared_clone(ctx.primary_path(), &project, &repo_path, &dest, role);
     }
     if dest.exists() {
         eprintln!(
@@ -351,11 +333,7 @@ pub fn run_add(url: &str, role: Role, ctx: &WorkspaceContext) -> anyhow::Result<
     }
 
     // Re-run activation so ecosystem files (Cargo.toml, package.json, etc.) are updated.
-    let project_name = project_dir
-        .file_name()
-        .and_then(|n| n.to_str())
-        .ok_or_else(|| anyhow::anyhow!("could not determine project name from path"))?;
-    activate_for_workspace(ctx, project_name)?;
+    activate_for_workspace(ctx, &project)?;
 
     Ok(())
 }
@@ -461,7 +439,7 @@ pub fn run_remove(
     delete_shared_clone: bool,
     ctx: &WorkspaceContext,
 ) -> anyhow::Result<()> {
-    let project_dir = find_project_dir(ctx)?;
+    let (project, project_dir) = find_project(ctx)?;
     let manifest_path = project_dir.join(Manifest::FILE_NAME);
 
     let repo_path = RepoPath::new(path)?;
@@ -486,15 +464,8 @@ pub fn run_remove(
             // Pass the primary-side project_dir so the scan correctly skips
             // the active project even when CWD is in a workweave (where
             // `project_dir` lives under the workweave, not primary).
-            let primary_project_dir = ctx
-                .primary_path()
-                .join("projects")
-                .join(project_dir.file_name().unwrap_or_default());
-            let referencing_projects = find_other_projects_referencing(
-                ctx.primary_path(),
-                &primary_project_dir,
-                &repo_path,
-            );
+            let referencing_projects =
+                find_other_projects_referencing(ctx.primary_path(), &project, &repo_path);
 
             if !referencing_projects.is_empty() {
                 for proj in &referencing_projects {
@@ -527,11 +498,7 @@ pub fn run_remove(
     eprintln!("Removed '{}' from manifest", repo_path.as_str());
 
     // Re-run activation so ecosystem files (Cargo.toml, package.json, etc.) are updated.
-    let project_name = project_dir
-        .file_name()
-        .and_then(|n| n.to_str())
-        .ok_or_else(|| anyhow::anyhow!("could not determine project name from path"))?;
-    activate_for_workspace(ctx, project_name)?;
+    activate_for_workspace(ctx, &project)?;
 
     // Optionally delete the clone directory. Always targets primary's
     // canonical path — `--delete` semantics mean "remove the shared clone",
@@ -649,7 +616,7 @@ pub fn run_add_new(path_arg: &str, ctx: &WorkspaceContext) -> anyhow::Result<()>
     // operates through and the `vcs_type` it records.
     let vcs_type = VcsType::Git;
     let vcs = vcs_for(vcs_type);
-    let project_dir = find_project_dir(ctx)?;
+    let (project, project_dir) = find_project(ctx)?;
     let manifest_path = project_dir.join(Manifest::FILE_NAME);
 
     // Validate that the argument looks like a path (registry/owner/repo).
@@ -694,17 +661,7 @@ pub fn run_add_new(path_arg: &str, ctx: &WorkspaceContext) -> anyhow::Result<()>
     // a potentially different role. The physical init'd repo is shared; the
     // operator should know. This is not a refusal.
     {
-        let primary_project_dir = ctx
-            .primary_path()
-            .join("projects")
-            .join(project_dir.file_name().unwrap_or_default());
-        warn_if_shared_clone(
-            ctx.primary_path(),
-            &primary_project_dir,
-            &repo_path,
-            &dest,
-            Role::Owned,
-        );
+        warn_if_shared_clone(ctx.primary_path(), &project, &repo_path, &dest, Role::Owned);
     }
     if dest.exists() {
         eprintln!(
@@ -763,11 +720,7 @@ pub fn run_add_new(path_arg: &str, ctx: &WorkspaceContext) -> anyhow::Result<()>
     }
 
     // Re-run activation so ecosystem files (Cargo.toml, package.json, etc.) are updated.
-    let project_name = project_dir
-        .file_name()
-        .and_then(|n| n.to_str())
-        .ok_or_else(|| anyhow::anyhow!("could not determine project name from path"))?;
-    activate_for_workspace(ctx, project_name)?;
+    activate_for_workspace(ctx, &project)?;
 
     Ok(())
 }
@@ -776,50 +729,38 @@ pub fn run_add_new(path_arg: &str, ctx: &WorkspaceContext) -> anyhow::Result<()>
 /// names of any projects that reference `repo_path`.
 fn find_other_projects_referencing(
     workspace_root: &Path,
-    active_project_dir: &Path,
+    active_project: &ProjectName,
     repo_path: &RepoPath,
-) -> Vec<String> {
-    find_other_projects_with_roles(workspace_root, active_project_dir, repo_path)
+) -> Vec<ProjectName> {
+    find_other_projects_with_roles(workspace_root, active_project, repo_path)
         .into_iter()
         .map(|(name, _role)| name)
         .collect()
 }
 
-/// Scan `projects/*/rwv.yaml` (excluding `active_project_dir`) and return the
-/// `(project_name, role)` pairs for any project that registers `repo_path`.
+/// Walk every project in the weave except `active_project` and return the
+/// `(project, role)` pairs for those that register `repo_path`.
 ///
-/// Used by `run_add` and `run_add_new` to emit shared-clone warnings.
+/// Used by `rwv add` to emit shared-clone warnings and by `rwv remove
+/// --delete` to refuse a clone another project still declares.
 fn find_other_projects_with_roles(
     workspace_root: &Path,
-    active_project_dir: &Path,
+    active_project: &ProjectName,
     repo_path: &RepoPath,
-) -> Vec<(String, Role)> {
-    let projects_dir = workspace_root.join("projects");
-    let mut referencing: Vec<(String, Role)> = Vec::new();
+) -> Vec<(ProjectName, Role)> {
+    let mut referencing: Vec<(ProjectName, Role)> = Vec::new();
 
-    let entries = match std::fs::read_dir(&projects_dir) {
-        Ok(e) => e,
-        Err(_) => return referencing,
-    };
-
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if !path.is_dir() {
+    for project in crate::workweave_index::projects_on_disk(workspace_root) {
+        if &project == active_project {
             continue;
         }
-        // Skip the active project.
-        if path == active_project_dir {
-            continue;
-        }
-        let manifest_path = path.join(Manifest::FILE_NAME);
+        let manifest_path = workspace_root
+            .join("projects")
+            .join(project.as_str())
+            .join(Manifest::FILE_NAME);
         if let Ok(manifest) = Manifest::from_path(&manifest_path) {
             if let Some(entry) = manifest.get_entry(repo_path) {
-                // Derive a human-readable project name from the directory name.
-                let name = path
-                    .file_name()
-                    .map(|n| n.to_string_lossy().into_owned())
-                    .unwrap_or_else(|| path.display().to_string());
-                referencing.push((name, entry.role));
+                referencing.push((project, entry.role));
             }
         }
     }
@@ -833,25 +774,22 @@ fn find_other_projects_with_roles(
 /// `this_role` is the role the caller is adding `repo_path` as; it is
 /// included in the warning so the operator understands the full picture.
 ///
-/// Detection: scan primary's `projects/` directory — that is the canonical
-/// enumeration of project manifests regardless of CWD (matches the same
-/// discovery the `remove --delete` guard uses).
+/// `workspace_root` is primary — even from a workweave the canonical
+/// manifest set lives under primary's `projects/`.
 fn warn_if_shared_clone(
     workspace_root: &Path,
-    active_project_dir: &Path,
+    active_project: &ProjectName,
     repo_path: &RepoPath,
     clone_dest: &Path,
     this_role: Role,
 ) {
-    // Look up primary-side active project dir for the scan — even from a
-    // workweave the canonical manifest set lives under primary/projects/.
-    let siblings = find_other_projects_with_roles(workspace_root, active_project_dir, repo_path);
+    let siblings = find_other_projects_with_roles(workspace_root, active_project, repo_path);
     for (other_project, other_role) in &siblings {
         eprintln!(
             "[warning] add: clone {} is already registered by project '{}' with role {}; \
              this project registers it as {} — the physical clone is shared",
             clone_dest.display(),
-            other_project,
+            other_project.as_str(),
             other_role.as_str(),
             this_role.as_str(),
         );
