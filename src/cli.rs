@@ -18,7 +18,7 @@ use crate::manifest;
 use crate::sync::{SyncSource, SyncStrategy};
 
 #[derive(Parser)]
-#[command(name = "rwv", version = option_env!("RWV_VERSION").unwrap_or(env!("CARGO_PKG_VERSION")), about = "A cross-repo workspace manager")]
+#[command(name = "rwv", version = crate::rwv_version(), about = "A cross-repo workspace manager")]
 pub struct Cli {
     /// Resolve workspace as if invoked from <path>. Any path inside a
     /// checkout works; the normal containment walk (marker, root, $HOME

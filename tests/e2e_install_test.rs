@@ -290,3 +290,28 @@ fn nix_devshell_provides_rwv() {
         }
     }
 }
+
+// ---------------------------------------------------------------------------
+// Test: python/repoweave/pyproject.toml's version is a separate authority
+// ---------------------------------------------------------------------------
+
+/// `python/repoweave/pyproject.toml`'s `version` is not sourced from
+/// `Cargo.toml` — it stays the `0.0.0` placeholder in the working tree and is
+/// rewritten from the git tag by `.github/workflows/publish-shims.yml` at
+/// release time. If this ever changes to track `CARGO_PKG_VERSION` (or any
+/// other real version) directly, that rewrite step needs updating to match —
+/// this test is what notices the drift.
+#[test]
+fn pyproject_version_is_the_release_time_placeholder() {
+    let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("python/repoweave/pyproject.toml");
+    let content =
+        std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
+    assert!(
+        content.contains("version = \"0.0.0\""),
+        "{} no longer carries the `0.0.0` release-time placeholder — if this \
+         is deliberate, update this test and .github/workflows/publish-shims.yml's \
+         version-rewrite step to match; got:\n{content}",
+        path.display()
+    );
+}

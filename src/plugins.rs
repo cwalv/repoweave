@@ -54,7 +54,7 @@
 //!
 //! | Variable | Value | Unset when |
 //! |---|---|---|
-//! | `RWV_VERSION` | `rwv` semver (from `CARGO_PKG_VERSION`) | never |
+//! | `RWV_VERSION` | `rwv` semver ([`crate::rwv_version`]) | never |
 //! | `RWV_WORKSPACE` | primary workspace root (absolute path) | no workspace resolved |
 //! | `RWV_WORKWEAVE` | `<project>--<name>` | not in / not addressing a workweave |
 //! | `RWV_PROJECT` | resolved project name | no project resolved |
@@ -91,7 +91,7 @@ use std::process::Command;
 /// variable set is automatically reflected in both.
 pub fn envelope_vars(resolution: Option<&Resolution>) -> Vec<(&'static str, String)> {
     let mut vars: Vec<(&'static str, String)> = Vec::new();
-    vars.push(("RWV_VERSION", env!("CARGO_PKG_VERSION").to_owned()));
+    vars.push(("RWV_VERSION", crate::rwv_version().to_owned()));
     if let Some(r) = resolution {
         vars.push(("RWV_WORKSPACE", r.workspace.to_string_lossy().into_owned()));
         if let Some(ww) = &r.workweave {
@@ -413,7 +413,7 @@ mod tests {
         let map: std::collections::HashMap<_, _> = vars.into_iter().collect();
         assert_eq!(
             map.get("RWV_VERSION"),
-            Some(&env!("CARGO_PKG_VERSION").to_owned())
+            Some(&crate::rwv_version().to_owned())
         );
         assert_eq!(map.get("RWV_WORKSPACE"), Some(&"/ws/primary".to_owned()));
         assert!(
@@ -434,7 +434,7 @@ mod tests {
         let map: std::collections::HashMap<_, _> = vars.into_iter().collect();
         assert_eq!(
             map.get("RWV_VERSION"),
-            Some(&env!("CARGO_PKG_VERSION").to_owned())
+            Some(&crate::rwv_version().to_owned())
         );
         assert_eq!(map.get("RWV_WORKSPACE"), Some(&"/ws/primary".to_owned()));
         assert_eq!(map.get("RWV_WORKWEAVE"), Some(&"myproj--fo-123".to_owned()));

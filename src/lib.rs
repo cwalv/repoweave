@@ -22,6 +22,13 @@
 //! `ARCHITECTURE.md` at the repo root is the module map, dataflow and seam
 //! description; `docs/explanation/joints/` holds the normative contracts.
 
+/// The `rwv` version: `build.rs`'s `git describe` output when built inside a
+/// git checkout (e.g. `0.16.0-3-ge5bfa9f`), else `Cargo.toml`'s version.
+/// The one fact `--version` and the plugin envelope's `RWV_VERSION` both read.
+pub fn rwv_version() -> &'static str {
+    option_env!("RWV_VERSION").unwrap_or(env!("CARGO_PKG_VERSION"))
+}
+
 pub mod activate;
 pub mod add_remove;
 pub mod check;
