@@ -1112,27 +1112,12 @@ impl WorkweaveMarker {
     /// `rwv doctor --fix` to migrate. All three fields (`primary`, `project`,
     /// `parent`) must be present; there is no silent backfill.
     pub fn read(dir: &Path) -> anyhow::Result<Option<Self>> {
-        let path = dir.join(".rwv-workweave");
-        if !path.exists() {
-            return Ok(None);
+        let path = dir.join(WORKWEAVE_MARKER_FILE);
+        match observe_marker(&path) {
+            MarkerPresence::Absent => Ok(None),
+            MarkerPresence::Usable(marker) => Ok(Some(marker)),
+            MarkerPresence::Defective { defect, .. } => Err(anyhow::anyhow!(defect.refusal(&path))),
         }
-        let content = std::fs::read_to_string(&path)
-            .with_context(|| format!("failed to read {}", path.display()))?;
-        // Pre-check: if the YAML parses but `parent` is absent, reject early
-        // with an actionable error rather than letting serde emit a cryptic
-        // "missing field" message.
-        let raw: serde_yaml::Value = serde_yaml::from_str(&content)
-            .with_context(|| format!("failed to parse .rwv-workweave at {}", path.display()))?;
-        if raw.get("parent").map(|v| v.is_null()).unwrap_or(true) {
-            anyhow::bail!(
-                "{} is a legacy workweave marker missing the required `parent:` field. \
-                 Run `rwv doctor --fix` to migrate it before using this workweave.",
-                path.display()
-            );
-        }
-        let marker: Self = serde_yaml::from_value(raw)
-            .with_context(|| format!("failed to parse .rwv-workweave at {}", path.display()))?;
-        Ok(Some(marker))
     }
 
     pub fn write(&self, dir: &Path) -> anyhow::Result<()> {
@@ -1173,6 +1158,277 @@ impl WorkweaveMarker {
             .with_context(|| format!("failed to parse .rwv-workweave at {}", path.display()))?;
         marker.write(dir)?;
         Ok(true)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Root identity — what one directory claims to be
+// ---------------------------------------------------------------------------
+
+/// Why a `.rwv-workweave` file cannot witness the identity it claims.
+///
+/// `Legacy` is the marker shape written before `parent:` became required;
+/// [`WorkweaveMarker::migrate_legacy`] is what `rwv doctor --fix` runs on it.
+#[derive(Debug)]
+pub enum MarkerDefect {
+    DanglingPrimary { primary: PathBuf },
+    Legacy,
+    Unreadable { detail: String },
+}
+
+impl MarkerDefect {
+    /// The operator-facing refusal for a marker carrying this defect: what is
+    /// wrong, the value that is wrong, and every exit that does not require
+    /// the reader to guess an identity on the tree's behalf.
+    pub fn refusal(&self, marker_path: &Path) -> String {
+        match self {
+            MarkerDefect::DanglingPrimary { primary } => format!(
+                "{} names primary: {}, which is not a repoweave workspace root. \
+                 A copied or rsync'd workweave tree is the usual cause. Repair \
+                 `primary:` to name the workspace this tree belongs to, or delete \
+                 {} to adopt this tree as a standalone weave.",
+                marker_path.display(),
+                primary.display(),
+                marker_path.display()
+            ),
+            MarkerDefect::Legacy => format!(
+                "{} is a legacy workweave marker missing the required `parent:` field. \
+                 Run `rwv doctor --fix` to migrate it before using this workweave.",
+                marker_path.display()
+            ),
+            MarkerDefect::Unreadable { detail } => format!(
+                "{detail}. Repair {}, or delete it to adopt this tree as a \
+                 standalone weave.",
+                marker_path.display()
+            ),
+        }
+    }
+}
+
+enum MarkerPresence {
+    Absent,
+    Usable(WorkweaveMarker),
+    Defective {
+        defect: MarkerDefect,
+        project_hint: Option<ProjectName>,
+    },
+}
+
+/// Parse `.rwv-workweave` once, for both the readers that need a marker and
+/// the readers that must classify a broken one.
+///
+/// `project_hint` is carried out of the defective arms because a root whose
+/// marker no verb may act on still presents a project to surfacing, and this
+/// is the last point where anything can read it.
+fn observe_marker(marker_path: &Path) -> MarkerPresence {
+    if !marker_path.exists() {
+        return MarkerPresence::Absent;
+    }
+    let unreadable =
+        |detail: String, project_hint: Option<ProjectName>| MarkerPresence::Defective {
+            defect: MarkerDefect::Unreadable { detail },
+            project_hint,
+        };
+    let content = match std::fs::read_to_string(marker_path) {
+        Ok(content) => content,
+        Err(e) => {
+            return unreadable(
+                format!("failed to read {}: {e}", marker_path.display()),
+                None,
+            );
+        }
+    };
+    let raw: serde_yaml::Value = match serde_yaml::from_str(&content) {
+        Ok(raw) => raw,
+        Err(e) => {
+            return unreadable(
+                format!(
+                    "failed to parse .rwv-workweave at {}: {e}",
+                    marker_path.display()
+                ),
+                None,
+            );
+        }
+    };
+    let project_hint = raw
+        .get("project")
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|project| !project.is_empty())
+        .and_then(|project| ProjectName::new(project).ok());
+    if raw.get("parent").map(|v| v.is_null()).unwrap_or(true) {
+        return MarkerPresence::Defective {
+            defect: MarkerDefect::Legacy,
+            project_hint,
+        };
+    }
+    match serde_yaml::from_value(raw) {
+        Ok(marker) => MarkerPresence::Usable(marker),
+        Err(e) => unreadable(
+            format!(
+                "failed to parse .rwv-workweave at {}: {e}",
+                marker_path.display()
+            ),
+            project_hint,
+        ),
+    }
+}
+
+/// The identity evidence one directory carries.
+///
+/// The arms are the states a directory can be in, not the states a verb is
+/// willing to act on: [`RootObservation::require_exclusive`] is where the
+/// unusable ones become refusals.
+#[derive(Debug)]
+pub enum RootObservation {
+    /// The marker alone, and its `primary:` verifies as a workspace root.
+    Workweave { marker: WorkweaveMarker },
+    /// Workspace-shaped, no marker. `selection` is the `.rwv-active` pointer,
+    /// which a primary root may legitimately be without.
+    Primary { selection: Option<ProjectName> },
+    /// Both files present, marker verified. The pointer is duplicate identity
+    /// no writer produces — a hygiene violation, not an ambiguity, since the
+    /// marker remains the sole discriminator between the two kinds of root.
+    Disputed {
+        root: PathBuf,
+        marker: WorkweaveMarker,
+        pointer: Option<ProjectName>,
+    },
+    /// A marker that cannot witness what it claims. A containment walk must
+    /// stop here rather than reading the tree's structural shape instead: the
+    /// shape of every workweave is the shape of a primary, so falling through
+    /// hands the tree a primary's authority on the strength of its own broken
+    /// claim to be something else.
+    MarkerUnverifiable {
+        marker_path: PathBuf,
+        defect: MarkerDefect,
+        project_hint: Option<ProjectName>,
+    },
+}
+
+/// Observe what identity evidence `dir` carries.
+///
+/// `Ok(None)` is "not a root of either kind" — a containment walk continues
+/// past it. Every other answer is terminal for the walk, including the two
+/// that no verb may act on.
+pub fn observe_root(dir: &Path) -> anyhow::Result<Option<RootObservation>> {
+    let marker_path = dir.join(WORKWEAVE_MARKER_FILE);
+    let observation = match observe_marker(&marker_path) {
+        MarkerPresence::Defective {
+            defect,
+            project_hint,
+        } => RootObservation::MarkerUnverifiable {
+            marker_path,
+            defect,
+            project_hint,
+        },
+        MarkerPresence::Usable(marker) => {
+            if !is_workspace_root(&marker.primary) {
+                RootObservation::MarkerUnverifiable {
+                    marker_path,
+                    project_hint: Some(marker.project),
+                    defect: MarkerDefect::DanglingPrimary {
+                        primary: marker.primary,
+                    },
+                }
+            } else if dir.join(ACTIVE_PROJECT_FILE).exists() {
+                RootObservation::Disputed {
+                    root: dir.to_path_buf(),
+                    pointer: read_active_project(dir),
+                    marker,
+                }
+            } else {
+                RootObservation::Workweave { marker }
+            }
+        }
+        MarkerPresence::Absent => {
+            if !is_workspace_root(dir) {
+                return Ok(None);
+            }
+            RootObservation::Primary {
+                selection: read_active_project(dir),
+            }
+        }
+    };
+    Ok(Some(observation))
+}
+
+impl RootObservation {
+    /// The identity a verb may act on, or the refusal that names the repair.
+    pub fn require_exclusive(self) -> anyhow::Result<WeaveRootIdentity> {
+        match self {
+            RootObservation::Workweave { marker } => {
+                Ok(WeaveRootIdentity::Workweave(WorkweaveIdentity { marker }))
+            }
+            RootObservation::Primary { selection } => {
+                Ok(WeaveRootIdentity::Primary(PrimaryIdentity { selection }))
+            }
+            RootObservation::Disputed { root, .. } => anyhow::bail!(
+                "{} and {} both exist: a weave root carries the workweave marker \
+                 or the active-project pointer, never both. Run `rwv doctor --fix`; \
+                 it removes the redundant file where the primary-side workweave \
+                 registry names this tree, and reports the conflict where nothing \
+                 outside the tree settles which file is the stray.",
+                root.join(WORKWEAVE_MARKER_FILE).display(),
+                root.join(ACTIVE_PROJECT_FILE).display()
+            ),
+            RootObservation::MarkerUnverifiable {
+                marker_path,
+                defect,
+                ..
+            } => Err(anyhow::anyhow!(defect.refusal(&marker_path))),
+        }
+    }
+
+    /// The project this root presents, for surfacing.
+    ///
+    /// Deliberately lenient where [`Self::require_exclusive`] refuses: a root
+    /// whose identity files disagree, or whose marker `rwv doctor --fix` can
+    /// still migrate, presents a project all the same, and answering `None`
+    /// there would collapse symlink surfacing on a tree the operator has a
+    /// one-command repair for.
+    pub fn presented_project(&self) -> Option<&ProjectName> {
+        match self {
+            RootObservation::Workweave { marker } => Some(&marker.project),
+            RootObservation::Primary { selection } => selection.as_ref(),
+            RootObservation::Disputed { marker, .. } => Some(&marker.project),
+            RootObservation::MarkerUnverifiable { project_hint, .. } => project_hint.as_ref(),
+        }
+    }
+}
+
+/// The identity of a weave root that carries exactly one identity file.
+///
+/// [`RootObservation::require_exclusive`] is the only producer, and the arms
+/// it refuses have no representation here. Both payloads hold private fields
+/// for that reason: a consumer that could assemble one from a marker and a
+/// pointer would be re-deciding, at its own site, the tiebreak this projection
+/// exists to have already refused.
+#[derive(Debug)]
+pub enum WeaveRootIdentity {
+    Workweave(WorkweaveIdentity),
+    Primary(PrimaryIdentity),
+}
+
+#[derive(Debug)]
+pub struct WorkweaveIdentity {
+    marker: WorkweaveMarker,
+}
+
+impl WorkweaveIdentity {
+    pub fn into_marker(self) -> WorkweaveMarker {
+        self.marker
+    }
+}
+
+#[derive(Debug)]
+pub struct PrimaryIdentity {
+    selection: Option<ProjectName>,
+}
+
+impl PrimaryIdentity {
+    pub fn into_selection(self) -> Option<ProjectName> {
+        self.selection
     }
 }
 
@@ -2640,6 +2896,411 @@ mod tests {
         assert_eq!(
             keys, expected,
             "in workweave: exactly {{workspace, workweave, project}} — no provenance fields"
+        );
+    }
+
+    // ========================================================================
+    // observe_root — one reader for the two identity files
+    //
+    // The arms are the states a directory can be in. Which of them a verb may
+    // act on is `require_exclusive`'s question, pinned separately below.
+    // ========================================================================
+
+    /// A workweave root whose marker points at `primary`.
+    fn make_workweave(parent: &Path, name: &str, primary: &Path, project: &str) -> PathBuf {
+        let dir = parent.join(name);
+        std::fs::create_dir_all(&dir).unwrap();
+        let marker = WorkweaveMarker {
+            primary: primary.to_path_buf(),
+            project: ProjectName::new(project).unwrap(),
+            parent: primary.to_path_buf(),
+        };
+        marker.write(&dir).unwrap();
+        dir
+    }
+
+    fn write_pointer(root: &Path, project: &str) {
+        std::fs::write(root.join(ACTIVE_PROJECT_FILE), format!("{project}\n")).unwrap();
+    }
+
+    fn observe(dir: &Path) -> RootObservation {
+        observe_root(dir)
+            .unwrap()
+            .unwrap_or_else(|| panic!("expected an observation at {}", dir.display()))
+    }
+
+    #[test]
+    fn observe_root_reads_a_verified_marker_as_a_workweave() {
+        let tmp = tempfile::tempdir().unwrap();
+        let primary = make_workspace(tmp.path(), "ws");
+        // Deliberately not workspace-shaped: the marker arm does not consult
+        // the tree's own shape, and a workweave that has not materialized any
+        // member yet still resolves.
+        let weave_dir = make_workweave(tmp.path(), "ws--feat", &primary, "myproject");
+
+        match observe(&weave_dir) {
+            RootObservation::Workweave { marker } => {
+                assert_eq!(marker.project.as_str(), "myproject");
+                assert_eq!(marker.primary, primary);
+            }
+            other => panic!("expected Workweave, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn observe_root_reads_a_pointer_at_a_workspace_shaped_root_as_primary() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = make_workspace(tmp.path(), "ws");
+        write_pointer(&root, "web-app");
+
+        match observe(&root) {
+            RootObservation::Primary { selection } => {
+                assert_eq!(selection.as_ref().map(ProjectName::as_str), Some("web-app"));
+            }
+            other => panic!("expected Primary, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn observe_root_reads_a_bare_workspace_shaped_root_as_primary_with_no_selection() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = make_workspace(tmp.path(), "ws");
+
+        match observe(&root) {
+            RootObservation::Primary { selection } => assert!(selection.is_none()),
+            other => panic!("expected Primary, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn observe_root_reads_both_files_as_disputed() {
+        let tmp = tempfile::tempdir().unwrap();
+        let primary = make_workspace(tmp.path(), "ws");
+        let weave_dir = make_workweave(tmp.path(), "ws--feat", &primary, "myproject");
+        write_pointer(&weave_dir, "myproject");
+
+        match observe(&weave_dir) {
+            RootObservation::Disputed {
+                root,
+                marker,
+                pointer,
+            } => {
+                assert_eq!(root, weave_dir);
+                assert_eq!(marker.project.as_str(), "myproject");
+                assert_eq!(pointer.as_ref().map(ProjectName::as_str), Some("myproject"));
+            }
+            other => panic!("expected Disputed, got {other:?}"),
+        }
+    }
+
+    /// An empty `.rwv-active` is still a present file, so the root is still
+    /// disputed — the pointer it cannot parse is the one thing the arm does
+    /// not need in order to say so.
+    #[test]
+    fn observe_root_reads_an_empty_pointer_beside_a_marker_as_disputed() {
+        let tmp = tempfile::tempdir().unwrap();
+        let primary = make_workspace(tmp.path(), "ws");
+        let weave_dir = make_workweave(tmp.path(), "ws--feat", &primary, "myproject");
+        std::fs::write(weave_dir.join(ACTIVE_PROJECT_FILE), "\n").unwrap();
+
+        match observe(&weave_dir) {
+            RootObservation::Disputed { pointer, .. } => assert!(pointer.is_none()),
+            other => panic!("expected Disputed, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn observe_root_reads_a_dangling_primary_as_marker_unverifiable() {
+        let tmp = tempfile::tempdir().unwrap();
+        let gone = tmp.path().join("moved-away");
+        let weave_dir = make_workweave(tmp.path(), "ws--feat", &gone, "myproject");
+        // A copied tree is workspace-shaped on its own; the marker's claim is
+        // what makes reading that shape a guess.
+        std::fs::create_dir_all(weave_dir.join("github")).unwrap();
+
+        match observe(&weave_dir) {
+            RootObservation::MarkerUnverifiable {
+                marker_path,
+                defect,
+                project_hint,
+            } => {
+                assert_eq!(marker_path, weave_dir.join(WORKWEAVE_MARKER_FILE));
+                match defect {
+                    MarkerDefect::DanglingPrimary { primary } => assert_eq!(primary, gone),
+                    other => panic!("expected DanglingPrimary, got {other:?}"),
+                }
+                assert_eq!(
+                    project_hint.as_ref().map(ProjectName::as_str),
+                    Some("myproject")
+                );
+            }
+            other => panic!("expected MarkerUnverifiable, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn observe_root_reads_a_legacy_marker_as_marker_unverifiable() {
+        let tmp = tempfile::tempdir().unwrap();
+        let primary = make_workspace(tmp.path(), "ws");
+        let weave_dir = tmp.path().join("ws--feat");
+        std::fs::create_dir_all(&weave_dir).unwrap();
+        std::fs::write(
+            weave_dir.join(WORKWEAVE_MARKER_FILE),
+            format!("primary: {}\nproject: myproject\n", primary.display()),
+        )
+        .unwrap();
+
+        match observe(&weave_dir) {
+            RootObservation::MarkerUnverifiable {
+                defect,
+                project_hint,
+                ..
+            } => {
+                assert!(
+                    matches!(defect, MarkerDefect::Legacy),
+                    "expected Legacy, got {defect:?}"
+                );
+                assert_eq!(
+                    project_hint.as_ref().map(ProjectName::as_str),
+                    Some("myproject"),
+                    "a legacy marker still names its project, and surfacing needs it"
+                );
+            }
+            other => panic!("expected MarkerUnverifiable, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn observe_root_reads_an_unparseable_marker_as_marker_unverifiable() {
+        let tmp = tempfile::tempdir().unwrap();
+        let weave_dir = tmp.path().join("ws--feat");
+        std::fs::create_dir_all(&weave_dir).unwrap();
+        std::fs::write(
+            weave_dir.join(WORKWEAVE_MARKER_FILE),
+            "primary: [unclosed\n",
+        )
+        .unwrap();
+
+        match observe(&weave_dir) {
+            RootObservation::MarkerUnverifiable { defect, .. } => assert!(
+                matches!(defect, MarkerDefect::Unreadable { .. }),
+                "expected Unreadable, got {defect:?}"
+            ),
+            other => panic!("expected MarkerUnverifiable, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn observe_root_reads_a_directory_that_is_neither_as_nothing() {
+        let tmp = tempfile::tempdir().unwrap();
+        let plain = tmp.path().join("just-a-dir");
+        std::fs::create_dir_all(&plain).unwrap();
+
+        assert!(observe_root(&plain).unwrap().is_none());
+    }
+
+    /// A pointer outside a workspace-shaped tree names nothing: `.rwv-active`
+    /// is not itself a witness of root-ness, and reading it as one would make
+    /// any directory a weave root.
+    #[test]
+    fn observe_root_reads_a_lone_pointer_as_nothing() {
+        let tmp = tempfile::tempdir().unwrap();
+        let plain = tmp.path().join("just-a-dir");
+        std::fs::create_dir_all(&plain).unwrap();
+        write_pointer(&plain, "web-app");
+
+        assert!(observe_root(&plain).unwrap().is_none());
+    }
+
+    // ========================================================================
+    // require_exclusive — the one collapse, and the two arms it refuses
+    // ========================================================================
+
+    /// Every `MarkerDefect`, with a match that stops compiling when a variant
+    /// is added. A new defect that nobody adds here is a defect the refusal
+    /// test below would never see.
+    fn all_marker_defects() -> Vec<MarkerDefect> {
+        let all = vec![
+            MarkerDefect::DanglingPrimary {
+                primary: PathBuf::from("/nowhere"),
+            },
+            MarkerDefect::Legacy,
+            MarkerDefect::Unreadable {
+                detail: "failed to parse .rwv-workweave".to_string(),
+            },
+        ];
+        for defect in &all {
+            match defect {
+                MarkerDefect::DanglingPrimary { .. }
+                | MarkerDefect::Legacy
+                | MarkerDefect::Unreadable { .. } => {}
+            }
+        }
+        all
+    }
+
+    #[test]
+    fn require_exclusive_projects_the_two_usable_arms() {
+        let tmp = tempfile::tempdir().unwrap();
+        let primary = make_workspace(tmp.path(), "ws");
+        let weave_dir = make_workweave(tmp.path(), "ws--feat", &primary, "myproject");
+        write_pointer(&primary, "web-app");
+
+        match observe(&weave_dir).require_exclusive().unwrap() {
+            WeaveRootIdentity::Workweave(workweave) => {
+                assert_eq!(workweave.into_marker().project.as_str(), "myproject");
+            }
+            other => panic!("expected the workweave arm, got {other:?}"),
+        }
+        match observe(&primary).require_exclusive().unwrap() {
+            WeaveRootIdentity::Primary(root) => {
+                assert_eq!(
+                    root.into_selection().as_ref().map(ProjectName::as_str),
+                    Some("web-app")
+                );
+            }
+            other => panic!("expected the primary arm, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn require_exclusive_refuses_a_disputed_root_naming_both_files_and_the_repair() {
+        let tmp = tempfile::tempdir().unwrap();
+        let primary = make_workspace(tmp.path(), "ws");
+        let weave_dir = make_workweave(tmp.path(), "ws--feat", &primary, "myproject");
+        write_pointer(&weave_dir, "something-else");
+
+        let err = observe(&weave_dir)
+            .require_exclusive()
+            .expect_err("a root carrying both identity files is not actionable")
+            .to_string();
+
+        for expected in [
+            weave_dir.join(WORKWEAVE_MARKER_FILE).display().to_string(),
+            weave_dir.join(ACTIVE_PROJECT_FILE).display().to_string(),
+            "rwv doctor --fix".to_string(),
+        ] {
+            assert!(
+                err.contains(&expected),
+                "the refusal must name {expected}; got: {err}"
+            );
+        }
+    }
+
+    /// Agreement between the two files does not soften the refusal: the state
+    /// no writer produces is the state that must not survive being tolerated.
+    #[test]
+    fn require_exclusive_refuses_a_disputed_root_whose_files_agree() {
+        let tmp = tempfile::tempdir().unwrap();
+        let primary = make_workspace(tmp.path(), "ws");
+        let weave_dir = make_workweave(tmp.path(), "ws--feat", &primary, "myproject");
+        write_pointer(&weave_dir, "myproject");
+
+        assert!(observe(&weave_dir).require_exclusive().is_err());
+    }
+
+    #[test]
+    fn require_exclusive_refuses_every_marker_defect() {
+        let marker_path = PathBuf::from("/weave/ws--feat/.rwv-workweave");
+        for defect in all_marker_defects() {
+            let described = format!("{defect:?}");
+            let err = RootObservation::MarkerUnverifiable {
+                marker_path: marker_path.clone(),
+                defect,
+                project_hint: None,
+            }
+            .require_exclusive()
+            .map(|_| ())
+            .expect_err(&format!(
+                "{described} must be terminal — falling through to Primary \
+                 hands the tree the authority its own broken claim denies it"
+            ))
+            .to_string();
+
+            assert!(
+                err.contains(&marker_path.display().to_string()),
+                "{described}: the refusal must name the marker; got: {err}"
+            );
+        }
+    }
+
+    #[test]
+    fn require_exclusive_names_the_dangling_value_and_both_exits() {
+        let tmp = tempfile::tempdir().unwrap();
+        let gone = tmp.path().join("moved-away");
+        let weave_dir = make_workweave(tmp.path(), "ws--feat", &gone, "myproject");
+
+        let err = observe(&weave_dir)
+            .require_exclusive()
+            .expect_err("a dangling primary: is not actionable")
+            .to_string();
+
+        assert!(
+            err.contains(&gone.display().to_string()),
+            "the refusal must name the value that does not verify; got: {err}"
+        );
+        assert!(
+            err.contains("primary:") && err.contains("delete"),
+            "the refusal must name both exits — repair the marker, or delete \
+             it to adopt the tree standalone; got: {err}"
+        );
+    }
+
+    // ========================================================================
+    // presented_project — lenient exactly where require_exclusive is strict
+    // ========================================================================
+
+    #[test]
+    fn presented_project_answers_for_a_disputed_root() {
+        let tmp = tempfile::tempdir().unwrap();
+        let primary = make_workspace(tmp.path(), "ws");
+        let weave_dir = make_workweave(tmp.path(), "ws--feat", &primary, "myproject");
+        write_pointer(&weave_dir, "something-else");
+
+        assert!(
+            observe(&weave_dir).require_exclusive().is_err(),
+            "the same root a verb must refuse"
+        );
+        assert_eq!(
+            observe(&weave_dir)
+                .presented_project()
+                .map(ProjectName::as_str),
+            Some("myproject"),
+            "the marker names what the root presents; the pointer is the stray"
+        );
+    }
+
+    #[test]
+    fn presented_project_answers_for_a_legacy_marker() {
+        let tmp = tempfile::tempdir().unwrap();
+        let primary = make_workspace(tmp.path(), "ws");
+        let weave_dir = tmp.path().join("ws--feat");
+        std::fs::create_dir_all(&weave_dir).unwrap();
+        std::fs::write(
+            weave_dir.join(WORKWEAVE_MARKER_FILE),
+            format!("primary: {}\nproject: myproject\n", primary.display()),
+        )
+        .unwrap();
+
+        assert_eq!(
+            observe(&weave_dir)
+                .presented_project()
+                .map(ProjectName::as_str),
+            Some("myproject"),
+            "surfacing must keep working on a workweave `rwv doctor --fix` can \
+             still migrate"
+        );
+    }
+
+    #[test]
+    fn presented_project_answers_for_a_primary_from_its_pointer() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = make_workspace(tmp.path(), "ws");
+        write_pointer(&root, "web-app");
+
+        assert_eq!(
+            observe(&root).presented_project().map(ProjectName::as_str),
+            Some("web-app")
         );
     }
 }
