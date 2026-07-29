@@ -1,5 +1,6 @@
 #![allow(dead_code)]
 
+pub mod compile_probe;
 pub mod contract;
 pub mod doctor_corpus;
 pub mod src_scan;
