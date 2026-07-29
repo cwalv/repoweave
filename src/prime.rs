@@ -352,6 +352,41 @@ integrations:
         assert!(output.contains("docs/reference/schemas"));
     }
 
+    // -- Key commands table names only real verbs -----------------------------
+
+    /// Every verb the "Key commands" table names must be a real subcommand.
+    /// The table is a hand-curated onboarding subset (not the full `rwv
+    /// explain` registry — its rows carry usage syntax and short blurbs a
+    /// mechanical listing would either omit or bloat), so this does not
+    /// regenerate it; it only guards against a renamed or removed verb
+    /// going stale here silently.
+    #[test]
+    fn key_commands_table_names_only_real_verbs() {
+        use clap::CommandFactory;
+
+        let cli_cmd = crate::cli::Cli::command();
+        for verb in [
+            "resolve",
+            "activate",
+            "workweave",
+            "add",
+            "remove",
+            "lock",
+            "doctor",
+            "fetch",
+        ] {
+            assert!(
+                cli_cmd.find_subcommand(verb).is_some(),
+                "Key commands table names `{verb}`, which is not a real rwv subcommand"
+            );
+        }
+        let workweave_cmd = cli_cmd.find_subcommand("workweave").expect("checked above");
+        assert!(
+            workweave_cmd.find_subcommand("create").is_some(),
+            "Key commands table names `workweave create`, which is not a real subcommand"
+        );
+    }
+
     // -- render_context in workweave ------------------------------------------
 
     #[test]
