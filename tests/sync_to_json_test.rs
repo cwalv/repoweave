@@ -199,7 +199,6 @@ fn make_workweave_ahead_fixture(
         ],
         &primary_project,
     );
-    std::fs::write(ww.join(".rwv-active"), "web-app\n").unwrap();
 
     // Advance the workweave's server repo and relock so sync-to has work.
     let advance_sha = make_commit(&ww_server, "ww.txt", "workweave\n", "ww: advance server");
@@ -543,7 +542,6 @@ fn sync_to_json_step3_advance_absent_for_noop_repos() {
         ],
         &primary_project,
     );
-    std::fs::write(ww.join(".rwv-active"), "web-app\n").unwrap();
 
     // No additional commits in ww; primary and ww are at the same tip.
     // sync-to --strategy=ff from ww to primary: step 1 is a no-op, step 3

@@ -122,8 +122,9 @@ pub struct WorkspaceContext {
 ///
 /// The two files are **mutually exclusive**, so this is one tier rather than
 /// two ranked ones: no root can offer both answers, and there is no
-/// precedence between them to get wrong. `rwv doctor` enforces the
-/// exclusivity ([`CheckViolation::WeaveRootIdentityConflict`]).
+/// precedence between them to get wrong. [`WorkspaceContext::resolve`]
+/// refuses a root that offers both; `rwv doctor` reports and repairs it
+/// ([`CheckViolation::WeaveRootIdentityConflict`]).
 ///
 /// Used by the resolver to distinguish structurally-determined targets
 /// (steps 1–2 and the marker spelling of step 3, silent) from the
@@ -170,6 +171,10 @@ pub enum Checkout {
         dir: PathBuf,
         /// The project this workweave belongs to.
         project: ProjectName,
+        /// The workspace this workweave was forked from, per its marker: the
+        /// primary when forked from primary, the parent workweave's path
+        /// when forked from another workweave.
+        parent: PathBuf,
     },
 }
 
@@ -537,6 +542,164 @@ pub fn require_workspace_or_empty(cwd: &Path, allow_non_empty_dir: bool) -> anyh
     }
 }
 
+/// Where the containment walk stopped, and the `cwd` it started from.
+///
+/// The two together are everything a [`WorkspaceContext`] needs beyond the
+/// identity the root claims, which is why the walk and the projection of an
+/// identity onto a context are separate: the entry points differ only in how
+/// much of [`RootObservation`] they are willing to act on.
+struct RootSite {
+    cwd: PathBuf,
+    dir: PathBuf,
+}
+
+/// Walk up from `cwd` to the nearest directory carrying weave-root identity
+/// evidence, and report what that directory claims.
+///
+/// The walk stops at the first ancestor [`observe_root`] answers for,
+/// including the answers no verb may act on: a directory claiming an identity
+/// it cannot witness is not a directory to walk past, because every workweave
+/// is shaped exactly like a primary and walking past one hands the tree a
+/// primary's authority on the strength of its own broken claim.
+fn walk_to_weave_root(cwd: &Path) -> anyhow::Result<(RootSite, RootObservation)> {
+    let cwd = cwd
+        .canonicalize()
+        .with_context(|| format!("failed to canonicalize {}", cwd.display()))?;
+
+    // Hard ceiling: never search above $HOME.
+    //
+    // Without this boundary, a walk-up that starts inside $HOME (e.g.
+    // from inside a workweave directory) could escape to /, then find
+    // workspace markers in an unrelated filesystem branch.  A test
+    // sandbox whose subprocess CWD is accidentally inside the active
+    // workweave would resolve the *real* primary workspace instead of its
+    // own temp-dir workspace and mutate it.
+    //
+    // The ceiling fires when `current` is about to cross *above* $HOME:
+    // if `current` is still within $HOME but its parent is not, we stop
+    // rather than walking into territory that can never legitimately
+    // contain a user workspace.  Paths already outside $HOME (e.g.
+    // /tmp/…) walk normally until the filesystem root — there is no
+    // cross-branch escape risk from those trees because their ancestors
+    // never include $HOME-rooted directories.
+    // Canonicalize home so that the ceiling check compares against the
+    // real path.  On systems where $HOME contains a symlinked component
+    // (e.g. /home -> /private/home on macOS, or a bespoke symlink on
+    // Linux), `dirs::home_dir()` returns the raw env value while `cwd`
+    // above has already been canonicalized.  Without canonicalization the
+    // `starts_with` test always returns false (the paths are spelled
+    // differently) and the ceiling silently never fires.
+    let home_dir = dirs::home_dir().and_then(|h| h.canonicalize().ok());
+
+    let mut current = cwd.as_path();
+    loop {
+        if let Some(observation) = observe_root(current)? {
+            let site = RootSite {
+                cwd: cwd.clone(),
+                dir: current.to_path_buf(),
+            };
+            return Ok((site, observation));
+        }
+
+        match current.parent() {
+            Some(parent) if parent != current => {
+                // Apply the $HOME ceiling: if `current` is inside $HOME but
+                // `parent` is not, stop here rather than walking above $HOME.
+                // This prevents workspace resolution from escaping to an
+                // unrelated filesystem branch (e.g. a test sandbox running
+                // inside a workweave from reaching the real primary weave).
+                if home_ceiling_blocks(current, parent, home_dir.as_deref()) {
+                    break;
+                }
+                current = parent;
+            }
+            _ => break,
+        }
+    }
+
+    anyhow::bail!("no repoweave workspace found above {}", cwd.display())
+}
+
+impl RootSite {
+    fn by_identity(
+        self,
+        identity: WeaveRootIdentity,
+        project_override: Option<ProjectName>,
+    ) -> anyhow::Result<WorkspaceContext> {
+        match identity {
+            WeaveRootIdentity::Workweave(identity) => {
+                self.by_marker(identity.into_marker(), project_override)
+            }
+            WeaveRootIdentity::Primary(identity) => {
+                Ok(self.by_pointer(identity.into_selection(), project_override))
+            }
+        }
+    }
+
+    /// The marker names both the primary workspace and the project, so
+    /// [`ProjectProvenance::Marker`] is reachable from here and nowhere else.
+    fn by_marker(
+        self,
+        marker: WorkweaveMarker,
+        project_override: Option<ProjectName>,
+    ) -> anyhow::Result<WorkspaceContext> {
+        let dir_basename = self
+            .dir
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("unknown");
+        // Workweave directories follow `<project>--<name>`. Strip the
+        // `<project>--` prefix so the workweave name can be resolved via the
+        // primary-side registry for delete / retire flows.
+        // parse_weave_dir_name returns the right-hand side; fall back to the
+        // full basename for exotic shapes that don't parse.
+        let name = match parse_weave_dir_name(dir_basename) {
+            Some((_, n)) => n,
+            None => WorkweaveName::new(dir_basename)?,
+        };
+        let (project, provenance) = match project_override {
+            Some(p) => (p, ProjectProvenance::Flag),
+            None => (marker.project, ProjectProvenance::Marker),
+        };
+        Ok(WorkspaceContext {
+            cwd_project_hint: detect_project(&self.cwd, &marker.primary),
+            primary_root: marker.primary,
+            checkout: Checkout::Workweave {
+                name,
+                dir: self.dir,
+                project,
+                parent: marker.parent,
+            },
+            project_provenance: Some(provenance),
+        })
+    }
+
+    /// The pointer is the ambient default, so
+    /// [`ProjectProvenance::ActiveFile`] is reachable from here and nowhere
+    /// else. Neither pointer nor override leaves both unset — the caller uses
+    /// [`WorkspaceContext::require_active_project`] to surface the corrective
+    /// error.
+    fn by_pointer(
+        self,
+        selection: Option<ProjectName>,
+        project_override: Option<ProjectName>,
+    ) -> WorkspaceContext {
+        let (project, provenance) = match project_override {
+            Some(p) => (Some(p), Some(ProjectProvenance::Flag)),
+            None => match selection {
+                Some(p) => (Some(p), Some(ProjectProvenance::ActiveFile)),
+                None => (None, None),
+            },
+        };
+        WorkspaceContext {
+            cwd_project_hint: detect_project(&self.cwd, &self.dir),
+            primary_root: self.dir,
+            checkout: Checkout::Primary { project },
+            project_provenance: provenance,
+        }
+    }
+}
+
 impl WorkspaceContext {
     /// Resolve the workspace context by walking up from `cwd`.
     ///
@@ -549,18 +712,19 @@ impl WorkspaceContext {
     ///      correct `Marker` → `WorkweaveFlag`.
     ///      Provenance = [`ProjectProvenance::WorkweaveFlag`].
     ///   3. The weave root's own identity file — **one tier**, whose
-    ///      spelling follows the kind of root the walk landed on:
-    ///      - workweave root → `.rwv-workweave` marker, structural: the
-    ///        workweave directory names its project.
+    ///      spelling follows the identity [`observe_root`] read at the root
+    ///      the walk landed on:
+    ///      - [`WeaveRootIdentity::Workweave`] → `.rwv-workweave` marker,
+    ///        structural: the workweave directory names its project.
     ///        Provenance = [`ProjectProvenance::Marker`].
-    ///      - primary root → `.rwv-active` pointer, the ambient default.
+    ///      - [`WeaveRootIdentity::Primary`] → `.rwv-active` pointer, the
+    ///        ambient default.
     ///        Provenance = [`ProjectProvenance::ActiveFile`].
     ///
-    /// Step 3 is one tier and not two because the two files are mutually
-    /// exclusive: the loop below returns from whichever arm matches, so no
-    /// invocation ever consults both, and there is no precedence between them
-    /// to document or to get wrong. `rwv doctor` enforces the exclusivity
-    /// (`weave-root-identity-conflict`).
+    /// Step 3 is one tier and not two because the identity is one
+    /// observation: [`RootObservation::require_exclusive`] refuses a root
+    /// carrying both files, so no invocation reaches a state where both are
+    /// readable and there is no precedence between them to get wrong.
     ///
     /// The chosen chain step is recorded on the returned context as
     /// [`WorkspaceContext::project_provenance`] so downstream code can
@@ -574,129 +738,31 @@ impl WorkspaceContext {
     /// so that diagnostics and `rwv` bare status can surface a divergence
     /// warning — it is no longer consulted for verb resolution.
     pub fn resolve(cwd: &Path, project_override: Option<ProjectName>) -> anyhow::Result<Self> {
-        let cwd = cwd
-            .canonicalize()
-            .with_context(|| format!("failed to canonicalize {}", cwd.display()))?;
+        let (site, observation) = walk_to_weave_root(cwd)?;
+        site.by_identity(observation.require_exclusive()?, project_override)
+    }
 
-        // Hard ceiling: never search above $HOME.
-        //
-        // Without this boundary, a walk-up that starts inside $HOME (e.g.
-        // from inside a workweave directory) could escape to /, then find
-        // workspace markers in an unrelated filesystem branch.  A test
-        // sandbox whose subprocess CWD is accidentally inside the active
-        // workweave would resolve the *real* primary workspace instead of its
-        // own temp-dir workspace and mutate it.
-        //
-        // The ceiling fires when `current` is about to cross *above* $HOME:
-        // if `current` is still within $HOME but its parent is not, we stop
-        // rather than walking into territory that can never legitimately
-        // contain a user workspace.  Paths already outside $HOME (e.g.
-        // /tmp/…) walk normally until the filesystem root — there is no
-        // cross-branch escape risk from those trees because their ancestors
-        // never include $HOME-rooted directories.
-        // Canonicalize home so that the ceiling check compares against the
-        // real path.  On systems where $HOME contains a symlinked component
-        // (e.g. /home -> /private/home on macOS, or a bespoke symlink on
-        // Linux), `dirs::home_dir()` returns the raw env value while `cwd`
-        // above has already been canonicalized.  Without canonicalization the
-        // `starts_with` test always returns false (the paths are spelled
-        // differently) and the ceiling silently never fires.
-        let home_dir = dirs::home_dir().and_then(|h| h.canonicalize().ok());
-
-        // Walk ancestors looking for a workspace root OR a workweave pattern.
-        //
-        // For each ancestor directory we check (in order):
-        //   1. Does it have a `.rwv-workweave` marker? If so, use that.
-        //      The marker is authoritative; all live workweaves carry one.
-        //   2. Is it a workspace root itself?
-        let mut current = cwd.as_path();
-        loop {
-            // 1. Check for `.rwv-workweave` marker file in the current directory.
-            // Propagate read errors (including legacy-marker errors) immediately
-            // so the operator sees an actionable message rather than a silent
-            // fallback to name-based resolution.
-            let marker_result = WorkweaveMarker::read(current)?;
-            if let Some(marker) = marker_result {
-                // The marker tells us exactly where the primary workspace is and
-                // which project this workweave belongs to.
-                let root = marker.primary.clone();
-                if is_workspace_root(&root) {
-                    let dir_basename = current
-                        .file_name()
-                        .and_then(|n| n.to_str())
-                        .unwrap_or("unknown");
-                    // Workweave directories follow `<project>--<name>`. Strip
-                    // the `<project>--` prefix so the workweave name can be
-                    // resolved via the primary-side registry for delete /
-                    // retire flows. parse_weave_dir_name returns the
-                    // right-hand side; fall back to the full basename for
-                    // exotic shapes that don't parse.
-                    let workweave_name = match parse_weave_dir_name(dir_basename) {
-                        Some((_, n)) => n,
-                        None => WorkweaveName::new(dir_basename)?,
-                    };
-                    // Provenance: `--project` wins if set, else the marker
-                    // determines the project (structural — a workweave root
-                    // carries no `.rwv-active`, so there is no ambient
-                    // pointer here to consult or to rank against).
-                    let (project, provenance) = match project_override {
-                        Some(p) => (p, ProjectProvenance::Flag),
-                        None => (marker.project, ProjectProvenance::Marker),
-                    };
-                    let cwd_project_hint = detect_project(&cwd, &root);
-                    return Ok(WorkspaceContext {
-                        primary_root: root,
-                        checkout: Checkout::Workweave {
-                            name: workweave_name,
-                            dir: current.to_path_buf(),
-                            project,
-                        },
-                        cwd_project_hint,
-                        project_provenance: Some(provenance),
-                    });
-                }
-            }
-
-            // 2. Check if current directory IS the workspace root.
-            if is_workspace_root(current) {
-                let cwd_project_hint = detect_project(&cwd, current);
-                // Provenance: `--project` wins; otherwise the `.rwv-active`
-                // pointer decides (if present). No pointer + no override
-                // leaves `project` and provenance unset — the caller uses
-                // `require_active_project` to surface the corrective error.
-                let (project, provenance) = match project_override {
-                    Some(p) => (Some(p), Some(ProjectProvenance::Flag)),
-                    None => match read_active_project(current) {
-                        Some(p) => (Some(p), Some(ProjectProvenance::ActiveFile)),
-                        None => (None, None),
-                    },
-                };
-                return Ok(WorkspaceContext {
-                    primary_root: current.to_path_buf(),
-                    checkout: Checkout::Primary { project },
-                    cwd_project_hint,
-                    project_provenance: provenance,
-                });
-            }
-
-            // Move up to parent.
-            match current.parent() {
-                Some(parent) if parent != current => {
-                    // Apply the $HOME ceiling: if `current` is inside $HOME but
-                    // `parent` is not, stop here rather than walking above $HOME.
-                    // This prevents workspace resolution from escaping to an
-                    // unrelated filesystem branch (e.g. a test sandbox running
-                    // inside a workweave from reaching the real primary weave).
-                    if home_ceiling_blocks(current, parent, home_dir.as_deref()) {
-                        break;
-                    }
-                    current = parent;
-                }
-                _ => break,
-            }
+    /// Resolve for `doctor` and `status`, whose subject is the root's
+    /// identity rather than the work done through it.
+    ///
+    /// A root carrying both identity files stops every other verb. Refusing
+    /// these two as well would withhold the inspection that names the state
+    /// and the repair that clears it, and would demand the operator run them
+    /// from somewhere else — which a copied tree, whose primary contains no
+    /// record of it, may not have. They proceed by marker, which is what
+    /// resolution reads at an undisputed workweave root anyway: the pointer
+    /// decides nothing at either kind of root, so tolerating one guesses
+    /// nothing. Every other unusable root is refused here exactly as in
+    /// [`Self::resolve`].
+    pub fn resolve_tolerating_disputed_root(
+        cwd: &Path,
+        project_override: Option<ProjectName>,
+    ) -> anyhow::Result<Self> {
+        let (site, observation) = walk_to_weave_root(cwd)?;
+        match observation {
+            RootObservation::Disputed { marker, .. } => site.by_marker(marker, project_override),
+            settled => site.by_identity(settled.require_exclusive()?, project_override),
         }
-
-        anyhow::bail!("no repoweave workspace found above {}", cwd.display())
     }
 
     /// The project name inferred from CWD's location under
@@ -2116,7 +2182,9 @@ mod tests {
         let ctx = WorkspaceContext::resolve(&weave_dir, None).unwrap();
         assert_eq!(ctx.primary_path(), primary_canon);
         match &ctx.checkout {
-            Checkout::Workweave { name, dir, project } => {
+            Checkout::Workweave {
+                name, dir, project, ..
+            } => {
                 assert_eq!(name.as_str(), "feat");
                 assert_eq!(*dir, weave_dir.canonicalize().unwrap());
                 assert_eq!(project.as_str(), "web-app");
@@ -2146,7 +2214,9 @@ mod tests {
         let ctx = WorkspaceContext::resolve(&repo_dir, None).unwrap();
         assert_eq!(ctx.primary_path(), root.canonicalize().unwrap());
         match &ctx.checkout {
-            Checkout::Workweave { name, dir, project } => {
+            Checkout::Workweave {
+                name, dir, project, ..
+            } => {
                 assert_eq!(name.as_str(), "feat");
                 assert_eq!(*dir, weave_dir.canonicalize().unwrap());
                 assert_eq!(project.as_str(), "web-app");
@@ -2205,6 +2275,241 @@ mod tests {
             msg.contains("no repoweave workspace found"),
             "unexpected error: {msg}"
         );
+    }
+
+    // ========================================================================
+    // Root identity drives resolution
+    //
+    // The one-tier collapse used to be enforced by the ORDER of two checks in
+    // the walk. It is now one observation per ancestor, so the states no verb
+    // may act on are refusals rather than fall-throughs.
+    // ========================================================================
+
+    /// A copied workweave: workspace-shaped, carrying a marker whose
+    /// `primary:` names a directory that is not a workspace root.
+    ///
+    /// This tree used to resolve as a `Checkout::Primary` at itself and pick
+    /// its project from its own stray `.rwv-active` — the marker was dropped
+    /// silently and the structural shape decided. Every workweave is shaped
+    /// exactly like a primary, so that handed the tree a primary's authority
+    /// on the strength of its own broken claim.
+    fn make_copied_workweave(parent: &Path) -> (PathBuf, PathBuf) {
+        let dir = make_workspace(parent, "web-app--copied");
+        let dangling = parent.join("gone");
+        std::fs::create_dir_all(&dangling).unwrap();
+        WorkweaveMarker {
+            primary: dangling.clone(),
+            project: ProjectName::new("web-app").unwrap(),
+            parent: dangling.clone(),
+        }
+        .write(&dir)
+        .unwrap();
+        (dir, dangling)
+    }
+
+    #[test]
+    fn resolve_refuses_a_marker_whose_primary_is_not_a_workspace_root() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (dir, dangling) = make_copied_workweave(tmp.path());
+        std::fs::write(dir.join(ACTIVE_PROJECT_FILE), "web-app\n").unwrap();
+
+        let err = WorkspaceContext::resolve(&dir, None).unwrap_err();
+        let msg = format!("{err}");
+        assert!(
+            msg.contains(&dir.join(WORKWEAVE_MARKER_FILE).display().to_string()),
+            "must name the marker: {msg}"
+        );
+        assert!(
+            msg.contains(&dangling.display().to_string()),
+            "must name the dangling primary: {msg}"
+        );
+        assert!(
+            msg.contains("Repair `primary:`"),
+            "must offer the repair: {msg}"
+        );
+        assert!(
+            msg.contains("standalone weave"),
+            "must offer the adopt-as-standalone exit: {msg}"
+        );
+    }
+
+    /// The refusal is terminal for the walk: an unverifiable marker does not
+    /// fall through to the enclosing workspace either.
+    #[test]
+    fn resolve_refuses_from_inside_a_copied_workweave() {
+        let tmp = tempfile::tempdir().unwrap();
+        let outer = make_workspace(tmp.path(), "ws");
+        let (dir, _) = make_copied_workweave(&outer);
+        let repo_dir = dir.join("github").join("acme").join("server");
+        std::fs::create_dir_all(&repo_dir).unwrap();
+
+        let err = WorkspaceContext::resolve(&repo_dir, None).unwrap_err();
+        assert!(
+            format!("{err}").contains("not a repoweave workspace root"),
+            "unexpected error: {err}"
+        );
+    }
+
+    /// A workweave root carrying both identity files, verified marker.
+    fn make_disputed_workweave(parent: &Path) -> (PathBuf, PathBuf) {
+        let root = make_workspace(parent, "ws");
+        let dir = parent.join(".workweaves").join("web-app--feat");
+        std::fs::create_dir_all(&dir).unwrap();
+        let primary_canon = root.canonicalize().unwrap();
+        WorkweaveMarker {
+            primary: primary_canon.clone(),
+            project: ProjectName::new("web-app").unwrap(),
+            parent: primary_canon,
+        }
+        .write(&dir)
+        .unwrap();
+        std::fs::write(dir.join(ACTIVE_PROJECT_FILE), "other-project\n").unwrap();
+        (root, dir)
+    }
+
+    #[test]
+    fn resolve_refuses_a_root_carrying_both_identity_files() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (_, dir) = make_disputed_workweave(tmp.path());
+
+        let err = WorkspaceContext::resolve(&dir, None).unwrap_err();
+        let msg = format!("{err}");
+        let canon = dir.canonicalize().unwrap();
+        assert!(
+            msg.contains(&canon.join(WORKWEAVE_MARKER_FILE).display().to_string()),
+            "must name the marker: {msg}"
+        );
+        assert!(
+            msg.contains(&canon.join(ACTIVE_PROJECT_FILE).display().to_string()),
+            "must name the pointer: {msg}"
+        );
+        assert!(
+            msg.contains("rwv doctor --fix"),
+            "must name the repair: {msg}"
+        );
+    }
+
+    /// `doctor` and `status` reach the same walk through
+    /// `resolve_tolerating_disputed_root`, and proceed by marker — the
+    /// pointer's `other-project` decides nothing.
+    #[test]
+    fn the_exempt_entry_point_proceeds_by_marker_from_a_disputed_root() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (root, dir) = make_disputed_workweave(tmp.path());
+
+        let ctx = WorkspaceContext::resolve_tolerating_disputed_root(&dir, None).unwrap();
+        assert_eq!(ctx.primary_path(), root.canonicalize().unwrap());
+        assert_eq!(ctx.project_provenance(), Some(ProjectProvenance::Marker));
+        match &ctx.checkout {
+            Checkout::Workweave { name, project, .. } => {
+                assert_eq!(name.as_str(), "feat");
+                assert_eq!(project.as_str(), "web-app");
+            }
+            Checkout::Primary { .. } => panic!("expected Workweave"),
+        }
+    }
+
+    /// The exemption is scoped to the disputed state alone: an unverifiable
+    /// marker refuses `doctor` and `status` too, because there is no verified
+    /// primary for either of them to inspect or repair through. The refusal is
+    /// what those two would otherwise have reported, so it carries the same
+    /// remediation the non-exempt one does.
+    ///
+    /// The fixture writes no `.rwv-active`: the pointer is not what makes an
+    /// unverifiable marker terminal, and a copied tree that never carried one
+    /// reaches the same refusal.
+    #[test]
+    fn the_exempt_entry_point_still_refuses_an_unverifiable_marker() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (dir, dangling) = make_copied_workweave(tmp.path());
+        assert!(!dir.join(ACTIVE_PROJECT_FILE).exists());
+
+        let err = WorkspaceContext::resolve_tolerating_disputed_root(&dir, None).unwrap_err();
+        let msg = format!("{err}");
+        assert!(
+            msg.contains("not a repoweave workspace root"),
+            "unexpected error: {msg}"
+        );
+        assert!(
+            msg.contains(&dir.join(WORKWEAVE_MARKER_FILE).display().to_string()),
+            "must name the marker: {msg}"
+        );
+        assert!(
+            msg.contains(&dangling.display().to_string()),
+            "must name the dangling primary: {msg}"
+        );
+        assert!(
+            msg.contains("Repair `primary:`"),
+            "must offer the repair: {msg}"
+        );
+        assert!(
+            msg.contains("standalone weave"),
+            "must offer the adopt-as-standalone exit: {msg}"
+        );
+    }
+
+    #[test]
+    fn checkout_workweave_carries_the_markers_parent_when_forked_from_primary() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = make_workspace(tmp.path(), "ws");
+        let dir = tmp.path().join(".workweaves").join("web-app--feat");
+        std::fs::create_dir_all(&dir).unwrap();
+        let primary_canon = root.canonicalize().unwrap();
+        WorkweaveMarker {
+            primary: primary_canon.clone(),
+            project: ProjectName::new("web-app").unwrap(),
+            parent: primary_canon.clone(),
+        }
+        .write(&dir)
+        .unwrap();
+
+        let ctx = WorkspaceContext::resolve(&dir, None).unwrap();
+        match &ctx.checkout {
+            Checkout::Workweave { parent, .. } => assert_eq!(*parent, primary_canon),
+            Checkout::Primary { .. } => panic!("expected Workweave"),
+        }
+    }
+
+    /// The case the field exists for: a workweave forked from another
+    /// workweave, whose parent is not the primary. `rwv sync` with no source
+    /// syncs one hop toward the primary, which is the parent and not the
+    /// primary_root beside it.
+    #[test]
+    fn checkout_workweave_carries_a_parent_that_is_not_the_primary() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = make_workspace(tmp.path(), "ws");
+        let primary_canon = root.canonicalize().unwrap();
+
+        let upper = tmp.path().join(".workweaves").join("web-app--upper");
+        std::fs::create_dir_all(&upper).unwrap();
+        WorkweaveMarker {
+            primary: primary_canon.clone(),
+            project: ProjectName::new("web-app").unwrap(),
+            parent: primary_canon.clone(),
+        }
+        .write(&upper)
+        .unwrap();
+
+        let lower = tmp.path().join(".workweaves").join("web-app--lower");
+        std::fs::create_dir_all(&lower).unwrap();
+        let upper_canon = upper.canonicalize().unwrap();
+        WorkweaveMarker {
+            primary: primary_canon.clone(),
+            project: ProjectName::new("web-app").unwrap(),
+            parent: upper_canon.clone(),
+        }
+        .write(&lower)
+        .unwrap();
+
+        let ctx = WorkspaceContext::resolve(&lower, None).unwrap();
+        assert_eq!(ctx.primary_path(), primary_canon);
+        match &ctx.checkout {
+            Checkout::Workweave { parent, .. } => {
+                assert_eq!(*parent, upper_canon);
+                assert_ne!(*parent, primary_canon);
+            }
+            Checkout::Primary { .. } => panic!("expected Workweave"),
+        }
     }
 
     // ========================================================================

@@ -3175,7 +3175,9 @@ pub fn workweave_log(
     use crate::workspace::Checkout;
 
     let (ww_name, ww_dir, project) = match &ctx.checkout {
-        Checkout::Workweave { name, dir, project } => (name.clone(), dir.clone(), project.clone()),
+        Checkout::Workweave {
+            name, dir, project, ..
+        } => (name.clone(), dir.clone(), project.clone()),
         Checkout::Primary { .. } => {
             bail!(
                 "`rwv workweave log` reports a workweave's history relative to its \

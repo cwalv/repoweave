@@ -144,7 +144,6 @@ repositories:
         primary_canon.display()
     );
     fs::write(weave_dir.join(".rwv-workweave"), &marker).unwrap();
-    fs::write(weave_dir.join(".rwv-active"), "ws\n").unwrap();
 
     Command::cargo_bin("rwv")
         .unwrap()

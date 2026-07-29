@@ -4281,7 +4281,9 @@ fn run_retire(ctx: &OpContext<'_>) -> anyhow::Result<()> {
     let emit_text = ctx.handler.emit_text();
 
     match &ctx.cwd_ctx.checkout {
-        Checkout::Workweave { dir, name, project } => retire_workweave_after_sync_to(
+        Checkout::Workweave {
+            dir, name, project, ..
+        } => retire_workweave_after_sync_to(
             ctx.project_vcs.as_ref(),
             &ctx.cwd_ctx,
             dir,

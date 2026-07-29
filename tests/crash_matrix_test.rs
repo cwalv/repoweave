@@ -1691,9 +1691,10 @@ fn make_retire_fixture(parent: &Path) -> RetireFixture {
         ],
         &primary.project_dir,
     );
-    std::fs::write(ww_root.join(".rwv-active"), "web-app\n").unwrap();
-
-    // Marker so the workweave resolves as such.
+    // Marker so the workweave resolves as such. No `.rwv-active` beside it:
+    // the two files are mutually exclusive and resolution now refuses a root
+    // carrying both, so a fixture that planted one here would be pinning the
+    // state this design removed.
     let marker = format!(
         "primary: \"{primary}\"\nproject: web-app\nparent: \"{primary}\"\n",
         primary = primary.root.display(),

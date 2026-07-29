@@ -208,9 +208,9 @@ fn make_workspace_with_ww(parent: &Path) -> (Workspace, String) {
         p = primary_canon
     );
     std::fs::write(ww_root.join(".rwv-workweave"), marker_content).unwrap();
-    // Set `.rwv-active` in both workspaces.
+    // The pointer is primary-only: the workweave's marker already names its
+    // project, and a root carrying both files is refused at resolution.
     std::fs::write(primary_root.join(".rwv-active"), "web-app\n").unwrap();
-    std::fs::write(ww_root.join(".rwv-active"), "web-app\n").unwrap();
 
     (
         Workspace {
@@ -427,9 +427,10 @@ fn sync_post_refresh_clears_stale_index() {
         p = primary_canon
     );
     std::fs::write(ww_root.join(".rwv-workweave"), marker_content).unwrap();
-    // Action verbs need `.rwv-active` (or --project).
+    // Action verbs need the primary's pointer (or --project); in the
+    // workweave the marker names the project, and a root carrying both files
+    // is refused at resolution.
     std::fs::write(primary_root.join(".rwv-active"), "web-app\n").unwrap();
-    std::fs::write(ww_root.join(".rwv-active"), "web-app\n").unwrap();
 
     // --- Primary commits C2, updates lock ---
     let c2 = make_commit(&server_primary, "advance.txt", "new\n", "primary: C2");

@@ -246,14 +246,37 @@ fn resolve_project_scoped(
     project_override: Option<crate::manifest::ProjectName>,
     use_workweave_flag: bool,
 ) -> anyhow::Result<WorkspaceContext> {
-    let ctx = WorkspaceContext::resolve(origin_dir, project_override)?;
+    Ok(with_target_surfaced(
+        WorkspaceContext::resolve(origin_dir, project_override)?,
+        use_workweave_flag,
+    ))
+}
+
+/// [`resolve_project_scoped`] for `doctor` and `status`, the two verbs that
+/// report on a weave root carrying both identity files instead of refusing to
+/// act through it.
+///
+/// Reachable only by naming it: every other project-scoped verb resolves
+/// through [`resolve_project_scoped`] and refuses.
+fn resolve_project_scoped_tolerating_disputed_root(
+    origin_dir: &Path,
+    project_override: Option<crate::manifest::ProjectName>,
+    use_workweave_flag: bool,
+) -> anyhow::Result<WorkspaceContext> {
+    Ok(with_target_surfaced(
+        WorkspaceContext::resolve_tolerating_disputed_root(origin_dir, project_override)?,
+        use_workweave_flag,
+    ))
+}
+
+fn with_target_surfaced(ctx: WorkspaceContext, use_workweave_flag: bool) -> WorkspaceContext {
     let ctx = if use_workweave_flag {
         ctx.with_workweave_flag_provenance()
     } else {
         ctx
     };
     ctx.emit_target_line();
-    Ok(ctx)
+    ctx
 }
 
 /// Levenshtein edit distance between two strings (two-row dynamic-programming
@@ -814,7 +837,11 @@ pub fn run() -> anyhow::Result<()> {
             project,
         }) => {
             let project_override = project.map(crate::manifest::ProjectName::new).transpose()?;
-            let ctx = resolve_project_scoped(&origin_dir, project_override, use_workweave_flag)?;
+            let ctx = resolve_project_scoped_tolerating_disputed_root(
+                &origin_dir,
+                project_override,
+                use_workweave_flag,
+            )?;
             // Minted here — the CLI boundary is the only place that knows
             // the operator asked. `run_check` gates the detached canonical
             // store's reattach on it; without the flag `--fix` reports the
@@ -853,7 +880,11 @@ pub fn run() -> anyhow::Result<()> {
         }
         Some(Commands::Status { json, project }) => {
             let project_override = project.map(crate::manifest::ProjectName::new).transpose()?;
-            let ctx = resolve_project_scoped(&origin_dir, project_override, use_workweave_flag)?;
+            let ctx = resolve_project_scoped_tolerating_disputed_root(
+                &origin_dir,
+                project_override,
+                use_workweave_flag,
+            )?;
             status::run_status(&ctx, json)?;
         }
         Some(Commands::Abort) => {

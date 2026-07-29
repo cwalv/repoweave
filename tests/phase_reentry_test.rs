@@ -674,7 +674,8 @@ fn make_retire_workspaces(parent: &Path) -> (Workspace, Workspace, String) {
         ],
         &primary.project_dir,
     );
-    std::fs::write(ww_root.join(".rwv-active"), "web-app\n").unwrap();
+    // The marker is this root's only identity file — no `.rwv-active` beside
+    // it, which resolution refuses.
     write_workweave_marker(&ww_root, &primary.root);
 
     let ww = Workspace {

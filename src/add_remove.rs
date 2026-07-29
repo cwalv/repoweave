@@ -210,7 +210,10 @@ pub fn run_add(url: &str, role: Role, ctx: &WorkspaceContext) -> anyhow::Result<
             // Local-path add doesn't clone, but if we are in a workweave the
             // operator may still expect the workweave to see the repo as a
             // worktree. Mirror the URL path's worktree-creation step.
-            if let Checkout::Workweave { name, dir, project } = &ctx.checkout {
+            if let Checkout::Workweave {
+                name, dir, project, ..
+            } = &ctx.checkout
+            {
                 let repo_path = RepoPath::new(url)?;
                 let canonical = ctx.primary_path().join(repo_path.as_path());
                 if canonical.exists() {
@@ -319,7 +322,10 @@ pub fn run_add(url: &str, role: Role, ctx: &WorkspaceContext) -> anyhow::Result<
 
     // In a workweave, also create a worktree at the workweave so the new
     // repo is materialized there.
-    if let Checkout::Workweave { name, dir, project } = &ctx.checkout {
+    if let Checkout::Workweave {
+        name, dir, project, ..
+    } = &ctx.checkout
+    {
         create_worktree_in_workweave(
             vcs.as_ref(),
             ctx.primary_path(),
@@ -706,7 +712,10 @@ pub fn run_add_new(path_arg: &str, ctx: &WorkspaceContext) -> anyhow::Result<()>
     // new repo is materialized there. `git init` produces an unborn HEAD,
     // so create_worktree_in_workweave silently skips until the first commit
     // lands upstream (operator can then `rwv sync`).
-    if let Checkout::Workweave { name, dir, project } = &ctx.checkout {
+    if let Checkout::Workweave {
+        name, dir, project, ..
+    } = &ctx.checkout
+    {
         create_worktree_in_workweave(
             vcs.as_ref(),
             ctx.primary_path(),

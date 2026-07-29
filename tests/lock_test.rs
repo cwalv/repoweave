@@ -55,20 +55,15 @@ fn init_git_repo(path: &Path) -> String {
     run(&["rev-parse", "HEAD"], path)
 }
 
-/// Write an `rwv.yaml` manifest into a project directory.
+/// Write an `rwv.yaml` manifest into a **primary** root's project directory.
 ///
-/// Also writes `.rwv-active` at the workspace root pointing at the
-/// project, so lock-test scenarios that run `rwv lock` (an action verb)
-/// resolve the project correctly.
+/// Also writes `.rwv-active` at that root pointing at the project, so
+/// lock-test scenarios that run `rwv lock` (an action verb) resolve the
+/// project correctly. A workweave root takes `write_workweave_manifest`
+/// instead: its marker already names the project, and a pointer beside the
+/// marker is the state resolution refuses.
 fn write_manifest(project_dir: &Path, repos: &[(&str, &str)]) {
-    std::fs::create_dir_all(project_dir).unwrap();
-    let mut yaml = String::from("repositories:\n");
-    for (repo_path, url) in repos {
-        yaml.push_str(&format!(
-            "  {repo_path}:\n    type: git\n    url: {url}\n    version: main\n    role: owned\n"
-        ));
-    }
-    std::fs::write(project_dir.join("rwv.yaml"), &yaml).unwrap();
+    write_workweave_manifest(project_dir, repos);
 
     // Derive (workspace_root, project_name) and set .rwv-active. The
     // project_dir is `<root>/projects/<name>/`, so the root is two
@@ -79,6 +74,19 @@ fn write_manifest(project_dir: &Path, repos: &[(&str, &str)]) {
     ) {
         let _ = std::fs::write(root.join(".rwv-active"), format!("{name}\n"));
     }
+}
+
+/// [`write_manifest`] without the pointer, for a project directory inside a
+/// workweave root.
+fn write_workweave_manifest(project_dir: &Path, repos: &[(&str, &str)]) {
+    std::fs::create_dir_all(project_dir).unwrap();
+    let mut yaml = String::from("repositories:\n");
+    for (repo_path, url) in repos {
+        yaml.push_str(&format!(
+            "  {repo_path}:\n    type: git\n    url: {url}\n    version: main\n    role: owned\n"
+        ));
+    }
+    std::fs::write(project_dir.join("rwv.yaml"), &yaml).unwrap();
 }
 
 /// Build a `Command` for the `rwv` binary.
@@ -189,7 +197,7 @@ fn lock_in_workweave_writes_to_workweave_project_dir_not_primary() {
     let workweave_dir = tmp.path().join("ws--hotfix");
     std::fs::create_dir_all(workweave_dir.join("github")).unwrap();
     let workweave_project_dir = workweave_dir.join("projects").join("ws");
-    write_manifest(
+    write_workweave_manifest(
         &workweave_project_dir,
         &[(repo_path, "https://github.com/acme/server.git")],
     );
